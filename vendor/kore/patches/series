@@ -1,0 +1,4 @@
+0001-kore-pslog-logging-and-bundle-build-knobs.patch
+0002-kore-lonejson-request-and-acme-integration.patch
+0003-kore-curl-bundled-toolchain-type-fixes.patch
+0004-kore-makefile-generate-version-object-from-clean-tree.patch

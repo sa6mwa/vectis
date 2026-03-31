@@ -1,0 +1,44 @@
+name: vectis-e2e
+
+services:
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: lockddev
+      MINIO_ROOT_PASSWORD: lockddevpass
+    ports:
+      - "${LOCKDC_MINIO_API_PORT:-19000}:9000"
+      - "${LOCKDC_MINIO_CONSOLE_PORT:-19001}:9001"
+    volumes:
+      - ./devenv/volumes/minio-data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        until mc alias set local http://minio:9000 lockddev lockddevpass; do
+          sleep 1
+        done
+        mc alias set local http://minio:9000 lockddev lockddevpass
+        mc mb --ignore-existing local/lockd-client-s3
+        mc anonymous set none local/lockd-client-s3
+    restart: "no"
+
+  lockd-mem:
+    image: docker.io/pktsystems/lockd:v0.8.1
+    restart: unless-stopped
+    command: ["--disable-mtls", "--connguard-enabled=false", "--store", "mem://", "--listen", "/run/lockd/lockd.sock", "--listen-proto", "unix"]
+    environment:
+      LOCKD_CONFIG_DIR: /config
+      LOCKD_OTLP_ENDPOINT: ""
+    ports:
+      - "${LOCKDC_MEM_PORT:-19440}:9341"
+    volumes:
+      - ./devenv/volumes/lockd-mem-config:/config
+      - ./devenv/volumes/lockd-mem-run:/run/lockd
+
