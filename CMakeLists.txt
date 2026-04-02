@@ -11,7 +11,7 @@ set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
 option(VECTIS_BUILD_STATIC "Build the static vectis library." ON)
-option(VECTIS_BUILD_SHARED "Build the shared vectis library." ON)
+option(VECTIS_BUILD_SHARED "Build the shared vectis library." OFF)
 option(VECTIS_BUILD_TESTS "Build vectis unit tests." ON)
 option(VECTIS_BUILD_FUZZERS "Build fuzz targets." OFF)
 option(VECTIS_ENABLE_COVERAGE "Build with coverage instrumentation." OFF)
@@ -22,8 +22,22 @@ set(VECTIS_EXTERNAL_ROOT "${CMAKE_SOURCE_DIR}/.cache/deps/host-debug"
 set(VECTIS_DIST_DIR "${CMAKE_BINARY_DIR}/dist"
     CACHE PATH "Distribution output directory.")
 
+set(vectis_lockdc_config_dir "${VECTIS_EXTERNAL_ROOT}/lib/cmake/lockdc")
+set(vectis_lockdc_shared_library "${VECTIS_EXTERNAL_ROOT}/lib/liblockdc.so")
+if(EXISTS "${vectis_lockdc_config_dir}/lockdcConfig.cmake")
+  find_package(lockdc CONFIG REQUIRED PATHS "${vectis_lockdc_config_dir}" NO_DEFAULT_PATH)
+endif()
+
 if(NOT VECTIS_BUILD_STATIC AND NOT VECTIS_BUILD_SHARED)
   message(FATAL_ERROR "Enable at least one of VECTIS_BUILD_STATIC or VECTIS_BUILD_SHARED.")
+endif()
+
+if(VECTIS_BUILD_SHARED AND NOT EXISTS "${vectis_lockdc_shared_library}")
+  message(FATAL_ERROR
+    "VECTIS_BUILD_SHARED=ON requires a usable ${vectis_lockdc_shared_library}. "
+    "The current dependency bundle only provides the static liblockdc archive. "
+    "Provision runtime/shared artifacts before enabling shared vectis builds."
+  )
 endif()
 
 if(VECTIS_BUILD_FUZZERS AND NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
@@ -85,6 +99,22 @@ endif()
 add_library(vectis_external_headers INTERFACE)
 target_include_directories(vectis_external_headers INTERFACE "${vectis_external_include_dir}")
 
+if(TARGET lockdc::static)
+  set(vectis_lockdc_static_target lockdc::static)
+endif()
+
+if(TARGET lockdc::shared)
+  set(vectis_lockdc_shared_target lockdc::shared)
+elseif(TARGET lockdc::static)
+  set(vectis_lockdc_shared_target lockdc::static)
+endif()
+
+if(EXISTS "${vectis_lockdc_shared_library}")
+  set(vectis_lockdc_shared_link "${vectis_lockdc_shared_library}")
+elseif(DEFINED vectis_lockdc_shared_target)
+  set(vectis_lockdc_shared_link "${vectis_lockdc_shared_target}")
+endif()
+
 set(vectis_public_headers
   include/vectis/vectis.h
 )
@@ -111,7 +141,12 @@ if(VECTIS_BUILD_STATIC)
     PRIVATE
       ${vectis_private_includes}
   )
-  target_link_libraries(vectis_static PUBLIC Threads::Threads vectis_external_headers)
+  target_link_libraries(vectis_static
+    PUBLIC
+      Threads::Threads
+      vectis_external_headers
+      ${vectis_lockdc_static_target}
+  )
   set_target_properties(vectis_static PROPERTIES OUTPUT_NAME vectis)
   vectis_configure_c_target(vectis_static)
 endif()
@@ -125,7 +160,12 @@ if(VECTIS_BUILD_SHARED)
     PRIVATE
       ${vectis_private_includes}
   )
-  target_link_libraries(vectis_shared PUBLIC Threads::Threads vectis_external_headers)
+  target_link_libraries(vectis_shared
+    PUBLIC
+      Threads::Threads
+      vectis_external_headers
+      ${vectis_lockdc_shared_link}
+  )
   set_target_properties(vectis_shared PROPERTIES
     OUTPUT_NAME vectis
     VERSION ${PROJECT_VERSION}

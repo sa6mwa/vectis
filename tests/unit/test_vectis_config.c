@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <string.h>
+#include "vectis_internal.h"
 #include <vectis/vectis.h>
 
 static vectis_status sample_handler(vectis_app *app,
@@ -19,7 +20,6 @@ int main(void) {
   vectis_app_config config;
   vectis_error error;
   vectis_app *app;
-  const char *endpoints[] = {"https://lockd.example.test:9341"};
   vectis_route_config route;
   vectis_status status;
 
@@ -31,14 +31,13 @@ int main(void) {
 
   config.app_name = "orders";
   config.tls.cert_key_bundle_path = "/tmp/orders.pem";
-  config.lockd.endpoints = endpoints;
-  config.lockd.endpoint_count = 1u;
-  config.lockd.client_bundle_path = "/tmp/lockd-client.pem";
+  config.lockd.unix_socket_path = "/tmp/lockd.sock";
 
   app = vectis_new(&config, &error);
   assert(app != NULL);
   assert(app->vt != NULL);
   assert(vectis_logger(app) != NULL);
+  assert(vectis_internal_lockd_client(app) != NULL);
 
   route.method = VECTIS_HTTP_POST;
   route.path = "/orders";
@@ -56,4 +55,3 @@ int main(void) {
   vectis_destroy(app);
   return 0;
 }
-

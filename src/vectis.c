@@ -1,5 +1,6 @@
 #include "vectis_internal.h"
 
+#include <lc/lc.h>
 #include <lonejson.h>
 #include <pthread.h>
 #include <stdarg.h>
@@ -47,6 +48,7 @@ static vectis_status vectis_app_register_route_impl(vectis_app *app,
                                                     vectis_error *error);
 static size_t vectis_app_route_count_impl(const vectis_app *app);
 static pslog_logger *vectis_app_logger_impl(vectis_app *app);
+static vectis_status vectis_open_lockd_client(vectis_app_impl *impl, vectis_error *error);
 
 static const vectis_methods vectis_default_methods = {
     vectis_destroy,
@@ -93,6 +95,64 @@ static void vectis_set_errorf(vectis_error *error,
   va_start(ap, fmt);
   (void)vsnprintf(error->message, sizeof(error->message), fmt, ap);
   va_end(ap);
+}
+
+static vectis_status vectis_status_from_lc_code(int code) {
+  switch (code) {
+  case LC_OK:
+    return VECTIS_OK;
+  case LC_ERR_INVALID:
+    return VECTIS_ERR_INVALID;
+  case LC_ERR_NOMEM:
+    return VECTIS_ERR_NOMEM;
+  default:
+    return VECTIS_ERR_STATE;
+  }
+}
+
+static int vectis_has_lockd_transport(const vectis_app_impl *impl) {
+  return (impl->endpoint_count > 0u) || (impl->unix_socket_path != NULL);
+}
+
+static int vectis_has_complete_lockd_config(const vectis_app_impl *impl) {
+  if (!vectis_has_lockd_transport(impl)) {
+    return 0;
+  }
+
+  if (impl->unix_socket_path != NULL) {
+    return 1;
+  }
+
+  return impl->client_bundle_path != NULL && impl->client_bundle_path[0] != '\0';
+}
+
+static vectis_status vectis_set_lc_error(vectis_error *error,
+                                         vectis_status fallback,
+                                         const char *prefix,
+                                         lc_error *lcerr) {
+  vectis_status status;
+
+  status = fallback;
+  if (lcerr != NULL) {
+    vectis_status mapped;
+
+    mapped = vectis_status_from_lc_code(lcerr->code);
+    if (mapped != VECTIS_OK) {
+      status = mapped;
+    }
+    if (lcerr->message != NULL && lcerr->detail != NULL) {
+      vectis_set_errorf(error, status, "%s: %s (%s)", prefix, lcerr->message, lcerr->detail);
+    } else if (lcerr->message != NULL) {
+      vectis_set_errorf(error, status, "%s: %s", prefix, lcerr->message);
+    } else {
+      vectis_set_error(error, status, prefix);
+    }
+    lc_error_cleanup(lcerr);
+  } else {
+    vectis_set_error(error, status, prefix);
+  }
+
+  return status;
 }
 
 const char *vectis_status_string(vectis_status status) {
@@ -227,6 +287,40 @@ static pslog_logger *vectis_make_owned_logger(const vectis_app_config *config,
   return scoped;
 }
 
+static vectis_status vectis_open_lockd_client(vectis_app_impl *impl, vectis_error *error) {
+  lc_client_config lcconf;
+  lc_error lcerr;
+  int rc;
+
+  if (impl->lockd_client != NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+
+  if (!vectis_has_complete_lockd_config(impl)) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+
+  memset(&lcerr, 0, sizeof(lcerr));
+  lc_client_config_init(&lcconf);
+  lcconf.endpoints = (const char *const *)impl->endpoints;
+  lcconf.endpoint_count = impl->endpoint_count;
+  lcconf.unix_socket_path = impl->unix_socket_path;
+  lcconf.client_bundle_path = impl->client_bundle_path;
+  lcconf.default_namespace = impl->default_namespace;
+  lcconf.timeout_ms = impl->timeout_ms;
+  lcconf.logger = impl->logger;
+
+  rc = lc_client_open(&lcconf, &impl->lockd_client, &lcerr);
+  if (rc != LC_OK) {
+    return vectis_set_lc_error(error, VECTIS_ERR_STATE, "failed to open lockd client", &lcerr);
+  }
+
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 static void vectis_free_routes(vectis_app_impl *impl) {
   size_t i;
 
@@ -242,6 +336,11 @@ static void vectis_free_routes(vectis_app_impl *impl) {
 static void vectis_destroy_impl(vectis_app_impl *impl) {
   if (impl == NULL) {
     return;
+  }
+
+  if (impl->lockd_client != NULL) {
+    lc_client_close(impl->lockd_client);
+    impl->lockd_client = NULL;
   }
 
   vectis_free_routes(impl);
@@ -381,6 +480,13 @@ vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error) {
     impl->owns_logger = 1;
   }
 
+  status = vectis_open_lockd_client(impl, error);
+  if (status != VECTIS_OK) {
+    vectis_destroy_impl(impl);
+    free(app);
+    return NULL;
+  }
+
   app->vt = &vectis_default_methods;
   app->impl = impl;
   return app;
@@ -408,6 +514,11 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
   impl = (vectis_app_impl *)app->impl;
 
   status = vectis_validate_startable(impl, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+
+  status = vectis_open_lockd_client(impl, error);
   if (status != VECTIS_OK) {
     return status;
   }
@@ -600,4 +711,15 @@ vectis_status vectis_json_validate_cstr(const char *json, vectis_error *error) {
 
   vectis_error_clear(error);
   return VECTIS_OK;
+}
+
+struct lc_client *vectis_internal_lockd_client(vectis_app *app) {
+  vectis_app_impl *impl;
+
+  if (app == NULL || app->impl == NULL) {
+    return NULL;
+  }
+
+  impl = (vectis_app_impl *)app->impl;
+  return impl->lockd_client;
 }

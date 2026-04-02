@@ -34,7 +34,7 @@ coarse enough that we can ask whether one area is complete without ambiguity.
 - [x] Implement app config defaults.
 - [x] Implement thread-safe app lifetime and route registry state.
 - [x] Support owned or borrowed `pslog` logger instances.
-- [ ] Instantiate and own a real `lc_client`.
+- [x] Instantiate and own a real `lc_client`.
 - [ ] Support shared lockd client/runtime access between handlers and consumers.
 
 ## Area 5: HTTP / Kore Integration
