@@ -238,6 +238,8 @@ The current implementation provides:
 - Thread-safe app object lifecycle and route registry management.
 - `lonejson`-backed JSON validation helpers.
 - `pslog`-backed owned or borrowed logger handling.
+- OpenSSL-backed self-signed and CA-signed certificate/key PEM bundle
+  generation helpers.
 - Dependency provisioning from the `liblockdc` 0.3.0 SDK bundle.
 - Compile-checked examples grouped under `examples/kore`, `examples/lockd`,
   `examples/curl`, `examples/ssh`, `examples/certs`, and `examples/raw` that

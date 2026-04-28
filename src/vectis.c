@@ -218,27 +218,6 @@ static void vectis_set_errorf(vectis_error *error,
   va_end(ap);
 }
 
-static vectis_status vectis_not_implemented(vectis_error *error,
-                                            const char *feature) {
-  vectis_set_errorf(error,
-                    VECTIS_ERR_NOT_IMPLEMENTED,
-                    "%s is not implemented yet",
-                    feature != NULL ? feature : "requested Vectis feature");
-  return VECTIS_ERR_NOT_IMPLEMENTED;
-}
-
-static vectis_status vectis_not_implemented_from(vectis_error *error,
-                                                 vectis_error_source source,
-                                                 const char *feature) {
-  vectis_status status;
-
-  status = vectis_not_implemented(error, feature);
-  if (error != NULL) {
-    error->source = source;
-  }
-  return status;
-}
-
 static vectis_status vectis_set_lockdc_error(vectis_error *error,
                                              int rc,
                                              const lc_error *lcerr,
@@ -4803,10 +4782,6 @@ static vectis_status vectis_cert_set_subject(X509 *cert,
     vectis_set_error(error, VECTIS_ERR_STATE, "failed to set certificate subject");
     return VECTIS_ERR_STATE;
   }
-  if (X509_set_issuer_name(cert, name) != 1) {
-    vectis_set_error(error, VECTIS_ERR_STATE, "failed to set certificate issuer");
-    return VECTIS_ERR_STATE;
-  }
   return VECTIS_OK;
 }
 
@@ -4964,10 +4939,75 @@ static vectis_status vectis_cert_write_outputs(const vectis_cert_bundle_config *
   return VECTIS_OK;
 }
 
+static vectis_status vectis_cert_load_ca(const vectis_cert_bundle_config *config,
+                                         X509 **out_cert,
+                                         EVP_PKEY **out_key,
+                                         vectis_error *error) {
+  FILE *fp;
+
+  if (config->ca_cert_path == NULL && config->ca_key_path == NULL) {
+    *out_cert = NULL;
+    *out_key = NULL;
+    return VECTIS_OK;
+  }
+  if (config->ca_cert_path == NULL || config->ca_key_path == NULL) {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "CA-signed certificate generation requires ca_cert_path and ca_key_path");
+    return VECTIS_ERR_INVALID;
+  }
+
+  fp = fopen(config->ca_cert_path, "rb");
+  if (fp == NULL) {
+    vectis_set_errorf(error,
+                      VECTIS_ERR_INVALID,
+                      "failed to open CA certificate: %s",
+                      config->ca_cert_path);
+    return VECTIS_ERR_INVALID;
+  }
+  *out_cert = PEM_read_X509(fp, NULL, NULL, NULL);
+  (void)fclose(fp);
+  if (*out_cert == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "failed to parse CA certificate");
+    return VECTIS_ERR_INVALID;
+  }
+
+  fp = fopen(config->ca_key_path, "rb");
+  if (fp == NULL) {
+    X509_free(*out_cert);
+    *out_cert = NULL;
+    vectis_set_errorf(error,
+                      VECTIS_ERR_INVALID,
+                      "failed to open CA private key: %s",
+                      config->ca_key_path);
+    return VECTIS_ERR_INVALID;
+  }
+  *out_key = PEM_read_PrivateKey(fp, NULL, NULL, NULL);
+  (void)fclose(fp);
+  if (*out_key == NULL) {
+    X509_free(*out_cert);
+    *out_cert = NULL;
+    vectis_set_error(error, VECTIS_ERR_INVALID, "failed to parse CA private key");
+    return VECTIS_ERR_INVALID;
+  }
+  if (X509_check_private_key(*out_cert, *out_key) != 1) {
+    X509_free(*out_cert);
+    EVP_PKEY_free(*out_key);
+    *out_cert = NULL;
+    *out_key = NULL;
+    vectis_set_error(error, VECTIS_ERR_INVALID, "CA certificate and private key do not match");
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
+}
+
 vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *config,
                                           vectis_error *error) {
   EVP_PKEY_CTX *key_ctx;
   EVP_PKEY *key;
+  EVP_PKEY *signing_key;
+  X509 *ca_cert;
+  EVP_PKEY *ca_key;
   X509 *cert;
   char *san;
   vectis_status status;
@@ -4987,11 +5027,6 @@ vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *confi
                      "certificate output requires output_bundle_path or output_cert_path + output_key_path");
     return VECTIS_ERR_INVALID;
   }
-  if (config->ca_cert_path != NULL || config->ca_key_path != NULL) {
-    return vectis_not_implemented_from(error,
-                                       VECTIS_ERROR_SOURCE_OPENSSL,
-                                       "OpenSSL CA-signed certificate bundle generation");
-  }
   if (config->key_bits < 1024u) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "certificate key_bits must be at least 1024");
     return VECTIS_ERR_INVALID;
@@ -5003,9 +5038,18 @@ vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *confi
 
   key_ctx = NULL;
   key = NULL;
+  signing_key = NULL;
+  ca_cert = NULL;
+  ca_key = NULL;
   cert = NULL;
   san = NULL;
   status = VECTIS_OK;
+
+  status = vectis_cert_load_ca(config, &ca_cert, &ca_key, error);
+  if (status != VECTIS_OK) {
+    goto done;
+  }
+  signing_key = ca_key != NULL ? ca_key : key;
 
   key_ctx = EVP_PKEY_CTX_new_from_name(NULL, "RSA", NULL);
   if (key_ctx == NULL ||
@@ -5036,6 +5080,14 @@ vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *confi
   if (status != VECTIS_OK) {
     goto done;
   }
+  if (X509_set_issuer_name(cert,
+                           ca_cert != NULL
+                               ? X509_get_subject_name(ca_cert)
+                               : X509_get_subject_name(cert)) != 1) {
+    status = VECTIS_ERR_STATE;
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to set certificate issuer");
+    goto done;
+  }
   status = vectis_cert_add_extension(cert, NID_basic_constraints, "critical,CA:FALSE", error);
   if (status != VECTIS_OK) {
     goto done;
@@ -5058,7 +5110,8 @@ vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *confi
     status = error->code;
     goto done;
   }
-  if (X509_sign(cert, key, EVP_sha256()) <= 0) {
+  signing_key = ca_key != NULL ? ca_key : key;
+  if (X509_sign(cert, signing_key, EVP_sha256()) <= 0) {
     status = VECTIS_ERR_STATE;
     vectis_set_error(error, VECTIS_ERR_STATE, "failed to sign certificate");
     goto done;
@@ -5071,6 +5124,8 @@ vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *confi
 done:
   free(san);
   X509_free(cert);
+  X509_free(ca_cert);
+  EVP_PKEY_free(ca_key);
   EVP_PKEY_free(key);
   EVP_PKEY_CTX_free(key_ctx);
   if (status != VECTIS_OK && error != NULL && error->source == VECTIS_ERROR_SOURCE_VECTIS) {

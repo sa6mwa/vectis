@@ -169,6 +169,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [ ] Support client and server certificate management in the shared Vectis config model.
 - [x] Draft the C helper API for OpenSSL-backed certificate bundle generation.
 - [x] Implement OpenSSL-backed self-signed certificate/key PEM bundle generation for the C SDK.
+- [x] Implement OpenSSL-backed CA-signed certificate/key PEM bundle generation from existing CA cert/key material.
 - [ ] Add tests for valid, expired, malformed, and missing certificate material.
 
 ## Area 12: Lua Runtime and Framework
