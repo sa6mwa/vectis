@@ -226,7 +226,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Add integration/e2e tests against local lockd and Kore.
 - [x] Add integration/e2e tests against the local SSH/SFTP and MQTT compose services.
 - [x] Add integration/e2e tests for Lua runner behavior.
-- [ ] Add package/archive generation for the C SDK and Vectis binary.
+- [x] Add package/archive generation for the C SDK and Vectis binary.
 - [x] Add package/archive generation for the current C SDK.
 - [x] Add optional arm64 Apple Darwin release archive and smoke-test zip generation when osxcross is available.
 - [ ] Add a GitHub Actions Darwin arm64 verification workflow using hosted `macos-15`/`macos-latest` runners to execute the smoke-test zip and codesign checks.

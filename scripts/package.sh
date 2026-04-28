@@ -32,6 +32,11 @@ verify_native_install_tree() {
   if [ -f "$package_root/lib/libvectis.so" ]; then
     bash "$script_dir/verify_installed_sdk.sh" "$package_root" shared
   fi
+  if [ ! -x "$package_root/bin/vectis" ]; then
+    echo "[package] missing executable vectis binary for $preset" >&2
+    exit 1
+  fi
+  "$package_root/bin/vectis" --version >/dev/null
 }
 
 run_target() {
