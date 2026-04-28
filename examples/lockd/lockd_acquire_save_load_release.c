@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <lc/lc.h>
@@ -17,12 +18,24 @@ static const lonejson_field account_doc_fields[] = {
 
 LONEJSON_MAP_DEFINE(account_doc_map, account_doc, account_doc_fields);
 
+static void print_error(const char *operation, const lc_error *error) {
+  fprintf(stderr, "%s failed", operation);
+  if (error != NULL && error->message != NULL) {
+    fprintf(stderr, ": %s", error->message);
+  }
+  if (error != NULL && error->detail != NULL) {
+    fprintf(stderr, " (%s)", error->detail);
+  }
+  fprintf(stderr, "\n");
+}
+
 int main(void) {
   lc_client_config config;
   lc_client *client;
   lc_lease *lease;
   lc_acquire_req acquire;
   lc_release_req release;
+  lc_get_res get_response;
   lc_error error;
   account_doc saved;
   account_doc loaded;
@@ -34,6 +47,7 @@ int main(void) {
   lc_error_init(&error);
   client = NULL;
   lease = NULL;
+  memset(&get_response, 0, sizeof(get_response));
   memset(&saved, 0, sizeof(saved));
   memset(&loaded, 0, sizeof(loaded));
 
@@ -46,6 +60,7 @@ int main(void) {
   config.insecure_skip_verify = config.client_bundle_path == NULL;
 
   if (lc_client_open(&config, &client, &error) != LC_OK) {
+    print_error("lc_client_open", &error);
     lc_error_cleanup(&error);
     return 1;
   }
@@ -54,6 +69,7 @@ int main(void) {
   acquire.owner = "vectis-lockd-example";
   acquire.ttl_seconds = 30L;
   if (lc_acquire(client, &acquire, &lease, &error) != LC_OK) {
+    print_error("lc_acquire", &error);
     lc_client_close(client);
     lc_error_cleanup(&error);
     return 1;
@@ -63,25 +79,31 @@ int main(void) {
   (void)snprintf(saved.status, sizeof(saved.status), "%s", "active");
   saved.version = 1;
   if (lease->save(lease, &account_doc_map, &saved, NULL, &error) != LC_OK) {
+    print_error("lease.save", &error);
     lc_lease_close(lease);
     lc_client_close(client);
     lc_error_cleanup(&error);
     return 1;
   }
-  if (lease->load(lease, &account_doc_map, &loaded, NULL, NULL, NULL, &error) != LC_OK) {
+  if (lease->load(lease, &account_doc_map, &loaded, NULL, NULL, &get_response, &error) != LC_OK) {
+    print_error("lease.load", &error);
     lc_lease_close(lease);
     lc_client_close(client);
+    lc_get_res_cleanup(&get_response);
     lc_error_cleanup(&error);
     return 1;
   }
+  lc_get_res_cleanup(&get_response);
+  memset(&get_response, 0, sizeof(get_response));
   if (lease->release(lease, &release, &error) != LC_OK) {
+    print_error("lease.release", &error);
     lc_lease_close(lease);
     lc_client_close(client);
     lc_error_cleanup(&error);
     return 1;
   }
+  lease = NULL;
 
-  lc_lease_close(lease);
   lc_client_close(client);
   lc_error_cleanup(&error);
   return 0;

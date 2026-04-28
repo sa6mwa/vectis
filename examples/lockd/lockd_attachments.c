@@ -85,8 +85,12 @@ int main(void) {
 
   lc_attachment_get_res_cleanup(&get_result);
   lc_sink_close(download);
-  (void)lease->release(lease, &release, &error);
-  lc_lease_close(lease);
+  if (lease->release(lease, &release, &error) != LC_OK) {
+    lc_lease_close(lease);
+    lc_client_close(client);
+    lc_error_cleanup(&error);
+    return 1;
+  }
   lc_client_close(client);
   lc_error_cleanup(&error);
   return 0;

@@ -229,6 +229,28 @@ image with password auth enabled only for local tests. MQTT uses
 `emqx/nanomq:0.24.13`; NanoMQ is a slim MQTT broker suitable for local protocol
 testing without introducing a larger broker stack.
 
+The normal entrypoints are Make targets:
+
+```sh
+make dev-up
+make dev-ps
+make dev-logs
+make dev-down
+make dev-reset
+make test-e2e
+make test-all
+```
+
+`make test-e2e` resets generated dev state before starting compose. That keeps
+the generated lockd CA/client/server bundles and the encrypted durable lockd
+stores in sync, which avoids false failures after certificate material has been
+rotated locally. The reset is intentionally scoped to lockd and MinIO state;
+the SSH/SFTP image owns root-created config files in its bind mount, so SSH/SFTP
+cleanup should be handled by the container-aware tests that exercise it. The
+e2e target stops compose services when it exits; set
+`VECTIS_E2E_KEEP_DEVSERVICES=1` when you want to keep them running for
+inspection after a failed or manual run.
+
 Darwin arm64 on-device verification should use GitHub-hosted macOS arm64
 runners rather than EC2 Mac Dedicated Hosts. GitHub provides standard M1 macOS
 runner labels such as `macos-14`, `macos-15`, `macos-26`, and `macos-latest`,

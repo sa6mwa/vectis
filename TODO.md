@@ -220,6 +220,9 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Add unit coverage for current runtime/config behavior.
 - [x] Add a first fuzz target around `lonejson` validation via Vectis.
 - [x] Add a non-conflicting local integration compose environment for mTLS lockd disk, mTLS lockd S3 over MinIO, SSH/SFTP, and MQTT.
+- [x] Add Makefile entrypoints for local integration services: `dev-up`, `dev-down`, `dev-reset`, `dev-ps`, and `dev-logs`.
+- [x] Add `make test-e2e` and `make test-all` entrypoints.
+- [x] Add the first compose-backed lockd e2e smoke against disk and S3-backed lockd services.
 - [ ] Add integration/e2e tests against local lockd and Kore.
 - [ ] Add integration/e2e tests against the local SSH/SFTP and MQTT compose services.
 - [ ] Add integration/e2e tests for Lua runner behavior.

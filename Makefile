@@ -16,7 +16,8 @@ FUZZ_PRESET := fuzz
 	help \
 	deps-debug deps-release deps-cross \
 	build build-debug build-release build-asan build-coverage build-fuzz \
-	test test-debug test-asan test-coverage test-install-tree \
+	test test-debug test-asan test-coverage test-install-tree test-e2e test-all \
+	dev-up dev-down dev-reset dev-ps dev-logs \
 	package \
 	build-kore verify-kore-patches \
 	format clean \
@@ -26,7 +27,14 @@ help:
 	@printf '%s\n' \
 		'make build              Configure and build the debug preset.' \
 		'make test               Run the debug unit test preset.' \
+		'make test-e2e           Reset and run the local compose-backed lockd e2e smoke tests.' \
+		'make test-all           Run unit tests and local e2e smoke tests.' \
 		'make test-install-tree  Build a native installed SDK tree and verify static/shared downstream consumers.' \
+		'make dev-up             Start the local lockd/MinIO/SSH/SFTP/MQTT integration environment.' \
+		'make dev-down           Stop the local integration environment.' \
+		'make dev-reset          Stop the local integration environment and reset lockd/MinIO generated state.' \
+		'make dev-ps             Show local integration environment service status.' \
+		'make dev-logs           Show local integration environment logs.' \
 		'make build-release      Configure the shipped Linux release matrix.' \
 		'make build-asan         Configure and build the ASan/UBSan preset.' \
 		'make build-coverage     Configure and build the coverage preset.' \
@@ -106,6 +114,11 @@ build-fuzz: deps-debug
 test-debug: build-debug
 	$(TIMED) test-debug $(CTEST) --preset $(DEBUG_PRESET)
 
+test-e2e:
+	$(TIMED) test-e2e bash ./scripts/test-e2e.sh
+
+test-all: test test-e2e
+
 test-asan: build-asan
 	$(TIMED) test-asan $(CTEST) --preset $(ASAN_PRESET)
 
@@ -140,6 +153,21 @@ build-kore: deps-debug vendor-kore
 
 verify-kore-patches: deps-debug vendor-kore
 	$(TIMED) verify-kore-patches bash ./scripts/verify-kore-patches.sh ./.cache/deps/host-debug
+
+dev-up:
+	$(TIMED) dev-up bash ./scripts/dev-up.sh
+
+dev-down:
+	$(TIMED) dev-down bash ./scripts/dev-down.sh
+
+dev-reset:
+	$(TIMED) dev-reset bash ./scripts/dev-reset.sh
+
+dev-ps:
+	bash ./scripts/dev-ps.sh
+
+dev-logs:
+	bash ./scripts/dev-logs.sh
 
 clean:
 	$(TIMED) clean bash ./scripts/clean.sh
