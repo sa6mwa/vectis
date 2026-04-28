@@ -44,6 +44,12 @@ int main(void) {
   (void)vectis_http_client_get(handle, "/health", &response, &error);
   vectis_http_response_cleanup(&response);
 
+  (void)vectis_http_client_head(handle, "/health", &response, &error);
+  vectis_http_response_cleanup(&response);
+
+  (void)vectis_http_client_options(handle, "/events", &response, &error);
+  vectis_http_response_cleanup(&response);
+
   (void)vectis_http_client_post_json(handle, "/events", &downstream_request_map, &payload, &response, &error);
   vectis_http_response_cleanup(&response);
 

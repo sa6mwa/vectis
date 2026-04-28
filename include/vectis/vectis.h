@@ -55,8 +55,26 @@ typedef enum vectis_http_method {
   VECTIS_HTTP_POST,
   VECTIS_HTTP_PUT,
   VECTIS_HTTP_PATCH,
-  VECTIS_HTTP_DELETE
+  VECTIS_HTTP_DELETE,
+  VECTIS_HTTP_HEAD,
+  VECTIS_HTTP_OPTIONS
 } vectis_http_method;
+
+typedef unsigned int vectis_http_methods;
+
+#define VECTIS_HTTP_METHOD_MASK(method) (1u << (unsigned)(method))
+#define VECTIS_HTTP_METHODS_NONE 0u
+#define VECTIS_HTTP_METHODS_GET VECTIS_HTTP_METHOD_MASK(VECTIS_HTTP_GET)
+#define VECTIS_HTTP_METHODS_POST VECTIS_HTTP_METHOD_MASK(VECTIS_HTTP_POST)
+#define VECTIS_HTTP_METHODS_PUT VECTIS_HTTP_METHOD_MASK(VECTIS_HTTP_PUT)
+#define VECTIS_HTTP_METHODS_PATCH VECTIS_HTTP_METHOD_MASK(VECTIS_HTTP_PATCH)
+#define VECTIS_HTTP_METHODS_DELETE VECTIS_HTTP_METHOD_MASK(VECTIS_HTTP_DELETE)
+#define VECTIS_HTTP_METHODS_HEAD VECTIS_HTTP_METHOD_MASK(VECTIS_HTTP_HEAD)
+#define VECTIS_HTTP_METHODS_OPTIONS VECTIS_HTTP_METHOD_MASK(VECTIS_HTTP_OPTIONS)
+#define VECTIS_HTTP_METHODS_ALL \
+  (VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_POST | VECTIS_HTTP_METHODS_PUT | \
+   VECTIS_HTTP_METHODS_PATCH | VECTIS_HTTP_METHODS_DELETE | VECTIS_HTTP_METHODS_HEAD | \
+   VECTIS_HTTP_METHODS_OPTIONS)
 
 typedef enum vectis_route_path_kind {
   VECTIS_ROUTE_PATH_LITERAL = 0,
@@ -174,6 +192,7 @@ typedef struct vectis_body_policy {
 
 typedef struct vectis_route_config {
   vectis_http_method method;
+  vectis_http_methods methods;
   const char *path;
   vectis_route_path_kind path_kind;
   vectis_body_policy body;
@@ -190,6 +209,7 @@ typedef vectis_status (*vectis_json_route_handler_fn)(vectis_app *app,
 
 typedef struct vectis_json_route_config {
   vectis_http_method method;
+  vectis_http_methods methods;
   const char *path;
   vectis_route_path_kind path_kind;
   vectis_body_policy body;
@@ -370,19 +390,36 @@ vectis_route_config vectis_route(vectis_http_method method,
                                  const char *path,
                                  vectis_route_handler_fn handler,
                                  void *userdata);
+vectis_route_config vectis_route_methods(vectis_http_methods methods,
+                                         const char *path,
+                                         vectis_route_handler_fn handler,
+                                         void *userdata);
 vectis_route_config vectis_route_regex(vectis_http_method method,
                                        const char *pattern,
                                        vectis_route_handler_fn handler,
                                        void *userdata);
+vectis_route_config vectis_route_regex_methods(vectis_http_methods methods,
+                                               const char *pattern,
+                                               vectis_route_handler_fn handler,
+                                               void *userdata);
 vectis_route_config vectis_upload_route(vectis_http_method method,
                                         const char *path,
                                         vectis_route_handler_fn handler,
                                         void *userdata);
+vectis_route_config vectis_upload_route_methods(vectis_http_methods methods,
+                                                const char *path,
+                                                vectis_route_handler_fn handler,
+                                                void *userdata);
 vectis_route_config vectis_upload_route_max(vectis_http_method method,
                                             const char *path,
                                             size_t max_bytes,
                                             vectis_route_handler_fn handler,
                                             void *userdata);
+vectis_route_config vectis_upload_route_max_methods(vectis_http_methods methods,
+                                                    const char *path,
+                                                    size_t max_bytes,
+                                                    vectis_route_handler_fn handler,
+                                                    void *userdata);
 vectis_json_route_config vectis_json_route(vectis_http_method method,
                                            const char *path,
                                            const lonejson_map *input_map,
@@ -391,6 +428,14 @@ vectis_json_route_config vectis_json_route(vectis_http_method method,
                                            size_t output_size,
                                            vectis_json_route_handler_fn handler,
                                            void *userdata);
+vectis_json_route_config vectis_json_route_methods(vectis_http_methods methods,
+                                                   const char *path,
+                                                   const lonejson_map *input_map,
+                                                   size_t input_size,
+                                                   const lonejson_map *output_map,
+                                                   size_t output_size,
+                                                   vectis_json_route_handler_fn handler,
+                                                   void *userdata);
 
 vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error);
 void vectis_destroy(vectis_app *app);
@@ -466,6 +511,14 @@ vectis_status vectis_http_client_delete(vectis_http_client *client,
                                         const char *url,
                                         vectis_http_response *response,
                                         vectis_error *error);
+vectis_status vectis_http_client_head(vectis_http_client *client,
+                                      const char *url,
+                                      vectis_http_response *response,
+                                      vectis_error *error);
+vectis_status vectis_http_client_options(vectis_http_client *client,
+                                         const char *url,
+                                         vectis_http_response *response,
+                                         vectis_error *error);
 vectis_status vectis_http_client_post_json(vectis_http_client *client,
                                            const char *url,
                                            const lonejson_map *map,
@@ -496,6 +549,14 @@ vectis_status vectis_http_delete(const vectis_http_client_config *client,
                                  const char *url,
                                  vectis_http_response *response,
                                  vectis_error *error);
+vectis_status vectis_http_head(const vectis_http_client_config *client,
+                               const char *url,
+                               vectis_http_response *response,
+                               vectis_error *error);
+vectis_status vectis_http_options(const vectis_http_client_config *client,
+                                  const char *url,
+                                  vectis_http_response *response,
+                                  vectis_error *error);
 vectis_status vectis_http_post_json(const vectis_http_client_config *client,
                                     const char *url,
                                     const lonejson_map *map,

@@ -8,7 +8,7 @@ surface directly, without local helper layers that would hide awkward API shape.
 - `kore/rest_api_lockd_lonejson.c`: Vectis route setup, lonejson mapped request
   and response structs, and raw liblockdc lease/save/release usage.
 - `kore/kore_basic_server.c`: minimal Kore-backed Vectis server shape with
-  pslog.
+  pslog and a shared GET/HEAD health route.
 - `kore/kore_json_routes.c`: JSON route auto-wiring shape with lonejson maps.
 - `kore/kore_regex_routes.c`: raw Kore/POSIX regex route shape for cases where
   named Vectis path parameters are not the right fit.
@@ -38,8 +38,8 @@ surface directly, without local helper layers that would hide awkward API shape.
 
 ## `curl/`
 
-- `curl/curl_json_api.c`: handle-shaped curl-backed client setup, GET/DELETE,
-  and POST/PUT/PATCH JSON helpers.
+- `curl/curl_json_api.c`: handle-shaped curl-backed client setup, GET, HEAD,
+  OPTIONS, DELETE, and POST/PUT/PATCH JSON helpers.
 - `curl/curl_transfer.c`: handle-shaped generic curl-backed file download and
   upload.
 - `curl/curl_sftp.c`: SFTP upload/download through curl.

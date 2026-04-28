@@ -79,6 +79,10 @@ static void assert_http_surface(void) {
   status = vectis_http_client_post_json(handle, "/docs", &sample_doc_map, &doc, &response, &error);
   assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
   assert(error.source == VECTIS_ERROR_SOURCE_CURL);
+  status = vectis_http_client_head(handle, "/docs", &response, &error);
+  assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
+  status = vectis_http_client_options(handle, "/docs", &response, &error);
+  assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
   vectis_http_client_destroy(handle);
 
   vectis_http_response_cleanup(&response);

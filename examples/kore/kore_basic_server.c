@@ -42,7 +42,10 @@ int main(void) {
     return 1;
   }
 
-  route = vectis_route(VECTIS_HTTP_GET, "/health", health, NULL);
+  route = vectis_route_methods(VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD,
+                               "/health",
+                               health,
+                               NULL);
   if (vectis_register_route(app, &route, &error) != VECTIS_OK) {
     vectis_destroy(app);
     logger->destroy(logger);

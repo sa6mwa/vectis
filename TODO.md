@@ -52,6 +52,8 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [ ] Define request/response abstractions that do not leak Kore internals unless explicitly requested.
 - [x] Add common C source constructors for path, memory, and `lc_source` material inputs.
 - [x] Add route constructors that infer literal, named-parameter, optional-parameter, and regex path kinds.
+- [x] Mirror Kore's supported HTTP methods in the Vectis C SDK: GET, POST, PUT, DELETE, HEAD, OPTIONS, and PATCH.
+- [x] Support one route handler registered for a method mask such as GET | HEAD.
 - [x] Add upload route constructors that attach the streaming upload body policy in one call.
 - [x] Add a handle-shaped C HTTP client API that can inherit app logging/defaults.
 - [x] Add high-level C SDK examples before implementation hardens, so the intended DX drives API shape rather than wrappers around internals.

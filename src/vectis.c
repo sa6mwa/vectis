@@ -11,6 +11,7 @@
 
 typedef struct vectis_route_entry {
   vectis_http_method method;
+  vectis_http_methods methods;
   char *path;
   vectis_route_path_kind path_kind;
   vectis_body_policy body;
@@ -376,6 +377,7 @@ void vectis_route_config_init(vectis_route_config *config) {
   }
   memset(config, 0, sizeof(*config));
   config->method = VECTIS_HTTP_ANY;
+  config->methods = VECTIS_HTTP_METHODS_NONE;
   config->path_kind = VECTIS_ROUTE_PATH_LITERAL;
   config->body = vectis_body_none();
 }
@@ -386,6 +388,7 @@ void vectis_json_route_config_init(vectis_json_route_config *config) {
   }
   memset(config, 0, sizeof(*config));
   config->method = VECTIS_HTTP_ANY;
+  config->methods = VECTIS_HTTP_METHODS_NONE;
   config->path_kind = VECTIS_ROUTE_PATH_LITERAL;
   config->body = vectis_body_json_default();
 }
@@ -400,6 +403,49 @@ static vectis_route_path_kind vectis_infer_route_path_kind(const char *path) {
   return VECTIS_ROUTE_PATH_LITERAL;
 }
 
+static vectis_http_methods vectis_method_mask(vectis_http_method method) {
+  if (method == VECTIS_HTTP_ANY) {
+    return VECTIS_HTTP_METHODS_ALL;
+  }
+  if (method < VECTIS_HTTP_GET || method > VECTIS_HTTP_OPTIONS) {
+    return VECTIS_HTTP_METHODS_NONE;
+  }
+  return VECTIS_HTTP_METHOD_MASK(method);
+}
+
+static vectis_http_methods vectis_normalize_methods(vectis_http_method method,
+                                                    vectis_http_methods methods) {
+  if (methods != VECTIS_HTTP_METHODS_NONE) {
+    return methods;
+  }
+  return vectis_method_mask(method);
+}
+
+static vectis_http_method vectis_first_method(vectis_http_methods methods) {
+  if (methods & VECTIS_HTTP_METHODS_GET) {
+    return VECTIS_HTTP_GET;
+  }
+  if (methods & VECTIS_HTTP_METHODS_POST) {
+    return VECTIS_HTTP_POST;
+  }
+  if (methods & VECTIS_HTTP_METHODS_PUT) {
+    return VECTIS_HTTP_PUT;
+  }
+  if (methods & VECTIS_HTTP_METHODS_PATCH) {
+    return VECTIS_HTTP_PATCH;
+  }
+  if (methods & VECTIS_HTTP_METHODS_DELETE) {
+    return VECTIS_HTTP_DELETE;
+  }
+  if (methods & VECTIS_HTTP_METHODS_HEAD) {
+    return VECTIS_HTTP_HEAD;
+  }
+  if (methods & VECTIS_HTTP_METHODS_OPTIONS) {
+    return VECTIS_HTTP_OPTIONS;
+  }
+  return VECTIS_HTTP_ANY;
+}
+
 vectis_route_config vectis_route(vectis_http_method method,
                                  const char *path,
                                  vectis_route_handler_fn handler,
@@ -408,6 +454,23 @@ vectis_route_config vectis_route(vectis_http_method method,
 
   vectis_route_config_init(&route);
   route.method = method;
+  route.methods = vectis_method_mask(method);
+  route.path = path;
+  route.path_kind = vectis_infer_route_path_kind(path);
+  route.handler = handler;
+  route.userdata = userdata;
+  return route;
+}
+
+vectis_route_config vectis_route_methods(vectis_http_methods methods,
+                                         const char *path,
+                                         vectis_route_handler_fn handler,
+                                         void *userdata) {
+  vectis_route_config route;
+
+  vectis_route_config_init(&route);
+  route.method = methods == VECTIS_HTTP_METHODS_NONE ? (vectis_http_method)-1 : vectis_first_method(methods);
+  route.methods = methods;
   route.path = path;
   route.path_kind = vectis_infer_route_path_kind(path);
   route.handler = handler;
@@ -423,10 +486,22 @@ vectis_route_config vectis_route_regex(vectis_http_method method,
 
   vectis_route_config_init(&route);
   route.method = method;
+  route.methods = vectis_method_mask(method);
   route.path = pattern;
   route.path_kind = VECTIS_ROUTE_PATH_REGEX;
   route.handler = handler;
   route.userdata = userdata;
+  return route;
+}
+
+vectis_route_config vectis_route_regex_methods(vectis_http_methods methods,
+                                               const char *pattern,
+                                               vectis_route_handler_fn handler,
+                                               void *userdata) {
+  vectis_route_config route;
+
+  route = vectis_route_methods(methods, pattern, handler, userdata);
+  route.path_kind = VECTIS_ROUTE_PATH_REGEX;
   return route;
 }
 
@@ -437,6 +512,17 @@ vectis_route_config vectis_upload_route(vectis_http_method method,
   vectis_route_config route;
 
   route = vectis_route(method, path, handler, userdata);
+  route.body = vectis_body_upload();
+  return route;
+}
+
+vectis_route_config vectis_upload_route_methods(vectis_http_methods methods,
+                                                const char *path,
+                                                vectis_route_handler_fn handler,
+                                                void *userdata) {
+  vectis_route_config route;
+
+  route = vectis_route_methods(methods, path, handler, userdata);
   route.body = vectis_body_upload();
   return route;
 }
@@ -453,6 +539,18 @@ vectis_route_config vectis_upload_route_max(vectis_http_method method,
   return route;
 }
 
+vectis_route_config vectis_upload_route_max_methods(vectis_http_methods methods,
+                                                    const char *path,
+                                                    size_t max_bytes,
+                                                    vectis_route_handler_fn handler,
+                                                    void *userdata) {
+  vectis_route_config route;
+
+  route = vectis_route_methods(methods, path, handler, userdata);
+  route.body = vectis_body_upload_max(max_bytes);
+  return route;
+}
+
 vectis_json_route_config vectis_json_route(vectis_http_method method,
                                            const char *path,
                                            const lonejson_map *input_map,
@@ -465,6 +563,7 @@ vectis_json_route_config vectis_json_route(vectis_http_method method,
 
   vectis_json_route_config_init(&route);
   route.method = method;
+  route.methods = vectis_method_mask(method);
   route.path = path;
   route.path_kind = vectis_infer_route_path_kind(path);
   route.body = vectis_body_json_default();
@@ -474,6 +573,28 @@ vectis_json_route_config vectis_json_route(vectis_http_method method,
   route.output_size = output_size;
   route.handler = handler;
   route.userdata = userdata;
+  return route;
+}
+
+vectis_json_route_config vectis_json_route_methods(vectis_http_methods methods,
+                                                   const char *path,
+                                                   const lonejson_map *input_map,
+                                                   size_t input_size,
+                                                   const lonejson_map *output_map,
+                                                   size_t output_size,
+                                                   vectis_json_route_handler_fn handler,
+                                                   void *userdata) {
+  vectis_json_route_config route;
+
+  route = vectis_json_route(vectis_first_method(methods),
+                            path,
+                            input_map,
+                            input_size,
+                            output_map,
+                            output_size,
+                            handler,
+                            userdata);
+  route.methods = methods;
   return route;
 }
 
@@ -658,6 +779,27 @@ static vectis_status vectis_validate_route_path(const char *path,
   }
   vectis_set_error(error, VECTIS_ERR_INVALID, "route path_kind is invalid");
   return VECTIS_ERR_INVALID;
+}
+
+static vectis_status vectis_validate_methods(vectis_http_method method,
+                                             vectis_http_methods methods,
+                                             vectis_error *error) {
+  vectis_http_methods normalized;
+
+  normalized = vectis_normalize_methods(method, methods);
+  if (normalized == VECTIS_HTTP_METHODS_NONE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "route requires at least one HTTP method");
+    return VECTIS_ERR_INVALID;
+  }
+  if ((normalized & ~VECTIS_HTTP_METHODS_ALL) != 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "route HTTP methods contain unsupported bits");
+    return VECTIS_ERR_INVALID;
+  }
+  if (method != VECTIS_HTTP_ANY && vectis_method_mask(method) == VECTIS_HTTP_METHODS_NONE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "route HTTP method is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
 }
 
 static vectis_status vectis_validate_body_policy(const vectis_body_policy *policy,
@@ -846,6 +988,9 @@ static vectis_status vectis_validate_route(const vectis_route_config *route,
   if (route == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "route is required");
     return VECTIS_ERR_INVALID;
+  }
+  if (vectis_validate_methods(route->method, route->methods, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
   if (vectis_validate_route_path(route->path, route->path_kind, error) != VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
@@ -1229,7 +1374,10 @@ vectis_status vectis_stop(vectis_app *app, vectis_error *error) {
 
 static int vectis_route_conflicts(const vectis_route_entry *existing,
                                   const vectis_route_config *candidate) {
-  return existing->method == candidate->method &&
+  vectis_http_methods methods;
+
+  methods = vectis_normalize_methods(candidate->method, candidate->methods);
+  return (existing->methods & methods) != 0u &&
          existing->path_kind == candidate->path_kind &&
          strcmp(existing->path, candidate->path) == 0;
 }
@@ -1283,6 +1431,7 @@ static vectis_status vectis_app_register_route_impl(vectis_app *app,
   }
 
   impl->routes[impl->route_count].method = route->method;
+  impl->routes[impl->route_count].methods = vectis_normalize_methods(route->method, route->methods);
   impl->routes[impl->route_count].path_kind = route->path_kind;
   impl->routes[impl->route_count].path = vectis_strdup(route->path);
   impl->routes[impl->route_count].body = route->body;
@@ -1321,6 +1470,9 @@ vectis_status vectis_register_json_route(vectis_app *app,
   if (route == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "json route is required");
     return VECTIS_ERR_INVALID;
+  }
+  if (vectis_validate_methods(route->method, route->methods, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
   if (vectis_validate_route_path(route->path, route->path_kind, error) != VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
@@ -1685,6 +1837,30 @@ vectis_status vectis_http_client_delete(vectis_http_client *client,
   return vectis_http_client_execute(client, &request, response, error);
 }
 
+vectis_status vectis_http_client_head(vectis_http_client *client,
+                                      const char *url,
+                                      vectis_http_response *response,
+                                      vectis_error *error) {
+  vectis_http_request request;
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_HEAD;
+  request.url = url;
+  return vectis_http_client_execute(client, &request, response, error);
+}
+
+vectis_status vectis_http_client_options(vectis_http_client *client,
+                                         const char *url,
+                                         vectis_http_response *response,
+                                         vectis_error *error) {
+  vectis_http_request request;
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_OPTIONS;
+  request.url = url;
+  return vectis_http_client_execute(client, &request, response, error);
+}
+
 static vectis_status vectis_http_client_send_json(vectis_http_client *client,
                                                   vectis_http_method method,
                                                   const char *url,
@@ -1781,6 +1957,30 @@ vectis_status vectis_http_delete(const vectis_http_client_config *client,
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_DELETE;
+  request.url = url;
+  return vectis_http_execute(client, &request, response, error);
+}
+
+vectis_status vectis_http_head(const vectis_http_client_config *client,
+                               const char *url,
+                               vectis_http_response *response,
+                               vectis_error *error) {
+  vectis_http_request request;
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_HEAD;
+  request.url = url;
+  return vectis_http_execute(client, &request, response, error);
+}
+
+vectis_status vectis_http_options(const vectis_http_client_config *client,
+                                  const char *url,
+                                  vectis_http_response *response,
+                                  vectis_error *error) {
+  vectis_http_request request;
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_OPTIONS;
   request.url = url;
   return vectis_http_execute(client, &request, response, error);
 }

@@ -103,6 +103,10 @@ Vectis route paths should support both common named path parameters such as
 parameters are a Vectis-owned convenience layer and must be validated as whole
 path segments with safe parameter names. Regex routes are an escape hatch for
 Kore-compatible matching and are kept separate from named parameter extraction.
+Vectis mirrors Kore's HTTP method set: `GET`, `POST`, `PUT`, `DELETE`, `HEAD`,
+`OPTIONS`, and `PATCH`. A route can be registered for one method or for a method
+mask, so common cases such as `GET | HEAD` can share one handler without
+duplicating route declarations.
 
 ## Concurrency Boundary
 

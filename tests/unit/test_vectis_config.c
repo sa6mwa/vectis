@@ -61,6 +61,7 @@ int main(void) {
   assert(vectis_internal_lockd_client(app) == NULL);
 
   route = vectis_route(VECTIS_HTTP_POST, "/orders", sample_handler, NULL);
+  assert(route.methods == VECTIS_HTTP_METHODS_POST);
   assert(route.body.mode == VECTIS_BODY_NONE);
   route.body = vectis_body_json_default();
   assert(route.body.mode == VECTIS_BODY_JSON);
@@ -74,6 +75,21 @@ int main(void) {
   assert(status == VECTIS_ERR_CONFLICT);
   assert(strstr(error.message, "duplicate route registration") != NULL);
 
+  route = vectis_route_methods(VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD,
+                               "/health",
+                               sample_handler,
+                               NULL);
+  assert(route.method == VECTIS_HTTP_GET);
+  assert((route.methods & VECTIS_HTTP_METHODS_HEAD) != 0u);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_route_count(app) == 2u);
+
+  param_route = vectis_route(VECTIS_HTTP_HEAD, "/orders", sample_handler, NULL);
+  status = vectis_register_route(app, &param_route, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_route_count(app) == 3u);
+
   param_route = vectis_route(VECTIS_HTTP_GET,
                              "/orders/:id/items/:item_id",
                              sample_handler,
@@ -81,7 +97,7 @@ int main(void) {
   assert(param_route.path_kind == VECTIS_ROUTE_PATH_PARAMS);
   status = vectis_register_route(app, &param_route, &error);
   assert(status == VECTIS_OK);
-  assert(vectis_route_count(app) == 2u);
+  assert(vectis_route_count(app) == 4u);
 
   param_route = vectis_route(VECTIS_HTTP_GET,
                              "/orders/:id?/items/:item_id?",
@@ -89,7 +105,7 @@ int main(void) {
                              NULL);
   status = vectis_register_route(app, &param_route, &error);
   assert(status == VECTIS_OK);
-  assert(vectis_route_count(app) == 3u);
+  assert(vectis_route_count(app) == 5u);
 
   vectis_destroy(app);
   return 0;

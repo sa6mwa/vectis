@@ -81,6 +81,21 @@ int main(void) {
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "path_kind") != NULL);
 
+  route = vectis_route_methods(VECTIS_HTTP_METHODS_NONE, "/bad-method", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "HTTP method") != NULL);
+
+  route = vectis_route_methods(VECTIS_HTTP_METHODS_OPTIONS | VECTIS_HTTP_METHODS_HEAD,
+                               "/multi",
+                               sample_handler,
+                               NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_OPTIONS, "/multi", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_ERR_CONFLICT);
+
   route = vectis_upload_route(VECTIS_HTTP_POST, "/upload", sample_handler, NULL);
   assert(route.body.mode == VECTIS_BODY_STREAMING_UPLOAD);
   assert(route.body.max_bytes == VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES);
