@@ -17,6 +17,9 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Provision the `liblockdc` 0.3.0 SDK archives into `.cache/deps/...`.
 - [x] Use the `liblockdc` SDK bundle as the source for lockdc, pslog, lonejson, curl, OpenSSL, libssh2, nghttp2, and zlib headers/libraries.
 - [x] Verify downloaded `liblockdc` SDK archives with pinned SHA-256 checksums.
+- [x] Provision pinned Lua 5.5.0 from lua.org into every target dependency root for the Vectis binary runtime.
+- [x] Build Lua as a static `liblua.a` plus headers for host, Linux cross, musl, and optional Darwin target roots.
+- [ ] Add dependency manifest validation in CMake for the pinned Lua version and checksum.
 - [x] Support host debug and Linux release matrix roots.
 - [ ] Add explicit dependency manifest validation in CMake, including expected dependency versions.
 - [x] Add optional arm64 Apple Darwin dependency provisioning from the `liblockdc` 0.3.0 SDK archive.
@@ -158,11 +161,16 @@ moving toward, not just the next patch. Keep items observable and testable.
 
 - [x] Reserve Lua-facing runtime concerns in the TODO contract and API design.
 - [ ] Add a `vectis` executable that embeds Lua.
+- [x] Make the `vectis` executable build depend on the Vectis-provisioned Lua 5.5 static library rather than a host Lua installation.
 - [x] Add the Linux `vectis` executable entrypoint wrapped in single-header `libpid0` for PID 1 behavior in `FROM scratch` containers.
 - [ ] Replace the placeholder executable submain with the real Lua runner.
 - [ ] Configure Lua package paths so bundled/native Vectis modules load without user setup.
 - [ ] Provide a `require("vectis")` facade that exposes the high-level framework.
 - [ ] Integrate existing Lua rocks for lockdc, pslog, and lonejson.
+- [ ] Build lockdc, pslog, lonejson, and Vectis-owned Lua modules against the provisioned Lua 5.5 ABI.
+- [ ] Register bundled Lua modules statically through `package.preload` in the `vectis` binary; do not require runtime `.so` loading.
+- [ ] Publish a separate `vectis` Lua rock for users who want to run the Vectis facade inside their own Lua 5.5 environment.
+- [ ] Keep LuaRocks out of the `vectis` binary runtime and release artifacts.
 - [ ] Add Vectis-owned Lua modules for Kore, curl, OpenSSL certificate workflows, and libssh2.
 - [ ] Keep the Lua framework model aligned with the C SDK model: raw dependency access plus a Vectis-owned DX layer with matching concepts and behavior.
 - [ ] Support shebang execution through `#!/usr/local/bin/vectis`.

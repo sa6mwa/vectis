@@ -121,6 +121,13 @@ set(vectis_external_include_dir "${VECTIS_EXTERNAL_ROOT}/include")
 if(NOT EXISTS "${vectis_external_include_dir}/pslog.h")
   message(STATUS "vectis external headers not provisioned yet: ${vectis_external_include_dir}/pslog.h")
 endif()
+set(vectis_lua_static_library "${VECTIS_EXTERNAL_ROOT}/lib/liblua.a")
+if(VECTIS_BUILD_BINARY AND NOT EXISTS "${vectis_lua_static_library}")
+  message(FATAL_ERROR
+    "VECTIS_BUILD_BINARY=ON requires Lua in the provisioned dependency root: "
+    "${vectis_lua_static_library}. Run scripts/deps.sh for this target first."
+  )
+endif()
 
 add_library(vectis_external_headers INTERFACE)
 target_include_directories(vectis_external_headers INTERFACE "${vectis_external_include_dir}")
@@ -220,6 +227,10 @@ if(VECTIS_BUILD_BINARY)
     target_link_libraries(vectis_bin PRIVATE vectis_static)
   elseif(VECTIS_BUILD_SHARED)
     target_link_libraries(vectis_bin PRIVATE vectis_shared)
+  endif()
+  target_link_libraries(vectis_bin PRIVATE "${vectis_lua_static_library}")
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(vectis_bin PRIVATE m)
   endif()
   set_target_properties(vectis_bin PROPERTIES
     OUTPUT_NAME vectis

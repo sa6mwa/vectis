@@ -176,6 +176,21 @@ archives. The 0.3.0 lockdc client API supports flexible client bundle sourcing,
 which is the required basis for packed Vectis services with embedded lockd
 certificate/key material.
 
+Vectis owns the Lua dependency for the `vectis` executable. The dependency
+provisioning step downloads pinned Lua 5.5.0 from lua.org, verifies its
+SHA-256, builds a target-specific static `liblua.a`, and installs the Lua
+headers into the same `.cache/deps/<target>` root as the liblockdc bundle. The
+C SDK does not make downstream C consumers depend on Lua by default; Lua is a
+runtime dependency of the Vectis binary and the Lua module build.
+
+The Vectis binary runtime must not depend on host Lua, LuaRocks, runtime
+`LUA_PATH`/`LUA_CPATH`, or dynamically discovered Lua `.so` modules. Bundled Lua
+modules should be compiled against the provisioned Lua 5.5 ABI and registered
+statically through `package.preload`. LuaRocks is still useful for distribution:
+Vectis should publish a thin `vectis` rock for users who want to run the Vectis
+facade inside their own Lua 5.5 environment, but that rock is not part of the
+self-contained `vectis` binary runtime contract.
+
 The bindings still missing from Vectis are:
 
 - Kore Lua bindings and the high-level Kore/Vectis Lua web framework.
