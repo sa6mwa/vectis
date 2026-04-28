@@ -3,7 +3,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <lc/lc.h>
 #include <lonejson.h>
 #include <pslog.h>
 #include <vectis/vectis.h>
@@ -68,26 +67,14 @@ static vectis_status get_state(vectis_app *app,
                                void *userdata,
                                vectis_error *error) {
   const char *id;
-  lc_client *lockd;
+  struct lc_client *lockd;
   pslog_logger *logger;
-  state_response state;
-  state_response loaded;
-  lc_acquire_req acquire;
-  lc_release_req release;
-  lc_get_res get_response;
-  lc_lease *lease;
+  state_response state = {"", ""};
+  state_response loaded = {"", ""};
   char key[128];
-  lc_error lockd_error;
+  vectis_status status;
 
   (void)userdata;
-  memset(&state, 0, sizeof(state));
-  memset(&loaded, 0, sizeof(loaded));
-  memset(&get_response, 0, sizeof(get_response));
-  lc_acquire_req_init(&acquire);
-  lc_release_req_init(&release);
-  lc_error_init(&lockd_error);
-  lease = NULL;
-
   id = vectis_request_path_param(request, "id");
   if (id == NULL) {
     id = "1001";
@@ -98,37 +85,49 @@ static vectis_status get_state(vectis_app *app,
     logger->infof(logger, "example.kore_lockd.get_state", "id=%s", id);
   }
   if (lockd == NULL) {
-    return VECTIS_ERR_STATE;
+    return vectis_response_error_json(response,
+                                      503,
+                                      "lockd_unavailable",
+                                      "lockd client is not configured",
+                                      "",
+                                      error);
   }
   (void)snprintf(state.id, sizeof(state.id), "%s", id);
   (void)snprintf(state.status, sizeof(state.status), "%s", "loaded");
-  (void)snprintf(key, sizeof(key), "state/%s", id);
+  status = vectis_format_key(key, sizeof(key), error, "state/%s", id);
+  if (status != VECTIS_OK) {
+    return vectis_response_error_json(response,
+                                      400,
+                                      "invalid_state_id",
+                                      "state id cannot be used as a lockd key",
+                                      error != NULL ? error->message : "",
+                                      error);
+  }
 
-  acquire.key = key;
-  acquire.owner = "vectis-kore-lockd-example";
-  acquire.ttl_seconds = 30L;
-  if (lc_acquire(lockd, &acquire, &lease, &lockd_error) != LC_OK) {
-    lc_error_cleanup(&lockd_error);
-    return VECTIS_ERR_STATE;
+  status = vectis_lockd_state_save(lockd,
+                                   key,
+                                   "vectis-kore-lockd-example",
+                                   30L,
+                                   &state_response_map,
+                                   &state,
+                                   error);
+  if (status == VECTIS_OK) {
+    status = vectis_lockd_state_load(lockd,
+                                     key,
+                                     "vectis-kore-lockd-example",
+                                     30L,
+                                     &state_response_map,
+                                     &loaded,
+                                     error);
   }
-  if (lease->save(lease, &state_response_map, &state, NULL, &lockd_error) != LC_OK) {
-    lc_lease_close(lease);
-    lc_error_cleanup(&lockd_error);
-    return VECTIS_ERR_STATE;
+  if (status != VECTIS_OK) {
+    return vectis_response_error_json(response,
+                                      503,
+                                      "lockd_state_failed",
+                                      "failed to save or load lockd state",
+                                      error != NULL ? error->message : "",
+                                      error);
   }
-  if (lease->load(lease, &state_response_map, &loaded, NULL, NULL, &get_response, &lockd_error) != LC_OK) {
-    lc_lease_close(lease);
-    lc_get_res_cleanup(&get_response);
-    lc_error_cleanup(&lockd_error);
-    return VECTIS_ERR_STATE;
-  }
-  lc_get_res_cleanup(&get_response);
-  if (lease->release(lease, &release, &lockd_error) != LC_OK) {
-    lc_lease_close(lease);
-    lc_error_cleanup(&lockd_error);
-    return VECTIS_ERR_STATE;
-  }
-  lc_error_cleanup(&lockd_error);
   return vectis_response_json(response, 200, &state_response_map, &loaded, error);
 }
 

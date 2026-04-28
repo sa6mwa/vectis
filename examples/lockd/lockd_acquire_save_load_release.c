@@ -4,6 +4,7 @@
 
 #include <lc/lc.h>
 #include <lonejson.h>
+#include <vectis/vectis.h>
 
 typedef struct account_doc {
   char id[64];
@@ -29,27 +30,31 @@ static void print_error(const char *operation, const lc_error *error) {
   fprintf(stderr, "\n");
 }
 
+static void print_vectis_error(const char *operation, const vectis_error *error) {
+  fprintf(stderr, "%s failed", operation);
+  if (error != NULL && error->message[0] != '\0') {
+    fprintf(stderr, ": %s", error->message);
+  }
+  if (error != NULL && error->detail[0] != '\0') {
+    fprintf(stderr, " (%s)", error->detail);
+  }
+  fprintf(stderr, "\n");
+}
+
 int main(void) {
   lc_client_config config;
   lc_client *client;
-  lc_lease *lease;
-  lc_acquire_req acquire;
-  lc_release_req release;
-  lc_get_res get_response;
   lc_error error;
-  account_doc saved;
-  account_doc loaded;
+  vectis_error vectis_error;
+  account_doc saved = {"", "", 0};
+  account_doc loaded = {"", "", 0};
   const char *endpoints[1];
+  vectis_status status;
 
   lc_client_config_init(&config);
-  lc_acquire_req_init(&acquire);
-  lc_release_req_init(&release);
   lc_error_init(&error);
+  vectis_error_clear(&vectis_error);
   client = NULL;
-  lease = NULL;
-  memset(&get_response, 0, sizeof(get_response));
-  memset(&saved, 0, sizeof(saved));
-  memset(&loaded, 0, sizeof(loaded));
 
   endpoints[0] = getenv("LOCKD_ENDPOINT") != NULL ? getenv("LOCKD_ENDPOINT") : "https://127.0.0.1:8443";
   config.endpoints = endpoints;
@@ -65,44 +70,31 @@ int main(void) {
     return 1;
   }
 
-  acquire.key = "accounts/1001";
-  acquire.owner = "vectis-lockd-example";
-  acquire.ttl_seconds = 30L;
-  if (lc_acquire(client, &acquire, &lease, &error) != LC_OK) {
-    print_error("lc_acquire", &error);
-    lc_client_close(client);
-    lc_error_cleanup(&error);
-    return 1;
-  }
-
   (void)snprintf(saved.id, sizeof(saved.id), "%s", "1001");
   (void)snprintf(saved.status, sizeof(saved.status), "%s", "active");
   saved.version = 1;
-  if (lease->save(lease, &account_doc_map, &saved, NULL, &error) != LC_OK) {
-    print_error("lease.save", &error);
-    lc_lease_close(lease);
+  status = vectis_lockd_state_save(client,
+                                   "accounts/1001",
+                                   "vectis-lockd-example",
+                                   30L,
+                                   &account_doc_map,
+                                   &saved,
+                                   &vectis_error);
+  if (status == VECTIS_OK) {
+    status = vectis_lockd_state_load(client,
+                                     "accounts/1001",
+                                     "vectis-lockd-example",
+                                     30L,
+                                     &account_doc_map,
+                                     &loaded,
+                                     &vectis_error);
+  }
+  if (status != VECTIS_OK) {
+    print_vectis_error("vectis_lockd_state_save/load", &vectis_error);
     lc_client_close(client);
     lc_error_cleanup(&error);
     return 1;
   }
-  if (lease->load(lease, &account_doc_map, &loaded, NULL, NULL, &get_response, &error) != LC_OK) {
-    print_error("lease.load", &error);
-    lc_lease_close(lease);
-    lc_client_close(client);
-    lc_get_res_cleanup(&get_response);
-    lc_error_cleanup(&error);
-    return 1;
-  }
-  lc_get_res_cleanup(&get_response);
-  memset(&get_response, 0, sizeof(get_response));
-  if (lease->release(lease, &release, &error) != LC_OK) {
-    print_error("lease.release", &error);
-    lc_lease_close(lease);
-    lc_client_close(client);
-    lc_error_cleanup(&error);
-    return 1;
-  }
-  lease = NULL;
 
   lc_client_close(client);
   lc_error_cleanup(&error);

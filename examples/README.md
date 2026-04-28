@@ -5,8 +5,9 @@ surface directly, without local helper layers that would hide awkward API shape.
 
 ## `kore/`
 
-- `kore/rest_api_lockd_lonejson.c`: Vectis route setup, lonejson mapped request
-  and response structs, and raw liblockdc lease/save/release usage.
+- `kore/rest_api_lockd_lonejson.c`: JSON body route setup, lonejson mapped
+  request and response structs, safe lockd key formatting, and Vectis lockd
+  state save helpers.
 - `kore/kore_basic_server.c`: minimal Kore-backed Vectis server shape with
   pslog and a shared GET/HEAD health route.
 - `kore/kore_json_routes.c`: JSON route auto-wiring shape with lonejson maps.
@@ -15,8 +16,9 @@ surface directly, without local helper layers that would hide awkward API shape.
 - `kore/kore_tls_acme.c`: manual TLS and ACME server configuration shape.
 - `kore/kore_tls_memory_bundles.c`: server cert/key, CA, and client-CA bundles
   supplied from in-memory PEM for packed-service deployments.
-- `kore/kore_lockd_api.c`: API handler shape that combines Vectis routing,
-  pslog, raw lockd client access, and lonejson responses.
+- `kore/kore_lockd_api.c`: API handler shape that combines Vectis path
+  parameters, pslog, lockd state save/load helpers, safe lockd key formatting,
+  and lonejson responses.
 - `kore/kore_file_upload.c`: large upload route using the Vectis upload route
   constructor and streaming body-policy preset.
 
@@ -24,8 +26,8 @@ surface directly, without local helper layers that would hide awkward API shape.
 
 - `lockd/lockd_open_client.c`: raw liblockdc client setup with flexible bundle
   sourcing.
-- `lockd/lockd_acquire_save_load_release.c`: acquire/save/load/release using
-  lonejson mapped structs.
+- `lockd/lockd_acquire_save_load_release.c`: Vectis-owned lockd state
+  save/load helpers using lonejson mapped structs.
 - `lockd/lockd_query.c`: query result streaming into a file sink.
 - `lockd/lockd_attachments.c`: attachment upload/download against a lease.
 - `lockd/lockd_enqueue.c`: queue producer.

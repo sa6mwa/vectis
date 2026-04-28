@@ -25,10 +25,9 @@ static int handle_stateful_order(void *context,
                                  lc_consumer_message *message,
                                  lc_error *error) {
   stateful_context *ctx;
-  workflow_state state;
+  workflow_state state = {"", ""};
 
   ctx = (stateful_context *)context;
-  memset(&state, 0, sizeof(state));
   if (message->state == NULL) {
     ctx->logger->errorf(ctx->logger, "example.lockd_state_consumer.missing_state",
                         "queue=%s message=%s",

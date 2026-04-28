@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <lc/lc.h>
 #include <lonejson.h>
 #include <pslog.h>
 #include <vectis/vectis.h>
@@ -35,19 +34,16 @@ static vectis_status save_order(vectis_app *app,
                                 vectis_error *error) {
   order_request input;
   order_response output;
-  lc_client *lockd;
+  struct lc_client *lockd;
   pslog_logger *logger;
-  lc_acquire_req acquire;
-  lc_release_req release;
-  lc_lease *lease;
   vectis_status status;
+  char key[128];
 
   (void)userdata;
-  memset(&input, 0, sizeof(input));
-  memset(&output, 0, sizeof(output));
-  lc_acquire_req_init(&acquire);
-  lc_release_req_init(&release);
-  lease = NULL;
+  input.id[0] = '\0';
+  input.status[0] = '\0';
+  output.id[0] = '\0';
+  output.saved[0] = '\0';
 
   status = vectis_request_json_into(request, &order_request_map, &input, error);
   if (status != VECTIS_OK) {
@@ -60,21 +56,38 @@ static vectis_status save_order(vectis_app *app,
     logger->infof(logger, "example.rest_lockd.save_order", "id=%s", input.id);
   }
 
-  acquire.key = input.id;
-  acquire.owner = "orders-api";
-  acquire.ttl_seconds = 30L;
-  if (lc_acquire(lockd, &acquire, &lease, NULL) != 0) {
-    return VECTIS_ERR_STATE;
+  if (lockd == NULL) {
+    return vectis_response_error_json(response,
+                                      503,
+                                      "lockd_unavailable",
+                                      "lockd client is not configured",
+                                      "",
+                                      error);
   }
-  if (lease->save(lease, &order_request_map, &input, NULL, NULL) != 0) {
-    lc_lease_close(lease);
-    return VECTIS_ERR_STATE;
+  status = vectis_format_key(key, sizeof(key), error, "orders/%s", input.id);
+  if (status != VECTIS_OK) {
+    return vectis_response_error_json(response,
+                                      400,
+                                      "invalid_order_id",
+                                      "order id cannot be used as a lockd key",
+                                      error != NULL ? error->message : "",
+                                      error);
   }
-  if (lease->release(lease, &release, NULL) != 0) {
-    lc_lease_close(lease);
-    return VECTIS_ERR_STATE;
+  status = vectis_lockd_state_save(lockd,
+                                   key,
+                                   "orders-api",
+                                   30L,
+                                   &order_request_map,
+                                   &input,
+                                   error);
+  if (status != VECTIS_OK) {
+    return vectis_response_error_json(response,
+                                      503,
+                                      "order_save_failed",
+                                      "failed to save order state",
+                                      error != NULL ? error->message : "",
+                                      error);
   }
-  lc_lease_close(lease);
 
   (void)snprintf(output.id, sizeof(output.id), "%s", input.id);
   (void)snprintf(output.saved, sizeof(output.saved), "%s", "true");
@@ -118,7 +131,7 @@ int main(void) {
     return 1;
   }
 
-  route = vectis_route(VECTIS_HTTP_POST, "/orders", save_order, NULL);
+  route = vectis_json_body_route(VECTIS_HTTP_POST, "/orders", save_order, NULL);
   if (vectis_register_route(app, &route, &error) != VECTIS_OK) {
     vectis_destroy(app);
     logger->destroy(logger);
