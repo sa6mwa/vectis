@@ -12,6 +12,7 @@ mqtt_port=${VECTIS_MQTT_PORT:-21883}
 default_kore_basic_port=$((28080 + ($$ % 1000) * 2))
 kore_basic_port=${VECTIS_E2E_KORE_BASIC_PORT:-$default_kore_basic_port}
 kore_lockd_port=${VECTIS_E2E_KORE_LOCKD_PORT:-$((kore_basic_port + 1))}
+kore_workflow_port=${VECTIS_E2E_KORE_WORKFLOW_PORT:-$((kore_basic_port + 2))}
 work_dir=$(mktemp -d)
 server_pids=""
 
@@ -172,6 +173,73 @@ run_kore_examples() {
       return 1
       ;;
   esac
+
+  printf '[e2e] kore lockd workflow with consumer deferral\n'
+  workflow_id=${VECTIS_E2E_WORKFLOW_ID:-"e2e-$$"}
+  workflow_queue=${VECTIS_E2E_WORKFLOW_QUEUE:-"vectis-e2e-workflow-$$"}
+  workflow_namespace=${VECTIS_E2E_WORKFLOW_NAMESPACE:-"examples"}
+  workflow_content=${VECTIS_E2E_WORKFLOW_CONTENT:-"vectis workflow content $$"}
+  workflow_consumer_first_log="$work_dir/workflow-consumer-first.log"
+  workflow_consumer_second_log="$work_dir/workflow-consumer-second.log"
+  start_server "kore workflow" "$work_dir/kore-workflow.log" \
+    env VECTIS_KORE_TLS=disabled \
+      VECTIS_KORE_PORT="$kore_workflow_port" \
+      LOCKD_ENDPOINT="$disk_endpoint" \
+      LOCKD_CLIENT_BUNDLE="$client_bundle" \
+      VECTIS_E2E_WORKFLOW_ID="$workflow_id" \
+      VECTIS_E2E_WORKFLOW_QUEUE="$workflow_queue" \
+      VECTIS_E2E_WORKFLOW_NAMESPACE="$workflow_namespace" \
+      VECTIS_E2E_WORKFLOW_CONTENT="$workflow_content" \
+      "$repo_root/build/debug/examples/vectis_example_kore_workflow_e2e" server
+  wait_for_http "http://127.0.0.1:$kore_workflow_port/health" "kore workflow api"
+  env LOCKD_ENDPOINT="$disk_endpoint" \
+    LOCKD_CLIENT_BUNDLE="$client_bundle" \
+    VECTIS_E2E_WORKFLOW_ID="$workflow_id" \
+    VECTIS_E2E_WORKFLOW_QUEUE="$workflow_queue" \
+    VECTIS_E2E_WORKFLOW_NAMESPACE="$workflow_namespace" \
+    VECTIS_E2E_WORKFLOW_CONTENT="$workflow_content" \
+    "$repo_root/build/debug/examples/vectis_example_kore_workflow_e2e" consumer-first \
+      >"$workflow_consumer_first_log" 2>&1 &
+  workflow_consumer_first_pid=$!
+  server_pids="$server_pids $workflow_consumer_first_pid"
+  env LOCKD_ENDPOINT="$disk_endpoint" \
+    LOCKD_CLIENT_BUNDLE="$client_bundle" \
+    VECTIS_E2E_WORKFLOW_ID="$workflow_id" \
+    VECTIS_E2E_WORKFLOW_QUEUE="$workflow_queue" \
+    VECTIS_E2E_WORKFLOW_NAMESPACE="$workflow_namespace" \
+    VECTIS_E2E_WORKFLOW_CONTENT="$workflow_content" \
+    "$repo_root/build/debug/examples/vectis_example_kore_workflow_e2e" consumer-second \
+      >"$workflow_consumer_second_log" 2>&1 &
+  workflow_consumer_second_pid=$!
+  server_pids="$server_pids $workflow_consumer_second_pid"
+  sleep 2
+  body=$(curl --max-time 5 -fsS \
+    -H 'content-type: application/json' \
+    -X POST \
+    --data "{\"content\":\"$workflow_content\"}" \
+    "http://127.0.0.1:$kore_workflow_port/workflow/$workflow_id")
+  case "$body" in
+    *"\"id\":\"$workflow_id\""*"\"queue\":\"$workflow_queue\""*'"counter":1'*) ;;
+    *)
+      printf '%s\n' "Unexpected workflow response: $body" >&2
+      return 1
+      ;;
+  esac
+  if ! wait "$workflow_consumer_first_pid"; then
+    sed 's/^/[workflow-consumer-first] /' "$workflow_consumer_first_log" >&2
+    return 1
+  fi
+  if ! wait "$workflow_consumer_second_pid"; then
+    sed 's/^/[workflow-consumer-second] /' "$workflow_consumer_second_log" >&2
+    return 1
+  fi
+  env LOCKD_ENDPOINT="$disk_endpoint" \
+    LOCKD_CLIENT_BUNDLE="$client_bundle" \
+    VECTIS_E2E_WORKFLOW_ID="$workflow_id" \
+    VECTIS_E2E_WORKFLOW_QUEUE="$workflow_queue" \
+    VECTIS_E2E_WORKFLOW_NAMESPACE="$workflow_namespace" \
+    VECTIS_E2E_WORKFLOW_CONTENT="$workflow_content" \
+    "$repo_root/build/debug/examples/vectis_example_kore_workflow_e2e" verify
 }
 
 "$script_dir/dev-reset.sh"
