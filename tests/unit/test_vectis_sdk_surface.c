@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <lc/lc.h>
 #include <lonejson.h>
 #include "vectis_internal.h"
 #include <vectis/vectis.h>
@@ -50,6 +51,15 @@ static vectis_status sample_route_handler(vectis_app *app,
     return vectis_response_text(response, 200, "text/plain", id, error);
   }
   return vectis_response_status(response, 204, error);
+}
+
+static int sample_consumer_handler(void *context,
+                                   lc_consumer_message *message,
+                                   lc_error *error) {
+  (void)context;
+  (void)message;
+  (void)error;
+  return LC_OK;
 }
 
 static void assert_http_surface(void) {
@@ -409,11 +419,69 @@ static void assert_tls_source_surface(void) {
   vectis_destroy(app);
 }
 
+static void assert_consumer_service_surface(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  lc_consumer_config consumer;
+  lc_consumer_service_config service_config;
+  vectis_consumer_service *service;
+
+  service = NULL;
+  status = vectis_consumer_service_new(NULL, NULL, &service, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(service == NULL);
+  status = vectis_consumer_service_run(NULL, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  status = vectis_consumer_service_start(NULL, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  status = vectis_consumer_service_stop(NULL, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  status = vectis_consumer_service_wait(NULL, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(vectis_consumer_service_raw(NULL) == NULL);
+
+  lc_consumer_config_init(&consumer);
+  lc_consumer_service_config_init(&service_config);
+  consumer.name = "orders-worker";
+  consumer.request.queue = "orders";
+  consumer.handle = sample_consumer_handler;
+  service_config.consumers = &consumer;
+  service_config.consumer_count = 1u;
+
+  vectis_app_config_init(&config);
+  app = vectis_new(&config, &error);
+  assert(app != NULL);
+  status = vectis_consumer_service_new(app, &service_config, &service, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "lockd") != NULL);
+  assert(service == NULL);
+  vectis_destroy(app);
+
+  vectis_app_config_init(&config);
+  config.lockd.unix_socket_path = "/tmp/vectis-missing-lockd.sock";
+  app = vectis_new(&config, &error);
+  assert(app != NULL);
+  status = vectis_consumer_service_new(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK || status == VECTIS_ERR_STATE);
+  if (status == VECTIS_OK) {
+    assert(service != NULL);
+    assert(vectis_consumer_service_raw(service) != NULL);
+    vectis_consumer_service_destroy(service);
+  } else {
+    assert(error.source == VECTIS_ERROR_SOURCE_LOCKDC);
+    assert(service == NULL);
+  }
+  vectis_destroy(app);
+}
+
 int main(void) {
   assert_http_surface();
   assert_io_surface();
   assert_request_response_surface();
   assert_json_route_surface();
   assert_tls_source_surface();
+  assert_consumer_service_surface();
   return 0;
 }

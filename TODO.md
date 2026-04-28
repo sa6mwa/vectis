@@ -128,8 +128,8 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [ ] Provide C and Lua helpers for document store, retrieval, query, leases, enqueue, dequeue, ack/nack, and retry-oriented workflow patterns.
 - [ ] Expose raw `liblockdc`/`lockdc` access for complete API coverage while making Vectis helpers the preferred workflow API.
 - [x] Make lockd optional for Kore-only C services while preserving validation for configured lockd transports.
-- [ ] Define consumer registration and lifecycle APIs for C.
-- [ ] Expose lockd consumer service startup/configuration directly, then layer Vectis-owned worker DX on top.
+- [x] Define consumer registration and lifecycle APIs for C.
+- [x] Expose lockd consumer service startup/configuration directly, then layer Vectis-owned worker DX on top.
 - [ ] Define Lua consumer-service runner mode as a separate process from Kore server mode.
 - [ ] Make it clear in API errors when a Lua script attempts to run incompatible server and consumer loops in one process.
 - [ ] Add integration tests covering enqueue/dequeue/ack workflows.

@@ -28,8 +28,11 @@ extern "C" {
 
 struct lc_client;
 struct lc_source;
+struct lc_consumer_service;
+struct lc_consumer_service_config;
 
 typedef struct vectis_app vectis_app;
+typedef struct vectis_consumer_service vectis_consumer_service;
 typedef struct vectis_methods vectis_methods;
 typedef struct vectis_request vectis_request;
 typedef struct vectis_response vectis_response;
@@ -456,6 +459,20 @@ pslog_logger *vectis_logger(vectis_app *app);
  * NULL is reserved for invalid apps or pre-start lifecycle inspection.
  */
 struct lc_client *vectis_lockd_client(vectis_app *app);
+vectis_status vectis_consumer_service_new(vectis_app *app,
+                                          const struct lc_consumer_service_config *config,
+                                          vectis_consumer_service **out,
+                                          vectis_error *error);
+struct lc_consumer_service *vectis_consumer_service_raw(vectis_consumer_service *service);
+vectis_status vectis_consumer_service_run(vectis_consumer_service *service,
+                                          vectis_error *error);
+vectis_status vectis_consumer_service_start(vectis_consumer_service *service,
+                                            vectis_error *error);
+vectis_status vectis_consumer_service_stop(vectis_consumer_service *service,
+                                           vectis_error *error);
+vectis_status vectis_consumer_service_wait(vectis_consumer_service *service,
+                                           vectis_error *error);
+void vectis_consumer_service_destroy(vectis_consumer_service *service);
 vectis_status vectis_json_validate_cstr(const char *json, vectis_error *error);
 
 vectis_status vectis_request_json_into(vectis_request *request,

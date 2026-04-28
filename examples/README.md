@@ -35,6 +35,8 @@ surface directly, without local helper layers that would hide awkward API shape.
   and process-level example logging.
 - `lockd/lockd_consumer_service_with_state.c`: managed consumer service using
   dequeue-with-state and lonejson mapped state mutation.
+- `lockd/lockd_vectis_consumer_service.c`: Vectis app-owned lockd setup plus
+  the raw liblockdc managed consumer service config.
 
 ## `curl/`
 

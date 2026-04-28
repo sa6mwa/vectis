@@ -53,6 +53,7 @@ vectis_add_example(vectis_example_lockd_enqueue lockd/lockd_enqueue.c)
 vectis_add_example(vectis_example_lockd_dequeue lockd/lockd_dequeue_ack_nack.c)
 vectis_add_example(vectis_example_lockd_consumer lockd/lockd_consumer_service.c)
 vectis_add_example(vectis_example_lockd_consumer_state lockd/lockd_consumer_service_with_state.c)
+vectis_add_example(vectis_example_vectis_consumer lockd/lockd_vectis_consumer_service.c)
 
 vectis_add_example(vectis_example_curl_json curl/curl_json_api.c)
 vectis_add_example(vectis_example_curl_transfer curl/curl_transfer.c)

@@ -123,6 +123,10 @@ struct vectis_http_client {
   pslog_logger *logger;
 };
 
+struct vectis_consumer_service {
+  lc_consumer_service *service;
+};
+
 typedef struct vectis_curl_buffer {
   char *data;
   size_t size;
@@ -233,6 +237,30 @@ static vectis_status vectis_not_implemented_from(vectis_error *error,
     error->source = source;
   }
   return status;
+}
+
+static vectis_status vectis_set_lockdc_error(vectis_error *error,
+                                             int rc,
+                                             const lc_error *lcerr,
+                                             const char *message) {
+  vectis_set_errorf(error,
+                    VECTIS_ERR_STATE,
+                    "%s: %s",
+                    message != NULL ? message : "lockdc operation failed",
+                    lcerr != NULL && lcerr->message != NULL
+                        ? lcerr->message
+                        : "unknown lockdc error");
+  if (error != NULL) {
+    error->source = VECTIS_ERROR_SOURCE_LOCKDC;
+    error->dependency_code = (long)rc;
+    if (lcerr != NULL) {
+      error->http_status = lcerr->http_status;
+      if (lcerr->detail != NULL) {
+        (void)snprintf(error->detail, sizeof(error->detail), "%s", lcerr->detail);
+      }
+    }
+  }
+  return VECTIS_ERR_STATE;
 }
 
 const char *vectis_status_string(vectis_status status) {
@@ -1379,7 +1407,6 @@ static vectis_status vectis_validate_server_config(const vectis_server_config *c
 
 static vectis_status vectis_validate_startable(const vectis_app_impl *impl,
                                                vectis_error *error) {
-  int has_lockd_transport;
   int has_cert_key_bundle;
   int has_split_certificate;
   int has_split_private_key;
@@ -1417,6 +1444,17 @@ static vectis_status vectis_validate_startable(const vectis_app_impl *impl,
     }
   }
 
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_validate_lockd_startable(const vectis_app_impl *impl,
+                                                     vectis_error *error) {
+  int has_lockd_transport;
+
+  if (impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
   has_lockd_transport = (impl->endpoint_count > 0u) || (impl->unix_socket_path != NULL);
   if (has_lockd_transport &&
       impl->client_bundle_path == NULL &&
@@ -1708,6 +1746,10 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
   impl = (vectis_app_impl *)app->impl;
 
   status = vectis_validate_startable(impl, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_validate_lockd_startable(impl, error);
   if (status != VECTIS_OK) {
     return status;
   }
@@ -2412,6 +2454,169 @@ struct lc_client *vectis_lockd_client(vectis_app *app) {
   }
   impl = (vectis_app_impl *)app->impl;
   return impl->lockd_client;
+}
+
+vectis_status vectis_consumer_service_new(vectis_app *app,
+                                          const struct lc_consumer_service_config *config,
+                                          vectis_consumer_service **out,
+                                          vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_consumer_service *service;
+  lc_error lcerr;
+  int rc;
+  vectis_status status;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config == NULL || config->consumers == NULL || config->consumer_count == 0u) {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "consumer service config requires at least one consumer");
+    return VECTIS_ERR_INVALID;
+  }
+
+  impl = (vectis_app_impl *)app->impl;
+  if (!vectis_lockd_is_configured(impl)) {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "consumer service requires configured lockd transport");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_validate_lockd_startable(impl, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_open_lockd_client(impl, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+
+  service = (vectis_consumer_service *)calloc(1u, sizeof(*service));
+  if (service == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate consumer service");
+    return VECTIS_ERR_NOMEM;
+  }
+
+  lc_error_init(&lcerr);
+  rc = lc_client_new_consumer_service(impl->lockd_client, config, &service->service, &lcerr);
+  if (rc != LC_OK) {
+    free(service);
+    status = vectis_set_lockdc_error(error, rc, &lcerr, "failed to create lockd consumer service");
+    lc_error_cleanup(&lcerr);
+    return status;
+  }
+  lc_error_cleanup(&lcerr);
+  *out = service;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+struct lc_consumer_service *vectis_consumer_service_raw(vectis_consumer_service *service) {
+  if (service == NULL) {
+    return NULL;
+  }
+  return service->service;
+}
+
+vectis_status vectis_consumer_service_run(vectis_consumer_service *service,
+                                          vectis_error *error) {
+  lc_error lcerr;
+  int rc;
+
+  if (service == NULL || service->service == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
+    return VECTIS_ERR_INVALID;
+  }
+  lc_error_init(&lcerr);
+  rc = service->service->run(service->service, &lcerr);
+  if (rc != LC_OK) {
+    (void)vectis_set_lockdc_error(error, rc, &lcerr, "lockd consumer service run failed");
+    lc_error_cleanup(&lcerr);
+    return VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_consumer_service_start(vectis_consumer_service *service,
+                                            vectis_error *error) {
+  lc_error lcerr;
+  int rc;
+
+  if (service == NULL || service->service == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
+    return VECTIS_ERR_INVALID;
+  }
+  lc_error_init(&lcerr);
+  rc = service->service->start(service->service, &lcerr);
+  if (rc != LC_OK) {
+    (void)vectis_set_lockdc_error(error, rc, &lcerr, "lockd consumer service start failed");
+    lc_error_cleanup(&lcerr);
+    return VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_consumer_service_stop(vectis_consumer_service *service,
+                                           vectis_error *error) {
+  int rc;
+
+  if (service == NULL || service->service == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
+    return VECTIS_ERR_INVALID;
+  }
+  rc = service->service->stop(service->service);
+  if (rc != LC_OK) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "lockd consumer service stop failed");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LOCKDC;
+      error->dependency_code = (long)rc;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_consumer_service_wait(vectis_consumer_service *service,
+                                           vectis_error *error) {
+  lc_error lcerr;
+  int rc;
+
+  if (service == NULL || service->service == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
+    return VECTIS_ERR_INVALID;
+  }
+  lc_error_init(&lcerr);
+  rc = service->service->wait(service->service, &lcerr);
+  if (rc != LC_OK) {
+    (void)vectis_set_lockdc_error(error, rc, &lcerr, "lockd consumer service wait failed");
+    lc_error_cleanup(&lcerr);
+    return VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+void vectis_consumer_service_destroy(vectis_consumer_service *service) {
+  if (service == NULL) {
+    return;
+  }
+  if (service->service != NULL) {
+    service->service->close(service->service);
+  }
+  free(service);
 }
 
 vectis_status vectis_json_validate_cstr(const char *json, vectis_error *error) {
