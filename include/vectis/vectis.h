@@ -6,6 +6,15 @@
 #include <pslog.h>
 
 #define VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION "https://acme-v02.api.letsencrypt.org/directory"
+#define VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS 1024u
+#define VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES 16384u
+#define VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES 10485760u
+#define VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS 5000L
+#define VECTIS_SERVER_DEFAULT_REQUEST_BODY_TIMEOUT_MS 15000L
+#define VECTIS_SERVER_DEFAULT_RESPONSE_WRITE_TIMEOUT_MS 15000L
+#define VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS 30000L
+#define VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS 5000L
+#define VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS 100u
 
 #ifdef __cplusplus
 extern "C" {
@@ -167,11 +176,25 @@ typedef struct vectis_json_route_config {
   void *userdata;
 } vectis_json_route_config;
 
+typedef struct vectis_server_config {
+  size_t max_connections;
+  size_t max_request_header_bytes;
+  size_t max_request_body_bytes;
+  long request_header_timeout_ms;
+  long request_body_timeout_ms;
+  long response_write_timeout_ms;
+  long idle_timeout_ms;
+  int keepalive_enabled;
+  long keepalive_timeout_ms;
+  unsigned keepalive_max_requests;
+} vectis_server_config;
+
 typedef struct vectis_app_config {
   const char *app_name;
   pslog_logger *logger;
   pslog_mode log_mode;
   pslog_level min_log_level;
+  vectis_server_config server;
   vectis_tls_config tls;
   vectis_lockd_config lockd;
 } vectis_app_config;
@@ -305,6 +328,7 @@ vectis_source vectis_source_from_path(const char *path);
 vectis_source vectis_source_from_memory(const void *memory, size_t memory_size);
 vectis_source vectis_source_from_lc(struct lc_source *source);
 void vectis_app_config_init(vectis_app_config *config);
+void vectis_server_config_init(vectis_server_config *config);
 void vectis_tls_config_init(vectis_tls_config *config);
 void vectis_lockd_config_init(vectis_lockd_config *config);
 void vectis_route_config_init(vectis_route_config *config);

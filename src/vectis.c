@@ -57,6 +57,7 @@ typedef struct vectis_app_impl {
   unsigned short port;
   vectis_tls_mode tls_mode;
   int require_client_certificate;
+  vectis_server_config server;
   pslog_logger *logger;
   vectis_route_entry *routes;
   size_t route_count;
@@ -278,6 +279,23 @@ void vectis_lockd_config_init(vectis_lockd_config *config) {
   config->timeout_ms = 30000L;
 }
 
+void vectis_server_config_init(vectis_server_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->max_connections = VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS;
+  config->max_request_header_bytes = VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES;
+  config->max_request_body_bytes = VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
+  config->request_header_timeout_ms = VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS;
+  config->request_body_timeout_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_TIMEOUT_MS;
+  config->response_write_timeout_ms = VECTIS_SERVER_DEFAULT_RESPONSE_WRITE_TIMEOUT_MS;
+  config->idle_timeout_ms = VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS;
+  config->keepalive_enabled = 1;
+  config->keepalive_timeout_ms = VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS;
+  config->keepalive_max_requests = VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS;
+}
+
 void vectis_app_config_init(vectis_app_config *config) {
   if (config == NULL) {
     return;
@@ -286,6 +304,7 @@ void vectis_app_config_init(vectis_app_config *config) {
   config->app_name = "vectis";
   config->log_mode = PSLOG_MODE_JSON;
   config->min_log_level = PSLOG_LEVEL_INFO;
+  vectis_server_config_init(&config->server);
   vectis_tls_config_init(&config->tls);
   vectis_lockd_config_init(&config->lockd);
 }
@@ -689,6 +708,67 @@ static vectis_status vectis_validate_route(const vectis_route_config *route,
   return VECTIS_OK;
 }
 
+static vectis_status vectis_validate_server_config(const vectis_server_config *config,
+                                                   vectis_error *error) {
+  if (config == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "server config is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->max_connections == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "server max_connections must be greater than zero");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->max_request_header_bytes < 1024u) {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "server max_request_header_bytes must be at least 1024");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->max_request_body_bytes == 0u) {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "server max_request_body_bytes must be greater than zero");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->request_header_timeout_ms <= 0L) {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "server request_header_timeout_ms must be greater than zero");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->request_body_timeout_ms <= 0L) {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "server request_body_timeout_ms must be greater than zero");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->response_write_timeout_ms <= 0L) {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "server response_write_timeout_ms must be greater than zero");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->idle_timeout_ms <= 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "server idle_timeout_ms must be greater than zero");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->keepalive_enabled) {
+    if (config->keepalive_timeout_ms <= 0L) {
+      vectis_set_error(error,
+                       VECTIS_ERR_INVALID,
+                       "server keepalive_timeout_ms must be greater than zero when keepalive is enabled");
+      return VECTIS_ERR_INVALID;
+    }
+    if (config->keepalive_max_requests == 0u) {
+      vectis_set_error(error,
+                       VECTIS_ERR_INVALID,
+                       "server keepalive_max_requests must be greater than zero when keepalive is enabled");
+      return VECTIS_ERR_INVALID;
+    }
+  }
+  return VECTIS_OK;
+}
+
 static vectis_status vectis_validate_startable(const vectis_app_impl *impl,
                                                vectis_error *error) {
   int has_lockd_transport;
@@ -760,6 +840,10 @@ vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error) {
   vectis_error_clear(error);
   vectis_app_config_init(&defaults);
   effective = config != NULL ? config : &defaults;
+  status = vectis_validate_server_config(&effective->server, error);
+  if (status != VECTIS_OK) {
+    return NULL;
+  }
 
   app = (vectis_app *)calloc(1u, sizeof(*app));
   impl = (vectis_app_impl *)calloc(1u, sizeof(*impl));
@@ -811,6 +895,7 @@ vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error) {
   impl->port = effective->tls.port;
   impl->tls_mode = effective->tls.mode;
   impl->require_client_certificate = effective->tls.require_client_certificate;
+  impl->server = effective->server;
 
   status = vectis_copy_source_bytes(&effective->tls.cert_key_bundle,
                                     effective->tls.cert_key_bundle_pem,

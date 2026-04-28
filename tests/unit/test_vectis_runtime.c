@@ -45,6 +45,27 @@ int main(void) {
   assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
   assert(strstr(error.message, "not implemented") != NULL);
 
+  vectis_destroy(app);
+  config.server.request_header_timeout_ms = 0L;
+  app = vectis_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "request_header_timeout_ms") != NULL);
+  vectis_app_config_init(&config);
+  config.tls.cert_key_bundle = vectis_source_from_path("/tmp/server.pem");
+  config.lockd.unix_socket_path = "/tmp/lockd.sock";
+  config.server.keepalive_max_requests = 0u;
+  app = vectis_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "keepalive_max_requests") != NULL);
+  vectis_app_config_init(&config);
+  config.tls.cert_key_bundle = vectis_source_from_path("/tmp/server.pem");
+  config.lockd.unix_socket_path = "/tmp/lockd.sock";
+  config.server.keepalive_enabled = 0;
+  config.server.keepalive_timeout_ms = 0L;
+  config.server.keepalive_max_requests = 0u;
+  app = vectis_new(&config, &error);
+  assert(app != NULL);
+
   vectis_route_config_init(&bad_route);
   bad_route.method = VECTIS_HTTP_GET;
   bad_route.path = "missing-slash";

@@ -46,6 +46,13 @@ one configuration layer, one logger, one lockd configuration, one TLS/certificat
 configuration story, one HTTP server boundary, and coherent helper APIs for JSON,
 queue, downstream HTTP, SFTP, and SSH workflows.
 
+The HTTP server boundary is defensive by default. `vectis_app_config_init()`
+sets explicit guardrails for maximum concurrent connections, request-header
+size, request-body size, header-read timeout, body-read timeout, response-write
+timeout, idle timeout, keepalive timeout, and maximum requests per keepalive
+connection. These defaults are intentionally part of the Vectis SDK surface so
+Kore integration cannot accidentally inherit unsafe runtime defaults later.
+
 The dependency headers and libraries are shipped intentionally. C users should
 be able to include and use Kore, `liblockdc`, `lonejson`, `libpslog`, libcurl,
 OpenSSL, and libssh2 directly when Vectis does not cover a case or when they
@@ -170,6 +177,9 @@ The current implementation provides:
 - A common `vectis_source` input model for path, `lc_source`, and in-memory
   bytes across lockd client bundles, Kore TLS material, downstream HTTP/MQTT
   client bundles, and SSH/SFTP private-key inputs.
+- A first-pass `vectis_server_config` with explicit DDoS/slow-client guardrails
+  for connection counts, request sizes, keepalive behavior, and read/write
+  timeouts.
 - Route constructors for literal paths, named and optional path parameters, and
   explicit regex routes, with automatic path-kind inference for the common
   `vectis_route()` and `vectis_json_route()` cases.

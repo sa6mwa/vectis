@@ -37,6 +37,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 
 - [x] Define opaque-handle-plus-method-table API surface.
 - [x] Implement app config defaults.
+- [x] Add defensive server/Kore guardrail defaults for connection count, request sizes, read/write timeouts, idle timeout, and keepalive behavior.
 - [x] Implement thread-safe app lifetime and route registry state.
 - [x] Support owned or borrowed `pslog` logger instances.
 - [x] Store and validate lockd configuration without requiring a live lockd daemon during app construction.
@@ -60,6 +61,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 
 - [x] Build and link Kore against the dependency bundle shipped by `liblockdc`.
 - [ ] Start/stop a real Kore runtime from `vectis`.
+- [ ] Translate `vectis_server_config` guardrails into concrete Kore runtime/config settings.
 - [ ] Wire `pslog` into the Kore runtime path so Vectis server logs and Kore runtime diagnostics use the configured app logger.
 - [ ] Expose raw Kore configuration/runtime escape hatches where practical.
 - [ ] Register Vectis C routes as Kore handlers.

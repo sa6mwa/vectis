@@ -29,6 +29,16 @@ int main(void) {
   assert(config.tls.mode == VECTIS_TLS_MODE_MANUAL);
   assert(config.tls.port == 8443u);
   assert(strcmp(config.tls.acme_directory_url, VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION) == 0);
+  assert(config.server.max_connections == VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS);
+  assert(config.server.max_request_header_bytes == VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES);
+  assert(config.server.max_request_body_bytes == VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES);
+  assert(config.server.request_header_timeout_ms == VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS);
+  assert(config.server.request_body_timeout_ms == VECTIS_SERVER_DEFAULT_REQUEST_BODY_TIMEOUT_MS);
+  assert(config.server.response_write_timeout_ms == VECTIS_SERVER_DEFAULT_RESPONSE_WRITE_TIMEOUT_MS);
+  assert(config.server.idle_timeout_ms == VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS);
+  assert(config.server.keepalive_enabled == 1);
+  assert(config.server.keepalive_timeout_ms == VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS);
+  assert(config.server.keepalive_max_requests == VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS);
   assert(config.lockd.timeout_ms == 30000L);
   vectis_error_clear(&error);
   assert(error.source == VECTIS_ERROR_SOURCE_NONE);
