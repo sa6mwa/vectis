@@ -224,13 +224,11 @@ enabled only for local tests. MQTT uses `emqx/nanomq:0.24.13`; NanoMQ is a slim
 MQTT broker suitable for local protocol testing without introducing a larger
 broker stack.
 
-Darwin arm64 on-device testing is expected to run on EC2 Mac Dedicated Hosts
-when no physical Mac is available. Current AWS discovery from this repository's
-development account shows `mac2.metal` availability in `eu-west-1` only, not
-`eu-north-1`. EC2 Mac is billed at the Dedicated Host layer and has a 24-hour
-minimum allocation, so the test harness must allocate hosts intentionally,
-terminate the instance, and release the host after the 24-hour minimum has
-elapsed.
+Darwin arm64 on-device verification should use GitHub-hosted macOS arm64
+runners rather than EC2 Mac Dedicated Hosts. GitHub provides standard M1 macOS
+runner labels such as `macos-14`, `macos-15`, `macos-26`, and `macos-latest`,
+which are enough for running the Darwin smoke zip and codesign verification
+without managing 24-hour Mac host allocations.
 
 ## Current State
 

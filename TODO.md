@@ -226,8 +226,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [ ] Add package/archive generation for the C SDK and Vectis binary.
 - [x] Add package/archive generation for the current C SDK.
 - [x] Add optional arm64 Apple Darwin release archive and smoke-test zip generation when osxcross is available.
-- [ ] Add an opt-in Darwin arm64 AWS test harness that allocates an EC2 Mac Dedicated Host, launches `mac2.metal`, runs the smoke zip, terminates the instance, and releases the host after the 24-hour minimum.
-- [ ] Add cost and permission guardrails to the Darwin AWS harness so it prints the expected minimum host charge before allocation and refuses to run without explicit confirmation.
+- [ ] Add a GitHub Actions Darwin arm64 verification workflow using hosted `macos-15`/`macos-latest` runners to execute the smoke-test zip and codesign checks.
 - [ ] Add release verification for GNU and musl deliverables.
 - [ ] Add on-device Darwin smoke verification once a Mac is available.
 - [ ] Add generated or checked API docs for C and Lua.
