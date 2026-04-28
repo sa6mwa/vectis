@@ -488,6 +488,8 @@ const char *vectis_request_header(vectis_request *request,
 vectis_status vectis_request_body_bytes(vectis_request *request,
                                         vectis_bytes *out,
                                         vectis_error *error);
+const char *vectis_request_body_path(vectis_request *request);
+int vectis_request_body_is_spooled(vectis_request *request);
 vectis_status vectis_response_status(vectis_response *response,
                                      int status_code,
                                      vectis_error *error);

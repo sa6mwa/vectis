@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <stdio.h>
 #include <string.h>
 #include "vectis_internal.h"
 #include <vectis/vectis.h>
@@ -35,6 +36,37 @@ static vectis_status metadata_handler(vectis_app *app,
   return vectis_response_text(response, 200, "text/plain", "metadata", error);
 }
 
+static vectis_status upload_handler(vectis_app *app,
+                                    vectis_request *request,
+                                    vectis_response *response,
+                                    void *userdata,
+                                    vectis_error *error) {
+  vectis_bytes body;
+  const char *path;
+  FILE *fp;
+  int ch;
+
+  (void)app;
+  (void)userdata;
+  path = vectis_request_body_path(request);
+  if (!vectis_request_body_is_spooled(request) || path == NULL) {
+    return vectis_response_text(response, 422, "text/plain", "not spooled", error);
+  }
+  if (vectis_request_body_bytes(request, &body, error) != VECTIS_ERR_STATE) {
+    return vectis_response_text(response, 422, "text/plain", "body bytes available", error);
+  }
+  fp = fopen(path, "rb");
+  if (fp == NULL) {
+    return vectis_response_text(response, 422, "text/plain", "missing spool", error);
+  }
+  ch = fgetc(fp);
+  (void)fclose(fp);
+  if (ch != 'x') {
+    return vectis_response_text(response, 422, "text/plain", "bad spool", error);
+  }
+  return vectis_response_text(response, 200, "text/plain", "spooled", error);
+}
+
 static void assert_kore_smoke(void) {
   vectis_app_config config;
   vectis_http_client_config http;
@@ -43,17 +75,23 @@ static void assert_kore_smoke(void) {
   vectis_http_response response;
   vectis_http_response metadata_response;
   vectis_http_response oversized_response;
+  vectis_http_response upload_response;
   vectis_route_config route;
   vectis_route_config limited_route;
+  vectis_route_config upload_route;
   const char *headers[] = {"x-vectis-trace: runtime-smoke"};
+  const char upload_path[] = "/tmp/vectis-runtime-upload.bin";
   vectis_error error;
   vectis_status status;
   vectis_app *app;
+  FILE *fp;
   int attempt;
+  int i;
 
   memset(&response, 0, sizeof(response));
   memset(&metadata_response, 0, sizeof(metadata_response));
   memset(&oversized_response, 0, sizeof(oversized_response));
+  memset(&upload_response, 0, sizeof(upload_response));
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
@@ -70,6 +108,10 @@ static void assert_kore_smoke(void) {
   limited_route = vectis_route(VECTIS_HTTP_POST, "/limited", sample_handler, NULL);
   limited_route.body = vectis_body_buffered_max(4u);
   status = vectis_register_route(app, &limited_route, &error);
+  assert(status == VECTIS_OK);
+  upload_route = vectis_upload_route_max(VECTIS_HTTP_POST, "/upload", 4096u, upload_handler, NULL);
+  upload_route.body.memory_buffer_limit_bytes = 1024u;
+  status = vectis_register_route(app, &upload_route, &error);
   assert(status == VECTIS_OK);
   status = vectis_start(app, &error);
   assert(status == VECTIS_OK);
@@ -109,6 +151,26 @@ static void assert_kore_smoke(void) {
   assert(status == VECTIS_OK);
   assert(oversized_response.status_code == 413L);
   vectis_http_response_cleanup(&oversized_response);
+
+  fp = fopen(upload_path, "wb");
+  assert(fp != NULL);
+  for (i = 0; i < 2048; ++i) {
+    assert(fputc('x', fp) == 'x');
+  }
+  assert(fclose(fp) == 0);
+  status = vectis_http_upload_file(&http,
+                                   VECTIS_HTTP_POST,
+                                   "http://127.0.0.1:28080/upload",
+                                   upload_path,
+                                   "application/octet-stream",
+                                   &upload_response,
+                                   &error);
+  assert(status == VECTIS_OK);
+  assert(upload_response.status_code == 200L);
+  assert(upload_response.body_size == 7u);
+  assert(memcmp(upload_response.body, "spooled", 7u) == 0);
+  vectis_http_response_cleanup(&upload_response);
+  remove(upload_path);
 
   status = vectis_stop(app, &error);
   assert(status == VECTIS_OK);

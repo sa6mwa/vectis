@@ -654,11 +654,14 @@ static vectis_status vectis_kore_load_default_dhparams(vectis_error *error) {
   return VECTIS_OK;
 }
 
-static void vectis_kore_apply_server_config(const vectis_server_config *server) {
+static void vectis_kore_apply_server_config(const vectis_server_config *server,
+                                            size_t body_disk_offload_bytes) {
   worker_max_connections = vectis_kore_u32_from_size(server->max_connections);
   http_request_limit = vectis_kore_u32_from_size(server->max_connections);
   http_header_max = vectis_kore_u16_from_size(server->max_request_header_bytes);
   http_body_max = server->max_request_body_bytes;
+  http_body_disk_offload = body_disk_offload_bytes > 0u ?
+      body_disk_offload_bytes : VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
   http_header_timeout = vectis_kore_seconds_from_ms(server->request_header_timeout_ms);
   http_body_timeout = vectis_kore_seconds_from_ms(server->request_body_idle_timeout_ms);
   http_keepalive_time = server->keepalive_enabled ?
@@ -883,13 +886,17 @@ static vectis_status vectis_kore_read_body(struct http_request *req,
   }
   if (policy->memory_buffer_limit_bytes > 0u &&
       body_size > policy->memory_buffer_limit_bytes) {
-    if (http_status != NULL) {
-      *http_status = 501;
+    if (policy->spool_to_disk && req->http_body_path != NULL) {
+      return vectis_internal_request_set_body_path(request,
+                                                   req->http_body_path,
+                                                   body_size,
+                                                   error);
     }
-    vectis_set_error(error,
-                     VECTIS_ERR_NOT_IMPLEMENTED,
-                     "request body exceeds current in-memory runtime limit");
-    return VECTIS_ERR_NOT_IMPLEMENTED;
+    if (http_status != NULL) {
+      *http_status = 413;
+    }
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body exceeds memory body limit");
+    return VECTIS_ERR_INVALID;
   }
   body = malloc(body_size);
   if (body == NULL) {
@@ -1030,7 +1037,8 @@ void kore_parent_configure(int argc, char **argv) {
   if (vectis_kore_current.logger != NULL) {
     kore_log_set_logger(vectis_kore_current.logger);
   }
-  vectis_kore_apply_server_config(&vectis_kore_current.server);
+  vectis_kore_apply_server_config(&vectis_kore_current.server,
+                                  vectis_kore_current.body_disk_offload_bytes);
   server = kore_server_create(vectis_kore_current.app_name != NULL ?
                               vectis_kore_current.app_name : "vectis");
   if (vectis_kore_current.tls_mode == VECTIS_TLS_MODE_DISABLED) {

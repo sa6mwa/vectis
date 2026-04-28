@@ -27,6 +27,7 @@ typedef struct vectis_kore_runtime_config {
   struct lc_source *client_ca_bundle_source;
   int require_client_certificate;
   vectis_server_config server;
+  size_t body_disk_offload_bytes;
   pslog_logger *logger;
   char *runtime_certfile;
   char *runtime_certkey;
@@ -66,6 +67,10 @@ vectis_status vectis_internal_request_set_body(vectis_request *request,
                                                const void *body,
                                                size_t body_size,
                                                vectis_error *error);
+vectis_status vectis_internal_request_set_body_path(vectis_request *request,
+                                                    const char *body_path,
+                                                    size_t body_size,
+                                                    vectis_error *error);
 vectis_status vectis_internal_request_add_path_param(vectis_request *request,
                                                      const char *name,
                                                      const char *value,

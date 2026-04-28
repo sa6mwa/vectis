@@ -99,6 +99,8 @@ typedef struct vectis_app_impl {
 
 struct vectis_request {
   vectis_bytes body;
+  char *body_path;
+  int body_spooled;
   vectis_kv *path_params;
   size_t path_param_count;
   size_t path_param_capacity;
@@ -152,6 +154,8 @@ static vectis_status vectis_app_register_route_owned_userdata(vectis_app *app,
                                                               int owns_userdata,
                                                               vectis_error *error);
 static size_t vectis_app_route_count_impl(const vectis_app *app);
+static size_t vectis_app_max_streaming_body_bytes(vectis_app_impl *impl);
+static size_t vectis_app_min_streaming_memory_limit_bytes(vectis_app_impl *impl);
 static pslog_logger *vectis_app_logger_impl(vectis_app *app);
 
 static const vectis_methods vectis_default_methods = {
@@ -1717,6 +1721,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
   vectis_status status;
   vectis_kore_runtime_config kore_config;
   size_t route_count;
+  size_t max_streaming_body_bytes;
 
   if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
@@ -1775,6 +1780,11 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
     kore_config.client_ca_bundle_source = impl->client_ca_bundle_source;
     kore_config.require_client_certificate = impl->require_client_certificate;
     kore_config.server = impl->server;
+    max_streaming_body_bytes = vectis_app_max_streaming_body_bytes(impl);
+    if (max_streaming_body_bytes > kore_config.server.max_request_body_bytes) {
+      kore_config.server.max_request_body_bytes = max_streaming_body_bytes;
+    }
+    kore_config.body_disk_offload_bytes = vectis_app_min_streaming_memory_limit_bytes(impl);
     kore_config.logger = impl->logger;
     status = vectis_internal_kore_start(&kore_config, error);
     if (status != VECTIS_OK) {
@@ -2091,6 +2101,48 @@ static size_t vectis_app_route_count_impl(const vectis_app *app) {
   count = impl->route_count;
   (void)pthread_mutex_unlock(&impl->mutex);
   return count;
+}
+
+static size_t vectis_app_max_streaming_body_bytes(vectis_app_impl *impl) {
+  size_t max_bytes;
+  size_t i;
+
+  if (impl == NULL) {
+    return 0u;
+  }
+  max_bytes = 0u;
+  (void)pthread_mutex_lock(&impl->mutex);
+  for (i = 0u; i < impl->route_count; ++i) {
+    if (impl->routes[i].body.mode == VECTIS_BODY_STREAMING_UPLOAD &&
+        impl->routes[i].body.max_bytes > max_bytes) {
+      max_bytes = impl->routes[i].body.max_bytes;
+    }
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
+  return max_bytes;
+}
+
+static size_t vectis_app_min_streaming_memory_limit_bytes(vectis_app_impl *impl) {
+  size_t min_bytes;
+  size_t limit;
+  size_t i;
+
+  if (impl == NULL) {
+    return 0u;
+  }
+  min_bytes = 0u;
+  (void)pthread_mutex_lock(&impl->mutex);
+  for (i = 0u; i < impl->route_count; ++i) {
+    if (impl->routes[i].body.mode == VECTIS_BODY_STREAMING_UPLOAD &&
+        impl->routes[i].body.spool_to_disk) {
+      limit = impl->routes[i].body.memory_buffer_limit_bytes;
+      if (limit > 0u && (min_bytes == 0u || limit < min_bytes)) {
+        min_bytes = limit;
+      }
+    }
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
+  return min_bytes;
 }
 
 size_t vectis_route_count(const vectis_app *app) {
@@ -2653,6 +2705,7 @@ void vectis_internal_request_cleanup(vectis_request *request) {
   vectis_kv_free_all(request->path_params, request->path_param_count);
   vectis_kv_free_all(request->query, request->query_count);
   vectis_kv_free_all(request->headers, request->header_count);
+  free(request->body_path);
   memset(request, 0, sizeof(*request));
 }
 
@@ -2676,7 +2729,38 @@ vectis_status vectis_internal_request_set_body(vectis_request *request,
     vectis_set_error(error, VECTIS_ERR_INVALID, "request body is invalid");
     return VECTIS_ERR_INVALID;
   }
+  free(request->body_path);
+  request->body_path = NULL;
+  request->body_spooled = 0;
   request->body.data = body;
+  request->body.size = body_size;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_internal_request_set_body_path(vectis_request *request,
+                                                    const char *body_path,
+                                                    size_t body_size,
+                                                    vectis_error *error) {
+  char *path_copy;
+
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (body_path == NULL || body_path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body path is required");
+    return VECTIS_ERR_INVALID;
+  }
+  path_copy = vectis_strdup(body_path);
+  if (path_copy == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy request body path");
+    return VECTIS_ERR_NOMEM;
+  }
+  free(request->body_path);
+  request->body_path = path_copy;
+  request->body_spooled = 1;
+  request->body.data = NULL;
   request->body.size = body_size;
   vectis_error_clear(error);
   return VECTIS_OK;
@@ -2871,9 +2955,26 @@ vectis_status vectis_request_body_bytes(vectis_request *request,
     vectis_set_error(error, VECTIS_ERR_INVALID, "request body output is required");
     return VECTIS_ERR_INVALID;
   }
+  if (request->body_spooled) {
+    vectis_set_error(error,
+                     VECTIS_ERR_STATE,
+                     "request body is spooled to disk; use vectis_request_body_path");
+    return VECTIS_ERR_STATE;
+  }
   *out = request->body;
   vectis_error_clear(error);
   return VECTIS_OK;
+}
+
+const char *vectis_request_body_path(vectis_request *request) {
+  if (request == NULL || !request->body_spooled) {
+    return NULL;
+  }
+  return request->body_path;
+}
+
+int vectis_request_body_is_spooled(vectis_request *request) {
+  return request != NULL && request->body_spooled;
 }
 
 vectis_status vectis_response_status(vectis_response *response,

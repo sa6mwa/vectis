@@ -220,6 +220,8 @@ The current implementation provides:
   manual HTTPS startup from path, memory, or `lc_source` cert/key material.
 - Per-route request-body policy presets for no-body routes, JSON/buffered
   bodies, and streaming large uploads.
+- Large upload routes can receive Kore-spooled request bodies through
+  `vectis_request_body_path()` instead of forcing multi-GB uploads into memory.
 - Optional lockd configuration, so Kore-only examples and services do not need
   placeholder lockd sockets.
 - Route constructors for literal paths, named and optional path parameters, and
