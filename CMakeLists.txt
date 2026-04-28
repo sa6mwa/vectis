@@ -31,6 +31,12 @@ set(VECTIS_TARGET_OS "${CMAKE_SYSTEM_NAME}"
 set(VECTIS_TARGET_LIBC ""
     CACHE STRING "Release target libc when applicable.")
 
+set(VECTIS_EXPECTED_LOCKDC_VERSION "0.3.0")
+set(VECTIS_EXPECTED_LUA_VERSION "5.5.0")
+set(VECTIS_EXPECTED_LUA_SHA256 "57ccc32bbbd005cab75bcc52444052535af691789dba2b9016d5c50640d68b3d")
+set(VECTIS_EXPECTED_LIBPID0_VERSION "0.3.0")
+set(VECTIS_EXPECTED_LIBPID0_SHA256 "29591e058ab5ad9d0bbe0cd4c0d783ace2dee4e2ae6c590a0ba1d9f146f025f9")
+
 string(TOLOWER "${VECTIS_TARGET_ARCH}" VECTIS_TARGET_ARCH_LOWER)
 string(TOLOWER "${VECTIS_TARGET_OS}" VECTIS_TARGET_OS_LOWER)
 string(TOLOWER "${VECTIS_TARGET_LIBC}" VECTIS_TARGET_LIBC_LOWER)
@@ -46,7 +52,53 @@ else()
   set(VECTIS_TARGET_ID "${VECTIS_TARGET_ARCH_LOWER}-${VECTIS_TARGET_OS_LOWER}")
 endif()
 
+function(vectis_manifest_value out_var key)
+  file(STRINGS "${vectis_dependency_manifest}" manifest_line
+       REGEX "^${key}=" LIMIT_COUNT 1)
+  if(NOT manifest_line)
+    message(FATAL_ERROR
+      "dependency manifest ${vectis_dependency_manifest} is missing required key ${key}")
+  endif()
+  string(REGEX REPLACE "^[^=]*=" "" manifest_value "${manifest_line}")
+  set(${out_var} "${manifest_value}" PARENT_SCOPE)
+endfunction()
+
+function(vectis_require_manifest key expected)
+  vectis_manifest_value(actual "${key}")
+  if(NOT actual STREQUAL "${expected}")
+    message(FATAL_ERROR
+      "dependency manifest ${key} mismatch: expected ${expected}, got ${actual}")
+  endif()
+endfunction()
+
+function(vectis_require_dependency_file path)
+  if(NOT EXISTS "${path}")
+    message(FATAL_ERROR
+      "dependency root ${VECTIS_EXTERNAL_ROOT} is incomplete; missing ${path}")
+  endif()
+endfunction()
+
 set(vectis_lockdc_config_dir "${VECTIS_EXTERNAL_ROOT}/lib/cmake/lockdc")
+set(vectis_dependency_manifest "${VECTIS_EXTERNAL_ROOT}/manifest.txt")
+if(EXISTS "${vectis_dependency_manifest}")
+  vectis_require_manifest(liblockdc_version "${VECTIS_EXPECTED_LOCKDC_VERSION}")
+  vectis_require_manifest(lua_version "${VECTIS_EXPECTED_LUA_VERSION}")
+  vectis_require_manifest(lua_sha256 "${VECTIS_EXPECTED_LUA_SHA256}")
+  vectis_require_manifest(libpid0_version "${VECTIS_EXPECTED_LIBPID0_VERSION}")
+  vectis_require_manifest(libpid0_sha256 "${VECTIS_EXPECTED_LIBPID0_SHA256}")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/lc/lc.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/lonejson.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/pslog.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/curl/curl.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/openssl/ssl.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/libssh2.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/libpid0-${VECTIS_EXPECTED_LIBPID0_VERSION}.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/lua.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblua.a")
+else()
+  message(STATUS "vectis dependency manifest not found yet: ${vectis_dependency_manifest}")
+endif()
+
 if(APPLE)
   set(vectis_lockdc_shared_library "${VECTIS_EXTERNAL_ROOT}/lib/liblockdc.dylib")
 else()

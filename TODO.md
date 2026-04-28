@@ -19,9 +19,9 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Verify downloaded `liblockdc` SDK archives with pinned SHA-256 checksums.
 - [x] Provision pinned Lua 5.5.0 from lua.org into every target dependency root for the Vectis binary runtime.
 - [x] Build Lua as a static `liblua.a` plus headers for host, Linux cross, musl, and optional Darwin target roots.
-- [ ] Add dependency manifest validation in CMake for the pinned Lua version and checksum.
+- [x] Add dependency manifest validation in CMake for the pinned Lua version and checksum.
 - [x] Support host debug and Linux release matrix roots.
-- [ ] Add explicit dependency manifest validation in CMake, including expected dependency versions.
+- [x] Add explicit dependency manifest validation in CMake, including expected dependency versions.
 - [x] Add optional arm64 Apple Darwin dependency provisioning from the `liblockdc` 0.3.0 SDK archive.
 - [ ] Verify musl and cross targets against the full release matrix in CI.
 - [ ] Verify Darwin arm64 packages on real Apple Silicon hardware.
