@@ -17,8 +17,8 @@ surface directly, without local helper layers that would hide awkward API shape.
   supplied from in-memory PEM for packed-service deployments.
 - `kore/kore_lockd_api.c`: API handler shape that combines Vectis routing,
   pslog, raw lockd client access, and lonejson responses.
-- `kore/kore_file_upload.c`: large upload route using the Vectis streaming
-  upload body-policy preset.
+- `kore/kore_file_upload.c`: large upload route using the Vectis upload route
+  constructor and streaming body-policy preset.
 
 ## `lockd/`
 

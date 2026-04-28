@@ -52,6 +52,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [ ] Define request/response abstractions that do not leak Kore internals unless explicitly requested.
 - [x] Add common C source constructors for path, memory, and `lc_source` material inputs.
 - [x] Add route constructors that infer literal, named-parameter, optional-parameter, and regex path kinds.
+- [x] Add upload route constructors that attach the streaming upload body policy in one call.
 - [x] Add a handle-shaped C HTTP client API that can inherit app logging/defaults.
 - [x] Add high-level C SDK examples before implementation hardens, so the intended DX drives API shape rather than wrappers around internals.
 - [x] Group C examples by SDK domain under `examples/kore`, `examples/lockd`, `examples/curl`, `examples/ssh`, `examples/certs`, and `examples/raw`.
@@ -110,6 +111,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [ ] Integrate the `lockdc` Lua binding into the Vectis Lua runtime.
 - [ ] Provide C and Lua helpers for document store, retrieval, query, leases, enqueue, dequeue, ack/nack, and retry-oriented workflow patterns.
 - [ ] Expose raw `liblockdc`/`lockdc` access for complete API coverage while making Vectis helpers the preferred workflow API.
+- [x] Make lockd optional for Kore-only C services while preserving validation for configured lockd transports.
 - [ ] Define consumer registration and lifecycle APIs for C.
 - [ ] Expose lockd consumer service startup/configuration directly, then layer Vectis-owned worker DX on top.
 - [ ] Define Lua consumer-service runner mode as a separate process from Kore server mode.

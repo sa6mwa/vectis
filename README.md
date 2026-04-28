@@ -46,6 +46,12 @@ one configuration layer, one logger, one lockd configuration, one TLS/certificat
 configuration story, one HTTP server boundary, and coherent helper APIs for JSON,
 queue, downstream HTTP, SFTP, and SSH workflows.
 
+Lockd is configured when the service needs it, but it is not mandatory for
+Kore-only services. If no lockd endpoint or Unix socket is configured, Vectis
+starts as an HTTP/TLS service without an app-owned lockd client. If TCP lockd
+transport is configured, Vectis requires client bundle material from path,
+`lc_source`, or memory.
+
 The HTTP server boundary is defensive by default. `vectis_app_config_init()`
 sets explicit guardrails for maximum concurrent connections, request-header
 size, default request-body size, header-read deadline, body-read idle timeout,
@@ -59,6 +65,8 @@ routes default to a bounded body shape suitable for JSON. File upload routes can
 opt into streaming/spool-to-disk behavior with `vectis_body_upload()` or set an
 explicit cap with `vectis_body_upload_max(bytes)`, so accepting a multi-GB
 upload does not require raising the default limit for every route.
+For the common case, `vectis_upload_route()` creates a route with that streaming
+upload policy already attached.
 
 The dependency headers and libraries are shipped intentionally. C users should
 be able to include and use Kore, `liblockdc`, `lonejson`, `libpslog`, libcurl,
@@ -189,6 +197,8 @@ The current implementation provides:
   timeouts, and minimum request-body transfer rate.
 - Per-route request-body policy presets for no-body routes, JSON/buffered
   bodies, and streaming large uploads.
+- Optional lockd configuration, so Kore-only examples and services do not need
+  placeholder lockd sockets.
 - Route constructors for literal paths, named and optional path parameters, and
   explicit regex routes, with automatic path-kind inference for the common
   `vectis_route()` and `vectis_json_route()` cases.

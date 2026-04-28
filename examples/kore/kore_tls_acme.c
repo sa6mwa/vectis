@@ -26,7 +26,6 @@ int main(void) {
   manual.tls.port = 8443u;
   manual.tls.certificate_path = "/etc/vectis/server.crt";
   manual.tls.private_key_path = "/etc/vectis/server.key";
-  manual.lockd.unix_socket_path = "/run/lockd.sock";
 
   vectis_app_config_init(&acme);
   acme.app_name = "acme-api";
@@ -35,7 +34,6 @@ int main(void) {
   acme.tls.bind = "0.0.0.0";
   acme.tls.port = 443u;
   acme.tls.acme_email = "ops@example.com";
-  acme.lockd.unix_socket_path = "/run/lockd.sock";
 
   logger->infof(logger, "example.kore_tls.manual",
                 "app=%s cert=%s key=%s", manual.app_name,

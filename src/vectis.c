@@ -430,6 +430,29 @@ vectis_route_config vectis_route_regex(vectis_http_method method,
   return route;
 }
 
+vectis_route_config vectis_upload_route(vectis_http_method method,
+                                        const char *path,
+                                        vectis_route_handler_fn handler,
+                                        void *userdata) {
+  vectis_route_config route;
+
+  route = vectis_route(method, path, handler, userdata);
+  route.body = vectis_body_upload();
+  return route;
+}
+
+vectis_route_config vectis_upload_route_max(vectis_http_method method,
+                                            const char *path,
+                                            size_t max_bytes,
+                                            vectis_route_handler_fn handler,
+                                            void *userdata) {
+  vectis_route_config route;
+
+  route = vectis_route(method, path, handler, userdata);
+  route.body = vectis_body_upload_max(max_bytes);
+  return route;
+}
+
 vectis_json_route_config vectis_json_route(vectis_http_method method,
                                            const char *path,
                                            const lonejson_map *input_map,
@@ -945,14 +968,8 @@ static vectis_status vectis_validate_startable(const vectis_app_impl *impl,
   }
 
   has_lockd_transport = (impl->endpoint_count > 0u) || (impl->unix_socket_path != NULL);
-  if (!has_lockd_transport) {
-    vectis_set_error(error,
-                     VECTIS_ERR_INVALID,
-                     "lockd requires either endpoints or unix_socket_path");
-    return VECTIS_ERR_INVALID;
-  }
-
-  if (impl->client_bundle_path == NULL &&
+  if (has_lockd_transport &&
+      impl->client_bundle_path == NULL &&
       impl->client_bundle_source == NULL &&
       impl->client_bundle_pem == NULL &&
       impl->unix_socket_path == NULL) {

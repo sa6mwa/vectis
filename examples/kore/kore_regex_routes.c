@@ -40,7 +40,6 @@ int main(void) {
   config.app_name = "regex-kore-api";
   config.logger = logger;
   config.tls.cert_key_bundle = vectis_source_from_path("/etc/vectis/server.pem");
-  config.lockd.unix_socket_path = "/run/lockd.sock";
 
   app = vectis_new(&config, &error);
   if (app == NULL) {

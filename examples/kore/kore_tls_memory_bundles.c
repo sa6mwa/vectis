@@ -56,7 +56,6 @@ int main(void) {
   config.tls.client_ca_bundle = vectis_source_from_memory(client_ca_bundle,
                                                          sizeof(client_ca_bundle) - 1u);
   config.tls.require_client_certificate = 1;
-  config.lockd.unix_socket_path = "/run/lockd.sock";
 
   app = vectis_new(&config, &error);
   if (app == NULL) {

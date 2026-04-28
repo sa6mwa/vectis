@@ -44,7 +44,6 @@ int main(void) {
   config.app_name = "upload-api";
   config.logger = logger;
   config.tls.cert_key_bundle = vectis_source_from_path("/etc/vectis/server.pem");
-  config.lockd.unix_socket_path = "/run/lockd.sock";
 
   app = vectis_new(&config, &error);
   if (app == NULL) {
@@ -52,8 +51,7 @@ int main(void) {
     return 1;
   }
 
-  route = vectis_route(VECTIS_HTTP_POST, "/files/:name", upload_file, NULL);
-  route.body = vectis_body_upload();
+  route = vectis_upload_route(VECTIS_HTTP_POST, "/files/:name", upload_file, NULL);
   if (vectis_register_route(app, &route, &error) != VECTIS_OK) {
     vectis_destroy(app);
     logger->destroy(logger);

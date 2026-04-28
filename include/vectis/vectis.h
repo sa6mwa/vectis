@@ -374,6 +374,15 @@ vectis_route_config vectis_route_regex(vectis_http_method method,
                                        const char *pattern,
                                        vectis_route_handler_fn handler,
                                        void *userdata);
+vectis_route_config vectis_upload_route(vectis_http_method method,
+                                        const char *path,
+                                        vectis_route_handler_fn handler,
+                                        void *userdata);
+vectis_route_config vectis_upload_route_max(vectis_http_method method,
+                                            const char *path,
+                                            size_t max_bytes,
+                                            vectis_route_handler_fn handler,
+                                            void *userdata);
 vectis_json_route_config vectis_json_route(vectis_http_method method,
                                            const char *path,
                                            const lonejson_map *input_map,
