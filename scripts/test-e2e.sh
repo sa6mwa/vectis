@@ -111,6 +111,36 @@ run_service_examples() {
     "$repo_root/build/debug/examples/vectis_example_sftp"
 }
 
+run_lua_examples() {
+  script="$work_dir/vectis-e2e.lua"
+  pack_script="$work_dir/vectis-e2e-pack.lua"
+  shebang_script="$work_dir/vectis-e2e-shebang.lua"
+  packed="$work_dir/vectis-e2e-packed"
+
+  printf '[e2e] lua runner\n'
+  printf '%s\n' \
+    'local vectis = require("vectis")' \
+    'assert(vectis.status_string(vectis.OK) == "ok")' \
+    'assert(arg[1] == "first")' \
+    'assert(arg[2] == "second")' >"$script"
+  "$repo_root/build/debug/vectis" "$script" first second
+
+  printf '[e2e] lua shebang\n'
+  printf '#!%s\n%s\n%s\n' \
+    "$repo_root/build/debug/vectis" \
+    'local vectis = require("vectis")' \
+    'assert(vectis.status_string(vectis.OK) == "ok")' >"$shebang_script"
+  chmod 755 "$shebang_script"
+  "$shebang_script"
+
+  printf '[e2e] lua pack\n'
+  printf '%s\n' \
+    'local vectis = require("vectis")' \
+    'assert(vectis.status_string(vectis.OK) == "ok")' >"$pack_script"
+  "$repo_root/build/debug/vectis" pack --script "$pack_script" --output "$packed"
+  "$packed"
+}
+
 run_kore_examples() {
   body=
 
@@ -149,6 +179,7 @@ run_kore_examples() {
 make -C "$repo_root" build-debug
 
 cd "$work_dir"
+run_lua_examples
 run_lockd_examples "$disk_endpoint" disk
 run_lockd_examples "$s3_endpoint" s3
 run_service_examples

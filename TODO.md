@@ -225,7 +225,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Add the first compose-backed lockd e2e smoke against disk and S3-backed lockd services.
 - [x] Add integration/e2e tests against local lockd and Kore.
 - [x] Add integration/e2e tests against the local SSH/SFTP and MQTT compose services.
-- [ ] Add integration/e2e tests for Lua runner behavior.
+- [x] Add integration/e2e tests for Lua runner behavior.
 - [ ] Add package/archive generation for the C SDK and Vectis binary.
 - [x] Add package/archive generation for the current C SDK.
 - [x] Add optional arm64 Apple Darwin release archive and smoke-test zip generation when osxcross is available.
