@@ -8,8 +8,8 @@ services:
       MINIO_ROOT_USER: lockddev
       MINIO_ROOT_PASSWORD: lockddevpass
     ports:
-      - "${LOCKDC_MINIO_API_PORT:-19000}:9000"
-      - "${LOCKDC_MINIO_CONSOLE_PORT:-19001}:9001"
+      - "${VECTIS_MINIO_API_PORT:-29000}:9000"
+      - "${VECTIS_MINIO_CONSOLE_PORT:-29001}:9001"
     volumes:
       - ./devenv/volumes/minio-data:/data
 
@@ -29,16 +29,111 @@ services:
         mc anonymous set none local/lockd-client-s3
     restart: "no"
 
-  lockd-mem:
-    image: docker.io/pktsystems/lockd:v0.8.1
+  lockd-disk-ca:
+    image: docker.io/pktsystems/lockd:v0.9.0
+    command: ["auth", "new", "ca", "--cn", "vectis-lockd-root", "--out", "/config/ca.pem", "--force"]
+    restart: on-failure
+    volumes:
+      - ./devenv/volumes/lockd-disk-config:/config
+
+  lockd-disk-server-cert:
+    image: docker.io/pktsystems/lockd:v0.9.0
+    depends_on:
+      - lockd-disk-ca
+    command: ["auth", "new", "server", "--ca-in", "/config/ca.pem", "--cn", "vectis-lockd-disk", "--hosts", "lockd-disk,localhost,127.0.0.1", "--out", "/config/server.pem", "--force"]
+    restart: on-failure
+    volumes:
+      - ./devenv/volumes/lockd-disk-config:/config
+
+  lockd-disk-client-cert:
+    image: docker.io/pktsystems/lockd:v0.9.0
+    depends_on:
+      - lockd-disk-ca
+    command: ["auth", "new", "client", "--ca-in", "/config/ca.pem", "--cn", "vectis-lockd-client", "-n", "default=rw", "--out", "/config/client.pem", "--force"]
+    restart: on-failure
+    volumes:
+      - ./devenv/volumes/lockd-disk-config:/config
+
+  lockd-disk:
+    image: docker.io/pktsystems/lockd:v0.9.0
+    depends_on:
+      - lockd-disk-server-cert
+      - lockd-disk-client-cert
     restart: unless-stopped
-    command: ["--disable-mtls", "--connguard-enabled=false", "--store", "mem://", "--listen", "/run/lockd/lockd.sock", "--listen-proto", "unix"]
+    command: ["--connguard-enabled=false", "--store", "disk:///storage", "--listen", ":9341", "--listen-proto", "tcp"]
     environment:
       LOCKD_CONFIG_DIR: /config
       LOCKD_OTLP_ENDPOINT: ""
     ports:
-      - "${LOCKDC_MEM_PORT:-19440}:9341"
+      - "${VECTIS_LOCKD_DISK_PORT:-29441}:9341"
     volumes:
-      - ./devenv/volumes/lockd-mem-config:/config
-      - ./devenv/volumes/lockd-mem-run:/run/lockd
+      - ./devenv/volumes/lockd-disk-config:/config
+      - ./devenv/volumes/lockd-disk-storage:/storage
 
+  lockd-s3-ca:
+    image: docker.io/pktsystems/lockd:v0.9.0
+    command: ["auth", "new", "ca", "--cn", "vectis-lockd-root", "--out", "/config/ca.pem", "--force"]
+    restart: on-failure
+    volumes:
+      - ./devenv/volumes/lockd-s3-config:/config
+
+  lockd-s3-server-cert:
+    image: docker.io/pktsystems/lockd:v0.9.0
+    depends_on:
+      - lockd-s3-ca
+    command: ["auth", "new", "server", "--ca-in", "/config/ca.pem", "--cn", "vectis-lockd-s3", "--hosts", "lockd-s3,localhost,127.0.0.1", "--out", "/config/server.pem", "--force"]
+    restart: on-failure
+    volumes:
+      - ./devenv/volumes/lockd-s3-config:/config
+
+  lockd-s3-client-cert:
+    image: docker.io/pktsystems/lockd:v0.9.0
+    depends_on:
+      - lockd-s3-ca
+    command: ["auth", "new", "client", "--ca-in", "/config/ca.pem", "--cn", "vectis-lockd-client", "-n", "default=rw", "--out", "/config/client.pem", "--force"]
+    restart: on-failure
+    volumes:
+      - ./devenv/volumes/lockd-s3-config:/config
+
+  lockd-s3:
+    image: docker.io/pktsystems/lockd:v0.9.0
+    depends_on:
+      - minio
+      - minio-init
+      - lockd-s3-server-cert
+      - lockd-s3-client-cert
+    restart: unless-stopped
+    command: ["--connguard-enabled=false", "--store", "s3://minio:9000/lockd-client-s3/vectis?insecure=1&path-style=1", "--listen", ":9341", "--listen-proto", "tcp"]
+    environment:
+      LOCKD_CONFIG_DIR: /config
+      LOCKD_OTLP_ENDPOINT: ""
+      LOCKD_S3_ACCESS_KEY_ID: lockddev
+      LOCKD_S3_SECRET_ACCESS_KEY: lockddevpass
+    ports:
+      - "${VECTIS_LOCKD_S3_PORT:-29443}:9341"
+    volumes:
+      - ./devenv/volumes/lockd-s3-config:/config
+
+  ssh-sftp:
+    image: lscr.io/linuxserver/openssh-server:latest
+    restart: unless-stopped
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: UTC
+      USER_NAME: vectis
+      USER_PASSWORD: vectispass
+      PASSWORD_ACCESS: "true"
+      SUDO_ACCESS: "false"
+      LOG_STDOUT: "true"
+    ports:
+      - "${VECTIS_SSH_PORT:-29222}:2222"
+    volumes:
+      - ./devenv/volumes/ssh-sftp-config:/config
+      - ./devenv/volumes/ssh-sftp-data:/data
+
+  mqtt:
+    image: emqx/nanomq:0.24.13
+    restart: unless-stopped
+    ports:
+      - "${VECTIS_MQTT_PORT:-21883}:1883"

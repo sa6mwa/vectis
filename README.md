@@ -199,6 +199,39 @@ The bindings still missing from Vectis are:
 - libssh2 Lua bindings for remote command execution and lower-level SSH/SFTP
   operations where curl is not enough.
 
+## Local Integration Environment
+
+`docker-compose.yaml` defines the Vectis-owned local integration environment.
+Its default host ports deliberately avoid the sibling `lockd` and `liblockdc`
+development environments:
+
+- MinIO S3 API: `29000`
+- MinIO console: `29001`
+- lockd disk transport with generated mTLS material: `29441`
+- lockd S3 transport, backed by local MinIO, with generated mTLS material:
+  `29443`
+- SSH/SFTP test server: `29222`
+- MQTT broker: `21883`
+
+Each port can be overridden with the matching `VECTIS_*_PORT` environment
+variable in the compose file. All lockd services in this environment must run
+with mTLS enabled; generated CA, server, and client bundles live under the
+ignored `devenv/volumes/` tree. Vectis intentionally uses disk and S3-backed
+lockd instances here rather than `mem://`, because integration tests should
+exercise durable backends and the S3 path through MinIO. The SSH/SFTP service
+uses the small `lscr.io/linuxserver/openssh-server` image with password auth
+enabled only for local tests. MQTT uses `emqx/nanomq:0.24.13`; NanoMQ is a slim
+MQTT broker suitable for local protocol testing without introducing a larger
+broker stack.
+
+Darwin arm64 on-device testing is expected to run on EC2 Mac Dedicated Hosts
+when no physical Mac is available. Current AWS discovery from this repository's
+development account shows `mac2.metal` availability in `eu-west-1` only, not
+`eu-north-1`. EC2 Mac is billed at the Dedicated Host layer and has a 24-hour
+minimum allocation, so the test harness must allocate hosts intentionally,
+terminate the instance, and release the host after the 24-hour minimum has
+elapsed.
+
 ## Current State
 
 The current implementation provides:

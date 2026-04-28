@@ -219,11 +219,15 @@ moving toward, not just the next patch. Keep items observable and testable.
 
 - [x] Add unit coverage for current runtime/config behavior.
 - [x] Add a first fuzz target around `lonejson` validation via Vectis.
+- [x] Add a non-conflicting local integration compose environment for mTLS lockd disk, mTLS lockd S3 over MinIO, SSH/SFTP, and MQTT.
 - [ ] Add integration/e2e tests against local lockd and Kore.
+- [ ] Add integration/e2e tests against the local SSH/SFTP and MQTT compose services.
 - [ ] Add integration/e2e tests for Lua runner behavior.
 - [ ] Add package/archive generation for the C SDK and Vectis binary.
 - [x] Add package/archive generation for the current C SDK.
 - [x] Add optional arm64 Apple Darwin release archive and smoke-test zip generation when osxcross is available.
+- [ ] Add an opt-in Darwin arm64 AWS test harness that allocates an EC2 Mac Dedicated Host, launches `mac2.metal`, runs the smoke zip, terminates the instance, and releases the host after the 24-hour minimum.
+- [ ] Add cost and permission guardrails to the Darwin AWS harness so it prints the expected minimum host charge before allocation and refuses to run without explicit confirmation.
 - [ ] Add release verification for GNU and musl deliverables.
 - [ ] Add on-device Darwin smoke verification once a Mac is available.
 - [ ] Add generated or checked API docs for C and Lua.
