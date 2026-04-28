@@ -5102,6 +5102,329 @@ static vectis_status vectis_cert_load_ca(const vectis_cert_bundle_config *config
   return VECTIS_OK;
 }
 
+static vectis_status vectis_read_source_bytes(const vectis_source *source,
+                                              void **out,
+                                              size_t *out_size,
+                                              const char *label,
+                                              vectis_error *error) {
+  FILE *fp;
+  long length;
+  void *buffer;
+  size_t nread;
+  unsigned char chunk[4096];
+  unsigned char *grown;
+  size_t size;
+  size_t capacity;
+  lc_error lcerr;
+
+  if (source == NULL || out == NULL || out_size == NULL) {
+    vectis_set_errorf(error, VECTIS_ERR_INVALID, "%s source is required", label);
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  *out_size = 0u;
+  if (source->memory != NULL && source->memory_size > 0u) {
+    buffer = malloc(source->memory_size);
+    if (buffer == NULL) {
+      vectis_set_errorf(error, VECTIS_ERR_NOMEM, "failed to copy %s source", label);
+      return VECTIS_ERR_NOMEM;
+    }
+    memcpy(buffer, source->memory, source->memory_size);
+    *out = buffer;
+    *out_size = source->memory_size;
+    return VECTIS_OK;
+  }
+  if (source->path != NULL) {
+    fp = fopen(source->path, "rb");
+    if (fp == NULL) {
+      vectis_set_errorf(error, VECTIS_ERR_INVALID, "failed to open %s: %s", label, source->path);
+      return VECTIS_ERR_INVALID;
+    }
+    if (fseek(fp, 0L, SEEK_END) != 0) {
+      (void)fclose(fp);
+      vectis_set_errorf(error, VECTIS_ERR_STATE, "failed to seek %s: %s", label, source->path);
+      return VECTIS_ERR_STATE;
+    }
+    length = ftell(fp);
+    if (length <= 0L || fseek(fp, 0L, SEEK_SET) != 0) {
+      (void)fclose(fp);
+      vectis_set_errorf(error, VECTIS_ERR_INVALID, "%s is empty or unreadable: %s", label, source->path);
+      return VECTIS_ERR_INVALID;
+    }
+    buffer = malloc((size_t)length);
+    if (buffer == NULL) {
+      (void)fclose(fp);
+      vectis_set_errorf(error, VECTIS_ERR_NOMEM, "failed to allocate %s buffer", label);
+      return VECTIS_ERR_NOMEM;
+    }
+    nread = fread(buffer, 1u, (size_t)length, fp);
+    if (fclose(fp) != 0 || nread != (size_t)length) {
+      free(buffer);
+      vectis_set_errorf(error, VECTIS_ERR_STATE, "failed to read %s: %s", label, source->path);
+      return VECTIS_ERR_STATE;
+    }
+    *out = buffer;
+    *out_size = (size_t)length;
+    return VECTIS_OK;
+  }
+  if (source->source != NULL) {
+    buffer = NULL;
+    size = 0u;
+    capacity = 0u;
+    lc_error_init(&lcerr);
+    if (source->source->reset != NULL && source->source->reset(source->source, &lcerr) != LC_OK) {
+      vectis_set_errorf(error,
+                        VECTIS_ERR_STATE,
+                        "failed to reset %s source: %s",
+                        label,
+                        lcerr.message != NULL ? lcerr.message : "unknown lockdc error");
+      lc_error_cleanup(&lcerr);
+      return VECTIS_ERR_STATE;
+    }
+    for (;;) {
+      nread = source->source->read(source->source, chunk, sizeof(chunk), &lcerr);
+      if (nread == 0u) {
+        break;
+      }
+      if (size + nread < size) {
+        free(buffer);
+        lc_error_cleanup(&lcerr);
+        vectis_set_errorf(error, VECTIS_ERR_NOMEM, "%s source is too large", label);
+        return VECTIS_ERR_NOMEM;
+      }
+      if (size + nread > capacity) {
+        capacity = capacity == 0u ? 8192u : capacity * 2u;
+        while (capacity < size + nread) {
+          capacity *= 2u;
+        }
+        grown = (unsigned char *)realloc(buffer, capacity);
+        if (grown == NULL) {
+          free(buffer);
+          lc_error_cleanup(&lcerr);
+          vectis_set_errorf(error, VECTIS_ERR_NOMEM, "failed to grow %s source buffer", label);
+          return VECTIS_ERR_NOMEM;
+        }
+        buffer = grown;
+      }
+      memcpy((unsigned char *)buffer + size, chunk, nread);
+      size += nread;
+    }
+    lc_error_cleanup(&lcerr);
+    if (size == 0u) {
+      free(buffer);
+      vectis_set_errorf(error, VECTIS_ERR_INVALID, "%s source is empty", label);
+      return VECTIS_ERR_INVALID;
+    }
+    *out = buffer;
+    *out_size = size;
+    return VECTIS_OK;
+  }
+  vectis_set_errorf(error, VECTIS_ERR_INVALID, "%s source is empty", label);
+  return VECTIS_ERR_INVALID;
+}
+
+static X509 *vectis_cert_read_x509(const void *pem, size_t pem_size) {
+  BIO *bio;
+  X509 *cert;
+
+  bio = BIO_new_mem_buf(pem, (int)pem_size);
+  if (bio == NULL) {
+    return NULL;
+  }
+  cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+  BIO_free(bio);
+  return cert;
+}
+
+static EVP_PKEY *vectis_cert_read_key(const void *pem, size_t pem_size) {
+  BIO *bio;
+  EVP_PKEY *key;
+
+  bio = BIO_new_mem_buf(pem, (int)pem_size);
+  if (bio == NULL) {
+    return NULL;
+  }
+  key = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+  BIO_free(bio);
+  return key;
+}
+
+static vectis_status vectis_cert_validate_time(X509 *cert, vectis_error *error) {
+  if (X509_cmp_current_time(X509_get0_notBefore(cert)) > 0) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "certificate is not valid yet");
+    return VECTIS_ERR_INVALID;
+  }
+  if (X509_cmp_current_time(X509_get0_notAfter(cert)) < 0) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "certificate is expired");
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_cert_verify_ca(X509 *cert,
+                                           X509 *ca_cert,
+                                           vectis_error *error) {
+  X509_STORE *store;
+  X509_STORE_CTX *ctx;
+  int ok;
+
+  store = X509_STORE_new();
+  if (store == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate certificate store");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (X509_STORE_add_cert(store, ca_cert) != 1) {
+    X509_STORE_free(store);
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to add CA certificate to store");
+    return VECTIS_ERR_STATE;
+  }
+  ctx = X509_STORE_CTX_new();
+  if (ctx == NULL) {
+    X509_STORE_free(store);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate certificate verify context");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (X509_STORE_CTX_init(ctx, store, cert, NULL) != 1) {
+    X509_STORE_CTX_free(ctx);
+    X509_STORE_free(store);
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to initialize certificate verification");
+    return VECTIS_ERR_STATE;
+  }
+  ok = X509_verify_cert(ctx);
+  X509_STORE_CTX_free(ctx);
+  X509_STORE_free(store);
+  if (ok != 1) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "certificate failed CA verification");
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
+}
+
+vectis_status vectis_cert_validate_bundle(const vectis_source *bundle,
+                                          vectis_error *error) {
+  void *pem;
+  size_t pem_size;
+  X509 *cert;
+  EVP_PKEY *key;
+  vectis_status status;
+
+  pem = NULL;
+  pem_size = 0u;
+  cert = NULL;
+  key = NULL;
+  status = vectis_read_source_bytes(bundle, &pem, &pem_size, "certificate bundle", error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  cert = vectis_cert_read_x509(pem, pem_size);
+  if (cert == NULL) {
+    free(pem);
+    vectis_set_error(error, VECTIS_ERR_INVALID, "failed to parse certificate from bundle");
+    return VECTIS_ERR_INVALID;
+  }
+  key = vectis_cert_read_key(pem, pem_size);
+  if (key == NULL) {
+    X509_free(cert);
+    free(pem);
+    vectis_set_error(error, VECTIS_ERR_INVALID, "failed to parse private key from bundle");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_cert_validate_time(cert, error);
+  if (status == VECTIS_OK && X509_check_private_key(cert, key) != 1) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "certificate and private key do not match");
+    status = VECTIS_ERR_INVALID;
+  }
+  EVP_PKEY_free(key);
+  X509_free(cert);
+  free(pem);
+  if (status == VECTIS_OK) {
+    vectis_error_clear(error);
+  }
+  return status;
+}
+
+vectis_status vectis_cert_validate_pair(const vectis_source *certificate,
+                                        const vectis_source *private_key,
+                                        const vectis_source *ca_bundle,
+                                        vectis_error *error) {
+  void *cert_pem;
+  void *key_pem;
+  void *ca_pem;
+  size_t cert_pem_size;
+  size_t key_pem_size;
+  size_t ca_pem_size;
+  X509 *cert;
+  X509 *ca_cert;
+  EVP_PKEY *key;
+  vectis_status status;
+
+  cert_pem = NULL;
+  key_pem = NULL;
+  ca_pem = NULL;
+  cert_pem_size = 0u;
+  key_pem_size = 0u;
+  ca_pem_size = 0u;
+  cert = NULL;
+  ca_cert = NULL;
+  key = NULL;
+
+  status = vectis_read_source_bytes(certificate, &cert_pem, &cert_pem_size, "certificate", error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_read_source_bytes(private_key, &key_pem, &key_pem_size, "private key", error);
+  if (status != VECTIS_OK) {
+    free(cert_pem);
+    return status;
+  }
+  cert = vectis_cert_read_x509(cert_pem, cert_pem_size);
+  key = vectis_cert_read_key(key_pem, key_pem_size);
+  if (cert == NULL || key == NULL) {
+    status = VECTIS_ERR_INVALID;
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     cert == NULL ? "failed to parse certificate" : "failed to parse private key");
+    goto done;
+  }
+  status = vectis_cert_validate_time(cert, error);
+  if (status != VECTIS_OK) {
+    goto done;
+  }
+  if (X509_check_private_key(cert, key) != 1) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "certificate and private key do not match");
+    status = VECTIS_ERR_INVALID;
+    goto done;
+  }
+  if (ca_bundle != NULL &&
+      (ca_bundle->path != NULL || ca_bundle->memory != NULL || ca_bundle->source != NULL)) {
+    status = vectis_read_source_bytes(ca_bundle, &ca_pem, &ca_pem_size, "CA bundle", error);
+    if (status != VECTIS_OK) {
+      goto done;
+    }
+    ca_cert = vectis_cert_read_x509(ca_pem, ca_pem_size);
+    if (ca_cert == NULL) {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "failed to parse CA certificate");
+      status = VECTIS_ERR_INVALID;
+      goto done;
+    }
+    status = vectis_cert_verify_ca(cert, ca_cert, error);
+    if (status != VECTIS_OK) {
+      goto done;
+    }
+  }
+  vectis_error_clear(error);
+  status = VECTIS_OK;
+
+done:
+  X509_free(ca_cert);
+  EVP_PKEY_free(key);
+  X509_free(cert);
+  free(ca_pem);
+  free(key_pem);
+  free(cert_pem);
+  return status;
+}
+
 vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *config,
                                           vectis_error *error) {
   EVP_PKEY_CTX *key_ctx;
@@ -5145,6 +5468,7 @@ vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *confi
   cert = NULL;
   san = NULL;
   status = VECTIS_OK;
+  vectis_error_clear(error);
 
   status = vectis_cert_load_ca(config, &ca_cert, &ca_key, error);
   if (status != VECTIS_OK) {
@@ -5189,17 +5513,26 @@ vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *confi
     vectis_set_error(error, VECTIS_ERR_STATE, "failed to set certificate issuer");
     goto done;
   }
-  status = vectis_cert_add_extension(cert, NID_basic_constraints, "critical,CA:FALSE", error);
+  status = vectis_cert_add_extension(cert,
+                                     NID_basic_constraints,
+                                     config->is_ca ? "critical,CA:TRUE" : "critical,CA:FALSE",
+                                     error);
   if (status != VECTIS_OK) {
     goto done;
   }
-  status = vectis_cert_add_extension(cert, NID_key_usage, "digitalSignature,keyEncipherment", error);
+  status = vectis_cert_add_extension(cert,
+                                     NID_key_usage,
+                                     config->is_ca ? "keyCertSign,cRLSign" :
+                                         "digitalSignature,keyEncipherment",
+                                     error);
   if (status != VECTIS_OK) {
     goto done;
   }
-  status = vectis_cert_add_extension(cert, NID_ext_key_usage, "serverAuth,clientAuth", error);
-  if (status != VECTIS_OK) {
-    goto done;
+  if (!config->is_ca) {
+    status = vectis_cert_add_extension(cert, NID_ext_key_usage, "serverAuth,clientAuth", error);
+    if (status != VECTIS_OK) {
+      goto done;
+    }
   }
   san = vectis_cert_san_string(config->dns_names, config->ip_addresses, error);
   if (san != NULL) {

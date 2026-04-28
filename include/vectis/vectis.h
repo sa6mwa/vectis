@@ -347,6 +347,7 @@ typedef struct vectis_cert_bundle_config {
   const char *ip_addresses;
   const char *ca_cert_path;
   const char *ca_key_path;
+  int is_ca;
   const char *output_bundle_path;
   const char *output_cert_path;
   const char *output_key_path;
@@ -663,6 +664,12 @@ void vectis_cert_subject_init(vectis_cert_subject *subject);
 void vectis_cert_bundle_config_init(vectis_cert_bundle_config *config);
 vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *config,
                                           vectis_error *error);
+vectis_status vectis_cert_validate_bundle(const vectis_source *bundle,
+                                          vectis_error *error);
+vectis_status vectis_cert_validate_pair(const vectis_source *certificate,
+                                        const vectis_source *private_key,
+                                        const vectis_source *ca_bundle,
+                                        vectis_error *error);
 
 #ifdef __cplusplus
 }

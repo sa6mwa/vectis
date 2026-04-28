@@ -1,27 +1,59 @@
 #include <vectis/vectis.h>
+#include <stdio.h>
 
 int main(void) {
+  vectis_cert_bundle_config ca;
   vectis_cert_bundle_config server;
   vectis_cert_bundle_config client;
+  vectis_source bundle;
   vectis_error error;
+
+  vectis_cert_bundle_config_init(&ca);
+  ca.subject.common_name = "Example Service CA";
+  ca.subject.organization = "Example";
+  ca.is_ca = 1;
+  ca.output_bundle_path = "/tmp/vectis-example-ca.pem";
+  ca.valid_days = 365L;
+  if (vectis_cert_generate_bundle(&ca, &error) != VECTIS_OK) {
+    fprintf(stderr, "CA generation failed: %s\n", error.message);
+    return 1;
+  }
 
   vectis_cert_bundle_config_init(&server);
   server.subject.common_name = "orders-api.internal";
   server.subject.organization = "Example";
   server.dns_names = "orders-api.internal,orders-api";
-  server.output_bundle_path = "certs/server.pem";
+  server.ca_cert_path = ca.output_bundle_path;
+  server.ca_key_path = ca.output_bundle_path;
+  server.output_bundle_path = "/tmp/vectis-example-server.pem";
   server.key_bits = 4096u;
   server.valid_days = 90L;
-  (void)vectis_cert_generate_bundle(&server, &error);
+  if (vectis_cert_generate_bundle(&server, &error) != VECTIS_OK) {
+    fprintf(stderr, "server certificate generation failed: %s\n", error.message);
+    return 1;
+  }
+  bundle = vectis_source_from_path(server.output_bundle_path);
+  if (vectis_cert_validate_bundle(&bundle, &error) != VECTIS_OK) {
+    fprintf(stderr, "server bundle validation failed: %s\n", error.message);
+    return 1;
+  }
 
   vectis_cert_bundle_config_init(&client);
   client.subject.common_name = "orders-api.lockd-client";
   client.subject.organization = "Example";
-  client.ca_cert_path = "certs/lockd-ca.crt";
-  client.ca_key_path = "certs/lockd-ca.key";
-  client.output_bundle_path = "certs/lockd-client.pem";
+  client.ca_cert_path = ca.output_bundle_path;
+  client.ca_key_path = ca.output_bundle_path;
+  client.output_bundle_path = "/tmp/vectis-example-lockd-client.pem";
   client.valid_days = 90L;
-  (void)vectis_cert_generate_bundle(&client, &error);
+  if (vectis_cert_generate_bundle(&client, &error) != VECTIS_OK) {
+    fprintf(stderr, "client certificate generation failed: %s\n", error.message);
+    return 1;
+  }
+  bundle = vectis_source_from_path(client.output_bundle_path);
+  if (vectis_cert_validate_bundle(&bundle, &error) != VECTIS_OK) {
+    fprintf(stderr, "client bundle validation failed: %s\n", error.message);
+    return 1;
+  }
 
   return 0;
 }

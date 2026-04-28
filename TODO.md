@@ -102,7 +102,8 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [ ] Translate Vectis ACME TLS config into Kore runtime behavior.
 - [ ] Support lockd client certificate bundle configuration from both C and Lua.
 - [ ] Support server certificate bundle configuration from both C and Lua.
-- [ ] Add Vectis-owned OpenSSL-backed helpers for generating private keys, CSRs, self-signed certificates, CA material, and client/server PEM bundles.
+- [x] Add Vectis-owned OpenSSL-backed helpers for generating self-signed certificates, CA material, and CA-signed client/server PEM bundles.
+- [ ] Add Vectis-owned OpenSSL-backed helpers for generating standalone private keys and CSRs.
 - [ ] Expose lower-level OpenSSL access for advanced users while keeping certificate workflows as the primary C and Lua DX.
 - [ ] Support embedding a lockd client certificate bundle into a packaged Vectis binary.
 - [ ] Support ACME configuration and certificate lifecycle.
@@ -170,8 +171,9 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [ ] Support client and server certificate management in the shared Vectis config model.
 - [x] Draft the C helper API for OpenSSL-backed certificate bundle generation.
 - [x] Implement OpenSSL-backed self-signed certificate/key PEM bundle generation for the C SDK.
+- [x] Implement OpenSSL-backed CA certificate/key PEM bundle generation for the C SDK.
 - [x] Implement OpenSSL-backed CA-signed certificate/key PEM bundle generation from existing CA cert/key material.
-- [ ] Add tests for valid, expired, malformed, and missing certificate material.
+- [x] Add tests for valid, expired, malformed, and missing certificate material.
 
 ## Area 12: Lua Runtime and Framework
 

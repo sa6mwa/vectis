@@ -116,14 +116,75 @@ static void assert_bundle_is_signed_by(const char *bundle_path,
   X509_free(cert);
 }
 
+static void write_text_file(const char *path, const char *text) {
+  FILE *fp;
+
+  fp = fopen(path, "wb");
+  assert(fp != NULL);
+  assert(fwrite(text, 1u, strlen(text), fp) == strlen(text));
+  assert(fclose(fp) == 0);
+}
+
+static void write_expired_bundle(const char *path) {
+  EVP_PKEY_CTX *key_ctx;
+  EVP_PKEY *key;
+  X509 *cert;
+  X509_NAME *name;
+  FILE *fp;
+
+  key_ctx = EVP_PKEY_CTX_new_from_name(NULL, "RSA", NULL);
+  assert(key_ctx != NULL);
+  key = NULL;
+  assert(EVP_PKEY_keygen_init(key_ctx) > 0);
+  assert(EVP_PKEY_CTX_set_rsa_keygen_bits(key_ctx, 1024) > 0);
+  assert(EVP_PKEY_keygen(key_ctx, &key) > 0);
+
+  cert = X509_new();
+  assert(cert != NULL);
+  assert(X509_set_version(cert, 2L) == 1);
+  assert(ASN1_INTEGER_set(X509_get_serialNumber(cert), 42L) == 1);
+  assert(X509_gmtime_adj(X509_get_notBefore(cert), -2L * 24L * 60L * 60L) != NULL);
+  assert(X509_gmtime_adj(X509_get_notAfter(cert), -1L * 24L * 60L * 60L) != NULL);
+  assert(X509_set_pubkey(cert, key) == 1);
+  name = X509_get_subject_name(cert);
+  assert(name != NULL);
+  assert(X509_NAME_add_entry_by_txt(name,
+                                    "CN",
+                                    MBSTRING_ASC,
+                                    (const unsigned char *)"expired.local",
+                                    -1,
+                                    -1,
+                                    0) == 1);
+  assert(X509_set_issuer_name(cert, name) == 1);
+  assert(X509_sign(cert, key, EVP_sha256()) > 0);
+
+  fp = fopen(path, "wb");
+  assert(fp != NULL);
+  assert(PEM_write_X509(fp, cert) == 1);
+  assert(PEM_write_PrivateKey(fp, key, NULL, NULL, 0, NULL, NULL) == 1);
+  assert(fclose(fp) == 0);
+
+  X509_free(cert);
+  EVP_PKEY_free(key);
+  EVP_PKEY_CTX_free(key_ctx);
+}
+
 int main(void) {
   vectis_cert_bundle_config config;
   vectis_cert_bundle_config ca_config;
   vectis_error error;
   vectis_status status;
+  vectis_source source;
+  vectis_source cert_source;
+  vectis_source key_source;
+  vectis_source ca_source;
   char bundle_path[128];
   char ca_bundle_path[128];
   char signed_bundle_path[128];
+  char signed_cert_path[128];
+  char signed_key_path[128];
+  char malformed_path[128];
+  char expired_path[128];
 
   vectis_error_clear(&error);
   status = vectis_cert_generate_bundle(NULL, &error);
@@ -170,27 +231,66 @@ int main(void) {
   assert(status == VECTIS_OK);
   assert(error.code == VECTIS_OK);
   assert_generated_bundle_is_parseable(bundle_path);
+  source = vectis_source_from_path(bundle_path);
+  status = vectis_cert_validate_bundle(&source, &error);
+  assert(status == VECTIS_OK);
   remove(bundle_path);
+
+  make_temp_path(malformed_path, sizeof(malformed_path), "malformed-cert");
+  write_text_file(malformed_path, "not pem\n");
+  source = vectis_source_from_path(malformed_path);
+  status = vectis_cert_validate_bundle(&source, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "parse certificate") != NULL);
+  remove(malformed_path);
+
+  source = vectis_source_from_path("/tmp/vectis-missing-cert.pem");
+  status = vectis_cert_validate_bundle(&source, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "open") != NULL);
+
+  make_temp_path(expired_path, sizeof(expired_path), "expired-cert");
+  write_expired_bundle(expired_path);
+  source = vectis_source_from_path(expired_path);
+  status = vectis_cert_validate_bundle(&source, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "expired") != NULL);
+  remove(expired_path);
 
   vectis_cert_bundle_config_init(&ca_config);
   vectis_cert_bundle_config_init(&config);
   make_temp_path(ca_bundle_path, sizeof(ca_bundle_path), "ca-bundle");
   make_temp_path(signed_bundle_path, sizeof(signed_bundle_path), "signed-bundle");
+  make_temp_path(signed_cert_path, sizeof(signed_cert_path), "signed-cert");
+  make_temp_path(signed_key_path, sizeof(signed_key_path), "signed-key");
   ca_config.subject.common_name = "Vectis Test CA";
   ca_config.output_bundle_path = ca_bundle_path;
+  ca_config.is_ca = 1;
   ca_config.valid_days = 30L;
   status = vectis_cert_generate_bundle(&ca_config, &error);
   assert(status == VECTIS_OK);
 
   config.subject.common_name = "client.local";
   config.output_bundle_path = signed_bundle_path;
+  config.output_cert_path = signed_cert_path;
+  config.output_key_path = signed_key_path;
   config.ca_cert_path = ca_bundle_path;
   config.ca_key_path = ca_bundle_path;
   config.valid_days = 30L;
   status = vectis_cert_generate_bundle(&config, &error);
   assert(status == VECTIS_OK);
   assert_bundle_is_signed_by(signed_bundle_path, ca_bundle_path, "Vectis Test CA");
+  source = vectis_source_from_path(signed_bundle_path);
+  status = vectis_cert_validate_bundle(&source, &error);
+  assert(status == VECTIS_OK);
+  cert_source = vectis_source_from_path(signed_cert_path);
+  key_source = vectis_source_from_path(signed_key_path);
+  ca_source = vectis_source_from_path(ca_bundle_path);
+  status = vectis_cert_validate_pair(&cert_source, &key_source, &ca_source, &error);
+  assert(status == VECTIS_OK);
   remove(ca_bundle_path);
   remove(signed_bundle_path);
+  remove(signed_cert_path);
+  remove(signed_key_path);
   return 0;
 }
