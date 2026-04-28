@@ -2,6 +2,7 @@
 
 #include <curl/curl.h>
 #include <lc/lc.h>
+#include <libssh2.h>
 #include <lonejson.h>
 #include <openssl/bn.h>
 #include <openssl/evp.h>
@@ -10,13 +11,17 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 #include <errno.h>
+#include <netdb.h>
 #include <pthread.h>
 #include <regex.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/time.h>
 #include <time.h>
+#include <unistd.h>
 
 typedef struct vectis_route_entry {
   vectis_http_method method;
@@ -139,9 +144,14 @@ static const vectis_methods vectis_default_methods = {
     vectis_app_logger_impl};
 
 static pthread_once_t vectis_curl_once = PTHREAD_ONCE_INIT;
+static pthread_once_t vectis_libssh2_once = PTHREAD_ONCE_INIT;
 
 static void vectis_curl_global_init_once(void) {
   (void)curl_global_init(CURL_GLOBAL_DEFAULT);
+}
+
+static void vectis_libssh2_global_init_once(void) {
+  (void)libssh2_init(0);
 }
 
 void vectis_error_clear(vectis_error *error) {
@@ -2604,6 +2614,36 @@ static vectis_status vectis_curl_set_error(vectis_error *error,
   return VECTIS_ERR_STATE;
 }
 
+static vectis_status vectis_append_output(char **out,
+                                          size_t *out_size,
+                                          const char *data,
+                                          size_t data_size,
+                                          vectis_error *error) {
+  char *grown;
+
+  if (data_size == 0u) {
+    return VECTIS_OK;
+  }
+  if (out == NULL || out_size == NULL || data == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "output buffer is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (*out_size > ((size_t)-1) - data_size - 1u) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "output buffer is too large");
+    return VECTIS_ERR_NOMEM;
+  }
+  grown = (char *)realloc(*out, *out_size + data_size + 1u);
+  if (grown == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to grow output buffer");
+    return VECTIS_ERR_NOMEM;
+  }
+  *out = grown;
+  memcpy(*out + *out_size, data, data_size);
+  *out_size += data_size;
+  (*out)[*out_size] = '\0';
+  return VECTIS_OK;
+}
+
 vectis_status vectis_http_client_post_json(vectis_http_client *client,
                                            const char *url,
                                            const lonejson_map *map,
@@ -3175,10 +3215,164 @@ void vectis_ssh_exec_result_cleanup(vectis_ssh_exec_result *result) {
   memset(result, 0, sizeof(*result));
 }
 
+static vectis_status vectis_ssh_connect_socket(const vectis_ssh_config *config,
+                                               int *out_fd,
+                                               vectis_error *error) {
+  struct addrinfo hints;
+  struct addrinfo *results;
+  struct addrinfo *rp;
+  char port_text[16];
+  int gai_rc;
+  int fd;
+  struct timeval timeout;
+
+  if (out_fd == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "socket output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out_fd = -1;
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+  (void)snprintf(port_text, sizeof(port_text), "%u", (unsigned)config->port);
+  results = NULL;
+  gai_rc = getaddrinfo(config->host, port_text, &hints, &results);
+  if (gai_rc != 0) {
+    vectis_set_errorf(error,
+                      VECTIS_ERR_STATE,
+                      "failed to resolve SSH host: %s",
+                      gai_strerror(gai_rc));
+    return VECTIS_ERR_STATE;
+  }
+  fd = -1;
+  for (rp = results; rp != NULL; rp = rp->ai_next) {
+    fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+    if (fd < 0) {
+      continue;
+    }
+    if (config->timeout_ms > 0L) {
+      timeout.tv_sec = config->timeout_ms / 1000L;
+      timeout.tv_usec = (config->timeout_ms % 1000L) * 1000L;
+      (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+      (void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    }
+    if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) {
+      break;
+    }
+    (void)close(fd);
+    fd = -1;
+  }
+  freeaddrinfo(results);
+  if (fd < 0) {
+    vectis_set_errorf(error,
+                      VECTIS_ERR_STATE,
+                      "failed to connect to SSH host %s:%u",
+                      config->host,
+                      (unsigned)config->port);
+    return VECTIS_ERR_STATE;
+  }
+  *out_fd = fd;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_ssh_authenticate(LIBSSH2_SESSION *session,
+                                             const vectis_ssh_config *config,
+                                             vectis_error *error) {
+  const char *key_path;
+  int rc;
+
+  key_path = vectis_source_path_or_old(&config->private_key, config->private_key_path);
+  if (key_path != NULL) {
+    rc = libssh2_userauth_publickey_fromfile(session,
+                                             config->username,
+                                             NULL,
+                                             key_path,
+                                             config->password);
+  } else if (config->password != NULL) {
+    rc = libssh2_userauth_password(session, config->username, config->password);
+  } else {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "SSH authentication requires password or private_key_path");
+    return VECTIS_ERR_INVALID;
+  }
+  if (rc != 0) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "SSH authentication failed");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+      error->dependency_code = (long)rc;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_ssh_read_channel(LIBSSH2_CHANNEL *channel,
+                                             vectis_ssh_exec_result *result,
+                                             vectis_error *error) {
+  char buffer[8192];
+  ssize_t n;
+  ssize_t nerr;
+  int active;
+  vectis_status status;
+
+  active = 1;
+  while (active) {
+    active = 0;
+    n = libssh2_channel_read(channel, buffer, sizeof(buffer));
+    while (n > 0) {
+      status = vectis_append_output(&result->stdout_data,
+                                    &result->stdout_size,
+                                    buffer,
+                                    (size_t)n,
+                                    error);
+      if (status != VECTIS_OK) {
+        return status;
+      }
+      active = 1;
+      n = libssh2_channel_read(channel, buffer, sizeof(buffer));
+    }
+    nerr = libssh2_channel_read_stderr(channel, buffer, sizeof(buffer));
+    while (nerr > 0) {
+      status = vectis_append_output(&result->stderr_data,
+                                    &result->stderr_size,
+                                    buffer,
+                                    (size_t)nerr,
+                                    error);
+      if (status != VECTIS_OK) {
+        return status;
+      }
+      active = 1;
+      nerr = libssh2_channel_read_stderr(channel, buffer, sizeof(buffer));
+    }
+    if (libssh2_channel_eof(channel)) {
+      break;
+    }
+    if (n == LIBSSH2_ERROR_EAGAIN || nerr == LIBSSH2_ERROR_EAGAIN || active) {
+      continue;
+    }
+    if (n < 0 && n != LIBSSH2_ERROR_EAGAIN) {
+      vectis_set_error(error, VECTIS_ERR_STATE, "failed to read SSH stdout");
+      return VECTIS_ERR_STATE;
+    }
+    if (nerr < 0 && nerr != LIBSSH2_ERROR_EAGAIN) {
+      vectis_set_error(error, VECTIS_ERR_STATE, "failed to read SSH stderr");
+      return VECTIS_ERR_STATE;
+    }
+  }
+  return VECTIS_OK;
+}
+
 vectis_status vectis_ssh_exec(const vectis_ssh_config *config,
                               const char *command,
                               vectis_ssh_exec_result *result,
                               vectis_error *error) {
+  LIBSSH2_SESSION *session;
+  LIBSSH2_CHANNEL *channel;
+  int fd;
+  int rc;
+  vectis_status status;
+
   if (config == NULL || config->host == NULL || config->username == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "SSH config requires host and username");
     return VECTIS_ERR_INVALID;
@@ -3191,7 +3385,87 @@ vectis_status vectis_ssh_exec(const vectis_ssh_config *config,
     vectis_set_error(error, VECTIS_ERR_INVALID, "SSH exec result is required");
     return VECTIS_ERR_INVALID;
   }
-  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_LIBSSH2, "libssh2 command execution");
+  memset(result, 0, sizeof(*result));
+  fd = -1;
+  session = NULL;
+  channel = NULL;
+
+  status = vectis_ssh_connect_socket(config, &fd, error);
+  if (status != VECTIS_OK) {
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+    }
+    return status;
+  }
+
+  (void)pthread_once(&vectis_libssh2_once, vectis_libssh2_global_init_once);
+  session = libssh2_session_init();
+  if (session == NULL) {
+    (void)close(fd);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to initialize SSH session");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (config->timeout_ms > 0L) {
+    libssh2_session_set_timeout(session, (long)config->timeout_ms);
+  }
+  rc = libssh2_session_handshake(session, fd);
+  if (rc != 0) {
+    libssh2_session_free(session);
+    (void)close(fd);
+    vectis_set_error(error, VECTIS_ERR_STATE, "SSH handshake failed");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+      error->dependency_code = (long)rc;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  status = vectis_ssh_authenticate(session, config, error);
+  if (status != VECTIS_OK) {
+    libssh2_session_disconnect(session, "vectis shutdown");
+    libssh2_session_free(session);
+    (void)close(fd);
+    return status;
+  }
+  channel = libssh2_channel_open_session(session);
+  if (channel == NULL) {
+    libssh2_session_disconnect(session, "vectis shutdown");
+    libssh2_session_free(session);
+    (void)close(fd);
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to open SSH session channel");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  rc = libssh2_channel_exec(channel, command);
+  if (rc != 0) {
+    libssh2_channel_free(channel);
+    libssh2_session_disconnect(session, "vectis shutdown");
+    libssh2_session_free(session);
+    (void)close(fd);
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to execute SSH command");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+      error->dependency_code = (long)rc;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  status = vectis_ssh_read_channel(channel, result, error);
+  result->exit_status = libssh2_channel_get_exit_status(channel);
+  (void)libssh2_channel_close(channel);
+  libssh2_channel_free(channel);
+  libssh2_session_disconnect(session, "vectis shutdown");
+  libssh2_session_free(session);
+  (void)close(fd);
+  if (status != VECTIS_OK) {
+    vectis_ssh_exec_result_cleanup(result);
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+    }
+    return status;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 vectis_status vectis_ssh_sftp_upload_file(const vectis_ssh_config *config,

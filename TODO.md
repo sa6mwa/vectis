@@ -145,6 +145,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [ ] Add Lua bindings for libssh2 session setup, authentication, command execution, stdout/stderr capture, exit status, and timeout handling.
 - [ ] Add C and Lua Vectis helpers for connecting to SSH servers and running commands with captured stdout, stderr, exit status, timeout, and structured error handling.
 - [x] Draft the C helper API for libssh2 command execution with captured stdout/stderr, exit status, and SFTP upload/download.
+- [x] Implement libssh2-backed C SSH command execution with captured stdout/stderr and exit status.
 - [ ] Expose raw libssh2 sessions/channels for advanced control.
 - [ ] Decide which lower-level SFTP operations need libssh2 bindings beyond curl-backed file transfer.
 - [ ] Add C helpers only where they support the Vectis service model rather than exposing libssh2 wholesale.

@@ -148,6 +148,12 @@ static void assert_io_surface(void) {
   ssh.username = "vectis";
   status = vectis_ssh_sftp_upload_file(&ssh, "local", "remote", &error);
   assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
+  ssh.host = "127.0.0.1";
+  ssh.port = 1u;
+  ssh.password = "secret";
+  status = vectis_ssh_exec(&ssh, "true", &result, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(error.source == VECTIS_ERROR_SOURCE_LIBSSH2);
   vectis_ssh_exec_result_cleanup(&result);
 
   vectis_mqtt_config_init(&mqtt);
