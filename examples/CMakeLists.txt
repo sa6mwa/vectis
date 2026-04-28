@@ -1,14 +1,34 @@
+if(NOT TARGET vectis_static AND NOT TARGET vectis_shared)
+  cmake_minimum_required(VERSION 3.21)
+  project(vectis_examples LANGUAGES C)
+  set(VECTIS_EXAMPLE_LINK "static" CACHE STRING "Vectis imported target to link: static or shared.")
+  find_package(vectis CONFIG REQUIRED)
+endif()
+
+if(TARGET vectis_static)
+  set(vectis_examples_link_target vectis_static)
+elseif(TARGET vectis_shared)
+  set(vectis_examples_link_target vectis_shared)
+elseif(VECTIS_EXAMPLE_LINK STREQUAL "shared")
+  if(NOT TARGET vectis::shared)
+    message(FATAL_ERROR "vectis::shared is not available for installed examples")
+  endif()
+  set(vectis_examples_link_target vectis::shared)
+elseif(VECTIS_EXAMPLE_LINK STREQUAL "static")
+  if(NOT TARGET vectis::static)
+    message(FATAL_ERROR "vectis::static is not available for installed examples")
+  endif()
+  set(vectis_examples_link_target vectis::static)
+else()
+  message(FATAL_ERROR "VECTIS_EXAMPLE_LINK must be static or shared")
+endif()
+
 function(vectis_add_example target_name source_file)
   add_executable(${target_name} ${source_file})
-  if(VECTIS_BUILD_STATIC)
-    target_link_libraries(${target_name} PRIVATE vectis_static)
-  elseif(VECTIS_BUILD_SHARED)
-    target_link_libraries(${target_name} PRIVATE vectis_shared)
+  target_link_libraries(${target_name} PRIVATE ${vectis_examples_link_target})
+  if(DEFINED VECTIS_EXTERNAL_ROOT)
+    target_include_directories(${target_name} PRIVATE "${VECTIS_EXTERNAL_ROOT}/include")
   endif()
-  target_include_directories(${target_name} PRIVATE
-    "${CMAKE_SOURCE_DIR}/include"
-    "${VECTIS_EXTERNAL_ROOT}/include"
-  )
   set_target_properties(${target_name} PROPERTIES
     C_STANDARD 90
     C_STANDARD_REQUIRED ON

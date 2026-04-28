@@ -205,6 +205,19 @@ if(EXISTS "${vectis_lockdc_shared_library}")
 elseif(DEFINED vectis_lockdc_shared_target)
   set(vectis_lockdc_shared_link "${vectis_lockdc_shared_target}")
 endif()
+set(vectis_shared_dependency_links)
+foreach(vectis_shared_dep IN ITEMS pslog curl ssh2 ssl crypto lonejson)
+  if(APPLE)
+    set(vectis_shared_dep_library "${VECTIS_EXTERNAL_ROOT}/lib/lib${vectis_shared_dep}.dylib")
+  else()
+    set(vectis_shared_dep_library "${VECTIS_EXTERNAL_ROOT}/lib/lib${vectis_shared_dep}.so")
+  endif()
+  if(EXISTS "${vectis_shared_dep_library}")
+    list(APPEND vectis_shared_dependency_links "${vectis_shared_dep_library}")
+  else()
+    list(APPEND vectis_shared_dependency_links "${vectis_shared_dep}")
+  endif()
+endforeach()
 
 set(vectis_public_headers
   include/vectis/vectis.h
@@ -369,6 +382,7 @@ if(VECTIS_BUILD_SHARED)
       Threads::Threads
       vectis_external_headers
       ${vectis_lockdc_shared_link}
+      ${vectis_shared_dependency_links}
       ${CMAKE_DL_LIBS}
   )
   set_target_properties(vectis_shared PROPERTIES

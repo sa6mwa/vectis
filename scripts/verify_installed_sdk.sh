@@ -7,6 +7,7 @@ package_root=${1:?usage: verify_installed_sdk.sh PACKAGE_ROOT [static|shared]}
 link_mode=${2:-static}
 cmake_bin=${CMAKE:-cmake}
 build_root=${TMPDIR:-/tmp}/vectis-install-sdk-${link_mode}-$$
+examples_build_root=${TMPDIR:-/tmp}/vectis-install-examples-${link_mode}-$$
 
 package_root=$(CDPATH= cd -- "$package_root" && pwd)
 
@@ -20,6 +21,7 @@ esac
 
 cleanup() {
   rm -rf "$build_root"
+  rm -rf "$examples_build_root"
 }
 trap cleanup EXIT INT TERM
 
@@ -40,4 +42,13 @@ if [ "$link_mode" = "shared" ]; then
   fi
 else
   "$build_root/vectis_install_consumer"
+fi
+
+if [ -f "$package_root/share/doc/vectis/examples/CMakeLists.txt" ]; then
+  "$cmake_bin" \
+    -S "$package_root/share/doc/vectis/examples" \
+    -B "$examples_build_root" \
+    -DCMAKE_PREFIX_PATH="$package_root" \
+    -DVECTIS_EXAMPLE_LINK="$link_mode"
+  "$cmake_bin" --build "$examples_build_root"
 fi

@@ -65,7 +65,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Add a handle-shaped C HTTP client API that can inherit app logging/defaults.
 - [x] Add high-level C SDK examples before implementation hardens, so the intended DX drives API shape rather than wrappers around internals.
 - [x] Group C examples by SDK domain under `examples/kore`, `examples/lockd`, `examples/curl`, `examples/ssh`, `examples/certs`, and `examples/raw`.
-- [ ] Add C examples that build against installed Vectis headers and libraries.
+- [x] Add C examples that build against installed Vectis headers and libraries.
 - [x] Add install-tree tests for static and shared downstream C consumers.
 - [ ] Add runnable example smoke tests against local lockd and a real Vectis/Kore server once runtime startup is implemented.
 
