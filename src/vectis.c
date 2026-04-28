@@ -1,7 +1,9 @@
 #include "vectis_internal.h"
 
+#include <curl/curl.h>
 #include <lc/lc.h>
 #include <lonejson.h>
+#include <errno.h>
 #include <pthread.h>
 #include <regex.h>
 #include <stdarg.h>
@@ -72,6 +74,21 @@ struct vectis_http_client {
   pslog_logger *logger;
 };
 
+typedef struct vectis_curl_buffer {
+  char *data;
+  size_t size;
+  int failed;
+} vectis_curl_buffer;
+
+typedef struct vectis_curl_request_body {
+  const void *data;
+  size_t size;
+  size_t offset;
+  char *owned_data;
+  FILE *file;
+  long file_size;
+} vectis_curl_request_body;
+
 static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error);
 static vectis_status vectis_app_stop_impl(vectis_app *app, vectis_error *error);
 static vectis_status vectis_app_register_route_impl(vectis_app *app,
@@ -87,6 +104,12 @@ static const vectis_methods vectis_default_methods = {
     vectis_app_register_route_impl,
     vectis_app_route_count_impl,
     vectis_app_logger_impl};
+
+static pthread_once_t vectis_curl_once = PTHREAD_ONCE_INIT;
+
+static void vectis_curl_global_init_once(void) {
+  (void)curl_global_init(CURL_GLOBAL_DEFAULT);
+}
 
 void vectis_error_clear(vectis_error *error) {
   if (error == NULL) {
@@ -650,6 +673,69 @@ static char *vectis_strdup(const char *value) {
   }
   memcpy(copy, value, len);
   return copy;
+}
+
+static int vectis_has_url_scheme(const char *url) {
+  const char *p;
+
+  if (url == NULL) {
+    return 0;
+  }
+  p = url;
+  while ((*p >= 'A' && *p <= 'Z') ||
+         (*p >= 'a' && *p <= 'z') ||
+         (*p >= '0' && *p <= '9') ||
+         *p == '+' || *p == '-' || *p == '.') {
+    p++;
+  }
+  return p > url && p[0] == ':' && p[1] == '/' && p[2] == '/';
+}
+
+static char *vectis_join_url(const char *base_url,
+                             const char *url,
+                             vectis_error *error) {
+  size_t base_len;
+  size_t url_len;
+  int base_slash;
+  int url_slash;
+  size_t len;
+  char *joined;
+  char *out;
+
+  if (url != NULL && vectis_has_url_scheme(url)) {
+    return vectis_strdup(url);
+  }
+  if (base_url == NULL || base_url[0] == '\0') {
+    return vectis_strdup(url);
+  }
+  if (url == NULL || url[0] == '\0') {
+    return vectis_strdup(base_url);
+  }
+
+  base_len = strlen(base_url);
+  url_len = strlen(url);
+  base_slash = base_len > 0u && base_url[base_len - 1u] == '/';
+  url_slash = url[0] == '/';
+  len = base_len + url_len + 2u;
+  joined = (char *)malloc(len);
+  if (joined == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate joined URL");
+    return NULL;
+  }
+  out = joined;
+  memcpy(out, base_url, base_len);
+  out += base_len;
+  if (base_slash && url_slash) {
+    url++;
+    url_len--;
+  } else if (!base_slash && !url_slash) {
+    *out = '/';
+    out++;
+  }
+  memcpy(out, url, url_len);
+  out += url_len;
+  *out = '\0';
+  return joined;
 }
 
 static vectis_status vectis_copy_bytes(const void *bytes,
@@ -1925,6 +2011,234 @@ static vectis_status vectis_http_client_send_json(vectis_http_client *client,
   return vectis_http_client_execute(client, &request, response, error);
 }
 
+static size_t vectis_curl_write_memory(char *ptr,
+                                       size_t size,
+                                       size_t nmemb,
+                                       void *userdata) {
+  vectis_curl_buffer *buffer;
+  size_t bytes;
+  char *grown;
+
+  buffer = (vectis_curl_buffer *)userdata;
+  bytes = size * nmemb;
+  if (buffer == NULL || bytes == 0u) {
+    return bytes;
+  }
+  if (buffer->size > ((size_t)-1) - bytes - 1u) {
+    buffer->failed = 1;
+    return 0u;
+  }
+  grown = (char *)realloc(buffer->data, buffer->size + bytes + 1u);
+  if (grown == NULL) {
+    buffer->failed = 1;
+    return 0u;
+  }
+  buffer->data = grown;
+  memcpy(buffer->data + buffer->size, ptr, bytes);
+  buffer->size += bytes;
+  buffer->data[buffer->size] = '\0';
+  return bytes;
+}
+
+static size_t vectis_curl_write_file(char *ptr,
+                                     size_t size,
+                                     size_t nmemb,
+                                     void *userdata) {
+  return fwrite(ptr, size, nmemb, (FILE *)userdata);
+}
+
+static size_t vectis_curl_read_file(char *ptr,
+                                    size_t size,
+                                    size_t nmemb,
+                                    void *userdata) {
+  return fread(ptr, size, nmemb, (FILE *)userdata);
+}
+
+static size_t vectis_curl_read_memory(char *ptr,
+                                      size_t size,
+                                      size_t nmemb,
+                                      void *userdata) {
+  vectis_curl_request_body *body;
+  size_t capacity;
+  size_t remaining;
+  size_t n;
+
+  body = (vectis_curl_request_body *)userdata;
+  capacity = size * nmemb;
+  if (body == NULL || capacity == 0u || body->offset >= body->size) {
+    return 0u;
+  }
+  remaining = body->size - body->offset;
+  n = remaining < capacity ? remaining : capacity;
+  memcpy(ptr, (const char *)body->data + body->offset, n);
+  body->offset += n;
+  return n;
+}
+
+static vectis_status vectis_file_size(FILE *file,
+                                      long *out_size,
+                                      vectis_error *error) {
+  long current;
+  long end;
+
+  if (file == NULL || out_size == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "file is required");
+    return VECTIS_ERR_INVALID;
+  }
+  current = ftell(file);
+  if (current < 0L) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to inspect file position");
+    return VECTIS_ERR_STATE;
+  }
+  if (fseek(file, 0L, SEEK_END) != 0) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to seek file");
+    return VECTIS_ERR_STATE;
+  }
+  end = ftell(file);
+  if (end < 0L || fseek(file, current, SEEK_SET) != 0) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to restore file position");
+    return VECTIS_ERR_STATE;
+  }
+  *out_size = end;
+  return VECTIS_OK;
+}
+
+static void vectis_curl_request_body_cleanup(vectis_curl_request_body *body) {
+  if (body == NULL) {
+    return;
+  }
+  if (body->file != NULL) {
+    (void)fclose(body->file);
+  }
+  free(body->owned_data);
+  memset(body, 0, sizeof(*body));
+}
+
+static vectis_status vectis_prepare_curl_body(const vectis_http_request *request,
+                                              vectis_curl_request_body *body,
+                                              vectis_error *error) {
+  lonejson_error json_error;
+  size_t json_len;
+
+  memset(body, 0, sizeof(*body));
+  if (request->json_map != NULL || request->json_value != NULL) {
+    if (request->json_map == NULL || request->json_value == NULL) {
+      vectis_set_error(error,
+                       VECTIS_ERR_INVALID,
+                       "JSON HTTP request requires both json_map and json_value");
+      return VECTIS_ERR_INVALID;
+    }
+    body->owned_data = lonejson_serialize_alloc(request->json_map,
+                                                request->json_value,
+                                                &json_len,
+                                                NULL,
+                                                &json_error);
+    if (body->owned_data == NULL) {
+      vectis_set_errorf(error,
+                        VECTIS_ERR_INVALID,
+                        "failed to serialize JSON request: %s",
+                        json_error.message);
+      if (error != NULL) {
+        error->source = VECTIS_ERROR_SOURCE_LONEJSON;
+      }
+      return VECTIS_ERR_INVALID;
+    }
+    body->data = body->owned_data;
+    body->size = json_len;
+    return VECTIS_OK;
+  }
+  if (request->body != NULL || request->body_size > 0u) {
+    if (request->body == NULL) {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP request body pointer is required");
+      return VECTIS_ERR_INVALID;
+    }
+    body->data = request->body;
+    body->size = request->body_size;
+    return VECTIS_OK;
+  }
+  if (request->body_path != NULL) {
+    body->file = fopen(request->body_path, "rb");
+    if (body->file == NULL) {
+      vectis_set_errorf(error,
+                        VECTIS_ERR_INVALID,
+                        "failed to open request body path: %s",
+                        request->body_path);
+      return VECTIS_ERR_INVALID;
+    }
+    if (vectis_file_size(body->file, &body->file_size, error) != VECTIS_OK) {
+      vectis_curl_request_body_cleanup(body);
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_curl_set_common_tls(CURL *curl,
+                                                const vectis_source *client_bundle,
+                                                const char *client_bundle_path,
+                                                const void *client_bundle_pem,
+                                                size_t client_bundle_pem_size,
+                                                const vectis_source *ca_bundle,
+                                                const char *ca_bundle_path,
+                                                vectis_error *error) {
+  const char *client_path;
+  const char *ca_path;
+  const void *client_pem;
+  size_t client_pem_size;
+#ifdef CURLOPT_SSLCERT_BLOB
+  struct curl_blob cert_blob;
+#endif
+
+  (void)error;
+  client_path = vectis_source_path_or_old(client_bundle, client_bundle_path);
+  ca_path = vectis_source_path_or_old(ca_bundle, ca_bundle_path);
+  client_pem_size = 0u;
+  client_pem = vectis_source_memory_or_old(client_bundle,
+                                           client_bundle_pem,
+                                           &client_pem_size,
+                                           client_bundle_pem_size);
+  if (ca_path != NULL) {
+    (void)curl_easy_setopt(curl, CURLOPT_CAINFO, ca_path);
+  }
+  if (client_path != NULL) {
+    (void)curl_easy_setopt(curl, CURLOPT_SSLCERT, client_path);
+    (void)curl_easy_setopt(curl, CURLOPT_SSLKEY, client_path);
+  } else if (client_pem != NULL && client_pem_size > 0u) {
+#ifdef CURLOPT_SSLCERT_BLOB
+    memset(&cert_blob, 0, sizeof(cert_blob));
+    cert_blob.data = (void *)client_pem;
+    cert_blob.len = client_pem_size;
+    cert_blob.flags = CURL_BLOB_COPY;
+    (void)curl_easy_setopt(curl, CURLOPT_SSLCERT_BLOB, &cert_blob);
+    (void)curl_easy_setopt(curl, CURLOPT_SSLKEY_BLOB, &cert_blob);
+#else
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "this libcurl build does not support in-memory client certificates");
+    return VECTIS_ERR_INVALID;
+#endif
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_curl_set_error(vectis_error *error,
+                                           CURLcode code,
+                                           const char *message,
+                                           char *curl_error) {
+  vectis_set_errorf(error,
+                    VECTIS_ERR_STATE,
+                    "%s: %s",
+                    message,
+                    curl_error != NULL && curl_error[0] != '\0'
+                        ? curl_error
+                        : curl_easy_strerror(code));
+  if (error != NULL) {
+    error->source = VECTIS_ERROR_SOURCE_CURL;
+    error->dependency_code = (long)code;
+  }
+  return VECTIS_ERR_STATE;
+}
+
 vectis_status vectis_http_client_post_json(vectis_http_client *client,
                                            const char *url,
                                            const lonejson_map *map,
@@ -1956,6 +2270,21 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
                                   const vectis_http_request *request,
                                   vectis_http_response *response,
                                   vectis_error *error) {
+  CURL *curl;
+  CURLcode curl_code;
+  struct curl_slist *headers;
+  vectis_curl_buffer response_buffer;
+  vectis_curl_request_body request_body;
+  char curl_error[CURL_ERROR_SIZE];
+  char *url;
+  char *response_content_type;
+  FILE *download_file;
+  long timeout_ms;
+  long connect_timeout_ms;
+  size_t i;
+  const char *method;
+  char content_type_header[256];
+
   if (client == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP client config is required");
     return VECTIS_ERR_INVALID;
@@ -1972,7 +2301,231 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
     vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP response is required");
     return VECTIS_ERR_INVALID;
   }
-  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_CURL, "curl HTTP execution");
+  if (request->body != NULL && request->body_path != NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP request cannot use both body and body_path");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->download_path != NULL && request->download_path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP download_path must not be empty");
+    return VECTIS_ERR_INVALID;
+  }
+
+  memset(response, 0, sizeof(*response));
+  memset(&response_buffer, 0, sizeof(response_buffer));
+  memset(&request_body, 0, sizeof(request_body));
+  memset(curl_error, 0, sizeof(curl_error));
+  headers = NULL;
+  curl = NULL;
+  url = NULL;
+  response_content_type = NULL;
+  download_file = NULL;
+
+  if (request->method < VECTIS_HTTP_GET || request->method > VECTIS_HTTP_OPTIONS) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP request method is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+
+  url = vectis_join_url(client->base_url, request->url, error);
+  if (url == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  if (vectis_prepare_curl_body(request, &request_body, error) != VECTIS_OK) {
+    free(url);
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+
+  (void)pthread_once(&vectis_curl_once, vectis_curl_global_init_once);
+  curl = curl_easy_init();
+  if (curl == NULL) {
+    vectis_curl_request_body_cleanup(&request_body);
+    free(url);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to initialize curl easy handle");
+    return VECTIS_ERR_NOMEM;
+  }
+
+  timeout_ms = request->timeout_ms > 0L ? request->timeout_ms : client->timeout_ms;
+  connect_timeout_ms = client->connect_timeout_ms;
+  (void)curl_easy_setopt(curl, CURLOPT_URL, url);
+  (void)curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error);
+  if (timeout_ms > 0L) {
+    (void)curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout_ms);
+  }
+  if (connect_timeout_ms > 0L) {
+    (void)curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, connect_timeout_ms);
+  }
+  if (client->follow_redirects) {
+    (void)curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  }
+  if (vectis_curl_set_common_tls(curl,
+                                 &client->client_bundle,
+                                 client->client_bundle_path,
+                                 client->client_bundle_pem,
+                                 client->client_bundle_pem_size,
+                                 &client->ca_bundle,
+                                 client->ca_bundle_path,
+                                 error) != VECTIS_OK) {
+    curl_easy_cleanup(curl);
+    vectis_curl_request_body_cleanup(&request_body);
+    free(url);
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+
+  for (i = 0u; i < request->header_count; ++i) {
+    if (request->headers == NULL || request->headers[i] == NULL) {
+      curl_slist_free_all(headers);
+      curl_easy_cleanup(curl);
+      vectis_curl_request_body_cleanup(&request_body);
+      free(url);
+      vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP request headers are invalid");
+      return VECTIS_ERR_INVALID;
+    }
+    headers = curl_slist_append(headers, request->headers[i]);
+    if (headers == NULL) {
+      curl_easy_cleanup(curl);
+      vectis_curl_request_body_cleanup(&request_body);
+      free(url);
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate curl headers");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  if (request->content_type != NULL && request->content_type[0] != '\0') {
+    (void)snprintf(content_type_header,
+                   sizeof(content_type_header),
+                   "Content-Type: %s",
+                   request->content_type);
+    headers = curl_slist_append(headers, content_type_header);
+    if (headers == NULL) {
+      curl_easy_cleanup(curl);
+      vectis_curl_request_body_cleanup(&request_body);
+      free(url);
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate content-type header");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  if (headers != NULL) {
+    (void)curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+  }
+
+  method = vectis_http_method_string(request->method);
+  if (request->method == VECTIS_HTTP_HEAD) {
+    (void)curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+  } else if (request->method == VECTIS_HTTP_POST) {
+    (void)curl_easy_setopt(curl, CURLOPT_POST, 1L);
+  } else if (request->method != VECTIS_HTTP_GET) {
+    (void)curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
+  }
+
+  if (request_body.file != NULL) {
+    if (request->method == VECTIS_HTTP_POST) {
+      curl_slist_free_all(headers);
+      curl_easy_cleanup(curl);
+      vectis_curl_request_body_cleanup(&request_body);
+      free(url);
+      vectis_set_error(error,
+                       VECTIS_ERR_INVALID,
+                       "body_path streaming is supported for upload-style methods, not POST");
+      return VECTIS_ERR_INVALID;
+    }
+    (void)curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+    (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION, vectis_curl_read_file);
+    (void)curl_easy_setopt(curl, CURLOPT_READDATA, request_body.file);
+    if (request_body.file_size >= 0L) {
+      (void)curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t)request_body.file_size);
+    }
+  } else if (request_body.data != NULL || request_body.size > 0u) {
+    if (request_body.data == NULL) {
+      curl_slist_free_all(headers);
+      curl_easy_cleanup(curl);
+      vectis_curl_request_body_cleanup(&request_body);
+      free(url);
+      vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP request body is invalid");
+      return VECTIS_ERR_INVALID;
+    }
+    if (request->method == VECTIS_HTTP_POST) {
+      (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_body.data);
+      (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)request_body.size);
+    } else {
+      (void)curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+      (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION, vectis_curl_read_memory);
+      (void)curl_easy_setopt(curl, CURLOPT_READDATA, &request_body);
+      (void)curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t)request_body.size);
+    }
+  }
+
+  if (request->download_path != NULL) {
+    download_file = fopen(request->download_path, "wb");
+    if (download_file == NULL) {
+      curl_slist_free_all(headers);
+      curl_easy_cleanup(curl);
+      vectis_curl_request_body_cleanup(&request_body);
+      free(url);
+      vectis_set_errorf(error,
+                        VECTIS_ERR_INVALID,
+                        "failed to open download path: %s",
+                        request->download_path);
+      return VECTIS_ERR_INVALID;
+    }
+    (void)curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, vectis_curl_write_file);
+    (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, download_file);
+  } else {
+    (void)curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, vectis_curl_write_memory);
+    (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_buffer);
+  }
+
+  curl_code = curl_easy_perform(curl);
+  if (download_file != NULL && fclose(download_file) != 0) {
+    download_file = NULL;
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    vectis_curl_request_body_cleanup(&request_body);
+    free(response_buffer.data);
+    free(url);
+    vectis_set_errorf(error,
+                      VECTIS_ERR_STATE,
+                      "failed to flush download path: %s",
+                      request->download_path);
+    return VECTIS_ERR_STATE;
+  }
+  download_file = NULL;
+  if (curl_code != CURLE_OK) {
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    vectis_curl_request_body_cleanup(&request_body);
+    free(response_buffer.data);
+    free(url);
+    return vectis_curl_set_error(error, curl_code, "curl request failed", curl_error);
+  }
+  if (response_buffer.failed) {
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    vectis_curl_request_body_cleanup(&request_body);
+    free(response_buffer.data);
+    free(url);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to buffer curl response body");
+    return VECTIS_ERR_NOMEM;
+  }
+
+  (void)curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response->status_code);
+  (void)curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &response_content_type);
+  response->content_type = vectis_strdup(response_content_type);
+  if (response_content_type != NULL && response->content_type == NULL) {
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    vectis_curl_request_body_cleanup(&request_body);
+    free(response_buffer.data);
+    free(url);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy response content type");
+    return VECTIS_ERR_NOMEM;
+  }
+  response->body = response_buffer.data;
+  response->body_size = response_buffer.size;
+
+  curl_slist_free_all(headers);
+  curl_easy_cleanup(curl);
+  vectis_curl_request_body_cleanup(&request_body);
+  free(url);
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 vectis_status vectis_http_get(const vectis_http_client_config *client,
@@ -2084,10 +2637,41 @@ void vectis_sftp_config_init(vectis_sftp_config *config) {
   config->timeout_ms = 30000L;
 }
 
+static vectis_status vectis_curl_set_ssh(CURL *curl,
+                                         const char *username,
+                                         const char *password,
+                                         const vectis_source *private_key,
+                                         const char *private_key_path,
+                                         const char *known_hosts_path) {
+  const char *key_path;
+
+  key_path = vectis_source_path_or_old(private_key, private_key_path);
+  if (username != NULL) {
+    (void)curl_easy_setopt(curl, CURLOPT_USERNAME, username);
+  }
+  if (password != NULL) {
+    (void)curl_easy_setopt(curl, CURLOPT_PASSWORD, password);
+  }
+  if (key_path != NULL) {
+    (void)curl_easy_setopt(curl, CURLOPT_SSH_PRIVATE_KEYFILE, key_path);
+  }
+  if (known_hosts_path != NULL) {
+    (void)curl_easy_setopt(curl, CURLOPT_SSH_KNOWNHOSTS, known_hosts_path);
+  }
+  return VECTIS_OK;
+}
+
 vectis_status vectis_sftp_upload_file(const vectis_sftp_config *config,
                                       const char *local_path,
                                       const char *remote_path,
                                       vectis_error *error) {
+  CURL *curl;
+  CURLcode curl_code;
+  FILE *file;
+  long file_size;
+  char *url;
+  char curl_error[CURL_ERROR_SIZE];
+
   if (config == NULL || config->url == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP config with url is required");
     return VECTIS_ERR_INVALID;
@@ -2096,13 +2680,65 @@ vectis_status vectis_sftp_upload_file(const vectis_sftp_config *config,
     vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP upload requires local_path and remote_path");
     return VECTIS_ERR_INVALID;
   }
-  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_CURL, "curl SFTP upload");
+  memset(curl_error, 0, sizeof(curl_error));
+  file = fopen(local_path, "rb");
+  if (file == NULL) {
+    vectis_set_errorf(error, VECTIS_ERR_INVALID, "failed to open SFTP upload file: %s", local_path);
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_file_size(file, &file_size, error) != VECTIS_OK) {
+    (void)fclose(file);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  url = vectis_join_url(config->url, remote_path, error);
+  if (url == NULL) {
+    (void)fclose(file);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  (void)pthread_once(&vectis_curl_once, vectis_curl_global_init_once);
+  curl = curl_easy_init();
+  if (curl == NULL) {
+    (void)fclose(file);
+    free(url);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to initialize curl easy handle");
+    return VECTIS_ERR_NOMEM;
+  }
+  (void)curl_easy_setopt(curl, CURLOPT_URL, url);
+  (void)curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error);
+  if (config->timeout_ms > 0L) {
+    (void)curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, config->timeout_ms);
+  }
+  (void)curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+  (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION, vectis_curl_read_file);
+  (void)curl_easy_setopt(curl, CURLOPT_READDATA, file);
+  (void)curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t)file_size);
+  (void)vectis_curl_set_ssh(curl,
+                            config->username,
+                            config->password,
+                            &config->private_key,
+                            config->private_key_path,
+                            config->known_hosts_path);
+  curl_code = curl_easy_perform(curl);
+  (void)fclose(file);
+  curl_easy_cleanup(curl);
+  free(url);
+  if (curl_code != CURLE_OK) {
+    return vectis_curl_set_error(error, curl_code, "curl SFTP upload failed", curl_error);
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 vectis_status vectis_sftp_download_file(const vectis_sftp_config *config,
                                         const char *remote_path,
                                         const char *local_path,
                                         vectis_error *error) {
+  CURL *curl;
+  CURLcode curl_code;
+  FILE *file;
+  char *url;
+  char curl_error[CURL_ERROR_SIZE];
+
   if (config == NULL || config->url == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP config with url is required");
     return VECTIS_ERR_INVALID;
@@ -2111,7 +2747,49 @@ vectis_status vectis_sftp_download_file(const vectis_sftp_config *config,
     vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP download requires remote_path and local_path");
     return VECTIS_ERR_INVALID;
   }
-  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_CURL, "curl SFTP download");
+  memset(curl_error, 0, sizeof(curl_error));
+  url = vectis_join_url(config->url, remote_path, error);
+  if (url == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  file = fopen(local_path, "wb");
+  if (file == NULL) {
+    free(url);
+    vectis_set_errorf(error, VECTIS_ERR_INVALID, "failed to open SFTP download file: %s", local_path);
+    return VECTIS_ERR_INVALID;
+  }
+  (void)pthread_once(&vectis_curl_once, vectis_curl_global_init_once);
+  curl = curl_easy_init();
+  if (curl == NULL) {
+    (void)fclose(file);
+    free(url);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to initialize curl easy handle");
+    return VECTIS_ERR_NOMEM;
+  }
+  (void)curl_easy_setopt(curl, CURLOPT_URL, url);
+  (void)curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error);
+  if (config->timeout_ms > 0L) {
+    (void)curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, config->timeout_ms);
+  }
+  (void)curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, vectis_curl_write_file);
+  (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, file);
+  (void)vectis_curl_set_ssh(curl,
+                            config->username,
+                            config->password,
+                            &config->private_key,
+                            config->private_key_path,
+                            config->known_hosts_path);
+  curl_code = curl_easy_perform(curl);
+  if (fclose(file) != 0 && curl_code == CURLE_OK) {
+    curl_code = CURLE_WRITE_ERROR;
+  }
+  curl_easy_cleanup(curl);
+  free(url);
+  if (curl_code != CURLE_OK) {
+    return vectis_curl_set_error(error, curl_code, "curl SFTP download failed", curl_error);
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 void vectis_ssh_config_init(vectis_ssh_config *config) {
@@ -2195,6 +2873,11 @@ vectis_status vectis_mqtt_publish(const vectis_mqtt_config *config,
                                   size_t payload_size,
                                   const char *content_type,
                                   vectis_error *error) {
+  CURL *curl;
+  CURLcode curl_code;
+  char *url;
+  char curl_error[CURL_ERROR_SIZE];
+
   (void)content_type;
   if (config == NULL || config->broker_url == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "MQTT config with broker_url is required");
@@ -2208,7 +2891,56 @@ vectis_status vectis_mqtt_publish(const vectis_mqtt_config *config,
     vectis_set_error(error, VECTIS_ERR_INVALID, "MQTT payload is invalid");
     return VECTIS_ERR_INVALID;
   }
-  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_CURL, "curl MQTT publish");
+  memset(curl_error, 0, sizeof(curl_error));
+  url = vectis_join_url(config->broker_url, topic, error);
+  if (url == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  (void)pthread_once(&vectis_curl_once, vectis_curl_global_init_once);
+  curl = curl_easy_init();
+  if (curl == NULL) {
+    free(url);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to initialize curl easy handle");
+    return VECTIS_ERR_NOMEM;
+  }
+  (void)curl_easy_setopt(curl, CURLOPT_URL, url);
+  (void)curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error);
+  if (config->timeout_ms > 0L) {
+    (void)curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, config->timeout_ms);
+  }
+  if (config->username != NULL) {
+    (void)curl_easy_setopt(curl, CURLOPT_USERNAME, config->username);
+  }
+  if (config->password != NULL) {
+    (void)curl_easy_setopt(curl, CURLOPT_PASSWORD, config->password);
+  }
+  if (vectis_curl_set_common_tls(curl,
+                                 &config->client_bundle,
+                                 config->client_bundle_path,
+                                 config->client_bundle_pem,
+                                 config->client_bundle_pem_size,
+                                 &config->ca_bundle,
+                                 config->ca_bundle_path,
+                                 error) != VECTIS_OK) {
+    curl_easy_cleanup(curl);
+    free(url);
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (payload != NULL) {
+    (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload);
+    (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)payload_size);
+  } else {
+    (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "");
+    (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)0);
+  }
+  curl_code = curl_easy_perform(curl);
+  curl_easy_cleanup(curl);
+  free(url);
+  if (curl_code != CURLE_OK) {
+    return vectis_curl_set_error(error, curl_code, "curl MQTT publish failed", curl_error);
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 vectis_status vectis_mqtt_publish_json(const vectis_mqtt_config *config,
@@ -2216,6 +2948,11 @@ vectis_status vectis_mqtt_publish_json(const vectis_mqtt_config *config,
                                        const lonejson_map *map,
                                        const void *value,
                                        vectis_error *error) {
+  lonejson_error json_error;
+  char *json;
+  size_t json_size;
+  vectis_status status;
+
   if (map == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "lonejson map is required");
     return VECTIS_ERR_INVALID;
@@ -2224,9 +2961,20 @@ vectis_status vectis_mqtt_publish_json(const vectis_mqtt_config *config,
     vectis_set_error(error, VECTIS_ERR_INVALID, "json value is required");
     return VECTIS_ERR_INVALID;
   }
-  (void)config;
-  (void)topic;
-  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_CURL, "curl MQTT JSON publish");
+  json = lonejson_serialize_alloc(map, value, &json_size, NULL, &json_error);
+  if (json == NULL) {
+    vectis_set_errorf(error,
+                      VECTIS_ERR_INVALID,
+                      "failed to serialize MQTT JSON payload: %s",
+                      json_error.message);
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LONEJSON;
+    }
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_mqtt_publish(config, topic, json, json_size, "application/json", error);
+  free(json);
+  return status;
 }
 
 void vectis_cert_subject_init(vectis_cert_subject *subject) {

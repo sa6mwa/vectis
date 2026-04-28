@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <lonejson.h>
@@ -49,6 +50,11 @@ static void assert_http_surface(void) {
   vectis_error error;
   sample_doc doc;
   vectis_status status;
+  FILE *fp;
+  const char source_path[] = "/tmp/vectis_http_source.txt";
+  const char upload_path[] = "/tmp/vectis_http_upload.txt";
+  const char source_body[] = "vectis file body";
+  const char upload_body[] = "upload body";
 
   handle = NULL;
   memset(&response, 0, sizeof(response));
@@ -62,29 +68,52 @@ static void assert_http_surface(void) {
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "url") != NULL);
 
-  client.base_url = "https://api.example.com";
-  status = vectis_http_post_json(&client, "/docs", &sample_doc_map, &doc, &response, &error);
-  assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
-  assert(strstr(error.message, "curl HTTP execution") != NULL);
+  fp = fopen(source_path, "wb");
+  assert(fp != NULL);
+  assert(fwrite(source_body, 1u, sizeof(source_body) - 1u, fp) == sizeof(source_body) - 1u);
+  assert(fclose(fp) == 0);
 
-  client.client_bundle = vectis_source_from_path("/tmp/client.pem");
+  client.base_url = "file:///tmp";
+  status = vectis_http_get(&client, "/vectis_http_source.txt", &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.body_size == sizeof(source_body) - 1u);
+  assert(memcmp(response.body, source_body, sizeof(source_body) - 1u) == 0);
+  vectis_http_response_cleanup(&response);
+
   status = vectis_http_client_new(&client, &handle, &error);
   assert(status == VECTIS_OK);
   assert(handle != NULL);
   vectis_http_request_init(&request);
-  request.url = "/docs";
+  request.url = "/vectis_http_source.txt";
   status = vectis_http_client_execute(handle, &request, &response, &error);
-  assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
-  assert(error.source == VECTIS_ERROR_SOURCE_CURL);
-  status = vectis_http_client_post_json(handle, "/docs", &sample_doc_map, &doc, &response, &error);
-  assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
-  assert(error.source == VECTIS_ERROR_SOURCE_CURL);
-  status = vectis_http_client_head(handle, "/docs", &response, &error);
-  assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
-  status = vectis_http_client_options(handle, "/docs", &response, &error);
-  assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
+  assert(status == VECTIS_OK);
+  assert(response.body_size == sizeof(source_body) - 1u);
+  vectis_http_response_cleanup(&response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_PUT;
+  request.url = "file:///tmp/vectis_http_upload.txt";
+  request.body = upload_body;
+  request.body_size = sizeof(upload_body) - 1u;
+  status = vectis_http_client_execute(handle, &request, &response, &error);
+  assert(status == VECTIS_OK);
+  vectis_http_response_cleanup(&response);
+  fp = fopen(upload_path, "rb");
+  assert(fp != NULL);
+  memset(&doc, 0, sizeof(doc));
+  assert(fread(doc.id, 1u, sizeof(upload_body) - 1u, fp) == sizeof(upload_body) - 1u);
+  assert(fclose(fp) == 0);
+  assert(memcmp(doc.id, upload_body, sizeof(upload_body) - 1u) == 0);
+
+  status = vectis_http_client_head(handle, "/vectis_http_source.txt", &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.body_size == 0u);
+  status = vectis_http_client_options(handle, "/vectis_http_source.txt", &response, &error);
+  assert(status != VECTIS_ERR_NOT_IMPLEMENTED);
   vectis_http_client_destroy(handle);
 
+  (void)remove(source_path);
+  (void)remove(upload_path);
   vectis_http_response_cleanup(&response);
 }
 
@@ -116,14 +145,13 @@ static void assert_io_surface(void) {
   vectis_ssh_exec_result_cleanup(&result);
 
   vectis_mqtt_config_init(&mqtt);
-  mqtt.broker_url = "mqtts://broker.example.com";
   status = vectis_mqtt_publish(&mqtt,
                                "workflow/test",
                                payload,
                                sizeof(payload) - 1u,
                                "text/plain",
                                &error);
-  assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
+  assert(status == VECTIS_ERR_INVALID);
 
   vectis_cert_bundle_config_init(&certs);
   assert(certs.key_bits == 4096u);

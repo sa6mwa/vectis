@@ -48,7 +48,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Store and validate lockd configuration without requiring a live lockd daemon during app construction.
 - [ ] Instantiate and own a real `lc_client` during runtime startup.
 - [x] Expose stable accessors/helpers for the shared logger and raw lockd client escape hatch.
-- [ ] Implement the dependency-backed behavior behind the drafted helpers for the JSON layer, HTTP client, SSH client, SFTP/MQTT over curl, and TLS/certificate config.
+- [ ] Implement the dependency-backed behavior behind the drafted helpers for the JSON layer, SSH client, and TLS/certificate config.
 - [ ] Expose dependency headers and low-level handles/APIs as explicit escape hatches without making them the primary DX.
 - [x] Define the first C pass of one Vectis-owned naming, source, error, timeout, ownership, and cleanup convention.
 - [x] Add stable string helpers for status, error source, HTTP method, and body mode names.
@@ -127,15 +127,16 @@ moving toward, not just the next patch. Keep items observable and testable.
 
 ## Area 9: Downstream HTTP / curl
 
-- [ ] Add dependency-backed C helpers around libcurl for service-friendly downstream HTTP calls.
+- [x] Add dependency-backed C helpers around libcurl for service-friendly downstream HTTP calls.
 - [x] Draft the C helper API for libcurl-backed HTTP, JSON request methods, generic upload/download, SFTP, and MQTT publish workflows.
 - [x] Add an opaque C HTTP client handle so repeated downstream calls do not have to pass raw config everywhere.
 - [x] Add handle-level C helpers for GET, DELETE, POST JSON, PUT JSON, and PATCH JSON.
+- [x] Add dependency-backed C MQTT publish helpers through libcurl.
 - [ ] Add Lua curl bindings that support all libcurl URL schemes made available by the bundled libcurl build.
 - [ ] Provide JSON-aware Lua helpers for common API calls using `lonejson`.
 - [ ] Provide C and Lua Vectis helpers for JSON API requests, downloads, uploads, streaming responses, SFTP upload/download, retries, and structured errors.
 - [ ] Expose raw curl handles/options for complete protocol coverage.
-- [ ] Support SFTP file retrieval and storage through curl where it is sufficient.
+- [x] Support SFTP file retrieval and storage through curl where it is sufficient.
 - [ ] Expose timeout, retry, header, TLS, client certificate, proxy, redirect, and streaming configuration in C and Lua.
 - [ ] Add integration tests for HTTP(S) downstream calls and SFTP operations.
 
