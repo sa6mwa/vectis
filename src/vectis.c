@@ -95,6 +95,7 @@ typedef struct vectis_app_impl {
   size_t route_count;
   size_t route_capacity;
   struct lc_client *lockd_client;
+  pid_t lockd_client_pid;
 } vectis_app_impl;
 
 struct vectis_request {
@@ -146,6 +147,7 @@ typedef struct vectis_curl_request_body {
 
 static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error);
 static vectis_status vectis_app_stop_impl(vectis_app *app, vectis_error *error);
+static void vectis_close_lockd_client_for_current_process(vectis_app_impl *impl);
 static vectis_status vectis_app_register_route_impl(vectis_app *app,
                                                     const vectis_route_config *route,
                                                     vectis_error *error);
@@ -1264,10 +1266,7 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
     return;
   }
 
-  if (impl->lockd_client != NULL) {
-    lc_client_close(impl->lockd_client);
-    impl->lockd_client = NULL;
-  }
+  vectis_close_lockd_client_for_current_process(impl);
 
   vectis_free_routes(impl);
   vectis_free_endpoints(impl);
@@ -1457,6 +1456,17 @@ static int vectis_lockd_is_configured(const vectis_app_impl *impl) {
   return impl != NULL && (impl->endpoint_count > 0u || impl->unix_socket_path != NULL);
 }
 
+static void vectis_close_lockd_client_for_current_process(vectis_app_impl *impl) {
+  if (impl == NULL || impl->lockd_client == NULL) {
+    return;
+  }
+  if (impl->lockd_client_pid == 0 || impl->lockd_client_pid == getpid()) {
+    lc_client_close(impl->lockd_client);
+  }
+  impl->lockd_client = NULL;
+  impl->lockd_client_pid = 0;
+}
+
 static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
                                               vectis_error *error) {
   lc_client_config config;
@@ -1467,6 +1477,10 @@ static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
   if (!vectis_lockd_is_configured(impl)) {
     vectis_error_clear(error);
     return VECTIS_OK;
+  }
+  if (impl->lockd_client != NULL && impl->lockd_client_pid != getpid()) {
+    impl->lockd_client = NULL;
+    impl->lockd_client_pid = 0;
   }
   if (impl->lockd_client != NULL) {
     vectis_error_clear(error);
@@ -1510,6 +1524,9 @@ static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
   }
 
   rc = lc_client_open(&config, &impl->lockd_client, &lcerr);
+  if (rc == LC_OK) {
+    impl->lockd_client_pid = getpid();
+  }
   if (memory_source != NULL) {
     lc_source_close(memory_source);
   }
@@ -1750,9 +1767,11 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
   route_count = impl->route_count;
   (void)pthread_mutex_unlock(&impl->mutex);
 
-  status = vectis_open_lockd_client(impl, error);
-  if (status != VECTIS_OK) {
-    return status;
+  if (route_count == 0u) {
+    status = vectis_open_lockd_client(impl, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
   }
 
   if (route_count > 0u) {
@@ -1788,10 +1807,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
     kore_config.logger = impl->logger;
     status = vectis_internal_kore_start(&kore_config, error);
     if (status != VECTIS_OK) {
-      if (impl->lockd_client != NULL) {
-        lc_client_close(impl->lockd_client);
-        impl->lockd_client = NULL;
-      }
+      vectis_close_lockd_client_for_current_process(impl);
       return status;
     }
   }
@@ -1834,10 +1850,7 @@ static vectis_status vectis_app_stop_impl(vectis_app *app, vectis_error *error) 
   }
 
   (void)pthread_mutex_lock(&impl->mutex);
-  if (impl->lockd_client != NULL) {
-    lc_client_close(impl->lockd_client);
-    impl->lockd_client = NULL;
-  }
+  vectis_close_lockd_client_for_current_process(impl);
   (void)pthread_mutex_unlock(&impl->mutex);
 
   vectis_error_clear(error);
@@ -2479,11 +2492,33 @@ pslog_logger *vectis_logger(vectis_app *app) {
 
 struct lc_client *vectis_lockd_client(vectis_app *app) {
   vectis_app_impl *impl;
+  vectis_error error;
 
   if (app == NULL || app->impl == NULL) {
     return NULL;
   }
   impl = (vectis_app_impl *)app->impl;
+  if (!vectis_lockd_is_configured(impl)) {
+    return NULL;
+  }
+  (void)pthread_mutex_lock(&impl->mutex);
+  if (impl->lockd_client != NULL && impl->lockd_client_pid != getpid()) {
+    impl->lockd_client = NULL;
+    impl->lockd_client_pid = 0;
+  }
+  if (impl->lockd_client == NULL) {
+    vectis_error_clear(&error);
+    if (vectis_open_lockd_client(impl, &error) != VECTIS_OK) {
+      if (impl->logger != NULL) {
+        impl->logger->errorf(impl->logger,
+                             "vectis.lockd.open_failed",
+                             "error=%s detail=%s",
+                             error.message,
+                             error.detail);
+      }
+    }
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
   return impl->lockd_client;
 }
 

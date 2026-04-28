@@ -3,6 +3,9 @@
 #include <lc/lc.h>
 #include <kore/kore.h>
 #include <kore/http.h>
+#if defined(__linux__)
+#include <kore/seccomp.h>
+#endif
 
 #include <errno.h>
 #include <fcntl.h>
@@ -46,6 +49,26 @@ static const char vectis_kore_default_dhparams[] =
     "iu1qHgEtnmgyqQdgCpGBMMRtx3j5ca0AOAkpmaMzy4t6Gh25PXFAADwqTs6p+Y0K\n"
     "zAqCkc3OyX3Pjsm1Wn+IpGtNtahR9EGC4caKAH5eZV9q//////////8CAQI=\n"
     "-----END DH PARAMETERS-----\n";
+
+#if defined(__linux__)
+static struct sock_filter vectis_kore_dependency_seccomp_filter[] = {
+#if defined(SYS_eventfd)
+  KORE_SYSCALL_ALLOW(eventfd),
+#endif
+#if defined(SYS_eventfd2)
+  KORE_SYSCALL_ALLOW(eventfd2),
+#endif
+#if defined(SYS_shutdown)
+  KORE_SYSCALL_ALLOW(shutdown),
+#endif
+};
+
+void kore_seccomp_hook(void) {
+  kore_seccomp_filter("vectis-dependencies",
+                      vectis_kore_dependency_seccomp_filter,
+                      KORE_FILTER_LEN(vectis_kore_dependency_seccomp_filter));
+}
+#endif
 
 typedef struct vectis_kore_material {
   const char *path;

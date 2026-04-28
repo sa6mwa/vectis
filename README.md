@@ -52,6 +52,12 @@ starts as an HTTP/TLS service without an app-owned lockd client. If TCP lockd
 transport is configured, Vectis requires client bundle material from path,
 `lc_source`, or memory.
 
+For Kore-backed services, the app-owned lockd client is process-local. Vectis
+does not open a lockd socket in the parent before Kore forks workers; route
+handlers get a lazily opened client in their current worker process through
+`vectis_lockd_client(app)`. Non-Kore runtimes still open configured lockd
+clients during startup so configuration errors fail fast.
+
 The HTTP server boundary is defensive by default. `vectis_app_config_init()`
 sets explicit guardrails for maximum concurrent connections, request-header
 size, default request-body size, header-read deadline, body-read idle timeout,

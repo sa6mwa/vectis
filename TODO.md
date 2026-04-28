@@ -47,7 +47,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Support owned or borrowed `pslog` logger instances.
 - [x] Store and validate lockd configuration without requiring a live lockd daemon during app construction.
 - [x] Instantiate and own a real `lc_client` during non-Kore runtime startup, with structured lockdc errors on open failure.
-- [x] Instantiate the app-owned `lc_client` before Kore starts and make it available to route handlers only after successful startup.
+- [x] Open app-owned lockd clients process-locally: during non-Kore startup and lazily inside Kore workers so route handlers do not inherit pre-fork sockets.
 - [x] Expose stable accessors/helpers for the shared logger and raw lockd client escape hatch.
 - [x] Implement dependency-backed C helpers for curl, SSH exec/SFTP, self-signed certificate bundles, request/response JSON parse/serialize, and JSON route auto-wiring.
 - [x] Translate manual Kore TLS material from path, memory, and `lc_source` inputs into runtime server cert/key configuration.
@@ -67,7 +67,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Group C examples by SDK domain under `examples/kore`, `examples/lockd`, `examples/curl`, `examples/ssh`, `examples/certs`, and `examples/raw`.
 - [x] Add C examples that build against installed Vectis headers and libraries.
 - [x] Add install-tree tests for static and shared downstream C consumers.
-- [ ] Add runnable example smoke tests against local lockd and a real Vectis/Kore server once runtime startup is implemented.
+- [x] Add runnable example smoke tests against local lockd and a real Vectis/Kore server once runtime startup is implemented.
 
 ## Area 5: HTTP / Kore Integration
 
@@ -223,7 +223,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Add Makefile entrypoints for local integration services: `dev-up`, `dev-down`, `dev-reset`, `dev-ps`, and `dev-logs`.
 - [x] Add `make test-e2e` and `make test-all` entrypoints.
 - [x] Add the first compose-backed lockd e2e smoke against disk and S3-backed lockd services.
-- [ ] Add integration/e2e tests against local lockd and Kore.
+- [x] Add integration/e2e tests against local lockd and Kore.
 - [x] Add integration/e2e tests against the local SSH/SFTP and MQTT compose services.
 - [ ] Add integration/e2e tests for Lua runner behavior.
 - [ ] Add package/archive generation for the C SDK and Vectis binary.
