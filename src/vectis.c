@@ -3825,6 +3825,31 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
     (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_buffer);
   }
 
+  if (client->configure_curl != NULL &&
+      client->configure_curl(curl, client->configure_curl_userdata, error) != VECTIS_OK) {
+    if (download_file != NULL) {
+      (void)fclose(download_file);
+    }
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    vectis_curl_request_body_cleanup(&request_body);
+    free(response_buffer.data);
+    free(url);
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (request->configure_curl != NULL &&
+      request->configure_curl(curl, request->configure_curl_userdata, error) != VECTIS_OK) {
+    if (download_file != NULL) {
+      (void)fclose(download_file);
+    }
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    vectis_curl_request_body_cleanup(&request_body);
+    free(response_buffer.data);
+    free(url);
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+
   curl_code = curl_easy_perform(curl);
   if (download_file != NULL && fclose(download_file) != 0) {
     download_file = NULL;

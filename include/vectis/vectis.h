@@ -2,6 +2,7 @@
 #define VECTIS_VECTIS_H
 
 #include <stddef.h>
+#include <curl/curl.h>
 #include <lonejson.h>
 #include <pslog.h>
 
@@ -112,6 +113,10 @@ typedef struct vectis_error {
   char message[256];
   char detail[256];
 } vectis_error;
+
+typedef vectis_status (*vectis_curl_configure_fn)(CURL *curl,
+                                                  void *userdata,
+                                                  vectis_error *error);
 
 typedef struct vectis_bytes {
   const void *data;
@@ -261,6 +266,8 @@ typedef struct vectis_http_client_config {
   long connect_timeout_ms;
   int follow_redirects;
   pslog_logger *logger;
+  vectis_curl_configure_fn configure_curl;
+  void *configure_curl_userdata;
 } vectis_http_client_config;
 
 typedef struct vectis_http_client vectis_http_client;
@@ -278,6 +285,8 @@ typedef struct vectis_http_request {
   const void *json_value;
   const char *download_path;
   long timeout_ms;
+  vectis_curl_configure_fn configure_curl;
+  void *configure_curl_userdata;
 } vectis_http_request;
 
 typedef struct vectis_http_response {

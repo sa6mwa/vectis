@@ -235,6 +235,8 @@ The current implementation provides:
   modes so examples and applications do not grow ad hoc name tables.
 - A handle-shaped HTTP client API that can be created directly or from an app
   so app logging/defaults can flow into downstream calls.
+- A raw curl configuration callback on HTTP client configs and individual HTTP
+  requests for protocol/options escape hatches without leaving Vectis helpers.
 - A `vectis` executable that embeds the provisioned Lua 5.5 runtime, supports
   normal script and shebang execution, and is wrapped on Linux with the
   single-header `libpid0` 0.3.0 helper so it can run correctly as PID 1 in

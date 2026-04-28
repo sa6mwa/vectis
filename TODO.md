@@ -147,7 +147,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [ ] Add Lua curl bindings that support all libcurl URL schemes made available by the bundled libcurl build.
 - [ ] Provide JSON-aware Lua helpers for common API calls using `lonejson`.
 - [ ] Provide C and Lua Vectis helpers for JSON API requests, downloads, uploads, streaming responses, SFTP upload/download, retries, and structured errors.
-- [ ] Expose raw curl handles/options for complete protocol coverage.
+- [x] Expose raw curl option configuration callbacks for complete protocol coverage escape hatches.
 - [x] Support SFTP file retrieval and storage through curl where it is sufficient.
 - [ ] Expose timeout, retry, header, TLS, client certificate, proxy, redirect, and streaming configuration in C and Lua.
 - [ ] Add integration tests for HTTP(S) downstream calls and SFTP operations.

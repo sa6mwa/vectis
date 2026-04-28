@@ -62,6 +62,25 @@ static int sample_consumer_handler(void *context,
   return LC_OK;
 }
 
+static vectis_status curl_config_ok(CURL *curl, void *userdata, vectis_error *error) {
+  int *count;
+
+  (void)error;
+  count = (int *)userdata;
+  if (count != NULL) {
+    (*count)++;
+  }
+  (void)curl_easy_setopt(curl, CURLOPT_USERAGENT, "vectis-test");
+  return VECTIS_OK;
+}
+
+static vectis_status curl_config_fail(CURL *curl, void *userdata, vectis_error *error) {
+  (void)curl;
+  (void)userdata;
+  vectis_set_error(error, VECTIS_ERR_STATE, "raw curl configuration failed");
+  return VECTIS_ERR_STATE;
+}
+
 static void assert_http_surface(void) {
   vectis_http_client_config client;
   vectis_http_client *handle;
@@ -78,7 +97,9 @@ static void assert_http_surface(void) {
   const char missing_upload_path[] = "/tmp/vectis_http_missing_upload.txt";
   const char source_body[] = "vectis file body";
   const char upload_body[] = "upload body";
+  int curl_config_count;
 
+  curl_config_count = 0;
   handle = NULL;
   memset(&response, 0, sizeof(response));
   memset(&doc, 0, sizeof(doc));
@@ -86,6 +107,8 @@ static void assert_http_surface(void) {
   assert(client.timeout_ms == 30000L);
   assert(client.connect_timeout_ms == 10000L);
   assert(client.follow_redirects == 1);
+  client.configure_curl = curl_config_ok;
+  client.configure_curl_userdata = &curl_config_count;
 
   status = vectis_http_get(&client, NULL, &response, &error);
   assert(status == VECTIS_ERR_INVALID);
@@ -99,6 +122,7 @@ static void assert_http_surface(void) {
   client.base_url = "file:///tmp";
   status = vectis_http_get(&client, "/vectis_http_source.txt", &response, &error);
   assert(status == VECTIS_OK);
+  assert(curl_config_count == 1);
   assert(response.body_size == sizeof(source_body) - 1u);
   assert(memcmp(response.body, source_body, sizeof(source_body) - 1u) == 0);
   vectis_http_response_cleanup(&response);
@@ -110,8 +134,16 @@ static void assert_http_surface(void) {
   request.url = "/vectis_http_source.txt";
   status = vectis_http_client_execute(handle, &request, &response, &error);
   assert(status == VECTIS_OK);
+  assert(curl_config_count == 2);
   assert(response.body_size == sizeof(source_body) - 1u);
   vectis_http_response_cleanup(&response);
+
+  vectis_http_request_init(&request);
+  request.url = "/vectis_http_source.txt";
+  request.configure_curl = curl_config_fail;
+  status = vectis_http_client_execute(handle, &request, &response, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "raw curl") != NULL);
 
   status = vectis_http_client_download_file(handle,
                                             "/vectis_http_source.txt",
