@@ -3189,6 +3189,37 @@ vectis_status vectis_http_client_options(vectis_http_client *client,
   return vectis_http_client_execute(client, &request, response, error);
 }
 
+vectis_status vectis_http_client_download_file(vectis_http_client *client,
+                                               const char *url,
+                                               const char *local_path,
+                                               vectis_http_response *response,
+                                               vectis_error *error) {
+  vectis_http_request request;
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = url;
+  request.download_path = local_path;
+  return vectis_http_client_execute(client, &request, response, error);
+}
+
+vectis_status vectis_http_client_upload_file(vectis_http_client *client,
+                                             vectis_http_method method,
+                                             const char *url,
+                                             const char *local_path,
+                                             const char *content_type,
+                                             vectis_http_response *response,
+                                             vectis_error *error) {
+  vectis_http_request request;
+
+  vectis_http_request_init(&request);
+  request.method = method;
+  request.url = url;
+  request.body_path = local_path;
+  request.content_type = content_type;
+  return vectis_http_client_execute(client, &request, response, error);
+}
+
 static vectis_status vectis_http_client_send_json(vectis_http_client *client,
                                                   vectis_http_method method,
                                                   const char *url,
@@ -3650,21 +3681,29 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
   }
 
   if (request_body.file != NULL) {
-    if (request->method == VECTIS_HTTP_POST) {
+    if (request->method == VECTIS_HTTP_GET ||
+        request->method == VECTIS_HTTP_HEAD ||
+        request->method == VECTIS_HTTP_OPTIONS) {
       curl_slist_free_all(headers);
       curl_easy_cleanup(curl);
       vectis_curl_request_body_cleanup(&request_body);
       free(url);
       vectis_set_error(error,
                        VECTIS_ERR_INVALID,
-                       "body_path streaming is supported for upload-style methods, not POST");
+                       "body_path streaming requires an upload-capable HTTP method");
       return VECTIS_ERR_INVALID;
     }
-    (void)curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+    if (request->method != VECTIS_HTTP_POST) {
+      (void)curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+    }
     (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION, vectis_curl_read_file);
     (void)curl_easy_setopt(curl, CURLOPT_READDATA, request_body.file);
     if (request_body.file_size >= 0L) {
-      (void)curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t)request_body.file_size);
+      if (request->method == VECTIS_HTTP_POST) {
+        (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)request_body.file_size);
+      } else {
+        (void)curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t)request_body.file_size);
+      }
     }
   } else if (request_body.data != NULL || request_body.size > 0u) {
     if (request_body.data == NULL) {
@@ -3807,6 +3846,37 @@ vectis_status vectis_http_options(const vectis_http_client_config *client,
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_OPTIONS;
   request.url = url;
+  return vectis_http_execute(client, &request, response, error);
+}
+
+vectis_status vectis_http_download_file(const vectis_http_client_config *client,
+                                        const char *url,
+                                        const char *local_path,
+                                        vectis_http_response *response,
+                                        vectis_error *error) {
+  vectis_http_request request;
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = url;
+  request.download_path = local_path;
+  return vectis_http_execute(client, &request, response, error);
+}
+
+vectis_status vectis_http_upload_file(const vectis_http_client_config *client,
+                                      vectis_http_method method,
+                                      const char *url,
+                                      const char *local_path,
+                                      const char *content_type,
+                                      vectis_http_response *response,
+                                      vectis_error *error) {
+  vectis_http_request request;
+
+  vectis_http_request_init(&request);
+  request.method = method;
+  request.url = url;
+  request.body_path = local_path;
+  request.content_type = content_type;
   return vectis_http_execute(client, &request, response, error);
 }
 

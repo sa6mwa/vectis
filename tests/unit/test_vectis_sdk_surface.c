@@ -73,6 +73,9 @@ static void assert_http_surface(void) {
   FILE *fp;
   const char source_path[] = "/tmp/vectis_http_source.txt";
   const char upload_path[] = "/tmp/vectis_http_upload.txt";
+  const char helper_download_path[] = "/tmp/vectis_http_download_helper.txt";
+  const char helper_upload_path[] = "/tmp/vectis_http_upload_helper.txt";
+  const char missing_upload_path[] = "/tmp/vectis_http_missing_upload.txt";
   const char source_body[] = "vectis file body";
   const char upload_body[] = "upload body";
 
@@ -110,6 +113,20 @@ static void assert_http_surface(void) {
   assert(response.body_size == sizeof(source_body) - 1u);
   vectis_http_response_cleanup(&response);
 
+  status = vectis_http_client_download_file(handle,
+                                            "/vectis_http_source.txt",
+                                            helper_download_path,
+                                            &response,
+                                            &error);
+  assert(status == VECTIS_OK);
+  vectis_http_response_cleanup(&response);
+  fp = fopen(helper_download_path, "rb");
+  assert(fp != NULL);
+  memset(&doc, 0, sizeof(doc));
+  assert(fread(doc.id, 1u, sizeof(source_body) - 1u, fp) == sizeof(source_body) - 1u);
+  assert(fclose(fp) == 0);
+  assert(memcmp(doc.id, source_body, sizeof(source_body) - 1u) == 0);
+
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_PUT;
   request.url = "file:///tmp/vectis_http_upload.txt";
@@ -125,6 +142,32 @@ static void assert_http_surface(void) {
   assert(fclose(fp) == 0);
   assert(memcmp(doc.id, upload_body, sizeof(upload_body) - 1u) == 0);
 
+  status = vectis_http_upload_file(&client,
+                                   VECTIS_HTTP_PUT,
+                                   "file:///tmp/vectis_http_upload_helper.txt",
+                                   source_path,
+                                   "text/plain",
+                                   &response,
+                                   &error);
+  assert(status == VECTIS_OK);
+  vectis_http_response_cleanup(&response);
+  fp = fopen(helper_upload_path, "rb");
+  assert(fp != NULL);
+  memset(&doc, 0, sizeof(doc));
+  assert(fread(doc.id, 1u, sizeof(source_body) - 1u, fp) == sizeof(source_body) - 1u);
+  assert(fclose(fp) == 0);
+  assert(memcmp(doc.id, source_body, sizeof(source_body) - 1u) == 0);
+
+  status = vectis_http_client_upload_file(handle,
+                                          VECTIS_HTTP_GET,
+                                          "file:///tmp/vectis_http_missing_upload.txt",
+                                          source_path,
+                                          "text/plain",
+                                          &response,
+                                          &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "upload-capable") != NULL);
+
   status = vectis_http_client_head(handle, "/vectis_http_source.txt", &response, &error);
   assert(status == VECTIS_OK);
   assert(response.body_size == 0u);
@@ -134,6 +177,9 @@ static void assert_http_surface(void) {
 
   (void)remove(source_path);
   (void)remove(upload_path);
+  (void)remove(helper_download_path);
+  (void)remove(helper_upload_path);
+  (void)remove(missing_upload_path);
   vectis_http_response_cleanup(&response);
 }
 
