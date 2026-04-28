@@ -2328,6 +2328,65 @@ vectis_status vectis_internal_dispatch_route(vectis_app *app,
   return handler(app, request, response, userdata, error);
 }
 
+vectis_status vectis_internal_route_body_policy(vectis_app *app,
+                                                vectis_http_method method,
+                                                const char *path,
+                                                vectis_body_policy *policy,
+                                                vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_request scratch;
+  vectis_status status;
+  size_t i;
+
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (policy == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "body policy output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_validate_request_path(path, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (vectis_method_mask(method) == VECTIS_HTTP_METHODS_NONE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP method is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+
+  impl = (vectis_app_impl *)app->impl;
+  status = VECTIS_ERR_STATE;
+  vectis_internal_request_init(&scratch);
+
+  (void)pthread_mutex_lock(&impl->mutex);
+  for (i = 0u; i < impl->route_count; ++i) {
+    vectis_kv_truncate(&scratch.path_params, &scratch.path_param_count, 0u);
+    if (!vectis_route_method_matches(&impl->routes[i], method)) {
+      continue;
+    }
+    if (vectis_route_path_matches(&impl->routes[i], path, &scratch, error)) {
+      *policy = impl->routes[i].body;
+      status = VECTIS_OK;
+      break;
+    }
+    if (error != NULL && error->code == VECTIS_ERR_NOMEM) {
+      status = VECTIS_ERR_NOMEM;
+      break;
+    }
+    if (error != NULL && error->code == VECTIS_ERR_INVALID) {
+      status = VECTIS_ERR_INVALID;
+      break;
+    }
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
+
+  vectis_internal_request_cleanup(&scratch);
+  if (status == VECTIS_ERR_STATE) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "no route matched request");
+  }
+  return status;
+}
+
 static pslog_logger *vectis_app_logger_impl(vectis_app *app) {
   vectis_app_impl *impl;
 

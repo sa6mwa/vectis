@@ -85,6 +85,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Attach the internal Vectis router dispatch to real Kore request handling.
 - [x] Expose request body, headers, query parameters, path parameters, and response helpers.
 - [x] Register JSON routes as ordinary Vectis routes with lonejson parse/serialize adapter dispatch.
+- [x] Enforce per-route no-body and max-body policies in the Kore request path before buffering request bodies.
 - [ ] Translate per-route body policies into concrete Kore request-body buffering, streaming, and spool-to-disk behavior.
 - [ ] Support Kore features through Vectis where practical, including TLS, ACME, websocket, static asset, file upload, and runtime configuration features.
 - [ ] Define the supported one-process multi-instance behavior based on what Kore can safely provide.

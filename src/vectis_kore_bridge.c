@@ -839,22 +839,58 @@ static void *vectis_kore_thread_main(void *userdata) {
 }
 
 static vectis_status vectis_kore_read_body(struct http_request *req,
+                                           const vectis_body_policy *policy,
                                            vectis_request *request,
                                            void **owned_body,
+                                           int *http_status,
                                            vectis_error *error) {
   void *body;
   size_t body_size;
   size_t offset;
   ssize_t nread;
 
+  if (http_status != NULL) {
+    *http_status = 0;
+  }
+  if (policy == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "body policy is required");
+    return VECTIS_ERR_INVALID;
+  }
   if (req->content_length == 0u) {
     return vectis_internal_request_set_body(request, NULL, 0u, error);
   }
+  if (policy->mode == VECTIS_BODY_NONE) {
+    if (http_status != NULL) {
+      *http_status = 413;
+    }
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body is not allowed for this route");
+    return VECTIS_ERR_INVALID;
+  }
   if (req->content_length > (u_int64_t)((size_t)-1)) {
+    if (http_status != NULL) {
+      *http_status = 413;
+    }
     vectis_set_error(error, VECTIS_ERR_INVALID, "request body is too large");
     return VECTIS_ERR_INVALID;
   }
   body_size = (size_t)req->content_length;
+  if (body_size > policy->max_bytes) {
+    if (http_status != NULL) {
+      *http_status = 413;
+    }
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body exceeds route limit");
+    return VECTIS_ERR_INVALID;
+  }
+  if (policy->memory_buffer_limit_bytes > 0u &&
+      body_size > policy->memory_buffer_limit_bytes) {
+    if (http_status != NULL) {
+      *http_status = 501;
+    }
+    vectis_set_error(error,
+                     VECTIS_ERR_NOT_IMPLEMENTED,
+                     "request body exceeds current in-memory runtime limit");
+    return VECTIS_ERR_NOT_IMPLEMENTED;
+  }
   body = malloc(body_size);
   if (body == NULL) {
     vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate request body");
@@ -910,11 +946,14 @@ int vectis_kore_route(struct http_request *req) {
   vectis_response *response;
   vectis_error error;
   vectis_app *app;
+  vectis_body_policy body_policy;
   vectis_http_method method;
   vectis_status status;
+  int error_status;
   void *owned_body;
 
   vectis_error_clear(&error);
+  error_status = 0;
   owned_body = NULL;
   request = vectis_internal_request_new(&error);
   response = vectis_internal_response_new(&error);
@@ -941,21 +980,33 @@ int vectis_kore_route(struct http_request *req) {
     return KORE_RESULT_OK;
   }
 
+  method = vectis_kore_method(req->method);
   status = vectis_kore_copy_request_metadata(req, request, &error);
   if (status == VECTIS_OK) {
-    status = vectis_kore_read_body(req, request, &owned_body, &error);
+    status = vectis_internal_route_body_policy(app, method, req->path, &body_policy, &error);
   }
   if (status == VECTIS_OK) {
-    method = vectis_kore_method(req->method);
+    status = vectis_kore_read_body(req,
+                                   &body_policy,
+                                   request,
+                                   &owned_body,
+                                   &error_status,
+                                   &error);
+  }
+  if (status == VECTIS_OK) {
     status = vectis_internal_dispatch_route(app, method, req->path, request, response, &error);
   }
 
   if (status == VECTIS_OK) {
     vectis_kore_send_response(req, response);
+  } else if (error_status != 0) {
+    http_response(req, error_status, error.message, strlen(error.message));
   } else if (status == VECTIS_ERR_INVALID) {
     http_response(req, 400, error.message, strlen(error.message));
   } else if (status == VECTIS_ERR_STATE) {
     http_response(req, 404, NULL, 0);
+  } else if (status == VECTIS_ERR_NOT_IMPLEMENTED) {
+    http_response(req, 501, error.message, strlen(error.message));
   } else {
     http_response(req, 500, error.message, strlen(error.message));
   }

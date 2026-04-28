@@ -264,6 +264,7 @@ static void assert_json_route_surface(void) {
   vectis_app_config config;
   vectis_json_route_config route;
   vectis_route_config raw_route;
+  vectis_body_policy policy;
   vectis_error error;
   vectis_status status;
   vectis_app *app;
@@ -332,6 +333,11 @@ static void assert_json_route_surface(void) {
   status = vectis_register_json_route(app, &route, &error);
   assert(status == VECTIS_OK);
   assert(vectis_route_count(app) == 3u);
+  status = vectis_internal_route_body_policy(app, VECTIS_HTTP_POST, "/typed/abc", &policy, &error);
+  assert(status == VECTIS_OK);
+  assert(policy.mode == VECTIS_BODY_JSON);
+  status = vectis_internal_route_body_policy(app, VECTIS_HTTP_DELETE, "/typed/abc", &policy, &error);
+  assert(status == VECTIS_ERR_STATE);
 
   status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
   assert(status == VECTIS_OK);

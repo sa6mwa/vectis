@@ -44,6 +44,7 @@ static void assert_kore_smoke(void) {
   vectis_http_response metadata_response;
   vectis_http_response oversized_response;
   vectis_route_config route;
+  vectis_route_config limited_route;
   const char *headers[] = {"x-vectis-trace: runtime-smoke"};
   vectis_error error;
   vectis_status status;
@@ -57,7 +58,7 @@ static void assert_kore_smoke(void) {
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
   config.tls.port = 28080u;
-  config.server.max_request_body_bytes = 4u;
+  config.server.max_request_body_bytes = 1024u;
   app = vectis_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/health", sample_handler, NULL);
@@ -65,6 +66,10 @@ static void assert_kore_smoke(void) {
   assert(status == VECTIS_OK);
   route = vectis_route(VECTIS_HTTP_GET, "/metadata", metadata_handler, NULL);
   status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  limited_route = vectis_route(VECTIS_HTTP_POST, "/limited", sample_handler, NULL);
+  limited_route.body = vectis_body_buffered_max(4u);
+  status = vectis_register_route(app, &limited_route, &error);
   assert(status == VECTIS_OK);
   status = vectis_start(app, &error);
   assert(status == VECTIS_OK);
@@ -97,7 +102,7 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&oversized);
   oversized.method = VECTIS_HTTP_POST;
-  oversized.url = "http://127.0.0.1:28080/health";
+  oversized.url = "http://127.0.0.1:28080/limited";
   oversized.body = "12345";
   oversized.body_size = 5u;
   status = vectis_http_execute(&http, &oversized, &oversized_response, &error);
