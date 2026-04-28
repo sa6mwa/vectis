@@ -22,6 +22,7 @@ int main(void) {
   vectis_app *app;
   vectis_status status;
   vectis_route_config bad_route;
+  vectis_route_config route;
 
   vectis_app_config_init(&config);
 
@@ -34,29 +35,91 @@ int main(void) {
   assert(strstr(error.message, "manual TLS requires") != NULL);
   vectis_destroy(app);
 
-  config.tls.cert_key_bundle_path = "/tmp/server.pem";
+  config.tls.cert_key_bundle = vectis_source_from_path("/tmp/server.pem");
   config.lockd.unix_socket_path = "/tmp/lockd.sock";
   app = vectis_new(&config, &error);
   assert(app != NULL);
-  assert(vectis_internal_lockd_client(app) != NULL);
+  assert(vectis_internal_lockd_client(app) == NULL);
 
   status = vectis_start(app, &error);
   assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
   assert(strstr(error.message, "not implemented") != NULL);
 
+  vectis_route_config_init(&bad_route);
   bad_route.method = VECTIS_HTTP_GET;
   bad_route.path = "missing-slash";
   bad_route.handler = sample_handler;
-  bad_route.userdata = NULL;
   status = vectis_register_route(app, &bad_route, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "route path must start with '/'") != NULL);
+
+  vectis_route_config_init(&route);
+  route.method = VECTIS_HTTP_GET;
+  route.path = "/orders/:id";
+  route.handler = sample_handler;
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "path_kind") != NULL);
+
+  vectis_route_config_init(&route);
+  route.method = VECTIS_HTTP_GET;
+  route.path = "/orders/:bad-name";
+  route.path_kind = VECTIS_ROUTE_PATH_PARAMS;
+  route.handler = sample_handler;
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "parameter name") != NULL);
+
+  vectis_route_config_init(&route);
+  route.method = VECTIS_HTTP_GET;
+  route.path = "/orders/../secrets";
+  route.path_kind = VECTIS_ROUTE_PATH_PARAMS;
+  route.handler = sample_handler;
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "dot segments") != NULL);
+
+  vectis_route_config_init(&route);
+  route.method = VECTIS_HTTP_GET;
+  route.path = "/orders/:id??";
+  route.path_kind = VECTIS_ROUTE_PATH_PARAMS;
+  route.handler = sample_handler;
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "parameter name") != NULL);
+
+  vectis_route_config_init(&route);
+  route.method = VECTIS_HTTP_GET;
+  route.path = "/orders?status=open";
+  route.path_kind = VECTIS_ROUTE_PATH_PARAMS;
+  route.handler = sample_handler;
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "only allowed") != NULL);
+
+  vectis_route_config_init(&route);
+  route.method = VECTIS_HTTP_GET;
+  route.path = "^/reports/[0-9]+$";
+  route.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  route.handler = sample_handler;
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+
+  vectis_route_config_init(&route);
+  route.method = VECTIS_HTTP_GET;
+  route.path = "^/reports/([0-9]+$";
+  route.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  route.handler = sample_handler;
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "regex") != NULL);
 
   status = vectis_json_validate_cstr("{\"ok\":true}", &error);
   assert(status == VECTIS_OK);
 
   status = vectis_json_validate_cstr("{\"ok\":", &error);
   assert(status == VECTIS_ERR_INVALID);
+  assert(error.source == VECTIS_ERROR_SOURCE_LONEJSON);
   assert(strstr(error.message, "invalid json") != NULL);
 
   status = vectis_stop(app, &error);

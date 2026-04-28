@@ -1,0 +1,131 @@
+#include <stddef.h>
+#include <stdio.h>
+#include <string.h>
+
+#include <lc/lc.h>
+#include <lonejson.h>
+#include <pslog.h>
+#include <vectis/vectis.h>
+
+typedef struct order_request {
+  char id[64];
+  char status[32];
+} order_request;
+
+typedef struct order_response {
+  char id[64];
+  char saved[8];
+} order_response;
+
+static const lonejson_field order_request_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(order_request, id, "id", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(order_request, status, "status", LONEJSON_OVERFLOW_FAIL)};
+
+static const lonejson_field order_response_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(order_response, id, "id", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(order_response, saved, "saved", LONEJSON_OVERFLOW_FAIL)};
+
+LONEJSON_MAP_DEFINE(order_request_map, order_request, order_request_fields);
+LONEJSON_MAP_DEFINE(order_response_map, order_response, order_response_fields);
+
+static vectis_status save_order(vectis_app *app,
+                                vectis_request *request,
+                                vectis_response *response,
+                                void *userdata,
+                                vectis_error *error) {
+  order_request input;
+  order_response output;
+  lc_client *lockd;
+  pslog_logger *logger;
+  lc_acquire_req acquire;
+  lc_release_req release;
+  lc_lease *lease;
+  vectis_status status;
+
+  (void)userdata;
+  memset(&input, 0, sizeof(input));
+  memset(&output, 0, sizeof(output));
+  lc_acquire_req_init(&acquire);
+  lc_release_req_init(&release);
+  lease = NULL;
+
+  status = vectis_request_json_into(request, &order_request_map, &input, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+
+  lockd = vectis_lockd_client(app);
+  logger = vectis_logger(app);
+  if (logger != NULL) {
+    logger->infof(logger, "example.rest_lockd.save_order", "id=%s", input.id);
+  }
+
+  acquire.key = input.id;
+  acquire.owner = "orders-api";
+  acquire.ttl_seconds = 30L;
+  if (lc_acquire(lockd, &acquire, &lease, NULL) != 0) {
+    return VECTIS_ERR_STATE;
+  }
+  if (lease->save(lease, &order_request_map, &input, NULL, NULL) != 0) {
+    lc_lease_close(lease);
+    return VECTIS_ERR_STATE;
+  }
+  if (lease->release(lease, &release, NULL) != 0) {
+    lc_lease_close(lease);
+    return VECTIS_ERR_STATE;
+  }
+  lc_lease_close(lease);
+
+  (void)snprintf(output.id, sizeof(output.id), "%s", input.id);
+  (void)snprintf(output.saved, sizeof(output.saved), "%s", "true");
+  return vectis_response_json(response, 200, &order_response_map, &output, error);
+}
+
+int main(void) {
+  vectis_app_config config;
+  vectis_route_config route;
+  vectis_error error;
+  vectis_app *app;
+  pslog_config log_config;
+  pslog_logger *logger;
+  const char *endpoints[] = {"https://lockd.internal:8443"};
+  const char bundle[] =
+      "-----BEGIN CERTIFICATE-----\n"
+      "example\n"
+      "-----END CERTIFICATE-----\n";
+
+  vectis_app_config_init(&config);
+  pslog_default_config(&log_config);
+  log_config.mode = PSLOG_MODE_JSON;
+  log_config.min_level = PSLOG_LEVEL_INFO;
+  log_config.output = pslog_output_from_fp(stderr, 0);
+  logger = pslog_new(&log_config);
+  if (logger == NULL) {
+    return 1;
+  }
+
+  config.app_name = "orders-api";
+  config.logger = logger;
+  config.tls.cert_key_bundle = vectis_source_from_path("/etc/vectis/server.pem");
+  config.lockd.endpoints = endpoints;
+  config.lockd.endpoint_count = 1u;
+  config.lockd.client_bundle = vectis_source_from_memory(bundle, sizeof(bundle) - 1u);
+  config.lockd.default_namespace = "orders";
+
+  app = vectis_new(&config, &error);
+  if (app == NULL) {
+    logger->destroy(logger);
+    return 1;
+  }
+
+  route = vectis_route(VECTIS_HTTP_POST, "/orders", save_order, NULL);
+  if (vectis_register_route(app, &route, &error) != VECTIS_OK) {
+    vectis_destroy(app);
+    logger->destroy(logger);
+    return 1;
+  }
+
+  vectis_destroy(app);
+  logger->destroy(logger);
+  return 0;
+}

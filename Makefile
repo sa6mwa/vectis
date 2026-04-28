@@ -17,6 +17,7 @@ FUZZ_PRESET := fuzz
 	deps-debug deps-release deps-cross \
 	build build-debug build-release build-asan build-coverage build-fuzz \
 	test test-debug test-asan test-coverage \
+	package \
 	build-kore verify-kore-patches \
 	format clean \
 	vendor-kore vendor-kore-apply vendor-kore-status vendor-kore-upgrade
@@ -31,7 +32,8 @@ help:
 		'make build-fuzz         Configure and build the fuzz preset.' \
 		'make deps-debug         Provision host debug dependencies into .cache/.' \
 		'make deps-release       Provision x86_64 GNU and musl release dependencies.' \
-		'make deps-cross         Provision aarch64 and armhf GNU/musl release dependencies.' \
+		'make deps-cross         Provision aarch64 and armhf GNU/musl release dependencies, plus Darwin when osxcross is available.' \
+		'make package            Build release SDK archives; Darwin is included only when osxcross is available.' \
 		'make vendor-kore        Clone or refresh the vendored Kore upstream checkout.' \
 		'make vendor-kore-apply  Assert and apply the local Kore patch series.' \
 		'make vendor-kore-status Show Kore upstream revision and patch-series status.' \
@@ -55,6 +57,11 @@ deps-cross:
 	$(TIMED) deps-aarch64-musl bash ./scripts/deps.sh deps-aarch64-linux-musl
 	$(TIMED) deps-armhf-gnu bash ./scripts/deps.sh deps-armhf-linux-gnu
 	$(TIMED) deps-armhf-musl bash ./scripts/deps.sh deps-armhf-linux-musl
+	@if bash ./scripts/osxcross_available.sh; then \
+		$(TIMED) deps-arm64-darwin bash ./scripts/deps.sh deps-arm64-apple-darwin; \
+	else \
+		printf '[deps] skipping deps-arm64-apple-darwin: osxcross toolchain not available\n'; \
+	fi
 
 build-debug: deps-debug
 	$(TIMED) build-debug $(CMAKE) --preset $(DEBUG_PRESET)
@@ -73,6 +80,15 @@ build-release: deps-release deps-cross
 	$(TIMED) build-armhf-gnu-compile $(CMAKE) --build --preset armhf-linux-gnu-release
 	$(TIMED) build-armhf-musl $(CMAKE) --preset armhf-linux-musl-release
 	$(TIMED) build-armhf-musl-compile $(CMAKE) --build --preset armhf-linux-musl-release
+	@if bash ./scripts/osxcross_available.sh; then \
+		$(TIMED) build-arm64-darwin $(CMAKE) --preset arm64-apple-darwin-release; \
+		$(TIMED) build-arm64-darwin-compile $(CMAKE) --build --preset arm64-apple-darwin-release; \
+	else \
+		printf '[build] skipping arm64-apple-darwin-release: osxcross toolchain not available\n'; \
+	fi
+
+package:
+	$(TIMED) package bash ./scripts/package.sh all
 
 build-asan: deps-debug
 	$(TIMED) build-asan $(CMAKE) --preset $(ASAN_PRESET)

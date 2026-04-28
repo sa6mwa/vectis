@@ -3,6 +3,7 @@
 #include <lc/lc.h>
 #include <lonejson.h>
 #include <pthread.h>
+#include <regex.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +12,7 @@
 typedef struct vectis_route_entry {
   vectis_http_method method;
   char *path;
+  vectis_route_path_kind path_kind;
   vectis_route_handler_fn handler;
   void *userdata;
 } vectis_route_entry;
@@ -22,11 +24,31 @@ typedef struct vectis_app_impl {
   char *app_name;
   char *bind;
   char *cert_key_bundle_path;
+  void *cert_key_bundle_pem;
+  size_t cert_key_bundle_pem_size;
+  struct lc_source *cert_key_bundle_source;
   char *certificate_path;
+  void *certificate_pem;
+  size_t certificate_pem_size;
+  struct lc_source *certificate_source;
   char *private_key_path;
+  void *private_key_pem;
+  size_t private_key_pem_size;
+  struct lc_source *private_key_source;
+  char *ca_bundle_path;
+  void *ca_bundle_pem;
+  size_t ca_bundle_pem_size;
+  struct lc_source *ca_bundle_source;
+  char *client_ca_bundle_path;
+  void *client_ca_bundle_pem;
+  size_t client_ca_bundle_pem_size;
+  struct lc_source *client_ca_bundle_source;
   char *acme_email;
   char *acme_directory_url;
   char *unix_socket_path;
+  void *client_bundle_pem;
+  size_t client_bundle_pem_size;
+  struct lc_source *client_bundle_source;
   char *client_bundle_path;
   char *default_namespace;
   char **endpoints;
@@ -34,12 +56,18 @@ typedef struct vectis_app_impl {
   long timeout_ms;
   unsigned short port;
   vectis_tls_mode tls_mode;
+  int require_client_certificate;
   pslog_logger *logger;
   vectis_route_entry *routes;
   size_t route_count;
   size_t route_capacity;
   struct lc_client *lockd_client;
 } vectis_app_impl;
+
+struct vectis_http_client {
+  vectis_http_client_config config;
+  pslog_logger *logger;
+};
 
 static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error);
 static vectis_status vectis_app_stop_impl(vectis_app *app, vectis_error *error);
@@ -48,7 +76,6 @@ static vectis_status vectis_app_register_route_impl(vectis_app *app,
                                                     vectis_error *error);
 static size_t vectis_app_route_count_impl(const vectis_app *app);
 static pslog_logger *vectis_app_logger_impl(vectis_app *app);
-static vectis_status vectis_open_lockd_client(vectis_app_impl *impl, vectis_error *error);
 
 static const vectis_methods vectis_default_methods = {
     vectis_destroy,
@@ -63,7 +90,11 @@ void vectis_error_clear(vectis_error *error) {
     return;
   }
   error->code = VECTIS_OK;
+  error->source = VECTIS_ERROR_SOURCE_NONE;
+  error->dependency_code = 0L;
+  error->http_status = 0L;
   error->message[0] = '\0';
+  error->detail[0] = '\0';
 }
 
 void vectis_set_error(vectis_error *error, vectis_status code, const char *message) {
@@ -72,6 +103,7 @@ void vectis_set_error(vectis_error *error, vectis_status code, const char *messa
     return;
   }
   error->code = code;
+  error->source = VECTIS_ERROR_SOURCE_VECTIS;
   if (message == NULL) {
     return;
   }
@@ -89,6 +121,7 @@ static void vectis_set_errorf(vectis_error *error,
     return;
   }
   error->code = code;
+  error->source = VECTIS_ERROR_SOURCE_VECTIS;
   if (fmt == NULL) {
     return;
   }
@@ -97,61 +130,24 @@ static void vectis_set_errorf(vectis_error *error,
   va_end(ap);
 }
 
-static vectis_status vectis_status_from_lc_code(int code) {
-  switch (code) {
-  case LC_OK:
-    return VECTIS_OK;
-  case LC_ERR_INVALID:
-    return VECTIS_ERR_INVALID;
-  case LC_ERR_NOMEM:
-    return VECTIS_ERR_NOMEM;
-  default:
-    return VECTIS_ERR_STATE;
-  }
+static vectis_status vectis_not_implemented(vectis_error *error,
+                                            const char *feature) {
+  vectis_set_errorf(error,
+                    VECTIS_ERR_NOT_IMPLEMENTED,
+                    "%s is not implemented yet",
+                    feature != NULL ? feature : "requested Vectis feature");
+  return VECTIS_ERR_NOT_IMPLEMENTED;
 }
 
-static int vectis_has_lockd_transport(const vectis_app_impl *impl) {
-  return (impl->endpoint_count > 0u) || (impl->unix_socket_path != NULL);
-}
-
-static int vectis_has_complete_lockd_config(const vectis_app_impl *impl) {
-  if (!vectis_has_lockd_transport(impl)) {
-    return 0;
-  }
-
-  if (impl->unix_socket_path != NULL) {
-    return 1;
-  }
-
-  return impl->client_bundle_path != NULL && impl->client_bundle_path[0] != '\0';
-}
-
-static vectis_status vectis_set_lc_error(vectis_error *error,
-                                         vectis_status fallback,
-                                         const char *prefix,
-                                         lc_error *lcerr) {
+static vectis_status vectis_not_implemented_from(vectis_error *error,
+                                                 vectis_error_source source,
+                                                 const char *feature) {
   vectis_status status;
 
-  status = fallback;
-  if (lcerr != NULL) {
-    vectis_status mapped;
-
-    mapped = vectis_status_from_lc_code(lcerr->code);
-    if (mapped != VECTIS_OK) {
-      status = mapped;
-    }
-    if (lcerr->message != NULL && lcerr->detail != NULL) {
-      vectis_set_errorf(error, status, "%s: %s (%s)", prefix, lcerr->message, lcerr->detail);
-    } else if (lcerr->message != NULL) {
-      vectis_set_errorf(error, status, "%s: %s", prefix, lcerr->message);
-    } else {
-      vectis_set_error(error, status, prefix);
-    }
-    lc_error_cleanup(lcerr);
-  } else {
-    vectis_set_error(error, status, prefix);
+  status = vectis_not_implemented(error, feature);
+  if (error != NULL) {
+    error->source = source;
   }
-
   return status;
 }
 
@@ -174,6 +170,95 @@ const char *vectis_status_string(vectis_status status) {
   }
 }
 
+const char *vectis_error_source_string(vectis_error_source source) {
+  switch (source) {
+  case VECTIS_ERROR_SOURCE_NONE:
+    return "none";
+  case VECTIS_ERROR_SOURCE_VECTIS:
+    return "vectis";
+  case VECTIS_ERROR_SOURCE_KORE:
+    return "kore";
+  case VECTIS_ERROR_SOURCE_LOCKDC:
+    return "lockdc";
+  case VECTIS_ERROR_SOURCE_LONEJSON:
+    return "lonejson";
+  case VECTIS_ERROR_SOURCE_PSLOG:
+    return "pslog";
+  case VECTIS_ERROR_SOURCE_CURL:
+    return "curl";
+  case VECTIS_ERROR_SOURCE_OPENSSL:
+    return "openssl";
+  case VECTIS_ERROR_SOURCE_LIBSSH2:
+    return "libssh2";
+  default:
+    return "unknown";
+  }
+}
+
+void vectis_source_init(vectis_source *source) {
+  if (source == NULL) {
+    return;
+  }
+  memset(source, 0, sizeof(*source));
+}
+
+vectis_source vectis_source_from_path(const char *path) {
+  vectis_source source;
+
+  vectis_source_init(&source);
+  source.path = path;
+  return source;
+}
+
+vectis_source vectis_source_from_memory(const void *memory, size_t memory_size) {
+  vectis_source source;
+
+  vectis_source_init(&source);
+  source.memory = memory;
+  source.memory_size = memory_size;
+  return source;
+}
+
+vectis_source vectis_source_from_lc(struct lc_source *lc_source) {
+  vectis_source source;
+
+  vectis_source_init(&source);
+  source.source = lc_source;
+  return source;
+}
+
+static const char *vectis_source_path_or_old(const vectis_source *source,
+                                             const char *old_path) {
+  if (source != NULL && source->path != NULL) {
+    return source->path;
+  }
+  return old_path;
+}
+
+static struct lc_source *vectis_source_lc_or_old(const vectis_source *source,
+                                                 struct lc_source *old_source) {
+  if (source != NULL && source->source != NULL) {
+    return source->source;
+  }
+  return old_source;
+}
+
+static const void *vectis_source_memory_or_old(const vectis_source *source,
+                                               const void *old_memory,
+                                               size_t *out_size,
+                                               size_t old_size) {
+  if (source != NULL && source->memory != NULL && source->memory_size > 0u) {
+    if (out_size != NULL) {
+      *out_size = source->memory_size;
+    }
+    return source->memory;
+  }
+  if (out_size != NULL) {
+    *out_size = old_size;
+  }
+  return old_memory;
+}
+
 void vectis_tls_config_init(vectis_tls_config *config) {
   if (config == NULL) {
     return;
@@ -182,6 +267,7 @@ void vectis_tls_config_init(vectis_tls_config *config) {
   config->mode = VECTIS_TLS_MODE_MANUAL;
   config->bind = "0.0.0.0";
   config->port = 8443u;
+  config->acme_directory_url = VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION;
 }
 
 void vectis_lockd_config_init(vectis_lockd_config *config) {
@@ -204,6 +290,87 @@ void vectis_app_config_init(vectis_app_config *config) {
   vectis_lockd_config_init(&config->lockd);
 }
 
+void vectis_route_config_init(vectis_route_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->method = VECTIS_HTTP_ANY;
+  config->path_kind = VECTIS_ROUTE_PATH_LITERAL;
+}
+
+void vectis_json_route_config_init(vectis_json_route_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->method = VECTIS_HTTP_ANY;
+  config->path_kind = VECTIS_ROUTE_PATH_LITERAL;
+}
+
+static vectis_route_path_kind vectis_infer_route_path_kind(const char *path) {
+  if (path != NULL && path[0] == '^') {
+    return VECTIS_ROUTE_PATH_REGEX;
+  }
+  if (path != NULL && strchr(path, ':') != NULL) {
+    return VECTIS_ROUTE_PATH_PARAMS;
+  }
+  return VECTIS_ROUTE_PATH_LITERAL;
+}
+
+vectis_route_config vectis_route(vectis_http_method method,
+                                 const char *path,
+                                 vectis_route_handler_fn handler,
+                                 void *userdata) {
+  vectis_route_config route;
+
+  vectis_route_config_init(&route);
+  route.method = method;
+  route.path = path;
+  route.path_kind = vectis_infer_route_path_kind(path);
+  route.handler = handler;
+  route.userdata = userdata;
+  return route;
+}
+
+vectis_route_config vectis_route_regex(vectis_http_method method,
+                                       const char *pattern,
+                                       vectis_route_handler_fn handler,
+                                       void *userdata) {
+  vectis_route_config route;
+
+  vectis_route_config_init(&route);
+  route.method = method;
+  route.path = pattern;
+  route.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  route.handler = handler;
+  route.userdata = userdata;
+  return route;
+}
+
+vectis_json_route_config vectis_json_route(vectis_http_method method,
+                                           const char *path,
+                                           const lonejson_map *input_map,
+                                           size_t input_size,
+                                           const lonejson_map *output_map,
+                                           size_t output_size,
+                                           vectis_json_route_handler_fn handler,
+                                           void *userdata) {
+  vectis_json_route_config route;
+
+  vectis_json_route_config_init(&route);
+  route.method = method;
+  route.path = path;
+  route.path_kind = vectis_infer_route_path_kind(path);
+  route.input_map = input_map;
+  route.input_size = input_size;
+  route.output_map = output_map;
+  route.output_size = output_size;
+  route.handler = handler;
+  route.userdata = userdata;
+  return route;
+}
+
 static char *vectis_strdup(const char *value) {
   size_t len;
   char *copy;
@@ -218,6 +385,173 @@ static char *vectis_strdup(const char *value) {
   }
   memcpy(copy, value, len);
   return copy;
+}
+
+static vectis_status vectis_copy_bytes(const void *bytes,
+                                       size_t size,
+                                       void **out,
+                                       size_t *out_size,
+                                       const char *label,
+                                       vectis_error *error) {
+  void *copy;
+
+  if (out != NULL) {
+    *out = NULL;
+  }
+  if (out_size != NULL) {
+    *out_size = 0u;
+  }
+  if (bytes == NULL || size == 0u) {
+    return VECTIS_OK;
+  }
+  copy = malloc(size);
+  if (copy == NULL) {
+    vectis_set_errorf(error, VECTIS_ERR_NOMEM, "failed to copy %s", label);
+    return VECTIS_ERR_NOMEM;
+  }
+  memcpy(copy, bytes, size);
+  *out = copy;
+  *out_size = size;
+  return VECTIS_OK;
+}
+
+static int vectis_tls_material_present(const char *path,
+                                       const void *pem,
+                                       struct lc_source *source) {
+  return path != NULL || pem != NULL || source != NULL;
+}
+
+static vectis_status vectis_copy_source_bytes(const vectis_source *source,
+                                              const void *old_bytes,
+                                              size_t old_size,
+                                              void **out,
+                                              size_t *out_size,
+                                              const char *label,
+                                              vectis_error *error) {
+  const void *bytes;
+  size_t size;
+
+  size = 0u;
+  bytes = vectis_source_memory_or_old(source, old_bytes, &size, old_size);
+  return vectis_copy_bytes(bytes, size, out, out_size, label, error);
+}
+
+static int vectis_is_param_start(int ch) {
+  return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == '_';
+}
+
+static int vectis_is_param_char(int ch) {
+  return vectis_is_param_start(ch) || (ch >= '0' && ch <= '9');
+}
+
+static vectis_status vectis_validate_param_path(const char *path,
+                                                vectis_error *error) {
+  const char *p;
+  int segment_start;
+
+  p = path + 1;
+  segment_start = 1;
+  while (*p != '\0') {
+    if (*p == '/') {
+      if (segment_start) {
+        vectis_set_error(error, VECTIS_ERR_INVALID, "route path must not contain empty segments");
+        return VECTIS_ERR_INVALID;
+      }
+      segment_start = 1;
+      p++;
+      continue;
+    }
+    if (segment_start && p[0] == '.' && (p[1] == '/' || p[1] == '\0' ||
+                                         (p[1] == '.' && (p[2] == '/' || p[2] == '\0')))) {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "route path must not contain dot segments");
+      return VECTIS_ERR_INVALID;
+    }
+    if (*p == ':') {
+      if (!segment_start) {
+        vectis_set_error(error, VECTIS_ERR_INVALID, "route path parameters must occupy a full segment");
+        return VECTIS_ERR_INVALID;
+      }
+      p++;
+      if (!vectis_is_param_start((unsigned char)*p)) {
+        vectis_set_error(error, VECTIS_ERR_INVALID, "route path parameter name is invalid");
+        return VECTIS_ERR_INVALID;
+      }
+      while (vectis_is_param_char((unsigned char)*p)) {
+        p++;
+      }
+      if (*p == '?') {
+        p++;
+      }
+      if (*p != '/' && *p != '\0') {
+        vectis_set_error(error, VECTIS_ERR_INVALID, "route path parameter name is invalid");
+        return VECTIS_ERR_INVALID;
+      }
+      segment_start = 0;
+      continue;
+    }
+    if (*p == '?') {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "route path '?' is only allowed after a path parameter name");
+      return VECTIS_ERR_INVALID;
+    }
+    if (*p == '%' || *p == '\\') {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "route path must not contain percent escapes or backslashes");
+      return VECTIS_ERR_INVALID;
+    }
+    segment_start = 0;
+    p++;
+  }
+  if (segment_start && path[1] != '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "route path must not end with an empty segment");
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_validate_route_path(const char *path,
+                                                vectis_route_path_kind path_kind,
+                                                vectis_error *error) {
+  regex_t compiled;
+  int regex_rc;
+
+  if (path_kind == VECTIS_ROUTE_PATH_LITERAL) {
+    if (path == NULL || path[0] != '/') {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "route path must start with '/'");
+      return VECTIS_ERR_INVALID;
+    }
+    if (strchr(path, ':') != NULL) {
+      vectis_set_error(error,
+                       VECTIS_ERR_INVALID,
+                       "route path contains ':' but path_kind is not VECTIS_ROUTE_PATH_PARAMS");
+      return VECTIS_ERR_INVALID;
+    }
+    return vectis_validate_param_path(path, error);
+  }
+  if (path_kind == VECTIS_ROUTE_PATH_PARAMS) {
+    if (path == NULL || path[0] != '/') {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "route path must start with '/'");
+      return VECTIS_ERR_INVALID;
+    }
+    return vectis_validate_param_path(path, error);
+  }
+  if (path_kind == VECTIS_ROUTE_PATH_REGEX) {
+    if (path == NULL || path[0] == '\0') {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "regex route path is required");
+      return VECTIS_ERR_INVALID;
+    }
+    if (path[0] != '^' || path[1] != '/') {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "regex route path must start with '^/'");
+      return VECTIS_ERR_INVALID;
+    }
+    regex_rc = regcomp(&compiled, path, REG_EXTENDED | REG_NOSUB);
+    if (regex_rc != 0) {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "regex route path is invalid POSIX extended regex");
+      return VECTIS_ERR_INVALID;
+    }
+    regfree(&compiled);
+    return VECTIS_OK;
+  }
+  vectis_set_error(error, VECTIS_ERR_INVALID, "route path_kind is invalid");
+  return VECTIS_ERR_INVALID;
 }
 
 static void vectis_free_endpoints(vectis_app_impl *impl) {
@@ -287,40 +621,6 @@ static pslog_logger *vectis_make_owned_logger(const vectis_app_config *config,
   return scoped;
 }
 
-static vectis_status vectis_open_lockd_client(vectis_app_impl *impl, vectis_error *error) {
-  lc_client_config lcconf;
-  lc_error lcerr;
-  int rc;
-
-  if (impl->lockd_client != NULL) {
-    vectis_error_clear(error);
-    return VECTIS_OK;
-  }
-
-  if (!vectis_has_complete_lockd_config(impl)) {
-    vectis_error_clear(error);
-    return VECTIS_OK;
-  }
-
-  memset(&lcerr, 0, sizeof(lcerr));
-  lc_client_config_init(&lcconf);
-  lcconf.endpoints = (const char *const *)impl->endpoints;
-  lcconf.endpoint_count = impl->endpoint_count;
-  lcconf.unix_socket_path = impl->unix_socket_path;
-  lcconf.client_bundle_path = impl->client_bundle_path;
-  lcconf.default_namespace = impl->default_namespace;
-  lcconf.timeout_ms = impl->timeout_ms;
-  lcconf.logger = impl->logger;
-
-  rc = lc_client_open(&lcconf, &impl->lockd_client, &lcerr);
-  if (rc != LC_OK) {
-    return vectis_set_lc_error(error, VECTIS_ERR_STATE, "failed to open lockd client", &lcerr);
-  }
-
-  vectis_error_clear(error);
-  return VECTIS_OK;
-}
-
 static void vectis_free_routes(vectis_app_impl *impl) {
   size_t i;
 
@@ -349,11 +649,19 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
   free(impl->app_name);
   free(impl->bind);
   free(impl->cert_key_bundle_path);
+  free(impl->cert_key_bundle_pem);
   free(impl->certificate_path);
+  free(impl->certificate_pem);
   free(impl->private_key_path);
+  free(impl->private_key_pem);
+  free(impl->ca_bundle_path);
+  free(impl->ca_bundle_pem);
+  free(impl->client_ca_bundle_path);
+  free(impl->client_ca_bundle_pem);
   free(impl->acme_email);
   free(impl->acme_directory_url);
   free(impl->unix_socket_path);
+  free(impl->client_bundle_pem);
   free(impl->client_bundle_path);
   free(impl->default_namespace);
 
@@ -371,9 +679,8 @@ static vectis_status vectis_validate_route(const vectis_route_config *route,
     vectis_set_error(error, VECTIS_ERR_INVALID, "route is required");
     return VECTIS_ERR_INVALID;
   }
-  if (route->path == NULL || route->path[0] != '/') {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "route path must start with '/'");
-    return VECTIS_ERR_INVALID;
+  if (vectis_validate_route_path(route->path, route->path_kind, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
   if (route->handler == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "route handler is required");
@@ -385,13 +692,34 @@ static vectis_status vectis_validate_route(const vectis_route_config *route,
 static vectis_status vectis_validate_startable(const vectis_app_impl *impl,
                                                vectis_error *error) {
   int has_lockd_transport;
+  int has_cert_key_bundle;
+  int has_split_certificate;
+  int has_split_private_key;
+  int has_client_ca;
 
   if (impl->tls_mode == VECTIS_TLS_MODE_MANUAL) {
-    if (impl->cert_key_bundle_path == NULL &&
-        (impl->certificate_path == NULL || impl->private_key_path == NULL)) {
+    has_cert_key_bundle = vectis_tls_material_present(impl->cert_key_bundle_path,
+                                                      impl->cert_key_bundle_pem,
+                                                      impl->cert_key_bundle_source);
+    has_split_certificate = vectis_tls_material_present(impl->certificate_path,
+                                                        impl->certificate_pem,
+                                                        impl->certificate_source);
+    has_split_private_key = vectis_tls_material_present(impl->private_key_path,
+                                                        impl->private_key_pem,
+                                                        impl->private_key_source);
+    if (!has_cert_key_bundle && (!has_split_certificate || !has_split_private_key)) {
       vectis_set_error(error,
                        VECTIS_ERR_INVALID,
-                       "manual TLS requires cert_key_bundle_path or certificate_path + private_key_path");
+                       "manual TLS requires cert_key_bundle or certificate + private_key from path, source, or memory");
+      return VECTIS_ERR_INVALID;
+    }
+    has_client_ca = vectis_tls_material_present(impl->client_ca_bundle_path,
+                                                impl->client_ca_bundle_pem,
+                                                impl->client_ca_bundle_source);
+    if (impl->require_client_certificate && !has_client_ca) {
+      vectis_set_error(error,
+                       VECTIS_ERR_INVALID,
+                       "client certificate verification requires client_ca_bundle from path, source, or memory");
       return VECTIS_ERR_INVALID;
     }
   } else if (impl->tls_mode == VECTIS_TLS_MODE_ACME) {
@@ -409,10 +737,13 @@ static vectis_status vectis_validate_startable(const vectis_app_impl *impl,
     return VECTIS_ERR_INVALID;
   }
 
-  if (impl->client_bundle_path == NULL && impl->unix_socket_path == NULL) {
+  if (impl->client_bundle_path == NULL &&
+      impl->client_bundle_source == NULL &&
+      impl->client_bundle_pem == NULL &&
+      impl->unix_socket_path == NULL) {
     vectis_set_error(error,
                      VECTIS_ERR_INVALID,
-                     "tcp lockd transport requires client_bundle_path");
+                     "tcp lockd transport requires client_bundle_path, client_bundle_source, or client_bundle_pem");
     return VECTIS_ERR_INVALID;
   }
 
@@ -448,17 +779,112 @@ vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error) {
 
   impl->app_name = vectis_strdup(effective->app_name != NULL ? effective->app_name : "vectis");
   impl->bind = vectis_strdup(effective->tls.bind != NULL ? effective->tls.bind : "0.0.0.0");
-  impl->cert_key_bundle_path = vectis_strdup(effective->tls.cert_key_bundle_path);
-  impl->certificate_path = vectis_strdup(effective->tls.certificate_path);
-  impl->private_key_path = vectis_strdup(effective->tls.private_key_path);
+  impl->cert_key_bundle_path = vectis_strdup(vectis_source_path_or_old(&effective->tls.cert_key_bundle,
+                                                                       effective->tls.cert_key_bundle_path));
+  impl->cert_key_bundle_source = vectis_source_lc_or_old(&effective->tls.cert_key_bundle,
+                                                         effective->tls.cert_key_bundle_source);
+  impl->certificate_path = vectis_strdup(vectis_source_path_or_old(&effective->tls.certificate,
+                                                                   effective->tls.certificate_path));
+  impl->certificate_source = vectis_source_lc_or_old(&effective->tls.certificate,
+                                                     effective->tls.certificate_source);
+  impl->private_key_path = vectis_strdup(vectis_source_path_or_old(&effective->tls.private_key,
+                                                                  effective->tls.private_key_path));
+  impl->private_key_source = vectis_source_lc_or_old(&effective->tls.private_key,
+                                                     effective->tls.private_key_source);
+  impl->ca_bundle_path = vectis_strdup(vectis_source_path_or_old(&effective->tls.ca_bundle,
+                                                                effective->tls.ca_bundle_path));
+  impl->ca_bundle_source = vectis_source_lc_or_old(&effective->tls.ca_bundle,
+                                                  effective->tls.ca_bundle_source);
+  impl->client_ca_bundle_path = vectis_strdup(vectis_source_path_or_old(&effective->tls.client_ca_bundle,
+                                                                       effective->tls.client_ca_bundle_path));
+  impl->client_ca_bundle_source = vectis_source_lc_or_old(&effective->tls.client_ca_bundle,
+                                                          effective->tls.client_ca_bundle_source);
   impl->acme_email = vectis_strdup(effective->tls.acme_email);
   impl->acme_directory_url = vectis_strdup(effective->tls.acme_directory_url);
   impl->unix_socket_path = vectis_strdup(effective->lockd.unix_socket_path);
-  impl->client_bundle_path = vectis_strdup(effective->lockd.client_bundle_path);
+  impl->client_bundle_path = vectis_strdup(vectis_source_path_or_old(&effective->lockd.client_bundle,
+                                                                    effective->lockd.client_bundle_path));
+  impl->client_bundle_source = vectis_source_lc_or_old(&effective->lockd.client_bundle,
+                                                       effective->lockd.client_bundle_source);
   impl->default_namespace = vectis_strdup(effective->lockd.default_namespace);
   impl->timeout_ms = effective->lockd.timeout_ms;
   impl->port = effective->tls.port;
   impl->tls_mode = effective->tls.mode;
+  impl->require_client_certificate = effective->tls.require_client_certificate;
+
+  status = vectis_copy_source_bytes(&effective->tls.cert_key_bundle,
+                                    effective->tls.cert_key_bundle_pem,
+                                    effective->tls.cert_key_bundle_pem_size,
+                                    &impl->cert_key_bundle_pem,
+                                    &impl->cert_key_bundle_pem_size,
+                                    "TLS cert/key bundle PEM",
+                                    error);
+  if (status != VECTIS_OK) {
+    vectis_destroy_impl(impl);
+    free(app);
+    return NULL;
+  }
+  status = vectis_copy_source_bytes(&effective->tls.certificate,
+                                    effective->tls.certificate_pem,
+                                    effective->tls.certificate_pem_size,
+                                    &impl->certificate_pem,
+                                    &impl->certificate_pem_size,
+                                    "TLS certificate PEM",
+                                    error);
+  if (status != VECTIS_OK) {
+    vectis_destroy_impl(impl);
+    free(app);
+    return NULL;
+  }
+  status = vectis_copy_source_bytes(&effective->tls.private_key,
+                                    effective->tls.private_key_pem,
+                                    effective->tls.private_key_pem_size,
+                                    &impl->private_key_pem,
+                                    &impl->private_key_pem_size,
+                                    "TLS private key PEM",
+                                    error);
+  if (status != VECTIS_OK) {
+    vectis_destroy_impl(impl);
+    free(app);
+    return NULL;
+  }
+  status = vectis_copy_source_bytes(&effective->tls.ca_bundle,
+                                    effective->tls.ca_bundle_pem,
+                                    effective->tls.ca_bundle_pem_size,
+                                    &impl->ca_bundle_pem,
+                                    &impl->ca_bundle_pem_size,
+                                    "TLS CA bundle PEM",
+                                    error);
+  if (status != VECTIS_OK) {
+    vectis_destroy_impl(impl);
+    free(app);
+    return NULL;
+  }
+  status = vectis_copy_source_bytes(&effective->tls.client_ca_bundle,
+                                    effective->tls.client_ca_bundle_pem,
+                                    effective->tls.client_ca_bundle_pem_size,
+                                    &impl->client_ca_bundle_pem,
+                                    &impl->client_ca_bundle_pem_size,
+                                    "TLS client CA bundle PEM",
+                                    error);
+  if (status != VECTIS_OK) {
+    vectis_destroy_impl(impl);
+    free(app);
+    return NULL;
+  }
+
+  status = vectis_copy_source_bytes(&effective->lockd.client_bundle,
+                                    effective->lockd.client_bundle_pem,
+                                    effective->lockd.client_bundle_pem_size,
+                                    &impl->client_bundle_pem,
+                                    &impl->client_bundle_pem_size,
+                                    "lockd client bundle PEM",
+                                    error);
+  if (status != VECTIS_OK) {
+    vectis_destroy_impl(impl);
+    free(app);
+    return NULL;
+  }
 
   status = vectis_copy_endpoints(impl, &effective->lockd, error);
   if (status != VECTIS_OK) {
@@ -478,13 +904,6 @@ vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error) {
       return NULL;
     }
     impl->owns_logger = 1;
-  }
-
-  status = vectis_open_lockd_client(impl, error);
-  if (status != VECTIS_OK) {
-    vectis_destroy_impl(impl);
-    free(app);
-    return NULL;
   }
 
   app->vt = &vectis_default_methods;
@@ -514,11 +933,6 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
   impl = (vectis_app_impl *)app->impl;
 
   status = vectis_validate_startable(impl, error);
-  if (status != VECTIS_OK) {
-    return status;
-  }
-
-  status = vectis_open_lockd_client(impl, error);
   if (status != VECTIS_OK) {
     return status;
   }
@@ -579,6 +993,7 @@ vectis_status vectis_stop(vectis_app *app, vectis_error *error) {
 static int vectis_route_conflicts(const vectis_route_entry *existing,
                                   const vectis_route_config *candidate) {
   return existing->method == candidate->method &&
+         existing->path_kind == candidate->path_kind &&
          strcmp(existing->path, candidate->path) == 0;
 }
 
@@ -627,6 +1042,7 @@ static vectis_status vectis_app_register_route_impl(vectis_app *app,
   }
 
   impl->routes[impl->route_count].method = route->method;
+  impl->routes[impl->route_count].path_kind = route->path_kind;
   impl->routes[impl->route_count].path = vectis_strdup(route->path);
   impl->routes[impl->route_count].handler = route->handler;
   impl->routes[impl->route_count].userdata = route->userdata;
@@ -649,6 +1065,35 @@ vectis_status vectis_register_route(vectis_app *app,
     return VECTIS_ERR_INVALID;
   }
   return app->vt->register_route(app, route, error);
+}
+
+vectis_status vectis_register_json_route(vectis_app *app,
+                                         const vectis_json_route_config *route,
+                                         vectis_error *error) {
+  if (app == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (route == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "json route is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_validate_route_path(route->path, route->path_kind, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (route->handler == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "json route handler is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (route->input_map != NULL && (route->input_size == 0u || route->input_size > 10485760u)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "json route input_size is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (route->output_map != NULL && (route->output_size == 0u || route->output_size > 10485760u)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "json route output_size is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_KORE, "JSON route auto-wiring");
 }
 
 static size_t vectis_app_route_count_impl(const vectis_app *app) {
@@ -689,6 +1134,16 @@ pslog_logger *vectis_logger(vectis_app *app) {
   return app->vt->logger(app);
 }
 
+struct lc_client *vectis_lockd_client(vectis_app *app) {
+  vectis_app_impl *impl;
+
+  if (app == NULL || app->impl == NULL) {
+    return NULL;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  return impl->lockd_client;
+}
+
 vectis_status vectis_json_validate_cstr(const char *json, vectis_error *error) {
   lonejson_error json_error;
   lonejson_status status;
@@ -706,11 +1161,622 @@ vectis_status vectis_json_validate_cstr(const char *json, vectis_error *error) {
                       (unsigned long)json_error.line,
                       (unsigned long)json_error.column,
                       json_error.message);
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LONEJSON;
+      error->dependency_code = (long)status;
+    }
     return VECTIS_ERR_INVALID;
   }
 
   vectis_error_clear(error);
   return VECTIS_OK;
+}
+
+vectis_status vectis_request_json_into(vectis_request *request,
+                                       const lonejson_map *map,
+                                       void *out,
+                                       vectis_error *error) {
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lonejson map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "json output struct is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_KORE, "request JSON parsing");
+}
+
+const char *vectis_request_path_param(vectis_request *request,
+                                      const char *name) {
+  (void)request;
+  (void)name;
+  return NULL;
+}
+
+const char *vectis_request_query(vectis_request *request,
+                                 const char *name) {
+  (void)request;
+  (void)name;
+  return NULL;
+}
+
+const char *vectis_request_header(vectis_request *request,
+                                  const char *name) {
+  (void)request;
+  (void)name;
+  return NULL;
+}
+
+vectis_status vectis_request_body_bytes(vectis_request *request,
+                                        vectis_bytes *out,
+                                        vectis_error *error) {
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_KORE, "request body access");
+}
+
+vectis_status vectis_response_status(vectis_response *response,
+                                     int status_code,
+                                     vectis_error *error) {
+  if (response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (status_code < 100 || status_code > 599) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP status code is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_KORE, "response status writing");
+}
+
+vectis_status vectis_response_text(vectis_response *response,
+                                   int status_code,
+                                   const char *content_type,
+                                   const char *text,
+                                   vectis_error *error) {
+  if (response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (status_code < 100 || status_code > 599) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP status code is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (content_type == NULL || content_type[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response content_type is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (text == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response text is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_KORE, "text response writing");
+}
+
+vectis_status vectis_response_bytes(vectis_response *response,
+                                    int status_code,
+                                    const char *content_type,
+                                    vectis_bytes body,
+                                    vectis_error *error) {
+  if (response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (status_code < 100 || status_code > 599) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP status code is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (content_type == NULL || content_type[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response content_type is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (body.data == NULL && body.size > 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response body is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_KORE, "byte response writing");
+}
+
+vectis_status vectis_response_json(vectis_response *response,
+                                   int status_code,
+                                   const lonejson_map *map,
+                                   const void *value,
+                                   vectis_error *error) {
+  if (response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (status_code < 100 || status_code > 599) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP status code is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lonejson map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (value == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "json response value is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_KORE, "response JSON serialization");
+}
+
+void vectis_http_client_config_init(vectis_http_client_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->timeout_ms = 30000L;
+  config->connect_timeout_ms = 10000L;
+  config->follow_redirects = 1;
+}
+
+vectis_status vectis_http_client_new(const vectis_http_client_config *config,
+                                     vectis_http_client **out,
+                                     vectis_error *error) {
+  vectis_http_client_config defaults;
+  const vectis_http_client_config *effective;
+  vectis_http_client *client;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP client output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  vectis_http_client_config_init(&defaults);
+  effective = config != NULL ? config : &defaults;
+  if (effective->timeout_ms < 0L || effective->connect_timeout_ms < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP client timeouts must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+
+  client = (vectis_http_client *)calloc(1u, sizeof(*client));
+  if (client == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate HTTP client");
+    return VECTIS_ERR_NOMEM;
+  }
+  client->config = *effective;
+  client->logger = effective->logger;
+  vectis_error_clear(error);
+  *out = client;
+  return VECTIS_OK;
+}
+
+vectis_status vectis_http_client_from_app(vectis_app *app,
+                                          const vectis_http_client_config *config,
+                                          vectis_http_client **out,
+                                          vectis_error *error) {
+  vectis_http_client_config effective;
+  vectis_status status;
+
+  if (app == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config != NULL) {
+    effective = *config;
+  } else {
+    vectis_http_client_config_init(&effective);
+  }
+  if (effective.logger == NULL) {
+    effective.logger = vectis_logger(app);
+  }
+  status = vectis_http_client_new(&effective, out, error);
+  if (status == VECTIS_OK && out != NULL && *out != NULL) {
+    (*out)->logger = effective.logger;
+  }
+  return status;
+}
+
+void vectis_http_client_destroy(vectis_http_client *client) {
+  free(client);
+}
+
+void vectis_http_request_init(vectis_http_request *request) {
+  if (request == NULL) {
+    return;
+  }
+  memset(request, 0, sizeof(*request));
+  request->method = VECTIS_HTTP_GET;
+}
+
+void vectis_http_response_cleanup(vectis_http_response *response) {
+  if (response == NULL) {
+    return;
+  }
+  free(response->content_type);
+  free(response->body);
+  memset(response, 0, sizeof(*response));
+}
+
+vectis_status vectis_http_client_execute(vectis_http_client *client,
+                                         const vectis_http_request *request,
+                                         vectis_http_response *response,
+                                         vectis_error *error) {
+  if (client == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP client is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_http_execute(&client->config, request, response, error);
+}
+
+vectis_status vectis_http_client_get(vectis_http_client *client,
+                                     const char *url,
+                                     vectis_http_response *response,
+                                     vectis_error *error) {
+  vectis_http_request request;
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = url;
+  return vectis_http_client_execute(client, &request, response, error);
+}
+
+vectis_status vectis_http_client_delete(vectis_http_client *client,
+                                        const char *url,
+                                        vectis_http_response *response,
+                                        vectis_error *error) {
+  vectis_http_request request;
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_DELETE;
+  request.url = url;
+  return vectis_http_client_execute(client, &request, response, error);
+}
+
+static vectis_status vectis_http_client_send_json(vectis_http_client *client,
+                                                  vectis_http_method method,
+                                                  const char *url,
+                                                  const lonejson_map *map,
+                                                  const void *value,
+                                                  vectis_http_response *response,
+                                                  vectis_error *error) {
+  vectis_http_request request;
+
+  if (map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lonejson map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (value == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "json value is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_http_request_init(&request);
+  request.method = method;
+  request.url = url;
+  request.content_type = "application/json";
+  request.json_map = map;
+  request.json_value = value;
+  return vectis_http_client_execute(client, &request, response, error);
+}
+
+vectis_status vectis_http_client_post_json(vectis_http_client *client,
+                                           const char *url,
+                                           const lonejson_map *map,
+                                           const void *value,
+                                           vectis_http_response *response,
+                                           vectis_error *error) {
+  return vectis_http_client_send_json(client, VECTIS_HTTP_POST, url, map, value, response, error);
+}
+
+vectis_status vectis_http_client_put_json(vectis_http_client *client,
+                                          const char *url,
+                                          const lonejson_map *map,
+                                          const void *value,
+                                          vectis_http_response *response,
+                                          vectis_error *error) {
+  return vectis_http_client_send_json(client, VECTIS_HTTP_PUT, url, map, value, response, error);
+}
+
+vectis_status vectis_http_client_patch_json(vectis_http_client *client,
+                                            const char *url,
+                                            const lonejson_map *map,
+                                            const void *value,
+                                            vectis_http_response *response,
+                                            vectis_error *error) {
+  return vectis_http_client_send_json(client, VECTIS_HTTP_PATCH, url, map, value, response, error);
+}
+
+vectis_status vectis_http_execute(const vectis_http_client_config *client,
+                                  const vectis_http_request *request,
+                                  vectis_http_response *response,
+                                  vectis_error *error) {
+  if (client == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP client config is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP request is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->url == NULL && client->base_url == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP request requires url or client base_url");
+    return VECTIS_ERR_INVALID;
+  }
+  if (response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP response is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_CURL, "curl HTTP execution");
+}
+
+vectis_status vectis_http_get(const vectis_http_client_config *client,
+                              const char *url,
+                              vectis_http_response *response,
+                              vectis_error *error) {
+  vectis_http_request request;
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = url;
+  return vectis_http_execute(client, &request, response, error);
+}
+
+vectis_status vectis_http_delete(const vectis_http_client_config *client,
+                                 const char *url,
+                                 vectis_http_response *response,
+                                 vectis_error *error) {
+  vectis_http_request request;
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_DELETE;
+  request.url = url;
+  return vectis_http_execute(client, &request, response, error);
+}
+
+static vectis_status vectis_http_send_json(const vectis_http_client_config *client,
+                                           vectis_http_method method,
+                                           const char *url,
+                                           const lonejson_map *map,
+                                           const void *value,
+                                           vectis_http_response *response,
+                                           vectis_error *error) {
+  vectis_http_request request;
+
+  if (map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lonejson map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (value == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "json value is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_http_request_init(&request);
+  request.method = method;
+  request.url = url;
+  request.content_type = "application/json";
+  request.json_map = map;
+  request.json_value = value;
+  return vectis_http_execute(client, &request, response, error);
+}
+
+vectis_status vectis_http_post_json(const vectis_http_client_config *client,
+                                    const char *url,
+                                    const lonejson_map *map,
+                                    const void *value,
+                                    vectis_http_response *response,
+                                    vectis_error *error) {
+  return vectis_http_send_json(client, VECTIS_HTTP_POST, url, map, value, response, error);
+}
+
+vectis_status vectis_http_put_json(const vectis_http_client_config *client,
+                                   const char *url,
+                                   const lonejson_map *map,
+                                   const void *value,
+                                   vectis_http_response *response,
+                                   vectis_error *error) {
+  return vectis_http_send_json(client, VECTIS_HTTP_PUT, url, map, value, response, error);
+}
+
+vectis_status vectis_http_patch_json(const vectis_http_client_config *client,
+                                     const char *url,
+                                     const lonejson_map *map,
+                                     const void *value,
+                                     vectis_http_response *response,
+                                     vectis_error *error) {
+  return vectis_http_send_json(client, VECTIS_HTTP_PATCH, url, map, value, response, error);
+}
+
+void vectis_sftp_config_init(vectis_sftp_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->timeout_ms = 30000L;
+}
+
+vectis_status vectis_sftp_upload_file(const vectis_sftp_config *config,
+                                      const char *local_path,
+                                      const char *remote_path,
+                                      vectis_error *error) {
+  if (config == NULL || config->url == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP config with url is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (local_path == NULL || remote_path == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP upload requires local_path and remote_path");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_CURL, "curl SFTP upload");
+}
+
+vectis_status vectis_sftp_download_file(const vectis_sftp_config *config,
+                                        const char *remote_path,
+                                        const char *local_path,
+                                        vectis_error *error) {
+  if (config == NULL || config->url == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP config with url is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (remote_path == NULL || local_path == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP download requires remote_path and local_path");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_CURL, "curl SFTP download");
+}
+
+void vectis_ssh_config_init(vectis_ssh_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->port = 22u;
+  config->timeout_ms = 30000L;
+}
+
+void vectis_ssh_exec_result_cleanup(vectis_ssh_exec_result *result) {
+  if (result == NULL) {
+    return;
+  }
+  free(result->stdout_data);
+  free(result->stderr_data);
+  memset(result, 0, sizeof(*result));
+}
+
+vectis_status vectis_ssh_exec(const vectis_ssh_config *config,
+                              const char *command,
+                              vectis_ssh_exec_result *result,
+                              vectis_error *error) {
+  if (config == NULL || config->host == NULL || config->username == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH config requires host and username");
+    return VECTIS_ERR_INVALID;
+  }
+  if (command == NULL || command[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH command is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (result == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH exec result is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_LIBSSH2, "libssh2 command execution");
+}
+
+vectis_status vectis_ssh_sftp_upload_file(const vectis_ssh_config *config,
+                                          const char *local_path,
+                                          const char *remote_path,
+                                          vectis_error *error) {
+  if (config == NULL || config->host == NULL || config->username == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH config requires host and username");
+    return VECTIS_ERR_INVALID;
+  }
+  if (local_path == NULL || remote_path == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH SFTP upload requires local_path and remote_path");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_LIBSSH2, "libssh2 SFTP upload");
+}
+
+vectis_status vectis_ssh_sftp_download_file(const vectis_ssh_config *config,
+                                            const char *remote_path,
+                                            const char *local_path,
+                                            vectis_error *error) {
+  if (config == NULL || config->host == NULL || config->username == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH config requires host and username");
+    return VECTIS_ERR_INVALID;
+  }
+  if (remote_path == NULL || local_path == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH SFTP download requires remote_path and local_path");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_LIBSSH2, "libssh2 SFTP download");
+}
+
+void vectis_mqtt_config_init(vectis_mqtt_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->timeout_ms = 30000L;
+}
+
+vectis_status vectis_mqtt_publish(const vectis_mqtt_config *config,
+                                  const char *topic,
+                                  const void *payload,
+                                  size_t payload_size,
+                                  const char *content_type,
+                                  vectis_error *error) {
+  (void)content_type;
+  if (config == NULL || config->broker_url == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "MQTT config with broker_url is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (topic == NULL || topic[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "MQTT topic is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (payload == NULL && payload_size > 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "MQTT payload is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_CURL, "curl MQTT publish");
+}
+
+vectis_status vectis_mqtt_publish_json(const vectis_mqtt_config *config,
+                                       const char *topic,
+                                       const lonejson_map *map,
+                                       const void *value,
+                                       vectis_error *error) {
+  if (map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lonejson map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (value == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "json value is required");
+    return VECTIS_ERR_INVALID;
+  }
+  (void)config;
+  (void)topic;
+  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_CURL, "curl MQTT JSON publish");
+}
+
+void vectis_cert_subject_init(vectis_cert_subject *subject) {
+  if (subject == NULL) {
+    return;
+  }
+  memset(subject, 0, sizeof(*subject));
+}
+
+void vectis_cert_bundle_config_init(vectis_cert_bundle_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->key_bits = 4096u;
+  config->valid_days = 397L;
+}
+
+vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *config,
+                                          vectis_error *error) {
+  if (config == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "certificate bundle config is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->subject.common_name == NULL || config->subject.common_name[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "certificate subject common_name is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->output_bundle_path == NULL &&
+      (config->output_cert_path == NULL || config->output_key_path == NULL)) {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "certificate output requires output_bundle_path or output_cert_path + output_key_path");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_not_implemented_from(error,
+                                     VECTIS_ERROR_SOURCE_OPENSSL,
+                                     "OpenSSL certificate bundle generation");
 }
 
 struct lc_client *vectis_internal_lockd_client(vectis_app *app) {

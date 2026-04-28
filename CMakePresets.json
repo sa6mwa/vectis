@@ -15,6 +15,7 @@
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "VECTIS_BUILD_STATIC": "ON",
         "VECTIS_BUILD_SHARED": "OFF",
+        "VECTIS_BUILD_BINARY": "ON",
         "VECTIS_BUILD_TESTS": "ON",
         "VECTIS_BUILD_FUZZERS": "OFF",
         "VECTIS_ENABLE_COVERAGE": "OFF",
@@ -36,7 +37,10 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/x86_64-linux-gnu",
-        "VECTIS_DIST_DIR": "${sourceDir}/dist"
+        "VECTIS_DIST_DIR": "${sourceDir}/dist",
+        "VECTIS_TARGET_ARCH": "x86_64",
+        "VECTIS_TARGET_OS": "linux",
+        "VECTIS_TARGET_LIBC": "gnu"
       }
     },
     {
@@ -44,7 +48,10 @@
       "inherits": "x86_64-linux-gnu-release",
       "toolchainFile": "${sourceDir}/cmake/toolchains/x86_64-linux-musl.cmake",
       "cacheVariables": {
-        "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/x86_64-linux-musl"
+        "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/x86_64-linux-musl",
+        "VECTIS_TARGET_ARCH": "x86_64",
+        "VECTIS_TARGET_OS": "linux",
+        "VECTIS_TARGET_LIBC": "musl"
       }
     },
     {
@@ -52,7 +59,10 @@
       "inherits": "x86_64-linux-gnu-release",
       "toolchainFile": "${sourceDir}/cmake/toolchains/aarch64-linux-gnu.cmake",
       "cacheVariables": {
-        "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/aarch64-linux-gnu"
+        "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/aarch64-linux-gnu",
+        "VECTIS_TARGET_ARCH": "aarch64",
+        "VECTIS_TARGET_OS": "linux",
+        "VECTIS_TARGET_LIBC": "gnu"
       }
     },
     {
@@ -60,7 +70,10 @@
       "inherits": "x86_64-linux-gnu-release",
       "toolchainFile": "${sourceDir}/cmake/toolchains/aarch64-linux-musl.cmake",
       "cacheVariables": {
-        "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/aarch64-linux-musl"
+        "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/aarch64-linux-musl",
+        "VECTIS_TARGET_ARCH": "aarch64",
+        "VECTIS_TARGET_OS": "linux",
+        "VECTIS_TARGET_LIBC": "musl"
       }
     },
     {
@@ -68,7 +81,10 @@
       "inherits": "x86_64-linux-gnu-release",
       "toolchainFile": "${sourceDir}/cmake/toolchains/armhf-linux-gnu.cmake",
       "cacheVariables": {
-        "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/armhf-linux-gnu"
+        "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/armhf-linux-gnu",
+        "VECTIS_TARGET_ARCH": "armhf",
+        "VECTIS_TARGET_OS": "linux",
+        "VECTIS_TARGET_LIBC": "gnu"
       }
     },
     {
@@ -76,7 +92,22 @@
       "inherits": "x86_64-linux-gnu-release",
       "toolchainFile": "${sourceDir}/cmake/toolchains/armhf-linux-musl.cmake",
       "cacheVariables": {
-        "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/armhf-linux-musl"
+        "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/armhf-linux-musl",
+        "VECTIS_TARGET_ARCH": "armhf",
+        "VECTIS_TARGET_OS": "linux",
+        "VECTIS_TARGET_LIBC": "musl"
+      }
+    },
+    {
+      "name": "arm64-apple-darwin-release",
+      "inherits": "x86_64-linux-gnu-release",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/arm64-apple-darwin.cmake",
+      "cacheVariables": {
+        "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/arm64-apple-darwin",
+        "VECTIS_BUILD_TESTS": "OFF",
+        "VECTIS_TARGET_ARCH": "arm64",
+        "VECTIS_TARGET_OS": "darwin",
+        "VECTIS_TARGET_LIBC": ""
       }
     },
     {
@@ -113,6 +144,7 @@
     { "name": "aarch64-linux-musl-release", "configurePreset": "aarch64-linux-musl-release" },
     { "name": "armhf-linux-gnu-release", "configurePreset": "armhf-linux-gnu-release" },
     { "name": "armhf-linux-musl-release", "configurePreset": "armhf-linux-musl-release" },
+    { "name": "arm64-apple-darwin-release", "configurePreset": "arm64-apple-darwin-release" },
     { "name": "asan", "configurePreset": "asan" },
     { "name": "coverage", "configurePreset": "coverage" },
     { "name": "fuzz", "configurePreset": "fuzz" }

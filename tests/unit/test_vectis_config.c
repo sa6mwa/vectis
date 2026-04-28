@@ -21,28 +21,30 @@ int main(void) {
   vectis_error error;
   vectis_app *app;
   vectis_route_config route;
+  vectis_route_config param_route;
   vectis_status status;
 
   vectis_app_config_init(&config);
   assert(strcmp(config.app_name, "vectis") == 0);
   assert(config.tls.mode == VECTIS_TLS_MODE_MANUAL);
   assert(config.tls.port == 8443u);
+  assert(strcmp(config.tls.acme_directory_url, VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION) == 0);
   assert(config.lockd.timeout_ms == 30000L);
+  vectis_error_clear(&error);
+  assert(error.source == VECTIS_ERROR_SOURCE_NONE);
+  assert(strcmp(vectis_error_source_string(VECTIS_ERROR_SOURCE_CURL), "curl") == 0);
 
   config.app_name = "orders";
-  config.tls.cert_key_bundle_path = "/tmp/orders.pem";
+  config.tls.cert_key_bundle = vectis_source_from_path("/tmp/orders.pem");
   config.lockd.unix_socket_path = "/tmp/lockd.sock";
 
   app = vectis_new(&config, &error);
   assert(app != NULL);
   assert(app->vt != NULL);
   assert(vectis_logger(app) != NULL);
-  assert(vectis_internal_lockd_client(app) != NULL);
+  assert(vectis_internal_lockd_client(app) == NULL);
 
-  route.method = VECTIS_HTTP_POST;
-  route.path = "/orders";
-  route.handler = sample_handler;
-  route.userdata = NULL;
+  route = vectis_route(VECTIS_HTTP_POST, "/orders", sample_handler, NULL);
 
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
@@ -51,6 +53,23 @@ int main(void) {
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_ERR_CONFLICT);
   assert(strstr(error.message, "duplicate route registration") != NULL);
+
+  param_route = vectis_route(VECTIS_HTTP_GET,
+                             "/orders/:id/items/:item_id",
+                             sample_handler,
+                             NULL);
+  assert(param_route.path_kind == VECTIS_ROUTE_PATH_PARAMS);
+  status = vectis_register_route(app, &param_route, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_route_count(app) == 2u);
+
+  param_route = vectis_route(VECTIS_HTTP_GET,
+                             "/orders/:id?/items/:item_id?",
+                             sample_handler,
+                             NULL);
+  status = vectis_register_route(app, &param_route, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_route_count(app) == 3u);
 
   vectis_destroy(app);
   return 0;

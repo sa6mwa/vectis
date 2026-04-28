@@ -1,0 +1,88 @@
+#include <stdlib.h>
+#include <string.h>
+
+#include <lc/lc.h>
+#include <lonejson.h>
+
+typedef struct account_doc {
+  char id[64];
+  char status[32];
+  lonejson_int64 version;
+} account_doc;
+
+static const lonejson_field account_doc_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(account_doc, id, "id", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(account_doc, status, "status", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_I64(account_doc, version, "version")};
+
+LONEJSON_MAP_DEFINE(account_doc_map, account_doc, account_doc_fields);
+
+int main(void) {
+  lc_client_config config;
+  lc_client *client;
+  lc_lease *lease;
+  lc_acquire_req acquire;
+  lc_release_req release;
+  lc_error error;
+  account_doc saved;
+  account_doc loaded;
+  const char *endpoints[1];
+
+  lc_client_config_init(&config);
+  lc_acquire_req_init(&acquire);
+  lc_release_req_init(&release);
+  lc_error_init(&error);
+  client = NULL;
+  lease = NULL;
+  memset(&saved, 0, sizeof(saved));
+  memset(&loaded, 0, sizeof(loaded));
+
+  endpoints[0] = getenv("LOCKD_ENDPOINT") != NULL ? getenv("LOCKD_ENDPOINT") : "https://127.0.0.1:8443";
+  config.endpoints = endpoints;
+  config.endpoint_count = 1u;
+  config.client_bundle_path = getenv("LOCKD_CLIENT_BUNDLE");
+  config.default_namespace = "examples";
+  config.disable_mtls = config.client_bundle_path == NULL;
+  config.insecure_skip_verify = config.client_bundle_path == NULL;
+
+  if (lc_client_open(&config, &client, &error) != LC_OK) {
+    lc_error_cleanup(&error);
+    return 1;
+  }
+
+  acquire.key = "accounts/1001";
+  acquire.owner = "vectis-lockd-example";
+  acquire.ttl_seconds = 30L;
+  if (lc_acquire(client, &acquire, &lease, &error) != LC_OK) {
+    lc_client_close(client);
+    lc_error_cleanup(&error);
+    return 1;
+  }
+
+  (void)snprintf(saved.id, sizeof(saved.id), "%s", "1001");
+  (void)snprintf(saved.status, sizeof(saved.status), "%s", "active");
+  saved.version = 1;
+  if (lease->save(lease, &account_doc_map, &saved, NULL, &error) != LC_OK) {
+    lc_lease_close(lease);
+    lc_client_close(client);
+    lc_error_cleanup(&error);
+    return 1;
+  }
+  if (lease->load(lease, &account_doc_map, &loaded, NULL, NULL, NULL, &error) != LC_OK) {
+    lc_lease_close(lease);
+    lc_client_close(client);
+    lc_error_cleanup(&error);
+    return 1;
+  }
+  if (lease->release(lease, &release, &error) != LC_OK) {
+    lc_lease_close(lease);
+    lc_client_close(client);
+    lc_error_cleanup(&error);
+    return 1;
+  }
+
+  lc_lease_close(lease);
+  lc_client_close(client);
+  lc_error_cleanup(&error);
+  return 0;
+}

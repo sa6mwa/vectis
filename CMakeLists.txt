@@ -12,7 +12,9 @@ find_package(Threads REQUIRED)
 
 option(VECTIS_BUILD_STATIC "Build the static vectis library." ON)
 option(VECTIS_BUILD_SHARED "Build the shared vectis library." OFF)
+option(VECTIS_BUILD_BINARY "Build the vectis executable." ON)
 option(VECTIS_BUILD_TESTS "Build vectis unit tests." ON)
+option(VECTIS_BUILD_EXAMPLES "Build vectis SDK examples." ON)
 option(VECTIS_BUILD_FUZZERS "Build fuzz targets." OFF)
 option(VECTIS_ENABLE_COVERAGE "Build with coverage instrumentation." OFF)
 option(VECTIS_INSTALL "Enable install rules." ON)
@@ -21,9 +23,34 @@ set(VECTIS_EXTERNAL_ROOT "${CMAKE_SOURCE_DIR}/.cache/deps/host-debug"
     CACHE PATH "Provisioned third-party dependency root.")
 set(VECTIS_DIST_DIR "${CMAKE_BINARY_DIR}/dist"
     CACHE PATH "Distribution output directory.")
+set(VECTIS_TARGET_ARCH "${CMAKE_SYSTEM_PROCESSOR}"
+    CACHE STRING "Release target architecture.")
+set(VECTIS_TARGET_OS "${CMAKE_SYSTEM_NAME}"
+    CACHE STRING "Release target operating system.")
+set(VECTIS_TARGET_LIBC ""
+    CACHE STRING "Release target libc when applicable.")
+
+string(TOLOWER "${VECTIS_TARGET_ARCH}" VECTIS_TARGET_ARCH_LOWER)
+string(TOLOWER "${VECTIS_TARGET_OS}" VECTIS_TARGET_OS_LOWER)
+string(TOLOWER "${VECTIS_TARGET_LIBC}" VECTIS_TARGET_LIBC_LOWER)
+if(VECTIS_TARGET_OS_LOWER STREQUAL "darwin")
+  set(VECTIS_TARGET_ID "${VECTIS_TARGET_ARCH_LOWER}-apple-darwin")
+elseif(VECTIS_TARGET_OS_LOWER STREQUAL "linux")
+  if(NOT VECTIS_TARGET_LIBC_LOWER STREQUAL "")
+    set(VECTIS_TARGET_ID "${VECTIS_TARGET_ARCH_LOWER}-linux-${VECTIS_TARGET_LIBC_LOWER}")
+  else()
+    set(VECTIS_TARGET_ID "${VECTIS_TARGET_ARCH_LOWER}-linux")
+  endif()
+else()
+  set(VECTIS_TARGET_ID "${VECTIS_TARGET_ARCH_LOWER}-${VECTIS_TARGET_OS_LOWER}")
+endif()
 
 set(vectis_lockdc_config_dir "${VECTIS_EXTERNAL_ROOT}/lib/cmake/lockdc")
-set(vectis_lockdc_shared_library "${VECTIS_EXTERNAL_ROOT}/lib/liblockdc.so")
+if(APPLE)
+  set(vectis_lockdc_shared_library "${VECTIS_EXTERNAL_ROOT}/lib/liblockdc.dylib")
+else()
+  set(vectis_lockdc_shared_library "${VECTIS_EXTERNAL_ROOT}/lib/liblockdc.so")
+endif()
 if(EXISTS "${vectis_lockdc_config_dir}/lockdcConfig.cmake")
   find_package(lockdc CONFIG REQUIRED PATHS "${vectis_lockdc_config_dir}" NO_DEFAULT_PATH)
 endif()
@@ -35,8 +62,7 @@ endif()
 if(VECTIS_BUILD_SHARED AND NOT EXISTS "${vectis_lockdc_shared_library}")
   message(FATAL_ERROR
     "VECTIS_BUILD_SHARED=ON requires a usable ${vectis_lockdc_shared_library}. "
-    "The current dependency bundle only provides the static liblockdc archive. "
-    "Provision runtime/shared artifacts before enabling shared vectis builds."
+    "Provision the liblockdc SDK bundle before enabling shared vectis builds."
   )
 endif()
 
@@ -121,11 +147,6 @@ set(vectis_public_headers
 
 set(vectis_sources
   src/vectis.c
-  src/vectis_embed_deps.c
-)
-
-set_source_files_properties(src/vectis_embed_deps.c PROPERTIES
-  COMPILE_OPTIONS "-Wno-cast-qual;-Wno-shadow"
 )
 
 set(vectis_private_includes
@@ -174,15 +195,65 @@ if(VECTIS_BUILD_SHARED)
   vectis_configure_c_target(vectis_shared)
 endif()
 
+configure_file(
+  "${CMAKE_SOURCE_DIR}/cmake/package-metadata.cmake.in"
+  "${CMAKE_BINARY_DIR}/package-metadata.cmake"
+  @ONLY
+)
+
 if(VECTIS_BUILD_STATIC)
   set(vectis_test_link_target vectis_static)
 elseif(VECTIS_BUILD_SHARED)
   set(vectis_test_link_target vectis_shared)
 endif()
 
+if(VECTIS_BUILD_BINARY)
+  add_executable(vectis_bin
+    src/vectis_cli.c
+    src/vectis_main.c
+  )
+  target_include_directories(vectis_bin PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+    "${vectis_external_include_dir}"
+  )
+  if(VECTIS_BUILD_STATIC)
+    target_link_libraries(vectis_bin PRIVATE vectis_static)
+  elseif(VECTIS_BUILD_SHARED)
+    target_link_libraries(vectis_bin PRIVATE vectis_shared)
+  endif()
+  set_target_properties(vectis_bin PROPERTIES
+    OUTPUT_NAME vectis
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+  )
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(vectis_bin PRIVATE
+      -std=c99
+      -Wall
+      -Wextra
+      -Werror
+      -Wpedantic
+      -Wstrict-prototypes
+      -Wmissing-prototypes
+      -Wshadow
+      -Wpointer-arith
+      -Wcast-qual
+      -Wwrite-strings
+    )
+  endif()
+  if(UNIX OR APPLE OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+    target_compile_definitions(vectis_bin PRIVATE _POSIX_C_SOURCE=200809L)
+  endif()
+endif()
+
 if(VECTIS_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
+endif()
+
+if(VECTIS_BUILD_EXAMPLES)
+  add_subdirectory(examples)
 endif()
 
 if(VECTIS_INSTALL)
@@ -195,5 +266,14 @@ if(VECTIS_INSTALL)
       RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     )
   endif()
+  if(VECTIS_BUILD_BINARY)
+    install(TARGETS vectis_bin RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+  endif()
   install(FILES ${vectis_public_headers} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/vectis")
+  install(DIRECTORY examples/
+          DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/vectis/examples"
+          FILES_MATCHING
+          PATTERN "*.c"
+          PATTERN "README.md"
+          PATTERN "CMakeLists.txt")
 endif()

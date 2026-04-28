@@ -19,3 +19,4 @@ endfunction()
 
 vectis_add_unit_test(vectis_unit_config test_vectis_config.c)
 vectis_add_unit_test(vectis_unit_runtime test_vectis_runtime.c)
+vectis_add_unit_test(vectis_unit_sdk_surface test_vectis_sdk_surface.c)
