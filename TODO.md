@@ -48,7 +48,8 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Store and validate lockd configuration without requiring a live lockd daemon during app construction.
 - [ ] Instantiate and own a real `lc_client` during runtime startup.
 - [x] Expose stable accessors/helpers for the shared logger and raw lockd client escape hatch.
-- [ ] Implement the dependency-backed behavior behind the drafted helpers for the JSON layer, SSH client, and full TLS/certificate config.
+- [x] Implement dependency-backed C helpers for curl, SSH exec/SFTP, self-signed certificate bundles, request/response JSON parse/serialize, and JSON route auto-wiring.
+- [ ] Complete the remaining dependency-backed behavior for CA-signed certificate generation and full Kore TLS/runtime configuration.
 - [x] Expose dependency headers and low-level handles/APIs as explicit escape hatches without making them the primary DX.
 - [x] Define the first C pass of one Vectis-owned naming, source, error, timeout, ownership, and cleanup convention.
 - [x] Add stable string helpers for status, error source, HTTP method, and body mode names.
@@ -79,6 +80,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Add public route-builder helpers for literal, named/optional parameter, and regex route registration.
 - [ ] Compile Vectis named and optional path parameters to safe Kore regex routes and populate `vectis_request_path_param()`.
 - [x] Expose request body, headers, query parameters, path parameters, and response helpers.
+- [x] Register JSON routes as ordinary Vectis routes with lonejson parse/serialize adapter dispatch.
 - [ ] Translate per-route body policies into concrete Kore request-body buffering, streaming, and spool-to-disk behavior.
 - [ ] Support Kore features through Vectis where practical, including TLS, ACME, websocket, static asset, file upload, and runtime configuration features.
 - [ ] Define the supported one-process multi-instance behavior based on what Kore can safely provide.
@@ -110,6 +112,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [ ] Expose Lua JSON encode/decode helpers through the bundled `lonejson` Lua rock or a Vectis facade.
 - [ ] Make `lonejson` the backing implementation for Vectis request parsing, response serialization, lockd document helpers, and JSON HTTP client helpers.
 - [ ] Add higher-level JSON REST helpers for request validation, response serialization, and downstream API calls.
+- [x] Add first-pass typed JSON route auto-wiring backed by lonejson mapped structs.
 
 ## Area 8: lockd / Workflow Runtime
 

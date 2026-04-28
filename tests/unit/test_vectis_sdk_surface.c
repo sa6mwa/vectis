@@ -21,11 +21,17 @@ static vectis_status sample_json_handler(vectis_app *app,
                                          void *output,
                                          void *userdata,
                                          vectis_error *error) {
+  sample_doc *in_doc;
+  sample_doc *out_doc;
+
   (void)app;
   (void)request;
-  (void)input;
-  (void)output;
   (void)userdata;
+  in_doc = (sample_doc *)input;
+  out_doc = (sample_doc *)output;
+  if (in_doc != NULL && out_doc != NULL) {
+    memcpy(out_doc->id, in_doc->id, strlen(in_doc->id) + 1u);
+  }
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -258,6 +264,11 @@ static void assert_json_route_surface(void) {
   vectis_error error;
   vectis_status status;
   vectis_app *app;
+  vectis_request *request;
+  vectis_response *response;
+  vectis_bytes body;
+  sample_doc output;
+  const char json[] = "{\"id\":\"abc\"}";
 
   vectis_app_config_init(&config);
   config.tls.cert_key_bundle_path = "/tmp/server.pem";
@@ -265,6 +276,10 @@ static void assert_json_route_surface(void) {
   app = vectis_new(&config, &error);
   assert(app != NULL);
   assert(vectis_lockd_client(app) == NULL);
+  request = vectis_internal_request_new(&error);
+  response = vectis_internal_response_new(&error);
+  assert(request != NULL);
+  assert(response != NULL);
 
   raw_route = vectis_route(VECTIS_HTTP_GET, "/state/:id?", sample_route_handler, NULL);
   assert(raw_route.path_kind == VECTIS_ROUTE_PATH_PARAMS);
@@ -287,10 +302,24 @@ static void assert_json_route_surface(void) {
   assert(route.path_kind == VECTIS_ROUTE_PATH_PARAMS);
   assert(route.body.mode == VECTIS_BODY_JSON);
   status = vectis_register_json_route(app, &route, &error);
-  assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
-  assert(error.source == VECTIS_ERROR_SOURCE_KORE);
-  assert(strstr(error.message, "JSON route auto-wiring") != NULL);
+  assert(status == VECTIS_OK);
+  assert(vectis_route_count(app) == 3u);
 
+  status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
+  assert(status == VECTIS_OK);
+  status = vectis_internal_invoke_route(app, 2u, request, response, &error);
+  assert(status == VECTIS_OK);
+  body = vectis_internal_response_body(response);
+  assert(vectis_internal_response_status_code(response) == 200);
+  assert(strcmp(vectis_internal_response_content_type(response), "application/json") == 0);
+  assert(body.data != NULL);
+  memset(&output, 0, sizeof(output));
+  assert(lonejson_parse_buffer(&sample_doc_map, &output, body.data, body.size, NULL, NULL) ==
+         LONEJSON_STATUS_OK);
+  assert(strcmp(output.id, "abc") == 0);
+
+  vectis_internal_response_free(response);
+  vectis_internal_request_free(request);
   vectis_destroy(app);
 }
 

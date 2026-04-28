@@ -5,6 +5,11 @@
 
 void vectis_set_error(vectis_error *error, vectis_status code, const char *message);
 struct lc_client *vectis_internal_lockd_client(vectis_app *app);
+vectis_status vectis_internal_invoke_route(vectis_app *app,
+                                           size_t index,
+                                           vectis_request *request,
+                                           vectis_response *response,
+                                           vectis_error *error);
 
 vectis_request *vectis_internal_request_new(vectis_error *error);
 void vectis_internal_request_init(vectis_request *request);
