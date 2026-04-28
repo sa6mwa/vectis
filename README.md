@@ -241,13 +241,15 @@ make test-e2e
 make test-all
 ```
 
-`make test-e2e` resets generated dev state before starting compose. That keeps
-the generated lockd CA/client/server bundles and the encrypted durable lockd
-stores in sync, which avoids false failures after certificate material has been
-rotated locally. The reset is intentionally scoped to lockd and MinIO state;
-the SSH/SFTP image owns root-created config files in its bind mount, so SSH/SFTP
-cleanup should be handled by the container-aware tests that exercise it. The
-e2e target stops compose services when it exits; set
+`make test-e2e` resets generated dev state before starting compose, then runs
+lockd disk/S3, MQTT publish, SSH command, curl-backed SFTP, and libssh2-backed
+SFTP smoke tests through the built examples. The reset keeps the generated
+lockd CA/client/server bundles and the encrypted durable lockd stores in sync,
+which avoids false failures after certificate material has been rotated locally.
+The reset is intentionally scoped to lockd and MinIO state; the SSH/SFTP image
+owns root-created config files in its bind mount, so SSH/SFTP cleanup is handled
+by the test working directory and compose lifecycle instead. The e2e target
+stops compose services when it exits; set
 `VECTIS_E2E_KEEP_DEVSERVICES=1` when you want to keep them running for
 inspection after a failed or manual run.
 

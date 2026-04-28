@@ -224,7 +224,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Add `make test-e2e` and `make test-all` entrypoints.
 - [x] Add the first compose-backed lockd e2e smoke against disk and S3-backed lockd services.
 - [ ] Add integration/e2e tests against local lockd and Kore.
-- [ ] Add integration/e2e tests against the local SSH/SFTP and MQTT compose services.
+- [x] Add integration/e2e tests against the local SSH/SFTP and MQTT compose services.
 - [ ] Add integration/e2e tests for Lua runner behavior.
 - [ ] Add package/archive generation for the C SDK and Vectis binary.
 - [x] Add package/archive generation for the current C SDK.
