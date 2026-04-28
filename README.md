@@ -206,14 +206,18 @@ The current implementation provides:
 - The initial C `vectis` runtime/config API and method-table surface.
 - Draft C SDK helper surface for curl-backed HTTP/SFTP/MQTT, libssh2 command
   execution, OpenSSL certificate bundle generation, JSON request/response
-  handling, and JSON-aware route registration. These APIs are compileable and
-  validated, but the real dependency-backed implementations are still pending.
+  handling, and JSON-aware route registration. The current C helpers are
+  dependency-backed and covered by unit/runtime smoke tests where local
+  verification is practical.
 - A common `vectis_source` input model for path, `lc_source`, and in-memory
   bytes across lockd client bundles, Kore TLS material, downstream HTTP/MQTT
   client bundles, and SSH/SFTP private-key inputs.
 - A first-pass `vectis_server_config` with explicit DDoS/slow-client guardrails
   for connection counts, request sizes, keepalive behavior, idle read/write
   timeouts, and minimum request-body transfer rate.
+- A real embedded Kore runtime path for C routes, including HTTP smoke coverage,
+  request metadata mapping, body-size guardrails, `pslog` runtime logging, and
+  manual HTTPS startup from path, memory, or `lc_source` cert/key material.
 - Per-route request-body policy presets for no-body routes, JSON/buffered
   bodies, and streaming large uploads.
 - Optional lockd configuration, so Kore-only examples and services do not need
@@ -239,12 +243,14 @@ The current implementation provides:
   exercise the intended C SDK DX without local helper layers.
 - A Kore upstream checkout plus tracked patch-series workflow.
 - A patched Kore build path that links against the bundled OpenSSL, libcurl,
-  libssh2, pslog, and lonejson toolchain.
+  libssh2, pslog, and lonejson toolchain. Vectis builds embedded Kore with
+  direct TLS material loading so the in-process runtime does not depend on
+  Kore's external key-manager flow.
 - A C89 portability contract for the `vectis` public API and implementation.
 
-The actual Kore runtime integration, Lua runner, missing Lua bindings, consumer
-runtime, higher-level REST helpers, packaging, and single-binary service builder
-remain tracked in [TODO.md](TODO.md).
+The Lua runner, missing Lua bindings, consumer runtime, ACME integration,
+higher-level REST helpers, packaging, and single-binary service builder remain
+tracked in [TODO.md](TODO.md).
 
 ## Build
 
@@ -294,3 +300,5 @@ Current Kore policy in `vectis`:
 - Kore ACME JSON parsing is patched to use `lonejson`.
 - Kore logging is being moved behind a `pslog` backend so HTTP/runtime logs can
   converge on one structured logger.
+- Embedded Vectis/Kore TLS currently supports manual cert/key material from
+  paths, memory, and `lc_source`; ACME remains a tracked implementation area.

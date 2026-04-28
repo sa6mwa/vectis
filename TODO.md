@@ -50,7 +50,8 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Instantiate the app-owned `lc_client` before Kore starts and make it available to route handlers only after successful startup.
 - [x] Expose stable accessors/helpers for the shared logger and raw lockd client escape hatch.
 - [x] Implement dependency-backed C helpers for curl, SSH exec/SFTP, self-signed certificate bundles, request/response JSON parse/serialize, and JSON route auto-wiring.
-- [ ] Complete the remaining dependency-backed behavior for CA-signed certificate generation and full Kore TLS/runtime configuration.
+- [x] Translate manual Kore TLS material from path, memory, and `lc_source` inputs into runtime server cert/key configuration.
+- [ ] Complete the remaining dependency-backed behavior for CA-signed certificate generation, ACME, and full Kore TLS/runtime configuration.
 - [x] Expose dependency headers and low-level handles/APIs as explicit escape hatches without making them the primary DX.
 - [x] Define the first C pass of one Vectis-owned naming, source, error, timeout, ownership, and cleanup convention.
 - [x] Add stable string helpers for status, error source, HTTP method, and body mode names.
@@ -72,8 +73,9 @@ moving toward, not just the next patch. Keep items observable and testable.
 
 - [x] Build and link Kore against the dependency bundle shipped by `liblockdc`.
 - [x] Start/stop a real Kore runtime from `vectis`.
-- [ ] Translate `vectis_server_config` guardrails into concrete Kore runtime/config settings.
-- [ ] Wire `pslog` into the Kore runtime path so Vectis server logs and Kore runtime diagnostics use the configured app logger.
+- [x] Translate the currently supported `vectis_server_config` guardrails into concrete Kore runtime/config settings.
+- [ ] Implement the remaining guardrails that Kore does not expose directly yet: response-write idle timeout, minimum body transfer rate, and keepalive request count.
+- [x] Wire `pslog` into the Kore runtime path so Vectis server logs and Kore runtime diagnostics use the configured app logger.
 - [ ] Expose raw Kore configuration/runtime escape hatches where practical.
 - [x] Register Vectis C routes as Kore handlers.
 - [x] Support method-specific handlers and router-style dispatch.
@@ -94,7 +96,8 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Define Vectis-owned TLS config surface with default TLS-first semantics.
 - [x] Validate bundle versus cert/key inputs before runtime startup.
 - [x] Add flexible path/source/memory TLS material configuration for Kore server cert/key bundles, split cert/key material, CA bundles, and client-CA bundles.
-- [ ] Translate Vectis TLS config into Kore config/runtime behavior.
+- [x] Translate manual Vectis TLS cert/key bundle, split cert/key, and client-CA material into Kore runtime behavior.
+- [ ] Translate Vectis ACME TLS config into Kore runtime behavior.
 - [ ] Support lockd client certificate bundle configuration from both C and Lua.
 - [ ] Support server certificate bundle configuration from both C and Lua.
 - [ ] Add Vectis-owned OpenSSL-backed helpers for generating private keys, CSRs, self-signed certificates, CA material, and client/server PEM bundles.
