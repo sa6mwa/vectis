@@ -6,4 +6,33 @@
 void vectis_set_error(vectis_error *error, vectis_status code, const char *message);
 struct lc_client *vectis_internal_lockd_client(vectis_app *app);
 
+vectis_request *vectis_internal_request_new(vectis_error *error);
+void vectis_internal_request_init(vectis_request *request);
+void vectis_internal_request_cleanup(vectis_request *request);
+void vectis_internal_request_free(vectis_request *request);
+vectis_status vectis_internal_request_set_body(vectis_request *request,
+                                               const void *body,
+                                               size_t body_size,
+                                               vectis_error *error);
+vectis_status vectis_internal_request_add_path_param(vectis_request *request,
+                                                     const char *name,
+                                                     const char *value,
+                                                     vectis_error *error);
+vectis_status vectis_internal_request_add_query(vectis_request *request,
+                                                const char *name,
+                                                const char *value,
+                                                vectis_error *error);
+vectis_status vectis_internal_request_add_header(vectis_request *request,
+                                                 const char *name,
+                                                 const char *value,
+                                                 vectis_error *error);
+
+vectis_response *vectis_internal_response_new(vectis_error *error);
+void vectis_internal_response_init(vectis_response *response);
+void vectis_internal_response_cleanup(vectis_response *response);
+void vectis_internal_response_free(vectis_response *response);
+int vectis_internal_response_status_code(const vectis_response *response);
+const char *vectis_internal_response_content_type(const vectis_response *response);
+vectis_bytes vectis_internal_response_body(const vectis_response *response);
+
 #endif

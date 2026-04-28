@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include <lonejson.h>
+#include "vectis_internal.h"
 #include <vectis/vectis.h>
 
 typedef struct sample_doc {
@@ -160,6 +161,63 @@ static void assert_io_surface(void) {
   assert(status == VECTIS_ERR_INVALID);
 }
 
+static void assert_request_response_surface(void) {
+  vectis_request *request;
+  vectis_response *response;
+  vectis_error error;
+  vectis_status status;
+  vectis_bytes body;
+  sample_doc doc;
+  const char json[] = "{\"id\":\"abc\"}";
+  const char text[] = "created";
+
+  request = vectis_internal_request_new(&error);
+  response = vectis_internal_response_new(&error);
+  assert(request != NULL);
+  assert(response != NULL);
+
+  status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
+  assert(status == VECTIS_OK);
+  status = vectis_internal_request_add_path_param(request, "id", "abc", &error);
+  assert(status == VECTIS_OK);
+  status = vectis_internal_request_add_query(request, "expand", "items", &error);
+  assert(status == VECTIS_OK);
+  status = vectis_internal_request_add_header(request, "content-type", "application/json", &error);
+  assert(status == VECTIS_OK);
+
+  assert(strcmp(vectis_request_path_param(request, "id"), "abc") == 0);
+  assert(strcmp(vectis_request_query(request, "expand"), "items") == 0);
+  assert(strcmp(vectis_request_header(request, "content-type"), "application/json") == 0);
+  assert(vectis_request_header(request, "missing") == NULL);
+
+  memset(&doc, 0, sizeof(doc));
+  status = vectis_request_body_bytes(request, &body, &error);
+  assert(status == VECTIS_OK);
+  assert(body.size == sizeof(json) - 1u);
+  status = vectis_request_json_into(request, &sample_doc_map, &doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(doc.id, "abc") == 0);
+
+  status = vectis_response_text(response, 201, "text/plain", text, &error);
+  assert(status == VECTIS_OK);
+  body = vectis_internal_response_body(response);
+  assert(vectis_internal_response_status_code(response) == 201);
+  assert(strcmp(vectis_internal_response_content_type(response), "text/plain") == 0);
+  assert(body.size == sizeof(text) - 1u);
+  assert(memcmp(body.data, text, sizeof(text) - 1u) == 0);
+
+  status = vectis_response_json(response, 200, &sample_doc_map, &doc, &error);
+  assert(status == VECTIS_OK);
+  body = vectis_internal_response_body(response);
+  assert(vectis_internal_response_status_code(response) == 200);
+  assert(strcmp(vectis_internal_response_content_type(response), "application/json") == 0);
+  assert(body.size > 0u);
+  assert(strstr((const char *)body.data, "\"abc\"") != NULL);
+
+  vectis_internal_request_free(request);
+  vectis_internal_response_free(response);
+}
+
 static void assert_json_route_surface(void) {
   vectis_app_config config;
   vectis_json_route_config route;
@@ -255,6 +313,7 @@ static void assert_tls_source_surface(void) {
 int main(void) {
   assert_http_surface();
   assert_io_surface();
+  assert_request_response_surface();
   assert_json_route_surface();
   assert_tls_source_surface();
   return 0;

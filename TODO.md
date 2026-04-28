@@ -53,7 +53,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Define the first C pass of one Vectis-owned naming, source, error, timeout, ownership, and cleanup convention.
 - [x] Add stable string helpers for status, error source, HTTP method, and body mode names.
 - [ ] Mirror the C naming, source, error, timeout, ownership, and cleanup convention in Lua.
-- [ ] Define request/response abstractions that do not leak Kore internals unless explicitly requested.
+- [x] Define request/response abstractions that do not leak Kore internals unless explicitly requested.
 - [x] Add common C source constructors for path, memory, and `lc_source` material inputs.
 - [x] Add route constructors that infer literal, named-parameter, optional-parameter, and regex path kinds.
 - [x] Mirror Kore's supported HTTP methods in the Vectis C SDK: GET, POST, PUT, DELETE, HEAD, OPTIONS, and PATCH.
@@ -78,7 +78,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Draft route path classification for literal paths, named path parameters, and explicit POSIX regex routes.
 - [x] Add public route-builder helpers for literal, named/optional parameter, and regex route registration.
 - [ ] Compile Vectis named and optional path parameters to safe Kore regex routes and populate `vectis_request_path_param()`.
-- [ ] Expose request body, headers, query parameters, path parameters, and response helpers.
+- [x] Expose request body, headers, query parameters, path parameters, and response helpers.
 - [ ] Translate per-route body policies into concrete Kore request-body buffering, streaming, and spool-to-disk behavior.
 - [ ] Support Kore features through Vectis where practical, including TLS, ACME, websocket, static asset, file upload, and runtime configuration features.
 - [ ] Define the supported one-process multi-instance behavior based on what Kore can safely provide.
