@@ -144,13 +144,12 @@ static void assert_io_surface(void) {
   assert(ssh.timeout_ms == 30000L);
   status = vectis_ssh_exec(&ssh, "uptime", &result, &error);
   assert(status == VECTIS_ERR_INVALID);
-  ssh.host = "worker.internal";
-  ssh.username = "vectis";
-  status = vectis_ssh_sftp_upload_file(&ssh, "local", "remote", &error);
-  assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
   ssh.host = "127.0.0.1";
   ssh.port = 1u;
+  ssh.username = "vectis";
   ssh.password = "secret";
+  status = vectis_ssh_sftp_upload_file(&ssh, "local", "remote", &error);
+  assert(status == VECTIS_ERR_INVALID || status == VECTIS_ERR_STATE);
   status = vectis_ssh_exec(&ssh, "true", &result, &error);
   assert(status == VECTIS_ERR_STATE);
   assert(error.source == VECTIS_ERROR_SOURCE_LIBSSH2);

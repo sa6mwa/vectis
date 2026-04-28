@@ -3,6 +3,7 @@
 #include <curl/curl.h>
 #include <lc/lc.h>
 #include <libssh2.h>
+#include <libssh2_sftp.h>
 #include <lonejson.h>
 #include <openssl/bn.h>
 #include <openssl/evp.h>
@@ -3472,6 +3473,19 @@ vectis_status vectis_ssh_sftp_upload_file(const vectis_ssh_config *config,
                                           const char *local_path,
                                           const char *remote_path,
                                           vectis_error *error) {
+  int fd;
+  int rc;
+  FILE *local;
+  LIBSSH2_SESSION *session;
+  LIBSSH2_SFTP *sftp;
+  LIBSSH2_SFTP_HANDLE *remote;
+  char buffer[32768];
+  size_t nread;
+  char *cursor;
+  size_t remaining;
+  ssize_t nwritten;
+  vectis_status status;
+
   if (config == NULL || config->host == NULL || config->username == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "SSH config requires host and username");
     return VECTIS_ERR_INVALID;
@@ -3480,13 +3494,135 @@ vectis_status vectis_ssh_sftp_upload_file(const vectis_ssh_config *config,
     vectis_set_error(error, VECTIS_ERR_INVALID, "SSH SFTP upload requires local_path and remote_path");
     return VECTIS_ERR_INVALID;
   }
-  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_LIBSSH2, "libssh2 SFTP upload");
+  fd = -1;
+  session = NULL;
+  sftp = NULL;
+  remote = NULL;
+  local = fopen(local_path, "rb");
+  if (local == NULL) {
+    vectis_set_errorf(error, VECTIS_ERR_INVALID, "failed to open SSH SFTP upload file: %s", local_path);
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_ssh_connect_socket(config, &fd, error);
+  if (status != VECTIS_OK) {
+    (void)fclose(local);
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+    }
+    return status;
+  }
+  (void)pthread_once(&vectis_libssh2_once, vectis_libssh2_global_init_once);
+  session = libssh2_session_init();
+  if (session == NULL) {
+    (void)fclose(local);
+    (void)close(fd);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to initialize SSH session");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (config->timeout_ms > 0L) {
+    libssh2_session_set_timeout(session, (long)config->timeout_ms);
+  }
+  rc = libssh2_session_handshake(session, fd);
+  if (rc != 0) {
+    (void)fclose(local);
+    libssh2_session_free(session);
+    (void)close(fd);
+    vectis_set_error(error, VECTIS_ERR_STATE, "SSH handshake failed");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+      error->dependency_code = (long)rc;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  status = vectis_ssh_authenticate(session, config, error);
+  if (status != VECTIS_OK) {
+    (void)fclose(local);
+    libssh2_session_disconnect(session, "vectis shutdown");
+    libssh2_session_free(session);
+    (void)close(fd);
+    return status;
+  }
+  sftp = libssh2_sftp_init(session);
+  if (sftp == NULL) {
+    (void)fclose(local);
+    libssh2_session_disconnect(session, "vectis shutdown");
+    libssh2_session_free(session);
+    (void)close(fd);
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to initialize SSH SFTP session");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  remote = libssh2_sftp_open(sftp,
+                             remote_path,
+                             LIBSSH2_FXF_WRITE | LIBSSH2_FXF_CREAT | LIBSSH2_FXF_TRUNC,
+                             0644);
+  if (remote == NULL) {
+    libssh2_sftp_shutdown(sftp);
+    (void)fclose(local);
+    libssh2_session_disconnect(session, "vectis shutdown");
+    libssh2_session_free(session);
+    (void)close(fd);
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to open remote SFTP file for upload");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  while ((nread = fread(buffer, 1u, sizeof(buffer), local)) > 0u) {
+    cursor = buffer;
+    remaining = nread;
+    while (remaining > 0u) {
+      nwritten = libssh2_sftp_write(remote, cursor, remaining);
+      if (nwritten < 0) {
+        libssh2_sftp_close(remote);
+        libssh2_sftp_shutdown(sftp);
+        (void)fclose(local);
+        libssh2_session_disconnect(session, "vectis shutdown");
+        libssh2_session_free(session);
+        (void)close(fd);
+        vectis_set_error(error, VECTIS_ERR_STATE, "failed to write remote SFTP file");
+        if (error != NULL) {
+          error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+          error->dependency_code = (long)nwritten;
+        }
+        return VECTIS_ERR_STATE;
+      }
+      cursor += nwritten;
+      remaining -= (size_t)nwritten;
+    }
+  }
+  if (ferror(local)) {
+    status = VECTIS_ERR_STATE;
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to read local SFTP upload file");
+  } else {
+    status = VECTIS_OK;
+    vectis_error_clear(error);
+  }
+  libssh2_sftp_close(remote);
+  libssh2_sftp_shutdown(sftp);
+  (void)fclose(local);
+  libssh2_session_disconnect(session, "vectis shutdown");
+  libssh2_session_free(session);
+  (void)close(fd);
+  return status;
 }
 
 vectis_status vectis_ssh_sftp_download_file(const vectis_ssh_config *config,
                                             const char *remote_path,
                                             const char *local_path,
                                             vectis_error *error) {
+  int fd;
+  int rc;
+  FILE *local;
+  LIBSSH2_SESSION *session;
+  LIBSSH2_SFTP *sftp;
+  LIBSSH2_SFTP_HANDLE *remote;
+  char buffer[32768];
+  ssize_t nread;
+  vectis_status status;
+
   if (config == NULL || config->host == NULL || config->username == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "SSH config requires host and username");
     return VECTIS_ERR_INVALID;
@@ -3495,7 +3631,110 @@ vectis_status vectis_ssh_sftp_download_file(const vectis_ssh_config *config,
     vectis_set_error(error, VECTIS_ERR_INVALID, "SSH SFTP download requires remote_path and local_path");
     return VECTIS_ERR_INVALID;
   }
-  return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_LIBSSH2, "libssh2 SFTP download");
+  fd = -1;
+  session = NULL;
+  sftp = NULL;
+  remote = NULL;
+  local = fopen(local_path, "wb");
+  if (local == NULL) {
+    vectis_set_errorf(error, VECTIS_ERR_INVALID, "failed to open SSH SFTP download file: %s", local_path);
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_ssh_connect_socket(config, &fd, error);
+  if (status != VECTIS_OK) {
+    (void)fclose(local);
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+    }
+    return status;
+  }
+  (void)pthread_once(&vectis_libssh2_once, vectis_libssh2_global_init_once);
+  session = libssh2_session_init();
+  if (session == NULL) {
+    (void)fclose(local);
+    (void)close(fd);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to initialize SSH session");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (config->timeout_ms > 0L) {
+    libssh2_session_set_timeout(session, (long)config->timeout_ms);
+  }
+  rc = libssh2_session_handshake(session, fd);
+  if (rc != 0) {
+    (void)fclose(local);
+    libssh2_session_free(session);
+    (void)close(fd);
+    vectis_set_error(error, VECTIS_ERR_STATE, "SSH handshake failed");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+      error->dependency_code = (long)rc;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  status = vectis_ssh_authenticate(session, config, error);
+  if (status != VECTIS_OK) {
+    (void)fclose(local);
+    libssh2_session_disconnect(session, "vectis shutdown");
+    libssh2_session_free(session);
+    (void)close(fd);
+    return status;
+  }
+  sftp = libssh2_sftp_init(session);
+  if (sftp == NULL) {
+    (void)fclose(local);
+    libssh2_session_disconnect(session, "vectis shutdown");
+    libssh2_session_free(session);
+    (void)close(fd);
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to initialize SSH SFTP session");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  remote = libssh2_sftp_open(sftp, remote_path, LIBSSH2_FXF_READ, 0);
+  if (remote == NULL) {
+    libssh2_sftp_shutdown(sftp);
+    (void)fclose(local);
+    libssh2_session_disconnect(session, "vectis shutdown");
+    libssh2_session_free(session);
+    (void)close(fd);
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to open remote SFTP file for download");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  status = VECTIS_OK;
+  nread = libssh2_sftp_read(remote, buffer, sizeof(buffer));
+  while (nread > 0) {
+    if (fwrite(buffer, 1u, (size_t)nread, local) != (size_t)nread) {
+      status = VECTIS_ERR_STATE;
+      vectis_set_error(error, VECTIS_ERR_STATE, "failed to write local SFTP download file");
+      break;
+    }
+    nread = libssh2_sftp_read(remote, buffer, sizeof(buffer));
+  }
+  if (status == VECTIS_OK && nread < 0) {
+    status = VECTIS_ERR_STATE;
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to read remote SFTP file");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+      error->dependency_code = (long)nread;
+    }
+  }
+  if (fclose(local) != 0 && status == VECTIS_OK) {
+    status = VECTIS_ERR_STATE;
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to flush local SFTP download file");
+  }
+  libssh2_sftp_close(remote);
+  libssh2_sftp_shutdown(sftp);
+  libssh2_session_disconnect(session, "vectis shutdown");
+  libssh2_session_free(session);
+  (void)close(fd);
+  if (status == VECTIS_OK) {
+    vectis_error_clear(error);
+  }
+  return status;
 }
 
 void vectis_mqtt_config_init(vectis_mqtt_config *config) {
