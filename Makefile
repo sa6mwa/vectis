@@ -16,7 +16,7 @@ FUZZ_PRESET := fuzz
 	help \
 	deps-debug deps-release deps-cross \
 	build build-debug build-release build-asan build-coverage build-fuzz \
-	test test-debug test-asan test-coverage \
+	test test-debug test-asan test-coverage test-install-tree \
 	package \
 	build-kore verify-kore-patches \
 	format clean \
@@ -26,6 +26,7 @@ help:
 	@printf '%s\n' \
 		'make build              Configure and build the debug preset.' \
 		'make test               Run the debug unit test preset.' \
+		'make test-install-tree  Build a native installed SDK tree and verify static/shared downstream consumers.' \
 		'make build-release      Configure the shipped Linux release matrix.' \
 		'make build-asan         Configure and build the ASan/UBSan preset.' \
 		'make build-coverage     Configure and build the coverage preset.' \
@@ -110,6 +111,14 @@ test-asan: build-asan
 
 test-coverage: build-coverage
 	$(TIMED) test-coverage $(CTEST) --preset $(COVERAGE_PRESET)
+
+test-install-tree:
+	$(TIMED) deps-install-tree bash ./scripts/deps.sh deps-x86_64-linux-gnu
+	$(TIMED) configure-install-tree $(CMAKE) -S . -B build/x86_64-linux-gnu-install-tree -GNinja -DCMAKE_BUILD_TYPE=Release -DVECTIS_EXTERNAL_ROOT=.cache/deps/x86_64-linux-gnu -DVECTIS_BUILD_STATIC=ON -DVECTIS_BUILD_SHARED=ON -DVECTIS_BUILD_BINARY=ON -DVECTIS_BUILD_TESTS=ON -DVECTIS_INSTALL=ON -DVECTIS_DIST_DIR=build/x86_64-linux-gnu-install-tree/dist -DVECTIS_TARGET_ARCH=x86_64 -DVECTIS_TARGET_OS=linux -DVECTIS_TARGET_LIBC=gnu
+	$(TIMED) build-install-tree $(CMAKE) --build build/x86_64-linux-gnu-install-tree
+	$(TIMED) package-install-tree $(CMAKE) -DVECTIS_BINARY_DIR=$(ROOT)/build/x86_64-linux-gnu-install-tree -DVECTIS_ROOT=$(ROOT) -DVECTIS_DIST_DIR=$(ROOT)/build/x86_64-linux-gnu-install-tree/dist -P $(ROOT)/cmake/package_archive.cmake
+	$(TIMED) verify-install-tree-static bash ./scripts/verify_installed_sdk.sh build/x86_64-linux-gnu-install-tree/package/vectis-0.0.0-x86_64-linux-gnu static
+	$(TIMED) verify-install-tree-shared bash ./scripts/verify_installed_sdk.sh build/x86_64-linux-gnu-install-tree/package/vectis-0.0.0-x86_64-linux-gnu shared
 
 format:
 	rg --files -g '*.c' -g '*.h' | xargs clang-format -i

@@ -341,11 +341,11 @@ vectis_source vectis_source_from_memory(const void *memory, size_t memory_size) 
   return source;
 }
 
-vectis_source vectis_source_from_lc(struct lc_source *lc_source) {
+vectis_source vectis_source_from_lc(struct lc_source *lc_bundle_source) {
   vectis_source source;
 
   vectis_source_init(&source);
-  source.source = lc_source;
+  source.source = lc_bundle_source;
   return source;
 }
 

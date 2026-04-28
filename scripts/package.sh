@@ -9,6 +9,31 @@ checksum_build_dir=
 
 unset LD_LIBRARY_PATH
 
+verify_native_install_tree() {
+  local preset="$1"
+  local build_dir="$2"
+  local package_root
+
+  if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
+    return
+  fi
+  if [ "$preset" != "x86_64-linux-gnu-release" ]; then
+    return
+  fi
+
+  package_root=$(find "$build_dir/package" -maxdepth 1 -type d -name 'vectis-*' | sort | tail -n 1)
+  if [ -z "$package_root" ]; then
+    echo "[package] missing staged install tree for $preset" >&2
+    exit 1
+  fi
+  if [ -f "$package_root/lib/libvectis.a" ]; then
+    bash "$script_dir/verify_installed_sdk.sh" "$package_root" static
+  fi
+  if [ -f "$package_root/lib/libvectis.so" ]; then
+    bash "$script_dir/verify_installed_sdk.sh" "$package_root" shared
+  fi
+}
+
 run_target() {
   local preset="$1"
   local build_dir="$repo_root/build/$preset"
@@ -21,6 +46,7 @@ run_target() {
     -DVECTIS_ROOT="$repo_root" \
     -DVECTIS_DIST_DIR="$repo_root/dist" \
     -P "$repo_root/cmake/package_archive.cmake"
+  verify_native_install_tree "$preset" "$build_dir"
   checksum_build_dir="$build_dir"
 }
 

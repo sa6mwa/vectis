@@ -85,6 +85,7 @@ function(vectis_configure_c_target target)
       -Wextra
       -Werror
       -Wpedantic
+      -Wno-long-long
       -Wstrict-prototypes
       -Wmissing-prototypes
       -Wshadow
@@ -261,6 +262,7 @@ if(VECTIS_WITH_KORE_RUNTIME)
     C_STANDARD 99
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS ON
+    POSITION_INDEPENDENT_CODE ON
   )
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(vectis_kore_runtime PRIVATE -std=gnu99 -Wall -Wextra)
