@@ -82,6 +82,22 @@ int main(void) {
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "path_kind") != NULL);
 
+  route = vectis_route(VECTIS_HTTP_POST, "/upload", sample_handler, NULL);
+  route.body = vectis_body_upload();
+  assert(route.body.mode == VECTIS_BODY_STREAMING_UPLOAD);
+  assert(route.body.max_bytes == VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES);
+  assert(route.body.spool_to_disk == 1);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+
+  route = vectis_route(VECTIS_HTTP_POST, "/bad-upload", sample_handler, NULL);
+  route.body = vectis_body_upload_max((size_t)1024u);
+  route.body.spool_to_disk = 0;
+  route.body.memory_buffer_limit_bytes = 512u;
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "spool_to_disk") != NULL);
+
   vectis_route_config_init(&route);
   route.method = VECTIS_HTTP_GET;
   route.path = "/orders/:bad-name";

@@ -7,14 +7,20 @@
 
 #define VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION "https://acme-v02.api.letsencrypt.org/directory"
 #define VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS 1024u
-#define VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES 16384u
+#define VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES 65536u
 #define VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES 10485760u
 #define VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS 5000L
-#define VECTIS_SERVER_DEFAULT_REQUEST_BODY_TIMEOUT_MS 15000L
-#define VECTIS_SERVER_DEFAULT_RESPONSE_WRITE_TIMEOUT_MS 15000L
+#define VECTIS_SERVER_DEFAULT_REQUEST_BODY_IDLE_TIMEOUT_MS 15000L
+#define VECTIS_SERVER_DEFAULT_RESPONSE_WRITE_IDLE_TIMEOUT_MS 15000L
+#define VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_BYTES_PER_SEC 1024u
+#define VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_GRACE_MS 10000L
 #define VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS 30000L
 #define VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS 5000L
 #define VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS 100u
+#define VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES ((size_t)3221225472UL)
+#define VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES 1048576u
+#define VECTIS_BODY_DEFAULT_UPLOAD_MIN_RATE_BYTES_PER_SEC 32768u
+#define VECTIS_BODY_DEFAULT_UPLOAD_MIN_RATE_GRACE_MS 30000L
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,6 +63,13 @@ typedef enum vectis_route_path_kind {
   VECTIS_ROUTE_PATH_PARAMS = 1,
   VECTIS_ROUTE_PATH_REGEX = 2
 } vectis_route_path_kind;
+
+typedef enum vectis_body_mode {
+  VECTIS_BODY_NONE = 0,
+  VECTIS_BODY_JSON = 1,
+  VECTIS_BODY_BUFFERED = 2,
+  VECTIS_BODY_STREAMING_UPLOAD = 3
+} vectis_body_mode;
 
 typedef enum vectis_error_source {
   VECTIS_ERROR_SOURCE_NONE = 0,
@@ -149,10 +162,21 @@ typedef vectis_status (*vectis_route_handler_fn)(vectis_app *app,
                                                  void *userdata,
                                                  vectis_error *error);
 
+typedef struct vectis_body_policy {
+  vectis_body_mode mode;
+  size_t max_bytes;
+  size_t memory_buffer_limit_bytes;
+  int spool_to_disk;
+  long idle_timeout_ms;
+  size_t min_rate_bytes_per_sec;
+  long min_rate_grace_ms;
+} vectis_body_policy;
+
 typedef struct vectis_route_config {
   vectis_http_method method;
   const char *path;
   vectis_route_path_kind path_kind;
+  vectis_body_policy body;
   vectis_route_handler_fn handler;
   void *userdata;
 } vectis_route_config;
@@ -168,6 +192,7 @@ typedef struct vectis_json_route_config {
   vectis_http_method method;
   const char *path;
   vectis_route_path_kind path_kind;
+  vectis_body_policy body;
   const lonejson_map *input_map;
   size_t input_size;
   const lonejson_map *output_map;
@@ -181,8 +206,10 @@ typedef struct vectis_server_config {
   size_t max_request_header_bytes;
   size_t max_request_body_bytes;
   long request_header_timeout_ms;
-  long request_body_timeout_ms;
-  long response_write_timeout_ms;
+  long request_body_idle_timeout_ms;
+  long response_write_idle_timeout_ms;
+  size_t request_body_min_rate_bytes_per_sec;
+  long request_body_min_rate_grace_ms;
   long idle_timeout_ms;
   int keepalive_enabled;
   long keepalive_timeout_ms;
@@ -331,6 +358,12 @@ void vectis_app_config_init(vectis_app_config *config);
 void vectis_server_config_init(vectis_server_config *config);
 void vectis_tls_config_init(vectis_tls_config *config);
 void vectis_lockd_config_init(vectis_lockd_config *config);
+void vectis_body_policy_init(vectis_body_policy *policy);
+vectis_body_policy vectis_body_none(void);
+vectis_body_policy vectis_body_json_default(void);
+vectis_body_policy vectis_body_buffered_max(size_t max_bytes);
+vectis_body_policy vectis_body_upload(void);
+vectis_body_policy vectis_body_upload_max(size_t max_bytes);
 void vectis_route_config_init(vectis_route_config *config);
 void vectis_json_route_config_init(vectis_json_route_config *config);
 vectis_route_config vectis_route(vectis_http_method method,

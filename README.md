@@ -48,10 +48,17 @@ queue, downstream HTTP, SFTP, and SSH workflows.
 
 The HTTP server boundary is defensive by default. `vectis_app_config_init()`
 sets explicit guardrails for maximum concurrent connections, request-header
-size, request-body size, header-read timeout, body-read timeout, response-write
-timeout, idle timeout, keepalive timeout, and maximum requests per keepalive
-connection. These defaults are intentionally part of the Vectis SDK surface so
-Kore integration cannot accidentally inherit unsafe runtime defaults later.
+size, default request-body size, header-read deadline, body-read idle timeout,
+minimum body transfer rate, response-write idle timeout, idle timeout,
+keepalive timeout, and maximum requests per keepalive connection. These
+defaults are intentionally part of the Vectis SDK surface so Kore integration
+cannot accidentally inherit unsafe runtime defaults later.
+
+Large request bodies are route policy, not global server policy. Normal API
+routes default to a bounded body shape suitable for JSON. File upload routes can
+opt into streaming/spool-to-disk behavior with `vectis_body_upload()` or set an
+explicit cap with `vectis_body_upload_max(bytes)`, so accepting a multi-GB
+upload does not require raising the default limit for every route.
 
 The dependency headers and libraries are shipped intentionally. C users should
 be able to include and use Kore, `liblockdc`, `lonejson`, `libpslog`, libcurl,
@@ -178,8 +185,10 @@ The current implementation provides:
   bytes across lockd client bundles, Kore TLS material, downstream HTTP/MQTT
   client bundles, and SSH/SFTP private-key inputs.
 - A first-pass `vectis_server_config` with explicit DDoS/slow-client guardrails
-  for connection counts, request sizes, keepalive behavior, and read/write
-  timeouts.
+  for connection counts, request sizes, keepalive behavior, idle read/write
+  timeouts, and minimum request-body transfer rate.
+- Per-route request-body policy presets for no-body routes, JSON/buffered
+  bodies, and streaming large uploads.
 - Route constructors for literal paths, named and optional path parameters, and
   explicit regex routes, with automatic path-kind inference for the common
   `vectis_route()` and `vectis_json_route()` cases.

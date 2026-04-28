@@ -33,8 +33,14 @@ int main(void) {
   assert(config.server.max_request_header_bytes == VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES);
   assert(config.server.max_request_body_bytes == VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES);
   assert(config.server.request_header_timeout_ms == VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS);
-  assert(config.server.request_body_timeout_ms == VECTIS_SERVER_DEFAULT_REQUEST_BODY_TIMEOUT_MS);
-  assert(config.server.response_write_timeout_ms == VECTIS_SERVER_DEFAULT_RESPONSE_WRITE_TIMEOUT_MS);
+  assert(config.server.request_body_idle_timeout_ms ==
+         VECTIS_SERVER_DEFAULT_REQUEST_BODY_IDLE_TIMEOUT_MS);
+  assert(config.server.response_write_idle_timeout_ms ==
+         VECTIS_SERVER_DEFAULT_RESPONSE_WRITE_IDLE_TIMEOUT_MS);
+  assert(config.server.request_body_min_rate_bytes_per_sec ==
+         VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_BYTES_PER_SEC);
+  assert(config.server.request_body_min_rate_grace_ms ==
+         VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_GRACE_MS);
   assert(config.server.idle_timeout_ms == VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS);
   assert(config.server.keepalive_enabled == 1);
   assert(config.server.keepalive_timeout_ms == VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS);
@@ -55,6 +61,10 @@ int main(void) {
   assert(vectis_internal_lockd_client(app) == NULL);
 
   route = vectis_route(VECTIS_HTTP_POST, "/orders", sample_handler, NULL);
+  assert(route.body.mode == VECTIS_BODY_NONE);
+  route.body = vectis_body_json_default();
+  assert(route.body.mode == VECTIS_BODY_JSON);
+  assert(route.body.max_bytes == VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES);
 
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);

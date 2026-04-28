@@ -38,6 +38,8 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Define opaque-handle-plus-method-table API surface.
 - [x] Implement app config defaults.
 - [x] Add defensive server/Kore guardrail defaults for connection count, request sizes, read/write timeouts, idle timeout, and keepalive behavior.
+- [x] Rename server body/write timeouts to idle-timeout semantics and add minimum request-body rate guardrails.
+- [x] Add per-route request-body policy presets for JSON/default bodies and streaming large uploads.
 - [x] Implement thread-safe app lifetime and route registry state.
 - [x] Support owned or borrowed `pslog` logger instances.
 - [x] Store and validate lockd configuration without requiring a live lockd daemon during app construction.
@@ -70,6 +72,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Add public route-builder helpers for literal, named/optional parameter, and regex route registration.
 - [ ] Compile Vectis named and optional path parameters to safe Kore regex routes and populate `vectis_request_path_param()`.
 - [ ] Expose request body, headers, query parameters, path parameters, and response helpers.
+- [ ] Translate per-route body policies into concrete Kore request-body buffering, streaming, and spool-to-disk behavior.
 - [ ] Support Kore features through Vectis where practical, including TLS, ACME, websocket, static asset, file upload, and runtime configuration features.
 - [ ] Define the supported one-process multi-instance behavior based on what Kore can safely provide.
 - [ ] Add real HTTP and HTTPS integration tests.
@@ -95,6 +98,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Patch Kore ACME JSON handling and request-body helpers to use `lonejson`.
 - [ ] Replace the remaining Kore JSON parsing surface with `lonejson`.
 - [ ] Expose C request-body parse helpers that support buffer, alloc, and spool-to-disk strategies.
+- [x] Draft request-body policy configuration for buffer versus streaming/spool-to-disk strategies.
 - [ ] Expose C response serialization helpers for large payload streaming.
 - [ ] Expose Lua JSON encode/decode helpers through the bundled `lonejson` Lua rock or a Vectis facade.
 - [ ] Make `lonejson` the backing implementation for Vectis request parsing, response serialization, lockd document helpers, and JSON HTTP client helpers.

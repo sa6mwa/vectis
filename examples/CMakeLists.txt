@@ -22,6 +22,7 @@ vectis_add_example(vectis_example_kore_regex kore/kore_regex_routes.c)
 vectis_add_example(vectis_example_kore_tls_acme kore/kore_tls_acme.c)
 vectis_add_example(vectis_example_kore_tls_memory kore/kore_tls_memory_bundles.c)
 vectis_add_example(vectis_example_kore_lockd_api kore/kore_lockd_api.c)
+vectis_add_example(vectis_example_kore_file_upload kore/kore_file_upload.c)
 vectis_add_example(vectis_example_rest_lockd kore/rest_api_lockd_lonejson.c)
 
 vectis_add_example(vectis_example_lockd_open lockd/lockd_open_client.c)

@@ -162,6 +162,7 @@ static void assert_json_route_surface(void) {
                             sample_json_handler,
                             NULL);
   assert(route.path_kind == VECTIS_ROUTE_PATH_PARAMS);
+  assert(route.body.mode == VECTIS_BODY_JSON);
   status = vectis_register_json_route(app, &route, &error);
   assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
   assert(error.source == VECTIS_ERROR_SOURCE_KORE);

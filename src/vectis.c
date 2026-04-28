@@ -13,6 +13,7 @@ typedef struct vectis_route_entry {
   vectis_http_method method;
   char *path;
   vectis_route_path_kind path_kind;
+  vectis_body_policy body;
   vectis_route_handler_fn handler;
   void *userdata;
 } vectis_route_entry;
@@ -288,8 +289,11 @@ void vectis_server_config_init(vectis_server_config *config) {
   config->max_request_header_bytes = VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES;
   config->max_request_body_bytes = VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
   config->request_header_timeout_ms = VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS;
-  config->request_body_timeout_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_TIMEOUT_MS;
-  config->response_write_timeout_ms = VECTIS_SERVER_DEFAULT_RESPONSE_WRITE_TIMEOUT_MS;
+  config->request_body_idle_timeout_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_IDLE_TIMEOUT_MS;
+  config->response_write_idle_timeout_ms = VECTIS_SERVER_DEFAULT_RESPONSE_WRITE_IDLE_TIMEOUT_MS;
+  config->request_body_min_rate_bytes_per_sec =
+      VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_BYTES_PER_SEC;
+  config->request_body_min_rate_grace_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_GRACE_MS;
   config->idle_timeout_ms = VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS;
   config->keepalive_enabled = 1;
   config->keepalive_timeout_ms = VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS;
@@ -309,6 +313,63 @@ void vectis_app_config_init(vectis_app_config *config) {
   vectis_lockd_config_init(&config->lockd);
 }
 
+void vectis_body_policy_init(vectis_body_policy *policy) {
+  if (policy == NULL) {
+    return;
+  }
+  memset(policy, 0, sizeof(*policy));
+  policy->mode = VECTIS_BODY_NONE;
+}
+
+vectis_body_policy vectis_body_none(void) {
+  vectis_body_policy policy;
+
+  vectis_body_policy_init(&policy);
+  return policy;
+}
+
+vectis_body_policy vectis_body_json_default(void) {
+  vectis_body_policy policy;
+
+  vectis_body_policy_init(&policy);
+  policy.mode = VECTIS_BODY_JSON;
+  policy.max_bytes = VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
+  policy.memory_buffer_limit_bytes = VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
+  policy.spool_to_disk = 0;
+  policy.idle_timeout_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_IDLE_TIMEOUT_MS;
+  policy.min_rate_bytes_per_sec = VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_BYTES_PER_SEC;
+  policy.min_rate_grace_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_GRACE_MS;
+  return policy;
+}
+
+vectis_body_policy vectis_body_buffered_max(size_t max_bytes) {
+  vectis_body_policy policy;
+
+  policy = vectis_body_json_default();
+  policy.mode = VECTIS_BODY_BUFFERED;
+  policy.max_bytes = max_bytes;
+  policy.memory_buffer_limit_bytes = max_bytes;
+  return policy;
+}
+
+vectis_body_policy vectis_body_upload_max(size_t max_bytes) {
+  vectis_body_policy policy;
+
+  vectis_body_policy_init(&policy);
+  policy.mode = VECTIS_BODY_STREAMING_UPLOAD;
+  policy.max_bytes = max_bytes;
+  policy.memory_buffer_limit_bytes = VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+  policy.spool_to_disk = 1;
+  policy.idle_timeout_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_IDLE_TIMEOUT_MS;
+  policy.min_rate_bytes_per_sec = VECTIS_BODY_DEFAULT_UPLOAD_MIN_RATE_BYTES_PER_SEC;
+  policy.min_rate_grace_ms = VECTIS_BODY_DEFAULT_UPLOAD_MIN_RATE_GRACE_MS;
+  return policy;
+}
+
+vectis_body_policy vectis_body_upload(void) {
+  return vectis_body_upload_max(VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES);
+}
+
 void vectis_route_config_init(vectis_route_config *config) {
   if (config == NULL) {
     return;
@@ -316,6 +377,7 @@ void vectis_route_config_init(vectis_route_config *config) {
   memset(config, 0, sizeof(*config));
   config->method = VECTIS_HTTP_ANY;
   config->path_kind = VECTIS_ROUTE_PATH_LITERAL;
+  config->body = vectis_body_none();
 }
 
 void vectis_json_route_config_init(vectis_json_route_config *config) {
@@ -325,6 +387,7 @@ void vectis_json_route_config_init(vectis_json_route_config *config) {
   memset(config, 0, sizeof(*config));
   config->method = VECTIS_HTTP_ANY;
   config->path_kind = VECTIS_ROUTE_PATH_LITERAL;
+  config->body = vectis_body_json_default();
 }
 
 static vectis_route_path_kind vectis_infer_route_path_kind(const char *path) {
@@ -381,6 +444,7 @@ vectis_json_route_config vectis_json_route(vectis_http_method method,
   route.method = method;
   route.path = path;
   route.path_kind = vectis_infer_route_path_kind(path);
+  route.body = vectis_body_json_default();
   route.input_map = input_map;
   route.input_size = input_size;
   route.output_map = output_map;
@@ -573,6 +637,68 @@ static vectis_status vectis_validate_route_path(const char *path,
   return VECTIS_ERR_INVALID;
 }
 
+static vectis_status vectis_validate_body_policy(const vectis_body_policy *policy,
+                                                 const vectis_server_config *server,
+                                                 vectis_error *error) {
+  if (policy == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "body policy is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (policy->mode == VECTIS_BODY_NONE) {
+    return VECTIS_OK;
+  }
+  if (policy->mode != VECTIS_BODY_JSON &&
+      policy->mode != VECTIS_BODY_BUFFERED &&
+      policy->mode != VECTIS_BODY_STREAMING_UPLOAD) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "body policy mode is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (policy->max_bytes == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "body policy max_bytes must be greater than zero");
+    return VECTIS_ERR_INVALID;
+  }
+  if (policy->idle_timeout_ms <= 0L) {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "body policy idle_timeout_ms must be greater than zero");
+    return VECTIS_ERR_INVALID;
+  }
+  if (policy->min_rate_grace_ms < 0L) {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "body policy min_rate_grace_ms must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+  if (policy->mode != VECTIS_BODY_STREAMING_UPLOAD) {
+    if (policy->memory_buffer_limit_bytes == 0u) {
+      vectis_set_error(error,
+                       VECTIS_ERR_INVALID,
+                       "buffered body policy memory_buffer_limit_bytes must be greater than zero");
+      return VECTIS_ERR_INVALID;
+    }
+    if (policy->memory_buffer_limit_bytes > policy->max_bytes) {
+      vectis_set_error(error,
+                       VECTIS_ERR_INVALID,
+                       "buffered body policy memory_buffer_limit_bytes must not exceed max_bytes");
+      return VECTIS_ERR_INVALID;
+    }
+  } else if (!policy->spool_to_disk && policy->memory_buffer_limit_bytes < policy->max_bytes) {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "streaming upload body policy requires spool_to_disk unless fully buffered");
+    return VECTIS_ERR_INVALID;
+  }
+  if (server != NULL && server->max_request_body_bytes > 0u &&
+      policy->mode != VECTIS_BODY_STREAMING_UPLOAD &&
+      policy->max_bytes > server->max_request_body_bytes) {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "non-streaming body policy max_bytes exceeds server max_request_body_bytes");
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
+}
+
 static void vectis_free_endpoints(vectis_app_impl *impl) {
   size_t i;
 
@@ -705,6 +831,9 @@ static vectis_status vectis_validate_route(const vectis_route_config *route,
     vectis_set_error(error, VECTIS_ERR_INVALID, "route handler is required");
     return VECTIS_ERR_INVALID;
   }
+  if (vectis_validate_body_policy(&route->body, NULL, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
   return VECTIS_OK;
 }
 
@@ -736,16 +865,22 @@ static vectis_status vectis_validate_server_config(const vectis_server_config *c
                      "server request_header_timeout_ms must be greater than zero");
     return VECTIS_ERR_INVALID;
   }
-  if (config->request_body_timeout_ms <= 0L) {
+  if (config->request_body_idle_timeout_ms <= 0L) {
     vectis_set_error(error,
                      VECTIS_ERR_INVALID,
-                     "server request_body_timeout_ms must be greater than zero");
+                     "server request_body_idle_timeout_ms must be greater than zero");
     return VECTIS_ERR_INVALID;
   }
-  if (config->response_write_timeout_ms <= 0L) {
+  if (config->response_write_idle_timeout_ms <= 0L) {
     vectis_set_error(error,
                      VECTIS_ERR_INVALID,
-                     "server response_write_timeout_ms must be greater than zero");
+                     "server response_write_idle_timeout_ms must be greater than zero");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->request_body_min_rate_grace_ms < 0L) {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "server request_body_min_rate_grace_ms must be non-negative");
     return VECTIS_ERR_INVALID;
   }
   if (config->idle_timeout_ms <= 0L) {
@@ -1102,6 +1237,10 @@ static vectis_status vectis_app_register_route_impl(vectis_app *app,
   }
 
   impl = (vectis_app_impl *)app->impl;
+  status = vectis_validate_body_policy(&route->body, &impl->server, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
   (void)pthread_mutex_lock(&impl->mutex);
   for (i = 0u; i < impl->route_count; ++i) {
     if (vectis_route_conflicts(&impl->routes[i], route)) {
@@ -1129,6 +1268,7 @@ static vectis_status vectis_app_register_route_impl(vectis_app *app,
   impl->routes[impl->route_count].method = route->method;
   impl->routes[impl->route_count].path_kind = route->path_kind;
   impl->routes[impl->route_count].path = vectis_strdup(route->path);
+  impl->routes[impl->route_count].body = route->body;
   impl->routes[impl->route_count].handler = route->handler;
   impl->routes[impl->route_count].userdata = route->userdata;
   if (impl->routes[impl->route_count].path == NULL) {
@@ -1155,6 +1295,8 @@ vectis_status vectis_register_route(vectis_app *app,
 vectis_status vectis_register_json_route(vectis_app *app,
                                          const vectis_json_route_config *route,
                                          vectis_error *error) {
+  vectis_app_impl *impl;
+
   if (app == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
     return VECTIS_ERR_INVALID;
@@ -1177,6 +1319,12 @@ vectis_status vectis_register_json_route(vectis_app *app,
   if (route->output_map != NULL && (route->output_size == 0u || route->output_size > 10485760u)) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "json route output_size is invalid");
     return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  if (vectis_validate_body_policy(&route->body,
+                                  impl != NULL ? &impl->server : NULL,
+                                  error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
   return vectis_not_implemented_from(error, VECTIS_ERROR_SOURCE_KORE, "JSON route auto-wiring");
 }
