@@ -370,6 +370,8 @@ struct vectis_app {
 void vectis_error_clear(vectis_error *error);
 const char *vectis_status_string(vectis_status status);
 const char *vectis_error_source_string(vectis_error_source source);
+const char *vectis_http_method_string(vectis_http_method method);
+const char *vectis_body_mode_string(vectis_body_mode mode);
 void vectis_source_init(vectis_source *source);
 vectis_source vectis_source_from_path(const char *path);
 vectis_source vectis_source_from_memory(const void *memory, size_t memory_size);

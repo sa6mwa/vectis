@@ -49,6 +49,8 @@ int main(void) {
   vectis_error_clear(&error);
   assert(error.source == VECTIS_ERROR_SOURCE_NONE);
   assert(strcmp(vectis_error_source_string(VECTIS_ERROR_SOURCE_CURL), "curl") == 0);
+  assert(strcmp(vectis_http_method_string(VECTIS_HTTP_OPTIONS), "OPTIONS") == 0);
+  assert(strcmp(vectis_body_mode_string(VECTIS_BODY_STREAMING_UPLOAD), "streaming_upload") == 0);
 
   config.app_name = "orders";
   config.tls.cert_key_bundle = vectis_source_from_path("/tmp/orders.pem");

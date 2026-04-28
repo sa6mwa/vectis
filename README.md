@@ -208,6 +208,8 @@ The current implementation provides:
   `vectis_route()` and `vectis_json_route()` cases.
 - A first pass at a dependency-aware error model that records Vectis status,
   error source, dependency code, HTTP status, summary message, and detail text.
+- Stable string helpers for statuses, error sources, HTTP methods, and body
+  modes so examples and applications do not grow ad hoc name tables.
 - A handle-shaped HTTP client API that can be created directly or from an app
   so app logging/defaults can flow into downstream calls.
 - A placeholder `vectis` executable entrypoint; on Linux it is wrapped with the

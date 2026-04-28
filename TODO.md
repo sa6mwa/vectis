@@ -48,6 +48,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [ ] Implement the dependency-backed behavior behind the drafted helpers for the JSON layer, HTTP client, SSH client, SFTP/MQTT over curl, and TLS/certificate config.
 - [ ] Expose dependency headers and low-level handles/APIs as explicit escape hatches without making them the primary DX.
 - [x] Define the first C pass of one Vectis-owned naming, source, error, timeout, ownership, and cleanup convention.
+- [x] Add stable string helpers for status, error source, HTTP method, and body mode names.
 - [ ] Mirror the C naming, source, error, timeout, ownership, and cleanup convention in Lua.
 - [ ] Define request/response abstractions that do not leak Kore internals unless explicitly requested.
 - [x] Add common C source constructors for path, memory, and `lc_source` material inputs.

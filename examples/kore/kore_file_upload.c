@@ -60,7 +60,8 @@ int main(void) {
 
   logger->infof(logger,
                 "example.kore_file_upload.start",
-                "max_body=%lu min_rate=%lu",
+                "body_mode=%s max_body=%lu min_rate=%lu",
+                vectis_body_mode_string(route.body.mode),
                 (unsigned long)route.body.max_bytes,
                 (unsigned long)route.body.min_rate_bytes_per_sec);
   (void)vectis_start(app, &error);

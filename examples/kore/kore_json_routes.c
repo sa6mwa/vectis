@@ -79,7 +79,7 @@ int main(void) {
                             NULL);
 
   logger->infof(logger, "example.kore_json.register", "method=%s path=%s",
-                "POST", route.path);
+                vectis_http_method_string(route.method), route.path);
   (void)vectis_register_json_route(app, &route, &error);
   vectis_destroy(app);
   logger->destroy(logger);

@@ -198,6 +198,44 @@ const char *vectis_error_source_string(vectis_error_source source) {
   }
 }
 
+const char *vectis_http_method_string(vectis_http_method method) {
+  switch (method) {
+  case VECTIS_HTTP_ANY:
+    return "ANY";
+  case VECTIS_HTTP_GET:
+    return "GET";
+  case VECTIS_HTTP_POST:
+    return "POST";
+  case VECTIS_HTTP_PUT:
+    return "PUT";
+  case VECTIS_HTTP_PATCH:
+    return "PATCH";
+  case VECTIS_HTTP_DELETE:
+    return "DELETE";
+  case VECTIS_HTTP_HEAD:
+    return "HEAD";
+  case VECTIS_HTTP_OPTIONS:
+    return "OPTIONS";
+  default:
+    return "UNKNOWN";
+  }
+}
+
+const char *vectis_body_mode_string(vectis_body_mode mode) {
+  switch (mode) {
+  case VECTIS_BODY_NONE:
+    return "none";
+  case VECTIS_BODY_JSON:
+    return "json";
+  case VECTIS_BODY_BUFFERED:
+    return "buffered";
+  case VECTIS_BODY_STREAMING_UPLOAD:
+    return "streaming_upload";
+  default:
+    return "unknown";
+  }
+}
+
 void vectis_source_init(vectis_source *source) {
   if (source == NULL) {
     return;
