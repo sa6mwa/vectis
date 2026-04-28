@@ -231,9 +231,10 @@ The current implementation provides:
   modes so examples and applications do not grow ad hoc name tables.
 - A handle-shaped HTTP client API that can be created directly or from an app
   so app logging/defaults can flow into downstream calls.
-- A placeholder `vectis` executable entrypoint; on Linux it is wrapped with the
+- A `vectis` executable that embeds the provisioned Lua 5.5 runtime, supports
+  normal script and shebang execution, and is wrapped on Linux with the
   single-header `libpid0` 0.3.0 helper so it can run correctly as PID 1 in
-  `FROM scratch` containers once the Lua runner is implemented.
+  `FROM scratch` containers.
 - Thread-safe app object lifecycle and route registry management.
 - `lonejson`-backed JSON validation helpers.
 - `pslog`-backed owned or borrowed logger handling.
@@ -248,9 +249,9 @@ The current implementation provides:
   Kore's external key-manager flow.
 - A C89 portability contract for the `vectis` public API and implementation.
 
-The Lua runner, missing Lua bindings, consumer runtime, ACME integration,
-higher-level REST helpers, packaging, and single-binary service builder remain
-tracked in [TODO.md](TODO.md).
+The full Lua framework facade, missing Lua bindings, consumer runtime, ACME
+integration, higher-level REST helpers, packaging, and single-binary service
+builder remain tracked in [TODO.md](TODO.md).
 
 ## Build
 

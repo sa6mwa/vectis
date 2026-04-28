@@ -174,12 +174,13 @@ moving toward, not just the next patch. Keep items observable and testable.
 ## Area 12: Lua Runtime and Framework
 
 - [x] Reserve Lua-facing runtime concerns in the TODO contract and API design.
-- [ ] Add a `vectis` executable that embeds Lua.
+- [x] Add a `vectis` executable that embeds Lua.
 - [x] Make the `vectis` executable build depend on the Vectis-provisioned Lua 5.5 static library rather than a host Lua installation.
 - [x] Add the Linux `vectis` executable entrypoint wrapped in single-header `libpid0` for PID 1 behavior in `FROM scratch` containers.
-- [ ] Replace the placeholder executable submain with the real Lua runner.
+- [x] Replace the placeholder executable submain with the real Lua runner.
 - [ ] Configure Lua package paths so bundled/native Vectis modules load without user setup.
-- [ ] Provide a `require("vectis")` facade that exposes the high-level framework.
+- [x] Provide the first statically preloaded `require("vectis")` facade for the embedded Lua runner.
+- [ ] Expand `require("vectis")` into the full high-level framework facade.
 - [ ] Integrate existing Lua rocks for lockdc, pslog, and lonejson.
 - [ ] Build lockdc, pslog, lonejson, and Vectis-owned Lua modules against the provisioned Lua 5.5 ABI.
 - [ ] Register bundled Lua modules statically through `package.preload` in the `vectis` binary; do not require runtime `.so` loading.
@@ -187,7 +188,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [ ] Keep LuaRocks out of the `vectis` binary runtime and release artifacts.
 - [ ] Add Vectis-owned Lua modules for Kore, curl, OpenSSL certificate workflows, and libssh2.
 - [ ] Keep the Lua framework model aligned with the C SDK model: raw dependency access plus a Vectis-owned DX layer with matching concepts and behavior.
-- [ ] Support shebang execution through `#!/usr/local/bin/vectis`.
+- [x] Support shebang execution through `#!/usr/local/bin/vectis`.
 - [ ] Provide a friendly REST API DX for defining routes, handlers, middleware-like hooks, JSON responses, lockd operations, and downstream calls.
 - [ ] Add Lua examples for API server, lockd document workflow, queue producer, queue consumer, downstream API call, SFTP transfer, and SSH command execution.
 - [ ] Add Lua unit and end-to-end tests.
