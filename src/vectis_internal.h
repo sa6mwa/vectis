@@ -3,8 +3,20 @@
 
 #include <vectis/vectis.h>
 
+typedef struct vectis_kore_runtime_config {
+  vectis_app *app;
+  const char *app_name;
+  const char *bind;
+  unsigned short port;
+  vectis_tls_mode tls_mode;
+  pslog_logger *logger;
+} vectis_kore_runtime_config;
+
 void vectis_set_error(vectis_error *error, vectis_status code, const char *message);
 struct lc_client *vectis_internal_lockd_client(vectis_app *app);
+vectis_status vectis_internal_kore_start(const vectis_kore_runtime_config *config,
+                                         vectis_error *error);
+vectis_status vectis_internal_kore_stop(vectis_app *app, vectis_error *error);
 vectis_status vectis_internal_invoke_route(vectis_app *app,
                                            size_t index,
                                            vectis_request *request,

@@ -1682,11 +1682,15 @@ vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error) {
 
 void vectis_destroy(vectis_app *app) {
   vectis_app_impl *impl;
+  vectis_error error;
 
   if (app == NULL) {
     return;
   }
   impl = (vectis_app_impl *)app->impl;
+  if (impl != NULL && impl->started) {
+    (void)vectis_stop(app, &error);
+  }
   vectis_destroy_impl(impl);
   free(app);
 }
@@ -1694,6 +1698,7 @@ void vectis_destroy(vectis_app *app) {
 static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error) {
   vectis_app_impl *impl;
   vectis_status status;
+  vectis_kore_runtime_config kore_config;
   size_t route_count;
 
   if (app == NULL || app->impl == NULL) {
@@ -1715,17 +1720,31 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
   }
   (void)pthread_mutex_unlock(&impl->mutex);
 
+  (void)pthread_mutex_lock(&impl->mutex);
   route_count = impl->route_count;
-  if (route_count > 0u) {
-    vectis_set_error(error,
-                     VECTIS_ERR_NOT_IMPLEMENTED,
-                     "Kore runtime bootstrap is not implemented yet");
-    return VECTIS_ERR_NOT_IMPLEMENTED;
-  }
+  (void)pthread_mutex_unlock(&impl->mutex);
 
   status = vectis_open_lockd_client(impl, error);
   if (status != VECTIS_OK) {
     return status;
+  }
+
+  if (route_count > 0u) {
+    memset(&kore_config, 0, sizeof(kore_config));
+    kore_config.app = app;
+    kore_config.app_name = impl->app_name;
+    kore_config.bind = impl->bind;
+    kore_config.port = impl->port;
+    kore_config.tls_mode = impl->tls_mode;
+    kore_config.logger = impl->logger;
+    status = vectis_internal_kore_start(&kore_config, error);
+    if (status != VECTIS_OK) {
+      if (impl->lockd_client != NULL) {
+        lc_client_close(impl->lockd_client);
+        impl->lockd_client = NULL;
+      }
+      return status;
+    }
   }
 
   (void)pthread_mutex_lock(&impl->mutex);
@@ -1759,6 +1778,13 @@ static vectis_status vectis_app_stop_impl(vectis_app *app, vectis_error *error) 
     return VECTIS_ERR_STATE;
   }
   impl->started = 0;
+  (void)pthread_mutex_unlock(&impl->mutex);
+
+  if (vectis_internal_kore_stop(app, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+
+  (void)pthread_mutex_lock(&impl->mutex);
   if (impl->lockd_client != NULL) {
     lc_client_close(impl->lockd_client);
     impl->lockd_client = NULL;

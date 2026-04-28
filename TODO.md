@@ -47,7 +47,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Support owned or borrowed `pslog` logger instances.
 - [x] Store and validate lockd configuration without requiring a live lockd daemon during app construction.
 - [x] Instantiate and own a real `lc_client` during non-Kore runtime startup, with structured lockdc errors on open failure.
-- [ ] Instantiate the app-owned `lc_client` before Kore starts and make it available to route handlers only after successful startup.
+- [x] Instantiate the app-owned `lc_client` before Kore starts and make it available to route handlers only after successful startup.
 - [x] Expose stable accessors/helpers for the shared logger and raw lockd client escape hatch.
 - [x] Implement dependency-backed C helpers for curl, SSH exec/SFTP, self-signed certificate bundles, request/response JSON parse/serialize, and JSON route auto-wiring.
 - [ ] Complete the remaining dependency-backed behavior for CA-signed certificate generation and full Kore TLS/runtime configuration.
@@ -71,22 +71,23 @@ moving toward, not just the next patch. Keep items observable and testable.
 ## Area 5: HTTP / Kore Integration
 
 - [x] Build and link Kore against the dependency bundle shipped by `liblockdc`.
-- [ ] Start/stop a real Kore runtime from `vectis`.
+- [x] Start/stop a real Kore runtime from `vectis`.
 - [ ] Translate `vectis_server_config` guardrails into concrete Kore runtime/config settings.
 - [ ] Wire `pslog` into the Kore runtime path so Vectis server logs and Kore runtime diagnostics use the configured app logger.
 - [ ] Expose raw Kore configuration/runtime escape hatches where practical.
-- [ ] Register Vectis C routes as Kore handlers.
-- [ ] Support method-specific handlers and router-style dispatch.
+- [x] Register Vectis C routes as Kore handlers.
+- [x] Support method-specific handlers and router-style dispatch.
 - [x] Draft route path classification for literal paths, named path parameters, and explicit POSIX regex routes.
 - [x] Add public route-builder helpers for literal, named/optional parameter, and regex route registration.
 - [x] Add internal Vectis router dispatch for literal, regex, named parameters, optional parameters, method masks, and safe path-param population.
-- [ ] Attach the internal Vectis router dispatch to real Kore request handling.
+- [x] Attach the internal Vectis router dispatch to real Kore request handling.
 - [x] Expose request body, headers, query parameters, path parameters, and response helpers.
 - [x] Register JSON routes as ordinary Vectis routes with lonejson parse/serialize adapter dispatch.
 - [ ] Translate per-route body policies into concrete Kore request-body buffering, streaming, and spool-to-disk behavior.
 - [ ] Support Kore features through Vectis where practical, including TLS, ACME, websocket, static asset, file upload, and runtime configuration features.
 - [ ] Define the supported one-process multi-instance behavior based on what Kore can safely provide.
-- [ ] Add real HTTP and HTTPS integration tests.
+- [x] Add real HTTP integration tests.
+- [ ] Add real HTTPS integration tests.
 
 ## Area 6: TLS / Certificate Configuration
 

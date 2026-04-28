@@ -27,10 +27,10 @@ index b8c96d5a3941668a05f6bea8a7a67c25e7ebbb21..6ae15898412a3d604432e8910bcf1c65
 +	FEATURES+=-DKORE_USE_PSLOG
 +	ifneq ("$(PSLOG_PATH)", "")
 +		CFLAGS+=-I$(PSLOG_PATH)/include
++		LDFLAGS+=-L$(PSLOG_PATH)/lib -lpslog
 +		FEATURES_INC+=-I$(PSLOG_PATH)/include
 +	endif
 +endif
-+
 +ifneq ("$(LONEJSON)", "")
 +	S_SRC+=src/ljson.c src/vectis_lonejson_impl.c
 +	CFLAGS+=-DKORE_USE_LONEJSON
@@ -231,7 +231,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..43fadae3d91135020247e29a793578ca5987a86c
 --- /dev/null
 +++ b/src/vectis_pslog_impl.c
-@@ -0,0 +1,13 @@
+@@ -0,0 +1,12 @@
 +#if defined(__GNUC__) || defined(__clang__)
 +#pragma GCC diagnostic push
 +#pragma GCC diagnostic ignored "-Wcast-qual"
@@ -244,4 +244,3 @@ index 0000000000000000000000000000000000000000..43fadae3d91135020247e29a793578ca
 +#if defined(__GNUC__) || defined(__clang__)
 +#pragma GCC diagnostic pop
 +#endif
-+

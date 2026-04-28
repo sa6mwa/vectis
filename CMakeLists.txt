@@ -16,6 +16,7 @@ option(VECTIS_BUILD_BINARY "Build the vectis executable." ON)
 option(VECTIS_BUILD_TESTS "Build vectis unit tests." ON)
 option(VECTIS_BUILD_EXAMPLES "Build vectis SDK examples." ON)
 option(VECTIS_BUILD_FUZZERS "Build fuzz targets." OFF)
+option(VECTIS_WITH_KORE_RUNTIME "Build the embedded Kore runtime adapter." ON)
 option(VECTIS_ENABLE_COVERAGE "Build with coverage instrumentation." OFF)
 option(VECTIS_INSTALL "Enable install rules." ON)
 
@@ -160,6 +161,118 @@ set(vectis_sources
   src/vectis.c
 )
 
+set(vectis_kore_objects)
+if(VECTIS_WITH_KORE_RUNTIME)
+  set(vectis_kore_root "${CMAKE_SOURCE_DIR}/vendor/kore/upstream")
+  if(NOT EXISTS "${vectis_kore_root}/src/kore.c")
+    message(FATAL_ERROR "VECTIS_WITH_KORE_RUNTIME=ON requires vendor/kore/upstream.")
+  endif()
+  set(vectis_kore_generated_dir "${CMAKE_BINARY_DIR}/kore-generated")
+  file(MAKE_DIRECTORY "${vectis_kore_generated_dir}")
+  file(WRITE "${vectis_kore_generated_dir}/version.c"
+    "const char *kore_version = \"vectis-embedded\";\n"
+    "const char *kore_build_date = \"${CMAKE_PROJECT_VERSION}\";\n"
+  )
+  file(WRITE "${vectis_kore_generated_dir}/assets.c"
+    "#include <sys/types.h>\n"
+    "u_int8_t asset_builtin_kore_conf[] = {0};\n"
+    "u_int32_t asset_len_builtin_kore_conf = 0;\n"
+  )
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    execute_process(
+      COMMAND "${vectis_kore_root}/misc/linux-platform.sh"
+      WORKING_DIRECTORY "${vectis_kore_root}"
+      OUTPUT_FILE "${vectis_kore_generated_dir}/platform.h"
+      RESULT_VARIABLE vectis_kore_platform_result
+    )
+    if(NOT vectis_kore_platform_result EQUAL 0)
+      message(FATAL_ERROR "failed to generate Kore Linux platform header")
+    endif()
+    set(vectis_kore_platform_sources
+      "${vectis_kore_root}/src/linux.c"
+      "${vectis_kore_root}/src/seccomp.c"
+    )
+  else()
+    file(WRITE "${vectis_kore_generated_dir}/platform.h" "")
+    set(vectis_kore_platform_sources "${vectis_kore_root}/src/bsd.c")
+  endif()
+  set(vectis_kore_sources
+    "${vectis_kore_root}/src/kore.c"
+    "${vectis_kore_root}/src/buf.c"
+    "${vectis_kore_root}/src/config.c"
+    "${vectis_kore_root}/src/connection.c"
+    "${vectis_kore_root}/src/domain.c"
+    "${vectis_kore_root}/src/filemap.c"
+    "${vectis_kore_root}/src/fileref.c"
+    "${vectis_kore_root}/src/json.c"
+    "${vectis_kore_root}/src/log.c"
+    "${vectis_kore_root}/src/mem.c"
+    "${vectis_kore_root}/src/msg.c"
+    "${vectis_kore_root}/src/module.c"
+    "${vectis_kore_root}/src/net.c"
+    "${vectis_kore_root}/src/pool.c"
+    "${vectis_kore_root}/src/runtime.c"
+    "${vectis_kore_root}/src/sha1.c"
+    "${vectis_kore_root}/src/sha2.c"
+    "${vectis_kore_root}/src/timer.c"
+    "${vectis_kore_root}/src/utils.c"
+    "${vectis_kore_root}/src/worker.c"
+    "${vectis_kore_root}/src/tls_openssl.c"
+    "${vectis_kore_root}/src/keymgr_openssl.c"
+    "${vectis_kore_root}/src/auth.c"
+    "${vectis_kore_root}/src/accesslog.c"
+    "${vectis_kore_root}/src/http.c"
+    "${vectis_kore_root}/src/route.c"
+    "${vectis_kore_root}/src/validator.c"
+    "${vectis_kore_root}/src/websocket.c"
+    "${vectis_kore_root}/src/acme.c"
+    "${vectis_kore_root}/src/curl.c"
+    "${vectis_kore_root}/src/ljson.c"
+    "${vectis_kore_root}/src/vectis_pslog_impl.c"
+    "${vectis_kore_generated_dir}/version.c"
+    "${vectis_kore_generated_dir}/assets.c"
+    ${vectis_kore_platform_sources}
+  )
+  add_library(vectis_kore_runtime OBJECT ${vectis_kore_sources})
+  target_include_directories(vectis_kore_runtime PRIVATE
+    "${vectis_kore_root}/include/kore"
+    "${vectis_kore_generated_dir}"
+    "${vectis_external_include_dir}"
+  )
+  target_compile_definitions(vectis_kore_runtime PRIVATE
+    KORE_SINGLE_BINARY
+    KORE_USE_ACME
+    KORE_USE_CURL
+    KORE_USE_LONEJSON
+    KORE_USE_PSLOG
+    KORE_TMPDIR="/tmp"
+    TLS_BACKEND_OPENSSL
+    main=vectis_kore_main
+    PREFIX="/usr/local"
+  )
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(vectis_kore_runtime PRIVATE
+      _GNU_SOURCE=1
+      _FORTIFY_SOURCE=2
+    )
+  endif()
+  set_target_properties(vectis_kore_runtime PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS ON
+  )
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(vectis_kore_runtime PRIVATE -std=gnu99 -Wall -Wextra)
+  endif()
+  list(APPEND vectis_sources src/vectis_kore_bridge.c $<TARGET_OBJECTS:vectis_kore_runtime>)
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    set_source_files_properties(src/vectis_kore_bridge.c PROPERTIES
+      COMPILE_OPTIONS "-std=gnu99;-Wno-pedantic;-Wno-long-long;-Wno-cast-qual;-Wno-missing-prototypes"
+      COMPILE_DEFINITIONS KORE_USE_PSLOG
+    )
+  endif()
+endif()
+
 set(vectis_private_includes
   "${CMAKE_SOURCE_DIR}/src"
 )
@@ -178,7 +291,11 @@ if(VECTIS_BUILD_STATIC)
       Threads::Threads
       vectis_external_headers
       ${vectis_lockdc_static_target}
+      ${CMAKE_DL_LIBS}
   )
+  if(VECTIS_WITH_KORE_RUNTIME AND UNIX AND NOT APPLE)
+    target_link_options(vectis_static INTERFACE -Wl,--export-dynamic)
+  endif()
   set_target_properties(vectis_static PROPERTIES OUTPUT_NAME vectis)
   vectis_configure_c_target(vectis_static)
 endif()
@@ -197,6 +314,7 @@ if(VECTIS_BUILD_SHARED)
       Threads::Threads
       vectis_external_headers
       ${vectis_lockdc_shared_link}
+      ${CMAKE_DL_LIBS}
   )
   set_target_properties(vectis_shared PROPERTIES
     OUTPUT_NAME vectis
