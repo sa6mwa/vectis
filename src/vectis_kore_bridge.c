@@ -87,6 +87,138 @@ static vectis_http_method vectis_kore_method(u_int8_t method) {
   }
 }
 
+static char *vectis_kore_memdup_cstr(const char *data, size_t len) {
+  char *copy;
+
+  copy = (char *)malloc(len + 1u);
+  if (copy == NULL) {
+    return NULL;
+  }
+  if (len > 0u) {
+    memcpy(copy, data, len);
+  }
+  copy[len] = '\0';
+  return copy;
+}
+
+static vectis_status vectis_kore_copy_headers(struct http_request *req,
+                                              vectis_request *request,
+                                              vectis_error *error) {
+  struct http_header *header;
+  vectis_status status;
+
+  TAILQ_FOREACH(header, &req->req_headers, list) {
+    if (header->header == NULL || header->header[0] == '\0') {
+      continue;
+    }
+    status = vectis_internal_request_add_header(request,
+                                                header->header,
+                                                header->value != NULL ? header->value : "",
+                                                error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_kore_add_query_pair(vectis_request *request,
+                                                const char *name,
+                                                size_t name_len,
+                                                const char *value,
+                                                size_t value_len,
+                                                vectis_error *error) {
+  char *owned_name;
+  char *owned_value;
+  vectis_status status;
+
+  if (name_len == 0u) {
+    return VECTIS_OK;
+  }
+  owned_name = vectis_kore_memdup_cstr(name, name_len);
+  owned_value = vectis_kore_memdup_cstr(value, value_len);
+  if (owned_name == NULL || owned_value == NULL) {
+    free(owned_name);
+    free(owned_value);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate query parameter");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (!http_argument_urldecode(owned_name, 1) ||
+      !http_argument_urldecode(owned_value, 1)) {
+    free(owned_name);
+    free(owned_value);
+    vectis_set_error(error, VECTIS_ERR_INVALID, "failed to decode query parameter");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_internal_request_add_query(request, owned_name, owned_value, error);
+  free(owned_name);
+  free(owned_value);
+  return status;
+}
+
+static vectis_status vectis_kore_copy_query(struct http_request *req,
+                                            vectis_request *request,
+                                            vectis_error *error) {
+  const char *cursor;
+  const char *pair;
+  const char *amp;
+  const char *eq;
+  size_t pair_len;
+  size_t name_len;
+  size_t value_len;
+  vectis_status status;
+
+  if (req->query_string == NULL || req->query_string[0] == '\0') {
+    return VECTIS_OK;
+  }
+  cursor = req->query_string;
+  while (*cursor != '\0') {
+    pair = cursor;
+    amp = strchr(pair, '&');
+    pair_len = amp != NULL ? (size_t)(amp - pair) : strlen(pair);
+    if (pair_len > 0u) {
+      eq = memchr(pair, '=', pair_len);
+      if (eq != NULL) {
+        name_len = (size_t)(eq - pair);
+        value_len = pair_len - name_len - 1u;
+        status = vectis_kore_add_query_pair(request,
+                                            pair,
+                                            name_len,
+                                            eq + 1,
+                                            value_len,
+                                            error);
+      } else {
+        status = vectis_kore_add_query_pair(request,
+                                            pair,
+                                            pair_len,
+                                            "",
+                                            0u,
+                                            error);
+      }
+      if (status != VECTIS_OK) {
+        return status;
+      }
+    }
+    if (amp == NULL) {
+      break;
+    }
+    cursor = amp + 1;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_kore_copy_request_metadata(struct http_request *req,
+                                                       vectis_request *request,
+                                                       vectis_error *error) {
+  vectis_status status;
+
+  status = vectis_kore_copy_headers(req, request, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  return vectis_kore_copy_query(req, request, error);
+}
+
 static void *vectis_kore_thread_main(void *userdata) {
   char *argv[5];
   const char *args[4];
@@ -213,7 +345,10 @@ int vectis_kore_route(struct http_request *req) {
     return KORE_RESULT_OK;
   }
 
-  status = vectis_kore_read_body(req, request, &owned_body, &error);
+  status = vectis_kore_copy_request_metadata(req, request, &error);
+  if (status == VECTIS_OK) {
+    status = vectis_kore_read_body(req, request, &owned_body, &error);
+  }
   if (status == VECTIS_OK) {
     method = vectis_kore_method(req->method);
     status = vectis_internal_dispatch_route(app, method, req->path, request, response, &error);

@@ -14,17 +14,42 @@ static vectis_status sample_handler(vectis_app *app,
   return vectis_response_text(response, 200, "text/plain", "ok", error);
 }
 
+static vectis_status metadata_handler(vectis_app *app,
+                                      vectis_request *request,
+                                      vectis_response *response,
+                                      void *userdata,
+                                      vectis_error *error) {
+  const char *expand;
+  const char *trace;
+
+  (void)app;
+  (void)userdata;
+  expand = vectis_request_query(request, "expand");
+  trace = vectis_request_header(request, "x-vectis-trace");
+  if (expand == NULL || strcmp(expand, "items and logs") != 0) {
+    return vectis_response_text(response, 422, "text/plain", "bad query", error);
+  }
+  if (trace == NULL || strcmp(trace, "runtime-smoke") != 0) {
+    return vectis_response_text(response, 422, "text/plain", "bad header", error);
+  }
+  return vectis_response_text(response, 200, "text/plain", "metadata", error);
+}
+
 static void assert_kore_smoke(void) {
   vectis_app_config config;
   vectis_http_client_config http;
+  vectis_http_request request;
   vectis_http_response response;
+  vectis_http_response metadata_response;
   vectis_route_config route;
+  const char *headers[] = {"x-vectis-trace: runtime-smoke"};
   vectis_error error;
   vectis_status status;
   vectis_app *app;
   int attempt;
 
   memset(&response, 0, sizeof(response));
+  memset(&metadata_response, 0, sizeof(metadata_response));
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
@@ -32,6 +57,9 @@ static void assert_kore_smoke(void) {
   app = vectis_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/health", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/metadata", metadata_handler, NULL);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
   status = vectis_start(app, &error);
@@ -50,6 +78,19 @@ static void assert_kore_smoke(void) {
   assert(response.body_size == 2u);
   assert(memcmp(response.body, "ok", 2u) == 0);
   vectis_http_response_cleanup(&response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = "http://127.0.0.1:28080/metadata?expand=items+and+logs";
+  request.headers = headers;
+  request.header_count = 1u;
+  status = vectis_http_execute(&http, &request, &metadata_response, &error);
+  assert(status == VECTIS_OK);
+  assert(metadata_response.status_code == 200L);
+  assert(metadata_response.body_size == 8u);
+  assert(memcmp(metadata_response.body, "metadata", 8u) == 0);
+  vectis_http_response_cleanup(&metadata_response);
+
   status = vectis_stop(app, &error);
   assert(status == VECTIS_OK);
   vectis_destroy(app);
