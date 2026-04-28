@@ -41,12 +41,15 @@ static vectis_status sample_route_handler(vectis_app *app,
                                           vectis_response *response,
                                           void *userdata,
                                           vectis_error *error) {
+  const char *id;
+
   (void)app;
-  (void)request;
-  (void)response;
   (void)userdata;
-  vectis_error_clear(error);
-  return VECTIS_OK;
+  id = vectis_request_path_param(request, "id");
+  if (id != NULL) {
+    return vectis_response_text(response, 200, "text/plain", id, error);
+  }
+  return vectis_response_status(response, 204, error);
 }
 
 static void assert_http_surface(void) {
@@ -290,6 +293,31 @@ static void assert_json_route_surface(void) {
   assert(raw_route.path_kind == VECTIS_ROUTE_PATH_REGEX);
   status = vectis_register_route(app, &raw_route, &error);
   assert(status == VECTIS_OK);
+
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/state/abc", request, response, &error);
+  assert(status == VECTIS_OK);
+  body = vectis_internal_response_body(response);
+  assert(vectis_internal_response_status_code(response) == 200);
+  assert(body.size == 3u);
+  assert(memcmp(body.data, "abc", 3u) == 0);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/state", request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 204);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/internal/123", request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 204);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/state/..", request, response, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "dot segments") != NULL);
 
   route = vectis_json_route(VECTIS_HTTP_POST,
                             "/typed/:id",

@@ -733,6 +733,21 @@ static char *vectis_strdup(const char *value) {
   return copy;
 }
 
+static char *vectis_strndup(const char *value, size_t len) {
+  char *copy;
+
+  if (value == NULL) {
+    return NULL;
+  }
+  copy = (char *)malloc(len + 1u);
+  if (copy == NULL) {
+    return NULL;
+  }
+  memcpy(copy, value, len);
+  copy[len] = '\0';
+  return copy;
+}
+
 static void vectis_kv_free_all(vectis_kv *items, size_t count) {
   size_t i;
 
@@ -808,6 +823,21 @@ static vectis_status vectis_kv_add(vectis_kv **items,
   (*items)[*count].value = value_copy;
   (*count)++;
   return VECTIS_OK;
+}
+
+static void vectis_kv_truncate(vectis_kv **items, size_t *count, size_t keep) {
+  size_t i;
+
+  if (items == NULL || *items == NULL || count == NULL || keep >= *count) {
+    return;
+  }
+  for (i = keep; i < *count; ++i) {
+    free((*items)[i].name);
+    free((*items)[i].value);
+    (*items)[i].name = NULL;
+    (*items)[i].value = NULL;
+  }
+  *count = keep;
 }
 
 static int vectis_has_url_scheme(const char *url) {
@@ -1038,6 +1068,19 @@ static vectis_status vectis_validate_route_path(const char *path,
   }
   vectis_set_error(error, VECTIS_ERR_INVALID, "route path_kind is invalid");
   return VECTIS_ERR_INVALID;
+}
+
+static vectis_status vectis_validate_request_path(const char *path,
+                                                  vectis_error *error) {
+  if (path == NULL || path[0] != '/') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request path must start with '/'");
+    return VECTIS_ERR_INVALID;
+  }
+  if (strchr(path, ':') != NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request path must not contain ':'");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_validate_param_path(path, error);
 }
 
 static vectis_status vectis_validate_methods(vectis_http_method method,
@@ -1929,6 +1972,215 @@ vectis_status vectis_internal_invoke_route(vectis_app *app,
     vectis_set_error(error, VECTIS_ERR_INVALID, "route handler is invalid");
     return VECTIS_ERR_INVALID;
   }
+  return handler(app, request, response, userdata, error);
+}
+
+static int vectis_route_method_matches(const vectis_route_entry *route,
+                                       vectis_http_method method) {
+  vectis_http_methods mask;
+
+  mask = vectis_method_mask(method);
+  return mask != VECTIS_HTTP_METHODS_NONE && (route->methods & mask) != 0u;
+}
+
+static int vectis_path_segment_is_safe(const char *value, size_t len) {
+  if (value == NULL || len == 0u) {
+    return 0;
+  }
+  if ((len == 1u && value[0] == '.') ||
+      (len == 2u && value[0] == '.' && value[1] == '.')) {
+    return 0;
+  }
+  return 1;
+}
+
+static vectis_status vectis_add_path_param_segment(vectis_request *request,
+                                                   const char *name,
+                                                   size_t name_len,
+                                                   const char *value,
+                                                   size_t value_len,
+                                                   vectis_error *error) {
+  char *name_copy;
+  char *value_copy;
+  vectis_status status;
+
+  name_copy = vectis_strndup(name, name_len);
+  value_copy = vectis_strndup(value, value_len);
+  if (name_copy == NULL || value_copy == NULL) {
+    free(name_copy);
+    free(value_copy);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy path parameter");
+    return VECTIS_ERR_NOMEM;
+  }
+  status = vectis_internal_request_add_path_param(request, name_copy, value_copy, error);
+  free(name_copy);
+  free(value_copy);
+  return status;
+}
+
+static int vectis_match_param_route_segments(const char *route,
+                                             const char *path,
+                                             vectis_request *request,
+                                             vectis_error *error) {
+  const char *route_end;
+  const char *path_end;
+  const char *next_route;
+  const char *next_path;
+  const char *name_start;
+  size_t route_len;
+  size_t path_len;
+  size_t name_len;
+  size_t saved_count;
+  int optional;
+
+  if (*route == '\0') {
+    return *path == '\0';
+  }
+  if (*path == '\0') {
+    if (*route == ':' && strchr(route, '/') == NULL) {
+      route_end = route + strlen(route);
+      return route_end > route && route_end[-1] == '?';
+    }
+    return 0;
+  }
+
+  route_end = strchr(route, '/');
+  if (route_end == NULL) {
+    route_end = route + strlen(route);
+  }
+  path_end = strchr(path, '/');
+  if (path_end == NULL) {
+    path_end = path + strlen(path);
+  }
+  next_route = *route_end == '/' ? route_end + 1 : route_end;
+  next_path = *path_end == '/' ? path_end + 1 : path_end;
+  route_len = (size_t)(route_end - route);
+  path_len = (size_t)(path_end - path);
+
+  if (route_len > 0u && route[0] == ':') {
+    optional = route_end > route && route_end[-1] == '?';
+    name_start = route + 1;
+    name_len = optional ? (size_t)(route_end - route - 2) : (size_t)(route_end - route - 1);
+    saved_count = request->path_param_count;
+
+    if (optional &&
+        vectis_match_param_route_segments(next_route, path, request, error)) {
+      return 1;
+    }
+    if (!vectis_path_segment_is_safe(path, path_len)) {
+      vectis_kv_truncate(&request->path_params, &request->path_param_count, saved_count);
+      return 0;
+    }
+    if (vectis_add_path_param_segment(request,
+                                      name_start,
+                                      name_len,
+                                      path,
+                                      path_len,
+                                      error) != VECTIS_OK) {
+      vectis_kv_truncate(&request->path_params, &request->path_param_count, saved_count);
+      return 0;
+    }
+    if (vectis_match_param_route_segments(next_route, next_path, request, error)) {
+      return 1;
+    }
+    vectis_kv_truncate(&request->path_params, &request->path_param_count, saved_count);
+    return 0;
+  }
+
+  if (route_len != path_len || memcmp(route, path, route_len) != 0) {
+    return 0;
+  }
+  return vectis_match_param_route_segments(next_route, next_path, request, error);
+}
+
+static int vectis_route_path_matches(const vectis_route_entry *route,
+                                     const char *path,
+                                     vectis_request *request,
+                                     vectis_error *error) {
+  regex_t compiled;
+  int regex_rc;
+
+  if (route->path_kind == VECTIS_ROUTE_PATH_LITERAL) {
+    return strcmp(route->path, path) == 0;
+  }
+  if (route->path_kind == VECTIS_ROUTE_PATH_PARAMS) {
+    return vectis_match_param_route_segments(route->path + 1, path + 1, request, error);
+  }
+  if (route->path_kind == VECTIS_ROUTE_PATH_REGEX) {
+    regex_rc = regcomp(&compiled, route->path, REG_EXTENDED | REG_NOSUB);
+    if (regex_rc != 0) {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "registered regex route is invalid");
+      return 0;
+    }
+    regex_rc = regexec(&compiled, path, 0u, NULL, 0);
+    regfree(&compiled);
+    return regex_rc == 0;
+  }
+  return 0;
+}
+
+vectis_status vectis_internal_dispatch_route(vectis_app *app,
+                                             vectis_http_method method,
+                                             const char *path,
+                                             vectis_request *request,
+                                             vectis_response *response,
+                                             vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_route_handler_fn handler;
+  void *userdata;
+  size_t i;
+  size_t saved_count;
+
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_validate_request_path(path, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (vectis_method_mask(method) == VECTIS_HTTP_METHODS_NONE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP method is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+
+  impl = (vectis_app_impl *)app->impl;
+  handler = NULL;
+  userdata = NULL;
+  saved_count = request->path_param_count;
+
+  (void)pthread_mutex_lock(&impl->mutex);
+  for (i = 0u; i < impl->route_count; ++i) {
+    vectis_kv_truncate(&request->path_params, &request->path_param_count, saved_count);
+    if (!vectis_route_method_matches(&impl->routes[i], method)) {
+      continue;
+    }
+    if (vectis_route_path_matches(&impl->routes[i], path, request, error)) {
+      handler = impl->routes[i].handler;
+      userdata = impl->routes[i].userdata;
+      break;
+    }
+    if (error != NULL && error->code == VECTIS_ERR_NOMEM) {
+      vectis_kv_truncate(&request->path_params, &request->path_param_count, saved_count);
+      (void)pthread_mutex_unlock(&impl->mutex);
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  if (handler == NULL) {
+    vectis_kv_truncate(&request->path_params, &request->path_param_count, saved_count);
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_STATE, "no route matched request");
+    return VECTIS_ERR_STATE;
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
+
   return handler(app, request, response, userdata, error);
 }
 

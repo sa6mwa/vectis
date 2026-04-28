@@ -10,6 +10,12 @@ vectis_status vectis_internal_invoke_route(vectis_app *app,
                                            vectis_request *request,
                                            vectis_response *response,
                                            vectis_error *error);
+vectis_status vectis_internal_dispatch_route(vectis_app *app,
+                                             vectis_http_method method,
+                                             const char *path,
+                                             vectis_request *request,
+                                             vectis_response *response,
+                                             vectis_error *error);
 
 vectis_request *vectis_internal_request_new(vectis_error *error);
 void vectis_internal_request_init(vectis_request *request);

@@ -78,7 +78,8 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [ ] Support method-specific handlers and router-style dispatch.
 - [x] Draft route path classification for literal paths, named path parameters, and explicit POSIX regex routes.
 - [x] Add public route-builder helpers for literal, named/optional parameter, and regex route registration.
-- [ ] Compile Vectis named and optional path parameters to safe Kore regex routes and populate `vectis_request_path_param()`.
+- [x] Add internal Vectis router dispatch for literal, regex, named parameters, optional parameters, method masks, and safe path-param population.
+- [ ] Attach the internal Vectis router dispatch to real Kore request handling.
 - [x] Expose request body, headers, query parameters, path parameters, and response helpers.
 - [x] Register JSON routes as ordinary Vectis routes with lonejson parse/serialize adapter dispatch.
 - [ ] Translate per-route body policies into concrete Kore request-body buffering, streaming, and spool-to-disk behavior.
