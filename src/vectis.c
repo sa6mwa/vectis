@@ -3,6 +3,12 @@
 #include <curl/curl.h>
 #include <lc/lc.h>
 #include <lonejson.h>
+#include <openssl/bn.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/rsa.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #include <errno.h>
 #include <pthread.h>
 #include <regex.h>
@@ -10,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 typedef struct vectis_route_entry {
   vectis_http_method method;
@@ -3351,8 +3358,209 @@ void vectis_cert_bundle_config_init(vectis_cert_bundle_config *config) {
   config->valid_days = 397L;
 }
 
+static int vectis_cert_add_name_entry(X509_NAME *name,
+                                      const char *field,
+                                      const char *value) {
+  if (value == NULL || value[0] == '\0') {
+    return 1;
+  }
+  return X509_NAME_add_entry_by_txt(name,
+                                    field,
+                                    MBSTRING_ASC,
+                                    (const unsigned char *)value,
+                                    -1,
+                                    -1,
+                                    0) == 1;
+}
+
+static vectis_status vectis_cert_set_subject(X509 *cert,
+                                             const vectis_cert_subject *subject,
+                                             vectis_error *error) {
+  X509_NAME *name;
+
+  name = X509_get_subject_name(cert);
+  if (name == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to allocate certificate subject");
+    return VECTIS_ERR_STATE;
+  }
+  if (!vectis_cert_add_name_entry(name, "CN", subject->common_name) ||
+      !vectis_cert_add_name_entry(name, "O", subject->organization) ||
+      !vectis_cert_add_name_entry(name, "OU", subject->organizational_unit) ||
+      !vectis_cert_add_name_entry(name, "C", subject->country) ||
+      !vectis_cert_add_name_entry(name, "ST", subject->state) ||
+      !vectis_cert_add_name_entry(name, "L", subject->locality)) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to set certificate subject");
+    return VECTIS_ERR_STATE;
+  }
+  if (X509_set_issuer_name(cert, name) != 1) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to set certificate issuer");
+    return VECTIS_ERR_STATE;
+  }
+  return VECTIS_OK;
+}
+
+static char *vectis_cert_san_string(const char *dns_names,
+                                    const char *ip_addresses,
+                                    vectis_error *error) {
+  size_t len;
+  size_t out_len;
+  const char *p;
+  const char *start;
+  char *out;
+  const char *prefix;
+  const char *inputs[2];
+  size_t i;
+  size_t part_len;
+
+  inputs[0] = dns_names;
+  inputs[1] = ip_addresses;
+  len = 1u;
+  for (i = 0u; i < 2u; ++i) {
+    p = inputs[i];
+    prefix = i == 0u ? "DNS:" : "IP:";
+    while (p != NULL && *p != '\0') {
+      while (*p == ',' || *p == ' ') {
+        p++;
+      }
+      start = p;
+      while (*p != '\0' && *p != ',') {
+        p++;
+      }
+      if (p > start) {
+        len += strlen(prefix) + (size_t)(p - start) + 1u;
+      }
+    }
+  }
+  if (len == 1u) {
+    return NULL;
+  }
+  out = (char *)malloc(len);
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate subjectAltName");
+    return NULL;
+  }
+  out[0] = '\0';
+  out_len = 0u;
+  for (i = 0u; i < 2u; ++i) {
+    p = inputs[i];
+    prefix = i == 0u ? "DNS:" : "IP:";
+    while (p != NULL && *p != '\0') {
+      while (*p == ',' || *p == ' ') {
+        p++;
+      }
+      start = p;
+      while (*p != '\0' && *p != ',') {
+        p++;
+      }
+      if (p > start) {
+        if (out_len > 0u) {
+          out[out_len] = ',';
+          out_len++;
+        }
+        part_len = strlen(prefix);
+        memcpy(out + out_len, prefix, part_len);
+        out_len += part_len;
+        part_len = (size_t)(p - start);
+        memcpy(out + out_len, start, part_len);
+        out_len += part_len;
+        out[out_len] = '\0';
+      }
+    }
+  }
+  return out;
+}
+
+static vectis_status vectis_cert_add_extension(X509 *cert,
+                                               int nid,
+                                               const char *value,
+                                               vectis_error *error) {
+  X509V3_CTX ctx;
+  X509_EXTENSION *extension;
+  char *value_copy;
+
+  X509V3_set_ctx_nodb(&ctx);
+  X509V3_set_ctx(&ctx, cert, cert, NULL, NULL, 0);
+  value_copy = vectis_strdup(value);
+  if (value_copy == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy certificate extension value");
+    return VECTIS_ERR_NOMEM;
+  }
+  extension = X509V3_EXT_conf_nid(NULL, &ctx, nid, value_copy);
+  free(value_copy);
+  if (extension == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to create certificate extension");
+    return VECTIS_ERR_STATE;
+  }
+  if (X509_add_ext(cert, extension, -1) != 1) {
+    X509_EXTENSION_free(extension);
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to add certificate extension");
+    return VECTIS_ERR_STATE;
+  }
+  X509_EXTENSION_free(extension);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_cert_write_outputs(const vectis_cert_bundle_config *config,
+                                               EVP_PKEY *key,
+                                               X509 *cert,
+                                               vectis_error *error) {
+  FILE *fp;
+
+  if (config->output_bundle_path != NULL) {
+    fp = fopen(config->output_bundle_path, "wb");
+    if (fp == NULL) {
+      vectis_set_errorf(error,
+                        VECTIS_ERR_INVALID,
+                        "failed to open certificate bundle output: %s",
+                        config->output_bundle_path);
+      return VECTIS_ERR_INVALID;
+    }
+    if (PEM_write_X509(fp, cert) != 1 ||
+        PEM_write_PrivateKey(fp, key, NULL, NULL, 0, NULL, NULL) != 1 ||
+        fclose(fp) != 0) {
+      vectis_set_error(error, VECTIS_ERR_STATE, "failed to write certificate bundle");
+      return VECTIS_ERR_STATE;
+    }
+  }
+  if (config->output_cert_path != NULL) {
+    fp = fopen(config->output_cert_path, "wb");
+    if (fp == NULL) {
+      vectis_set_errorf(error,
+                        VECTIS_ERR_INVALID,
+                        "failed to open certificate output: %s",
+                        config->output_cert_path);
+      return VECTIS_ERR_INVALID;
+    }
+    if (PEM_write_X509(fp, cert) != 1 || fclose(fp) != 0) {
+      vectis_set_error(error, VECTIS_ERR_STATE, "failed to write certificate");
+      return VECTIS_ERR_STATE;
+    }
+  }
+  if (config->output_key_path != NULL) {
+    fp = fopen(config->output_key_path, "wb");
+    if (fp == NULL) {
+      vectis_set_errorf(error,
+                        VECTIS_ERR_INVALID,
+                        "failed to open private key output: %s",
+                        config->output_key_path);
+      return VECTIS_ERR_INVALID;
+    }
+    if (PEM_write_PrivateKey(fp, key, NULL, NULL, 0, NULL, NULL) != 1 || fclose(fp) != 0) {
+      vectis_set_error(error, VECTIS_ERR_STATE, "failed to write private key");
+      return VECTIS_ERR_STATE;
+    }
+  }
+  return VECTIS_OK;
+}
+
 vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *config,
                                           vectis_error *error) {
+  EVP_PKEY_CTX *key_ctx;
+  EVP_PKEY *key;
+  X509 *cert;
+  char *san;
+  vectis_status status;
+
   if (config == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "certificate bundle config is required");
     return VECTIS_ERR_INVALID;
@@ -3368,9 +3576,96 @@ vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *confi
                      "certificate output requires output_bundle_path or output_cert_path + output_key_path");
     return VECTIS_ERR_INVALID;
   }
-  return vectis_not_implemented_from(error,
-                                     VECTIS_ERROR_SOURCE_OPENSSL,
-                                     "OpenSSL certificate bundle generation");
+  if (config->ca_cert_path != NULL || config->ca_key_path != NULL) {
+    return vectis_not_implemented_from(error,
+                                       VECTIS_ERROR_SOURCE_OPENSSL,
+                                       "OpenSSL CA-signed certificate bundle generation");
+  }
+  if (config->key_bits < 1024u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "certificate key_bits must be at least 1024");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->valid_days <= 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "certificate valid_days must be greater than zero");
+    return VECTIS_ERR_INVALID;
+  }
+
+  key_ctx = NULL;
+  key = NULL;
+  cert = NULL;
+  san = NULL;
+  status = VECTIS_OK;
+
+  key_ctx = EVP_PKEY_CTX_new_from_name(NULL, "RSA", NULL);
+  if (key_ctx == NULL ||
+      EVP_PKEY_keygen_init(key_ctx) <= 0 ||
+      EVP_PKEY_CTX_set_rsa_keygen_bits(key_ctx, (int)config->key_bits) <= 0 ||
+      EVP_PKEY_keygen(key_ctx, &key) <= 0) {
+    status = VECTIS_ERR_STATE;
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to generate RSA private key");
+    goto done;
+  }
+
+  cert = X509_new();
+  if (cert == NULL) {
+    status = VECTIS_ERR_NOMEM;
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate certificate");
+    goto done;
+  }
+  if (X509_set_version(cert, 2L) != 1 ||
+      ASN1_INTEGER_set(X509_get_serialNumber(cert), (long)time(NULL)) != 1 ||
+      X509_gmtime_adj(X509_get_notBefore(cert), 0L) == NULL ||
+      X509_gmtime_adj(X509_get_notAfter(cert), config->valid_days * 24L * 60L * 60L) == NULL ||
+      X509_set_pubkey(cert, key) != 1) {
+    status = VECTIS_ERR_STATE;
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to initialize certificate");
+    goto done;
+  }
+  status = vectis_cert_set_subject(cert, &config->subject, error);
+  if (status != VECTIS_OK) {
+    goto done;
+  }
+  status = vectis_cert_add_extension(cert, NID_basic_constraints, "critical,CA:FALSE", error);
+  if (status != VECTIS_OK) {
+    goto done;
+  }
+  status = vectis_cert_add_extension(cert, NID_key_usage, "digitalSignature,keyEncipherment", error);
+  if (status != VECTIS_OK) {
+    goto done;
+  }
+  status = vectis_cert_add_extension(cert, NID_ext_key_usage, "serverAuth,clientAuth", error);
+  if (status != VECTIS_OK) {
+    goto done;
+  }
+  san = vectis_cert_san_string(config->dns_names, config->ip_addresses, error);
+  if (san != NULL) {
+    status = vectis_cert_add_extension(cert, NID_subject_alt_name, san, error);
+    if (status != VECTIS_OK) {
+      goto done;
+    }
+  } else if (error != NULL && error->code != VECTIS_OK) {
+    status = error->code;
+    goto done;
+  }
+  if (X509_sign(cert, key, EVP_sha256()) <= 0) {
+    status = VECTIS_ERR_STATE;
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to sign certificate");
+    goto done;
+  }
+  status = vectis_cert_write_outputs(config, key, cert, error);
+  if (status == VECTIS_OK) {
+    vectis_error_clear(error);
+  }
+
+done:
+  free(san);
+  X509_free(cert);
+  EVP_PKEY_free(key);
+  EVP_PKEY_CTX_free(key_ctx);
+  if (status != VECTIS_OK && error != NULL && error->source == VECTIS_ERROR_SOURCE_VECTIS) {
+    error->source = VECTIS_ERROR_SOURCE_OPENSSL;
+  }
+  return status;
 }
 
 struct lc_client *vectis_internal_lockd_client(vectis_app *app) {

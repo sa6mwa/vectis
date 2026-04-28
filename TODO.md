@@ -48,7 +48,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Store and validate lockd configuration without requiring a live lockd daemon during app construction.
 - [ ] Instantiate and own a real `lc_client` during runtime startup.
 - [x] Expose stable accessors/helpers for the shared logger and raw lockd client escape hatch.
-- [ ] Implement the dependency-backed behavior behind the drafted helpers for the JSON layer, SSH client, and TLS/certificate config.
+- [ ] Implement the dependency-backed behavior behind the drafted helpers for the JSON layer, SSH client, and full TLS/certificate config.
 - [ ] Expose dependency headers and low-level handles/APIs as explicit escape hatches without making them the primary DX.
 - [x] Define the first C pass of one Vectis-owned naming, source, error, timeout, ownership, and cleanup convention.
 - [x] Add stable string helpers for status, error source, HTTP method, and body mode names.
@@ -156,6 +156,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [ ] Keep raw OpenSSL exposure narrow; prefer Vectis certificate workflows over dumping OpenSSL APIs into Lua.
 - [ ] Support client and server certificate management in the shared Vectis config model.
 - [x] Draft the C helper API for OpenSSL-backed certificate bundle generation.
+- [x] Implement OpenSSL-backed self-signed certificate/key PEM bundle generation for the C SDK.
 - [ ] Add tests for valid, expired, malformed, and missing certificate material.
 
 ## Area 12: Lua Runtime and Framework

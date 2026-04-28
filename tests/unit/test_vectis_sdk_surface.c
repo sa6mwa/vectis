@@ -127,6 +127,11 @@ static void assert_io_surface(void) {
   vectis_error error;
   vectis_status status;
   const char payload[] = "ready";
+  const char bundle_path[] = "/tmp/vectis-test-bundle.pem";
+  const char cert_path[] = "/tmp/vectis-test-cert.pem";
+  const char key_path[] = "/tmp/vectis-test-key.pem";
+  char line[128];
+  FILE *fp;
 
   vectis_sftp_config_init(&sftp);
   assert(sftp.timeout_ms == 30000L);
@@ -159,6 +164,29 @@ static void assert_io_surface(void) {
   assert(certs.valid_days == 397L);
   status = vectis_cert_generate_bundle(&certs, &error);
   assert(status == VECTIS_ERR_INVALID);
+
+  certs.subject.common_name = "localhost";
+  certs.dns_names = "localhost";
+  certs.output_bundle_path = bundle_path;
+  certs.output_cert_path = cert_path;
+  certs.output_key_path = key_path;
+  certs.key_bits = 1024u;
+  certs.valid_days = 1L;
+  status = vectis_cert_generate_bundle(&certs, &error);
+  assert(status == VECTIS_OK);
+  fp = fopen(bundle_path, "rb");
+  assert(fp != NULL);
+  assert(fgets(line, sizeof(line), fp) != NULL);
+  assert(strstr(line, "BEGIN CERTIFICATE") != NULL);
+  assert(fclose(fp) == 0);
+  fp = fopen(key_path, "rb");
+  assert(fp != NULL);
+  assert(fgets(line, sizeof(line), fp) != NULL);
+  assert(strstr(line, "BEGIN") != NULL);
+  assert(fclose(fp) == 0);
+  (void)remove(bundle_path);
+  (void)remove(cert_path);
+  (void)remove(key_path);
 }
 
 static void assert_request_response_surface(void) {
