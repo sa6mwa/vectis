@@ -13,4 +13,9 @@ if(TARGET vectis_bin)
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
                    -P "${CMAKE_SOURCE_DIR}/tests/lua/shebang.cmake")
+  add_test(NAME vectis_lua_pack
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/pack.cmake")
 endif()

@@ -200,18 +200,19 @@ moving toward, not just the next patch. Keep items observable and testable.
 
 ## Area 13: Single Binary Packaging
 
-- [ ] Add a `vectis pack` or equivalent command that creates a new runnable binary from the Vectis runner plus a Lua script.
-- [ ] On Linux/ELF, use a self-describing appended trailer with magic, version, offsets, lengths, hashes, and metadata.
+- [x] Add a `vectis pack` command that creates a new runnable binary from the Vectis runner plus a Lua script on Linux.
+- [x] On Linux/ELF, use a self-describing appended trailer with magic, version, lengths, hashes, and metadata.
 - [ ] On Darwin/Mach-O, embed Lua and certificate payloads through a generated object/section layout rather than relying on arbitrary appended EOF data.
 - [ ] Define one shared payload manifest format across ELF and Mach-O so runtime validation and Lua startup behavior stay platform-independent.
-- [ ] Support optional embedding of the liblockdc client certificate bundle.
+- [x] Support optional embedding of the liblockdc client certificate bundle payload in the Linux pack format.
 - [ ] Load embedded lockd client bundles through liblockdc 0.3.0 flexible bundle sources (`lc_source` memory/callback sources) without writing private runtime files.
-- [ ] Validate payload bounds and hashes before executing embedded Lua or loading embedded certificates.
-- [ ] Preserve normal `vectis script.lua` execution when no embedded payload exists.
+- [x] Validate payload bounds and hashes before executing embedded Lua.
+- [x] Preserve normal `vectis script.lua` execution when no embedded payload exists.
 - [ ] Add Darwin packing flags for automatic codesigning after the final Mach-O artifact is produced, including `--codesign <identity>`, `--ad-hoc-codesign`, `--hardened-runtime`, `--timestamp`, and `--entitlements <path>`.
 - [ ] Ensure Darwin packing never mutates the executable after codesigning.
 - [ ] Add verification commands/tests for packed Darwin binaries using `codesign --verify --strict --verbose=4` and, when available, `spctl --assess --type execute`.
 - [ ] Document operational limits around signing, notarization, stripping, hardening tools, and platform-specific executable formats.
+- [x] Add first smoke test that packages and executes a Lua script artifact.
 - [ ] Add tests that package a Lua API service and a Lua consumer service, then execute both artifacts.
 
 ## Area 14: Verification and Release

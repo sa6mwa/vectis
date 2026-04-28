@@ -243,6 +243,9 @@ The current implementation provides:
   normal script and shebang execution, and is wrapped on Linux with the
   single-header `libpid0` 0.3.0 helper so it can run correctly as PID 1 in
   `FROM scratch` containers.
+- `vectis pack --script script.lua --output service` on Linux for creating a
+  single executable with an appended, hashed Lua payload while preserving normal
+  `vectis script.lua` execution for unpacked binaries.
 - Thread-safe app object lifecycle and route registry management.
 - `lonejson`-backed JSON validation helpers.
 - `pslog`-backed owned or borrowed logger handling.
