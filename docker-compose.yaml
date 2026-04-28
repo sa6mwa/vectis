@@ -13,6 +13,7 @@ services:
     volumes:
       - ./devenv/volumes/minio-data:/data
 
+  # One-shot bootstrap job. It is expected to exit 0 after creating the bucket.
   minio-init:
     image: minio/mc:latest
     depends_on:
@@ -29,71 +30,60 @@ services:
         mc anonymous set none local/lockd-client-s3
     restart: "no"
 
-  lockd-disk-ca:
+  # One-shot bootstrap job. It is expected to exit 0 after creating the shared
+  # lockd CA bundle used by every lockd service in this compose environment.
+  lockd-ca:
     image: docker.io/pktsystems/lockd:v0.9.0
     command: ["auth", "new", "ca", "--cn", "vectis-lockd-root", "--out", "/config/ca.pem", "--force"]
     restart: on-failure
     volumes:
-      - ./devenv/volumes/lockd-disk-config:/config
+      - ./devenv/volumes/lockd-config:/config
 
+  # One-shot bootstrap job. It creates the disk server bundle from the shared CA.
   lockd-disk-server-cert:
     image: docker.io/pktsystems/lockd:v0.9.0
     depends_on:
-      - lockd-disk-ca
-    command: ["auth", "new", "server", "--ca-in", "/config/ca.pem", "--cn", "vectis-lockd-disk", "--hosts", "lockd-disk,localhost,127.0.0.1", "--out", "/config/server.pem", "--force"]
+      - lockd-ca
+    command: ["auth", "new", "server", "--ca-in", "/config/ca.pem", "--cn", "vectis-lockd-disk", "--hosts", "lockd-disk,localhost,127.0.0.1", "--out", "/config/disk-server.pem", "--force"]
     restart: on-failure
     volumes:
-      - ./devenv/volumes/lockd-disk-config:/config
+      - ./devenv/volumes/lockd-config:/config
 
-  lockd-disk-client-cert:
+  # One-shot bootstrap job. It creates the S3 server bundle from the shared CA.
+  lockd-s3-server-cert:
     image: docker.io/pktsystems/lockd:v0.9.0
     depends_on:
-      - lockd-disk-ca
+      - lockd-ca
+    command: ["auth", "new", "server", "--ca-in", "/config/ca.pem", "--cn", "vectis-lockd-s3", "--hosts", "lockd-s3,localhost,127.0.0.1", "--out", "/config/s3-server.pem", "--force"]
+    restart: on-failure
+    volumes:
+      - ./devenv/volumes/lockd-config:/config
+
+  # One-shot bootstrap job. This client bundle is trusted by all lockd services.
+  lockd-client-cert:
+    image: docker.io/pktsystems/lockd:v0.9.0
+    depends_on:
+      - lockd-ca
     command: ["auth", "new", "client", "--ca-in", "/config/ca.pem", "--cn", "vectis-lockd-client", "-n", "default=rw", "--out", "/config/client.pem", "--force"]
     restart: on-failure
     volumes:
-      - ./devenv/volumes/lockd-disk-config:/config
+      - ./devenv/volumes/lockd-config:/config
 
   lockd-disk:
     image: docker.io/pktsystems/lockd:v0.9.0
     depends_on:
       - lockd-disk-server-cert
-      - lockd-disk-client-cert
+      - lockd-client-cert
     restart: unless-stopped
-    command: ["--connguard-enabled=false", "--store", "disk:///storage", "--listen", ":9341", "--listen-proto", "tcp"]
+    command: ["--bundle", "/config/disk-server.pem", "--connguard-enabled=false", "--store", "disk:///storage", "--listen", ":9341", "--listen-proto", "tcp"]
     environment:
       LOCKD_CONFIG_DIR: /config
       LOCKD_OTLP_ENDPOINT: ""
     ports:
       - "${VECTIS_LOCKD_DISK_PORT:-29441}:9341"
     volumes:
-      - ./devenv/volumes/lockd-disk-config:/config
+      - ./devenv/volumes/lockd-config:/config
       - ./devenv/volumes/lockd-disk-storage:/storage
-
-  lockd-s3-ca:
-    image: docker.io/pktsystems/lockd:v0.9.0
-    command: ["auth", "new", "ca", "--cn", "vectis-lockd-root", "--out", "/config/ca.pem", "--force"]
-    restart: on-failure
-    volumes:
-      - ./devenv/volumes/lockd-s3-config:/config
-
-  lockd-s3-server-cert:
-    image: docker.io/pktsystems/lockd:v0.9.0
-    depends_on:
-      - lockd-s3-ca
-    command: ["auth", "new", "server", "--ca-in", "/config/ca.pem", "--cn", "vectis-lockd-s3", "--hosts", "lockd-s3,localhost,127.0.0.1", "--out", "/config/server.pem", "--force"]
-    restart: on-failure
-    volumes:
-      - ./devenv/volumes/lockd-s3-config:/config
-
-  lockd-s3-client-cert:
-    image: docker.io/pktsystems/lockd:v0.9.0
-    depends_on:
-      - lockd-s3-ca
-    command: ["auth", "new", "client", "--ca-in", "/config/ca.pem", "--cn", "vectis-lockd-client", "-n", "default=rw", "--out", "/config/client.pem", "--force"]
-    restart: on-failure
-    volumes:
-      - ./devenv/volumes/lockd-s3-config:/config
 
   lockd-s3:
     image: docker.io/pktsystems/lockd:v0.9.0
@@ -101,9 +91,9 @@ services:
       - minio
       - minio-init
       - lockd-s3-server-cert
-      - lockd-s3-client-cert
+      - lockd-client-cert
     restart: unless-stopped
-    command: ["--connguard-enabled=false", "--store", "s3://minio:9000/lockd-client-s3/vectis?insecure=1&path-style=1", "--listen", ":9341", "--listen-proto", "tcp"]
+    command: ["--bundle", "/config/s3-server.pem", "--connguard-enabled=false", "--store", "s3://minio:9000/lockd-client-s3/vectis?insecure=1&path-style=1", "--listen", ":9341", "--listen-proto", "tcp"]
     environment:
       LOCKD_CONFIG_DIR: /config
       LOCKD_OTLP_ENDPOINT: ""
@@ -112,7 +102,7 @@ services:
     ports:
       - "${VECTIS_LOCKD_S3_PORT:-29443}:9341"
     volumes:
-      - ./devenv/volumes/lockd-s3-config:/config
+      - ./devenv/volumes/lockd-config:/config
 
   ssh-sftp:
     image: lscr.io/linuxserver/openssh-server:latest

@@ -216,13 +216,18 @@ development environments:
 Each port can be overridden with the matching `VECTIS_*_PORT` environment
 variable in the compose file. All lockd services in this environment must run
 with mTLS enabled; generated CA, server, and client bundles live under the
-ignored `devenv/volumes/` tree. Vectis intentionally uses disk and S3-backed
-lockd instances here rather than `mem://`, because integration tests should
-exercise durable backends and the S3 path through MinIO. The SSH/SFTP service
-uses the small `lscr.io/linuxserver/openssh-server` image with password auth
-enabled only for local tests. MQTT uses `emqx/nanomq:0.24.13`; NanoMQ is a slim
-MQTT broker suitable for local protocol testing without introducing a larger
-broker stack.
+ignored `devenv/volumes/` tree. The compose file uses one-shot bootstrap
+services for MinIO bucket creation and lockd certificate generation; those jobs
+are expected to exit `0`, while `restart: on-failure` makes transient ordering
+races self-heal under `nerdctl compose`. Both lockd services use the same
+generated client bundle at `devenv/volumes/lockd-config/client.pem`, with
+service-specific server bundles signed by the same CA. Vectis intentionally uses
+disk and S3-backed lockd instances here rather than `mem://`, because
+integration tests should exercise durable backends and the S3 path through
+MinIO. The SSH/SFTP service uses the small `lscr.io/linuxserver/openssh-server`
+image with password auth enabled only for local tests. MQTT uses
+`emqx/nanomq:0.24.13`; NanoMQ is a slim MQTT broker suitable for local protocol
+testing without introducing a larger broker stack.
 
 Darwin arm64 on-device verification should use GitHub-hosted macOS arm64
 runners rather than EC2 Mac Dedicated Hosts. GitHub provides standard M1 macOS
