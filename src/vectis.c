@@ -1432,6 +1432,88 @@ static vectis_status vectis_validate_startable(const vectis_app_impl *impl,
   return VECTIS_OK;
 }
 
+static int vectis_lockd_is_configured(const vectis_app_impl *impl) {
+  return impl != NULL && (impl->endpoint_count > 0u || impl->unix_socket_path != NULL);
+}
+
+static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
+                                              vectis_error *error) {
+  lc_client_config config;
+  lc_source *memory_source;
+  lc_error lcerr;
+  int rc;
+
+  if (!vectis_lockd_is_configured(impl)) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (impl->lockd_client != NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+
+  memory_source = NULL;
+  lc_error_init(&lcerr);
+  lc_client_config_init(&config);
+  config.endpoints = (const char *const *)impl->endpoints;
+  config.endpoint_count = impl->endpoint_count;
+  config.unix_socket_path = impl->unix_socket_path;
+  config.client_bundle_path = impl->client_bundle_path;
+  config.client_bundle_source = impl->client_bundle_source;
+  config.default_namespace = impl->default_namespace;
+  config.timeout_ms = impl->timeout_ms;
+  config.logger = impl->logger;
+
+  if (impl->client_bundle_pem != NULL && impl->client_bundle_pem_size > 0u) {
+    rc = lc_source_from_memory(impl->client_bundle_pem,
+                               impl->client_bundle_pem_size,
+                               &memory_source,
+                               &lcerr);
+    if (rc != LC_OK) {
+      vectis_set_errorf(error,
+                        VECTIS_ERR_STATE,
+                        "failed to create lockd client bundle source: %s",
+                        lcerr.message != NULL ? lcerr.message : "unknown lockdc error");
+      if (error != NULL) {
+        error->source = VECTIS_ERROR_SOURCE_LOCKDC;
+        error->dependency_code = (long)rc;
+        error->http_status = lcerr.http_status;
+        if (lcerr.detail != NULL) {
+          (void)snprintf(error->detail, sizeof(error->detail), "%s", lcerr.detail);
+        }
+      }
+      lc_error_cleanup(&lcerr);
+      return VECTIS_ERR_STATE;
+    }
+    config.client_bundle_source = memory_source;
+  }
+
+  rc = lc_client_open(&config, &impl->lockd_client, &lcerr);
+  if (memory_source != NULL) {
+    lc_source_close(memory_source);
+  }
+  if (rc != LC_OK) {
+    vectis_set_errorf(error,
+                      VECTIS_ERR_STATE,
+                      "failed to open lockd client: %s",
+                      lcerr.message != NULL ? lcerr.message : "unknown lockdc error");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LOCKDC;
+      error->dependency_code = (long)rc;
+      error->http_status = lcerr.http_status;
+      if (lcerr.detail != NULL) {
+        (void)snprintf(error->detail, sizeof(error->detail), "%s", lcerr.detail);
+      }
+    }
+    lc_error_cleanup(&lcerr);
+    return VECTIS_ERR_STATE;
+  }
+
+  lc_error_cleanup(&lcerr);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error) {
   vectis_app_config defaults;
   const vectis_app_config *effective;
@@ -1612,6 +1694,7 @@ void vectis_destroy(vectis_app *app) {
 static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error) {
   vectis_app_impl *impl;
   vectis_status status;
+  size_t route_count;
 
   if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
@@ -1632,10 +1715,24 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
   }
   (void)pthread_mutex_unlock(&impl->mutex);
 
-  vectis_set_error(error,
-                   VECTIS_ERR_NOT_IMPLEMENTED,
-                   "Kore runtime bootstrap and lockd client startup are not implemented yet");
-  return VECTIS_ERR_NOT_IMPLEMENTED;
+  route_count = impl->route_count;
+  if (route_count > 0u) {
+    vectis_set_error(error,
+                     VECTIS_ERR_NOT_IMPLEMENTED,
+                     "Kore runtime bootstrap is not implemented yet");
+    return VECTIS_ERR_NOT_IMPLEMENTED;
+  }
+
+  status = vectis_open_lockd_client(impl, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+
+  (void)pthread_mutex_lock(&impl->mutex);
+  impl->started = 1;
+  (void)pthread_mutex_unlock(&impl->mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 vectis_status vectis_start(vectis_app *app, vectis_error *error) {
@@ -1661,12 +1758,15 @@ static vectis_status vectis_app_stop_impl(vectis_app *app, vectis_error *error) 
     vectis_set_error(error, VECTIS_ERR_STATE, "app is not started");
     return VECTIS_ERR_STATE;
   }
+  impl->started = 0;
+  if (impl->lockd_client != NULL) {
+    lc_client_close(impl->lockd_client);
+    impl->lockd_client = NULL;
+  }
   (void)pthread_mutex_unlock(&impl->mutex);
 
-  vectis_set_error(error,
-                   VECTIS_ERR_NOT_IMPLEMENTED,
-                   "Kore runtime shutdown and consumer teardown are not implemented yet");
-  return VECTIS_ERR_NOT_IMPLEMENTED;
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 vectis_status vectis_stop(vectis_app *app, vectis_error *error) {

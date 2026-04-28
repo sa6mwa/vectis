@@ -374,7 +374,9 @@ static void assert_tls_source_surface(void) {
   app = vectis_new(&config, &error);
   assert(app != NULL);
   status = vectis_start(app, &error);
-  assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
+  assert(status == VECTIS_ERR_STATE);
+  assert(error.source == VECTIS_ERROR_SOURCE_LOCKDC);
+  assert(vectis_lockd_client(app) == NULL);
   vectis_destroy(app);
 
   vectis_app_config_init(&config);
@@ -396,7 +398,8 @@ static void assert_tls_source_surface(void) {
   app = vectis_new(&config, &error);
   assert(app != NULL);
   status = vectis_start(app, &error);
-  assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
+  assert(status == VECTIS_ERR_STATE);
+  assert(error.source == VECTIS_ERROR_SOURCE_LOCKDC);
   vectis_destroy(app);
 }
 

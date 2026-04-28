@@ -46,7 +46,8 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Implement thread-safe app lifetime and route registry state.
 - [x] Support owned or borrowed `pslog` logger instances.
 - [x] Store and validate lockd configuration without requiring a live lockd daemon during app construction.
-- [ ] Instantiate and own a real `lc_client` during runtime startup.
+- [x] Instantiate and own a real `lc_client` during non-Kore runtime startup, with structured lockdc errors on open failure.
+- [ ] Instantiate the app-owned `lc_client` before Kore starts and make it available to route handlers only after successful startup.
 - [x] Expose stable accessors/helpers for the shared logger and raw lockd client escape hatch.
 - [x] Implement dependency-backed C helpers for curl, SSH exec/SFTP, self-signed certificate bundles, request/response JSON parse/serialize, and JSON route auto-wiring.
 - [ ] Complete the remaining dependency-backed behavior for CA-signed certificate generation and full Kore TLS/runtime configuration.

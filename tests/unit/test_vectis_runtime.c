@@ -41,8 +41,9 @@ int main(void) {
   assert(vectis_internal_lockd_client(app) == NULL);
 
   status = vectis_start(app, &error);
-  assert(status == VECTIS_ERR_NOT_IMPLEMENTED);
-  assert(strstr(error.message, "not implemented") != NULL);
+  assert(status == VECTIS_OK);
+  status = vectis_stop(app, &error);
+  assert(status == VECTIS_OK);
 
   vectis_destroy(app);
   config.server.request_header_timeout_ms = 0L;
