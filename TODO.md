@@ -49,7 +49,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [ ] Instantiate and own a real `lc_client` during runtime startup.
 - [x] Expose stable accessors/helpers for the shared logger and raw lockd client escape hatch.
 - [ ] Implement the dependency-backed behavior behind the drafted helpers for the JSON layer, SSH client, and full TLS/certificate config.
-- [ ] Expose dependency headers and low-level handles/APIs as explicit escape hatches without making them the primary DX.
+- [x] Expose dependency headers and low-level handles/APIs as explicit escape hatches without making them the primary DX.
 - [x] Define the first C pass of one Vectis-owned naming, source, error, timeout, ownership, and cleanup convention.
 - [x] Add stable string helpers for status, error source, HTTP method, and body mode names.
 - [ ] Mirror the C naming, source, error, timeout, ownership, and cleanup convention in Lua.

@@ -118,6 +118,7 @@ function(vectis_configure_c_target target)
 endfunction()
 
 set(vectis_external_include_dir "${VECTIS_EXTERNAL_ROOT}/include")
+set(vectis_kore_include_dir "${CMAKE_SOURCE_DIR}/vendor/kore/upstream/include")
 if(NOT EXISTS "${vectis_external_include_dir}/pslog.h")
   message(STATUS "vectis external headers not provisioned yet: ${vectis_external_include_dir}/pslog.h")
 endif()
@@ -131,6 +132,9 @@ endif()
 
 add_library(vectis_external_headers INTERFACE)
 target_include_directories(vectis_external_headers INTERFACE "${vectis_external_include_dir}")
+if(EXISTS "${vectis_kore_include_dir}/kore/kore.h")
+  target_include_directories(vectis_external_headers INTERFACE "${vectis_kore_include_dir}")
+endif()
 
 if(TARGET lockdc::static)
   set(vectis_lockdc_static_target lockdc::static)
@@ -281,6 +285,10 @@ if(VECTIS_INSTALL)
     install(TARGETS vectis_bin RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
   endif()
   install(FILES ${vectis_public_headers} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/vectis")
+  if(EXISTS "${vectis_kore_include_dir}/kore/kore.h")
+    install(DIRECTORY "${vectis_kore_include_dir}/kore"
+            DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+  endif()
   install(DIRECTORY examples/
           DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/vectis/examples"
           FILES_MATCHING
