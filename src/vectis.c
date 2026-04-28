@@ -1736,6 +1736,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
     kore_config.bind = impl->bind;
     kore_config.port = impl->port;
     kore_config.tls_mode = impl->tls_mode;
+    kore_config.server = impl->server;
     kore_config.logger = impl->logger;
     status = vectis_internal_kore_start(&kore_config, error);
     if (status != VECTIS_OK) {

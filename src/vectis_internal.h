@@ -9,6 +9,7 @@ typedef struct vectis_kore_runtime_config {
   const char *bind;
   unsigned short port;
   vectis_tls_mode tls_mode;
+  vectis_server_config server;
   pslog_logger *logger;
 } vectis_kore_runtime_config;
 

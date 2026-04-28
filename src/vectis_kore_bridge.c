@@ -18,6 +18,7 @@ void kore_parent_teardown(void);
 
 extern int skip_chroot;
 extern int skip_runas;
+extern u_int32_t worker_max_connections;
 
 static pthread_mutex_t vectis_kore_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t vectis_kore_thread;
@@ -85,6 +86,47 @@ static vectis_http_method vectis_kore_method(u_int8_t method) {
   default:
     return VECTIS_HTTP_ANY;
   }
+}
+
+static u_int16_t vectis_kore_seconds_from_ms(long ms) {
+  long seconds;
+
+  if (ms <= 0L) {
+    return 1u;
+  }
+  seconds = (ms + 999L) / 1000L;
+  if (seconds <= 0L) {
+    return 1u;
+  }
+  if (seconds > 65535L) {
+    return 65535u;
+  }
+  return (u_int16_t)seconds;
+}
+
+static u_int16_t vectis_kore_u16_from_size(size_t value) {
+  if (value > 65535u) {
+    return 65535u;
+  }
+  return (u_int16_t)value;
+}
+
+static u_int32_t vectis_kore_u32_from_size(size_t value) {
+  if (value > (size_t)((u_int32_t)-1)) {
+    return (u_int32_t)-1;
+  }
+  return (u_int32_t)value;
+}
+
+static void vectis_kore_apply_server_config(const vectis_server_config *server) {
+  worker_max_connections = vectis_kore_u32_from_size(server->max_connections);
+  http_request_limit = vectis_kore_u32_from_size(server->max_connections);
+  http_header_max = vectis_kore_u16_from_size(server->max_request_header_bytes);
+  http_body_max = server->max_request_body_bytes;
+  http_header_timeout = vectis_kore_seconds_from_ms(server->request_header_timeout_ms);
+  http_body_timeout = vectis_kore_seconds_from_ms(server->request_body_idle_timeout_ms);
+  http_keepalive_time = server->keepalive_enabled ?
+      vectis_kore_seconds_from_ms(server->keepalive_timeout_ms) : 0u;
 }
 
 static char *vectis_kore_memdup_cstr(const char *data, size_t len) {
@@ -383,6 +425,7 @@ void kore_parent_configure(int argc, char **argv) {
   if (vectis_kore_current.logger != NULL) {
     kore_log_set_logger(vectis_kore_current.logger);
   }
+  vectis_kore_apply_server_config(&vectis_kore_current.server);
   server = kore_server_create(vectis_kore_current.app_name != NULL ?
                               vectis_kore_current.app_name : "vectis");
   if (vectis_kore_current.tls_mode == VECTIS_TLS_MODE_DISABLED) {
