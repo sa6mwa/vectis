@@ -224,6 +224,8 @@ The current implementation provides:
   `vectis_request_body_path()` instead of forcing multi-GB uploads into memory.
 - OpenSSL-backed self-signed, CA, and CA-signed client/server PEM bundle
   generation plus validation helpers for bundles and split cert/key material.
+- `vectis_request_json_into()` parses both in-memory and Kore-spooled request
+  bodies, so JSON handlers do not need bespoke temp-file handling.
 - Optional lockd configuration, so Kore-only examples and services do not need
   placeholder lockd sockets.
 - Route constructors for literal paths, named and optional path parameters, and

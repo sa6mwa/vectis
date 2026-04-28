@@ -364,6 +364,7 @@ static void assert_json_route_surface(void) {
   sample_doc output;
   const char json[] = "{\"id\":\"abc\"}";
   const char spool_path[] = "/tmp/vectis-spooled-body";
+  FILE *fp;
 
   vectis_app_config_init(&config);
   config.tls.cert_key_bundle_path = "/tmp/server.pem";
@@ -443,13 +444,22 @@ static void assert_json_route_surface(void) {
          LONEJSON_STATUS_OK);
   assert(strcmp(output.id, "abc") == 0);
 
-  status = vectis_internal_request_set_body_path(request, spool_path, 4096u, &error);
+  fp = fopen(spool_path, "wb");
+  assert(fp != NULL);
+  assert(fwrite(json, 1u, sizeof(json) - 1u, fp) == sizeof(json) - 1u);
+  assert(fclose(fp) == 0);
+  memset(&output, 0, sizeof(output));
+  status = vectis_internal_request_set_body_path(request, spool_path, sizeof(json) - 1u, &error);
   assert(status == VECTIS_OK);
   assert(vectis_request_body_is_spooled(request));
   assert(strcmp(vectis_request_body_path(request), spool_path) == 0);
+  status = vectis_request_json_into(request, &sample_doc_map, &output, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(output.id, "abc") == 0);
   status = vectis_request_body_bytes(request, &body, &error);
   assert(status == VECTIS_ERR_STATE);
   assert(strstr(error.message, "spooled") != NULL);
+  remove(spool_path);
 
   vectis_internal_response_free(response);
   vectis_internal_request_free(request);

@@ -115,7 +115,8 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Keep Kore JSON-RPC unsupported in Vectis phase 1.
 - [x] Patch Kore ACME JSON handling and request-body helpers to use `lonejson`.
 - [ ] Replace the remaining Kore JSON parsing surface with `lonejson`.
-- [ ] Expose C request-body parse helpers that support buffer, alloc, and spool-to-disk strategies.
+- [x] Make C request JSON parsing work for both buffered and Kore-spooled request bodies.
+- [ ] Expose additional C request-body parse helpers that support explicit buffer, alloc, and streaming strategies.
 - [x] Draft request-body policy configuration for buffer versus streaming/spool-to-disk strategies.
 - [ ] Expose C response serialization helpers for large payload streaming.
 - [ ] Expose Lua JSON encode/decode helpers through the bundled `lonejson` Lua rock or a Vectis facade.

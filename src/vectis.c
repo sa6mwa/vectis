@@ -2880,6 +2880,11 @@ vectis_status vectis_request_json_into(vectis_request *request,
                                        vectis_error *error) {
   lonejson_error json_error;
   lonejson_status json_status;
+  FILE *fp;
+  void *owned_body;
+  const void *body_data;
+  size_t body_size;
+  size_t nread;
 
   if (request == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "request is required");
@@ -2893,16 +2898,52 @@ vectis_status vectis_request_json_into(vectis_request *request,
     vectis_set_error(error, VECTIS_ERR_INVALID, "json output struct is required");
     return VECTIS_ERR_INVALID;
   }
-  if (request->body.data == NULL && request->body.size > 0u) {
+  owned_body = NULL;
+  body_data = request->body.data;
+  body_size = request->body.size;
+  if (request->body_spooled) {
+    if (request->body_path == NULL || request->body_path[0] == '\0') {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "spooled request body path is missing");
+      return VECTIS_ERR_INVALID;
+    }
+    fp = fopen(request->body_path, "rb");
+    if (fp == NULL) {
+      vectis_set_errorf(error,
+                        VECTIS_ERR_INVALID,
+                        "failed to open spooled request body: %s",
+                        request->body_path);
+      return VECTIS_ERR_INVALID;
+    }
+    if (body_size > 0u) {
+      owned_body = malloc(body_size);
+      if (owned_body == NULL) {
+        (void)fclose(fp);
+        vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate spooled request body");
+        return VECTIS_ERR_NOMEM;
+      }
+      nread = fread(owned_body, 1u, body_size, fp);
+      if (fclose(fp) != 0 || nread != body_size) {
+        free(owned_body);
+        vectis_set_error(error, VECTIS_ERR_STATE, "failed to read spooled request body");
+        return VECTIS_ERR_STATE;
+      }
+      body_data = owned_body;
+    } else if (fclose(fp) != 0) {
+      vectis_set_error(error, VECTIS_ERR_STATE, "failed to close spooled request body");
+      return VECTIS_ERR_STATE;
+    }
+  }
+  if (body_data == NULL && body_size > 0u) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "request body is invalid");
     return VECTIS_ERR_INVALID;
   }
   json_status = lonejson_parse_buffer(map,
                                       out,
-                                      request->body.data,
-                                      request->body.size,
+                                      body_data,
+                                      body_size,
                                       NULL,
                                       &json_error);
+  free(owned_body);
   if (json_status != LONEJSON_STATUS_OK) {
     vectis_set_errorf(error,
                       VECTIS_ERR_INVALID,
