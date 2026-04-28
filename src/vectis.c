@@ -121,6 +121,30 @@ struct vectis_response {
   int sent;
 };
 
+typedef struct vectis_error_response_body {
+  char code[64];
+  char message[256];
+  char detail[256];
+} vectis_error_response_body;
+
+static const lonejson_field vectis_error_response_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(vectis_error_response_body,
+                                    code,
+                                    "code",
+                                    LONEJSON_OVERFLOW_TRUNCATE),
+    LONEJSON_FIELD_STRING_FIXED_REQ(vectis_error_response_body,
+                                    message,
+                                    "message",
+                                    LONEJSON_OVERFLOW_TRUNCATE),
+    LONEJSON_FIELD_STRING_FIXED(vectis_error_response_body,
+                                detail,
+                                "detail",
+                                LONEJSON_OVERFLOW_TRUNCATE)};
+
+LONEJSON_MAP_DEFINE(vectis_error_response_map,
+                    vectis_error_response_body,
+                    vectis_error_response_fields);
+
 struct vectis_http_client {
   vectis_http_client_config config;
   pslog_logger *logger;
@@ -262,6 +286,8 @@ const char *vectis_status_string(vectis_status status) {
     return "conflict";
   case VECTIS_ERR_NOT_IMPLEMENTED:
     return "not_implemented";
+  case VECTIS_ERR_TIMEOUT:
+    return "timeout";
   default:
     return "unknown";
   }
@@ -607,6 +633,28 @@ vectis_route_config vectis_route_methods(vectis_http_methods methods,
   route.path_kind = vectis_infer_route_path_kind(path);
   route.handler = handler;
   route.userdata = userdata;
+  return route;
+}
+
+vectis_route_config vectis_json_body_route(vectis_http_method method,
+                                           const char *path,
+                                           vectis_route_handler_fn handler,
+                                           void *userdata) {
+  vectis_route_config route;
+
+  route = vectis_route(method, path, handler, userdata);
+  route.body = vectis_body_json_default();
+  return route;
+}
+
+vectis_route_config vectis_json_body_route_methods(vectis_http_methods methods,
+                                                   const char *path,
+                                                   vectis_route_handler_fn handler,
+                                                   void *userdata) {
+  vectis_route_config route;
+
+  route = vectis_route_methods(methods, path, handler, userdata);
+  route.body = vectis_body_json_default();
   return route;
 }
 
@@ -1959,6 +2007,69 @@ vectis_status vectis_register_route(vectis_app *app,
   return app->vt->register_route(app, route, error);
 }
 
+static char *vectis_join_route_prefix(const char *prefix,
+                                      const char *path,
+                                      vectis_error *error) {
+  size_t prefix_len;
+  size_t path_len;
+  size_t need_slash;
+  char *joined;
+
+  if (path == NULL || path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "route path is required");
+    return NULL;
+  }
+  if (prefix == NULL || prefix[0] == '\0') {
+    return vectis_strdup(path);
+  }
+  if (prefix[0] != '/') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "route prefix must start with /");
+    return NULL;
+  }
+  prefix_len = strlen(prefix);
+  path_len = strlen(path);
+  need_slash = prefix[prefix_len - 1u] == '/' || path[0] == '/' ? 0u : 1u;
+  joined = (char *)malloc(prefix_len + need_slash + path_len + 1u);
+  if (joined == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate prefixed route path");
+    return NULL;
+  }
+  (void)snprintf(joined,
+                 prefix_len + need_slash + path_len + 1u,
+                 "%s%s%s",
+                 prefix,
+                 need_slash ? "/" : "",
+                 path[0] == '/' && prefix[prefix_len - 1u] == '/' ? path + 1 : path);
+  return joined;
+}
+
+vectis_status vectis_register_prefixed_route(vectis_app *app,
+                                             const char *prefix,
+                                             const vectis_route_config *route,
+                                             vectis_error *error) {
+  vectis_route_config prefixed;
+  char *path;
+  vectis_status status;
+
+  if (route == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "route is required");
+    return VECTIS_ERR_INVALID;
+  }
+  path = vectis_join_route_prefix(prefix, route->path, error);
+  if (path == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  prefixed = *route;
+  prefixed.path = path;
+  prefixed.path_kind = vectis_infer_route_path_kind(path);
+  if (route->path_kind == VECTIS_ROUTE_PATH_REGEX) {
+    prefixed.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  }
+  status = vectis_register_route(app, &prefixed, error);
+  free(path);
+  return status;
+}
+
 static vectis_status vectis_json_route_dispatch(vectis_app *app,
                                                 vectis_request *request,
                                                 vectis_response *response,
@@ -2099,6 +2210,33 @@ vectis_status vectis_register_json_route(vectis_app *app,
   if (status != VECTIS_OK) {
     free(adapter);
   }
+  return status;
+}
+
+vectis_status vectis_register_prefixed_json_route(vectis_app *app,
+                                                  const char *prefix,
+                                                  const vectis_json_route_config *route,
+                                                  vectis_error *error) {
+  vectis_json_route_config prefixed;
+  char *path;
+  vectis_status status;
+
+  if (route == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "json route is required");
+    return VECTIS_ERR_INVALID;
+  }
+  path = vectis_join_route_prefix(prefix, route->path, error);
+  if (path == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  prefixed = *route;
+  prefixed.path = path;
+  prefixed.path_kind = vectis_infer_route_path_kind(path);
+  if (route->path_kind == VECTIS_ROUTE_PATH_REGEX) {
+    prefixed.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  }
+  status = vectis_register_json_route(app, &prefixed, error);
+  free(path);
   return status;
 }
 
@@ -2385,6 +2523,7 @@ vectis_status vectis_internal_dispatch_route(vectis_app *app,
   handler = NULL;
   userdata = NULL;
   saved_count = request->path_param_count;
+  vectis_error_clear(error);
 
   (void)pthread_mutex_lock(&impl->mutex);
   for (i = 0u; i < impl->route_count; ++i) {
@@ -2443,6 +2582,7 @@ vectis_status vectis_internal_route_body_policy(vectis_app *app,
   impl = (vectis_app_impl *)app->impl;
   status = VECTIS_ERR_STATE;
   vectis_internal_request_init(&scratch);
+  vectis_error_clear(error);
 
   (void)pthread_mutex_lock(&impl->mutex);
   for (i = 0u; i < impl->route_count; ++i) {
@@ -2675,6 +2815,60 @@ vectis_status vectis_consumer_service_wait(vectis_consumer_service *service,
   return VECTIS_OK;
 }
 
+static long vectis_now_ms(void) {
+  struct timeval tv;
+
+  if (gettimeofday(&tv, NULL) != 0) {
+    return 0L;
+  }
+  return (long)(tv.tv_sec * 1000L) + (long)(tv.tv_usec / 1000L);
+}
+
+vectis_status vectis_consumer_service_run_until(vectis_consumer_service *service,
+                                                const volatile int *done,
+                                                long timeout_ms,
+                                                vectis_error *error) {
+  long deadline;
+  struct timespec pause_time;
+  vectis_status status;
+
+  if (service == NULL || service->service == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (done == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "done flag is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (timeout_ms <= 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "timeout_ms must be greater than zero");
+    return VECTIS_ERR_INVALID;
+  }
+
+  status = vectis_consumer_service_start(service, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  deadline = vectis_now_ms() + timeout_ms;
+  pause_time.tv_sec = 0;
+  pause_time.tv_nsec = 10000000L;
+  while (!*done && vectis_now_ms() < deadline) {
+    (void)nanosleep(&pause_time, NULL);
+  }
+  if (!*done) {
+    (void)vectis_consumer_service_stop(service, error);
+    (void)vectis_consumer_service_wait(service, error);
+    vectis_set_error(error, VECTIS_ERR_TIMEOUT, "consumer service timed out");
+    return VECTIS_ERR_TIMEOUT;
+  }
+  status = vectis_consumer_service_stop(service, error);
+  if (status != VECTIS_OK) {
+    (void)vectis_consumer_service_wait(service, error);
+    return status;
+  }
+  return vectis_consumer_service_wait(service, error);
+}
+
 void vectis_consumer_service_destroy(vectis_consumer_service *service) {
   if (service == NULL) {
     return;
@@ -2709,6 +2903,229 @@ vectis_status vectis_json_validate_cstr(const char *json, vectis_error *error) {
     return VECTIS_ERR_INVALID;
   }
 
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_format_key(char *out,
+                                size_t out_size,
+                                vectis_error *error,
+                                const char *format,
+                                ...) {
+  va_list ap;
+  int written;
+
+  if (out == NULL || out_size == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "key output buffer is required");
+    return VECTIS_ERR_INVALID;
+  }
+  out[0] = '\0';
+  if (format == NULL || format[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "key format is required");
+    return VECTIS_ERR_INVALID;
+  }
+  va_start(ap, format);
+  written = vsnprintf(out, out_size, format, ap);
+  va_end(ap);
+  if (written < 0 || (size_t)written >= out_size) {
+    out[0] = '\0';
+    vectis_set_error(error, VECTIS_ERR_INVALID, "formatted key exceeds output buffer");
+    return VECTIS_ERR_INVALID;
+  }
+  if (strstr(out, "/../") != NULL ||
+      strstr(out, "/./") != NULL ||
+      strcmp(out, "..") == 0 ||
+      strcmp(out, ".") == 0 ||
+      strncmp(out, "../", 3u) == 0 ||
+      strncmp(out, "./", 2u) == 0 ||
+      (strlen(out) >= 3u && strcmp(out + strlen(out) - 3u, "/..") == 0) ||
+      (strlen(out) >= 2u && strcmp(out + strlen(out) - 2u, "/.") == 0)) {
+    out[0] = '\0';
+    vectis_set_error(error, VECTIS_ERR_INVALID, "formatted key must not contain dot segments");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_lockd_acquire_state(struct lc_client *client,
+                                                const char *key,
+                                                const char *owner,
+                                                long ttl_seconds,
+                                                struct lc_lease **out,
+                                                vectis_error *error) {
+  lc_acquire_req acquire;
+  lc_error lcerr;
+  int rc;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lease output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  if (client == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lockd client is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (key == NULL || key[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lockd state key is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (owner == NULL || owner[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lockd state owner is required");
+    return VECTIS_ERR_INVALID;
+  }
+  lc_acquire_req_init(&acquire);
+  lc_error_init(&lcerr);
+  acquire.key = key;
+  acquire.owner = owner;
+  acquire.ttl_seconds = ttl_seconds > 0L ? ttl_seconds : 30L;
+  rc = lc_acquire(client, &acquire, out, &lcerr);
+  if (rc != LC_OK) {
+    (void)vectis_set_lockdc_error(error, rc, &lcerr, "failed to acquire lockd state");
+    lc_error_cleanup(&lcerr);
+    return VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_lockd_state_load(struct lc_client *client,
+                                      const char *key,
+                                      const char *owner,
+                                      long ttl_seconds,
+                                      const lonejson_map *map,
+                                      void *out,
+                                      vectis_error *error) {
+  struct lc_lease *lease;
+  lc_release_req release;
+  lc_get_res get_response;
+  lc_error lcerr;
+  int rc;
+  vectis_status status;
+
+  if (map == NULL || out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lockd state load requires map and output");
+    return VECTIS_ERR_INVALID;
+  }
+  lease = NULL;
+  status = vectis_lockd_acquire_state(client, key, owner, ttl_seconds, &lease, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  lc_release_req_init(&release);
+  memset(&get_response, 0, sizeof(get_response));
+  lc_error_init(&lcerr);
+  rc = lease->load(lease, map, out, NULL, NULL, &get_response, &lcerr);
+  lc_get_res_cleanup(&get_response);
+  if (rc == LC_OK) {
+    rc = lease->release(lease, &release, &lcerr);
+  }
+  if (rc != LC_OK) {
+    lc_lease_close(lease);
+    (void)vectis_set_lockdc_error(error, rc, &lcerr, "failed to load lockd state");
+    lc_error_cleanup(&lcerr);
+    return VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_lockd_state_save(struct lc_client *client,
+                                      const char *key,
+                                      const char *owner,
+                                      long ttl_seconds,
+                                      const lonejson_map *map,
+                                      const void *value,
+                                      vectis_error *error) {
+  struct lc_lease *lease;
+  lc_release_req release;
+  lc_error lcerr;
+  int rc;
+  vectis_status status;
+
+  if (map == NULL || value == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lockd state save requires map and value");
+    return VECTIS_ERR_INVALID;
+  }
+  lease = NULL;
+  status = vectis_lockd_acquire_state(client, key, owner, ttl_seconds, &lease, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  lc_release_req_init(&release);
+  lc_error_init(&lcerr);
+  rc = lease->save(lease, map, value, NULL, &lcerr);
+  if (rc == LC_OK) {
+    rc = lease->release(lease, &release, &lcerr);
+  }
+  if (rc != LC_OK) {
+    lc_lease_close(lease);
+    (void)vectis_set_lockdc_error(error, rc, &lcerr, "failed to save lockd state");
+    lc_error_cleanup(&lcerr);
+    return VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_lockd_state_update(struct lc_client *client,
+                                        const char *key,
+                                        const char *owner,
+                                        long ttl_seconds,
+                                        const lonejson_map *map,
+                                        void *state,
+                                        vectis_lockd_state_update_fn update,
+                                        void *userdata,
+                                        vectis_error *error) {
+  struct lc_lease *lease;
+  lc_release_req release;
+  lc_get_res get_response;
+  lc_error lcerr;
+  int rc;
+  int save;
+  vectis_status status;
+
+  if (map == NULL || state == NULL || update == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lockd state update requires map, state, and callback");
+    return VECTIS_ERR_INVALID;
+  }
+  lease = NULL;
+  status = vectis_lockd_acquire_state(client, key, owner, ttl_seconds, &lease, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  lc_release_req_init(&release);
+  memset(&get_response, 0, sizeof(get_response));
+  lc_error_init(&lcerr);
+  rc = lease->load(lease, map, state, NULL, NULL, &get_response, &lcerr);
+  lc_get_res_cleanup(&get_response);
+  if (rc == LC_OK) {
+    save = 1;
+    status = update(lease, state, &save, userdata, error);
+    if (status != VECTIS_OK) {
+      (void)lease->release(lease, &release, &lcerr);
+      lc_lease_close(lease);
+      lc_error_cleanup(&lcerr);
+      return status;
+    }
+    if (save) {
+      rc = lease->save(lease, map, state, NULL, &lcerr);
+    }
+  }
+  if (rc == LC_OK) {
+    rc = lease->release(lease, &release, &lcerr);
+  }
+  if (rc != LC_OK) {
+    lc_lease_close(lease);
+    (void)vectis_set_lockdc_error(error, rc, &lcerr, "failed to update lockd state");
+    lc_error_cleanup(&lcerr);
+    return VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -3196,6 +3613,37 @@ vectis_status vectis_response_json(vectis_response *response,
   status = vectis_response_bytes(response, status_code, "application/json", body, error);
   free(json);
   return status;
+}
+
+vectis_status vectis_response_error_json(vectis_response *response,
+                                         int status_code,
+                                         const char *code,
+                                         const char *message,
+                                         const char *detail,
+                                         vectis_error *error) {
+  vectis_error_response_body body;
+
+  memset(&body, 0, sizeof(body));
+  if (status_code < 100 || status_code > 599) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP status code is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  (void)snprintf(body.code,
+                 sizeof(body.code),
+                 "%s",
+                 code != NULL && code[0] != '\0' ? code : "error");
+  (void)snprintf(body.message,
+                 sizeof(body.message),
+                 "%s",
+                 message != NULL && message[0] != '\0' ? message : "request failed");
+  if (detail != NULL) {
+    (void)snprintf(body.detail, sizeof(body.detail), "%s", detail);
+  }
+  return vectis_response_json(response,
+                              status_code,
+                              &vectis_error_response_map,
+                              &body,
+                              error);
 }
 
 void vectis_http_client_config_init(vectis_http_client_config *config) {

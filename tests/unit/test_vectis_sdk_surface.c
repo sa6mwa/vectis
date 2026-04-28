@@ -99,6 +99,7 @@ static void assert_http_surface(void) {
   const char upload_body[] = "upload body";
   int curl_config_count;
 
+  assert(strcmp(vectis_status_string(VECTIS_ERR_TIMEOUT), "timeout") == 0);
   curl_config_count = 0;
   handle = NULL;
   memset(&response, 0, sizeof(response));
@@ -346,6 +347,20 @@ static void assert_request_response_surface(void) {
   assert(body.size > 0u);
   assert(strstr((const char *)body.data, "\"abc\"") != NULL);
 
+  status = vectis_response_error_json(response,
+                                      422,
+                                      "invalid_order",
+                                      "order is invalid",
+                                      "missing id",
+                                      &error);
+  assert(status == VECTIS_OK);
+  body = vectis_internal_response_body(response);
+  assert(vectis_internal_response_status_code(response) == 422);
+  assert(strcmp(vectis_internal_response_content_type(response), "application/json") == 0);
+  assert(strstr((const char *)body.data, "\"code\":\"invalid_order\"") != NULL);
+  assert(strstr((const char *)body.data, "\"message\":\"order is invalid\"") != NULL);
+  assert(strstr((const char *)body.data, "\"detail\":\"missing id\"") != NULL);
+
   vectis_internal_request_free(request);
   vectis_internal_response_free(response);
 }
@@ -362,6 +377,7 @@ static void assert_json_route_surface(void) {
   vectis_response *response;
   vectis_bytes body;
   sample_doc output;
+  char key[64];
   const char json[] = "{\"id\":\"abc\"}";
   const char spool_path[] = "/tmp/vectis-spooled-body";
   FILE *fp;
@@ -385,6 +401,12 @@ static void assert_json_route_surface(void) {
   raw_route = vectis_route_regex(VECTIS_HTTP_GET, "^/internal/[0-9]+$", sample_route_handler, NULL);
   assert(raw_route.path_kind == VECTIS_ROUTE_PATH_REGEX);
   status = vectis_register_route(app, &raw_route, &error);
+  assert(status == VECTIS_OK);
+
+  raw_route = vectis_json_body_route(VECTIS_HTTP_POST, "/raw-json", sample_route_handler, NULL);
+  assert(raw_route.body.mode == VECTIS_BODY_JSON);
+  assert(raw_route.path_kind == VECTIS_ROUTE_PATH_LITERAL);
+  status = vectis_register_prefixed_route(app, "/api/v1", &raw_route, &error);
   assert(status == VECTIS_OK);
 
   status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/state/abc", request, response, &error);
@@ -422,18 +444,23 @@ static void assert_json_route_surface(void) {
                             NULL);
   assert(route.path_kind == VECTIS_ROUTE_PATH_PARAMS);
   assert(route.body.mode == VECTIS_BODY_JSON);
-  status = vectis_register_json_route(app, &route, &error);
+  status = vectis_register_prefixed_json_route(app, "/api/v1", &route, &error);
   assert(status == VECTIS_OK);
-  assert(vectis_route_count(app) == 3u);
-  status = vectis_internal_route_body_policy(app, VECTIS_HTTP_POST, "/typed/abc", &policy, &error);
+  assert(vectis_route_count(app) == 4u);
+  status = vectis_internal_route_body_policy(app, VECTIS_HTTP_POST, "/api/v1/typed/abc", &policy, &error);
   assert(status == VECTIS_OK);
   assert(policy.mode == VECTIS_BODY_JSON);
-  status = vectis_internal_route_body_policy(app, VECTIS_HTTP_DELETE, "/typed/abc", &policy, &error);
+  status = vectis_internal_route_body_policy(app, VECTIS_HTTP_DELETE, "/api/v1/typed/abc", &policy, &error);
   assert(status == VECTIS_ERR_STATE);
 
   status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
   assert(status == VECTIS_OK);
-  status = vectis_internal_invoke_route(app, 2u, request, response, &error);
+  status = vectis_internal_dispatch_route(app,
+                                          VECTIS_HTTP_POST,
+                                          "/api/v1/typed/abc",
+                                          request,
+                                          response,
+                                          &error);
   assert(status == VECTIS_OK);
   body = vectis_internal_response_body(response);
   assert(vectis_internal_response_status_code(response) == 200);
@@ -443,6 +470,22 @@ static void assert_json_route_surface(void) {
   assert(lonejson_parse_buffer(&sample_doc_map, &output, body.data, body.size, NULL, NULL) ==
          LONEJSON_STATUS_OK);
   assert(strcmp(output.id, "abc") == 0);
+
+  status = vectis_format_key(key, sizeof(key), &error, "state/%s/%s", "orders", "1001");
+  assert(status == VECTIS_OK);
+  assert(strcmp(key, "state/orders/1001") == 0);
+  status = vectis_format_key(key, sizeof(key), &error, "state/%s", "../secret");
+  assert(status == VECTIS_ERR_INVALID);
+  status = vectis_lockd_state_load(NULL,
+                                   key,
+                                   "owner",
+                                   30L,
+                                   &sample_doc_map,
+                                   &output,
+                                   &error);
+  assert(status == VECTIS_ERR_INVALID);
+  status = vectis_consumer_service_run_until(NULL, NULL, 1L, &error);
+  assert(status == VECTIS_ERR_INVALID);
 
   fp = fopen(spool_path, "wb");
   assert(fp != NULL);

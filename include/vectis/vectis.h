@@ -28,6 +28,7 @@ extern "C" {
 #endif
 
 struct lc_client;
+struct lc_lease;
 struct lc_source;
 struct lc_consumer_service;
 struct lc_consumer_service_config;
@@ -44,7 +45,8 @@ typedef enum vectis_status {
   VECTIS_ERR_NOMEM = 2,
   VECTIS_ERR_STATE = 3,
   VECTIS_ERR_CONFLICT = 4,
-  VECTIS_ERR_NOT_IMPLEMENTED = 5
+  VECTIS_ERR_NOT_IMPLEMENTED = 5,
+  VECTIS_ERR_TIMEOUT = 6
 } vectis_status;
 
 typedef enum vectis_tls_mode {
@@ -212,6 +214,12 @@ typedef vectis_status (*vectis_json_route_handler_fn)(vectis_app *app,
                                                       vectis_request *request,
                                                       void *input,
                                                       void *output,
+                                                      void *userdata,
+                                                      vectis_error *error);
+
+typedef vectis_status (*vectis_lockd_state_update_fn)(struct lc_lease *lease,
+                                                      void *state,
+                                                      int *save,
                                                       void *userdata,
                                                       vectis_error *error);
 
@@ -409,6 +417,14 @@ vectis_route_config vectis_route_methods(vectis_http_methods methods,
                                          const char *path,
                                          vectis_route_handler_fn handler,
                                          void *userdata);
+vectis_route_config vectis_json_body_route(vectis_http_method method,
+                                           const char *path,
+                                           vectis_route_handler_fn handler,
+                                           void *userdata);
+vectis_route_config vectis_json_body_route_methods(vectis_http_methods methods,
+                                                   const char *path,
+                                                   vectis_route_handler_fn handler,
+                                                   void *userdata);
 vectis_route_config vectis_route_regex(vectis_http_method method,
                                        const char *pattern,
                                        vectis_route_handler_fn handler,
@@ -462,6 +478,14 @@ vectis_status vectis_register_route(vectis_app *app,
 vectis_status vectis_register_json_route(vectis_app *app,
                                          const vectis_json_route_config *route,
                                          vectis_error *error);
+vectis_status vectis_register_prefixed_route(vectis_app *app,
+                                             const char *prefix,
+                                             const vectis_route_config *route,
+                                             vectis_error *error);
+vectis_status vectis_register_prefixed_json_route(vectis_app *app,
+                                                  const char *prefix,
+                                                  const vectis_json_route_config *route,
+                                                  vectis_error *error);
 size_t vectis_route_count(const vectis_app *app);
 pslog_logger *vectis_logger(vectis_app *app);
 /* Returns the app-owned lockd client after successful runtime startup.
@@ -482,8 +506,40 @@ vectis_status vectis_consumer_service_stop(vectis_consumer_service *service,
                                            vectis_error *error);
 vectis_status vectis_consumer_service_wait(vectis_consumer_service *service,
                                            vectis_error *error);
+vectis_status vectis_consumer_service_run_until(vectis_consumer_service *service,
+                                                const volatile int *done,
+                                                long timeout_ms,
+                                                vectis_error *error);
 void vectis_consumer_service_destroy(vectis_consumer_service *service);
 vectis_status vectis_json_validate_cstr(const char *json, vectis_error *error);
+vectis_status vectis_format_key(char *out,
+                                size_t out_size,
+                                vectis_error *error,
+                                const char *format,
+                                ...);
+vectis_status vectis_lockd_state_load(struct lc_client *client,
+                                      const char *key,
+                                      const char *owner,
+                                      long ttl_seconds,
+                                      const lonejson_map *map,
+                                      void *out,
+                                      vectis_error *error);
+vectis_status vectis_lockd_state_save(struct lc_client *client,
+                                      const char *key,
+                                      const char *owner,
+                                      long ttl_seconds,
+                                      const lonejson_map *map,
+                                      const void *value,
+                                      vectis_error *error);
+vectis_status vectis_lockd_state_update(struct lc_client *client,
+                                        const char *key,
+                                        const char *owner,
+                                        long ttl_seconds,
+                                        const lonejson_map *map,
+                                        void *state,
+                                        vectis_lockd_state_update_fn update,
+                                        void *userdata,
+                                        vectis_error *error);
 
 vectis_status vectis_request_json_into(vectis_request *request,
                                        const lonejson_map *map,
@@ -518,6 +574,12 @@ vectis_status vectis_response_json(vectis_response *response,
                                    const lonejson_map *map,
                                    const void *value,
                                    vectis_error *error);
+vectis_status vectis_response_error_json(vectis_response *response,
+                                         int status_code,
+                                         const char *code,
+                                         const char *message,
+                                         const char *detail,
+                                         vectis_error *error);
 
 void vectis_http_client_config_init(vectis_http_client_config *config);
 vectis_status vectis_http_client_new(const vectis_http_client_config *config,

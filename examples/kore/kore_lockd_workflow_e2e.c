@@ -49,13 +49,19 @@ typedef struct workflow_server_context {
 
 typedef struct workflow_consumer_context {
   workflow_config config;
-  vectis_consumer_service *service;
   lonejson_int64 expected_counter;
   lonejson_int64 next_counter;
   int ack_message;
+  volatile int done;
   volatile int handled;
   volatile int failed;
 } workflow_consumer_context;
+
+typedef struct workflow_counter_update {
+  lonejson_int64 expected;
+  lonejson_int64 next;
+  int matched;
+} workflow_counter_update;
 
 static const lonejson_field workflow_input_fields[] = {
     LONEJSON_FIELD_STRING_FIXED_REQ(workflow_input,
@@ -109,7 +115,6 @@ static const workflow_counter workflow_counter_zero;
 static const workflow_message workflow_message_zero;
 static const workflow_response workflow_response_zero;
 static const workflow_consumer_context workflow_consumer_context_zero;
-static const lc_get_res lc_get_res_zero;
 static const lc_enqueue_res lc_enqueue_res_zero;
 
 static const char *env_or_default(const char *name, const char *fallback) {
@@ -178,227 +183,156 @@ static int print_lockd_error(const char *operation, const lc_error *error) {
   return 1;
 }
 
-static int build_content_key(const char *id, char *key, size_t key_size) {
-  int written;
-
-  written = snprintf(key, key_size, "workflow/%s/content", id);
-  return written > 0 && (size_t)written < key_size ? 0 : -1;
-}
-
-static int build_counter_key(const char *id, char *key, size_t key_size) {
-  int written;
-
-  written = snprintf(key, key_size, "workflow/%s/counter", id);
-  return written > 0 && (size_t)written < key_size ? 0 : -1;
-}
-
-static int save_content_state(lc_client *client,
-                              const char *id,
-                              const char *content,
-                              lc_error *error) {
+static vectis_status save_content_state(lc_client *client,
+                                        const char *id,
+                                        const char *content,
+                                        vectis_error *error) {
   workflow_content doc;
-  lc_acquire_req acquire;
-  lc_release_req release;
-  lc_lease *lease;
   char key[160];
-  int rc;
+  vectis_status status;
 
   doc = workflow_content_zero;
-  lc_acquire_req_init(&acquire);
-  lc_release_req_init(&release);
-  lease = NULL;
-  if (build_content_key(id, key, sizeof(key)) != 0) {
-    return LC_ERR_INVALID;
+  status = vectis_format_key(key, sizeof(key), error, "workflow/%s/content", id);
+  if (status != VECTIS_OK) {
+    return status;
   }
   (void)snprintf(doc.id, sizeof(doc.id), "%s", id);
   (void)snprintf(doc.content, sizeof(doc.content), "%s", content);
-  acquire.key = key;
-  acquire.owner = "vectis-e2e-kore-producer";
-  acquire.ttl_seconds = 30L;
-  rc = lc_acquire(client, &acquire, &lease, error);
-  if (rc != LC_OK) {
-    return rc;
-  }
-  rc = lease->save(lease, &workflow_content_map, &doc, NULL, error);
-  if (rc == LC_OK) {
-    rc = lease->release(lease, &release, error);
-  }
-  if (rc != LC_OK) {
-    lc_lease_close(lease);
-    return rc;
-  }
-  return LC_OK;
+  return vectis_lockd_state_save(client,
+                                 key,
+                                 "vectis-e2e-kore-producer",
+                                 30L,
+                                 &workflow_content_map,
+                                 &doc,
+                                 error);
 }
 
-static int save_counter_state(lc_client *client,
-                              const char *id,
-                              lonejson_int64 counter,
-                              const char *owner,
-                              lc_error *error) {
+static vectis_status save_counter_state(lc_client *client,
+                                        const char *id,
+                                        lonejson_int64 counter,
+                                        const char *owner,
+                                        vectis_error *error) {
   workflow_counter doc;
-  lc_acquire_req acquire;
-  lc_release_req release;
-  lc_lease *lease;
   char key[160];
-  int rc;
+  vectis_status status;
 
   doc = workflow_counter_zero;
-  lc_acquire_req_init(&acquire);
-  lc_release_req_init(&release);
-  lease = NULL;
-  if (build_counter_key(id, key, sizeof(key)) != 0) {
-    return LC_ERR_INVALID;
+  status = vectis_format_key(key, sizeof(key), error, "workflow/%s/counter", id);
+  if (status != VECTIS_OK) {
+    return status;
   }
   (void)snprintf(doc.id, sizeof(doc.id), "%s", id);
   doc.counter = counter;
-  acquire.key = key;
-  acquire.owner = owner;
-  acquire.ttl_seconds = 30L;
-  rc = lc_acquire(client, &acquire, &lease, error);
-  if (rc != LC_OK) {
-    return rc;
-  }
-  rc = lease->save(lease, &workflow_counter_map, &doc, NULL, error);
-  if (rc == LC_OK) {
-    rc = lease->release(lease, &release, error);
-  }
-  if (rc != LC_OK) {
-    lc_lease_close(lease);
-    return rc;
-  }
-  return LC_OK;
+  return vectis_lockd_state_save(client,
+                                 key,
+                                 owner,
+                                 30L,
+                                 &workflow_counter_map,
+                                 &doc,
+                                 error);
 }
 
-static int load_content_state(lc_client *client,
-                              const char *id,
-                              workflow_content *doc,
-                              lc_error *error) {
+static vectis_status load_content_state(lc_client *client,
+                                        const char *id,
+                                        workflow_content *doc,
+                                        vectis_error *error) {
   char key[160];
-  lc_acquire_req acquire;
-  lc_release_req release;
-  lc_get_res response;
-  lc_lease *lease;
-  int rc;
+  vectis_status status;
 
-  if (build_content_key(id, key, sizeof(key)) != 0) {
-    return LC_ERR_INVALID;
-  }
   *doc = workflow_content_zero;
-  response = lc_get_res_zero;
-  lc_acquire_req_init(&acquire);
-  lc_release_req_init(&release);
-  lease = NULL;
-  acquire.key = key;
-  acquire.owner = "vectis-e2e-content-reader";
-  acquire.ttl_seconds = 30L;
-  rc = lc_acquire(client, &acquire, &lease, error);
-  if (rc == LC_OK) {
-    rc = lease->load(lease, &workflow_content_map, doc, NULL, NULL, &response, error);
+  status = vectis_format_key(key, sizeof(key), error, "workflow/%s/content", id);
+  if (status != VECTIS_OK) {
+    return status;
   }
-  if (rc == LC_OK) {
-    rc = lease->release(lease, &release, error);
-  }
-  lc_get_res_cleanup(&response);
-  if (rc != LC_OK && lease != NULL) {
-    lc_lease_close(lease);
-  }
-  return rc;
+  return vectis_lockd_state_load(client,
+                                 key,
+                                 "vectis-e2e-content-reader",
+                                 30L,
+                                 &workflow_content_map,
+                                 doc,
+                                 error);
 }
 
-static int load_counter_state(lc_client *client,
-                              const char *id,
-                              workflow_counter *doc,
-                              lc_error *error) {
+static vectis_status load_counter_state(lc_client *client,
+                                        const char *id,
+                                        workflow_counter *doc,
+                                        vectis_error *error) {
   char key[160];
-  lc_acquire_req acquire;
-  lc_release_req release;
-  lc_get_res response;
-  lc_lease *lease;
-  int rc;
+  vectis_status status;
 
-  if (build_counter_key(id, key, sizeof(key)) != 0) {
-    return LC_ERR_INVALID;
-  }
   *doc = workflow_counter_zero;
-  response = lc_get_res_zero;
-  lc_acquire_req_init(&acquire);
-  lc_release_req_init(&release);
-  lease = NULL;
-  acquire.key = key;
-  acquire.owner = "vectis-e2e-counter-reader";
-  acquire.ttl_seconds = 30L;
-  rc = lc_acquire(client, &acquire, &lease, error);
-  if (rc == LC_OK) {
-    rc = lease->load(lease, &workflow_counter_map, doc, NULL, NULL, &response, error);
+  status = vectis_format_key(key, sizeof(key), error, "workflow/%s/counter", id);
+  if (status != VECTIS_OK) {
+    return status;
   }
-  if (rc == LC_OK) {
-    rc = lease->release(lease, &release, error);
-  }
-  lc_get_res_cleanup(&response);
-  if (rc != LC_OK && lease != NULL) {
-    lc_lease_close(lease);
-  }
-  return rc;
+  return vectis_lockd_state_load(client,
+                                 key,
+                                 "vectis-e2e-counter-reader",
+                                 30L,
+                                 &workflow_counter_map,
+                                 doc,
+                                 error);
 }
 
-static int update_counter_state(lc_client *client,
-                                const char *id,
-                                lonejson_int64 expected,
-                                lonejson_int64 next,
-                                const char *owner,
-                                int *matched,
-                                lc_error *error) {
+static vectis_status update_counter_value(struct lc_lease *lease,
+                                          void *state,
+                                          int *save,
+                                          void *userdata,
+                                          vectis_error *error) {
+  workflow_counter *doc;
+  workflow_counter_update *update;
+
+  (void)lease;
+  (void)error;
+  doc = (workflow_counter *)state;
+  update = (workflow_counter_update *)userdata;
+  if (doc->counter != update->expected) {
+    update->matched = 0;
+    *save = 0;
+    return VECTIS_OK;
+  }
+  doc->counter = update->next;
+  update->matched = 1;
+  *save = 1;
+  return VECTIS_OK;
+}
+
+static vectis_status update_counter_state(lc_client *client,
+                                          const char *id,
+                                          lonejson_int64 expected,
+                                          lonejson_int64 next,
+                                          const char *owner,
+                                          int *matched,
+                                          vectis_error *error) {
   workflow_counter doc;
-  lc_acquire_req acquire;
-  lc_release_req release;
-  lc_get_res get_response;
-  lc_lease *lease;
+  workflow_counter_update update;
   char key[160];
-  int rc;
+  vectis_status status;
 
   doc = workflow_counter_zero;
-  get_response = lc_get_res_zero;
-  lc_acquire_req_init(&acquire);
-  lc_release_req_init(&release);
-  lease = NULL;
+  update.expected = expected;
+  update.next = next;
+  update.matched = 0;
   if (matched != NULL) {
     *matched = 0;
   }
-  if (build_counter_key(id, key, sizeof(key)) != 0) {
-    return LC_ERR_INVALID;
+  status = vectis_format_key(key, sizeof(key), error, "workflow/%s/counter", id);
+  if (status != VECTIS_OK) {
+    return status;
   }
-  acquire.key = key;
-  acquire.owner = owner;
-  acquire.ttl_seconds = 30L;
-  rc = lc_acquire(client, &acquire, &lease, error);
-  if (rc != LC_OK) {
-    return rc;
+  status = vectis_lockd_state_update(client,
+                                     key,
+                                     owner,
+                                     30L,
+                                     &workflow_counter_map,
+                                     &doc,
+                                     update_counter_value,
+                                     &update,
+                                     error);
+  if (status == VECTIS_OK && matched != NULL) {
+    *matched = update.matched;
   }
-  rc = lease->load(lease, &workflow_counter_map, &doc, NULL, NULL, &get_response, error);
-  lc_get_res_cleanup(&get_response);
-  if (rc == LC_OK && doc.counter != expected) {
-    rc = lease->release(lease, &release, error);
-    if (rc != LC_OK) {
-      lc_lease_close(lease);
-      return rc;
-    }
-    return LC_OK;
-  }
-  if (rc == LC_OK) {
-    doc.counter = next;
-    rc = lease->save(lease, &workflow_counter_map, &doc, NULL, error);
-  }
-  if (rc == LC_OK && matched != NULL) {
-    *matched = 1;
-  }
-  if (rc == LC_OK) {
-    rc = lease->release(lease, &release, error);
-  }
-  if (rc != LC_OK) {
-    lc_lease_close(lease);
-    return rc;
-  }
-  return LC_OK;
+  return status;
 }
 
 static int enqueue_workflow_message(lc_client *client,
@@ -467,6 +401,7 @@ static vectis_status start_workflow(vectis_app *app,
   lc_client *client;
   lc_error lcerr;
   const char *id;
+  vectis_status status;
   int rc;
 
   context = (workflow_server_context *)userdata;
@@ -475,7 +410,12 @@ static vectis_status start_workflow(vectis_app *app,
   lc_error_init(&lcerr);
   id = vectis_request_path_param(request, "id");
   if (id == NULL || id[0] == '\0') {
-    return vectis_response_status(response, 400, error);
+    return vectis_response_error_json(response,
+                                      400,
+                                      "missing_id",
+                                      "workflow id is required",
+                                      NULL,
+                                      error);
   }
   if (vectis_request_json_into(request, &workflow_input_map, &input, error) != VECTIS_OK) {
     return VECTIS_ERR_INVALID;
@@ -484,13 +424,15 @@ static vectis_status start_workflow(vectis_app *app,
   if (client == NULL) {
     return VECTIS_ERR_STATE;
   }
-  rc = save_content_state(client, id, input.content, &lcerr);
-  if (rc == LC_OK) {
-    rc = save_counter_state(client, id, 1, "vectis-e2e-kore-producer", &lcerr);
+  status = save_content_state(client, id, input.content, error);
+  if (status == VECTIS_OK) {
+    status = save_counter_state(client, id, 1, "vectis-e2e-kore-producer", error);
   }
-  if (rc == LC_OK) {
-    rc = enqueue_workflow_message(client, &context->config, id, &lcerr);
+  if (status != VECTIS_OK) {
+    lc_error_cleanup(&lcerr);
+    return status;
   }
+  rc = enqueue_workflow_message(client, &context->config, id, &lcerr);
   if (rc != LC_OK) {
     lc_error_cleanup(&lcerr);
     return VECTIS_ERR_STATE;
@@ -547,15 +489,21 @@ static int handle_workflow_message(void *userdata,
   workflow_message message;
   workflow_content content;
   lc_nack_req nack;
-  vectis_error stop_error;
+  vectis_error verror;
+  vectis_status status;
   int rc;
   int matched;
 
   context = (workflow_consumer_context *)userdata;
   matched = 0;
+  vectis_error_clear(&verror);
   rc = parse_delivery_id(delivery->message, &message, error);
   if (rc == LC_OK) {
-    rc = load_content_state(delivery->client, message.id, &content, error);
+    status = load_content_state(delivery->client, message.id, &content, &verror);
+    if (status != VECTIS_OK) {
+      fprintf(stderr, "load content failed: %s\n", verror.message);
+      rc = LC_ERR_PROTOCOL;
+    }
   }
   if (rc == LC_OK &&
       (strcmp(content.id, message.id) != 0 ||
@@ -569,15 +517,19 @@ static int handle_workflow_message(void *userdata,
     rc = LC_ERR_PROTOCOL;
   }
   if (rc == LC_OK) {
-    rc = update_counter_state(delivery->client,
-                              message.id,
-                              context->expected_counter,
-                              context->next_counter,
-                              context->ack_message
-                                  ? "vectis-e2e-consumer-second"
-                                  : "vectis-e2e-consumer-first",
-                              &matched,
-                              error);
+    status = update_counter_state(delivery->client,
+                                  message.id,
+                                  context->expected_counter,
+                                  context->next_counter,
+                                  context->ack_message
+                                      ? "vectis-e2e-consumer-second"
+                                      : "vectis-e2e-consumer-first",
+                                  &matched,
+                                  &verror);
+    if (status != VECTIS_OK) {
+      fprintf(stderr, "update counter failed: %s\n", verror.message);
+      rc = LC_ERR_PROTOCOL;
+    }
   }
   if (rc == LC_OK) {
     if (!matched) {
@@ -597,12 +549,11 @@ static int handle_workflow_message(void *userdata,
   if (rc == LC_OK) {
     if (matched) {
       context->handled = 1;
+      context->done = 1;
     }
   } else {
     context->failed = 1;
-  }
-  if ((matched || rc != LC_OK) && context->service != NULL) {
-    (void)vectis_consumer_service_stop(context->service, &stop_error);
+    context->done = 1;
   }
   return rc;
 }
@@ -658,8 +609,7 @@ static int run_server(void) {
     logger->destroy(logger);
     return 1;
   }
-  route = vectis_route(VECTIS_HTTP_POST, "/workflow/:id", start_workflow, &context);
-  route.body = vectis_body_json_default();
+  route = vectis_json_body_route(VECTIS_HTTP_POST, "/workflow/:id", start_workflow, &context);
   if (vectis_register_route(app, &route, &error) != VECTIS_OK) {
     (void)print_vectis_error("vectis_register_route", &error);
     vectis_destroy(app);
@@ -687,12 +637,14 @@ static int run_consumer(lonejson_int64 expected_counter,
   lc_consumer_service_config service_config;
   vectis_error error;
   vectis_app *app;
+  vectis_consumer_service *service;
   pslog_logger *logger;
   const char *endpoints[1];
   int rc;
-  time_t deadline;
+  vectis_status status;
 
   context = workflow_consumer_context_zero;
+  service = NULL;
   load_config(&context.config);
   context.expected_counter = expected_counter;
   context.next_counter = next_counter;
@@ -728,27 +680,20 @@ static int run_consumer(lonejson_int64 expected_counter,
   service_config.consumers = &consumer;
   service_config.consumer_count = 1u;
   rc = 1;
-  if (vectis_consumer_service_new(app, &service_config, &context.service, &error) !=
-      VECTIS_OK) {
+  status = vectis_consumer_service_new(app, &service_config, &service, &error);
+  if (status != VECTIS_OK) {
     (void)print_vectis_error("vectis_consumer_service_new", &error);
-  } else if (vectis_consumer_service_start(context.service, &error) != VECTIS_OK) {
-    (void)print_vectis_error("vectis_consumer_service_start", &error);
   } else {
-    deadline = time(NULL) + 30;
-    while (!context.handled && !context.failed && time(NULL) < deadline) {
-      (void)sleep(1u);
-    }
-    if (!context.handled || context.failed) {
-      (void)vectis_consumer_service_stop(context.service, &error);
-      fprintf(stderr, "workflow consumer timed out or failed\n");
-    }
-    if (vectis_consumer_service_wait(context.service, &error) != VECTIS_OK) {
-      (void)print_vectis_error("vectis_consumer_service_wait", &error);
+    status = vectis_consumer_service_run_until(service, &context.done, 30000L, &error);
+    if (status != VECTIS_OK) {
+      (void)print_vectis_error("vectis_consumer_service_run_until", &error);
     } else if (context.handled && !context.failed) {
       rc = 0;
+    } else {
+      fprintf(stderr, "workflow consumer stopped without handling expected phase\n");
     }
   }
-  vectis_consumer_service_destroy(context.service);
+  vectis_consumer_service_destroy(service);
   vectis_destroy(app);
   logger->destroy(logger);
   return rc;
@@ -762,9 +707,12 @@ static int run_verify(void) {
   const char *endpoints[1];
   workflow_content content;
   workflow_counter counter;
+  vectis_error verror;
+  vectis_status status;
   int rc;
 
   load_config(&config);
+  vectis_error_clear(&verror);
   lc_client_config_init(&client_config);
   lc_error_init(&error);
   client = NULL;
@@ -775,16 +723,24 @@ static int run_verify(void) {
   client_config.default_namespace = config.namespace_name;
   rc = lc_client_open(&client_config, &client, &error);
   if (rc == LC_OK) {
-    rc = load_content_state(client,
-                            env_or_default("VECTIS_E2E_WORKFLOW_ID", "e2e"),
-                            &content,
-                            &error);
+    status = load_content_state(client,
+                                env_or_default("VECTIS_E2E_WORKFLOW_ID", "e2e"),
+                                &content,
+                                &verror);
+    if (status != VECTIS_OK) {
+      fprintf(stderr, "verify content failed: %s\n", verror.message);
+      rc = LC_ERR_PROTOCOL;
+    }
   }
   if (rc == LC_OK) {
-    rc = load_counter_state(client,
-                            env_or_default("VECTIS_E2E_WORKFLOW_ID", "e2e"),
-                            &counter,
-                            &error);
+    status = load_counter_state(client,
+                                env_or_default("VECTIS_E2E_WORKFLOW_ID", "e2e"),
+                                &counter,
+                                &verror);
+    if (status != VECTIS_OK) {
+      fprintf(stderr, "verify counter failed: %s\n", verror.message);
+      rc = LC_ERR_PROTOCOL;
+    }
   }
   if (rc == LC_OK &&
       (strcmp(content.content, config.expected_content) != 0 || counter.counter != 3)) {

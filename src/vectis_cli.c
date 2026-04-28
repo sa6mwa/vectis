@@ -252,6 +252,8 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "OK");
   lua_pushinteger(lua, VECTIS_ERR_INVALID);
   lua_setfield(lua, -2, "ERR_INVALID");
+  lua_pushinteger(lua, VECTIS_ERR_TIMEOUT);
+  lua_setfield(lua, -2, "ERR_TIMEOUT");
   lua_pushcfunction(lua, vectis_lua_status_string);
   lua_setfield(lua, -2, "status_string");
   return 1;
