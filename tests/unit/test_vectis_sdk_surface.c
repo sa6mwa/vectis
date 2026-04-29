@@ -360,6 +360,7 @@ static void assert_request_response_surface(void) {
   vectis_error error;
   vectis_status status;
   vectis_bytes body;
+  vectis_mutable_bytes body_copy;
   sample_doc doc;
   const char json[] = "{\"id\":\"abc\"}";
   const char text[] = "created";
@@ -371,6 +372,14 @@ static void assert_request_response_surface(void) {
 
   status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
   assert(status == VECTIS_OK);
+  memset(&body_copy, 0, sizeof(body_copy));
+  status = vectis_request_body_copy(request, &body_copy, &error);
+  assert(status == VECTIS_OK);
+  assert(body_copy.size == sizeof(json) - 1u);
+  assert(memcmp(body_copy.data, json, sizeof(json) - 1u) == 0);
+  vectis_mutable_bytes_cleanup(&body_copy);
+  assert(body_copy.data == NULL);
+  assert(body_copy.size == 0u);
   status = vectis_internal_request_add_path_param(request, "id", "abc", &error);
   assert(status == VECTIS_OK);
   status = vectis_internal_request_add_query(request, "expand", "items", &error);
@@ -438,6 +447,7 @@ static void assert_json_route_surface(void) {
   vectis_request *request;
   vectis_response *response;
   vectis_bytes body;
+  vectis_mutable_bytes body_copy;
   sample_doc output;
   char key[64];
   const char json[] = "{\"id\":\"abc\"}";
@@ -561,6 +571,11 @@ static void assert_json_route_surface(void) {
   status = vectis_request_json_into(request, &sample_doc_map, &output, &error);
   assert(status == VECTIS_OK);
   assert(strcmp(output.id, "abc") == 0);
+  status = vectis_request_body_copy(request, &body_copy, &error);
+  assert(status == VECTIS_OK);
+  assert(body_copy.size == sizeof(json) - 1u);
+  assert(memcmp(body_copy.data, json, sizeof(json) - 1u) == 0);
+  vectis_mutable_bytes_cleanup(&body_copy);
   status = vectis_request_body_bytes(request, &body, &error);
   assert(status == VECTIS_ERR_STATE);
   assert(strstr(error.message, "spooled") != NULL);

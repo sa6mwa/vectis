@@ -3482,6 +3482,76 @@ vectis_status vectis_request_body_bytes(vectis_request *request,
   return VECTIS_OK;
 }
 
+vectis_status vectis_request_body_copy(vectis_request *request,
+                                       vectis_mutable_bytes *out,
+                                       vectis_error *error) {
+  FILE *fp;
+  void *buffer;
+  size_t nread;
+
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  out->data = NULL;
+  out->size = 0u;
+  if (request->body.size == 0u) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  buffer = malloc(request->body.size);
+  if (buffer == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate request body copy");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (request->body_spooled) {
+    if (request->body_path == NULL || request->body_path[0] == '\0') {
+      free(buffer);
+      vectis_set_error(error, VECTIS_ERR_INVALID, "spooled request body path is missing");
+      return VECTIS_ERR_INVALID;
+    }
+    fp = fopen(request->body_path, "rb");
+    if (fp == NULL) {
+      free(buffer);
+      vectis_set_errorf(error,
+                        VECTIS_ERR_INVALID,
+                        "failed to open spooled request body: %s",
+                        request->body_path);
+      return VECTIS_ERR_INVALID;
+    }
+    nread = fread(buffer, 1u, request->body.size, fp);
+    if (fclose(fp) != 0 || nread != request->body.size) {
+      free(buffer);
+      vectis_set_error(error, VECTIS_ERR_STATE, "failed to read spooled request body");
+      return VECTIS_ERR_STATE;
+    }
+  } else {
+    if (request->body.data == NULL) {
+      free(buffer);
+      vectis_set_error(error, VECTIS_ERR_INVALID, "request body is invalid");
+      return VECTIS_ERR_INVALID;
+    }
+    memcpy(buffer, request->body.data, request->body.size);
+  }
+  out->data = buffer;
+  out->size = request->body.size;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+void vectis_mutable_bytes_cleanup(vectis_mutable_bytes *bytes) {
+  if (bytes == NULL) {
+    return;
+  }
+  free(bytes->data);
+  bytes->data = NULL;
+  bytes->size = 0u;
+}
+
 const char *vectis_request_body_path(vectis_request *request) {
   if (request == NULL || !request->body_spooled) {
     return NULL;

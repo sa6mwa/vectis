@@ -126,7 +126,8 @@ and C/integration tests before adding Lua bindings or Lua facades.
 - [x] Patch Kore ACME JSON handling and request-body helpers to use `lonejson`.
 - [ ] Replace the remaining Kore JSON parsing surface with `lonejson`.
 - [x] Make C request JSON parsing work for both buffered and Kore-spooled request bodies.
-- [ ] Expose additional C request-body parse helpers that support explicit buffer, alloc, and streaming strategies.
+- [x] Expose additional C request-body parse helpers that support explicit borrowed-buffer and owned-copy strategies.
+- [ ] Expose C request-body streaming parse helpers where this is practical above Kore's body callback model.
 - [x] Draft request-body policy configuration for buffer versus streaming/spool-to-disk strategies.
 - [ ] Expose C response serialization helpers for large payload streaming.
 - [ ] Expose Lua JSON encode/decode helpers through the bundled `lonejson` Lua rock or a Vectis facade.

@@ -581,6 +581,10 @@ const char *vectis_request_header(vectis_request *request,
 vectis_status vectis_request_body_bytes(vectis_request *request,
                                         vectis_bytes *out,
                                         vectis_error *error);
+vectis_status vectis_request_body_copy(vectis_request *request,
+                                       vectis_mutable_bytes *out,
+                                       vectis_error *error);
+void vectis_mutable_bytes_cleanup(vectis_mutable_bytes *bytes);
 const char *vectis_request_body_path(vectis_request *request);
 int vectis_request_body_is_spooled(vectis_request *request);
 vectis_status vectis_response_status(vectis_response *response,
