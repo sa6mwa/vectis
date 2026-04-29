@@ -360,14 +360,17 @@ The current implementation provides:
   `vectis_dsv_csv_rows()`/`vectis_dsv_tsv_rows()`, while headered files can infer
   names from the first row or ignore that row and use explicit column names.
   Whole-record comments are opt-in with `config.comment_prefix`; quoted values
-  are never treated as comments.
+  are never treated as comments. The `*_to_json_array()` helpers are explicitly
+  materializing conversion APIs; use `vectis_dsv_parse_lonejson*()` for streaming
+  typed row processing.
 - XML input can stream through libxml2's reader API from `vectis_source` or raw
   `lc_source` readers into `lonejson` mapped structs using
   `lonejson_parse_reader()`. The first mapping contract is intentionally
   map-shaped: child elements map by JSON key, repeated child elements fill
   lonejson arrays, attributes map by attribute name or configured prefix, and
   text inside object elements maps to `config.text_key` which defaults to
-  `text`.
+  `text`. Repeated XML elements for one mapped array must be contiguous; a later
+  repeat after another field is rejected instead of buffered and reordered.
 - `vectis_request_body_reader()` exposes the raw `lc_source` escape hatch, while
   `vectis_request_body_materialize()` gives handlers one memory-or-file result
   without making them decide the storage class up front.

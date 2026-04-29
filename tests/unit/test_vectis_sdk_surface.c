@@ -1399,6 +1399,13 @@ static void assert_xml_surface(void) {
       "</invoice>";
   const char bad_root[] = "<statement><id>x</id></statement>";
   const char duplicate_scalar[] = "<invoice><id>a</id><id>b</id></invoice>";
+  const char non_contiguous_array[] =
+      "<invoice>"
+      "<id>a</id>"
+      "<line><sku>A-1</sku><quantity>2</quantity></line>"
+      "<active>true</active>"
+      "<line><sku>B-2</sku><quantity>3</quantity></line>"
+      "</invoice>";
   vectis_xml_config config;
   vectis_source xml_source;
   vectis_error error;
@@ -1449,6 +1456,16 @@ static void assert_xml_surface(void) {
                                             &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "duplicate") != NULL);
+  vectis_error_clear(&error);
+
+  xml_source = vectis_source_from_memory(non_contiguous_array, sizeof(non_contiguous_array) - 1u);
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_doc_map,
+                                            &config,
+                                            &doc,
+                                            &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "non-contiguous") != NULL);
   vectis_error_clear(&error);
 
   xml_source = vectis_source_from_memory(xml, sizeof(xml) - 1u);

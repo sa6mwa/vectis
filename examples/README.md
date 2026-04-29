@@ -66,14 +66,15 @@ surface directly, without local helper layers that would hide awkward API shape.
 
 - `dsv/dsv_lonejson.c`: row-only CSV input from memory or a file path, streamed
   into a lonejson mapped struct row callback by map field order, with opt-in
-  whole-line comments, plus typed JSON-array conversion through the same
-  lonejson map.
+  whole-line comments, plus explicit materializing JSON-array conversion through
+  the same lonejson map.
 
 ## `xml/`
 
 - `xml/xml_lonejson.c`: XML input from a Vectis source into a typed lonejson
   struct, including element text, attributes, scalar arrays, and nested object
-  arrays.
+  arrays. Repeated array elements are intentionally required to be contiguous so
+  the parser never buffers and reorders XML.
 
 ## `ssh/`
 
