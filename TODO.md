@@ -20,6 +20,8 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Provision pinned Lua 5.5.0 from lua.org into every target dependency root for the Vectis binary runtime.
 - [x] Build Lua as a static `liblua.a` plus headers for host, Linux cross, musl, and optional Darwin target roots.
 - [x] Add dependency manifest validation in CMake for the pinned Lua version and checksum.
+- [x] Provision pinned libxml2 2.15.3 from GNOME into every target dependency root.
+- [x] Build libxml2 as both static and shared libraries plus headers without relying on distro XML packages.
 - [x] Support host debug and Linux release matrix roots.
 - [x] Add explicit dependency manifest validation in CMake, including expected dependency versions.
 - [x] Add optional arm64 Apple Darwin dependency provisioning from the `liblockdc` 0.3.0 SDK archive.
@@ -148,6 +150,8 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add opt-in whole-record DSV comment skipping with configurable prefixes.
 - [x] Add C examples and tests for CSV, TSV, custom delimiter, streamed row parsing, and DSV-to-JSON-array conversion.
 - [ ] Add C examples and tests for struct-to-DSV serialization once that API lands.
+- [ ] Define the XML-to-lonejson mapping contract before implementing XML document streaming helpers.
+- [ ] Add libxml2-backed streaming XML parse helpers that can feed lonejson mapped structs without whole-document buffering.
 - [ ] Expose Lua JSON encode/decode helpers through the bundled `lonejson` Lua rock or a Vectis facade.
 - [x] Make `lonejson` the backing implementation for Vectis request parsing, response serialization, lockd document helpers, and JSON HTTP client helpers.
 - [ ] Add higher-level JSON REST helpers for request validation, response serialization, and downstream API calls.

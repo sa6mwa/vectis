@@ -40,6 +40,8 @@ hand.
 - libcurl provides HTTP(S), SFTP, and other URL-oriented client operations.
 - OpenSSL provides TLS and certificate handling.
 - libssh2 provides SSH command execution and lower-level SSH/SFTP capability.
+- libxml2 provides streaming XML parsing for document formats common in finance
+  and integration workflows.
 
 The C SDK should present these as one stable surface: one application object,
 one configuration layer, one logger, one lockd configuration, one TLS/certificate
@@ -112,9 +114,10 @@ upload policy already attached.
 
 The dependency headers and libraries are shipped intentionally. C users should
 be able to include and use Kore, `liblockdc`, `lonejson`, `libpslog`, libcurl,
-OpenSSL, and libssh2 directly when Vectis does not cover a case or when they
-need exact low-level control. That raw access is an escape hatch, not the main
-experience. The primary C SDK should be Vectis-owned and service-oriented.
+OpenSSL, libssh2, and libxml2 directly when Vectis does not cover a case or
+when they need exact low-level control. That raw access is an escape hatch, not
+the main experience. The primary C SDK should be Vectis-owned and
+service-oriented.
 
 The Lua runtime should mirror that same model. Lua scripts should have raw
 module access where useful, but the primary DX should expose Vectis-owned
@@ -227,6 +230,13 @@ SHA-256, builds a target-specific static `liblua.a`, and installs the Lua
 headers into the same `.cache/deps/<target>` root as the liblockdc bundle. The
 C SDK does not make downstream C consumers depend on Lua by default; Lua is a
 runtime dependency of the Vectis binary and the Lua module build.
+
+Vectis also owns the libxml2 dependency. The dependency provisioning step
+downloads pinned libxml2 2.15.3 from GNOME, verifies its SHA-256, builds both
+static and shared libraries into the same `.cache/deps/<target>` root, and
+exports the libxml2 headers for raw dependency access. Host iconv/zlib support
+is disabled for this vendored build so Vectis does not acquire an implicit
+system XML dependency surface.
 
 The Vectis binary runtime must not depend on host Lua, LuaRocks, runtime
 `LUA_PATH`/`LUA_CPATH`, or dynamically discovered Lua `.so` modules. Bundled Lua
@@ -405,15 +415,16 @@ The current implementation provides:
 - `pslog`-backed owned or borrowed logger handling.
 - OpenSSL-backed self-signed and CA-signed certificate/key PEM bundle
   generation helpers.
-- Dependency provisioning from the `liblockdc` 0.3.0 SDK bundle.
+- Dependency provisioning from the `liblockdc` 0.3.0 SDK bundle plus
+  target-built Lua 5.5.0 and libxml2 2.15.3.
 - Compile-checked examples grouped under `examples/kore`, `examples/lockd`,
   `examples/curl`, `examples/dsv`, `examples/ssh`, `examples/certs`, and
   `examples/raw` that exercise the intended C SDK DX without local helper
   layers.
 - A Kore upstream checkout plus tracked patch-series workflow.
 - A patched Kore build path that links against the bundled OpenSSL, libcurl,
-  libssh2, pslog, and lonejson toolchain. Vectis builds embedded Kore with
-  direct TLS material loading so the in-process runtime does not depend on
+  libssh2, pslog, lonejson, and libxml2 toolchain. Vectis builds embedded Kore
+  with direct TLS material loading so the in-process runtime does not depend on
   Kore's external key-manager flow.
 - A C89 portability contract for the `vectis` public API and implementation.
 

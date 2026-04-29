@@ -5,6 +5,7 @@
 #include <kore/kore.h>
 #include <lc/lc.h>
 #include <libssh2.h>
+#include <libxml/parser.h>
 #include <lonejson.h>
 #include <openssl/ssl.h>
 #include <pslog.h>
@@ -17,6 +18,7 @@ int main(void) {
   struct lc_client *client;
   struct kore_server *server;
   LIBSSH2_SESSION *ssh;
+  const char *xml_version;
   SSL_CTX *ssl;
   CURLcode curl_code;
   pslog_logger logger;
@@ -41,11 +43,12 @@ int main(void) {
   client = NULL;
   server = NULL;
   ssh = NULL;
+  xml_version = xmlParserVersion;
   ssl = NULL;
   curl_code = CURLE_OK;
 
   if (client != NULL || server != NULL || ssh != NULL || ssl != NULL ||
-      curl_code != CURLE_OK || logger.impl != NULL) {
+      curl_code != CURLE_OK || logger.impl != NULL || xml_version == NULL) {
     return 4;
   }
   return error.code == VECTIS_OK ? 0 : 5;

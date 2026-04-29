@@ -1,6 +1,7 @@
 #include <curl/curl.h>
 #include <lc/lc.h>
 #include <libssh2.h>
+#include <libxml/parser.h>
 #include <lonejson.h>
 #include <openssl/ssl.h>
 #include <pslog.h>
@@ -28,5 +29,6 @@ int main(void) {
   (void)libssh2_init(0);
   libssh2_exit();
   (void)LONEJSON_VERSION_MAJOR;
+  (void)xmlParserVersion;
   return 0;
 }

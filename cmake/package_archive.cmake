@@ -86,31 +86,35 @@ function(_vectis_append_shared_dep out_var dep)
 endfunction()
 
 if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/lib/libvectis.a")
+  set(_vectis_static_links lockdc::static "${PACKAGE_PREFIX_DIR}/lib/libxml2.a" Threads::Threads)
+  if(UNIX AND NOT APPLE)
+    list(APPEND _vectis_static_links m)
+  endif()
   add_library(vectis::static STATIC IMPORTED)
   set_target_properties(vectis::static PROPERTIES
     IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libvectis.a"
-    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include"
-    INTERFACE_LINK_LIBRARIES "lockdc::static;Threads::Threads"
+    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include;${PACKAGE_PREFIX_DIR}/include/libxml2"
+    INTERFACE_LINK_LIBRARIES "${_vectis_static_links}"
   )
 endif()
 
 if(NOT TARGET vectis::shared)
   set(_vectis_shared_links lockdc::shared Threads::Threads)
-  foreach(_vectis_shared_dep IN ITEMS pslog curl ssh2 ssl crypto lonejson)
+  foreach(_vectis_shared_dep IN ITEMS pslog curl ssh2 ssl crypto lonejson xml2)
     _vectis_append_shared_dep(_vectis_shared_links "${_vectis_shared_dep}")
   endforeach()
   if(APPLE AND EXISTS "${PACKAGE_PREFIX_DIR}/lib/libvectis.dylib")
     add_library(vectis::shared SHARED IMPORTED)
     set_target_properties(vectis::shared PROPERTIES
       IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libvectis.dylib"
-      INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include"
+      INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include;${PACKAGE_PREFIX_DIR}/include/libxml2"
       INTERFACE_LINK_LIBRARIES "${_vectis_shared_links}"
     )
   elseif(EXISTS "${PACKAGE_PREFIX_DIR}/lib/libvectis.so")
     add_library(vectis::shared SHARED IMPORTED)
     set_target_properties(vectis::shared PROPERTIES
       IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libvectis.so"
-      INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include"
+      INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include;${PACKAGE_PREFIX_DIR}/include/libxml2"
       INTERFACE_LINK_LIBRARIES "${_vectis_shared_links}"
     )
   endif()

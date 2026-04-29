@@ -12,6 +12,8 @@ lockdc_sha256=
 target_cc=
 target_ar=
 target_ranlib=
+target_cmake_system_name=
+target_cmake_system_processor=
 target_lua_syscflags=
 target_lua_mycflags="-fPIC"
 
@@ -24,6 +26,8 @@ case "$preset" in
     target_cc="${CC:-cc}"
     target_ar="${AR:-ar}"
     target_ranlib="${RANLIB:-ranlib}"
+    target_cmake_system_name="Linux"
+    target_cmake_system_processor="x86_64"
     target_lua_syscflags="-DLUA_USE_POSIX"
     target_lua_mycflags="-fPIC -DLUA_USE_APICHECK"
     ;;
@@ -35,6 +39,8 @@ case "$preset" in
     target_cc="${CC:-cc}"
     target_ar="${AR:-ar}"
     target_ranlib="${RANLIB:-ranlib}"
+    target_cmake_system_name="Linux"
+    target_cmake_system_processor="x86_64"
     target_lua_syscflags="-DLUA_USE_POSIX"
     ;;
   deps-x86_64-linux-musl)
@@ -45,6 +51,8 @@ case "$preset" in
     target_cc="${CC:-x86_64-linux-musl-gcc}"
     target_ar="${AR:-x86_64-linux-musl-ar}"
     target_ranlib="${RANLIB:-x86_64-linux-musl-ranlib}"
+    target_cmake_system_name="Linux"
+    target_cmake_system_processor="x86_64"
     target_lua_syscflags="-DLUA_USE_POSIX"
     ;;
   deps-aarch64-linux-gnu)
@@ -55,6 +63,8 @@ case "$preset" in
     target_cc="${CC:-aarch64-linux-gnu-gcc}"
     target_ar="${AR:-aarch64-linux-gnu-ar}"
     target_ranlib="${RANLIB:-aarch64-linux-gnu-ranlib}"
+    target_cmake_system_name="Linux"
+    target_cmake_system_processor="aarch64"
     target_lua_syscflags="-DLUA_USE_POSIX"
     ;;
   deps-aarch64-linux-musl)
@@ -65,6 +75,8 @@ case "$preset" in
     target_cc="${CC:-aarch64-linux-musl-gcc}"
     target_ar="${AR:-aarch64-linux-musl-ar}"
     target_ranlib="${RANLIB:-aarch64-linux-musl-ranlib}"
+    target_cmake_system_name="Linux"
+    target_cmake_system_processor="aarch64"
     target_lua_syscflags="-DLUA_USE_POSIX"
     ;;
   deps-armhf-linux-gnu)
@@ -75,6 +87,8 @@ case "$preset" in
     target_cc="${CC:-arm-linux-gnueabihf-gcc}"
     target_ar="${AR:-arm-linux-gnueabihf-ar}"
     target_ranlib="${RANLIB:-arm-linux-gnueabihf-ranlib}"
+    target_cmake_system_name="Linux"
+    target_cmake_system_processor="arm"
     target_lua_syscflags="-DLUA_USE_POSIX"
     ;;
   deps-armhf-linux-musl)
@@ -85,6 +99,8 @@ case "$preset" in
     target_cc="${CC:-arm-linux-musleabihf-gcc}"
     target_ar="${AR:-arm-linux-musleabihf-ar}"
     target_ranlib="${RANLIB:-arm-linux-musleabihf-ranlib}"
+    target_cmake_system_name="Linux"
+    target_cmake_system_processor="arm"
     target_lua_syscflags="-DLUA_USE_POSIX"
     ;;
   deps-arm64-apple-darwin)
@@ -101,6 +117,8 @@ case "$preset" in
     target_cc="${CC:-$osxcross_root/bin/$osxcross_host-clang}"
     target_ar="${AR:-$osxcross_root/bin/$osxcross_host-ar}"
     target_ranlib="${RANLIB:-$osxcross_root/bin/$osxcross_host-ranlib}"
+    target_cmake_system_name="Darwin"
+    target_cmake_system_processor="arm64"
     target_lua_syscflags="-DLUA_USE_POSIX"
     ;;
   *)
@@ -110,6 +128,24 @@ case "$preset" in
 esac
 
 mkdir -p "$downloads_dir" "$deps_root/include" "$deps_root/lib"
+
+resolve_tool_path() {
+  tool=$1
+  case "$tool" in
+    */*) printf '%s\n' "$tool" ;;
+    *)
+      resolved=$(command -v "$tool" 2>/dev/null || true)
+      if [ -z "$resolved" ]; then
+        echo "required tool not found: $tool" >&2
+        exit 1
+      fi
+      printf '%s\n' "$resolved"
+      ;;
+  esac
+}
+
+target_ar=$(resolve_tool_path "$target_ar")
+target_ranlib=$(resolve_tool_path "$target_ranlib")
 
 lockdc_version="0.3.0"
 lockdc_archive="liblockdc-${lockdc_version}-${lockdc_arch}-${lockdc_platform}.tar.gz"
@@ -128,6 +164,15 @@ lua_download="$downloads_dir/$lua_archive"
 lua_sha256="57ccc32bbbd005cab75bcc52444052535af691789dba2b9016d5c50640d68b3d"
 lua_build_root="$repo_root/.cache/deps-build/$preset"
 lua_build_dir="$lua_build_root/lua-${lua_version}"
+libxml2_version="2.15.3"
+libxml2_archive="libxml2-${libxml2_version}.tar.gz"
+libxml2_url="https://github.com/GNOME/libxml2/archive/refs/tags/v${libxml2_version}.tar.gz"
+libxml2_download="$downloads_dir/$libxml2_archive"
+libxml2_sha256="5c6060277173270356c3f1c321a640ab629bdabc5e5ba9095b99e00759ba0c39"
+libxml2_build_root="$repo_root/.cache/deps-build/$preset/libxml2-${libxml2_version}"
+libxml2_source_dir="$libxml2_build_root/src"
+libxml2_static_build_dir="$libxml2_build_root/build-static"
+libxml2_shared_build_dir="$libxml2_build_root/build-shared"
 manifest_path="$deps_root/manifest.txt"
 
 download_if_missing() {
@@ -141,6 +186,7 @@ download_if_missing() {
 download_if_missing "$lockdc_url" "$lockdc_download"
 download_if_missing "$pid0_url" "$pid0_download"
 download_if_missing "$lua_url" "$lua_download"
+download_if_missing "$libxml2_url" "$libxml2_download"
 
 actual_sha256=$(sha256sum "$lockdc_download" | awk '{print $1}')
 if [ "$actual_sha256" != "$lockdc_sha256" ]; then
@@ -163,6 +209,40 @@ if [ "$actual_lua_sha256" != "$lua_sha256" ]; then
   echo "actual   $actual_lua_sha256" >&2
   exit 1
 fi
+actual_libxml2_sha256=$(sha256sum "$libxml2_download" | awk '{print $1}')
+if [ "$actual_libxml2_sha256" != "$libxml2_sha256" ]; then
+  echo "checksum mismatch for $libxml2_archive" >&2
+  echo "expected $libxml2_sha256" >&2
+  echo "actual   $actual_libxml2_sha256" >&2
+  exit 1
+fi
+
+build_libxml2() {
+  build_dir=$1
+  shared=$2
+
+  cmake -S "$libxml2_source_dir" -B "$build_dir" -GNinja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="$deps_root" \
+    -DCMAKE_C_COMPILER="$target_cc" \
+    -DCMAKE_AR="$target_ar" \
+    -DCMAKE_RANLIB="$target_ranlib" \
+    -DCMAKE_SYSTEM_NAME="$target_cmake_system_name" \
+    -DCMAKE_SYSTEM_PROCESSOR="$target_cmake_system_processor" \
+    -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+    -DBUILD_SHARED_LIBS="$shared" \
+    -DLIBXML2_WITH_DOCS=OFF \
+    -DLIBXML2_WITH_PROGRAMS=OFF \
+    -DLIBXML2_WITH_TESTS=OFF \
+    -DLIBXML2_WITH_PYTHON=OFF \
+    -DLIBXML2_WITH_ICONV=OFF \
+    -DLIBXML2_WITH_ICU=OFF \
+    -DLIBXML2_WITH_MODULES=OFF \
+    -DLIBXML2_WITH_READLINE=OFF \
+    -DLIBXML2_WITH_ZLIB=OFF
+  cmake --build "$build_dir"
+  cmake --install "$build_dir"
+}
 
 rm -rf "$deps_root/include" "$deps_root/lib" "$deps_root/share"
 mkdir -p "$deps_root"
@@ -184,6 +264,12 @@ cp "$lua_build_dir/src/luaconf.h" "$deps_root/include/luaconf.h"
 cp "$lua_build_dir/src/lualib.h" "$deps_root/include/lualib.h"
 cp "$lua_build_dir/src/lauxlib.h" "$deps_root/include/lauxlib.h"
 cp "$lua_build_dir/src/lua.hpp" "$deps_root/include/lua.hpp"
+rm -rf "$libxml2_build_root"
+mkdir -p "$libxml2_build_root"
+tar -xzf "$libxml2_download" -C "$libxml2_build_root"
+mv "$libxml2_build_root/libxml2-$libxml2_version" "$libxml2_source_dir"
+build_libxml2 "$libxml2_static_build_dir" OFF
+build_libxml2 "$libxml2_shared_build_dir" ON
 
 cat > "$manifest_path" <<EOF
 preset=$preset
@@ -204,4 +290,11 @@ lua_sha256=$lua_sha256
 lua_source=lua.org
 lua_linkage=static
 lua_runtime_module_loading=static-package-preload
+libxml2_version=$libxml2_version
+libxml2_archive=$libxml2_archive
+libxml2_sha256=$libxml2_sha256
+libxml2_source=GNOME
+libxml2_iconv=disabled
+libxml2_zlib=disabled
+libxml2_linkage=static+shared
 EOF
