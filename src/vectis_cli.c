@@ -316,7 +316,7 @@ static int vectis_lua_run_buffer(const char *script_name,
   }
   luaL_openlibs(lua);
   vectis_lua_preload(lua);
-  vectis_lua_set_arg(lua, argc, argv, -1, script_name);
+  vectis_lua_set_arg(lua, argc, argv, 0, script_name);
 
   load_script = script;
   load_size = script_size;
@@ -405,6 +405,11 @@ static int vectis_lua_run_embedded(int argc, char **argv) {
 int vectis_cli_main(int argc, char **argv) {
   int rc;
 
+  rc = vectis_lua_run_embedded(argc, argv);
+  if (rc >= 0) {
+    return rc;
+  }
+
   if (argc > 1 && strcmp(argv[1], "--help") == 0) {
     vectis_cli_usage(stdout);
     return 0;
@@ -419,10 +424,6 @@ int vectis_cli_main(int argc, char **argv) {
 
   if (argc > 1) {
     return vectis_lua_run_script(argc, argv, 1);
-  }
-  rc = vectis_lua_run_embedded(argc, argv);
-  if (rc >= 0) {
-    return rc;
   }
   vectis_cli_usage(stderr);
   return 64;

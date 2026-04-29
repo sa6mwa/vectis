@@ -77,6 +77,12 @@ typedef struct vectis_kore_material {
   lc_source *source;
 } vectis_kore_material;
 
+static int vectis_kore_material_present(const vectis_kore_material *material);
+static vectis_status vectis_kore_material_bytes(const vectis_kore_material *material,
+                                                void **out,
+                                                size_t *out_size,
+                                                vectis_error *error);
+
 static size_t vectis_kore_environment_size(void) {
   size_t total;
   int i;
@@ -428,6 +434,75 @@ static vectis_status vectis_kore_material_to_file(const vectis_kore_material *ma
   return VECTIS_ERR_INVALID;
 }
 
+static vectis_status vectis_kore_certificate_chain_to_file(const vectis_kore_material *certificate,
+                                                           const vectis_kore_material *ca_bundle,
+                                                           char **path_out,
+                                                           int *temporary_out,
+                                                           vectis_error *error) {
+  void *cert_bytes;
+  void *ca_bytes;
+  unsigned char *chain;
+  size_t cert_size;
+  size_t ca_size;
+  size_t chain_size;
+  vectis_status status;
+
+  if (certificate == NULL || path_out == NULL || temporary_out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "TLS certificate output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!vectis_kore_material_present(ca_bundle)) {
+    return vectis_kore_material_to_file(certificate, path_out, temporary_out, error);
+  }
+
+  cert_bytes = NULL;
+  ca_bytes = NULL;
+  chain = NULL;
+  cert_size = 0u;
+  ca_size = 0u;
+  status = vectis_kore_material_bytes(certificate, &cert_bytes, &cert_size, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_kore_material_bytes(ca_bundle, &ca_bytes, &ca_size, error);
+  if (status != VECTIS_OK) {
+    free(cert_bytes);
+    return status;
+  }
+  if (ca_size > ((size_t)-1) - cert_size - 1u) {
+    free(cert_bytes);
+    free(ca_bytes);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "TLS certificate chain is too large");
+    return VECTIS_ERR_NOMEM;
+  }
+  chain_size = cert_size + ca_size;
+  if (cert_size > 0u && ((const unsigned char *)cert_bytes)[cert_size - 1u] != '\n') {
+    chain_size++;
+  }
+  chain = (unsigned char *)malloc(chain_size);
+  if (chain == NULL) {
+    free(cert_bytes);
+    free(ca_bytes);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate TLS certificate chain");
+    return VECTIS_ERR_NOMEM;
+  }
+  memcpy(chain, cert_bytes, cert_size);
+  if (chain_size > cert_size + ca_size) {
+    chain[cert_size] = '\n';
+    memcpy(chain + cert_size + 1u, ca_bytes, ca_size);
+  } else {
+    memcpy(chain + cert_size, ca_bytes, ca_size);
+  }
+  status = vectis_kore_temp_file_from_bytes(chain, chain_size, path_out, error);
+  if (status == VECTIS_OK) {
+    *temporary_out = 1;
+  }
+  free(chain);
+  free(cert_bytes);
+  free(ca_bytes);
+  return status;
+}
+
 static const char *vectis_kore_find_private_key_marker(const char *data,
                                                        size_t size) {
   const char *markers[] = {
@@ -583,6 +658,7 @@ static vectis_status vectis_kore_prepare_tls(vectis_kore_runtime_config *config,
   vectis_kore_material bundle;
   vectis_kore_material certificate;
   vectis_kore_material private_key;
+  vectis_kore_material ca_bundle;
   vectis_kore_material client_ca;
   vectis_status status;
 
@@ -593,6 +669,7 @@ static vectis_status vectis_kore_prepare_tls(vectis_kore_runtime_config *config,
   memset(&bundle, 0, sizeof(bundle));
   memset(&certificate, 0, sizeof(certificate));
   memset(&private_key, 0, sizeof(private_key));
+  memset(&ca_bundle, 0, sizeof(ca_bundle));
   memset(&client_ca, 0, sizeof(client_ca));
   bundle.path = config->cert_key_bundle_path;
   bundle.memory = config->cert_key_bundle_pem;
@@ -606,6 +683,10 @@ static vectis_status vectis_kore_prepare_tls(vectis_kore_runtime_config *config,
   private_key.memory = config->private_key_pem;
   private_key.memory_size = config->private_key_pem_size;
   private_key.source = config->private_key_source;
+  ca_bundle.path = config->ca_bundle_path;
+  ca_bundle.memory = config->ca_bundle_pem;
+  ca_bundle.memory_size = config->ca_bundle_pem_size;
+  ca_bundle.source = config->ca_bundle_source;
   client_ca.path = config->client_ca_bundle_path;
   client_ca.memory = config->client_ca_bundle_pem;
   client_ca.memory_size = config->client_ca_bundle_pem_size;
@@ -622,10 +703,11 @@ static vectis_status vectis_kore_prepare_tls(vectis_kore_runtime_config *config,
       return status;
     }
   } else {
-    status = vectis_kore_material_to_file(&certificate,
-                                          &config->runtime_certfile,
-                                          &config->runtime_certfile_temporary,
-                                          error);
+    status = vectis_kore_certificate_chain_to_file(&certificate,
+                                                  &ca_bundle,
+                                                  &config->runtime_certfile,
+                                                  &config->runtime_certfile_temporary,
+                                                  error);
     if (status != VECTIS_OK) {
       return status;
     }

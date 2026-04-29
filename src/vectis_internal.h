@@ -21,6 +21,10 @@ typedef struct vectis_kore_runtime_config {
   const void *private_key_pem;
   size_t private_key_pem_size;
   struct lc_source *private_key_source;
+  const char *ca_bundle_path;
+  const void *ca_bundle_pem;
+  size_t ca_bundle_pem_size;
+  struct lc_source *ca_bundle_source;
   const char *client_ca_bundle_path;
   const void *client_ca_bundle_pem;
   size_t client_ca_bundle_pem_size;

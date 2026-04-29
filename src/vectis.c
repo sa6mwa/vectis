@@ -1841,6 +1841,10 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
     kore_config.private_key_pem = impl->private_key_pem;
     kore_config.private_key_pem_size = impl->private_key_pem_size;
     kore_config.private_key_source = impl->private_key_source;
+    kore_config.ca_bundle_path = impl->ca_bundle_path;
+    kore_config.ca_bundle_pem = impl->ca_bundle_pem;
+    kore_config.ca_bundle_pem_size = impl->ca_bundle_pem_size;
+    kore_config.ca_bundle_source = impl->ca_bundle_source;
     kore_config.client_ca_bundle_path = impl->client_ca_bundle_path;
     kore_config.client_ca_bundle_pem = impl->client_ca_bundle_pem;
     kore_config.client_ca_bundle_pem_size = impl->client_ca_bundle_pem_size;
