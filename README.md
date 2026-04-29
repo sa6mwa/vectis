@@ -312,6 +312,8 @@ The current implementation provides:
   so app logging/defaults can flow into downstream calls.
 - A raw curl configuration callback on HTTP client configs and individual HTTP
   requests for protocol/options escape hatches without leaving Vectis helpers.
+- A raw Kore request accessor, `vectis_request_kore()`, for C handlers that need
+  low-level Kore request APIs as an explicit escape hatch.
 - First-class C curl settings for proxy URLs, connect/overall timeouts,
   low-speed aborts, redirects, request headers, client certificates, CA bundles,
   bounded retries, file downloads/uploads, and streaming response-body callbacks.

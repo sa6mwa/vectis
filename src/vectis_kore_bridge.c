@@ -1116,6 +1116,7 @@ int vectis_kore_route(struct http_request *req) {
     vectis_internal_response_free(response);
     return KORE_RESULT_OK;
   }
+  vectis_internal_request_set_kore(request, req);
 
   method = vectis_kore_method(req->method);
   status = vectis_kore_copy_request_metadata(req, request, &error);

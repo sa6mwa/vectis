@@ -3,6 +3,8 @@
 
 #include <vectis/vectis.h>
 
+struct http_request;
+
 typedef struct vectis_kore_runtime_config {
   vectis_app *app;
   const char *app_name;
@@ -78,6 +80,8 @@ vectis_status vectis_internal_request_set_body_path(vectis_request *request,
                                                     const char *body_path,
                                                     size_t body_size,
                                                     vectis_error *error);
+void vectis_internal_request_set_kore(vectis_request *request,
+                                      struct http_request *kore_request);
 vectis_status vectis_internal_request_add_path_param(vectis_request *request,
                                                      const char *name,
                                                      const char *value,

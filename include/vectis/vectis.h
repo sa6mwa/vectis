@@ -299,6 +299,7 @@ typedef struct vectis_http_client_config {
 } vectis_http_client_config;
 
 typedef struct vectis_http_client vectis_http_client;
+struct http_request;
 
 typedef struct vectis_http_request {
   vectis_http_method method;
@@ -594,6 +595,7 @@ const char *vectis_request_query(vectis_request *request,
                                  const char *name);
 const char *vectis_request_header(vectis_request *request,
                                   const char *name);
+struct http_request *vectis_request_kore(vectis_request *request);
 vectis_status vectis_request_body_bytes(vectis_request *request,
                                         vectis_bytes *out,
                                         vectis_error *error);

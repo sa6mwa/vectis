@@ -83,7 +83,8 @@ and C/integration tests before adding Lua bindings or Lua facades.
 - [x] Translate the currently supported `vectis_server_config` guardrails into concrete Kore runtime/config settings.
 - [x] Implement the remaining guardrails that Kore does not expose directly yet: response-write idle timeout, minimum body transfer rate, and keepalive request count.
 - [x] Wire `pslog` into the Kore runtime path so Vectis server logs and Kore runtime diagnostics use the configured app logger.
-- [ ] Expose raw Kore configuration/runtime escape hatches where practical.
+- [x] Expose raw Kore request/runtime escape hatches where practical for C handlers.
+- [ ] Expose additional raw Kore configuration hooks where the startup lifecycle can report errors cleanly.
 - [x] Register Vectis C routes as Kore handlers.
 - [x] Support method-specific handlers and router-style dispatch.
 - [x] Draft route path classification for literal paths, named path parameters, and explicit POSIX regex routes.

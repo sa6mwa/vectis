@@ -101,6 +101,7 @@ typedef struct vectis_app_impl {
 } vectis_app_impl;
 
 struct vectis_request {
+  struct http_request *kore_request;
   vectis_bytes body;
   char *body_path;
   int body_spooled;
@@ -3242,6 +3243,14 @@ vectis_status vectis_internal_request_set_body_path(vectis_request *request,
   return VECTIS_OK;
 }
 
+void vectis_internal_request_set_kore(vectis_request *request,
+                                      struct http_request *kore_request) {
+  if (request == NULL) {
+    return;
+  }
+  request->kore_request = kore_request;
+}
+
 vectis_status vectis_internal_request_add_path_param(vectis_request *request,
                                                      const char *name,
                                                      const char *value,
@@ -3459,6 +3468,13 @@ const char *vectis_request_header(vectis_request *request,
     return NULL;
   }
   return vectis_kv_find(request->headers, request->header_count, name);
+}
+
+struct http_request *vectis_request_kore(vectis_request *request) {
+  if (request == NULL) {
+    return NULL;
+  }
+  return request->kore_request;
 }
 
 vectis_status vectis_request_body_bytes(vectis_request *request,
