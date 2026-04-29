@@ -14,6 +14,7 @@ kore_basic_port=${VECTIS_E2E_KORE_BASIC_PORT:-$default_kore_basic_port}
 kore_lockd_port=${VECTIS_E2E_KORE_LOCKD_PORT:-$((kore_basic_port + 1))}
 kore_workflow_port=${VECTIS_E2E_KORE_WORKFLOW_PORT:-$((kore_basic_port + 2))}
 kore_downstream_port=${VECTIS_E2E_KORE_DOWNSTREAM_PORT:-$((kore_basic_port + 3))}
+kore_static_port=${VECTIS_E2E_KORE_STATIC_PORT:-$((kore_basic_port + 4))}
 work_dir=$(mktemp -d)
 server_pids=""
 
@@ -123,6 +124,48 @@ run_downstream_http_examples() {
     "$repo_root/build/debug/examples/vectis_example_curl_downstream_e2e" client
 }
 
+run_static_asset_examples() {
+  status=
+  body=
+
+  printf '[e2e] kore static assets and traversal guard\n'
+  start_server "static assets" "$work_dir/static-assets.log" \
+    env VECTIS_KORE_PORT="$kore_static_port" \
+      VECTIS_STATIC_ROOT="$work_dir/static-assets" \
+      VECTIS_STATIC_INDEX="$work_dir/static-assets/index.html" \
+      VECTIS_STATIC_APP="$work_dir/static-assets/app.js" \
+      "$repo_root/build/debug/examples/vectis_example_kore_static_assets"
+  wait_for_http "http://127.0.0.1:$kore_static_port/" "static asset server"
+  body=$(curl --max-time 3 -fsS "http://127.0.0.1:$kore_static_port/")
+  case "$body" in
+    *'<title>vectis</title>'*) ;;
+    *)
+      printf '%s\n' "Unexpected static index response: $body" >&2
+      return 1
+      ;;
+  esac
+  body=$(curl --max-time 3 -fsS "http://127.0.0.1:$kore_static_port/assets/app.js")
+  case "$body" in
+    *"console.log('vectis');"*) ;;
+    *)
+      printf '%s\n' "Unexpected static app response: $body" >&2
+      return 1
+      ;;
+  esac
+  status=$(curl --max-time 3 -fsS -o /dev/null -w '%{http_code}' -I \
+    "http://127.0.0.1:$kore_static_port/assets/app.js")
+  if [ "$status" != "200" ]; then
+    printf '%s\n' "Unexpected static HEAD status: $status" >&2
+    return 1
+  fi
+  status=$(curl --path-as-is --max-time 3 -fsS -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:$kore_static_port/assets/../secret" || true)
+  if [ "$status" != "400" ] && [ "$status" != "404" ]; then
+    printf '%s\n' "Unexpected traversal status: $status" >&2
+    return 1
+  fi
+}
+
 run_lua_examples() {
   script="$work_dir/vectis-e2e.lua"
   pack_script="$work_dir/vectis-e2e-pack.lua"
@@ -151,6 +194,14 @@ run_lua_examples() {
     'assert(vectis.status_string(vectis.OK) == "ok")' >"$pack_script"
   "$repo_root/build/debug/vectis" pack --script "$pack_script" --output "$packed"
   "$packed"
+}
+
+run_tls_cert_examples() {
+  printf '[e2e] certificate generation and validation\n'
+  "$repo_root/build/debug/tests/unit/vectis_unit_certs"
+
+  printf '[e2e] https runtime with CA chain validation\n'
+  "$repo_root/build/debug/tests/unit/vectis_unit_https_runtime"
 }
 
 run_kore_examples() {
@@ -259,8 +310,10 @@ make -C "$repo_root" build-debug
 
 cd "$work_dir"
 run_lua_examples
+run_tls_cert_examples
 run_lockd_examples "$disk_endpoint" disk
 run_lockd_examples "$s3_endpoint" s3
 run_service_examples
 run_downstream_http_examples
+run_static_asset_examples
 run_kore_examples

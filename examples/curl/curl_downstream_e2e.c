@@ -436,6 +436,7 @@ static int run_client(void) {
   stream_capture capture;
   const char *base_url;
   const char *upload_path;
+  const char *bad_upload_path;
   const char *download_path;
   FILE *fp;
   char downloaded[64];
@@ -445,10 +446,16 @@ static int run_client(void) {
   base_url = env_or_default("VECTIS_DOWNSTREAM_BASE_URL", "http://127.0.0.1:28083");
   upload_path = env_or_default("VECTIS_DOWNSTREAM_UPLOAD_PATH",
                                "/tmp/vectis-downstream-upload.txt");
+  bad_upload_path = env_or_default("VECTIS_DOWNSTREAM_BAD_UPLOAD_PATH",
+                                   "/tmp/vectis-downstream-bad-upload.txt");
   download_path = env_or_default("VECTIS_DOWNSTREAM_CLIENT_DOWNLOAD_PATH",
                                  "/tmp/vectis-downstream-client-download.txt");
   if (write_file(upload_path, "upload-body") != 0) {
     fprintf(stderr, "failed to write upload fixture\n");
+    return 1;
+  }
+  if (write_file(bad_upload_path, "wrong-body") != 0) {
+    fprintf(stderr, "failed to write bad upload fixture\n");
     return 1;
   }
   vectis_http_client_config_init(&config);
@@ -464,6 +471,30 @@ static int run_client(void) {
       require_http_status(&response, 200L, "GET /health") != 0 ||
       response.body_size != 3u ||
       memcmp(response.body, "ok\n", 3u) != 0) {
+    vectis_http_response_cleanup(&response);
+    vectis_http_client_destroy(client);
+    return 1;
+  }
+  vectis_http_response_cleanup(&response);
+
+  status = vectis_http_client_get(client, "/missing", &response, &error);
+  if (require_status(status, VECTIS_OK, "GET /missing", &error) != 0 ||
+      require_http_status(&response, 404L, "GET /missing") != 0) {
+    vectis_http_response_cleanup(&response);
+    vectis_http_client_destroy(client);
+    return 1;
+  }
+  vectis_http_response_cleanup(&response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = "/events";
+  request.body = "{bad-json";
+  request.body_size = strlen("{bad-json");
+  request.content_type = "application/json";
+  status = vectis_http_client_execute(client, &request, &response, &error);
+  if (require_status(status, VECTIS_OK, "POST /events malformed JSON", &error) != 0 ||
+      require_http_status(&response, 400L, "POST /events malformed JSON") != 0) {
     vectis_http_response_cleanup(&response);
     vectis_http_client_destroy(client);
     return 1;
@@ -563,8 +594,24 @@ static int run_client(void) {
     return 1;
   }
   vectis_http_response_cleanup(&response);
+
+  status = vectis_http_client_upload_file(client,
+                                          VECTIS_HTTP_PUT,
+                                          "/upload/order-1001",
+                                          bad_upload_path,
+                                          "text/plain",
+                                          &response,
+                                          &error);
+  if (require_status(status, VECTIS_OK, "PUT /upload/order-1001 bad body", &error) != 0 ||
+      require_http_status(&response, 422L, "PUT /upload/order-1001 bad body") != 0) {
+    vectis_http_response_cleanup(&response);
+    vectis_http_client_destroy(client);
+    return 1;
+  }
+  vectis_http_response_cleanup(&response);
   vectis_http_client_destroy(client);
   (void)remove(upload_path);
+  (void)remove(bad_upload_path);
   (void)remove(download_path);
   return 0;
 }
