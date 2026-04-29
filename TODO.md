@@ -93,9 +93,10 @@ and C/integration tests before adding Lua bindings or Lua facades.
 - [x] Attach the internal Vectis router dispatch to real Kore request handling.
 - [x] Expose request body, headers, query parameters, path parameters, and response helpers.
 - [x] Register JSON routes as ordinary Vectis routes with lonejson parse/serialize adapter dispatch.
-- [x] Enforce per-route no-body and max-body policies in the Kore request path before buffering request bodies.
-- [x] Expose Kore-spooled request-body file paths for large upload routes.
-- [ ] Translate per-route body policies into concrete Kore request-body buffering, streaming, and spool-to-disk behavior.
+- [x] Enforce per-route no-body and max-body policies in the Kore request path before handler dispatch.
+- [x] Expose request bodies as reader-first `lc_source` streams; no Kore handler path may require upfront framework buffering.
+- [x] Add explicit read-all and memory-then-spill-to-disk helpers for handlers that choose to materialize request bodies.
+- [ ] Translate per-route body policies into any remaining concrete Kore request-body streaming and disk-offload tuning behavior.
 - [ ] Support Kore features through Vectis where practical, including websocket, static asset, file upload, and deeper runtime configuration features.
 - [ ] Define the supported one-process multi-instance behavior based on what Kore can safely provide.
 - [x] Add real HTTP integration tests.
@@ -126,9 +127,9 @@ and C/integration tests before adding Lua bindings or Lua facades.
 - [x] Keep Kore JSON-RPC unsupported in Vectis phase 1.
 - [x] Patch Kore ACME JSON handling and request-body helpers to use `lonejson`.
 - [ ] Replace the remaining Kore JSON parsing surface with `lonejson`.
-- [x] Make C request JSON parsing work for both buffered and Kore-spooled request bodies.
-- [x] Expose additional C request-body parse helpers that support explicit borrowed-buffer and owned-copy strategies.
-- [ ] Expose C request-body streaming parse helpers where this is practical above Kore's body callback model.
+- [x] Make C request JSON parsing stream from the request reader into lonejson instead of requiring buffered bodies.
+- [x] Expose additional C request-body helpers that support explicit reader, read-all, and spill-to-disk strategies.
+- [x] Expose C request-body streaming parse helpers where this is practical above Kore's body callback model.
 - [x] Draft request-body policy configuration for buffer versus streaming/spool-to-disk strategies.
 - [x] Expose C response helpers for large file payloads without application-memory buffering.
 - [ ] Expose C response serialization helpers for generated large payload streaming.

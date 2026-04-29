@@ -420,6 +420,8 @@ static void assert_request_response_surface(void) {
   vectis_status status;
   vectis_bytes body;
   vectis_mutable_bytes body_copy;
+  vectis_body_spill_config spill_config;
+  vectis_body_spill_result spill;
   sample_doc doc;
   const char json[] = "{\"id\":\"abc\"}";
   const char text[] = "created";
@@ -431,6 +433,7 @@ static void assert_request_response_surface(void) {
 
   status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
   assert(status == VECTIS_OK);
+  assert(vectis_request_body_reader(request) != NULL);
   memset(&body_copy, 0, sizeof(body_copy));
   status = vectis_request_body_copy(request, &body_copy, &error);
   assert(status == VECTIS_OK);
@@ -461,6 +464,15 @@ static void assert_request_response_surface(void) {
   status = vectis_request_json_into(request, &sample_doc_map, &doc, &error);
   assert(status == VECTIS_OK);
   assert(strcmp(doc.id, "abc") == 0);
+  vectis_body_spill_config_init(&spill_config);
+  spill_config.memory_limit_bytes = 4u;
+  status = vectis_request_body_spill(request, &spill_config, &spill, &error);
+  assert(status == VECTIS_OK);
+  assert(spill.spooled_to_disk);
+  assert(spill.path != NULL);
+  assert(spill.size == sizeof(json) - 1u);
+  remove(spill.path);
+  vectis_body_spill_result_cleanup(&spill);
 
   status = vectis_response_text(response, 201, "text/plain", text, &error);
   assert(status == VECTIS_OK);
@@ -647,7 +659,7 @@ static void assert_json_route_surface(void) {
   vectis_mutable_bytes_cleanup(&body_copy);
   status = vectis_request_body_bytes(request, &body, &error);
   assert(status == VECTIS_ERR_STATE);
-  assert(strstr(error.message, "spooled") != NULL);
+  assert(strstr(error.message, "reader-backed") != NULL);
   remove(spool_path);
 
   vectis_internal_response_free(response);

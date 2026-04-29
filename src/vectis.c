@@ -103,8 +103,11 @@ typedef struct vectis_app_impl {
 struct vectis_request {
   struct http_request *kore_request;
   vectis_bytes body;
+  struct lc_source *body_reader;
+  int owns_body_reader;
   char *body_path;
   int body_spooled;
+  vectis_body_policy body_policy;
   vectis_kv *path_params;
   size_t path_param_count;
   size_t path_param_capacity;
@@ -284,6 +287,75 @@ static vectis_status vectis_set_lockdc_error(vectis_error *error,
     }
   }
   return VECTIS_ERR_STATE;
+}
+
+static void vectis_request_close_body_reader(vectis_request *request) {
+  if (request == NULL) {
+    return;
+  }
+  if (request->body_reader != NULL && request->owns_body_reader) {
+    lc_source_close(request->body_reader);
+  }
+  request->body_reader = NULL;
+  request->owns_body_reader = 0;
+}
+
+static vectis_status vectis_source_error(vectis_error *error,
+                                         int rc,
+                                         const lc_error *lcerr,
+                                         const char *message) {
+  vectis_set_errorf(error,
+                    rc == LC_ERR_NOMEM ? VECTIS_ERR_NOMEM : VECTIS_ERR_STATE,
+                    "%s: %s",
+                    message != NULL ? message : "source operation failed",
+                    lcerr != NULL && lcerr->message != NULL ?
+                        lcerr->message : "unknown source error");
+  if (error != NULL) {
+    error->source = VECTIS_ERROR_SOURCE_LOCKDC;
+    error->dependency_code = (long)rc;
+  }
+  return rc == LC_ERR_NOMEM ? VECTIS_ERR_NOMEM : VECTIS_ERR_STATE;
+}
+
+static vectis_status vectis_request_reset_body_reader(vectis_request *request,
+                                                      vectis_error *error) {
+  lc_error lcerr;
+  int rc;
+
+  if (request == NULL || request->body_reader == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body reader is not available");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->body_reader->reset == NULL) {
+    return VECTIS_OK;
+  }
+  lc_error_init(&lcerr);
+  rc = request->body_reader->reset(request->body_reader, &lcerr);
+  if (rc != LC_OK) {
+    (void)vectis_source_error(error, rc, &lcerr, "failed to reset request body reader");
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  return VECTIS_OK;
+}
+
+static int vectis_tmp_template(char *buffer,
+                               size_t buffer_size,
+                               const vectis_body_spill_config *config) {
+  const char *directory;
+  const char *prefix;
+  int n;
+
+  if (buffer == NULL || buffer_size == 0u) {
+    return 0;
+  }
+  directory = config != NULL && config->directory != NULL &&
+              config->directory[0] != '\0' ? config->directory : "/tmp";
+  prefix = config != NULL && config->prefix != NULL &&
+           config->prefix[0] != '\0' ? config->prefix : "vectis-body";
+  n = snprintf(buffer, buffer_size, "%s/%s-XXXXXX", directory, prefix);
+  return n > 0 && (size_t)n < buffer_size;
 }
 
 const char *vectis_status_string(vectis_status status) {
@@ -3214,6 +3286,7 @@ void vectis_internal_request_cleanup(vectis_request *request) {
   vectis_kv_free_all(request->path_params, request->path_param_count);
   vectis_kv_free_all(request->query, request->query_count);
   vectis_kv_free_all(request->headers, request->header_count);
+  vectis_request_close_body_reader(request);
   free(request->body_path);
   memset(request, 0, sizeof(*request));
 }
@@ -3230,6 +3303,10 @@ vectis_status vectis_internal_request_set_body(vectis_request *request,
                                                const void *body,
                                                size_t body_size,
                                                vectis_error *error) {
+  lc_error lcerr;
+  lc_source *source;
+  int rc;
+
   if (request == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "request is required");
     return VECTIS_ERR_INVALID;
@@ -3238,11 +3315,24 @@ vectis_status vectis_internal_request_set_body(vectis_request *request,
     vectis_set_error(error, VECTIS_ERR_INVALID, "request body is invalid");
     return VECTIS_ERR_INVALID;
   }
+  lc_error_init(&lcerr);
+  source = NULL;
+  rc = lc_source_from_memory(body, body_size, &source, &lcerr);
+  if (rc != LC_OK) {
+    (void)vectis_source_error(error, rc, &lcerr, "failed to create request body reader");
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
   free(request->body_path);
   request->body_path = NULL;
   request->body_spooled = 0;
   request->body.data = body;
   request->body.size = body_size;
+  vectis_body_policy_init(&request->body_policy);
+  vectis_request_close_body_reader(request);
+  request->body_reader = source;
+  request->owns_body_reader = 1;
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -3252,6 +3342,9 @@ vectis_status vectis_internal_request_set_body_path(vectis_request *request,
                                                     size_t body_size,
                                                     vectis_error *error) {
   char *path_copy;
+  lc_error lcerr;
+  lc_source *source;
+  int rc;
 
   if (request == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "request is required");
@@ -3266,11 +3359,56 @@ vectis_status vectis_internal_request_set_body_path(vectis_request *request,
     vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy request body path");
     return VECTIS_ERR_NOMEM;
   }
+  lc_error_init(&lcerr);
+  source = NULL;
+  rc = lc_source_from_file(body_path, &source, &lcerr);
+  if (rc != LC_OK) {
+    free(path_copy);
+    (void)vectis_source_error(error, rc, &lcerr, "failed to create request body file reader");
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
   free(request->body_path);
   request->body_path = path_copy;
   request->body_spooled = 1;
   request->body.data = NULL;
   request->body.size = body_size;
+  vectis_body_policy_init(&request->body_policy);
+  vectis_request_close_body_reader(request);
+  request->body_reader = source;
+  request->owns_body_reader = 1;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_internal_request_set_body_reader(vectis_request *request,
+                                                      struct lc_source *source,
+                                                      size_t body_size,
+                                                      int owned,
+                                                      const vectis_body_policy *policy,
+                                                      vectis_error *error) {
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (source == NULL && body_size > 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body reader is required");
+    return VECTIS_ERR_INVALID;
+  }
+  free(request->body_path);
+  request->body_path = NULL;
+  request->body_spooled = 0;
+  request->body.data = NULL;
+  request->body.size = body_size;
+  vectis_request_close_body_reader(request);
+  request->body_reader = source;
+  request->owns_body_reader = owned ? 1 : 0;
+  if (policy != NULL) {
+    request->body_policy = *policy;
+  } else {
+    vectis_body_policy_init(&request->body_policy);
+  }
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -3423,11 +3561,11 @@ vectis_status vectis_request_json_into(vectis_request *request,
                                        vectis_error *error) {
   lonejson_error json_error;
   lonejson_status json_status;
-  FILE *fp;
-  void *owned_body;
-  const void *body_data;
-  size_t body_size;
+  lonejson_curl_parse parse;
+  lc_error lcerr;
+  unsigned char chunk[8192];
   size_t nread;
+  size_t accepted;
 
   if (request == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "request is required");
@@ -3441,53 +3579,62 @@ vectis_status vectis_request_json_into(vectis_request *request,
     vectis_set_error(error, VECTIS_ERR_INVALID, "json output struct is required");
     return VECTIS_ERR_INVALID;
   }
-  owned_body = NULL;
-  body_data = request->body.data;
-  body_size = request->body.size;
-  if (request->body_spooled) {
-    if (request->body_path == NULL || request->body_path[0] == '\0') {
-      vectis_set_error(error, VECTIS_ERR_INVALID, "spooled request body path is missing");
-      return VECTIS_ERR_INVALID;
-    }
-    fp = fopen(request->body_path, "rb");
-    if (fp == NULL) {
-      vectis_set_errorf(error,
-                        VECTIS_ERR_INVALID,
-                        "failed to open spooled request body: %s",
-                        request->body_path);
-      return VECTIS_ERR_INVALID;
-    }
-    if (body_size > 0u) {
-      owned_body = malloc(body_size);
-      if (owned_body == NULL) {
-        (void)fclose(fp);
-        vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate spooled request body");
-        return VECTIS_ERR_NOMEM;
-      }
-      nread = fread(owned_body, 1u, body_size, fp);
-      if (fclose(fp) != 0 || nread != body_size) {
-        free(owned_body);
-        vectis_set_error(error, VECTIS_ERR_STATE, "failed to read spooled request body");
-        return VECTIS_ERR_STATE;
-      }
-      body_data = owned_body;
-    } else if (fclose(fp) != 0) {
-      vectis_set_error(error, VECTIS_ERR_STATE, "failed to close spooled request body");
-      return VECTIS_ERR_STATE;
-    }
-  }
-  if (body_data == NULL && body_size > 0u) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "request body is invalid");
+  if (request->body_reader == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body reader is not available");
     return VECTIS_ERR_INVALID;
   }
-  json_status = lonejson_parse_buffer(map,
-                                      out,
-                                      body_data,
-                                      body_size,
-                                      NULL,
-                                      &json_error);
-  free(owned_body);
+  if (vectis_request_reset_body_reader(request, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  json_status = lonejson_curl_parse_init(&parse, map, out, NULL);
   if (json_status != LONEJSON_STATUS_OK) {
+    vectis_set_errorf(error,
+                      VECTIS_ERR_INVALID,
+                      "failed to initialize request JSON parser: %s",
+                      parse.error.message);
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LONEJSON;
+      error->dependency_code = (long)json_status;
+    }
+    return VECTIS_ERR_INVALID;
+  }
+  lc_error_init(&lcerr);
+  for (;;) {
+    nread = request->body_reader->read(request->body_reader,
+                                       chunk,
+                                       sizeof(chunk),
+                                       &lcerr);
+    if (nread == 0u) {
+      if (lcerr.code != 0) {
+        (void)vectis_source_error(error, lcerr.code, &lcerr, "failed to read request body");
+        lonejson_curl_parse_cleanup(&parse);
+        lc_error_cleanup(&lcerr);
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+      break;
+    }
+    accepted = lonejson_curl_write_callback((char *)chunk, 1u, nread, &parse);
+    if (accepted != nread) {
+      json_error = parse.error;
+      vectis_set_errorf(error,
+                        VECTIS_ERR_INVALID,
+                        "failed to parse request JSON at line %lu column %lu: %s",
+                        (unsigned long)json_error.line,
+                        (unsigned long)json_error.column,
+                        json_error.message);
+      if (error != NULL) {
+        error->source = VECTIS_ERROR_SOURCE_LONEJSON;
+        error->dependency_code = (long)LONEJSON_STATUS_INVALID_JSON;
+      }
+      lonejson_curl_parse_cleanup(&parse);
+      lc_error_cleanup(&lcerr);
+      return VECTIS_ERR_INVALID;
+    }
+  }
+  lc_error_cleanup(&lcerr);
+  json_status = lonejson_curl_parse_finish(&parse);
+  if (json_status != LONEJSON_STATUS_OK) {
+    json_error = parse.error;
     vectis_set_errorf(error,
                       VECTIS_ERR_INVALID,
                       "failed to parse request JSON at line %lu column %lu: %s",
@@ -3498,8 +3645,11 @@ vectis_status vectis_request_json_into(vectis_request *request,
       error->source = VECTIS_ERROR_SOURCE_LONEJSON;
       error->dependency_code = (long)json_status;
     }
+    lonejson_curl_parse_cleanup(&parse);
     return VECTIS_ERR_INVALID;
   }
+  lonejson_curl_parse_cleanup(&parse);
+  (void)vectis_request_reset_body_reader(request, NULL);
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -3535,6 +3685,255 @@ struct http_request *vectis_request_kore(vectis_request *request) {
   return request->kore_request;
 }
 
+struct lc_source *vectis_request_body_reader(vectis_request *request) {
+  if (request == NULL) {
+    return NULL;
+  }
+  return request->body_reader;
+}
+
+void vectis_body_spill_config_init(vectis_body_spill_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  config->memory_limit_bytes = VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+  config->directory = NULL;
+  config->prefix = NULL;
+}
+
+void vectis_body_spill_result_cleanup(vectis_body_spill_result *result) {
+  if (result == NULL) {
+    return;
+  }
+  vectis_mutable_bytes_cleanup(&result->memory);
+  free(result->path);
+  result->path = NULL;
+  result->size = 0u;
+  result->spooled_to_disk = 0;
+}
+
+vectis_status vectis_request_body_spill(vectis_request *request,
+                                        const vectis_body_spill_config *config,
+                                        vectis_body_spill_result *out,
+                                        vectis_error *error) {
+  unsigned char chunk[8192];
+  lc_error lcerr;
+  FILE *fp;
+  char tmp_template[PATH_MAX];
+  char *path;
+  void *next;
+  unsigned char *memory;
+  size_t memory_size;
+  size_t memory_capacity;
+  size_t memory_limit;
+  size_t nread;
+  size_t total;
+  int fd;
+  int spooled;
+
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body spill output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->body_reader == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body reader is not available");
+    return VECTIS_ERR_INVALID;
+  }
+  out->memory.data = NULL;
+  out->memory.size = 0u;
+  out->path = NULL;
+  out->size = 0u;
+  out->spooled_to_disk = 0;
+  memory_limit = config != NULL ? config->memory_limit_bytes : 0u;
+  if (memory_limit == 0u) {
+    memory_limit = request->body_policy.memory_buffer_limit_bytes;
+  }
+  if (memory_limit == 0u) {
+    memory_limit = VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+  }
+  if (!vectis_tmp_template(tmp_template, sizeof(tmp_template), config)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body spill path is too long");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_request_reset_body_reader(request, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  memory = NULL;
+  memory_size = 0u;
+  memory_capacity = 0u;
+  fp = NULL;
+  path = NULL;
+  fd = -1;
+  total = 0u;
+  spooled = 0;
+  lc_error_init(&lcerr);
+  for (;;) {
+    nread = request->body_reader->read(request->body_reader,
+                                       chunk,
+                                       sizeof(chunk),
+                                       &lcerr);
+    if (nread == 0u) {
+      if (lcerr.code != 0) {
+        (void)vectis_source_error(error, lcerr.code, &lcerr, "failed to read request body");
+        lc_error_cleanup(&lcerr);
+        if (fp != NULL) {
+          (void)fclose(fp);
+        } else if (fd >= 0) {
+          (void)close(fd);
+        }
+        if (path != NULL) {
+          (void)unlink(path);
+        }
+        free(path);
+        free(memory);
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+      break;
+    }
+    if ((size_t)-1 - total < nread) {
+      vectis_set_error(error, VECTIS_ERR_STATE, "request body size overflow");
+      lc_error_cleanup(&lcerr);
+      if (fp != NULL) {
+        (void)fclose(fp);
+      }
+      if (path != NULL) {
+        (void)unlink(path);
+      }
+      free(path);
+      free(memory);
+      return VECTIS_ERR_STATE;
+    }
+    if (!spooled && total + nread > memory_limit) {
+      fd = mkstemp(tmp_template);
+      if (fd < 0) {
+        vectis_set_error(error, VECTIS_ERR_STATE, "failed to create request body spill file");
+        lc_error_cleanup(&lcerr);
+        free(memory);
+        return VECTIS_ERR_STATE;
+      }
+      path = vectis_strdup(tmp_template);
+      if (path == NULL) {
+        (void)close(fd);
+        (void)unlink(tmp_template);
+        vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy request body spill path");
+        lc_error_cleanup(&lcerr);
+        free(memory);
+        return VECTIS_ERR_NOMEM;
+      }
+      fp = fdopen(fd, "wb");
+      if (fp == NULL) {
+        (void)close(fd);
+        (void)unlink(path);
+        free(path);
+        free(memory);
+        vectis_set_error(error, VECTIS_ERR_STATE, "failed to open request body spill file");
+        lc_error_cleanup(&lcerr);
+        return VECTIS_ERR_STATE;
+      }
+      fd = -1;
+      if (memory_size > 0u && fwrite(memory, 1u, memory_size, fp) != memory_size) {
+        (void)fclose(fp);
+        (void)unlink(path);
+        free(path);
+        free(memory);
+        vectis_set_error(error, VECTIS_ERR_STATE, "failed to write request body spill file");
+        lc_error_cleanup(&lcerr);
+        return VECTIS_ERR_STATE;
+      }
+      free(memory);
+      memory = NULL;
+      memory_size = 0u;
+      memory_capacity = 0u;
+      spooled = 1;
+    }
+    if (spooled) {
+      if (fwrite(chunk, 1u, nread, fp) != nread) {
+        (void)fclose(fp);
+        (void)unlink(path);
+        free(path);
+        vectis_set_error(error, VECTIS_ERR_STATE, "failed to write request body spill file");
+        lc_error_cleanup(&lcerr);
+        return VECTIS_ERR_STATE;
+      }
+    } else if (nread > 0u) {
+      if (memory_size + nread > memory_capacity) {
+        memory_capacity = memory_capacity == 0u ? nread : memory_capacity;
+        while (memory_capacity < memory_size + nread) {
+          if (memory_capacity > ((size_t)-1 / 2u)) {
+            memory_capacity = memory_size + nread;
+            break;
+          }
+          memory_capacity *= 2u;
+        }
+        next = realloc(memory, memory_capacity);
+        if (next == NULL) {
+          free(memory);
+          vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate request body memory");
+          lc_error_cleanup(&lcerr);
+          return VECTIS_ERR_NOMEM;
+        }
+        memory = (unsigned char *)next;
+      }
+      memcpy(memory + memory_size, chunk, nread);
+      memory_size += nread;
+    }
+    total += nread;
+  }
+  lc_error_cleanup(&lcerr);
+  if (fp != NULL && fclose(fp) != 0) {
+    (void)unlink(path);
+    free(path);
+    free(memory);
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to close request body spill file");
+    return VECTIS_ERR_STATE;
+  }
+  (void)vectis_request_reset_body_reader(request, NULL);
+  out->size = total;
+  if (spooled) {
+    out->path = path;
+    out->spooled_to_disk = 1;
+  } else {
+    out->memory.data = memory;
+    out->memory.size = memory_size;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_request_body_read_all(vectis_request *request,
+                                           vectis_mutable_bytes *out,
+                                           vectis_error *error) {
+  vectis_body_spill_config config;
+  vectis_body_spill_result result;
+  vectis_status status;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_body_spill_config_init(&config);
+  config.memory_limit_bytes = (size_t)-1;
+  status = vectis_request_body_spill(request, &config, &result, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (result.spooled_to_disk) {
+    vectis_body_spill_result_cleanup(&result);
+    vectis_set_error(error, VECTIS_ERR_STATE, "request body unexpectedly spooled while reading all");
+    return VECTIS_ERR_STATE;
+  }
+  *out = result.memory;
+  result.memory.data = NULL;
+  result.memory.size = 0u;
+  vectis_body_spill_result_cleanup(&result);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 vectis_status vectis_request_body_bytes(vectis_request *request,
                                         vectis_bytes *out,
                                         vectis_error *error) {
@@ -3546,10 +3945,10 @@ vectis_status vectis_request_body_bytes(vectis_request *request,
     vectis_set_error(error, VECTIS_ERR_INVALID, "request body output is required");
     return VECTIS_ERR_INVALID;
   }
-  if (request->body_spooled) {
+  if (request->body.data == NULL && request->body.size > 0u) {
     vectis_set_error(error,
                      VECTIS_ERR_STATE,
-                     "request body is spooled to disk; use vectis_request_body_path");
+                     "request body is reader-backed; use vectis_request_body_reader or vectis_request_body_read_all");
     return VECTIS_ERR_STATE;
   }
   *out = request->body;
@@ -3560,62 +3959,7 @@ vectis_status vectis_request_body_bytes(vectis_request *request,
 vectis_status vectis_request_body_copy(vectis_request *request,
                                        vectis_mutable_bytes *out,
                                        vectis_error *error) {
-  FILE *fp;
-  void *buffer;
-  size_t nread;
-
-  if (request == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "request is required");
-    return VECTIS_ERR_INVALID;
-  }
-  if (out == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "request body output is required");
-    return VECTIS_ERR_INVALID;
-  }
-  out->data = NULL;
-  out->size = 0u;
-  if (request->body.size == 0u) {
-    vectis_error_clear(error);
-    return VECTIS_OK;
-  }
-  buffer = malloc(request->body.size);
-  if (buffer == NULL) {
-    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate request body copy");
-    return VECTIS_ERR_NOMEM;
-  }
-  if (request->body_spooled) {
-    if (request->body_path == NULL || request->body_path[0] == '\0') {
-      free(buffer);
-      vectis_set_error(error, VECTIS_ERR_INVALID, "spooled request body path is missing");
-      return VECTIS_ERR_INVALID;
-    }
-    fp = fopen(request->body_path, "rb");
-    if (fp == NULL) {
-      free(buffer);
-      vectis_set_errorf(error,
-                        VECTIS_ERR_INVALID,
-                        "failed to open spooled request body: %s",
-                        request->body_path);
-      return VECTIS_ERR_INVALID;
-    }
-    nread = fread(buffer, 1u, request->body.size, fp);
-    if (fclose(fp) != 0 || nread != request->body.size) {
-      free(buffer);
-      vectis_set_error(error, VECTIS_ERR_STATE, "failed to read spooled request body");
-      return VECTIS_ERR_STATE;
-    }
-  } else {
-    if (request->body.data == NULL) {
-      free(buffer);
-      vectis_set_error(error, VECTIS_ERR_INVALID, "request body is invalid");
-      return VECTIS_ERR_INVALID;
-    }
-    memcpy(buffer, request->body.data, request->body.size);
-  }
-  out->data = buffer;
-  out->size = request->body.size;
-  vectis_error_clear(error);
-  return VECTIS_OK;
+  return vectis_request_body_read_all(request, out, error);
 }
 
 void vectis_mutable_bytes_cleanup(vectis_mutable_bytes *bytes) {

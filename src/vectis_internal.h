@@ -80,6 +80,12 @@ vectis_status vectis_internal_request_set_body_path(vectis_request *request,
                                                     const char *body_path,
                                                     size_t body_size,
                                                     vectis_error *error);
+vectis_status vectis_internal_request_set_body_reader(vectis_request *request,
+                                                      struct lc_source *source,
+                                                      size_t body_size,
+                                                      int owned,
+                                                      const vectis_body_policy *policy,
+                                                      vectis_error *error);
 void vectis_internal_request_set_kore(vectis_request *request,
                                       struct http_request *kore_request);
 vectis_status vectis_internal_request_add_path_param(vectis_request *request,

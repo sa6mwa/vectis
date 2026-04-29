@@ -285,20 +285,23 @@ The current implementation provides:
   for connection counts, request sizes, keepalive behavior, idle read/write
   timeouts, and minimum request-body transfer rate.
 - A real embedded Kore runtime path for C routes, including HTTP smoke coverage,
-  request metadata mapping, body-size guardrails, `pslog` runtime logging, and
-  manual HTTPS startup from path, memory, or `lc_source` cert/key material.
+  request metadata mapping, reader-first request bodies, body-size guardrails,
+  `pslog` runtime logging, and manual HTTPS startup from path, memory, or
+  `lc_source` cert/key material.
 - Per-route request-body policy presets for no-body routes, JSON/buffered
   bodies, and streaming large uploads.
-- Large upload routes can receive Kore-spooled request bodies through
-  `vectis_request_body_path()` instead of forcing multi-GB uploads into memory.
+- Handlers always receive a request body reader. Large upload routes can choose
+  `vectis_request_body_spill()` to keep small bodies in memory and spill larger
+  bodies to a temp file without making upfront buffering part of the framework
+  dispatch path.
 - OpenSSL-backed private-key, CSR, self-signed, CA, and CA-signed
   client/server PEM bundle generation plus validation helpers for bundles and
   split cert/key material.
-- `vectis_request_json_into()` parses both in-memory and Kore-spooled request
-  bodies, so JSON handlers do not need bespoke temp-file handling.
-- `vectis_request_body_bytes()` exposes borrowed buffered bodies, while
-  `vectis_request_body_copy()` gives handlers an owned byte buffer from either
-  buffered or Kore-spooled bodies.
+- `vectis_request_json_into()` streams the request reader into lonejson, so JSON
+  routes do not require a prebuffered request body.
+- `vectis_request_body_reader()` exposes the raw `lc_source` escape hatch, while
+  `vectis_request_body_read_all()` and `vectis_request_body_spill()` cover the
+  common application-level memory and temp-file choices.
 - `vectis_response_file()` lets C handlers return large files through the Kore
   runtime without first buffering the whole response in application memory.
 - `vectis_response_header()` adds ordinary response headers with CR/LF-safe

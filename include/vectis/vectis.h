@@ -3,6 +3,9 @@
 
 #include <stddef.h>
 #include <curl/curl.h>
+#ifndef LONEJSON_WITH_CURL
+#define LONEJSON_WITH_CURL 1
+#endif
 #include <lonejson.h>
 #include <pslog.h>
 
@@ -141,6 +144,19 @@ typedef struct vectis_mutable_bytes {
   void *data;
   size_t size;
 } vectis_mutable_bytes;
+
+typedef struct vectis_body_spill_config {
+  size_t memory_limit_bytes;
+  const char *directory;
+  const char *prefix;
+} vectis_body_spill_config;
+
+typedef struct vectis_body_spill_result {
+  vectis_mutable_bytes memory;
+  char *path;
+  size_t size;
+  int spooled_to_disk;
+} vectis_body_spill_result;
 
 typedef struct vectis_source {
   const char *path;
@@ -596,6 +612,16 @@ const char *vectis_request_query(vectis_request *request,
 const char *vectis_request_header(vectis_request *request,
                                   const char *name);
 struct http_request *vectis_request_kore(vectis_request *request);
+struct lc_source *vectis_request_body_reader(vectis_request *request);
+void vectis_body_spill_config_init(vectis_body_spill_config *config);
+void vectis_body_spill_result_cleanup(vectis_body_spill_result *result);
+vectis_status vectis_request_body_read_all(vectis_request *request,
+                                           vectis_mutable_bytes *out,
+                                           vectis_error *error);
+vectis_status vectis_request_body_spill(vectis_request *request,
+                                        const vectis_body_spill_config *config,
+                                        vectis_body_spill_result *out,
+                                        vectis_error *error);
 vectis_status vectis_request_body_bytes(vectis_request *request,
                                         vectis_bytes *out,
                                         vectis_error *error);
