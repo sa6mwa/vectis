@@ -3988,6 +3988,47 @@ void vectis_http_response_cleanup(vectis_http_response *response) {
   memset(response, 0, sizeof(*response));
 }
 
+vectis_status vectis_http_response_json_into(const vectis_http_response *response,
+                                             const lonejson_map *map,
+                                             void *out,
+                                             vectis_error *error) {
+  lonejson_error json_error;
+
+  if (response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP response is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lonejson map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "JSON output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (response->body == NULL && response->body_size > 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP response body is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (lonejson_parse_buffer(map,
+                            out,
+                            response->body,
+                            response->body_size,
+                            NULL,
+                            &json_error) != LONEJSON_STATUS_OK) {
+    vectis_set_errorf(error,
+                      VECTIS_ERR_INVALID,
+                      "failed to parse JSON response: %s",
+                      json_error.message);
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LONEJSON;
+    }
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 vectis_status vectis_http_client_execute(vectis_http_client *client,
                                          const vectis_http_request *request,
                                          vectis_http_response *response,

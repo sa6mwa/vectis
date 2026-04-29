@@ -56,6 +56,7 @@ int main(void) {
   vectis_http_response_cleanup(&response);
 
   (void)vectis_http_client_post_json(handle, "/events", &downstream_request_map, &payload, &response, &error);
+  (void)vectis_http_response_json_into(&response, &downstream_request_map, &payload, &error);
   vectis_http_response_cleanup(&response);
 
   (void)vectis_http_client_put_json(handle, "/events/order", &downstream_request_map, &payload, &response, &error);

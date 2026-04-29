@@ -133,7 +133,7 @@ and C/integration tests before adding Lua bindings or Lua facades.
 - [x] Expose C response helpers for large file payloads without application-memory buffering.
 - [ ] Expose C response serialization helpers for generated large payload streaming.
 - [ ] Expose Lua JSON encode/decode helpers through the bundled `lonejson` Lua rock or a Vectis facade.
-- [ ] Make `lonejson` the backing implementation for Vectis request parsing, response serialization, lockd document helpers, and JSON HTTP client helpers.
+- [x] Make `lonejson` the backing implementation for Vectis request parsing, response serialization, lockd document helpers, and JSON HTTP client helpers.
 - [ ] Add higher-level JSON REST helpers for request validation, response serialization, and downstream API calls.
 - [x] Add first-pass typed JSON route auto-wiring backed by lonejson mapped structs.
 

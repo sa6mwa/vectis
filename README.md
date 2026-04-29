@@ -321,6 +321,8 @@ The current implementation provides:
 - First-class C curl settings for proxy URLs, connect/overall timeouts,
   low-speed aborts, redirects, request headers, client certificates, CA bundles,
   bounded retries, file downloads/uploads, and streaming response-body callbacks.
+- `vectis_http_response_json_into()` parses downstream HTTP JSON response bodies
+  directly into lonejson mapped structs.
 - A `vectis` executable that embeds the provisioned Lua 5.5 runtime, supports
   normal script and shebang execution, and is wrapped on Linux with the
   single-header `libpid0` 0.3.0 helper so it can run correctly as PID 1 in

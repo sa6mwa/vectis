@@ -136,8 +136,10 @@ static void assert_http_surface(void) {
   const char helper_download_path[] = "/tmp/vectis_http_download_helper.txt";
   const char helper_upload_path[] = "/tmp/vectis_http_upload_helper.txt";
   const char missing_upload_path[] = "/tmp/vectis_http_missing_upload.txt";
+  const char json_path[] = "/tmp/vectis_http_doc.json";
   const char source_body[] = "vectis file body";
   const char upload_body[] = "upload body";
+  const char json_body[] = "{\"id\":\"downstream\"}";
   int curl_config_count;
   int retry_config_count;
 
@@ -174,6 +176,10 @@ static void assert_http_surface(void) {
   assert(fp != NULL);
   assert(fwrite(source_body, 1u, sizeof(source_body) - 1u, fp) == sizeof(source_body) - 1u);
   assert(fclose(fp) == 0);
+  fp = fopen(json_path, "wb");
+  assert(fp != NULL);
+  assert(fwrite(json_body, 1u, sizeof(json_body) - 1u, fp) == sizeof(json_body) - 1u);
+  assert(fclose(fp) == 0);
 
   client.base_url = "file:///tmp";
   status = vectis_http_get(&client, "/vectis_http_source.txt", &response, &error);
@@ -183,6 +189,14 @@ static void assert_http_surface(void) {
   assert(memcmp(response.body, source_body, sizeof(source_body) - 1u) == 0);
   vectis_http_response_cleanup(&response);
 
+  status = vectis_http_get(&client, "/vectis_http_doc.json", &response, &error);
+  assert(status == VECTIS_OK);
+  memset(&doc, 0, sizeof(doc));
+  status = vectis_http_response_json_into(&response, &sample_doc_map, &doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(doc.id, "downstream") == 0);
+  vectis_http_response_cleanup(&response);
+
   status = vectis_http_client_new(&client, &handle, &error);
   assert(status == VECTIS_OK);
   assert(handle != NULL);
@@ -190,7 +204,7 @@ static void assert_http_surface(void) {
   request.url = "/vectis_http_source.txt";
   status = vectis_http_client_execute(handle, &request, &response, &error);
   assert(status == VECTIS_OK);
-  assert(curl_config_count == 2);
+  assert(curl_config_count == 3);
   assert(response.body_size == sizeof(source_body) - 1u);
   vectis_http_response_cleanup(&response);
 
@@ -319,6 +333,7 @@ static void assert_http_surface(void) {
   (void)remove(helper_download_path);
   (void)remove(helper_upload_path);
   (void)remove(missing_upload_path);
+  (void)remove(json_path);
   vectis_http_response_cleanup(&response);
 }
 

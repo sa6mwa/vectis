@@ -650,6 +650,10 @@ vectis_status vectis_http_client_from_app(vectis_app *app,
 void vectis_http_client_destroy(vectis_http_client *client);
 void vectis_http_request_init(vectis_http_request *request);
 void vectis_http_response_cleanup(vectis_http_response *response);
+vectis_status vectis_http_response_json_into(const vectis_http_response *response,
+                                             const lonejson_map *map,
+                                             void *out,
+                                             vectis_error *error);
 vectis_status vectis_http_client_execute(vectis_http_client *client,
                                          const vectis_http_request *request,
                                          vectis_http_response *response,
