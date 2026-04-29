@@ -298,6 +298,10 @@ The current implementation provides:
   split cert/key material.
 - `vectis_request_json_into()` streams the request reader into lonejson, so JSON
   routes do not require a prebuffered request body.
+- `vectis_json_typed_route()` parses a mapped input struct up front and lets the
+  handler reply with any status-specific lonejson output map through
+  `vectis_json_reply()`, which covers ordinary success/error variants without a
+  forced envelope type.
 - `vectis_request_body_reader()` exposes the raw `lc_source` escape hatch, while
   `vectis_request_body_materialize()` gives handlers one memory-or-file result
   without making them decide the storage class up front.

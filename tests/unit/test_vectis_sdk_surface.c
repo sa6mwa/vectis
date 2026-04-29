@@ -11,10 +11,20 @@ typedef struct sample_doc {
   char id[32];
 } sample_doc;
 
+typedef struct sample_error_doc {
+  char code[32];
+  char message[64];
+} sample_error_doc;
+
 static const lonejson_field sample_doc_fields[] = {
     LONEJSON_FIELD_STRING_FIXED_REQ(sample_doc, id, "id", LONEJSON_OVERFLOW_FAIL)};
 
+static const lonejson_field sample_error_doc_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(sample_error_doc, code, "code", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(sample_error_doc, message, "message", LONEJSON_OVERFLOW_FAIL)};
+
 LONEJSON_MAP_DEFINE(sample_doc_map, sample_doc, sample_doc_fields);
+LONEJSON_MAP_DEFINE(sample_error_doc_map, sample_error_doc, sample_error_doc_fields);
 
 static vectis_status sample_json_handler(vectis_app *app,
                                          vectis_request *request,
@@ -35,6 +45,33 @@ static vectis_status sample_json_handler(vectis_app *app,
   }
   vectis_error_clear(error);
   return VECTIS_OK;
+}
+
+static vectis_status sample_json_typed_handler(vectis_app *app,
+                                               vectis_request *request,
+                                               void *input,
+                                               vectis_json_response *response,
+                                               void *userdata,
+                                               vectis_error *error) {
+  sample_doc *in_doc;
+  sample_doc out_doc;
+  sample_error_doc error_doc;
+
+  (void)app;
+  (void)request;
+  (void)userdata;
+  in_doc = (sample_doc *)input;
+  memset(&out_doc, 0, sizeof(out_doc));
+  memset(&error_doc, 0, sizeof(error_doc));
+  if (in_doc != NULL && strcmp(in_doc->id, "conflict") == 0) {
+    (void)snprintf(error_doc.code, sizeof(error_doc.code), "conflict");
+    (void)snprintf(error_doc.message, sizeof(error_doc.message), "document already exists");
+    return vectis_json_reply(response, 409, &sample_error_doc_map, &error_doc, error);
+  }
+  if (in_doc != NULL) {
+    (void)snprintf(out_doc.id, sizeof(out_doc.id), "%s", in_doc->id);
+  }
+  return vectis_json_reply(response, 201, &sample_doc_map, &out_doc, error);
 }
 
 static vectis_status sample_route_handler(vectis_app *app,
@@ -534,6 +571,7 @@ static void assert_request_response_surface(void) {
 static void assert_json_route_surface(void) {
   vectis_app_config config;
   vectis_json_route_config route;
+  vectis_json_typed_route_config typed_route;
   vectis_route_config raw_route;
   vectis_body_policy policy;
   vectis_error error;
@@ -544,6 +582,7 @@ static void assert_json_route_surface(void) {
   vectis_bytes body;
   vectis_mutable_bytes body_copy;
   sample_doc output;
+  sample_error_doc error_output;
   char key[64];
   const char json[] = "{\"id\":\"abc\"}";
   const char spool_path[] = "/tmp/vectis-spooled-body";
@@ -637,6 +676,58 @@ static void assert_json_route_surface(void) {
   assert(lonejson_parse_buffer(&sample_doc_map, &output, body.data, body.size, NULL, NULL) ==
          LONEJSON_STATUS_OK);
   assert(strcmp(output.id, "abc") == 0);
+
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+  typed_route = vectis_json_typed_route(VECTIS_HTTP_POST,
+                                        "/typed-response",
+                                        &sample_doc_map,
+                                        sizeof(sample_doc),
+                                        sample_json_typed_handler,
+                                        NULL);
+  status = vectis_register_prefixed_json_typed_route(app, "/api/v1", &typed_route, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_route_count(app) == 5u);
+  status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
+  assert(status == VECTIS_OK);
+  status = vectis_internal_dispatch_route(app,
+                                          VECTIS_HTTP_POST,
+                                          "/api/v1/typed-response",
+                                          request,
+                                          response,
+                                          &error);
+  assert(status == VECTIS_OK);
+  body = vectis_internal_response_body(response);
+  assert(vectis_internal_response_status_code(response) == 201);
+  memset(&output, 0, sizeof(output));
+  assert(lonejson_parse_buffer(&sample_doc_map, &output, body.data, body.size, NULL, NULL) ==
+         LONEJSON_STATUS_OK);
+  assert(strcmp(output.id, "abc") == 0);
+
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+  status = vectis_internal_request_set_body(request,
+                                            "{\"id\":\"conflict\"}",
+                                            sizeof("{\"id\":\"conflict\"}") - 1u,
+                                            &error);
+  assert(status == VECTIS_OK);
+  status = vectis_internal_dispatch_route(app,
+                                          VECTIS_HTTP_POST,
+                                          "/api/v1/typed-response",
+                                          request,
+                                          response,
+                                          &error);
+  assert(status == VECTIS_OK);
+  body = vectis_internal_response_body(response);
+  assert(vectis_internal_response_status_code(response) == 409);
+  memset(&error_output, 0, sizeof(error_output));
+  assert(lonejson_parse_buffer(&sample_error_doc_map,
+                               &error_output,
+                               body.data,
+                               body.size,
+                               NULL,
+                               NULL) == LONEJSON_STATUS_OK);
+  assert(strcmp(error_output.code, "conflict") == 0);
 
   status = vectis_format_key(key, sizeof(key), &error, "state/%s/%s", "orders", "1001");
   assert(status == VECTIS_OK);

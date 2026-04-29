@@ -137,6 +137,7 @@ and C/integration tests before adding Lua bindings or Lua facades.
 - [x] Make `lonejson` the backing implementation for Vectis request parsing, response serialization, lockd document helpers, and JSON HTTP client helpers.
 - [ ] Add higher-level JSON REST helpers for request validation, response serialization, and downstream API calls.
 - [x] Add first-pass typed JSON route auto-wiring backed by lonejson mapped structs.
+- [x] Add multi-output typed JSON routes where handlers choose status-specific response maps at runtime.
 
 ## Area 8: lockd / Workflow Runtime
 

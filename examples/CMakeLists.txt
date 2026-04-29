@@ -38,6 +38,7 @@ endfunction()
 
 vectis_add_example(vectis_example_kore_basic kore/kore_basic_server.c)
 vectis_add_example(vectis_example_kore_json kore/kore_json_routes.c)
+vectis_add_example(vectis_example_kore_json_multi_output kore/kore_json_multi_output.c)
 vectis_add_example(vectis_example_kore_regex kore/kore_regex_routes.c)
 vectis_add_example(vectis_example_kore_tls_acme kore/kore_tls_acme.c)
 vectis_add_example(vectis_example_kore_tls_memory kore/kore_tls_memory_bundles.c)

@@ -45,6 +45,13 @@ typedef struct vectis_json_route_adapter {
   void *userdata;
 } vectis_json_route_adapter;
 
+typedef struct vectis_json_typed_route_adapter {
+  const lonejson_map *input_map;
+  size_t input_size;
+  vectis_json_typed_route_handler_fn handler;
+  void *userdata;
+} vectis_json_typed_route_adapter;
+
 typedef struct vectis_kv {
   char *name;
   char *value;
@@ -128,6 +135,11 @@ struct vectis_response {
   vectis_kv *headers;
   size_t header_count;
   size_t header_capacity;
+  int sent;
+};
+
+struct vectis_json_response {
+  vectis_response *response;
   int sent;
 };
 
@@ -638,6 +650,17 @@ void vectis_json_route_config_init(vectis_json_route_config *config) {
   config->body = vectis_body_json_default();
 }
 
+void vectis_json_typed_route_config_init(vectis_json_typed_route_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->method = VECTIS_HTTP_ANY;
+  config->methods = VECTIS_HTTP_METHODS_NONE;
+  config->path_kind = VECTIS_ROUTE_PATH_LITERAL;
+  config->body = vectis_body_json_default();
+}
+
 static vectis_route_path_kind vectis_infer_route_path_kind(const char *path) {
   if (path != NULL && path[0] == '^') {
     return VECTIS_ROUTE_PATH_REGEX;
@@ -861,6 +884,45 @@ vectis_json_route_config vectis_json_route_methods(vectis_http_methods methods,
                             output_size,
                             handler,
                             userdata);
+  route.methods = methods;
+  return route;
+}
+
+vectis_json_typed_route_config vectis_json_typed_route(vectis_http_method method,
+                                                       const char *path,
+                                                       const lonejson_map *input_map,
+                                                       size_t input_size,
+                                                       vectis_json_typed_route_handler_fn handler,
+                                                       void *userdata) {
+  vectis_json_typed_route_config route;
+
+  vectis_json_typed_route_config_init(&route);
+  route.method = method;
+  route.methods = vectis_method_mask(method);
+  route.path = path;
+  route.path_kind = vectis_infer_route_path_kind(path);
+  route.body = vectis_body_json_default();
+  route.input_map = input_map;
+  route.input_size = input_size;
+  route.handler = handler;
+  route.userdata = userdata;
+  return route;
+}
+
+vectis_json_typed_route_config vectis_json_typed_route_methods(vectis_http_methods methods,
+                                                               const char *path,
+                                                               const lonejson_map *input_map,
+                                                               size_t input_size,
+                                                               vectis_json_typed_route_handler_fn handler,
+                                                               void *userdata) {
+  vectis_json_typed_route_config route;
+
+  route = vectis_json_typed_route(vectis_first_method(methods),
+                                  path,
+                                  input_map,
+                                  input_size,
+                                  handler,
+                                  userdata);
   route.methods = methods;
   return route;
 }
@@ -2199,6 +2261,40 @@ vectis_status vectis_register_prefixed_route(vectis_app *app,
   return status;
 }
 
+static vectis_status vectis_json_route_alloc_input(vectis_request *request,
+                                                   const lonejson_map *map,
+                                                   size_t size,
+                                                   void **out,
+                                                   vectis_error *error) {
+  void *input;
+  vectis_status status;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "json input output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  if (map == NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  input = calloc(1u, size);
+  if (input == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate json route input");
+    return VECTIS_ERR_NOMEM;
+  }
+  lonejson_init(map, input);
+  status = vectis_request_json_into(request, map, input, error);
+  if (status != VECTIS_OK) {
+    lonejson_cleanup(map, input);
+    free(input);
+    return status;
+  }
+  *out = input;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 static vectis_status vectis_json_route_dispatch(vectis_app *app,
                                                 vectis_request *request,
                                                 vectis_response *response,
@@ -2217,19 +2313,13 @@ static vectis_status vectis_json_route_dispatch(vectis_app *app,
 
   input = NULL;
   output = NULL;
-  if (adapter->input_map != NULL) {
-    input = calloc(1u, adapter->input_size);
-    if (input == NULL) {
-      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate json route input");
-      return VECTIS_ERR_NOMEM;
-    }
-    lonejson_init(adapter->input_map, input);
-    status = vectis_request_json_into(request, adapter->input_map, input, error);
-    if (status != VECTIS_OK) {
-      lonejson_cleanup(adapter->input_map, input);
-      free(input);
-      return status;
-    }
+  status = vectis_json_route_alloc_input(request,
+                                         adapter->input_map,
+                                         adapter->input_size,
+                                         &input,
+                                         error);
+  if (status != VECTIS_OK) {
+    return status;
   }
 
   if (adapter->output_map != NULL) {
@@ -2261,6 +2351,43 @@ static vectis_status vectis_json_route_dispatch(vectis_app *app,
     lonejson_cleanup(adapter->input_map, input);
   }
   free(output);
+  free(input);
+  return status;
+}
+
+static vectis_status vectis_json_typed_route_dispatch(vectis_app *app,
+                                                      vectis_request *request,
+                                                      vectis_response *response,
+                                                      void *userdata,
+                                                      vectis_error *error) {
+  vectis_json_typed_route_adapter *adapter;
+  vectis_json_response json_response;
+  void *input;
+  vectis_status status;
+
+  adapter = (vectis_json_typed_route_adapter *)userdata;
+  if (adapter == NULL || adapter->handler == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "typed json route adapter is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  input = NULL;
+  status = vectis_json_route_alloc_input(request,
+                                         adapter->input_map,
+                                         adapter->input_size,
+                                         &input,
+                                         error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  json_response.response = response;
+  json_response.sent = 0;
+  status = adapter->handler(app, request, input, &json_response, adapter->userdata, error);
+  if (status == VECTIS_OK && !json_response.sent) {
+    status = vectis_response_status(response, 204, error);
+  }
+  if (adapter->input_map != NULL) {
+    lonejson_cleanup(adapter->input_map, input);
+  }
   free(input);
   return status;
 }
@@ -2342,6 +2469,72 @@ vectis_status vectis_register_json_route(vectis_app *app,
   return status;
 }
 
+vectis_status vectis_register_json_typed_route(vectis_app *app,
+                                               const vectis_json_typed_route_config *route,
+                                               vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_json_typed_route_adapter *adapter;
+  vectis_route_config raw_route;
+  vectis_status status;
+
+  if (app == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (route == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "typed json route is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_validate_methods(route->method, route->methods, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (vectis_validate_route_path(route->path, route->path_kind, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (route->handler == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "typed json route handler is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (route->input_map != NULL && (route->input_size == 0u || route->input_size > 10485760u)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "typed json route input_size is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (route->input_map != NULL && route->input_size != route->input_map->struct_size) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "typed json route input_size does not match lonejson map");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  if (vectis_validate_body_policy(&route->body,
+                                  impl != NULL ? &impl->server : NULL,
+                                  error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  adapter = (vectis_json_typed_route_adapter *)calloc(1u, sizeof(*adapter));
+  if (adapter == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate typed json route adapter");
+    return VECTIS_ERR_NOMEM;
+  }
+  adapter->input_map = route->input_map;
+  adapter->input_size = route->input_size;
+  adapter->handler = route->handler;
+  adapter->userdata = route->userdata;
+
+  vectis_route_config_init(&raw_route);
+  raw_route.method = route->method;
+  raw_route.methods = vectis_normalize_methods(route->method, route->methods);
+  raw_route.path = route->path;
+  raw_route.path_kind = route->path_kind;
+  raw_route.body = route->body;
+  raw_route.handler = vectis_json_typed_route_dispatch;
+  raw_route.userdata = adapter;
+
+  status = vectis_app_register_route_owned_userdata(app, &raw_route, 1, error);
+  if (status != VECTIS_OK) {
+    free(adapter);
+  }
+  return status;
+}
+
 vectis_status vectis_register_prefixed_json_route(vectis_app *app,
                                                   const char *prefix,
                                                   const vectis_json_route_config *route,
@@ -2365,6 +2558,33 @@ vectis_status vectis_register_prefixed_json_route(vectis_app *app,
     prefixed.path_kind = VECTIS_ROUTE_PATH_REGEX;
   }
   status = vectis_register_json_route(app, &prefixed, error);
+  free(path);
+  return status;
+}
+
+vectis_status vectis_register_prefixed_json_typed_route(vectis_app *app,
+                                                        const char *prefix,
+                                                        const vectis_json_typed_route_config *route,
+                                                        vectis_error *error) {
+  vectis_json_typed_route_config prefixed;
+  char *path;
+  vectis_status status;
+
+  if (route == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "typed json route is required");
+    return VECTIS_ERR_INVALID;
+  }
+  path = vectis_join_route_prefix(prefix, route->path, error);
+  if (path == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  prefixed = *route;
+  prefixed.path = path;
+  prefixed.path_kind = vectis_infer_route_path_kind(path);
+  if (route->path_kind == VECTIS_ROUTE_PATH_REGEX) {
+    prefixed.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  }
+  status = vectis_register_json_typed_route(app, &prefixed, error);
   free(path);
   return status;
 }
@@ -4346,6 +4566,40 @@ vectis_status vectis_response_json(vectis_response *response,
   body.size = json_size;
   status = vectis_response_bytes(response, status_code, "application/json", body, error);
   free(json);
+  return status;
+}
+
+vectis_status vectis_json_reply(vectis_json_response *response,
+                                int status_code,
+                                const lonejson_map *map,
+                                const void *value,
+                                vectis_error *error) {
+  vectis_status status;
+
+  if (response == NULL || response->response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "json response is required");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_response_json(response->response, status_code, map, value, error);
+  if (status == VECTIS_OK) {
+    response->sent = 1;
+  }
+  return status;
+}
+
+vectis_status vectis_json_reply_status(vectis_json_response *response,
+                                       int status_code,
+                                       vectis_error *error) {
+  vectis_status status;
+
+  if (response == NULL || response->response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "json response is required");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_response_status(response->response, status_code, error);
+  if (status == VECTIS_OK) {
+    response->sent = 1;
+  }
   return status;
 }
 
