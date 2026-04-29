@@ -1,6 +1,12 @@
 #include <assert.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include "vectis_internal.h"
 #include <vectis/vectis.h>
 
@@ -86,6 +92,119 @@ static vectis_status file_handler(vectis_app *app,
   return vectis_response_file(response, 200, "text/plain", (const char *)userdata, error);
 }
 
+static int connect_local(unsigned short port) {
+  struct sockaddr_in addr;
+  int fd;
+  int rc;
+
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(port);
+  rc = inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+  assert(rc == 1);
+  rc = connect(fd, (const struct sockaddr *)&addr, (socklen_t)sizeof(addr));
+  assert(rc == 0);
+  return fd;
+}
+
+static void socket_send_all(int fd, const char *data, size_t size) {
+  size_t offset;
+  ssize_t written;
+
+  offset = 0u;
+  while (offset < size) {
+    written = send(fd, data + offset, size - offset, 0);
+    assert(written > 0);
+    offset += (size_t)written;
+  }
+}
+
+static ssize_t socket_recv_some(int fd, char *buffer, size_t size, long timeout_ms) {
+  struct timeval tv;
+  fd_set rfds;
+  int rc;
+
+  FD_ZERO(&rfds);
+  FD_SET(fd, &rfds);
+  tv.tv_sec = timeout_ms / 1000L;
+  tv.tv_usec = (timeout_ms % 1000L) * 1000L;
+  rc = select(fd + 1, &rfds, NULL, NULL, &tv);
+  assert(rc >= 0);
+  if (rc == 0) {
+    return 0;
+  }
+  return recv(fd, buffer, size, 0);
+}
+
+static int count_token(const char *haystack, const char *needle) {
+  const char *p;
+  int count;
+
+  count = 0;
+  p = haystack;
+  while ((p = strstr(p, needle)) != NULL) {
+    ++count;
+    p += strlen(needle);
+  }
+  return count;
+}
+
+static void assert_large_header_rejected(unsigned short port) {
+  const char *prefix;
+  const char *suffix;
+  char request[3072];
+  char response[1024];
+  ssize_t nread;
+  size_t prefix_size;
+  size_t suffix_size;
+  int fd;
+
+  prefix = "GET /health HTTP/1.1\r\nHost: localhost\r\nX-Big: ";
+  suffix = "\r\n\r\n";
+  prefix_size = strlen(prefix);
+  suffix_size = strlen(suffix);
+  fd = connect_local(port);
+  memset(request, 'a', sizeof(request));
+  memcpy(request, prefix, prefix_size);
+  memcpy(request + sizeof(request) - suffix_size, suffix, suffix_size);
+  socket_send_all(fd, request, sizeof(request));
+  memset(response, 0, sizeof(response));
+  nread = socket_recv_some(fd, response, sizeof(response) - 1u, 2000L);
+  if (nread > 0) {
+    response[(size_t)nread] = '\0';
+    assert(strstr(response, " 200 ") == NULL);
+  }
+  (void)shutdown(fd, SHUT_RDWR);
+  (void)close(fd);
+}
+
+static void assert_keepalive_limit(unsigned short port) {
+  const char *request;
+  char response[2048];
+  ssize_t nread;
+  int fd;
+
+  request = "GET /health HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "Connection: keep-alive\r\n"
+            "\r\n"
+            "GET /health HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "Connection: keep-alive\r\n"
+            "\r\n";
+  fd = connect_local(port);
+  socket_send_all(fd, request, strlen(request));
+  memset(response, 0, sizeof(response));
+  nread = socket_recv_some(fd, response, sizeof(response) - 1u, 2000L);
+  assert(nread > 0);
+  response[(size_t)nread] = '\0';
+  assert(count_token(response, " 200 ") == 1);
+  (void)shutdown(fd, SHUT_RDWR);
+  (void)close(fd);
+}
+
 static void assert_kore_smoke(void) {
   vectis_app_config config;
   vectis_http_client_config http;
@@ -123,7 +242,13 @@ static void assert_kore_smoke(void) {
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
   config.tls.port = 28080u;
+  config.server.max_request_header_bytes = 1024u;
   config.server.max_request_body_bytes = 1024u;
+  config.server.request_header_timeout_ms = 1000L;
+  config.server.request_body_idle_timeout_ms = 1000L;
+  config.server.request_body_min_rate_bytes_per_sec = 1024u;
+  config.server.request_body_min_rate_grace_ms = 500L;
+  config.server.keepalive_max_requests = 1u;
   fp = fopen(response_file_path, "wb");
   assert(fp != NULL);
   assert(fwrite(response_file_body, 1u, sizeof(response_file_body) - 1u, fp) ==
@@ -180,6 +305,9 @@ static void assert_kore_smoke(void) {
   assert(response.status_code == 200L);
   assert(response.body_size == 2u);
   assert(memcmp(response.body, "ok", 2u) == 0);
+
+  assert_large_header_rejected(28080u);
+  assert_keepalive_limit(28080u);
 
   vectis_http_response_cleanup(&response);
   status = vectis_http_get(&http, "http://127.0.0.1:28080/file", &response, &error);

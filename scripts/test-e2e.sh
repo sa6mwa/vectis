@@ -88,6 +88,25 @@ run_lockd_examples() {
     "$repo_root/build/debug/examples/vectis_example_lockd_dequeue"
 }
 
+run_lockd_failure_examples() {
+  bad_bundle="$work_dir/bad-client.pem"
+
+  printf '[e2e] lockd unavailable endpoint failure\n'
+  if env LOCKD_ENDPOINT="https://127.0.0.1:1" LOCKD_CLIENT_BUNDLE="$client_bundle" \
+      "$repo_root/build/debug/examples/vectis_example_lockd_lease"; then
+    printf '%s\n' "lockd lease unexpectedly succeeded against unavailable endpoint" >&2
+    return 1
+  fi
+
+  printf '%s\n' "not a pem bundle" >"$bad_bundle"
+  printf '[e2e] lockd invalid client bundle failure\n'
+  if env LOCKD_ENDPOINT="$disk_endpoint" LOCKD_CLIENT_BUNDLE="$bad_bundle" \
+      "$repo_root/build/debug/examples/vectis_example_lockd_lease"; then
+    printf '%s\n' "lockd lease unexpectedly succeeded with invalid client bundle" >&2
+    return 1
+  fi
+}
+
 run_service_examples() {
   printf '[e2e] mqtt publish\n'
   env VECTIS_MQTT_URL="mqtt://127.0.0.1:$mqtt_port" \
@@ -158,12 +177,18 @@ run_static_asset_examples() {
     printf '%s\n' "Unexpected static HEAD status: $status" >&2
     return 1
   fi
-  status=$(curl --path-as-is --max-time 3 -fsS -o /dev/null -w '%{http_code}' \
-    "http://127.0.0.1:$kore_static_port/assets/../secret" || true)
-  if [ "$status" != "400" ] && [ "$status" != "404" ]; then
-    printf '%s\n' "Unexpected traversal status: $status" >&2
-    return 1
-  fi
+  for traversal_path in \
+    "/assets/../secret" \
+    "/assets/%2e%2e/secret" \
+    "/assets/%2E%2E/secret" \
+    "/assets/..%2fsecret"; do
+    status=$(curl --path-as-is --max-time 3 -fsS -o /dev/null -w '%{http_code}' \
+      "http://127.0.0.1:$kore_static_port$traversal_path" || true)
+    if [ "$status" != "400" ] && [ "$status" != "404" ]; then
+      printf '%s\n' "Unexpected traversal status for $traversal_path: $status" >&2
+      return 1
+    fi
+  done
 }
 
 run_lua_examples() {
@@ -202,6 +227,9 @@ run_tls_cert_examples() {
 
   printf '[e2e] https runtime with CA chain validation\n'
   "$repo_root/build/debug/tests/unit/vectis_unit_https_runtime"
+
+  printf '[e2e] https runtime with required client certificate\n'
+  "$repo_root/build/debug/tests/unit/vectis_unit_https_mtls_runtime"
 }
 
 run_kore_examples() {
@@ -313,6 +341,7 @@ run_lua_examples
 run_tls_cert_examples
 run_lockd_examples "$disk_endpoint" disk
 run_lockd_examples "$s3_endpoint" s3
+run_lockd_failure_examples
 run_service_examples
 run_downstream_http_examples
 run_static_asset_examples

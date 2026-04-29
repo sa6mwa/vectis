@@ -1,6 +1,5 @@
 #include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -64,7 +63,7 @@ static void assert_https_ok(const char *url,
     }
   }
   if (status != VECTIS_OK) {
-    fprintf(stderr, "https smoke failed: status=%s error=%s detail=%s\n",
+    fprintf(stderr, "https mtls smoke failed: status=%s error=%s detail=%s\n",
             vectis_status_string(status),
             error.message,
             error.detail);
@@ -83,46 +82,19 @@ int main(void) {
   vectis_error error;
   vectis_status status;
   vectis_app *app;
-  const char root_bundle_path[] = "/tmp/vectis-runtime-root-bundle.pem";
-  const char root_cert_path[] = "/tmp/vectis-runtime-root-cert.pem";
-  const char root_key_path[] = "/tmp/vectis-runtime-root-key.pem";
-  const char wrong_root_bundle_path[] = "/tmp/vectis-runtime-wrong-root-bundle.pem";
-  const char wrong_root_cert_path[] = "/tmp/vectis-runtime-wrong-root-cert.pem";
-  const char wrong_root_key_path[] = "/tmp/vectis-runtime-wrong-root-key.pem";
-  const char intermediate_cert_path[] = "/tmp/vectis-runtime-intermediate-cert.pem";
-  const char intermediate_key_path[] = "/tmp/vectis-runtime-intermediate-key.pem";
-  const char server_cert_path[] = "/tmp/vectis-runtime-server-cert.pem";
-  const char server_key_path[] = "/tmp/vectis-runtime-server-key.pem";
+  const char root_bundle_path[] = "/tmp/vectis-mtls-root-bundle.pem";
+  const char root_cert_path[] = "/tmp/vectis-mtls-root-cert.pem";
+  const char root_key_path[] = "/tmp/vectis-mtls-root-key.pem";
+  const char server_cert_path[] = "/tmp/vectis-mtls-server-cert.pem";
+  const char server_key_path[] = "/tmp/vectis-mtls-server-key.pem";
+  const char client_bundle_path[] = "/tmp/vectis-mtls-client-bundle.pem";
 
   app = NULL;
   vectis_cert_bundle_config_init(&certs);
-  certs.subject.common_name = "Vectis Runtime Root CA";
+  certs.subject.common_name = "Vectis Runtime mTLS Root CA";
   certs.output_bundle_path = root_bundle_path;
   certs.output_cert_path = root_cert_path;
   certs.output_key_path = root_key_path;
-  certs.is_ca = 1;
-  certs.key_bits = 2048u;
-  certs.valid_days = 1L;
-  status = vectis_cert_generate_bundle(&certs, &error);
-  assert(status == VECTIS_OK);
-
-  vectis_cert_bundle_config_init(&certs);
-  certs.subject.common_name = "Vectis Runtime Wrong Root CA";
-  certs.output_bundle_path = wrong_root_bundle_path;
-  certs.output_cert_path = wrong_root_cert_path;
-  certs.output_key_path = wrong_root_key_path;
-  certs.is_ca = 1;
-  certs.key_bits = 2048u;
-  certs.valid_days = 1L;
-  status = vectis_cert_generate_bundle(&certs, &error);
-  assert(status == VECTIS_OK);
-
-  vectis_cert_bundle_config_init(&certs);
-  certs.subject.common_name = "Vectis Runtime Intermediate CA";
-  certs.output_cert_path = intermediate_cert_path;
-  certs.output_key_path = intermediate_key_path;
-  certs.ca_cert_path = root_cert_path;
-  certs.ca_key_path = root_key_path;
   certs.is_ca = 1;
   certs.key_bits = 2048u;
   certs.valid_days = 1L;
@@ -134,8 +106,18 @@ int main(void) {
   certs.ip_addresses = "127.0.0.1";
   certs.output_cert_path = server_cert_path;
   certs.output_key_path = server_key_path;
-  certs.ca_cert_path = intermediate_cert_path;
-  certs.ca_key_path = intermediate_key_path;
+  certs.ca_cert_path = root_cert_path;
+  certs.ca_key_path = root_key_path;
+  certs.key_bits = 2048u;
+  certs.valid_days = 1L;
+  status = vectis_cert_generate_bundle(&certs, &error);
+  assert(status == VECTIS_OK);
+
+  vectis_cert_bundle_config_init(&certs);
+  certs.subject.common_name = "vectis-runtime-client";
+  certs.output_bundle_path = client_bundle_path;
+  certs.ca_cert_path = root_cert_path;
+  certs.ca_key_path = root_key_path;
   certs.key_bits = 2048u;
   certs.valid_days = 1L;
   status = vectis_cert_generate_bundle(&certs, &error);
@@ -144,10 +126,11 @@ int main(void) {
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_MANUAL;
   config.tls.bind = "127.0.0.1";
-  config.tls.port = 28443u;
+  config.tls.port = 28444u;
   config.tls.certificate_path = server_cert_path;
   config.tls.private_key_path = server_key_path;
-  config.tls.ca_bundle_path = intermediate_cert_path;
+  config.tls.client_ca_bundle_path = root_cert_path;
+  config.tls.require_client_certificate = 1;
   app = vectis_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/secure", sample_handler, NULL);
@@ -156,10 +139,8 @@ int main(void) {
   status = vectis_start(app, &error);
   assert(status == VECTIS_OK);
 
-  assert_https_ok("https://127.0.0.1:28443/secure", root_cert_path, NULL);
-  assert_https_fails("https://127.0.0.1:28443/secure", NULL, NULL);
-  assert_https_fails("https://127.0.0.1:28443/secure", wrong_root_cert_path, NULL);
-  assert_https_fails("https://localhost:28443/secure", root_cert_path, NULL);
+  assert_https_fails("https://127.0.0.1:28444/secure", root_cert_path, NULL);
+  assert_https_ok("https://127.0.0.1:28444/secure", root_cert_path, client_bundle_path);
 
   status = vectis_stop(app, &error);
   assert(status == VECTIS_OK);
@@ -168,12 +149,8 @@ int main(void) {
   (void)remove(root_bundle_path);
   (void)remove(root_cert_path);
   (void)remove(root_key_path);
-  (void)remove(wrong_root_bundle_path);
-  (void)remove(wrong_root_cert_path);
-  (void)remove(wrong_root_key_path);
-  (void)remove(intermediate_cert_path);
-  (void)remove(intermediate_key_path);
   (void)remove(server_cert_path);
   (void)remove(server_key_path);
+  (void)remove(client_bundle_path);
   return 0;
 }
