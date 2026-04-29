@@ -33,14 +33,16 @@ int main(void) {
   acme.tls.mode = VECTIS_TLS_MODE_ACME;
   acme.tls.bind = "0.0.0.0";
   acme.tls.port = 443u;
+  acme.tls.domain = "api.example.com";
   acme.tls.acme_email = "ops@example.com";
 
   logger->infof(logger, "example.kore_tls.manual",
                 "app=%s cert=%s key=%s", manual.app_name,
                 manual.tls.certificate_path, manual.tls.private_key_path);
   logger->infof(logger, "example.kore_tls.acme",
-                "app=%s email=%s directory=%s", acme.app_name,
-                acme.tls.acme_email, acme.tls.acme_directory_url);
+                "app=%s domain=%s email=%s directory=%s", acme.app_name,
+                acme.tls.domain, acme.tls.acme_email,
+                acme.tls.acme_directory_url);
   logger->destroy(logger);
   return 0;
 }

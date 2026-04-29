@@ -55,6 +55,7 @@ typedef struct vectis_app_impl {
   int owns_logger;
   char *app_name;
   char *bind;
+  char *domain;
   char *cert_key_bundle_path;
   void *cert_key_bundle_pem;
   size_t cert_key_bundle_pem_size;
@@ -428,6 +429,7 @@ void vectis_tls_config_init(vectis_tls_config *config) {
   config->mode = VECTIS_TLS_MODE_MANUAL;
   config->bind = "0.0.0.0";
   config->port = 8443u;
+  config->domain = "*";
   config->acme_directory_url = VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION;
 }
 
@@ -1321,6 +1323,7 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
 
   free(impl->app_name);
   free(impl->bind);
+  free(impl->domain);
   free(impl->cert_key_bundle_path);
   free(impl->cert_key_bundle_pem);
   free(impl->certificate_path);
@@ -1470,6 +1473,11 @@ static vectis_status vectis_validate_startable(const vectis_app_impl *impl,
   } else if (impl->tls_mode == VECTIS_TLS_MODE_ACME) {
     if (impl->acme_email == NULL || impl->acme_email[0] == '\0') {
       vectis_set_error(error, VECTIS_ERR_INVALID, "ACME mode requires acme_email");
+      return VECTIS_ERR_INVALID;
+    }
+    if (impl->domain == NULL || impl->domain[0] == '\0' || strcmp(impl->domain, "*") == 0 ||
+        strchr(impl->domain, '*') != NULL) {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "ACME mode requires a non-wildcard tls.domain");
       return VECTIS_ERR_INVALID;
     }
   }
@@ -1633,6 +1641,7 @@ vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error) {
 
   impl->app_name = vectis_strdup(effective->app_name != NULL ? effective->app_name : "vectis");
   impl->bind = vectis_strdup(effective->tls.bind != NULL ? effective->tls.bind : "0.0.0.0");
+  impl->domain = vectis_strdup(effective->tls.domain != NULL ? effective->tls.domain : "*");
   impl->cert_key_bundle_path = vectis_strdup(vectis_source_path_or_old(&effective->tls.cert_key_bundle,
                                                                        effective->tls.cert_key_bundle_path));
   impl->cert_key_bundle_source = vectis_source_lc_or_old(&effective->tls.cert_key_bundle,
@@ -1828,7 +1837,10 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
     kore_config.app_name = impl->app_name;
     kore_config.bind = impl->bind;
     kore_config.port = impl->port;
+    kore_config.domain = impl->domain;
     kore_config.tls_mode = impl->tls_mode;
+    kore_config.acme_email = impl->acme_email;
+    kore_config.acme_directory_url = impl->acme_directory_url;
     kore_config.cert_key_bundle_path = impl->cert_key_bundle_path;
     kore_config.cert_key_bundle_pem = impl->cert_key_bundle_pem;
     kore_config.cert_key_bundle_pem_size = impl->cert_key_bundle_pem_size;

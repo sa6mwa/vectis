@@ -154,6 +154,7 @@ typedef struct vectis_tls_config {
   vectis_tls_mode mode;
   const char *bind;
   unsigned short port;
+  const char *domain;
   const char *cert_key_bundle_path;
   vectis_source cert_key_bundle;
   struct lc_source *cert_key_bundle_source;

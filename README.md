@@ -158,7 +158,10 @@ mTLS verification should be configurable from paths, borrowed sources, or
 in-memory PEM bytes so packed services do not need to unpack certificates before
 startup.
 
-ACME mode defaults to the Let's Encrypt production directory
+Manual TLS uses a wildcard Kore domain by default. ACME needs a concrete SNI
+name, so `VECTIS_TLS_MODE_ACME` requires `tls.domain` to be set to the public
+hostname being issued and rejects wildcard domains. ACME mode defaults to the
+Let's Encrypt production directory
 `VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION` unless the application overrides
 `tls.acme_directory_url`.
 

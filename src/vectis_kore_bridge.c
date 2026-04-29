@@ -1,6 +1,7 @@
 #include "vectis_internal.h"
 
 #include <lc/lc.h>
+#include <kore/acme.h>
 #include <kore/kore.h>
 #include <kore/http.h>
 #if defined(__linux__)
@@ -234,6 +235,23 @@ static void vectis_kore_cleanup_config(vectis_kore_runtime_config *config) {
   config->runtime_certfile_temporary = 0;
   config->runtime_certkey_temporary = 0;
   config->runtime_client_ca_temporary = 0;
+}
+
+static vectis_status vectis_kore_prepare_acme(vectis_kore_runtime_config *config,
+                                              vectis_error *error) {
+  if (config->tls_mode != VECTIS_TLS_MODE_ACME) {
+    return VECTIS_OK;
+  }
+  if (config->domain == NULL || config->domain[0] == '\0' ||
+      strchr(config->domain, '*') != NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "ACME mode requires a concrete TLS domain");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->acme_email == NULL || config->acme_email[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "ACME mode requires acme_email");
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
 }
 
 static void vectis_kore_cleanup_local_config(vectis_kore_runtime_config *config) {
@@ -1156,15 +1174,33 @@ void kore_parent_configure(int argc, char **argv) {
                         NULL)) {
     fatal("failed to bind Vectis Kore listener");
   }
-  domain = kore_domain_new("*");
+  acme_domains = 0;
+  domain = kore_domain_new(vectis_kore_current.domain != NULL ?
+                           vectis_kore_current.domain : "*");
   if (server->tls) {
-    domain->certfile = kore_strdup(vectis_kore_current.runtime_certfile);
-    domain->certkey = kore_strdup(vectis_kore_current.runtime_certkey);
+    if (vectis_kore_current.tls_mode == VECTIS_TLS_MODE_ACME) {
+      domain->acme = 1;
+      kore_free(domain->certfile);
+      kore_free(domain->certkey);
+      kore_acme_get_paths(domain->domain, &domain->certkey, &domain->certfile);
+      acme_domains++;
+      kore_free(acme_email);
+      acme_email = kore_strdup(vectis_kore_current.acme_email);
+      kore_free(acme_provider);
+      acme_provider = kore_strdup(vectis_kore_current.acme_directory_url != NULL ?
+                                  vectis_kore_current.acme_directory_url :
+                                  VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION);
+    } else {
+      domain->certfile = kore_strdup(vectis_kore_current.runtime_certfile);
+      domain->certkey = kore_strdup(vectis_kore_current.runtime_certkey);
+    }
     if (vectis_kore_current.require_client_certificate &&
         vectis_kore_current.runtime_client_ca_file != NULL) {
       domain->cafile = kore_strdup(vectis_kore_current.runtime_client_ca_file);
     }
-    vectis_kore_setup_domain_tls(domain);
+    if (vectis_kore_current.tls_mode != VECTIS_TLS_MODE_ACME) {
+      vectis_kore_setup_domain_tls(domain);
+    }
   }
   if (!kore_domain_attach(domain, server)) {
     fatal("failed to attach Vectis Kore domain");
@@ -1195,13 +1231,6 @@ vectis_status vectis_internal_kore_start(const vectis_kore_runtime_config *confi
     vectis_set_error(error, VECTIS_ERR_INVALID, "Kore runtime config is required");
     return VECTIS_ERR_INVALID;
   }
-  if (config->tls_mode == VECTIS_TLS_MODE_ACME) {
-    vectis_set_error(error,
-                     VECTIS_ERR_NOT_IMPLEMENTED,
-                     "Kore ACME runtime configuration is not implemented yet");
-    return VECTIS_ERR_NOT_IMPLEMENTED;
-  }
-
   prepared = *config;
   prepared.runtime_certfile = NULL;
   prepared.runtime_certkey = NULL;
@@ -1209,6 +1238,10 @@ vectis_status vectis_internal_kore_start(const vectis_kore_runtime_config *confi
   prepared.runtime_certfile_temporary = 0;
   prepared.runtime_certkey_temporary = 0;
   prepared.runtime_client_ca_temporary = 0;
+  status = vectis_kore_prepare_acme(&prepared, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
   status = vectis_kore_prepare_tls(&prepared, error);
   if (status != VECTIS_OK) {
     vectis_kore_cleanup_local_config(&prepared);

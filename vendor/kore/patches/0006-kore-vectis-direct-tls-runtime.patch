@@ -2,17 +2,21 @@ diff --git a/src/kore.c b/src/kore.c
 index 802f7d8..cadf77c 100644
 --- a/src/kore.c
 +++ b/src/kore.c
-@@ -879,6 +879,9 @@ kore_server_start(int argc, char *argv[])
+@@ -879,6 +879,13 @@ kore_server_start(int argc, char *argv[])
  #endif
  
  	/* Check if keymgr will be active. */
 +#if defined(KORE_VECTIS_DIRECT_TLS)
++#if defined(KORE_USE_ACME)
++	kore_keymgr_active = acme_domains > 0 ? 1 : 0;
++#else
 +	kore_keymgr_active = 0;
++#endif
 +#else
  	if (kore_tls_supported()) {
  		LIST_FOREACH(srv, &kore_servers, list) {
  			if (srv->tls) {
-@@ -889,6 +892,7 @@ kore_server_start(int argc, char *argv[])
+@@ -889,6 +896,7 @@ kore_server_start(int argc, char *argv[])
  	} else {
  		kore_keymgr_active = 0;
  	}

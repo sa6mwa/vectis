@@ -28,6 +28,7 @@ int main(void) {
   assert(strcmp(config.app_name, "vectis") == 0);
   assert(config.tls.mode == VECTIS_TLS_MODE_MANUAL);
   assert(config.tls.port == 8443u);
+  assert(strcmp(config.tls.domain, "*") == 0);
   assert(strcmp(config.tls.acme_directory_url, VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION) == 0);
   assert(config.server.max_connections == VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS);
   assert(config.server.max_request_header_bytes == VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES);
@@ -110,5 +111,26 @@ int main(void) {
   assert(vectis_route_count(app) == 5u);
 
   vectis_destroy(app);
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_ACME;
+  config.tls.acme_email = "ops@example.com";
+  app = vectis_new(&config, &error);
+  assert(app != NULL);
+  status = vectis_start(app, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "tls.domain") != NULL);
+  vectis_destroy(app);
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_ACME;
+  config.tls.domain = "api.example.com";
+  app = vectis_new(&config, &error);
+  assert(app != NULL);
+  status = vectis_start(app, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "acme_email") != NULL);
+  vectis_destroy(app);
+
   return 0;
 }

@@ -64,9 +64,8 @@ surface directly, without local helper layers that would hide awkward API shape.
 - `raw/raw_escape_hatches.c`: direct inclusion and use of bundled dependency
   headers.
 
-The helper APIs are currently draft/stubbed where the dependency-backed runtime
-is not implemented yet. The examples are still compiled by the normal build so
-the public SDK shape remains mechanically valid. New examples should prefer
+The examples are compiled by the normal build so the public SDK shape remains
+mechanically valid. New examples should prefer
 `vectis_source_from_path()`, `vectis_source_from_memory()`, `vectis_route()`,
 `vectis_route_regex()`, and `vectis_json_route()` unless they are intentionally
 showing a lower-level compatibility field.

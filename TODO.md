@@ -51,7 +51,8 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Expose stable accessors/helpers for the shared logger and raw lockd client escape hatch.
 - [x] Implement dependency-backed C helpers for curl, SSH exec/SFTP, self-signed certificate bundles, request/response JSON parse/serialize, and JSON route auto-wiring.
 - [x] Translate manual Kore TLS material from path, memory, and `lc_source` inputs into runtime server cert/key configuration.
-- [ ] Complete the remaining dependency-backed behavior for CA-signed certificate generation, ACME, and full Kore TLS/runtime configuration.
+- [x] Complete dependency-backed behavior for CA-signed certificate generation and manual/ACME Kore TLS startup.
+- [ ] Complete the remaining full Kore runtime configuration surface, including raw escape hatches where useful.
 - [x] Expose dependency headers and low-level handles/APIs as explicit escape hatches without making them the primary DX.
 - [x] Define the first C pass of one Vectis-owned naming, source, error, timeout, ownership, and cleanup convention.
 - [x] Add stable string helpers for status, error source, HTTP method, and body mode names.
@@ -88,10 +89,10 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Enforce per-route no-body and max-body policies in the Kore request path before buffering request bodies.
 - [x] Expose Kore-spooled request-body file paths for large upload routes.
 - [ ] Translate per-route body policies into concrete Kore request-body buffering, streaming, and spool-to-disk behavior.
-- [ ] Support Kore features through Vectis where practical, including TLS, ACME, websocket, static asset, file upload, and runtime configuration features.
+- [ ] Support Kore features through Vectis where practical, including websocket, static asset, file upload, and deeper runtime configuration features.
 - [ ] Define the supported one-process multi-instance behavior based on what Kore can safely provide.
 - [x] Add real HTTP integration tests.
-- [ ] Add real HTTPS integration tests.
+- [x] Add real HTTPS integration tests.
 
 ## Area 6: TLS / Certificate Configuration
 
@@ -99,14 +100,17 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Validate bundle versus cert/key inputs before runtime startup.
 - [x] Add flexible path/source/memory TLS material configuration for Kore server cert/key bundles, split cert/key material, CA bundles, and client-CA bundles.
 - [x] Translate manual Vectis TLS cert/key bundle, split cert/key, and client-CA material into Kore runtime behavior.
-- [ ] Translate Vectis ACME TLS config into Kore runtime behavior.
-- [ ] Support lockd client certificate bundle configuration from both C and Lua.
-- [ ] Support server certificate bundle configuration from both C and Lua.
+- [x] Translate Vectis ACME TLS config into Kore runtime behavior.
+- [x] Support lockd client certificate bundle configuration from C.
+- [x] Support server certificate bundle configuration from C.
+- [ ] Support lockd client certificate bundle configuration from Lua.
+- [ ] Support server certificate bundle configuration from Lua.
 - [x] Add Vectis-owned OpenSSL-backed helpers for generating self-signed certificates, CA material, and CA-signed client/server PEM bundles.
 - [ ] Add Vectis-owned OpenSSL-backed helpers for generating standalone private keys and CSRs.
 - [ ] Expose lower-level OpenSSL access for advanced users while keeping certificate workflows as the primary C and Lua DX.
 - [ ] Support embedding a lockd client certificate bundle into a packaged Vectis binary.
-- [ ] Support ACME configuration and certificate lifecycle.
+- [x] Support ACME runtime configuration through Kore for C services.
+- [ ] Add ACME lifecycle examples/tests beyond startup validation, using a controlled ACME test server if practical.
 - [ ] Support reload/update of key material where Kore allows it.
 
 ## Area 7: JSON Surface
