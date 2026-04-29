@@ -75,7 +75,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Build and link Kore against the dependency bundle shipped by `liblockdc`.
 - [x] Start/stop a real Kore runtime from `vectis`.
 - [x] Translate the currently supported `vectis_server_config` guardrails into concrete Kore runtime/config settings.
-- [ ] Implement the remaining guardrails that Kore does not expose directly yet: response-write idle timeout, minimum body transfer rate, and keepalive request count.
+- [x] Implement the remaining guardrails that Kore does not expose directly yet: response-write idle timeout, minimum body transfer rate, and keepalive request count.
 - [x] Wire `pslog` into the Kore runtime path so Vectis server logs and Kore runtime diagnostics use the configured app logger.
 - [ ] Expose raw Kore configuration/runtime escape hatches where practical.
 - [x] Register Vectis C routes as Kore handlers.

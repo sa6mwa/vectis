@@ -787,8 +787,15 @@ static void vectis_kore_apply_server_config(const vectis_server_config *server,
       body_disk_offload_bytes : VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
   http_header_timeout = vectis_kore_seconds_from_ms(server->request_header_timeout_ms);
   http_body_timeout = vectis_kore_seconds_from_ms(server->request_body_idle_timeout_ms);
+  http_response_write_timeout =
+      vectis_kore_u32_from_size((size_t)server->response_write_idle_timeout_ms);
+  http_body_min_rate = (u_int64_t)server->request_body_min_rate_bytes_per_sec;
+  http_body_min_rate_grace = server->request_body_min_rate_grace_ms > 0L ?
+      (u_int64_t)server->request_body_min_rate_grace_ms : 0u;
   http_keepalive_time = server->keepalive_enabled ?
       vectis_kore_seconds_from_ms(server->keepalive_timeout_ms) : 0u;
+  http_keepalive_max_requests = server->keepalive_enabled ?
+      (u_int32_t)server->keepalive_max_requests : 0u;
 }
 
 static void vectis_kore_setup_domain_tls(struct kore_domain *domain) {
