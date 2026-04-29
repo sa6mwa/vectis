@@ -25,6 +25,8 @@ surface directly, without local helper layers that would hide awkward API shape.
   and lonejson responses.
 - `kore/kore_file_upload.c`: large upload route using the Vectis upload route
   constructor and streaming body-policy preset.
+- `kore/kore_generated_response.c`: generated JSON response body written through
+  lonejson to a temporary file for Kore to serve without application buffering.
 
 ## `lockd/`
 

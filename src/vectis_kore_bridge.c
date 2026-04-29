@@ -1174,6 +1174,9 @@ static void vectis_kore_send_response(struct http_request *req,
       http_response(req, 500, NULL, 0);
       return;
     }
+    if (vectis_internal_response_file_temporary(response)) {
+      (void)unlink(file_path);
+    }
     http_response_fileref(req, status, ref);
     return;
   }

@@ -151,11 +151,16 @@ struct vectis_response {
   void *body;
   size_t body_size;
   char *file_path;
+  int file_path_temporary;
   vectis_kv *headers;
   size_t header_count;
   size_t header_capacity;
   int sent;
 };
+
+typedef struct vectis_file_sink {
+  FILE *fp;
+} vectis_file_sink;
 
 struct vectis_json_response {
   vectis_response *response;
@@ -393,6 +398,16 @@ static int vectis_tmp_template(char *buffer,
   prefix = config != NULL && config->prefix != NULL &&
            config->prefix[0] != '\0' ? config->prefix : "vectis-body";
   n = snprintf(buffer, buffer_size, "%s/%s-XXXXXX", directory, prefix);
+  return n > 0 && (size_t)n < buffer_size;
+}
+
+static int vectis_response_tmp_template(char *buffer, size_t buffer_size) {
+  int n;
+
+  if (buffer == NULL || buffer_size == 0u) {
+    return 0;
+  }
+  n = snprintf(buffer, buffer_size, "/tmp/vectis-response-XXXXXX");
   return n > 0 && (size_t)n < buffer_size;
 }
 
@@ -4911,6 +4926,9 @@ void vectis_internal_response_cleanup(vectis_response *response) {
   }
   free(response->content_type);
   free(response->body);
+  if (response->file_path_temporary && response->file_path != NULL) {
+    (void)unlink(response->file_path);
+  }
   free(response->file_path);
   vectis_kv_free_all(response->headers, response->header_count);
   memset(response, 0, sizeof(*response));
@@ -4946,6 +4964,10 @@ vectis_bytes vectis_internal_response_body(const vectis_response *response) {
 
 const char *vectis_internal_response_file_path(const vectis_response *response) {
   return response != NULL ? response->file_path : NULL;
+}
+
+int vectis_internal_response_file_temporary(const vectis_response *response) {
+  return response != NULL && response->file_path_temporary;
 }
 
 size_t vectis_internal_response_header_count(const vectis_response *response) {
@@ -5712,9 +5734,189 @@ vectis_status vectis_response_file(vectis_response *response,
   response->body = NULL;
   response->body_size = 0u;
   response->file_path = path_copy;
+  response->file_path_temporary = 0;
   response->sent = 1;
   vectis_error_clear(error);
   return VECTIS_OK;
+}
+
+static vectis_status vectis_response_file_owned(vectis_response *response,
+                                                int status_code,
+                                                const char *content_type,
+                                                char *path,
+                                                int temporary,
+                                                vectis_error *error) {
+  char *content_type_copy;
+
+  if (response == NULL) {
+    free(path);
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (status_code < 100 || status_code > 599) {
+    free(path);
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP status code is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (content_type == NULL || content_type[0] == '\0') {
+    free(path);
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response content type is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (path == NULL || path[0] == '\0') {
+    free(path);
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response file path is required");
+    return VECTIS_ERR_INVALID;
+  }
+  content_type_copy = vectis_strdup(content_type);
+  if (content_type_copy == NULL) {
+    if (temporary) {
+      (void)unlink(path);
+    }
+    free(path);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy response content type");
+    return VECTIS_ERR_NOMEM;
+  }
+  free(response->content_type);
+  free(response->body);
+  if (response->file_path_temporary && response->file_path != NULL) {
+    (void)unlink(response->file_path);
+  }
+  free(response->file_path);
+  response->status_code = status_code;
+  response->content_type = content_type_copy;
+  response->body = NULL;
+  response->body_size = 0u;
+  response->file_path = path;
+  response->file_path_temporary = temporary ? 1 : 0;
+  response->sent = 1;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_create_response_temp_file(FILE **out_fp,
+                                                      char **out_path,
+                                                      vectis_error *error) {
+  char tmp_template[PATH_MAX];
+  int fd;
+  FILE *fp;
+  char *path;
+
+  if (out_fp == NULL || out_path == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "temp file outputs are required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out_fp = NULL;
+  *out_path = NULL;
+  if (!vectis_response_tmp_template(tmp_template, sizeof(tmp_template))) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response temp path is too long");
+    return VECTIS_ERR_INVALID;
+  }
+  fd = mkstemp(tmp_template);
+  if (fd < 0) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to create response temp file");
+    return VECTIS_ERR_STATE;
+  }
+  path = vectis_strdup(tmp_template);
+  if (path == NULL) {
+    (void)close(fd);
+    (void)unlink(tmp_template);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy response temp path");
+    return VECTIS_ERR_NOMEM;
+  }
+  fp = fdopen(fd, "wb");
+  if (fp == NULL) {
+    (void)close(fd);
+    (void)unlink(path);
+    free(path);
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to open response temp file");
+    return VECTIS_ERR_STATE;
+  }
+  *out_fp = fp;
+  *out_path = path;
+  return VECTIS_OK;
+}
+
+vectis_status vectis_response_source(vectis_response *response,
+                                     int status_code,
+                                     const char *content_type,
+                                     struct lc_source *source,
+                                     vectis_error *error) {
+  unsigned char buffer[8192];
+  lc_error lcerr;
+  FILE *fp;
+  char *path;
+  size_t nread;
+
+  if (source == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response source is required");
+    return VECTIS_ERR_INVALID;
+  }
+  fp = NULL;
+  path = NULL;
+  if (vectis_create_response_temp_file(&fp, &path, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  if (source->reset != NULL) {
+    lc_error_init(&lcerr);
+    if (source->reset(source, &lcerr) != LC_OK) {
+      (void)fclose(fp);
+      (void)unlink(path);
+      free(path);
+      (void)vectis_source_error(error, lcerr.code, &lcerr, "failed to reset response source");
+      lc_error_cleanup(&lcerr);
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    lc_error_cleanup(&lcerr);
+  }
+  lc_error_init(&lcerr);
+  for (;;) {
+    nread = source->read(source, buffer, sizeof(buffer), &lcerr);
+    if (nread == 0u) {
+      if (lcerr.code != 0) {
+        (void)fclose(fp);
+        (void)unlink(path);
+        free(path);
+        (void)vectis_source_error(error, lcerr.code, &lcerr, "failed to read response source");
+        lc_error_cleanup(&lcerr);
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+      break;
+    }
+    if (fwrite(buffer, 1u, nread, fp) != nread) {
+      (void)fclose(fp);
+      (void)unlink(path);
+      free(path);
+      lc_error_cleanup(&lcerr);
+      vectis_set_error(error, VECTIS_ERR_STATE, "failed to write response temp file");
+      return VECTIS_ERR_STATE;
+    }
+  }
+  lc_error_cleanup(&lcerr);
+  if (fclose(fp) != 0) {
+    (void)unlink(path);
+    free(path);
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to close response temp file");
+    return VECTIS_ERR_STATE;
+  }
+  return vectis_response_file_owned(response, status_code, content_type, path, 1, error);
+}
+
+static lonejson_status vectis_lonejson_file_sink(void *user,
+                                                 const void *data,
+                                                 size_t length,
+                                                 lonejson_error *error) {
+  vectis_file_sink *sink;
+
+  (void)error;
+  sink = (vectis_file_sink *)user;
+  if (sink == NULL || sink->fp == NULL || (data == NULL && length > 0u)) {
+    return LONEJSON_STATUS_INVALID_ARGUMENT;
+  }
+  if (length > 0u && fwrite(data, 1u, length, sink->fp) != length) {
+    return LONEJSON_STATUS_IO_ERROR;
+  }
+  return LONEJSON_STATUS_OK;
 }
 
 vectis_status vectis_response_json(vectis_response *response,
@@ -5760,6 +5962,60 @@ vectis_status vectis_response_json(vectis_response *response,
   status = vectis_response_bytes(response, status_code, "application/json", body, error);
   free(json);
   return status;
+}
+
+vectis_status vectis_response_json_generated(vectis_response *response,
+                                             int status_code,
+                                             const lonejson_map *map,
+                                             const void *value,
+                                             vectis_error *error) {
+  vectis_file_sink sink;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  FILE *fp;
+  char *path;
+
+  if (map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lonejson map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (value == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "json response value is required");
+    return VECTIS_ERR_INVALID;
+  }
+  fp = NULL;
+  path = NULL;
+  if (vectis_create_response_temp_file(&fp, &path, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  sink.fp = fp;
+  json_status = lonejson_serialize_sink(map,
+                                        value,
+                                        vectis_lonejson_file_sink,
+                                        &sink,
+                                        NULL,
+                                        &json_error);
+  if (json_status != LONEJSON_STATUS_OK) {
+    (void)fclose(fp);
+    (void)unlink(path);
+    free(path);
+    vectis_set_errorf(error,
+                      VECTIS_ERR_INVALID,
+                      "failed to serialize generated response JSON: %s",
+                      json_error.message);
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LONEJSON;
+      error->dependency_code = (long)json_status;
+    }
+    return VECTIS_ERR_INVALID;
+  }
+  if (fclose(fp) != 0) {
+    (void)unlink(path);
+    free(path);
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to close generated JSON response file");
+    return VECTIS_ERR_STATE;
+  }
+  return vectis_response_file_owned(response, status_code, "application/json", path, 1, error);
 }
 
 vectis_status vectis_json_reply(vectis_json_response *response,

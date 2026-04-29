@@ -455,6 +455,7 @@ static void assert_request_response_surface(void) {
   vectis_response *response;
   vectis_error error;
   vectis_status status;
+  lc_source *source;
   vectis_bytes body;
   vectis_mutable_bytes body_copy;
   vectis_body_materialize_config materialize_config;
@@ -540,6 +541,19 @@ static void assert_request_response_surface(void) {
   assert(strcmp(vectis_internal_response_content_type(response), "application/json") == 0);
   assert(body.size > 0u);
   assert(strstr((const char *)body.data, "\"abc\"") != NULL);
+  status = vectis_response_json_generated(response, 200, &sample_doc_map, &doc, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_body(response).data == NULL);
+  assert(vectis_internal_response_file_path(response) != NULL);
+  assert(vectis_internal_response_file_temporary(response));
+  source = NULL;
+  assert(lc_source_from_memory(text, sizeof(text) - 1u, &source, NULL) == LC_OK);
+  status = vectis_response_source(response, 200, "text/plain", source, &error);
+  lc_source_close(source);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_body(response).data == NULL);
+  assert(vectis_internal_response_file_path(response) != NULL);
+  assert(vectis_internal_response_file_temporary(response));
   status = vectis_response_header(response, "x-vectis-test", "ok", &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_header_count(response) == 1u);

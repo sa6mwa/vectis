@@ -779,11 +779,21 @@ vectis_status vectis_response_file(vectis_response *response,
                                    const char *content_type,
                                    const char *path,
                                    vectis_error *error);
+vectis_status vectis_response_source(vectis_response *response,
+                                     int status_code,
+                                     const char *content_type,
+                                     struct lc_source *source,
+                                     vectis_error *error);
 vectis_status vectis_response_json(vectis_response *response,
                                    int status_code,
                                    const lonejson_map *map,
                                    const void *value,
                                    vectis_error *error);
+vectis_status vectis_response_json_generated(vectis_response *response,
+                                             int status_code,
+                                             const lonejson_map *map,
+                                             const void *value,
+                                             vectis_error *error);
 vectis_status vectis_json_reply(vectis_json_response *response,
                                 int status_code,
                                 const lonejson_map *map,

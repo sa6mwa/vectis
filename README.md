@@ -309,6 +309,9 @@ The current implementation provides:
   without making them decide the storage class up front.
 - `vectis_response_file()` lets C handlers return large files through the Kore
   runtime without first buffering the whole response in application memory.
+- `vectis_response_source()` and `vectis_response_json_generated()` write
+  generated payloads to temporary files first, then hand those files to Kore so
+  handlers do not need one contiguous response buffer.
 - `vectis_response_header()` adds ordinary response headers with CR/LF-safe
   validation before the Kore bridge sends the response.
 - Optional lockd configuration, so Kore-only examples and services do not need
