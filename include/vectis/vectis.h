@@ -608,6 +608,10 @@ int vectis_request_body_is_spooled(vectis_request *request);
 vectis_status vectis_response_status(vectis_response *response,
                                      int status_code,
                                      vectis_error *error);
+vectis_status vectis_response_header(vectis_response *response,
+                                     const char *name,
+                                     const char *value,
+                                     vectis_error *error);
 vectis_status vectis_response_text(vectis_response *response,
                                    int status_code,
                                    const char *content_type,

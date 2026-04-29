@@ -103,5 +103,10 @@ int vectis_internal_response_status_code(const vectis_response *response);
 const char *vectis_internal_response_content_type(const vectis_response *response);
 vectis_bytes vectis_internal_response_body(const vectis_response *response);
 const char *vectis_internal_response_file_path(const vectis_response *response);
+size_t vectis_internal_response_header_count(const vectis_response *response);
+const char *vectis_internal_response_header_name(const vectis_response *response,
+                                                 size_t index);
+const char *vectis_internal_response_header_value(const vectis_response *response,
+                                                  size_t index);
 
 #endif

@@ -301,6 +301,8 @@ The current implementation provides:
   buffered or Kore-spooled bodies.
 - `vectis_response_file()` lets C handlers return large files through the Kore
   runtime without first buffering the whole response in application memory.
+- `vectis_response_header()` adds ordinary response headers with CR/LF-safe
+  validation before the Kore bridge sends the response.
 - Optional lockd configuration, so Kore-only examples and services do not need
   placeholder lockd sockets.
 - Route constructors for literal paths, named and optional path parameters, and

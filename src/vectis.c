@@ -122,6 +122,9 @@ struct vectis_response {
   void *body;
   size_t body_size;
   char *file_path;
+  vectis_kv *headers;
+  size_t header_count;
+  size_t header_capacity;
   int sent;
 };
 
@@ -848,6 +851,34 @@ static const char *vectis_kv_find(const vectis_kv *items,
     }
   }
   return NULL;
+}
+
+static int vectis_header_name_valid(const char *name) {
+  const unsigned char *cursor;
+
+  if (name == NULL || name[0] == '\0') {
+    return 0;
+  }
+  for (cursor = (const unsigned char *)name; *cursor != '\0'; ++cursor) {
+    if (*cursor <= 32u || *cursor == 127u || *cursor == ':') {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static int vectis_header_value_valid(const char *value) {
+  const unsigned char *cursor;
+
+  if (value == NULL) {
+    return 0;
+  }
+  for (cursor = (const unsigned char *)value; *cursor != '\0'; ++cursor) {
+    if (*cursor == '\r' || *cursor == '\n') {
+      return 0;
+    }
+  }
+  return 1;
 }
 
 static vectis_status vectis_kv_add(vectis_kv **items,
@@ -3330,6 +3361,7 @@ void vectis_internal_response_cleanup(vectis_response *response) {
   free(response->content_type);
   free(response->body);
   free(response->file_path);
+  vectis_kv_free_all(response->headers, response->header_count);
   memset(response, 0, sizeof(*response));
 }
 
@@ -3363,6 +3395,26 @@ vectis_bytes vectis_internal_response_body(const vectis_response *response) {
 
 const char *vectis_internal_response_file_path(const vectis_response *response) {
   return response != NULL ? response->file_path : NULL;
+}
+
+size_t vectis_internal_response_header_count(const vectis_response *response) {
+  return response != NULL ? response->header_count : 0u;
+}
+
+const char *vectis_internal_response_header_name(const vectis_response *response,
+                                                 size_t index) {
+  if (response == NULL || index >= response->header_count) {
+    return NULL;
+  }
+  return response->headers[index].name;
+}
+
+const char *vectis_internal_response_header_value(const vectis_response *response,
+                                                  size_t index) {
+  if (response == NULL || index >= response->header_count) {
+    return NULL;
+  }
+  return response->headers[index].value;
 }
 
 vectis_status vectis_request_json_into(vectis_request *request,
@@ -3608,6 +3660,31 @@ vectis_status vectis_response_status(vectis_response *response,
   response->sent = 1;
   vectis_error_clear(error);
   return VECTIS_OK;
+}
+
+vectis_status vectis_response_header(vectis_response *response,
+                                     const char *name,
+                                     const char *value,
+                                     vectis_error *error) {
+  if (response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!vectis_header_name_valid(name)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response header name is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!vectis_header_value_valid(value)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response header value is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_kv_add(&response->headers,
+                       &response->header_count,
+                       &response->header_capacity,
+                       name,
+                       value,
+                       "response header",
+                       error);
 }
 
 vectis_status vectis_response_text(vectis_response *response,

@@ -462,6 +462,15 @@ static void assert_request_response_surface(void) {
   assert(strcmp(vectis_internal_response_content_type(response), "application/json") == 0);
   assert(body.size > 0u);
   assert(strstr((const char *)body.data, "\"abc\"") != NULL);
+  status = vectis_response_header(response, "x-vectis-test", "ok", &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_header_count(response) == 1u);
+  assert(strcmp(vectis_internal_response_header_name(response, 0u), "x-vectis-test") == 0);
+  assert(strcmp(vectis_internal_response_header_value(response, 0u), "ok") == 0);
+  status = vectis_response_header(response, "bad:name", "ok", &error);
+  assert(status == VECTIS_ERR_INVALID);
+  status = vectis_response_header(response, "x-bad", "bad\nvalue", &error);
+  assert(status == VECTIS_ERR_INVALID);
 
   status = vectis_response_error_json(response,
                                       422,

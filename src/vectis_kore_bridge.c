@@ -1070,10 +1070,16 @@ static void vectis_kore_send_response(struct http_request *req,
   struct timespec ts;
   int fd;
   int status;
+  size_t i;
 
   status = vectis_internal_response_status_code(response);
   if (status == 0) {
     status = 204;
+  }
+  for (i = 0u; i < vectis_internal_response_header_count(response); ++i) {
+    http_response_header(req,
+                         vectis_internal_response_header_name(response, i),
+                         vectis_internal_response_header_value(response, i));
   }
   content_type = vectis_internal_response_content_type(response);
   if (content_type != NULL) {
