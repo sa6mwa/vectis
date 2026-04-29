@@ -139,19 +139,20 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Draft request-body policy configuration for buffer versus streaming/spool-to-disk strategies.
 - [x] Expose C response helpers for large file payloads without application-memory buffering.
 - [x] Expose C response serialization helpers for generated large payload streaming.
-- [ ] Add delimiter-separated value support for CSV, TSV, and configurable any-SV input/output.
+- [x] Add delimiter-separated value support for CSV, TSV, and configurable any-SV input.
 - [x] Stream CSV/TSV/any-SV rows from `lc_source` and `vectis_source` readers into caller-provided `lonejson`-mapped structs without requiring whole-file buffering.
 - [x] Provide row callback APIs for DSV parsing so handlers can validate, transform, store to lockd, enqueue, or write downstream output one row at a time.
 - [x] Provide convenience DSV-to-JSON-array conversion, including a typed `lonejson` map-backed variant.
 - [ ] Add DSV-to-JSON-array memory-limit and spill-to-disk behavior consistent with other Vectis body/materialization helpers.
 - [ ] Provide `lonejson`-mapped struct serialization back to CSV, TSV, and configurable any-SV streams.
-- [ ] Handle headers, headerless map-order fields, explicit field mappings, delimiter/quote/escape configuration, CRLF/LF normalization, empty values, null policy, and strict versus permissive row-width validation.
+- [x] Handle headers, headerless map-order fields, explicit field mappings, delimiter/quote/escape configuration, CRLF/LF normalization, empty values, and strict versus permissive row-width validation.
 - [x] Add explicit row-only CSV/TSV presets for the common headerless typed-lonejson path.
 - [x] Add opt-in whole-record DSV comment skipping with configurable prefixes.
 - [x] Add C examples and tests for CSV, TSV, custom delimiter, streamed row parsing, and DSV-to-JSON-array conversion.
 - [ ] Add C examples and tests for struct-to-DSV serialization once that API lands.
-- [ ] Define the XML-to-lonejson mapping contract before implementing XML document streaming helpers.
-- [ ] Add libxml2-backed streaming XML parse helpers that can feed lonejson mapped structs without whole-document buffering.
+- [x] Define the first XML-to-lonejson mapping contract: child elements by field key, repeated elements to arrays, attributes by name or configured prefix, and object text to `config.text_key`.
+- [x] Add libxml2-backed XML reader helpers that parse `vectis_source` or raw `lc_source` inputs into lonejson mapped structs.
+- [ ] Add true push-through XML-to-lonejson streaming for huge text fields so intermediate generated JSON strings do not need to remain memory-backed.
 - [ ] Expose Lua JSON encode/decode helpers through the bundled `lonejson` Lua rock or a Vectis facade.
 - [x] Make `lonejson` the backing implementation for Vectis request parsing, response serialization, lockd document helpers, and JSON HTTP client helpers.
 - [ ] Add higher-level JSON REST helpers for request validation, response serialization, and downstream API calls.

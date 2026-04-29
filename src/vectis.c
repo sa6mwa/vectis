@@ -4,6 +4,8 @@
 #include <lc/lc.h>
 #include <libssh2.h>
 #include <libssh2_sftp.h>
+#include <libxml/parser.h>
+#include <libxml/xmlreader.h>
 #include <lonejson.h>
 #include <openssl/bn.h>
 #include <openssl/evp.h>
@@ -11,6 +13,7 @@
 #include <openssl/rsa.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
+#include <ctype.h>
 #include <errno.h>
 #include <limits.h>
 #include <netdb.h>
@@ -98,6 +101,25 @@ typedef struct vectis_dsv_parser {
   int eof;
   int skip_next_lf;
 } vectis_dsv_parser;
+
+typedef struct vectis_xml_field_value {
+  vectis_string_builder value;
+  size_t count;
+  int array;
+} vectis_xml_field_value;
+
+typedef struct vectis_xml_lc_reader {
+  lc_source *source;
+  vectis_status status;
+  lc_error error;
+  int has_error;
+} vectis_xml_lc_reader;
+
+typedef struct vectis_lonejson_bytes_reader {
+  const unsigned char *data;
+  size_t size;
+  size_t offset;
+} vectis_lonejson_bytes_reader;
 
 typedef struct vectis_json_string_box {
   char *value;
@@ -5661,6 +5683,856 @@ vectis_status vectis_dsv_source_to_lonejson_array(const vectis_source *source,
     lc_source_close(reader);
   }
   return status;
+}
+
+void vectis_xml_config_init(vectis_xml_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  config->root_element = NULL;
+  config->text_key = "text";
+  config->attribute_prefix = "";
+  config->trim_text = 1;
+  config->skip_unknown = 1;
+  config->max_depth = 64u;
+  config->max_text_bytes = 67108864u;
+}
+
+vectis_xml_config vectis_xml_default(void) {
+  vectis_xml_config config;
+
+  vectis_xml_config_init(&config);
+  return config;
+}
+
+static int vectis_xml_lc_read(void *ctx, char *buffer, int len) {
+  vectis_xml_lc_reader *reader;
+  size_t nread;
+
+  reader = (vectis_xml_lc_reader *)ctx;
+  if (reader == NULL || reader->source == NULL || buffer == NULL || len < 0) {
+    return -1;
+  }
+  lc_error_cleanup(&reader->error);
+  lc_error_init(&reader->error);
+  nread = reader->source->read(reader->source, buffer, (size_t)len, &reader->error);
+  if (nread == 0u && reader->error.code != 0) {
+    reader->has_error = 1;
+    reader->status = VECTIS_ERR_STATE;
+    return -1;
+  }
+  return (int)nread;
+}
+
+static vectis_status vectis_xml_effective_config(const vectis_xml_config *config,
+                                                 vectis_xml_config *out,
+                                                 vectis_error *error) {
+  vectis_xml_config defaults;
+
+  vectis_xml_config_init(&defaults);
+  *out = config != NULL ? *config : defaults;
+  if (out->max_depth == 0u) {
+    out->max_depth = defaults.max_depth;
+  }
+  if (out->text_key == NULL) {
+    out->text_key = defaults.text_key;
+  }
+  if (out->attribute_prefix == NULL) {
+    out->attribute_prefix = defaults.attribute_prefix;
+  }
+  if (out->root_element != NULL && out->root_element[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML root_element must not be empty");
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
+}
+
+static const char *vectis_xml_reader_local_name(xmlTextReaderPtr reader) {
+  const xmlChar *name;
+
+  name = xmlTextReaderConstLocalName(reader);
+  if (name == NULL) {
+    name = xmlTextReaderConstName(reader);
+  }
+  return (const char *)name;
+}
+
+static int vectis_xml_name_matches(const char *actual, const char *expected) {
+  return actual != NULL && expected != NULL && strcmp(actual, expected) == 0;
+}
+
+static const lonejson_field *vectis_xml_find_field(const lonejson_map *map,
+                                                   const char *name) {
+  return vectis_dsv_find_field(map, name);
+}
+
+static const lonejson_field *vectis_xml_find_attribute_field(const lonejson_map *map,
+                                                            const vectis_xml_config *config,
+                                                            const char *name,
+                                                            vectis_string_builder *key,
+                                                            vectis_error *error) {
+  const lonejson_field *field;
+
+  field = vectis_xml_find_field(map, name);
+  if (field != NULL || config->attribute_prefix[0] == '\0') {
+    return field;
+  }
+  key->size = 0u;
+  if (key->data != NULL) {
+    key->data[0] = '\0';
+  }
+  if (vectis_string_builder_append(key, config->attribute_prefix, error) != VECTIS_OK ||
+      vectis_string_builder_append(key, name, error) != VECTIS_OK) {
+    return NULL;
+  }
+  return vectis_xml_find_field(map, key->data);
+}
+
+static int vectis_xml_field_is_array(const lonejson_field *field) {
+  return field != NULL &&
+         (field->kind == LONEJSON_FIELD_KIND_STRING_ARRAY ||
+          field->kind == LONEJSON_FIELD_KIND_I64_ARRAY ||
+          field->kind == LONEJSON_FIELD_KIND_U64_ARRAY ||
+          field->kind == LONEJSON_FIELD_KIND_F64_ARRAY ||
+          field->kind == LONEJSON_FIELD_KIND_BOOL_ARRAY ||
+          field->kind == LONEJSON_FIELD_KIND_OBJECT_ARRAY);
+}
+
+static int vectis_xml_field_is_object(const lonejson_field *field) {
+  return field != NULL &&
+         (field->kind == LONEJSON_FIELD_KIND_OBJECT ||
+          field->kind == LONEJSON_FIELD_KIND_OBJECT_ARRAY);
+}
+
+static int vectis_xml_field_uses_string_value(const lonejson_field *field) {
+  if (field == NULL) {
+    return 1;
+  }
+  return field->kind == LONEJSON_FIELD_KIND_STRING ||
+         field->kind == LONEJSON_FIELD_KIND_STRING_STREAM ||
+         field->kind == LONEJSON_FIELD_KIND_BASE64_STREAM ||
+         field->kind == LONEJSON_FIELD_KIND_STRING_SOURCE ||
+         field->kind == LONEJSON_FIELD_KIND_BASE64_SOURCE ||
+         field->kind == LONEJSON_FIELD_KIND_JSON_VALUE ||
+         field->kind == LONEJSON_FIELD_KIND_STRING_ARRAY;
+}
+
+static int vectis_xml_ascii_equal_ci(const char *value, const char *expected) {
+  while (*value != '\0' && *expected != '\0') {
+    if (tolower((unsigned char)*value) != tolower((unsigned char)*expected)) {
+      return 0;
+    }
+    value++;
+    expected++;
+  }
+  return *value == '\0' && *expected == '\0';
+}
+
+static void vectis_xml_trim_span(const char **data, size_t *size) {
+  const char *start;
+  const char *end;
+
+  start = *data;
+  end = start + *size;
+  while (start < end && isspace((unsigned char)*start)) {
+    start++;
+  }
+  while (end > start && isspace((unsigned char)*(end - 1))) {
+    end--;
+  }
+  *data = start;
+  *size = (size_t)(end - start);
+}
+
+static int vectis_xml_span_has_nonspace(const char *data, size_t size) {
+  size_t i;
+
+  for (i = 0u; i < size; ++i) {
+    if (!isspace((unsigned char)data[i])) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static vectis_status vectis_xml_append_scalar_json(vectis_string_builder *builder,
+                                                   const lonejson_field *field,
+                                                   const char *value,
+                                                   size_t value_size,
+                                                   vectis_error *error) {
+  char *copy;
+  vectis_status status;
+
+  if (vectis_xml_field_uses_string_value(field)) {
+    copy = (char *)malloc(value_size + 1u);
+    if (copy == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate XML scalar value");
+      return VECTIS_ERR_NOMEM;
+    }
+    if (value_size > 0u) {
+      memcpy(copy, value, value_size);
+    }
+    copy[value_size] = '\0';
+    status = vectis_append_lonejson_string(builder, copy, error);
+    free(copy);
+    return status;
+  }
+  if (field != NULL &&
+      (field->kind == LONEJSON_FIELD_KIND_BOOL ||
+       field->kind == LONEJSON_FIELD_KIND_BOOL_ARRAY)) {
+    copy = (char *)malloc(value_size + 1u);
+    if (copy == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate XML boolean value");
+      return VECTIS_ERR_NOMEM;
+    }
+    if (value_size > 0u) {
+      memcpy(copy, value, value_size);
+    }
+    copy[value_size] = '\0';
+    if (vectis_xml_ascii_equal_ci(copy, "true") || strcmp(copy, "1") == 0) {
+      free(copy);
+      return vectis_string_builder_append(builder, "true", error);
+    }
+    if (vectis_xml_ascii_equal_ci(copy, "false") || strcmp(copy, "0") == 0) {
+      free(copy);
+      return vectis_string_builder_append(builder, "false", error);
+    }
+    free(copy);
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML boolean value must be true, false, 1, or 0");
+    return VECTIS_ERR_INVALID;
+  }
+  if (value_size == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML numeric value must not be empty");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_string_builder_append_n(builder, value, value_size, error);
+}
+
+static vectis_status vectis_xml_field_append(vectis_xml_field_value *slot,
+                                             const lonejson_field *field,
+                                             vectis_string_builder *value,
+                                             vectis_error *error) {
+  if (slot->count > 0u && !slot->array) {
+    vectis_set_errorf(error,
+                      VECTIS_ERR_INVALID,
+                      "duplicate XML value for field '%s'",
+                      field->json_key);
+    return VECTIS_ERR_INVALID;
+  }
+  if (slot->array && slot->count == 0u) {
+    if (vectis_string_builder_append(&slot->value, "[", error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+  }
+  if (slot->array && slot->count > 0u) {
+    if (vectis_string_builder_append(&slot->value, ",", error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+  }
+  if (vectis_string_builder_append_n(&slot->value, value->data, value->size, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  slot->count++;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_xml_append_text_field(vectis_xml_field_value *slots,
+                                                  const lonejson_map *map,
+                                                  const vectis_xml_config *config,
+                                                  const char *data,
+                                                  size_t size,
+                                                  vectis_error *error) {
+  const lonejson_field *field;
+  vectis_string_builder scalar;
+  const char *text;
+  size_t text_size;
+  size_t index;
+  vectis_status status;
+
+  if (config->text_key == NULL || config->text_key[0] == '\0') {
+    return VECTIS_OK;
+  }
+  text = data;
+  text_size = size;
+  if (config->trim_text) {
+    vectis_xml_trim_span(&text, &text_size);
+  }
+  if (text_size == 0u) {
+    return VECTIS_OK;
+  }
+  field = vectis_xml_find_field(map, config->text_key);
+  if (field == NULL) {
+    if (config->skip_unknown) {
+      return VECTIS_OK;
+    }
+    vectis_set_errorf(error, VECTIS_ERR_INVALID, "unknown XML text field '%s'", config->text_key);
+    return VECTIS_ERR_INVALID;
+  }
+  index = (size_t)(field - map->fields);
+  scalar.data = NULL;
+  scalar.size = 0u;
+  scalar.capacity = 0u;
+  status = vectis_xml_append_scalar_json(&scalar, field, text, text_size, error);
+  if (status == VECTIS_OK) {
+    status = vectis_xml_field_append(&slots[index], field, &scalar, error);
+  }
+  vectis_string_builder_cleanup(&scalar);
+  return status;
+}
+
+static vectis_status vectis_xml_read_text_content(xmlTextReaderPtr reader,
+                                                  const vectis_xml_config *config,
+                                                  int start_depth,
+                                                  vectis_string_builder *text,
+                                                  vectis_error *error) {
+  int rc;
+  int type;
+  int depth;
+  const xmlChar *value;
+  const char *chunk;
+  size_t chunk_size;
+
+  if (xmlTextReaderIsEmptyElement(reader)) {
+    return VECTIS_OK;
+  }
+  for (;;) {
+    rc = xmlTextReaderRead(reader);
+    if (rc != 1) {
+      if (rc == 0) {
+        vectis_set_error(error, VECTIS_ERR_INVALID, "unexpected end of XML while reading text");
+      } else {
+        vectis_set_error(error, VECTIS_ERR_INVALID, "libxml2 failed while reading XML text");
+      }
+      return VECTIS_ERR_INVALID;
+    }
+    type = xmlTextReaderNodeType(reader);
+    depth = xmlTextReaderDepth(reader);
+    if (type == XML_READER_TYPE_END_ELEMENT && depth == start_depth) {
+      return VECTIS_OK;
+    }
+    if (type == XML_READER_TYPE_ELEMENT) {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "XML scalar field contains nested elements");
+      return VECTIS_ERR_INVALID;
+    }
+    if (type == XML_READER_TYPE_TEXT ||
+        type == XML_READER_TYPE_CDATA ||
+        type == XML_READER_TYPE_SIGNIFICANT_WHITESPACE ||
+        type == XML_READER_TYPE_WHITESPACE) {
+      value = xmlTextReaderConstValue(reader);
+      if (value != NULL) {
+        chunk = (const char *)value;
+        chunk_size = strlen(chunk);
+        if (config->max_text_bytes > 0u && text->size + chunk_size > config->max_text_bytes) {
+          vectis_set_error(error, VECTIS_ERR_INVALID, "XML text exceeds max_text_bytes");
+          return VECTIS_ERR_INVALID;
+        }
+        if (vectis_string_builder_append_n(text, chunk, chunk_size, error) != VECTIS_OK) {
+          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        }
+      }
+    }
+  }
+}
+
+static vectis_status vectis_xml_skip_element(xmlTextReaderPtr reader, vectis_error *error) {
+  int start_depth;
+  int rc;
+  int type;
+
+  if (xmlTextReaderIsEmptyElement(reader)) {
+    return VECTIS_OK;
+  }
+  start_depth = xmlTextReaderDepth(reader);
+  for (;;) {
+    rc = xmlTextReaderRead(reader);
+    if (rc != 1) {
+      if (rc == 0) {
+        vectis_set_error(error, VECTIS_ERR_INVALID, "unexpected end of XML while skipping element");
+      } else {
+        vectis_set_error(error, VECTIS_ERR_INVALID, "libxml2 failed while skipping XML element");
+      }
+      return VECTIS_ERR_INVALID;
+    }
+    type = xmlTextReaderNodeType(reader);
+    if (type == XML_READER_TYPE_END_ELEMENT && xmlTextReaderDepth(reader) == start_depth) {
+      return VECTIS_OK;
+    }
+  }
+}
+
+static vectis_status vectis_xml_append_field_from_reader(xmlTextReaderPtr reader,
+                                                         const lonejson_field *field,
+                                                         const vectis_xml_config *config,
+                                                         size_t depth,
+                                                         vectis_string_builder *out,
+                                                         vectis_error *error);
+
+static vectis_status vectis_xml_build_object(xmlTextReaderPtr reader,
+                                             const lonejson_map *map,
+                                             const vectis_xml_config *config,
+                                             size_t depth,
+                                             vectis_string_builder *out,
+                                             vectis_error *error) {
+  vectis_xml_field_value *slots;
+  vectis_string_builder key;
+  vectis_string_builder text;
+  vectis_string_builder value;
+  const lonejson_field *field;
+  const char *name;
+  const xmlChar *attr_value;
+  size_t i;
+  size_t index;
+  int start_depth;
+  int empty;
+  int rc;
+  int type;
+  int first;
+  vectis_status status;
+
+  if (depth > config->max_depth) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML nesting exceeds max_depth");
+    return VECTIS_ERR_INVALID;
+  }
+  if (map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML lonejson map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  slots = (vectis_xml_field_value *)calloc(map->field_count, sizeof(slots[0]));
+  if (slots == NULL && map->field_count > 0u) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate XML field slots");
+    return VECTIS_ERR_NOMEM;
+  }
+  for (i = 0u; i < map->field_count; ++i) {
+    slots[i].array = vectis_xml_field_is_array(&map->fields[i]);
+  }
+  key.data = NULL;
+  key.size = 0u;
+  key.capacity = 0u;
+  text.data = NULL;
+  text.size = 0u;
+  text.capacity = 0u;
+  value.data = NULL;
+  value.size = 0u;
+  value.capacity = 0u;
+  start_depth = xmlTextReaderDepth(reader);
+  empty = xmlTextReaderIsEmptyElement(reader);
+  status = VECTIS_OK;
+
+  if (xmlTextReaderMoveToFirstAttribute(reader) == 1) {
+    do {
+      name = vectis_xml_reader_local_name(reader);
+      if (name == NULL) {
+        continue;
+      }
+      field = vectis_xml_find_attribute_field(map, config, name, &key, error);
+      if (field == NULL) {
+        if (error != NULL && error->code != VECTIS_OK) {
+          status = error->code;
+          goto cleanup;
+        }
+        if (config->skip_unknown) {
+          continue;
+        }
+        vectis_set_errorf(error, VECTIS_ERR_INVALID, "unknown XML attribute '%s'", name);
+        status = VECTIS_ERR_INVALID;
+        goto cleanup;
+      }
+      attr_value = xmlTextReaderConstValue(reader);
+      value.size = 0u;
+      if (value.data != NULL) {
+        value.data[0] = '\0';
+      }
+      status = vectis_xml_append_scalar_json(&value,
+                                             field,
+                                             attr_value != NULL ? (const char *)attr_value : "",
+                                             attr_value != NULL ? strlen((const char *)attr_value) : 0u,
+                                             error);
+      if (status != VECTIS_OK) {
+        goto cleanup;
+      }
+      index = (size_t)(field - map->fields);
+      status = vectis_xml_field_append(&slots[index], field, &value, error);
+      if (status != VECTIS_OK) {
+        goto cleanup;
+      }
+    } while (xmlTextReaderMoveToNextAttribute(reader) == 1);
+    (void)xmlTextReaderMoveToElement(reader);
+  }
+
+  if (!empty) {
+    for (;;) {
+      rc = xmlTextReaderRead(reader);
+      if (rc != 1) {
+        if (rc == 0) {
+          vectis_set_error(error, VECTIS_ERR_INVALID, "unexpected end of XML object");
+        } else {
+          vectis_set_error(error, VECTIS_ERR_INVALID, "libxml2 failed while reading XML object");
+        }
+        status = VECTIS_ERR_INVALID;
+        goto cleanup;
+      }
+      type = xmlTextReaderNodeType(reader);
+      if (type == XML_READER_TYPE_END_ELEMENT && xmlTextReaderDepth(reader) == start_depth) {
+        break;
+      }
+      if (type == XML_READER_TYPE_ELEMENT) {
+        name = vectis_xml_reader_local_name(reader);
+        field = vectis_xml_find_field(map, name);
+        if (field == NULL) {
+          if (!config->skip_unknown) {
+            vectis_set_errorf(error, VECTIS_ERR_INVALID, "unknown XML element '%s'", name);
+            status = VECTIS_ERR_INVALID;
+            goto cleanup;
+          }
+          status = vectis_xml_skip_element(reader, error);
+          if (status != VECTIS_OK) {
+            goto cleanup;
+          }
+          continue;
+        }
+        value.size = 0u;
+        if (value.data != NULL) {
+          value.data[0] = '\0';
+        }
+        status = vectis_xml_append_field_from_reader(reader,
+                                                     field,
+                                                     config,
+                                                     depth + 1u,
+                                                     &value,
+                                                     error);
+        if (status != VECTIS_OK) {
+          goto cleanup;
+        }
+        index = (size_t)(field - map->fields);
+        status = vectis_xml_field_append(&slots[index], field, &value, error);
+        if (status != VECTIS_OK) {
+          goto cleanup;
+        }
+      } else if (type == XML_READER_TYPE_TEXT ||
+                 type == XML_READER_TYPE_CDATA ||
+                 type == XML_READER_TYPE_SIGNIFICANT_WHITESPACE ||
+                 type == XML_READER_TYPE_WHITESPACE) {
+        attr_value = xmlTextReaderConstValue(reader);
+        if (attr_value != NULL &&
+            vectis_xml_span_has_nonspace((const char *)attr_value, strlen((const char *)attr_value))) {
+          status = vectis_string_builder_append(&text, (const char *)attr_value, error);
+          if (status != VECTIS_OK) {
+            goto cleanup;
+          }
+        }
+      }
+    }
+  }
+
+  if (text.size > 0u) {
+    status = vectis_xml_append_text_field(slots, map, config, text.data, text.size, error);
+    if (status != VECTIS_OK) {
+      goto cleanup;
+    }
+  }
+  status = vectis_string_builder_append(out, "{", error);
+  first = 1;
+  for (i = 0u; status == VECTIS_OK && i < map->field_count; ++i) {
+    if (slots[i].count == 0u) {
+      continue;
+    }
+    if (slots[i].array &&
+        vectis_string_builder_append(&slots[i].value, "]", error) != VECTIS_OK) {
+      status = error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      break;
+    }
+    if (!first && vectis_string_builder_append(out, ",", error) != VECTIS_OK) {
+      status = error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      break;
+    }
+    first = 0;
+    if (vectis_append_lonejson_string(out, map->fields[i].json_key, error) != VECTIS_OK ||
+        vectis_string_builder_append(out, ":", error) != VECTIS_OK ||
+        vectis_string_builder_append_n(out, slots[i].value.data, slots[i].value.size, error) != VECTIS_OK) {
+      status = error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      break;
+    }
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(out, "}", error);
+  }
+
+cleanup:
+  for (i = 0u; i < map->field_count; ++i) {
+    vectis_string_builder_cleanup(&slots[i].value);
+  }
+  free(slots);
+  vectis_string_builder_cleanup(&key);
+  vectis_string_builder_cleanup(&text);
+  vectis_string_builder_cleanup(&value);
+  return status;
+}
+
+static vectis_status vectis_xml_append_field_from_reader(xmlTextReaderPtr reader,
+                                                         const lonejson_field *field,
+                                                         const vectis_xml_config *config,
+                                                         size_t depth,
+                                                         vectis_string_builder *out,
+                                                         vectis_error *error) {
+  vectis_string_builder text;
+  const char *data;
+  size_t size;
+  vectis_status status;
+
+  if (field == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML field is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_xml_field_is_object(field)) {
+    return vectis_xml_build_object(reader, field->submap, config, depth, out, error);
+  }
+  text.data = NULL;
+  text.size = 0u;
+  text.capacity = 0u;
+  status = vectis_xml_read_text_content(reader,
+                                        config,
+                                        xmlTextReaderDepth(reader),
+                                        &text,
+                                        error);
+  if (status == VECTIS_OK) {
+    data = text.data != NULL ? text.data : "";
+    size = text.size;
+    if (config->trim_text) {
+      vectis_xml_trim_span(&data, &size);
+    }
+    status = vectis_xml_append_scalar_json(out, field, data, size, error);
+  }
+  vectis_string_builder_cleanup(&text);
+  return status;
+}
+
+static vectis_status vectis_xml_reader_build_lonejson_input(xmlTextReaderPtr reader,
+                                                            const lonejson_map *map,
+                                                            const vectis_xml_config *config,
+                                                            vectis_string_builder *out,
+                                                            vectis_error *error) {
+  vectis_string_builder json;
+  const char *name;
+  int rc;
+  vectis_status status;
+
+  json.data = NULL;
+  json.size = 0u;
+  json.capacity = 0u;
+  status = VECTIS_OK;
+  for (;;) {
+    rc = xmlTextReaderRead(reader);
+    if (rc != 1) {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "XML document has no root element");
+      status = VECTIS_ERR_INVALID;
+      goto cleanup;
+    }
+    if (xmlTextReaderNodeType(reader) == XML_READER_TYPE_ELEMENT) {
+      break;
+    }
+  }
+  name = vectis_xml_reader_local_name(reader);
+  if (config->root_element != NULL && !vectis_xml_name_matches(name, config->root_element)) {
+    vectis_set_errorf(error,
+                      VECTIS_ERR_INVALID,
+                      "XML root element '%s' does not match expected '%s'",
+                      name != NULL ? name : "",
+                      config->root_element);
+    status = VECTIS_ERR_INVALID;
+    goto cleanup;
+  }
+  status = vectis_xml_build_object(reader, map, config, 1u, &json, error);
+  if (status != VECTIS_OK) {
+    goto cleanup;
+  }
+  out->data = json.data;
+  out->size = json.size;
+  out->capacity = json.capacity;
+  json.data = NULL;
+  json.size = 0u;
+  json.capacity = 0u;
+  vectis_error_clear(error);
+
+cleanup:
+  vectis_string_builder_cleanup(&json);
+  return status;
+}
+
+static vectis_status vectis_xml_open_reader(const vectis_source *source,
+                                            xmlTextReaderPtr *out,
+                                            vectis_xml_lc_reader *lc_reader,
+                                            vectis_error *error) {
+  int options;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML reader output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  if (source == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML source is required");
+    return VECTIS_ERR_INVALID;
+  }
+  options = XML_PARSE_NONET | XML_PARSE_COMPACT | XML_PARSE_NOBLANKS;
+  if (source->path != NULL) {
+    *out = xmlReaderForFile(source->path, NULL, options);
+  } else if (source->memory != NULL || source->memory_size > 0u) {
+    if (source->memory == NULL) {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "XML memory source data is required");
+      return VECTIS_ERR_INVALID;
+    }
+    if (source->memory_size > (size_t)INT_MAX) {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "XML memory source is too large for libxml2 reader");
+      return VECTIS_ERR_INVALID;
+    }
+    *out = xmlReaderForMemory((const char *)source->memory,
+                              (int)source->memory_size,
+                              NULL,
+                              NULL,
+                              options);
+  } else if (source->source != NULL) {
+    lc_reader->source = source->source;
+    lc_reader->status = VECTIS_OK;
+    lc_reader->has_error = 0;
+    lc_error_init(&lc_reader->error);
+    *out = xmlReaderForIO(vectis_xml_lc_read, NULL, lc_reader, NULL, NULL, options);
+  } else {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML source is empty");
+    return VECTIS_ERR_INVALID;
+  }
+  if (*out == NULL) {
+    if (lc_reader != NULL && lc_reader->has_error) {
+      (void)vectis_source_error(error,
+                                lc_reader->error.code,
+                                &lc_reader->error,
+                                "failed to read XML source");
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    vectis_set_error(error, VECTIS_ERR_INVALID, "failed to open XML reader");
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_xml_source_build_lonejson_input(const vectis_source *source,
+                                                            const lonejson_map *map,
+                                                            const vectis_xml_config *config,
+                                                            vectis_string_builder *out,
+                                                            vectis_error *error) {
+  vectis_xml_config effective;
+  xmlTextReaderPtr reader;
+  vectis_xml_lc_reader lc_reader;
+  vectis_status status;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML lonejson reader input is required");
+    return VECTIS_ERR_INVALID;
+  }
+  out->data = NULL;
+  out->size = 0u;
+  out->capacity = 0u;
+  if (map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML lonejson map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_xml_effective_config(config, &effective, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  lc_reader.source = NULL;
+  lc_reader.status = VECTIS_OK;
+  lc_reader.has_error = 0;
+  lc_error_init(&lc_reader.error);
+  status = vectis_xml_open_reader(source, &reader, &lc_reader, error);
+  if (status != VECTIS_OK) {
+    lc_error_cleanup(&lc_reader.error);
+    return status;
+  }
+  status = vectis_xml_reader_build_lonejson_input(reader, map, &effective, out, error);
+  xmlFreeTextReader(reader);
+  lc_error_cleanup(&lc_reader.error);
+  return status;
+}
+
+static lonejson_read_result vectis_lonejson_read_bytes(void *user,
+                                                       unsigned char *buffer,
+                                                       size_t capacity) {
+  vectis_lonejson_bytes_reader *reader;
+  lonejson_read_result result;
+  size_t remaining;
+  size_t nread;
+
+  result = lonejson_default_read_result();
+  reader = (vectis_lonejson_bytes_reader *)user;
+  if (reader == NULL || buffer == NULL) {
+    result.error_code = EINVAL;
+    return result;
+  }
+  if (reader->offset >= reader->size) {
+    result.eof = 1;
+    return result;
+  }
+  remaining = reader->size - reader->offset;
+  nread = remaining < capacity ? remaining : capacity;
+  if (nread > 0u) {
+    memcpy(buffer, reader->data + reader->offset, nread);
+    reader->offset += nread;
+  }
+  result.bytes_read = nread;
+  result.eof = reader->offset >= reader->size;
+  return result;
+}
+
+vectis_status vectis_xml_parse_lonejson_source(const vectis_source *source,
+                                               const lonejson_map *map,
+                                               const vectis_xml_config *config,
+                                               void *out,
+                                               vectis_error *error) {
+  vectis_string_builder input;
+  vectis_lonejson_bytes_reader reader;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  vectis_status status;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML lonejson output struct is required");
+    return VECTIS_ERR_INVALID;
+  }
+  input.data = NULL;
+  input.size = 0u;
+  input.capacity = 0u;
+  status = vectis_xml_source_build_lonejson_input(source, map, config, &input, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  lonejson_init(map, out);
+  reader.data = (const unsigned char *)input.data;
+  reader.size = input.size;
+  reader.offset = 0u;
+  json_status = lonejson_parse_reader(map, out, vectis_lonejson_read_bytes, &reader, NULL, &json_error);
+  vectis_string_builder_cleanup(&input);
+  if (json_status != LONEJSON_STATUS_OK) {
+    vectis_set_errorf(error, VECTIS_ERR_INVALID, "failed to parse XML through lonejson: %s", json_error.message);
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LONEJSON;
+      error->dependency_code = (long)json_status;
+    }
+    lonejson_cleanup(map, out);
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_xml_parse_lonejson(struct lc_source *source,
+                                        const lonejson_map *map,
+                                        const vectis_xml_config *config,
+                                        void *out,
+                                        vectis_error *error) {
+  vectis_source wrapped_source;
+
+  wrapped_source = vectis_source_from_lc(source);
+  return vectis_xml_parse_lonejson_source(&wrapped_source, map, config, out, error);
 }
 
 vectis_status vectis_format_key(char *out,

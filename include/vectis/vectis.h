@@ -201,6 +201,16 @@ typedef struct vectis_dsv_config {
   size_t max_field_bytes;
 } vectis_dsv_config;
 
+typedef struct vectis_xml_config {
+  const char *root_element;
+  const char *text_key;
+  const char *attribute_prefix;
+  int trim_text;
+  int skip_unknown;
+  size_t max_depth;
+  size_t max_text_bytes;
+} vectis_xml_config;
+
 typedef struct vectis_source {
   const char *path;
   struct lc_source *source;
@@ -774,6 +784,18 @@ vectis_status vectis_dsv_source_to_lonejson_array(const vectis_source *source,
                                                  const vectis_dsv_config *config,
                                                  vectis_mutable_bytes *out,
                                                  vectis_error *error);
+void vectis_xml_config_init(vectis_xml_config *config);
+vectis_xml_config vectis_xml_default(void);
+vectis_status vectis_xml_parse_lonejson(struct lc_source *source,
+                                        const lonejson_map *map,
+                                        const vectis_xml_config *config,
+                                        void *out,
+                                        vectis_error *error);
+vectis_status vectis_xml_parse_lonejson_source(const vectis_source *source,
+                                               const lonejson_map *map,
+                                               const vectis_xml_config *config,
+                                               void *out,
+                                               vectis_error *error);
 vectis_status vectis_format_key(char *out,
                                 size_t out_size,
                                 vectis_error *error,

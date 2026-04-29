@@ -361,6 +361,13 @@ The current implementation provides:
   names from the first row or ignore that row and use explicit column names.
   Whole-record comments are opt-in with `config.comment_prefix`; quoted values
   are never treated as comments.
+- XML input can stream through libxml2's reader API from `vectis_source` or raw
+  `lc_source` readers into `lonejson` mapped structs using
+  `lonejson_parse_reader()`. The first mapping contract is intentionally
+  map-shaped: child elements map by JSON key, repeated child elements fill
+  lonejson arrays, attributes map by attribute name or configured prefix, and
+  text inside object elements maps to `config.text_key` which defaults to
+  `text`.
 - `vectis_request_body_reader()` exposes the raw `lc_source` escape hatch, while
   `vectis_request_body_materialize()` gives handlers one memory-or-file result
   without making them decide the storage class up front.

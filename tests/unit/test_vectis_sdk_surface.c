@@ -31,6 +31,24 @@ typedef struct sample_dsv_rows {
   char last_id[32];
 } sample_dsv_rows;
 
+typedef struct sample_xml_line {
+  char sku[32];
+  lonejson_int64 quantity;
+} sample_xml_line;
+
+typedef struct sample_xml_amount {
+  char currency[8];
+  double text;
+} sample_xml_amount;
+
+typedef struct sample_xml_doc {
+  char id[32];
+  sample_xml_amount amount;
+  lonejson_object_array line;
+  lonejson_string_array tag;
+  int active;
+} sample_xml_doc;
+
 static const lonejson_field sample_doc_fields[] = {
     LONEJSON_FIELD_STRING_FIXED_REQ(sample_doc, id, "id", LONEJSON_OVERFLOW_FAIL)};
 
@@ -43,9 +61,33 @@ static const lonejson_field sample_dsv_doc_fields[] = {
     LONEJSON_FIELD_I64_REQ(sample_dsv_doc, count, "count"),
     LONEJSON_FIELD_BOOL_REQ(sample_dsv_doc, active, "active")};
 
+static const lonejson_field sample_xml_line_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(sample_xml_line, sku, "sku", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_I64_REQ(sample_xml_line, quantity, "quantity")};
+
+static const lonejson_field sample_xml_amount_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(sample_xml_amount, currency, "currency", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_F64_REQ(sample_xml_amount, text, "text")};
+
+LONEJSON_MAP_DEFINE(sample_xml_line_map, sample_xml_line, sample_xml_line_fields);
+LONEJSON_MAP_DEFINE(sample_xml_amount_map, sample_xml_amount, sample_xml_amount_fields);
+
+static const lonejson_field sample_xml_doc_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(sample_xml_doc, id, "id", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_OBJECT_REQ(sample_xml_doc, amount, "amount", &sample_xml_amount_map),
+    LONEJSON_FIELD_OBJECT_ARRAY(sample_xml_doc,
+                                line,
+                                "line",
+                                sample_xml_line,
+                                &sample_xml_line_map,
+                                LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_ARRAY(sample_xml_doc, tag, "tag", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_BOOL_REQ(sample_xml_doc, active, "active")};
+
 LONEJSON_MAP_DEFINE(sample_doc_map, sample_doc, sample_doc_fields);
 LONEJSON_MAP_DEFINE(sample_error_doc_map, sample_error_doc, sample_error_doc_fields);
 LONEJSON_MAP_DEFINE(sample_dsv_doc_map, sample_dsv_doc, sample_dsv_doc_fields);
+LONEJSON_MAP_DEFINE(sample_xml_doc_map, sample_xml_doc, sample_xml_doc_fields);
 
 static vectis_status sample_json_handler(vectis_app *app,
                                          vectis_request *request,
@@ -1343,6 +1385,86 @@ static void assert_dsv_surface(void) {
   vectis_error_clear(&error);
 }
 
+static void assert_xml_surface(void) {
+  const char xml[] =
+      "<invoice ignored=\"yes\">"
+      "<id> inv-001 </id>"
+      "<amount currency=\"SEK\">123.50</amount>"
+      "<line><sku>A-1</sku><quantity>2</quantity></line>"
+      "<line><sku>B-2</sku><quantity>3</quantity></line>"
+      "<tag>finance</tag>"
+      "<tag>xml</tag>"
+      "<active>1</active>"
+      "<unknown>ignored</unknown>"
+      "</invoice>";
+  const char bad_root[] = "<statement><id>x</id></statement>";
+  const char duplicate_scalar[] = "<invoice><id>a</id><id>b</id></invoice>";
+  vectis_xml_config config;
+  vectis_source xml_source;
+  vectis_error error;
+  vectis_status status;
+  sample_xml_doc doc;
+  sample_xml_line *lines;
+
+  config = vectis_xml_default();
+  config.root_element = "invoice";
+  memset(&doc, 0, sizeof(doc));
+  xml_source = vectis_source_from_memory(xml, sizeof(xml) - 1u);
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_doc_map,
+                                            &config,
+                                            &doc,
+                                            &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(doc.id, "inv-001") == 0);
+  assert(strcmp(doc.amount.currency, "SEK") == 0);
+  assert(doc.amount.text > 123.49 && doc.amount.text < 123.51);
+  assert(doc.line.count == 2u);
+  lines = (sample_xml_line *)doc.line.items;
+  assert(strcmp(lines[0].sku, "A-1") == 0);
+  assert(lines[0].quantity == 2);
+  assert(strcmp(lines[1].sku, "B-2") == 0);
+  assert(lines[1].quantity == 3);
+  assert(doc.tag.count == 2u);
+  assert(strcmp(doc.tag.items[0], "finance") == 0);
+  assert(strcmp(doc.tag.items[1], "xml") == 0);
+  assert(doc.active == 1);
+  lonejson_cleanup(&sample_xml_doc_map, &doc);
+
+  xml_source = vectis_source_from_memory(bad_root, sizeof(bad_root) - 1u);
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_doc_map,
+                                            &config,
+                                            &doc,
+                                            &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "root element") != NULL);
+  vectis_error_clear(&error);
+
+  xml_source = vectis_source_from_memory(duplicate_scalar, sizeof(duplicate_scalar) - 1u);
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_doc_map,
+                                            &config,
+                                            &doc,
+                                            &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "duplicate") != NULL);
+  vectis_error_clear(&error);
+
+  xml_source = vectis_source_from_memory(xml, sizeof(xml) - 1u);
+  config = vectis_xml_default();
+  config.root_element = "invoice";
+  config.skip_unknown = 0;
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_doc_map,
+                                            &config,
+                                            &doc,
+                                            &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "unknown") != NULL);
+  vectis_error_clear(&error);
+}
+
 int main(void) {
   assert_http_surface();
   assert_io_surface();
@@ -1352,5 +1474,6 @@ int main(void) {
   assert_tls_source_surface();
   assert_consumer_service_surface();
   assert_dsv_surface();
+  assert_xml_surface();
   return 0;
 }

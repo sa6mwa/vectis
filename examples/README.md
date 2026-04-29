@@ -69,6 +69,12 @@ surface directly, without local helper layers that would hide awkward API shape.
   whole-line comments, plus typed JSON-array conversion through the same
   lonejson map.
 
+## `xml/`
+
+- `xml/xml_lonejson.c`: XML input from a Vectis source into a typed lonejson
+  struct, including element text, attributes, scalar arrays, and nested object
+  arrays.
+
 ## `ssh/`
 
 - `ssh/ssh_command.c`: libssh2 command execution.

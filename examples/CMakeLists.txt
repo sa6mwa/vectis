@@ -67,6 +67,7 @@ vectis_add_example(vectis_example_sftp curl/curl_sftp.c)
 vectis_add_example(vectis_example_mqtt curl/mqtt_publish.c)
 
 vectis_add_example(vectis_example_dsv_lonejson dsv/dsv_lonejson.c)
+vectis_add_example(vectis_example_xml_lonejson xml/xml_lonejson.c)
 
 vectis_add_example(vectis_example_ssh ssh/ssh_command.c)
 vectis_add_example(vectis_example_ssh_sftp ssh/ssh2_sftp.c)
