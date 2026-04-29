@@ -62,6 +62,12 @@ surface directly, without local helper layers that would hide awkward API shape.
 - `curl/curl_sftp.c`: SFTP upload/download through curl.
 - `curl/mqtt_publish.c`: MQTT raw and JSON publish through curl.
 
+## `dsv/`
+
+- `dsv/dsv_lonejson.c`: CSV input from memory or a file path, streamed into a
+  lonejson mapped struct row callback, plus typed JSON-array conversion through
+  the same lonejson map.
+
 ## `ssh/`
 
 - `ssh/ssh_command.c`: libssh2 command execution.

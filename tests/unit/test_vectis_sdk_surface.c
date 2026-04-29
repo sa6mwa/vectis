@@ -18,6 +18,19 @@ typedef struct sample_error_doc {
   char message[64];
 } sample_error_doc;
 
+typedef struct sample_dsv_doc {
+  char id[32];
+  lonejson_int64 count;
+  int active;
+} sample_dsv_doc;
+
+typedef struct sample_dsv_rows {
+  size_t count;
+  lonejson_int64 total;
+  int active_count;
+  char last_id[32];
+} sample_dsv_rows;
+
 static const lonejson_field sample_doc_fields[] = {
     LONEJSON_FIELD_STRING_FIXED_REQ(sample_doc, id, "id", LONEJSON_OVERFLOW_FAIL)};
 
@@ -25,8 +38,14 @@ static const lonejson_field sample_error_doc_fields[] = {
     LONEJSON_FIELD_STRING_FIXED_REQ(sample_error_doc, code, "code", LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_STRING_FIXED_REQ(sample_error_doc, message, "message", LONEJSON_OVERFLOW_FAIL)};
 
+static const lonejson_field sample_dsv_doc_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(sample_dsv_doc, id, "id", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_I64_REQ(sample_dsv_doc, count, "count"),
+    LONEJSON_FIELD_BOOL_REQ(sample_dsv_doc, active, "active")};
+
 LONEJSON_MAP_DEFINE(sample_doc_map, sample_doc, sample_doc_fields);
 LONEJSON_MAP_DEFINE(sample_error_doc_map, sample_error_doc, sample_error_doc_fields);
+LONEJSON_MAP_DEFINE(sample_dsv_doc_map, sample_dsv_doc, sample_dsv_doc_fields);
 
 static vectis_status sample_json_handler(vectis_app *app,
                                          vectis_request *request,
@@ -99,6 +118,26 @@ static int sample_consumer_handler(void *context,
   (void)message;
   (void)error;
   return LC_OK;
+}
+
+static vectis_status sample_dsv_row(void *userdata,
+                                    size_t row_number,
+                                    void *row,
+                                    vectis_error *error) {
+  sample_dsv_rows *rows;
+  sample_dsv_doc *doc;
+
+  (void)error;
+  rows = (sample_dsv_rows *)userdata;
+  doc = (sample_dsv_doc *)row;
+  assert(row_number == rows->count + 1u);
+  rows->count++;
+  rows->total += doc->count;
+  if (doc->active) {
+    rows->active_count++;
+  }
+  (void)snprintf(rows->last_id, sizeof(rows->last_id), "%s", doc->id);
+  return VECTIS_OK;
 }
 
 static vectis_status curl_config_ok(CURL *curl, void *userdata, vectis_error *error) {
@@ -1036,6 +1075,157 @@ static void assert_consumer_service_surface(void) {
   vectis_destroy(app);
 }
 
+static void assert_dsv_surface(void) {
+  const char csv[] = "id,count,active\r\nalpha,2,true\r\n\"beta,quoted\",3,false\r\n";
+  const char tsv[] = "id\tcount\tactive\none\t7\ttrue\n";
+  const char short_row_csv[] = "id,count,active\nbad,1\n";
+  const char oversized_field_csv[] = "id,count,active\nabc,1,true\n";
+  const char unterminated_csv[] = "id,count,active\n\"unterminated,1,true\n";
+  const char *columns[] = {"id", "count", "active"};
+  vectis_dsv_config config;
+  vectis_source dsv_source;
+  vectis_mutable_bytes json;
+  sample_dsv_rows rows;
+  lc_source *source;
+  vectis_error error;
+  vectis_status status;
+
+  memset(&rows, 0, sizeof(rows));
+  config = vectis_dsv_csv();
+  vectis_source_init(&dsv_source);
+  status = vectis_dsv_parse_lonejson_source(&dsv_source,
+                                            &sample_dsv_doc_map,
+                                            &config,
+                                            sample_dsv_row,
+                                            &rows,
+                                            &error);
+  assert(status == VECTIS_ERR_INVALID);
+  vectis_error_clear(&error);
+
+  dsv_source = vectis_source_from_memory(csv, sizeof(csv) - 1u);
+  status = vectis_dsv_parse_lonejson_source(&dsv_source,
+                                            &sample_dsv_doc_map,
+                                            &config,
+                                            sample_dsv_row,
+                                            &rows,
+                                            &error);
+  assert(status == VECTIS_OK);
+  assert(rows.count == 2u);
+  assert(rows.total == 5);
+  assert(rows.active_count == 1);
+  assert(strcmp(rows.last_id, "beta,quoted") == 0);
+
+  memset(&json, 0, sizeof(json));
+  dsv_source = vectis_source_from_memory(csv, sizeof(csv) - 1u);
+  status = vectis_dsv_source_to_json_array(&dsv_source,
+                                           &config,
+                                           &json,
+                                           &error);
+  assert(status == VECTIS_OK);
+  assert(json.data != NULL);
+  assert(strstr((const char *)json.data, "\"id\":\"alpha\"") != NULL);
+  assert(strstr((const char *)json.data, "\"id\":\"beta,quoted\"") != NULL);
+  assert(strstr((const char *)json.data, "\"count\":\"3\"") != NULL);
+  vectis_mutable_bytes_cleanup(&json);
+
+  memset(&json, 0, sizeof(json));
+  dsv_source = vectis_source_from_memory(csv, sizeof(csv) - 1u);
+  status = vectis_dsv_source_to_lonejson_array(&dsv_source,
+                                               &sample_dsv_doc_map,
+                                               &config,
+                                               &json,
+                                               &error);
+  assert(status == VECTIS_OK);
+  assert(json.data != NULL);
+  assert(strstr((const char *)json.data, "\"id\":\"alpha\"") != NULL);
+  assert(strstr((const char *)json.data, "\"count\":3") != NULL);
+  assert(strstr((const char *)json.data, "\"active\":false") != NULL);
+  vectis_mutable_bytes_cleanup(&json);
+
+  memset(&rows, 0, sizeof(rows));
+  assert(lc_source_from_memory(tsv, sizeof(tsv) - 1u, &source, NULL) == LC_OK);
+  config = vectis_dsv_tsv();
+  status = vectis_dsv_parse_lonejson(source,
+                                     &sample_dsv_doc_map,
+                                     &config,
+                                     sample_dsv_row,
+                                     &rows,
+                                     &error);
+  assert(status == VECTIS_OK);
+  assert(rows.count == 1u);
+  assert(rows.total == 7);
+  assert(rows.active_count == 1);
+  lc_source_close(source);
+
+  assert(lc_source_from_memory("two|11|false\n", 13u, &source, NULL) == LC_OK);
+  vectis_dsv_config_init(&config);
+  config.delimiter = '|';
+  config.has_header = 0;
+  config.columns = columns;
+  config.column_count = 3u;
+  memset(&rows, 0, sizeof(rows));
+  status = vectis_dsv_parse_lonejson(source,
+                                     &sample_dsv_doc_map,
+                                     &config,
+                                     sample_dsv_row,
+                                     &rows,
+                                     &error);
+  assert(status == VECTIS_OK);
+  assert(rows.count == 1u);
+  assert(rows.total == 11);
+  assert(rows.active_count == 0);
+  lc_source_close(source);
+
+  assert(lc_source_from_memory(short_row_csv, sizeof(short_row_csv) - 1u, &source, NULL) == LC_OK);
+  config = vectis_dsv_csv();
+  memset(&rows, 0, sizeof(rows));
+  status = vectis_dsv_parse_lonejson(source,
+                                     &sample_dsv_doc_map,
+                                     &config,
+                                     sample_dsv_row,
+                                     &rows,
+                                     &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "row width") != NULL);
+  lc_source_close(source);
+  vectis_error_clear(&error);
+
+  assert(lc_source_from_memory(oversized_field_csv,
+                               sizeof(oversized_field_csv) - 1u,
+                               &source,
+                               NULL) == LC_OK);
+  config = vectis_dsv_csv();
+  config.max_field_bytes = 2u;
+  memset(&rows, 0, sizeof(rows));
+  status = vectis_dsv_parse_lonejson(source,
+                                     &sample_dsv_doc_map,
+                                     &config,
+                                     sample_dsv_row,
+                                     &rows,
+                                     &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "max_field_bytes") != NULL);
+  lc_source_close(source);
+  vectis_error_clear(&error);
+
+  assert(lc_source_from_memory(unterminated_csv,
+                               sizeof(unterminated_csv) - 1u,
+                               &source,
+                               NULL) == LC_OK);
+  config = vectis_dsv_csv();
+  memset(&rows, 0, sizeof(rows));
+  status = vectis_dsv_parse_lonejson(source,
+                                     &sample_dsv_doc_map,
+                                     &config,
+                                     sample_dsv_row,
+                                     &rows,
+                                     &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "unterminated") != NULL);
+  lc_source_close(source);
+  vectis_error_clear(&error);
+}
+
 int main(void) {
   assert_http_surface();
   assert_io_surface();
@@ -1044,5 +1234,6 @@ int main(void) {
   assert_openapi_surface();
   assert_tls_source_surface();
   assert_consumer_service_surface();
+  assert_dsv_surface();
   return 0;
 }

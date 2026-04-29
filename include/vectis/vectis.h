@@ -187,6 +187,18 @@ typedef struct vectis_body_spill_result {
   int spooled_to_disk;
 } vectis_body_spill_result;
 
+typedef struct vectis_dsv_config {
+  int delimiter;
+  int quote;
+  int escape;
+  int has_header;
+  int strict_row_width;
+  int trim_cr;
+  const char *const *columns;
+  size_t column_count;
+  size_t max_field_bytes;
+} vectis_dsv_config;
+
 typedef struct vectis_source {
   const char *path;
   struct lc_source *source;
@@ -304,6 +316,11 @@ typedef vectis_status (*vectis_lockd_state_update_fn)(struct lc_lease *lease,
                                                       int *save,
                                                       void *userdata,
                                                       vectis_error *error);
+
+typedef vectis_status (*vectis_dsv_lonejson_row_fn)(void *userdata,
+                                                    size_t row_number,
+                                                    void *row,
+                                                    vectis_error *error);
 
 typedef struct vectis_json_route_config {
   vectis_http_method method;
@@ -720,6 +737,39 @@ vectis_status vectis_consumer_service_run_until(vectis_consumer_service *service
                                                 vectis_error *error);
 void vectis_consumer_service_destroy(vectis_consumer_service *service);
 vectis_status vectis_json_validate_cstr(const char *json, vectis_error *error);
+void vectis_dsv_config_init(vectis_dsv_config *config);
+vectis_dsv_config vectis_dsv_csv(void);
+vectis_dsv_config vectis_dsv_tsv(void);
+vectis_status vectis_dsv_parse_lonejson(struct lc_source *source,
+                                        const lonejson_map *map,
+                                        const vectis_dsv_config *config,
+                                        vectis_dsv_lonejson_row_fn row,
+                                        void *userdata,
+                                        vectis_error *error);
+vectis_status vectis_dsv_parse_lonejson_source(const vectis_source *source,
+                                               const lonejson_map *map,
+                                               const vectis_dsv_config *config,
+                                               vectis_dsv_lonejson_row_fn row,
+                                               void *userdata,
+                                               vectis_error *error);
+vectis_status vectis_dsv_to_json_array(struct lc_source *source,
+                                       const vectis_dsv_config *config,
+                                       vectis_mutable_bytes *out,
+                                       vectis_error *error);
+vectis_status vectis_dsv_source_to_json_array(const vectis_source *source,
+                                             const vectis_dsv_config *config,
+                                             vectis_mutable_bytes *out,
+                                             vectis_error *error);
+vectis_status vectis_dsv_to_lonejson_array(struct lc_source *source,
+                                           const lonejson_map *map,
+                                           const vectis_dsv_config *config,
+                                           vectis_mutable_bytes *out,
+                                           vectis_error *error);
+vectis_status vectis_dsv_source_to_lonejson_array(const vectis_source *source,
+                                                 const lonejson_map *map,
+                                                 const vectis_dsv_config *config,
+                                                 vectis_mutable_bytes *out,
+                                                 vectis_error *error);
 vectis_status vectis_format_key(char *out,
                                 size_t out_size,
                                 vectis_error *error,

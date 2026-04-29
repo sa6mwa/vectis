@@ -344,6 +344,9 @@ The current implementation provides:
   forced envelope type.
 - Optional OpenAPI docs can be attached separately from route execution and
   generated as JSON or YAML from route metadata plus named lonejson maps.
+- CSV, TSV, and configurable delimiter-separated input can stream from
+  `vectis_source` or raw `lc_source` readers into `lonejson` mapped row structs,
+  with optional JSON-array conversion through the same map.
 - `vectis_request_body_reader()` exposes the raw `lc_source` escape hatch, while
   `vectis_request_body_materialize()` gives handlers one memory-or-file result
   without making them decide the storage class up front.
@@ -400,8 +403,9 @@ The current implementation provides:
   generation helpers.
 - Dependency provisioning from the `liblockdc` 0.3.0 SDK bundle.
 - Compile-checked examples grouped under `examples/kore`, `examples/lockd`,
-  `examples/curl`, `examples/ssh`, `examples/certs`, and `examples/raw` that
-  exercise the intended C SDK DX without local helper layers.
+  `examples/curl`, `examples/dsv`, `examples/ssh`, `examples/certs`, and
+  `examples/raw` that exercise the intended C SDK DX without local helper
+  layers.
 - A Kore upstream checkout plus tracked patch-series workflow.
 - A patched Kore build path that links against the bundled OpenSSL, libcurl,
   libssh2, pslog, and lonejson toolchain. Vectis builds embedded Kore with

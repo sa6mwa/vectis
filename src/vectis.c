@@ -78,6 +78,26 @@ typedef struct vectis_string_builder {
   size_t capacity;
 } vectis_string_builder;
 
+typedef struct vectis_dsv_fields {
+  char **items;
+  size_t *sizes;
+  size_t count;
+  size_t capacity;
+} vectis_dsv_fields;
+
+typedef struct vectis_dsv_parser {
+  vectis_dsv_config config;
+  lc_source *source;
+  vectis_dsv_fields fields;
+  vectis_string_builder field;
+  char buffer[4096];
+  size_t offset;
+  size_t size;
+  size_t physical_row;
+  int eof;
+  int skip_next_lf;
+} vectis_dsv_parser;
+
 typedef struct vectis_json_string_box {
   char *value;
 } vectis_json_string_box;
@@ -4794,6 +4814,744 @@ vectis_status vectis_json_validate_cstr(const char *json, vectis_error *error) {
 
   vectis_error_clear(error);
   return VECTIS_OK;
+}
+
+void vectis_dsv_config_init(vectis_dsv_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->delimiter = ',';
+  config->quote = '"';
+  config->escape = '"';
+  config->has_header = 1;
+  config->strict_row_width = 1;
+  config->trim_cr = 1;
+  config->max_field_bytes = 1048576u;
+}
+
+vectis_dsv_config vectis_dsv_csv(void) {
+  vectis_dsv_config config;
+
+  vectis_dsv_config_init(&config);
+  return config;
+}
+
+vectis_dsv_config vectis_dsv_tsv(void) {
+  vectis_dsv_config config;
+
+  vectis_dsv_config_init(&config);
+  config.delimiter = '\t';
+  return config;
+}
+
+static void vectis_dsv_fields_cleanup(vectis_dsv_fields *fields) {
+  size_t i;
+
+  if (fields == NULL) {
+    return;
+  }
+  for (i = 0u; i < fields->count; ++i) {
+    free(fields->items[i]);
+  }
+  free(fields->items);
+  free(fields->sizes);
+  fields->items = NULL;
+  fields->sizes = NULL;
+  fields->count = 0u;
+  fields->capacity = 0u;
+}
+
+static vectis_status vectis_dsv_fields_push(vectis_dsv_fields *fields,
+                                            const char *data,
+                                            size_t size,
+                                            vectis_error *error) {
+  char **next_items;
+  size_t *next_sizes;
+  size_t capacity;
+  char *copy;
+
+  if (fields->count == fields->capacity) {
+    capacity = fields->capacity == 0u ? 8u : fields->capacity * 2u;
+    next_items = (char **)realloc(fields->items, capacity * sizeof(fields->items[0]));
+    if (next_items == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to grow DSV field list");
+      return VECTIS_ERR_NOMEM;
+    }
+    fields->items = next_items;
+    next_sizes = (size_t *)realloc(fields->sizes, capacity * sizeof(fields->sizes[0]));
+    if (next_sizes == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to grow DSV field sizes");
+      return VECTIS_ERR_NOMEM;
+    }
+    fields->sizes = next_sizes;
+    fields->capacity = capacity;
+  }
+  copy = (char *)malloc(size + 1u);
+  if (copy == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate DSV field");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (size > 0u) {
+    memcpy(copy, data, size);
+  }
+  copy[size] = '\0';
+  fields->items[fields->count] = copy;
+  fields->sizes[fields->count] = size;
+  fields->count++;
+  return VECTIS_OK;
+}
+
+static void vectis_dsv_fields_reset(vectis_dsv_fields *fields) {
+  size_t i;
+
+  if (fields == NULL) {
+    return;
+  }
+  for (i = 0u; i < fields->count; ++i) {
+    free(fields->items[i]);
+    fields->items[i] = NULL;
+    fields->sizes[i] = 0u;
+  }
+  fields->count = 0u;
+}
+
+static vectis_status vectis_dsv_parser_next_char(vectis_dsv_parser *parser,
+                                                 int *out,
+                                                 vectis_error *error) {
+  lc_error lcerr;
+  size_t nread;
+
+  if (parser->offset >= parser->size) {
+    if (parser->eof) {
+      *out = EOF;
+      return VECTIS_OK;
+    }
+    lc_error_init(&lcerr);
+    nread = parser->source->read(parser->source,
+                                 parser->buffer,
+                                 sizeof(parser->buffer),
+                                 &lcerr);
+    if (nread == 0u) {
+      if (lcerr.code != 0) {
+        (void)vectis_source_error(error, lcerr.code, &lcerr, "failed to read DSV source");
+        lc_error_cleanup(&lcerr);
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+      parser->eof = 1;
+      *out = EOF;
+      lc_error_cleanup(&lcerr);
+      return VECTIS_OK;
+    }
+    parser->offset = 0u;
+    parser->size = nread;
+    lc_error_cleanup(&lcerr);
+  }
+  *out = (unsigned char)parser->buffer[parser->offset++];
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_dsv_push_current_field(vectis_dsv_parser *parser,
+                                                   vectis_error *error) {
+  vectis_status status;
+
+  status = vectis_dsv_fields_push(&parser->fields,
+                                  parser->field.data,
+                                  parser->field.size,
+                                  error);
+  parser->field.size = 0u;
+  if (parser->field.data != NULL) {
+    parser->field.data[0] = '\0';
+  }
+  return status;
+}
+
+static vectis_status vectis_dsv_read_record(vectis_dsv_parser *parser,
+                                            int *has_record,
+                                            vectis_error *error) {
+  int c = 0;
+  char ch;
+  int in_quotes;
+  int after_quote;
+  int at_field_start;
+  vectis_status status;
+
+  *has_record = 0;
+  vectis_dsv_fields_reset(&parser->fields);
+  parser->field.size = 0u;
+  if (parser->field.data != NULL) {
+    parser->field.data[0] = '\0';
+  }
+  in_quotes = 0;
+  after_quote = 0;
+  at_field_start = 1;
+
+  for (;;) {
+    status = vectis_dsv_parser_next_char(parser, &c, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    if (c == EOF) {
+      if (in_quotes) {
+        vectis_set_error(error, VECTIS_ERR_INVALID, "unterminated quoted DSV field");
+        return VECTIS_ERR_INVALID;
+      }
+      if (parser->field.size > 0u || parser->fields.count > 0u) {
+        if (vectis_dsv_push_current_field(parser, error) != VECTIS_OK) {
+          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        }
+        *has_record = 1;
+      }
+      return VECTIS_OK;
+    }
+    if (parser->skip_next_lf) {
+      parser->skip_next_lf = 0;
+      if (c == '\n') {
+        continue;
+      }
+    }
+    if (after_quote) {
+      if (c == parser->config.quote && parser->config.escape == parser->config.quote) {
+        if (vectis_string_builder_append_n(&parser->field, "\"", 1u, error) != VECTIS_OK) {
+          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        }
+        after_quote = 0;
+        in_quotes = 1;
+        at_field_start = 0;
+        continue;
+      }
+      in_quotes = 0;
+      after_quote = 0;
+    }
+    if (in_quotes) {
+      if (c == parser->config.quote) {
+        after_quote = 1;
+      } else {
+        ch = (char)c;
+        if (parser->config.max_field_bytes > 0u &&
+            parser->field.size + 1u > parser->config.max_field_bytes) {
+          vectis_set_error(error, VECTIS_ERR_INVALID, "DSV field exceeds max_field_bytes");
+          return VECTIS_ERR_INVALID;
+        }
+        if (vectis_string_builder_append_n(&parser->field, &ch, 1u, error) != VECTIS_OK) {
+          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        }
+      }
+      continue;
+    }
+    if (c == parser->config.quote && at_field_start) {
+      in_quotes = 1;
+      at_field_start = 0;
+      continue;
+    }
+    if (c == parser->config.delimiter) {
+      if (vectis_dsv_push_current_field(parser, error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+      at_field_start = 1;
+      continue;
+    }
+    if (c == '\r' || c == '\n') {
+      if (c == '\r') {
+        parser->skip_next_lf = parser->config.trim_cr;
+      }
+      if (vectis_dsv_push_current_field(parser, error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+      parser->physical_row++;
+      *has_record = 1;
+      return VECTIS_OK;
+    }
+    if (parser->config.max_field_bytes > 0u &&
+        parser->field.size + 1u > parser->config.max_field_bytes) {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "DSV field exceeds max_field_bytes");
+      return VECTIS_ERR_INVALID;
+    }
+    ch = (char)c;
+    if (vectis_string_builder_append_n(&parser->field, &ch, 1u, error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+    at_field_start = 0;
+  }
+}
+
+static const lonejson_field *vectis_dsv_find_field(const lonejson_map *map,
+                                                   const char *name) {
+  size_t i;
+
+  if (map == NULL || name == NULL) {
+    return NULL;
+  }
+  for (i = 0u; i < map->field_count; ++i) {
+    if (strcmp(map->fields[i].json_key, name) == 0) {
+      return &map->fields[i];
+    }
+  }
+  return NULL;
+}
+
+static int vectis_dsv_field_uses_json_string(const lonejson_field *field) {
+  if (field == NULL) {
+    return 1;
+  }
+  return field->kind == LONEJSON_FIELD_KIND_STRING ||
+         field->kind == LONEJSON_FIELD_KIND_STRING_STREAM ||
+         field->kind == LONEJSON_FIELD_KIND_BASE64_STREAM ||
+         field->kind == LONEJSON_FIELD_KIND_STRING_SOURCE ||
+         field->kind == LONEJSON_FIELD_KIND_BASE64_SOURCE;
+}
+
+static vectis_status vectis_dsv_append_row_json(vectis_string_builder *builder,
+                                                const lonejson_map *map,
+                                                const char *const *columns,
+                                                size_t column_count,
+                                                const vectis_dsv_fields *fields,
+                                                int all_strings,
+                                                vectis_error *error) {
+  size_t i;
+  const char *value;
+  size_t value_size;
+  const lonejson_field *field;
+  int first;
+
+  if (vectis_string_builder_append(builder, "{", error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  first = 1;
+  for (i = 0u; i < column_count; ++i) {
+    value = i < fields->count ? fields->items[i] : "";
+    value_size = i < fields->count ? fields->sizes[i] : 0u;
+    field = all_strings ? NULL : vectis_dsv_find_field(map, columns[i]);
+    if (!all_strings && field == NULL) {
+      continue;
+    }
+    if (!all_strings && value_size == 0u && !vectis_dsv_field_uses_json_string(field)) {
+      continue;
+    }
+    if (!first && vectis_string_builder_append(builder, ",", error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+    first = 0;
+    if (vectis_append_lonejson_string(builder, columns[i], error) != VECTIS_OK ||
+        vectis_string_builder_append(builder, ":", error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    }
+    if (all_strings || vectis_dsv_field_uses_json_string(field)) {
+      if (vectis_append_lonejson_string(builder, value, error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_INVALID;
+      }
+    } else if (vectis_string_builder_append_n(builder, value, value_size, error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+  }
+  return vectis_string_builder_append(builder, "}", error);
+}
+
+static vectis_status vectis_dsv_effective_config(const vectis_dsv_config *config,
+                                                 vectis_dsv_config *out,
+                                                 vectis_error *error) {
+  vectis_dsv_config defaults;
+
+  vectis_dsv_config_init(&defaults);
+  *out = config != NULL ? *config : defaults;
+  if (out->delimiter == 0 || out->delimiter == '\r' || out->delimiter == '\n') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV delimiter is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (out->quote == 0) {
+    out->quote = '"';
+  }
+  if (out->escape == 0) {
+    out->escape = out->quote;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_dsv_open_source(const vectis_source *source,
+                                            lc_source **out,
+                                            int *owned,
+                                            vectis_error *error) {
+  lc_error lcerr;
+  int rc;
+
+  if (out == NULL || owned == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV source output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  *owned = 0;
+  if (source == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV source is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (source->source != NULL) {
+    *out = source->source;
+    return VECTIS_OK;
+  }
+  lc_error_init(&lcerr);
+  if (source->path != NULL) {
+    rc = lc_source_from_file(source->path, out, &lcerr);
+  } else if (source->memory != NULL || source->memory_size > 0u) {
+    rc = lc_source_from_memory(source->memory, source->memory_size, out, &lcerr);
+  } else {
+    lc_error_cleanup(&lcerr);
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV source is empty");
+    return VECTIS_ERR_INVALID;
+  }
+  if (rc != LC_OK) {
+    (void)vectis_source_error(error, rc, &lcerr, "failed to open DSV source");
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  *owned = 1;
+  return VECTIS_OK;
+}
+
+vectis_status vectis_dsv_parse_lonejson(struct lc_source *source,
+                                        const lonejson_map *map,
+                                        const vectis_dsv_config *config,
+                                        vectis_dsv_lonejson_row_fn row,
+                                        void *userdata,
+                                        vectis_error *error) {
+  vectis_dsv_parser parser;
+  vectis_dsv_config effective;
+  vectis_dsv_fields headers;
+  const char *const *columns;
+  const char **header_columns;
+  size_t column_count;
+  size_t data_row;
+  int has_record;
+  void *value;
+  vectis_string_builder json;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  vectis_status status;
+
+  if (source == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV source is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (map == NULL || row == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV map and row callback are required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_dsv_effective_config(config, &effective, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  memset(&parser, 0, sizeof(parser));
+  memset(&headers, 0, sizeof(headers));
+  parser.config = effective;
+  parser.source = source;
+  columns = effective.columns;
+  header_columns = NULL;
+  column_count = effective.column_count;
+  if (effective.has_header) {
+    status = vectis_dsv_read_record(&parser, &has_record, error);
+    if (status != VECTIS_OK) {
+      vectis_dsv_fields_cleanup(&parser.fields);
+      vectis_string_builder_cleanup(&parser.field);
+      return status;
+    }
+    if (!has_record) {
+      vectis_dsv_fields_cleanup(&parser.fields);
+      vectis_string_builder_cleanup(&parser.field);
+      vectis_error_clear(error);
+      return VECTIS_OK;
+    }
+    headers = parser.fields;
+    memset(&parser.fields, 0, sizeof(parser.fields));
+    if (columns == NULL) {
+      if (headers.count == 0u) {
+        vectis_dsv_fields_cleanup(&headers);
+        vectis_dsv_fields_cleanup(&parser.fields);
+        vectis_string_builder_cleanup(&parser.field);
+        vectis_set_error(error, VECTIS_ERR_INVALID, "DSV header row is empty");
+        return VECTIS_ERR_INVALID;
+      }
+      header_columns = (const char **)calloc(headers.count, sizeof(header_columns[0]));
+      if (header_columns == NULL) {
+        vectis_dsv_fields_cleanup(&headers);
+        vectis_dsv_fields_cleanup(&parser.fields);
+        vectis_string_builder_cleanup(&parser.field);
+        vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate DSV header columns");
+        return VECTIS_ERR_NOMEM;
+      }
+      for (column_count = 0u; column_count < headers.count; ++column_count) {
+        header_columns[column_count] = headers.items[column_count];
+      }
+      columns = header_columns;
+      column_count = headers.count;
+    }
+  }
+  if (columns == NULL || column_count == 0u) {
+    vectis_dsv_fields_cleanup(&headers);
+    vectis_dsv_fields_cleanup(&parser.fields);
+    vectis_string_builder_cleanup(&parser.field);
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV columns are required when no header row is used");
+    return VECTIS_ERR_INVALID;
+  }
+  data_row = 0u;
+  for (;;) {
+    status = vectis_dsv_read_record(&parser, &has_record, error);
+    if (status != VECTIS_OK) {
+      break;
+    }
+    if (!has_record) {
+      break;
+    }
+    if (effective.strict_row_width && parser.fields.count != column_count) {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "DSV row width does not match columns");
+      status = VECTIS_ERR_INVALID;
+      break;
+    }
+    memset(&json, 0, sizeof(json));
+    status = vectis_dsv_append_row_json(&json,
+                                        map,
+                                        columns,
+                                        column_count,
+                                        &parser.fields,
+                                        0,
+                                        error);
+    if (status != VECTIS_OK) {
+      vectis_string_builder_cleanup(&json);
+      break;
+    }
+    value = calloc(1u, map->struct_size);
+    if (value == NULL) {
+      vectis_string_builder_cleanup(&json);
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate DSV row struct");
+      status = VECTIS_ERR_NOMEM;
+      break;
+    }
+    lonejson_init(map, value);
+    json_status = lonejson_parse_buffer(map, value, json.data, json.size, NULL, &json_error);
+    vectis_string_builder_cleanup(&json);
+    if (json_status != LONEJSON_STATUS_OK) {
+      vectis_set_errorf(error,
+                        VECTIS_ERR_INVALID,
+                        "failed to parse DSV row %lu through lonejson: %s",
+                        (unsigned long)(data_row + 1u),
+                        json_error.message);
+      if (error != NULL) {
+        error->source = VECTIS_ERROR_SOURCE_LONEJSON;
+        error->dependency_code = (long)json_status;
+      }
+      lonejson_cleanup(map, value);
+      free(value);
+      status = VECTIS_ERR_INVALID;
+      break;
+    }
+    status = row(userdata, data_row + 1u, value, error);
+    lonejson_cleanup(map, value);
+    free(value);
+    if (status != VECTIS_OK) {
+      break;
+    }
+    data_row++;
+  }
+  vectis_dsv_fields_cleanup(&headers);
+  vectis_dsv_fields_cleanup(&parser.fields);
+  vectis_string_builder_cleanup(&parser.field);
+  free(header_columns);
+  if (status == VECTIS_OK) {
+    vectis_error_clear(error);
+  }
+  return status;
+}
+
+vectis_status vectis_dsv_parse_lonejson_source(const vectis_source *source,
+                                               const lonejson_map *map,
+                                               const vectis_dsv_config *config,
+                                               vectis_dsv_lonejson_row_fn row,
+                                               void *userdata,
+                                               vectis_error *error) {
+  lc_source *reader;
+  int owned;
+  vectis_status status;
+
+  status = vectis_dsv_open_source(source, &reader, &owned, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_dsv_parse_lonejson(reader, map, config, row, userdata, error);
+  if (owned) {
+    lc_source_close(reader);
+  }
+  return status;
+}
+
+static vectis_status vectis_dsv_to_json_array_impl(struct lc_source *source,
+                                                   const lonejson_map *map,
+                                                   const vectis_dsv_config *config,
+                                                   vectis_mutable_bytes *out,
+                                                   int all_strings,
+                                                   vectis_error *error) {
+  vectis_dsv_parser parser;
+  vectis_dsv_config effective;
+  vectis_dsv_fields headers;
+  const char *const *columns;
+  const char **header_columns;
+  size_t column_count;
+  int has_record;
+  int first;
+  vectis_status status;
+  vectis_string_builder json;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV JSON output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  out->data = NULL;
+  out->size = 0u;
+  if (source == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV source is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!all_strings && map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV lonejson map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_dsv_effective_config(config, &effective, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  memset(&parser, 0, sizeof(parser));
+  memset(&headers, 0, sizeof(headers));
+  memset(&json, 0, sizeof(json));
+  parser.config = effective;
+  parser.source = source;
+  columns = effective.columns;
+  header_columns = NULL;
+  column_count = effective.column_count;
+  if (effective.has_header) {
+    status = vectis_dsv_read_record(&parser, &has_record, error);
+    if (status != VECTIS_OK) {
+      goto cleanup;
+    }
+    if (has_record) {
+      headers = parser.fields;
+      memset(&parser.fields, 0, sizeof(parser.fields));
+      if (columns == NULL) {
+        if (headers.count == 0u) {
+          vectis_set_error(error, VECTIS_ERR_INVALID, "DSV header row is empty");
+          status = VECTIS_ERR_INVALID;
+          goto cleanup;
+        }
+        header_columns = (const char **)calloc(headers.count, sizeof(header_columns[0]));
+        if (header_columns == NULL) {
+          vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate DSV header columns");
+          status = VECTIS_ERR_NOMEM;
+          goto cleanup;
+        }
+        for (column_count = 0u; column_count < headers.count; ++column_count) {
+          header_columns[column_count] = headers.items[column_count];
+        }
+        columns = header_columns;
+        column_count = headers.count;
+      }
+    }
+  }
+  if (columns == NULL || column_count == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV columns are required when no header row is used");
+    status = VECTIS_ERR_INVALID;
+    goto cleanup;
+  }
+  status = vectis_string_builder_append(&json, "[", error);
+  first = 1;
+  while (status == VECTIS_OK) {
+    status = vectis_dsv_read_record(&parser, &has_record, error);
+    if (status != VECTIS_OK || !has_record) {
+      break;
+    }
+    if (effective.strict_row_width && parser.fields.count != column_count) {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "DSV row width does not match columns");
+      status = VECTIS_ERR_INVALID;
+      break;
+    }
+    if (!first && vectis_string_builder_append(&json, ",", error) != VECTIS_OK) {
+      status = error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      break;
+    }
+    first = 0;
+    status = vectis_dsv_append_row_json(&json,
+                                        map,
+                                        columns,
+                                        column_count,
+                                        &parser.fields,
+                                        all_strings,
+                                        error);
+  }
+  if (status == VECTIS_OK && vectis_string_builder_append(&json, "]", error) == VECTIS_OK) {
+    out->data = json.data;
+    out->size = json.size;
+    json.data = NULL;
+    json.size = 0u;
+    vectis_error_clear(error);
+  } else if (status == VECTIS_OK) {
+    status = error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+
+cleanup:
+  vectis_dsv_fields_cleanup(&headers);
+  vectis_dsv_fields_cleanup(&parser.fields);
+  vectis_string_builder_cleanup(&parser.field);
+  vectis_string_builder_cleanup(&json);
+  free(header_columns);
+  return status;
+}
+
+vectis_status vectis_dsv_to_json_array(struct lc_source *source,
+                                       const vectis_dsv_config *config,
+                                       vectis_mutable_bytes *out,
+                                       vectis_error *error) {
+  return vectis_dsv_to_json_array_impl(source, NULL, config, out, 1, error);
+}
+
+vectis_status vectis_dsv_source_to_json_array(const vectis_source *source,
+                                             const vectis_dsv_config *config,
+                                             vectis_mutable_bytes *out,
+                                             vectis_error *error) {
+  lc_source *reader;
+  int owned;
+  vectis_status status;
+
+  status = vectis_dsv_open_source(source, &reader, &owned, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_dsv_to_json_array(reader, config, out, error);
+  if (owned) {
+    lc_source_close(reader);
+  }
+  return status;
+}
+
+vectis_status vectis_dsv_to_lonejson_array(struct lc_source *source,
+                                           const lonejson_map *map,
+                                           const vectis_dsv_config *config,
+                                           vectis_mutable_bytes *out,
+                                           vectis_error *error) {
+  return vectis_dsv_to_json_array_impl(source, map, config, out, 0, error);
+}
+
+vectis_status vectis_dsv_source_to_lonejson_array(const vectis_source *source,
+                                                 const lonejson_map *map,
+                                                 const vectis_dsv_config *config,
+                                                 vectis_mutable_bytes *out,
+                                                 vectis_error *error) {
+  lc_source *reader;
+  int owned;
+  vectis_status status;
+
+  status = vectis_dsv_open_source(source, &reader, &owned, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_dsv_to_lonejson_array(reader, map, config, out, error);
+  if (owned) {
+    lc_source_close(reader);
+  }
+  return status;
 }
 
 vectis_status vectis_format_key(char *out,
