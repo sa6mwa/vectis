@@ -27,6 +27,8 @@ surface directly, without local helper layers that would hide awkward API shape.
   constructor and streaming body-policy preset.
 - `kore/kore_generated_response.c`: generated JSON response body written through
   lonejson to a temporary file for Kore to serve without application buffering.
+- `kore/kore_static_assets.c`: static file and directory route helpers with
+  GET/HEAD defaults and traversal-safe request paths.
 
 ## `lockd/`
 

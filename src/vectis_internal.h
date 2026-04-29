@@ -74,6 +74,9 @@ void vectis_internal_request_cleanup(vectis_request *request);
 void vectis_internal_request_free(vectis_request *request);
 void vectis_internal_request_set_method(vectis_request *request,
                                         vectis_http_method method);
+vectis_status vectis_internal_request_set_path(vectis_request *request,
+                                               const char *path,
+                                               vectis_error *error);
 vectis_status vectis_internal_request_set_body(vectis_request *request,
                                                const void *body,
                                                size_t body_size,

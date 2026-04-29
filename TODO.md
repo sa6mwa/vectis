@@ -96,6 +96,7 @@ and C/integration tests before adding Lua bindings or Lua facades.
 - [x] Enforce per-route no-body and max-body policies in the Kore request path before handler dispatch.
 - [x] Expose request bodies as reader-first `lc_source` streams; no Kore handler path may require upfront framework buffering.
 - [x] Add transparent body materialization for fixed buffers, memory caps, and automatic spill-to-disk when the body does not fit.
+- [x] Add static file and directory route helpers with traversal-safe path handling.
 - [ ] Translate per-route body policies into any remaining concrete Kore request-body streaming and disk-offload tuning behavior.
 - [ ] Support Kore features through Vectis where practical, including websocket, static asset, file upload, and deeper runtime configuration features.
 - [ ] Define the supported one-process multi-instance behavior based on what Kore can safely provide.

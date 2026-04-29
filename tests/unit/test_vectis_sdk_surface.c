@@ -1,6 +1,8 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <lc/lc.h>
 #include <lonejson.h>
@@ -590,6 +592,8 @@ static void assert_json_route_surface(void) {
   vectis_json_route_config route;
   vectis_json_typed_route_config typed_route;
   vectis_route_config raw_route;
+  vectis_static_file_config static_file;
+  vectis_static_directory_config static_dir;
   vectis_body_policy policy;
   vectis_error error;
   vectis_status status;
@@ -603,6 +607,9 @@ static void assert_json_route_surface(void) {
   char key[64];
   const char json[] = "{\"id\":\"abc\"}";
   const char spool_path[] = "/tmp/vectis-spooled-body";
+  const char static_file_path[] = "/tmp/vectis-static-file.txt";
+  const char static_dir_path[] = "/tmp/vectis-static-dir";
+  const char static_dir_file_path[] = "/tmp/vectis-static-dir/app.js";
   FILE *fp;
 
   vectis_app_config_init(&config);
@@ -632,6 +639,30 @@ static void assert_json_route_surface(void) {
   status = vectis_register_prefixed_route(app, "/api/v1", &raw_route, &error);
   assert(status == VECTIS_OK);
 
+  fp = fopen(static_file_path, "wb");
+  assert(fp != NULL);
+  assert(fwrite("static-file", 1u, 11u, fp) == 11u);
+  assert(fclose(fp) == 0);
+  (void)remove(static_dir_file_path);
+  (void)rmdir(static_dir_path);
+  assert(mkdir(static_dir_path, 0700) == 0);
+  fp = fopen(static_dir_file_path, "wb");
+  assert(fp != NULL);
+  assert(fwrite("static-dir", 1u, 10u, fp) == 10u);
+  assert(fclose(fp) == 0);
+  vectis_static_file_config_init(&static_file);
+  static_file.path = "/static-file";
+  static_file.file_path = static_file_path;
+  static_file.content_type = "text/plain";
+  status = vectis_register_static_file(app, &static_file, &error);
+  assert(status == VECTIS_OK);
+  vectis_static_directory_config_init(&static_dir);
+  static_dir.path_prefix = "/assets";
+  static_dir.root_dir = static_dir_path;
+  static_dir.content_type = "application/javascript";
+  status = vectis_register_static_directory(app, &static_dir, &error);
+  assert(status == VECTIS_OK);
+
   status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/state/abc", request, response, &error);
   assert(status == VECTIS_OK);
   body = vectis_internal_response_body(response);
@@ -653,6 +684,32 @@ static void assert_json_route_surface(void) {
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/static-file", request, response, &error);
+  assert(status == VECTIS_OK);
+  body = vectis_internal_response_body(response);
+  assert(vectis_request_path(request) != NULL);
+  assert(strcmp(vectis_request_path(request), "/static-file") == 0);
+  assert(vectis_internal_response_status_code(response) == 200);
+  assert(strcmp(vectis_internal_response_file_path(response), static_file_path) == 0);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_HEAD, "/static-file", request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 200);
+  body = vectis_internal_response_body(response);
+  assert(body.data == NULL);
+  assert(body.size == 0u);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/assets/app.js", request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 200);
+  assert(strcmp(vectis_internal_response_file_path(response), static_dir_file_path) == 0);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+
   status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/state/..", request, response, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "dot segments") != NULL);
@@ -669,7 +726,7 @@ static void assert_json_route_surface(void) {
   assert(route.body.mode == VECTIS_BODY_JSON);
   status = vectis_register_prefixed_json_route(app, "/api/v1", &route, &error);
   assert(status == VECTIS_OK);
-  assert(vectis_route_count(app) == 4u);
+  assert(vectis_route_count(app) == 6u);
   status = vectis_internal_route_body_policy(app, VECTIS_HTTP_POST, "/api/v1/typed/abc", &policy, &error);
   assert(status == VECTIS_OK);
   assert(policy.mode == VECTIS_BODY_JSON);
@@ -704,7 +761,7 @@ static void assert_json_route_surface(void) {
                                         NULL);
   status = vectis_register_prefixed_json_typed_route(app, "/api/v1", &typed_route, &error);
   assert(status == VECTIS_OK);
-  assert(vectis_route_count(app) == 5u);
+  assert(vectis_route_count(app) == 7u);
   status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
   assert(status == VECTIS_OK);
   status = vectis_internal_dispatch_route(app,
@@ -787,6 +844,9 @@ static void assert_json_route_surface(void) {
   vectis_internal_response_free(response);
   vectis_internal_request_free(request);
   vectis_destroy(app);
+  (void)remove(static_file_path);
+  (void)remove(static_dir_file_path);
+  (void)rmdir(static_dir_path);
 }
 
 static void assert_openapi_surface(void) {

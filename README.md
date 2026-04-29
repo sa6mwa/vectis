@@ -319,6 +319,8 @@ The current implementation provides:
 - Route constructors for literal paths, named and optional path parameters, and
   explicit regex routes, with automatic path-kind inference for the common
   `vectis_route()` and `vectis_json_route()` cases.
+- Static file and static directory helpers register GET/HEAD routes with
+  Vectis-owned request path validation and traversal-safe directory resolution.
 - A first pass at a dependency-aware error model that records Vectis status,
   error source, dependency code, HTTP status, summary message, and detail text.
 - Stable string helpers for statuses, error sources, HTTP methods, and body

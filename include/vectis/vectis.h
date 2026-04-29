@@ -262,6 +262,21 @@ typedef struct vectis_route_config {
   void *userdata;
 } vectis_route_config;
 
+typedef struct vectis_static_file_config {
+  const char *path;
+  const char *file_path;
+  const char *content_type;
+  vectis_http_methods methods;
+} vectis_static_file_config;
+
+typedef struct vectis_static_directory_config {
+  const char *path_prefix;
+  const char *root_dir;
+  const char *content_type;
+  const char *index_file;
+  vectis_http_methods methods;
+} vectis_static_directory_config;
+
 typedef vectis_status (*vectis_json_route_handler_fn)(vectis_app *app,
                                                       vectis_request *request,
                                                       void *input,
@@ -627,6 +642,8 @@ vectis_json_typed_route_config vectis_json_typed_route_methods(vectis_http_metho
                                                                size_t input_size,
                                                                vectis_json_typed_route_handler_fn handler,
                                                                void *userdata);
+void vectis_static_file_config_init(vectis_static_file_config *config);
+void vectis_static_directory_config_init(vectis_static_directory_config *config);
 
 vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error);
 void vectis_destroy(vectis_app *app);
@@ -653,6 +670,12 @@ vectis_status vectis_register_prefixed_json_typed_route(vectis_app *app,
                                                         const char *prefix,
                                                         const vectis_json_typed_route_config *route,
                                                         vectis_error *error);
+vectis_status vectis_register_static_file(vectis_app *app,
+                                          const vectis_static_file_config *config,
+                                          vectis_error *error);
+vectis_status vectis_register_static_directory(vectis_app *app,
+                                               const vectis_static_directory_config *config,
+                                               vectis_error *error);
 vectis_status vectis_attach_openapi_doc(vectis_app *app,
                                         vectis_http_methods methods,
                                         const char *path,
@@ -723,6 +746,7 @@ vectis_status vectis_request_json_into(vectis_request *request,
                                        void *out,
                                        vectis_error *error);
 vectis_http_method vectis_request_method(vectis_request *request);
+const char *vectis_request_path(vectis_request *request);
 const char *vectis_request_path_param(vectis_request *request,
                                       const char *name);
 const char *vectis_request_query(vectis_request *request,
