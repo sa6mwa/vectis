@@ -95,7 +95,7 @@ and C/integration tests before adding Lua bindings or Lua facades.
 - [x] Register JSON routes as ordinary Vectis routes with lonejson parse/serialize adapter dispatch.
 - [x] Enforce per-route no-body and max-body policies in the Kore request path before handler dispatch.
 - [x] Expose request bodies as reader-first `lc_source` streams; no Kore handler path may require upfront framework buffering.
-- [x] Add explicit read-all and memory-then-spill-to-disk helpers for handlers that choose to materialize request bodies.
+- [x] Add transparent body materialization for fixed buffers, memory caps, and automatic spill-to-disk when the body does not fit.
 - [ ] Translate per-route body policies into any remaining concrete Kore request-body streaming and disk-offload tuning behavior.
 - [ ] Support Kore features through Vectis where practical, including websocket, static asset, file upload, and deeper runtime configuration features.
 - [ ] Define the supported one-process multi-instance behavior based on what Kore can safely provide.
@@ -128,7 +128,7 @@ and C/integration tests before adding Lua bindings or Lua facades.
 - [x] Patch Kore ACME JSON handling and request-body helpers to use `lonejson`.
 - [ ] Replace the remaining Kore JSON parsing surface with `lonejson`.
 - [x] Make C request JSON parsing stream from the request reader into lonejson instead of requiring buffered bodies.
-- [x] Expose additional C request-body helpers that support explicit reader, read-all, and spill-to-disk strategies.
+- [x] Expose additional C request-body helpers that support explicit reader and transparent memory-or-file materialization.
 - [x] Expose C request-body streaming parse helpers where this is practical above Kore's body callback model.
 - [x] Draft request-body policy configuration for buffer versus streaming/spool-to-disk strategies.
 - [x] Expose C response helpers for large file payloads without application-memory buffering.

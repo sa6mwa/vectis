@@ -290,18 +290,17 @@ The current implementation provides:
   `lc_source` cert/key material.
 - Per-route request-body policy presets for no-body routes, JSON/buffered
   bodies, and streaming large uploads.
-- Handlers always receive a request body reader. Large upload routes can choose
-  `vectis_request_body_spill()` to keep small bodies in memory and spill larger
-  bodies to a temp file without making upfront buffering part of the framework
-  dispatch path.
+- Handlers always receive a request body reader. `vectis_request_body_materialize()`
+  can use a caller-provided fixed buffer or configured memory cap, then
+  transparently spills to a temp file if the body does not fit.
 - OpenSSL-backed private-key, CSR, self-signed, CA, and CA-signed
   client/server PEM bundle generation plus validation helpers for bundles and
   split cert/key material.
 - `vectis_request_json_into()` streams the request reader into lonejson, so JSON
   routes do not require a prebuffered request body.
 - `vectis_request_body_reader()` exposes the raw `lc_source` escape hatch, while
-  `vectis_request_body_read_all()` and `vectis_request_body_spill()` cover the
-  common application-level memory and temp-file choices.
+  `vectis_request_body_materialize()` gives handlers one memory-or-file result
+  without making them decide the storage class up front.
 - `vectis_response_file()` lets C handlers return large files through the Kore
   runtime without first buffering the whole response in application memory.
 - `vectis_response_header()` adds ordinary response headers with CR/LF-safe

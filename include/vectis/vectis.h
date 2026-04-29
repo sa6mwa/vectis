@@ -145,6 +145,28 @@ typedef struct vectis_mutable_bytes {
   size_t size;
 } vectis_mutable_bytes;
 
+typedef enum vectis_body_materialized_kind {
+  VECTIS_BODY_MATERIALIZED_NONE = 0,
+  VECTIS_BODY_MATERIALIZED_MEMORY = 1,
+  VECTIS_BODY_MATERIALIZED_FILE = 2
+} vectis_body_materialized_kind;
+
+typedef struct vectis_body_materialize_config {
+  void *buffer;
+  size_t buffer_size;
+  size_t memory_limit_bytes;
+  const char *directory;
+  const char *prefix;
+} vectis_body_materialize_config;
+
+typedef struct vectis_body_materialized {
+  vectis_body_materialized_kind kind;
+  vectis_mutable_bytes memory;
+  char *path;
+  size_t size;
+  int owns_memory;
+} vectis_body_materialized;
+
 typedef struct vectis_body_spill_config {
   size_t memory_limit_bytes;
   const char *directory;
@@ -613,6 +635,15 @@ const char *vectis_request_header(vectis_request *request,
                                   const char *name);
 struct http_request *vectis_request_kore(vectis_request *request);
 struct lc_source *vectis_request_body_reader(vectis_request *request);
+void vectis_body_materialize_config_init(vectis_body_materialize_config *config);
+void vectis_body_materialized_cleanup(vectis_body_materialized *body);
+vectis_status vectis_body_materialized_open_reader(const vectis_body_materialized *body,
+                                                   struct lc_source **out,
+                                                   vectis_error *error);
+vectis_status vectis_request_body_materialize(vectis_request *request,
+                                              const vectis_body_materialize_config *config,
+                                              vectis_body_materialized *out,
+                                              vectis_error *error);
 void vectis_body_spill_config_init(vectis_body_spill_config *config);
 void vectis_body_spill_result_cleanup(vectis_body_spill_result *result);
 vectis_status vectis_request_body_read_all(vectis_request *request,

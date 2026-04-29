@@ -10,33 +10,33 @@ static vectis_status upload_file(vectis_app *app,
                                  vectis_error *error) {
   pslog_logger *logger;
   const char *name;
-  vectis_body_spill_config spill_config;
-  vectis_body_spill_result spill;
+  vectis_body_materialize_config body_config;
+  vectis_body_materialized body;
   vectis_status status;
 
   (void)userdata;
   logger = vectis_logger(app);
   name = vectis_request_path_param(request, "name");
-  vectis_body_spill_config_init(&spill_config);
-  spill_config.memory_limit_bytes = 1024u * 1024u;
-  spill_config.prefix = "vectis-upload";
-  status = vectis_request_body_spill(request, &spill_config, &spill, error);
+  vectis_body_materialize_config_init(&body_config);
+  body_config.memory_limit_bytes = 1024u * 1024u;
+  body_config.prefix = "vectis-upload";
+  status = vectis_request_body_materialize(request, &body_config, &body, error);
   if (status != VECTIS_OK) {
     return status;
   }
   if (logger != NULL) {
     logger->infof(logger,
                   "example.kore_file_upload.accept",
-                  "name=%s bytes=%lu spooled=%d path=%s",
+                  "name=%s bytes=%lu storage=%s path=%s",
                   name != NULL ? name : "unnamed",
-                  (unsigned long)spill.size,
-                  spill.spooled_to_disk,
-                  spill.path != NULL ? spill.path : "");
+                  (unsigned long)body.size,
+                  body.kind == VECTIS_BODY_MATERIALIZED_FILE ? "file" : "memory",
+                  body.path != NULL ? body.path : "");
   }
-  if (spill.spooled_to_disk && spill.path != NULL) {
-    (void)remove(spill.path);
+  if (body.kind == VECTIS_BODY_MATERIALIZED_FILE && body.path != NULL) {
+    (void)remove(body.path);
   }
-  vectis_body_spill_result_cleanup(&spill);
+  vectis_body_materialized_cleanup(&body);
   return vectis_response_text(response, 202, "text/plain", "accepted\n", error);
 }
 

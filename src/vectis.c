@@ -342,7 +342,7 @@ static vectis_status vectis_request_reset_body_reader(vectis_request *request,
 
 static int vectis_tmp_template(char *buffer,
                                size_t buffer_size,
-                               const vectis_body_spill_config *config) {
+                               const vectis_body_materialize_config *config) {
   const char *directory;
   const char *prefix;
   int n;
@@ -3701,6 +3701,68 @@ void vectis_body_spill_config_init(vectis_body_spill_config *config) {
   config->prefix = NULL;
 }
 
+void vectis_body_materialize_config_init(vectis_body_materialize_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  config->buffer = NULL;
+  config->buffer_size = 0u;
+  config->memory_limit_bytes = VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+  config->directory = NULL;
+  config->prefix = NULL;
+}
+
+void vectis_body_materialized_cleanup(vectis_body_materialized *body) {
+  if (body == NULL) {
+    return;
+  }
+  if (body->owns_memory) {
+    free(body->memory.data);
+  }
+  free(body->path);
+  body->kind = VECTIS_BODY_MATERIALIZED_NONE;
+  body->memory.data = NULL;
+  body->memory.size = 0u;
+  body->path = NULL;
+  body->size = 0u;
+  body->owns_memory = 0;
+}
+
+vectis_status vectis_body_materialized_open_reader(const vectis_body_materialized *body,
+                                                   struct lc_source **out,
+                                                   vectis_error *error) {
+  lc_error lcerr;
+  int rc;
+
+  if (body == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "materialized body is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "body reader output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  lc_error_init(&lcerr);
+  if (body->kind == VECTIS_BODY_MATERIALIZED_MEMORY) {
+    rc = lc_source_from_memory(body->memory.data, body->memory.size, out, &lcerr);
+  } else if (body->kind == VECTIS_BODY_MATERIALIZED_FILE) {
+    rc = lc_source_from_file(body->path, out, &lcerr);
+  } else {
+    lc_error_cleanup(&lcerr);
+    vectis_set_error(error, VECTIS_ERR_INVALID, "materialized body is empty");
+    return VECTIS_ERR_INVALID;
+  }
+  if (rc != LC_OK) {
+    (void)vectis_source_error(error, rc, &lcerr, "failed to open materialized body reader");
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 void vectis_body_spill_result_cleanup(vectis_body_spill_result *result) {
   if (result == NULL) {
     return;
@@ -3712,10 +3774,10 @@ void vectis_body_spill_result_cleanup(vectis_body_spill_result *result) {
   result->spooled_to_disk = 0;
 }
 
-vectis_status vectis_request_body_spill(vectis_request *request,
-                                        const vectis_body_spill_config *config,
-                                        vectis_body_spill_result *out,
-                                        vectis_error *error) {
+vectis_status vectis_request_body_materialize(vectis_request *request,
+                                              const vectis_body_materialize_config *config,
+                                              vectis_body_materialized *out,
+                                              vectis_error *error) {
   unsigned char chunk[8192];
   lc_error lcerr;
   FILE *fp;
@@ -3723,9 +3785,11 @@ vectis_status vectis_request_body_spill(vectis_request *request,
   char *path;
   void *next;
   unsigned char *memory;
+  unsigned char *fixed_buffer;
   size_t memory_size;
   size_t memory_capacity;
   size_t memory_limit;
+  size_t fixed_buffer_size;
   size_t nread;
   size_t total;
   int fd;
@@ -3736,19 +3800,29 @@ vectis_status vectis_request_body_spill(vectis_request *request,
     return VECTIS_ERR_INVALID;
   }
   if (out == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "request body spill output is required");
+    vectis_set_error(error, VECTIS_ERR_INVALID, "materialized request body output is required");
     return VECTIS_ERR_INVALID;
   }
   if (request->body_reader == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "request body reader is not available");
     return VECTIS_ERR_INVALID;
   }
+  out->kind = VECTIS_BODY_MATERIALIZED_NONE;
   out->memory.data = NULL;
   out->memory.size = 0u;
   out->path = NULL;
   out->size = 0u;
-  out->spooled_to_disk = 0;
+  out->owns_memory = 0;
   memory_limit = config != NULL ? config->memory_limit_bytes : 0u;
+  fixed_buffer = config != NULL ? config->buffer : NULL;
+  fixed_buffer_size = config != NULL ? config->buffer_size : 0u;
+  if (fixed_buffer == NULL) {
+    fixed_buffer_size = 0u;
+  }
+  if (fixed_buffer_size > 0u && (memory_limit == 0u ||
+      memory_limit > fixed_buffer_size)) {
+    memory_limit = fixed_buffer_size;
+  }
   if (memory_limit == 0u) {
     memory_limit = request->body_policy.memory_buffer_limit_bytes;
   }
@@ -3756,7 +3830,7 @@ vectis_status vectis_request_body_spill(vectis_request *request,
     memory_limit = VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
   }
   if (!vectis_tmp_template(tmp_template, sizeof(tmp_template), config)) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "request body spill path is too long");
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body materialization path is too long");
     return VECTIS_ERR_INVALID;
   }
   if (vectis_request_reset_body_reader(request, error) != VECTIS_OK) {
@@ -3770,6 +3844,10 @@ vectis_status vectis_request_body_spill(vectis_request *request,
   fd = -1;
   total = 0u;
   spooled = 0;
+  if (fixed_buffer_size > 0u) {
+    memory = fixed_buffer;
+    memory_capacity = fixed_buffer_size;
+  }
   lc_error_init(&lcerr);
   for (;;) {
     nread = request->body_reader->read(request->body_reader,
@@ -3789,7 +3867,9 @@ vectis_status vectis_request_body_spill(vectis_request *request,
           (void)unlink(path);
         }
         free(path);
-        free(memory);
+        if (memory != fixed_buffer) {
+          free(memory);
+        }
         return error != NULL ? error->code : VECTIS_ERR_STATE;
       }
       break;
@@ -3804,24 +3884,30 @@ vectis_status vectis_request_body_spill(vectis_request *request,
         (void)unlink(path);
       }
       free(path);
-      free(memory);
+      if (memory != fixed_buffer) {
+        free(memory);
+      }
       return VECTIS_ERR_STATE;
     }
     if (!spooled && total + nread > memory_limit) {
       fd = mkstemp(tmp_template);
       if (fd < 0) {
-        vectis_set_error(error, VECTIS_ERR_STATE, "failed to create request body spill file");
+        vectis_set_error(error, VECTIS_ERR_STATE, "failed to create request body materialization file");
         lc_error_cleanup(&lcerr);
-        free(memory);
+        if (memory != fixed_buffer) {
+          free(memory);
+        }
         return VECTIS_ERR_STATE;
       }
       path = vectis_strdup(tmp_template);
       if (path == NULL) {
         (void)close(fd);
         (void)unlink(tmp_template);
-        vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy request body spill path");
+        vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy request body materialization path");
         lc_error_cleanup(&lcerr);
-        free(memory);
+        if (memory != fixed_buffer) {
+          free(memory);
+        }
         return VECTIS_ERR_NOMEM;
       }
       fp = fdopen(fd, "wb");
@@ -3829,8 +3915,10 @@ vectis_status vectis_request_body_spill(vectis_request *request,
         (void)close(fd);
         (void)unlink(path);
         free(path);
-        free(memory);
-        vectis_set_error(error, VECTIS_ERR_STATE, "failed to open request body spill file");
+        if (memory != fixed_buffer) {
+          free(memory);
+        }
+        vectis_set_error(error, VECTIS_ERR_STATE, "failed to open request body materialization file");
         lc_error_cleanup(&lcerr);
         return VECTIS_ERR_STATE;
       }
@@ -3839,12 +3927,16 @@ vectis_status vectis_request_body_spill(vectis_request *request,
         (void)fclose(fp);
         (void)unlink(path);
         free(path);
-        free(memory);
-        vectis_set_error(error, VECTIS_ERR_STATE, "failed to write request body spill file");
+        if (memory != fixed_buffer) {
+          free(memory);
+        }
+        vectis_set_error(error, VECTIS_ERR_STATE, "failed to write request body materialization file");
         lc_error_cleanup(&lcerr);
         return VECTIS_ERR_STATE;
       }
-      free(memory);
+      if (memory != fixed_buffer) {
+        free(memory);
+      }
       memory = NULL;
       memory_size = 0u;
       memory_capacity = 0u;
@@ -3855,7 +3947,7 @@ vectis_status vectis_request_body_spill(vectis_request *request,
         (void)fclose(fp);
         (void)unlink(path);
         free(path);
-        vectis_set_error(error, VECTIS_ERR_STATE, "failed to write request body spill file");
+        vectis_set_error(error, VECTIS_ERR_STATE, "failed to write request body materialization file");
         lc_error_cleanup(&lcerr);
         return VECTIS_ERR_STATE;
       }
@@ -3869,12 +3961,17 @@ vectis_status vectis_request_body_spill(vectis_request *request,
           }
           memory_capacity *= 2u;
         }
-        next = realloc(memory, memory_capacity);
+        next = memory == fixed_buffer ? malloc(memory_capacity) : realloc(memory, memory_capacity);
         if (next == NULL) {
-          free(memory);
+          if (memory != fixed_buffer) {
+            free(memory);
+          }
           vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate request body memory");
           lc_error_cleanup(&lcerr);
           return VECTIS_ERR_NOMEM;
+        }
+        if (memory == fixed_buffer && memory_size > 0u) {
+          memcpy(next, fixed_buffer, memory_size);
         }
         memory = (unsigned char *)next;
       }
@@ -3887,49 +3984,97 @@ vectis_status vectis_request_body_spill(vectis_request *request,
   if (fp != NULL && fclose(fp) != 0) {
     (void)unlink(path);
     free(path);
-    free(memory);
-    vectis_set_error(error, VECTIS_ERR_STATE, "failed to close request body spill file");
+    if (memory != fixed_buffer) {
+      free(memory);
+    }
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to close request body materialization file");
     return VECTIS_ERR_STATE;
   }
   (void)vectis_request_reset_body_reader(request, NULL);
   out->size = total;
   if (spooled) {
+    out->kind = VECTIS_BODY_MATERIALIZED_FILE;
     out->path = path;
-    out->spooled_to_disk = 1;
   } else {
+    out->kind = VECTIS_BODY_MATERIALIZED_MEMORY;
     out->memory.data = memory;
     out->memory.size = memory_size;
+    out->owns_memory = memory != fixed_buffer;
   }
   vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_request_body_spill(vectis_request *request,
+                                        const vectis_body_spill_config *config,
+                                        vectis_body_spill_result *out,
+                                        vectis_error *error) {
+  vectis_body_materialize_config materialize_config;
+  vectis_body_materialized body;
+  vectis_status status;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body spill output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_body_materialize_config_init(&materialize_config);
+  if (config != NULL) {
+    materialize_config.memory_limit_bytes = config->memory_limit_bytes;
+    materialize_config.directory = config->directory;
+    materialize_config.prefix = config->prefix;
+  }
+  status = vectis_request_body_materialize(request, &materialize_config, &body, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  out->memory.data = NULL;
+  out->memory.size = 0u;
+  out->path = NULL;
+  out->size = body.size;
+  out->spooled_to_disk = body.kind == VECTIS_BODY_MATERIALIZED_FILE;
+  if (body.kind == VECTIS_BODY_MATERIALIZED_FILE) {
+    out->path = body.path;
+    body.path = NULL;
+  } else {
+    out->memory.data = body.memory.data;
+    out->memory.size = body.memory.size;
+    body.memory.data = NULL;
+    body.memory.size = 0u;
+    body.owns_memory = 0;
+  }
+  vectis_body_materialized_cleanup(&body);
   return VECTIS_OK;
 }
 
 vectis_status vectis_request_body_read_all(vectis_request *request,
                                            vectis_mutable_bytes *out,
                                            vectis_error *error) {
-  vectis_body_spill_config config;
-  vectis_body_spill_result result;
+  vectis_body_materialize_config config;
+  vectis_body_materialized body;
   vectis_status status;
 
   if (out == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "request body output is required");
     return VECTIS_ERR_INVALID;
   }
-  vectis_body_spill_config_init(&config);
+  vectis_body_materialize_config_init(&config);
   config.memory_limit_bytes = (size_t)-1;
-  status = vectis_request_body_spill(request, &config, &result, error);
+  status = vectis_request_body_materialize(request, &config, &body, error);
   if (status != VECTIS_OK) {
     return status;
   }
-  if (result.spooled_to_disk) {
-    vectis_body_spill_result_cleanup(&result);
+  if (body.kind != VECTIS_BODY_MATERIALIZED_MEMORY ||
+      (body.memory.size > 0u && !body.owns_memory)) {
+    vectis_body_materialized_cleanup(&body);
     vectis_set_error(error, VECTIS_ERR_STATE, "request body unexpectedly spooled while reading all");
     return VECTIS_ERR_STATE;
   }
-  *out = result.memory;
-  result.memory.data = NULL;
-  result.memory.size = 0u;
-  vectis_body_spill_result_cleanup(&result);
+  out->data = body.memory.data;
+  out->size = body.memory.size;
+  body.memory.data = NULL;
+  body.memory.size = 0u;
+  body.owns_memory = 0;
+  vectis_body_materialized_cleanup(&body);
   vectis_error_clear(error);
   return VECTIS_OK;
 }

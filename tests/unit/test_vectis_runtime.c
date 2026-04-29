@@ -41,38 +41,38 @@ static vectis_status upload_handler(vectis_app *app,
                                     vectis_response *response,
                                     void *userdata,
                                     vectis_error *error) {
-  vectis_body_spill_config config;
-  vectis_body_spill_result spill;
+  vectis_body_materialize_config config;
+  vectis_body_materialized body;
   FILE *fp;
   int ch;
   vectis_status status;
 
   (void)app;
   (void)userdata;
-  vectis_body_spill_config_init(&config);
+  vectis_body_materialize_config_init(&config);
   config.memory_limit_bytes = 1024u;
   config.prefix = "vectis-runtime-upload";
-  status = vectis_request_body_spill(request, &config, &spill, error);
+  status = vectis_request_body_materialize(request, &config, &body, error);
   if (status != VECTIS_OK) {
     return status;
   }
-  if (!spill.spooled_to_disk || spill.path == NULL) {
-    vectis_body_spill_result_cleanup(&spill);
+  if (body.kind != VECTIS_BODY_MATERIALIZED_FILE || body.path == NULL) {
+    vectis_body_materialized_cleanup(&body);
     return vectis_response_text(response, 422, "text/plain", "not spooled", error);
   }
-  fp = fopen(spill.path, "rb");
+  fp = fopen(body.path, "rb");
   if (fp == NULL) {
-    vectis_body_spill_result_cleanup(&spill);
+    vectis_body_materialized_cleanup(&body);
     return vectis_response_text(response, 422, "text/plain", "missing spool", error);
   }
   ch = fgetc(fp);
   (void)fclose(fp);
   if (ch != 'x') {
-    vectis_body_spill_result_cleanup(&spill);
+    vectis_body_materialized_cleanup(&body);
     return vectis_response_text(response, 422, "text/plain", "bad spool", error);
   }
-  (void)remove(spill.path);
-  vectis_body_spill_result_cleanup(&spill);
+  (void)remove(body.path);
+  vectis_body_materialized_cleanup(&body);
   return vectis_response_text(response, 200, "text/plain", "spooled", error);
 }
 
