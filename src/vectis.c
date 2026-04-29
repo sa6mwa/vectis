@@ -753,7 +753,7 @@ vectis_body_policy vectis_body_json_default(void) {
   policy.mode = VECTIS_BODY_JSON;
   policy.max_bytes = VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
   policy.memory_buffer_limit_bytes = VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
-  policy.spool_disabled = 0;
+  policy.disk_spool_disabled = 0;
   policy.idle_timeout_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_IDLE_TIMEOUT_MS;
   policy.min_rate_bytes_per_sec = VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_BYTES_PER_SEC;
   policy.min_rate_grace_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_GRACE_MS;
@@ -1653,7 +1653,7 @@ static vectis_status vectis_validate_body_policy(const vectis_body_policy *polic
                        "buffered body policy memory_buffer_limit_bytes must not exceed max_bytes");
       return VECTIS_ERR_INVALID;
     }
-  } else if (policy->spool_disabled && policy->memory_buffer_limit_bytes < policy->max_bytes) {
+  } else if (policy->disk_spool_disabled && policy->memory_buffer_limit_bytes < policy->max_bytes) {
     vectis_set_error(error,
                      VECTIS_ERR_INVALID,
                      "streaming upload body policy cannot disable spooling unless fully buffered");
@@ -4170,7 +4170,7 @@ static size_t vectis_app_min_streaming_memory_limit_bytes(vectis_app_impl *impl)
   (void)pthread_mutex_lock(&impl->mutex);
   for (i = 0u; i < impl->route_count; ++i) {
     if (impl->routes[i].body.mode == VECTIS_BODY_STREAMING_UPLOAD &&
-        !impl->routes[i].body.spool_disabled) {
+        !impl->routes[i].body.disk_spool_disabled) {
       limit = impl->routes[i].body.memory_buffer_limit_bytes;
       if (limit > 0u && (min_bytes == 0u || limit < min_bytes)) {
         min_bytes = limit;
@@ -7204,7 +7204,7 @@ static vectis_status vectis_http_execute_once(const vectis_http_client_config *c
   if (connect_timeout_ms > 0L) {
     (void)curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, connect_timeout_ms);
   }
-  if (!client->redirects_disabled) {
+  if (!client->follow_redirects_disabled) {
     (void)curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
   }
   if (request->proxy_url != NULL && request->proxy_url[0] != '\0') {

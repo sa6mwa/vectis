@@ -128,6 +128,12 @@ typedef struct vectis_error {
   char detail[256];
 } vectis_error;
 
+/*
+ * Public configuration structs must be initialized with their matching
+ * vectis_*_init() function before use. Boolean fields default to zero; opt-out
+ * fields such as *_disabled are used when Vectis enables behavior by default.
+ */
+
 typedef vectis_status (*vectis_curl_configure_fn)(CURL *curl,
                                                   void *userdata,
                                                   vectis_error *error);
@@ -248,7 +254,7 @@ typedef struct vectis_body_policy {
   vectis_body_mode mode;
   size_t max_bytes;
   size_t memory_buffer_limit_bytes;
-  int spool_disabled;
+  int disk_spool_disabled;
   long idle_timeout_ms;
   size_t min_rate_bytes_per_sec;
   long min_rate_grace_ms;
@@ -392,7 +398,7 @@ typedef struct vectis_http_client_config {
   const char *ca_bundle_path;
   long timeout_ms;
   long connect_timeout_ms;
-  int redirects_disabled;
+  int follow_redirects_disabled;
   const char *proxy_url;
   long low_speed_limit_bytes_per_sec;
   long low_speed_time_seconds;

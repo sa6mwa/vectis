@@ -449,7 +449,7 @@ int main(void) {
   route = vectis_upload_route(VECTIS_HTTP_POST, "/upload", sample_handler, NULL);
   assert(route.body.mode == VECTIS_BODY_STREAMING_UPLOAD);
   assert(route.body.max_bytes == VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES);
-  assert(route.body.spool_disabled == 0);
+  assert(route.body.disk_spool_disabled == 0);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
 
@@ -458,7 +458,7 @@ int main(void) {
                                   (size_t)1024u,
                                   sample_handler,
                                   NULL);
-  route.body.spool_disabled = 1;
+  route.body.disk_spool_disabled = 1;
   route.body.memory_buffer_limit_bytes = 512u;
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_ERR_INVALID);

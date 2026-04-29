@@ -46,6 +46,13 @@ one configuration layer, one logger, one lockd configuration, one TLS/certificat
 configuration story, one HTTP server boundary, and coherent helper APIs for JSON,
 queue, downstream HTTP, SFTP, and SSH workflows.
 
+Public configuration structs must be initialized with their matching
+`vectis_*_init()` function before use. Local C variables are not automatically
+zeroed, and the init helpers also apply Vectis' non-zero operational defaults
+for limits, timeouts, and retry behavior. Boolean fields default to zero; when a
+feature is enabled by default, the public option is an explicit opt-out such as
+`*_disabled`.
+
 Lockd is configured when the service needs it, but it is not mandatory for
 Kore-only services. If no lockd endpoint or Unix socket is configured, Vectis
 starts as an HTTP/TLS service without an app-owned lockd client. If TCP lockd
@@ -56,6 +63,14 @@ transport is configured, Vectis requires client bundle material from path,
 left unset, Vectis uses the app logger for lockd client logging. Set
 `config.lockd.logger_disabled = 1` to disable lockd client logging while keeping
 the application/Kore logger enabled.
+
+```c
+vectis_app_config config;
+
+vectis_app_config_init(&config);
+config.logger = kore_logger;
+config.lockd.logger_disabled = 1; /* Keep Kore/app logging, silence lockd. */
+```
 
 For Kore-backed services, the app-owned lockd client is process-local. Vectis
 does not open a lockd socket in the parent before Kore forks workers; route
