@@ -1077,6 +1077,7 @@ static void assert_consumer_service_surface(void) {
 
 static void assert_dsv_surface(void) {
   const char csv[] = "id,count,active\r\nalpha,2,true\r\n\"beta,quoted\",3,false\r\n";
+  const char headerless_csv[] = "gamma,13,true\n";
   const char tsv[] = "id\tcount\tactive\none\t7\ttrue\n";
   const char short_row_csv[] = "id,count,active\nbad,1\n";
   const char oversized_field_csv[] = "id,count,active\nabc,1,true\n";
@@ -1175,6 +1176,43 @@ static void assert_dsv_surface(void) {
   assert(rows.total == 11);
   assert(rows.active_count == 0);
   lc_source_close(source);
+
+  assert(lc_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u, &source, NULL) == LC_OK);
+  config = vectis_dsv_csv();
+  config.has_header = 0;
+  memset(&rows, 0, sizeof(rows));
+  status = vectis_dsv_parse_lonejson(source,
+                                     &sample_dsv_doc_map,
+                                     &config,
+                                     sample_dsv_row,
+                                     &rows,
+                                     &error);
+  assert(status == VECTIS_OK);
+  assert(rows.count == 1u);
+  assert(rows.total == 13);
+  assert(rows.active_count == 1);
+  assert(strcmp(rows.last_id, "gamma") == 0);
+  lc_source_close(source);
+
+  memset(&json, 0, sizeof(json));
+  dsv_source = vectis_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u);
+  status = vectis_dsv_source_to_lonejson_array(&dsv_source,
+                                               &sample_dsv_doc_map,
+                                               &config,
+                                               &json,
+                                               &error);
+  assert(status == VECTIS_OK);
+  assert(strstr((const char *)json.data, "\"id\":\"gamma\"") != NULL);
+  assert(strstr((const char *)json.data, "\"count\":13") != NULL);
+  assert(strstr((const char *)json.data, "\"active\":true") != NULL);
+  vectis_mutable_bytes_cleanup(&json);
+
+  memset(&json, 0, sizeof(json));
+  dsv_source = vectis_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u);
+  status = vectis_dsv_source_to_json_array(&dsv_source, &config, &json, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "columns") != NULL);
+  vectis_error_clear(&error);
 
   assert(lc_source_from_memory(short_row_csv, sizeof(short_row_csv) - 1u, &source, NULL) == LC_OK);
   config = vectis_dsv_csv();

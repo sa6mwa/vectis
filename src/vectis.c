@@ -5208,6 +5208,36 @@ static vectis_status vectis_dsv_open_source(const vectis_source *source,
   return VECTIS_OK;
 }
 
+static vectis_status vectis_dsv_columns_from_map(const lonejson_map *map,
+                                                 const char ***out,
+                                                 size_t *out_count,
+                                                 vectis_error *error) {
+  const char **columns;
+  size_t i;
+
+  if (out == NULL || out_count == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV column output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  *out_count = 0u;
+  if (map == NULL || map->field_count == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV lonejson map has no fields");
+    return VECTIS_ERR_INVALID;
+  }
+  columns = (const char **)calloc(map->field_count, sizeof(columns[0]));
+  if (columns == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate DSV map columns");
+    return VECTIS_ERR_NOMEM;
+  }
+  for (i = 0u; i < map->field_count; ++i) {
+    columns[i] = map->fields[i].json_key;
+  }
+  *out = columns;
+  *out_count = map->field_count;
+  return VECTIS_OK;
+}
+
 vectis_status vectis_dsv_parse_lonejson(struct lc_source *source,
                                         const lonejson_map *map,
                                         const vectis_dsv_config *config,
@@ -5283,6 +5313,15 @@ vectis_status vectis_dsv_parse_lonejson(struct lc_source *source,
       columns = header_columns;
       column_count = headers.count;
     }
+  } else if (columns == NULL) {
+    status = vectis_dsv_columns_from_map(map, &header_columns, &column_count, error);
+    if (status != VECTIS_OK) {
+      vectis_dsv_fields_cleanup(&headers);
+      vectis_dsv_fields_cleanup(&parser.fields);
+      vectis_string_builder_cleanup(&parser.field);
+      return status;
+    }
+    columns = header_columns;
   }
   if (columns == NULL || column_count == 0u) {
     vectis_dsv_fields_cleanup(&headers);
@@ -5450,6 +5489,12 @@ static vectis_status vectis_dsv_to_json_array_impl(struct lc_source *source,
         column_count = headers.count;
       }
     }
+  } else if (columns == NULL && !all_strings) {
+    status = vectis_dsv_columns_from_map(map, &header_columns, &column_count, error);
+    if (status != VECTIS_OK) {
+      goto cleanup;
+    }
+    columns = header_columns;
   }
   if (columns == NULL || column_count == 0u) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "DSV columns are required when no header row is used");
