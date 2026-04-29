@@ -200,6 +200,7 @@ typedef struct vectis_lockd_config {
   const char *default_namespace;
   long timeout_ms;
   pslog_logger *logger;
+  int logger_disabled;
 } vectis_lockd_config;
 
 typedef struct vectis_tls_config {
@@ -247,7 +248,7 @@ typedef struct vectis_body_policy {
   vectis_body_mode mode;
   size_t max_bytes;
   size_t memory_buffer_limit_bytes;
-  int spool_to_disk;
+  int spool_disabled;
   long idle_timeout_ms;
   size_t min_rate_bytes_per_sec;
   long min_rate_grace_ms;
@@ -366,7 +367,7 @@ typedef struct vectis_server_config {
   size_t request_body_min_rate_bytes_per_sec;
   long request_body_min_rate_grace_ms;
   long idle_timeout_ms;
-  int keepalive_enabled;
+  int keepalive_disabled;
   long keepalive_timeout_ms;
   unsigned keepalive_max_requests;
 } vectis_server_config;
@@ -391,7 +392,7 @@ typedef struct vectis_http_client_config {
   const char *ca_bundle_path;
   long timeout_ms;
   long connect_timeout_ms;
-  int follow_redirects;
+  int redirects_disabled;
   const char *proxy_url;
   long low_speed_limit_bytes_per_sec;
   long low_speed_time_seconds;

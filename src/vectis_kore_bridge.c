@@ -792,10 +792,10 @@ static void vectis_kore_apply_server_config(const vectis_server_config *server,
   http_body_min_rate = (u_int64_t)server->request_body_min_rate_bytes_per_sec;
   http_body_min_rate_grace = server->request_body_min_rate_grace_ms > 0L ?
       (u_int64_t)server->request_body_min_rate_grace_ms : 0u;
-  http_keepalive_time = server->keepalive_enabled ?
-      vectis_kore_seconds_from_ms(server->keepalive_timeout_ms) : 0u;
-  http_keepalive_max_requests = server->keepalive_enabled ?
-      (u_int32_t)server->keepalive_max_requests : 0u;
+  http_keepalive_time = server->keepalive_disabled ?
+      0u : vectis_kore_seconds_from_ms(server->keepalive_timeout_ms);
+  http_keepalive_max_requests = server->keepalive_disabled ?
+      0u : (u_int32_t)server->keepalive_max_requests;
 }
 
 static void vectis_kore_setup_domain_tls(struct kore_domain *domain) {

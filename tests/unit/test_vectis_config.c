@@ -43,11 +43,12 @@ int main(void) {
   assert(config.server.request_body_min_rate_grace_ms ==
          VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_GRACE_MS);
   assert(config.server.idle_timeout_ms == VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS);
-  assert(config.server.keepalive_enabled == 1);
+  assert(config.server.keepalive_disabled == 0);
   assert(config.server.keepalive_timeout_ms == VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS);
   assert(config.server.keepalive_max_requests == VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS);
   assert(config.lockd.timeout_ms == 30000L);
   assert(config.lockd.logger == NULL);
+  assert(config.lockd.logger_disabled == 0);
   vectis_error_clear(&error);
   assert(error.source == VECTIS_ERROR_SOURCE_NONE);
   assert(strcmp(vectis_error_source_string(VECTIS_ERROR_SOURCE_CURL), "curl") == 0);

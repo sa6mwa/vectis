@@ -191,7 +191,7 @@ static void assert_http_surface(void) {
   vectis_http_client_config_init(&client);
   assert(client.timeout_ms == 30000L);
   assert(client.connect_timeout_ms == 10000L);
-  assert(client.follow_redirects == 1);
+  assert(client.redirects_disabled == 0);
   assert(client.proxy_url == NULL);
   assert(client.low_speed_limit_bytes_per_sec == 0L);
   assert(client.low_speed_time_seconds == 0L);

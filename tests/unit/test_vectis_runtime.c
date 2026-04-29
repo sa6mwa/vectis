@@ -409,7 +409,7 @@ int main(void) {
   vectis_app_config_init(&config);
   config.tls.cert_key_bundle = vectis_source_from_path("/tmp/server.pem");
   config.lockd.unix_socket_path = "/tmp/lockd.sock";
-  config.server.keepalive_enabled = 0;
+  config.server.keepalive_disabled = 1;
   config.server.keepalive_timeout_ms = 0L;
   config.server.keepalive_max_requests = 0u;
   app = vectis_new(&config, &error);
@@ -449,7 +449,7 @@ int main(void) {
   route = vectis_upload_route(VECTIS_HTTP_POST, "/upload", sample_handler, NULL);
   assert(route.body.mode == VECTIS_BODY_STREAMING_UPLOAD);
   assert(route.body.max_bytes == VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES);
-  assert(route.body.spool_to_disk == 1);
+  assert(route.body.spool_disabled == 0);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
 
@@ -458,11 +458,11 @@ int main(void) {
                                   (size_t)1024u,
                                   sample_handler,
                                   NULL);
-  route.body.spool_to_disk = 0;
+  route.body.spool_disabled = 1;
   route.body.memory_buffer_limit_bytes = 512u;
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_ERR_INVALID);
-  assert(strstr(error.message, "spool_to_disk") != NULL);
+  assert(strstr(error.message, "spooling") != NULL);
 
   vectis_route_config_init(&route);
   route.method = VECTIS_HTTP_GET;

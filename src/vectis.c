@@ -120,6 +120,7 @@ typedef struct vectis_app_impl {
   char **endpoints;
   size_t endpoint_count;
   pslog_logger *lockd_logger;
+  int lockd_logger_disabled;
   long timeout_ms;
   unsigned short port;
   vectis_tls_mode tls_mode;
@@ -713,7 +714,6 @@ void vectis_server_config_init(vectis_server_config *config) {
       VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_BYTES_PER_SEC;
   config->request_body_min_rate_grace_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_GRACE_MS;
   config->idle_timeout_ms = VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS;
-  config->keepalive_enabled = 1;
   config->keepalive_timeout_ms = VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS;
   config->keepalive_max_requests = VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS;
 }
@@ -753,7 +753,7 @@ vectis_body_policy vectis_body_json_default(void) {
   policy.mode = VECTIS_BODY_JSON;
   policy.max_bytes = VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
   policy.memory_buffer_limit_bytes = VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
-  policy.spool_to_disk = 0;
+  policy.spool_disabled = 0;
   policy.idle_timeout_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_IDLE_TIMEOUT_MS;
   policy.min_rate_bytes_per_sec = VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_BYTES_PER_SEC;
   policy.min_rate_grace_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_GRACE_MS;
@@ -777,7 +777,6 @@ vectis_body_policy vectis_body_upload_max(size_t max_bytes) {
   policy.mode = VECTIS_BODY_STREAMING_UPLOAD;
   policy.max_bytes = max_bytes;
   policy.memory_buffer_limit_bytes = VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
-  policy.spool_to_disk = 1;
   policy.idle_timeout_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_IDLE_TIMEOUT_MS;
   policy.min_rate_bytes_per_sec = VECTIS_BODY_DEFAULT_UPLOAD_MIN_RATE_BYTES_PER_SEC;
   policy.min_rate_grace_ms = VECTIS_BODY_DEFAULT_UPLOAD_MIN_RATE_GRACE_MS;
@@ -1654,10 +1653,10 @@ static vectis_status vectis_validate_body_policy(const vectis_body_policy *polic
                        "buffered body policy memory_buffer_limit_bytes must not exceed max_bytes");
       return VECTIS_ERR_INVALID;
     }
-  } else if (!policy->spool_to_disk && policy->memory_buffer_limit_bytes < policy->max_bytes) {
+  } else if (policy->spool_disabled && policy->memory_buffer_limit_bytes < policy->max_bytes) {
     vectis_set_error(error,
                      VECTIS_ERR_INVALID,
-                     "streaming upload body policy requires spool_to_disk unless fully buffered");
+                     "streaming upload body policy cannot disable spooling unless fully buffered");
     return VECTIS_ERR_INVALID;
   }
   if (server != NULL && server->max_request_body_bytes > 0u &&
@@ -2010,7 +2009,7 @@ static vectis_status vectis_validate_server_config(const vectis_server_config *c
     vectis_set_error(error, VECTIS_ERR_INVALID, "server idle_timeout_ms must be greater than zero");
     return VECTIS_ERR_INVALID;
   }
-  if (config->keepalive_enabled) {
+  if (!config->keepalive_disabled) {
     if (config->keepalive_timeout_ms <= 0L) {
       vectis_set_error(error,
                        VECTIS_ERR_INVALID,
@@ -2142,7 +2141,8 @@ static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
   config.client_bundle_source = impl->client_bundle_source;
   config.default_namespace = impl->default_namespace;
   config.timeout_ms = impl->timeout_ms;
-  config.logger = impl->lockd_logger != NULL ? impl->lockd_logger : impl->logger;
+  config.logger = impl->lockd_logger_disabled ? NULL :
+      (impl->lockd_logger != NULL ? impl->lockd_logger : impl->logger);
 
   if (impl->client_bundle_pem != NULL && impl->client_bundle_pem_size > 0u) {
     rc = lc_source_from_memory(impl->client_bundle_pem,
@@ -2260,6 +2260,7 @@ vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error) {
                                                        effective->lockd.client_bundle_source);
   impl->default_namespace = vectis_strdup(effective->lockd.default_namespace);
   impl->lockd_logger = effective->lockd.logger;
+  impl->lockd_logger_disabled = effective->lockd.logger_disabled;
   impl->timeout_ms = effective->lockd.timeout_ms;
   impl->port = effective->tls.port;
   impl->tls_mode = effective->tls.mode;
@@ -4169,7 +4170,7 @@ static size_t vectis_app_min_streaming_memory_limit_bytes(vectis_app_impl *impl)
   (void)pthread_mutex_lock(&impl->mutex);
   for (i = 0u; i < impl->route_count; ++i) {
     if (impl->routes[i].body.mode == VECTIS_BODY_STREAMING_UPLOAD &&
-        impl->routes[i].body.spool_to_disk) {
+        !impl->routes[i].body.spool_disabled) {
       limit = impl->routes[i].body.memory_buffer_limit_bytes;
       if (limit > 0u && (min_bytes == 0u || limit < min_bytes)) {
         min_bytes = limit;
@@ -6470,7 +6471,6 @@ void vectis_http_client_config_init(vectis_http_client_config *config) {
   memset(config, 0, sizeof(*config));
   config->timeout_ms = 30000L;
   config->connect_timeout_ms = 10000L;
-  config->follow_redirects = 1;
   config->retry_max_attempts = 1u;
   config->retry_initial_delay_ms = 250L;
   config->retry_max_delay_ms = 2000L;
@@ -7204,7 +7204,7 @@ static vectis_status vectis_http_execute_once(const vectis_http_client_config *c
   if (connect_timeout_ms > 0L) {
     (void)curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, connect_timeout_ms);
   }
-  if (client->follow_redirects) {
+  if (!client->redirects_disabled) {
     (void)curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
   }
   if (request->proxy_url != NULL && request->proxy_url[0] != '\0') {

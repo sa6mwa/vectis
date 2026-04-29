@@ -53,7 +53,9 @@ transport is configured, Vectis requires client bundle material from path,
 `lc_source`, or memory.
 `config.lockd.logger` can be set when the lockd client should use a different
 `pslog` scope, level, or palette than the application/Kore logger. If it is
-left unset, Vectis uses the app logger for lockd client logging.
+left unset, Vectis uses the app logger for lockd client logging. Set
+`config.lockd.logger_disabled = 1` to disable lockd client logging while keeping
+the application/Kore logger enabled.
 
 For Kore-backed services, the app-owned lockd client is process-local. Vectis
 does not open a lockd socket in the parent before Kore forks workers; route
