@@ -134,6 +134,13 @@ and C/integration tests before adding Lua bindings or Lua facades.
 - [x] Draft request-body policy configuration for buffer versus streaming/spool-to-disk strategies.
 - [x] Expose C response helpers for large file payloads without application-memory buffering.
 - [x] Expose C response serialization helpers for generated large payload streaming.
+- [ ] Add delimiter-separated value support for CSV, TSV, and configurable any-SV input/output.
+- [ ] Stream CSV/TSV/any-SV rows from `lc_source` readers into caller-provided `lonejson`-mapped structs without requiring whole-file buffering.
+- [ ] Provide row callback APIs for DSV parsing so handlers can validate, transform, store to lockd, enqueue, or write downstream output one row at a time.
+- [ ] Provide convenience DSV-to-JSON-array conversion backed by `lonejson`, with memory limits and spill-to-disk behavior consistent with other Vectis body/materialization helpers.
+- [ ] Provide `lonejson`-mapped struct serialization back to CSV, TSV, and configurable any-SV streams.
+- [ ] Handle headers, explicit field mappings, delimiter/quote/escape configuration, CRLF/LF normalization, empty values, null policy, and strict versus permissive row-width validation.
+- [ ] Add C examples and tests for CSV, TSV, custom delimiter, streamed row parsing, DSV-to-JSON-array conversion, and struct-to-DSV serialization.
 - [ ] Expose Lua JSON encode/decode helpers through the bundled `lonejson` Lua rock or a Vectis facade.
 - [x] Make `lonejson` the backing implementation for Vectis request parsing, response serialization, lockd document helpers, and JSON HTTP client helpers.
 - [ ] Add higher-level JSON REST helpers for request validation, response serialization, and downstream API calls.
