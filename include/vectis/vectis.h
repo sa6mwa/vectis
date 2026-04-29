@@ -308,6 +308,38 @@ typedef struct vectis_json_typed_route_config {
   void *userdata;
 } vectis_json_typed_route_config;
 
+typedef enum vectis_openapi_format {
+  VECTIS_OPENAPI_JSON = 0,
+  VECTIS_OPENAPI_YAML = 1
+} vectis_openapi_format;
+
+typedef struct vectis_openapi_schema {
+  const char *name;
+  const lonejson_map *map;
+} vectis_openapi_schema;
+
+typedef struct vectis_openapi_response {
+  int status_code;
+  const char *description;
+  vectis_openapi_schema schema;
+} vectis_openapi_response;
+
+typedef struct vectis_openapi_route_doc {
+  const char *summary;
+  const char *operation_id;
+  const char *const *tags;
+  size_t tag_count;
+  vectis_openapi_schema request_schema;
+  vectis_openapi_response *responses;
+  size_t response_count;
+  size_t response_capacity;
+} vectis_openapi_route_doc;
+
+typedef struct vectis_openapi_document {
+  const char *title;
+  const char *version;
+} vectis_openapi_document;
+
 typedef struct vectis_server_config {
   size_t max_connections;
   size_t max_request_header_bytes;
@@ -512,6 +544,19 @@ vectis_body_policy vectis_body_upload_max(size_t max_bytes);
 void vectis_route_config_init(vectis_route_config *config);
 void vectis_json_route_config_init(vectis_json_route_config *config);
 void vectis_json_typed_route_config_init(vectis_json_typed_route_config *config);
+void vectis_openapi_document_init(vectis_openapi_document *document);
+void vectis_openapi_route_doc_init(vectis_openapi_route_doc *doc);
+void vectis_openapi_route_doc_cleanup(vectis_openapi_route_doc *doc);
+vectis_openapi_schema vectis_openapi_lonejson_schema(const char *name,
+                                                     const lonejson_map *map);
+vectis_status vectis_openapi_request_json(vectis_openapi_route_doc *doc,
+                                          vectis_openapi_schema schema,
+                                          vectis_error *error);
+vectis_status vectis_openapi_response_json(vectis_openapi_route_doc *doc,
+                                           int status_code,
+                                           const char *description,
+                                           vectis_openapi_schema schema,
+                                           vectis_error *error);
 vectis_route_config vectis_route(vectis_http_method method,
                                  const char *path,
                                  vectis_route_handler_fn handler,
@@ -608,6 +653,16 @@ vectis_status vectis_register_prefixed_json_typed_route(vectis_app *app,
                                                         const char *prefix,
                                                         const vectis_json_typed_route_config *route,
                                                         vectis_error *error);
+vectis_status vectis_attach_openapi_doc(vectis_app *app,
+                                        vectis_http_methods methods,
+                                        const char *path,
+                                        const vectis_openapi_route_doc *doc,
+                                        vectis_error *error);
+vectis_status vectis_generate_openapi(vectis_app *app,
+                                      const vectis_openapi_document *document,
+                                      vectis_openapi_format format,
+                                      vectis_mutable_bytes *out,
+                                      vectis_error *error);
 size_t vectis_route_count(const vectis_app *app);
 pslog_logger *vectis_logger(vectis_app *app);
 /* Returns the app-owned lockd client after successful runtime startup.

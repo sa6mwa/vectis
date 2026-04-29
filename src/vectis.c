@@ -57,6 +57,18 @@ typedef struct vectis_kv {
   char *value;
 } vectis_kv;
 
+typedef struct vectis_openapi_doc_entry {
+  vectis_http_methods methods;
+  char *path;
+  vectis_openapi_route_doc doc;
+} vectis_openapi_doc_entry;
+
+typedef struct vectis_string_builder {
+  char *data;
+  size_t size;
+  size_t capacity;
+} vectis_string_builder;
+
 typedef struct vectis_app_impl {
   pthread_mutex_t mutex;
   int started;
@@ -103,6 +115,9 @@ typedef struct vectis_app_impl {
   vectis_route_entry *routes;
   size_t route_count;
   size_t route_capacity;
+  vectis_openapi_doc_entry *openapi_docs;
+  size_t openapi_doc_count;
+  size_t openapi_doc_capacity;
   struct lc_client *lockd_client;
   pid_t lockd_client_pid;
 } vectis_app_impl;
@@ -368,6 +383,113 @@ static int vectis_tmp_template(char *buffer,
            config->prefix[0] != '\0' ? config->prefix : "vectis-body";
   n = snprintf(buffer, buffer_size, "%s/%s-XXXXXX", directory, prefix);
   return n > 0 && (size_t)n < buffer_size;
+}
+
+static void vectis_string_builder_cleanup(vectis_string_builder *builder) {
+  if (builder == NULL) {
+    return;
+  }
+  free(builder->data);
+  builder->data = NULL;
+  builder->size = 0u;
+  builder->capacity = 0u;
+}
+
+static vectis_status vectis_string_builder_reserve(vectis_string_builder *builder,
+                                                   size_t extra,
+                                                   vectis_error *error) {
+  char *next;
+  size_t needed;
+  size_t capacity;
+
+  if (builder == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "string builder is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if ((size_t)-1 - builder->size < extra + 1u) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "string builder size overflow");
+    return VECTIS_ERR_NOMEM;
+  }
+  needed = builder->size + extra + 1u;
+  if (needed <= builder->capacity) {
+    return VECTIS_OK;
+  }
+  capacity = builder->capacity == 0u ? 256u : builder->capacity;
+  while (capacity < needed) {
+    if (capacity > ((size_t)-1 / 2u)) {
+      capacity = needed;
+      break;
+    }
+    capacity *= 2u;
+  }
+  next = (char *)realloc(builder->data, capacity);
+  if (next == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to grow string builder");
+    return VECTIS_ERR_NOMEM;
+  }
+  builder->data = next;
+  builder->capacity = capacity;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_string_builder_append_n(vectis_string_builder *builder,
+                                                    const char *text,
+                                                    size_t length,
+                                                    vectis_error *error) {
+  if (text == NULL && length > 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "string builder text is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_string_builder_reserve(builder, length, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  if (length > 0u) {
+    memcpy(builder->data + builder->size, text, length);
+  }
+  builder->size += length;
+  builder->data[builder->size] = '\0';
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_string_builder_append(vectis_string_builder *builder,
+                                                  const char *text,
+                                                  vectis_error *error) {
+  return vectis_string_builder_append_n(builder,
+                                        text != NULL ? text : "",
+                                        text != NULL ? strlen(text) : 0u,
+                                        error);
+}
+
+static vectis_status vectis_string_builder_appendf(vectis_string_builder *builder,
+                                                   vectis_error *error,
+                                                   const char *fmt,
+                                                   ...) {
+  va_list ap;
+  int n;
+  size_t old_size;
+
+  if (fmt == NULL) {
+    return VECTIS_OK;
+  }
+  va_start(ap, fmt);
+  n = vsnprintf(NULL, 0u, fmt, ap);
+  va_end(ap);
+  if (n < 0) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to format string builder content");
+    return VECTIS_ERR_STATE;
+  }
+  if (vectis_string_builder_reserve(builder, (size_t)n, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  old_size = builder->size;
+  va_start(ap, fmt);
+  (void)vsnprintf(builder->data + builder->size,
+                  builder->capacity - builder->size,
+                  fmt,
+                  ap);
+  va_end(ap);
+  builder->size = old_size + (size_t)n;
+  return VECTIS_OK;
 }
 
 const char *vectis_status_string(vectis_status status) {
@@ -659,6 +781,94 @@ void vectis_json_typed_route_config_init(vectis_json_typed_route_config *config)
   config->methods = VECTIS_HTTP_METHODS_NONE;
   config->path_kind = VECTIS_ROUTE_PATH_LITERAL;
   config->body = vectis_body_json_default();
+}
+
+void vectis_openapi_document_init(vectis_openapi_document *document) {
+  if (document == NULL) {
+    return;
+  }
+  document->title = "Vectis API";
+  document->version = "0.0.0";
+}
+
+void vectis_openapi_route_doc_init(vectis_openapi_route_doc *doc) {
+  if (doc == NULL) {
+    return;
+  }
+  memset(doc, 0, sizeof(*doc));
+}
+
+void vectis_openapi_route_doc_cleanup(vectis_openapi_route_doc *doc) {
+  if (doc == NULL) {
+    return;
+  }
+  free(doc->responses);
+  doc->responses = NULL;
+  doc->response_count = 0u;
+  doc->response_capacity = 0u;
+}
+
+vectis_openapi_schema vectis_openapi_lonejson_schema(const char *name,
+                                                     const lonejson_map *map) {
+  vectis_openapi_schema schema;
+
+  schema.name = name;
+  schema.map = map;
+  return schema;
+}
+
+vectis_status vectis_openapi_request_json(vectis_openapi_route_doc *doc,
+                                          vectis_openapi_schema schema,
+                                          vectis_error *error) {
+  if (doc == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "OpenAPI route doc is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (schema.map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "OpenAPI request schema map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  doc->request_schema = schema;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_openapi_response_json(vectis_openapi_route_doc *doc,
+                                           int status_code,
+                                           const char *description,
+                                           vectis_openapi_schema schema,
+                                           vectis_error *error) {
+  vectis_openapi_response *grown;
+  size_t next_capacity;
+
+  if (doc == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "OpenAPI route doc is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (status_code < 100 || status_code > 599) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "OpenAPI response status is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (schema.map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "OpenAPI response schema map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (doc->response_count == doc->response_capacity) {
+    next_capacity = doc->response_capacity == 0u ? 4u : doc->response_capacity * 2u;
+    grown = (vectis_openapi_response *)realloc(doc->responses, next_capacity * sizeof(*grown));
+    if (grown == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to grow OpenAPI responses");
+      return VECTIS_ERR_NOMEM;
+    }
+    doc->responses = grown;
+    doc->response_capacity = next_capacity;
+  }
+  doc->responses[doc->response_count].status_code = status_code;
+  doc->responses[doc->response_count].description = description;
+  doc->responses[doc->response_count].schema = schema;
+  doc->response_count++;
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 static vectis_route_path_kind vectis_infer_route_path_kind(const char *path) {
@@ -1486,6 +1696,152 @@ static void vectis_free_routes(vectis_app_impl *impl) {
   impl->route_capacity = 0u;
 }
 
+static void vectis_free_const_string(const char *value) {
+  union {
+    const char *const_value;
+    void *mutable_value;
+  } ptr;
+
+  ptr.const_value = value;
+  free(ptr.mutable_value);
+}
+
+static void vectis_free_const_string_array(const char *const *value) {
+  union {
+    const char *const *const_value;
+    void *mutable_value;
+  } ptr;
+
+  ptr.const_value = value;
+  free(ptr.mutable_value);
+}
+
+static void vectis_openapi_route_doc_deep_cleanup(vectis_openapi_route_doc *doc) {
+  size_t i;
+
+  if (doc == NULL) {
+    return;
+  }
+  vectis_free_const_string(doc->summary);
+  vectis_free_const_string(doc->operation_id);
+  for (i = 0u; i < doc->tag_count; ++i) {
+    vectis_free_const_string(doc->tags[i]);
+  }
+  vectis_free_const_string_array(doc->tags);
+  vectis_free_const_string(doc->request_schema.name);
+  for (i = 0u; i < doc->response_count; ++i) {
+    vectis_free_const_string(doc->responses[i].description);
+    vectis_free_const_string(doc->responses[i].schema.name);
+  }
+  free(doc->responses);
+  memset(doc, 0, sizeof(*doc));
+}
+
+static void vectis_free_openapi_docs(vectis_app_impl *impl) {
+  size_t i;
+
+  if (impl == NULL) {
+    return;
+  }
+  for (i = 0u; i < impl->openapi_doc_count; ++i) {
+    free(impl->openapi_docs[i].path);
+    vectis_openapi_route_doc_deep_cleanup(&impl->openapi_docs[i].doc);
+  }
+  free(impl->openapi_docs);
+  impl->openapi_docs = NULL;
+  impl->openapi_doc_count = 0u;
+  impl->openapi_doc_capacity = 0u;
+}
+
+static vectis_status vectis_openapi_route_doc_deep_copy(vectis_openapi_route_doc *dst,
+                                                        const vectis_openapi_route_doc *src,
+                                                        vectis_error *error) {
+  const char **tags;
+  vectis_openapi_response *responses;
+  size_t i;
+
+  if (dst == NULL || src == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "OpenAPI route doc copy requires source and destination");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(dst, 0, sizeof(*dst));
+  if (src->summary != NULL) {
+    dst->summary = vectis_strdup(src->summary);
+    if (dst->summary == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy OpenAPI summary");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  if (src->operation_id != NULL) {
+    dst->operation_id = vectis_strdup(src->operation_id);
+    if (dst->operation_id == NULL) {
+      vectis_openapi_route_doc_deep_cleanup(dst);
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy OpenAPI operation id");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  if (src->tag_count > 0u) {
+    tags = (const char **)calloc(src->tag_count, sizeof(*tags));
+    if (tags == NULL) {
+      vectis_openapi_route_doc_deep_cleanup(dst);
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy OpenAPI tags");
+      return VECTIS_ERR_NOMEM;
+    }
+    dst->tags = tags;
+    dst->tag_count = src->tag_count;
+    for (i = 0u; i < src->tag_count; ++i) {
+      if (src->tags[i] != NULL) {
+        tags[i] = vectis_strdup(src->tags[i]);
+        if (tags[i] == NULL) {
+          vectis_openapi_route_doc_deep_cleanup(dst);
+          vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy OpenAPI tag");
+          return VECTIS_ERR_NOMEM;
+        }
+      }
+    }
+  }
+  dst->request_schema = src->request_schema;
+  if (src->request_schema.name != NULL) {
+    dst->request_schema.name = vectis_strdup(src->request_schema.name);
+    if (dst->request_schema.name == NULL) {
+      vectis_openapi_route_doc_deep_cleanup(dst);
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy OpenAPI request schema name");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  if (src->response_count > 0u) {
+    responses = (vectis_openapi_response *)calloc(src->response_count, sizeof(*responses));
+    if (responses == NULL) {
+      vectis_openapi_route_doc_deep_cleanup(dst);
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy OpenAPI responses");
+      return VECTIS_ERR_NOMEM;
+    }
+    dst->responses = responses;
+    dst->response_count = src->response_count;
+    dst->response_capacity = src->response_count;
+    for (i = 0u; i < src->response_count; ++i) {
+      responses[i] = src->responses[i];
+      if (src->responses[i].description != NULL) {
+        responses[i].description = vectis_strdup(src->responses[i].description);
+        if (responses[i].description == NULL) {
+          vectis_openapi_route_doc_deep_cleanup(dst);
+          vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy OpenAPI response description");
+          return VECTIS_ERR_NOMEM;
+        }
+      }
+      if (src->responses[i].schema.name != NULL) {
+        responses[i].schema.name = vectis_strdup(src->responses[i].schema.name);
+        if (responses[i].schema.name == NULL) {
+          vectis_openapi_route_doc_deep_cleanup(dst);
+          vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy OpenAPI response schema name");
+          return VECTIS_ERR_NOMEM;
+        }
+      }
+    }
+  }
+  return VECTIS_OK;
+}
+
 static void vectis_destroy_impl(vectis_app_impl *impl) {
   if (impl == NULL) {
     return;
@@ -1494,6 +1850,7 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
   vectis_close_lockd_client_for_current_process(impl);
 
   vectis_free_routes(impl);
+  vectis_free_openapi_docs(impl);
   vectis_free_endpoints(impl);
 
   free(impl->app_name);
@@ -2587,6 +2944,788 @@ vectis_status vectis_register_prefixed_json_typed_route(vectis_app *app,
   status = vectis_register_json_typed_route(app, &prefixed, error);
   free(path);
   return status;
+}
+
+vectis_status vectis_attach_openapi_doc(vectis_app *app,
+                                        vectis_http_methods methods,
+                                        const char *path,
+                                        const vectis_openapi_route_doc *doc,
+                                        vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_openapi_doc_entry *grown;
+  vectis_openapi_route_doc doc_copy;
+  char *path_copy;
+  size_t next_capacity;
+
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (methods == VECTIS_HTTP_METHODS_NONE || (methods & ~VECTIS_HTTP_METHODS_ALL) != 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "OpenAPI methods are invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (path == NULL || path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "OpenAPI path is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (doc == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "OpenAPI route doc is required");
+    return VECTIS_ERR_INVALID;
+  }
+  path_copy = vectis_strdup(path);
+  if (path_copy == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy OpenAPI path");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (vectis_openapi_route_doc_deep_copy(&doc_copy, doc, error) != VECTIS_OK) {
+    free(path_copy);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  if (impl->openapi_doc_count == impl->openapi_doc_capacity) {
+    next_capacity = impl->openapi_doc_capacity == 0u ? 4u : impl->openapi_doc_capacity * 2u;
+    grown = (vectis_openapi_doc_entry *)realloc(impl->openapi_docs,
+                                                next_capacity * sizeof(*grown));
+    if (grown == NULL) {
+      (void)pthread_mutex_unlock(&impl->mutex);
+      free(path_copy);
+      vectis_openapi_route_doc_deep_cleanup(&doc_copy);
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to grow OpenAPI docs");
+      return VECTIS_ERR_NOMEM;
+    }
+    impl->openapi_docs = grown;
+    impl->openapi_doc_capacity = next_capacity;
+  }
+  impl->openapi_docs[impl->openapi_doc_count].methods = methods;
+  impl->openapi_docs[impl->openapi_doc_count].path = path_copy;
+  impl->openapi_docs[impl->openapi_doc_count].doc = doc_copy;
+  impl->openapi_doc_count++;
+  (void)pthread_mutex_unlock(&impl->mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static const char *vectis_openapi_schema_name(vectis_openapi_schema schema) {
+  if (schema.name != NULL && schema.name[0] != '\0') {
+    return schema.name;
+  }
+  if (schema.map != NULL && schema.map->name != NULL && schema.map->name[0] != '\0') {
+    return schema.map->name;
+  }
+  return "Schema";
+}
+
+static vectis_status vectis_append_json_string(vectis_string_builder *builder,
+                                               const char *value,
+                                               vectis_error *error) {
+  const unsigned char *p;
+  char escaped[7];
+
+  if (vectis_string_builder_append(builder, "\"", error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  p = (const unsigned char *)(value != NULL ? value : "");
+  while (*p != '\0') {
+    if (*p == '"' || *p == '\\') {
+      if (vectis_string_builder_appendf(builder, error, "\\%c", *p) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+    } else if (*p == '\n') {
+      if (vectis_string_builder_append(builder, "\\n", error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+    } else if (*p == '\r') {
+      if (vectis_string_builder_append(builder, "\\r", error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+    } else if (*p == '\t') {
+      if (vectis_string_builder_append(builder, "\\t", error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+    } else if (*p < 0x20u) {
+      (void)snprintf(escaped, sizeof(escaped), "\\u%04x", (unsigned)*p);
+      if (vectis_string_builder_append(builder, escaped, error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+    } else if (vectis_string_builder_append_n(builder, (const char *)p, 1u, error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+    ++p;
+  }
+  return vectis_string_builder_append(builder, "\"", error);
+}
+
+static vectis_status vectis_openapi_append_path(vectis_string_builder *builder,
+                                                const char *path,
+                                                vectis_error *error) {
+  const char *p;
+  const char *start;
+
+  p = path != NULL ? path : "/";
+  while (*p != '\0') {
+    if (*p == ':') {
+      ++p;
+      start = p;
+      while ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+             (*p >= '0' && *p <= '9') || *p == '_') {
+        ++p;
+      }
+      if (vectis_string_builder_append(builder, "{", error) != VECTIS_OK ||
+          vectis_string_builder_append_n(builder, start, (size_t)(p - start), error) != VECTIS_OK ||
+          vectis_string_builder_append(builder, "}", error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+      if (*p == '?') {
+        ++p;
+      }
+    } else {
+      if (vectis_string_builder_append_n(builder, p, 1u, error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+      ++p;
+    }
+  }
+  return VECTIS_OK;
+}
+
+static const char *vectis_openapi_method_name(vectis_http_method method) {
+  switch (method) {
+  case VECTIS_HTTP_GET:
+    return "get";
+  case VECTIS_HTTP_POST:
+    return "post";
+  case VECTIS_HTTP_PUT:
+    return "put";
+  case VECTIS_HTTP_PATCH:
+    return "patch";
+  case VECTIS_HTTP_DELETE:
+    return "delete";
+  case VECTIS_HTTP_HEAD:
+    return "head";
+  case VECTIS_HTTP_OPTIONS:
+    return "options";
+  default:
+    return "get";
+  }
+}
+
+static const char *vectis_openapi_field_type(const lonejson_field *field) {
+  switch (field->kind) {
+  case LONEJSON_FIELD_KIND_I64:
+  case LONEJSON_FIELD_KIND_U64:
+  case LONEJSON_FIELD_KIND_I64_ARRAY:
+  case LONEJSON_FIELD_KIND_U64_ARRAY:
+    return "integer";
+  case LONEJSON_FIELD_KIND_F64:
+  case LONEJSON_FIELD_KIND_F64_ARRAY:
+    return "number";
+  case LONEJSON_FIELD_KIND_BOOL:
+  case LONEJSON_FIELD_KIND_BOOL_ARRAY:
+    return "boolean";
+  case LONEJSON_FIELD_KIND_OBJECT:
+  case LONEJSON_FIELD_KIND_OBJECT_ARRAY:
+    return "object";
+  default:
+    return "string";
+  }
+}
+
+static int vectis_openapi_field_is_array(const lonejson_field *field) {
+  return field->kind == LONEJSON_FIELD_KIND_STRING_ARRAY ||
+         field->kind == LONEJSON_FIELD_KIND_I64_ARRAY ||
+         field->kind == LONEJSON_FIELD_KIND_U64_ARRAY ||
+         field->kind == LONEJSON_FIELD_KIND_F64_ARRAY ||
+         field->kind == LONEJSON_FIELD_KIND_BOOL_ARRAY ||
+         field->kind == LONEJSON_FIELD_KIND_OBJECT_ARRAY;
+}
+
+static vectis_status vectis_openapi_append_schema_json(vectis_string_builder *builder,
+                                                       vectis_openapi_schema schema,
+                                                       vectis_error *error) {
+  const lonejson_map *map;
+  const lonejson_field *field;
+  size_t i;
+  size_t required_count;
+  int first;
+
+  map = schema.map;
+  if (map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "OpenAPI schema map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_string_builder_append(builder, "{\"type\":\"object\",\"properties\":{", error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  for (i = 0u; i < map->field_count; ++i) {
+    field = &map->fields[i];
+    if (i > 0u && vectis_string_builder_append(builder, ",", error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+    if (vectis_append_json_string(builder, field->json_key, error) != VECTIS_OK ||
+        vectis_string_builder_append(builder, ":", error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+    if (vectis_openapi_field_is_array(field)) {
+      if (vectis_string_builder_appendf(builder,
+                                        error,
+                                        "{\"type\":\"array\",\"items\":{\"type\":\"%s\"}}",
+                                        vectis_openapi_field_type(field)) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+    } else if ((field->kind == LONEJSON_FIELD_KIND_OBJECT ||
+                field->kind == LONEJSON_FIELD_KIND_OBJECT_ARRAY) &&
+               field->submap != NULL) {
+      if (vectis_string_builder_append(builder, "{\"$ref\":\"#/components/schemas/", error) != VECTIS_OK ||
+          vectis_string_builder_append(builder, field->submap->name, error) != VECTIS_OK ||
+          vectis_string_builder_append(builder, "\"}", error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+    } else if (vectis_string_builder_appendf(builder,
+                                             error,
+                                             "{\"type\":\"%s\"}",
+                                             vectis_openapi_field_type(field)) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+  }
+  required_count = 0u;
+  for (i = 0u; i < map->field_count; ++i) {
+    if ((map->fields[i].flags & LONEJSON_FIELD_REQUIRED) != 0u) {
+      required_count++;
+    }
+  }
+  if (vectis_string_builder_append(builder, "}", error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  if (required_count > 0u) {
+    if (vectis_string_builder_append(builder, ",\"required\":[", error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+    first = 1;
+    for (i = 0u; i < map->field_count; ++i) {
+      if ((map->fields[i].flags & LONEJSON_FIELD_REQUIRED) != 0u) {
+        if (!first && vectis_string_builder_append(builder, ",", error) != VECTIS_OK) {
+          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        }
+        if (vectis_append_json_string(builder, map->fields[i].json_key, error) != VECTIS_OK) {
+          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        }
+        first = 0;
+      }
+    }
+    if (vectis_string_builder_append(builder, "]", error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+  }
+  return vectis_string_builder_append(builder, "}", error);
+}
+
+static int vectis_openapi_schema_seen(const vectis_openapi_schema *schemas,
+                                      size_t count,
+                                      vectis_openapi_schema schema) {
+  const char *name;
+  size_t i;
+
+  name = vectis_openapi_schema_name(schema);
+  for (i = 0u; i < count; ++i) {
+    if (strcmp(vectis_openapi_schema_name(schemas[i]), name) == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static vectis_status vectis_openapi_collect_schema(vectis_openapi_schema **schemas,
+                                                   size_t *count,
+                                                   size_t *capacity,
+                                                   vectis_openapi_schema schema,
+                                                   vectis_error *error) {
+  vectis_openapi_schema *grown;
+  size_t next_capacity;
+
+  if (schema.map == NULL || vectis_openapi_schema_seen(*schemas, *count, schema)) {
+    return VECTIS_OK;
+  }
+  if (*count == *capacity) {
+    next_capacity = *capacity == 0u ? 8u : *capacity * 2u;
+    grown = (vectis_openapi_schema *)realloc(*schemas, next_capacity * sizeof(*grown));
+    if (grown == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to collect OpenAPI schemas");
+      return VECTIS_ERR_NOMEM;
+    }
+    *schemas = grown;
+    *capacity = next_capacity;
+  }
+  (*schemas)[*count] = schema;
+  (*count)++;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_openapi_collect_doc_schemas(const vectis_openapi_route_doc *doc,
+                                                        vectis_openapi_schema **schemas,
+                                                        size_t *count,
+                                                        size_t *capacity,
+                                                        vectis_error *error) {
+  size_t i;
+
+  if (doc == NULL) {
+    return VECTIS_OK;
+  }
+  if (vectis_openapi_collect_schema(schemas, count, capacity, doc->request_schema, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  for (i = 0u; i < doc->response_count; ++i) {
+    if (vectis_openapi_collect_schema(schemas,
+                                      count,
+                                      capacity,
+                                      doc->responses[i].schema,
+                                      error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_openapi_append_ref_json(vectis_string_builder *builder,
+                                                    vectis_openapi_schema schema,
+                                                    vectis_error *error) {
+  if (vectis_string_builder_append(builder, "{\"$ref\":\"#/components/schemas/", error) != VECTIS_OK ||
+      vectis_string_builder_append(builder, vectis_openapi_schema_name(schema), error) != VECTIS_OK ||
+      vectis_string_builder_append(builder, "\"}", error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_generate_openapi_json(vectis_app_impl *impl,
+                                                  const vectis_openapi_document *document,
+                                                  vectis_string_builder *builder,
+                                                  vectis_error *error) {
+  vectis_openapi_schema *schemas;
+  size_t schema_count;
+  size_t schema_capacity;
+  size_t i;
+  size_t j;
+  int first_path;
+  int first_method;
+  int first_response;
+  vectis_http_method method;
+  vectis_string_builder path_builder;
+  const vectis_openapi_route_doc *doc;
+
+  schemas = NULL;
+  schema_count = 0u;
+  schema_capacity = 0u;
+  memset(&path_builder, 0, sizeof(path_builder));
+  for (i = 0u; i < impl->openapi_doc_count; ++i) {
+    if (vectis_openapi_collect_doc_schemas(&impl->openapi_docs[i].doc,
+                                           &schemas,
+                                           &schema_count,
+                                           &schema_capacity,
+                                           error) != VECTIS_OK) {
+      free(schemas);
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+  }
+  if (vectis_string_builder_append(builder, "{\"openapi\":\"3.1.0\",\"info\":{\"title\":", error) != VECTIS_OK ||
+      vectis_append_json_string(builder, document->title, error) != VECTIS_OK ||
+      vectis_string_builder_append(builder, ",\"version\":", error) != VECTIS_OK ||
+      vectis_append_json_string(builder, document->version, error) != VECTIS_OK ||
+      vectis_string_builder_append(builder, "},\"paths\":{", error) != VECTIS_OK) {
+    free(schemas);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  first_path = 1;
+  for (i = 0u; i < impl->openapi_doc_count; ++i) {
+    doc = &impl->openapi_docs[i].doc;
+    path_builder.size = 0u;
+    if (path_builder.data != NULL) {
+      path_builder.data[0] = '\0';
+    }
+    if (vectis_openapi_append_path(&path_builder, impl->openapi_docs[i].path, error) != VECTIS_OK) {
+      vectis_string_builder_cleanup(&path_builder);
+      free(schemas);
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+    if (!first_path && vectis_string_builder_append(builder, ",", error) != VECTIS_OK) {
+      vectis_string_builder_cleanup(&path_builder);
+      free(schemas);
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+    if (vectis_append_json_string(builder, path_builder.data, error) != VECTIS_OK ||
+        vectis_string_builder_append(builder, ":{", error) != VECTIS_OK) {
+      vectis_string_builder_cleanup(&path_builder);
+      free(schemas);
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+    first_method = 1;
+    for (method = VECTIS_HTTP_GET; method <= VECTIS_HTTP_OPTIONS; ++method) {
+      if ((impl->openapi_docs[i].methods & VECTIS_HTTP_METHOD_MASK(method)) != 0u) {
+        if (!first_method && vectis_string_builder_append(builder, ",", error) != VECTIS_OK) {
+          vectis_string_builder_cleanup(&path_builder);
+          free(schemas);
+          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        }
+        if (vectis_append_json_string(builder, vectis_openapi_method_name(method), error) != VECTIS_OK ||
+            vectis_string_builder_append(builder, ":{", error) != VECTIS_OK) {
+          vectis_string_builder_cleanup(&path_builder);
+          free(schemas);
+          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        }
+        if (doc->operation_id != NULL) {
+          if (vectis_string_builder_append(builder, "\"operationId\":", error) != VECTIS_OK ||
+              vectis_append_json_string(builder, doc->operation_id, error) != VECTIS_OK ||
+              vectis_string_builder_append(builder, ",", error) != VECTIS_OK) {
+            vectis_string_builder_cleanup(&path_builder);
+            free(schemas);
+            return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+          }
+        }
+        if (doc->summary != NULL) {
+          if (vectis_string_builder_append(builder, "\"summary\":", error) != VECTIS_OK ||
+              vectis_append_json_string(builder, doc->summary, error) != VECTIS_OK ||
+              vectis_string_builder_append(builder, ",", error) != VECTIS_OK) {
+            vectis_string_builder_cleanup(&path_builder);
+            free(schemas);
+            return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+          }
+        }
+        if (doc->tag_count > 0u) {
+          if (vectis_string_builder_append(builder, "\"tags\":[", error) != VECTIS_OK) {
+            vectis_string_builder_cleanup(&path_builder);
+            free(schemas);
+            return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+          }
+          for (j = 0u; j < doc->tag_count; ++j) {
+            if (j > 0u && vectis_string_builder_append(builder, ",", error) != VECTIS_OK) {
+              vectis_string_builder_cleanup(&path_builder);
+              free(schemas);
+              return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+            }
+            if (vectis_append_json_string(builder, doc->tags[j], error) != VECTIS_OK) {
+              vectis_string_builder_cleanup(&path_builder);
+              free(schemas);
+              return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+            }
+          }
+          if (vectis_string_builder_append(builder, "],", error) != VECTIS_OK) {
+            vectis_string_builder_cleanup(&path_builder);
+            free(schemas);
+            return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+          }
+        }
+        if (doc->request_schema.map != NULL) {
+          if (vectis_string_builder_append(builder,
+                                           "\"requestBody\":{\"content\":{\"application/json\":{\"schema\":",
+                                           error) != VECTIS_OK ||
+              vectis_openapi_append_ref_json(builder, doc->request_schema, error) != VECTIS_OK ||
+              vectis_string_builder_append(builder, "}}},\"required\":true},", error) != VECTIS_OK) {
+            vectis_string_builder_cleanup(&path_builder);
+            free(schemas);
+            return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+          }
+        }
+        if (vectis_string_builder_append(builder, "\"responses\":{", error) != VECTIS_OK) {
+          vectis_string_builder_cleanup(&path_builder);
+          free(schemas);
+          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        }
+        first_response = 1;
+        for (j = 0u; j < doc->response_count; ++j) {
+          if (!first_response && vectis_string_builder_append(builder, ",", error) != VECTIS_OK) {
+            vectis_string_builder_cleanup(&path_builder);
+            free(schemas);
+            return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+          }
+          if (vectis_string_builder_appendf(builder, error, "\"%d\":{\"description\":", doc->responses[j].status_code) != VECTIS_OK ||
+              vectis_append_json_string(builder,
+                                        doc->responses[j].description != NULL ?
+                                            doc->responses[j].description : "",
+                                        error) != VECTIS_OK ||
+              vectis_string_builder_append(builder,
+                                           ",\"content\":{\"application/json\":{\"schema\":",
+                                           error) != VECTIS_OK ||
+              vectis_openapi_append_ref_json(builder, doc->responses[j].schema, error) != VECTIS_OK ||
+              vectis_string_builder_append(builder, "}}}}", error) != VECTIS_OK) {
+            vectis_string_builder_cleanup(&path_builder);
+            free(schemas);
+            return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+          }
+          first_response = 0;
+        }
+        if (vectis_string_builder_append(builder, "}}", error) != VECTIS_OK) {
+          vectis_string_builder_cleanup(&path_builder);
+          free(schemas);
+          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        }
+        first_method = 0;
+      }
+    }
+    if (vectis_string_builder_append(builder, "}", error) != VECTIS_OK) {
+      vectis_string_builder_cleanup(&path_builder);
+      free(schemas);
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+    first_path = 0;
+  }
+  if (vectis_string_builder_append(builder, "},\"components\":{\"schemas\":{", error) != VECTIS_OK) {
+    vectis_string_builder_cleanup(&path_builder);
+    free(schemas);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  for (i = 0u; i < schema_count; ++i) {
+    if (i > 0u && vectis_string_builder_append(builder, ",", error) != VECTIS_OK) {
+      vectis_string_builder_cleanup(&path_builder);
+      free(schemas);
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+    if (vectis_append_json_string(builder, vectis_openapi_schema_name(schemas[i]), error) != VECTIS_OK ||
+        vectis_string_builder_append(builder, ":", error) != VECTIS_OK ||
+        vectis_openapi_append_schema_json(builder, schemas[i], error) != VECTIS_OK) {
+      vectis_string_builder_cleanup(&path_builder);
+      free(schemas);
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+  }
+  vectis_string_builder_cleanup(&path_builder);
+  free(schemas);
+  return vectis_string_builder_append(builder, "}}}", error);
+}
+
+static vectis_status vectis_generate_openapi_yaml(vectis_app_impl *impl,
+                                                  const vectis_openapi_document *document,
+                                                  vectis_string_builder *builder,
+                                                  vectis_error *error) {
+  vectis_openapi_schema *schemas;
+  size_t schema_count;
+  size_t schema_capacity;
+  size_t i;
+  size_t j;
+  vectis_http_method method;
+  vectis_string_builder path_builder;
+  const vectis_openapi_route_doc *doc;
+  const lonejson_map *map;
+  const lonejson_field *field;
+
+  schemas = NULL;
+  schema_count = 0u;
+  schema_capacity = 0u;
+  memset(&path_builder, 0, sizeof(path_builder));
+  for (i = 0u; i < impl->openapi_doc_count; ++i) {
+    if (vectis_openapi_collect_doc_schemas(&impl->openapi_docs[i].doc,
+                                           &schemas,
+                                           &schema_count,
+                                           &schema_capacity,
+                                           error) != VECTIS_OK) {
+      free(schemas);
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+  }
+  if (vectis_string_builder_append(builder, "openapi: 3.1.0\ninfo:\n  title: ", error) != VECTIS_OK ||
+      vectis_append_json_string(builder, document->title, error) != VECTIS_OK ||
+      vectis_string_builder_append(builder, "\n  version: ", error) != VECTIS_OK ||
+      vectis_append_json_string(builder, document->version, error) != VECTIS_OK ||
+      vectis_string_builder_append(builder, "\npaths:\n", error) != VECTIS_OK) {
+    free(schemas);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  for (i = 0u; i < impl->openapi_doc_count; ++i) {
+    doc = &impl->openapi_docs[i].doc;
+    path_builder.size = 0u;
+    if (path_builder.data != NULL) {
+      path_builder.data[0] = '\0';
+    }
+    if (vectis_openapi_append_path(&path_builder, impl->openapi_docs[i].path, error) != VECTIS_OK ||
+        vectis_string_builder_append(builder, "  ", error) != VECTIS_OK ||
+        vectis_append_json_string(builder, path_builder.data, error) != VECTIS_OK ||
+        vectis_string_builder_append(builder, ":\n", error) != VECTIS_OK) {
+      vectis_string_builder_cleanup(&path_builder);
+      free(schemas);
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+    for (method = VECTIS_HTTP_GET; method <= VECTIS_HTTP_OPTIONS; ++method) {
+      if ((impl->openapi_docs[i].methods & VECTIS_HTTP_METHOD_MASK(method)) != 0u) {
+        if (vectis_string_builder_appendf(builder, error, "    %s:\n", vectis_openapi_method_name(method)) != VECTIS_OK) {
+          vectis_string_builder_cleanup(&path_builder);
+          free(schemas);
+          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        }
+        if (doc->operation_id != NULL &&
+            (vectis_string_builder_append(builder, "      operationId: ", error) != VECTIS_OK ||
+             vectis_append_json_string(builder, doc->operation_id, error) != VECTIS_OK ||
+             vectis_string_builder_append(builder, "\n", error) != VECTIS_OK)) {
+          vectis_string_builder_cleanup(&path_builder);
+          free(schemas);
+          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        }
+        if (doc->summary != NULL &&
+            (vectis_string_builder_append(builder, "      summary: ", error) != VECTIS_OK ||
+             vectis_append_json_string(builder, doc->summary, error) != VECTIS_OK ||
+             vectis_string_builder_append(builder, "\n", error) != VECTIS_OK)) {
+          vectis_string_builder_cleanup(&path_builder);
+          free(schemas);
+          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        }
+        if (doc->tag_count > 0u) {
+          if (vectis_string_builder_append(builder, "      tags:\n", error) != VECTIS_OK) {
+            vectis_string_builder_cleanup(&path_builder);
+            free(schemas);
+            return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+          }
+          for (j = 0u; j < doc->tag_count; ++j) {
+            if (vectis_string_builder_append(builder, "        - ", error) != VECTIS_OK ||
+                vectis_append_json_string(builder, doc->tags[j], error) != VECTIS_OK ||
+                vectis_string_builder_append(builder, "\n", error) != VECTIS_OK) {
+              vectis_string_builder_cleanup(&path_builder);
+              free(schemas);
+              return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+            }
+          }
+        }
+        if (doc->request_schema.map != NULL &&
+            (vectis_string_builder_append(builder,
+                                          "      requestBody:\n        required: true\n        content:\n          application/json:\n            schema:\n              $ref: \"#/components/schemas/",
+                                          error) != VECTIS_OK ||
+             vectis_string_builder_append(builder, vectis_openapi_schema_name(doc->request_schema), error) != VECTIS_OK ||
+             vectis_string_builder_append(builder, "\"\n", error) != VECTIS_OK)) {
+          vectis_string_builder_cleanup(&path_builder);
+          free(schemas);
+          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        }
+        if (vectis_string_builder_append(builder, "      responses:\n", error) != VECTIS_OK) {
+          vectis_string_builder_cleanup(&path_builder);
+          free(schemas);
+          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        }
+        for (j = 0u; j < doc->response_count; ++j) {
+          if (vectis_string_builder_appendf(builder,
+                                            error,
+                                            "        \"%d\":\n          description: ",
+                                            doc->responses[j].status_code) != VECTIS_OK ||
+              vectis_append_json_string(builder,
+                                        doc->responses[j].description != NULL ?
+                                            doc->responses[j].description : "",
+                                        error) != VECTIS_OK ||
+              vectis_string_builder_append(builder,
+                                           "\n          content:\n            application/json:\n              schema:\n                $ref: \"#/components/schemas/",
+                                           error) != VECTIS_OK ||
+              vectis_string_builder_append(builder, vectis_openapi_schema_name(doc->responses[j].schema), error) != VECTIS_OK ||
+              vectis_string_builder_append(builder, "\"\n", error) != VECTIS_OK) {
+            vectis_string_builder_cleanup(&path_builder);
+            free(schemas);
+            return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+          }
+        }
+      }
+    }
+  }
+  if (vectis_string_builder_append(builder, "components:\n  schemas:\n", error) != VECTIS_OK) {
+    vectis_string_builder_cleanup(&path_builder);
+    free(schemas);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  for (i = 0u; i < schema_count; ++i) {
+    map = schemas[i].map;
+    if (vectis_string_builder_appendf(builder,
+                                      error,
+                                      "    %s:\n      type: object\n      properties:\n",
+                                      vectis_openapi_schema_name(schemas[i])) != VECTIS_OK) {
+      vectis_string_builder_cleanup(&path_builder);
+      free(schemas);
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+    for (j = 0u; j < map->field_count; ++j) {
+      field = &map->fields[j];
+      if (vectis_string_builder_appendf(builder,
+                                        error,
+                                        "        %s:\n          type: %s\n",
+                                        field->json_key,
+                                        vectis_openapi_field_is_array(field) ?
+                                            "array" : vectis_openapi_field_type(field)) != VECTIS_OK) {
+        vectis_string_builder_cleanup(&path_builder);
+        free(schemas);
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+      if (vectis_openapi_field_is_array(field) &&
+          vectis_string_builder_appendf(builder,
+                                        error,
+                                        "          items:\n            type: %s\n",
+                                        vectis_openapi_field_type(field)) != VECTIS_OK) {
+        vectis_string_builder_cleanup(&path_builder);
+        free(schemas);
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+    }
+    if (vectis_string_builder_append(builder, "      required:\n", error) != VECTIS_OK) {
+      vectis_string_builder_cleanup(&path_builder);
+      free(schemas);
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+    for (j = 0u; j < map->field_count; ++j) {
+      if ((map->fields[j].flags & LONEJSON_FIELD_REQUIRED) != 0u &&
+          vectis_string_builder_appendf(builder,
+                                        error,
+                                        "        - %s\n",
+                                        map->fields[j].json_key) != VECTIS_OK) {
+        vectis_string_builder_cleanup(&path_builder);
+        free(schemas);
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+    }
+  }
+  vectis_string_builder_cleanup(&path_builder);
+  free(schemas);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_generate_openapi(vectis_app *app,
+                                      const vectis_openapi_document *document,
+                                      vectis_openapi_format format,
+                                      vectis_mutable_bytes *out,
+                                      vectis_error *error) {
+  vectis_openapi_document default_document;
+  vectis_string_builder builder;
+  vectis_status status;
+
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "OpenAPI output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (format != VECTIS_OPENAPI_JSON && format != VECTIS_OPENAPI_YAML) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "OpenAPI format is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  out->data = NULL;
+  out->size = 0u;
+  if (document == NULL) {
+    vectis_openapi_document_init(&default_document);
+    document = &default_document;
+  }
+  memset(&builder, 0, sizeof(builder));
+  if (format == VECTIS_OPENAPI_JSON) {
+    status = vectis_generate_openapi_json((vectis_app_impl *)app->impl,
+                                          document,
+                                          &builder,
+                                          error);
+  } else {
+    status = vectis_generate_openapi_yaml((vectis_app_impl *)app->impl,
+                                          document,
+                                          &builder,
+                                          error);
+  }
+  if (status != VECTIS_OK) {
+    vectis_string_builder_cleanup(&builder);
+    return status;
+  }
+  out->data = builder.data;
+  out->size = builder.size;
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 static size_t vectis_app_route_count_impl(const vectis_app *app) {

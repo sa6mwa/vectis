@@ -772,6 +772,84 @@ static void assert_json_route_surface(void) {
   vectis_destroy(app);
 }
 
+static void assert_openapi_surface(void) {
+  vectis_app_config config;
+  vectis_openapi_route_doc doc;
+  vectis_openapi_document document;
+  vectis_mutable_bytes json;
+  vectis_mutable_bytes yaml;
+  vectis_error error;
+  vectis_status status;
+  vectis_app *app;
+  const char *tags[] = {"orders"};
+
+  vectis_app_config_init(&config);
+  config.tls.cert_key_bundle_path = "/tmp/server.pem";
+  app = vectis_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_openapi_route_doc_init(&doc);
+  doc.summary = "Create order";
+  doc.operation_id = "createOrder";
+  doc.tags = tags;
+  doc.tag_count = 1u;
+  status = vectis_openapi_request_json(&doc,
+                                       vectis_openapi_lonejson_schema("OrderRequest",
+                                                                      &sample_doc_map),
+                                       &error);
+  assert(status == VECTIS_OK);
+  status = vectis_openapi_response_json(&doc,
+                                        201,
+                                        "Created",
+                                        vectis_openapi_lonejson_schema("OrderCreated",
+                                                                       &sample_doc_map),
+                                        &error);
+  assert(status == VECTIS_OK);
+  status = vectis_openapi_response_json(&doc,
+                                        409,
+                                        "Conflict",
+                                        vectis_openapi_lonejson_schema("ApiError",
+                                                                       &sample_error_doc_map),
+                                        &error);
+  assert(status == VECTIS_OK);
+  status = vectis_attach_openapi_doc(app,
+                                     VECTIS_HTTP_METHODS_POST,
+                                     "/orders/:id?",
+                                     &doc,
+                                     &error);
+  assert(status == VECTIS_OK);
+
+  vectis_openapi_document_init(&document);
+  document.title = "Orders API";
+  document.version = "1.2.3";
+  status = vectis_generate_openapi(app, &document, VECTIS_OPENAPI_JSON, &json, &error);
+  assert(status == VECTIS_OK);
+  assert(json.data != NULL);
+  assert(strstr((const char *)json.data, "\"openapi\":\"3.1.0\"") != NULL);
+  assert(strstr((const char *)json.data, "\"/orders/{id}\"") != NULL);
+  assert(strstr((const char *)json.data, "\"operationId\":\"createOrder\"") != NULL);
+  assert(strstr((const char *)json.data, "\"201\"") != NULL);
+  assert(strstr((const char *)json.data, "\"409\"") != NULL);
+  assert(strstr((const char *)json.data, "\"OrderRequest\"") != NULL);
+  assert(strstr((const char *)json.data, "\"ApiError\"") != NULL);
+  assert(strstr((const char *)json.data, "\"required\":[\"id\"]") != NULL);
+  vectis_mutable_bytes_cleanup(&json);
+
+  status = vectis_generate_openapi(app, &document, VECTIS_OPENAPI_YAML, &yaml, &error);
+  assert(status == VECTIS_OK);
+  assert(yaml.data != NULL);
+  assert(strstr((const char *)yaml.data, "openapi: 3.1.0") != NULL);
+  assert(strstr((const char *)yaml.data, "\"/orders/{id}\":") != NULL);
+  assert(strstr((const char *)yaml.data, "operationId: \"createOrder\"") != NULL);
+  assert(strstr((const char *)yaml.data, "\"201\":") != NULL);
+  assert(strstr((const char *)yaml.data, "OrderRequest:") != NULL);
+  assert(strstr((const char *)yaml.data, "ApiError:") != NULL);
+  vectis_mutable_bytes_cleanup(&yaml);
+
+  vectis_openapi_route_doc_cleanup(&doc);
+  vectis_destroy(app);
+}
+
 static void assert_tls_source_surface(void) {
   vectis_app_config config;
   vectis_error error;
@@ -886,6 +964,7 @@ int main(void) {
   assert_io_surface();
   assert_request_response_surface();
   assert_json_route_surface();
+  assert_openapi_surface();
   assert_tls_source_surface();
   assert_consumer_service_surface();
   return 0;

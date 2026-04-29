@@ -13,6 +13,8 @@ surface directly, without local helper layers that would hide awkward API shape.
 - `kore/kore_json_routes.c`: JSON route auto-wiring shape with lonejson maps.
 - `kore/kore_json_multi_output.c`: typed JSON route shape where the handler
   chooses the HTTP status and response map at runtime.
+- `kore/kore_openapi_docs.c`: optional OpenAPI metadata attachment and JSON/YAML
+  spec generation from lonejson maps.
 - `kore/kore_regex_routes.c`: raw Kore/POSIX regex route shape for cases where
   named Vectis path parameters are not the right fit.
 - `kore/kore_tls_acme.c`: manual TLS and ACME server configuration shape.

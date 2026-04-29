@@ -302,6 +302,8 @@ The current implementation provides:
   handler reply with any status-specific lonejson output map through
   `vectis_json_reply()`, which covers ordinary success/error variants without a
   forced envelope type.
+- Optional OpenAPI docs can be attached separately from route execution and
+  generated as JSON or YAML from route metadata plus named lonejson maps.
 - `vectis_request_body_reader()` exposes the raw `lc_source` escape hatch, while
   `vectis_request_body_materialize()` gives handlers one memory-or-file result
   without making them decide the storage class up front.
