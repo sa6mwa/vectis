@@ -288,6 +288,10 @@ The current implementation provides:
   request metadata mapping, reader-first request bodies, body-size guardrails,
   `pslog` runtime logging, and manual HTTPS startup from path, memory, or
   `lc_source` cert/key material.
+- One Kore runtime may be active per process. Multiple app objects can be
+  constructed, but starting a second routed app while one Kore runtime is
+  running returns `VECTIS_ERR_STATE`; use separate processes for independent
+  servers or consumer services.
 - Per-route request-body policy presets for no-body routes, JSON/buffered
   bodies, and streaming large uploads.
 - Handlers always receive a request body reader. `vectis_request_body_materialize()`

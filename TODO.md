@@ -99,7 +99,7 @@ and C/integration tests before adding Lua bindings or Lua facades.
 - [x] Add static file and directory route helpers with traversal-safe path handling.
 - [ ] Translate per-route body policies into any remaining concrete Kore request-body streaming and disk-offload tuning behavior.
 - [ ] Support Kore features through Vectis where practical, including websocket, static asset, file upload, and deeper runtime configuration features.
-- [ ] Define the supported one-process multi-instance behavior based on what Kore can safely provide.
+- [x] Define the supported one-process multi-instance behavior based on what Kore can safely provide.
 - [x] Add real HTTP integration tests.
 - [x] Add real HTTPS integration tests.
 

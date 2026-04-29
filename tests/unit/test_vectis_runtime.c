@@ -99,13 +99,18 @@ static void assert_kore_smoke(void) {
   vectis_route_config limited_route;
   vectis_route_config upload_route;
   vectis_route_config file_route;
+  vectis_app_config second_config;
+  vectis_route_config second_route;
   const char *headers[] = {"x-vectis-trace: runtime-smoke"};
   const char upload_path[] = "/tmp/vectis-runtime-upload.bin";
   const char response_file_path[] = "/tmp/vectis-runtime-response.txt";
   const char response_file_body[] = "file-response";
   vectis_error error;
+  vectis_error second_error;
   vectis_status status;
+  vectis_status second_status;
   vectis_app *app;
+  vectis_app *second_app;
   FILE *fp;
   int attempt;
   int i;
@@ -145,6 +150,20 @@ static void assert_kore_smoke(void) {
   assert(status == VECTIS_OK);
   status = vectis_start(app, &error);
   assert(status == VECTIS_OK);
+
+  vectis_app_config_init(&second_config);
+  second_config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  second_config.tls.bind = "127.0.0.1";
+  second_config.tls.port = 28081u;
+  second_app = vectis_new(&second_config, &second_error);
+  assert(second_app != NULL);
+  second_route = vectis_route(VECTIS_HTTP_GET, "/health", sample_handler, NULL);
+  second_status = vectis_register_route(second_app, &second_route, &second_error);
+  assert(second_status == VECTIS_OK);
+  second_status = vectis_start(second_app, &second_error);
+  assert(second_status == VECTIS_ERR_STATE);
+  assert(strstr(second_error.message, "Kore runtime is already running") != NULL);
+  vectis_destroy(second_app);
 
   vectis_http_client_config_init(&http);
   http.timeout_ms = 1000L;
