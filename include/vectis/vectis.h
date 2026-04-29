@@ -119,6 +119,10 @@ typedef struct vectis_error {
 typedef vectis_status (*vectis_curl_configure_fn)(CURL *curl,
                                                   void *userdata,
                                                   vectis_error *error);
+typedef vectis_status (*vectis_http_response_body_fn)(const void *data,
+                                                      size_t size,
+                                                      void *userdata,
+                                                      vectis_error *error);
 
 typedef struct vectis_bytes {
   const void *data;
@@ -274,6 +278,9 @@ typedef struct vectis_http_client_config {
   long timeout_ms;
   long connect_timeout_ms;
   int follow_redirects;
+  const char *proxy_url;
+  long low_speed_limit_bytes_per_sec;
+  long low_speed_time_seconds;
   pslog_logger *logger;
   vectis_curl_configure_fn configure_curl;
   void *configure_curl_userdata;
@@ -294,6 +301,11 @@ typedef struct vectis_http_request {
   const void *json_value;
   const char *download_path;
   long timeout_ms;
+  const char *proxy_url;
+  long low_speed_limit_bytes_per_sec;
+  long low_speed_time_seconds;
+  vectis_http_response_body_fn response_body;
+  void *response_body_userdata;
   vectis_curl_configure_fn configure_curl;
   void *configure_curl_userdata;
 } vectis_http_request;

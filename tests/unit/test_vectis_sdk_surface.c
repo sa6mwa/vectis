@@ -81,6 +81,31 @@ static vectis_status curl_config_fail(CURL *curl, void *userdata, vectis_error *
   return VECTIS_ERR_STATE;
 }
 
+static vectis_status response_stream_ok(const void *data,
+                                        size_t size,
+                                        void *userdata,
+                                        vectis_error *error) {
+  sample_doc *doc;
+
+  (void)error;
+  doc = (sample_doc *)userdata;
+  assert(size < sizeof(doc->id));
+  memcpy(doc->id, data, size);
+  doc->id[size] = '\0';
+  return VECTIS_OK;
+}
+
+static vectis_status response_stream_fail(const void *data,
+                                          size_t size,
+                                          void *userdata,
+                                          vectis_error *error) {
+  (void)data;
+  (void)size;
+  (void)userdata;
+  vectis_set_error(error, VECTIS_ERR_STATE, "stream callback failed");
+  return VECTIS_ERR_STATE;
+}
+
 static void assert_http_surface(void) {
   vectis_http_client_config client;
   vectis_http_client *handle;
@@ -108,6 +133,14 @@ static void assert_http_surface(void) {
   assert(client.timeout_ms == 30000L);
   assert(client.connect_timeout_ms == 10000L);
   assert(client.follow_redirects == 1);
+  assert(client.proxy_url == NULL);
+  assert(client.low_speed_limit_bytes_per_sec == 0L);
+  assert(client.low_speed_time_seconds == 0L);
+  client.low_speed_limit_bytes_per_sec = -1L;
+  status = vectis_http_client_new(&client, &handle, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "non-negative") != NULL);
+  client.low_speed_limit_bytes_per_sec = 0L;
   client.configure_curl = curl_config_ok;
   client.configure_curl_userdata = &curl_config_count;
 
@@ -190,6 +223,35 @@ static void assert_http_surface(void) {
   assert(fread(doc.id, 1u, sizeof(source_body) - 1u, fp) == sizeof(source_body) - 1u);
   assert(fclose(fp) == 0);
   assert(memcmp(doc.id, source_body, sizeof(source_body) - 1u) == 0);
+
+  vectis_http_request_init(&request);
+  request.url = "/vectis_http_source.txt";
+  request.low_speed_limit_bytes_per_sec = 1L;
+  request.low_speed_time_seconds = 10L;
+  request.response_body = response_stream_ok;
+  request.response_body_userdata = &doc;
+  memset(&doc, 0, sizeof(doc));
+  status = vectis_http_client_execute(handle, &request, &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.body == NULL);
+  assert(response.body_size == 0u);
+  assert(memcmp(doc.id, source_body, sizeof(source_body) - 1u) == 0);
+  vectis_http_response_cleanup(&response);
+
+  vectis_http_request_init(&request);
+  request.url = "/vectis_http_source.txt";
+  request.response_body = response_stream_fail;
+  status = vectis_http_client_execute(handle, &request, &response, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "stream callback") != NULL);
+
+  vectis_http_request_init(&request);
+  request.url = "/vectis_http_source.txt";
+  request.download_path = helper_download_path;
+  request.response_body = response_stream_ok;
+  status = vectis_http_client_execute(handle, &request, &response, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "download_path") != NULL);
 
   status = vectis_http_client_upload_file(handle,
                                           VECTIS_HTTP_GET,

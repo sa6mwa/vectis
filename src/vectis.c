@@ -161,6 +161,13 @@ typedef struct vectis_curl_buffer {
   int failed;
 } vectis_curl_buffer;
 
+typedef struct vectis_curl_response_stream {
+  vectis_http_response_body_fn callback;
+  void *userdata;
+  vectis_error *error;
+  int failed;
+} vectis_curl_response_stream;
+
 typedef struct vectis_curl_request_body {
   const void *data;
   size_t size;
@@ -3686,7 +3693,10 @@ vectis_status vectis_http_client_new(const vectis_http_client_config *config,
   *out = NULL;
   vectis_http_client_config_init(&defaults);
   effective = config != NULL ? config : &defaults;
-  if (effective->timeout_ms < 0L || effective->connect_timeout_ms < 0L) {
+  if (effective->timeout_ms < 0L ||
+      effective->connect_timeout_ms < 0L ||
+      effective->low_speed_limit_bytes_per_sec < 0L ||
+      effective->low_speed_time_seconds < 0L) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP client timeouts must be non-negative");
     return VECTIS_ERR_INVALID;
   }
@@ -3900,6 +3910,25 @@ static size_t vectis_curl_write_file(char *ptr,
                                      size_t nmemb,
                                      void *userdata) {
   return fwrite(ptr, size, nmemb, (FILE *)userdata);
+}
+
+static size_t vectis_curl_write_stream(char *ptr,
+                                       size_t size,
+                                       size_t nmemb,
+                                       void *userdata) {
+  vectis_curl_response_stream *stream;
+  size_t bytes;
+
+  stream = (vectis_curl_response_stream *)userdata;
+  bytes = size * nmemb;
+  if (stream == NULL || stream->callback == NULL || bytes == 0u) {
+    return bytes;
+  }
+  if (stream->callback(ptr, bytes, stream->userdata, stream->error) != VECTIS_OK) {
+    stream->failed = 1;
+    return 0u;
+  }
+  return bytes;
 }
 
 static size_t vectis_curl_read_file(char *ptr,
@@ -4159,6 +4188,7 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
   CURLcode curl_code;
   struct curl_slist *headers;
   vectis_curl_buffer response_buffer;
+  vectis_curl_response_stream response_stream;
   vectis_curl_request_body request_body;
   char curl_error[CURL_ERROR_SIZE];
   char *url;
@@ -4166,6 +4196,8 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
   FILE *download_file;
   long timeout_ms;
   long connect_timeout_ms;
+  long low_speed_limit;
+  long low_speed_time;
   size_t i;
   const char *method;
   char content_type_header[256];
@@ -4194,9 +4226,21 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
     vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP download_path must not be empty");
     return VECTIS_ERR_INVALID;
   }
+  if (request->download_path != NULL && request->response_body != NULL) {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "HTTP request cannot use both download_path and response_body");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->low_speed_limit_bytes_per_sec < 0L ||
+      request->low_speed_time_seconds < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP request low-speed settings must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
 
   memset(response, 0, sizeof(*response));
   memset(&response_buffer, 0, sizeof(response_buffer));
+  memset(&response_stream, 0, sizeof(response_stream));
   memset(&request_body, 0, sizeof(request_body));
   memset(curl_error, 0, sizeof(curl_error));
   headers = NULL;
@@ -4230,6 +4274,10 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
 
   timeout_ms = request->timeout_ms > 0L ? request->timeout_ms : client->timeout_ms;
   connect_timeout_ms = client->connect_timeout_ms;
+  low_speed_limit = request->low_speed_limit_bytes_per_sec > 0L ?
+      request->low_speed_limit_bytes_per_sec : client->low_speed_limit_bytes_per_sec;
+  low_speed_time = request->low_speed_time_seconds > 0L ?
+      request->low_speed_time_seconds : client->low_speed_time_seconds;
   (void)curl_easy_setopt(curl, CURLOPT_URL, url);
   (void)curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error);
   if (timeout_ms > 0L) {
@@ -4240,6 +4288,17 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
   }
   if (client->follow_redirects) {
     (void)curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  }
+  if (request->proxy_url != NULL && request->proxy_url[0] != '\0') {
+    (void)curl_easy_setopt(curl, CURLOPT_PROXY, request->proxy_url);
+  } else if (client->proxy_url != NULL && client->proxy_url[0] != '\0') {
+    (void)curl_easy_setopt(curl, CURLOPT_PROXY, client->proxy_url);
+  }
+  if (low_speed_limit > 0L) {
+    (void)curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, low_speed_limit);
+  }
+  if (low_speed_time > 0L) {
+    (void)curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, low_speed_time);
   }
   if (vectis_curl_set_common_tls(curl,
                                  &client->client_bundle,
@@ -4360,6 +4419,12 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
     }
     (void)curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, vectis_curl_write_file);
     (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, download_file);
+  } else if (request->response_body != NULL) {
+    response_stream.callback = request->response_body;
+    response_stream.userdata = request->response_body_userdata;
+    response_stream.error = error;
+    (void)curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, vectis_curl_write_stream);
+    (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_stream);
   } else {
     (void)curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, vectis_curl_write_memory);
     (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_buffer);
@@ -4405,6 +4470,18 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
     return VECTIS_ERR_STATE;
   }
   download_file = NULL;
+  if (response_stream.failed) {
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    vectis_curl_request_body_cleanup(&request_body);
+    free(response_buffer.data);
+    free(url);
+    if (error != NULL && error->code != VECTIS_OK) {
+      return error->code;
+    }
+    vectis_set_error(error, VECTIS_ERR_STATE, "HTTP response body callback failed");
+    return VECTIS_ERR_STATE;
+  }
   if (curl_code != CURLE_OK) {
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);

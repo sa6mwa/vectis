@@ -309,6 +309,9 @@ The current implementation provides:
   so app logging/defaults can flow into downstream calls.
 - A raw curl configuration callback on HTTP client configs and individual HTTP
   requests for protocol/options escape hatches without leaving Vectis helpers.
+- First-class C curl settings for proxy URLs, connect/overall timeouts,
+  low-speed aborts, redirects, request headers, client certificates, CA bundles,
+  file downloads/uploads, and streaming response-body callbacks.
 - A `vectis` executable that embeds the provisioned Lua 5.5 runtime, supports
   normal script and shebang execution, and is wrapped on Linux with the
   single-header `libpid0` 0.3.0 helper so it can run correctly as PID 1 in
