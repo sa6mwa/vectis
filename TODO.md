@@ -72,9 +72,12 @@ moving toward, not just the next patch. Keep items observable and testable.
 
 ## C-first boundary
 
-The current implementation phase is C-only. Lua runtime work remains documented
-below, but new implementation should continue through the C SDK, C examples,
-and C/integration tests before adding Lua bindings or Lua facades.
+The first C SDK pass is implemented and covered by unit, install-tree, ASAN, and
+compose-backed e2e tests. Remaining C items below are either deeper runtime
+coverage, future feature expansion, or post-C-SDK polish; they should not block
+starting the Lua runtime/facade phase unless they directly affect Lua API shape.
+Lua runtime work remains documented below and should mirror the C naming, source,
+error, timeout, ownership, cleanup, logger, and streaming conventions.
 
 ## Area 5: HTTP / Kore Integration
 
@@ -209,6 +212,14 @@ and C/integration tests before adding Lua bindings or Lua facades.
 - [x] Implement OpenSSL-backed CA certificate/key PEM bundle generation for the C SDK.
 - [x] Implement OpenSSL-backed CA-signed certificate/key PEM bundle generation from existing CA cert/key material.
 - [x] Add tests for valid, expired, malformed, and missing certificate material.
+
+## Area 11.5: Future CAI Integration
+
+- [ ] Track CAI as a future dependency once its C SDK surface stabilizes; current Vectis-side feedback is parked in `../cai/stash/feedbackfromvectis.md`.
+- [ ] Add a Vectis CAI config section that can borrow an external `cai_client` or create an app-owned client with Vectis logger inheritance.
+- [ ] Mirror the lockd logger model for CAI: dedicated CAI logger, fallback to app/Kore logger, and `logger_disabled` opt-out.
+- [ ] Add thin Vectis adapters for request-body reader to `cai_source`, CAI output to Vectis response/lockd payload, and CAI errors to JSON API responses.
+- [ ] Keep CAI itself as the primary SDK for OpenAI mechanics; Vectis should provide integration glue and service-oriented DX, not a second CAI wrapper.
 
 ## Area 12: Lua Runtime and Framework
 

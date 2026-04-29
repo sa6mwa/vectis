@@ -53,6 +53,22 @@ for limits, timeouts, and retry behavior. Boolean fields default to zero; when a
 feature is enabled by default, the public option is an explicit opt-out such as
 `*_disabled`.
 
+The normal C SDK lifecycle is:
+
+1. initialize a config struct with `vectis_app_config_init()`,
+2. attach borrowed dependencies such as `pslog` loggers or externally owned
+   lockd clients only when the app should not own them,
+3. create the app with `vectis_new()`,
+4. register routes, static assets, JSON handlers, or consumer handlers,
+5. start the app or consumer runtime,
+6. destroy the Vectis-owned handle after shutdown.
+
+Borrowed pointers stay borrowed. Loggers, raw dependency handles, string
+storage, `lc_source` objects, and callback contexts supplied through config or
+route registration must outlive the Vectis object or route that references
+them. Vectis-owned objects are explicitly returned as opaque handles and have a
+matching destroy/close function.
+
 Lockd is configured when the service needs it, but it is not mandatory for
 Kore-only services. If no lockd endpoint or Unix socket is configured, Vectis
 starts as an HTTP/TLS service without an app-owned lockd client. If TCP lockd
