@@ -331,9 +331,10 @@ The current implementation provides:
   Kore's external key-manager flow.
 - A C89 portability contract for the `vectis` public API and implementation.
 
-The full Lua framework facade, missing Lua bindings, consumer runtime, ACME
-integration, higher-level REST helpers, packaging, and single-binary service
-builder remain tracked in [TODO.md](TODO.md).
+The active implementation phase is focused on finishing and refining the C SDK
+surface. The Lua framework facade, missing Lua bindings, Darwin-specific pack
+format/signing work, deeper Kore feature coverage, and any remaining C helper
+refinements remain tracked in [TODO.md](TODO.md).
 
 ## Build
 

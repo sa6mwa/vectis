@@ -70,6 +70,12 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Add install-tree tests for static and shared downstream C consumers.
 - [x] Add runnable example smoke tests against local lockd and a real Vectis/Kore server once runtime startup is implemented.
 
+## C-first boundary
+
+The current implementation phase is C-only. Lua runtime work remains documented
+below, but new implementation should continue through the C SDK, C examples,
+and C/integration tests before adding Lua bindings or Lua facades.
+
 ## Area 5: HTTP / Kore Integration
 
 - [x] Build and link Kore against the dependency bundle shipped by `liblockdc`.
@@ -130,16 +136,18 @@ moving toward, not just the next patch. Keep items observable and testable.
 
 ## Area 8: lockd / Workflow Runtime
 
-- [ ] Wrap the public `liblockdc` 0.3.0 C API behind Vectis service-friendly helpers where doing so improves DX.
+- [ ] Extend Vectis service-friendly lockd helpers only where they reduce real C workflow friction without obscuring the public `liblockdc` 0.3.0 API.
 - [ ] Integrate the `lockdc` Lua binding into the Vectis Lua runtime.
-- [ ] Provide C and Lua helpers for document store, retrieval, query, leases, enqueue, dequeue, ack/nack, and retry-oriented workflow patterns.
+- [x] Provide first-pass C helpers for lockd-backed typed state load/save/update workflows.
+- [ ] Provide additional C helpers for retry-oriented queue workflow patterns only where raw `liblockdc` remains too noisy in real examples.
+- [ ] Provide Lua helpers for document store, retrieval, query, leases, enqueue, dequeue, ack/nack, and retry-oriented workflow patterns.
 - [ ] Expose raw `liblockdc`/`lockdc` access for complete API coverage while making Vectis helpers the preferred workflow API.
 - [x] Make lockd optional for Kore-only C services while preserving validation for configured lockd transports.
 - [x] Define consumer registration and lifecycle APIs for C.
 - [x] Expose lockd consumer service startup/configuration directly, then layer Vectis-owned worker DX on top.
 - [ ] Define Lua consumer-service runner mode as a separate process from Kore server mode.
 - [ ] Make it clear in API errors when a Lua script attempts to run incompatible server and consumer loops in one process.
-- [ ] Add integration tests covering enqueue/dequeue/ack workflows.
+- [x] Add integration tests covering enqueue/dequeue/ack workflows.
 - [x] Add raw liblockdc C examples for open client, lease save/load, query, attachments, enqueue, manual dequeue, and managed consumer services.
 
 ## Area 9: Downstream HTTP / curl
@@ -151,29 +159,34 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Add dependency-backed C MQTT publish helpers through libcurl.
 - [ ] Add Lua curl bindings that support all libcurl URL schemes made available by the bundled libcurl build.
 - [ ] Provide JSON-aware Lua helpers for common API calls using `lonejson`.
-- [ ] Provide C and Lua Vectis helpers for JSON API requests, downloads, uploads, streaming responses, SFTP upload/download, retries, and structured errors.
+- [x] Provide C Vectis helpers for JSON API requests, downloads, uploads, SFTP upload/download, and structured errors.
+- [ ] Add C retry/proxy/streaming-response helpers where the current curl configuration callback is not enough.
+- [ ] Provide Lua Vectis helpers for JSON API requests, downloads, uploads, streaming responses, SFTP upload/download, retries, and structured errors.
 - [x] Expose raw curl option configuration callbacks for complete protocol coverage escape hatches.
 - [x] Support SFTP file retrieval and storage through curl where it is sufficient.
 - [ ] Expose timeout, retry, header, TLS, client certificate, proxy, redirect, and streaming configuration in C and Lua.
-- [ ] Add integration tests for HTTP(S) downstream calls and SFTP operations.
+- [x] Add integration tests for SFTP operations.
+- [ ] Add integration tests for HTTP(S) downstream calls against a controlled local downstream server.
 
 ## Area 10: SSH / libssh2
 
 - [ ] Add Lua bindings for libssh2 session setup, authentication, command execution, stdout/stderr capture, exit status, and timeout handling.
-- [ ] Add C and Lua Vectis helpers for connecting to SSH servers and running commands with captured stdout, stderr, exit status, timeout, and structured error handling.
+- [x] Add C Vectis helpers for connecting to SSH servers and running commands with captured stdout, stderr, exit status, timeout, and structured error handling.
+- [ ] Add Lua Vectis helpers for connecting to SSH servers and running commands with captured stdout, stderr, exit status, timeout, and structured error handling.
 - [x] Draft the C helper API for libssh2 command execution with captured stdout/stderr, exit status, and SFTP upload/download.
 - [x] Implement libssh2-backed C SSH command execution with captured stdout/stderr and exit status.
 - [x] Implement libssh2-backed C SFTP upload/download helpers for cases where curl-backed SFTP is not enough.
 - [ ] Expose raw libssh2 sessions/channels for advanced control.
 - [ ] Decide which lower-level SFTP operations need libssh2 bindings beyond curl-backed file transfer.
 - [ ] Add C helpers only where they support the Vectis service model rather than exposing libssh2 wholesale.
-- [ ] Add integration tests for remote command execution against a controlled test SSH server.
+- [x] Add integration tests for remote command execution against a controlled test SSH server.
 
 ## Area 11: OpenSSL / Certificate Binding
 
 - [ ] Add Lua bindings or facades for certificate loading, parsing, validation, and bundle assembly.
 - [ ] Keep raw OpenSSL exposure narrow; prefer Vectis certificate workflows over dumping OpenSSL APIs into Lua.
-- [ ] Support client and server certificate management in the shared Vectis config model.
+- [x] Support client and server certificate management in the C shared Vectis config model.
+- [ ] Support client and server certificate management in the Lua shared Vectis config model.
 - [x] Draft the C helper API for OpenSSL-backed certificate bundle generation.
 - [x] Implement OpenSSL-backed self-signed certificate/key PEM bundle generation for the C SDK.
 - [x] Implement OpenSSL-backed CA certificate/key PEM bundle generation for the C SDK.
