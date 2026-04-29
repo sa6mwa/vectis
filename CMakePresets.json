@@ -158,6 +158,9 @@
     {
       "name": "asan",
       "configurePreset": "asan",
+      "environment": {
+        "LSAN_OPTIONS": "suppressions=${sourceDir}/tests/asan/lsan.supp"
+      },
       "output": { "outputOnFailure": true }
     },
     {

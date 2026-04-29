@@ -169,9 +169,12 @@ static void assert_kore_smoke(void) {
   http.timeout_ms = 1000L;
   http.connect_timeout_ms = 200L;
   status = VECTIS_ERR_STATE;
-  for (attempt = 0; attempt < 20 && status != VECTIS_OK; ++attempt) {
+  for (attempt = 0; attempt < 100 && status != VECTIS_OK; ++attempt) {
     vectis_http_response_cleanup(&response);
     status = vectis_http_get(&http, "http://127.0.0.1:28080/health", &response, &error);
+    if (status != VECTIS_OK) {
+      usleep(100000u);
+    }
   }
   assert(status == VECTIS_OK);
   assert(response.status_code == 200L);

@@ -79,7 +79,7 @@ index ca607e34fe0d68030e285ff6c30d958088a266ff..0ff8d5edcf275cd20f770426f341007b
  /* config.c */
  void		kore_parse_config(void);
 diff --git a/src/log.c b/src/log.c
-index fb51ada7c005fb1bede4fc8539892c49c8ce37f8..06f1ec5428c92248099e72c2ae07dc547ffbac35 100644
+index fb51ada..0362c16 100644
 --- a/src/log.c
 +++ b/src/log.c
 @@ -21,6 +21,10 @@
@@ -93,12 +93,13 @@ index fb51ada7c005fb1bede4fc8539892c49c8ce37f8..06f1ec5428c92248099e72c2ae07dc54
  struct kore_wlog {
  	int		prio;
  	u_int16_t	wid;
-@@ -33,6 +37,47 @@ static void	log_print(int, const char *, ...)
+@@ -33,6 +37,48 @@ static void	log_print(int, const char *, ...)
  static void	log_from_worker(struct kore_msg *, const void *);
  
  static FILE	*fp = NULL;
 +#if defined(KORE_USE_PSLOG)
 +static pslog_logger	*kore_pslog_logger = NULL;
++static int		kore_pslog_logger_owned = 0;
 +#endif
 +
 +#if defined(KORE_USE_PSLOG)
@@ -141,22 +142,26 @@ index fb51ada7c005fb1bede4fc8539892c49c8ce37f8..06f1ec5428c92248099e72c2ae07dc54
  
  void
  kore_log_init(void)
-@@ -46,6 +91,22 @@ kore_log_init(void)
+@@ -46,6 +92,26 @@ kore_log_init(void)
  
  	fp = stdout;
  
 +#if defined(KORE_USE_PSLOG)
 +	if (kore_pslog_logger == NULL) {
 +		pslog_config	psconf;
++		pslog_logger	*root;
 +
 +		pslog_default_config(&psconf);
 +		psconf.mode = PSLOG_MODE_JSON;
 +		psconf.min_level = PSLOG_LEVEL_INFO;
 +		psconf.output = pslog_output_from_fp(stdout, 0);
-+		kore_pslog_logger = pslog_new(&psconf);
-+		if (kore_pslog_logger != NULL) {
-+			kore_pslog_logger = pslog_withf(kore_pslog_logger,
++		root = pslog_new(&psconf);
++		if (root != NULL) {
++			kore_pslog_logger = pslog_withf(root,
 +			    "service=%s component=%s", "kore", "http");
++			root->destroy(root);
++			if (kore_pslog_logger != NULL)
++				kore_pslog_logger_owned = 1;
 +		}
 +	}
 +#endif
@@ -164,20 +169,23 @@ index fb51ada7c005fb1bede4fc8539892c49c8ce37f8..06f1ec5428c92248099e72c2ae07dc54
  	if (!kore_foreground)
  		openlog(name, LOG_NDELAY | LOG_PID, LOG_DAEMON);
  
-@@ -59,7 +120,39 @@ kore_log_file(const char *path)
+@@ -59,7 +125,49 @@ kore_log_file(const char *path)
  		fp = stdout;
  		fatal("fopen(%s): %s", path, errno_s);
  	}
 +
 +#if defined(KORE_USE_PSLOG)
 +	if (kore_pslog_logger != NULL) {
-+		kore_pslog_logger->destroy(kore_pslog_logger);
++		if (kore_pslog_logger_owned)
++			kore_pslog_logger->destroy(kore_pslog_logger);
 +		kore_pslog_logger = NULL;
++		kore_pslog_logger_owned = 0;
 +	}
 +
 +	{
 +		pslog_config	psconf;
 +		pslog_output	output;
++		pslog_logger	*root;
 +
 +		pslog_default_config(&psconf);
 +		psconf.mode = PSLOG_MODE_JSON;
@@ -185,10 +193,13 @@ index fb51ada7c005fb1bede4fc8539892c49c8ce37f8..06f1ec5428c92248099e72c2ae07dc54
 +		if (pslog_output_init_file(&output, path, "a") != 0)
 +			fatal("pslog_output_init_file(%s): failed", path);
 +		psconf.output = output;
-+		kore_pslog_logger = pslog_new(&psconf);
-+		if (kore_pslog_logger != NULL) {
-+			kore_pslog_logger = pslog_withf(kore_pslog_logger,
++		root = pslog_new(&psconf);
++		if (root != NULL) {
++			kore_pslog_logger = pslog_withf(root,
 +			    "service=%s component=%s", "kore", "http");
++			root->destroy(root);
++			if (kore_pslog_logger != NULL)
++				kore_pslog_logger_owned = 1;
 +		}
 +	}
 +#endif
@@ -198,13 +209,17 @@ index fb51ada7c005fb1bede4fc8539892c49c8ce37f8..06f1ec5428c92248099e72c2ae07dc54
 +void
 +kore_log_set_logger(pslog_logger *logger)
 +{
++	if (kore_pslog_logger != NULL && kore_pslog_logger_owned &&
++	    kore_pslog_logger != logger)
++		kore_pslog_logger->destroy(kore_pslog_logger);
 +	kore_pslog_logger = logger;
++	kore_pslog_logger_owned = 0;
  }
 +#endif
  
  void
  kore_log(int prio, const char *fmt, ...)
-@@ -94,7 +187,9 @@ kore_log(int prio, const char *fmt, ...)
+@@ -94,7 +202,9 @@ kore_log(int prio, const char *fmt, ...)
  	} else {
  		str = kore_buf_stringify(&buf, NULL);
  
@@ -215,7 +230,7 @@ index fb51ada7c005fb1bede4fc8539892c49c8ce37f8..06f1ec5428c92248099e72c2ae07dc54
  			log_print(prio, "proc=[parent] log=[%s]\n", str);
  		else
  			syslog(prio, "proc=[parent] log=[%s]", str);
-@@ -119,7 +214,9 @@ log_from_worker(struct kore_msg *msg, const void *data)
+@@ -119,7 +229,9 @@ log_from_worker(struct kore_msg *msg, const void *data)
  	wlog = data;
  	name = kore_worker_name(wlog->wid);
  

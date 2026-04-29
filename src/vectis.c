@@ -4114,12 +4114,6 @@ vectis_status vectis_generate_openapi(vectis_app *app,
       }
       return VECTIS_ERR_INVALID;
     }
-    vectis_string_builder_cleanup(&builder);
-    builder.data = json_value.json;
-    builder.size = json_value.len;
-    builder.capacity = json_value.len + 1u;
-    json_value.json = NULL;
-    json_value.len = 0u;
     lonejson_json_value_cleanup(&json_value);
   }
   out->data = builder.data;
