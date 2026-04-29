@@ -162,12 +162,12 @@ and C/integration tests before adding Lua bindings or Lua facades.
 - [ ] Provide JSON-aware Lua helpers for common API calls using `lonejson`.
 - [x] Provide C Vectis helpers for JSON API requests, downloads, uploads, SFTP upload/download, and structured errors.
 - [x] Add C proxy, low-speed, and streaming-response helpers where the current curl configuration callback is not enough.
-- [ ] Add C retry helpers where the current curl configuration callback is not enough.
+- [x] Add C retry helpers where the current curl configuration callback is not enough.
 - [ ] Provide Lua Vectis helpers for JSON API requests, downloads, uploads, streaming responses, SFTP upload/download, retries, and structured errors.
 - [x] Expose raw curl option configuration callbacks for complete protocol coverage escape hatches.
 - [x] Support SFTP file retrieval and storage through curl where it is sufficient.
 - [x] Expose timeout, header, TLS, client certificate, proxy, redirect, and streaming-response configuration in C.
-- [ ] Expose retry configuration in C.
+- [x] Expose retry configuration in C.
 - [ ] Expose timeout, retry, header, TLS, client certificate, proxy, redirect, and streaming configuration in Lua.
 - [x] Add integration tests for SFTP operations.
 - [ ] Add integration tests for HTTP(S) downstream calls against a controlled local downstream server.

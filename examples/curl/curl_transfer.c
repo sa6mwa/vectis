@@ -24,6 +24,10 @@ int main(void) {
   client.timeout_ms = 60000L;
   client.low_speed_limit_bytes_per_sec = 1024L;
   client.low_speed_time_seconds = 30L;
+  client.retry_max_attempts = 3u;
+  client.retry_initial_delay_ms = 250L;
+  client.retry_max_delay_ms = 2000L;
+  client.retry_conditions = VECTIS_HTTP_RETRY_DEFAULT;
   if (vectis_http_client_new(&client, &handle, &error) != VECTIS_OK) {
     return 1;
   }
@@ -39,6 +43,7 @@ int main(void) {
   request.url = "https://api.example.com/export/orders.ndjson";
   request.response_body = inspect_chunk;
   request.response_body_userdata = stdout;
+  request.retry_max_attempts = 1u;
   (void)vectis_http_client_execute(handle, &request, &response, &error);
   vectis_http_response_cleanup(&response);
 

@@ -81,6 +81,22 @@ static vectis_status curl_config_fail(CURL *curl, void *userdata, vectis_error *
   return VECTIS_ERR_STATE;
 }
 
+static vectis_status curl_config_fail_first_transfer(CURL *curl,
+                                                     void *userdata,
+                                                     vectis_error *error) {
+  int *count;
+
+  (void)error;
+  count = (int *)userdata;
+  if (count != NULL) {
+    (*count)++;
+    if (*count == 1) {
+      (void)curl_easy_setopt(curl, CURLOPT_URL, "file:///tmp/vectis_http_missing_retry.txt");
+    }
+  }
+  return VECTIS_OK;
+}
+
 static vectis_status response_stream_ok(const void *data,
                                         size_t size,
                                         void *userdata,
@@ -123,9 +139,11 @@ static void assert_http_surface(void) {
   const char source_body[] = "vectis file body";
   const char upload_body[] = "upload body";
   int curl_config_count;
+  int retry_config_count;
 
   assert(strcmp(vectis_status_string(VECTIS_ERR_TIMEOUT), "timeout") == 0);
   curl_config_count = 0;
+  retry_config_count = 0;
   handle = NULL;
   memset(&response, 0, sizeof(response));
   memset(&doc, 0, sizeof(doc));
@@ -136,6 +154,10 @@ static void assert_http_surface(void) {
   assert(client.proxy_url == NULL);
   assert(client.low_speed_limit_bytes_per_sec == 0L);
   assert(client.low_speed_time_seconds == 0L);
+  assert(client.retry_max_attempts == 1u);
+  assert(client.retry_initial_delay_ms == 250L);
+  assert(client.retry_max_delay_ms == 2000L);
+  assert(client.retry_conditions == VECTIS_HTTP_RETRY_DEFAULT);
   client.low_speed_limit_bytes_per_sec = -1L;
   status = vectis_http_client_new(&client, &handle, &error);
   assert(status == VECTIS_ERR_INVALID);
@@ -171,6 +193,28 @@ static void assert_http_surface(void) {
   assert(curl_config_count == 2);
   assert(response.body_size == sizeof(source_body) - 1u);
   vectis_http_response_cleanup(&response);
+
+  vectis_http_request_init(&request);
+  request.url = "/vectis_http_source.txt";
+  request.retry_max_attempts = 2u;
+  request.retry_initial_delay_ms = 0L;
+  request.retry_max_delay_ms = 0L;
+  request.configure_curl = curl_config_fail_first_transfer;
+  retry_config_count = 0;
+  request.configure_curl_userdata = &retry_config_count;
+  status = vectis_http_client_execute(handle, &request, &response, &error);
+  assert(status == VECTIS_OK);
+  assert(retry_config_count == 2);
+  assert(response.body_size == sizeof(source_body) - 1u);
+  vectis_http_response_cleanup(&response);
+
+  vectis_http_request_init(&request);
+  request.url = "/vectis_http_source.txt";
+  request.retry_max_attempts = 2u;
+  request.response_body = response_stream_ok;
+  status = vectis_http_client_execute(handle, &request, &response, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "streaming") != NULL);
 
   vectis_http_request_init(&request);
   request.url = "/vectis_http_source.txt";

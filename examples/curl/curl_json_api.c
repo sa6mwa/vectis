@@ -28,6 +28,11 @@ int main(void) {
   client.base_url = "https://api.example.com";
   client.client_bundle = vectis_source_from_path("/etc/vectis/downstream-client.pem");
   client.timeout_ms = 5000L;
+  client.retry_max_attempts = 3u;
+  client.retry_initial_delay_ms = 100L;
+  client.retry_max_delay_ms = 1000L;
+  client.retry_conditions = VECTIS_HTTP_RETRY_TRANSPORT | VECTIS_HTTP_RETRY_429 |
+                            VECTIS_HTTP_RETRY_5XX;
 
   payload.event[0] = 'o';
   payload.event[1] = 'r';

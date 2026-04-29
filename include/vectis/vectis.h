@@ -67,6 +67,7 @@ typedef enum vectis_http_method {
 } vectis_http_method;
 
 typedef unsigned int vectis_http_methods;
+typedef unsigned int vectis_http_retry_conditions;
 
 #define VECTIS_HTTP_METHOD_MASK(method) (1u << (unsigned)(method))
 #define VECTIS_HTTP_METHODS_NONE 0u
@@ -81,6 +82,13 @@ typedef unsigned int vectis_http_methods;
   (VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_POST | VECTIS_HTTP_METHODS_PUT | \
    VECTIS_HTTP_METHODS_PATCH | VECTIS_HTTP_METHODS_DELETE | VECTIS_HTTP_METHODS_HEAD | \
    VECTIS_HTTP_METHODS_OPTIONS)
+
+#define VECTIS_HTTP_RETRY_NONE 0u
+#define VECTIS_HTTP_RETRY_TRANSPORT 1u
+#define VECTIS_HTTP_RETRY_429 2u
+#define VECTIS_HTTP_RETRY_5XX 4u
+#define VECTIS_HTTP_RETRY_DEFAULT \
+  (VECTIS_HTTP_RETRY_TRANSPORT | VECTIS_HTTP_RETRY_429 | VECTIS_HTTP_RETRY_5XX)
 
 typedef enum vectis_route_path_kind {
   VECTIS_ROUTE_PATH_LITERAL = 0,
@@ -281,6 +289,10 @@ typedef struct vectis_http_client_config {
   const char *proxy_url;
   long low_speed_limit_bytes_per_sec;
   long low_speed_time_seconds;
+  unsigned retry_max_attempts;
+  long retry_initial_delay_ms;
+  long retry_max_delay_ms;
+  vectis_http_retry_conditions retry_conditions;
   pslog_logger *logger;
   vectis_curl_configure_fn configure_curl;
   void *configure_curl_userdata;
@@ -304,6 +316,10 @@ typedef struct vectis_http_request {
   const char *proxy_url;
   long low_speed_limit_bytes_per_sec;
   long low_speed_time_seconds;
+  unsigned retry_max_attempts;
+  long retry_initial_delay_ms;
+  long retry_max_delay_ms;
+  vectis_http_retry_conditions retry_conditions;
   vectis_http_response_body_fn response_body;
   void *response_body_userdata;
   vectis_curl_configure_fn configure_curl;

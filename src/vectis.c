@@ -12,6 +12,7 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 #include <errno.h>
+#include <limits.h>
 #include <netdb.h>
 #include <pthread.h>
 #include <regex.h>
@@ -3747,6 +3748,10 @@ void vectis_http_client_config_init(vectis_http_client_config *config) {
   config->timeout_ms = 30000L;
   config->connect_timeout_ms = 10000L;
   config->follow_redirects = 1;
+  config->retry_max_attempts = 1u;
+  config->retry_initial_delay_ms = 250L;
+  config->retry_max_delay_ms = 2000L;
+  config->retry_conditions = VECTIS_HTTP_RETRY_DEFAULT;
 }
 
 vectis_status vectis_http_client_new(const vectis_http_client_config *config,
@@ -3766,7 +3771,9 @@ vectis_status vectis_http_client_new(const vectis_http_client_config *config,
   if (effective->timeout_ms < 0L ||
       effective->connect_timeout_ms < 0L ||
       effective->low_speed_limit_bytes_per_sec < 0L ||
-      effective->low_speed_time_seconds < 0L) {
+      effective->low_speed_time_seconds < 0L ||
+      effective->retry_initial_delay_ms < 0L ||
+      effective->retry_max_delay_ms < 0L) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP client timeouts must be non-negative");
     return VECTIS_ERR_INVALID;
   }
@@ -4193,6 +4200,83 @@ static vectis_status vectis_curl_set_error(vectis_error *error,
   return VECTIS_ERR_STATE;
 }
 
+static unsigned vectis_http_effective_retry_attempts(const vectis_http_client_config *client,
+                                                     const vectis_http_request *request) {
+  if (request != NULL && request->retry_max_attempts > 0u) {
+    return request->retry_max_attempts;
+  }
+  if (client != NULL && client->retry_max_attempts > 0u) {
+    return client->retry_max_attempts;
+  }
+  return 1u;
+}
+
+static long vectis_http_effective_retry_initial_delay(const vectis_http_client_config *client,
+                                                     const vectis_http_request *request) {
+  if (request != NULL && request->retry_initial_delay_ms > 0L) {
+    return request->retry_initial_delay_ms;
+  }
+  if (client != NULL && client->retry_initial_delay_ms > 0L) {
+    return client->retry_initial_delay_ms;
+  }
+  return 0L;
+}
+
+static long vectis_http_effective_retry_max_delay(const vectis_http_client_config *client,
+                                                  const vectis_http_request *request) {
+  if (request != NULL && request->retry_max_delay_ms > 0L) {
+    return request->retry_max_delay_ms;
+  }
+  if (client != NULL && client->retry_max_delay_ms > 0L) {
+    return client->retry_max_delay_ms;
+  }
+  return 0L;
+}
+
+static vectis_http_retry_conditions vectis_http_effective_retry_conditions(
+    const vectis_http_client_config *client,
+    const vectis_http_request *request) {
+  if (request != NULL && request->retry_conditions != VECTIS_HTTP_RETRY_NONE) {
+    return request->retry_conditions;
+  }
+  if (client != NULL) {
+    return client->retry_conditions;
+  }
+  return VECTIS_HTTP_RETRY_NONE;
+}
+
+static int vectis_http_status_retryable(long status_code,
+                                        vectis_http_retry_conditions conditions) {
+  if ((conditions & VECTIS_HTTP_RETRY_429) != 0u && status_code == 429L) {
+    return 1;
+  }
+  if ((conditions & VECTIS_HTTP_RETRY_5XX) != 0u &&
+      status_code >= 500L && status_code <= 599L) {
+    return 1;
+  }
+  return 0;
+}
+
+static int vectis_http_error_retryable(const vectis_error *error,
+                                       vectis_http_retry_conditions conditions) {
+  if ((conditions & VECTIS_HTTP_RETRY_TRANSPORT) == 0u) {
+    return 0;
+  }
+  return error != NULL && error->source == VECTIS_ERROR_SOURCE_CURL;
+}
+
+static void vectis_sleep_ms(long delay_ms) {
+  struct timespec ts;
+
+  if (delay_ms <= 0L) {
+    return;
+  }
+  ts.tv_sec = delay_ms / 1000L;
+  ts.tv_nsec = (delay_ms % 1000L) * 1000000L;
+  while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
+  }
+}
+
 static vectis_status vectis_append_output(char **out,
                                           size_t *out_size,
                                           const char *data,
@@ -4250,10 +4334,10 @@ vectis_status vectis_http_client_patch_json(vectis_http_client *client,
   return vectis_http_client_send_json(client, VECTIS_HTTP_PATCH, url, map, value, response, error);
 }
 
-vectis_status vectis_http_execute(const vectis_http_client_config *client,
-                                  const vectis_http_request *request,
-                                  vectis_http_response *response,
-                                  vectis_error *error) {
+static vectis_status vectis_http_execute_once(const vectis_http_client_config *client,
+                                             const vectis_http_request *request,
+                                             vectis_http_response *response,
+                                             vectis_error *error) {
   CURL *curl;
   CURLcode curl_code;
   struct curl_slist *headers;
@@ -4591,6 +4675,88 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
   free(url);
   vectis_error_clear(error);
   return VECTIS_OK;
+}
+
+vectis_status vectis_http_execute(const vectis_http_client_config *client,
+                                  const vectis_http_request *request,
+                                  vectis_http_response *response,
+                                  vectis_error *error) {
+  vectis_error attempt_error;
+  vectis_status status;
+  unsigned max_attempts;
+  unsigned attempt;
+  long delay_ms;
+  long max_delay_ms;
+  vectis_http_retry_conditions retry_conditions;
+
+  if (request != NULL &&
+      (request->retry_initial_delay_ms < 0L || request->retry_max_delay_ms < 0L)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP request retry delays must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+  if (client != NULL &&
+      (client->retry_initial_delay_ms < 0L || client->retry_max_delay_ms < 0L)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP client retry delays must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+
+  max_attempts = vectis_http_effective_retry_attempts(client, request);
+  retry_conditions = vectis_http_effective_retry_conditions(client, request);
+  if (max_attempts > 1u && request != NULL && request->response_body != NULL) {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "HTTP response streaming cannot be retried safely");
+    return VECTIS_ERR_INVALID;
+  }
+  if (retry_conditions == VECTIS_HTTP_RETRY_NONE) {
+    max_attempts = 1u;
+  }
+
+  delay_ms = vectis_http_effective_retry_initial_delay(client, request);
+  max_delay_ms = vectis_http_effective_retry_max_delay(client, request);
+  if (max_delay_ms > 0L && delay_ms > max_delay_ms) {
+    delay_ms = max_delay_ms;
+  }
+
+  vectis_error_clear(&attempt_error);
+  for (attempt = 1u; attempt <= max_attempts; ++attempt) {
+    status = vectis_http_execute_once(client, request, response, &attempt_error);
+    if (status == VECTIS_OK) {
+      if (attempt >= max_attempts ||
+          !vectis_http_status_retryable(response->status_code, retry_conditions)) {
+        if (error != NULL) {
+          *error = attempt_error;
+        }
+        return VECTIS_OK;
+      }
+      vectis_http_response_cleanup(response);
+    } else if (attempt >= max_attempts ||
+               !vectis_http_error_retryable(&attempt_error, retry_conditions)) {
+      if (error != NULL) {
+        *error = attempt_error;
+      }
+      return status;
+    }
+
+    if (attempt < max_attempts) {
+      vectis_sleep_ms(delay_ms);
+      if (delay_ms > 0L) {
+        if (delay_ms > LONG_MAX / 2L) {
+          delay_ms = max_delay_ms > 0L ? max_delay_ms : delay_ms;
+        } else {
+          delay_ms *= 2L;
+          if (max_delay_ms > 0L && delay_ms > max_delay_ms) {
+            delay_ms = max_delay_ms;
+          }
+        }
+      }
+    }
+  }
+
+  if (error != NULL) {
+    *error = attempt_error;
+  }
+  return VECTIS_ERR_STATE;
 }
 
 vectis_status vectis_http_get(const vectis_http_client_config *client,
