@@ -349,6 +349,8 @@ The current implementation provides:
   Headerless row-only files can infer columns from the map field order with
   `vectis_dsv_csv_rows()`/`vectis_dsv_tsv_rows()`, while headered files can infer
   names from the first row or ignore that row and use explicit column names.
+  Whole-record comments are opt-in with `config.comment_prefix`; quoted values
+  are never treated as comments.
 - `vectis_request_body_reader()` exposes the raw `lc_source` escape hatch, while
   `vectis_request_body_materialize()` gives handlers one memory-or-file result
   without making them decide the storage class up front.

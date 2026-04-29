@@ -194,6 +194,8 @@ typedef struct vectis_dsv_config {
   int has_header;
   int strict_row_width;
   int trim_cr;
+  int allow_indented_comments;
+  const char *comment_prefix;
   const char *const *columns;
   size_t column_count;
   size_t max_field_bytes;

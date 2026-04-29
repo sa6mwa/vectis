@@ -94,6 +94,7 @@ typedef struct vectis_dsv_parser {
   size_t offset;
   size_t size;
   size_t physical_row;
+  int first_field_quoted;
   int eof;
   int skip_next_lf;
 } vectis_dsv_parser;
@@ -4827,6 +4828,7 @@ void vectis_dsv_config_init(vectis_dsv_config *config) {
   config->has_header = 1;
   config->strict_row_width = 1;
   config->trim_cr = 1;
+  config->allow_indented_comments = 1;
   config->max_field_bytes = 1048576u;
 }
 
@@ -4998,6 +5000,7 @@ static vectis_status vectis_dsv_read_record(vectis_dsv_parser *parser,
   if (parser->field.data != NULL) {
     parser->field.data[0] = '\0';
   }
+  parser->first_field_quoted = 0;
   in_quotes = 0;
   after_quote = 0;
   at_field_start = 1;
@@ -5056,6 +5059,9 @@ static vectis_status vectis_dsv_read_record(vectis_dsv_parser *parser,
       continue;
     }
     if (c == parser->config.quote && at_field_start) {
+      if (parser->fields.count == 0u && parser->field.size == 0u) {
+        parser->first_field_quoted = 1;
+      }
       in_quotes = 1;
       at_field_start = 0;
       continue;
@@ -5088,6 +5094,48 @@ static vectis_status vectis_dsv_read_record(vectis_dsv_parser *parser,
       return error != NULL ? error->code : VECTIS_ERR_NOMEM;
     }
     at_field_start = 0;
+  }
+}
+
+static int vectis_dsv_record_is_comment(const vectis_dsv_parser *parser) {
+  const char *value;
+  const char *prefix;
+  size_t prefix_size;
+
+  if (parser == NULL ||
+      parser->config.comment_prefix == NULL ||
+      parser->config.comment_prefix[0] == '\0' ||
+      parser->fields.count == 0u ||
+      parser->first_field_quoted) {
+    return 0;
+  }
+  value = parser->fields.items[0];
+  if (value == NULL) {
+    return 0;
+  }
+  if (parser->config.allow_indented_comments) {
+    while (*value == ' ' || *value == '\t') {
+      value++;
+    }
+  }
+  prefix = parser->config.comment_prefix;
+  prefix_size = strlen(prefix);
+  return strncmp(value, prefix, prefix_size) == 0;
+}
+
+static vectis_status vectis_dsv_read_data_record(vectis_dsv_parser *parser,
+                                                 int *has_record,
+                                                 vectis_error *error) {
+  vectis_status status;
+
+  for (;;) {
+    status = vectis_dsv_read_record(parser, has_record, error);
+    if (status != VECTIS_OK || !*has_record) {
+      return status;
+    }
+    if (!vectis_dsv_record_is_comment(parser)) {
+      return VECTIS_OK;
+    }
   }
 }
 
@@ -5293,7 +5341,7 @@ vectis_status vectis_dsv_parse_lonejson(struct lc_source *source,
   header_columns = NULL;
   column_count = effective.column_count;
   if (effective.has_header) {
-    status = vectis_dsv_read_record(&parser, &has_record, error);
+    status = vectis_dsv_read_data_record(&parser, &has_record, error);
     if (status != VECTIS_OK) {
       vectis_dsv_fields_cleanup(&parser.fields);
       vectis_string_builder_cleanup(&parser.field);
@@ -5348,7 +5396,7 @@ vectis_status vectis_dsv_parse_lonejson(struct lc_source *source,
   }
   data_row = 0u;
   for (;;) {
-    status = vectis_dsv_read_record(&parser, &has_record, error);
+    status = vectis_dsv_read_data_record(&parser, &has_record, error);
     if (status != VECTIS_OK) {
       break;
     }
@@ -5479,7 +5527,7 @@ static vectis_status vectis_dsv_to_json_array_impl(struct lc_source *source,
   header_columns = NULL;
   column_count = effective.column_count;
   if (effective.has_header) {
-    status = vectis_dsv_read_record(&parser, &has_record, error);
+    status = vectis_dsv_read_data_record(&parser, &has_record, error);
     if (status != VECTIS_OK) {
       goto cleanup;
     }
@@ -5520,7 +5568,7 @@ static vectis_status vectis_dsv_to_json_array_impl(struct lc_source *source,
   status = vectis_string_builder_append(&json, "[", error);
   first = 1;
   while (status == VECTIS_OK) {
-    status = vectis_dsv_read_record(&parser, &has_record, error);
+    status = vectis_dsv_read_data_record(&parser, &has_record, error);
     if (status != VECTIS_OK || !has_record) {
       break;
     }

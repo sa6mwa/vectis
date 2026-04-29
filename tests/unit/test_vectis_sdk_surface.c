@@ -1077,8 +1077,19 @@ static void assert_consumer_service_surface(void) {
 
 static void assert_dsv_surface(void) {
   const char csv[] = "id,count,active\r\nalpha,2,true\r\n\"beta,quoted\",3,false\r\n";
+  const char commented_csv[] =
+      "  # export metadata\n"
+      "id,count,active\n"
+      "epsilon,23,true\n"
+      "# skipped row,999,false\n"
+      "\"#literal\",29,false\n";
   const char csv_with_alt_header[] = "external_id,total,enabled\nnamed,17,true\n";
   const char headerless_csv[] = "gamma,13,true\n";
+  const char headerless_commented_csv[] =
+      "# row-only export\n"
+      "zeta,31,true\n"
+      "  # skipped row,999,false\n"
+      "eta,37,false\n";
   const char tsv[] = "id\tcount\tactive\none\t7\ttrue\n";
   const char headerless_tsv[] = "delta\t19\tfalse\n";
   const char short_row_csv[] = "id,count,active\nbad,1\n";
@@ -1117,6 +1128,22 @@ static void assert_dsv_surface(void) {
   assert(rows.total == 5);
   assert(rows.active_count == 1);
   assert(strcmp(rows.last_id, "beta,quoted") == 0);
+
+  dsv_source = vectis_source_from_memory(commented_csv, sizeof(commented_csv) - 1u);
+  config = vectis_dsv_csv();
+  config.comment_prefix = "#";
+  memset(&rows, 0, sizeof(rows));
+  status = vectis_dsv_parse_lonejson_source(&dsv_source,
+                                            &sample_dsv_doc_map,
+                                            &config,
+                                            sample_dsv_row,
+                                            &rows,
+                                            &error);
+  assert(status == VECTIS_OK);
+  assert(rows.count == 2u);
+  assert(rows.total == 52);
+  assert(rows.active_count == 1);
+  assert(strcmp(rows.last_id, "#literal") == 0);
 
   dsv_source = vectis_source_from_memory(csv_with_alt_header, sizeof(csv_with_alt_header) - 1u);
   config = vectis_dsv_csv();
@@ -1211,6 +1238,23 @@ static void assert_dsv_surface(void) {
   assert(rows.active_count == 1);
   assert(strcmp(rows.last_id, "gamma") == 0);
   lc_source_close(source);
+
+  dsv_source = vectis_source_from_memory(headerless_commented_csv,
+                                         sizeof(headerless_commented_csv) - 1u);
+  config = vectis_dsv_csv_rows();
+  config.comment_prefix = "#";
+  memset(&rows, 0, sizeof(rows));
+  status = vectis_dsv_parse_lonejson_source(&dsv_source,
+                                            &sample_dsv_doc_map,
+                                            &config,
+                                            sample_dsv_row,
+                                            &rows,
+                                            &error);
+  assert(status == VECTIS_OK);
+  assert(rows.count == 2u);
+  assert(rows.total == 68);
+  assert(rows.active_count == 1);
+  assert(strcmp(rows.last_id, "eta") == 0);
 
   assert(lc_source_from_memory(headerless_tsv, sizeof(headerless_tsv) - 1u, &source, NULL) == LC_OK);
   config = vectis_dsv_tsv_rows();
