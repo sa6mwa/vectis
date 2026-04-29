@@ -60,6 +60,7 @@ vectis_add_example(vectis_example_lockd_consumer_state lockd/lockd_consumer_serv
 vectis_add_example(vectis_example_vectis_consumer lockd/lockd_vectis_consumer_service.c)
 
 vectis_add_example(vectis_example_curl_json curl/curl_json_api.c)
+vectis_add_example(vectis_example_curl_downstream_e2e curl/curl_downstream_e2e.c)
 vectis_add_example(vectis_example_curl_transfer curl/curl_transfer.c)
 vectis_add_example(vectis_example_sftp curl/curl_sftp.c)
 vectis_add_example(vectis_example_mqtt curl/mqtt_publish.c)

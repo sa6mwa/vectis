@@ -494,6 +494,9 @@ static void assert_request_response_surface(void) {
   assert(strcmp(vectis_request_header(request, "content-type"), "application/json") == 0);
   assert(vectis_request_header(request, "missing") == NULL);
   assert(vectis_request_kore(request) == NULL);
+  assert(vectis_request_method(request) == VECTIS_HTTP_ANY);
+  vectis_internal_request_set_method(request, VECTIS_HTTP_PATCH);
+  assert(vectis_request_method(request) == VECTIS_HTTP_PATCH);
 
   memset(&doc, 0, sizeof(doc));
   status = vectis_request_body_bytes(request, &body, &error);

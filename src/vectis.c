@@ -127,6 +127,7 @@ typedef struct vectis_app_impl {
 } vectis_app_impl;
 
 struct vectis_request {
+  vectis_http_method method;
   struct http_request *kore_request;
   vectis_bytes body;
   struct lc_source *body_reader;
@@ -4705,6 +4706,7 @@ void vectis_internal_request_init(vectis_request *request) {
     return;
   }
   memset(request, 0, sizeof(*request));
+  request->method = VECTIS_HTTP_ANY;
 }
 
 void vectis_internal_request_cleanup(vectis_request *request) {
@@ -4725,6 +4727,14 @@ void vectis_internal_request_free(vectis_request *request) {
   }
   vectis_internal_request_cleanup(request);
   free(request);
+}
+
+void vectis_internal_request_set_method(vectis_request *request,
+                                        vectis_http_method method) {
+  if (request == NULL) {
+    return;
+  }
+  request->method = method;
 }
 
 vectis_status vectis_internal_request_set_body(vectis_request *request,
@@ -5087,6 +5097,13 @@ vectis_status vectis_request_json_into(vectis_request *request,
   (void)vectis_request_reset_body_reader(request, NULL);
   vectis_error_clear(error);
   return VECTIS_OK;
+}
+
+vectis_http_method vectis_request_method(vectis_request *request) {
+  if (request == NULL) {
+    return VECTIS_HTTP_ANY;
+  }
+  return request->method;
 }
 
 const char *vectis_request_path_param(vectis_request *request,

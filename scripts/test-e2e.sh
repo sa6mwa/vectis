@@ -13,6 +13,7 @@ default_kore_basic_port=$((28080 + ($$ % 1000) * 2))
 kore_basic_port=${VECTIS_E2E_KORE_BASIC_PORT:-$default_kore_basic_port}
 kore_lockd_port=${VECTIS_E2E_KORE_LOCKD_PORT:-$((kore_basic_port + 1))}
 kore_workflow_port=${VECTIS_E2E_KORE_WORKFLOW_PORT:-$((kore_basic_port + 2))}
+kore_downstream_port=${VECTIS_E2E_KORE_DOWNSTREAM_PORT:-$((kore_basic_port + 3))}
 work_dir=$(mktemp -d)
 server_pids=""
 
@@ -110,6 +111,16 @@ run_service_examples() {
     VECTIS_SFTP_USERNAME="vectis" \
     VECTIS_SFTP_PASSWORD="vectispass" \
     "$repo_root/build/debug/examples/vectis_example_sftp"
+}
+
+run_downstream_http_examples() {
+  printf '[e2e] downstream HTTP client/server\n'
+  start_server "downstream http" "$work_dir/downstream-http.log" \
+    env VECTIS_KORE_PORT="$kore_downstream_port" \
+      "$repo_root/build/debug/examples/vectis_example_curl_downstream_e2e" server
+  wait_for_http "http://127.0.0.1:$kore_downstream_port/health" "downstream HTTP server"
+  env VECTIS_DOWNSTREAM_BASE_URL="http://127.0.0.1:$kore_downstream_port" \
+    "$repo_root/build/debug/examples/vectis_example_curl_downstream_e2e" client
 }
 
 run_lua_examples() {
@@ -251,4 +262,5 @@ run_lua_examples
 run_lockd_examples "$disk_endpoint" disk
 run_lockd_examples "$s3_endpoint" s3
 run_service_examples
+run_downstream_http_examples
 run_kore_examples

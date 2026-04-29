@@ -50,6 +50,9 @@ surface directly, without local helper layers that would hide awkward API shape.
 
 - `curl/curl_json_api.c`: handle-shaped curl-backed client setup, GET, HEAD,
   OPTIONS, DELETE, and POST/PUT/PATCH JSON helpers.
+- `curl/curl_downstream_e2e.c`: controlled local downstream server/client flow
+  covering JSON methods, HEAD/OPTIONS, streaming responses, downloads, and
+  uploads.
 - `curl/curl_transfer.c`: handle-shaped generic curl-backed file download and
   upload.
 - `curl/curl_sftp.c`: SFTP upload/download through curl.

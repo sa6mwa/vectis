@@ -325,6 +325,9 @@ The current implementation provides:
   modes so examples and applications do not grow ad hoc name tables.
 - A handle-shaped HTTP client API that can be created directly or from an app
   so app logging/defaults can flow into downstream calls.
+- `vectis_request_method()` exposes the matched HTTP method to handlers, which
+  keeps shared GET/HEAD or PUT/PATCH route handlers inside the Vectis request
+  abstraction.
 - A raw curl configuration callback on HTTP client configs and individual HTTP
   requests for protocol/options escape hatches without leaving Vectis helpers.
 - A raw Kore request accessor, `vectis_request_kore()`, for C handlers that need
@@ -334,6 +337,9 @@ The current implementation provides:
   bounded retries, file downloads/uploads, and streaming response-body callbacks.
 - `vectis_http_response_json_into()` parses downstream HTTP JSON response bodies
   directly into lonejson mapped structs.
+- The compose-backed e2e suite includes a controlled downstream HTTP
+  server/client flow for JSON API calls, HEAD/OPTIONS, streaming responses,
+  uploads, and downloads.
 - A `vectis` executable that embeds the provisioned Lua 5.5 runtime, supports
   normal script and shebang execution, and is wrapped on Linux with the
   single-header `libpid0` 0.3.0 helper so it can run correctly as PID 1 in

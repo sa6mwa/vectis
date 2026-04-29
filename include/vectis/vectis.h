@@ -722,6 +722,7 @@ vectis_status vectis_request_json_into(vectis_request *request,
                                        const lonejson_map *map,
                                        void *out,
                                        vectis_error *error);
+vectis_http_method vectis_request_method(vectis_request *request);
 const char *vectis_request_path_param(vectis_request *request,
                                       const char *name);
 const char *vectis_request_query(vectis_request *request,

@@ -175,7 +175,7 @@ and C/integration tests before adding Lua bindings or Lua facades.
 - [x] Expose retry configuration in C.
 - [ ] Expose timeout, retry, header, TLS, client certificate, proxy, redirect, and streaming configuration in Lua.
 - [x] Add integration tests for SFTP operations.
-- [ ] Add integration tests for HTTP(S) downstream calls against a controlled local downstream server.
+- [x] Add integration tests for HTTP(S) downstream calls against a controlled local downstream server.
 
 ## Area 10: SSH / libssh2
 
