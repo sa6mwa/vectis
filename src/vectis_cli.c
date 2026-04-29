@@ -16,6 +16,13 @@
 #define VECTIS_PACK_MAGIC "VECTIS_PACK_V1"
 #define VECTIS_PACK_MAGIC_SIZE 14u
 
+typedef struct vectis_lua_runtime_context {
+  const unsigned char *embedded_lockd_bundle;
+  size_t embedded_lockd_bundle_size;
+} vectis_lua_runtime_context;
+
+static vectis_lua_runtime_context vectis_lua_current;
+
 static void vectis_cli_usage(FILE *stream) {
   fputs("usage: vectis [--version] [--help] script.lua [args...]\n"
         "       vectis pack --script script.lua --output output [--lockd-bundle bundle.pem]\n",
@@ -244,6 +251,18 @@ static int vectis_lua_status_string(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_has_embedded_lockd_bundle(lua_State *lua) {
+  lua_pushboolean(lua,
+                  vectis_lua_current.embedded_lockd_bundle != NULL &&
+                      vectis_lua_current.embedded_lockd_bundle_size > 0u);
+  return 1;
+}
+
+static int vectis_lua_embedded_lockd_bundle_size(lua_State *lua) {
+  lua_pushinteger(lua, (lua_Integer)vectis_lua_current.embedded_lockd_bundle_size);
+  return 1;
+}
+
 static int luaopen_vectis(lua_State *lua) {
   lua_newtable(lua);
   lua_pushliteral(lua, "0.0.0");
@@ -256,6 +275,10 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "ERR_TIMEOUT");
   lua_pushcfunction(lua, vectis_lua_status_string);
   lua_setfield(lua, -2, "status_string");
+  lua_pushcfunction(lua, vectis_lua_has_embedded_lockd_bundle);
+  lua_setfield(lua, -2, "has_embedded_lockd_bundle");
+  lua_pushcfunction(lua, vectis_lua_embedded_lockd_bundle_size);
+  lua_setfield(lua, -2, "embedded_lockd_bundle_size");
   return 1;
 }
 
@@ -302,6 +325,8 @@ static int vectis_lua_run_loaded(lua_State *lua, int status) {
 static int vectis_lua_run_buffer(const char *script_name,
                                  const unsigned char *script,
                                  size_t script_size,
+                                 const unsigned char *lockd_bundle,
+                                 size_t lockd_bundle_size,
                                  int argc,
                                  char **argv) {
   lua_State *lua;
@@ -315,6 +340,8 @@ static int vectis_lua_run_buffer(const char *script_name,
     return 70;
   }
   luaL_openlibs(lua);
+  vectis_lua_current.embedded_lockd_bundle = lockd_bundle;
+  vectis_lua_current.embedded_lockd_bundle_size = lockd_bundle_size;
   vectis_lua_preload(lua);
   vectis_lua_set_arg(lua, argc, argv, 0, script_name);
 
@@ -338,6 +365,7 @@ static int vectis_lua_run_script(int argc, char **argv, int script_index) {
   lua_State *lua;
   int status;
 
+  memset(&vectis_lua_current, 0, sizeof(vectis_lua_current));
   lua = luaL_newstate();
   if (lua == NULL) {
     fputs("vectis: failed to allocate Lua state\n", stderr);
@@ -354,6 +382,7 @@ static int vectis_lua_run_script(int argc, char **argv, int script_index) {
 static int vectis_lua_run_embedded(int argc, char **argv) {
   unsigned char *self;
   unsigned char *script;
+  unsigned char *bundle;
   unsigned char footer[VECTIS_PACK_FOOTER_SIZE];
   unsigned char actual_sha[SHA256_DIGEST_LENGTH];
   size_t self_size;
@@ -391,14 +420,30 @@ static int vectis_lua_run_embedded(int argc, char **argv) {
   }
   script_offset = self_size - VECTIS_PACK_FOOTER_SIZE - bundle_size - script_size;
   script = self + script_offset;
+  bundle = script + script_size;
   SHA256(script, script_size, actual_sha);
   if (memcmp(actual_sha, footer + 32u, SHA256_DIGEST_LENGTH) != 0) {
     free(self);
     fputs("vectis: embedded Lua script hash mismatch\n", stderr);
     return 1;
   }
-  rc = vectis_lua_run_buffer(argv[0], script, script_size, argc, argv);
+  if (bundle_size > 0u) {
+    SHA256(bundle, bundle_size, actual_sha);
+    if (memcmp(actual_sha, footer + 64u, SHA256_DIGEST_LENGTH) != 0) {
+      free(self);
+      fputs("vectis: embedded lockd bundle hash mismatch\n", stderr);
+      return 1;
+    }
+  }
+  rc = vectis_lua_run_buffer(argv[0],
+                             script,
+                             script_size,
+                             bundle_size > 0u ? bundle : NULL,
+                             bundle_size,
+                             argc,
+                             argv);
   free(self);
+  memset(&vectis_lua_current, 0, sizeof(vectis_lua_current));
   return rc;
 }
 

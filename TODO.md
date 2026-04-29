@@ -232,7 +232,8 @@ and C/integration tests before adding Lua bindings or Lua facades.
 - [ ] On Darwin/Mach-O, embed Lua and certificate payloads through a generated object/section layout rather than relying on arbitrary appended EOF data.
 - [ ] Define one shared payload manifest format across ELF and Mach-O so runtime validation and Lua startup behavior stay platform-independent.
 - [x] Support optional embedding of the liblockdc client certificate bundle payload in the Linux pack format.
-- [ ] Load embedded lockd client bundles through liblockdc 0.3.0 flexible bundle sources (`lc_source` memory/callback sources) without writing private runtime files.
+- [x] Validate embedded lockd client bundle hashes before executing a packed Lua script.
+- [ ] Wire embedded lockd client bundles into the statically registered lockdc Lua module through liblockdc 0.3.0 flexible bundle sources (`lc_source` memory/callback sources) without writing private runtime files.
 - [x] Validate payload bounds and hashes before executing embedded Lua.
 - [x] Preserve normal `vectis script.lua` execution when no embedded payload exists.
 - [ ] Add Darwin packing flags for automatic codesigning after the final Mach-O artifact is produced, including `--codesign <identity>`, `--ad-hoc-codesign`, `--hardened-runtime`, `--timestamp`, and `--entitlements <path>`.

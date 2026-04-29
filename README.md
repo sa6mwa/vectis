@@ -353,6 +353,10 @@ The current implementation provides:
 - `vectis pack --script script.lua --output service` on Linux for creating a
   single executable with an appended, hashed Lua payload while preserving normal
   `vectis script.lua` execution for unpacked binaries.
+- `vectis pack --lockd-bundle client.pem` embeds lockd client certificate/key
+  bytes into the packed executable, validates their hash before Lua execution,
+  and keeps them in memory for the future statically registered lockdc module to
+  consume without writing private material to disk.
 - Thread-safe app object lifecycle and route registry management.
 - `lonejson`-backed JSON validation helpers.
 - `pslog`-backed owned or borrowed logger handling.
