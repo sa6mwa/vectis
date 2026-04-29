@@ -64,9 +64,9 @@ surface directly, without local helper layers that would hide awkward API shape.
 
 ## `dsv/`
 
-- `dsv/dsv_lonejson.c`: CSV input from memory or a file path, streamed into a
-  lonejson mapped struct row callback, plus typed JSON-array conversion through
-  the same lonejson map.
+- `dsv/dsv_lonejson.c`: row-only CSV input from memory or a file path, streamed
+  into a lonejson mapped struct row callback by map field order, plus typed
+  JSON-array conversion through the same lonejson map.
 
 ## `ssh/`
 

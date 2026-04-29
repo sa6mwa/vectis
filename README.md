@@ -345,8 +345,10 @@ The current implementation provides:
 - Optional OpenAPI docs can be attached separately from route execution and
   generated as JSON or YAML from route metadata plus named lonejson maps.
 - CSV, TSV, and configurable delimiter-separated input can stream from
-  `vectis_source` or raw `lc_source` readers into `lonejson` mapped row structs,
-  with optional JSON-array conversion through the same map.
+  `vectis_source` or raw `lc_source` readers into `lonejson` mapped row structs.
+  Headerless row-only files can infer columns from the map field order with
+  `vectis_dsv_csv_rows()`/`vectis_dsv_tsv_rows()`, while headered files can infer
+  names from the first row or ignore that row and use explicit column names.
 - `vectis_request_body_reader()` exposes the raw `lc_source` escape hatch, while
   `vectis_request_body_materialize()` gives handlers one memory-or-file result
   without making them decide the storage class up front.

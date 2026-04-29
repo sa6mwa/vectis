@@ -144,6 +144,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Add DSV-to-JSON-array memory-limit and spill-to-disk behavior consistent with other Vectis body/materialization helpers.
 - [ ] Provide `lonejson`-mapped struct serialization back to CSV, TSV, and configurable any-SV streams.
 - [ ] Handle headers, headerless map-order fields, explicit field mappings, delimiter/quote/escape configuration, CRLF/LF normalization, empty values, null policy, and strict versus permissive row-width validation.
+- [x] Add explicit row-only CSV/TSV presets for the common headerless typed-lonejson path.
 - [x] Add C examples and tests for CSV, TSV, custom delimiter, streamed row parsing, and DSV-to-JSON-array conversion.
 - [ ] Add C examples and tests for struct-to-DSV serialization once that API lands.
 - [ ] Expose Lua JSON encode/decode helpers through the bundled `lonejson` Lua rock or a Vectis facade.

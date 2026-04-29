@@ -740,6 +740,8 @@ vectis_status vectis_json_validate_cstr(const char *json, vectis_error *error);
 void vectis_dsv_config_init(vectis_dsv_config *config);
 vectis_dsv_config vectis_dsv_csv(void);
 vectis_dsv_config vectis_dsv_tsv(void);
+vectis_dsv_config vectis_dsv_csv_rows(void);
+vectis_dsv_config vectis_dsv_tsv_rows(void);
 vectis_status vectis_dsv_parse_lonejson(struct lc_source *source,
                                         const lonejson_map *map,
                                         const vectis_dsv_config *config,

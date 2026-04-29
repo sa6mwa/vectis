@@ -1077,8 +1077,10 @@ static void assert_consumer_service_surface(void) {
 
 static void assert_dsv_surface(void) {
   const char csv[] = "id,count,active\r\nalpha,2,true\r\n\"beta,quoted\",3,false\r\n";
+  const char csv_with_alt_header[] = "external_id,total,enabled\nnamed,17,true\n";
   const char headerless_csv[] = "gamma,13,true\n";
   const char tsv[] = "id\tcount\tactive\none\t7\ttrue\n";
+  const char headerless_tsv[] = "delta\t19\tfalse\n";
   const char short_row_csv[] = "id,count,active\nbad,1\n";
   const char oversized_field_csv[] = "id,count,active\nabc,1,true\n";
   const char unterminated_csv[] = "id,count,active\n\"unterminated,1,true\n";
@@ -1115,6 +1117,23 @@ static void assert_dsv_surface(void) {
   assert(rows.total == 5);
   assert(rows.active_count == 1);
   assert(strcmp(rows.last_id, "beta,quoted") == 0);
+
+  dsv_source = vectis_source_from_memory(csv_with_alt_header, sizeof(csv_with_alt_header) - 1u);
+  config = vectis_dsv_csv();
+  config.columns = columns;
+  config.column_count = 3u;
+  memset(&rows, 0, sizeof(rows));
+  status = vectis_dsv_parse_lonejson_source(&dsv_source,
+                                            &sample_dsv_doc_map,
+                                            &config,
+                                            sample_dsv_row,
+                                            &rows,
+                                            &error);
+  assert(status == VECTIS_OK);
+  assert(rows.count == 1u);
+  assert(rows.total == 17);
+  assert(rows.active_count == 1);
+  assert(strcmp(rows.last_id, "named") == 0);
 
   memset(&json, 0, sizeof(json));
   dsv_source = vectis_source_from_memory(csv, sizeof(csv) - 1u);
@@ -1178,8 +1197,7 @@ static void assert_dsv_surface(void) {
   lc_source_close(source);
 
   assert(lc_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u, &source, NULL) == LC_OK);
-  config = vectis_dsv_csv();
-  config.has_header = 0;
+  config = vectis_dsv_csv_rows();
   memset(&rows, 0, sizeof(rows));
   status = vectis_dsv_parse_lonejson(source,
                                      &sample_dsv_doc_map,
@@ -1194,7 +1212,24 @@ static void assert_dsv_surface(void) {
   assert(strcmp(rows.last_id, "gamma") == 0);
   lc_source_close(source);
 
+  assert(lc_source_from_memory(headerless_tsv, sizeof(headerless_tsv) - 1u, &source, NULL) == LC_OK);
+  config = vectis_dsv_tsv_rows();
+  memset(&rows, 0, sizeof(rows));
+  status = vectis_dsv_parse_lonejson(source,
+                                     &sample_dsv_doc_map,
+                                     &config,
+                                     sample_dsv_row,
+                                     &rows,
+                                     &error);
+  assert(status == VECTIS_OK);
+  assert(rows.count == 1u);
+  assert(rows.total == 19);
+  assert(rows.active_count == 0);
+  assert(strcmp(rows.last_id, "delta") == 0);
+  lc_source_close(source);
+
   memset(&json, 0, sizeof(json));
+  config = vectis_dsv_csv_rows();
   dsv_source = vectis_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u);
   status = vectis_dsv_source_to_lonejson_array(&dsv_source,
                                                &sample_dsv_doc_map,

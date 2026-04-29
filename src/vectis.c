@@ -4845,6 +4845,22 @@ vectis_dsv_config vectis_dsv_tsv(void) {
   return config;
 }
 
+vectis_dsv_config vectis_dsv_csv_rows(void) {
+  vectis_dsv_config config;
+
+  config = vectis_dsv_csv();
+  config.has_header = 0;
+  return config;
+}
+
+vectis_dsv_config vectis_dsv_tsv_rows(void) {
+  vectis_dsv_config config;
+
+  config = vectis_dsv_tsv();
+  config.has_header = 0;
+  return config;
+}
+
 static void vectis_dsv_fields_cleanup(vectis_dsv_fields *fields) {
   size_t i;
 

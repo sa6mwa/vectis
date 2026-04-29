@@ -50,7 +50,6 @@ static vectis_status on_order_row(void *userdata,
 
 int main(int argc, char **argv) {
   const char fallback_csv[] =
-      "id,customer,quantity,priority\n"
       "ord-1001,acme,3,true\n"
       "\"ord-1002\",northwind,5,false\n";
   vectis_source source;
@@ -63,7 +62,7 @@ int main(int argc, char **argv) {
   memset(&totals, 0, sizeof(totals));
   memset(&json, 0, sizeof(json));
   vectis_error_clear(&error);
-  csv = vectis_dsv_csv();
+  csv = vectis_dsv_csv_rows();
   source = argc > 1 ? vectis_source_from_path(argv[1])
                     : vectis_source_from_memory(fallback_csv, sizeof(fallback_csv) - 1u);
 
