@@ -69,6 +69,10 @@ typedef struct vectis_string_builder {
   size_t capacity;
 } vectis_string_builder;
 
+typedef struct vectis_json_string_box {
+  char *value;
+} vectis_json_string_box;
+
 typedef struct vectis_app_impl {
   pthread_mutex_t mutex;
   int started;
@@ -157,6 +161,13 @@ struct vectis_json_response {
   vectis_response *response;
   int sent;
 };
+
+static const lonejson_field vectis_json_string_box_fields[] = {
+    LONEJSON_FIELD_STRING_ALLOC(vectis_json_string_box, value, "value")};
+
+LONEJSON_MAP_DEFINE(vectis_json_string_box_map,
+                    vectis_json_string_box,
+                    vectis_json_string_box_fields);
 
 typedef struct vectis_error_response_body {
   char code[64];
@@ -3017,44 +3028,57 @@ static const char *vectis_openapi_schema_name(vectis_openapi_schema schema) {
   return "Schema";
 }
 
-static vectis_status vectis_append_json_string(vectis_string_builder *builder,
-                                               const char *value,
-                                               vectis_error *error) {
-  const unsigned char *p;
-  char escaped[7];
+static vectis_status vectis_append_lonejson_string(vectis_string_builder *builder,
+                                                   const char *value,
+                                                   vectis_error *error) {
+  vectis_json_string_box box;
+  lonejson_error json_error;
+  char *json;
+  char *start;
+  size_t json_size;
+  size_t length;
+  union {
+    const char *const_value;
+    char *mutable_value;
+  } ptr;
 
-  if (vectis_string_builder_append(builder, "\"", error) != VECTIS_OK) {
+  ptr.const_value = value != NULL ? value : "";
+  box.value = ptr.mutable_value;
+  json = lonejson_serialize_alloc(&vectis_json_string_box_map,
+                                  &box,
+                                  &json_size,
+                                  NULL,
+                                  &json_error);
+  if (json == NULL) {
+    vectis_set_errorf(error,
+                      VECTIS_ERR_INVALID,
+                      "failed to serialize JSON string: %s",
+                      json_error.message);
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LONEJSON;
+    }
+    return VECTIS_ERR_INVALID;
+  }
+  start = strchr(json, ':');
+  if (start == NULL || json_size < 2u) {
+    free(json);
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to extract serialized JSON string");
+    return VECTIS_ERR_STATE;
+  }
+  ++start;
+  length = json_size - (size_t)(start - json);
+  if (length == 0u || start[length - 1u] != '}') {
+    free(json);
+    vectis_set_error(error, VECTIS_ERR_STATE, "serialized JSON string shape is invalid");
+    return VECTIS_ERR_STATE;
+  }
+  length--;
+  if (vectis_string_builder_append_n(builder, start, length, error) != VECTIS_OK) {
+    free(json);
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
-  p = (const unsigned char *)(value != NULL ? value : "");
-  while (*p != '\0') {
-    if (*p == '"' || *p == '\\') {
-      if (vectis_string_builder_appendf(builder, error, "\\%c", *p) != VECTIS_OK) {
-        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
-      }
-    } else if (*p == '\n') {
-      if (vectis_string_builder_append(builder, "\\n", error) != VECTIS_OK) {
-        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
-      }
-    } else if (*p == '\r') {
-      if (vectis_string_builder_append(builder, "\\r", error) != VECTIS_OK) {
-        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
-      }
-    } else if (*p == '\t') {
-      if (vectis_string_builder_append(builder, "\\t", error) != VECTIS_OK) {
-        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
-      }
-    } else if (*p < 0x20u) {
-      (void)snprintf(escaped, sizeof(escaped), "\\u%04x", (unsigned)*p);
-      if (vectis_string_builder_append(builder, escaped, error) != VECTIS_OK) {
-        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
-      }
-    } else if (vectis_string_builder_append_n(builder, (const char *)p, 1u, error) != VECTIS_OK) {
-      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
-    }
-    ++p;
-  }
-  return vectis_string_builder_append(builder, "\"", error);
+  free(json);
+  return VECTIS_OK;
 }
 
 static vectis_status vectis_openapi_append_path(vectis_string_builder *builder,
@@ -3163,7 +3187,7 @@ static vectis_status vectis_openapi_append_schema_json(vectis_string_builder *bu
     if (i > 0u && vectis_string_builder_append(builder, ",", error) != VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_NOMEM;
     }
-    if (vectis_append_json_string(builder, field->json_key, error) != VECTIS_OK ||
+    if (vectis_append_lonejson_string(builder, field->json_key, error) != VECTIS_OK ||
         vectis_string_builder_append(builder, ":", error) != VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_NOMEM;
     }
@@ -3208,7 +3232,7 @@ static vectis_status vectis_openapi_append_schema_json(vectis_string_builder *bu
         if (!first && vectis_string_builder_append(builder, ",", error) != VECTIS_OK) {
           return error != NULL ? error->code : VECTIS_ERR_NOMEM;
         }
-        if (vectis_append_json_string(builder, map->fields[i].json_key, error) != VECTIS_OK) {
+        if (vectis_append_lonejson_string(builder, map->fields[i].json_key, error) != VECTIS_OK) {
           return error != NULL ? error->code : VECTIS_ERR_NOMEM;
         }
         first = 0;
@@ -3329,9 +3353,9 @@ static vectis_status vectis_generate_openapi_json(vectis_app_impl *impl,
     }
   }
   if (vectis_string_builder_append(builder, "{\"openapi\":\"3.1.0\",\"info\":{\"title\":", error) != VECTIS_OK ||
-      vectis_append_json_string(builder, document->title, error) != VECTIS_OK ||
+      vectis_append_lonejson_string(builder, document->title, error) != VECTIS_OK ||
       vectis_string_builder_append(builder, ",\"version\":", error) != VECTIS_OK ||
-      vectis_append_json_string(builder, document->version, error) != VECTIS_OK ||
+      vectis_append_lonejson_string(builder, document->version, error) != VECTIS_OK ||
       vectis_string_builder_append(builder, "},\"paths\":{", error) != VECTIS_OK) {
     free(schemas);
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
@@ -3353,7 +3377,7 @@ static vectis_status vectis_generate_openapi_json(vectis_app_impl *impl,
       free(schemas);
       return error != NULL ? error->code : VECTIS_ERR_NOMEM;
     }
-    if (vectis_append_json_string(builder, path_builder.data, error) != VECTIS_OK ||
+    if (vectis_append_lonejson_string(builder, path_builder.data, error) != VECTIS_OK ||
         vectis_string_builder_append(builder, ":{", error) != VECTIS_OK) {
       vectis_string_builder_cleanup(&path_builder);
       free(schemas);
@@ -3367,7 +3391,7 @@ static vectis_status vectis_generate_openapi_json(vectis_app_impl *impl,
           free(schemas);
           return error != NULL ? error->code : VECTIS_ERR_NOMEM;
         }
-        if (vectis_append_json_string(builder, vectis_openapi_method_name(method), error) != VECTIS_OK ||
+        if (vectis_append_lonejson_string(builder, vectis_openapi_method_name(method), error) != VECTIS_OK ||
             vectis_string_builder_append(builder, ":{", error) != VECTIS_OK) {
           vectis_string_builder_cleanup(&path_builder);
           free(schemas);
@@ -3375,7 +3399,7 @@ static vectis_status vectis_generate_openapi_json(vectis_app_impl *impl,
         }
         if (doc->operation_id != NULL) {
           if (vectis_string_builder_append(builder, "\"operationId\":", error) != VECTIS_OK ||
-              vectis_append_json_string(builder, doc->operation_id, error) != VECTIS_OK ||
+              vectis_append_lonejson_string(builder, doc->operation_id, error) != VECTIS_OK ||
               vectis_string_builder_append(builder, ",", error) != VECTIS_OK) {
             vectis_string_builder_cleanup(&path_builder);
             free(schemas);
@@ -3384,7 +3408,7 @@ static vectis_status vectis_generate_openapi_json(vectis_app_impl *impl,
         }
         if (doc->summary != NULL) {
           if (vectis_string_builder_append(builder, "\"summary\":", error) != VECTIS_OK ||
-              vectis_append_json_string(builder, doc->summary, error) != VECTIS_OK ||
+              vectis_append_lonejson_string(builder, doc->summary, error) != VECTIS_OK ||
               vectis_string_builder_append(builder, ",", error) != VECTIS_OK) {
             vectis_string_builder_cleanup(&path_builder);
             free(schemas);
@@ -3403,7 +3427,7 @@ static vectis_status vectis_generate_openapi_json(vectis_app_impl *impl,
               free(schemas);
               return error != NULL ? error->code : VECTIS_ERR_NOMEM;
             }
-            if (vectis_append_json_string(builder, doc->tags[j], error) != VECTIS_OK) {
+            if (vectis_append_lonejson_string(builder, doc->tags[j], error) != VECTIS_OK) {
               vectis_string_builder_cleanup(&path_builder);
               free(schemas);
               return error != NULL ? error->code : VECTIS_ERR_NOMEM;
@@ -3420,7 +3444,7 @@ static vectis_status vectis_generate_openapi_json(vectis_app_impl *impl,
                                            "\"requestBody\":{\"content\":{\"application/json\":{\"schema\":",
                                            error) != VECTIS_OK ||
               vectis_openapi_append_ref_json(builder, doc->request_schema, error) != VECTIS_OK ||
-              vectis_string_builder_append(builder, "}}},\"required\":true},", error) != VECTIS_OK) {
+              vectis_string_builder_append(builder, "}},\"required\":true},", error) != VECTIS_OK) {
             vectis_string_builder_cleanup(&path_builder);
             free(schemas);
             return error != NULL ? error->code : VECTIS_ERR_NOMEM;
@@ -3439,7 +3463,7 @@ static vectis_status vectis_generate_openapi_json(vectis_app_impl *impl,
             return error != NULL ? error->code : VECTIS_ERR_NOMEM;
           }
           if (vectis_string_builder_appendf(builder, error, "\"%d\":{\"description\":", doc->responses[j].status_code) != VECTIS_OK ||
-              vectis_append_json_string(builder,
+              vectis_append_lonejson_string(builder,
                                         doc->responses[j].description != NULL ?
                                             doc->responses[j].description : "",
                                         error) != VECTIS_OK ||
@@ -3447,7 +3471,7 @@ static vectis_status vectis_generate_openapi_json(vectis_app_impl *impl,
                                            ",\"content\":{\"application/json\":{\"schema\":",
                                            error) != VECTIS_OK ||
               vectis_openapi_append_ref_json(builder, doc->responses[j].schema, error) != VECTIS_OK ||
-              vectis_string_builder_append(builder, "}}}}", error) != VECTIS_OK) {
+              vectis_string_builder_append(builder, "}}}", error) != VECTIS_OK) {
             vectis_string_builder_cleanup(&path_builder);
             free(schemas);
             return error != NULL ? error->code : VECTIS_ERR_NOMEM;
@@ -3480,7 +3504,7 @@ static vectis_status vectis_generate_openapi_json(vectis_app_impl *impl,
       free(schemas);
       return error != NULL ? error->code : VECTIS_ERR_NOMEM;
     }
-    if (vectis_append_json_string(builder, vectis_openapi_schema_name(schemas[i]), error) != VECTIS_OK ||
+    if (vectis_append_lonejson_string(builder, vectis_openapi_schema_name(schemas[i]), error) != VECTIS_OK ||
         vectis_string_builder_append(builder, ":", error) != VECTIS_OK ||
         vectis_openapi_append_schema_json(builder, schemas[i], error) != VECTIS_OK) {
       vectis_string_builder_cleanup(&path_builder);
@@ -3523,9 +3547,9 @@ static vectis_status vectis_generate_openapi_yaml(vectis_app_impl *impl,
     }
   }
   if (vectis_string_builder_append(builder, "openapi: 3.1.0\ninfo:\n  title: ", error) != VECTIS_OK ||
-      vectis_append_json_string(builder, document->title, error) != VECTIS_OK ||
+      vectis_append_lonejson_string(builder, document->title, error) != VECTIS_OK ||
       vectis_string_builder_append(builder, "\n  version: ", error) != VECTIS_OK ||
-      vectis_append_json_string(builder, document->version, error) != VECTIS_OK ||
+      vectis_append_lonejson_string(builder, document->version, error) != VECTIS_OK ||
       vectis_string_builder_append(builder, "\npaths:\n", error) != VECTIS_OK) {
     free(schemas);
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
@@ -3538,7 +3562,7 @@ static vectis_status vectis_generate_openapi_yaml(vectis_app_impl *impl,
     }
     if (vectis_openapi_append_path(&path_builder, impl->openapi_docs[i].path, error) != VECTIS_OK ||
         vectis_string_builder_append(builder, "  ", error) != VECTIS_OK ||
-        vectis_append_json_string(builder, path_builder.data, error) != VECTIS_OK ||
+        vectis_append_lonejson_string(builder, path_builder.data, error) != VECTIS_OK ||
         vectis_string_builder_append(builder, ":\n", error) != VECTIS_OK) {
       vectis_string_builder_cleanup(&path_builder);
       free(schemas);
@@ -3553,7 +3577,7 @@ static vectis_status vectis_generate_openapi_yaml(vectis_app_impl *impl,
         }
         if (doc->operation_id != NULL &&
             (vectis_string_builder_append(builder, "      operationId: ", error) != VECTIS_OK ||
-             vectis_append_json_string(builder, doc->operation_id, error) != VECTIS_OK ||
+             vectis_append_lonejson_string(builder, doc->operation_id, error) != VECTIS_OK ||
              vectis_string_builder_append(builder, "\n", error) != VECTIS_OK)) {
           vectis_string_builder_cleanup(&path_builder);
           free(schemas);
@@ -3561,7 +3585,7 @@ static vectis_status vectis_generate_openapi_yaml(vectis_app_impl *impl,
         }
         if (doc->summary != NULL &&
             (vectis_string_builder_append(builder, "      summary: ", error) != VECTIS_OK ||
-             vectis_append_json_string(builder, doc->summary, error) != VECTIS_OK ||
+             vectis_append_lonejson_string(builder, doc->summary, error) != VECTIS_OK ||
              vectis_string_builder_append(builder, "\n", error) != VECTIS_OK)) {
           vectis_string_builder_cleanup(&path_builder);
           free(schemas);
@@ -3575,7 +3599,7 @@ static vectis_status vectis_generate_openapi_yaml(vectis_app_impl *impl,
           }
           for (j = 0u; j < doc->tag_count; ++j) {
             if (vectis_string_builder_append(builder, "        - ", error) != VECTIS_OK ||
-                vectis_append_json_string(builder, doc->tags[j], error) != VECTIS_OK ||
+                vectis_append_lonejson_string(builder, doc->tags[j], error) != VECTIS_OK ||
                 vectis_string_builder_append(builder, "\n", error) != VECTIS_OK) {
               vectis_string_builder_cleanup(&path_builder);
               free(schemas);
@@ -3603,7 +3627,7 @@ static vectis_status vectis_generate_openapi_yaml(vectis_app_impl *impl,
                                             error,
                                             "        \"%d\":\n          description: ",
                                             doc->responses[j].status_code) != VECTIS_OK ||
-              vectis_append_json_string(builder,
+              vectis_append_lonejson_string(builder,
                                         doc->responses[j].description != NULL ?
                                             doc->responses[j].description : "",
                                         error) != VECTIS_OK ||
@@ -3686,6 +3710,9 @@ vectis_status vectis_generate_openapi(vectis_app *app,
                                       vectis_error *error) {
   vectis_openapi_document default_document;
   vectis_string_builder builder;
+  lonejson_json_value json_value;
+  lonejson_error json_error;
+  lonejson_status json_status;
   vectis_status status;
 
   if (app == NULL || app->impl == NULL) {
@@ -3721,6 +3748,33 @@ vectis_status vectis_generate_openapi(vectis_app *app,
   if (status != VECTIS_OK) {
     vectis_string_builder_cleanup(&builder);
     return status;
+  }
+  if (format == VECTIS_OPENAPI_JSON) {
+    lonejson_json_value_init(&json_value);
+    json_status = lonejson_json_value_set_buffer(&json_value,
+                                                 builder.data,
+                                                 builder.size,
+                                                 &json_error);
+    if (json_status != LONEJSON_STATUS_OK) {
+      lonejson_json_value_cleanup(&json_value);
+      vectis_string_builder_cleanup(&builder);
+      vectis_set_errorf(error,
+                        VECTIS_ERR_INVALID,
+                        "failed to validate generated OpenAPI JSON: %s",
+                        json_error.message);
+      if (error != NULL) {
+        error->source = VECTIS_ERROR_SOURCE_LONEJSON;
+        error->dependency_code = (long)json_status;
+      }
+      return VECTIS_ERR_INVALID;
+    }
+    vectis_string_builder_cleanup(&builder);
+    builder.data = json_value.json;
+    builder.size = json_value.len;
+    builder.capacity = json_value.len + 1u;
+    json_value.json = NULL;
+    json_value.len = 0u;
+    lonejson_json_value_cleanup(&json_value);
   }
   out->data = builder.data;
   out->size = builder.size;
