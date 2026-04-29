@@ -5,8 +5,28 @@ int main(void) {
   vectis_cert_bundle_config ca;
   vectis_cert_bundle_config server;
   vectis_cert_bundle_config client;
+  vectis_private_key_config key;
+  vectis_csr_config csr;
   vectis_source bundle;
   vectis_error error;
+
+  vectis_private_key_config_init(&key);
+  key.output_key_path = "/tmp/vectis-example-csr-key.pem";
+  if (vectis_cert_generate_private_key(&key, &error) != VECTIS_OK) {
+    fprintf(stderr, "private key generation failed: %s\n", error.message);
+    return 1;
+  }
+
+  vectis_csr_config_init(&csr);
+  csr.subject.common_name = "csr.orders-api.internal";
+  csr.subject.organization = "Example";
+  csr.dns_names = "csr.orders-api.internal,csr-orders-api";
+  csr.private_key_path = key.output_key_path;
+  csr.output_csr_path = "/tmp/vectis-example-csr.pem";
+  if (vectis_cert_generate_csr(&csr, &error) != VECTIS_OK) {
+    fprintf(stderr, "CSR generation failed: %s\n", error.message);
+    return 1;
+  }
 
   vectis_cert_bundle_config_init(&ca);
   ca.subject.common_name = "Example Service CA";

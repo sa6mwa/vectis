@@ -373,6 +373,20 @@ typedef struct vectis_cert_bundle_config {
   long valid_days;
 } vectis_cert_bundle_config;
 
+typedef struct vectis_private_key_config {
+  const char *output_key_path;
+  unsigned key_bits;
+} vectis_private_key_config;
+
+typedef struct vectis_csr_config {
+  vectis_cert_subject subject;
+  const char *dns_names;
+  const char *ip_addresses;
+  vectis_source private_key;
+  const char *private_key_path;
+  const char *output_csr_path;
+} vectis_csr_config;
+
 struct vectis_methods {
   void (*destroy)(vectis_app *app);
   vectis_status (*start)(vectis_app *app, vectis_error *error);
@@ -734,6 +748,12 @@ vectis_status vectis_mqtt_publish_json(const vectis_mqtt_config *config,
 
 void vectis_cert_subject_init(vectis_cert_subject *subject);
 void vectis_cert_bundle_config_init(vectis_cert_bundle_config *config);
+void vectis_private_key_config_init(vectis_private_key_config *config);
+void vectis_csr_config_init(vectis_csr_config *config);
+vectis_status vectis_cert_generate_private_key(const vectis_private_key_config *config,
+                                               vectis_error *error);
+vectis_status vectis_cert_generate_csr(const vectis_csr_config *config,
+                                       vectis_error *error);
 vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *config,
                                           vectis_error *error);
 vectis_status vectis_cert_validate_bundle(const vectis_source *bundle,

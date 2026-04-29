@@ -74,6 +74,89 @@ static void assert_generated_bundle_is_parseable(const char *path) {
   X509_free(cert);
 }
 
+static void assert_generated_key_is_parseable(const char *path) {
+  FILE *fp;
+  EVP_PKEY *key;
+
+  fp = fopen(path, "rb");
+  assert(fp != NULL);
+  key = PEM_read_PrivateKey(fp, NULL, NULL, NULL);
+  assert(key != NULL);
+  assert(EVP_PKEY_base_id(key) == EVP_PKEY_RSA);
+  fclose(fp);
+  EVP_PKEY_free(key);
+}
+
+static void assert_generated_csr_is_parseable(const char *csr_path,
+                                              const char *key_path) {
+  FILE *fp;
+  X509_REQ *request;
+  EVP_PKEY *key;
+  char common_name[128];
+  STACK_OF(X509_EXTENSION) *extensions;
+  STACK_OF(GENERAL_NAME) *names;
+  X509_EXTENSION *extension;
+  int found_dns;
+  int found_ip;
+  int i;
+  int nid;
+  const GENERAL_NAME *name;
+  const unsigned char expected_ip[] = {127u, 0u, 0u, 1u};
+
+  fp = fopen(csr_path, "rb");
+  assert(fp != NULL);
+  request = PEM_read_X509_REQ(fp, NULL, NULL, NULL);
+  assert(request != NULL);
+  fclose(fp);
+
+  fp = fopen(key_path, "rb");
+  assert(fp != NULL);
+  key = PEM_read_PrivateKey(fp, NULL, NULL, NULL);
+  assert(key != NULL);
+  fclose(fp);
+
+  assert(X509_REQ_verify(request, key) == 1);
+  memset(common_name, 0, sizeof(common_name));
+  assert(X509_NAME_get_text_by_NID(X509_REQ_get_subject_name(request),
+                                   NID_commonName,
+                                   common_name,
+                                   (int)sizeof(common_name)) > 0);
+  assert(strcmp(common_name, "csr.local") == 0);
+
+  found_dns = 0;
+  found_ip = 0;
+  extensions = X509_REQ_get_extensions(request);
+  assert(extensions != NULL);
+  for (i = 0; i < sk_X509_EXTENSION_num(extensions); ++i) {
+    extension = sk_X509_EXTENSION_value(extensions, i);
+    nid = OBJ_obj2nid(X509_EXTENSION_get_object(extension));
+    if (nid == NID_subject_alt_name) {
+      names = X509V3_EXT_d2i(extension);
+      assert(names != NULL);
+      for (nid = 0; nid < sk_GENERAL_NAME_num(names); ++nid) {
+        name = sk_GENERAL_NAME_value(names, nid);
+        if (name->type == GEN_DNS &&
+            ASN1_STRING_length(name->d.dNSName) == 9 &&
+            memcmp(ASN1_STRING_get0_data(name->d.dNSName), "csr.local", 9u) == 0) {
+          found_dns = 1;
+        }
+        if (name->type == GEN_IPADD &&
+            ASN1_STRING_length(name->d.iPAddress) == 4 &&
+            memcmp(ASN1_STRING_get0_data(name->d.iPAddress), expected_ip, sizeof(expected_ip)) == 0) {
+          found_ip = 1;
+        }
+      }
+      GENERAL_NAMES_free(names);
+    }
+  }
+  sk_X509_EXTENSION_pop_free(extensions, X509_EXTENSION_free);
+  assert(found_dns);
+  assert(found_ip);
+
+  EVP_PKEY_free(key);
+  X509_REQ_free(request);
+}
+
 static void assert_bundle_is_signed_by(const char *bundle_path,
                                        const char *ca_bundle_path,
                                        const char *issuer_cn) {
@@ -172,6 +255,8 @@ static void write_expired_bundle(const char *path) {
 int main(void) {
   vectis_cert_bundle_config config;
   vectis_cert_bundle_config ca_config;
+  vectis_private_key_config key_config;
+  vectis_csr_config csr_config;
   vectis_error error;
   vectis_status status;
   vectis_source source;
@@ -183,10 +268,50 @@ int main(void) {
   char signed_bundle_path[128];
   char signed_cert_path[128];
   char signed_key_path[128];
+  char csr_key_path[128];
+  char csr_path[128];
   char malformed_path[128];
   char expired_path[128];
 
   vectis_error_clear(&error);
+  status = vectis_cert_generate_private_key(NULL, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "config") != NULL);
+
+  vectis_private_key_config_init(&key_config);
+  status = vectis_cert_generate_private_key(&key_config, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "output_key_path") != NULL);
+
+  make_temp_path(csr_key_path, sizeof(csr_key_path), "csr-key");
+  key_config.output_key_path = csr_key_path;
+  key_config.key_bits = 2048u;
+  status = vectis_cert_generate_private_key(&key_config, &error);
+  assert(status == VECTIS_OK);
+  assert_generated_key_is_parseable(csr_key_path);
+
+  status = vectis_cert_generate_csr(NULL, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "config") != NULL);
+
+  vectis_csr_config_init(&csr_config);
+  status = vectis_cert_generate_csr(&csr_config, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "common_name") != NULL);
+
+  make_temp_path(csr_path, sizeof(csr_path), "csr");
+  csr_config.subject.common_name = "csr.local";
+  csr_config.subject.organization = "Vectis";
+  csr_config.dns_names = "csr.local,csr.internal";
+  csr_config.ip_addresses = "127.0.0.1";
+  csr_config.private_key_path = csr_key_path;
+  csr_config.output_csr_path = csr_path;
+  status = vectis_cert_generate_csr(&csr_config, &error);
+  assert(status == VECTIS_OK);
+  assert_generated_csr_is_parseable(csr_path, csr_key_path);
+  remove(csr_path);
+  remove(csr_key_path);
+
   status = vectis_cert_generate_bundle(NULL, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "config") != NULL);

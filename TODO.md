@@ -112,7 +112,7 @@ and C/integration tests before adding Lua bindings or Lua facades.
 - [ ] Support lockd client certificate bundle configuration from Lua.
 - [ ] Support server certificate bundle configuration from Lua.
 - [x] Add Vectis-owned OpenSSL-backed helpers for generating self-signed certificates, CA material, and CA-signed client/server PEM bundles.
-- [ ] Add Vectis-owned OpenSSL-backed helpers for generating standalone private keys and CSRs.
+- [x] Add Vectis-owned OpenSSL-backed helpers for generating standalone private keys and CSRs.
 - [ ] Expose lower-level OpenSSL access for advanced users while keeping certificate workflows as the primary C and Lua DX.
 - [ ] Support embedding a lockd client certificate bundle into a packaged Vectis binary.
 - [x] Support ACME runtime configuration through Kore for C services.
