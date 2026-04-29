@@ -1064,6 +1064,11 @@ static void vectis_kore_send_response(struct http_request *req,
                                       vectis_response *response) {
   vectis_bytes body;
   const char *content_type;
+  const char *file_path;
+  struct kore_fileref *ref;
+  struct stat st;
+  struct timespec ts;
+  int fd;
   int status;
 
   status = vectis_internal_response_status_code(response);
@@ -1073,6 +1078,33 @@ static void vectis_kore_send_response(struct http_request *req,
   content_type = vectis_internal_response_content_type(response);
   if (content_type != NULL) {
     http_response_header(req, "content-type", content_type);
+  }
+  file_path = vectis_internal_response_file_path(response);
+  if (file_path != NULL) {
+    fd = open(file_path, O_RDONLY);
+    if (fd == -1 || fstat(fd, &st) != 0) {
+      if (fd != -1) {
+        (void)close(fd);
+      }
+      http_response(req, 404, NULL, 0);
+      return;
+    }
+    ts.tv_sec = st.st_mtime;
+    ts.tv_nsec = 0L;
+    if (req->owner == NULL || req->owner->owner == NULL ||
+        req->owner->owner->server == NULL) {
+      (void)close(fd);
+      http_response(req, 500, NULL, 0);
+      return;
+    }
+    ref = kore_fileref_create(req->owner->owner->server, file_path, fd, st.st_size, &ts);
+    if (ref == NULL) {
+      (void)close(fd);
+      http_response(req, 500, NULL, 0);
+      return;
+    }
+    http_response_fileref(req, status, ref);
+    return;
   }
   body = vectis_internal_response_body(response);
   http_response(req, status, body.data, body.size);

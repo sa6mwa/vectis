@@ -67,6 +67,16 @@ static vectis_status upload_handler(vectis_app *app,
   return vectis_response_text(response, 200, "text/plain", "spooled", error);
 }
 
+static vectis_status file_handler(vectis_app *app,
+                                  vectis_request *request,
+                                  vectis_response *response,
+                                  void *userdata,
+                                  vectis_error *error) {
+  (void)app;
+  (void)request;
+  return vectis_response_file(response, 200, "text/plain", (const char *)userdata, error);
+}
+
 static void assert_kore_smoke(void) {
   vectis_app_config config;
   vectis_http_client_config http;
@@ -79,8 +89,11 @@ static void assert_kore_smoke(void) {
   vectis_route_config route;
   vectis_route_config limited_route;
   vectis_route_config upload_route;
+  vectis_route_config file_route;
   const char *headers[] = {"x-vectis-trace: runtime-smoke"};
   const char upload_path[] = "/tmp/vectis-runtime-upload.bin";
+  const char response_file_path[] = "/tmp/vectis-runtime-response.txt";
+  const char response_file_body[] = "file-response";
   vectis_error error;
   vectis_status status;
   vectis_app *app;
@@ -97,6 +110,11 @@ static void assert_kore_smoke(void) {
   config.tls.bind = "127.0.0.1";
   config.tls.port = 28080u;
   config.server.max_request_body_bytes = 1024u;
+  fp = fopen(response_file_path, "wb");
+  assert(fp != NULL);
+  assert(fwrite(response_file_body, 1u, sizeof(response_file_body) - 1u, fp) ==
+         sizeof(response_file_body) - 1u);
+  assert(fclose(fp) == 0);
   app = vectis_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/health", sample_handler, NULL);
@@ -113,6 +131,9 @@ static void assert_kore_smoke(void) {
   upload_route.body.memory_buffer_limit_bytes = 1024u;
   status = vectis_register_route(app, &upload_route, &error);
   assert(status == VECTIS_OK);
+  file_route = vectis_route(VECTIS_HTTP_GET, "/file", file_handler, (void *)response_file_path);
+  status = vectis_register_route(app, &file_route, &error);
+  assert(status == VECTIS_OK);
   status = vectis_start(app, &error);
   assert(status == VECTIS_OK);
 
@@ -128,6 +149,13 @@ static void assert_kore_smoke(void) {
   assert(response.status_code == 200L);
   assert(response.body_size == 2u);
   assert(memcmp(response.body, "ok", 2u) == 0);
+
+  vectis_http_response_cleanup(&response);
+  status = vectis_http_get(&http, "http://127.0.0.1:28080/file", &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200L);
+  assert(response.body_size == sizeof(response_file_body) - 1u);
+  assert(memcmp(response.body, response_file_body, sizeof(response_file_body) - 1u) == 0);
   vectis_http_response_cleanup(&response);
 
   vectis_http_request_init(&request);
@@ -171,6 +199,7 @@ static void assert_kore_smoke(void) {
   assert(memcmp(upload_response.body, "spooled", 7u) == 0);
   vectis_http_response_cleanup(&upload_response);
   remove(upload_path);
+  remove(response_file_path);
 
   status = vectis_stop(app, &error);
   assert(status == VECTIS_OK);

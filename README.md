@@ -299,6 +299,8 @@ The current implementation provides:
 - `vectis_request_body_bytes()` exposes borrowed buffered bodies, while
   `vectis_request_body_copy()` gives handlers an owned byte buffer from either
   buffered or Kore-spooled bodies.
+- `vectis_response_file()` lets C handlers return large files through the Kore
+  runtime without first buffering the whole response in application memory.
 - Optional lockd configuration, so Kore-only examples and services do not need
   placeholder lockd sockets.
 - Route constructors for literal paths, named and optional path parameters, and

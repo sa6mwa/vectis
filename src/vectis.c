@@ -121,6 +121,7 @@ struct vectis_response {
   char *content_type;
   void *body;
   size_t body_size;
+  char *file_path;
   int sent;
 };
 
@@ -3328,6 +3329,7 @@ void vectis_internal_response_cleanup(vectis_response *response) {
   }
   free(response->content_type);
   free(response->body);
+  free(response->file_path);
   memset(response, 0, sizeof(*response));
 }
 
@@ -3357,6 +3359,10 @@ vectis_bytes vectis_internal_response_body(const vectis_response *response) {
     body.size = response->body_size;
   }
   return body;
+}
+
+const char *vectis_internal_response_file_path(const vectis_response *response) {
+  return response != NULL ? response->file_path : NULL;
 }
 
 vectis_status vectis_request_json_into(vectis_request *request,
@@ -3596,6 +3602,8 @@ vectis_status vectis_response_status(vectis_response *response,
   free(response->body);
   response->body = NULL;
   response->body_size = 0u;
+  free(response->file_path);
+  response->file_path = NULL;
   response->status_code = status_code;
   response->sent = 1;
   vectis_error_clear(error);
@@ -3671,10 +3679,60 @@ vectis_status vectis_response_bytes(vectis_response *response,
   }
   free(response->content_type);
   free(response->body);
+  free(response->file_path);
   response->status_code = status_code;
   response->content_type = content_type_copy;
   response->body = body_copy;
   response->body_size = body.size;
+  response->file_path = NULL;
+  response->sent = 1;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_response_file(vectis_response *response,
+                                   int status_code,
+                                   const char *content_type,
+                                   const char *path,
+                                   vectis_error *error) {
+  char *content_type_copy;
+  char *path_copy;
+
+  if (response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (status_code < 100 || status_code > 599) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP status code is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (content_type == NULL || content_type[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response content_type is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (path == NULL || path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response file path is required");
+    return VECTIS_ERR_INVALID;
+  }
+  content_type_copy = vectis_strdup(content_type);
+  if (content_type_copy == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy response content type");
+    return VECTIS_ERR_NOMEM;
+  }
+  path_copy = vectis_strdup(path);
+  if (path_copy == NULL) {
+    free(content_type_copy);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy response file path");
+    return VECTIS_ERR_NOMEM;
+  }
+  free(response->content_type);
+  free(response->body);
+  free(response->file_path);
+  response->status_code = status_code;
+  response->content_type = content_type_copy;
+  response->body = NULL;
+  response->body_size = 0u;
+  response->file_path = path_copy;
   response->sent = 1;
   vectis_error_clear(error);
   return VECTIS_OK;

@@ -618,6 +618,11 @@ vectis_status vectis_response_bytes(vectis_response *response,
                                     const char *content_type,
                                     vectis_bytes body,
                                     vectis_error *error);
+vectis_status vectis_response_file(vectis_response *response,
+                                   int status_code,
+                                   const char *content_type,
+                                   const char *path,
+                                   vectis_error *error);
 vectis_status vectis_response_json(vectis_response *response,
                                    int status_code,
                                    const lonejson_map *map,
