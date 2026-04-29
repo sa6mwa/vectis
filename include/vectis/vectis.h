@@ -199,6 +199,7 @@ typedef struct vectis_lockd_config {
   const char *client_bundle_path;
   const char *default_namespace;
   long timeout_ms;
+  pslog_logger *logger;
 } vectis_lockd_config;
 
 typedef struct vectis_tls_config {

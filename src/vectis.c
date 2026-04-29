@@ -119,6 +119,7 @@ typedef struct vectis_app_impl {
   char *default_namespace;
   char **endpoints;
   size_t endpoint_count;
+  pslog_logger *lockd_logger;
   long timeout_ms;
   unsigned short port;
   vectis_tls_mode tls_mode;
@@ -2141,7 +2142,7 @@ static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
   config.client_bundle_source = impl->client_bundle_source;
   config.default_namespace = impl->default_namespace;
   config.timeout_ms = impl->timeout_ms;
-  config.logger = impl->logger;
+  config.logger = impl->lockd_logger != NULL ? impl->lockd_logger : impl->logger;
 
   if (impl->client_bundle_pem != NULL && impl->client_bundle_pem_size > 0u) {
     rc = lc_source_from_memory(impl->client_bundle_pem,
@@ -2258,6 +2259,7 @@ vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error) {
   impl->client_bundle_source = vectis_source_lc_or_old(&effective->lockd.client_bundle,
                                                        effective->lockd.client_bundle_source);
   impl->default_namespace = vectis_strdup(effective->lockd.default_namespace);
+  impl->lockd_logger = effective->lockd.logger;
   impl->timeout_ms = effective->lockd.timeout_ms;
   impl->port = effective->tls.port;
   impl->tls_mode = effective->tls.mode;

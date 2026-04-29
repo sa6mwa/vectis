@@ -22,7 +22,8 @@ surface directly, without local helper layers that would hide awkward API shape.
   supplied from in-memory PEM for packed-service deployments.
 - `kore/kore_lockd_api.c`: API handler shape that combines Vectis path
   parameters, pslog, lockd state save/load helpers, safe lockd key formatting,
-  and lonejson responses.
+  and lonejson responses. It uses a scoped Kore logger and a separate lockd
+  client logger with its own palette.
 - `kore/kore_file_upload.c`: large upload route using the Vectis upload route
   constructor and streaming body-policy preset.
 - `kore/kore_generated_response.c`: generated JSON response body written through
@@ -46,7 +47,8 @@ surface directly, without local helper layers that would hide awkward API shape.
 - `lockd/lockd_consumer_service_with_state.c`: managed consumer service using
   dequeue-with-state and lonejson mapped state mutation.
 - `lockd/lockd_vectis_consumer_service.c`: Vectis app-owned lockd setup plus
-  the raw liblockdc managed consumer service config.
+  the raw liblockdc managed consumer service config, with separate app and
+  lockd client loggers.
 
 ## `curl/`
 

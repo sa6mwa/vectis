@@ -47,6 +47,7 @@ int main(void) {
   assert(config.server.keepalive_timeout_ms == VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS);
   assert(config.server.keepalive_max_requests == VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS);
   assert(config.lockd.timeout_ms == 30000L);
+  assert(config.lockd.logger == NULL);
   vectis_error_clear(&error);
   assert(error.source == VECTIS_ERROR_SOURCE_NONE);
   assert(strcmp(vectis_error_source_string(VECTIS_ERROR_SOURCE_CURL), "curl") == 0);

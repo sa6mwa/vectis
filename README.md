@@ -51,6 +51,9 @@ Kore-only services. If no lockd endpoint or Unix socket is configured, Vectis
 starts as an HTTP/TLS service without an app-owned lockd client. If TCP lockd
 transport is configured, Vectis requires client bundle material from path,
 `lc_source`, or memory.
+`config.lockd.logger` can be set when the lockd client should use a different
+`pslog` scope, level, or palette than the application/Kore logger. If it is
+left unset, Vectis uses the app logger for lockd client logging.
 
 For Kore-backed services, the app-owned lockd client is process-local. Vectis
 does not open a lockd socket in the parent before Kore forks workers; route

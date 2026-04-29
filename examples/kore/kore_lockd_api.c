@@ -61,6 +61,36 @@ static int print_error(const char *operation, const vectis_error *error) {
   return 1;
 }
 
+static pslog_logger *new_scoped_logger(const char *component,
+                                       const pslog_palette *palette,
+                                       pslog_logger **root_out) {
+  pslog_config log_config;
+  pslog_logger *root;
+  pslog_logger *scoped;
+
+  if (root_out != NULL) {
+    *root_out = NULL;
+  }
+  pslog_default_config(&log_config);
+  log_config.mode = PSLOG_MODE_CONSOLE;
+  log_config.min_level = PSLOG_LEVEL_INFO;
+  log_config.output = pslog_output_from_fp(stderr, 0);
+  log_config.palette = palette;
+  root = pslog_new(&log_config);
+  if (root == NULL) {
+    return NULL;
+  }
+  scoped = root->withf(root, "component=%s", component);
+  if (scoped == NULL) {
+    root->destroy(root);
+    return NULL;
+  }
+  if (root_out != NULL) {
+    *root_out = root;
+  }
+  return scoped;
+}
+
 static vectis_status get_state(vectis_app *app,
                                vectis_request *request,
                                vectis_response *response,
@@ -136,16 +166,29 @@ int main(void) {
   vectis_route_config route;
   vectis_error error;
   vectis_app *app;
-  pslog_config log_config;
+  pslog_logger *root_logger;
   pslog_logger *logger;
+  pslog_logger *lockd_root_logger;
+  pslog_logger *lockd_logger;
   const char *endpoints[1];
 
-  pslog_default_config(&log_config);
-  log_config.mode = PSLOG_MODE_JSON;
-  log_config.min_level = PSLOG_LEVEL_INFO;
-  log_config.output = pslog_output_from_fp(stderr, 0);
-  logger = pslog_new(&log_config);
-  if (logger == NULL) {
+  root_logger = NULL;
+  lockd_root_logger = NULL;
+  logger = new_scoped_logger("kore", pslog_palette_default(), &root_logger);
+  lockd_logger = new_scoped_logger("lockd", &pslog_builtin_palette_horizon, &lockd_root_logger);
+  if (logger == NULL || lockd_logger == NULL) {
+    if (lockd_logger != NULL) {
+      lockd_logger->destroy(lockd_logger);
+    }
+    if (lockd_root_logger != NULL) {
+      lockd_root_logger->destroy(lockd_root_logger);
+    }
+    if (logger != NULL) {
+      logger->destroy(logger);
+    }
+    if (root_logger != NULL) {
+      root_logger->destroy(root_logger);
+    }
     return 1;
   }
 
@@ -166,11 +209,15 @@ int main(void) {
   config.lockd.client_bundle = vectis_source_from_path(
       env_or_default("LOCKD_CLIENT_BUNDLE", "/etc/vectis/lockd-client.pem"));
   config.lockd.default_namespace = "examples";
+  config.lockd.logger = lockd_logger;
 
   app = vectis_new(&config, &error);
   if (app == NULL) {
     (void)print_error("vectis_new", &error);
     logger->destroy(logger);
+    lockd_logger->destroy(lockd_logger);
+    lockd_root_logger->destroy(lockd_root_logger);
+    root_logger->destroy(root_logger);
     return 1;
   }
   route = vectis_route(VECTIS_HTTP_GET, "/state/:id?", get_state, NULL);
@@ -178,6 +225,9 @@ int main(void) {
     (void)print_error("vectis_register_route", &error);
     vectis_destroy(app);
     logger->destroy(logger);
+    lockd_logger->destroy(lockd_logger);
+    lockd_root_logger->destroy(lockd_root_logger);
+    root_logger->destroy(root_logger);
     return 1;
   }
   logger->infof(logger, "example.kore_lockd.start",
@@ -187,10 +237,16 @@ int main(void) {
     (void)print_error("vectis_start", &error);
     vectis_destroy(app);
     logger->destroy(logger);
+    lockd_logger->destroy(lockd_logger);
+    lockd_root_logger->destroy(lockd_root_logger);
+    root_logger->destroy(root_logger);
     return 1;
   }
   serve_forever();
   vectis_destroy(app);
   logger->destroy(logger);
+  lockd_logger->destroy(lockd_logger);
+  lockd_root_logger->destroy(lockd_root_logger);
+  root_logger->destroy(root_logger);
   return 0;
 }
