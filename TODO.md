@@ -152,9 +152,10 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Add C examples and tests for struct-to-DSV serialization once that API lands.
 - [x] Define the first XML-to-lonejson mapping contract: child elements by field key, repeated elements to arrays, attributes by name or configured prefix, and object text to `config.text_key`.
 - [x] Add libxml2-backed XML reader helpers that parse `vectis_source` or raw `lc_source` inputs into lonejson mapped structs.
-- [ ] Add true push-through XML-to-lonejson streaming for huge text fields so intermediate generated JSON strings do not need to remain memory-backed.
+- [x] Add true push-through XML-to-lonejson streaming for huge text fields so intermediate generated JSON strings do not need to remain memory-backed.
 - [ ] Expose Lua JSON encode/decode helpers through the bundled `lonejson` Lua rock or a Vectis facade.
 - [x] Make `lonejson` the backing implementation for Vectis request parsing, response serialization, lockd document helpers, and JSON HTTP client helpers.
+- [x] Stream mapped JSON request bodies into curl through LoneJSON's generator, using a non-buffering count pass for rewind-free mapped structs when `Content-Length` is required.
 - [ ] Add higher-level JSON REST helpers for request validation, response serialization, and downstream API calls.
 - [x] Add first-pass typed JSON route auto-wiring backed by lonejson mapped structs.
 - [x] Add multi-output typed JSON routes where handlers choose status-specific response maps at runtime.

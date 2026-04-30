@@ -408,6 +408,10 @@ The current implementation provides:
 - First-class C curl settings for proxy URLs, connect/overall timeouts,
   low-speed aborts, redirects, request headers, client certificates, CA bundles,
   bounded retries, file downloads/uploads, and streaming response-body callbacks.
+- Mapped JSON request bodies are serialized through LoneJSON's generator into
+  curl instead of prebuffering. Vectis does a bounded counting pass for ordinary
+  rewind-free mapped structs so HTTP servers that require `Content-Length` still
+  work; genuinely source-backed or nested raw JSON fields remain chunked.
 - `vectis_http_response_json_into()` parses downstream HTTP JSON response bodies
   directly into lonejson mapped structs.
 - The compose-backed e2e suite includes a controlled downstream HTTP

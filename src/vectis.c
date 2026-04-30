@@ -301,6 +301,9 @@ typedef struct vectis_curl_request_body {
   size_t size;
   size_t offset;
   char *owned_data;
+  lonejson_curl_upload json_upload;
+  curl_off_t json_size;
+  int json_upload_active;
   FILE *file;
   long file_size;
 } vectis_curl_request_body;
@@ -8849,15 +8852,112 @@ static void vectis_curl_request_body_cleanup(vectis_curl_request_body *body) {
   if (body->file != NULL) {
     (void)fclose(body->file);
   }
+  if (body->json_upload_active) {
+    lonejson_curl_upload_cleanup(&body->json_upload);
+  }
   free(body->owned_data);
   memset(body, 0, sizeof(*body));
+}
+
+static int vectis_lonejson_map_has_unknown_size_fields(const lonejson_map *map,
+                                                       unsigned depth) {
+  size_t i;
+
+  if (map == NULL || depth > 32u) {
+    return 1;
+  }
+  for (i = 0u; i < map->field_count; ++i) {
+    const lonejson_field *field;
+
+    field = &map->fields[i];
+    switch (field->kind) {
+    case LONEJSON_FIELD_KIND_STRING_STREAM:
+    case LONEJSON_FIELD_KIND_BASE64_STREAM:
+    case LONEJSON_FIELD_KIND_STRING_SOURCE:
+    case LONEJSON_FIELD_KIND_BASE64_SOURCE:
+    case LONEJSON_FIELD_KIND_JSON_VALUE:
+      return 1;
+    case LONEJSON_FIELD_KIND_OBJECT:
+    case LONEJSON_FIELD_KIND_OBJECT_ARRAY:
+      if (vectis_lonejson_map_has_unknown_size_fields(field->submap,
+                                                      depth + 1u)) {
+        return 1;
+      }
+      break;
+    default:
+      break;
+    }
+  }
+  return 0;
+}
+
+static vectis_status vectis_lonejson_count_upload_size(const lonejson_map *map,
+                                                       const void *value,
+                                                       curl_off_t *out_size,
+                                                       vectis_error *error) {
+  lonejson_generator generator;
+  lonejson_status json_status;
+  unsigned char buffer[8192];
+  curl_off_t total;
+  int eof;
+
+  if (out_size == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "JSON upload size output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out_size = (curl_off_t)-1;
+  if (vectis_lonejson_map_has_unknown_size_fields(map, 0u)) {
+    return VECTIS_OK;
+  }
+  json_status = lonejson_generator_init(&generator, map, value, NULL);
+  if (json_status != LONEJSON_STATUS_OK) {
+    vectis_set_errorf(error,
+                      VECTIS_ERR_INVALID,
+                      "failed to inspect JSON request size: %s",
+                      generator.error.message[0] != '\0' ? generator.error.message :
+                      lonejson_status_string(json_status));
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LONEJSON;
+      error->dependency_code = (long)json_status;
+    }
+    return VECTIS_ERR_INVALID;
+  }
+  total = 0;
+  eof = 0;
+  while (!eof) {
+    size_t out_len;
+
+    json_status = lonejson_generator_read(&generator,
+                                          buffer,
+                                          sizeof(buffer),
+                                          &out_len,
+                                          &eof);
+    if (json_status != LONEJSON_STATUS_OK) {
+      vectis_set_errorf(error,
+                        VECTIS_ERR_INVALID,
+                        "failed to inspect JSON request size: %s",
+                        generator.error.message[0] != '\0' ? generator.error.message :
+                        lonejson_status_string(json_status));
+      if (error != NULL) {
+        error->source = VECTIS_ERROR_SOURCE_LONEJSON;
+        error->dependency_code = (long)json_status;
+      }
+      lonejson_generator_cleanup(&generator);
+      return VECTIS_ERR_INVALID;
+    }
+    total += (curl_off_t)out_len;
+  }
+  lonejson_generator_cleanup(&generator);
+  *out_size = total;
+  return VECTIS_OK;
 }
 
 static vectis_status vectis_prepare_curl_body(const vectis_http_request *request,
                                               vectis_curl_request_body *body,
                                               vectis_error *error) {
   lonejson_error json_error;
-  size_t json_len;
+  lonejson_status json_status;
+  vectis_status status;
 
   memset(body, 0, sizeof(*body));
   if (request->json_map != NULL || request->json_value != NULL) {
@@ -8867,23 +8967,32 @@ static vectis_status vectis_prepare_curl_body(const vectis_http_request *request
                        "JSON HTTP request requires both json_map and json_value");
       return VECTIS_ERR_INVALID;
     }
-    body->owned_data = lonejson_serialize_alloc(request->json_map,
-                                                request->json_value,
-                                                &json_len,
-                                                NULL,
-                                                &json_error);
-    if (body->owned_data == NULL) {
+    json_status = lonejson_curl_upload_init(&body->json_upload,
+                                            request->json_map,
+                                            request->json_value,
+                                            NULL);
+    if (json_status != LONEJSON_STATUS_OK) {
+      json_error = body->json_upload.generator.error;
       vectis_set_errorf(error,
                         VECTIS_ERR_INVALID,
                         "failed to serialize JSON request: %s",
-                        json_error.message);
+                        json_error.message[0] != '\0' ? json_error.message :
+                        lonejson_status_string(json_status));
       if (error != NULL) {
         error->source = VECTIS_ERROR_SOURCE_LONEJSON;
+        error->dependency_code = (long)json_status;
       }
       return VECTIS_ERR_INVALID;
     }
-    body->data = body->owned_data;
-    body->size = json_len;
+    status = vectis_lonejson_count_upload_size(request->json_map,
+                                               request->json_value,
+                                               &body->json_size,
+                                               error);
+    if (status != VECTIS_OK) {
+      lonejson_curl_upload_cleanup(&body->json_upload);
+      return status;
+    }
+    body->json_upload_active = 1;
     return VECTIS_OK;
   }
   if (request->body != NULL || request->body_size > 0u) {
@@ -9278,6 +9387,17 @@ static vectis_status vectis_http_execute_once(const vectis_http_client_config *c
       return VECTIS_ERR_NOMEM;
     }
   }
+  if (request_body.json_upload_active &&
+      request_body.json_size < 0) {
+    headers = curl_slist_append(headers, "Transfer-Encoding: chunked");
+    if (headers == NULL) {
+      curl_easy_cleanup(curl);
+      vectis_curl_request_body_cleanup(&request_body);
+      free(url);
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate transfer-encoding header");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
   if (headers != NULL) {
     (void)curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
   }
@@ -9291,7 +9411,32 @@ static vectis_status vectis_http_execute_once(const vectis_http_client_config *c
     (void)curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
   }
 
-  if (request_body.file != NULL) {
+  if (request_body.json_upload_active) {
+    if (request->method == VECTIS_HTTP_GET ||
+        request->method == VECTIS_HTTP_HEAD ||
+        request->method == VECTIS_HTTP_OPTIONS) {
+      curl_slist_free_all(headers);
+      curl_easy_cleanup(curl);
+      vectis_curl_request_body_cleanup(&request_body);
+      free(url);
+      vectis_set_error(error,
+                       VECTIS_ERR_INVALID,
+                       "JSON streaming requires an upload-capable HTTP method");
+      return VECTIS_ERR_INVALID;
+    }
+    if (request->method != VECTIS_HTTP_POST) {
+      (void)curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+    }
+    (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION, lonejson_curl_read_callback);
+    (void)curl_easy_setopt(curl, CURLOPT_READDATA, &request_body.json_upload);
+    if (request->method == VECTIS_HTTP_POST) {
+      (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE,
+                             request_body.json_size);
+    } else {
+      (void)curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE,
+                             request_body.json_size);
+    }
+  } else if (request_body.file != NULL) {
     if (request->method == VECTIS_HTTP_GET ||
         request->method == VECTIS_HTTP_HEAD ||
         request->method == VECTIS_HTTP_OPTIONS) {
