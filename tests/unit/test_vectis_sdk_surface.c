@@ -1147,6 +1147,8 @@ static void assert_dsv_surface(void) {
   const char oversized_field_csv[] = "id,count,active\nabc,1,true\n";
   const char unterminated_csv[] = "id,count,active\n\"unterminated,1,true\n";
   const char *columns[] = {"id", "count", "active"};
+  const char *reordered_columns[] = {"active", "id"};
+  sample_dsv_doc out_rows[2] = {{"alpha,quoted", 2, 1}, {" #comment", 3, 0}};
   vectis_dsv_config config;
   vectis_source dsv_source;
   vectis_mutable_bytes json;
@@ -1391,6 +1393,64 @@ static void assert_dsv_surface(void) {
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "unterminated") != NULL);
   lc_source_close(source);
+  vectis_error_clear(&error);
+
+  memset(&json, 0, sizeof(json));
+  config = vectis_dsv_csv();
+  config.comment_prefix = "#";
+  status = vectis_dsv_lonejson_rows_to_bytes(&sample_dsv_doc_map,
+                                             &config,
+                                             out_rows,
+                                             2u,
+                                             0u,
+                                             &json,
+                                             &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp((const char *)json.data,
+                "id,count,active\n"
+                "\"alpha,quoted\",2,true\n"
+                "\" #comment\",3,false\n") == 0);
+  dsv_source = vectis_source_from_memory(json.data, json.size);
+  memset(&rows, 0, sizeof(rows));
+  status = vectis_dsv_parse_lonejson_source(&dsv_source,
+                                            &sample_dsv_doc_map,
+                                            &config,
+                                            sample_dsv_row,
+                                            &rows,
+                                            &error);
+  assert(status == VECTIS_OK);
+  assert(rows.count == 2u);
+  assert(rows.total == 5);
+  assert(rows.active_count == 1);
+  assert(strcmp(rows.last_id, " #comment") == 0);
+  vectis_mutable_bytes_cleanup(&json);
+
+  memset(&json, 0, sizeof(json));
+  config = vectis_dsv_tsv_rows();
+  config.columns = reordered_columns;
+  config.column_count = 2u;
+  status = vectis_dsv_lonejson_rows_to_bytes(&sample_dsv_doc_map,
+                                             &config,
+                                             out_rows,
+                                             1u,
+                                             0u,
+                                             &json,
+                                             &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp((const char *)json.data, "true\talpha,quoted\n") == 0);
+  vectis_mutable_bytes_cleanup(&json);
+
+  memset(&json, 0, sizeof(json));
+  config = vectis_dsv_csv();
+  status = vectis_dsv_lonejson_rows_to_bytes(&sample_xml_doc_map,
+                                             &config,
+                                             NULL,
+                                             0u,
+                                             0u,
+                                             &json,
+                                             &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "not a scalar") != NULL);
   vectis_error_clear(&error);
 }
 

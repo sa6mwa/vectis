@@ -67,7 +67,7 @@ surface directly, without local helper layers that would hide awkward API shape.
 - `dsv/dsv_lonejson.c`: row-only CSV input from memory or a file path, streamed
   into a lonejson mapped struct row callback by map field order, with opt-in
   whole-line comments, plus explicit materializing JSON-array conversion through
-  the same lonejson map.
+  the same lonejson map and scalar mapped-struct serialization back to CSV.
 
 ## `xml/`
 

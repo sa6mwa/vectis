@@ -56,12 +56,17 @@ int main(int argc, char **argv) {
   vectis_source source;
   vectis_dsv_config csv;
   vectis_mutable_bytes json;
+  vectis_mutable_bytes export_csv;
   vectis_error error;
   order_totals totals;
+  order_row rows[2] = {
+      {"ord-2001", "globex,west", 8, 1},
+      {"ord-2002", "# literal customer", 13, 0}};
   vectis_status status;
 
   memset(&totals, 0, sizeof(totals));
   memset(&json, 0, sizeof(json));
+  memset(&export_csv, 0, sizeof(export_csv));
   vectis_error_clear(&error);
   csv = vectis_dsv_csv_rows();
   csv.comment_prefix = "#";
@@ -92,6 +97,23 @@ int main(int argc, char **argv) {
          (long)totals.quantity,
          totals.priority_rows);
   printf("%.*s\n", (int)json.size, (const char *)json.data);
+
+  csv = vectis_dsv_csv();
+  csv.comment_prefix = "#";
+  status = vectis_dsv_lonejson_rows_to_bytes(&order_row_map,
+                                             &csv,
+                                             rows,
+                                             2u,
+                                             0u,
+                                             &export_csv,
+                                             &error);
+  if (status != VECTIS_OK) {
+    vectis_mutable_bytes_cleanup(&json);
+    fprintf(stderr, "failed to serialize rows to DSV: %s\n", error.message);
+    return 1;
+  }
+  printf("%.*s", (int)export_csv.size, (const char *)export_csv.data);
   vectis_mutable_bytes_cleanup(&json);
+  vectis_mutable_bytes_cleanup(&export_csv);
   return 0;
 }

@@ -32,6 +32,7 @@ extern "C" {
 
 struct lc_client;
 struct lc_lease;
+struct lc_sink;
 struct lc_source;
 struct lc_consumer_service;
 struct lc_consumer_service_config;
@@ -784,6 +785,20 @@ vectis_status vectis_dsv_source_to_lonejson_array(const vectis_source *source,
                                                  const vectis_dsv_config *config,
                                                  vectis_mutable_bytes *out,
                                                  vectis_error *error);
+vectis_status vectis_dsv_write_lonejson_rows(struct lc_sink *sink,
+                                             const lonejson_map *map,
+                                             const vectis_dsv_config *config,
+                                             const void *rows,
+                                             size_t row_count,
+                                             size_t row_stride,
+                                             vectis_error *error);
+vectis_status vectis_dsv_lonejson_rows_to_bytes(const lonejson_map *map,
+                                                const vectis_dsv_config *config,
+                                                const void *rows,
+                                                size_t row_count,
+                                                size_t row_stride,
+                                                vectis_mutable_bytes *out,
+                                                vectis_error *error);
 void vectis_xml_config_init(vectis_xml_config *config);
 vectis_xml_config vectis_xml_default(void);
 vectis_status vectis_xml_parse_lonejson(struct lc_source *source,

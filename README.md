@@ -362,7 +362,9 @@ The current implementation provides:
   Whole-record comments are opt-in with `config.comment_prefix`; quoted values
   are never treated as comments. The `*_to_json_array()` helpers are explicitly
   materializing conversion APIs; use `vectis_dsv_parse_lonejson*()` for streaming
-  typed row processing.
+  typed row processing. The reverse path, `vectis_dsv_write_lonejson_rows()`,
+  streams scalar mapped structs to `lc_sink` outputs, with
+  `vectis_dsv_lonejson_rows_to_bytes()` available as a small-export convenience.
 - XML input can stream through libxml2's reader API from `vectis_source` or raw
   `lc_source` readers into `lonejson` mapped structs using
   `lonejson_parse_reader()`. The first mapping contract is intentionally

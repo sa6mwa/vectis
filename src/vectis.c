@@ -5836,6 +5836,414 @@ vectis_status vectis_dsv_source_to_lonejson_array(const vectis_source *source,
   return status;
 }
 
+static vectis_status vectis_dsv_sink_write(lc_sink *sink,
+                                           const void *data,
+                                           size_t size,
+                                           vectis_error *error) {
+  lc_error lcerr;
+  int rc;
+
+  if (size == 0u) {
+    return VECTIS_OK;
+  }
+  if (sink == NULL || sink->write == NULL || data == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV output sink is required");
+    return VECTIS_ERR_INVALID;
+  }
+  lc_error_init(&lcerr);
+  rc = sink->write(sink, data, size, &lcerr);
+  if (!rc) {
+    (void)vectis_source_error(error,
+                              lcerr.code != LC_OK ? lcerr.code : LC_ERR_TRANSPORT,
+                              &lcerr,
+                              "failed to write DSV output");
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_dsv_sink_write_cstr(lc_sink *sink,
+                                                const char *value,
+                                                vectis_error *error) {
+  return vectis_dsv_sink_write(sink, value, value != NULL ? strlen(value) : 0u, error);
+}
+
+static int vectis_dsv_field_is_writable_scalar(const lonejson_field *field) {
+  if (field == NULL) {
+    return 0;
+  }
+  switch (field->kind) {
+  case LONEJSON_FIELD_KIND_STRING:
+  case LONEJSON_FIELD_KIND_I64:
+  case LONEJSON_FIELD_KIND_U64:
+  case LONEJSON_FIELD_KIND_F64:
+  case LONEJSON_FIELD_KIND_BOOL:
+    return 1;
+  default:
+    return 0;
+  }
+}
+
+static vectis_status vectis_dsv_get_columns(const lonejson_map *map,
+                                            const vectis_dsv_config *config,
+                                            const char *const **out_columns,
+                                            const char ***out_owned_columns,
+                                            size_t *out_count,
+                                            vectis_error *error) {
+  const char **owned;
+  vectis_status status;
+
+  if (out_columns == NULL || out_owned_columns == NULL || out_count == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV column output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out_columns = NULL;
+  *out_owned_columns = NULL;
+  *out_count = 0u;
+  if (config != NULL && config->columns != NULL) {
+    if (config->column_count == 0u) {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "DSV column count is required");
+      return VECTIS_ERR_INVALID;
+    }
+    *out_columns = config->columns;
+    *out_count = config->column_count;
+    return VECTIS_OK;
+  }
+  status = vectis_dsv_columns_from_map(map, &owned, out_count, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  *out_columns = owned;
+  *out_owned_columns = owned;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_dsv_validate_output_fields(const lonejson_map *map,
+                                                       const char *const *columns,
+                                                       size_t column_count,
+                                                       vectis_error *error) {
+  size_t i;
+
+  if (map == NULL || map->struct_size == 0u || columns == NULL || column_count == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV map and columns are required");
+    return VECTIS_ERR_INVALID;
+  }
+  for (i = 0u; i < column_count; ++i) {
+    const lonejson_field *field;
+
+    field = vectis_dsv_find_field(map, columns[i]);
+    if (field == NULL) {
+      vectis_set_errorf(error,
+                        VECTIS_ERR_INVALID,
+                        "DSV output column has no mapped field: %s",
+                        columns[i] != NULL ? columns[i] : "(null)");
+      return VECTIS_ERR_INVALID;
+    }
+    if (!vectis_dsv_field_is_writable_scalar(field)) {
+      vectis_set_errorf(error,
+                        VECTIS_ERR_INVALID,
+                        "DSV output column is not a scalar field: %s",
+                        columns[i] != NULL ? columns[i] : "(null)");
+      return VECTIS_ERR_INVALID;
+    }
+  }
+  return VECTIS_OK;
+}
+
+static int vectis_dsv_needs_quote(const char *value,
+                                  size_t size,
+                                  const vectis_dsv_config *config,
+                                  int first_field) {
+  size_t i;
+
+  if (value == NULL || size == 0u) {
+    return 0;
+  }
+  if (first_field && config->comment_prefix != NULL && config->comment_prefix[0] != '\0' &&
+      strncmp(value, config->comment_prefix, strlen(config->comment_prefix)) == 0) {
+    return 1;
+  }
+  if (first_field && config->allow_indented_comments &&
+      config->comment_prefix != NULL &&
+      config->comment_prefix[0] != '\0') {
+    i = 0u;
+    while (i < size && (value[i] == ' ' || value[i] == '\t')) {
+      i++;
+    }
+    if (strncmp(value + i, config->comment_prefix, strlen(config->comment_prefix)) == 0) {
+      return 1;
+    }
+  }
+  for (i = 0u; i < size; ++i) {
+    if ((unsigned char)value[i] == (unsigned char)config->delimiter ||
+        (unsigned char)value[i] == (unsigned char)config->quote ||
+        value[i] == '\r' ||
+        value[i] == '\n') {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static vectis_status vectis_dsv_write_delimited_field(lc_sink *sink,
+                                                      const char *value,
+                                                      size_t size,
+                                                      const vectis_dsv_config *config,
+                                                      int first_field,
+                                                      vectis_error *error) {
+  char quote;
+  char escape;
+  size_t i;
+
+  if (value == NULL) {
+    return VECTIS_OK;
+  }
+  if (!vectis_dsv_needs_quote(value, size, config, first_field)) {
+    return vectis_dsv_sink_write(sink, value, size, error);
+  }
+  quote = (char)config->quote;
+  escape = (char)config->escape;
+  if (vectis_dsv_sink_write(sink, &quote, 1u, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  for (i = 0u; i < size; ++i) {
+    if (value[i] == quote &&
+        vectis_dsv_sink_write(sink, &escape, 1u, error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    if (vectis_dsv_sink_write(sink, value + i, 1u, error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+  }
+  return vectis_dsv_sink_write(sink, &quote, 1u, error);
+}
+
+static const char *vectis_dsv_string_field_value(const lonejson_field *field,
+                                                 const void *row) {
+  const char *base;
+
+  base = (const char *)row + field->struct_offset;
+  if (field->storage == LONEJSON_STORAGE_DYNAMIC) {
+    const char *const *ptr;
+
+    ptr = (const char *const *)base;
+    return *ptr != NULL ? *ptr : "";
+  }
+  return base;
+}
+
+static vectis_status vectis_dsv_write_field_value(lc_sink *sink,
+                                                  const lonejson_field *field,
+                                                  const void *row,
+                                                  const vectis_dsv_config *config,
+                                                  int first_field,
+                                                  vectis_error *error) {
+  const char *base;
+  const char *text;
+  char number[64];
+  int written;
+
+  base = (const char *)row + field->struct_offset;
+  switch (field->kind) {
+  case LONEJSON_FIELD_KIND_STRING:
+    text = vectis_dsv_string_field_value(field, row);
+    return vectis_dsv_write_delimited_field(sink,
+                                            text,
+                                            strlen(text),
+                                            config,
+                                            first_field,
+                                            error);
+  case LONEJSON_FIELD_KIND_I64:
+    written = snprintf(number, sizeof(number), "%lld", (long long)*(const lonejson_int64 *)base);
+    break;
+  case LONEJSON_FIELD_KIND_U64:
+    written = snprintf(number, sizeof(number), "%llu",
+                       (unsigned long long)*(const lonejson_uint64 *)base);
+    break;
+  case LONEJSON_FIELD_KIND_F64:
+    written = snprintf(number, sizeof(number), "%.17g", *(const double *)base);
+    break;
+  case LONEJSON_FIELD_KIND_BOOL:
+    text = *(const int *)base ? "true" : "false";
+    return vectis_dsv_sink_write_cstr(sink, text, error);
+  default:
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV output field is not scalar");
+    return VECTIS_ERR_INVALID;
+  }
+  if (written < 0 || (size_t)written >= sizeof(number)) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to format DSV scalar field");
+    return VECTIS_ERR_STATE;
+  }
+  return vectis_dsv_sink_write(sink, number, (size_t)written, error);
+}
+
+vectis_status vectis_dsv_write_lonejson_rows(struct lc_sink *sink,
+                                             const lonejson_map *map,
+                                             const vectis_dsv_config *config,
+                                             const void *rows,
+                                             size_t row_count,
+                                             size_t row_stride,
+                                             vectis_error *error) {
+  vectis_dsv_config effective;
+  const char *const *columns;
+  const char **owned_columns;
+  size_t column_count;
+  size_t row_index;
+  size_t column_index;
+  vectis_status status;
+  char delimiter;
+
+  if (sink == NULL || (rows == NULL && row_count > 0u) || map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV sink, map, and rows are required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (row_stride == 0u) {
+    row_stride = map->struct_size;
+  }
+  if (row_stride < map->struct_size) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV row stride is smaller than map struct size");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_dsv_effective_config(config, &effective, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  columns = NULL;
+  owned_columns = NULL;
+  column_count = 0u;
+  status = vectis_dsv_get_columns(map, &effective, &columns, &owned_columns, &column_count, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_dsv_validate_output_fields(map, columns, column_count, error);
+  if (status != VECTIS_OK) {
+    free(owned_columns);
+    return status;
+  }
+  delimiter = (char)effective.delimiter;
+  if (effective.has_header) {
+    for (column_index = 0u; column_index < column_count; ++column_index) {
+      if (column_index > 0u &&
+          vectis_dsv_sink_write(sink, &delimiter, 1u, error) != VECTIS_OK) {
+        free(owned_columns);
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+      status = vectis_dsv_write_delimited_field(sink,
+                                                columns[column_index],
+                                                strlen(columns[column_index]),
+                                                &effective,
+                                                column_index == 0u,
+                                                error);
+      if (status != VECTIS_OK) {
+        free(owned_columns);
+        return status;
+      }
+    }
+    if (vectis_dsv_sink_write_cstr(sink, "\n", error) != VECTIS_OK) {
+      free(owned_columns);
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+  }
+  for (row_index = 0u; row_index < row_count; ++row_index) {
+    const char *row;
+
+    row = (const char *)rows + row_index * row_stride;
+    for (column_index = 0u; column_index < column_count; ++column_index) {
+      const lonejson_field *field;
+
+      if (column_index > 0u &&
+          vectis_dsv_sink_write(sink, &delimiter, 1u, error) != VECTIS_OK) {
+        free(owned_columns);
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+      field = vectis_dsv_find_field(map, columns[column_index]);
+      status = vectis_dsv_write_field_value(sink,
+                                            field,
+                                            row,
+                                            &effective,
+                                            column_index == 0u,
+                                            error);
+      if (status != VECTIS_OK) {
+        free(owned_columns);
+        return status;
+      }
+    }
+    if (vectis_dsv_sink_write_cstr(sink, "\n", error) != VECTIS_OK) {
+      free(owned_columns);
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+  }
+  free(owned_columns);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_dsv_lonejson_rows_to_bytes(const lonejson_map *map,
+                                                const vectis_dsv_config *config,
+                                                const void *rows,
+                                                size_t row_count,
+                                                size_t row_stride,
+                                                vectis_mutable_bytes *out,
+                                                vectis_error *error) {
+  lc_sink *sink;
+  lc_error lcerr;
+  const void *bytes;
+  size_t size;
+  vectis_status status;
+  int rc;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV byte output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  out->data = NULL;
+  out->size = 0u;
+  lc_error_init(&lcerr);
+  sink = NULL;
+  rc = lc_sink_to_memory(&sink, &lcerr);
+  if (rc != LC_OK) {
+    (void)vectis_source_error(error, rc, &lcerr, "failed to create DSV memory sink");
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  lc_error_cleanup(&lcerr);
+  status = vectis_dsv_write_lonejson_rows(sink,
+                                          map,
+                                          config,
+                                          rows,
+                                          row_count,
+                                          row_stride,
+                                          error);
+  if (status != VECTIS_OK) {
+    lc_sink_close(sink);
+    return status;
+  }
+  lc_error_init(&lcerr);
+  rc = lc_sink_memory_bytes(sink, &bytes, &size, &lcerr);
+  if (rc != LC_OK) {
+    (void)vectis_source_error(error, rc, &lcerr, "failed to read DSV memory sink");
+    lc_sink_close(sink);
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  out->data = malloc(size + 1u);
+  if (out->data == NULL) {
+    lc_sink_close(sink);
+    lc_error_cleanup(&lcerr);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate DSV bytes");
+    return VECTIS_ERR_NOMEM;
+  }
+  memcpy(out->data, bytes, size);
+  ((char *)out->data)[size] = '\0';
+  out->size = size;
+  lc_sink_close(sink);
+  lc_error_cleanup(&lcerr);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 void vectis_xml_config_init(vectis_xml_config *config) {
   if (config == NULL) {
     return;
