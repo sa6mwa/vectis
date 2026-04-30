@@ -102,18 +102,18 @@ int main(void) {
   app_config.tls.bind = env_or_default("VECTIS_KORE_BIND", "127.0.0.1");
   app_config.tls.port = env_port_or_default("VECTIS_KORE_PORT", 28084u);
 
-  app = vectis_new(&app_config, &error);
+  app = vectis_app_new(&app_config, &error);
   if (app == NULL) {
-    return print_error("vectis_new", &error);
+    return print_error("vectis_app_new", &error);
   }
 
   vectis_static_file_config_init(&file);
   file.path = "/";
   file.file_path = index_path;
   file.content_type = "text/html";
-  if (vectis_register_static_file(app, &file, &error) != VECTIS_OK) {
-    (void)print_error("vectis_register_static_file", &error);
-    vectis_destroy(app);
+  if (app->static_file(app, &file, &error) != VECTIS_OK) {
+    (void)print_error("app->static_file", &error);
+    app->close(app);
     return 1;
   }
 
@@ -121,18 +121,18 @@ int main(void) {
   directory.path_prefix = "/assets";
   directory.root_dir = root_dir;
   directory.content_type = "application/javascript";
-  if (vectis_register_static_directory(app, &directory, &error) != VECTIS_OK) {
-    (void)print_error("vectis_register_static_directory", &error);
-    vectis_destroy(app);
+  if (app->static_directory(app, &directory, &error) != VECTIS_OK) {
+    (void)print_error("app->static_directory", &error);
+    app->close(app);
     return 1;
   }
 
-  if (vectis_start(app, &error) != VECTIS_OK) {
-    (void)print_error("vectis_start", &error);
-    vectis_destroy(app);
+  if (app->start(app, &error) != VECTIS_OK) {
+    (void)print_error("app->start", &error);
+    app->close(app);
     return 1;
   }
   serve_forever();
-  vectis_destroy(app);
+  app->close(app);
   return 0;
 }

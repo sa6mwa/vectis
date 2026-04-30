@@ -351,9 +351,21 @@ static void assert_http_surface(void) {
   status = vectis_http_client_new(&client, &handle, &error);
   assert(status == VECTIS_OK);
   assert(handle != NULL);
+  assert(handle->execute != NULL);
+  assert(handle->get != NULL);
+  assert(handle->delete_ != NULL);
+  assert(handle->head != NULL);
+  assert(handle->options != NULL);
+  assert(handle->download_file != NULL);
+  assert(handle->upload_file != NULL);
+  assert(handle->post_json != NULL);
+  assert(handle->put_json != NULL);
+  assert(handle->patch_json != NULL);
+  assert(handle->close != NULL);
+  assert(strcmp(handle->config.base_url, "file:///tmp") == 0);
   vectis_http_request_init(&request);
   request.url = "/vectis_http_source.txt";
-  status = vectis_http_client_execute(handle, &request, &response, &error);
+  status = handle->execute(handle, &request, &response, &error);
   assert(status == VECTIS_OK);
   assert(curl_config_count == 3);
   assert(response.body_size == sizeof(source_body) - 1u);
@@ -367,7 +379,7 @@ static void assert_http_surface(void) {
   request.configure_curl = curl_config_fail_first_transfer;
   retry_config_count = 0;
   request.configure_curl_userdata = &retry_config_count;
-  status = vectis_http_client_execute(handle, &request, &response, &error);
+  status = handle->execute(handle, &request, &response, &error);
   assert(status == VECTIS_OK);
   assert(retry_config_count == 2);
   assert(response.body_size == sizeof(source_body) - 1u);
@@ -377,22 +389,22 @@ static void assert_http_surface(void) {
   request.url = "/vectis_http_source.txt";
   request.retry_max_attempts = 2u;
   request.response_body = response_stream_ok;
-  status = vectis_http_client_execute(handle, &request, &response, &error);
+  status = handle->execute(handle, &request, &response, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "streaming") != NULL);
 
   vectis_http_request_init(&request);
   request.url = "/vectis_http_source.txt";
   request.configure_curl = curl_config_fail;
-  status = vectis_http_client_execute(handle, &request, &response, &error);
+  status = handle->execute(handle, &request, &response, &error);
   assert(status == VECTIS_ERR_STATE);
   assert(strstr(error.message, "raw curl") != NULL);
 
-  status = vectis_http_client_download_file(handle,
-                                            "/vectis_http_source.txt",
-                                            helper_download_path,
-                                            &response,
-                                            &error);
+  status = handle->download_file(handle,
+                                 "/vectis_http_source.txt",
+                                 helper_download_path,
+                                 &response,
+                                 &error);
   assert(status == VECTIS_OK);
   vectis_http_response_cleanup(&response);
   fp = fopen(helper_download_path, "rb");
@@ -407,7 +419,7 @@ static void assert_http_surface(void) {
   request.url = "file:///tmp/vectis_http_upload.txt";
   request.body = upload_body;
   request.body_size = sizeof(upload_body) - 1u;
-  status = vectis_http_client_execute(handle, &request, &response, &error);
+  status = handle->execute(handle, &request, &response, &error);
   assert(status == VECTIS_OK);
   vectis_http_response_cleanup(&response);
   fp = fopen(upload_path, "rb");
@@ -440,7 +452,7 @@ static void assert_http_surface(void) {
   request.response_body = response_stream_ok;
   request.response_body_userdata = &doc;
   memset(&doc, 0, sizeof(doc));
-  status = vectis_http_client_execute(handle, &request, &response, &error);
+  status = handle->execute(handle, &request, &response, &error);
   assert(status == VECTIS_OK);
   assert(response.body == NULL);
   assert(response.body_size == 0u);
@@ -450,7 +462,7 @@ static void assert_http_surface(void) {
   vectis_http_request_init(&request);
   request.url = "/vectis_http_source.txt";
   request.response_body = response_stream_fail;
-  status = vectis_http_client_execute(handle, &request, &response, &error);
+  status = handle->execute(handle, &request, &response, &error);
   assert(status == VECTIS_ERR_STATE);
   assert(strstr(error.message, "stream callback") != NULL);
 
@@ -458,26 +470,26 @@ static void assert_http_surface(void) {
   request.url = "/vectis_http_source.txt";
   request.download_path = helper_download_path;
   request.response_body = response_stream_ok;
-  status = vectis_http_client_execute(handle, &request, &response, &error);
+  status = handle->execute(handle, &request, &response, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "download_path") != NULL);
 
-  status = vectis_http_client_upload_file(handle,
-                                          VECTIS_HTTP_GET,
-                                          "file:///tmp/vectis_http_missing_upload.txt",
-                                          source_path,
-                                          "text/plain",
-                                          &response,
-                                          &error);
+  status = handle->upload_file(handle,
+                               VECTIS_HTTP_GET,
+                               "file:///tmp/vectis_http_missing_upload.txt",
+                               source_path,
+                               "text/plain",
+                               &response,
+                               &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "upload-capable") != NULL);
 
-  status = vectis_http_client_head(handle, "/vectis_http_source.txt", &response, &error);
+  status = handle->head(handle, "/vectis_http_source.txt", &response, &error);
   assert(status == VECTIS_OK);
   assert(response.body_size == 0u);
-  status = vectis_http_client_options(handle, "/vectis_http_source.txt", &response, &error);
+  status = handle->options(handle, "/vectis_http_source.txt", &response, &error);
   assert(status != VECTIS_ERR_NOT_IMPLEMENTED);
-  vectis_http_client_destroy(handle);
+  handle->close(handle);
 
   (void)remove(source_path);
   (void)remove(upload_path);
@@ -490,9 +502,12 @@ static void assert_http_surface(void) {
 
 static void assert_io_surface(void) {
   vectis_sftp_config sftp;
+  vectis_sftp *sftp_handle;
   vectis_ssh_config ssh;
+  vectis_ssh *ssh_handle;
   vectis_ssh_exec_result result;
   vectis_mqtt_config mqtt;
+  vectis_mqtt *mqtt_handle;
   vectis_cert_bundle_config certs;
   vectis_error error;
   vectis_status status;
@@ -503,21 +518,46 @@ static void assert_io_surface(void) {
   char line[128];
   FILE *fp;
 
+  sftp_handle = NULL;
+  ssh_handle = NULL;
+  mqtt_handle = NULL;
   vectis_sftp_config_init(&sftp);
   assert(sftp.timeout_ms == 30000L);
+  status = vectis_sftp_new(&sftp, &sftp_handle, &error);
+  assert(status == VECTIS_ERR_INVALID);
   status = vectis_sftp_upload_file(&sftp, "local", "remote", &error);
   assert(status == VECTIS_ERR_INVALID);
+  sftp.url = "sftp://127.0.0.1:1";
+  status = vectis_sftp_new(&sftp, &sftp_handle, &error);
+  assert(status == VECTIS_OK);
+  assert(sftp_handle != NULL);
+  assert(sftp_handle->upload_file != NULL);
+  assert(sftp_handle->download_file != NULL);
+  assert(sftp_handle->close != NULL);
+  assert(strcmp(sftp_handle->config.url, "sftp://127.0.0.1:1") == 0);
+  sftp_handle->close(sftp_handle);
 
   vectis_ssh_config_init(&ssh);
   memset(&result, 0, sizeof(result));
   assert(ssh.port == 22u);
   assert(ssh.timeout_ms == 30000L);
+  status = vectis_ssh_new(&ssh, &ssh_handle, &error);
+  assert(status == VECTIS_ERR_INVALID);
   status = vectis_ssh_exec(&ssh, "uptime", &result, &error);
   assert(status == VECTIS_ERR_INVALID);
   ssh.host = "127.0.0.1";
   ssh.port = 1u;
   ssh.username = "vectis";
   ssh.password = "secret";
+  status = vectis_ssh_new(&ssh, &ssh_handle, &error);
+  assert(status == VECTIS_OK);
+  assert(ssh_handle != NULL);
+  assert(ssh_handle->exec != NULL);
+  assert(ssh_handle->sftp_upload_file != NULL);
+  assert(ssh_handle->sftp_download_file != NULL);
+  assert(ssh_handle->close != NULL);
+  assert(strcmp(ssh_handle->config.host, "127.0.0.1") == 0);
+  ssh_handle->close(ssh_handle);
   status = vectis_ssh_sftp_upload_file(&ssh, "local", "remote", &error);
   assert(status == VECTIS_ERR_INVALID || status == VECTIS_ERR_STATE);
   status = vectis_ssh_exec(&ssh, "true", &result, &error);
@@ -526,6 +566,8 @@ static void assert_io_surface(void) {
   vectis_ssh_exec_result_cleanup(&result);
 
   vectis_mqtt_config_init(&mqtt);
+  status = vectis_mqtt_new(&mqtt, &mqtt_handle, &error);
+  assert(status == VECTIS_ERR_INVALID);
   status = vectis_mqtt_publish(&mqtt,
                                "workflow/test",
                                payload,
@@ -533,6 +575,15 @@ static void assert_io_surface(void) {
                                "text/plain",
                                &error);
   assert(status == VECTIS_ERR_INVALID);
+  mqtt.broker_url = "mqtt://127.0.0.1:1";
+  status = vectis_mqtt_new(&mqtt, &mqtt_handle, &error);
+  assert(status == VECTIS_OK);
+  assert(mqtt_handle != NULL);
+  assert(mqtt_handle->publish != NULL);
+  assert(mqtt_handle->publish_json != NULL);
+  assert(mqtt_handle->close != NULL);
+  assert(strcmp(mqtt_handle->config.broker_url, "mqtt://127.0.0.1:1") == 0);
+  mqtt_handle->close(mqtt_handle);
 
   vectis_cert_bundle_config_init(&certs);
   assert(certs.key_bits == 4096u);
@@ -772,9 +823,17 @@ static void assert_json_route_surface(void) {
   vectis_app_config_init(&config);
   config.tls.cert_key_bundle_path = "/tmp/server.pem";
   config.lockd.unix_socket_path = "/tmp/lockd.sock";
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app != NULL);
-  assert(vectis_lockd_client(app) == NULL);
+  assert(app->start != NULL);
+  assert(app->route != NULL);
+  assert(app->json_route != NULL);
+  assert(app->json_typed_route != NULL);
+  assert(app->static_file != NULL);
+  assert(app->static_directory != NULL);
+  assert(app->lockd_client != NULL);
+  assert(app->close != NULL);
+  assert(app->lockd_client(app) == NULL);
   request = vectis_internal_request_new(&error);
   response = vectis_internal_response_new(&error);
   assert(request != NULL);
@@ -782,18 +841,18 @@ static void assert_json_route_surface(void) {
 
   raw_route = vectis_route(VECTIS_HTTP_GET, "/state/:id?", sample_route_handler, NULL);
   assert(raw_route.path_kind == VECTIS_ROUTE_PATH_PARAMS);
-  status = vectis_register_route(app, &raw_route, &error);
+  status = app->route(app, &raw_route, &error);
   assert(status == VECTIS_OK);
 
   raw_route = vectis_route_regex(VECTIS_HTTP_GET, "^/internal/[0-9]+$", sample_route_handler, NULL);
   assert(raw_route.path_kind == VECTIS_ROUTE_PATH_REGEX);
-  status = vectis_register_route(app, &raw_route, &error);
+  status = app->route(app, &raw_route, &error);
   assert(status == VECTIS_OK);
 
   raw_route = vectis_json_body_route(VECTIS_HTTP_POST, "/raw-json", sample_route_handler, NULL);
   assert(raw_route.body.mode == VECTIS_BODY_JSON);
   assert(raw_route.path_kind == VECTIS_ROUTE_PATH_LITERAL);
-  status = vectis_register_prefixed_route(app, "/api/v1", &raw_route, &error);
+  status = app->prefixed_route(app, "/api/v1", &raw_route, &error);
   assert(status == VECTIS_OK);
 
   fp = fopen(static_file_path, "wb");
@@ -811,13 +870,13 @@ static void assert_json_route_surface(void) {
   static_file.path = "/static-file";
   static_file.file_path = static_file_path;
   static_file.content_type = "text/plain";
-  status = vectis_register_static_file(app, &static_file, &error);
+  status = app->static_file(app, &static_file, &error);
   assert(status == VECTIS_OK);
   vectis_static_directory_config_init(&static_dir);
   static_dir.path_prefix = "/assets";
   static_dir.root_dir = static_dir_path;
   static_dir.content_type = "application/javascript";
-  status = vectis_register_static_directory(app, &static_dir, &error);
+  status = app->static_directory(app, &static_dir, &error);
   assert(status == VECTIS_OK);
 
   status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/state/abc", request, response, &error);
@@ -881,7 +940,7 @@ static void assert_json_route_surface(void) {
                             NULL);
   assert(route.path_kind == VECTIS_ROUTE_PATH_PARAMS);
   assert(route.body.mode == VECTIS_BODY_JSON);
-  status = vectis_register_prefixed_json_route(app, "/api/v1", &route, &error);
+  status = app->prefixed_json_route(app, "/api/v1", &route, &error);
   assert(status == VECTIS_OK);
   assert(vectis_route_count(app) == 6u);
   status = vectis_internal_route_body_policy(app, VECTIS_HTTP_POST, "/api/v1/typed/abc", &policy, &error);
@@ -916,7 +975,7 @@ static void assert_json_route_surface(void) {
                                         sizeof(sample_doc),
                                         sample_json_typed_handler,
                                         NULL);
-  status = vectis_register_prefixed_json_typed_route(app, "/api/v1", &typed_route, &error);
+  status = app->prefixed_json_typed_route(app, "/api/v1", &typed_route, &error);
   assert(status == VECTIS_OK);
   assert(vectis_route_count(app) == 7u);
   status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
@@ -1000,7 +1059,7 @@ static void assert_json_route_surface(void) {
 
   vectis_internal_response_free(response);
   vectis_internal_request_free(request);
-  vectis_destroy(app);
+  app->close(app);
   (void)remove(static_file_path);
   (void)remove(static_dir_file_path);
   (void)rmdir(static_dir_path);
@@ -1019,7 +1078,7 @@ static void assert_openapi_surface(void) {
 
   vectis_app_config_init(&config);
   config.tls.cert_key_bundle_path = "/tmp/server.pem";
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app != NULL);
 
   vectis_openapi_route_doc_init(&doc);
@@ -1081,7 +1140,7 @@ static void assert_openapi_surface(void) {
   vectis_mutable_bytes_cleanup(&yaml);
 
   vectis_openapi_route_doc_cleanup(&doc);
-  vectis_destroy(app);
+  app->close(app);
 }
 
 static void assert_tls_source_surface(void) {
@@ -1104,36 +1163,36 @@ static void assert_tls_source_surface(void) {
   vectis_app_config_init(&config);
   config.tls.cert_key_bundle = vectis_source_from_memory(server_bundle, sizeof(server_bundle) - 1u);
   config.lockd.unix_socket_path = "/tmp/lockd.sock";
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app != NULL);
-  status = vectis_start(app, &error);
+  status = app->start(app, &error);
   assert(status == VECTIS_ERR_STATE);
   assert(error.source == VECTIS_ERROR_SOURCE_LOCKDC);
   assert(vectis_lockd_client(app) == NULL);
-  vectis_destroy(app);
+  app->close(app);
 
   vectis_app_config_init(&config);
   config.tls.cert_key_bundle = vectis_source_from_memory(server_bundle, sizeof(server_bundle) - 1u);
   config.tls.require_client_certificate = 1;
   config.lockd.unix_socket_path = "/tmp/lockd.sock";
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app != NULL);
-  status = vectis_start(app, &error);
+  status = app->start(app, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "client_ca_bundle") != NULL);
-  vectis_destroy(app);
+  app->close(app);
 
   vectis_app_config_init(&config);
   config.tls.cert_key_bundle = vectis_source_from_memory(server_bundle, sizeof(server_bundle) - 1u);
   config.tls.client_ca_bundle = vectis_source_from_memory(client_ca, sizeof(client_ca) - 1u);
   config.tls.require_client_certificate = 1;
   config.lockd.unix_socket_path = "/tmp/lockd.sock";
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app != NULL);
-  status = vectis_start(app, &error);
+  status = app->start(app, &error);
   assert(status == VECTIS_ERR_STATE);
   assert(error.source == VECTIS_ERROR_SOURCE_LOCKDC);
-  vectis_destroy(app);
+  app->close(app);
 }
 
 static void assert_consumer_service_surface(void) {
@@ -1168,29 +1227,29 @@ static void assert_consumer_service_surface(void) {
   service_config.consumer_count = 1u;
 
   vectis_app_config_init(&config);
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app != NULL);
-  status = vectis_consumer_service_new(app, &service_config, &service, &error);
+  status = app->consumer_service(app, &service_config, &service, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "lockd") != NULL);
   assert(service == NULL);
-  vectis_destroy(app);
+  app->close(app);
 
   vectis_app_config_init(&config);
   config.lockd.unix_socket_path = "/tmp/vectis-missing-lockd.sock";
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app != NULL);
-  status = vectis_consumer_service_new(app, &service_config, &service, &error);
+  status = app->consumer_service(app, &service_config, &service, &error);
   assert(status == VECTIS_OK || status == VECTIS_ERR_STATE);
   if (status == VECTIS_OK) {
     assert(service != NULL);
     assert(vectis_consumer_service_raw(service) != NULL);
-    vectis_consumer_service_destroy(service);
+    service->close(service);
   } else {
     assert(error.source == VECTIS_ERROR_SOURCE_LOCKDC);
     assert(service == NULL);
   }
-  vectis_destroy(app);
+  app->close(app);
 }
 
 static void assert_dsv_surface(void) {

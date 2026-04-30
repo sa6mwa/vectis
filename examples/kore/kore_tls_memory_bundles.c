@@ -57,20 +57,20 @@ int main(void) {
                                                          sizeof(client_ca_bundle) - 1u);
   config.tls.require_client_certificate = 1;
 
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   if (app == NULL) {
     logger->destroy(logger);
     return 1;
   }
 
   route = vectis_route(VECTIS_HTTP_GET, "/health", health, NULL);
-  (void)vectis_register_route(app, &route, &error);
+  (void)app->route(app, &route, &error);
 
   logger->infof(logger, "example.kore_tls_memory.start",
                 "app=%s require_client_certificate=%d",
                 config.app_name, config.tls.require_client_certificate);
-  (void)vectis_start(app, &error);
-  vectis_destroy(app);
+  (void)app->start(app, &error);
+  app->close(app);
   logger->destroy(logger);
   return 0;
 }

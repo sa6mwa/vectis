@@ -121,7 +121,7 @@ int main(void) {
     app_config.lockd.client_bundle = vectis_source_from_path(bundle_path);
   }
 
-  app = vectis_new(&app_config, &error);
+  app = vectis_app_new(&app_config, &error);
   if (app == NULL) {
     logger->errorf(logger,
                    "example.vectis_consumer.new_failed",
@@ -146,7 +146,7 @@ int main(void) {
   service_config.consumers = &consumer;
   service_config.consumer_count = 1u;
 
-  if (vectis_consumer_service_new(app, &service_config, &service, &error) != VECTIS_OK) {
+  if (app->consumer_service(app, &service_config, &service, &error) != VECTIS_OK) {
     logger->errorf(logger,
                    "example.vectis_consumer.create_failed",
                    "source=%s code=%d dependency=%ld http_status=%ld message=%s detail=%s",
@@ -156,7 +156,7 @@ int main(void) {
                    error.http_status,
                    error.message,
                    error.detail);
-  } else if (vectis_consumer_service_run(service, &error) != VECTIS_OK) {
+  } else if (service->run(service, &error) != VECTIS_OK) {
     logger->errorf(logger,
                    "example.vectis_consumer.run_failed",
                    "source=%s code=%d dependency=%ld http_status=%ld message=%s detail=%s",
@@ -170,8 +170,8 @@ int main(void) {
     rc = 0;
   }
 
-  vectis_consumer_service_destroy(service);
-  vectis_destroy(app);
+  service->close(service);
+  app->close(app);
   logger->destroy(logger);
   lockd_logger->destroy(lockd_logger);
   lockd_root_logger->destroy(lockd_root_logger);

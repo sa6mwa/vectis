@@ -39,7 +39,10 @@ struct lc_consumer_service_config;
 
 typedef struct vectis_app vectis_app;
 typedef struct vectis_consumer_service vectis_consumer_service;
-typedef struct vectis_methods vectis_methods;
+typedef struct vectis_http_client vectis_http_client;
+typedef struct vectis_sftp vectis_sftp;
+typedef struct vectis_ssh vectis_ssh;
+typedef struct vectis_mqtt vectis_mqtt;
 typedef struct vectis_request vectis_request;
 typedef struct vectis_response vectis_response;
 typedef struct vectis_json_response vectis_json_response;
@@ -441,7 +444,6 @@ typedef struct vectis_http_client_config {
   void *configure_curl_userdata;
 } vectis_http_client_config;
 
-typedef struct vectis_http_client vectis_http_client;
 struct http_request;
 
 typedef struct vectis_http_request {
@@ -559,19 +561,180 @@ typedef struct vectis_csr_config {
   const char *output_csr_path;
 } vectis_csr_config;
 
-struct vectis_methods {
-  void (*destroy)(vectis_app *app);
-  vectis_status (*start)(vectis_app *app, vectis_error *error);
-  vectis_status (*stop)(vectis_app *app, vectis_error *error);
-  vectis_status (*register_route)(vectis_app *app,
+/*
+ * Stateful Vectis SDK handles expose direct function-pointer method semantics
+ * with an explicit `self` argument, mirroring liblockdc. The `impl` pointer is
+ * private. Public config fields on non-app handles are shallow effective
+ * config copies; borrowed strings, sources, loggers, and callbacks must outlive
+ * the handle unless a specific API says otherwise.
+ */
+struct vectis_app {
+  vectis_status (*start)(vectis_app *self, vectis_error *error);
+  vectis_status (*stop)(vectis_app *self, vectis_error *error);
+  vectis_status (*route)(vectis_app *self,
+                         const vectis_route_config *route,
+                         vectis_error *error);
+  vectis_status (*json_route)(vectis_app *self,
+                              const vectis_json_route_config *route,
+                              vectis_error *error);
+  vectis_status (*json_typed_route)(vectis_app *self,
+                                    const vectis_json_typed_route_config *route,
+                                    vectis_error *error);
+  vectis_status (*prefixed_route)(vectis_app *self,
+                                  const char *prefix,
                                   const vectis_route_config *route,
                                   vectis_error *error);
-  size_t (*route_count)(const vectis_app *app);
-  pslog_logger *(*logger)(vectis_app *app);
+  vectis_status (*prefixed_json_route)(vectis_app *self,
+                                       const char *prefix,
+                                       const vectis_json_route_config *route,
+                                       vectis_error *error);
+  vectis_status (*prefixed_json_typed_route)(vectis_app *self,
+                                             const char *prefix,
+                                             const vectis_json_typed_route_config *route,
+                                             vectis_error *error);
+  vectis_status (*static_file)(vectis_app *self,
+                               const vectis_static_file_config *config,
+                               vectis_error *error);
+  vectis_status (*static_directory)(vectis_app *self,
+                                    const vectis_static_directory_config *config,
+                                    vectis_error *error);
+  vectis_status (*openapi_doc)(vectis_app *self,
+                               vectis_http_methods methods,
+                               const char *path,
+                               const vectis_openapi_route_doc *doc,
+                               vectis_error *error);
+  vectis_status (*openapi)(vectis_app *self,
+                           const vectis_openapi_document *document,
+                           vectis_openapi_format format,
+                           vectis_mutable_bytes *out,
+                           vectis_error *error);
+  size_t (*route_count)(const vectis_app *self);
+  pslog_logger *(*logger)(vectis_app *self);
+  struct lc_client *(*lockd_client)(vectis_app *self);
+  vectis_status (*consumer_service)(vectis_app *self,
+                                    const struct lc_consumer_service_config *config,
+                                    vectis_consumer_service **out,
+                                    vectis_error *error);
+  void (*close)(vectis_app *self);
+  void *impl;
 };
 
-struct vectis_app {
-  const vectis_methods *vt;
+struct vectis_consumer_service {
+  struct lc_consumer_service *(*raw)(vectis_consumer_service *self);
+  vectis_status (*run)(vectis_consumer_service *self, vectis_error *error);
+  vectis_status (*start)(vectis_consumer_service *self, vectis_error *error);
+  vectis_status (*stop)(vectis_consumer_service *self, vectis_error *error);
+  vectis_status (*wait)(vectis_consumer_service *self, vectis_error *error);
+  vectis_status (*run_until)(vectis_consumer_service *self,
+                             const volatile int *done,
+                             long timeout_ms,
+                             vectis_error *error);
+  void (*close)(vectis_consumer_service *self);
+  void *impl;
+};
+
+struct vectis_http_client {
+  vectis_status (*execute)(vectis_http_client *self,
+                           const vectis_http_request *request,
+                           vectis_http_response *response,
+                           vectis_error *error);
+  vectis_status (*get)(vectis_http_client *self,
+                       const char *url,
+                       vectis_http_response *response,
+                       vectis_error *error);
+  vectis_status (*delete_)(vectis_http_client *self,
+                           const char *url,
+                           vectis_http_response *response,
+                           vectis_error *error);
+  vectis_status (*head)(vectis_http_client *self,
+                        const char *url,
+                        vectis_http_response *response,
+                        vectis_error *error);
+  vectis_status (*options)(vectis_http_client *self,
+                           const char *url,
+                           vectis_http_response *response,
+                           vectis_error *error);
+  vectis_status (*download_file)(vectis_http_client *self,
+                                 const char *url,
+                                 const char *local_path,
+                                 vectis_http_response *response,
+                                 vectis_error *error);
+  vectis_status (*upload_file)(vectis_http_client *self,
+                               vectis_http_method method,
+                               const char *url,
+                               const char *local_path,
+                               const char *content_type,
+                               vectis_http_response *response,
+                               vectis_error *error);
+  vectis_status (*post_json)(vectis_http_client *self,
+                             const char *url,
+                             const lonejson_map *map,
+                             const void *value,
+                             vectis_http_response *response,
+                             vectis_error *error);
+  vectis_status (*put_json)(vectis_http_client *self,
+                            const char *url,
+                            const lonejson_map *map,
+                            const void *value,
+                            vectis_http_response *response,
+                            vectis_error *error);
+  vectis_status (*patch_json)(vectis_http_client *self,
+                              const char *url,
+                              const lonejson_map *map,
+                              const void *value,
+                              vectis_http_response *response,
+                              vectis_error *error);
+  void (*close)(vectis_http_client *self);
+  vectis_http_client_config config;
+  void *impl;
+};
+
+struct vectis_sftp {
+  vectis_status (*upload_file)(vectis_sftp *self,
+                               const char *local_path,
+                               const char *remote_path,
+                               vectis_error *error);
+  vectis_status (*download_file)(vectis_sftp *self,
+                                 const char *remote_path,
+                                 const char *local_path,
+                                 vectis_error *error);
+  void (*close)(vectis_sftp *self);
+  vectis_sftp_config config;
+  void *impl;
+};
+
+struct vectis_ssh {
+  vectis_status (*exec)(vectis_ssh *self,
+                        const char *command,
+                        vectis_ssh_exec_result *result,
+                        vectis_error *error);
+  vectis_status (*sftp_upload_file)(vectis_ssh *self,
+                                    const char *local_path,
+                                    const char *remote_path,
+                                    vectis_error *error);
+  vectis_status (*sftp_download_file)(vectis_ssh *self,
+                                      const char *remote_path,
+                                      const char *local_path,
+                                      vectis_error *error);
+  void (*close)(vectis_ssh *self);
+  vectis_ssh_config config;
+  void *impl;
+};
+
+struct vectis_mqtt {
+  vectis_status (*publish)(vectis_mqtt *self,
+                           const char *topic,
+                           const void *payload,
+                           size_t payload_size,
+                           const char *content_type,
+                           vectis_error *error);
+  vectis_status (*publish_json)(vectis_mqtt *self,
+                                const char *topic,
+                                const lonejson_map *map,
+                                const void *value,
+                                vectis_error *error);
+  void (*close)(vectis_mqtt *self);
+  vectis_mqtt_config config;
   void *impl;
 };
 
@@ -683,7 +846,9 @@ vectis_json_typed_route_config vectis_json_typed_route_methods(vectis_http_metho
 void vectis_static_file_config_init(vectis_static_file_config *config);
 void vectis_static_directory_config_init(vectis_static_directory_config *config);
 
+vectis_app *vectis_app_new(const vectis_app_config *config, vectis_error *error);
 vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error);
+void vectis_app_close(vectis_app *app);
 void vectis_destroy(vectis_app *app);
 vectis_status vectis_start(vectis_app *app, vectis_error *error);
 vectis_status vectis_stop(vectis_app *app, vectis_error *error);
@@ -964,6 +1129,7 @@ vectis_status vectis_http_client_from_app(vectis_app *app,
                                           vectis_http_client **out,
                                           vectis_error *error);
 void vectis_http_client_destroy(vectis_http_client *client);
+void vectis_http_client_close(vectis_http_client *client);
 void vectis_http_request_init(vectis_http_request *request);
 void vectis_http_response_cleanup(vectis_http_response *response);
 vectis_status vectis_http_response_json_into(const vectis_http_response *response,
@@ -1072,6 +1238,10 @@ vectis_status vectis_http_patch_json(const vectis_http_client_config *client,
                                      vectis_error *error);
 
 void vectis_sftp_config_init(vectis_sftp_config *config);
+vectis_status vectis_sftp_new(const vectis_sftp_config *config,
+                              vectis_sftp **out,
+                              vectis_error *error);
+void vectis_sftp_close(vectis_sftp *sftp);
 vectis_status vectis_sftp_upload_file(const vectis_sftp_config *config,
                                       const char *local_path,
                                       const char *remote_path,
@@ -1082,6 +1252,10 @@ vectis_status vectis_sftp_download_file(const vectis_sftp_config *config,
                                         vectis_error *error);
 
 void vectis_ssh_config_init(vectis_ssh_config *config);
+vectis_status vectis_ssh_new(const vectis_ssh_config *config,
+                             vectis_ssh **out,
+                             vectis_error *error);
+void vectis_ssh_close(vectis_ssh *ssh);
 void vectis_ssh_exec_result_cleanup(vectis_ssh_exec_result *result);
 vectis_status vectis_ssh_exec(const vectis_ssh_config *config,
                               const char *command,
@@ -1097,6 +1271,10 @@ vectis_status vectis_ssh_sftp_download_file(const vectis_ssh_config *config,
                                             vectis_error *error);
 
 void vectis_mqtt_config_init(vectis_mqtt_config *config);
+vectis_status vectis_mqtt_new(const vectis_mqtt_config *config,
+                              vectis_mqtt **out,
+                              vectis_error *error);
+void vectis_mqtt_close(vectis_mqtt *mqtt);
 vectis_status vectis_mqtt_publish(const vectis_mqtt_config *config,
                                   const char *topic,
                                   const void *payload,

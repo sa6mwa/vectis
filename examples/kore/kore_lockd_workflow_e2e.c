@@ -645,9 +645,9 @@ static int run_server(void) {
   app_config.lockd.client_bundle = vectis_source_from_path(context.config.bundle_path);
   app_config.lockd.default_namespace = context.config.namespace_name;
   app_config.lockd.logger = lockd_logger;
-  app = vectis_new(&app_config, &error);
+  app = vectis_app_new(&app_config, &error);
   if (app == NULL) {
-    (void)print_vectis_error("vectis_new", &error);
+    (void)print_vectis_error("vectis_app_new", &error);
     logger->destroy(logger);
     lockd_logger->destroy(lockd_logger);
     lockd_root_logger->destroy(lockd_root_logger);
@@ -658,9 +658,9 @@ static int run_server(void) {
                                "/health",
                                health,
                                NULL);
-  if (vectis_register_route(app, &route, &error) != VECTIS_OK) {
-    (void)print_vectis_error("vectis_register_route", &error);
-    vectis_destroy(app);
+  if (app->route(app, &route, &error) != VECTIS_OK) {
+    (void)print_vectis_error("app->route", &error);
+    app->close(app);
     logger->destroy(logger);
     lockd_logger->destroy(lockd_logger);
     lockd_root_logger->destroy(lockd_root_logger);
@@ -668,18 +668,18 @@ static int run_server(void) {
     return 1;
   }
   route = vectis_json_body_route(VECTIS_HTTP_POST, "/workflow/:id", start_workflow, &context);
-  if (vectis_register_route(app, &route, &error) != VECTIS_OK) {
-    (void)print_vectis_error("vectis_register_route", &error);
-    vectis_destroy(app);
+  if (app->route(app, &route, &error) != VECTIS_OK) {
+    (void)print_vectis_error("app->route", &error);
+    app->close(app);
     logger->destroy(logger);
     lockd_logger->destroy(lockd_logger);
     lockd_root_logger->destroy(lockd_root_logger);
     root_logger->destroy(root_logger);
     return 1;
   }
-  if (vectis_start(app, &error) != VECTIS_OK) {
-    (void)print_vectis_error("vectis_start", &error);
-    vectis_destroy(app);
+  if (app->start(app, &error) != VECTIS_OK) {
+    (void)print_vectis_error("app->start", &error);
+    app->close(app);
     logger->destroy(logger);
     lockd_logger->destroy(lockd_logger);
     lockd_root_logger->destroy(lockd_root_logger);
@@ -687,7 +687,7 @@ static int run_server(void) {
     return 1;
   }
   serve_forever();
-  vectis_destroy(app);
+  app->close(app);
   logger->destroy(logger);
   lockd_logger->destroy(lockd_logger);
   lockd_root_logger->destroy(lockd_root_logger);
@@ -741,9 +741,9 @@ static int run_consumer(lonejson_int64 expected_counter,
   app_config.lockd.client_bundle = vectis_source_from_path(context.config.bundle_path);
   app_config.lockd.default_namespace = context.config.namespace_name;
   app_config.lockd.logger = lockd_logger;
-  app = vectis_new(&app_config, &error);
+  app = vectis_app_new(&app_config, &error);
   if (app == NULL) {
-    (void)print_vectis_error("vectis_new", &error);
+    (void)print_vectis_error("vectis_app_new", &error);
     logger->destroy(logger);
     lockd_logger->destroy(lockd_logger);
     lockd_root_logger->destroy(lockd_root_logger);
@@ -761,21 +761,21 @@ static int run_consumer(lonejson_int64 expected_counter,
   service_config.consumers = &consumer;
   service_config.consumer_count = 1u;
   rc = 1;
-  status = vectis_consumer_service_new(app, &service_config, &service, &error);
+  status = app->consumer_service(app, &service_config, &service, &error);
   if (status != VECTIS_OK) {
-    (void)print_vectis_error("vectis_consumer_service_new", &error);
+    (void)print_vectis_error("app->consumer_service", &error);
   } else {
-    status = vectis_consumer_service_run_until(service, &context.done, 30000L, &error);
+    status = service->run_until(service, &context.done, 30000L, &error);
     if (status != VECTIS_OK) {
-      (void)print_vectis_error("vectis_consumer_service_run_until", &error);
+      (void)print_vectis_error("service->run_until", &error);
     } else if (context.handled && !context.failed) {
       rc = 0;
     } else {
       fprintf(stderr, "workflow consumer stopped without handling expected phase\n");
     }
   }
-  vectis_consumer_service_destroy(service);
-  vectis_destroy(app);
+  service->close(service);
+  app->close(app);
   logger->destroy(logger);
   lockd_logger->destroy(lockd_logger);
   lockd_root_logger->destroy(lockd_root_logger);

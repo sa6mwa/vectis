@@ -41,21 +41,21 @@ int main(void) {
   config.logger = logger;
   config.tls.cert_key_bundle = vectis_source_from_path("/etc/vectis/server.pem");
 
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   if (app == NULL) {
     logger->destroy(logger);
     return 1;
   }
 
   route = vectis_route_regex(VECTIS_HTTP_GET, "^/reports/[0-9]+$", report, NULL);
-  if (vectis_register_route(app, &route, &error) != VECTIS_OK) {
-    vectis_destroy(app);
+  if (app->route(app, &route, &error) != VECTIS_OK) {
+    app->close(app);
     logger->destroy(logger);
     return 1;
   }
 
-  (void)vectis_start(app, &error);
-  vectis_destroy(app);
+  (void)app->start(app, &error);
+  app->close(app);
   logger->destroy(logger);
   return 0;
 }

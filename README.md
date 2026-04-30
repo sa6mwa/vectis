@@ -55,21 +55,87 @@ for limits, timeouts, and retry behavior. Boolean fields default to zero; when a
 feature is enabled by default, the public option is an explicit opt-out such as
 `*_disabled`.
 
-The normal C SDK lifecycle is:
+The primary C SDK lifecycle uses handle structs with explicit `self`
+arguments, matching the `liblockdc` style:
 
 1. initialize a config struct with `vectis_app_config_init()`,
 2. attach borrowed dependencies such as `pslog` loggers or externally owned
    lockd clients only when the app should not own them,
-3. create the app with `vectis_new()`,
-4. register routes, static assets, JSON handlers, or consumer handlers,
-5. start the app or consumer runtime,
-6. destroy the Vectis-owned handle after shutdown.
+3. create the app with `vectis_app_new()`,
+4. register routes, static assets, JSON handlers, or consumer handlers through
+   the returned handle,
+5. start the app or consumer runtime through the handle,
+6. close the Vectis-owned handle after shutdown.
+
+```c
+vectis_app_config config;
+vectis_app *app;
+vectis_route_config route;
+vectis_error error;
+
+vectis_app_config_init(&config);
+config.app_name = "orders-api";
+config.tls.bind = "127.0.0.1";
+config.tls.port = 8080;
+config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+
+app = vectis_app_new(&config, &error);
+if (app == NULL) {
+  return 1;
+}
+
+route = vectis_route_methods(VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD,
+                             "/health",
+                             health,
+                             NULL);
+if (app->route(app, &route, &error) != VECTIS_OK) {
+  app->close(app);
+  return 1;
+}
+
+if (app->start(app, &error) != VECTIS_OK) {
+  app->close(app);
+  return 1;
+}
+
+app->close(app);
+```
+
+Stateful/resource-owning SDK surfaces follow the same pattern:
+
+```c
+vectis_ssh_config config;
+vectis_ssh *ssh;
+vectis_ssh_exec_result result;
+
+vectis_ssh_config_init(&config);
+config.host = "127.0.0.1";
+config.username = "deploy";
+config.password = "secret";
+
+ssh = NULL;
+if (vectis_ssh_new(&config, &ssh, &error) != VECTIS_OK) {
+  return 1;
+}
+if (ssh->exec(ssh, "uname -a", &result, &error) != VECTIS_OK) {
+  ssh->close(ssh);
+  return 1;
+}
+vectis_ssh_exec_result_cleanup(&result);
+ssh->close(ssh);
+```
+
+The free functions such as `vectis_register_route()`, `vectis_start()`,
+`vectis_http_client_get()`, `vectis_ssh_exec()`, and `vectis_mqtt_publish()`
+remain public lower-level levers and compatibility entry points. New examples
+should prefer the handle methods unless they are deliberately demonstrating
+the lower-level API.
 
 Borrowed pointers stay borrowed. Loggers, raw dependency handles, string
 storage, `lc_source` objects, and callback contexts supplied through config or
 route registration must outlive the Vectis object or route that references
-them. Vectis-owned objects are explicitly returned as opaque handles and have a
-matching destroy/close function.
+them. Vectis-owned handles are returned with method pointers and have a
+matching `close()` method.
 
 Lockd is configured when the service needs it, but it is not mandatory for
 Kore-only services. If no lockd endpoint or Unix socket is configured, Vectis
@@ -93,7 +159,7 @@ config.lockd.logger_disabled = 1; /* Keep Kore/app logging, silence lockd. */
 For Kore-backed services, the app-owned lockd client is process-local. Vectis
 does not open a lockd socket in the parent before Kore forks workers; route
 handlers get a lazily opened client in their current worker process through
-`vectis_lockd_client(app)`. Non-Kore runtimes still open configured lockd
+`app->lockd_client(app)`. Non-Kore runtimes still open configured lockd
 clients during startup so configuration errors fail fast.
 
 The HTTP server boundary is defensive by default. `vectis_app_config_init()`

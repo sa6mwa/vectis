@@ -177,7 +177,7 @@ static void assert_invalid_server_config(vectis_app_config *config,
   vectis_error error;
   vectis_app *app;
 
-  app = vectis_new(config, &error);
+  app = vectis_app_new(config, &error);
   assert(app == NULL);
   assert(strstr(error.message, expected_message) != NULL);
 }
@@ -243,9 +243,9 @@ static void assert_server_config_validation(void) {
   config.server.keepalive_disabled = 1;
   config.server.keepalive_timeout_ms = 0L;
   config.server.keepalive_max_requests = 0u;
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app != NULL);
-  vectis_destroy(app);
+  app->close(app);
 }
 
 static void assert_route_body_policy_validation(void) {
@@ -258,7 +258,7 @@ static void assert_route_body_policy_validation(void) {
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.server.max_request_body_bytes = 64u;
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app != NULL);
 
   route = vectis_route(VECTIS_HTTP_POST, "/json-too-large", sample_handler, NULL);
@@ -330,7 +330,7 @@ static void assert_route_body_policy_validation(void) {
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "min_rate_grace_ms") != NULL);
 
-  vectis_destroy(app);
+  app->close(app);
 }
 
 static void assert_large_header_rejected(unsigned short port) {
@@ -440,7 +440,7 @@ static void assert_kore_smoke(void) {
   assert(fwrite(response_file_body, 1u, sizeof(response_file_body) - 1u, fp) ==
          sizeof(response_file_body) - 1u);
   assert(fclose(fp) == 0);
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/health", sample_handler, NULL);
   status = vectis_register_route(app, &route, &error);
@@ -469,14 +469,14 @@ static void assert_kore_smoke(void) {
   file_route = vectis_route(VECTIS_HTTP_GET, "/file", file_handler, (void *)response_file_path);
   status = vectis_register_route(app, &file_route, &error);
   assert(status == VECTIS_OK);
-  status = vectis_start(app, &error);
+  status = app->start(app, &error);
   assert(status == VECTIS_OK);
 
   vectis_app_config_init(&second_config);
   second_config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   second_config.tls.bind = "127.0.0.1";
   second_config.tls.port = 28081u;
-  second_app = vectis_new(&second_config, &second_error);
+  second_app = vectis_app_new(&second_config, &second_error);
   assert(second_app != NULL);
   second_route = vectis_route(VECTIS_HTTP_GET, "/health", sample_handler, NULL);
   second_status = vectis_register_route(second_app, &second_route, &second_error);
@@ -602,7 +602,7 @@ static void assert_kore_smoke(void) {
 
   status = vectis_stop(app, &error);
   assert(status == VECTIS_OK);
-  vectis_destroy(app);
+  app->close(app);
 }
 
 int main(void) {
@@ -618,35 +618,35 @@ int main(void) {
 
   vectis_app_config_init(&config);
 
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app != NULL);
   assert(vectis_internal_lockd_client(app) == NULL);
 
-  status = vectis_start(app, &error);
+  status = app->start(app, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "manual TLS requires") != NULL);
-  vectis_destroy(app);
+  app->close(app);
 
   config.tls.cert_key_bundle = vectis_source_from_path("/tmp/server.pem");
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app != NULL);
   assert(vectis_internal_lockd_client(app) == NULL);
 
-  status = vectis_start(app, &error);
+  status = app->start(app, &error);
   assert(status == VECTIS_OK);
   status = vectis_stop(app, &error);
   assert(status == VECTIS_OK);
 
-  vectis_destroy(app);
+  app->close(app);
   config.server.request_header_timeout_ms = 0L;
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app == NULL);
   assert(strstr(error.message, "request_header_timeout_ms") != NULL);
   vectis_app_config_init(&config);
   config.tls.cert_key_bundle = vectis_source_from_path("/tmp/server.pem");
   config.lockd.unix_socket_path = "/tmp/lockd.sock";
   config.server.keepalive_max_requests = 0u;
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app == NULL);
   assert(strstr(error.message, "keepalive_max_requests") != NULL);
   vectis_app_config_init(&config);
@@ -655,7 +655,7 @@ int main(void) {
   config.server.keepalive_disabled = 1;
   config.server.keepalive_timeout_ms = 0L;
   config.server.keepalive_max_requests = 0u;
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app != NULL);
 
   vectis_route_config_init(&bad_route);
@@ -778,7 +778,7 @@ int main(void) {
   status = vectis_stop(app, &error);
   assert(status == VECTIS_ERR_STATE);
 
-  vectis_destroy(app);
+  app->close(app);
   assert_kore_smoke();
   return 0;
 }

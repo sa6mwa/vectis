@@ -43,15 +43,15 @@ int main(void) {
   config.app_name = "generated-response-api";
   config.tls.cert_key_bundle = vectis_source_from_path("/etc/vectis/server.pem");
 
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   if (app == NULL) {
     return 1;
   }
   route = vectis_route(VECTIS_HTTP_GET, "/reports/:id", report, NULL);
-  if (vectis_register_route(app, &route, &error) != VECTIS_OK) {
-    vectis_destroy(app);
+  if (app->route(app, &route, &error) != VECTIS_OK) {
+    app->close(app);
     return 1;
   }
-  vectis_destroy(app);
+  app->close(app);
   return 0;
 }

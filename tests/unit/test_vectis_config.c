@@ -59,9 +59,11 @@ int main(void) {
   config.tls.cert_key_bundle = vectis_source_from_path("/tmp/orders.pem");
   config.lockd.unix_socket_path = "/tmp/lockd.sock";
 
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app != NULL);
-  assert(app->vt != NULL);
+  assert(app->start != NULL);
+  assert(app->route != NULL);
+  assert(app->close != NULL);
   assert(vectis_logger(app) != NULL);
   assert(vectis_internal_lockd_client(app) == NULL);
 
@@ -112,27 +114,27 @@ int main(void) {
   assert(status == VECTIS_OK);
   assert(vectis_route_count(app) == 5u);
 
-  vectis_destroy(app);
+  app->close(app);
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_ACME;
   config.tls.acme_email = "ops@example.com";
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app != NULL);
-  status = vectis_start(app, &error);
+  status = app->start(app, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "tls.domain") != NULL);
-  vectis_destroy(app);
+  app->close(app);
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_ACME;
   config.tls.domain = "api.example.com";
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app != NULL);
-  status = vectis_start(app, &error);
+  status = app->start(app, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "acme_email") != NULL);
-  vectis_destroy(app);
+  app->close(app);
 
   return 0;
 }

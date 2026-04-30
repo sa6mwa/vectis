@@ -63,7 +63,7 @@ int main(void) {
   config.logger = logger;
   config.tls.cert_key_bundle = vectis_source_from_path("/etc/vectis/server.pem");
 
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   if (app == NULL) {
     logger->destroy(logger);
     return 1;
@@ -80,8 +80,8 @@ int main(void) {
 
   logger->infof(logger, "example.kore_json.register", "method=%s path=%s",
                 vectis_http_method_string(route.method), route.path);
-  (void)vectis_register_json_route(app, &route, &error);
-  vectis_destroy(app);
+  (void)app->json_route(app, &route, &error);
+  app->close(app);
   logger->destroy(logger);
   return 0;
 }

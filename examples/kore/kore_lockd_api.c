@@ -211,9 +211,9 @@ int main(void) {
   config.lockd.default_namespace = "examples";
   config.lockd.logger = lockd_logger;
 
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   if (app == NULL) {
-    (void)print_error("vectis_new", &error);
+    (void)print_error("vectis_app_new", &error);
     logger->destroy(logger);
     lockd_logger->destroy(lockd_logger);
     lockd_root_logger->destroy(lockd_root_logger);
@@ -221,9 +221,9 @@ int main(void) {
     return 1;
   }
   route = vectis_route(VECTIS_HTTP_GET, "/state/:id?", get_state, NULL);
-  if (vectis_register_route(app, &route, &error) != VECTIS_OK) {
-    (void)print_error("vectis_register_route", &error);
-    vectis_destroy(app);
+  if (app->route(app, &route, &error) != VECTIS_OK) {
+    (void)print_error("app->route", &error);
+    app->close(app);
     logger->destroy(logger);
     lockd_logger->destroy(lockd_logger);
     lockd_root_logger->destroy(lockd_root_logger);
@@ -233,9 +233,9 @@ int main(void) {
   logger->infof(logger, "example.kore_lockd.start",
                 "endpoint=%s namespace=%s", endpoints[0],
                 config.lockd.default_namespace);
-  if (vectis_start(app, &error) != VECTIS_OK) {
-    (void)print_error("vectis_start", &error);
-    vectis_destroy(app);
+  if (app->start(app, &error) != VECTIS_OK) {
+    (void)print_error("app->start", &error);
+    app->close(app);
     logger->destroy(logger);
     lockd_logger->destroy(lockd_logger);
     lockd_root_logger->destroy(lockd_root_logger);
@@ -243,7 +243,7 @@ int main(void) {
     return 1;
   }
   serve_forever();
-  vectis_destroy(app);
+  app->close(app);
   logger->destroy(logger);
   lockd_logger->destroy(lockd_logger);
   lockd_root_logger->destroy(lockd_root_logger);

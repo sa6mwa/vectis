@@ -39,18 +39,20 @@ static int print_error(const char *operation, const vectis_error *error) {
 }
 
 int main(void) {
-  vectis_mqtt_config mqtt;
+  vectis_mqtt_config config;
+  vectis_mqtt *mqtt;
   vectis_error error;
   workflow_event event;
   const char raw_payload[] = "ready";
 
-  vectis_mqtt_config_init(&mqtt);
+  mqtt = NULL;
+  vectis_mqtt_config_init(&config);
   vectis_error_clear(&error);
-  mqtt.broker_url = env_or_default("VECTIS_MQTT_URL", "mqtt://127.0.0.1:21883");
-  mqtt.username = getenv("VECTIS_MQTT_USERNAME");
-  mqtt.password = getenv("VECTIS_MQTT_PASSWORD");
-  mqtt.client_bundle_path = getenv("VECTIS_MQTT_CLIENT_BUNDLE");
-  mqtt.ca_bundle_path = getenv("VECTIS_MQTT_CA_BUNDLE");
+  config.broker_url = env_or_default("VECTIS_MQTT_URL", "mqtt://127.0.0.1:21883");
+  config.username = getenv("VECTIS_MQTT_USERNAME");
+  config.password = getenv("VECTIS_MQTT_PASSWORD");
+  config.client_bundle_path = getenv("VECTIS_MQTT_CLIENT_BUNDLE");
+  config.ca_bundle_path = getenv("VECTIS_MQTT_CA_BUNDLE");
 
   event.id[0] = '1';
   event.id[1] = '\0';
@@ -61,20 +63,27 @@ int main(void) {
   event.type[4] = 'r';
   event.type[5] = '\0';
 
-  if (vectis_mqtt_publish(&mqtt,
-                          "workflow/orders/raw",
-                          raw_payload,
-                          sizeof(raw_payload) - 1u,
-                          "text/plain",
-                          &error) != VECTIS_OK) {
-    return print_error("vectis_mqtt_publish", &error);
+  if (vectis_mqtt_new(&config, &mqtt, &error) != VECTIS_OK) {
+    return print_error("vectis_mqtt_new", &error);
   }
-  if (vectis_mqtt_publish_json(&mqtt,
-                               "workflow/orders/json",
-                               &workflow_event_map,
-                               &event,
-                               &error) != VECTIS_OK) {
-    return print_error("vectis_mqtt_publish_json", &error);
+
+  if (mqtt->publish(mqtt,
+                    "workflow/orders/raw",
+                    raw_payload,
+                    sizeof(raw_payload) - 1u,
+                    "text/plain",
+                    &error) != VECTIS_OK) {
+    mqtt->close(mqtt);
+    return print_error("mqtt->publish", &error);
   }
+  if (mqtt->publish_json(mqtt,
+                         "workflow/orders/json",
+                         &workflow_event_map,
+                         &event,
+                         &error) != VECTIS_OK) {
+    mqtt->close(mqtt);
+    return print_error("mqtt->publish_json", &error);
+  }
+  mqtt->close(mqtt);
   return 0;
 }

@@ -285,14 +285,9 @@ LONEJSON_MAP_DEFINE(vectis_error_response_map,
                     vectis_error_response_body,
                     vectis_error_response_fields);
 
-struct vectis_http_client {
-  vectis_http_client_config config;
-  pslog_logger *logger;
-};
-
-struct vectis_consumer_service {
+typedef struct vectis_consumer_service_impl {
   lc_consumer_service *service;
-};
+} vectis_consumer_service_impl;
 
 typedef struct vectis_curl_buffer {
   char *data;
@@ -332,14 +327,13 @@ static vectis_status vectis_app_register_route_owned_userdata(vectis_app *app,
 static size_t vectis_app_route_count_impl(const vectis_app *app);
 static size_t vectis_app_min_streaming_memory_limit_bytes(vectis_app_impl *impl);
 static pslog_logger *vectis_app_logger_impl(vectis_app *app);
-
-static const vectis_methods vectis_default_methods = {
-    vectis_destroy,
-    vectis_app_start_impl,
-    vectis_app_stop_impl,
-    vectis_app_register_route_impl,
-    vectis_app_route_count_impl,
-    vectis_app_logger_impl};
+static vectis_status vectis_http_client_send_json(vectis_http_client *client,
+                                                  vectis_http_method method,
+                                                  const char *url,
+                                                  const lonejson_map *map,
+                                                  const void *value,
+                                                  vectis_http_response *response,
+                                                  vectis_error *error);
 
 static pthread_once_t vectis_curl_once = PTHREAD_ONCE_INIT;
 static pthread_once_t vectis_libssh2_once = PTHREAD_ONCE_INIT;
@@ -2272,7 +2266,7 @@ static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
   return VECTIS_OK;
 }
 
-vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error) {
+vectis_app *vectis_app_new(const vectis_app_config *config, vectis_error *error) {
   vectis_app_config defaults;
   const vectis_app_config *effective;
   vectis_app *app;
@@ -2436,9 +2430,33 @@ vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error) {
     impl->owns_logger = 1;
   }
 
-  app->vt = &vectis_default_methods;
+  app->start = vectis_start;
+  app->stop = vectis_stop;
+  app->route = vectis_register_route;
+  app->json_route = vectis_register_json_route;
+  app->json_typed_route = vectis_register_json_typed_route;
+  app->prefixed_route = vectis_register_prefixed_route;
+  app->prefixed_json_route = vectis_register_prefixed_json_route;
+  app->prefixed_json_typed_route = vectis_register_prefixed_json_typed_route;
+  app->static_file = vectis_register_static_file;
+  app->static_directory = vectis_register_static_directory;
+  app->openapi_doc = vectis_attach_openapi_doc;
+  app->openapi = vectis_generate_openapi;
+  app->route_count = vectis_route_count;
+  app->logger = vectis_logger;
+  app->lockd_client = vectis_lockd_client;
+  app->consumer_service = vectis_consumer_service_new;
+  app->close = vectis_destroy;
   app->impl = impl;
   return app;
+}
+
+vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error) {
+  return vectis_app_new(config, error);
+}
+
+void vectis_app_close(vectis_app *app) {
+  vectis_destroy(app);
 }
 
 void vectis_destroy(vectis_app *app) {
@@ -2545,11 +2563,11 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
 }
 
 vectis_status vectis_start(vectis_app *app, vectis_error *error) {
-  if (app == NULL || app->vt == NULL || app->vt->start == NULL) {
+  if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
     return VECTIS_ERR_INVALID;
   }
-  return app->vt->start(app, error);
+  return vectis_app_start_impl(app, error);
 }
 
 static vectis_status vectis_app_stop_impl(vectis_app *app, vectis_error *error) {
@@ -2583,11 +2601,11 @@ static vectis_status vectis_app_stop_impl(vectis_app *app, vectis_error *error) 
 }
 
 vectis_status vectis_stop(vectis_app *app, vectis_error *error) {
-  if (app == NULL || app->vt == NULL || app->vt->stop == NULL) {
+  if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
     return VECTIS_ERR_INVALID;
   }
-  return app->vt->stop(app, error);
+  return vectis_app_stop_impl(app, error);
 }
 
 static int vectis_route_conflicts(const vectis_route_entry *existing,
@@ -2677,11 +2695,11 @@ static vectis_status vectis_app_register_route_owned_userdata(vectis_app *app,
 vectis_status vectis_register_route(vectis_app *app,
                                     const vectis_route_config *route,
                                     vectis_error *error) {
-  if (app == NULL || app->vt == NULL || app->vt->register_route == NULL) {
+  if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
     return VECTIS_ERR_INVALID;
   }
-  return app->vt->register_route(app, route, error);
+  return vectis_app_register_route_impl(app, route, error);
 }
 
 static char *vectis_join_route_prefix(const char *prefix,
@@ -4233,10 +4251,10 @@ static size_t vectis_app_min_streaming_memory_limit_bytes(vectis_app_impl *impl)
 }
 
 size_t vectis_route_count(const vectis_app *app) {
-  if (app == NULL || app->vt == NULL || app->vt->route_count == NULL) {
+  if (app == NULL || app->impl == NULL) {
     return 0u;
   }
-  return app->vt->route_count(app);
+  return vectis_app_route_count_impl(app);
 }
 
 vectis_status vectis_internal_invoke_route(vectis_app *app,
@@ -4564,10 +4582,10 @@ static pslog_logger *vectis_app_logger_impl(vectis_app *app) {
 }
 
 pslog_logger *vectis_logger(vectis_app *app) {
-  if (app == NULL || app->vt == NULL || app->vt->logger == NULL) {
+  if (app == NULL || app->impl == NULL) {
     return NULL;
   }
-  return app->vt->logger(app);
+  return vectis_app_logger_impl(app);
 }
 
 struct lc_client *vectis_lockd_client(vectis_app *app) {
@@ -4608,6 +4626,7 @@ vectis_status vectis_consumer_service_new(vectis_app *app,
                                           vectis_error *error) {
   vectis_app_impl *impl;
   vectis_consumer_service *service;
+  vectis_consumer_service_impl *service_impl;
   lc_error lcerr;
   int rc;
   vectis_status status;
@@ -4645,43 +4664,60 @@ vectis_status vectis_consumer_service_new(vectis_app *app,
   }
 
   service = (vectis_consumer_service *)calloc(1u, sizeof(*service));
-  if (service == NULL) {
+  service_impl = (vectis_consumer_service_impl *)calloc(1u, sizeof(*service_impl));
+  if (service == NULL || service_impl == NULL) {
+    free(service);
+    free(service_impl);
     vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate consumer service");
     return VECTIS_ERR_NOMEM;
   }
 
   lc_error_init(&lcerr);
-  rc = lc_client_new_consumer_service(impl->lockd_client, config, &service->service, &lcerr);
+  rc = lc_client_new_consumer_service(impl->lockd_client, config, &service_impl->service, &lcerr);
   if (rc != LC_OK) {
+    free(service_impl);
     free(service);
     status = vectis_set_lockdc_error(error, rc, &lcerr, "failed to create lockd consumer service");
     lc_error_cleanup(&lcerr);
     return status;
   }
   lc_error_cleanup(&lcerr);
+  service->raw = vectis_consumer_service_raw;
+  service->run = vectis_consumer_service_run;
+  service->start = vectis_consumer_service_start;
+  service->stop = vectis_consumer_service_stop;
+  service->wait = vectis_consumer_service_wait;
+  service->run_until = vectis_consumer_service_run_until;
+  service->close = vectis_consumer_service_destroy;
+  service->impl = service_impl;
   *out = service;
   vectis_error_clear(error);
   return VECTIS_OK;
 }
 
 struct lc_consumer_service *vectis_consumer_service_raw(vectis_consumer_service *service) {
+  vectis_consumer_service_impl *impl;
+
   if (service == NULL) {
     return NULL;
   }
-  return service->service;
+  impl = (vectis_consumer_service_impl *)service->impl;
+  return impl != NULL ? impl->service : NULL;
 }
 
 vectis_status vectis_consumer_service_run(vectis_consumer_service *service,
                                           vectis_error *error) {
+  vectis_consumer_service_impl *impl;
   lc_error lcerr;
   int rc;
 
-  if (service == NULL || service->service == NULL) {
+  impl = service != NULL ? (vectis_consumer_service_impl *)service->impl : NULL;
+  if (impl == NULL || impl->service == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
     return VECTIS_ERR_INVALID;
   }
   lc_error_init(&lcerr);
-  rc = service->service->run(service->service, &lcerr);
+  rc = impl->service->run(impl->service, &lcerr);
   if (rc != LC_OK) {
     (void)vectis_set_lockdc_error(error, rc, &lcerr, "lockd consumer service run failed");
     lc_error_cleanup(&lcerr);
@@ -4694,15 +4730,17 @@ vectis_status vectis_consumer_service_run(vectis_consumer_service *service,
 
 vectis_status vectis_consumer_service_start(vectis_consumer_service *service,
                                             vectis_error *error) {
+  vectis_consumer_service_impl *impl;
   lc_error lcerr;
   int rc;
 
-  if (service == NULL || service->service == NULL) {
+  impl = service != NULL ? (vectis_consumer_service_impl *)service->impl : NULL;
+  if (impl == NULL || impl->service == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
     return VECTIS_ERR_INVALID;
   }
   lc_error_init(&lcerr);
-  rc = service->service->start(service->service, &lcerr);
+  rc = impl->service->start(impl->service, &lcerr);
   if (rc != LC_OK) {
     (void)vectis_set_lockdc_error(error, rc, &lcerr, "lockd consumer service start failed");
     lc_error_cleanup(&lcerr);
@@ -4715,13 +4753,15 @@ vectis_status vectis_consumer_service_start(vectis_consumer_service *service,
 
 vectis_status vectis_consumer_service_stop(vectis_consumer_service *service,
                                            vectis_error *error) {
+  vectis_consumer_service_impl *impl;
   int rc;
 
-  if (service == NULL || service->service == NULL) {
+  impl = service != NULL ? (vectis_consumer_service_impl *)service->impl : NULL;
+  if (impl == NULL || impl->service == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
     return VECTIS_ERR_INVALID;
   }
-  rc = service->service->stop(service->service);
+  rc = impl->service->stop(impl->service);
   if (rc != LC_OK) {
     vectis_set_error(error, VECTIS_ERR_STATE, "lockd consumer service stop failed");
     if (error != NULL) {
@@ -4736,15 +4776,17 @@ vectis_status vectis_consumer_service_stop(vectis_consumer_service *service,
 
 vectis_status vectis_consumer_service_wait(vectis_consumer_service *service,
                                            vectis_error *error) {
+  vectis_consumer_service_impl *impl;
   lc_error lcerr;
   int rc;
 
-  if (service == NULL || service->service == NULL) {
+  impl = service != NULL ? (vectis_consumer_service_impl *)service->impl : NULL;
+  if (impl == NULL || impl->service == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
     return VECTIS_ERR_INVALID;
   }
   lc_error_init(&lcerr);
-  rc = service->service->wait(service->service, &lcerr);
+  rc = impl->service->wait(impl->service, &lcerr);
   if (rc != LC_OK) {
     (void)vectis_set_lockdc_error(error, rc, &lcerr, "lockd consumer service wait failed");
     lc_error_cleanup(&lcerr);
@@ -4768,11 +4810,13 @@ vectis_status vectis_consumer_service_run_until(vectis_consumer_service *service
                                                 const volatile int *done,
                                                 long timeout_ms,
                                                 vectis_error *error) {
+  vectis_consumer_service_impl *impl;
   long deadline;
   struct timespec pause_time;
   vectis_status status;
 
-  if (service == NULL || service->service == NULL) {
+  impl = service != NULL ? (vectis_consumer_service_impl *)service->impl : NULL;
+  if (impl == NULL || impl->service == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
     return VECTIS_ERR_INVALID;
   }
@@ -4810,12 +4854,16 @@ vectis_status vectis_consumer_service_run_until(vectis_consumer_service *service
 }
 
 void vectis_consumer_service_destroy(vectis_consumer_service *service) {
+  vectis_consumer_service_impl *impl;
+
   if (service == NULL) {
     return;
   }
-  if (service->service != NULL) {
-    service->service->close(service->service);
+  impl = (vectis_consumer_service_impl *)service->impl;
+  if (impl != NULL && impl->service != NULL) {
+    impl->service->close(impl->service);
   }
+  free(impl);
   free(service);
 }
 
@@ -9393,8 +9441,18 @@ vectis_status vectis_http_client_new(const vectis_http_client_config *config,
     vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate HTTP client");
     return VECTIS_ERR_NOMEM;
   }
+  client->execute = vectis_http_client_execute;
+  client->get = vectis_http_client_get;
+  client->delete_ = vectis_http_client_delete;
+  client->head = vectis_http_client_head;
+  client->options = vectis_http_client_options;
+  client->download_file = vectis_http_client_download_file;
+  client->upload_file = vectis_http_client_upload_file;
+  client->post_json = vectis_http_client_post_json;
+  client->put_json = vectis_http_client_put_json;
+  client->patch_json = vectis_http_client_patch_json;
+  client->close = vectis_http_client_destroy;
   client->config = *effective;
-  client->logger = effective->logger;
   vectis_error_clear(error);
   *out = client;
   return VECTIS_OK;
@@ -9420,14 +9478,15 @@ vectis_status vectis_http_client_from_app(vectis_app *app,
     effective.logger = vectis_logger(app);
   }
   status = vectis_http_client_new(&effective, out, error);
-  if (status == VECTIS_OK && out != NULL && *out != NULL) {
-    (*out)->logger = effective.logger;
-  }
   return status;
 }
 
 void vectis_http_client_destroy(vectis_http_client *client) {
   free(client);
+}
+
+void vectis_http_client_close(vectis_http_client *client) {
+  vectis_http_client_destroy(client);
 }
 
 void vectis_http_request_init(vectis_http_request *request) {
@@ -10692,6 +10751,64 @@ void vectis_sftp_config_init(vectis_sftp_config *config) {
   config->timeout_ms = 30000L;
 }
 
+static vectis_status vectis_sftp_handle_upload_file(vectis_sftp *self,
+                                                    const char *local_path,
+                                                    const char *remote_path,
+                                                    vectis_error *error) {
+  if (self == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP handle is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_sftp_upload_file(&self->config, local_path, remote_path, error);
+}
+
+static vectis_status vectis_sftp_handle_download_file(vectis_sftp *self,
+                                                      const char *remote_path,
+                                                      const char *local_path,
+                                                      vectis_error *error) {
+  if (self == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP handle is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_sftp_download_file(&self->config, remote_path, local_path, error);
+}
+
+vectis_status vectis_sftp_new(const vectis_sftp_config *config,
+                              vectis_sftp **out,
+                              vectis_error *error) {
+  vectis_sftp_config defaults;
+  const vectis_sftp_config *effective;
+  vectis_sftp *sftp;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP handle output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  vectis_sftp_config_init(&defaults);
+  effective = config != NULL ? config : &defaults;
+  if (effective->url == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP config with url is required");
+    return VECTIS_ERR_INVALID;
+  }
+  sftp = (vectis_sftp *)calloc(1u, sizeof(*sftp));
+  if (sftp == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate SFTP handle");
+    return VECTIS_ERR_NOMEM;
+  }
+  sftp->upload_file = vectis_sftp_handle_upload_file;
+  sftp->download_file = vectis_sftp_handle_download_file;
+  sftp->close = vectis_sftp_close;
+  sftp->config = *effective;
+  *out = sftp;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+void vectis_sftp_close(vectis_sftp *sftp) {
+  free(sftp);
+}
+
 static vectis_status vectis_curl_set_ssh(CURL *curl,
                                          const char *username,
                                          const char *password,
@@ -10854,6 +10971,76 @@ void vectis_ssh_config_init(vectis_ssh_config *config) {
   memset(config, 0, sizeof(*config));
   config->port = 22u;
   config->timeout_ms = 30000L;
+}
+
+static vectis_status vectis_ssh_handle_exec(vectis_ssh *self,
+                                            const char *command,
+                                            vectis_ssh_exec_result *result,
+                                            vectis_error *error) {
+  if (self == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH handle is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_ssh_exec(&self->config, command, result, error);
+}
+
+static vectis_status vectis_ssh_handle_sftp_upload_file(vectis_ssh *self,
+                                                        const char *local_path,
+                                                        const char *remote_path,
+                                                        vectis_error *error) {
+  if (self == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH handle is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_ssh_sftp_upload_file(&self->config, local_path, remote_path, error);
+}
+
+static vectis_status vectis_ssh_handle_sftp_download_file(vectis_ssh *self,
+                                                          const char *remote_path,
+                                                          const char *local_path,
+                                                          vectis_error *error) {
+  if (self == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH handle is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_ssh_sftp_download_file(&self->config, remote_path, local_path, error);
+}
+
+vectis_status vectis_ssh_new(const vectis_ssh_config *config,
+                             vectis_ssh **out,
+                             vectis_error *error) {
+  vectis_ssh_config defaults;
+  const vectis_ssh_config *effective;
+  vectis_ssh *ssh;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH handle output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  vectis_ssh_config_init(&defaults);
+  effective = config != NULL ? config : &defaults;
+  if (effective->host == NULL || effective->username == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH config requires host and username");
+    return VECTIS_ERR_INVALID;
+  }
+  ssh = (vectis_ssh *)calloc(1u, sizeof(*ssh));
+  if (ssh == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate SSH handle");
+    return VECTIS_ERR_NOMEM;
+  }
+  ssh->exec = vectis_ssh_handle_exec;
+  ssh->sftp_upload_file = vectis_ssh_handle_sftp_upload_file;
+  ssh->sftp_download_file = vectis_ssh_handle_sftp_download_file;
+  ssh->close = vectis_ssh_close;
+  ssh->config = *effective;
+  *out = ssh;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+void vectis_ssh_close(vectis_ssh *ssh) {
+  free(ssh);
 }
 
 void vectis_ssh_exec_result_cleanup(vectis_ssh_exec_result *result) {
@@ -11392,6 +11579,67 @@ void vectis_mqtt_config_init(vectis_mqtt_config *config) {
   }
   memset(config, 0, sizeof(*config));
   config->timeout_ms = 30000L;
+}
+
+static vectis_status vectis_mqtt_handle_publish(vectis_mqtt *self,
+                                                const char *topic,
+                                                const void *payload,
+                                                size_t payload_size,
+                                                const char *content_type,
+                                                vectis_error *error) {
+  if (self == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "MQTT handle is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_mqtt_publish(&self->config, topic, payload, payload_size, content_type, error);
+}
+
+static vectis_status vectis_mqtt_handle_publish_json(vectis_mqtt *self,
+                                                     const char *topic,
+                                                     const lonejson_map *map,
+                                                     const void *value,
+                                                     vectis_error *error) {
+  if (self == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "MQTT handle is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_mqtt_publish_json(&self->config, topic, map, value, error);
+}
+
+vectis_status vectis_mqtt_new(const vectis_mqtt_config *config,
+                              vectis_mqtt **out,
+                              vectis_error *error) {
+  vectis_mqtt_config defaults;
+  const vectis_mqtt_config *effective;
+  vectis_mqtt *mqtt;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "MQTT handle output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  vectis_mqtt_config_init(&defaults);
+  effective = config != NULL ? config : &defaults;
+  if (effective->broker_url == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "MQTT config with broker_url is required");
+    return VECTIS_ERR_INVALID;
+  }
+  mqtt = (vectis_mqtt *)calloc(1u, sizeof(*mqtt));
+  if (mqtt == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate MQTT handle");
+    return VECTIS_ERR_NOMEM;
+  }
+  mqtt->publish = vectis_mqtt_handle_publish;
+  mqtt->publish_json = vectis_mqtt_handle_publish_json;
+  mqtt->close = vectis_mqtt_close;
+  mqtt->config = *effective;
+  *out = mqtt;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+void vectis_mqtt_close(vectis_mqtt *mqtt) {
+  free(mqtt);
 }
 
 vectis_status vectis_mqtt_publish(const vectis_mqtt_config *config,

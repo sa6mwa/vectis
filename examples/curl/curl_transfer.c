@@ -32,7 +32,7 @@ int main(void) {
     return 1;
   }
 
-  (void)vectis_http_client_download_file(handle,
+  (void)handle->download_file(handle,
                                          "https://api.example.com/export/orders.ndjson",
                                          "var/orders.ndjson",
                                          &response,
@@ -44,10 +44,10 @@ int main(void) {
   request.response_body = inspect_chunk;
   request.response_body_userdata = stdout;
   request.retry_max_attempts = 1u;
-  (void)vectis_http_client_execute(handle, &request, &response, &error);
+  (void)handle->execute(handle, &request, &response, &error);
   vectis_http_response_cleanup(&response);
 
-  (void)vectis_http_client_upload_file(handle,
+  (void)handle->upload_file(handle,
                                        VECTIS_HTTP_PUT,
                                        "https://api.example.com/import/orders.ndjson",
                                        "var/orders.ndjson",
@@ -56,6 +56,6 @@ int main(void) {
                                        &error);
   vectis_http_response_cleanup(&response);
 
-  vectis_http_client_destroy(handle);
+  handle->close(handle);
   return 0;
 }

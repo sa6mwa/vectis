@@ -169,7 +169,7 @@ int main(void) {
   config.lockd.default_namespace = "orders";
   config.lockd.logger = lockd_logger;
 
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   if (app == NULL) {
     logger->destroy(logger);
     lockd_logger->destroy(lockd_logger);
@@ -179,8 +179,8 @@ int main(void) {
   }
 
   route = vectis_json_body_route(VECTIS_HTTP_POST, "/orders", save_order, NULL);
-  if (vectis_register_route(app, &route, &error) != VECTIS_OK) {
-    vectis_destroy(app);
+  if (app->route(app, &route, &error) != VECTIS_OK) {
+    app->close(app);
     logger->destroy(logger);
     lockd_logger->destroy(lockd_logger);
     lockd_root_logger->destroy(lockd_root_logger);
@@ -188,7 +188,7 @@ int main(void) {
     return 1;
   }
 
-  vectis_destroy(app);
+  app->close(app);
   logger->destroy(logger);
   lockd_logger->destroy(lockd_logger);
   lockd_root_logger->destroy(lockd_root_logger);

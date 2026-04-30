@@ -93,7 +93,9 @@ surface directly, without local helper layers that would hide awkward API shape.
   headers.
 
 The examples are compiled by the normal build so the public SDK shape remains
-mechanically valid. New examples should prefer
-`vectis_source_from_path()`, `vectis_source_from_memory()`, `vectis_route()`,
-`vectis_route_regex()`, and `vectis_json_route()` unless they are intentionally
-showing a lower-level compatibility field.
+mechanically valid. New stateful examples should prefer handle methods such as
+`app->route(app, ...)`, `app->start(app, ...)`, `client->get(client, ...)`,
+`ssh->exec(ssh, ...)`, and `service->run(service, ...)`. Constructors and
+stateless helpers such as `vectis_source_from_path()`, `vectis_route()`,
+`vectis_route_regex()`, and `vectis_json_route()` remain normal free
+functions.

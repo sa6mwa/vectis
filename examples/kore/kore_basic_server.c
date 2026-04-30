@@ -88,9 +88,9 @@ int main(void) {
         env_or_default("VECTIS_KORE_CERT_BUNDLE", "/etc/vectis/server.pem"));
   }
 
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   if (app == NULL) {
-    (void)print_error("vectis_new", &error);
+    (void)print_error("vectis_app_new", &error);
     logger->destroy(logger);
     return 1;
   }
@@ -99,23 +99,23 @@ int main(void) {
                                "/health",
                                health,
                                NULL);
-  if (vectis_register_route(app, &route, &error) != VECTIS_OK) {
-    (void)print_error("vectis_register_route", &error);
-    vectis_destroy(app);
+  if (app->route(app, &route, &error) != VECTIS_OK) {
+    (void)print_error("app->route", &error);
+    app->close(app);
     logger->destroy(logger);
     return 1;
   }
 
   logger->infof(logger, "example.kore_basic.start", "bind=%s port=%u",
                 config.tls.bind, (unsigned)config.tls.port);
-  if (vectis_start(app, &error) != VECTIS_OK) {
-    (void)print_error("vectis_start", &error);
-    vectis_destroy(app);
+  if (app->start(app, &error) != VECTIS_OK) {
+    (void)print_error("app->start", &error);
+    app->close(app);
     logger->destroy(logger);
     return 1;
   }
   serve_forever();
-  vectis_destroy(app);
+  app->close(app);
   logger->destroy(logger);
   return 0;
 }

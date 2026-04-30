@@ -63,21 +63,23 @@ static int file_equals(const char *path, const char *expected) {
 }
 
 int main(void) {
-  vectis_sftp_config sftp;
+  vectis_sftp_config config;
+  vectis_sftp *sftp;
   vectis_error error;
   const char payload[] = "vectis curl sftp e2e\n";
   const char *local_upload;
   const char *local_download;
   const char *remote_path;
 
-  vectis_sftp_config_init(&sftp);
+  sftp = NULL;
+  vectis_sftp_config_init(&config);
   vectis_error_clear(&error);
-  sftp.url = env_or_default("VECTIS_SFTP_URL", "sftp://127.0.0.1:29222");
-  sftp.username = env_or_default("VECTIS_SFTP_USERNAME", "vectis");
-  sftp.password = env_or_default("VECTIS_SFTP_PASSWORD", "vectispass");
-  sftp.private_key_path = getenv("VECTIS_SFTP_PRIVATE_KEY");
-  sftp.known_hosts_path = getenv("VECTIS_SFTP_KNOWN_HOSTS");
-  sftp.timeout_ms = 10000L;
+  config.url = env_or_default("VECTIS_SFTP_URL", "sftp://127.0.0.1:29222");
+  config.username = env_or_default("VECTIS_SFTP_USERNAME", "vectis");
+  config.password = env_or_default("VECTIS_SFTP_PASSWORD", "vectispass");
+  config.private_key_path = getenv("VECTIS_SFTP_PRIVATE_KEY");
+  config.known_hosts_path = getenv("VECTIS_SFTP_KNOWN_HOSTS");
+  config.timeout_ms = 10000L;
 
   local_upload = env_or_default("VECTIS_SFTP_UPLOAD_FILE", "curl-sftp-upload.txt");
   local_download = env_or_default("VECTIS_SFTP_DOWNLOAD_FILE", "curl-sftp-download.txt");
@@ -88,15 +90,22 @@ int main(void) {
     return 1;
   }
 
-  if (vectis_sftp_upload_file(&sftp, local_upload, remote_path, &error) != VECTIS_OK) {
-    return print_error("vectis_sftp_upload_file", &error);
+  if (vectis_sftp_new(&config, &sftp, &error) != VECTIS_OK) {
+    return print_error("vectis_sftp_new", &error);
   }
-  if (vectis_sftp_download_file(&sftp, remote_path, local_download, &error) != VECTIS_OK) {
-    return print_error("vectis_sftp_download_file", &error);
+  if (sftp->upload_file(sftp, local_upload, remote_path, &error) != VECTIS_OK) {
+    sftp->close(sftp);
+    return print_error("sftp->upload_file", &error);
+  }
+  if (sftp->download_file(sftp, remote_path, local_download, &error) != VECTIS_OK) {
+    sftp->close(sftp);
+    return print_error("sftp->download_file", &error);
   }
   if (!file_equals(local_download, payload)) {
     fprintf(stderr, "downloaded SFTP file did not match uploaded payload\n");
+    sftp->close(sftp);
     return 1;
   }
+  sftp->close(sftp);
   return 0;
 }

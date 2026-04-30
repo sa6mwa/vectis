@@ -40,7 +40,9 @@ moving toward, not just the next patch. Keep items observable and testable.
 
 ## Area 4: C SDK Surface
 
-- [x] Define opaque-handle-plus-method-table API surface.
+- [x] Define public handle structs with direct function-pointer method semantics
+  (`app->start(app, ...)`, `client->get(client, ...)`) and private `impl`
+  pointers, while keeping free functions as lower-level compatibility levers.
 - [x] Implement app config defaults.
 - [x] Add defensive server/Kore guardrail defaults for connection count, request sizes, read/write timeouts, idle timeout, and keepalive behavior.
 - [x] Rename server body/write timeouts to idle-timeout semantics and add minimum request-body rate guardrails.

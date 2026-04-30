@@ -42,30 +42,37 @@ static int print_error(const char *operation, const vectis_error *error) {
 }
 
 int main(void) {
-  vectis_ssh_config ssh;
+  vectis_ssh_config config;
+  vectis_ssh *ssh;
   vectis_ssh_exec_result result = {0};
   vectis_error error;
   const char *command;
   const char expected[] = "vectis-ssh-ok";
 
-  vectis_ssh_config_init(&ssh);
+  ssh = NULL;
+  vectis_ssh_config_init(&config);
   vectis_error_clear(&error);
 
-  ssh.host = env_or_default("VECTIS_SSH_HOST", "127.0.0.1");
-  ssh.port = env_port_or_default("VECTIS_SSH_PORT", 29222u);
-  ssh.username = env_or_default("VECTIS_SSH_USERNAME", "vectis");
-  ssh.password = env_or_default("VECTIS_SSH_PASSWORD", "vectispass");
-  ssh.private_key_path = getenv("VECTIS_SSH_PRIVATE_KEY");
-  ssh.known_hosts_path = getenv("VECTIS_SSH_KNOWN_HOSTS");
-  ssh.timeout_ms = 10000L;
+  config.host = env_or_default("VECTIS_SSH_HOST", "127.0.0.1");
+  config.port = env_port_or_default("VECTIS_SSH_PORT", 29222u);
+  config.username = env_or_default("VECTIS_SSH_USERNAME", "vectis");
+  config.password = env_or_default("VECTIS_SSH_PASSWORD", "vectispass");
+  config.private_key_path = getenv("VECTIS_SSH_PRIVATE_KEY");
+  config.known_hosts_path = getenv("VECTIS_SSH_KNOWN_HOSTS");
+  config.timeout_ms = 10000L;
   command = env_or_default("VECTIS_SSH_COMMAND", "printf vectis-ssh-ok");
 
-  if (vectis_ssh_exec(&ssh, command, &result, &error) != VECTIS_OK) {
-    return print_error("vectis_ssh_exec", &error);
+  if (vectis_ssh_new(&config, &ssh, &error) != VECTIS_OK) {
+    return print_error("vectis_ssh_new", &error);
+  }
+  if (ssh->exec(ssh, command, &result, &error) != VECTIS_OK) {
+    ssh->close(ssh);
+    return print_error("ssh->exec", &error);
   }
   if (result.exit_status != 0) {
     fprintf(stderr, "SSH command exited with status %d\n", result.exit_status);
     vectis_ssh_exec_result_cleanup(&result);
+    ssh->close(ssh);
     return 1;
   }
   if (strcmp(command, "printf vectis-ssh-ok") == 0 &&
@@ -73,8 +80,10 @@ int main(void) {
        memcmp(result.stdout_data, expected, strlen(expected)) != 0)) {
     fprintf(stderr, "SSH command returned unexpected stdout\n");
     vectis_ssh_exec_result_cleanup(&result);
+    ssh->close(ssh);
     return 1;
   }
   vectis_ssh_exec_result_cleanup(&result);
+  ssh->close(ssh);
   return 0;
 }

@@ -46,28 +46,28 @@ int main(void) {
     return 1;
   }
 
-  (void)vectis_http_client_get(handle, "/health", &response, &error);
+  (void)handle->get(handle, "/health", &response, &error);
   vectis_http_response_cleanup(&response);
 
-  (void)vectis_http_client_head(handle, "/health", &response, &error);
+  (void)handle->head(handle, "/health", &response, &error);
   vectis_http_response_cleanup(&response);
 
-  (void)vectis_http_client_options(handle, "/events", &response, &error);
+  (void)handle->options(handle, "/events", &response, &error);
   vectis_http_response_cleanup(&response);
 
-  (void)vectis_http_client_post_json(handle, "/events", &downstream_request_map, &payload, &response, &error);
+  (void)handle->post_json(handle, "/events", &downstream_request_map, &payload, &response, &error);
   (void)vectis_http_response_json_into(&response, &downstream_request_map, &payload, &error);
   vectis_http_response_cleanup(&response);
 
-  (void)vectis_http_client_put_json(handle, "/events/order", &downstream_request_map, &payload, &response, &error);
+  (void)handle->put_json(handle, "/events/order", &downstream_request_map, &payload, &response, &error);
   vectis_http_response_cleanup(&response);
 
-  (void)vectis_http_client_patch_json(handle, "/events/order", &downstream_request_map, &payload, &response, &error);
+  (void)handle->patch_json(handle, "/events/order", &downstream_request_map, &payload, &response, &error);
   vectis_http_response_cleanup(&response);
 
-  (void)vectis_http_client_delete(handle, "/events/order", &response, &error);
+  (void)handle->delete_(handle, "/events/order", &response, &error);
   vectis_http_response_cleanup(&response);
 
-  vectis_http_client_destroy(handle);
+  handle->close(handle);
   return 0;
 }

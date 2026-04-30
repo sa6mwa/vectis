@@ -63,15 +63,15 @@ int main(void) {
   config.tls.cert_key_bundle = vectis_source_from_path("/etc/vectis/server.pem");
   config.server.max_request_body_bytes = VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES;
 
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   if (app == NULL) {
     logger->destroy(logger);
     return 1;
   }
 
   route = vectis_upload_route(VECTIS_HTTP_POST, "/files/:name", upload_file, NULL);
-  if (vectis_register_route(app, &route, &error) != VECTIS_OK) {
-    vectis_destroy(app);
+  if (app->route(app, &route, &error) != VECTIS_OK) {
+    app->close(app);
     logger->destroy(logger);
     return 1;
   }
@@ -82,8 +82,8 @@ int main(void) {
                 vectis_body_mode_string(route.body.mode),
                 (unsigned long)route.body.max_bytes,
                 (unsigned long)route.body.min_rate_bytes_per_sec);
-  (void)vectis_start(app, &error);
-  vectis_destroy(app);
+  (void)app->start(app, &error);
+  app->close(app);
   logger->destroy(logger);
   return 0;
 }

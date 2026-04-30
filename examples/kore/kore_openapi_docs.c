@@ -43,7 +43,7 @@ int main(void) {
 
   vectis_app_config_init(&config);
   config.tls.cert_key_bundle_path = "/tmp/server.pem";
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   if (app == NULL) {
     return 1;
   }
@@ -74,7 +74,7 @@ int main(void) {
                                 &route_doc,
                                 &error) != VECTIS_OK) {
     vectis_openapi_route_doc_cleanup(&route_doc);
-    vectis_destroy(app);
+    app->close(app);
     return 1;
   }
 
@@ -83,12 +83,12 @@ int main(void) {
   document.version = "1.0.0";
   if (vectis_generate_openapi(app, &document, VECTIS_OPENAPI_YAML, &yaml, &error) != VECTIS_OK) {
     vectis_openapi_route_doc_cleanup(&route_doc);
-    vectis_destroy(app);
+    app->close(app);
     return 1;
   }
   (void)fwrite(yaml.data, 1u, yaml.size, stdout);
   vectis_mutable_bytes_cleanup(&yaml);
   vectis_openapi_route_doc_cleanup(&route_doc);
-  vectis_destroy(app);
+  app->close(app);
   return 0;
 }

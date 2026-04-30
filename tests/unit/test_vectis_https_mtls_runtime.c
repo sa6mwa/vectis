@@ -156,12 +156,12 @@ int main(void) {
   config.tls.private_key_path = server_key_path;
   config.tls.client_ca_bundle_path = root_cert_path;
   config.tls.require_client_certificate = 1;
-  app = vectis_new(&config, &error);
+  app = vectis_app_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/secure", sample_handler, NULL);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
-  status = vectis_start(app, &error);
+  status = app->start(app, &error);
   assert(status == VECTIS_OK);
 
   assert_https_fails("https://127.0.0.1:28444/secure", root_cert_path, NULL);
@@ -170,7 +170,7 @@ int main(void) {
 
   status = vectis_stop(app, &error);
   assert(status == VECTIS_OK);
-  vectis_destroy(app);
+  app->close(app);
 
   (void)remove(root_bundle_path);
   (void)remove(root_cert_path);
