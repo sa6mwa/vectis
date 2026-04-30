@@ -566,7 +566,7 @@ static int run_client(void) {
     return 1;
   }
 
-  status = client->delete_(client, "/events/order-1001", &response, &error);
+  status = client->del(client, "/events/order-1001", &response, &error);
   if (require_status(status, VECTIS_OK, "DELETE /events/order-1001", &error) != 0 ||
       require_http_status(&response, 204L, "DELETE /events/order-1001") != 0) {
     vectis_http_response_cleanup(&response);

@@ -53,7 +53,7 @@ surface directly, without local helper layers that would hide awkward API shape.
 ## `curl/`
 
 - `curl/curl_json_api.c`: handle-shaped curl-backed client setup, GET, HEAD,
-  OPTIONS, DELETE, and POST/PUT/PATCH JSON helpers.
+  OPTIONS, `client->del()`, and POST/PUT/PATCH JSON helpers.
 - `curl/curl_downstream_e2e.c`: controlled local downstream server/client flow
   covering JSON methods, HEAD/OPTIONS, streaming responses, downloads, and
   uploads.
@@ -95,7 +95,7 @@ surface directly, without local helper layers that would hide awkward API shape.
 The examples are compiled by the normal build so the public SDK shape remains
 mechanically valid. New stateful examples should prefer handle methods such as
 `app->route(app, ...)`, `app->start(app, ...)`, `client->get(client, ...)`,
-`ssh->exec(ssh, ...)`, and `service->run(service, ...)`. Constructors and
-stateless helpers such as `vectis_source_from_path()`, `vectis_route()`,
-`vectis_route_regex()`, and `vectis_json_route()` remain normal free
-functions.
+`client->del(client, ...)`, `ssh->exec(ssh, ...)`, and
+`service->run(service, ...)`. Constructors and stateless helpers such as
+`vectis_source_from_path()`, `vectis_route()`, `vectis_route_regex()`, and
+`vectis_json_route()` remain normal free functions.

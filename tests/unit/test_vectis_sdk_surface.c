@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -312,8 +313,10 @@ static void assert_http_surface(void) {
   assert(client.retry_max_delay_ms == 2000L);
   assert(client.retry_conditions == VECTIS_HTTP_RETRY_DEFAULT);
   client.low_speed_limit_bytes_per_sec = -1L;
+  handle = (vectis_http_client *)(uintptr_t)1u;
   status = vectis_http_client_new(&client, &handle, &error);
   assert(status == VECTIS_ERR_INVALID);
+  assert(handle == NULL);
   assert(strstr(error.message, "non-negative") != NULL);
   client.low_speed_limit_bytes_per_sec = 0L;
   client.configure_curl = curl_config_ok;
@@ -353,7 +356,7 @@ static void assert_http_surface(void) {
   assert(handle != NULL);
   assert(handle->execute != NULL);
   assert(handle->get != NULL);
-  assert(handle->delete_ != NULL);
+  assert(handle->del != NULL);
   assert(handle->head != NULL);
   assert(handle->options != NULL);
   assert(handle->download_file != NULL);
@@ -489,6 +492,13 @@ static void assert_http_surface(void) {
   assert(response.body_size == 0u);
   status = handle->options(handle, "/vectis_http_source.txt", &response, &error);
   assert(status != VECTIS_ERR_NOT_IMPLEMENTED);
+
+  status = handle->del(handle, "/vectis_http_source.txt", &response, &error);
+  assert(status != VECTIS_ERR_INVALID);
+
+  status = vectis_http_client_execute(NULL, &request, &response, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "HTTP client") != NULL);
   handle->close(handle);
 
   (void)remove(source_path);
@@ -523,6 +533,10 @@ static void assert_io_surface(void) {
   mqtt_handle = NULL;
   vectis_sftp_config_init(&sftp);
   assert(sftp.timeout_ms == 30000L);
+  sftp_handle = (vectis_sftp *)(uintptr_t)1u;
+  status = vectis_sftp_new(&sftp, &sftp_handle, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(sftp_handle == NULL);
   status = vectis_sftp_new(&sftp, &sftp_handle, &error);
   assert(status == VECTIS_ERR_INVALID);
   status = vectis_sftp_upload_file(&sftp, "local", "remote", &error);
@@ -535,12 +549,19 @@ static void assert_io_surface(void) {
   assert(sftp_handle->download_file != NULL);
   assert(sftp_handle->close != NULL);
   assert(strcmp(sftp_handle->config.url, "sftp://127.0.0.1:1") == 0);
+  status = sftp_handle->upload_file(NULL, "local", "remote", &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "SFTP handle") != NULL);
   sftp_handle->close(sftp_handle);
 
   vectis_ssh_config_init(&ssh);
   memset(&result, 0, sizeof(result));
   assert(ssh.port == 22u);
   assert(ssh.timeout_ms == 30000L);
+  ssh_handle = (vectis_ssh *)(uintptr_t)1u;
+  status = vectis_ssh_new(&ssh, &ssh_handle, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(ssh_handle == NULL);
   status = vectis_ssh_new(&ssh, &ssh_handle, &error);
   assert(status == VECTIS_ERR_INVALID);
   status = vectis_ssh_exec(&ssh, "uptime", &result, &error);
@@ -557,6 +578,9 @@ static void assert_io_surface(void) {
   assert(ssh_handle->sftp_download_file != NULL);
   assert(ssh_handle->close != NULL);
   assert(strcmp(ssh_handle->config.host, "127.0.0.1") == 0);
+  status = ssh_handle->exec(NULL, "uptime", &result, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "SSH handle") != NULL);
   ssh_handle->close(ssh_handle);
   status = vectis_ssh_sftp_upload_file(&ssh, "local", "remote", &error);
   assert(status == VECTIS_ERR_INVALID || status == VECTIS_ERR_STATE);
@@ -566,6 +590,10 @@ static void assert_io_surface(void) {
   vectis_ssh_exec_result_cleanup(&result);
 
   vectis_mqtt_config_init(&mqtt);
+  mqtt_handle = (vectis_mqtt *)(uintptr_t)1u;
+  status = vectis_mqtt_new(&mqtt, &mqtt_handle, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(mqtt_handle == NULL);
   status = vectis_mqtt_new(&mqtt, &mqtt_handle, &error);
   assert(status == VECTIS_ERR_INVALID);
   status = vectis_mqtt_publish(&mqtt,
@@ -583,6 +611,14 @@ static void assert_io_surface(void) {
   assert(mqtt_handle->publish_json != NULL);
   assert(mqtt_handle->close != NULL);
   assert(strcmp(mqtt_handle->config.broker_url, "mqtt://127.0.0.1:1") == 0);
+  status = mqtt_handle->publish(NULL,
+                                "workflow/test",
+                                payload,
+                                sizeof(payload) - 1u,
+                                "text/plain",
+                                &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "MQTT handle") != NULL);
   mqtt_handle->close(mqtt_handle);
 
   vectis_cert_bundle_config_init(&certs);

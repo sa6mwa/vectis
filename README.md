@@ -125,6 +125,32 @@ vectis_ssh_exec_result_cleanup(&result);
 ssh->close(ssh);
 ```
 
+HTTP clients, SFTP sessions, SSH sessions, MQTT publishers, Vectis apps, and
+consumer services all use the same shape: init config, construct handle, call
+methods with explicit `self`, and close the handle. Constructors clear `*out`
+before validation, so failed construction never leaves a stale output pointer.
+Handle config fields are shallow effective config copies; any borrowed strings,
+sources, loggers, or callback contexts must outlive the handle.
+
+```c
+vectis_http_client_config config;
+vectis_http_client *client;
+vectis_http_response response = {0};
+
+vectis_http_client_config_init(&config);
+config.base_url = "https://api.example.com";
+
+if (vectis_http_client_new(&config, &client, &error) != VECTIS_OK) {
+  return 1;
+}
+if (client->post_json(client, "/orders", &order_map, &order, &response, &error) != VECTIS_OK) {
+  client->close(client);
+  return 1;
+}
+vectis_http_response_cleanup(&response);
+client->close(client);
+```
+
 The free functions such as `vectis_register_route()`, `vectis_start()`,
 `vectis_http_client_get()`, `vectis_ssh_exec()`, and `vectis_mqtt_publish()`
 remain public lower-level levers and compatibility entry points. New examples

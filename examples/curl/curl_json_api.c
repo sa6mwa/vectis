@@ -65,7 +65,7 @@ int main(void) {
   (void)handle->patch_json(handle, "/events/order", &downstream_request_map, &payload, &response, &error);
   vectis_http_response_cleanup(&response);
 
-  (void)handle->delete_(handle, "/events/order", &response, &error);
+  (void)handle->del(handle, "/events/order", &response, &error);
   vectis_http_response_cleanup(&response);
 
   handle->close(handle);

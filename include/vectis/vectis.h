@@ -642,10 +642,10 @@ struct vectis_http_client {
                        const char *url,
                        vectis_http_response *response,
                        vectis_error *error);
-  vectis_status (*delete_)(vectis_http_client *self,
-                           const char *url,
-                           vectis_http_response *response,
-                           vectis_error *error);
+  vectis_status (*del)(vectis_http_client *self,
+                       const char *url,
+                       vectis_http_response *response,
+                       vectis_error *error);
   vectis_status (*head)(vectis_http_client *self,
                         const char *url,
                         vectis_http_response *response,

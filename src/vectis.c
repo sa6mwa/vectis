@@ -9443,7 +9443,7 @@ vectis_status vectis_http_client_new(const vectis_http_client_config *config,
   }
   client->execute = vectis_http_client_execute;
   client->get = vectis_http_client_get;
-  client->delete_ = vectis_http_client_delete;
+  client->del = vectis_http_client_delete;
   client->head = vectis_http_client_head;
   client->options = vectis_http_client_options;
   client->download_file = vectis_http_client_download_file;
