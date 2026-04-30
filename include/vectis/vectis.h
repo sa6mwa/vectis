@@ -785,6 +785,28 @@ vectis_status vectis_dsv_source_to_lonejson_array(const vectis_source *source,
                                                  const vectis_dsv_config *config,
                                                  vectis_mutable_bytes *out,
                                                  vectis_error *error);
+vectis_status vectis_dsv_to_json_array_spill(struct lc_source *source,
+                                             const vectis_dsv_config *config,
+                                             const vectis_body_spill_config *spill,
+                                             vectis_body_spill_result *out,
+                                             vectis_error *error);
+vectis_status vectis_dsv_source_to_json_array_spill(const vectis_source *source,
+                                                   const vectis_dsv_config *config,
+                                                   const vectis_body_spill_config *spill,
+                                                   vectis_body_spill_result *out,
+                                                   vectis_error *error);
+vectis_status vectis_dsv_to_lonejson_array_spill(struct lc_source *source,
+                                                 const lonejson_map *map,
+                                                 const vectis_dsv_config *config,
+                                                 const vectis_body_spill_config *spill,
+                                                 vectis_body_spill_result *out,
+                                                 vectis_error *error);
+vectis_status vectis_dsv_source_to_lonejson_array_spill(const vectis_source *source,
+                                                       const lonejson_map *map,
+                                                       const vectis_dsv_config *config,
+                                                       const vectis_body_spill_config *spill,
+                                                       vectis_body_spill_result *out,
+                                                       vectis_error *error);
 vectis_status vectis_dsv_write_lonejson_rows(struct lc_sink *sink,
                                              const lonejson_map *map,
                                              const vectis_dsv_config *config,

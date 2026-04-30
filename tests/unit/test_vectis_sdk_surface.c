@@ -1150,10 +1150,14 @@ static void assert_dsv_surface(void) {
   const char *reordered_columns[] = {"active", "id"};
   sample_dsv_doc out_rows[2] = {{"alpha,quoted", 2, 1}, {" #comment", 3, 0}};
   vectis_dsv_config config;
+  vectis_body_spill_config spill_config;
+  vectis_body_spill_result spill_result;
   vectis_source dsv_source;
   vectis_mutable_bytes json;
   sample_dsv_rows rows;
   lc_source *source;
+  FILE *fp;
+  char spill_bytes[256];
   vectis_error error;
   vectis_status status;
 
@@ -1338,6 +1342,49 @@ static void assert_dsv_surface(void) {
   assert(strstr((const char *)json.data, "\"count\":13") != NULL);
   assert(strstr((const char *)json.data, "\"active\":true") != NULL);
   vectis_mutable_bytes_cleanup(&json);
+
+  vectis_body_spill_config_init(&spill_config);
+  spill_config.memory_limit_bytes = 16u;
+  spill_config.prefix = "vectis-dsv-json";
+  memset(&spill_result, 0, sizeof(spill_result));
+  dsv_source = vectis_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u);
+  status = vectis_dsv_source_to_lonejson_array_spill(&dsv_source,
+                                                     &sample_dsv_doc_map,
+                                                     &config,
+                                                     &spill_config,
+                                                     &spill_result,
+                                                     &error);
+  assert(status == VECTIS_OK);
+  assert(spill_result.spooled_to_disk);
+  assert(spill_result.path != NULL);
+  assert(spill_result.size > 16u);
+  fp = fopen(spill_result.path, "rb");
+  assert(fp != NULL);
+  memset(spill_bytes, 0, sizeof(spill_bytes));
+  assert(fread(spill_bytes, 1u, sizeof(spill_bytes) - 1u, fp) > 0u);
+  assert(fclose(fp) == 0);
+  assert(strstr(spill_bytes, "\"id\":\"gamma\"") != NULL);
+  assert(remove(spill_result.path) == 0);
+  vectis_body_spill_result_cleanup(&spill_result);
+
+  vectis_body_spill_config_init(&spill_config);
+  spill_config.memory_limit_bytes = 4096u;
+  memset(&spill_result, 0, sizeof(spill_result));
+  dsv_source = vectis_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u);
+  status = vectis_dsv_source_to_lonejson_array_spill(&dsv_source,
+                                                     &sample_dsv_doc_map,
+                                                     &config,
+                                                     &spill_config,
+                                                     &spill_result,
+                                                     &error);
+  assert(status == VECTIS_OK);
+  assert(!spill_result.spooled_to_disk);
+  assert(spill_result.memory.data != NULL);
+  assert(spill_result.memory.size < sizeof(spill_bytes));
+  memset(spill_bytes, 0, sizeof(spill_bytes));
+  memcpy(spill_bytes, spill_result.memory.data, spill_result.memory.size);
+  assert(strstr(spill_bytes, "\"id\":\"gamma\"") != NULL);
+  vectis_body_spill_result_cleanup(&spill_result);
 
   memset(&json, 0, sizeof(json));
   dsv_source = vectis_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u);

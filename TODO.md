@@ -143,7 +143,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Stream CSV/TSV/any-SV rows from `lc_source` and `vectis_source` readers into caller-provided `lonejson`-mapped structs without requiring whole-file buffering.
 - [x] Provide row callback APIs for DSV parsing so handlers can validate, transform, store to lockd, enqueue, or write downstream output one row at a time.
 - [x] Provide convenience DSV-to-JSON-array conversion, including a typed `lonejson` map-backed variant.
-- [ ] Add DSV-to-JSON-array memory-limit and spill-to-disk behavior consistent with other Vectis body/materialization helpers.
+- [x] Add DSV-to-JSON-array memory-limit and spill-to-disk behavior consistent with other Vectis body/materialization helpers.
 - [x] Provide `lonejson`-mapped struct serialization back to CSV, TSV, and configurable any-SV streams.
 - [x] Handle headers, headerless map-order fields, explicit field mappings, delimiter/quote/escape configuration, CRLF/LF normalization, empty values, and strict versus permissive row-width validation.
 - [x] Add explicit row-only CSV/TSV presets for the common headerless typed-lonejson path.

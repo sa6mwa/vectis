@@ -141,6 +141,17 @@ typedef struct vectis_dsv_row_pipe_writer {
   vectis_error error;
 } vectis_dsv_row_pipe_writer;
 
+typedef struct vectis_spill_writer {
+  unsigned char *memory;
+  size_t memory_size;
+  size_t memory_capacity;
+  size_t memory_limit;
+  size_t total;
+  FILE *fp;
+  char *path;
+  int spooled;
+} vectis_spill_writer;
+
 typedef struct vectis_json_string_box {
   char *value;
 } vectis_json_string_box;
@@ -5782,6 +5793,425 @@ cleanup:
   return status;
 }
 
+static void vectis_spill_writer_cleanup(vectis_spill_writer *writer) {
+  if (writer == NULL) {
+    return;
+  }
+  if (writer->fp != NULL) {
+    (void)fclose(writer->fp);
+  }
+  if (writer->path != NULL) {
+    (void)unlink(writer->path);
+  }
+  free(writer->path);
+  free(writer->memory);
+  memset(writer, 0, sizeof(*writer));
+}
+
+static vectis_status vectis_spill_writer_open_file(vectis_spill_writer *writer,
+                                                   const vectis_body_spill_config *config,
+                                                   vectis_error *error) {
+  vectis_body_materialize_config materialize;
+  char tmp_template[PATH_MAX];
+  int fd;
+
+  vectis_body_materialize_config_init(&materialize);
+  if (config != NULL) {
+    materialize.directory = config->directory;
+    materialize.prefix = config->prefix;
+  }
+  if (!vectis_tmp_template(tmp_template, sizeof(tmp_template), &materialize)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "spill output path is too long");
+    return VECTIS_ERR_INVALID;
+  }
+  fd = mkstemp(tmp_template);
+  if (fd < 0) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to create spill output file");
+    return VECTIS_ERR_STATE;
+  }
+  writer->path = vectis_strdup(tmp_template);
+  if (writer->path == NULL) {
+    (void)close(fd);
+    (void)unlink(tmp_template);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy spill output path");
+    return VECTIS_ERR_NOMEM;
+  }
+  writer->fp = fdopen(fd, "wb");
+  if (writer->fp == NULL) {
+    (void)close(fd);
+    (void)unlink(writer->path);
+    free(writer->path);
+    writer->path = NULL;
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to open spill output file");
+    return VECTIS_ERR_STATE;
+  }
+  if (writer->memory_size > 0u &&
+      fwrite(writer->memory, 1u, writer->memory_size, writer->fp) != writer->memory_size) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to write spill output file");
+    return VECTIS_ERR_STATE;
+  }
+  free(writer->memory);
+  writer->memory = NULL;
+  writer->memory_size = 0u;
+  writer->memory_capacity = 0u;
+  writer->spooled = 1;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_spill_writer_init(vectis_spill_writer *writer,
+                                              const vectis_body_spill_config *config) {
+  memset(writer, 0, sizeof(*writer));
+  writer->memory_limit = config != NULL ? config->memory_limit_bytes : 0u;
+  if (writer->memory_limit == 0u) {
+    writer->memory_limit = VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_spill_writer_write(vectis_spill_writer *writer,
+                                               const void *data,
+                                               size_t size,
+                                               const vectis_body_spill_config *config,
+                                               vectis_error *error) {
+  void *next;
+
+  if (size == 0u) {
+    return VECTIS_OK;
+  }
+  if (writer == NULL || data == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "spill writer data is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if ((size_t)-1 - writer->total < size) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "spill output size overflow");
+    return VECTIS_ERR_STATE;
+  }
+  if (!writer->spooled && writer->total + size > writer->memory_limit) {
+    if (vectis_spill_writer_open_file(writer, config, error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+  }
+  if (writer->spooled) {
+    if (fwrite(data, 1u, size, writer->fp) != size) {
+      vectis_set_error(error, VECTIS_ERR_STATE, "failed to write spill output file");
+      return VECTIS_ERR_STATE;
+    }
+  } else {
+    if (writer->memory_size + size > writer->memory_capacity) {
+      writer->memory_capacity = writer->memory_capacity == 0u ? size : writer->memory_capacity;
+      while (writer->memory_capacity < writer->memory_size + size) {
+        if (writer->memory_capacity > ((size_t)-1 / 2u)) {
+          writer->memory_capacity = writer->memory_size + size;
+          break;
+        }
+        writer->memory_capacity *= 2u;
+      }
+      next = realloc(writer->memory, writer->memory_capacity);
+      if (next == NULL) {
+        vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate spill output memory");
+        return VECTIS_ERR_NOMEM;
+      }
+      writer->memory = (unsigned char *)next;
+    }
+    memcpy(writer->memory + writer->memory_size, data, size);
+    writer->memory_size += size;
+  }
+  writer->total += size;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_spill_writer_write_cstr(vectis_spill_writer *writer,
+                                                    const char *value,
+                                                    const vectis_body_spill_config *config,
+                                                    vectis_error *error) {
+  return vectis_spill_writer_write(writer,
+                                   value,
+                                   value != NULL ? strlen(value) : 0u,
+                                   config,
+                                   error);
+}
+
+static vectis_status vectis_spill_writer_finish(vectis_spill_writer *writer,
+                                                vectis_body_spill_result *out,
+                                                vectis_error *error) {
+  if (writer == NULL || out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "spill writer output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (writer->fp != NULL && fclose(writer->fp) != 0) {
+    writer->fp = NULL;
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to close spill output file");
+    return VECTIS_ERR_STATE;
+  }
+  writer->fp = NULL;
+  out->memory.data = NULL;
+  out->memory.size = 0u;
+  out->path = NULL;
+  out->size = writer->total;
+  out->spooled_to_disk = writer->spooled;
+  if (writer->spooled) {
+    out->path = writer->path;
+    writer->path = NULL;
+  } else {
+    out->memory.data = writer->memory;
+    out->memory.size = writer->memory_size;
+    writer->memory = NULL;
+    writer->memory_size = 0u;
+    writer->memory_capacity = 0u;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_spill_writer_json_string(vectis_spill_writer *writer,
+                                                     const char *value,
+                                                     size_t size,
+                                                     const vectis_body_spill_config *spill,
+                                                     vectis_error *error) {
+  size_t i;
+
+  if (vectis_spill_writer_write_cstr(writer, "\"", spill, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  for (i = 0u; i < size; ++i) {
+    char escaped[7];
+    int n;
+
+    switch (value[i]) {
+    case '"':
+      if (vectis_spill_writer_write_cstr(writer, "\\\"", spill, error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+      break;
+    case '\\':
+      if (vectis_spill_writer_write_cstr(writer, "\\\\", spill, error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+      break;
+    case '\b':
+      if (vectis_spill_writer_write_cstr(writer, "\\b", spill, error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+      break;
+    case '\f':
+      if (vectis_spill_writer_write_cstr(writer, "\\f", spill, error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+      break;
+    case '\n':
+      if (vectis_spill_writer_write_cstr(writer, "\\n", spill, error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+      break;
+    case '\r':
+      if (vectis_spill_writer_write_cstr(writer, "\\r", spill, error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+      break;
+    case '\t':
+      if (vectis_spill_writer_write_cstr(writer, "\\t", spill, error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+      break;
+    default:
+      if ((unsigned char)value[i] < 0x20u) {
+        n = snprintf(escaped, sizeof(escaped), "\\u%04x", (unsigned char)value[i]);
+        if (n != 6 ||
+            vectis_spill_writer_write(writer, escaped, 6u, spill, error) != VECTIS_OK) {
+          return error != NULL ? error->code : VECTIS_ERR_STATE;
+        }
+      } else if (vectis_spill_writer_write(writer, value + i, 1u, spill, error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+      break;
+    }
+  }
+  return vectis_spill_writer_write_cstr(writer, "\"", spill, error);
+}
+
+static vectis_status vectis_dsv_write_row_json_spill(vectis_spill_writer *writer,
+                                                     const lonejson_map *map,
+                                                     const char *const *columns,
+                                                     size_t column_count,
+                                                     const vectis_dsv_fields *fields,
+                                                     int all_strings,
+                                                     const vectis_body_spill_config *spill,
+                                                     vectis_error *error) {
+  size_t i;
+  const char *value;
+  size_t value_size;
+  const lonejson_field *field;
+  int first;
+
+  if (vectis_spill_writer_write_cstr(writer, "{", spill, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  first = 1;
+  for (i = 0u; i < column_count; ++i) {
+    value = i < fields->count ? fields->items[i] : "";
+    value_size = i < fields->count ? fields->sizes[i] : 0u;
+    field = all_strings ? NULL : vectis_dsv_find_field(map, columns[i]);
+    if (!all_strings && field == NULL) {
+      continue;
+    }
+    if (!all_strings && value_size == 0u && !vectis_dsv_field_uses_json_string(field)) {
+      continue;
+    }
+    if (!first && vectis_spill_writer_write_cstr(writer, ",", spill, error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    first = 0;
+    if (vectis_spill_writer_json_string(writer,
+                                        columns[i],
+                                        strlen(columns[i]),
+                                        spill,
+                                        error) != VECTIS_OK ||
+        vectis_spill_writer_write_cstr(writer, ":", spill, error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    if (all_strings || vectis_dsv_field_uses_json_string(field)) {
+      if (vectis_spill_writer_json_string(writer, value, value_size, spill, error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+    } else if (vectis_spill_writer_write(writer, value, value_size, spill, error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+  }
+  return vectis_spill_writer_write_cstr(writer, "}", spill, error);
+}
+
+static vectis_status vectis_dsv_to_json_array_spill_impl(struct lc_source *source,
+                                                         const lonejson_map *map,
+                                                         const vectis_dsv_config *config,
+                                                         const vectis_body_spill_config *spill,
+                                                         vectis_body_spill_result *out,
+                                                         int all_strings,
+                                                         vectis_error *error) {
+  vectis_dsv_parser parser;
+  vectis_dsv_config effective;
+  vectis_dsv_fields headers;
+  const char *const *columns;
+  const char **header_columns;
+  size_t column_count;
+  int has_record;
+  int first;
+  vectis_status status;
+  vectis_spill_writer writer;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV spill output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  out->memory.data = NULL;
+  out->memory.size = 0u;
+  out->path = NULL;
+  out->size = 0u;
+  out->spooled_to_disk = 0;
+  if (source == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV source is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!all_strings && map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV lonejson map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_dsv_effective_config(config, &effective, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  memset(&parser, 0, sizeof(parser));
+  memset(&headers, 0, sizeof(headers));
+  vectis_spill_writer_init(&writer, spill);
+  parser.config = effective;
+  parser.source = source;
+  columns = effective.columns;
+  header_columns = NULL;
+  column_count = effective.column_count;
+  status = VECTIS_OK;
+  if (effective.has_header) {
+    status = vectis_dsv_read_data_record(&parser, &has_record, error);
+    if (status != VECTIS_OK) {
+      goto cleanup;
+    }
+    if (has_record) {
+      headers = parser.fields;
+      memset(&parser.fields, 0, sizeof(parser.fields));
+      if (columns == NULL) {
+        if (headers.count == 0u) {
+          vectis_set_error(error, VECTIS_ERR_INVALID, "DSV header row is empty");
+          status = VECTIS_ERR_INVALID;
+          goto cleanup;
+        }
+        header_columns = (const char **)calloc(headers.count, sizeof(header_columns[0]));
+        if (header_columns == NULL) {
+          vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate DSV header columns");
+          status = VECTIS_ERR_NOMEM;
+          goto cleanup;
+        }
+        for (column_count = 0u; column_count < headers.count; ++column_count) {
+          header_columns[column_count] = headers.items[column_count];
+        }
+        columns = header_columns;
+        column_count = headers.count;
+      }
+    }
+  } else if (columns == NULL && !all_strings) {
+    status = vectis_dsv_columns_from_map(map, &header_columns, &column_count, error);
+    if (status != VECTIS_OK) {
+      goto cleanup;
+    }
+    columns = header_columns;
+  }
+  if (columns == NULL || column_count == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV columns are required when no header row is used");
+    status = VECTIS_ERR_INVALID;
+    goto cleanup;
+  }
+  status = vectis_spill_writer_write_cstr(&writer, "[", spill, error);
+  first = 1;
+  while (status == VECTIS_OK) {
+    status = vectis_dsv_read_data_record(&parser, &has_record, error);
+    if (status != VECTIS_OK || !has_record) {
+      break;
+    }
+    if (effective.strict_row_width && parser.fields.count != column_count) {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "DSV row width does not match columns");
+      status = VECTIS_ERR_INVALID;
+      break;
+    }
+    if (!first && vectis_spill_writer_write_cstr(&writer, ",", spill, error) != VECTIS_OK) {
+      status = error != NULL ? error->code : VECTIS_ERR_STATE;
+      break;
+    }
+    first = 0;
+    status = vectis_dsv_write_row_json_spill(&writer,
+                                             map,
+                                             columns,
+                                             column_count,
+                                             &parser.fields,
+                                             all_strings,
+                                             spill,
+                                             error);
+  }
+  if (status == VECTIS_OK &&
+      vectis_spill_writer_write_cstr(&writer, "]", spill, error) != VECTIS_OK) {
+    status = error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_spill_writer_finish(&writer, out, error);
+  }
+
+cleanup:
+  if (status != VECTIS_OK) {
+    vectis_body_spill_result_cleanup(out);
+  }
+  vectis_spill_writer_cleanup(&writer);
+  vectis_dsv_fields_cleanup(&headers);
+  vectis_dsv_fields_cleanup(&parser.fields);
+  vectis_string_builder_cleanup(&parser.field);
+  free(header_columns);
+  return status;
+}
+
 vectis_status vectis_dsv_to_json_array(struct lc_source *source,
                                        const vectis_dsv_config *config,
                                        vectis_mutable_bytes *out,
@@ -5830,6 +6260,64 @@ vectis_status vectis_dsv_source_to_lonejson_array(const vectis_source *source,
     return status;
   }
   status = vectis_dsv_to_lonejson_array(reader, map, config, out, error);
+  if (owned) {
+    lc_source_close(reader);
+  }
+  return status;
+}
+
+vectis_status vectis_dsv_to_json_array_spill(struct lc_source *source,
+                                             const vectis_dsv_config *config,
+                                             const vectis_body_spill_config *spill,
+                                             vectis_body_spill_result *out,
+                                             vectis_error *error) {
+  return vectis_dsv_to_json_array_spill_impl(source, NULL, config, spill, out, 1, error);
+}
+
+vectis_status vectis_dsv_source_to_json_array_spill(const vectis_source *source,
+                                                   const vectis_dsv_config *config,
+                                                   const vectis_body_spill_config *spill,
+                                                   vectis_body_spill_result *out,
+                                                   vectis_error *error) {
+  lc_source *reader;
+  int owned;
+  vectis_status status;
+
+  status = vectis_dsv_open_source(source, &reader, &owned, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_dsv_to_json_array_spill(reader, config, spill, out, error);
+  if (owned) {
+    lc_source_close(reader);
+  }
+  return status;
+}
+
+vectis_status vectis_dsv_to_lonejson_array_spill(struct lc_source *source,
+                                                 const lonejson_map *map,
+                                                 const vectis_dsv_config *config,
+                                                 const vectis_body_spill_config *spill,
+                                                 vectis_body_spill_result *out,
+                                                 vectis_error *error) {
+  return vectis_dsv_to_json_array_spill_impl(source, map, config, spill, out, 0, error);
+}
+
+vectis_status vectis_dsv_source_to_lonejson_array_spill(const vectis_source *source,
+                                                       const lonejson_map *map,
+                                                       const vectis_dsv_config *config,
+                                                       const vectis_body_spill_config *spill,
+                                                       vectis_body_spill_result *out,
+                                                       vectis_error *error) {
+  lc_source *reader;
+  int owned;
+  vectis_status status;
+
+  status = vectis_dsv_open_source(source, &reader, &owned, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_dsv_to_lonejson_array_spill(reader, map, config, spill, out, error);
   if (owned) {
     lc_source_close(reader);
   }
