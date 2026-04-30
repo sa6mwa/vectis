@@ -17,9 +17,44 @@ function(vectis_add_unit_test target_name)
   add_test(NAME ${target_name} COMMAND ${target_name})
 endfunction()
 
+function(vectis_add_cpp_header_test target_name)
+  add_executable(${target_name} ${ARGN})
+  target_link_libraries(${target_name} PRIVATE ${vectis_test_link_target})
+  target_include_directories(${target_name} PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+  )
+  set_target_properties(${target_name} PROPERTIES
+    CXX_STANDARD 98
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+  )
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(${target_name} PRIVATE
+      -Wall
+      -Wextra
+      -Werror
+      -Wpedantic
+      -Wshadow
+      -Wpointer-arith
+      -Wcast-qual
+      -Wwrite-strings
+    )
+  endif()
+  add_test(NAME ${target_name} COMMAND ${target_name})
+endfunction()
+
 vectis_add_unit_test(vectis_unit_config test_vectis_config.c)
 vectis_add_unit_test(vectis_unit_certs test_vectis_certs.c)
 vectis_add_unit_test(vectis_unit_https_runtime test_vectis_https_runtime.c)
 vectis_add_unit_test(vectis_unit_https_mtls_runtime test_vectis_https_mtls_runtime.c)
 vectis_add_unit_test(vectis_unit_runtime test_vectis_runtime.c)
 vectis_add_unit_test(vectis_unit_sdk_surface test_vectis_sdk_surface.c)
+
+include(CheckLanguage)
+check_language(CXX)
+if(CMAKE_CXX_COMPILER)
+  enable_language(CXX)
+  vectis_add_cpp_header_test(vectis_unit_header_cpp test_vectis_header_cpp.cpp)
+else()
+  message(STATUS "C++ compiler not available; skipping vectis C++ header smoke test")
+endif()
