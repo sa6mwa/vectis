@@ -80,8 +80,8 @@ static vectis_status save_order(vectis_app *app,
     return status;
   }
 
-  lockd = vectis_lockd_client(app);
-  logger = vectis_logger(app);
+  lockd = app->lockd_client(app);
+  logger = app->logger(app);
   if (logger != NULL) {
     logger->infof(logger, "example.rest_lockd.save_order", "id=%s", input.id);
   }

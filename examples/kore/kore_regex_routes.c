@@ -12,7 +12,7 @@ static vectis_status report(vectis_app *app,
 
   (void)request;
   (void)userdata;
-  logger = vectis_logger(app);
+  logger = app->logger(app);
   if (logger != NULL) {
     logger->infof(logger, "example.kore_regex.report", "route=%s", "^/reports/[0-9]+$");
   }

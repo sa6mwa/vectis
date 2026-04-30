@@ -862,12 +862,21 @@ static void assert_json_route_surface(void) {
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   assert(app->start != NULL);
+  assert(app->stop != NULL);
   assert(app->route != NULL);
   assert(app->json_route != NULL);
   assert(app->json_typed_route != NULL);
+  assert(app->prefixed_route != NULL);
+  assert(app->prefixed_json_route != NULL);
+  assert(app->prefixed_json_typed_route != NULL);
   assert(app->static_file != NULL);
   assert(app->static_directory != NULL);
+  assert(app->openapi_doc != NULL);
+  assert(app->openapi != NULL);
+  assert(app->route_count != NULL);
+  assert(app->logger != NULL);
   assert(app->lockd_client != NULL);
+  assert(app->consumer_service != NULL);
   assert(app->close != NULL);
   assert(app->lockd_client(app) == NULL);
   request = vectis_internal_request_new(&error);
@@ -978,7 +987,7 @@ static void assert_json_route_surface(void) {
   assert(route.body.mode == VECTIS_BODY_JSON);
   status = app->prefixed_json_route(app, "/api/v1", &route, &error);
   assert(status == VECTIS_OK);
-  assert(vectis_route_count(app) == 6u);
+  assert(app->route_count(app) == 6u);
   status = vectis_internal_route_body_policy(app, VECTIS_HTTP_POST, "/api/v1/typed/abc", &policy, &error);
   assert(status == VECTIS_OK);
   assert(policy.mode == VECTIS_BODY_JSON);
@@ -1013,7 +1022,7 @@ static void assert_json_route_surface(void) {
                                         NULL);
   status = app->prefixed_json_typed_route(app, "/api/v1", &typed_route, &error);
   assert(status == VECTIS_OK);
-  assert(vectis_route_count(app) == 7u);
+  assert(app->route_count(app) == 7u);
   status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
   assert(status == VECTIS_OK);
   status = vectis_internal_dispatch_route(app,
@@ -1141,17 +1150,17 @@ static void assert_openapi_surface(void) {
                                                                        &sample_error_doc_map),
                                         &error);
   assert(status == VECTIS_OK);
-  status = vectis_attach_openapi_doc(app,
-                                     VECTIS_HTTP_METHODS_POST,
-                                     "/orders/:id?",
-                                     &doc,
-                                     &error);
+  status = app->openapi_doc(app,
+                            VECTIS_HTTP_METHODS_POST,
+                            "/orders/:id?",
+                            &doc,
+                            &error);
   assert(status == VECTIS_OK);
 
   vectis_openapi_document_init(&document);
   document.title = "Orders API";
   document.version = "1.2.3";
-  status = vectis_generate_openapi(app, &document, VECTIS_OPENAPI_JSON, &json, &error);
+  status = app->openapi(app, &document, VECTIS_OPENAPI_JSON, &json, &error);
   assert(status == VECTIS_OK);
   assert(json.data != NULL);
   assert(strstr((const char *)json.data, "\"openapi\":\"3.1.0\"") != NULL);
@@ -1164,7 +1173,7 @@ static void assert_openapi_surface(void) {
   assert(strstr((const char *)json.data, "\"required\":[\"id\"]") != NULL);
   vectis_mutable_bytes_cleanup(&json);
 
-  status = vectis_generate_openapi(app, &document, VECTIS_OPENAPI_YAML, &yaml, &error);
+  status = app->openapi(app, &document, VECTIS_OPENAPI_YAML, &yaml, &error);
   assert(status == VECTIS_OK);
   assert(yaml.data != NULL);
   assert(strstr((const char *)yaml.data, "openapi: 3.1.0") != NULL);

@@ -109,8 +109,8 @@ static vectis_status get_state(vectis_app *app,
   if (id == NULL) {
     id = "1001";
   }
-  lockd = vectis_lockd_client(app);
-  logger = vectis_logger(app);
+  lockd = app->lockd_client(app);
+  logger = app->logger(app);
   if (logger != NULL) {
     logger->infof(logger, "example.kore_lockd.get_state", "id=%s", id);
   }

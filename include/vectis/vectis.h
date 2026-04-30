@@ -563,14 +563,31 @@ typedef struct vectis_csr_config {
 
 /*
  * Stateful Vectis SDK handles expose direct function-pointer method semantics
- * with an explicit `self` argument, mirroring liblockdc. The `impl` pointer is
- * private. Public config fields on non-app handles are shallow effective
- * config copies; borrowed strings, sources, loggers, and callbacks must outlive
- * the handle unless a specific API says otherwise.
+ * with an explicit `self` argument, mirroring liblockdc.
+ *
+ * The handle methods are the primary DX for stateful/resource-owning APIs. The
+ * free functions below remain public as constructors, stateless builders,
+ * cleanup helpers, and lower-level levers for callers that need them.
+ *
+ * `impl` is private and must not be read or written by applications. Public
+ * config fields on non-app handles are shallow effective config copies:
+ * borrowed strings, sources, loggers, maps, and callback contexts must outlive
+ * the handle unless a specific API documents a deep copy.
+ *
+ * Constructors clear `*out` before validation so failed construction never
+ * leaves a stale handle pointer behind. Close functions accept NULL.
  */
 struct vectis_app {
+  /* Start or stop the app runtime. Apps with routes start Kore; lockd-only apps
+   * open the configured lockd client without starting Kore.
+   */
   vectis_status (*start)(vectis_app *self, vectis_error *error);
   vectis_status (*stop)(vectis_app *self, vectis_error *error);
+
+  /* Register HTTP routes. Builder helpers such as vectis_route(),
+   * vectis_json_route(), and vectis_upload_route() are intentionally still free
+   * functions because they produce value configs, not owned handles.
+   */
   vectis_status (*route)(vectis_app *self,
                          const vectis_route_config *route,
                          vectis_error *error);
@@ -598,6 +615,11 @@ struct vectis_app {
   vectis_status (*static_directory)(vectis_app *self,
                                     const vectis_static_directory_config *config,
                                     vectis_error *error);
+
+  /* Attach per-route OpenAPI metadata or generate an OpenAPI document from the
+   * current route registry. Generation writes to `out`; callers clean it with
+   * vectis_mutable_bytes_cleanup().
+   */
   vectis_status (*openapi_doc)(vectis_app *self,
                                vectis_http_methods methods,
                                const char *path,
@@ -610,7 +632,16 @@ struct vectis_app {
                            vectis_error *error);
   size_t (*route_count)(const vectis_app *self);
   pslog_logger *(*logger)(vectis_app *self);
+
+  /* Returns the app-owned process-local lockd client when lockd is configured
+   * and open in the current process. Route handlers on a started
+   * lockd-configured app can treat this as present.
+   */
   struct lc_client *(*lockd_client)(vectis_app *self);
+
+  /* Create a Vectis-owned wrapper around a liblockdc consumer service. The
+   * lc_consumer_service_config and its callbacks remain caller-owned.
+   */
   vectis_status (*consumer_service)(vectis_app *self,
                                     const struct lc_consumer_service_config *config,
                                     vectis_consumer_service **out,
@@ -620,6 +651,9 @@ struct vectis_app {
 };
 
 struct vectis_consumer_service {
+  /* Escape hatch for APIs not covered by the Vectis facade. The returned raw
+   * service remains owned by this handle.
+   */
   struct lc_consumer_service *(*raw)(vectis_consumer_service *self);
   vectis_status (*run)(vectis_consumer_service *self, vectis_error *error);
   vectis_status (*start)(vectis_consumer_service *self, vectis_error *error);
@@ -634,6 +668,9 @@ struct vectis_consumer_service {
 };
 
 struct vectis_http_client {
+  /* Execute a fully specified request. Convenience methods below construct a
+   * request and delegate here.
+   */
   vectis_status (*execute)(vectis_http_client *self,
                            const vectis_http_request *request,
                            vectis_http_response *response,
@@ -642,6 +679,9 @@ struct vectis_http_client {
                        const char *url,
                        vectis_http_response *response,
                        vectis_error *error);
+  /* HTTP DELETE. Named `del` so vectis.h remains usable from C++ translation
+   * units where `delete` is a keyword.
+   */
   vectis_status (*del)(vectis_http_client *self,
                        const char *url,
                        vectis_http_response *response,
@@ -685,6 +725,8 @@ struct vectis_http_client {
                               vectis_http_response *response,
                               vectis_error *error);
   void (*close)(vectis_http_client *self);
+
+  /* Shallow effective config copy used by the methods above. */
   vectis_http_client_config config;
   void *impl;
 };
@@ -699,6 +741,8 @@ struct vectis_sftp {
                                  const char *local_path,
                                  vectis_error *error);
   void (*close)(vectis_sftp *self);
+
+  /* Shallow effective config copy used by the methods above. */
   vectis_sftp_config config;
   void *impl;
 };
@@ -717,6 +761,8 @@ struct vectis_ssh {
                                       const char *local_path,
                                       vectis_error *error);
   void (*close)(vectis_ssh *self);
+
+  /* Shallow effective config copy used by the methods above. */
   vectis_ssh_config config;
   void *impl;
 };
@@ -734,6 +780,8 @@ struct vectis_mqtt {
                                 const void *value,
                                 vectis_error *error);
   void (*close)(vectis_mqtt *self);
+
+  /* Shallow effective config copy used by the methods above. */
   vectis_mqtt_config config;
   void *impl;
 };

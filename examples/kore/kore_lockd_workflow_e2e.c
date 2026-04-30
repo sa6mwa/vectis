@@ -420,7 +420,7 @@ static vectis_status start_workflow(vectis_app *app,
   if (vectis_request_json_into(request, &workflow_input_map, &input, error) != VECTIS_OK) {
     return VECTIS_ERR_INVALID;
   }
-  client = vectis_lockd_client(app);
+  client = app->lockd_client(app);
   if (client == NULL) {
     return VECTIS_ERR_STATE;
   }

@@ -15,7 +15,7 @@ static vectis_status upload_file(vectis_app *app,
   vectis_status status;
 
   (void)userdata;
-  logger = vectis_logger(app);
+  logger = app->logger(app);
   name = vectis_request_path_param(request, "name");
   vectis_body_materialize_config_init(&body_config);
   body_config.memory_limit_bytes = 1024u * 1024u;

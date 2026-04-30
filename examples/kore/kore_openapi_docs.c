@@ -68,11 +68,11 @@ int main(void) {
                                    "Conflict",
                                    vectis_openapi_lonejson_schema("ApiError", &api_error_map),
                                    &error) != VECTIS_OK ||
-      vectis_attach_openapi_doc(app,
-                                VECTIS_HTTP_METHODS_POST,
-                                "/orders/:id?",
-                                &route_doc,
-                                &error) != VECTIS_OK) {
+      app->openapi_doc(app,
+                       VECTIS_HTTP_METHODS_POST,
+                       "/orders/:id?",
+                       &route_doc,
+                       &error) != VECTIS_OK) {
     vectis_openapi_route_doc_cleanup(&route_doc);
     app->close(app);
     return 1;
@@ -81,7 +81,7 @@ int main(void) {
   vectis_openapi_document_init(&document);
   document.title = "Orders API";
   document.version = "1.0.0";
-  if (vectis_generate_openapi(app, &document, VECTIS_OPENAPI_YAML, &yaml, &error) != VECTIS_OK) {
+  if (app->openapi(app, &document, VECTIS_OPENAPI_YAML, &yaml, &error) != VECTIS_OK) {
     vectis_openapi_route_doc_cleanup(&route_doc);
     app->close(app);
     return 1;
