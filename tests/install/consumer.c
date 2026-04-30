@@ -13,7 +13,10 @@
 
 int main(void) {
   vectis_app_config config;
+  vectis_http_client_config http_config;
   vectis_error error;
+  vectis_app *app;
+  vectis_http_client *http;
   lonejson_error json_error;
   struct lc_client *client;
   struct kore_server *server;
@@ -31,13 +34,45 @@ int main(void) {
   if (config.app_name == NULL || strcmp(config.app_name, "vectis") != 0) {
     return 1;
   }
+  app = vectis_app_new(&config, &error);
+  if (app == NULL) {
+    return 2;
+  }
+  if (app->route_count == NULL ||
+      app->route_count(app) != 0u ||
+      app->logger == NULL ||
+      app->logger(app) == NULL ||
+      app->close == NULL) {
+    app->close(app);
+    return 3;
+  }
+  app->close(app);
+
+  http = NULL;
+  vectis_http_client_config_init(&http_config);
+  if (vectis_http_client_new(&http_config, &http, &error) != VECTIS_OK) {
+    return 4;
+  }
+  if (http == NULL ||
+      http->execute == NULL ||
+      http->get == NULL ||
+      http->del == NULL ||
+      http->post_json == NULL ||
+      http->close == NULL) {
+    if (http != NULL) {
+      http->close(http);
+    }
+    return 5;
+  }
+  http->close(http);
+
   if (vectis_status_string(VECTIS_OK) == NULL ||
       vectis_http_method_string(VECTIS_HTTP_GET) == NULL ||
       vectis_body_mode_string(VECTIS_BODY_JSON) == NULL) {
-    return 2;
+    return 6;
   }
   if (lonejson_validate_cstr("{}", &json_error) != LONEJSON_STATUS_OK) {
-    return 3;
+    return 7;
   }
 
   client = NULL;
@@ -49,7 +84,7 @@ int main(void) {
 
   if (client != NULL || server != NULL || ssh != NULL || ssl != NULL ||
       curl_code != CURLE_OK || logger.impl != NULL || xml_version == NULL) {
-    return 4;
+    return 8;
   }
-  return error.code == VECTIS_OK ? 0 : 5;
+  return error.code == VECTIS_OK ? 0 : 9;
 }

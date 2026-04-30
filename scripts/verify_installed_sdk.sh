@@ -36,12 +36,23 @@ if [ "$link_mode" = "shared" ]; then
   if [ "$(uname -s)" = "Darwin" ]; then
     DYLD_LIBRARY_PATH="$package_root/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
       "$build_root/vectis_install_consumer"
+    if [ -x "$build_root/vectis_install_consumer_cpp" ]; then
+      DYLD_LIBRARY_PATH="$package_root/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
+        "$build_root/vectis_install_consumer_cpp"
+    fi
   else
     LD_LIBRARY_PATH="$package_root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
       "$build_root/vectis_install_consumer"
+    if [ -x "$build_root/vectis_install_consumer_cpp" ]; then
+      LD_LIBRARY_PATH="$package_root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+        "$build_root/vectis_install_consumer_cpp"
+    fi
   fi
 else
   "$build_root/vectis_install_consumer"
+  if [ -x "$build_root/vectis_install_consumer_cpp" ]; then
+    "$build_root/vectis_install_consumer_cpp"
+  fi
 fi
 
 if [ -f "$package_root/share/doc/vectis/examples/CMakeLists.txt" ]; then
