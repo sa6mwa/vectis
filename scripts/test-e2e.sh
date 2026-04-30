@@ -282,27 +282,6 @@ run_kore_examples() {
       VECTIS_E2E_WORKFLOW_CONTENT="$workflow_content" \
       "$repo_root/build/debug/examples/vectis_example_kore_workflow_e2e" server
   wait_for_http "http://127.0.0.1:$kore_workflow_port/health" "kore workflow api"
-  env LOCKD_ENDPOINT="$disk_endpoint" \
-    LOCKD_CLIENT_BUNDLE="$client_bundle" \
-    VECTIS_E2E_WORKFLOW_ID="$workflow_id" \
-    VECTIS_E2E_WORKFLOW_QUEUE="$workflow_queue" \
-    VECTIS_E2E_WORKFLOW_NAMESPACE="$workflow_namespace" \
-    VECTIS_E2E_WORKFLOW_CONTENT="$workflow_content" \
-    "$repo_root/build/debug/examples/vectis_example_kore_workflow_e2e" consumer-first \
-      >"$workflow_consumer_first_log" 2>&1 &
-  workflow_consumer_first_pid=$!
-  server_pids="$server_pids $workflow_consumer_first_pid"
-  env LOCKD_ENDPOINT="$disk_endpoint" \
-    LOCKD_CLIENT_BUNDLE="$client_bundle" \
-    VECTIS_E2E_WORKFLOW_ID="$workflow_id" \
-    VECTIS_E2E_WORKFLOW_QUEUE="$workflow_queue" \
-    VECTIS_E2E_WORKFLOW_NAMESPACE="$workflow_namespace" \
-    VECTIS_E2E_WORKFLOW_CONTENT="$workflow_content" \
-    "$repo_root/build/debug/examples/vectis_example_kore_workflow_e2e" consumer-second \
-      >"$workflow_consumer_second_log" 2>&1 &
-  workflow_consumer_second_pid=$!
-  server_pids="$server_pids $workflow_consumer_second_pid"
-  sleep 2
   body=$(curl --max-time 5 -fsS \
     -H 'content-type: application/json' \
     -X POST \
@@ -315,12 +294,57 @@ run_kore_examples() {
       return 1
       ;;
   esac
+  env LOCKD_ENDPOINT="$disk_endpoint" \
+    LOCKD_CLIENT_BUNDLE="$client_bundle" \
+    VECTIS_E2E_WORKFLOW_ID="$workflow_id" \
+    VECTIS_E2E_WORKFLOW_QUEUE="$workflow_queue" \
+    VECTIS_E2E_WORKFLOW_NAMESPACE="$workflow_namespace" \
+    VECTIS_E2E_WORKFLOW_CONTENT="$workflow_content" \
+    "$repo_root/build/debug/examples/vectis_example_kore_workflow_e2e" consumer-second \
+      >"$workflow_consumer_second_log" 2>&1 &
+  workflow_consumer_second_pid=$!
+  server_pids="$server_pids $workflow_consumer_second_pid"
+  count=0
+  while ! grep -q 'workflow.consumer.not_ready' "$workflow_consumer_second_log"; do
+    count=$((count + 1))
+    if [ "$count" -ge 20 ]; then
+      sed 's/^/[workflow-consumer-second] /' "$workflow_consumer_second_log" >&2
+      printf '%s\n' "workflow second consumer did not defer the not-ready message" >&2
+      return 1
+    fi
+    if ! kill -0 "$workflow_consumer_second_pid" >/dev/null 2>&1; then
+      sed 's/^/[workflow-consumer-second] /' "$workflow_consumer_second_log" >&2
+      printf '%s\n' "workflow second consumer exited before first deferral" >&2
+      return 1
+    fi
+    sleep 1
+  done
+  env LOCKD_ENDPOINT="$disk_endpoint" \
+    LOCKD_CLIENT_BUNDLE="$client_bundle" \
+    VECTIS_E2E_WORKFLOW_ID="$workflow_id" \
+    VECTIS_E2E_WORKFLOW_QUEUE="$workflow_queue" \
+    VECTIS_E2E_WORKFLOW_NAMESPACE="$workflow_namespace" \
+    VECTIS_E2E_WORKFLOW_CONTENT="$workflow_content" \
+    "$repo_root/build/debug/examples/vectis_example_kore_workflow_e2e" consumer-first \
+      >"$workflow_consumer_first_log" 2>&1 &
+  workflow_consumer_first_pid=$!
+  server_pids="$server_pids $workflow_consumer_first_pid"
   if ! wait "$workflow_consumer_first_pid"; then
     sed 's/^/[workflow-consumer-first] /' "$workflow_consumer_first_log" >&2
     return 1
   fi
   if ! wait "$workflow_consumer_second_pid"; then
     sed 's/^/[workflow-consumer-second] /' "$workflow_consumer_second_log" >&2
+    return 1
+  fi
+  if ! grep -q 'workflow.consumer.defer' "$workflow_consumer_first_log"; then
+    sed 's/^/[workflow-consumer-first] /' "$workflow_consumer_first_log" >&2
+    printf '%s\n' "workflow first consumer did not defer after incrementing counter" >&2
+    return 1
+  fi
+  if ! grep -q 'workflow.consumer.ack' "$workflow_consumer_second_log"; then
+    sed 's/^/[workflow-consumer-second] /' "$workflow_consumer_second_log" >&2
+    printf '%s\n' "workflow second consumer did not ack final message" >&2
     return 1
   fi
   env LOCKD_ENDPOINT="$disk_endpoint" \

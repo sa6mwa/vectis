@@ -320,6 +320,14 @@ static int run_server(void) {
     vectis_destroy(app);
     return 1;
   }
+  route = vectis_json_body_route(VECTIS_HTTP_POST, "/limited", event_handler, NULL);
+  route.body.max_bytes = 4u;
+  route.body.memory_buffer_limit_bytes = 4u;
+  if (vectis_register_route(app, &route, &error) != VECTIS_OK) {
+    (void)print_error("register POST /limited", &error);
+    vectis_destroy(app);
+    return 1;
+  }
   route = vectis_json_body_route_methods(VECTIS_HTTP_METHODS_PUT | VECTIS_HTTP_METHODS_PATCH,
                                          "/events/:id",
                                          event_handler,
@@ -496,6 +504,36 @@ static int run_client(void) {
   status = vectis_http_client_execute(client, &request, &response, &error);
   if (require_status(status, VECTIS_OK, "POST /events malformed JSON", &error) != 0 ||
       require_http_status(&response, 400L, "POST /events malformed JSON") != 0) {
+    vectis_http_response_cleanup(&response);
+    vectis_http_client_destroy(client);
+    return 1;
+  }
+  vectis_http_response_cleanup(&response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = "/events";
+  request.body = "{}";
+  request.body_size = strlen("{}");
+  request.content_type = "application/json";
+  status = vectis_http_client_execute(client, &request, &response, &error);
+  if (require_status(status, VECTIS_OK, "POST /events missing required field", &error) != 0 ||
+      require_http_status(&response, 400L, "POST /events missing required field") != 0) {
+    vectis_http_response_cleanup(&response);
+    vectis_http_client_destroy(client);
+    return 1;
+  }
+  vectis_http_response_cleanup(&response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = "/limited";
+  request.body = "12345";
+  request.body_size = strlen("12345");
+  request.content_type = "application/json";
+  status = vectis_http_client_execute(client, &request, &response, &error);
+  if (require_status(status, VECTIS_OK, "POST /limited oversized body", &error) != 0 ||
+      require_http_status(&response, 413L, "POST /limited oversized body") != 0) {
     vectis_http_response_cleanup(&response);
     vectis_http_client_destroy(client);
     return 1;

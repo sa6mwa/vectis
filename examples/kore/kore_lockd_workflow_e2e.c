@@ -533,13 +533,28 @@ static int handle_workflow_message(void *userdata,
   }
   if (rc == LC_OK) {
     if (!matched) {
+      fprintf(stderr,
+              "workflow.consumer.not_ready id=%s expected=%ld ack=%d\n",
+              message.id,
+              (long)context->expected_counter,
+              context->ack_message);
       lc_nack_req_init(&nack);
       nack.delay_seconds = 0L;
       nack.intent = LC_NACK_INTENT_DEFER;
       rc = delivery->message->nack(delivery->message, &nack, error);
     } else if (context->ack_message) {
+      fprintf(stderr,
+              "workflow.consumer.ack id=%s expected=%ld next=%ld\n",
+              message.id,
+              (long)context->expected_counter,
+              (long)context->next_counter);
       rc = delivery->message->ack(delivery->message, error);
     } else {
+      fprintf(stderr,
+              "workflow.consumer.defer id=%s expected=%ld next=%ld\n",
+              message.id,
+              (long)context->expected_counter,
+              (long)context->next_counter);
       lc_nack_req_init(&nack);
       nack.delay_seconds = 0L;
       nack.intent = LC_NACK_INTENT_DEFER;
@@ -776,6 +791,8 @@ static int run_verify(void) {
   const char *endpoints[1];
   workflow_content content;
   workflow_counter counter;
+  lc_queue_stats_req stats_req;
+  lc_queue_stats_res stats;
   vectis_error verror;
   vectis_status status;
   int rc;
@@ -818,6 +835,23 @@ static int run_verify(void) {
             content.content,
             (long)counter.counter);
     rc = LC_ERR_PROTOCOL;
+  }
+  if (rc == LC_OK) {
+    lc_queue_stats_req_init(&stats_req);
+    memset(&stats, 0, sizeof(stats));
+    stats_req.queue = config.queue;
+    if (lc_queue_stats(client, &stats_req, &stats, &error) != LC_OK) {
+      rc = LC_ERR_PROTOCOL;
+    } else {
+      if (stats.available != 0 || stats.pending_candidates != 0) {
+        fprintf(stderr,
+                "verify queue not drained: available=%d pending=%d\n",
+                stats.available,
+                stats.pending_candidates);
+        rc = LC_ERR_PROTOCOL;
+      }
+      lc_queue_stats_res_cleanup(&stats);
+    }
   }
   if (client != NULL) {
     lc_client_close(client);

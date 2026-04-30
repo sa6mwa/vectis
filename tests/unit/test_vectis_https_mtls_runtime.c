@@ -85,9 +85,13 @@ int main(void) {
   const char root_bundle_path[] = "/tmp/vectis-mtls-root-bundle.pem";
   const char root_cert_path[] = "/tmp/vectis-mtls-root-cert.pem";
   const char root_key_path[] = "/tmp/vectis-mtls-root-key.pem";
+  const char wrong_root_bundle_path[] = "/tmp/vectis-mtls-wrong-root-bundle.pem";
+  const char wrong_root_cert_path[] = "/tmp/vectis-mtls-wrong-root-cert.pem";
+  const char wrong_root_key_path[] = "/tmp/vectis-mtls-wrong-root-key.pem";
   const char server_cert_path[] = "/tmp/vectis-mtls-server-cert.pem";
   const char server_key_path[] = "/tmp/vectis-mtls-server-key.pem";
   const char client_bundle_path[] = "/tmp/vectis-mtls-client-bundle.pem";
+  const char wrong_client_bundle_path[] = "/tmp/vectis-mtls-wrong-client-bundle.pem";
 
   app = NULL;
   vectis_cert_bundle_config_init(&certs);
@@ -102,12 +106,33 @@ int main(void) {
   assert(status == VECTIS_OK);
 
   vectis_cert_bundle_config_init(&certs);
+  certs.subject.common_name = "Vectis Runtime mTLS Wrong Root CA";
+  certs.output_bundle_path = wrong_root_bundle_path;
+  certs.output_cert_path = wrong_root_cert_path;
+  certs.output_key_path = wrong_root_key_path;
+  certs.is_ca = 1;
+  certs.key_bits = 2048u;
+  certs.valid_days = 1L;
+  status = vectis_cert_generate_bundle(&certs, &error);
+  assert(status == VECTIS_OK);
+
+  vectis_cert_bundle_config_init(&certs);
   certs.subject.common_name = "127.0.0.1";
   certs.ip_addresses = "127.0.0.1";
   certs.output_cert_path = server_cert_path;
   certs.output_key_path = server_key_path;
   certs.ca_cert_path = root_cert_path;
   certs.ca_key_path = root_key_path;
+  certs.key_bits = 2048u;
+  certs.valid_days = 1L;
+  status = vectis_cert_generate_bundle(&certs, &error);
+  assert(status == VECTIS_OK);
+
+  vectis_cert_bundle_config_init(&certs);
+  certs.subject.common_name = "vectis-runtime-wrong-client";
+  certs.output_bundle_path = wrong_client_bundle_path;
+  certs.ca_cert_path = wrong_root_cert_path;
+  certs.ca_key_path = wrong_root_key_path;
   certs.key_bits = 2048u;
   certs.valid_days = 1L;
   status = vectis_cert_generate_bundle(&certs, &error);
@@ -140,6 +165,7 @@ int main(void) {
   assert(status == VECTIS_OK);
 
   assert_https_fails("https://127.0.0.1:28444/secure", root_cert_path, NULL);
+  assert_https_fails("https://127.0.0.1:28444/secure", root_cert_path, wrong_client_bundle_path);
   assert_https_ok("https://127.0.0.1:28444/secure", root_cert_path, client_bundle_path);
 
   status = vectis_stop(app, &error);
@@ -149,8 +175,12 @@ int main(void) {
   (void)remove(root_bundle_path);
   (void)remove(root_cert_path);
   (void)remove(root_key_path);
+  (void)remove(wrong_root_bundle_path);
+  (void)remove(wrong_root_cert_path);
+  (void)remove(wrong_root_key_path);
   (void)remove(server_cert_path);
   (void)remove(server_key_path);
   (void)remove(client_bundle_path);
+  (void)remove(wrong_client_bundle_path);
   return 0;
 }
