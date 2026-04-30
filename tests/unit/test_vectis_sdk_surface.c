@@ -1435,7 +1435,7 @@ static void assert_xml_surface(void) {
                                             &doc,
                                             &error);
   assert(status == VECTIS_OK);
-  assert(strcmp(doc.id, "inv-001") == 0);
+  assert(strcmp(doc.id, " inv-001 ") == 0);
   assert(strcmp(doc.amount.currency, "SEK") == 0);
   assert(doc.amount.text > 123.49 && doc.amount.text < 123.51);
   assert(doc.line.count == 2u);
@@ -1508,19 +1508,19 @@ static void assert_xml_surface(void) {
                                             &config,
                                             &blob_doc,
                                             &error);
-  assert(status == VECTIS_ERR_INVALID);
-  assert(strstr(error.message, "trim_text=0") != NULL);
-  vectis_error_clear(&error);
-  config.trim_text = 0;
+  assert(status == VECTIS_OK);
+  assert(lonejson_spooled_size(&blob_doc.body) == large_body_size);
+  assert(lonejson_spooled_spilled(&blob_doc.body));
+  lonejson_cleanup(&sample_xml_blob_doc_map, &blob_doc);
+  config.trim_text = 1;
   status = vectis_xml_parse_lonejson_source(&xml_source,
                                             &sample_xml_blob_doc_map,
                                             &config,
                                             &blob_doc,
                                             &error);
-  assert(status == VECTIS_OK);
-  assert(lonejson_spooled_size(&blob_doc.body) == large_body_size);
-  assert(lonejson_spooled_spilled(&blob_doc.body));
-  lonejson_cleanup(&sample_xml_blob_doc_map, &blob_doc);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "trim_text=0") != NULL);
+  vectis_error_clear(&error);
   free(large_xml);
 }
 

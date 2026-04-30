@@ -75,7 +75,7 @@ surface directly, without local helper layers that would hide awkward API shape.
   struct, including element text, attributes, scalar arrays, and nested object
   arrays. Repeated array elements are intentionally required to be contiguous so
   the parser never buffers and reorders XML. Use LoneJSON spooled stream fields
-  with `trim_text = 0` for large XML text/blob payloads.
+  with the default `trim_text = 0` for large XML text/blob payloads.
 
 ## `ssh/`
 

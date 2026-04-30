@@ -372,8 +372,9 @@ The current implementation provides:
   `text`. Repeated XML elements for one mapped array must be contiguous; a later
   repeat after another field is rejected instead of buffered and reordered.
   Large XML text/blob fields should be mapped with LoneJSON's spooled stream
-  fields. Those fields require `config.trim_text = 0`, because exact right-trim
-  would require buffering an unbounded trailing whitespace run.
+  fields. Those fields use the default `config.trim_text = 0`; enabling trimming
+  for spooled fields is rejected because exact right-trim would require buffering
+  an unbounded trailing whitespace run.
 - `vectis_request_body_reader()` exposes the raw `lc_source` escape hatch, while
   `vectis_request_body_materialize()` gives handlers one memory-or-file result
   without making them decide the storage class up front.
