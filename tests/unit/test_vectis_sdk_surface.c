@@ -251,6 +251,28 @@ static vectis_status response_stream_fail(const void *data,
   return VECTIS_ERR_STATE;
 }
 
+static void assert_source_equals(lc_source *source, const void *expected, size_t expected_size) {
+  lc_sink *sink;
+  lc_error error;
+  const void *bytes;
+  size_t size;
+  size_t written;
+
+  sink = NULL;
+  bytes = NULL;
+  size = 0u;
+  written = 0u;
+  lc_error_init(&error);
+  assert(lc_sink_to_memory(&sink, &error) == LC_OK);
+  assert(lc_copy(source, sink, &written, &error) == LC_OK);
+  assert(written == expected_size);
+  assert(lc_sink_memory_bytes(sink, &bytes, &size, &error) == LC_OK);
+  assert(size == expected_size);
+  assert(memcmp(bytes, expected, expected_size) == 0);
+  lc_sink_close(sink);
+  lc_error_cleanup(&error);
+}
+
 static void assert_http_surface(void) {
   vectis_http_client_config client;
   vectis_http_client *handle;
@@ -552,6 +574,8 @@ static void assert_request_response_surface(void) {
   vectis_mutable_bytes body_copy;
   vectis_body_materialize_config materialize_config;
   vectis_body_materialized materialized;
+  vectis_body_spill_config spill_config;
+  vectis_body_spill_result spill_result;
   char small_body_buffer[64];
   char tiny_body_buffer[4];
   sample_doc doc;
@@ -608,7 +632,30 @@ static void assert_request_response_surface(void) {
   assert(materialized.memory.data == small_body_buffer);
   assert(materialized.memory.size == sizeof(json) - 1u);
   assert(memcmp(materialized.memory.data, json, sizeof(json) - 1u) == 0);
+  source = NULL;
+  status = vectis_body_materialized_open_reader(&materialized, &source, &error);
+  assert(status == VECTIS_OK);
+  assert_source_equals(source, json, sizeof(json) - 1u);
+  lc_source_close(source);
   vectis_body_materialized_cleanup(&materialized);
+
+  memset(&body_copy, 0, sizeof(body_copy));
+  status = vectis_request_body_read_all(request, &body_copy, &error);
+  assert(status == VECTIS_OK);
+  assert(body_copy.size == sizeof(json) - 1u);
+  assert(memcmp(body_copy.data, json, sizeof(json) - 1u) == 0);
+  vectis_mutable_bytes_cleanup(&body_copy);
+
+  vectis_body_spill_config_init(&spill_config);
+  spill_config.memory_limit_bytes = 64u;
+  memset(&spill_result, 0, sizeof(spill_result));
+  status = vectis_request_body_spill(request, &spill_config, &spill_result, &error);
+  assert(status == VECTIS_OK);
+  assert(!spill_result.spooled_to_disk);
+  assert(spill_result.memory.size == sizeof(json) - 1u);
+  assert(memcmp(spill_result.memory.data, json, sizeof(json) - 1u) == 0);
+  vectis_body_spill_result_cleanup(&spill_result);
+
   vectis_body_materialize_config_init(&materialize_config);
   materialize_config.buffer = tiny_body_buffer;
   materialize_config.buffer_size = sizeof(tiny_body_buffer);
@@ -618,8 +665,28 @@ static void assert_request_response_surface(void) {
   assert(materialized.kind == VECTIS_BODY_MATERIALIZED_FILE);
   assert(materialized.path != NULL);
   assert(materialized.size == sizeof(json) - 1u);
+  source = NULL;
+  status = vectis_body_materialized_open_reader(&materialized, &source, &error);
+  assert(status == VECTIS_OK);
+  assert_source_equals(source, json, sizeof(json) - 1u);
+  lc_source_close(source);
   remove(materialized.path);
   vectis_body_materialized_cleanup(&materialized);
+
+  vectis_body_spill_config_init(&spill_config);
+  spill_config.memory_limit_bytes = 4u;
+  spill_config.prefix = "vectis-sdk-spill";
+  memset(&spill_result, 0, sizeof(spill_result));
+  status = vectis_request_body_spill(request, &spill_config, &spill_result, &error);
+  assert(status == VECTIS_OK);
+  assert(spill_result.spooled_to_disk);
+  assert(spill_result.path != NULL);
+  assert(spill_result.size == sizeof(json) - 1u);
+  assert(lc_source_from_file(spill_result.path, &source, NULL) == LC_OK);
+  assert_source_equals(source, json, sizeof(json) - 1u);
+  lc_source_close(source);
+  assert(remove(spill_result.path) == 0);
+  vectis_body_spill_result_cleanup(&spill_result);
 
   status = vectis_response_text(response, 201, "text/plain", text, &error);
   assert(status == VECTIS_OK);
