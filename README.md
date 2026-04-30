@@ -104,13 +104,18 @@ keepalive timeout, and maximum requests per keepalive connection. These
 defaults are intentionally part of the Vectis SDK surface so Kore integration
 cannot accidentally inherit unsafe runtime defaults later.
 
-Large request bodies are route policy, not global server policy. Normal API
-routes default to a bounded body shape suitable for JSON. File upload routes can
-opt into streaming/spool-to-disk behavior with `vectis_body_upload()` or set an
-explicit cap with `vectis_body_upload_max(bytes)`, so accepting a multi-GB
-upload does not require raising the default limit for every route.
-For the common case, `vectis_upload_route()` creates a route with that streaming
-upload policy already attached.
+Request-body size is split into two layers. `vectis_server_config` owns the
+hard Kore ingress ceiling through `max_request_body_bytes`; Vectis never raises
+that global limit implicitly from route registration. Route body policies are
+semantic/materialization limits for individual handlers and must fit under the
+server ceiling. Normal API routes default to a bounded body shape suitable for
+JSON. File upload routes can opt into streaming/spool-to-disk behavior with
+`vectis_body_upload()` or set an explicit cap with
+`vectis_body_upload_max(bytes)`. Services that accept multi-GB uploads should
+set the server ceiling deliberately, or run those upload routes in a separate
+Vectis/Kore process from small JSON APIs.
+For the common case, `vectis_upload_route()` creates a route with the default
+streaming upload policy already attached.
 
 The dependency headers and libraries are shipped intentionally. C users should
 be able to include and use Kore, `liblockdc`, `lonejson`, `libpslog`, libcurl,

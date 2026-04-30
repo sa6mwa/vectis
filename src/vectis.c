@@ -330,7 +330,6 @@ static vectis_status vectis_app_register_route_owned_userdata(vectis_app *app,
                                                               int owns_userdata,
                                                               vectis_error *error);
 static size_t vectis_app_route_count_impl(const vectis_app *app);
-static size_t vectis_app_max_streaming_body_bytes(vectis_app_impl *impl);
 static size_t vectis_app_min_streaming_memory_limit_bytes(vectis_app_impl *impl);
 static pslog_logger *vectis_app_logger_impl(vectis_app *app);
 
@@ -1737,11 +1736,10 @@ static vectis_status vectis_validate_body_policy(const vectis_body_policy *polic
     return VECTIS_ERR_INVALID;
   }
   if (server != NULL && server->max_request_body_bytes > 0u &&
-      policy->mode != VECTIS_BODY_STREAMING_UPLOAD &&
       policy->max_bytes > server->max_request_body_bytes) {
     vectis_set_error(error,
                      VECTIS_ERR_INVALID,
-                     "non-streaming body policy max_bytes exceeds server max_request_body_bytes");
+                     "body policy max_bytes exceeds server max_request_body_bytes");
     return VECTIS_ERR_INVALID;
   }
   return VECTIS_OK;
@@ -2463,7 +2461,6 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
   vectis_status status;
   vectis_kore_runtime_config kore_config;
   size_t route_count;
-  size_t max_streaming_body_bytes;
 
   if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
@@ -2531,10 +2528,6 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
     kore_config.client_ca_bundle_source = impl->client_ca_bundle_source;
     kore_config.require_client_certificate = impl->require_client_certificate;
     kore_config.server = impl->server;
-    max_streaming_body_bytes = vectis_app_max_streaming_body_bytes(impl);
-    if (max_streaming_body_bytes > kore_config.server.max_request_body_bytes) {
-      kore_config.server.max_request_body_bytes = max_streaming_body_bytes;
-    }
     kore_config.body_disk_offload_bytes = vectis_app_min_streaming_memory_limit_bytes(impl);
     kore_config.logger = impl->logger;
     status = vectis_internal_kore_start(&kore_config, error);
@@ -4214,25 +4207,6 @@ static size_t vectis_app_route_count_impl(const vectis_app *app) {
   count = impl->route_count;
   (void)pthread_mutex_unlock(&impl->mutex);
   return count;
-}
-
-static size_t vectis_app_max_streaming_body_bytes(vectis_app_impl *impl) {
-  size_t max_bytes;
-  size_t i;
-
-  if (impl == NULL) {
-    return 0u;
-  }
-  max_bytes = 0u;
-  (void)pthread_mutex_lock(&impl->mutex);
-  for (i = 0u; i < impl->route_count; ++i) {
-    if (impl->routes[i].body.mode == VECTIS_BODY_STREAMING_UPLOAD &&
-        impl->routes[i].body.max_bytes > max_bytes) {
-      max_bytes = impl->routes[i].body.max_bytes;
-    }
-  }
-  (void)pthread_mutex_unlock(&impl->mutex);
-  return max_bytes;
 }
 
 static size_t vectis_app_min_streaming_memory_limit_bytes(vectis_app_impl *impl) {

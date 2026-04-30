@@ -243,7 +243,7 @@ static void assert_kore_smoke(void) {
   config.tls.bind = "127.0.0.1";
   config.tls.port = 28080u;
   config.server.max_request_header_bytes = 1024u;
-  config.server.max_request_body_bytes = 1024u;
+  config.server.max_request_body_bytes = 4096u;
   config.server.request_header_timeout_ms = 1000L;
   config.server.request_body_idle_timeout_ms = 1000L;
   config.server.request_body_min_rate_bytes_per_sec = 1024u;
@@ -450,6 +450,13 @@ int main(void) {
   assert(route.body.mode == VECTIS_BODY_STREAMING_UPLOAD);
   assert(route.body.max_bytes == VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES);
   assert(route.body.disk_spool_disabled == 0);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "server max_request_body_bytes") != NULL);
+
+  route = vectis_upload_route_max(VECTIS_HTTP_POST, "/upload", 4096u, sample_handler, NULL);
+  assert(route.body.mode == VECTIS_BODY_STREAMING_UPLOAD);
+  assert(route.body.max_bytes == 4096u);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
 
