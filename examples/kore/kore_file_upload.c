@@ -61,6 +61,7 @@ int main(void) {
   config.app_name = "upload-api";
   config.logger = logger;
   config.tls.cert_key_bundle = vectis_source_from_path("/etc/vectis/server.pem");
+  config.server.max_request_body_bytes = VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES;
 
   app = vectis_new(&config, &error);
   if (app == NULL) {

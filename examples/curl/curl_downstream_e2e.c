@@ -293,6 +293,7 @@ static int run_server(void) {
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = env_or_default("VECTIS_KORE_BIND", "127.0.0.1");
   config.tls.port = env_port_or_default("VECTIS_KORE_PORT", 28083u);
+  config.server.max_request_body_bytes = VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES;
 
   app = vectis_new(&config, &error);
   if (app == NULL) {
