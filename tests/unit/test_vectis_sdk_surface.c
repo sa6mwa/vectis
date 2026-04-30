@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -49,6 +50,10 @@ typedef struct sample_xml_doc {
   int active;
 } sample_xml_doc;
 
+typedef struct sample_xml_blob_doc {
+  lonejson_spooled body;
+} sample_xml_blob_doc;
+
 static const lonejson_field sample_doc_fields[] = {
     LONEJSON_FIELD_STRING_FIXED_REQ(sample_doc, id, "id", LONEJSON_OVERFLOW_FAIL)};
 
@@ -84,10 +89,14 @@ static const lonejson_field sample_xml_doc_fields[] = {
     LONEJSON_FIELD_STRING_ARRAY(sample_xml_doc, tag, "tag", LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_BOOL_REQ(sample_xml_doc, active, "active")};
 
+static const lonejson_field sample_xml_blob_doc_fields[] = {
+    LONEJSON_FIELD_STRING_STREAM_REQ(sample_xml_blob_doc, body, "body")};
+
 LONEJSON_MAP_DEFINE(sample_doc_map, sample_doc, sample_doc_fields);
 LONEJSON_MAP_DEFINE(sample_error_doc_map, sample_error_doc, sample_error_doc_fields);
 LONEJSON_MAP_DEFINE(sample_dsv_doc_map, sample_dsv_doc, sample_dsv_doc_fields);
 LONEJSON_MAP_DEFINE(sample_xml_doc_map, sample_xml_doc, sample_xml_doc_fields);
+LONEJSON_MAP_DEFINE(sample_xml_blob_doc_map, sample_xml_blob_doc, sample_xml_blob_doc_fields);
 
 static vectis_status sample_json_handler(vectis_app *app,
                                          vectis_request *request,
@@ -1411,7 +1420,10 @@ static void assert_xml_surface(void) {
   vectis_error error;
   vectis_status status;
   sample_xml_doc doc;
+  sample_xml_blob_doc blob_doc;
   sample_xml_line *lines;
+  char *large_xml;
+  size_t large_body_size;
 
   config = vectis_xml_default();
   config.root_element = "invoice";
@@ -1480,6 +1492,36 @@ static void assert_xml_surface(void) {
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "unknown") != NULL);
   vectis_error_clear(&error);
+
+  memset(&blob_doc, 0, sizeof(blob_doc));
+  large_body_size = 2u * 1024u * 1024u;
+  large_xml = (char *)malloc(large_body_size + 24u);
+  assert(large_xml != NULL);
+  memcpy(large_xml, "<doc><body>", 11u);
+  memset(large_xml + 11u, 'x', large_body_size);
+  memcpy(large_xml + 11u + large_body_size, "</body></doc>", 13u);
+  config = vectis_xml_default();
+  config.root_element = "doc";
+  xml_source = vectis_source_from_memory(large_xml, large_body_size + 24u);
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_blob_doc_map,
+                                            &config,
+                                            &blob_doc,
+                                            &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "trim_text=0") != NULL);
+  vectis_error_clear(&error);
+  config.trim_text = 0;
+  status = vectis_xml_parse_lonejson_source(&xml_source,
+                                            &sample_xml_blob_doc_map,
+                                            &config,
+                                            &blob_doc,
+                                            &error);
+  assert(status == VECTIS_OK);
+  assert(lonejson_spooled_size(&blob_doc.body) == large_body_size);
+  assert(lonejson_spooled_spilled(&blob_doc.body));
+  lonejson_cleanup(&sample_xml_blob_doc_map, &blob_doc);
+  free(large_xml);
 }
 
 int main(void) {

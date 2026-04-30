@@ -5965,6 +5965,12 @@ static int vectis_xml_field_uses_string_value(const lonejson_field *field) {
          field->kind == LONEJSON_FIELD_KIND_STRING_ARRAY;
 }
 
+static int vectis_xml_field_is_spooled_value(const lonejson_field *field) {
+  return field != NULL &&
+         (field->kind == LONEJSON_FIELD_KIND_STRING_STREAM ||
+          field->kind == LONEJSON_FIELD_KIND_BASE64_STREAM);
+}
+
 static void vectis_xml_trim_span(const char **data, size_t *size) {
   const char *start;
   const char *end;
@@ -6268,10 +6274,22 @@ static vectis_status vectis_xml_stream_scalar_content(xmlTextReaderPtr reader,
   text.size = 0u;
   text.capacity = 0u;
   status = VECTIS_OK;
+  if (vectis_xml_field_is_spooled_value(field) && config->trim_text) {
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "XML spooled lonejson fields require trim_text=0 for true streaming");
+    return VECTIS_ERR_INVALID;
+  }
   if (xmlTextReaderIsEmptyElement(reader)) {
     status = vectis_xml_write_scalar_text(fd, field, "", 0u, config, error);
     vectis_string_builder_cleanup(&text);
     return status;
+  }
+  if (vectis_xml_field_is_spooled_value(field)) {
+    if (vectis_xml_write_cstr(fd, "\"", error) != VECTIS_OK) {
+      vectis_string_builder_cleanup(&text);
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
   }
   start_depth = xmlTextReaderDepth(reader);
   for (;;) {
@@ -6306,14 +6324,26 @@ static vectis_status vectis_xml_stream_scalar_content(xmlTextReaderPtr reader,
           status = VECTIS_ERR_INVALID;
           break;
         }
-        if (vectis_string_builder_append_n(&text, chunk, chunk_size, error) != VECTIS_OK) {
-          status = error != NULL ? error->code : VECTIS_ERR_NOMEM;
-          break;
+        if (vectis_xml_field_is_spooled_value(field)) {
+          text.size += chunk_size;
+          if (vectis_xml_write_json_string_chunk(fd, chunk, chunk_size, error) != VECTIS_OK) {
+            status = error != NULL ? error->code : VECTIS_ERR_STATE;
+            break;
+          }
+        } else {
+          if (vectis_string_builder_append_n(&text, chunk, chunk_size, error) != VECTIS_OK) {
+            status = error != NULL ? error->code : VECTIS_ERR_NOMEM;
+            break;
+          }
         }
       }
     }
   }
-  if (status == VECTIS_OK) {
+  if (vectis_xml_field_is_spooled_value(field)) {
+    if (status == VECTIS_OK) {
+      status = vectis_xml_write_cstr(fd, "\"", error);
+    }
+  } else if (status == VECTIS_OK) {
     status = vectis_xml_write_scalar_text(fd,
                                           field,
                                           text.data != NULL ? text.data : "",
