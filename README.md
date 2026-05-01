@@ -312,12 +312,12 @@ linked into a new runner binary.
 
 ## Dependency Baseline
 
-The current baseline is `liblockdc` 0.3.0. Its SDK archives include the C
+The current baseline is `liblockdc` 0.4.0. Its SDK archives include the C
 headers and libraries for lockdc, pslog, lonejson, curl, OpenSSL, libssh2,
-nghttp2, and zlib. The 0.3.0 release also ships the `lockdc` Lua rock. The Lua
+nghttp2, and zlib. The 0.4.0 release also ships the `lockdc` Lua rock. The Lua
 rocks for `libpslog` 0.3.1 and `lonejson` 0.4.1 are available separately, and
-their C headers/libraries are also included in the `liblockdc` 0.3.0 SDK
-archives. The 0.3.0 lockdc client API supports flexible client bundle sourcing,
+their C headers/libraries are also included in the `liblockdc` 0.4.0 SDK
+archives. The 0.4.0 lockdc client API supports flexible client bundle sourcing,
 which is the required basis for packed Vectis services with embedded lockd
 certificate/key material.
 
@@ -534,7 +534,7 @@ The current implementation provides:
 - `pslog`-backed owned or borrowed logger handling.
 - OpenSSL-backed self-signed and CA-signed certificate/key PEM bundle
   generation helpers.
-- Dependency provisioning from the `liblockdc` 0.3.0 SDK bundle plus
+- Dependency provisioning from the `liblockdc` 0.4.0 SDK bundle plus
   target-built Lua 5.5.0 and libxml2 2.15.3.
 - Compile-checked examples grouped under `examples/kore`, `examples/lockd`,
   `examples/curl`, `examples/dsv`, `examples/ssh`, `examples/certs`, and

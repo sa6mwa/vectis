@@ -14,7 +14,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 
 ## Area 2: Dependency Provisioning
 
-- [x] Provision the `liblockdc` 0.3.0 SDK archives into `.cache/deps/...`.
+- [x] Provision the `liblockdc` 0.4.0 SDK archives into `.cache/deps/...`.
 - [x] Use the `liblockdc` SDK bundle as the source for lockdc, pslog, lonejson, curl, OpenSSL, libssh2, nghttp2, and zlib headers/libraries.
 - [x] Verify downloaded `liblockdc` SDK archives with pinned SHA-256 checksums.
 - [x] Provision pinned Lua 5.5.0 from lua.org into every target dependency root for the Vectis binary runtime.
@@ -24,7 +24,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Build libxml2 as both static and shared libraries plus headers without relying on distro XML packages.
 - [x] Support host debug and Linux release matrix roots.
 - [x] Add explicit dependency manifest validation in CMake, including expected dependency versions.
-- [x] Add optional arm64 Apple Darwin dependency provisioning from the `liblockdc` 0.3.0 SDK archive.
+- [x] Add optional arm64 Apple Darwin dependency provisioning from the `liblockdc` 0.4.0 SDK archive.
 - [ ] Verify musl and cross targets against the full release matrix in CI.
 - [ ] Verify Darwin arm64 packages on real Apple Silicon hardware.
 - [x] Add release packaging checks that prove downstream C consumers can include Vectis headers and all dependency headers from the installed SDK.
@@ -166,7 +166,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 
 ## Area 8: lockd / Workflow Runtime
 
-- [ ] Extend Vectis service-friendly lockd helpers only where they reduce real C workflow friction without obscuring the public `liblockdc` 0.3.0 API.
+- [ ] Extend Vectis service-friendly lockd helpers only where they reduce real C workflow friction without obscuring the public `liblockdc` 0.4.0 API.
 - [ ] Integrate the `lockdc` Lua binding into the Vectis Lua runtime.
 - [x] Provide first-pass C helpers for lockd-backed typed state load/save/update workflows.
 - [ ] Provide additional C helpers for retry-oriented queue workflow patterns only where raw `liblockdc` remains too noisy in real examples.
@@ -264,7 +264,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Define one shared payload manifest format across ELF and Mach-O so runtime validation and Lua startup behavior stay platform-independent.
 - [x] Support optional embedding of the liblockdc client certificate bundle payload in the Linux pack format.
 - [x] Validate embedded lockd client bundle hashes before executing a packed Lua script.
-- [ ] Wire embedded lockd client bundles into the statically registered lockdc Lua module through liblockdc 0.3.0 flexible bundle sources (`lc_source` memory/callback sources) without writing private runtime files.
+- [ ] Wire embedded lockd client bundles into the statically registered lockdc Lua module through liblockdc 0.4.0 flexible bundle sources (`lc_source` memory/callback sources) without writing private runtime files.
 - [x] Validate payload bounds and hashes before executing embedded Lua.
 - [x] Preserve normal `vectis script.lua` execution when no embedded payload exists.
 - [ ] Add Darwin packing flags for automatic codesigning after the final Mach-O artifact is produced, including `--codesign <identity>`, `--ad-hoc-codesign`, `--hardened-runtime`, `--timestamp`, and `--entitlements <path>`.
