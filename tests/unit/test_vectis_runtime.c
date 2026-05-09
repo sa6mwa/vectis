@@ -10,6 +10,15 @@
 #include "vectis_internal.h"
 #include <vectis/vectis.h>
 
+typedef struct source_json_doc {
+  lonejson_source payload;
+} source_json_doc;
+
+static const lonejson_field source_json_doc_fields[] = {
+    LONEJSON_FIELD_STRING_SOURCE_REQ(source_json_doc, payload, "payload")};
+
+LONEJSON_MAP_DEFINE(source_json_doc_map, source_json_doc, source_json_doc_fields);
+
 static vectis_status sample_handler(vectis_app *app,
                                     vectis_request *request,
                                     vectis_response *response,
@@ -40,6 +49,27 @@ static vectis_status metadata_handler(vectis_app *app,
     return vectis_response_text(response, 422, "text/plain", "bad header", error);
   }
   return vectis_response_text(response, 200, "text/plain", "metadata", error);
+}
+
+static vectis_status json_source_handler(vectis_app *app,
+                                         vectis_request *request,
+                                         vectis_response *response,
+                                         void *userdata,
+                                         vectis_error *error) {
+  const char *content_length;
+  const char *transfer_encoding;
+
+  (void)app;
+  (void)userdata;
+  content_length = vectis_request_header(request, "content-length");
+  transfer_encoding = vectis_request_header(request, "transfer-encoding");
+  if (content_length == NULL || strcmp(content_length, "17") != 0) {
+    return vectis_response_text(response, 422, "text/plain", "bad content-length", error);
+  }
+  if (transfer_encoding != NULL) {
+    return vectis_response_text(response, 422, "text/plain", "unexpected transfer-encoding", error);
+  }
+  return vectis_response_text(response, 200, "text/plain", "json-source", error);
 }
 
 static vectis_status upload_handler(vectis_app *app,
@@ -391,13 +421,16 @@ static void assert_kore_smoke(void) {
   vectis_app_config config;
   vectis_http_client_config http;
   vectis_http_request request;
+  vectis_http_request json_source_request;
   vectis_http_request oversized;
   vectis_http_response response;
   vectis_http_response metadata_response;
+  vectis_http_response json_source_response;
   vectis_http_response method_response;
   vectis_http_response param_response;
   vectis_http_response oversized_response;
   vectis_http_response upload_response;
+  source_json_doc json_source_doc;
   vectis_route_config route;
   vectis_route_config limited_route;
   vectis_route_config upload_route;
@@ -406,6 +439,7 @@ static void assert_kore_smoke(void) {
   vectis_route_config second_route;
   const char *headers[] = {"x-vectis-trace: runtime-smoke"};
   const char upload_path[] = "/tmp/vectis-runtime-upload.bin";
+  const char json_source_path[] = "/tmp/vectis-runtime-json-source.txt";
   const char response_file_path[] = "/tmp/vectis-runtime-response.txt";
   const char response_file_body[] = "file-response";
   vectis_error error;
@@ -420,10 +454,13 @@ static void assert_kore_smoke(void) {
 
   memset(&response, 0, sizeof(response));
   memset(&metadata_response, 0, sizeof(metadata_response));
+  memset(&json_source_response, 0, sizeof(json_source_response));
   memset(&method_response, 0, sizeof(method_response));
   memset(&param_response, 0, sizeof(param_response));
   memset(&oversized_response, 0, sizeof(oversized_response));
   memset(&upload_response, 0, sizeof(upload_response));
+  memset(&json_source_request, 0, sizeof(json_source_request));
+  memset(&json_source_doc, 0, sizeof(json_source_doc));
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
@@ -446,6 +483,11 @@ static void assert_kore_smoke(void) {
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
   route = vectis_route(VECTIS_HTTP_GET, "/metadata", metadata_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  route = vectis_json_body_route(VECTIS_HTTP_POST, "/json-source", json_source_handler, NULL);
+  route.body.max_bytes = 4096u;
+  route.body.memory_buffer_limit_bytes = 4096u;
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
   route = vectis_route_methods(VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD |
@@ -524,6 +566,27 @@ static void assert_kore_smoke(void) {
   assert(metadata_response.body_size == 8u);
   assert(memcmp(metadata_response.body, "metadata", 8u) == 0);
   vectis_http_response_cleanup(&metadata_response);
+
+  fp = fopen(json_source_path, "wb");
+  assert(fp != NULL);
+  assert(fwrite("abc", 1u, 3u, fp) == 3u);
+  assert(fclose(fp) == 0);
+  lonejson_source_init(&json_source_doc.payload);
+  assert(lonejson_source_set_path(&json_source_doc.payload, json_source_path, NULL) ==
+         LONEJSON_STATUS_OK);
+  vectis_http_request_init(&json_source_request);
+  json_source_request.method = VECTIS_HTTP_POST;
+  json_source_request.url = "http://127.0.0.1:28080/json-source";
+  json_source_request.json_map = &source_json_doc_map;
+  json_source_request.json_value = &json_source_doc;
+  status = vectis_http_execute(&http, &json_source_request, &json_source_response, &error);
+  assert(status == VECTIS_OK);
+  assert(json_source_response.status_code == 200L);
+  assert(json_source_response.body_size == 11u);
+  assert(memcmp(json_source_response.body, "json-source", 11u) == 0);
+  vectis_http_response_cleanup(&json_source_response);
+  lonejson_source_cleanup(&json_source_doc.payload);
+  remove(json_source_path);
 
   status = vectis_http_head(&http, "http://127.0.0.1:28080/methods", &method_response, &error);
   assert(status == VECTIS_OK);

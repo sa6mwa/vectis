@@ -9788,97 +9788,49 @@ static void vectis_curl_request_body_cleanup(vectis_curl_request_body *body) {
   memset(body, 0, sizeof(*body));
 }
 
-static int vectis_lonejson_map_has_unknown_size_fields(const lonejson_map *map,
-                                                       unsigned depth) {
-  size_t i;
-
-  if (map == NULL || depth > 32u) {
-    return 1;
-  }
-  for (i = 0u; i < map->field_count; ++i) {
-    const lonejson_field *field;
-
-    field = &map->fields[i];
-    switch (field->kind) {
-    case LONEJSON_FIELD_KIND_STRING_STREAM:
-    case LONEJSON_FIELD_KIND_BASE64_STREAM:
-    case LONEJSON_FIELD_KIND_STRING_SOURCE:
-    case LONEJSON_FIELD_KIND_BASE64_SOURCE:
-    case LONEJSON_FIELD_KIND_JSON_VALUE:
-      return 1;
-    case LONEJSON_FIELD_KIND_OBJECT:
-    case LONEJSON_FIELD_KIND_OBJECT_ARRAY:
-      if (vectis_lonejson_map_has_unknown_size_fields(field->submap,
-                                                      depth + 1u)) {
-        return 1;
-      }
-      break;
-    default:
-      break;
-    }
-  }
-  return 0;
-}
-
 static vectis_status vectis_lonejson_count_upload_size(const lonejson_map *map,
                                                        const void *value,
                                                        curl_off_t *out_size,
                                                        vectis_error *error) {
-  lonejson_generator generator;
+  lonejson_error json_error;
   lonejson_status json_status;
-  unsigned char buffer[8192];
-  curl_off_t total;
-  int eof;
+  size_t measured_size;
+  size_t max_curl_size;
 
   if (out_size == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "JSON upload size output is required");
     return VECTIS_ERR_INVALID;
   }
   *out_size = (curl_off_t)-1;
-  if (vectis_lonejson_map_has_unknown_size_fields(map, 0u)) {
-    return VECTIS_OK;
-  }
-  json_status = lonejson_generator_init(&generator, map, value, NULL);
-  if (json_status != LONEJSON_STATUS_OK) {
-    vectis_set_errorf(error,
-                      VECTIS_ERR_INVALID,
-                      "failed to inspect JSON request size: %s",
-                      generator.error.message[0] != '\0' ? generator.error.message :
-                      lonejson_status_string(json_status));
-    if (error != NULL) {
-      error->source = VECTIS_ERROR_SOURCE_LONEJSON;
-      error->dependency_code = (long)json_status;
-    }
-    return VECTIS_ERR_INVALID;
-  }
-  total = 0;
-  eof = 0;
-  while (!eof) {
-    size_t out_len;
 
-    json_status = lonejson_generator_read(&generator,
-                                          buffer,
-                                          sizeof(buffer),
-                                          &out_len,
-                                          &eof);
-    if (json_status != LONEJSON_STATUS_OK) {
-      vectis_set_errorf(error,
-                        VECTIS_ERR_INVALID,
-                        "failed to inspect JSON request size: %s",
-                        generator.error.message[0] != '\0' ? generator.error.message :
-                        lonejson_status_string(json_status));
-      if (error != NULL) {
-        error->source = VECTIS_ERROR_SOURCE_LONEJSON;
-        error->dependency_code = (long)json_status;
-      }
-      lonejson_generator_cleanup(&generator);
+  lonejson_error_init(&json_error);
+  json_status = lonejson_generator_measure(map, value, &measured_size, NULL, &json_error);
+  if (json_status == LONEJSON_STATUS_OK) {
+    max_curl_size = (sizeof(curl_off_t) <= sizeof(size_t))
+                        ? (((size_t)1u << ((sizeof(curl_off_t) * CHAR_BIT) - 1u)) - 1u)
+                        : (size_t)-1;
+    if (measured_size > max_curl_size) {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "JSON request body is too large for curl");
       return VECTIS_ERR_INVALID;
     }
-    total += (curl_off_t)out_len;
+    *out_size = (curl_off_t)measured_size;
+    return VECTIS_OK;
   }
-  lonejson_generator_cleanup(&generator);
-  *out_size = total;
-  return VECTIS_OK;
+  if (json_status == LONEJSON_STATUS_INVALID_ARGUMENT &&
+      strstr(json_error.message, "cannot measure non-rewindable") != NULL) {
+    return VECTIS_OK;
+  }
+
+  vectis_set_errorf(error,
+                    VECTIS_ERR_INVALID,
+                    "failed to inspect JSON request size: %s",
+                    json_error.message[0] != '\0' ? json_error.message :
+                    lonejson_status_string(json_status));
+  if (error != NULL) {
+    error->source = VECTIS_ERROR_SOURCE_LONEJSON;
+    error->dependency_code = (long)json_status;
+  }
+  return VECTIS_ERR_INVALID;
 }
 
 static vectis_status vectis_prepare_curl_body(const vectis_http_request *request,
