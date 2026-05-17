@@ -6754,6 +6754,237 @@ vectis_status vectis_dsv_lonejson_rows_to_bytes(const lonejson_map *map,
   return VECTIS_OK;
 }
 
+typedef struct vectis_lonejson_lc_reader {
+  lc_source *source;
+  int last_error;
+} vectis_lonejson_lc_reader;
+
+typedef struct vectis_json_array_callback_state {
+  vectis_json_array_item_fn callback;
+  void *userdata;
+  vectis_error *error;
+  size_t index;
+  vectis_status status;
+} vectis_json_array_callback_state;
+
+typedef struct vectis_lonejson_lc_sink {
+  lc_sink *sink;
+  int last_error;
+} vectis_lonejson_lc_sink;
+
+static lonejson_read_result vectis_lonejson_lc_read(void *user,
+                                                    unsigned char *buffer,
+                                                    size_t capacity) {
+  vectis_lonejson_lc_reader *reader;
+  lonejson_read_result result;
+  lc_error lcerr;
+  size_t nread;
+
+  result = lonejson_default_read_result();
+  reader = (vectis_lonejson_lc_reader *)user;
+  if (reader == NULL || reader->source == NULL || buffer == NULL) {
+    result.error_code = EINVAL;
+    return result;
+  }
+  if (capacity == 0u) {
+    return result;
+  }
+  lc_error_init(&lcerr);
+  nread = reader->source->read(reader->source, buffer, capacity, &lcerr);
+  if (nread == 0u) {
+    if (lcerr.code != 0) {
+      reader->last_error = lcerr.code;
+      result.error_code = EIO;
+    } else {
+      result.eof = 1;
+    }
+  } else {
+    result.bytes_read = nread;
+  }
+  lc_error_cleanup(&lcerr);
+  return result;
+}
+
+static lonejson_status vectis_lonejson_lc_sink_write(void *user,
+                                                     const void *data,
+                                                     size_t size,
+                                                     lonejson_error *json_error) {
+  vectis_lonejson_lc_sink *writer;
+  lc_error lcerr;
+  int rc;
+
+  (void)json_error;
+  writer = (vectis_lonejson_lc_sink *)user;
+  if (writer == NULL || writer->sink == NULL || writer->sink->write == NULL ||
+      (data == NULL && size > 0u)) {
+    if (json_error != NULL) {
+      lonejson_error_init(json_error);
+      json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
+      (void)snprintf(json_error->message, sizeof(json_error->message), "%s", "JSON rewrite sink is required");
+    }
+    return LONEJSON_STATUS_CALLBACK_FAILED;
+  }
+  if (size == 0u) {
+    return LONEJSON_STATUS_OK;
+  }
+  lc_error_init(&lcerr);
+  rc = writer->sink->write(writer->sink, data, size, &lcerr);
+  if (!rc) {
+    writer->last_error = lcerr.code != LC_OK ? lcerr.code : LC_ERR_TRANSPORT;
+    if (json_error != NULL) {
+      lonejson_error_init(json_error);
+      json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
+      json_error->system_errno = writer->last_error;
+      (void)snprintf(json_error->message,
+                     sizeof(json_error->message),
+                     "%s",
+                     lcerr.message != NULL ? lcerr.message : "JSON rewrite sink write failed");
+    }
+    lc_error_cleanup(&lcerr);
+    return LONEJSON_STATUS_CALLBACK_FAILED;
+  }
+  lc_error_cleanup(&lcerr);
+  return LONEJSON_STATUS_OK;
+}
+
+static vectis_status vectis_set_lonejson_error(vectis_error *error,
+                                               lonejson_status status,
+                                               const lonejson_error *json_error,
+                                               const char *context) {
+  const char *message;
+
+  message = json_error != NULL && json_error->message[0] != '\0'
+      ? json_error->message
+      : lonejson_status_string(status);
+  vectis_set_errorf(error, VECTIS_ERR_INVALID, "%s: %s", context, message);
+  if (error != NULL) {
+    error->source = VECTIS_ERROR_SOURCE_LONEJSON;
+    error->dependency_code = (long)status;
+  }
+  return VECTIS_ERR_INVALID;
+}
+
+vectis_status vectis_json_array_each_source(const vectis_source *source,
+                                            const char *array_path,
+                                            const lonejson_map *map,
+                                            void *item,
+                                            vectis_json_array_item_fn callback,
+                                            void *userdata,
+                                            vectis_error *error) {
+  lc_source *reader_source;
+  vectis_lonejson_lc_reader reader;
+  lonejson_array_stream *stream;
+  lonejson_array_stream_result result;
+  lonejson_error json_error;
+  vectis_status callback_status;
+  int owned;
+  size_t index;
+
+  if (map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lonejson map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (item == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "JSON array item storage is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (callback == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "JSON array callback is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_dsv_open_source(source, &reader_source, &owned, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  reader.source = reader_source;
+  reader.last_error = 0;
+  stream = lonejson_array_stream_open_reader(array_path, vectis_lonejson_lc_read, &reader, NULL, &json_error);
+  if (stream == NULL) {
+    if (owned) {
+      lc_source_close(reader_source);
+    }
+    return vectis_set_lonejson_error(error, LONEJSON_STATUS_INVALID_JSON, &json_error, "failed to open JSON array stream");
+  }
+  index = 0u;
+  for (;;) {
+    lonejson_init(map, item);
+    result = lonejson_array_stream_next(stream, map, item, &json_error);
+    if (result == LONEJSON_ARRAY_STREAM_ITEM) {
+      callback_status = callback(userdata, index, item, error);
+      lonejson_cleanup(map, item);
+      if (callback_status != VECTIS_OK) {
+        lonejson_array_stream_close(stream);
+        if (owned) {
+          lc_source_close(reader_source);
+        }
+        return callback_status;
+      }
+      ++index;
+      continue;
+    }
+    lonejson_cleanup(map, item);
+    break;
+  }
+  lonejson_array_stream_close(stream);
+  if (owned) {
+    lc_source_close(reader_source);
+  }
+  if (result != LONEJSON_ARRAY_STREAM_EOF) {
+    return vectis_set_lonejson_error(error,
+                                     LONEJSON_STATUS_INVALID_JSON,
+                                     &json_error,
+                                     "failed to stream JSON array");
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_json_array_rewrite_source(const vectis_source *source,
+                                               const char *selector,
+                                               struct lc_sink *sink,
+                                               const lonejson_array_rewrite_options *options,
+                                               vectis_error *error) {
+  lc_source *reader_source;
+  vectis_lonejson_lc_reader reader;
+  vectis_lonejson_lc_sink writer;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  int owned;
+
+  if (sink == NULL || sink->write == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "JSON rewrite output sink is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (options == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "JSON rewrite options are required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_dsv_open_source(source, &reader_source, &owned, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  reader.source = reader_source;
+  reader.last_error = 0;
+  writer.sink = sink;
+  writer.last_error = 0;
+  json_status = lonejson_array_rewrite_reader(selector,
+                                              vectis_lonejson_lc_read,
+                                              &reader,
+                                              vectis_lonejson_lc_sink_write,
+                                              &writer,
+                                              options,
+                                              &json_error);
+  if (owned) {
+    lc_source_close(reader_source);
+  }
+  if (json_status != LONEJSON_STATUS_OK) {
+    return vectis_set_lonejson_error(error,
+                                     json_status,
+                                     &json_error,
+                                     "failed to rewrite JSON array");
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 void vectis_xml_config_init(vectis_xml_config *config) {
   if (config == NULL) {
     return;
@@ -8391,6 +8622,33 @@ vectis_status vectis_request_json_into(vectis_request *request,
   return VECTIS_OK;
 }
 
+vectis_status vectis_request_json_array_each(vectis_request *request,
+                                             const char *array_path,
+                                             const lonejson_map *map,
+                                             void *item,
+                                             vectis_json_array_item_fn callback,
+                                             void *userdata,
+                                             vectis_error *error) {
+  vectis_source source;
+  vectis_status status;
+
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->body_reader == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body reader is not available");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_request_reset_body_reader(request, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  source = vectis_source_from_lc(request->body_reader);
+  status = vectis_json_array_each_source(&source, array_path, map, item, callback, userdata, error);
+  (void)vectis_request_reset_body_reader(request, NULL);
+  return status;
+}
+
 vectis_http_method vectis_request_method(vectis_request *request) {
   if (request == NULL) {
     return VECTIS_HTTP_ANY;
@@ -9235,6 +9493,67 @@ static lonejson_status vectis_lonejson_file_sink(void *user,
   return LONEJSON_STATUS_OK;
 }
 
+typedef struct vectis_http_json_array_stream {
+  lonejson_array_stream *stream;
+  const lonejson_map *map;
+  void *item;
+  vectis_json_array_callback_state callback;
+  lonejson_error json_error;
+  lonejson_status json_status;
+} vectis_http_json_array_stream;
+
+static lonejson_status vectis_http_json_array_stream_item(void *user, void *dst) {
+  vectis_http_json_array_stream *stream;
+  vectis_status status;
+
+  stream = (vectis_http_json_array_stream *)user;
+  if (stream == NULL || stream->callback.callback == NULL) {
+    return LONEJSON_STATUS_CALLBACK_FAILED;
+  }
+  status = stream->callback.callback(stream->callback.userdata,
+                                     stream->callback.index,
+                                     dst,
+                                     stream->callback.error);
+  if (status != VECTIS_OK) {
+    stream->callback.status = status;
+    return LONEJSON_STATUS_CALLBACK_FAILED;
+  }
+  ++stream->callback.index;
+  return LONEJSON_STATUS_OK;
+}
+
+static vectis_status vectis_http_json_array_stream_body(const void *data,
+                                                       size_t size,
+                                                       void *userdata,
+                                                       vectis_error *error) {
+  vectis_http_json_array_stream *stream;
+
+  stream = (vectis_http_json_array_stream *)userdata;
+  if (stream == NULL || stream->stream == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "JSON array stream is not initialized");
+    return VECTIS_ERR_INVALID;
+  }
+  stream->callback.error = error;
+  stream->json_status = lonejson_array_stream_push(stream->stream,
+                                                   stream->map,
+                                                   stream->item,
+                                                   data,
+                                                   size,
+                                                   vectis_http_json_array_stream_item,
+                                                   stream,
+                                                   &stream->json_error);
+  if (stream->json_status != LONEJSON_STATUS_OK) {
+    if (stream->callback.status != VECTIS_OK) {
+      return stream->callback.status;
+    }
+    return vectis_set_lonejson_error(error,
+                                     stream->json_status,
+                                     &stream->json_error,
+                                     "failed to stream HTTP JSON array");
+  }
+  return VECTIS_OK;
+}
+
 vectis_status vectis_response_json(vectis_response *response,
                                    int status_code,
                                    const lonejson_map *map,
@@ -9443,6 +9762,7 @@ vectis_status vectis_http_client_new(const vectis_http_client_config *config,
   }
   client->execute = vectis_http_client_execute;
   client->get = vectis_http_client_get;
+  client->get_json_array = vectis_http_client_get_json_array;
   client->del = vectis_http_client_delete;
   client->head = vectis_http_client_head;
   client->options = vectis_http_client_options;
@@ -9547,6 +9867,27 @@ vectis_status vectis_http_response_json_into(const vectis_http_response *respons
   return VECTIS_OK;
 }
 
+vectis_status vectis_http_response_json_array_each(const vectis_http_response *response,
+                                                   const char *array_path,
+                                                   const lonejson_map *map,
+                                                   void *item,
+                                                   vectis_json_array_item_fn callback,
+                                                   void *userdata,
+                                                   vectis_error *error) {
+  vectis_source source;
+
+  if (response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP response is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (response->body == NULL && response->body_size > 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP response body is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  source = vectis_source_from_memory(response->body, response->body_size);
+  return vectis_json_array_each_source(&source, array_path, map, item, callback, userdata, error);
+}
+
 vectis_status vectis_http_client_execute(vectis_http_client *client,
                                          const vectis_http_request *request,
                                          vectis_http_response *response,
@@ -9568,6 +9909,30 @@ vectis_status vectis_http_client_get(vectis_http_client *client,
   request.method = VECTIS_HTTP_GET;
   request.url = url;
   return vectis_http_client_execute(client, &request, response, error);
+}
+
+vectis_status vectis_http_client_get_json_array(vectis_http_client *client,
+                                                const char *url,
+                                                const char *array_path,
+                                                const lonejson_map *map,
+                                                void *item,
+                                                vectis_json_array_item_fn callback,
+                                                void *userdata,
+                                                vectis_http_response *response,
+                                                vectis_error *error) {
+  if (client == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP client is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_http_get_json_array(&client->config,
+                                    url,
+                                    array_path,
+                                    map,
+                                    item,
+                                    callback,
+                                    userdata,
+                                    response,
+                                    error);
 }
 
 vectis_status vectis_http_client_delete(vectis_http_client *client,
@@ -10573,6 +10938,73 @@ vectis_status vectis_http_get(const vectis_http_client_config *client,
   request.method = VECTIS_HTTP_GET;
   request.url = url;
   return vectis_http_execute(client, &request, response, error);
+}
+
+vectis_status vectis_http_get_json_array(const vectis_http_client_config *client,
+                                         const char *url,
+                                         const char *array_path,
+                                         const lonejson_map *map,
+                                         void *item,
+                                         vectis_json_array_item_fn callback,
+                                         void *userdata,
+                                         vectis_http_response *response,
+                                         vectis_error *error) {
+  vectis_http_request request;
+  vectis_http_json_array_stream stream;
+  vectis_status status;
+
+  if (map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lonejson map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (item == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "JSON array item storage is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (callback == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "JSON array callback is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&stream, 0, sizeof(stream));
+  stream.map = map;
+  stream.item = item;
+  stream.callback.callback = callback;
+  stream.callback.userdata = userdata;
+  stream.callback.error = error;
+  stream.callback.status = VECTIS_OK;
+  stream.stream = lonejson_array_stream_open_push(array_path, NULL, &stream.json_error);
+  if (stream.stream == NULL) {
+    return vectis_set_lonejson_error(error,
+                                     LONEJSON_STATUS_INVALID_JSON,
+                                     &stream.json_error,
+                                     "failed to open HTTP JSON array stream");
+  }
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = url;
+  request.response_body = vectis_http_json_array_stream_body;
+  request.response_body_userdata = &stream;
+  status = vectis_http_execute(client, &request, response, error);
+  if (status == VECTIS_OK) {
+    stream.json_status = lonejson_array_stream_finish(stream.stream,
+                                                      stream.map,
+                                                      stream.item,
+                                                      vectis_http_json_array_stream_item,
+                                                      &stream,
+                                                      &stream.json_error);
+    if (stream.json_status != LONEJSON_STATUS_OK) {
+      if (stream.callback.status != VECTIS_OK) {
+        status = stream.callback.status;
+      } else {
+        status = vectis_set_lonejson_error(error,
+                                           stream.json_status,
+                                           &stream.json_error,
+                                           "failed to finish HTTP JSON array stream");
+      }
+    }
+  }
+  lonejson_array_stream_close(stream.stream);
+  return status;
 }
 
 vectis_status vectis_http_delete(const vectis_http_client_config *client,

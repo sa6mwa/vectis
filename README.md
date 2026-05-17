@@ -312,14 +312,14 @@ linked into a new runner binary.
 
 ## Dependency Baseline
 
-The current baseline is `liblockdc` 0.6.0. Its SDK archives include the C
-headers and libraries for lockdc, pslog, lonejson, curl, OpenSSL, libssh2,
-nghttp2, and zlib. The 0.6.0 release also ships the `lockdc` Lua rock. The Lua
-rocks for `libpslog` 0.3.1 and `lonejson` 0.8.0 are available separately, and
-their C headers/libraries are also included in the `liblockdc` 0.6.0 SDK
-archives. The 0.6.0 lockdc client API supports flexible client bundle sourcing,
-which is the required basis for packed Vectis services with embedded lockd
-certificate/key material.
+The current baseline is split across pinned target SDK archives: `liblockdc`
+0.9.0 provides the lockdc C headers/libraries, `c.pkt.systems` 0.1.0 provides
+curl, OpenSSL, libssh2, nghttp2, and zlib, `lonejson` 0.16.0 provides the C
+JSON headers/libraries, and `libpslog` 0.4.1 provides the C logging
+headers/libraries. The 0.9.0 `liblockdc` release also ships the `lockdc` Lua
+rock, and the LoneJSON/libpslog releases ship their Lua rocks separately. This
+split is deliberate: Vectis provisions each provider as its own binary SDK
+archive instead of relying on liblockdc as an umbrella dependency bundle.
 
 Vectis owns the Lua dependency for the `vectis` executable. The dependency
 provisioning step downloads pinned Lua 5.5.0 from lua.org, verifies its
@@ -533,11 +533,15 @@ The current implementation provides:
   consume without writing private material to disk.
 - Thread-safe app object lifecycle and route registry management.
 - `lonejson`-backed JSON validation helpers.
+- Selected-array JSON streaming helpers for Vectis sources, request bodies,
+  buffered HTTP responses, and streaming HTTP GET responses, plus source-to-sink
+  selected-array rewrite helpers backed by LoneJSON.
 - `pslog`-backed owned or borrowed logger handling.
 - OpenSSL-backed self-signed and CA-signed certificate/key PEM bundle
   generation helpers.
-- Dependency provisioning from the `liblockdc` 0.6.0 SDK bundle plus
-  target-built Lua 5.5.0 and libxml2 2.15.3.
+- Dependency provisioning from split `liblockdc` 0.9.0, `c.pkt.systems` 0.1.0,
+  `lonejson` 0.16.0, and `libpslog` 0.4.1 SDK bundles plus target-built Lua
+  5.5.0 and libxml2 2.15.3.
 - Compile-checked examples grouped under `examples/kore`, `examples/lockd`,
   `examples/curl`, `examples/dsv`, `examples/ssh`, `examples/certs`, and
   `examples/raw` that exercise the intended C SDK DX without local helper

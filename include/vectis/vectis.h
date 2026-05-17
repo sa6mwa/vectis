@@ -337,6 +337,19 @@ typedef vectis_status (*vectis_dsv_lonejson_row_fn)(void *userdata,
                                                     size_t row_number,
                                                     void *row,
                                                     vectis_error *error);
+/**
+ * Callback invoked for each item decoded from a selected JSON array.
+ *
+ * `index` is zero-based within the selected array. `item` points at caller-owned
+ * storage initialized and populated through the supplied `lonejson_map`; the
+ * pointer is valid only for the duration of the callback and is reused for the
+ * next element. Return `VECTIS_OK` to continue or any other `vectis_status` to
+ * stop streaming and propagate that status to the caller.
+ */
+typedef vectis_status (*vectis_json_array_item_fn)(void *userdata,
+                                                   size_t index,
+                                                   void *item,
+                                                   vectis_error *error);
 
 typedef struct vectis_json_route_config {
   vectis_http_method method;
@@ -679,6 +692,18 @@ struct vectis_http_client {
                        const char *url,
                        vectis_http_response *response,
                        vectis_error *error);
+  /* Stream a selected JSON array from an HTTP GET response body. The response
+   * body is consumed incrementally and is not materialized in `response->body`.
+   */
+  vectis_status (*get_json_array)(vectis_http_client *self,
+                                  const char *url,
+                                  const char *array_path,
+                                  const lonejson_map *map,
+                                  void *item,
+                                  vectis_json_array_item_fn callback,
+                                  void *userdata,
+                                  vectis_http_response *response,
+                                  vectis_error *error);
   /* HTTP DELETE. Named `del` so vectis.h remains usable from C++ translation
    * units where `delete` is a keyword.
    */
@@ -1034,6 +1059,34 @@ vectis_status vectis_dsv_lonejson_rows_to_bytes(const lonejson_map *map,
                                                 size_t row_stride,
                                                 vectis_mutable_bytes *out,
                                                 vectis_error *error);
+/**
+ * Stream a selected JSON array from a Vectis source.
+ *
+ * `array_path` is a LoneJSON selected-array path; pass `NULL` or an empty string
+ * for a root JSON array. Each element is decoded into `item` using `map`, passed
+ * to `callback`, then cleaned up before the next element is read. The full JSON
+ * document and selected array are not materialized.
+ */
+vectis_status vectis_json_array_each_source(const vectis_source *source,
+                                            const char *array_path,
+                                            const lonejson_map *map,
+                                            void *item,
+                                            vectis_json_array_item_fn callback,
+                                            void *userdata,
+                                            vectis_error *error);
+/**
+ * Rewrite a selected JSON array from a Vectis source into an `lc_sink`.
+ *
+ * The source and sink are processed incrementally through LoneJSON's array
+ * rewriter. `selector` follows LoneJSON's selected-array syntax; pass `NULL` or
+ * an empty string for a root JSON array. `options` owns the item map, item
+ * storage, and rewrite callback policy.
+ */
+vectis_status vectis_json_array_rewrite_source(const vectis_source *source,
+                                               const char *selector,
+                                               struct lc_sink *sink,
+                                               const lonejson_array_rewrite_options *options,
+                                               vectis_error *error);
 void vectis_xml_config_init(vectis_xml_config *config);
 vectis_xml_config vectis_xml_default(void);
 vectis_status vectis_xml_parse_lonejson(struct lc_source *source,
@@ -1079,6 +1132,20 @@ vectis_status vectis_request_json_into(vectis_request *request,
                                        const lonejson_map *map,
                                        void *out,
                                        vectis_error *error);
+/**
+ * Stream a selected JSON array from a request body.
+ *
+ * The request body reader is reset before parsing. This is a true streaming
+ * parse of the request body; use `vectis_request_json_into()` only when the
+ * complete JSON object is the desired API contract.
+ */
+vectis_status vectis_request_json_array_each(vectis_request *request,
+                                             const char *array_path,
+                                             const lonejson_map *map,
+                                             void *item,
+                                             vectis_json_array_item_fn callback,
+                                             void *userdata,
+                                             vectis_error *error);
 vectis_http_method vectis_request_method(vectis_request *request);
 const char *vectis_request_path(vectis_request *request);
 const char *vectis_request_path_param(vectis_request *request,
@@ -1184,6 +1251,20 @@ vectis_status vectis_http_response_json_into(const vectis_http_response *respons
                                              const lonejson_map *map,
                                              void *out,
                                              vectis_error *error);
+/**
+ * Iterate a selected JSON array from an already-buffered HTTP response.
+ *
+ * This helper streams the selected array out of `response->body`, but the HTTP
+ * transport has already materialized the response. Use `vectis_http_get_json_array()`
+ * when the body itself must be consumed incrementally from the network.
+ */
+vectis_status vectis_http_response_json_array_each(const vectis_http_response *response,
+                                                   const char *array_path,
+                                                   const lonejson_map *map,
+                                                   void *item,
+                                                   vectis_json_array_item_fn callback,
+                                                   void *userdata,
+                                                   vectis_error *error);
 vectis_status vectis_http_client_execute(vectis_http_client *client,
                                          const vectis_http_request *request,
                                          vectis_http_response *response,
@@ -1192,6 +1273,21 @@ vectis_status vectis_http_client_get(vectis_http_client *client,
                                      const char *url,
                                      vectis_http_response *response,
                                      vectis_error *error);
+/**
+ * Stream a selected JSON array from an HTTP GET response through a client handle.
+ *
+ * The response metadata is still populated, but the body bytes are consumed by
+ * LoneJSON and are not copied into `response->body`.
+ */
+vectis_status vectis_http_client_get_json_array(vectis_http_client *client,
+                                                const char *url,
+                                                const char *array_path,
+                                                const lonejson_map *map,
+                                                void *item,
+                                                vectis_json_array_item_fn callback,
+                                                void *userdata,
+                                                vectis_http_response *response,
+                                                vectis_error *error);
 vectis_status vectis_http_client_delete(vectis_http_client *client,
                                         const char *url,
                                         vectis_http_response *response,
@@ -1242,6 +1338,22 @@ vectis_status vectis_http_get(const vectis_http_client_config *client,
                               const char *url,
                               vectis_http_response *response,
                               vectis_error *error);
+/**
+ * Stream a selected JSON array from an HTTP GET response.
+ *
+ * This is the transport-level streaming variant for large JSON array payloads.
+ * `response->body` remains `NULL`; callers observe elements through `callback`
+ * as they arrive and can abort by returning a non-OK status.
+ */
+vectis_status vectis_http_get_json_array(const vectis_http_client_config *client,
+                                         const char *url,
+                                         const char *array_path,
+                                         const lonejson_map *map,
+                                         void *item,
+                                         vectis_json_array_item_fn callback,
+                                         void *userdata,
+                                         vectis_http_response *response,
+                                         vectis_error *error);
 vectis_status vectis_http_delete(const vectis_http_client_config *client,
                                  const char *url,
                                  vectis_http_response *response,

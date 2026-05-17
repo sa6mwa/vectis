@@ -31,7 +31,10 @@ set(VECTIS_TARGET_OS "${CMAKE_SYSTEM_NAME}"
 set(VECTIS_TARGET_LIBC ""
     CACHE STRING "Release target libc when applicable.")
 
-set(VECTIS_EXPECTED_LOCKDC_VERSION "0.6.0")
+set(VECTIS_EXPECTED_SYSTEM_VERSION "0.1.0")
+set(VECTIS_EXPECTED_LOCKDC_VERSION "0.9.0")
+set(VECTIS_EXPECTED_LONEJSON_VERSION "0.16.0")
+set(VECTIS_EXPECTED_PSLOG_VERSION "0.4.1")
 set(VECTIS_EXPECTED_LUA_VERSION "5.5.0")
 set(VECTIS_EXPECTED_LUA_SHA256 "57ccc32bbbd005cab75bcc52444052535af691789dba2b9016d5c50640d68b3d")
 set(VECTIS_EXPECTED_LIBPID0_VERSION "0.3.0")
@@ -83,7 +86,10 @@ endfunction()
 set(vectis_lockdc_config_dir "${VECTIS_EXTERNAL_ROOT}/lib/cmake/lockdc")
 set(vectis_dependency_manifest "${VECTIS_EXTERNAL_ROOT}/manifest.txt")
 if(EXISTS "${vectis_dependency_manifest}")
+  vectis_require_manifest(system_version "${VECTIS_EXPECTED_SYSTEM_VERSION}")
   vectis_require_manifest(liblockdc_version "${VECTIS_EXPECTED_LOCKDC_VERSION}")
+  vectis_require_manifest(lonejson_version "${VECTIS_EXPECTED_LONEJSON_VERSION}")
+  vectis_require_manifest(pslog_version "${VECTIS_EXPECTED_PSLOG_VERSION}")
   vectis_require_manifest(lua_version "${VECTIS_EXPECTED_LUA_VERSION}")
   vectis_require_manifest(lua_sha256 "${VECTIS_EXPECTED_LUA_SHA256}")
   vectis_require_manifest(libpid0_version "${VECTIS_EXPECTED_LIBPID0_VERSION}")
@@ -96,14 +102,43 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/curl/curl.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/openssl/ssl.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/libssh2.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/nghttp2/nghttp2.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/zlib.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/libpid0-${VECTIS_EXPECTED_LIBPID0_VERSION}.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/lua.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/libxml2/libxml/parser.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblockdc.a")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblonejson.a")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libpslog.a")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcurl.a")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssh2.a")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssl.a")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcrypto.a")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libnghttp2.a")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libz.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblua.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libxml2.a")
   if(APPLE)
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblockdc.dylib")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblonejson.dylib")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libpslog.dylib")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcurl.dylib")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssh2.dylib")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssl.dylib")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcrypto.dylib")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libnghttp2.dylib")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libz.dylib")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libxml2.dylib")
   else()
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblockdc.so")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblonejson.so")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libpslog.so")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcurl.so")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssh2.so")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssl.so")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcrypto.so")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libnghttp2.so")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libz.so")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libxml2.so")
   endif()
 else()
@@ -220,8 +255,19 @@ if(EXISTS "${vectis_lockdc_shared_library}")
 elseif(DEFINED vectis_lockdc_shared_target)
   set(vectis_lockdc_shared_link "${vectis_lockdc_shared_target}")
 endif()
+set(vectis_static_dependency_links
+  "${VECTIS_EXTERNAL_ROOT}/lib/libpslog.a"
+  "${VECTIS_EXTERNAL_ROOT}/lib/libcurl.a"
+  "${VECTIS_EXTERNAL_ROOT}/lib/libssh2.a"
+  "${VECTIS_EXTERNAL_ROOT}/lib/libssl.a"
+  "${VECTIS_EXTERNAL_ROOT}/lib/libcrypto.a"
+  "${VECTIS_EXTERNAL_ROOT}/lib/liblonejson.a"
+  "${VECTIS_EXTERNAL_ROOT}/lib/libxml2.a"
+  "${VECTIS_EXTERNAL_ROOT}/lib/libnghttp2.a"
+  "${VECTIS_EXTERNAL_ROOT}/lib/libz.a"
+)
 set(vectis_shared_dependency_links)
-foreach(vectis_shared_dep IN ITEMS pslog curl ssh2 ssl crypto lonejson xml2)
+foreach(vectis_shared_dep IN ITEMS pslog curl ssh2 ssl crypto lonejson xml2 nghttp2 z)
   if(APPLE)
     set(vectis_shared_dep_library "${VECTIS_EXTERNAL_ROOT}/lib/lib${vectis_shared_dep}.dylib")
   else()
@@ -369,12 +415,16 @@ if(VECTIS_BUILD_STATIC)
     PRIVATE
       ${vectis_private_includes}
   )
+  target_link_directories(vectis_static
+    PUBLIC
+      "${VECTIS_EXTERNAL_ROOT}/lib"
+  )
   target_link_libraries(vectis_static
     PUBLIC
       Threads::Threads
       vectis_external_headers
       ${vectis_lockdc_static_target}
-      "${vectis_libxml2_static_library}"
+      ${vectis_static_dependency_links}
       ${CMAKE_DL_LIBS}
   )
   if(VECTIS_WITH_KORE_RUNTIME AND UNIX AND NOT APPLE)
@@ -395,6 +445,10 @@ if(VECTIS_BUILD_SHARED)
       "${CMAKE_SOURCE_DIR}/include"
     PRIVATE
       ${vectis_private_includes}
+  )
+  target_link_directories(vectis_shared
+    PUBLIC
+      "${VECTIS_EXTERNAL_ROOT}/lib"
   )
   target_link_libraries(vectis_shared
     PUBLIC

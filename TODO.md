@@ -14,9 +14,9 @@ moving toward, not just the next patch. Keep items observable and testable.
 
 ## Area 2: Dependency Provisioning
 
-- [x] Provision the `liblockdc` 0.6.0 SDK archives into `.cache/deps/...`.
-- [x] Use the `liblockdc` SDK bundle as the source for lockdc, pslog, lonejson, curl, OpenSSL, libssh2, nghttp2, and zlib headers/libraries.
-- [x] Verify downloaded `liblockdc` SDK archives with pinned SHA-256 checksums.
+- [x] Provision split `liblockdc` 0.9.0, `c.pkt.systems` 0.1.0, `lonejson` 0.16.0, and `libpslog` 0.4.1 SDK archives into `.cache/deps/...`.
+- [x] Use `liblockdc` only as the source for lockdc, `c.pkt.systems` as the source for curl/OpenSSL/libssh2/nghttp2/zlib, and standalone LoneJSON/libpslog bundles for their C headers/libraries.
+- [x] Verify downloaded SDK archives with pinned SHA-256 checksums.
 - [x] Provision pinned Lua 5.5.0 from lua.org into every target dependency root for the Vectis binary runtime.
 - [x] Build Lua as a static `liblua.a` plus headers for host, Linux cross, musl, and optional Darwin target roots.
 - [x] Add dependency manifest validation in CMake for the pinned Lua version and checksum.
@@ -24,7 +24,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Build libxml2 as both static and shared libraries plus headers without relying on distro XML packages.
 - [x] Support host debug and Linux release matrix roots.
 - [x] Add explicit dependency manifest validation in CMake, including expected dependency versions.
-- [x] Add optional arm64 Apple Darwin dependency provisioning from the `liblockdc` 0.6.0 SDK archive.
+- [x] Add optional arm64 Apple Darwin dependency provisioning from the split SDK archive set.
 - [ ] Verify musl and cross targets against the full release matrix in CI.
 - [ ] Verify Darwin arm64 packages on real Apple Silicon hardware.
 - [x] Add release packaging checks that prove downstream C consumers can include Vectis headers and all dependency headers from the installed SDK.
@@ -160,6 +160,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Make `lonejson` the backing implementation for Vectis request parsing, response serialization, lockd document helpers, and JSON HTTP client helpers.
 - [x] Stream mapped JSON request bodies into curl through LoneJSON's generator, using `lonejson_generator_measure()` for replayable mapped structs when `Content-Length` is required and chunked transfer for non-rewindable values.
 - [ ] Evaluate LoneJSON 0.8 object-framed stream, `lonejson_json_value`, SSE, and multipart parsers for Vectis-owned helpers where they improve API, workflow, or file-ingestion DX without hiding buffering semantics.
+- [x] Integrate LoneJSON selected-array streaming and selected-array rewrite helpers without materializing complete documents or selected arrays.
 - [ ] Add higher-level JSON REST helpers for request validation, response serialization, and downstream API calls.
 - [x] Add first-pass typed JSON route auto-wiring backed by lonejson mapped structs.
 - [x] Add multi-output typed JSON routes where handlers choose status-specific response maps at runtime.
@@ -167,7 +168,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 
 ## Area 8: lockd / Workflow Runtime
 
-- [ ] Extend Vectis service-friendly lockd helpers only where they reduce real C workflow friction without obscuring the public `liblockdc` 0.6.0 API.
+- [ ] Extend Vectis service-friendly lockd helpers only where they reduce real C workflow friction without obscuring the public `liblockdc` 0.9.0 API.
 - [ ] Integrate the `lockdc` Lua binding into the Vectis Lua runtime.
 - [x] Provide first-pass C helpers for lockd-backed typed state load/save/update workflows.
 - [ ] Provide additional C helpers for retry-oriented queue workflow patterns only where raw `liblockdc` remains too noisy in real examples.
@@ -265,7 +266,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Define one shared payload manifest format across ELF and Mach-O so runtime validation and Lua startup behavior stay platform-independent.
 - [x] Support optional embedding of the liblockdc client certificate bundle payload in the Linux pack format.
 - [x] Validate embedded lockd client bundle hashes before executing a packed Lua script.
-- [ ] Wire embedded lockd client bundles into the statically registered lockdc Lua module through liblockdc 0.6.0 flexible bundle sources (`lc_source` memory/callback sources) without writing private runtime files.
+- [ ] Wire embedded lockd client bundles into the statically registered lockdc Lua module through liblockdc 0.9.0 flexible bundle sources (`lc_source` memory/callback sources) without writing private runtime files.
 - [x] Validate payload bounds and hashes before executing embedded Lua.
 - [x] Preserve normal `vectis script.lua` execution when no embedded payload exists.
 - [ ] Add Darwin packing flags for automatic codesigning after the final Mach-O artifact is produced, including `--codesign <identity>`, `--ad-hoc-codesign`, `--hardened-runtime`, `--timestamp`, and `--entitlements <path>`.

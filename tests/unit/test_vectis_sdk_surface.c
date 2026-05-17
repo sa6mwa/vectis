@@ -192,6 +192,103 @@ static vectis_status sample_dsv_row(void *userdata,
   return VECTIS_OK;
 }
 
+static vectis_status sample_json_array_item(void *userdata,
+                                            size_t index,
+                                            void *item,
+                                            vectis_error *error) {
+  sample_dsv_rows *rows;
+  sample_dsv_doc *doc;
+
+  (void)error;
+  rows = (sample_dsv_rows *)userdata;
+  doc = (sample_dsv_doc *)item;
+  assert(index == rows->count);
+  rows->count++;
+  rows->total += doc->count;
+  if (doc->active) {
+    rows->active_count++;
+  }
+  (void)snprintf(rows->last_id, sizeof(rows->last_id), "%s", doc->id);
+  return VECTIS_OK;
+}
+
+static vectis_status sample_json_array_fail_on_second(void *userdata,
+                                                      size_t index,
+                                                      void *item,
+                                                      vectis_error *error) {
+  sample_dsv_rows *rows;
+  sample_dsv_doc *doc;
+
+  rows = (sample_dsv_rows *)userdata;
+  doc = (sample_dsv_doc *)item;
+  rows->count++;
+  rows->total += doc->count;
+  if (index == 1u) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "array callback stopped");
+    return VECTIS_ERR_STATE;
+  }
+  return VECTIS_OK;
+}
+
+static lonejson_status sample_json_array_rewrite_item(
+    void *user,
+    const lonejson_array_rewrite_context *context,
+    void *item,
+    lonejson_array_rewrite_result *result,
+    lonejson_error *error) {
+  sample_dsv_rows *rows;
+  sample_dsv_doc *doc;
+
+  (void)context;
+  (void)error;
+  rows = (sample_dsv_rows *)user;
+  doc = (sample_dsv_doc *)item;
+  rows->count++;
+  rows->total += doc->count;
+  if (doc->active) {
+    rows->active_count++;
+    result->action = LONEJSON_ARRAY_REWRITE_KEEP;
+  } else {
+    result->action = LONEJSON_ARRAY_REWRITE_DROP;
+  }
+  return LONEJSON_STATUS_OK;
+}
+
+static lonejson_status sample_json_array_rewrite_fail(
+    void *user,
+    const lonejson_array_rewrite_context *context,
+    void *item,
+    lonejson_array_rewrite_result *result,
+    lonejson_error *error) {
+  (void)user;
+  (void)context;
+  (void)item;
+  (void)result;
+  if (error != NULL) {
+    lonejson_error_init(error);
+    error->code = LONEJSON_STATUS_CALLBACK_FAILED;
+    (void)snprintf(error->message, sizeof(error->message), "%s", "rewrite callback stopped");
+  }
+  return LONEJSON_STATUS_CALLBACK_FAILED;
+}
+
+static int failing_sink_write(lc_sink *self, const void *bytes, size_t count, lc_error *error) {
+  char *message;
+
+  (void)self;
+  (void)bytes;
+  (void)count;
+  if (error != NULL) {
+    error->code = LC_ERR_TRANSPORT;
+    message = (char *)malloc(sizeof("intentional sink failure"));
+    if (message != NULL) {
+      memcpy(message, "intentional sink failure", sizeof("intentional sink failure"));
+    }
+    error->message = message;
+  }
+  return 0;
+}
+
 static vectis_status curl_config_ok(CURL *curl, void *userdata, vectis_error *error) {
   int *count;
 
@@ -289,9 +386,15 @@ static void assert_http_surface(void) {
   const char helper_upload_path[] = "/tmp/vectis_http_upload_helper.txt";
   const char missing_upload_path[] = "/tmp/vectis_http_missing_upload.txt";
   const char json_path[] = "/tmp/vectis_http_doc.json";
+  const char json_array_path[] = "/tmp/vectis_http_array.json";
+  const char bad_json_array_path[] = "/tmp/vectis_http_bad_array.json";
   const char source_body[] = "vectis file body";
   const char upload_body[] = "upload body";
   const char json_body[] = "{\"id\":\"downstream\"}";
+  const char json_array_body[] = "{\"items\":[{\"id\":\"one\",\"count\":2,\"active\":true},{\"id\":\"two\",\"count\":5,\"active\":false}]}";
+  const char bad_json_array_body[] = "{\"items\":[{\"id\":\"broken\",\"count\":2,\"active\":true}";
+  sample_dsv_doc array_item;
+  sample_dsv_rows array_rows;
   int curl_config_count;
   int retry_config_count;
 
@@ -334,6 +437,16 @@ static void assert_http_surface(void) {
   assert(fp != NULL);
   assert(fwrite(json_body, 1u, sizeof(json_body) - 1u, fp) == sizeof(json_body) - 1u);
   assert(fclose(fp) == 0);
+  fp = fopen(json_array_path, "wb");
+  assert(fp != NULL);
+  assert(fwrite(json_array_body, 1u, sizeof(json_array_body) - 1u, fp) ==
+         sizeof(json_array_body) - 1u);
+  assert(fclose(fp) == 0);
+  fp = fopen(bad_json_array_path, "wb");
+  assert(fp != NULL);
+  assert(fwrite(bad_json_array_body, 1u, sizeof(bad_json_array_body) - 1u, fp) ==
+         sizeof(bad_json_array_body) - 1u);
+  assert(fclose(fp) == 0);
 
   client.base_url = "file:///tmp";
   status = vectis_http_get(&client, "/vectis_http_source.txt", &response, &error);
@@ -351,11 +464,30 @@ static void assert_http_surface(void) {
   assert(strcmp(doc.id, "downstream") == 0);
   vectis_http_response_cleanup(&response);
 
+  status = vectis_http_get(&client, "/vectis_http_array.json", &response, &error);
+  assert(status == VECTIS_OK);
+  memset(&array_rows, 0, sizeof(array_rows));
+  memset(&array_item, 0, sizeof(array_item));
+  status = vectis_http_response_json_array_each(&response,
+                                                "items",
+                                                &sample_dsv_doc_map,
+                                                &array_item,
+                                                sample_json_array_item,
+                                                &array_rows,
+                                                &error);
+  assert(status == VECTIS_OK);
+  assert(array_rows.count == 2u);
+  assert(array_rows.total == 7);
+  assert(array_rows.active_count == 1);
+  assert(strcmp(array_rows.last_id, "two") == 0);
+  vectis_http_response_cleanup(&response);
+
   status = vectis_http_client_new(&client, &handle, &error);
   assert(status == VECTIS_OK);
   assert(handle != NULL);
   assert(handle->execute != NULL);
   assert(handle->get != NULL);
+  assert(handle->get_json_array != NULL);
   assert(handle->del != NULL);
   assert(handle->head != NULL);
   assert(handle->options != NULL);
@@ -370,8 +502,63 @@ static void assert_http_surface(void) {
   request.url = "/vectis_http_source.txt";
   status = handle->execute(handle, &request, &response, &error);
   assert(status == VECTIS_OK);
-  assert(curl_config_count == 3);
+  assert(curl_config_count == 4);
   assert(response.body_size == sizeof(source_body) - 1u);
+  vectis_http_response_cleanup(&response);
+
+  memset(&array_rows, 0, sizeof(array_rows));
+  memset(&array_item, 0, sizeof(array_item));
+  status = handle->get_json_array(handle,
+                                  "/vectis_http_array.json",
+                                  "items",
+                                  &sample_dsv_doc_map,
+                                  &array_item,
+                                  sample_json_array_item,
+                                  &array_rows,
+                                  &response,
+                                  &error);
+  assert(status == VECTIS_OK);
+  assert(response.body == NULL);
+  assert(response.body_size == 0u);
+  assert(array_rows.count == 2u);
+  assert(array_rows.total == 7);
+  assert(array_rows.active_count == 1);
+  vectis_http_response_cleanup(&response);
+
+  memset(&array_rows, 0, sizeof(array_rows));
+  memset(&array_item, 0, sizeof(array_item));
+  status = handle->get_json_array(handle,
+                                  "/vectis_http_array.json",
+                                  "items",
+                                  &sample_dsv_doc_map,
+                                  &array_item,
+                                  sample_json_array_fail_on_second,
+                                  &array_rows,
+                                  &response,
+                                  &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "array callback stopped") != NULL);
+  assert(response.body == NULL);
+  assert(response.body_size == 0u);
+  assert(array_rows.count == 2u);
+  vectis_http_response_cleanup(&response);
+
+  memset(&array_rows, 0, sizeof(array_rows));
+  memset(&array_item, 0, sizeof(array_item));
+  status = handle->get_json_array(handle,
+                                  "/vectis_http_bad_array.json",
+                                  "items",
+                                  &sample_dsv_doc_map,
+                                  &array_item,
+                                  sample_json_array_item,
+                                  &array_rows,
+                                  &response,
+                                  &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(error.source == VECTIS_ERROR_SOURCE_LONEJSON);
+  assert(response.body == NULL);
+  assert(response.body_size == 0u);
+  assert(array_rows.count == 0u);
   vectis_http_response_cleanup(&response);
 
   vectis_http_request_init(&request);
@@ -507,6 +694,8 @@ static void assert_http_surface(void) {
   (void)remove(helper_upload_path);
   (void)remove(missing_upload_path);
   (void)remove(json_path);
+  (void)remove(json_array_path);
+  (void)remove(bad_json_array_path);
   vectis_http_response_cleanup(&response);
 }
 
@@ -1326,6 +1515,13 @@ static void assert_dsv_surface(void) {
   vectis_source dsv_source;
   vectis_mutable_bytes json;
   sample_dsv_rows rows;
+  sample_dsv_doc item;
+  lonejson_array_rewrite_options rewrite_options;
+  vectis_request *request;
+  lc_sink *sink;
+  lc_sink failing_sink;
+  const void *sink_bytes;
+  size_t sink_size;
   lc_source *source;
   FILE *fp;
   char spill_bytes[256];
@@ -1415,6 +1611,166 @@ static void assert_dsv_surface(void) {
   assert(strstr((const char *)json.data, "\"id\":\"alpha\"") != NULL);
   assert(strstr((const char *)json.data, "\"count\":3") != NULL);
   assert(strstr((const char *)json.data, "\"active\":false") != NULL);
+
+  dsv_source = vectis_source_from_memory(json.data, json.size);
+  memset(&rows, 0, sizeof(rows));
+  memset(&item, 0, sizeof(item));
+  status = vectis_json_array_each_source(&dsv_source,
+                                         "",
+                                         &sample_dsv_doc_map,
+                                         &item,
+                                         sample_json_array_item,
+                                         &rows,
+                                         &error);
+  assert(status == VECTIS_OK);
+  assert(rows.count == 2u);
+  assert(rows.total == 5);
+  assert(rows.active_count == 1);
+  assert(strcmp(rows.last_id, "beta,quoted") == 0);
+
+  request = vectis_internal_request_new(&error);
+  assert(request != NULL);
+  status = vectis_internal_request_set_body(request, json.data, json.size, &error);
+  assert(status == VECTIS_OK);
+  memset(&rows, 0, sizeof(rows));
+  memset(&item, 0, sizeof(item));
+  status = vectis_request_json_array_each(request,
+                                          "",
+                                          &sample_dsv_doc_map,
+                                          &item,
+                                          sample_json_array_item,
+                                          &rows,
+                                          &error);
+  assert(status == VECTIS_OK);
+  assert(rows.count == 2u);
+  assert(rows.total == 5);
+  vectis_internal_request_free(request);
+
+  dsv_source = vectis_source_from_memory(json.data, json.size);
+  memset(&item, 0, sizeof(item));
+  status = vectis_json_array_each_source(&dsv_source,
+                                         "",
+                                         NULL,
+                                         &item,
+                                         sample_json_array_item,
+                                         &rows,
+                                         &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "map") != NULL);
+
+  dsv_source = vectis_source_from_memory(json.data, json.size);
+  status = vectis_json_array_each_source(&dsv_source,
+                                         "",
+                                         &sample_dsv_doc_map,
+                                         NULL,
+                                         sample_json_array_item,
+                                         &rows,
+                                         &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "storage") != NULL);
+
+  dsv_source = vectis_source_from_memory(json.data, json.size);
+  memset(&item, 0, sizeof(item));
+  status = vectis_json_array_each_source(&dsv_source,
+                                         "",
+                                         &sample_dsv_doc_map,
+                                         &item,
+                                         NULL,
+                                         &rows,
+                                         &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "callback") != NULL);
+
+  dsv_source = vectis_source_from_memory(json.data, json.size);
+  memset(&rows, 0, sizeof(rows));
+  memset(&item, 0, sizeof(item));
+  status = vectis_json_array_each_source(&dsv_source,
+                                         "",
+                                         &sample_dsv_doc_map,
+                                         &item,
+                                         sample_json_array_fail_on_second,
+                                         &rows,
+                                         &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "array callback stopped") != NULL);
+  assert(rows.count == 2u);
+
+  dsv_source = vectis_source_from_memory("{\"items\":[{\"id\":\"broken\",\"count\":2,\"active\":true}",
+                                         sizeof("{\"items\":[{\"id\":\"broken\",\"count\":2,\"active\":true}") - 1u);
+  memset(&rows, 0, sizeof(rows));
+  memset(&item, 0, sizeof(item));
+  status = vectis_json_array_each_source(&dsv_source,
+                                         "items",
+                                         &sample_dsv_doc_map,
+                                         &item,
+                                         sample_json_array_item,
+                                         &rows,
+                                         &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(error.source == VECTIS_ERROR_SOURCE_LONEJSON);
+  assert(rows.count == 0u);
+
+  dsv_source = vectis_source_from_memory(json.data, json.size);
+  status = vectis_json_array_rewrite_source(&dsv_source, "", NULL, &rewrite_options, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "sink") != NULL);
+
+  assert(lc_sink_to_memory(&sink, NULL) == LC_OK);
+  dsv_source = vectis_source_from_memory(json.data, json.size);
+  status = vectis_json_array_rewrite_source(&dsv_source, "", sink, NULL, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "options") != NULL);
+  lc_sink_close(sink);
+
+  assert(lc_sink_to_memory(&sink, NULL) == LC_OK);
+  memset(&rows, 0, sizeof(rows));
+  memset(&item, 0, sizeof(item));
+  memset(&rewrite_options, 0, sizeof(rewrite_options));
+  rewrite_options.item_map = &sample_dsv_doc_map;
+  rewrite_options.item_dst = &item;
+  rewrite_options.item = sample_json_array_rewrite_item;
+  rewrite_options.user = &rows;
+  dsv_source = vectis_source_from_memory(json.data, json.size);
+  status = vectis_json_array_rewrite_source(&dsv_source, "", sink, &rewrite_options, &error);
+  assert(status == VECTIS_OK);
+  assert(rows.count == 2u);
+  assert(rows.total == 5);
+  assert(rows.active_count == 1);
+  assert(lc_sink_memory_bytes(sink, &sink_bytes, &sink_size, NULL) == LC_OK);
+  assert(sink_size > 0u);
+  assert(sink_size < sizeof(spill_bytes));
+  memset(spill_bytes, 0, sizeof(spill_bytes));
+  memcpy(spill_bytes, sink_bytes, sink_size);
+  assert(strstr(spill_bytes, "\"id\":\"alpha\"") != NULL);
+  assert(strstr(spill_bytes, "\"id\":\"beta,quoted\"") == NULL);
+  lc_sink_close(sink);
+
+  assert(lc_sink_to_memory(&sink, NULL) == LC_OK);
+  memset(&item, 0, sizeof(item));
+  memset(&rewrite_options, 0, sizeof(rewrite_options));
+  rewrite_options.item_map = &sample_dsv_doc_map;
+  rewrite_options.item_dst = &item;
+  rewrite_options.item = sample_json_array_rewrite_fail;
+  dsv_source = vectis_source_from_memory(json.data, json.size);
+  status = vectis_json_array_rewrite_source(&dsv_source, "", sink, &rewrite_options, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(error.source == VECTIS_ERROR_SOURCE_LONEJSON);
+  assert(strstr(error.message, "rewrite callback stopped") != NULL);
+  lc_sink_close(sink);
+
+  memset(&failing_sink, 0, sizeof(failing_sink));
+  failing_sink.write = failing_sink_write;
+  memset(&item, 0, sizeof(item));
+  memset(&rewrite_options, 0, sizeof(rewrite_options));
+  rewrite_options.item_map = &sample_dsv_doc_map;
+  rewrite_options.item_dst = &item;
+  rewrite_options.item = sample_json_array_rewrite_item;
+  dsv_source = vectis_source_from_memory(json.data, json.size);
+  status = vectis_json_array_rewrite_source(&dsv_source, "", &failing_sink, &rewrite_options, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(error.source == VECTIS_ERROR_SOURCE_LONEJSON);
+  assert(strstr(error.message, "intentional sink failure") != NULL);
+
   vectis_mutable_bytes_cleanup(&json);
 
   memset(&rows, 0, sizeof(rows));

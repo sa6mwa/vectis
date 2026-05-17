@@ -7,8 +7,11 @@ preset=${1:-deps-host-debug}
 
 downloads_dir="$repo_root/.cache/downloads"
 deps_root=
-lockdc_arch=
+target_id=
+system_sha256=
 lockdc_sha256=
+lonejson_sha256=
+pslog_sha256=
 target_cc=
 target_ar=
 target_ranlib=
@@ -20,9 +23,11 @@ target_lua_mycflags="-fPIC"
 case "$preset" in
   deps-host-debug)
     deps_root="$repo_root/.cache/deps/host-debug"
-    lockdc_arch="x86_64"
-    lockdc_platform="linux-gnu"
-    lockdc_sha256="10e7fea38931b804c1ee8d5102c65a1af44fa096854ffc9bd4a7e0acb60140ee"
+    target_id="x86_64-linux-gnu"
+    system_sha256="4e6c4ca07c0647a05923b4a56ef12d440a1d1b53465224e30d990fc18777aa4e"
+    lockdc_sha256="0fb8b96297b964e5addbcdc2d552b7749f072e8871b8144bb9219d5d9e0e0ff5"
+    lonejson_sha256="f3998e52bfc6c13dba558f736cfd7593ff0571cefb831f806d9605b981275d8d"
+    pslog_sha256="91d2f93bc07bc66cf83d6a27a80cb6439c384d56bf84a2d11cd903215430d1d8"
     target_cc="${CC:-cc}"
     target_ar="${AR:-ar}"
     target_ranlib="${RANLIB:-ranlib}"
@@ -33,9 +38,11 @@ case "$preset" in
     ;;
   deps-x86_64-linux-gnu)
     deps_root="$repo_root/.cache/deps/x86_64-linux-gnu"
-    lockdc_arch="x86_64"
-    lockdc_platform="linux-gnu"
-    lockdc_sha256="10e7fea38931b804c1ee8d5102c65a1af44fa096854ffc9bd4a7e0acb60140ee"
+    target_id="x86_64-linux-gnu"
+    system_sha256="4e6c4ca07c0647a05923b4a56ef12d440a1d1b53465224e30d990fc18777aa4e"
+    lockdc_sha256="0fb8b96297b964e5addbcdc2d552b7749f072e8871b8144bb9219d5d9e0e0ff5"
+    lonejson_sha256="f3998e52bfc6c13dba558f736cfd7593ff0571cefb831f806d9605b981275d8d"
+    pslog_sha256="91d2f93bc07bc66cf83d6a27a80cb6439c384d56bf84a2d11cd903215430d1d8"
     target_cc="${CC:-cc}"
     target_ar="${AR:-ar}"
     target_ranlib="${RANLIB:-ranlib}"
@@ -45,9 +52,11 @@ case "$preset" in
     ;;
   deps-x86_64-linux-musl)
     deps_root="$repo_root/.cache/deps/x86_64-linux-musl"
-    lockdc_arch="x86_64"
-    lockdc_platform="linux-musl"
-    lockdc_sha256="b49de24a09337af8284ee0ad898fd7eac9dce5c209b83dc181a935a0f2a8a39e"
+    target_id="x86_64-linux-musl"
+    system_sha256="d44f70558b961125c96d356d27ce83fc7d50c9cc650a335c2016c8d3778d98aa"
+    lockdc_sha256="28aa3e786ac1763b78d264a2ddeb4b75a5704ae6e3eca2690767af53c7cc551e"
+    lonejson_sha256="e7bf4533a31cb366b5e553b81758997c4d8e1630a326810358310b4bcb8112cb"
+    pslog_sha256="b628d32f9207e5102c9a8ae3f7ad32ce36e61178c7db67e6aa4548eb9cae567d"
     target_cc="${CC:-x86_64-linux-musl-gcc}"
     target_ar="${AR:-x86_64-linux-musl-ar}"
     target_ranlib="${RANLIB:-x86_64-linux-musl-ranlib}"
@@ -57,9 +66,11 @@ case "$preset" in
     ;;
   deps-aarch64-linux-gnu)
     deps_root="$repo_root/.cache/deps/aarch64-linux-gnu"
-    lockdc_arch="aarch64"
-    lockdc_platform="linux-gnu"
-    lockdc_sha256="2d0758faea25971e337710266e02e66beadcdd20be81835e40f599c2e6a15a75"
+    target_id="aarch64-linux-gnu"
+    system_sha256="c20969872de3087f984e8bca3e01fa98e495a3581940e426d07ebed014cf8190"
+    lockdc_sha256="03ff83c364c3c7c75c3d9ccb7ab2623cccacbf93d4292e4e7c59d26e0c268f82"
+    lonejson_sha256="073160587fa2151eefdc13238eb71677f1dc7740c89a5ad42f86b2a4f25b332f"
+    pslog_sha256="d936ae9416f539c4f40aeaa023b9147cbd568bc87b7a3c3b091adfd217d935bb"
     target_cc="${CC:-aarch64-linux-gnu-gcc}"
     target_ar="${AR:-aarch64-linux-gnu-ar}"
     target_ranlib="${RANLIB:-aarch64-linux-gnu-ranlib}"
@@ -69,9 +80,11 @@ case "$preset" in
     ;;
   deps-aarch64-linux-musl)
     deps_root="$repo_root/.cache/deps/aarch64-linux-musl"
-    lockdc_arch="aarch64"
-    lockdc_platform="linux-musl"
-    lockdc_sha256="38945220b7e6adc23e22aac2273bd5fd069a3c14f7dd339727c03646f0f13983"
+    target_id="aarch64-linux-musl"
+    system_sha256="8ff3cc3c457dc66918470beaea01744bc38c342a87c20c6b072761c56c858e19"
+    lockdc_sha256="8ebaaba73eac9e2dd835060a8cab13034e00459af554f800be8341445c2905de"
+    lonejson_sha256="0a4669d8b2644132f1bf8288e14893e866d39be3adc37b652651d714deae90fa"
+    pslog_sha256="638725174cf39f3c5337fc6f118bc88c2a41d385a01be98170ff4bef3d57fcae"
     target_cc="${CC:-aarch64-linux-musl-gcc}"
     target_ar="${AR:-aarch64-linux-musl-ar}"
     target_ranlib="${RANLIB:-aarch64-linux-musl-ranlib}"
@@ -81,9 +94,11 @@ case "$preset" in
     ;;
   deps-armhf-linux-gnu)
     deps_root="$repo_root/.cache/deps/armhf-linux-gnu"
-    lockdc_arch="armhf"
-    lockdc_platform="linux-gnu"
-    lockdc_sha256="2eb1e171f76b791d6de5ecd30f3db05ed2faddce707f3ce94dddbe05480630bd"
+    target_id="armhf-linux-gnu"
+    system_sha256="26787953d690b0f01a11538e8692f68f9c746b8e97a9baf47ac15241d9a947fc"
+    lockdc_sha256="fb60639a522b75e5e462d7796d4b62bff00bf85fb4a241764bad732a070204d9"
+    lonejson_sha256="3a2ba02d7054f663c588b089d67ef23f99cdc9748730084abbece08b5acdc023"
+    pslog_sha256="bc8530a3773666deb6d551263c7dd59a64c92629fa56d1e89c278d637472f2dc"
     target_cc="${CC:-arm-linux-gnueabihf-gcc}"
     target_ar="${AR:-arm-linux-gnueabihf-ar}"
     target_ranlib="${RANLIB:-arm-linux-gnueabihf-ranlib}"
@@ -93,9 +108,11 @@ case "$preset" in
     ;;
   deps-armhf-linux-musl)
     deps_root="$repo_root/.cache/deps/armhf-linux-musl"
-    lockdc_arch="armhf"
-    lockdc_platform="linux-musl"
-    lockdc_sha256="efbcca8dc6007ac204ceb2b4093c8edbaecaeaca01804e5d4399975fbc402fec"
+    target_id="armhf-linux-musl"
+    system_sha256="f0172a6ff928111cfaeb503b01b48b3cdd2c05a04d54047630180ee79f65af31"
+    lockdc_sha256="14eac9a63d349342110d91f662d915bd28c0b3980390d3435d893e422eb1c74d"
+    lonejson_sha256="80e4608295a6c9ba70edcc418a6839c6904d5fe2bdde2187cca23766d2435f84"
+    pslog_sha256="503d2bd882c053dc8f34dbfe718a328303a4973789bbb8fb37261e4822b3babe"
     target_cc="${CC:-arm-linux-musleabihf-gcc}"
     target_ar="${AR:-arm-linux-musleabihf-ar}"
     target_ranlib="${RANLIB:-arm-linux-musleabihf-ranlib}"
@@ -105,9 +122,11 @@ case "$preset" in
     ;;
   deps-arm64-apple-darwin)
     deps_root="$repo_root/.cache/deps/arm64-apple-darwin"
-    lockdc_arch="arm64"
-    lockdc_platform="apple-darwin"
-    lockdc_sha256="b5ee3612b6d1a61e5bc99fa7b4cc0ab660a62372a0c7d5a9a3db2e8b5206c46f"
+    target_id="arm64-apple-darwin"
+    system_sha256="dba4424de9566c2418162f62e5e90c45b40266c6e750b5096d4a251bf96d8e9a"
+    lockdc_sha256="c7d313ac8dc38f1a98281767f240ef8bb29a63baa65c9b528f6d9893c2d21645"
+    lonejson_sha256="4e8730906de7159c54a9eca3f6107846543592e20d97b3c0b9dae1d3cdfc8d1f"
+    pslog_sha256="f8f4e18810ecad7278eb341fbfe7e3f9d85eb654891c4d08149f425f3a4c9b3d"
     if [ -n "${OSXCROSS_ROOT:-}" ]; then
       osxcross_root=$OSXCROSS_ROOT
     else
@@ -147,10 +166,22 @@ resolve_tool_path() {
 target_ar=$(resolve_tool_path "$target_ar")
 target_ranlib=$(resolve_tool_path "$target_ranlib")
 
-lockdc_version="0.6.0"
-lockdc_archive="liblockdc-${lockdc_version}-${lockdc_arch}-${lockdc_platform}.tar.gz"
+system_version="0.1.0"
+system_archive="c.pkt.systems-${system_version}-${target_id}.tar.gz"
+system_url="https://github.com/sa6mwa/c.pkt.systems/releases/download/v${system_version}/${system_archive}"
+system_download="$downloads_dir/$system_archive"
+lockdc_version="0.9.0"
+lockdc_archive="liblockdc-${lockdc_version}-${target_id}.tar.gz"
 lockdc_url="https://github.com/sa6mwa/liblockdc/releases/download/v${lockdc_version}/${lockdc_archive}"
 lockdc_download="$downloads_dir/$lockdc_archive"
+lonejson_version="0.16.0"
+lonejson_archive="liblonejson-${lonejson_version}-${target_id}.tar.gz"
+lonejson_url="https://github.com/sa6mwa/lonejson/releases/download/v${lonejson_version}/${lonejson_archive}"
+lonejson_download="$downloads_dir/$lonejson_archive"
+pslog_version="0.4.1"
+pslog_archive="libpslog-${pslog_version}-${target_id}.tar.gz"
+pslog_url="https://github.com/sa6mwa/libpslog/releases/download/v${pslog_version}/${pslog_archive}"
+pslog_download="$downloads_dir/$pslog_archive"
 pid0_version="0.3.0"
 pid0_header="libpid0-${pid0_version}.h"
 pid0_header_gz="${pid0_header}.gz"
@@ -183,16 +214,40 @@ download_if_missing() {
   fi
 }
 
+download_if_missing "$system_url" "$system_download"
 download_if_missing "$lockdc_url" "$lockdc_download"
+download_if_missing "$lonejson_url" "$lonejson_download"
+download_if_missing "$pslog_url" "$pslog_download"
 download_if_missing "$pid0_url" "$pid0_download"
 download_if_missing "$lua_url" "$lua_download"
 download_if_missing "$libxml2_url" "$libxml2_download"
 
+actual_system_sha256=$(sha256sum "$system_download" | awk '{print $1}')
+if [ "$actual_system_sha256" != "$system_sha256" ]; then
+  echo "checksum mismatch for $system_archive" >&2
+  echo "expected $system_sha256" >&2
+  echo "actual   $actual_system_sha256" >&2
+  exit 1
+fi
 actual_sha256=$(sha256sum "$lockdc_download" | awk '{print $1}')
 if [ "$actual_sha256" != "$lockdc_sha256" ]; then
   echo "checksum mismatch for $lockdc_archive" >&2
   echo "expected $lockdc_sha256" >&2
   echo "actual   $actual_sha256" >&2
+  exit 1
+fi
+actual_lonejson_sha256=$(sha256sum "$lonejson_download" | awk '{print $1}')
+if [ "$actual_lonejson_sha256" != "$lonejson_sha256" ]; then
+  echo "checksum mismatch for $lonejson_archive" >&2
+  echo "expected $lonejson_sha256" >&2
+  echo "actual   $actual_lonejson_sha256" >&2
+  exit 1
+fi
+actual_pslog_sha256=$(sha256sum "$pslog_download" | awk '{print $1}')
+if [ "$actual_pslog_sha256" != "$pslog_sha256" ]; then
+  echo "checksum mismatch for $pslog_archive" >&2
+  echo "expected $pslog_sha256" >&2
+  echo "actual   $actual_pslog_sha256" >&2
   exit 1
 fi
 actual_pid0_sha256=$(sha256sum "$pid0_download" | awk '{print $1}')
@@ -246,7 +301,10 @@ build_libxml2() {
 
 rm -rf "$deps_root/include" "$deps_root/lib" "$deps_root/share"
 mkdir -p "$deps_root"
+tar -xzf "$system_download" -C "$deps_root" --strip-components 1
 tar -xzf "$lockdc_download" -C "$deps_root" --strip-components 1
+tar -xzf "$lonejson_download" -C "$deps_root" --strip-components 1
+tar -xzf "$pslog_download" -C "$deps_root" --strip-components 1
 gzip -dc "$pid0_download" > "$deps_root/include/$pid0_header"
 rm -rf "$lua_build_dir"
 mkdir -p "$lua_build_root"
@@ -273,14 +331,25 @@ build_libxml2 "$libxml2_shared_build_dir" ON
 
 cat > "$manifest_path" <<EOF
 preset=$preset
+system_archive=$system_archive
+system_version=$system_version
+system_sha256=$system_sha256
 liblockdc_archive=$lockdc_archive
 liblockdc_version=$lockdc_version
 liblockdc_sha256=$lockdc_sha256
-pslog_source=liblockdc-bundle
-lonejson_source=liblockdc-bundle
-curl_source=liblockdc-bundle
-openssl_source=liblockdc-bundle
-libssh2_source=liblockdc-bundle
+lonejson_archive=$lonejson_archive
+lonejson_version=$lonejson_version
+lonejson_sha256=$lonejson_sha256
+pslog_archive=$pslog_archive
+pslog_version=$pslog_version
+pslog_sha256=$pslog_sha256
+pslog_source=libpslog-release
+lonejson_source=lonejson-release
+curl_source=c.pkt.systems
+openssl_source=c.pkt.systems
+libssh2_source=c.pkt.systems
+nghttp2_source=c.pkt.systems
+zlib_source=c.pkt.systems
 libpid0_version=$pid0_version
 libpid0_header=$pid0_header
 libpid0_sha256=$pid0_sha256
