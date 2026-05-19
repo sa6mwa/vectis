@@ -14,7 +14,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 
 ## Area 2: Dependency Provisioning
 
-- [x] Provision split `liblockdc` 0.9.0, `c.pkt.systems` 0.1.0, `lonejson` 0.16.0, and `libpslog` 0.4.1 SDK archives into `.cache/deps/...`.
+- [x] Provision split `liblockdc` 0.9.0, `c.pkt.systems` 0.1.0, `lonejson` 0.19.0, and `libpslog` 0.4.1 SDK archives into `.cache/deps/...`.
 - [x] Use `liblockdc` only as the source for lockdc, `c.pkt.systems` as the source for curl/OpenSSL/libssh2/nghttp2/zlib, and standalone LoneJSON/libpslog bundles for their C headers/libraries.
 - [x] Verify downloaded SDK archives with pinned SHA-256 checksums.
 - [x] Provision pinned Lua 5.5.0 from lua.org into every target dependency root for the Vectis binary runtime.
@@ -156,10 +156,10 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Define the first XML-to-lonejson mapping contract: child elements by field key, repeated elements to arrays, attributes by name or configured prefix, and object text to `config.text_key`.
 - [x] Add libxml2-backed XML reader helpers that parse `vectis_source` or raw `lc_source` inputs into lonejson mapped structs.
 - [x] Add true push-through XML-to-lonejson streaming for huge text fields so intermediate generated JSON strings do not need to remain memory-backed.
-- [ ] Expose Lua JSON encode/decode helpers through the bundled `lonejson` Lua rock or a Vectis facade.
+- [x] Expose Lua JSON encode/decode helpers through the bundled `lonejson` Lua module.
 - [x] Make `lonejson` the backing implementation for Vectis request parsing, response serialization, lockd document helpers, and JSON HTTP client helpers.
 - [x] Stream mapped JSON request bodies into curl through LoneJSON's generator, using `lonejson_generator_measure()` for replayable mapped structs when `Content-Length` is required and chunked transfer for non-rewindable values.
-- [ ] Evaluate LoneJSON 0.8 object-framed stream, `lonejson_json_value`, SSE, and multipart parsers for Vectis-owned helpers where they improve API, workflow, or file-ingestion DX without hiding buffering semantics.
+- [x] Evaluate LoneJSON object-framed stream, selected-array stream/rewrite, generic JSON value, writer, SSE, and multipart APIs for Vectis-owned helpers where they improve API, workflow, or file-ingestion DX without hiding buffering semantics.
 - [x] Integrate LoneJSON selected-array streaming and selected-array rewrite helpers without materializing complete documents or selected arrays.
 - [ ] Add higher-level JSON REST helpers for request validation, response serialization, and downstream API calls.
 - [x] Add first-pass typed JSON route auto-wiring backed by lonejson mapped structs.
@@ -246,9 +246,9 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Configure Lua package paths so bundled/native Vectis modules load without user setup.
 - [x] Provide the first statically preloaded `require("vectis")` facade for the embedded Lua runner.
 - [ ] Expand `require("vectis")` into the full high-level framework facade.
-- [ ] Integrate existing Lua rocks for lockdc, pslog, and lonejson.
-- [ ] Build lockdc, pslog, lonejson, and Vectis-owned Lua modules against the provisioned Lua 5.5 ABI.
-- [ ] Register bundled Lua modules statically through `package.preload` in the `vectis` binary; do not require runtime `.so` loading.
+- [ ] Integrate existing Lua rocks for lockdc and pslog; LoneJSON is statically preloaded from the pinned source tarball.
+- [ ] Build lockdc, pslog, and Vectis-owned Lua modules against the provisioned Lua 5.5 ABI; LoneJSON is already built against that ABI.
+- [ ] Register bundled Lua modules statically through `package.preload` in the `vectis` binary; LoneJSON and `vectis` are registered, lockdc/pslog remain.
 - [ ] Publish a separate `vectis` Lua rock for users who want to run the Vectis facade inside their own Lua 5.5 environment.
 - [ ] Keep LuaRocks out of the `vectis` binary runtime and release artifacts.
 - [ ] Add Vectis-owned Lua modules for Kore, curl, OpenSSL certificate workflows, and libssh2.

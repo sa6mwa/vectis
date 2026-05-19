@@ -26,7 +26,7 @@ case "$preset" in
     target_id="x86_64-linux-gnu"
     system_sha256="4e6c4ca07c0647a05923b4a56ef12d440a1d1b53465224e30d990fc18777aa4e"
     lockdc_sha256="0fb8b96297b964e5addbcdc2d552b7749f072e8871b8144bb9219d5d9e0e0ff5"
-    lonejson_sha256="f3998e52bfc6c13dba558f736cfd7593ff0571cefb831f806d9605b981275d8d"
+    lonejson_sha256="02341cf71f3c93c0cc18cabde5dad3625d3654b08ab10815a3096af174112411"
     pslog_sha256="91d2f93bc07bc66cf83d6a27a80cb6439c384d56bf84a2d11cd903215430d1d8"
     target_cc="${CC:-cc}"
     target_ar="${AR:-ar}"
@@ -41,7 +41,7 @@ case "$preset" in
     target_id="x86_64-linux-gnu"
     system_sha256="4e6c4ca07c0647a05923b4a56ef12d440a1d1b53465224e30d990fc18777aa4e"
     lockdc_sha256="0fb8b96297b964e5addbcdc2d552b7749f072e8871b8144bb9219d5d9e0e0ff5"
-    lonejson_sha256="f3998e52bfc6c13dba558f736cfd7593ff0571cefb831f806d9605b981275d8d"
+    lonejson_sha256="02341cf71f3c93c0cc18cabde5dad3625d3654b08ab10815a3096af174112411"
     pslog_sha256="91d2f93bc07bc66cf83d6a27a80cb6439c384d56bf84a2d11cd903215430d1d8"
     target_cc="${CC:-cc}"
     target_ar="${AR:-ar}"
@@ -55,7 +55,7 @@ case "$preset" in
     target_id="x86_64-linux-musl"
     system_sha256="d44f70558b961125c96d356d27ce83fc7d50c9cc650a335c2016c8d3778d98aa"
     lockdc_sha256="28aa3e786ac1763b78d264a2ddeb4b75a5704ae6e3eca2690767af53c7cc551e"
-    lonejson_sha256="e7bf4533a31cb366b5e553b81758997c4d8e1630a326810358310b4bcb8112cb"
+    lonejson_sha256="a488a418a3f3943c2eb81737538761d84df871f85c431b880819bad6601ea9b8"
     pslog_sha256="b628d32f9207e5102c9a8ae3f7ad32ce36e61178c7db67e6aa4548eb9cae567d"
     target_cc="${CC:-x86_64-linux-musl-gcc}"
     target_ar="${AR:-x86_64-linux-musl-ar}"
@@ -69,7 +69,7 @@ case "$preset" in
     target_id="aarch64-linux-gnu"
     system_sha256="c20969872de3087f984e8bca3e01fa98e495a3581940e426d07ebed014cf8190"
     lockdc_sha256="03ff83c364c3c7c75c3d9ccb7ab2623cccacbf93d4292e4e7c59d26e0c268f82"
-    lonejson_sha256="073160587fa2151eefdc13238eb71677f1dc7740c89a5ad42f86b2a4f25b332f"
+    lonejson_sha256="33a5194485a0ced6fc5d701ee2f3da31208c84cffb6b5e592e4954d7811292ac"
     pslog_sha256="d936ae9416f539c4f40aeaa023b9147cbd568bc87b7a3c3b091adfd217d935bb"
     target_cc="${CC:-aarch64-linux-gnu-gcc}"
     target_ar="${AR:-aarch64-linux-gnu-ar}"
@@ -83,7 +83,7 @@ case "$preset" in
     target_id="aarch64-linux-musl"
     system_sha256="8ff3cc3c457dc66918470beaea01744bc38c342a87c20c6b072761c56c858e19"
     lockdc_sha256="8ebaaba73eac9e2dd835060a8cab13034e00459af554f800be8341445c2905de"
-    lonejson_sha256="0a4669d8b2644132f1bf8288e14893e866d39be3adc37b652651d714deae90fa"
+    lonejson_sha256="9dc198141b57ff6c84d770b685cd9b623c3bad139857b3cfddd1f7a5dfe8b508"
     pslog_sha256="638725174cf39f3c5337fc6f118bc88c2a41d385a01be98170ff4bef3d57fcae"
     target_cc="${CC:-aarch64-linux-musl-gcc}"
     target_ar="${AR:-aarch64-linux-musl-ar}"
@@ -97,7 +97,7 @@ case "$preset" in
     target_id="armhf-linux-gnu"
     system_sha256="26787953d690b0f01a11538e8692f68f9c746b8e97a9baf47ac15241d9a947fc"
     lockdc_sha256="fb60639a522b75e5e462d7796d4b62bff00bf85fb4a241764bad732a070204d9"
-    lonejson_sha256="3a2ba02d7054f663c588b089d67ef23f99cdc9748730084abbece08b5acdc023"
+    lonejson_sha256="a28e233550171ea2fe6ea0a91cd68ba24509f3b3ce9a9b0b99a40c47717cd533"
     pslog_sha256="bc8530a3773666deb6d551263c7dd59a64c92629fa56d1e89c278d637472f2dc"
     target_cc="${CC:-arm-linux-gnueabihf-gcc}"
     target_ar="${AR:-arm-linux-gnueabihf-ar}"
@@ -111,7 +111,7 @@ case "$preset" in
     target_id="armhf-linux-musl"
     system_sha256="f0172a6ff928111cfaeb503b01b48b3cdd2c05a04d54047630180ee79f65af31"
     lockdc_sha256="14eac9a63d349342110d91f662d915bd28c0b3980390d3435d893e422eb1c74d"
-    lonejson_sha256="80e4608295a6c9ba70edcc418a6839c6904d5fe2bdde2187cca23766d2435f84"
+    lonejson_sha256="148159b85afe3ad372387a5c79e37417bb04e4b726697d629e69c5aeeea536d8"
     pslog_sha256="503d2bd882c053dc8f34dbfe718a328303a4973789bbb8fb37261e4822b3babe"
     target_cc="${CC:-arm-linux-musleabihf-gcc}"
     target_ar="${AR:-arm-linux-musleabihf-ar}"
@@ -125,7 +125,7 @@ case "$preset" in
     target_id="arm64-apple-darwin"
     system_sha256="dba4424de9566c2418162f62e5e90c45b40266c6e750b5096d4a251bf96d8e9a"
     lockdc_sha256="c7d313ac8dc38f1a98281767f240ef8bb29a63baa65c9b528f6d9893c2d21645"
-    lonejson_sha256="4e8730906de7159c54a9eca3f6107846543592e20d97b3c0b9dae1d3cdfc8d1f"
+    lonejson_sha256="0355de7ead2c43b781189625c7ced4179f092f839879a04c79038ec3bdaf8035"
     pslog_sha256="f8f4e18810ecad7278eb341fbfe7e3f9d85eb654891c4d08149f425f3a4c9b3d"
     if [ -n "${OSXCROSS_ROOT:-}" ]; then
       osxcross_root=$OSXCROSS_ROOT
@@ -174,10 +174,15 @@ lockdc_version="0.9.0"
 lockdc_archive="liblockdc-${lockdc_version}-${target_id}.tar.gz"
 lockdc_url="https://github.com/sa6mwa/liblockdc/releases/download/v${lockdc_version}/${lockdc_archive}"
 lockdc_download="$downloads_dir/$lockdc_archive"
-lonejson_version="0.16.0"
+lonejson_version="0.19.0"
 lonejson_archive="liblonejson-${lonejson_version}-${target_id}.tar.gz"
 lonejson_url="https://github.com/sa6mwa/lonejson/releases/download/v${lonejson_version}/${lonejson_archive}"
 lonejson_download="$downloads_dir/$lonejson_archive"
+lonejson_source_archive="lonejson-${lonejson_version}.tar.gz"
+lonejson_source_url="https://github.com/sa6mwa/lonejson/releases/download/v${lonejson_version}/${lonejson_source_archive}"
+lonejson_source_download="$downloads_dir/$lonejson_source_archive"
+lonejson_source_sha256="24aabe40efa371fbeb505a587e5831351eb2fede714c4e224a07d90745c39005"
+lonejson_source_dir="$deps_root/share/lonejson-source"
 pslog_version="0.4.1"
 pslog_archive="libpslog-${pslog_version}-${target_id}.tar.gz"
 pslog_url="https://github.com/sa6mwa/libpslog/releases/download/v${pslog_version}/${pslog_archive}"
@@ -217,6 +222,7 @@ download_if_missing() {
 download_if_missing "$system_url" "$system_download"
 download_if_missing "$lockdc_url" "$lockdc_download"
 download_if_missing "$lonejson_url" "$lonejson_download"
+download_if_missing "$lonejson_source_url" "$lonejson_source_download"
 download_if_missing "$pslog_url" "$pslog_download"
 download_if_missing "$pid0_url" "$pid0_download"
 download_if_missing "$lua_url" "$lua_download"
@@ -241,6 +247,13 @@ if [ "$actual_lonejson_sha256" != "$lonejson_sha256" ]; then
   echo "checksum mismatch for $lonejson_archive" >&2
   echo "expected $lonejson_sha256" >&2
   echo "actual   $actual_lonejson_sha256" >&2
+  exit 1
+fi
+actual_lonejson_source_sha256=$(sha256sum "$lonejson_source_download" | awk '{print $1}')
+if [ "$actual_lonejson_source_sha256" != "$lonejson_source_sha256" ]; then
+  echo "checksum mismatch for $lonejson_source_archive" >&2
+  echo "expected $lonejson_source_sha256" >&2
+  echo "actual   $actual_lonejson_source_sha256" >&2
   exit 1
 fi
 actual_pslog_sha256=$(sha256sum "$pslog_download" | awk '{print $1}')
@@ -304,6 +317,15 @@ mkdir -p "$deps_root"
 tar -xzf "$system_download" -C "$deps_root" --strip-components 1
 tar -xzf "$lockdc_download" -C "$deps_root" --strip-components 1
 tar -xzf "$lonejson_download" -C "$deps_root" --strip-components 1
+mkdir -p "$lonejson_source_dir"
+tar -xzf "$lonejson_source_download" -C "$lonejson_source_dir" --strip-components 1
+case "$target_cmake_system_name" in
+  Linux)
+    if [ -e "$deps_root/lib/liblonejson.so.0.19.0" ] && [ ! -e "$deps_root/lib/liblonejson.so.4" ]; then
+      ln -s liblonejson.so.0.19.0 "$deps_root/lib/liblonejson.so.4"
+    fi
+    ;;
+esac
 tar -xzf "$pslog_download" -C "$deps_root" --strip-components 1
 gzip -dc "$pid0_download" > "$deps_root/include/$pid0_header"
 rm -rf "$lua_build_dir"
@@ -340,6 +362,8 @@ liblockdc_sha256=$lockdc_sha256
 lonejson_archive=$lonejson_archive
 lonejson_version=$lonejson_version
 lonejson_sha256=$lonejson_sha256
+lonejson_source_archive=$lonejson_source_archive
+lonejson_source_sha256=$lonejson_source_sha256
 pslog_archive=$pslog_archive
 pslog_version=$pslog_version
 pslog_sha256=$pslog_sha256

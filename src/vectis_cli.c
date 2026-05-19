@@ -23,6 +23,62 @@ typedef struct vectis_lua_runtime_context {
 
 static vectis_lua_runtime_context vectis_lua_current;
 
+extern int luaopen_lonejson_core(lua_State *lua);
+
+static const char vectis_lonejson_lua_init[] =
+    "local core = require(\"lonejson.core\")\n"
+    "local M = {}\n"
+    "local function field(kind, opts)\n"
+    "  opts = opts or {}\n"
+    "  opts.kind = kind\n"
+    "  return opts\n"
+    "end\n"
+    "function M.field(name, spec)\n"
+    "  spec = spec or {}\n"
+    "  spec.name = name\n"
+    "  return spec\n"
+    "end\n"
+    "function M.string(opts) return field(\"string\", opts) end\n"
+    "function M.spooled_text(opts) return field(\"spooled_text\", opts) end\n"
+    "function M.spooled_bytes(opts) return field(\"spooled_bytes\", opts) end\n"
+    "function M.json_value(opts) return field(\"json_value\", opts) end\n"
+    "function M.i64(opts) return field(\"i64\", opts) end\n"
+    "function M.u64(opts) return field(\"u64\", opts) end\n"
+    "function M.f64(opts) return field(\"f64\", opts) end\n"
+    "function M.boolean(opts) return field(\"boolean\", opts) end\n"
+    "M.bool = M.boolean\n"
+    "function M.object(opts) return field(\"object\", opts) end\n"
+    "function M.string_array(opts) return field(\"string_array\", opts) end\n"
+    "function M.i64_array(opts) return field(\"i64_array\", opts) end\n"
+    "function M.u64_array(opts) return field(\"u64_array\", opts) end\n"
+    "function M.f64_array(opts) return field(\"f64_array\", opts) end\n"
+    "function M.boolean_array(opts) return field(\"boolean_array\", opts) end\n"
+    "function M.object_array(opts) return field(\"object_array\", opts) end\n"
+    "function M.json_array(value)\n"
+    "  value = value or {}\n"
+    "  return setmetatable(value, { __lonejson_json_kind = \"array\" })\n"
+    "end\n"
+    "function M.json_object(value)\n"
+    "  value = value or {}\n"
+    "  return setmetatable(value, { __lonejson_json_kind = \"object\" })\n"
+    "end\n"
+    "function M.schema(name, fields) return core.compile_schema(name, fields) end\n"
+    "function M.chunks(spool, chunk_size)\n"
+    "  spool:rewind()\n"
+    "  return function() return spool:read(chunk_size or 4096) end\n"
+    "end\n"
+    "M.array_rewrite_string = core.array_rewrite_string\n"
+    "M.array_rewrite_path = core.array_rewrite_path\n"
+    "M.encode_json = core.encode_json\n"
+    "M.encode_json_to_sink = core.encode_json_to_sink\n"
+    "M.encode_value = core.encode_json\n"
+    "M.encode_value_to_sink = core.encode_json_to_sink\n"
+    "M.decode_json = core.decode_json\n"
+    "M.decode_value = core.decode_json\n"
+    "M.core = core\n"
+    "M.json_null = core.json_null()\n"
+    "return M\n";
+
 static void vectis_cli_usage(FILE *stream) {
   fputs("usage: vectis [--version] [--help] script.lua [args...]\n"
         "       vectis pack --script script.lua --output output [--lockd-bundle bundle.pem]\n",
@@ -282,11 +338,32 @@ static int luaopen_vectis(lua_State *lua) {
   return 1;
 }
 
+static int luaopen_lonejson(lua_State *lua) {
+  int status;
+
+  status = luaL_loadbuffer(lua,
+                           vectis_lonejson_lua_init,
+                           sizeof(vectis_lonejson_lua_init) - 1u,
+                           "lonejson.init");
+  if (status != LUA_OK) {
+    return lua_error(lua);
+  }
+  status = lua_pcall(lua, 0, 1, 0);
+  if (status != LUA_OK) {
+    return lua_error(lua);
+  }
+  return 1;
+}
+
 static void vectis_lua_preload(lua_State *lua) {
   lua_getglobal(lua, "package");
   lua_getfield(lua, -1, "preload");
   lua_pushcfunction(lua, luaopen_vectis);
   lua_setfield(lua, -2, "vectis");
+  lua_pushcfunction(lua, luaopen_lonejson_core);
+  lua_setfield(lua, -2, "lonejson.core");
+  lua_pushcfunction(lua, luaopen_lonejson);
+  lua_setfield(lua, -2, "lonejson");
   lua_pop(lua, 2);
 }
 

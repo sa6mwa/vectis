@@ -33,7 +33,7 @@ set(VECTIS_TARGET_LIBC ""
 
 set(VECTIS_EXPECTED_SYSTEM_VERSION "0.1.0")
 set(VECTIS_EXPECTED_LOCKDC_VERSION "0.9.0")
-set(VECTIS_EXPECTED_LONEJSON_VERSION "0.16.0")
+set(VECTIS_EXPECTED_LONEJSON_VERSION "0.19.0")
 set(VECTIS_EXPECTED_PSLOG_VERSION "0.4.1")
 set(VECTIS_EXPECTED_LUA_VERSION "5.5.0")
 set(VECTIS_EXPECTED_LUA_SHA256 "57ccc32bbbd005cab75bcc52444052535af691789dba2b9016d5c50640d68b3d")
@@ -107,6 +107,8 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/libpid0-${VECTIS_EXPECTED_LIBPID0_VERSION}.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/lua.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/libxml2/libxml/parser.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lonejson-source/src/lua/lonejson_lua.c")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lonejson-source/lua/lonejson/init.lua")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblockdc.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblonejson.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libpslog.a")
@@ -223,6 +225,7 @@ if(NOT EXISTS "${vectis_external_include_dir}/pslog.h")
   message(STATUS "vectis external headers not provisioned yet: ${vectis_external_include_dir}/pslog.h")
 endif()
 set(vectis_lua_static_library "${VECTIS_EXTERNAL_ROOT}/lib/liblua.a")
+set(vectis_lonejson_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/lonejson-source")
 set(vectis_libxml2_static_library "${VECTIS_EXTERNAL_ROOT}/lib/libxml2.a")
 if(VECTIS_BUILD_BINARY AND NOT EXISTS "${vectis_lua_static_library}")
   message(FATAL_ERROR
@@ -479,9 +482,27 @@ elseif(VECTIS_BUILD_SHARED)
 endif()
 
 if(VECTIS_BUILD_BINARY)
+  set(vectis_lonejson_lua_source
+    "${vectis_lonejson_lua_source_dir}/src/lua/lonejson_lua.c")
+  add_library(vectis_lonejson_lua OBJECT "${vectis_lonejson_lua_source}")
+  target_include_directories(vectis_lonejson_lua PRIVATE
+    "${vectis_external_include_dir}"
+    "${vectis_lonejson_lua_source_dir}/src"
+    "${vectis_lonejson_lua_source_dir}/src/lua"
+  )
+  target_compile_definitions(vectis_lonejson_lua PRIVATE
+    _POSIX_C_SOURCE=200809L)
+  set_target_properties(vectis_lonejson_lua PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON
+  )
+
   add_executable(vectis_bin
     src/vectis_cli.c
     src/vectis_main.c
+    $<TARGET_OBJECTS:vectis_lonejson_lua>
   )
   target_include_directories(vectis_bin PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
