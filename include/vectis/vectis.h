@@ -97,6 +97,7 @@ typedef unsigned int vectis_http_retry_conditions;
 #define VECTIS_HTTP_RETRY_5XX 4u
 #define VECTIS_HTTP_RETRY_DEFAULT \
   (VECTIS_HTTP_RETRY_TRANSPORT | VECTIS_HTTP_RETRY_429 | VECTIS_HTTP_RETRY_5XX)
+#define VECTIS_HTTP_RETRY_INHERIT ((vectis_http_retry_conditions)~0u)
 
 typedef enum vectis_route_path_kind {
   VECTIS_ROUTE_PATH_LITERAL = 0,

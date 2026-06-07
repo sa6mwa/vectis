@@ -10297,6 +10297,7 @@ void vectis_http_request_init(vectis_http_request *request) {
   }
   memset(request, 0, sizeof(*request));
   request->method = VECTIS_HTTP_GET;
+  request->retry_conditions = VECTIS_HTTP_RETRY_INHERIT;
 }
 
 void vectis_http_response_cleanup(vectis_http_response *response) {
@@ -10904,7 +10905,7 @@ static long vectis_http_effective_retry_max_delay(const vectis_http_client_confi
 static vectis_http_retry_conditions vectis_http_effective_retry_conditions(
     const vectis_http_client_config *client,
     const vectis_http_request *request) {
-  if (request != NULL && request->retry_conditions != VECTIS_HTTP_RETRY_NONE) {
+  if (request != NULL && request->retry_conditions != VECTIS_HTTP_RETRY_INHERIT) {
     return request->retry_conditions;
   }
   if (client != NULL) {

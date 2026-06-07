@@ -538,6 +538,7 @@ static void assert_http_surface(void) {
   assert(handle->close != NULL);
   assert(strcmp(handle->config.base_url, "file:///tmp") == 0);
   vectis_http_request_init(&request);
+  assert(request.retry_conditions == VECTIS_HTTP_RETRY_INHERIT);
   request.url = "/vectis_http_source.txt";
   status = handle->execute(handle, &request, &response, &error);
   assert(status == VECTIS_OK);
@@ -613,6 +614,30 @@ static void assert_http_surface(void) {
   assert(retry_config_count == 2);
   assert(response.body_size == sizeof(source_body) - 1u);
   vectis_http_response_cleanup(&response);
+
+  client.retry_max_attempts = 2u;
+  client.retry_initial_delay_ms = 0L;
+  client.retry_max_delay_ms = 0L;
+  client.retry_conditions = VECTIS_HTTP_RETRY_DEFAULT;
+  status = vectis_http_client_new(&client, &no_retry_handle, &error);
+  assert(status == VECTIS_OK);
+  vectis_http_request_init(&request);
+  request.url = "/vectis_http_source.txt";
+  request.retry_conditions = VECTIS_HTTP_RETRY_NONE;
+  request.configure_curl = curl_config_fail_first_transfer;
+  retry_config_count = 0;
+  request.configure_curl_userdata = &retry_config_count;
+  status = no_retry_handle->execute(no_retry_handle, &request, &response, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(error.source == VECTIS_ERROR_SOURCE_CURL);
+  assert(retry_config_count == 1);
+  vectis_http_response_cleanup(&response);
+  no_retry_handle->close(no_retry_handle);
+  no_retry_handle = NULL;
+  client.retry_max_attempts = 1u;
+  client.retry_initial_delay_ms = 250L;
+  client.retry_max_delay_ms = 2000L;
+  client.retry_conditions = VECTIS_HTTP_RETRY_DEFAULT;
 
   vectis_http_request_init(&request);
   request.url = "/vectis_http_source.txt";
