@@ -2981,7 +2981,9 @@ static vectis_status vectis_static_directory_dispatch(vectis_app *app,
   if (strncmp(path, data->path_prefix, prefix_len) != 0) {
     return vectis_response_status(response, 404, error);
   }
-  if (path[prefix_len] == '\0') {
+  if (strcmp(data->path_prefix, "/") == 0) {
+    relative = path[1] == '\0' ? data->index_file : path + 1u;
+  } else if (path[prefix_len] == '\0') {
     relative = data->index_file;
   } else if (path[prefix_len] == '/') {
     relative = path + prefix_len + 1u;
@@ -3013,6 +3015,13 @@ static char *vectis_static_directory_regex(const char *prefix,
     if (strchr(".+*?^$()[]{}|\\", *p) != NULL) {
       extra++;
     }
+  }
+  if (strcmp(prefix, "/") == 0) {
+    regex = vectis_strdup("^/.*$");
+    if (regex == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate static directory route regex");
+    }
+    return regex;
   }
   len = 1u + strlen(prefix) + extra + strlen("(/.*)?$") + 1u;
   regex = (char *)malloc(len);

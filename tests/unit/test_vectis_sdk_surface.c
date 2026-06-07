@@ -1096,6 +1096,7 @@ static void assert_json_route_surface(void) {
   vectis_error error;
   vectis_status status;
   vectis_app *app;
+  vectis_app *root_static_app;
   vectis_request *request;
   vectis_response *response;
   vectis_bytes body;
@@ -1116,6 +1117,7 @@ static void assert_json_route_surface(void) {
   config.lockd.unix_socket_path = "/tmp/lockd.sock";
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
+  root_static_app = NULL;
   json_runtime = lonejson_new(NULL, NULL);
   assert(json_runtime != NULL);
   assert(app->start != NULL);
@@ -1237,6 +1239,28 @@ static void assert_json_route_surface(void) {
   assert(strcmp(vectis_internal_response_file_path(response), static_dir_file_path) == 0);
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
+
+  root_static_app = vectis_app_new(&config, &error);
+  assert(root_static_app != NULL);
+  vectis_static_directory_config_init(&static_dir);
+  static_dir.path_prefix = "/";
+  static_dir.root_dir = static_dir_path;
+  static_dir.content_type = "application/javascript";
+  status = root_static_app->static_directory(root_static_app, &static_dir, &error);
+  assert(status == VECTIS_OK);
+  status = vectis_internal_dispatch_route(root_static_app,
+                                          VECTIS_HTTP_GET,
+                                          "/app.js",
+                                          request,
+                                          response,
+                                          &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 200);
+  assert(strcmp(vectis_internal_response_file_path(response), static_dir_file_path) == 0);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+  root_static_app->close(root_static_app);
+  root_static_app = NULL;
 
   assert(remove(static_dir_file_path) == 0);
   status = vectis_internal_dispatch_route(app, VECTIS_HTTP_HEAD, "/assets/app.js", request, response, &error);

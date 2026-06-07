@@ -403,6 +403,8 @@ if(VECTIS_WITH_KORE_RUNTIME)
       COMPILE_DEFINITIONS "KORE_USE_ACME;KORE_USE_CURL;KORE_USE_LONEJSON;KORE_USE_PSLOG;KORE_VECTIS_DIRECT_TLS;TLS_BACKEND_OPENSSL"
     )
   endif()
+else()
+  list(APPEND vectis_sources src/vectis_kore_stub.c)
 endif()
 
 set(vectis_private_includes

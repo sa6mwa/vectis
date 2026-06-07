@@ -16,7 +16,7 @@ FUZZ_PRESET := fuzz
 	help \
 	deps-debug deps-release deps-cross \
 	build build-debug build-release build-asan build-coverage build-fuzz \
-	test test-debug test-asan test-coverage test-install-tree test-e2e test-all \
+	test test-debug test-asan test-coverage test-install-tree test-no-kore test-e2e test-all \
 	dev-up dev-down dev-reset dev-ps dev-logs \
 	package \
 	build-kore verify-kore-patches \
@@ -27,6 +27,7 @@ help:
 	@printf '%s\n' \
 		'make build              Configure and build the debug preset.' \
 		'make test               Run the debug unit test preset.' \
+		'make test-no-kore       Configure and link a VECTIS_WITH_KORE_RUNTIME=OFF build.' \
 		'make test-e2e           Reset and run the local compose-backed lockd e2e smoke tests.' \
 		'make test-all           Run unit tests and local e2e smoke tests.' \
 		'make test-install-tree  Build a native installed SDK tree and verify static/shared downstream consumers.' \
@@ -124,6 +125,9 @@ test-asan: build-asan
 
 test-coverage: build-coverage
 	$(TIMED) test-coverage $(CTEST) --preset $(COVERAGE_PRESET)
+
+test-no-kore: deps-debug
+	$(TIMED) test-no-kore bash ./scripts/test-no-kore-build.sh
 
 test-install-tree:
 	$(TIMED) deps-install-tree bash ./scripts/deps.sh deps-x86_64-linux-gnu
