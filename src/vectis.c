@@ -1813,6 +1813,16 @@ static vectis_status vectis_copy_endpoints(vectis_app_impl *impl,
   if (lockd->endpoint_count == 0u) {
     return VECTIS_OK;
   }
+  if (lockd->endpoints == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lockd endpoints are required");
+    return VECTIS_ERR_INVALID;
+  }
+  for (i = 0u; i < lockd->endpoint_count; ++i) {
+    if (lockd->endpoints[i] == NULL || lockd->endpoints[i][0] == '\0') {
+      vectis_set_error(error, VECTIS_ERR_INVALID, "lockd endpoints must not be empty");
+      return VECTIS_ERR_INVALID;
+    }
+  }
   impl->endpoints = (char **)calloc(lockd->endpoint_count, sizeof(*impl->endpoints));
   if (impl->endpoints == NULL) {
     vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate lockd endpoints");

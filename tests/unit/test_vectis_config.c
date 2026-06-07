@@ -23,6 +23,7 @@ int main(void) {
   vectis_route_config route;
   vectis_route_config param_route;
   vectis_status status;
+  const char *bad_endpoints[1];
 
   vectis_app_config_init(&config);
   assert(strcmp(config.app_name, "vectis") == 0);
@@ -55,6 +56,30 @@ int main(void) {
   assert(strcmp(vectis_http_method_string(VECTIS_HTTP_OPTIONS), "OPTIONS") == 0);
   assert(strcmp(vectis_body_mode_string(VECTIS_BODY_STREAMING_UPLOAD), "streaming_upload") == 0);
 
+  vectis_app_config_init(&config);
+  config.lockd.endpoint_count = 1u;
+  config.lockd.endpoints = NULL;
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "lockd endpoints") != NULL);
+
+  bad_endpoints[0] = NULL;
+  vectis_app_config_init(&config);
+  config.lockd.endpoint_count = 1u;
+  config.lockd.endpoints = bad_endpoints;
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "lockd endpoints") != NULL);
+
+  bad_endpoints[0] = "";
+  vectis_app_config_init(&config);
+  config.lockd.endpoint_count = 1u;
+  config.lockd.endpoints = bad_endpoints;
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "lockd endpoints") != NULL);
+
+  vectis_app_config_init(&config);
   config.app_name = "orders";
   config.tls.cert_key_bundle = vectis_source_from_path("/tmp/orders.pem");
   config.lockd.unix_socket_path = "/tmp/lockd.sock";

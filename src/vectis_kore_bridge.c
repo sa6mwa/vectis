@@ -1199,9 +1199,11 @@ int vectis_kore_route(struct http_request *req) {
   vectis_http_method method;
   vectis_status status;
   int error_status;
+  int route_matched;
 
   vectis_error_clear(&error);
   error_status = 0;
+  route_matched = 0;
   request = vectis_internal_request_new(&error);
   response = vectis_internal_response_new(&error);
 
@@ -1233,6 +1235,9 @@ int vectis_kore_route(struct http_request *req) {
   status = vectis_kore_copy_request_metadata(req, request, &error);
   if (status == VECTIS_OK) {
     status = vectis_internal_route_body_policy(app, method, req->path, &body_policy, &error);
+    if (status == VECTIS_OK) {
+      route_matched = 1;
+    }
   }
   if (status == VECTIS_OK) {
     status = vectis_kore_prepare_body_reader(req,
@@ -1251,7 +1256,7 @@ int vectis_kore_route(struct http_request *req) {
     http_response(req, error_status, error.message, strlen(error.message));
   } else if (status == VECTIS_ERR_INVALID) {
     http_response(req, 400, error.message, strlen(error.message));
-  } else if (status == VECTIS_ERR_STATE) {
+  } else if (status == VECTIS_ERR_STATE && !route_matched) {
     http_response(req, 404, NULL, 0);
   } else if (status == VECTIS_ERR_NOT_IMPLEMENTED) {
     http_response(req, 501, error.message, strlen(error.message));

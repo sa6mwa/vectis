@@ -31,6 +31,19 @@ static vectis_status sample_handler(vectis_app *app,
   return vectis_response_text(response, 200, "text/plain", "ok", error);
 }
 
+static vectis_status state_error_handler(vectis_app *app,
+                                         vectis_request *request,
+                                         vectis_response *response,
+                                         void *userdata,
+                                         vectis_error *error) {
+  (void)app;
+  (void)request;
+  (void)response;
+  (void)userdata;
+  vectis_set_error(error, VECTIS_ERR_STATE, "handler dependency failed");
+  return VECTIS_ERR_STATE;
+}
+
 static vectis_status metadata_handler(vectis_app *app,
                                       vectis_request *request,
                                       vectis_response *response,
@@ -534,6 +547,7 @@ static void assert_kore_smoke(void) {
   vectis_http_request oversized;
   vectis_http_response response;
   vectis_http_response metadata_response;
+  vectis_http_response state_error_response;
   vectis_http_response json_source_response;
   vectis_http_response method_response;
   vectis_http_response param_response;
@@ -563,6 +577,7 @@ static void assert_kore_smoke(void) {
 
   memset(&response, 0, sizeof(response));
   memset(&metadata_response, 0, sizeof(metadata_response));
+  memset(&state_error_response, 0, sizeof(state_error_response));
   memset(&json_source_response, 0, sizeof(json_source_response));
   memset(&method_response, 0, sizeof(method_response));
   memset(&param_response, 0, sizeof(param_response));
@@ -592,6 +607,9 @@ static void assert_kore_smoke(void) {
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
   route = vectis_route(VECTIS_HTTP_GET, "/metadata", metadata_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/state-error", state_error_handler, NULL);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
   route = vectis_json_body_route(VECTIS_HTTP_POST, "/json-source", json_source_handler, NULL);
@@ -652,6 +670,14 @@ static void assert_kore_smoke(void) {
   assert(response.status_code == 200L);
   assert(response.body_size == 2u);
   assert(memcmp(response.body, "ok", 2u) == 0);
+
+  status = vectis_http_get(&http,
+                           "http://127.0.0.1:28080/state-error",
+                           &state_error_response,
+                           &error);
+  assert(status == VECTIS_OK);
+  assert(state_error_response.status_code == 500L);
+  vectis_http_response_cleanup(&state_error_response);
 
   assert_large_header_rejected(28080u);
   assert_keepalive_limit(28080u);
