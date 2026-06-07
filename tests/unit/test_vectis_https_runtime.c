@@ -4,6 +4,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <lc/lc.h>
 #include <vectis/vectis.h>
 
 static vectis_status sample_handler(vectis_app *app,
@@ -30,6 +31,55 @@ static vectis_status https_get(const char *url,
   http.timeout_ms = 1000L;
   http.connect_timeout_ms = 200L;
   return vectis_http_get(&http, url, response, error);
+}
+
+static vectis_status https_get_ca_source(const char *url,
+                                         vectis_source ca_bundle,
+                                         vectis_http_response *response,
+                                         vectis_error *error) {
+  vectis_http_client_config http;
+
+  vectis_http_client_config_init(&http);
+  http.ca_bundle = ca_bundle;
+  http.timeout_ms = 1000L;
+  http.connect_timeout_ms = 200L;
+  return vectis_http_get(&http, url, response, error);
+}
+
+static int read_file(const char *path, char **out, size_t *out_size) {
+  FILE *fp;
+  long length;
+  char *buffer;
+
+  *out = NULL;
+  *out_size = 0u;
+  fp = fopen(path, "rb");
+  if (fp == NULL) {
+    return 0;
+  }
+  if (fseek(fp, 0L, SEEK_END) != 0) {
+    (void)fclose(fp);
+    return 0;
+  }
+  length = ftell(fp);
+  if (length <= 0L || fseek(fp, 0L, SEEK_SET) != 0) {
+    (void)fclose(fp);
+    return 0;
+  }
+  buffer = (char *)malloc((size_t)length);
+  if (buffer == NULL) {
+    (void)fclose(fp);
+    return 0;
+  }
+  if (fread(buffer, 1u, (size_t)length, fp) != (size_t)length) {
+    (void)fclose(fp);
+    free(buffer);
+    return 0;
+  }
+  (void)fclose(fp);
+  *out = buffer;
+  *out_size = (size_t)length;
+  return 1;
 }
 
 static void assert_https_fails(const char *url,
@@ -76,6 +126,35 @@ static void assert_https_ok(const char *url,
   vectis_http_response_cleanup(&response);
 }
 
+static void assert_https_ca_source_ok(const char *url, vectis_source ca_source, const char *label) {
+  vectis_http_response response;
+  vectis_error error;
+  vectis_status status;
+  int attempt;
+
+  memset(&response, 0, sizeof(response));
+  status = VECTIS_ERR_STATE;
+  for (attempt = 0; attempt < 100 && status != VECTIS_OK; ++attempt) {
+    vectis_http_response_cleanup(&response);
+    status = https_get_ca_source(url, ca_source, &response, &error);
+    if (status != VECTIS_OK) {
+      usleep(100000u);
+    }
+  }
+  if (status != VECTIS_OK) {
+    fprintf(stderr, "https %s CA smoke failed: status=%s error=%s detail=%s\n",
+            label,
+            vectis_status_string(status),
+            error.message,
+            error.detail);
+  }
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200L);
+  assert(response.body_size == 2u);
+  assert(memcmp(response.body, "ok", 2u) == 0);
+  vectis_http_response_cleanup(&response);
+}
+
 int main(void) {
   vectis_cert_bundle_config certs;
   vectis_app_config config;
@@ -93,8 +172,14 @@ int main(void) {
   const char intermediate_key_path[] = "/tmp/vectis-runtime-intermediate-key.pem";
   const char server_cert_path[] = "/tmp/vectis-runtime-server-cert.pem";
   const char server_key_path[] = "/tmp/vectis-runtime-server-key.pem";
+  char *root_cert_pem;
+  size_t root_cert_pem_size;
+  lc_source *root_cert_source;
 
   app = NULL;
+  root_cert_pem = NULL;
+  root_cert_pem_size = 0u;
+  root_cert_source = NULL;
   vectis_cert_bundle_config_init(&certs);
   certs.subject.common_name = "Vectis Runtime Root CA";
   certs.output_bundle_path = root_bundle_path;
@@ -157,6 +242,18 @@ int main(void) {
   assert(status == VECTIS_OK);
 
   assert_https_ok("https://127.0.0.1:28443/secure", root_cert_path, NULL);
+  assert(read_file(root_cert_path, &root_cert_pem, &root_cert_pem_size));
+  assert_https_ca_source_ok("https://127.0.0.1:28443/secure",
+                            vectis_source_from_memory(root_cert_pem, root_cert_pem_size),
+                            "memory");
+  assert(lc_source_from_memory(root_cert_pem, root_cert_pem_size, &root_cert_source, NULL) == LC_OK);
+  assert_https_ca_source_ok("https://127.0.0.1:28443/secure",
+                            vectis_source_from_lc(root_cert_source),
+                            "lc_source");
+  lc_source_close(root_cert_source);
+  root_cert_source = NULL;
+  free(root_cert_pem);
+  root_cert_pem = NULL;
   assert_https_fails("https://127.0.0.1:28443/secure", NULL, NULL);
   assert_https_fails("https://127.0.0.1:28443/secure", wrong_root_cert_path, NULL);
   assert_https_fails("https://localhost:28443/secure", root_cert_path, NULL);
@@ -175,5 +272,9 @@ int main(void) {
   (void)remove(intermediate_key_path);
   (void)remove(server_cert_path);
   (void)remove(server_key_path);
+  if (root_cert_source != NULL) {
+    lc_source_close(root_cert_source);
+  }
+  free(root_cert_pem);
   return 0;
 }

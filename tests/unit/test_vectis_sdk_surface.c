@@ -1152,6 +1152,9 @@ static void assert_json_route_surface(void) {
   assert(raw_route.path_kind == VECTIS_ROUTE_PATH_REGEX);
   status = app->route(app, &raw_route, &error);
   assert(status == VECTIS_OK);
+  raw_route = vectis_route_regex(VECTIS_HTTP_GET, "^/reports/[0-9]+$", sample_route_handler, NULL);
+  status = app->prefixed_route(app, "/api", &raw_route, &error);
+  assert(status == VECTIS_OK);
 
   raw_route = vectis_json_body_route(VECTIS_HTTP_POST, "/raw-json", sample_route_handler, NULL);
   assert(raw_route.body.mode == VECTIS_BODY_JSON);
@@ -1201,6 +1204,18 @@ static void assert_json_route_surface(void) {
   status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/internal/123", request, response, &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 204);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/api/reports/42", request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 204);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/api/reports/x", request, response, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "no route") != NULL);
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
@@ -1288,7 +1303,7 @@ static void assert_json_route_surface(void) {
   assert(route.body.mode == VECTIS_BODY_JSON);
   status = app->prefixed_json_route(app, "/api/v1", &route, &error);
   assert(status == VECTIS_OK);
-  assert(app->route_count(app) == 6u);
+  assert(app->route_count(app) == 7u);
   status = vectis_internal_route_body_policy(app, VECTIS_HTTP_POST, "/api/v1/typed/abc", &policy, &error);
   assert(status == VECTIS_OK);
   assert(policy.mode == VECTIS_BODY_JSON);
@@ -1323,7 +1338,7 @@ static void assert_json_route_surface(void) {
                                         NULL);
   status = app->prefixed_json_typed_route(app, "/api/v1", &typed_route, &error);
   assert(status == VECTIS_OK);
-  assert(app->route_count(app) == 7u);
+  assert(app->route_count(app) == 8u);
   status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
   assert(status == VECTIS_OK);
   status = vectis_internal_dispatch_route(app,

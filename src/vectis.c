@@ -2790,6 +2790,46 @@ static char *vectis_join_route_prefix(const char *prefix,
   return joined;
 }
 
+static char *vectis_join_regex_route_prefix(const char *prefix,
+                                            const char *path,
+                                            vectis_error *error) {
+  size_t prefix_len;
+  size_t path_len;
+  size_t need_slash;
+  char *joined;
+
+  if (path == NULL || path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "route path is required");
+    return NULL;
+  }
+  if (path[0] != '^' || path[1] != '/') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "regex route path must start with '^/'");
+    return NULL;
+  }
+  if (prefix == NULL || prefix[0] == '\0' || strcmp(prefix, "/") == 0) {
+    return vectis_strdup(path);
+  }
+  if (prefix[0] != '/') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "route prefix must start with /");
+    return NULL;
+  }
+  prefix_len = strlen(prefix);
+  path_len = strlen(path);
+  need_slash = prefix[prefix_len - 1u] == '/' ? 0u : 1u;
+  joined = (char *)malloc(1u + prefix_len + need_slash + path_len - 1u + 1u);
+  if (joined == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate prefixed route path");
+    return NULL;
+  }
+  (void)snprintf(joined,
+                 1u + prefix_len + need_slash + path_len - 1u + 1u,
+                 "^%s%s%s",
+                 prefix,
+                 need_slash ? "/" : "",
+                 path + 2);
+  return joined;
+}
+
 vectis_status vectis_register_prefixed_route(vectis_app *app,
                                              const char *prefix,
                                              const vectis_route_config *route,
@@ -2802,7 +2842,11 @@ vectis_status vectis_register_prefixed_route(vectis_app *app,
     vectis_set_error(error, VECTIS_ERR_INVALID, "route is required");
     return VECTIS_ERR_INVALID;
   }
-  path = vectis_join_route_prefix(prefix, route->path, error);
+  if (route->path_kind == VECTIS_ROUTE_PATH_REGEX) {
+    path = vectis_join_regex_route_prefix(prefix, route->path, error);
+  } else {
+    path = vectis_join_route_prefix(prefix, route->path, error);
+  }
   if (path == NULL) {
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
@@ -10699,7 +10743,6 @@ static vectis_status vectis_curl_set_common_tls(CURL *curl,
   struct curl_blob cert_blob;
 #endif
 
-  (void)error;
   client_path = vectis_source_path_or_old(client_bundle, client_bundle_path);
   ca_path = vectis_source_path_or_old(ca_bundle, ca_bundle_path);
   client_pem_size = 0u;
@@ -10709,6 +10752,29 @@ static vectis_status vectis_curl_set_common_tls(CURL *curl,
                                            client_bundle_pem_size);
   if (ca_path != NULL) {
     (void)curl_easy_setopt(curl, CURLOPT_CAINFO, ca_path);
+  } else if (ca_bundle != NULL && (ca_bundle->memory != NULL || ca_bundle->source != NULL)) {
+#if defined(CURL_AT_LEAST_VERSION) && CURL_AT_LEAST_VERSION(7, 77, 0)
+    void *ca_pem;
+    size_t ca_pem_size;
+    struct curl_blob ca_blob;
+
+    ca_pem = NULL;
+    ca_pem_size = 0u;
+    if (vectis_read_source_bytes(ca_bundle, &ca_pem, &ca_pem_size, "CA bundle", error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    memset(&ca_blob, 0, sizeof(ca_blob));
+    ca_blob.data = ca_pem;
+    ca_blob.len = ca_pem_size;
+    ca_blob.flags = CURL_BLOB_COPY;
+    (void)curl_easy_setopt(curl, CURLOPT_CAINFO_BLOB, &ca_blob);
+    free(ca_pem);
+#else
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "this libcurl build does not support in-memory CA bundles");
+    return VECTIS_ERR_INVALID;
+#endif
   }
   if (client_path != NULL) {
     (void)curl_easy_setopt(curl, CURLOPT_SSLCERT, client_path);
