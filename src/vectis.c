@@ -325,6 +325,11 @@ static vectis_status vectis_http_client_send_json(vectis_http_client *client,
                                                   const void *value,
                                                   vectis_http_response *response,
                                                   vectis_error *error);
+static vectis_status vectis_read_source_bytes(const vectis_source *source,
+                                              void **out,
+                                              size_t *out_size,
+                                              const char *label,
+                                              vectis_error *error);
 
 static pthread_once_t vectis_curl_once = PTHREAD_ONCE_INIT;
 static pthread_once_t vectis_libssh2_once = PTHREAD_ONCE_INIT;
@@ -8817,6 +8822,23 @@ void vectis_internal_response_cleanup(vectis_response *response) {
   memset(response, 0, sizeof(*response));
 }
 
+static void vectis_response_clear_payload(vectis_response *response) {
+  if (response == NULL) {
+    return;
+  }
+  free(response->content_type);
+  response->content_type = NULL;
+  free(response->body);
+  response->body = NULL;
+  response->body_size = 0u;
+  if (response->file_path_temporary && response->file_path != NULL) {
+    (void)unlink(response->file_path);
+  }
+  free(response->file_path);
+  response->file_path = NULL;
+  response->file_path_temporary = 0;
+}
+
 void vectis_internal_response_free(vectis_response *response) {
   if (response == NULL) {
     return;
@@ -9507,13 +9529,7 @@ vectis_status vectis_response_status(vectis_response *response,
     vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP status code is invalid");
     return VECTIS_ERR_INVALID;
   }
-  free(response->content_type);
-  response->content_type = NULL;
-  free(response->body);
-  response->body = NULL;
-  response->body_size = 0u;
-  free(response->file_path);
-  response->file_path = NULL;
+  vectis_response_clear_payload(response);
   response->status_code = status_code;
   response->sent = 1;
   vectis_error_clear(error);
@@ -9612,14 +9628,11 @@ vectis_status vectis_response_bytes(vectis_response *response,
     }
     memcpy(body_copy, body.data, body.size);
   }
-  free(response->content_type);
-  free(response->body);
-  free(response->file_path);
+  vectis_response_clear_payload(response);
   response->status_code = status_code;
   response->content_type = content_type_copy;
   response->body = body_copy;
   response->body_size = body.size;
-  response->file_path = NULL;
   response->sent = 1;
   vectis_error_clear(error);
   return VECTIS_OK;
@@ -9660,9 +9673,7 @@ vectis_status vectis_response_file(vectis_response *response,
     vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy response file path");
     return VECTIS_ERR_NOMEM;
   }
-  free(response->content_type);
-  free(response->body);
-  free(response->file_path);
+  vectis_response_clear_payload(response);
   response->status_code = status_code;
   response->content_type = content_type_copy;
   response->body = NULL;
@@ -9711,12 +9722,7 @@ static vectis_status vectis_response_file_owned(vectis_response *response,
     vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy response content type");
     return VECTIS_ERR_NOMEM;
   }
-  free(response->content_type);
-  free(response->body);
-  if (response->file_path_temporary && response->file_path != NULL) {
-    (void)unlink(response->file_path);
-  }
-  free(response->file_path);
+  vectis_response_clear_payload(response);
   response->status_code = status_code;
   response->content_type = content_type_copy;
   response->body = NULL;
@@ -11284,14 +11290,14 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
 
   max_attempts = vectis_http_effective_retry_attempts(client, request);
   retry_conditions = vectis_http_effective_retry_conditions(client, request);
+  if (retry_conditions == VECTIS_HTTP_RETRY_NONE) {
+    max_attempts = 1u;
+  }
   if (max_attempts > 1u && request != NULL && request->response_body != NULL) {
     vectis_set_error(error,
                      VECTIS_ERR_INVALID,
                      "HTTP response streaming cannot be retried safely");
     return VECTIS_ERR_INVALID;
-  }
-  if (retry_conditions == VECTIS_HTTP_RETRY_NONE) {
-    max_attempts = 1u;
   }
 
   delay_ms = vectis_http_effective_retry_initial_delay(client, request);
@@ -11919,21 +11925,42 @@ static vectis_status vectis_ssh_authenticate(LIBSSH2_SESSION *session,
                                              const vectis_ssh_config *config,
                                              vectis_error *error) {
   const char *key_path;
+  void *key_pem;
+  size_t key_pem_size;
   int rc;
 
   key_path = vectis_source_path_or_old(&config->private_key, config->private_key_path);
+  key_pem = NULL;
+  key_pem_size = 0u;
   if (key_path != NULL) {
     rc = libssh2_userauth_publickey_fromfile(session,
                                              config->username,
                                              NULL,
                                              key_path,
                                              config->password);
+  } else if (config->private_key.memory != NULL || config->private_key.source != NULL) {
+    if (vectis_read_source_bytes(&config->private_key,
+                                 &key_pem,
+                                 &key_pem_size,
+                                 "SSH private key",
+                                 error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    rc = libssh2_userauth_publickey_frommemory(session,
+                                               config->username,
+                                               strlen(config->username),
+                                               NULL,
+                                               0u,
+                                               (const char *)key_pem,
+                                               key_pem_size,
+                                               config->password);
+    free(key_pem);
   } else if (config->password != NULL) {
     rc = libssh2_userauth_password(session, config->username, config->password);
   } else {
     vectis_set_error(error,
                      VECTIS_ERR_INVALID,
-                     "SSH authentication requires password or private_key_path");
+                     "SSH authentication requires password or private key");
     return VECTIS_ERR_INVALID;
   }
   if (rc != 0) {

@@ -16,6 +16,7 @@ kore_workflow_port=${VECTIS_E2E_KORE_WORKFLOW_PORT:-$((kore_basic_port + 2))}
 kore_downstream_port=${VECTIS_E2E_KORE_DOWNSTREAM_PORT:-$((kore_basic_port + 3))}
 kore_static_port=${VECTIS_E2E_KORE_STATIC_PORT:-$((kore_basic_port + 4))}
 work_dir=$(mktemp -d)
+ssh_memory_key="$work_dir/vectis-e2e-ssh-key"
 server_pids=""
 
 cleanup() {
@@ -117,6 +118,13 @@ run_service_examples() {
     VECTIS_SSH_PORT="$ssh_port" \
     VECTIS_SSH_USERNAME="vectis" \
     VECTIS_SSH_PASSWORD="vectispass" \
+    "$repo_root/build/debug/examples/vectis_example_ssh"
+
+  printf '[e2e] ssh command with memory private key\n'
+  env VECTIS_SSH_HOST="127.0.0.1" \
+    VECTIS_SSH_PORT="$ssh_port" \
+    VECTIS_SSH_USERNAME="vectis" \
+    VECTIS_SSH_PRIVATE_KEY_MEMORY_FILE="$ssh_memory_key" \
     "$repo_root/build/debug/examples/vectis_example_ssh"
 
   printf '[e2e] libssh2 sftp upload/download\n'
@@ -356,8 +364,24 @@ run_kore_examples() {
     "$repo_root/build/debug/examples/vectis_example_kore_workflow_e2e" verify
 }
 
+provision_ssh_public_key() {
+  if ! command -v ssh-keygen >/dev/null 2>&1; then
+    printf '%s\n' "ssh-keygen is required for source-backed SSH key e2e coverage" >&2
+    return 1
+  fi
+  ssh-keygen -q -t rsa -b 2048 -m PEM -N "" -f "$ssh_memory_key"
+}
+
+install_ssh_public_key() {
+  "$script_dir/compose.sh" exec -T ssh-sftp /bin/sh -ec \
+    'mkdir -p /config/.ssh && cat > /config/.ssh/authorized_keys && chmod 700 /config/.ssh && chmod 600 /config/.ssh/authorized_keys' \
+    <"$ssh_memory_key.pub"
+}
+
 "$script_dir/dev-reset.sh"
+provision_ssh_public_key
 "$script_dir/dev-up.sh"
+install_ssh_public_key
 make -C "$repo_root" build-debug
 
 cd "$work_dir"

@@ -374,6 +374,7 @@ static void assert_source_equals(lc_source *source, const void *expected, size_t
 static void assert_http_surface(void) {
   vectis_http_client_config client;
   vectis_http_client *handle;
+  vectis_http_client *no_retry_handle;
   vectis_http_request request;
   vectis_http_response response;
   vectis_error error;
@@ -402,6 +403,7 @@ static void assert_http_surface(void) {
   curl_config_count = 0;
   retry_config_count = 0;
   handle = NULL;
+  no_retry_handle = NULL;
   memset(&response, 0, sizeof(response));
   memset(&doc, 0, sizeof(doc));
   vectis_http_client_config_init(&client);
@@ -583,6 +585,26 @@ static void assert_http_surface(void) {
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "streaming") != NULL);
 
+  client.retry_max_attempts = 2u;
+  client.retry_conditions = VECTIS_HTTP_RETRY_NONE;
+  status = vectis_http_client_new(&client, &no_retry_handle, &error);
+  assert(status == VECTIS_OK);
+  vectis_http_request_init(&request);
+  request.url = "/vectis_http_source.txt";
+  request.response_body = response_stream_ok;
+  request.response_body_userdata = &doc;
+  memset(&doc, 0, sizeof(doc));
+  status = no_retry_handle->execute(no_retry_handle, &request, &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.body == NULL);
+  assert(response.body_size == 0u);
+  assert(memcmp(doc.id, source_body, sizeof(source_body) - 1u) == 0);
+  vectis_http_response_cleanup(&response);
+  no_retry_handle->close(no_retry_handle);
+  no_retry_handle = NULL;
+  client.retry_max_attempts = 1u;
+  client.retry_conditions = VECTIS_HTTP_RETRY_DEFAULT;
+
   vectis_http_request_init(&request);
   request.url = "/vectis_http_source.txt";
   request.configure_curl = curl_config_fail;
@@ -740,6 +762,7 @@ static void assert_io_surface(void) {
   const char bundle_path[] = "/tmp/vectis-test-bundle.pem";
   const char cert_path[] = "/tmp/vectis-test-cert.pem";
   const char key_path[] = "/tmp/vectis-test-key.pem";
+  const char ssh_key_pem[] = "not a real ssh key";
   char line[128];
   FILE *fp;
 
@@ -797,6 +820,15 @@ static void assert_io_surface(void) {
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "SSH handle") != NULL);
   ssh_handle->close(ssh_handle);
+  ssh.password = NULL;
+  ssh.private_key = vectis_source_from_memory(ssh_key_pem, sizeof(ssh_key_pem) - 1u);
+  status = vectis_ssh_new(&ssh, &ssh_handle, &error);
+  assert(status == VECTIS_OK);
+  assert(ssh_handle->config.private_key.memory == ssh_key_pem);
+  assert(ssh_handle->config.private_key.memory_size == sizeof(ssh_key_pem) - 1u);
+  ssh_handle->close(ssh_handle);
+  ssh.password = "secret";
+  vectis_source_init(&ssh.private_key);
   status = vectis_ssh_sftp_upload_file(&ssh, "local", "remote", &error);
   assert(status == VECTIS_ERR_INVALID || status == VECTIS_ERR_STATE);
   status = vectis_ssh_exec(&ssh, "true", &result, &error);
@@ -878,6 +910,7 @@ static void assert_request_response_surface(void) {
   vectis_body_materialized materialized;
   vectis_body_spill_config spill_config;
   vectis_body_spill_result spill_result;
+  char temp_response_path[4096];
   char small_body_buffer[64];
   char tiny_body_buffer[4];
   sample_doc doc;
@@ -1018,6 +1051,12 @@ static void assert_request_response_surface(void) {
   assert(vectis_internal_response_body(response).data == NULL);
   assert(vectis_internal_response_file_path(response) != NULL);
   assert(vectis_internal_response_file_temporary(response));
+  assert(access(vectis_internal_response_file_path(response), F_OK) == 0);
+  assert(strlen(vectis_internal_response_file_path(response)) < sizeof(temp_response_path));
+  strcpy(temp_response_path, vectis_internal_response_file_path(response));
+  status = vectis_response_status(response, 204, &error);
+  assert(status == VECTIS_OK);
+  assert(access(temp_response_path, F_OK) != 0);
   status = vectis_response_header(response, "x-vectis-test", "ok", &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_header_count(response) == 1u);
