@@ -3480,7 +3480,11 @@ vectis_status vectis_register_prefixed_json_route(vectis_app *app,
     vectis_set_error(error, VECTIS_ERR_INVALID, "json route is required");
     return VECTIS_ERR_INVALID;
   }
-  path = vectis_join_route_prefix(prefix, route->path, error);
+  if (route->path_kind == VECTIS_ROUTE_PATH_REGEX) {
+    path = vectis_join_regex_route_prefix(prefix, route->path, error);
+  } else {
+    path = vectis_join_route_prefix(prefix, route->path, error);
+  }
   if (path == NULL) {
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
@@ -3507,7 +3511,11 @@ vectis_status vectis_register_prefixed_json_typed_route(vectis_app *app,
     vectis_set_error(error, VECTIS_ERR_INVALID, "typed json route is required");
     return VECTIS_ERR_INVALID;
   }
-  path = vectis_join_route_prefix(prefix, route->path, error);
+  if (route->path_kind == VECTIS_ROUTE_PATH_REGEX) {
+    path = vectis_join_regex_route_prefix(prefix, route->path, error);
+  } else {
+    path = vectis_join_route_prefix(prefix, route->path, error);
+  }
   if (path == NULL) {
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
@@ -13071,6 +13079,16 @@ static vectis_status vectis_read_source_bytes(const vectis_source *source,
     for (;;) {
       nread = source->source->read(source->source, chunk, sizeof(chunk), &lcerr);
       if (nread == 0u) {
+        if (lcerr.code != LC_OK) {
+          free(buffer);
+          vectis_set_errorf(error,
+                            VECTIS_ERR_STATE,
+                            "failed to read %s source: %s",
+                            label,
+                            lcerr.message != NULL ? lcerr.message : "unknown lockdc error");
+          lc_error_cleanup(&lcerr);
+          return VECTIS_ERR_STATE;
+        }
         break;
       }
       if (size + nread < size) {

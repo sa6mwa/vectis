@@ -43,6 +43,10 @@ typedef struct sample_xml_amount {
   double text;
 } sample_xml_amount;
 
+typedef struct failing_source_context {
+  int read_count;
+} failing_source_context;
+
 typedef struct sample_xml_doc {
   char id[32];
   sample_xml_amount amount;
@@ -145,6 +149,39 @@ static vectis_status sample_json_typed_handler(vectis_app *app,
     (void)snprintf(out_doc.id, sizeof(out_doc.id), "%s", in_doc->id);
   }
   return vectis_json_reply(response, 201, &sample_doc_map, &out_doc, error);
+}
+
+static size_t failing_source_read(void *context, void *buffer, size_t count, lc_error *error) {
+  failing_source_context *state;
+  const char partial[] = "partial certificate";
+  size_t n;
+
+  state = (failing_source_context *)context;
+  if (state->read_count == 0) {
+    state->read_count++;
+    n = sizeof(partial) - 1u;
+    if (n > count) {
+      n = count;
+    }
+    memcpy(buffer, partial, n);
+    return n;
+  }
+  if (error != NULL) {
+    error->code = LC_ERR_TRANSPORT;
+    error->message = (char *)malloc(sizeof("source failed"));
+    assert(error->message != NULL);
+    memcpy(error->message, "source failed", sizeof("source failed"));
+  }
+  return 0u;
+}
+
+static int failing_source_reset(void *context, lc_error *error) {
+  failing_source_context *state;
+
+  (void)error;
+  state = (failing_source_context *)context;
+  state->read_count = 0;
+  return LC_OK;
 }
 
 static vectis_status sample_route_handler(vectis_app *app,
@@ -1219,6 +1256,62 @@ static void assert_json_route_surface(void) {
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
+  route = vectis_json_route(VECTIS_HTTP_POST,
+                            "^/json-regex/[0-9]+$",
+                            &sample_doc_map,
+                            sizeof(sample_doc),
+                            &sample_doc_map,
+                            sizeof(sample_doc),
+                            sample_json_handler,
+                            NULL);
+  assert(route.path_kind == VECTIS_ROUTE_PATH_REGEX);
+  status = app->prefixed_json_route(app, "/api", &route, &error);
+  assert(status == VECTIS_OK);
+  status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
+  assert(status == VECTIS_OK);
+  status = vectis_internal_dispatch_route(app,
+                                          VECTIS_HTTP_POST,
+                                          "/api/json-regex/42",
+                                          request,
+                                          response,
+                                          &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 200);
+  body = vectis_internal_response_body(response);
+  memset(&output, 0, sizeof(output));
+  assert(lonejson_parse_buffer(json_runtime, &sample_doc_map, &output, body.data, body.size, NULL) ==
+         LONEJSON_STATUS_OK);
+  assert(strcmp(output.id, "abc") == 0);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+
+  typed_route = vectis_json_typed_route(VECTIS_HTTP_POST,
+                                        "^/typed-regex/[0-9]+$",
+                                        &sample_doc_map,
+                                        sizeof(sample_doc),
+                                        sample_json_typed_handler,
+                                        NULL);
+  assert(typed_route.path_kind == VECTIS_ROUTE_PATH_REGEX);
+  status = app->prefixed_json_typed_route(app, "/api", &typed_route, &error);
+  assert(status == VECTIS_OK);
+  status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
+  assert(status == VECTIS_OK);
+  status = vectis_internal_dispatch_route(app,
+                                          VECTIS_HTTP_POST,
+                                          "/api/typed-regex/7",
+                                          request,
+                                          response,
+                                          &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 201);
+  body = vectis_internal_response_body(response);
+  memset(&output, 0, sizeof(output));
+  assert(lonejson_parse_buffer(json_runtime, &sample_doc_map, &output, body.data, body.size, NULL) ==
+         LONEJSON_STATUS_OK);
+  assert(strcmp(output.id, "abc") == 0);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+
   status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/static-file", request, response, &error);
   assert(status == VECTIS_OK);
   body = vectis_internal_response_body(response);
@@ -1303,7 +1396,7 @@ static void assert_json_route_surface(void) {
   assert(route.body.mode == VECTIS_BODY_JSON);
   status = app->prefixed_json_route(app, "/api/v1", &route, &error);
   assert(status == VECTIS_OK);
-  assert(app->route_count(app) == 7u);
+  assert(app->route_count(app) == 9u);
   status = vectis_internal_route_body_policy(app, VECTIS_HTTP_POST, "/api/v1/typed/abc", &policy, &error);
   assert(status == VECTIS_OK);
   assert(policy.mode == VECTIS_BODY_JSON);
@@ -1338,7 +1431,7 @@ static void assert_json_route_surface(void) {
                                         NULL);
   status = app->prefixed_json_typed_route(app, "/api/v1", &typed_route, &error);
   assert(status == VECTIS_OK);
-  assert(app->route_count(app) == 8u);
+  assert(app->route_count(app) == 10u);
   status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
   assert(status == VECTIS_OK);
   status = vectis_internal_dispatch_route(app,
@@ -1510,6 +1603,10 @@ static void assert_tls_source_surface(void) {
   vectis_error error;
   vectis_status status;
   vectis_app *app;
+  lc_source *failing_source;
+  failing_source_context failing_context;
+  vectis_source failing_cert_source;
+  vectis_source private_key_source;
   const char server_bundle[] =
       "-----BEGIN CERTIFICATE-----\n"
       "server\n"
@@ -1521,6 +1618,29 @@ static void assert_tls_source_surface(void) {
       "-----BEGIN CERTIFICATE-----\n"
       "ca\n"
       "-----END CERTIFICATE-----\n";
+  const char private_key[] =
+      "-----BEGIN PRIVATE KEY-----\n"
+      "key\n"
+      "-----END PRIVATE KEY-----\n";
+
+  failing_source = NULL;
+  memset(&failing_context, 0, sizeof(failing_context));
+  assert(lc_source_from_callbacks(failing_source_read,
+                                  failing_source_reset,
+                                  NULL,
+                                  &failing_context,
+                                  &failing_source,
+                                  NULL) == LC_OK);
+  failing_cert_source = vectis_source_from_lc(failing_source);
+  private_key_source = vectis_source_from_memory(private_key, sizeof(private_key) - 1u);
+  status = vectis_cert_validate_pair(&failing_cert_source,
+                                     &private_key_source,
+                                     NULL,
+                                     &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "source failed") != NULL);
+  lc_source_close(failing_source);
+  failing_source = NULL;
 
   vectis_app_config_init(&config);
   config.tls.cert_key_bundle = vectis_source_from_memory(server_bundle, sizeof(server_bundle) - 1u);
