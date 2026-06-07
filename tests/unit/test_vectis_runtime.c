@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <string.h>
@@ -200,6 +201,114 @@ static int count_token(const char *haystack, const char *needle) {
     p += strlen(needle);
   }
   return count;
+}
+
+static int count_fd_dir(const char *path) {
+  DIR *dir;
+  struct dirent *entry;
+  int count;
+
+  dir = opendir(path);
+  if (dir == NULL) {
+    return 0;
+  }
+  count = 0;
+  while ((entry = readdir(dir)) != NULL) {
+    if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+      ++count;
+    }
+  }
+  (void)closedir(dir);
+  return count;
+}
+
+static long proc_ppid(const char *pid_name) {
+  char path[512];
+  char buffer[512];
+  char *end_comm;
+  FILE *fp;
+  long ppid;
+  char state;
+
+  sprintf(path, "/proc/%s/stat", pid_name);
+  fp = fopen(path, "r");
+  if (fp == NULL) {
+    return -1L;
+  }
+  if (fgets(buffer, sizeof(buffer), fp) == NULL) {
+    (void)fclose(fp);
+    return -1L;
+  }
+  (void)fclose(fp);
+  end_comm = strrchr(buffer, ')');
+  if (end_comm == NULL) {
+    return -1L;
+  }
+  if (sscanf(end_comm + 2, "%c %ld", &state, &ppid) != 2) {
+    return -1L;
+  }
+  (void)state;
+  return ppid;
+}
+
+static int current_process_tree_fd_count(void) {
+  DIR *proc;
+  struct dirent *entry;
+  char fd_path[512];
+  long self;
+  long ppid;
+  int count;
+
+  self = (long)getpid();
+  count = count_fd_dir("/proc/self/fd");
+  proc = opendir("/proc");
+  assert(proc != NULL);
+  while ((entry = readdir(proc)) != NULL) {
+    if (entry->d_name[0] < '0' || entry->d_name[0] > '9') {
+      continue;
+    }
+    ppid = proc_ppid(entry->d_name);
+    if (ppid == self) {
+      sprintf(fd_path, "/proc/%s/fd", entry->d_name);
+      count += count_fd_dir(fd_path);
+    }
+  }
+  (void)closedir(proc);
+  return count;
+}
+
+static void assert_repeated_file_responses_do_not_leak_fds(
+    const vectis_http_client_config *http,
+    const char *url,
+    const char *expected,
+    size_t expected_size,
+    vectis_error *error) {
+  vectis_http_response response;
+  vectis_status status;
+  int before;
+  int after;
+  int i;
+
+  memset(&response, 0, sizeof(response));
+  for (i = 0; i < 48; ++i) {
+    status = vectis_http_get(http, url, &response, error);
+    assert(status == VECTIS_OK);
+    assert(response.status_code == 200L);
+    assert(response.body_size == expected_size);
+    assert(memcmp(response.body, expected, expected_size) == 0);
+    vectis_http_response_cleanup(&response);
+  }
+  before = current_process_tree_fd_count();
+  for (i = 0; i < 48; ++i) {
+    status = vectis_http_get(http, url, &response, error);
+    assert(status == VECTIS_OK);
+    assert(response.status_code == 200L);
+    assert(response.body_size == expected_size);
+    assert(memcmp(response.body, expected, expected_size) == 0);
+    vectis_http_response_cleanup(&response);
+  }
+  after = current_process_tree_fd_count();
+  assert(after <= before + 2);
 }
 
 static void assert_invalid_server_config(vectis_app_config *config,
@@ -554,6 +663,11 @@ static void assert_kore_smoke(void) {
   assert(response.body_size == sizeof(response_file_body) - 1u);
   assert(memcmp(response.body, response_file_body, sizeof(response_file_body) - 1u) == 0);
   vectis_http_response_cleanup(&response);
+  assert_repeated_file_responses_do_not_leak_fds(&http,
+                                                 "http://127.0.0.1:28080/file",
+                                                 response_file_body,
+                                                 sizeof(response_file_body) - 1u,
+                                                 &error);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;

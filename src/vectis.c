@@ -26,6 +26,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
@@ -2867,7 +2868,12 @@ static vectis_status vectis_static_response(vectis_request *request,
                                             const char *content_type,
                                             const char *file_path,
                                             vectis_error *error) {
+  struct stat st;
+
   if (vectis_request_method(request) == VECTIS_HTTP_HEAD) {
+    if (stat(file_path, &st) != 0 || !S_ISREG(st.st_mode)) {
+      return vectis_response_status(response, 404, error);
+    }
     if (content_type != NULL &&
         vectis_response_header(response, "content-type", content_type, error) != VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_STATE;
@@ -10728,6 +10734,12 @@ static vectis_status vectis_curl_set_error(vectis_error *error,
   return VECTIS_ERR_STATE;
 }
 
+static int vectis_http_method_upload_capable(vectis_http_method method) {
+  return method != VECTIS_HTTP_GET &&
+         method != VECTIS_HTTP_HEAD &&
+         method != VECTIS_HTTP_OPTIONS;
+}
+
 static unsigned vectis_http_effective_retry_attempts(const vectis_http_client_config *client,
                                                      const vectis_http_request *request) {
   if (request != NULL && request->retry_max_attempts > 0u) {
@@ -11053,9 +11065,7 @@ static vectis_status vectis_http_execute_once(const vectis_http_client_config *c
   }
 
   if (request_body.json_upload_active) {
-    if (request->method == VECTIS_HTTP_GET ||
-        request->method == VECTIS_HTTP_HEAD ||
-        request->method == VECTIS_HTTP_OPTIONS) {
+    if (!vectis_http_method_upload_capable(request->method)) {
       curl_slist_free_all(headers);
       curl_easy_cleanup(curl);
       vectis_curl_request_body_cleanup(&request_body);
@@ -11078,9 +11088,7 @@ static vectis_status vectis_http_execute_once(const vectis_http_client_config *c
                              request_body.json_size);
     }
   } else if (request_body.file != NULL) {
-    if (request->method == VECTIS_HTTP_GET ||
-        request->method == VECTIS_HTTP_HEAD ||
-        request->method == VECTIS_HTTP_OPTIONS) {
+    if (!vectis_http_method_upload_capable(request->method)) {
       curl_slist_free_all(headers);
       curl_easy_cleanup(curl);
       vectis_curl_request_body_cleanup(&request_body);
@@ -11109,6 +11117,16 @@ static vectis_status vectis_http_execute_once(const vectis_http_client_config *c
       vectis_curl_request_body_cleanup(&request_body);
       free(url);
       vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP request body is invalid");
+      return VECTIS_ERR_INVALID;
+    }
+    if (!vectis_http_method_upload_capable(request->method)) {
+      curl_slist_free_all(headers);
+      curl_easy_cleanup(curl);
+      vectis_curl_request_body_cleanup(&request_body);
+      free(url);
+      vectis_set_error(error,
+                       VECTIS_ERR_INVALID,
+                       "raw request bodies require an upload-capable HTTP method");
       return VECTIS_ERR_INVALID;
     }
     if (request->method == VECTIS_HTTP_POST) {

@@ -1152,6 +1152,18 @@ static void vectis_kore_send_response(struct http_request *req,
   }
   file_path = vectis_internal_response_file_path(response);
   if (file_path != NULL) {
+    if (req->owner == NULL || req->owner->owner == NULL ||
+        req->owner->owner->server == NULL) {
+      http_response(req, 500, NULL, 0);
+      return;
+    }
+    if (!vectis_internal_response_file_temporary(response)) {
+      ref = kore_fileref_get(file_path, req->owner->owner->server->tls);
+      if (ref != NULL) {
+        http_response_fileref(req, status, ref);
+        return;
+      }
+    }
     fd = open(file_path, O_RDONLY);
     if (fd == -1 || fstat(fd, &st) != 0) {
       if (fd != -1) {
@@ -1162,12 +1174,6 @@ static void vectis_kore_send_response(struct http_request *req,
     }
     ts.tv_sec = st.st_mtime;
     ts.tv_nsec = 0L;
-    if (req->owner == NULL || req->owner->owner == NULL ||
-        req->owner->owner->server == NULL) {
-      (void)close(fd);
-      http_response(req, 500, NULL, 0);
-      return;
-    }
     ref = kore_fileref_create(req->owner->owner->server, file_path, fd, st.st_size, &ts);
     if (ref == NULL) {
       (void)close(fd);

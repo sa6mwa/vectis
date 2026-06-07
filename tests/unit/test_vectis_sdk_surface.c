@@ -674,6 +674,32 @@ static void assert_http_surface(void) {
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "upload-capable") != NULL);
 
+  vectis_http_request_init(&request);
+  request.url = "file:///tmp/vectis_http_upload.txt";
+  request.body = upload_body;
+  request.body_size = sizeof(upload_body) - 1u;
+  status = handle->execute(handle, &request, &response, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "upload-capable") != NULL);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_HEAD;
+  request.url = "file:///tmp/vectis_http_upload.txt";
+  request.body = upload_body;
+  request.body_size = sizeof(upload_body) - 1u;
+  status = handle->execute(handle, &request, &response, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "upload-capable") != NULL);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_OPTIONS;
+  request.url = "file:///tmp/vectis_http_upload.txt";
+  request.body = upload_body;
+  request.body_size = sizeof(upload_body) - 1u;
+  status = handle->execute(handle, &request, &response, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "upload-capable") != NULL);
+
   status = handle->head(handle, "/vectis_http_source.txt", &response, &error);
   assert(status == VECTIS_OK);
   assert(response.body_size == 0u);
@@ -1156,10 +1182,30 @@ static void assert_json_route_surface(void) {
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
+  assert(remove(static_file_path) == 0);
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_HEAD, "/static-file", request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 404);
+  body = vectis_internal_response_body(response);
+  assert(body.data == NULL);
+  assert(body.size == 0u);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+
   status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/assets/app.js", request, response, &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 200);
   assert(strcmp(vectis_internal_response_file_path(response), static_dir_file_path) == 0);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+
+  assert(remove(static_dir_file_path) == 0);
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_HEAD, "/assets/app.js", request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 404);
+  body = vectis_internal_response_body(response);
+  assert(body.data == NULL);
+  assert(body.size == 0u);
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
