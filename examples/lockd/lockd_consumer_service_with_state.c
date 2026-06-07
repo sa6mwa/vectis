@@ -37,11 +37,11 @@ static int handle_stateful_order(void *context,
                             : "");
     return LC_ERR_PROTOCOL;
   }
-  if (message->state->load(message->state, &workflow_state_map, &state, NULL, NULL, NULL, error) != LC_OK) {
+  if (message->state->load(message->state, &workflow_state_map, &state, NULL, NULL, error) != LC_OK) {
     return LC_ERR_TRANSPORT;
   }
   (void)snprintf(state.phase, sizeof(state.phase), "%s", "processed");
-  if (message->state->save(message->state, &workflow_state_map, &state, NULL, error) != LC_OK) {
+  if (message->state->save(message->state, &workflow_state_map, &state, error) != LC_OK) {
     return LC_ERR_TRANSPORT;
   }
   ctx->logger->infof(ctx->logger, "example.lockd_state_consumer.processed",

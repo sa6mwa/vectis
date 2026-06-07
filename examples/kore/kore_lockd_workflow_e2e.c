@@ -343,6 +343,7 @@ static int enqueue_workflow_message(lc_client *client,
   lc_enqueue_req enqueue;
   lc_enqueue_res result;
   lc_source *source;
+  lonejson *json_runtime;
   lonejson_error json_error;
   char *json;
   size_t json_size;
@@ -353,11 +354,17 @@ static int enqueue_workflow_message(lc_client *client,
   lc_enqueue_req_init(&enqueue);
   source = NULL;
   (void)snprintf(message.id, sizeof(message.id), "%s", id);
-  json = lonejson_serialize_alloc(&workflow_message_map,
+  json_runtime = lonejson_new(NULL, &json_error);
+  if (json_runtime == NULL) {
+    fprintf(stderr, "lonejson runtime init failed: %s\n", json_error.message);
+    return LC_ERR_NOMEM;
+  }
+  json = lonejson_serialize_alloc(json_runtime,
+                                  &workflow_message_map,
                                   &message,
                                   &json_size,
-                                  NULL,
                                   &json_error);
+  lonejson_free(json_runtime);
   if (json == NULL) {
     fprintf(stderr, "serialize workflow message failed: %s\n", json_error.message);
     return LC_ERR_INVALID;
@@ -452,6 +459,7 @@ static int parse_delivery_id(lc_message *message,
   size_t length;
   lonejson_error json_error;
   lonejson_status json_status;
+  lonejson *json_runtime;
   int rc;
 
   sink = NULL;
@@ -467,15 +475,22 @@ static int parse_delivery_id(lc_message *message,
     rc = lc_sink_memory_bytes(sink, &bytes, &length, error);
   }
   if (rc == LC_OK) {
-    json_status = lonejson_parse_buffer(&workflow_message_map,
+    json_runtime = lonejson_new(NULL, &json_error);
+    if (json_runtime == NULL) {
+      fprintf(stderr, "lonejson runtime init failed: %s\n", json_error.message);
+      rc = LC_ERR_NOMEM;
+    } else {
+      json_status = lonejson_parse_buffer(json_runtime,
+                                        &workflow_message_map,
                                         workflow,
                                         (const char *)bytes,
                                         length,
-                                        NULL,
                                         &json_error);
-    if (json_status != LONEJSON_STATUS_OK) {
-      fprintf(stderr, "parse workflow message failed: %s\n", json_error.message);
-      rc = LC_ERR_INVALID;
+      lonejson_free(json_runtime);
+      if (json_status != LONEJSON_STATUS_OK) {
+        fprintf(stderr, "parse workflow message failed: %s\n", json_error.message);
+        rc = LC_ERR_INVALID;
+      }
     }
   }
   lc_sink_close(sink);

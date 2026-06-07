@@ -1,9 +1,9 @@
 diff --git a/include/kore/ljson.h b/include/kore/ljson.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..9a723b53581df44e482cfea80abeba4d17b9f657
+index 0000000..32c19aa
 --- /dev/null
 +++ b/include/kore/ljson.h
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,27 @@
 +/*
 + * vectis lonejson helpers for Kore HTTP handlers.
 + */
@@ -22,8 +22,7 @@ index 0000000000000000000000000000000000000000..9a723b53581df44e482cfea80abeba4d
 +lonejson_status	kore_ljson_validate_request(struct http_request *,
 +		    lonejson_error *);
 +lonejson_status	kore_ljson_parse_request(struct http_request *,
-+		    const lonejson_map *, void *, const lonejson_parse_options *,
-+		    lonejson_error *);
++		    const lonejson_map *, void *, lonejson_error *);
 +
 +#if defined(__cplusplus)
 +}
@@ -33,7 +32,7 @@ index 0000000000000000000000000000000000000000..9a723b53581df44e482cfea80abeba4d
 +
 +#endif
 diff --git a/src/acme.c b/src/acme.c
-index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c629791cb9 100644
+index d8fcf0d..0e86d07 100644
 --- a/src/acme.c
 +++ b/src/acme.c
 @@ -37,6 +37,10 @@
@@ -57,7 +56,7 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  
  static void	acme_sign_expire(void *, u_int64_t);
  static void	acme_sign_result(struct kore_msg *, const void *);
-@@ -279,6 +285,116 @@ char			*acme_email = NULL;
+@@ -279,6 +285,124 @@ char			*acme_email = NULL;
  char			*acme_provider = NULL;
  u_int32_t		acme_request_timeout = 8;
  
@@ -157,9 +156,17 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
 +{
 +	lonejson_error		error;
 +	lonejson_status		status;
++	lonejson		*runtime;
 +
 +	memset(dst, 0, map->struct_size);
-+	status = lonejson_parse_buffer(map, dst, body, len, NULL, &error);
++	runtime = lonejson_new(NULL, &error);
++	if (runtime == NULL) {
++		kore_log(LOG_NOTICE, "%s: lonejson runtime init failed (%s)",
++		    what, error.message);
++		return (KORE_RESULT_ERROR);
++	}
++	status = lonejson_parse_buffer(runtime, map, dst, body, len, &error);
++	lonejson_free(runtime);
 +	if (status != LONEJSON_STATUS_OK) {
 +		kore_log(LOG_NOTICE, "%s: lonejson parse failed at %zu:%zu (%s)",
 +		    what, error.line, error.column, error.message);
@@ -174,7 +181,7 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  void
  kore_acme_init(void)
  {
-@@ -392,7 +508,6 @@ acme_parse_directory(void)
+@@ -392,7 +516,6 @@ acme_parse_directory(void)
  {
  	struct acme_request	req;
  	size_t			len;
@@ -182,7 +189,7 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  	const u_int8_t		*body;
  
  	acme_request_prepare(&req, HTTP_METHOD_GET, acme_provider, NULL, 0);
-@@ -412,6 +527,28 @@ acme_parse_directory(void)
+@@ -412,6 +535,28 @@ acme_parse_directory(void)
  
  	kore_curl_response_as_bytes(&req.curl, &body, &len);
  
@@ -211,7 +218,7 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  	kore_json_init(&json, body, len);
  
  	if (!kore_json_parse(&json)) {
-@@ -425,9 +562,10 @@ acme_parse_directory(void)
+@@ -425,9 +570,10 @@ acme_parse_directory(void)
  	acme_directory_set(&json, "newOrder", &order_url);
  	acme_directory_set(&json, "newAccount", &account_url);
  	acme_directory_set(&json, "revokeCert", &revoke_url);
@@ -223,7 +230,7 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  	acme_request_cleanup(&req);
  }
  
-@@ -578,14 +716,13 @@ acme_order_create_submit(struct acme_sign_op *op, struct kore_buf *payload)
+@@ -578,14 +724,13 @@ acme_order_create_submit(struct acme_sign_op *op, struct kore_buf *payload)
  {
  	struct acme_request		req;
  	size_t				len;
@@ -239,7 +246,7 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  
  	order = NULL;
  	domain = op->udata;
-@@ -617,79 +754,138 @@ acme_order_create_submit(struct acme_sign_op *op, struct kore_buf *payload)
+@@ -617,79 +762,138 @@ acme_order_create_submit(struct acme_sign_op *op, struct kore_buf *payload)
  	}
  
  	kore_curl_response_as_bytes(&req.curl, &body, &len);
@@ -405,7 +412,9 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
 +		order->final = kore_strdup(final->data.string);
 +		kore_timer_add(acme_order_process, ACME_ORDER_TICK,
 +		    order, KORE_TIMER_ONESHOT);
-+
+ 
+-	order->curauth = LIST_FIRST(&order->auth);
+-	kore_log(LOG_INFO, "[%s] order_id =  %s", order->domain, order->id);
 +		TAILQ_FOREACH(item, &array->data.items, list) {
 +			if (item->type != KORE_JSON_TYPE_STRING)
 +				continue;
@@ -415,11 +424,9 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
 +			LIST_INSERT_HEAD(&order->auth, auth, list);
 +		}
  
--	order->curauth = LIST_FIRST(&order->auth);
--	kore_log(LOG_INFO, "[%s] order_id =  %s", order->domain, order->id);
 +		order->curauth = LIST_FIRST(&order->auth);
 +		kore_log(LOG_INFO, "[%s] order_id =  %s", order->domain, order->id);
- 
++
 +cleanup_json_order_create:
 +		kore_json_cleanup(&json);
 +	}
@@ -432,7 +439,7 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  	acme_request_cleanup(&req);
  }
  
-@@ -704,11 +900,9 @@ acme_order_update_submit(struct acme_sign_op *op, struct kore_buf *payload)
+@@ -704,11 +908,9 @@ acme_order_update_submit(struct acme_sign_op *op, struct kore_buf *payload)
  {
  	struct acme_request		req;
  	size_t				len;
@@ -444,7 +451,7 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  
  	order = op->udata;
  	op->udata = NULL;
-@@ -734,41 +928,81 @@ acme_order_update_submit(struct acme_sign_op *op, struct kore_buf *payload)
+@@ -734,41 +936,81 @@ acme_order_update_submit(struct acme_sign_op *op, struct kore_buf *payload)
  
  	ret = KORE_RESULT_ERROR;
  	kore_curl_response_as_bytes(&req.curl, &body, &len);
@@ -549,7 +556,7 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  
  	ret = KORE_RESULT_OK;
  
-@@ -778,7 +1012,6 @@ cleanup:
+@@ -778,7 +1020,6 @@ cleanup:
  	else
  		order->state = ACME_ORDER_STATE_UPDATE_AUTH;
  
@@ -557,7 +564,7 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  	acme_request_cleanup(&req);
  }
  
-@@ -1121,17 +1354,13 @@ acme_order_auth_update_submit(struct acme_sign_op *op, struct kore_buf *payload)
+@@ -1121,17 +1362,13 @@ acme_order_auth_update_submit(struct acme_sign_op *op, struct kore_buf *payload)
  	const char			*p;
  	struct acme_request		req;
  	size_t				len;
@@ -575,7 +582,7 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  
  	auth = op->udata;
  	order = auth->order;
-@@ -1152,139 +1381,217 @@ acme_order_auth_update_submit(struct acme_sign_op *op, struct kore_buf *payload)
+@@ -1152,139 +1389,217 @@ acme_order_auth_update_submit(struct acme_sign_op *op, struct kore_buf *payload)
  	}
  
  	kore_curl_response_as_bytes(&req.curl, &body, &len);
@@ -728,12 +735,12 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
 -		 */
 -		if (strcmp(type->data.string, "tls-alpn-01"))
 -			continue;
--
++		kore_log(LOG_INFO, "[%s:auth] %s updated", order->domain, auth->url);
+ 
 -		url = kore_json_find_string(object, "url");
 -		token = kore_json_find_string(object, "token");
 -		status = kore_json_find_string(object, "status");
-+		kore_log(LOG_INFO, "[%s:auth] %s updated", order->domain, auth->url);
- 
+-
 -		if (url == NULL || token == NULL || status == NULL) {
 -			kore_log(LOG_NOTICE,
 -			    "[%s:auth:challenge] missing members",
@@ -891,7 +898,7 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  
  	if (auth->challenge == NULL) {
  		kore_log(LOG_NOTICE,
-@@ -1306,7 +1613,6 @@ cleanup:
+@@ -1306,7 +1621,6 @@ cleanup:
  		}
  	}
  
@@ -899,7 +906,7 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  	acme_request_cleanup(&req);
  }
  
-@@ -1435,7 +1741,7 @@ acme_request_prepare(struct acme_request *req, int method,
+@@ -1435,7 +1749,7 @@ acme_request_prepare(struct acme_request *req, int method,
  
  	/* Override default timeout. */
  	curl_easy_setopt(req->curl.handle,
@@ -908,7 +915,7 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  
  	kore_curl_http_setup(&req->curl, method, data, len);
  	kore_curl_http_set_header(&req->curl, "content-type",
-@@ -1462,9 +1768,7 @@ static int
+@@ -1462,9 +1776,7 @@ static int
  acme_request_run(struct acme_request *req)
  {
  	size_t				len;
@@ -918,7 +925,7 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  
  	kore_curl_run(&req->curl);
  
-@@ -1476,25 +1780,47 @@ acme_request_run(struct acme_request *req)
+@@ -1476,25 +1788,47 @@ acme_request_run(struct acme_request *req)
  
  	if (req->curl.http.status == HTTP_STATUS_BAD_REQUEST) {
  		kore_curl_response_as_bytes(&req->curl, &body, &len);
@@ -976,7 +983,7 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  		return (KORE_RESULT_ERROR);
  	}
  
-@@ -1507,6 +1833,7 @@ acme_request_cleanup(struct acme_request *req)
+@@ -1507,6 +1841,7 @@ acme_request_cleanup(struct acme_request *req)
  	kore_curl_cleanup(&req->curl);
  }
  
@@ -984,7 +991,7 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  static void
  acme_directory_set(struct kore_json *json, const char *name, char **out)
  {
-@@ -1519,6 +1846,7 @@ acme_directory_set(struct kore_json *json, const char *name, char **out)
+@@ -1519,6 +1854,7 @@ acme_directory_set(struct kore_json *json, const char *name, char **out)
  
  	*out = kore_strdup(item->data.string);
  }
@@ -994,10 +1001,10 @@ index d8fcf0debe15078c578ada2dc49e865a8df08292..ccb7e08b10497f1a2fc1d637fb6702c6
  acme_sign_submit(struct kore_json_item *json, const char *url, void *udata,
 diff --git a/src/ljson.c b/src/ljson.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..df46afbb97f6aeee8db2624aadc559cab1ddd491
+index 0000000..053e8c9
 --- /dev/null
 +++ b/src/ljson.c
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,93 @@
 +/*
 + * vectis lonejson helpers for Kore request bodies.
 + */
@@ -1034,6 +1041,8 @@ index 0000000000000000000000000000000000000000..df46afbb97f6aeee8db2624aadc559ca
 +kore_ljson_validate_request(struct http_request *req, lonejson_error *error)
 +{
 +	struct kore_ljson_reader	reader;
++	lonejson		*runtime;
++	lonejson_status		status;
 +
 +	if (req == NULL) {
 +		if (error != NULL) {
@@ -1049,14 +1058,22 @@ index 0000000000000000000000000000000000000000..df46afbb97f6aeee8db2624aadc559ca
 +		return (LONEJSON_STATUS_IO_ERROR);
 +
 +	reader.req = req;
-+	return lonejson_validate_reader(kore_ljson_http_reader, &reader, error);
++	runtime = lonejson_new(NULL, error);
++	if (runtime == NULL)
++		return (LONEJSON_STATUS_ALLOCATION_FAILED);
++	status = lonejson_validate_reader(runtime, kore_ljson_http_reader,
++	    &reader, error);
++	lonejson_free(runtime);
++	return (status);
 +}
 +
 +lonejson_status
 +kore_ljson_parse_request(struct http_request *req, const lonejson_map *map,
-+    void *dst, const lonejson_parse_options *options, lonejson_error *error)
++    void *dst, lonejson_error *error)
 +{
 +	struct kore_ljson_reader	reader;
++	lonejson		*runtime;
++	lonejson_status		status;
 +
 +	if (req == NULL || map == NULL || dst == NULL) {
 +		if (error != NULL) {
@@ -1073,24 +1090,11 @@ index 0000000000000000000000000000000000000000..df46afbb97f6aeee8db2624aadc559ca
 +		return (LONEJSON_STATUS_IO_ERROR);
 +
 +	reader.req = req;
-+	return lonejson_parse_reader(map, dst, kore_ljson_http_reader,
-+	    &reader, options, error);
++	runtime = lonejson_new(NULL, error);
++	if (runtime == NULL)
++		return (LONEJSON_STATUS_ALLOCATION_FAILED);
++	status = lonejson_parse_reader(runtime, map, dst, kore_ljson_http_reader,
++	    &reader, error);
++	lonejson_free(runtime);
++	return (status);
 +}
-diff --git a/src/vectis_lonejson_impl.c b/src/vectis_lonejson_impl.c
-new file mode 100644
-index 0000000000000000000000000000000000000000..45a9be228d6d838194210a13931901b9b2133030
---- /dev/null
-+++ b/src/vectis_lonejson_impl.c
-@@ -0,0 +1,12 @@
-+#if defined(__GNUC__) || defined(__clang__)
-+#pragma GCC diagnostic push
-+#pragma GCC diagnostic ignored "-Wcast-qual"
-+#pragma GCC diagnostic ignored "-Wshadow"
-+#endif
-+
-+#define LONEJSON_IMPLEMENTATION
-+#include <lonejson.h>
-+
-+#if defined(__GNUC__) || defined(__clang__)
-+#pragma GCC diagnostic pop
-+#endif

@@ -17,7 +17,7 @@ index b8c96d5a3941668a05f6bea8a7a67c25e7ebbb21..6ae15898412a3d604432e8910bcf1c65
  LDFLAGS+=-rdynamic
  
  ifeq ("$(TLS_BACKEND)", "openssl")
-@@ -65,6 +73,26 @@ ifneq ("$(DEBUG)", "")
+@@ -65,6 +73,27 @@ ifneq ("$(DEBUG)", "")
  	FEATURES+=-DKORE_DEBUG
  endif
  
@@ -32,11 +32,12 @@ index b8c96d5a3941668a05f6bea8a7a67c25e7ebbb21..6ae15898412a3d604432e8910bcf1c65
 +	endif
 +endif
 +ifneq ("$(LONEJSON)", "")
-+	S_SRC+=src/ljson.c src/vectis_lonejson_impl.c
++	S_SRC+=src/ljson.c
 +	CFLAGS+=-DKORE_USE_LONEJSON
 +	FEATURES+=-DKORE_USE_LONEJSON
 +	ifneq ("$(LONEJSON_PATH)", "")
 +		CFLAGS+=-I$(LONEJSON_PATH)/include
++		LDFLAGS+=-L$(LONEJSON_PATH)/lib -llonejson
 +		FEATURES_INC+=-I$(LONEJSON_PATH)/include
 +	endif
 +endif

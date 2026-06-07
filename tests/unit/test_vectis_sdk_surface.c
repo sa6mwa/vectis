@@ -1035,6 +1035,7 @@ static void assert_json_route_surface(void) {
   vectis_response *response;
   vectis_bytes body;
   vectis_mutable_bytes body_copy;
+  lonejson *json_runtime;
   sample_doc output;
   sample_error_doc error_output;
   char key[64];
@@ -1050,6 +1051,8 @@ static void assert_json_route_surface(void) {
   config.lockd.unix_socket_path = "/tmp/lockd.sock";
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
+  json_runtime = lonejson_new(NULL, NULL);
+  assert(json_runtime != NULL);
   assert(app->start != NULL);
   assert(app->stop != NULL);
   assert(app->route != NULL);
@@ -1197,7 +1200,7 @@ static void assert_json_route_surface(void) {
   assert(strcmp(vectis_internal_response_content_type(response), "application/json") == 0);
   assert(body.data != NULL);
   memset(&output, 0, sizeof(output));
-  assert(lonejson_parse_buffer(&sample_doc_map, &output, body.data, body.size, NULL, NULL) ==
+  assert(lonejson_parse_buffer(json_runtime, &sample_doc_map, &output, body.data, body.size, NULL) ==
          LONEJSON_STATUS_OK);
   assert(strcmp(output.id, "abc") == 0);
 
@@ -1224,7 +1227,7 @@ static void assert_json_route_surface(void) {
   body = vectis_internal_response_body(response);
   assert(vectis_internal_response_status_code(response) == 201);
   memset(&output, 0, sizeof(output));
-  assert(lonejson_parse_buffer(&sample_doc_map, &output, body.data, body.size, NULL, NULL) ==
+  assert(lonejson_parse_buffer(json_runtime, &sample_doc_map, &output, body.data, body.size, NULL) ==
          LONEJSON_STATUS_OK);
   assert(strcmp(output.id, "abc") == 0);
 
@@ -1245,11 +1248,11 @@ static void assert_json_route_surface(void) {
   body = vectis_internal_response_body(response);
   assert(vectis_internal_response_status_code(response) == 409);
   memset(&error_output, 0, sizeof(error_output));
-  assert(lonejson_parse_buffer(&sample_error_doc_map,
+  assert(lonejson_parse_buffer(json_runtime,
+                               &sample_error_doc_map,
                                &error_output,
                                body.data,
                                body.size,
-                               NULL,
                                NULL) == LONEJSON_STATUS_OK);
   assert(strcmp(error_output.code, "conflict") == 0);
 
@@ -1293,6 +1296,7 @@ static void assert_json_route_surface(void) {
 
   vectis_internal_response_free(response);
   vectis_internal_request_free(request);
+  lonejson_free(json_runtime);
   app->close(app);
   (void)remove(static_file_path);
   (void)remove(static_dir_file_path);

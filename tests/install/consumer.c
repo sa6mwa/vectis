@@ -17,6 +17,7 @@ int main(void) {
   vectis_error error;
   vectis_app *app;
   vectis_http_client *http;
+  lonejson *json_runtime;
   lonejson_error json_error;
   struct lc_client *client;
   struct kore_server *server;
@@ -71,9 +72,15 @@ int main(void) {
       vectis_body_mode_string(VECTIS_BODY_JSON) == NULL) {
     return 6;
   }
-  if (lonejson_validate_cstr("{}", &json_error) != LONEJSON_STATUS_OK) {
+  json_runtime = lonejson_new(NULL, &json_error);
+  if (json_runtime == NULL) {
     return 7;
   }
+  if (lonejson_validate_cstr(json_runtime, "{}", &json_error) != LONEJSON_STATUS_OK) {
+    lonejson_free(json_runtime);
+    return 7;
+  }
+  lonejson_free(json_runtime);
 
   client = NULL;
   server = NULL;
