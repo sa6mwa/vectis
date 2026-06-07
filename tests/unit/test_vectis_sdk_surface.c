@@ -1217,7 +1217,7 @@ static void assert_json_route_surface(void) {
   status = app->static_file(app, &static_file, &error);
   assert(status == VECTIS_OK);
   vectis_static_directory_config_init(&static_dir);
-  static_dir.path_prefix = "/assets";
+  static_dir.path_prefix = "/assets/";
   static_dir.root_dir = static_dir_path;
   static_dir.content_type = "application/javascript";
   status = app->static_directory(app, &static_dir, &error);

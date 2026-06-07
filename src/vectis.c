@@ -2154,6 +2154,12 @@ static vectis_status vectis_validate_startable(const vectis_app_impl *impl,
   int has_split_private_key;
   int has_client_ca;
 
+  if (impl->tls_mode != VECTIS_TLS_MODE_DISABLED &&
+      impl->tls_mode != VECTIS_TLS_MODE_MANUAL &&
+      impl->tls_mode != VECTIS_TLS_MODE_ACME) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "tls.mode is invalid");
+    return VECTIS_ERR_INVALID;
+  }
   if (impl->tls_mode == VECTIS_TLS_MODE_MANUAL) {
     has_cert_key_bundle = vectis_tls_material_present(impl->cert_key_bundle_path,
                                                       impl->cert_key_bundle_pem,
@@ -3088,6 +3094,29 @@ static char *vectis_static_directory_regex(const char *prefix,
   return regex;
 }
 
+static char *vectis_normalize_static_directory_prefix(const char *prefix,
+                                                      vectis_error *error) {
+  char *normalized;
+  size_t len;
+
+  if (prefix == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "static directory path_prefix is required");
+    return NULL;
+  }
+  len = strlen(prefix);
+  while (len > 1u && prefix[len - 1u] == '/') {
+    len--;
+  }
+  normalized = (char *)malloc(len + 1u);
+  if (normalized == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to normalize static directory path_prefix");
+    return NULL;
+  }
+  memcpy(normalized, prefix, len);
+  normalized[len] = '\0';
+  return normalized;
+}
+
 vectis_status vectis_register_static_file(vectis_app *app,
                                           const vectis_static_file_config *config,
                                           vectis_error *error) {
@@ -3132,7 +3161,9 @@ vectis_status vectis_register_static_directory(vectis_app *app,
   vectis_static_route_data *data;
   vectis_status status;
   char *regex;
+  char *path_prefix;
 
+  path_prefix = NULL;
   if (config == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "static directory config is required");
     return VECTIS_ERR_INVALID;
@@ -3141,15 +3172,21 @@ vectis_status vectis_register_static_directory(vectis_app *app,
     vectis_set_error(error, VECTIS_ERR_INVALID, "static directory path_prefix and root_dir are required");
     return VECTIS_ERR_INVALID;
   }
-  if (vectis_validate_route_path(config->path_prefix, VECTIS_ROUTE_PATH_LITERAL, error) != VECTIS_OK) {
+  path_prefix = vectis_normalize_static_directory_prefix(config->path_prefix, error);
+  if (path_prefix == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  if (vectis_validate_route_path(path_prefix, VECTIS_ROUTE_PATH_LITERAL, error) != VECTIS_OK) {
+    free(path_prefix);
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
-  regex = vectis_static_directory_regex(config->path_prefix, error);
+  regex = vectis_static_directory_regex(path_prefix, error);
   if (regex == NULL) {
+    free(path_prefix);
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
   data = vectis_static_route_data_new(1,
-                                      config->path_prefix,
+                                      path_prefix,
                                       NULL,
                                       config->root_dir,
                                       config->content_type != NULL ? config->content_type :
@@ -3157,9 +3194,11 @@ vectis_status vectis_register_static_directory(vectis_app *app,
                                       config->index_file != NULL ? config->index_file : "index.html",
                                       error);
   if (data == NULL) {
+    free(path_prefix);
     free(regex);
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
+  free(path_prefix);
   vectis_route_config_init(&route);
   route.method = vectis_first_method(vectis_static_methods_or_default(config->methods));
   route.methods = vectis_static_methods_or_default(config->methods);

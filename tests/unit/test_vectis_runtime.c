@@ -794,6 +794,18 @@ int main(void) {
   assert_route_body_policy_validation();
 
   vectis_app_config_init(&config);
+  config.tls.mode = (vectis_tls_mode)99;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/invalid-tls-mode", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "tls.mode") != NULL);
+  app->close(app);
+
+  vectis_app_config_init(&config);
 
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
