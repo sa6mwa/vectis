@@ -81,7 +81,7 @@ int main(void) {
                 "body_mode=%s max_body=%lu min_rate=%lu",
                 vectis_body_mode_string(route.body.mode),
                 (unsigned long)route.body.max_bytes,
-                (unsigned long)route.body.min_rate_bytes_per_sec);
+                (unsigned long)config.server.request_body_min_rate_bytes_per_sec);
   (void)app->start(app, &error);
   app->close(app);
   logger->destroy(logger);

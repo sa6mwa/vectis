@@ -508,7 +508,6 @@ static void assert_route_body_policy_validation(void) {
   route.handler = sample_handler;
   route.body.mode = (vectis_body_mode)99;
   route.body.max_bytes = 1u;
-  route.body.idle_timeout_ms = 1L;
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "mode") != NULL);
@@ -517,14 +516,12 @@ static void assert_route_body_policy_validation(void) {
   route.body = vectis_body_buffered_max(64u);
   route.body.max_bytes = 0u;
   route.body.memory_buffer_limit_bytes = 0u;
-  route.body.idle_timeout_ms = 0L;
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
 
   route = vectis_upload_route_max(VECTIS_HTTP_POST, "/zero-upload-defaults", 64u, sample_handler, NULL);
   route.body.max_bytes = 0u;
   route.body.memory_buffer_limit_bytes = 0u;
-  route.body.idle_timeout_ms = 0L;
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "server max_request_body_bytes") != NULL);
@@ -535,20 +532,6 @@ static void assert_route_body_policy_validation(void) {
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "memory_buffer_limit_bytes") != NULL);
-
-  route = vectis_route(VECTIS_HTTP_POST, "/bad-idle", sample_handler, NULL);
-  route.body = vectis_body_buffered_max(8u);
-  route.body.idle_timeout_ms = -1L;
-  status = vectis_register_route(app, &route, &error);
-  assert(status == VECTIS_ERR_INVALID);
-  assert(strstr(error.message, "idle_timeout_ms") != NULL);
-
-  route = vectis_route(VECTIS_HTTP_POST, "/bad-grace", sample_handler, NULL);
-  route.body = vectis_body_buffered_max(8u);
-  route.body.min_rate_grace_ms = -1L;
-  status = vectis_register_route(app, &route, &error);
-  assert(status == VECTIS_ERR_INVALID);
-  assert(strstr(error.message, "min_rate_grace_ms") != NULL);
 
   app->close(app);
 }

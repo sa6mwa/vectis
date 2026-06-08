@@ -24,8 +24,6 @@
 #define VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES ((size_t)3221225472UL)
 #define VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES 262144u
 #define VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES
-#define VECTIS_BODY_DEFAULT_UPLOAD_MIN_RATE_BYTES_PER_SEC 32768u
-#define VECTIS_BODY_DEFAULT_UPLOAD_MIN_RATE_GRACE_MS 30000L
 
 #ifdef __cplusplus
 extern "C" {
@@ -290,9 +288,6 @@ typedef struct vectis_body_policy {
   size_t max_bytes;
   size_t memory_buffer_limit_bytes;
   int disk_spool_disabled;
-  long idle_timeout_ms;
-  size_t min_rate_bytes_per_sec;
-  long min_rate_grace_ms;
 } vectis_body_policy;
 
 typedef struct vectis_route_config {

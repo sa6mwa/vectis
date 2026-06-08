@@ -881,9 +881,6 @@ vectis_body_policy vectis_body_json_default(void) {
   policy.max_bytes = VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
   policy.memory_buffer_limit_bytes = VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES;
   policy.disk_spool_disabled = 0;
-  policy.idle_timeout_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_IDLE_TIMEOUT_MS;
-  policy.min_rate_bytes_per_sec = VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_BYTES_PER_SEC;
-  policy.min_rate_grace_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_GRACE_MS;
   return policy;
 }
 
@@ -906,9 +903,6 @@ vectis_body_policy vectis_body_upload_max(size_t max_bytes) {
   policy.mode = VECTIS_BODY_STREAMING_UPLOAD;
   policy.max_bytes = max_bytes;
   policy.memory_buffer_limit_bytes = VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
-  policy.idle_timeout_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_IDLE_TIMEOUT_MS;
-  policy.min_rate_bytes_per_sec = VECTIS_BODY_DEFAULT_UPLOAD_MIN_RATE_BYTES_PER_SEC;
-  policy.min_rate_grace_ms = VECTIS_BODY_DEFAULT_UPLOAD_MIN_RATE_GRACE_MS;
   return policy;
 }
 
@@ -978,7 +972,6 @@ static vectis_body_policy vectis_effective_body_policy(const vectis_body_policy 
                                                        const vectis_server_config *server) {
   vectis_body_policy effective;
   size_t server_max_body;
-  long server_body_idle_timeout;
 
   vectis_body_policy_init(&effective);
   if (policy == NULL) {
@@ -992,9 +985,6 @@ static vectis_body_policy vectis_effective_body_policy(const vectis_body_policy 
   server_max_body = server != NULL && server->max_request_body_bytes > 0u
       ? server->max_request_body_bytes
       : VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
-  server_body_idle_timeout = server != NULL && server->request_body_idle_timeout_ms > 0L
-      ? server->request_body_idle_timeout_ms
-      : VECTIS_SERVER_DEFAULT_REQUEST_BODY_IDLE_TIMEOUT_MS;
 
   if (effective.mode == VECTIS_BODY_STREAMING_UPLOAD) {
     effective.max_bytes =
@@ -1002,28 +992,12 @@ static vectis_body_policy vectis_effective_body_policy(const vectis_body_policy 
     effective.memory_buffer_limit_bytes =
         vectis_default_size(effective.memory_buffer_limit_bytes,
                             VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES);
-    effective.idle_timeout_ms =
-        vectis_default_long(effective.idle_timeout_ms, server_body_idle_timeout);
-    effective.min_rate_bytes_per_sec =
-        vectis_default_size(effective.min_rate_bytes_per_sec,
-                            VECTIS_BODY_DEFAULT_UPLOAD_MIN_RATE_BYTES_PER_SEC);
-    effective.min_rate_grace_ms =
-        vectis_default_long(effective.min_rate_grace_ms,
-                            VECTIS_BODY_DEFAULT_UPLOAD_MIN_RATE_GRACE_MS);
   } else {
     effective.max_bytes = vectis_default_size(effective.max_bytes, server_max_body);
     effective.memory_buffer_limit_bytes =
         vectis_default_size(effective.memory_buffer_limit_bytes,
                             vectis_min_size(effective.max_bytes,
                                             VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES));
-    effective.idle_timeout_ms =
-        vectis_default_long(effective.idle_timeout_ms, server_body_idle_timeout);
-    effective.min_rate_bytes_per_sec =
-        vectis_default_size(effective.min_rate_bytes_per_sec,
-                            VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_BYTES_PER_SEC);
-    effective.min_rate_grace_ms =
-        vectis_default_long(effective.min_rate_grace_ms,
-                            VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_GRACE_MS);
   }
   return effective;
 }
@@ -1868,18 +1842,6 @@ static vectis_status vectis_validate_body_policy(const vectis_body_policy *polic
     return VECTIS_ERR_INVALID;
   }
   effective = vectis_effective_body_policy(policy, server);
-  if (policy->idle_timeout_ms < 0L) {
-    vectis_set_error(error,
-                     VECTIS_ERR_INVALID,
-                     "body policy idle_timeout_ms must be non-negative");
-    return VECTIS_ERR_INVALID;
-  }
-  if (policy->min_rate_grace_ms < 0L) {
-    vectis_set_error(error,
-                     VECTIS_ERR_INVALID,
-                     "body policy min_rate_grace_ms must be non-negative");
-    return VECTIS_ERR_INVALID;
-  }
   if (effective.mode != VECTIS_BODY_STREAMING_UPLOAD) {
     if (effective.memory_buffer_limit_bytes > effective.max_bytes) {
       vectis_set_error(error,
