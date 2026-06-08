@@ -33,7 +33,7 @@ int main(void) {
   assert(strcmp(config.tls.acme_directory_url, VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION) == 0);
   assert(config.server.max_connections == VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS);
   assert(config.server.max_request_header_bytes == VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES);
-  assert(config.server.max_request_body_bytes == VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES);
+  assert(config.server.max_request_body_bytes == 0u);
   assert(config.server.request_header_timeout_ms == VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS);
   assert(config.server.request_body_idle_timeout_ms ==
          VECTIS_SERVER_DEFAULT_REQUEST_BODY_IDLE_TIMEOUT_MS);

@@ -316,6 +316,7 @@ static vectis_status vectis_app_register_route_owned_userdata(vectis_app *app,
                                                               int owns_userdata,
                                                               vectis_error *error);
 static size_t vectis_app_route_count_impl(const vectis_app *app);
+static size_t vectis_app_max_request_body_bytes(vectis_app_impl *impl);
 static size_t vectis_app_body_disk_offload_bytes(vectis_app_impl *impl, int *configured);
 static pslog_logger *vectis_app_logger_impl(vectis_app *app);
 static vectis_status vectis_http_client_send_json(vectis_http_client *client,
@@ -832,7 +833,7 @@ void vectis_server_config_init(vectis_server_config *config) {
   memset(config, 0, sizeof(*config));
   config->max_connections = VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS;
   config->max_request_header_bytes = VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES;
-  config->max_request_body_bytes = VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
+  config->max_request_body_bytes = 0u;
   config->request_header_timeout_ms = VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS;
   config->request_body_idle_timeout_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_IDLE_TIMEOUT_MS;
   config->response_write_idle_timeout_ms = VECTIS_SERVER_DEFAULT_RESPONSE_WRITE_IDLE_TIMEOUT_MS;
@@ -2508,6 +2509,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config, vectis_error *error)
   impl->tls_mode = effective->tls.mode;
   impl->require_client_certificate = effective->tls.require_client_certificate;
   impl->server = effective_server;
+  impl->server.max_request_body_bytes = effective->server.max_request_body_bytes;
 
   status = vectis_copy_source_bytes(&effective->tls.cert_key_bundle,
                                     effective->tls.cert_key_bundle_pem,
@@ -2719,6 +2721,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
     kore_config.client_ca_bundle_source = impl->client_ca_bundle_source;
     kore_config.require_client_certificate = impl->require_client_certificate;
     kore_config.server = impl->server;
+    kore_config.server.max_request_body_bytes = vectis_app_max_request_body_bytes(impl);
     kore_config.body_disk_offload_bytes =
         vectis_app_body_disk_offload_bytes(impl, &kore_config.body_disk_offload_configured);
     kore_config.logger = impl->logger;
@@ -2820,7 +2823,10 @@ static vectis_status vectis_app_register_route_owned_userdata(vectis_app *app,
   }
 
   impl = (vectis_app_impl *)app->impl;
-  status = vectis_validate_body_policy(&route->body, &impl->server, error);
+  status = vectis_validate_body_policy(&route->body,
+                                       impl->server.max_request_body_bytes > 0u ?
+                                           &impl->server : NULL,
+                                       error);
   if (status != VECTIS_OK) {
     return status;
   }
@@ -4619,6 +4625,28 @@ static size_t vectis_app_body_disk_offload_bytes(vectis_app_impl *impl, int *con
   }
   (void)pthread_mutex_unlock(&impl->mutex);
   return min_bytes;
+}
+
+static size_t vectis_app_max_request_body_bytes(vectis_app_impl *impl) {
+  size_t max_bytes;
+  size_t i;
+
+  if (impl == NULL) {
+    return VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
+  }
+  if (impl->server.max_request_body_bytes > 0u) {
+    return impl->server.max_request_body_bytes;
+  }
+  max_bytes = VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
+  (void)pthread_mutex_lock(&impl->mutex);
+  for (i = 0u; i < impl->route_count; ++i) {
+    if (impl->routes[i].body.mode != VECTIS_BODY_NONE &&
+        impl->routes[i].body.max_bytes > max_bytes) {
+      max_bytes = impl->routes[i].body.max_bytes;
+    }
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
+  return max_bytes;
 }
 
 size_t vectis_route_count(const vectis_app *app) {

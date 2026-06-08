@@ -958,6 +958,7 @@ int main(void) {
   vectis_status status;
   vectis_route_config bad_route;
   vectis_route_config route;
+  vectis_body_policy policy;
 
   assert_server_config_validation();
   assert_route_body_policy_validation();
@@ -1047,13 +1048,20 @@ int main(void) {
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_ERR_CONFLICT);
 
-  route = vectis_upload_route(VECTIS_HTTP_POST, "/upload", sample_handler, NULL);
+  route = vectis_upload_route(VECTIS_HTTP_POST, "/upload-default", sample_handler, NULL);
   assert(route.body.mode == VECTIS_BODY_STREAMING_UPLOAD);
   assert(route.body.max_bytes == VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES);
   assert(route.body.disk_spool_disabled == 0);
   status = vectis_register_route(app, &route, &error);
-  assert(status == VECTIS_ERR_INVALID);
-  assert(strstr(error.message, "server max_request_body_bytes") != NULL);
+  assert(status == VECTIS_OK);
+  status = vectis_internal_route_body_policy(app,
+                                             VECTIS_HTTP_POST,
+                                             "/upload-default",
+                                             &policy,
+                                             &error);
+  assert(status == VECTIS_OK);
+  assert(policy.max_bytes == VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES);
+  assert(policy.memory_buffer_limit_bytes == VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES);
 
   route = vectis_upload_route_max(VECTIS_HTTP_POST, "/upload", 4096u, sample_handler, NULL);
   assert(route.body.mode == VECTIS_BODY_STREAMING_UPLOAD);
