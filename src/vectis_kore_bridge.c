@@ -528,19 +528,24 @@ static const char *vectis_kore_find_private_key_marker(const char *data,
       "-----BEGIN PRIVATE KEY-----",
       "-----BEGIN RSA PRIVATE KEY-----",
       "-----BEGIN EC PRIVATE KEY-----"};
-  const char *cursor;
+  const char *marker;
+  size_t marker_size;
   size_t i;
+  size_t offset;
 
   if (data == NULL || size == 0u) {
     return NULL;
   }
   for (i = 0u; i < sizeof(markers) / sizeof(markers[0]); ++i) {
-    cursor = data;
-    while ((cursor = strstr(cursor, markers[i])) != NULL) {
-      if ((size_t)(cursor - data) < size) {
-        return cursor;
+    marker = markers[i];
+    marker_size = strlen(marker);
+    if (marker_size > size) {
+      continue;
+    }
+    for (offset = 0u; offset <= size - marker_size; ++offset) {
+      if (memcmp(data + offset, marker, marker_size) == 0) {
+        return data + offset;
       }
-      cursor++;
     }
   }
   return NULL;

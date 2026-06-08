@@ -10808,18 +10808,38 @@ static vectis_status vectis_curl_set_common_tls(CURL *curl,
   const char *client_path;
   const char *ca_path;
   const void *client_pem;
+  void *client_pem_owned;
   size_t client_pem_size;
-#ifdef CURLOPT_SSLCERT_BLOB
+#if defined(CURL_AT_LEAST_VERSION) && CURL_AT_LEAST_VERSION(7, 71, 0)
   struct curl_blob cert_blob;
 #endif
 
   client_path = vectis_source_path_or_old(client_bundle, client_bundle_path);
   ca_path = vectis_source_path_or_old(ca_bundle, ca_bundle_path);
+  client_pem_owned = NULL;
   client_pem_size = 0u;
   client_pem = vectis_source_memory_or_old(client_bundle,
                                            client_bundle_pem,
                                            &client_pem_size,
                                            client_bundle_pem_size);
+  if (client_path == NULL && client_pem == NULL &&
+      client_bundle != NULL && client_bundle->source != NULL) {
+#if defined(CURL_AT_LEAST_VERSION) && CURL_AT_LEAST_VERSION(7, 71, 0)
+    if (vectis_read_source_bytes(client_bundle,
+                                 &client_pem_owned,
+                                 &client_pem_size,
+                                 "client certificate bundle",
+                                 error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    client_pem = client_pem_owned;
+#else
+    vectis_set_error(error,
+                     VECTIS_ERR_INVALID,
+                     "this libcurl build does not support in-memory client certificates");
+    return VECTIS_ERR_INVALID;
+#endif
+  }
   if (ca_path != NULL) {
     (void)curl_easy_setopt(curl, CURLOPT_CAINFO, ca_path);
   } else if (ca_bundle != NULL && (ca_bundle->memory != NULL || ca_bundle->source != NULL)) {
@@ -10831,6 +10851,7 @@ static vectis_status vectis_curl_set_common_tls(CURL *curl,
     ca_pem = NULL;
     ca_pem_size = 0u;
     if (vectis_read_source_bytes(ca_bundle, &ca_pem, &ca_pem_size, "CA bundle", error) != VECTIS_OK) {
+      free(client_pem_owned);
       return error != NULL ? error->code : VECTIS_ERR_STATE;
     }
     memset(&ca_blob, 0, sizeof(ca_blob));
@@ -10843,6 +10864,7 @@ static vectis_status vectis_curl_set_common_tls(CURL *curl,
     vectis_set_error(error,
                      VECTIS_ERR_INVALID,
                      "this libcurl build does not support in-memory CA bundles");
+    free(client_pem_owned);
     return VECTIS_ERR_INVALID;
 #endif
   }
@@ -10850,14 +10872,16 @@ static vectis_status vectis_curl_set_common_tls(CURL *curl,
     (void)curl_easy_setopt(curl, CURLOPT_SSLCERT, client_path);
     (void)curl_easy_setopt(curl, CURLOPT_SSLKEY, client_path);
   } else if (client_pem != NULL && client_pem_size > 0u) {
-#ifdef CURLOPT_SSLCERT_BLOB
+#if defined(CURL_AT_LEAST_VERSION) && CURL_AT_LEAST_VERSION(7, 71, 0)
     memset(&cert_blob, 0, sizeof(cert_blob));
-    cert_blob.data = (void *)client_pem;
+    memcpy(&cert_blob.data, &client_pem, sizeof(cert_blob.data));
     cert_blob.len = client_pem_size;
     cert_blob.flags = CURL_BLOB_COPY;
     (void)curl_easy_setopt(curl, CURLOPT_SSLCERT_BLOB, &cert_blob);
     (void)curl_easy_setopt(curl, CURLOPT_SSLKEY_BLOB, &cert_blob);
+    free(client_pem_owned);
 #else
+    free(client_pem_owned);
     vectis_set_error(error,
                      VECTIS_ERR_INVALID,
                      "this libcurl build does not support in-memory client certificates");

@@ -1628,6 +1628,7 @@ static void assert_openapi_surface(void) {
 
 static void assert_tls_source_surface(void) {
   vectis_app_config config;
+  vectis_route_config route;
   vectis_error error;
   vectis_status status;
   vectis_app *app;
@@ -1635,6 +1636,7 @@ static void assert_tls_source_surface(void) {
   failing_source_context failing_context;
   vectis_source failing_cert_source;
   vectis_source private_key_source;
+  char *certificate_only_bundle;
   const char server_bundle[] =
       "-----BEGIN CERTIFICATE-----\n"
       "server\n"
@@ -1645,6 +1647,10 @@ static void assert_tls_source_surface(void) {
   const char client_ca[] =
       "-----BEGIN CERTIFICATE-----\n"
       "ca\n"
+      "-----END CERTIFICATE-----\n";
+  const char certificate_only[] =
+      "-----BEGIN CERTIFICATE-----\n"
+      "server\n"
       "-----END CERTIFICATE-----\n";
   const char private_key[] =
       "-----BEGIN PRIVATE KEY-----\n"
@@ -1680,6 +1686,26 @@ static void assert_tls_source_surface(void) {
   assert(error.source == VECTIS_ERROR_SOURCE_LOCKDC);
   assert(vectis_lockd_client(app) == NULL);
   app->close(app);
+
+  certificate_only_bundle = malloc(sizeof(certificate_only) - 1u);
+  assert(certificate_only_bundle != NULL);
+  memcpy(certificate_only_bundle, certificate_only, sizeof(certificate_only) - 1u);
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_MANUAL;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = 28555u;
+  config.tls.cert_key_bundle = vectis_source_from_memory(certificate_only_bundle,
+                                                        sizeof(certificate_only) - 1u);
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/tls", sample_route_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "private key") != NULL);
+  app->close(app);
+  free(certificate_only_bundle);
 
   vectis_app_config_init(&config);
   config.tls.cert_key_bundle = vectis_source_from_memory(server_bundle, sizeof(server_bundle) - 1u);
