@@ -787,11 +787,14 @@ static void assert_http_surface(void) {
   status = handle->head(handle, "/vectis_http_source.txt", &response, &error);
   assert(status == VECTIS_OK);
   assert(response.body_size == 0u);
+  vectis_http_response_cleanup(&response);
   status = handle->options(handle, "/vectis_http_source.txt", &response, &error);
   assert(status != VECTIS_ERR_NOT_IMPLEMENTED);
+  vectis_http_response_cleanup(&response);
 
   status = handle->del(handle, "/vectis_http_source.txt", &response, &error);
   assert(status != VECTIS_ERR_INVALID);
+  vectis_http_response_cleanup(&response);
 
   status = vectis_http_client_execute(NULL, &request, &response, &error);
   assert(status == VECTIS_ERR_INVALID);
