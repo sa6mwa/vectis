@@ -49,6 +49,7 @@ typedef struct vectis_kore_runtime_config {
 
 void vectis_set_error(vectis_error *error, vectis_status code, const char *message);
 struct lc_client *vectis_internal_lockd_client(vectis_app *app);
+size_t vectis_internal_max_request_body_bytes(vectis_app *app);
 vectis_status vectis_internal_kore_start(const vectis_kore_runtime_config *config,
                                          vectis_error *error);
 vectis_status vectis_internal_kore_stop(vectis_app *app, vectis_error *error);

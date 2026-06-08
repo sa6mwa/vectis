@@ -4649,6 +4649,13 @@ static size_t vectis_app_max_request_body_bytes(vectis_app_impl *impl) {
   return max_bytes;
 }
 
+size_t vectis_internal_max_request_body_bytes(vectis_app *app) {
+  if (app == NULL || app->impl == NULL) {
+    return VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
+  }
+  return vectis_app_max_request_body_bytes((vectis_app_impl *)app->impl);
+}
+
 size_t vectis_route_count(const vectis_app *app) {
   if (app == NULL || app->impl == NULL) {
     return 0u;

@@ -475,6 +475,7 @@ static void assert_route_body_policy_validation(void) {
   config.server.max_request_body_bytes = 64u;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
+  assert(vectis_internal_max_request_body_bytes(app) == 64u);
 
   route = vectis_route(VECTIS_HTTP_POST, "/json-too-large", sample_handler, NULL);
   route.body = vectis_body_json_default();
@@ -979,6 +980,8 @@ int main(void) {
 
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
+  assert(vectis_internal_max_request_body_bytes(app) ==
+         VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES);
   assert(vectis_internal_lockd_client(app) == NULL);
 
   status = app->start(app, &error);
@@ -1054,6 +1057,8 @@ int main(void) {
   assert(route.body.disk_spool_disabled == 0);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
+  assert(vectis_internal_max_request_body_bytes(app) ==
+         VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES);
   status = vectis_internal_route_body_policy(app,
                                              VECTIS_HTTP_POST,
                                              "/upload-default",
