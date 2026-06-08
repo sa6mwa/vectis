@@ -10,6 +10,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -23,6 +24,8 @@ extern char **environ;
 
 int vectis_kore_main(int argc, char **argv);
 int vectis_kore_route(struct http_request *req);
+int vectis_kore_body_chunk(struct http_request *req, const void *data, size_t len);
+void vectis_kore_request_free(struct http_request *req);
 void kore_parent_configure(int argc, char **argv);
 void kore_parent_teardown(void);
 
@@ -786,13 +789,14 @@ static vectis_status vectis_kore_load_default_dhparams(vectis_error *error) {
 static void vectis_kore_apply_server_config(const vectis_server_config *server,
                                             size_t body_disk_offload_bytes,
                                             int body_disk_offload_configured) {
+  (void)body_disk_offload_bytes;
+  (void)body_disk_offload_configured;
   worker_max_connections = vectis_kore_u32_from_size(server->max_connections);
   worker_idle_timeout = (u_int64_t)server->idle_timeout_ms;
   http_request_limit = vectis_kore_u32_from_size(server->max_connections);
   http_header_max = vectis_kore_u16_from_size(server->max_request_header_bytes);
   http_body_max = server->max_request_body_bytes;
-  http_body_disk_offload = body_disk_offload_configured ?
-      body_disk_offload_bytes : VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+  http_body_disk_offload = 0u;
   http_header_timeout = vectis_kore_seconds_from_ms(server->request_header_timeout_ms);
   http_body_timeout = vectis_kore_seconds_from_ms(server->request_body_idle_timeout_ms);
   http_response_write_timeout =
@@ -979,119 +983,270 @@ static void *vectis_kore_thread_main(void *userdata) {
   return NULL;
 }
 
-typedef struct vectis_kore_body_reader {
-  struct http_request *req;
-  size_t body_size;
-  size_t offset;
-  int rewound;
-} vectis_kore_body_reader;
+typedef struct vectis_kore_body_state {
+  vectis_body_policy policy;
+  size_t expected_size;
+  size_t total_size;
+  unsigned char *memory;
+  size_t memory_size;
+  size_t memory_capacity;
+  FILE *file;
+  char *path;
+  int error_status;
+  int initialized;
+  int spooled;
+} vectis_kore_body_state;
 
-static size_t vectis_kore_body_reader_read(void *context,
-                                           void *buffer,
-                                           size_t count,
-                                           lc_error *error) {
-  vectis_kore_body_reader *reader;
-  ssize_t nread;
-  size_t remaining;
+static int vectis_kore_tmp_template(char *buffer, size_t buffer_size) {
+  int n;
 
-  reader = (vectis_kore_body_reader *)context;
-  if (reader == NULL || reader->req == NULL || buffer == NULL) {
-    if (error != NULL) {
-      error->code = LC_ERR_INVALID;
+  if (buffer == NULL || buffer_size == 0u) {
+    return 0;
+  }
+  n = snprintf(buffer, buffer_size, "/tmp/vectis-kore-body-XXXXXX");
+  return n > 0 && (size_t)n < buffer_size;
+}
+
+static void vectis_kore_body_state_cleanup(vectis_kore_body_state *state) {
+  if (state == NULL) {
+    return;
+  }
+  if (state->file != NULL) {
+    (void)fclose(state->file);
+    state->file = NULL;
+  }
+  if (state->path != NULL) {
+    (void)unlink(state->path);
+    free(state->path);
+    state->path = NULL;
+  }
+  free(state->memory);
+  state->memory = NULL;
+  state->memory_size = 0u;
+  state->memory_capacity = 0u;
+  state->total_size = 0u;
+  state->initialized = 0;
+  state->spooled = 0;
+}
+
+void vectis_kore_request_free(struct http_request *req) {
+  if (req == NULL || req->hdlr_extra == NULL) {
+    return;
+  }
+  vectis_kore_body_state_cleanup((vectis_kore_body_state *)req->hdlr_extra);
+}
+
+static size_t vectis_kore_policy_memory_limit(const vectis_body_policy *policy) {
+  if (policy == NULL || policy->memory_buffer_limit_bytes == 0u) {
+    return VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+  }
+  return policy->memory_buffer_limit_bytes;
+}
+
+static vectis_kore_body_state *vectis_kore_body_state_get(struct http_request *req) {
+  if (req == NULL) {
+    return NULL;
+  }
+  if (req->hdlr_extra == NULL) {
+    return (vectis_kore_body_state *)http_state_create(req, sizeof(vectis_kore_body_state));
+  }
+  return (vectis_kore_body_state *)req->hdlr_extra;
+}
+
+static int vectis_kore_body_state_spool(vectis_kore_body_state *state) {
+  char tmp_template[PATH_MAX];
+  char *path;
+  FILE *file;
+  int fd;
+
+  if (state == NULL || state->spooled) {
+    return state != NULL;
+  }
+  if (!vectis_kore_tmp_template(tmp_template, sizeof(tmp_template))) {
+    return 0;
+  }
+  fd = mkstemp(tmp_template);
+  if (fd < 0) {
+    return 0;
+  }
+  path = strdup(tmp_template);
+  if (path == NULL) {
+    (void)close(fd);
+    (void)unlink(tmp_template);
+    return 0;
+  }
+  file = fdopen(fd, "w+b");
+  if (file == NULL) {
+    (void)close(fd);
+    (void)unlink(tmp_template);
+    free(path);
+    return 0;
+  }
+  if (state->memory_size > 0u &&
+      fwrite(state->memory, 1u, state->memory_size, file) != state->memory_size) {
+    (void)fclose(file);
+    (void)unlink(path);
+    free(path);
+    return 0;
+  }
+  free(state->memory);
+  state->memory = NULL;
+  state->memory_size = 0u;
+  state->memory_capacity = 0u;
+  state->file = file;
+  state->path = path;
+  state->spooled = 1;
+  return 1;
+}
+
+static int vectis_kore_body_state_append(vectis_kore_body_state *state,
+                                         const void *data,
+                                         size_t len) {
+  unsigned char *next;
+  size_t memory_limit;
+  size_t next_capacity;
+
+  if (state == NULL || (data == NULL && len > 0u)) {
+    return 0;
+  }
+  if (len == 0u) {
+    return 1;
+  }
+  if ((size_t)-1 - state->total_size < len) {
+    return 0;
+  }
+  memory_limit = vectis_kore_policy_memory_limit(&state->policy);
+  if (!state->spooled && state->memory_size + len > memory_limit) {
+    if (state->policy.disk_spool_disabled) {
+      return 0;
     }
-    return 0u;
+    if (!vectis_kore_body_state_spool(state)) {
+      return 0;
+    }
   }
-  if (reader->offset >= reader->body_size) {
-    return 0u;
-  }
-  if (!reader->rewound) {
-    if (!http_body_rewind(reader->req)) {
-      if (error != NULL) {
-        error->code = LC_ERR_TRANSPORT;
+  if (state->spooled) {
+    if (fwrite(data, 1u, len, state->file) != len) {
+      return 0;
+    }
+  } else {
+    if (state->memory_size + len > state->memory_capacity) {
+      next_capacity = state->memory_capacity == 0u ? len : state->memory_capacity;
+      while (next_capacity < state->memory_size + len) {
+        if (next_capacity > ((size_t)-1 / 2u)) {
+          next_capacity = state->memory_size + len;
+          break;
+        }
+        next_capacity *= 2u;
       }
-      return 0u;
+      next = (unsigned char *)realloc(state->memory, next_capacity);
+      if (next == NULL) {
+        return 0;
+      }
+      state->memory = next;
+      state->memory_capacity = next_capacity;
     }
-    reader->rewound = 1;
-    reader->offset = 0u;
+    memcpy(state->memory + state->memory_size, data, len);
+    state->memory_size += len;
   }
-  remaining = reader->body_size - reader->offset;
-  if (count > remaining) {
-    count = remaining;
-  }
-  nread = http_body_read(reader->req, buffer, count);
-  if (nread <= 0) {
-    if (error != NULL) {
-      error->code = LC_ERR_TRANSPORT;
-    }
-    return 0u;
-  }
-  reader->offset += (size_t)nread;
-  return (size_t)nread;
+  state->total_size += len;
+  return 1;
 }
 
-static int vectis_kore_body_reader_reset(void *context, lc_error *error) {
-  vectis_kore_body_reader *reader;
-
-  reader = (vectis_kore_body_reader *)context;
-  if (reader == NULL || reader->req == NULL) {
-    if (error != NULL) {
-      error->code = LC_ERR_INVALID;
-    }
-    return LC_ERR_INVALID;
+static void vectis_kore_reject_body_chunk(struct http_request *req,
+                                          vectis_kore_body_state *state,
+                                          int status,
+                                          const char *message) {
+  if (state != NULL) {
+    state->error_status = status;
   }
-  if (reader->body_size == 0u) {
-    reader->rewound = 1;
-    reader->offset = 0u;
-    return LC_OK;
-  }
-  if (!http_body_rewind(reader->req)) {
-    if (error != NULL) {
-      error->code = LC_ERR_TRANSPORT;
-    }
-    return LC_ERR_TRANSPORT;
-  }
-  reader->rewound = 1;
-  reader->offset = 0u;
-  return LC_OK;
+  http_response(req, status, message, message != NULL ? strlen(message) : 0u);
+  req->flags |= HTTP_REQUEST_DELETE;
 }
 
-static void vectis_kore_body_reader_close(void *context) {
-  free(context);
+int vectis_kore_body_chunk(struct http_request *req, const void *data, size_t len) {
+  vectis_kore_body_state *state;
+  vectis_error error;
+  vectis_app *app;
+  vectis_http_method method;
+  vectis_status status;
+
+  vectis_error_clear(&error);
+  state = vectis_kore_body_state_get(req);
+  if (state == NULL) {
+    return KORE_RESULT_ERROR;
+  }
+  if (state->error_status != 0) {
+    return KORE_RESULT_OK;
+  }
+  if (!state->initialized) {
+    (void)pthread_mutex_lock(&vectis_kore_mutex);
+    app = vectis_kore_current.app;
+    (void)pthread_mutex_unlock(&vectis_kore_mutex);
+    if (app == NULL || req == NULL || req->path == NULL) {
+      vectis_kore_reject_body_chunk(req, state, 503, NULL);
+      return KORE_RESULT_OK;
+    }
+    method = vectis_kore_method(req->method);
+    status = vectis_internal_route_body_policy(app, method, req->path, &state->policy, &error);
+    if (status != VECTIS_OK) {
+      vectis_kore_reject_body_chunk(req, state, 404, NULL);
+      return KORE_RESULT_OK;
+    }
+    state->expected_size = (size_t)req->http_body_length;
+    if (state->policy.mode == VECTIS_BODY_NONE && req->http_body_length > 0u) {
+      vectis_kore_reject_body_chunk(req,
+                                    state,
+                                    413,
+                                    "request body is not allowed for this route");
+      return KORE_RESULT_OK;
+    }
+    if (req->http_body_length > (u_int64_t)((size_t)-1) ||
+        state->expected_size > state->policy.max_bytes) {
+      vectis_kore_reject_body_chunk(req,
+                                    state,
+                                    413,
+                                    "request body exceeds route limit");
+      return KORE_RESULT_OK;
+    }
+    state->initialized = 1;
+  }
+  if (!vectis_kore_body_state_append(state, data, len)) {
+    vectis_kore_reject_body_chunk(req, state, 413, "failed to stream request body");
+    return KORE_RESULT_OK;
+  }
+  return KORE_RESULT_OK;
 }
 
-static vectis_status vectis_kore_prepare_body_reader(struct http_request *req,
-                                                     const vectis_body_policy *policy,
-                                                     vectis_request *request,
-                                                     int *http_status,
-                                                     vectis_error *error) {
-  vectis_kore_body_reader *reader;
-  lc_error lcerr;
-  lc_source *source;
+static vectis_status vectis_kore_attach_streamed_body(struct http_request *req,
+                                                      const vectis_body_policy *policy,
+                                                      vectis_request *request,
+                                                      int *http_status,
+                                                      vectis_error *error) {
+  vectis_kore_body_state *state;
   size_t body_size;
-  int rc;
 
   if (http_status != NULL) {
     *http_status = 0;
   }
-  if (policy == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "body policy is required");
+  if (req == NULL || policy == NULL || request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body state is invalid");
     return VECTIS_ERR_INVALID;
   }
-  if (req->content_length > 0u && policy->mode == VECTIS_BODY_NONE) {
-    if (http_status != NULL) {
-      *http_status = 413;
-    }
-    vectis_set_error(error, VECTIS_ERR_INVALID, "request body is not allowed for this route");
-    return VECTIS_ERR_INVALID;
-  }
-  if (req->content_length > (u_int64_t)((size_t)-1)) {
+  if (req->http_body_length > (u_int64_t)((size_t)-1)) {
     if (http_status != NULL) {
       *http_status = 413;
     }
     vectis_set_error(error, VECTIS_ERR_INVALID, "request body is too large");
     return VECTIS_ERR_INVALID;
   }
-  body_size = (size_t)req->content_length;
+  body_size = (size_t)req->http_body_length;
+  if (body_size > 0u && policy->mode == VECTIS_BODY_NONE) {
+    if (http_status != NULL) {
+      *http_status = 413;
+    }
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body is not allowed for this route");
+    return VECTIS_ERR_INVALID;
+  }
   if (body_size > policy->max_bytes) {
     if (http_status != NULL) {
       *http_status = 413;
@@ -1099,38 +1254,25 @@ static vectis_status vectis_kore_prepare_body_reader(struct http_request *req,
     vectis_set_error(error, VECTIS_ERR_INVALID, "request body exceeds route limit");
     return VECTIS_ERR_INVALID;
   }
-  reader = (vectis_kore_body_reader *)calloc(1u, sizeof(*reader));
-  if (reader == NULL) {
-    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate request body reader");
-    return VECTIS_ERR_NOMEM;
+  if (body_size == 0u) {
+    return vectis_internal_request_set_body(request, NULL, 0u, error);
   }
-  reader->req = req;
-  reader->body_size = body_size;
-  lc_error_init(&lcerr);
-  source = NULL;
-  rc = lc_source_from_callbacks(vectis_kore_body_reader_read,
-                                vectis_kore_body_reader_reset,
-                                vectis_kore_body_reader_close,
-                                reader,
-                                &source,
-                                &lcerr);
-  if (rc != LC_OK) {
-    free(reader);
-    vectis_set_error(error, VECTIS_ERR_STATE, "failed to create request body reader");
-    if (error != NULL) {
-      error->source = VECTIS_ERROR_SOURCE_LOCKDC;
-      error->dependency_code = rc;
+  state = (vectis_kore_body_state *)req->hdlr_extra;
+  if (state == NULL || state->error_status != 0 || state->total_size != body_size) {
+    if (http_status != NULL) {
+      *http_status = state != NULL && state->error_status != 0 ? state->error_status : 400;
     }
-    lc_error_cleanup(&lcerr);
-    return VECTIS_ERR_STATE;
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request body stream is incomplete");
+    return VECTIS_ERR_INVALID;
   }
-  lc_error_cleanup(&lcerr);
-  rc = vectis_internal_request_set_body_reader(request, source, body_size, 1, policy, error);
-  if (rc != VECTIS_OK) {
-    lc_source_close(source);
-    return rc;
+  if (state->spooled) {
+    if (state->file != NULL && fflush(state->file) != 0) {
+      vectis_set_error(error, VECTIS_ERR_STATE, "failed to flush streamed request body");
+      return VECTIS_ERR_STATE;
+    }
+    return vectis_internal_request_set_body_path(request, state->path, state->total_size, error);
   }
-  return VECTIS_OK;
+  return vectis_internal_request_set_body(request, state->memory, state->memory_size, error);
 }
 
 static void vectis_kore_send_response(struct http_request *req,
@@ -1248,11 +1390,11 @@ int vectis_kore_route(struct http_request *req) {
     }
   }
   if (status == VECTIS_OK) {
-    status = vectis_kore_prepare_body_reader(req,
-                                             &body_policy,
-                                             request,
-                                             &error_status,
-                                             &error);
+    status = vectis_kore_attach_streamed_body(req,
+                                              &body_policy,
+                                              request,
+                                              &error_status,
+                                              &error);
   }
   if (status == VECTIS_OK) {
     status = vectis_internal_dispatch_route(app, method, req->path, request, response, &error);
@@ -1341,6 +1483,14 @@ void kore_parent_configure(int argc, char **argv) {
     fatal("failed to create Vectis Kore route");
   }
   kore_route_callback(route, "vectis_kore_route");
+  route->on_body_chunk = kore_runtime_getcall("vectis_kore_body_chunk");
+  if (route->on_body_chunk == NULL) {
+    fatal("failed to resolve Vectis Kore body chunk callback");
+  }
+  route->on_free = kore_runtime_getcall("vectis_kore_request_free");
+  if (route->on_free == NULL) {
+    fatal("failed to resolve Vectis Kore request cleanup callback");
+  }
   kore_server_finalize(server);
   (void)pthread_mutex_unlock(&vectis_kore_mutex);
 }

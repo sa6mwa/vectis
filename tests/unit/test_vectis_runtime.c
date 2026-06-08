@@ -121,6 +121,35 @@ static vectis_status upload_handler(vectis_app *app,
   return vectis_response_text(response, 200, "text/plain", "buffered", error);
 }
 
+static vectis_status spooled_upload_handler(vectis_app *app,
+                                            vectis_request *request,
+                                            vectis_response *response,
+                                            void *userdata,
+                                            vectis_error *error) {
+  vectis_body_materialized body;
+  vectis_body_materialize_config config;
+  vectis_status status;
+
+  (void)app;
+  (void)userdata;
+  if (!vectis_request_body_is_spooled(request) ||
+      vectis_request_body_path(request) == NULL) {
+    return vectis_response_text(response, 422, "text/plain", "not spooled", error);
+  }
+  vectis_body_materialize_config_init(&config);
+  config.memory_limit_bytes = 4u;
+  status = vectis_request_body_materialize(request, &config, &body, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (body.kind != VECTIS_BODY_MATERIALIZED_FILE || body.size != 32u) {
+    vectis_body_materialized_cleanup(&body);
+    return vectis_response_text(response, 422, "text/plain", "bad spooled body", error);
+  }
+  vectis_body_materialized_cleanup(&body);
+  return vectis_response_text(response, 200, "text/plain", "spooled", error);
+}
+
 static vectis_status file_handler(vectis_app *app,
                                   vectis_request *request,
                                   vectis_response *response,
@@ -539,19 +568,23 @@ static void assert_kore_smoke(void) {
   vectis_http_client_config http;
   vectis_http_request request;
   vectis_http_request json_source_request;
+  vectis_http_request no_body_request;
   vectis_http_request oversized;
   vectis_http_response response;
   vectis_http_response metadata_response;
   vectis_http_response state_error_response;
   vectis_http_response json_source_response;
   vectis_http_response method_response;
+  vectis_http_response no_body_response;
   vectis_http_response param_response;
   vectis_http_response oversized_response;
   vectis_http_response upload_response;
+  vectis_http_response spooled_upload_response;
   source_json_doc json_source_doc;
   vectis_route_config route;
   vectis_route_config limited_route;
   vectis_route_config upload_route;
+  vectis_route_config spooled_upload_route;
   vectis_route_config file_route;
   vectis_app_config second_config;
   vectis_route_config second_route;
@@ -575,10 +608,13 @@ static void assert_kore_smoke(void) {
   memset(&state_error_response, 0, sizeof(state_error_response));
   memset(&json_source_response, 0, sizeof(json_source_response));
   memset(&method_response, 0, sizeof(method_response));
+  memset(&no_body_response, 0, sizeof(no_body_response));
   memset(&param_response, 0, sizeof(param_response));
   memset(&oversized_response, 0, sizeof(oversized_response));
   memset(&upload_response, 0, sizeof(upload_response));
+  memset(&spooled_upload_response, 0, sizeof(spooled_upload_response));
   memset(&json_source_request, 0, sizeof(json_source_request));
+  memset(&no_body_request, 0, sizeof(no_body_request));
   memset(&json_source_doc, 0, sizeof(json_source_doc));
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
@@ -619,6 +655,9 @@ static void assert_kore_smoke(void) {
                                NULL);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_POST, "/no-body", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
   route = vectis_route(VECTIS_HTTP_GET, "/orders/:id/items/:item_id?", param_handler, NULL);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
@@ -630,6 +669,15 @@ static void assert_kore_smoke(void) {
   upload_route.body.memory_buffer_limit_bytes = 4096u;
   upload_route.body.disk_spool_disabled = 1;
   status = vectis_register_route(app, &upload_route, &error);
+  assert(status == VECTIS_OK);
+  spooled_upload_route = vectis_upload_route_max(VECTIS_HTTP_POST,
+                                                 "/upload-spooled",
+                                                 4096u,
+                                                 spooled_upload_handler,
+                                                 NULL);
+  spooled_upload_route.body.memory_buffer_limit_bytes = 4u;
+  spooled_upload_route.body.disk_spool_disabled = 0;
+  status = vectis_register_route(app, &spooled_upload_route, &error);
   assert(status == VECTIS_OK);
   file_route = vectis_route(VECTIS_HTTP_GET, "/file", file_handler, (void *)response_file_path);
   status = vectis_register_route(app, &file_route, &error);
@@ -742,6 +790,16 @@ static void assert_kore_smoke(void) {
   assert(method_response.status_code == 404L);
   vectis_http_response_cleanup(&method_response);
 
+  vectis_http_request_init(&no_body_request);
+  no_body_request.method = VECTIS_HTTP_POST;
+  no_body_request.url = "http://127.0.0.1:28080/no-body";
+  no_body_request.body = "not allowed";
+  no_body_request.body_size = 11u;
+  status = vectis_http_execute(&http, &no_body_request, &no_body_response, &error);
+  assert(status == VECTIS_OK);
+  assert(no_body_response.status_code == 413L);
+  vectis_http_response_cleanup(&no_body_response);
+
   status = vectis_http_get(&http,
                            "http://127.0.0.1:28080/orders/123/items/abc",
                            &param_response,
@@ -798,6 +856,18 @@ static void assert_kore_smoke(void) {
   assert(upload_response.body_size == 8u);
   assert(memcmp(upload_response.body, "buffered", 8u) == 0);
   vectis_http_response_cleanup(&upload_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = "http://127.0.0.1:28080/upload-spooled";
+  request.body = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+  request.body_size = 32u;
+  status = vectis_http_execute(&http, &request, &spooled_upload_response, &error);
+  assert(status == VECTIS_OK);
+  assert(spooled_upload_response.status_code == 200L);
+  assert(spooled_upload_response.body_size == 7u);
+  assert(memcmp(spooled_upload_response.body, "spooled", 7u) == 0);
+  vectis_http_response_cleanup(&spooled_upload_response);
   remove(upload_path);
   remove(response_file_path);
 
