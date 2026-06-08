@@ -16,7 +16,7 @@ FUZZ_PRESET := fuzz
 	help \
 	deps-debug deps-release deps-cross \
 	build build-debug build-release build-asan build-coverage build-fuzz \
-	test test-debug test-asan test-coverage test-install-tree test-no-kore test-e2e test-all \
+	test test-debug test-asan test-coverage test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
 	dev-up dev-down dev-reset dev-ps dev-logs \
 	package \
 	build-kore verify-kore-patches \
@@ -39,6 +39,7 @@ help:
 		'make build-release      Configure the shipped Linux release matrix.' \
 		'make build-asan         Configure and build the ASan/UBSan preset.' \
 		'make build-coverage     Configure and build the coverage preset.' \
+		'make test-instrumentation-presets Build the sanitizer and coverage preset link-regression targets.' \
 		'make build-fuzz         Configure and build the fuzz preset.' \
 		'make deps-debug         Provision host debug dependencies into .cache/.' \
 		'make deps-release       Provision x86_64 GNU and musl release dependencies.' \
@@ -125,6 +126,12 @@ test-asan: build-asan
 
 test-coverage: build-coverage
 	$(TIMED) test-coverage $(CTEST) --preset $(COVERAGE_PRESET)
+
+test-instrumentation-presets: deps-debug
+	$(TIMED) test-asan-preset-link $(CMAKE) --preset $(ASAN_PRESET)
+	$(TIMED) test-asan-preset-link-compile $(CMAKE) --build --preset $(ASAN_PRESET) --target vectis_unit_header_cpp
+	$(TIMED) test-coverage-preset-link $(CMAKE) --preset $(COVERAGE_PRESET)
+	$(TIMED) test-coverage-preset-link-compile $(CMAKE) --build --preset $(COVERAGE_PRESET) --target vectis_bin
 
 test-no-kore: deps-debug
 	$(TIMED) test-no-kore bash ./scripts/test-no-kore-build.sh
