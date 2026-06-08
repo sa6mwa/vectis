@@ -316,7 +316,7 @@ static vectis_status vectis_app_register_route_owned_userdata(vectis_app *app,
                                                               int owns_userdata,
                                                               vectis_error *error);
 static size_t vectis_app_route_count_impl(const vectis_app *app);
-static size_t vectis_app_min_streaming_memory_limit_bytes(vectis_app_impl *impl);
+static size_t vectis_app_body_disk_offload_bytes(vectis_app_impl *impl, int *configured);
 static pslog_logger *vectis_app_logger_impl(vectis_app *app);
 static vectis_status vectis_http_client_send_json(vectis_http_client *client,
                                                   vectis_http_method method,
@@ -2614,7 +2614,8 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
     kore_config.client_ca_bundle_source = impl->client_ca_bundle_source;
     kore_config.require_client_certificate = impl->require_client_certificate;
     kore_config.server = impl->server;
-    kore_config.body_disk_offload_bytes = vectis_app_min_streaming_memory_limit_bytes(impl);
+    kore_config.body_disk_offload_bytes =
+        vectis_app_body_disk_offload_bytes(impl, &kore_config.body_disk_offload_configured);
     kore_config.logger = impl->logger;
     status = vectis_internal_kore_start(&kore_config, error);
     if (status != VECTIS_OK) {
@@ -4479,20 +4480,31 @@ static size_t vectis_app_route_count_impl(const vectis_app *app) {
   return count;
 }
 
-static size_t vectis_app_min_streaming_memory_limit_bytes(vectis_app_impl *impl) {
+static size_t vectis_app_body_disk_offload_bytes(vectis_app_impl *impl, int *configured) {
   size_t min_bytes;
   size_t limit;
   size_t i;
 
+  if (configured != NULL) {
+    *configured = 0;
+  }
   if (impl == NULL) {
     return 0u;
   }
   min_bytes = 0u;
   (void)pthread_mutex_lock(&impl->mutex);
   for (i = 0u; i < impl->route_count; ++i) {
-    if (impl->routes[i].body.mode == VECTIS_BODY_STREAMING_UPLOAD &&
-        !impl->routes[i].body.disk_spool_disabled) {
+    if (impl->routes[i].body.mode != VECTIS_BODY_STREAMING_UPLOAD) {
+      continue;
+    }
+    if (configured != NULL) {
+      *configured = 1;
+    }
+    if (!impl->routes[i].body.disk_spool_disabled) {
       limit = impl->routes[i].body.memory_buffer_limit_bytes;
+      if (limit == 0u) {
+        limit = VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+      }
       if (limit > 0u && (min_bytes == 0u || limit < min_bytes)) {
         min_bytes = limit;
       }

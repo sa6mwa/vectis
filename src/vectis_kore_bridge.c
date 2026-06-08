@@ -28,6 +28,7 @@ void kore_parent_teardown(void);
 
 extern int skip_chroot;
 extern int skip_runas;
+extern u_int64_t worker_idle_timeout;
 extern u_int32_t worker_max_connections;
 
 static pthread_mutex_t vectis_kore_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -778,12 +779,14 @@ static vectis_status vectis_kore_load_default_dhparams(vectis_error *error) {
 }
 
 static void vectis_kore_apply_server_config(const vectis_server_config *server,
-                                            size_t body_disk_offload_bytes) {
+                                            size_t body_disk_offload_bytes,
+                                            int body_disk_offload_configured) {
   worker_max_connections = vectis_kore_u32_from_size(server->max_connections);
+  worker_idle_timeout = (u_int64_t)server->idle_timeout_ms;
   http_request_limit = vectis_kore_u32_from_size(server->max_connections);
   http_header_max = vectis_kore_u16_from_size(server->max_request_header_bytes);
   http_body_max = server->max_request_body_bytes;
-  http_body_disk_offload = body_disk_offload_bytes > 0u ?
+  http_body_disk_offload = body_disk_offload_configured ?
       body_disk_offload_bytes : VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
   http_header_timeout = vectis_kore_seconds_from_ms(server->request_header_timeout_ms);
   http_body_timeout = vectis_kore_seconds_from_ms(server->request_body_idle_timeout_ms);
@@ -1283,7 +1286,8 @@ void kore_parent_configure(int argc, char **argv) {
     kore_log_set_logger(vectis_kore_current.logger);
   }
   vectis_kore_apply_server_config(&vectis_kore_current.server,
-                                  vectis_kore_current.body_disk_offload_bytes);
+                                  vectis_kore_current.body_disk_offload_bytes,
+                                  vectis_kore_current.body_disk_offload_configured);
   server = kore_server_create(vectis_kore_current.app_name != NULL ?
                               vectis_kore_current.app_name : "vectis");
   if (vectis_kore_current.tls_mode == VECTIS_TLS_MODE_DISABLED) {

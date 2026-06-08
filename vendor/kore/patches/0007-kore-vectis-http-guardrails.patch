@@ -22,9 +22,18 @@ index c865750..fc2e9cc 100644
  extern u_int32_t	http_request_count;
  extern u_int64_t	http_body_disk_offload;
 diff --git a/include/kore/kore.h b/include/kore/kore.h
-index 0ff8d5e..2a10b21 100644
+index 0ff8d5e..d50ec48 100644
 --- a/include/kore/kore.h
 +++ b/include/kore/kore.h
+@@ -212,6 +212,8 @@ TAILQ_HEAD(netbuf_head, netbuf);
+ 
+ #define KORE_IDLE_TIMER_MAX	5000
+ 
++extern u_int64_t	worker_idle_timeout;
++
+ #define WEBSOCKET_OP_CONT	0x00
+ #define WEBSOCKET_OP_TEXT	0x01
+ #define WEBSOCKET_OP_BINARY	0x02
 @@ -268,6 +268,8 @@ struct connection {
  #if !defined(KORE_NO_HTTP)
  	u_int64_t			http_start;
@@ -35,9 +44,18 @@ index 0ff8d5e..2a10b21 100644
  	struct kore_runtime_call	*ws_message;
  	struct kore_runtime_call	*ws_disconnect;
 diff --git a/src/connection.c b/src/connection.c
-index e5069ab..ba63568 100644
+index e5069ab..2bbf672 100644
 --- a/src/connection.c
 +++ b/src/connection.c
+@@ -74,7 +74,7 @@ kore_connection_new(void *owner)
+ 	c->hdlr_extra = NULL;
+ 	c->proto = CONN_PROTO_UNKNOWN;
+ 	c->idle_timer.start = 0;
+-	c->idle_timer.length = KORE_IDLE_TIMER_MAX;
++	c->idle_timer.length = worker_idle_timeout;
+ 
+ 	c->evt.type = KORE_TYPE_CONNECTION;
+ 	c->evt.handle = kore_connection_event;
 @@ -85,6 +85,8 @@ kore_connection_new(void *owner)
  	c->ws_disconnect = NULL;
  	c->http_start = kore_time_ms();
@@ -47,6 +65,16 @@ index e5069ab..ba63568 100644
  	TAILQ_INIT(&(c->http_requests));
  #endif
  
+@@ -158,7 +160,8 @@ kore_connection_accept(struct listener *listener, struct connection **out)
+ 			c->proto = CONN_PROTO_HTTP;
+ 			if (http_keepalive_time != 0) {
+ 				c->idle_timer.length =
+-				    http_keepalive_time * 1000;
++				    MIN((u_int64_t)http_keepalive_time * 1000,
++				    worker_idle_timeout);
+ 			}
+ 			net_recv_queue(c, http_header_max,
+ 			    NETBUF_CALL_CB_ALWAYS, http_header_recv);
 @@ -185,8 +187,15 @@ kore_connection_check_timeout(u_int64_t now)
  #if !defined(KORE_NO_HTTP)
  		if (c->state == CONN_STATE_ESTABLISHED &&
@@ -64,6 +92,16 @@ index e5069ab..ba63568 100644
  			if (!http_check_timeout(c, now))
  				continue;
  			if (!TAILQ_EMPTY(&c->http_requests))
+@@ -276,7 +285,8 @@ kore_connection_handle(struct connection *c)
+ 		c->proto = CONN_PROTO_HTTP;
+ 		if (http_keepalive_time != 0) {
+ 			c->idle_timer.length =
+-			    http_keepalive_time * 1000;
++			    MIN((u_int64_t)http_keepalive_time * 1000,
++			    worker_idle_timeout);
+ 		}
+ 
+ 		net_recv_queue(c, http_header_max,
 diff --git a/src/http.c b/src/http.c
 index 1547fb1..70f7fd6 100644
 --- a/src/http.c
@@ -244,3 +282,15 @@ index 5abcf05..f102899 100644
  
  	return (KORE_RESULT_OK);
  }
+diff --git a/src/worker.c b/src/worker.c
+index 895c0ae..84829d7 100644
+--- a/src/worker.c
++++ b/src/worker.c
+@@ -95,6 +95,7 @@ static struct wlock			*accept_lock;
+ 
+ struct kore_worker		*worker = NULL;
+ u_int8_t			worker_set_affinity = 1;
++u_int64_t			worker_idle_timeout = KORE_IDLE_TIMER_MAX;
+ u_int32_t			worker_accept_threshold = 16;
+ u_int32_t			worker_rlimit_nofiles = 768;
+ u_int32_t			worker_max_connections = 512;

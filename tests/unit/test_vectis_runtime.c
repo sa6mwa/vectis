@@ -11,6 +11,9 @@
 #include "vectis_internal.h"
 #include <vectis/vectis.h>
 
+extern u_int64_t http_body_disk_offload;
+extern u_int64_t worker_idle_timeout;
+
 typedef struct source_json_doc {
   lonejson_source payload;
 } source_json_doc;
@@ -93,37 +96,29 @@ static vectis_status upload_handler(vectis_app *app,
                                     vectis_error *error) {
   vectis_body_materialize_config config;
   vectis_body_materialized body;
-  FILE *fp;
-  int ch;
   vectis_status status;
 
   (void)app;
   (void)userdata;
   vectis_body_materialize_config_init(&config);
-  config.memory_limit_bytes = 1024u;
+  config.memory_limit_bytes = 0u;
   config.prefix = "vectis-runtime-upload";
   status = vectis_request_body_materialize(request, &config, &body, error);
   if (status != VECTIS_OK) {
     return status;
   }
-  if (body.kind != VECTIS_BODY_MATERIALIZED_FILE || body.path == NULL) {
+  if (body.kind != VECTIS_BODY_MATERIALIZED_MEMORY ||
+      body.memory.data == NULL ||
+      body.memory.size == 0u) {
     vectis_body_materialized_cleanup(&body);
-    return vectis_response_text(response, 422, "text/plain", "not spooled", error);
+    return vectis_response_text(response, 422, "text/plain", "not buffered", error);
   }
-  fp = fopen(body.path, "rb");
-  if (fp == NULL) {
+  if (((const char *)body.memory.data)[0] != 'x') {
     vectis_body_materialized_cleanup(&body);
-    return vectis_response_text(response, 422, "text/plain", "missing spool", error);
+    return vectis_response_text(response, 422, "text/plain", "bad buffer", error);
   }
-  ch = fgetc(fp);
-  (void)fclose(fp);
-  if (ch != 'x') {
-    vectis_body_materialized_cleanup(&body);
-    return vectis_response_text(response, 422, "text/plain", "bad spool", error);
-  }
-  (void)remove(body.path);
   vectis_body_materialized_cleanup(&body);
-  return vectis_response_text(response, 200, "text/plain", "spooled", error);
+  return vectis_response_text(response, 200, "text/plain", "buffered", error);
 }
 
 static vectis_status file_handler(vectis_app *app,
@@ -632,7 +627,8 @@ static void assert_kore_smoke(void) {
   status = vectis_register_route(app, &limited_route, &error);
   assert(status == VECTIS_OK);
   upload_route = vectis_upload_route_max(VECTIS_HTTP_POST, "/upload", 4096u, upload_handler, NULL);
-  upload_route.body.memory_buffer_limit_bytes = 1024u;
+  upload_route.body.memory_buffer_limit_bytes = 4096u;
+  upload_route.body.disk_spool_disabled = 1;
   status = vectis_register_route(app, &upload_route, &error);
   assert(status == VECTIS_OK);
   file_route = vectis_route(VECTIS_HTTP_GET, "/file", file_handler, (void *)response_file_path);
@@ -670,6 +666,8 @@ static void assert_kore_smoke(void) {
   assert(response.status_code == 200L);
   assert(response.body_size == 2u);
   assert(memcmp(response.body, "ok", 2u) == 0);
+  assert(http_body_disk_offload == 0u);
+  assert(worker_idle_timeout == VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS);
 
   status = vectis_http_get(&http,
                            "http://127.0.0.1:28080/state-error",
@@ -797,8 +795,8 @@ static void assert_kore_smoke(void) {
                                    &error);
   assert(status == VECTIS_OK);
   assert(upload_response.status_code == 200L);
-  assert(upload_response.body_size == 7u);
-  assert(memcmp(upload_response.body, "spooled", 7u) == 0);
+  assert(upload_response.body_size == 8u);
+  assert(memcmp(upload_response.body, "buffered", 8u) == 0);
   vectis_http_response_cleanup(&upload_response);
   remove(upload_path);
   remove(response_file_path);

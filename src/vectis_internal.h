@@ -37,6 +37,7 @@ typedef struct vectis_kore_runtime_config {
   int require_client_certificate;
   vectis_server_config server;
   size_t body_disk_offload_bytes;
+  int body_disk_offload_configured;
   pslog_logger *logger;
   char *runtime_certfile;
   char *runtime_certkey;
