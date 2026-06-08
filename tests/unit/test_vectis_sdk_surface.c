@@ -1574,6 +1574,7 @@ static void assert_json_route_surface(void) {
 static void assert_openapi_surface(void) {
   vectis_app_config config;
   vectis_openapi_route_doc doc;
+  vectis_openapi_route_doc get_doc;
   vectis_openapi_document document;
   vectis_mutable_bytes json;
   vectis_mutable_bytes yaml;
@@ -1581,6 +1582,8 @@ static void assert_openapi_surface(void) {
   vectis_status status;
   vectis_app *app;
   const char *tags[] = {"orders"};
+  const char *path_json;
+  const char *path_yaml;
 
   vectis_app_config_init(&config);
   config.tls.cert_key_bundle_path = "/tmp/server.pem";
@@ -1588,13 +1591,14 @@ static void assert_openapi_surface(void) {
   assert(app != NULL);
 
   vectis_openapi_route_doc_init(&doc);
+  vectis_openapi_route_doc_init(&get_doc);
   doc.summary = "Create order";
   doc.operation_id = "createOrder";
   doc.tags = tags;
   doc.tag_count = 1u;
   status = vectis_openapi_request_json(&doc,
                                        vectis_openapi_lonejson_schema("OrderRequest",
-                                                                      &sample_doc_map),
+                                                                      &sample_xml_doc_map),
                                        &error);
   assert(status == VECTIS_OK);
   status = vectis_openapi_response_json(&doc,
@@ -1618,6 +1622,22 @@ static void assert_openapi_surface(void) {
                             &error);
   assert(status == VECTIS_OK);
 
+  get_doc.summary = "Get order";
+  get_doc.operation_id = "getOrder";
+  status = vectis_openapi_response_json(&get_doc,
+                                        200,
+                                        "OK",
+                                        vectis_openapi_lonejson_schema("OrderCreated",
+                                                                       &sample_doc_map),
+                                        &error);
+  assert(status == VECTIS_OK);
+  status = app->openapi_doc(app,
+                            VECTIS_HTTP_METHODS_GET,
+                            "/orders/:id?",
+                            &get_doc,
+                            &error);
+  assert(status == VECTIS_OK);
+
   vectis_openapi_document_init(&document);
   document.title = "Orders API";
   document.version = "1.2.3";
@@ -1626,10 +1646,19 @@ static void assert_openapi_surface(void) {
   assert(json.data != NULL);
   assert(strstr((const char *)json.data, "\"openapi\":\"3.1.0\"") != NULL);
   assert(strstr((const char *)json.data, "\"/orders/{id}\"") != NULL);
+  path_json = strstr((const char *)json.data, "\"/orders/{id}\"");
+  assert(path_json != NULL);
+  assert(strstr(path_json + 1, "\"/orders/{id}\"") == NULL);
+  assert(strstr((const char *)json.data, "\"get\":{\"operationId\":\"getOrder\"") != NULL);
+  assert(strstr((const char *)json.data, "\"post\":{\"operationId\":\"createOrder\"") != NULL);
   assert(strstr((const char *)json.data, "\"operationId\":\"createOrder\"") != NULL);
   assert(strstr((const char *)json.data, "\"201\"") != NULL);
   assert(strstr((const char *)json.data, "\"409\"") != NULL);
   assert(strstr((const char *)json.data, "\"OrderRequest\"") != NULL);
+  assert(strstr((const char *)json.data, "\"sample_xml_amount\"") != NULL);
+  assert(strstr((const char *)json.data, "\"sample_xml_line\"") != NULL);
+  assert(strstr((const char *)json.data, "\"$ref\":\"#/components/schemas/sample_xml_amount\"") != NULL);
+  assert(strstr((const char *)json.data, "\"$ref\":\"#/components/schemas/sample_xml_line\"") != NULL);
   assert(strstr((const char *)json.data, "\"ApiError\"") != NULL);
   assert(strstr((const char *)json.data, "\"required\":[\"id\"]") != NULL);
   vectis_mutable_bytes_cleanup(&json);
@@ -1639,13 +1668,23 @@ static void assert_openapi_surface(void) {
   assert(yaml.data != NULL);
   assert(strstr((const char *)yaml.data, "openapi: 3.1.0") != NULL);
   assert(strstr((const char *)yaml.data, "\"/orders/{id}\":") != NULL);
+  path_yaml = strstr((const char *)yaml.data, "\"/orders/{id}\":");
+  assert(path_yaml != NULL);
+  assert(strstr(path_yaml + 1, "\"/orders/{id}\":") == NULL);
+  assert(strstr((const char *)yaml.data, "    get:\n      operationId: \"getOrder\"") != NULL);
+  assert(strstr((const char *)yaml.data, "    post:\n      operationId: \"createOrder\"") != NULL);
   assert(strstr((const char *)yaml.data, "operationId: \"createOrder\"") != NULL);
   assert(strstr((const char *)yaml.data, "\"201\":") != NULL);
   assert(strstr((const char *)yaml.data, "OrderRequest:") != NULL);
+  assert(strstr((const char *)yaml.data, "sample_xml_amount:") != NULL);
+  assert(strstr((const char *)yaml.data, "sample_xml_line:") != NULL);
+  assert(strstr((const char *)yaml.data, "$ref: \"#/components/schemas/sample_xml_amount\"") != NULL);
+  assert(strstr((const char *)yaml.data, "$ref: \"#/components/schemas/sample_xml_line\"") != NULL);
   assert(strstr((const char *)yaml.data, "ApiError:") != NULL);
   vectis_mutable_bytes_cleanup(&yaml);
 
   vectis_openapi_route_doc_cleanup(&doc);
+  vectis_openapi_route_doc_cleanup(&get_doc);
   app->close(app);
 }
 

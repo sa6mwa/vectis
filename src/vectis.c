@@ -3873,6 +3873,21 @@ static lonejson_status vectis_openapi_writer_field_schema(lonejson_writer *write
 
   type = vectis_openapi_field_type(field);
   if (vectis_openapi_field_is_array(field)) {
+    if (field->kind == LONEJSON_FIELD_KIND_OBJECT_ARRAY && field->submap != NULL) {
+      vectis_openapi_schema schema;
+
+      schema.name = field->submap->name;
+      schema.map = field->submap;
+      if (lonejson_writer_begin_object(writer, error) != LONEJSON_STATUS_OK ||
+          lonejson_writer_key(writer, "type", 4u, error) != LONEJSON_STATUS_OK ||
+          lonejson_writer_string(writer, "array", 5u, error) != LONEJSON_STATUS_OK ||
+          lonejson_writer_key(writer, "items", 5u, error) != LONEJSON_STATUS_OK ||
+          vectis_openapi_writer_ref(writer, schema, error) != LONEJSON_STATUS_OK ||
+          lonejson_writer_end_object(writer, error) != LONEJSON_STATUS_OK) {
+        return error->code;
+      }
+      return LONEJSON_STATUS_OK;
+    }
     if (lonejson_writer_begin_object(writer, error) != LONEJSON_STATUS_OK ||
         lonejson_writer_key(writer, "type", 4u, error) != LONEJSON_STATUS_OK ||
         lonejson_writer_string(writer, "array", 5u, error) != LONEJSON_STATUS_OK ||
@@ -3977,6 +3992,12 @@ static int vectis_openapi_schema_seen(const vectis_openapi_schema *schemas,
   return 0;
 }
 
+static vectis_status vectis_openapi_collect_schema_children(vectis_openapi_schema **schemas,
+                                                            size_t *count,
+                                                            size_t *capacity,
+                                                            const lonejson_map *map,
+                                                            vectis_error *error);
+
 static vectis_status vectis_openapi_collect_schema(vectis_openapi_schema **schemas,
                                                    size_t *count,
                                                    size_t *capacity,
@@ -4000,6 +4021,33 @@ static vectis_status vectis_openapi_collect_schema(vectis_openapi_schema **schem
   }
   (*schemas)[*count] = schema;
   (*count)++;
+  return vectis_openapi_collect_schema_children(schemas, count, capacity, schema.map, error);
+}
+
+static vectis_status vectis_openapi_collect_schema_children(vectis_openapi_schema **schemas,
+                                                            size_t *count,
+                                                            size_t *capacity,
+                                                            const lonejson_map *map,
+                                                            vectis_error *error) {
+  vectis_openapi_schema child;
+  const lonejson_field *field;
+  size_t i;
+
+  if (map == NULL) {
+    return VECTIS_OK;
+  }
+  for (i = 0u; i < map->field_count; ++i) {
+    field = &map->fields[i];
+    if ((field->kind == LONEJSON_FIELD_KIND_OBJECT ||
+         field->kind == LONEJSON_FIELD_KIND_OBJECT_ARRAY) &&
+        field->submap != NULL) {
+      child.name = field->submap->name;
+      child.map = field->submap;
+      if (vectis_openapi_collect_schema(schemas, count, capacity, child, error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+    }
+  }
   return VECTIS_OK;
 }
 
@@ -4028,6 +4076,76 @@ static vectis_status vectis_openapi_collect_doc_schemas(const vectis_openapi_rou
   return VECTIS_OK;
 }
 
+static void vectis_openapi_paths_cleanup(char **paths, size_t count) {
+  size_t i;
+
+  if (paths == NULL) {
+    return;
+  }
+  for (i = 0u; i < count; ++i) {
+    free(paths[i]);
+  }
+  free(paths);
+}
+
+static vectis_status vectis_openapi_collect_paths(vectis_app_impl *impl,
+                                                  char ***paths_out,
+                                                  vectis_error *error) {
+  vectis_string_builder builder;
+  char **paths;
+  size_t i;
+
+  if (paths_out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "OpenAPI path output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *paths_out = NULL;
+  if (impl == NULL || impl->openapi_doc_count == 0u) {
+    return VECTIS_OK;
+  }
+  paths = (char **)calloc(impl->openapi_doc_count, sizeof(*paths));
+  if (paths == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to collect OpenAPI paths");
+    return VECTIS_ERR_NOMEM;
+  }
+  memset(&builder, 0, sizeof(builder));
+  for (i = 0u; i < impl->openapi_doc_count; ++i) {
+    builder.size = 0u;
+    if (builder.data != NULL) {
+      builder.data[0] = '\0';
+    }
+    if (vectis_openapi_append_path(&builder, impl->openapi_docs[i].path, error) != VECTIS_OK) {
+      vectis_string_builder_cleanup(&builder);
+      vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+    paths[i] = vectis_strdup(builder.data != NULL ? builder.data : "");
+    if (paths[i] == NULL) {
+      vectis_string_builder_cleanup(&builder);
+      vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy OpenAPI path");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  vectis_string_builder_cleanup(&builder);
+  *paths_out = paths;
+  return VECTIS_OK;
+}
+
+static int vectis_openapi_path_seen(const char *const *paths, size_t index) {
+  size_t i;
+
+  if (paths == NULL || paths[index] == NULL) {
+    return 0;
+  }
+  for (i = 0u; i < index; ++i) {
+    if (paths[i] != NULL && strcmp(paths[i], paths[index]) == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
 static vectis_status vectis_generate_openapi_json(vectis_app_impl *impl,
                                                   const vectis_openapi_document *document,
                                                   vectis_string_builder *builder,
@@ -4038,19 +4156,20 @@ static vectis_status vectis_generate_openapi_json(vectis_app_impl *impl,
   lonejson_status json_status;
   lonejson *runtime;
   vectis_openapi_schema *schemas;
+  char **paths;
   size_t schema_count;
   size_t schema_capacity;
   size_t i;
   size_t j;
+  size_t k;
   vectis_http_method method;
-  vectis_string_builder path_builder;
   const vectis_openapi_route_doc *doc;
   char status_key[16];
 
   schemas = NULL;
+  paths = NULL;
   schema_count = 0u;
   schema_capacity = 0u;
-  memset(&path_builder, 0, sizeof(path_builder));
   for (i = 0u; i < impl->openapi_doc_count; ++i) {
     if (vectis_openapi_collect_doc_schemas(&impl->openapi_docs[i].doc,
                                            &schemas,
@@ -4061,11 +4180,15 @@ static vectis_status vectis_generate_openapi_json(vectis_app_impl *impl,
       return error != NULL ? error->code : VECTIS_ERR_NOMEM;
     }
   }
+  if (vectis_openapi_collect_paths(impl, &paths, error) != VECTIS_OK) {
+    free(schemas);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
   sink.builder = builder;
   sink.error = error;
   runtime = vectis_lonejson_new(error);
   if (runtime == NULL) {
-    vectis_string_builder_cleanup(&path_builder);
+    vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
     free(schemas);
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
@@ -4095,122 +4218,116 @@ static vectis_status vectis_generate_openapi_json(vectis_app_impl *impl,
     goto json_cleanup_failed;
   }
   for (i = 0u; i < impl->openapi_doc_count; ++i) {
-    doc = &impl->openapi_docs[i].doc;
-    path_builder.size = 0u;
-    if (path_builder.data != NULL) {
-      path_builder.data[0] = '\0';
-    }
-    if (vectis_openapi_append_path(&path_builder, impl->openapi_docs[i].path, error) != VECTIS_OK) {
-      json_status = LONEJSON_STATUS_CALLBACK_FAILED;
-      lonejson_error_init(&json_error);
-      json_error.code = LONEJSON_STATUS_CALLBACK_FAILED;
-      strncpy(json_error.message,
-              error != NULL && error->message[0] != '\0' ? error->message : "failed to write OpenAPI path",
-              sizeof(json_error.message) - 1u);
-      json_error.message[sizeof(json_error.message) - 1u] = '\0';
-      goto json_cleanup_failed;
+    if (vectis_openapi_path_seen((const char *const *)paths, i)) {
+      continue;
     }
     if (lonejson_writer_key(&writer,
-                            path_builder.data != NULL ? path_builder.data : "",
-                            path_builder.size,
+                            paths[i] != NULL ? paths[i] : "",
+                            paths[i] != NULL ? strlen(paths[i]) : 0u,
                             &json_error) != LONEJSON_STATUS_OK ||
         lonejson_writer_begin_object(&writer, &json_error) != LONEJSON_STATUS_OK) {
       json_status = json_error.code;
       goto json_cleanup_failed;
     }
-    for (method = VECTIS_HTTP_GET; method <= VECTIS_HTTP_OPTIONS; ++method) {
-      if ((impl->openapi_docs[i].methods & VECTIS_HTTP_METHOD_MASK(method)) != 0u) {
-        if (lonejson_writer_key(&writer,
-                                vectis_openapi_method_name(method),
-                                strlen(vectis_openapi_method_name(method)),
-                                &json_error) != LONEJSON_STATUS_OK ||
-            lonejson_writer_begin_object(&writer, &json_error) != LONEJSON_STATUS_OK) {
-          json_status = json_error.code;
-          goto json_cleanup_failed;
-        }
-        if (doc->operation_id != NULL) {
-          if (lonejson_writer_key(&writer, "operationId", 11u, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_string(&writer, doc->operation_id, strlen(doc->operation_id), &json_error) != LONEJSON_STATUS_OK) {
+    for (k = 0u; k < impl->openapi_doc_count; ++k) {
+      if (paths[k] == NULL || strcmp(paths[k], paths[i]) != 0) {
+        continue;
+      }
+      doc = &impl->openapi_docs[k].doc;
+      for (method = VECTIS_HTTP_GET; method <= VECTIS_HTTP_OPTIONS; ++method) {
+        if ((impl->openapi_docs[k].methods & VECTIS_HTTP_METHOD_MASK(method)) != 0u) {
+          if (lonejson_writer_key(&writer,
+                                  vectis_openapi_method_name(method),
+                                  strlen(vectis_openapi_method_name(method)),
+                                  &json_error) != LONEJSON_STATUS_OK ||
+              lonejson_writer_begin_object(&writer, &json_error) != LONEJSON_STATUS_OK) {
             json_status = json_error.code;
             goto json_cleanup_failed;
           }
-        }
-        if (doc->summary != NULL) {
-          if (lonejson_writer_key(&writer, "summary", 7u, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_string(&writer, doc->summary, strlen(doc->summary), &json_error) != LONEJSON_STATUS_OK) {
-            json_status = json_error.code;
-            goto json_cleanup_failed;
-          }
-        }
-        if (doc->tag_count > 0u) {
-          if (lonejson_writer_key(&writer, "tags", 4u, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_begin_array(&writer, &json_error) != LONEJSON_STATUS_OK) {
-            json_status = json_error.code;
-            goto json_cleanup_failed;
-          }
-          for (j = 0u; j < doc->tag_count; ++j) {
-            if (lonejson_writer_string(&writer,
-                                       doc->tags[j] != NULL ? doc->tags[j] : "",
-                                       doc->tags[j] != NULL ? strlen(doc->tags[j]) : 0u,
-                                       &json_error) != LONEJSON_STATUS_OK) {
+          if (doc->operation_id != NULL) {
+            if (lonejson_writer_key(&writer, "operationId", 11u, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_string(&writer, doc->operation_id, strlen(doc->operation_id), &json_error) != LONEJSON_STATUS_OK) {
               json_status = json_error.code;
               goto json_cleanup_failed;
             }
           }
-          if (lonejson_writer_end_array(&writer, &json_error) != LONEJSON_STATUS_OK) {
+          if (doc->summary != NULL) {
+            if (lonejson_writer_key(&writer, "summary", 7u, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_string(&writer, doc->summary, strlen(doc->summary), &json_error) != LONEJSON_STATUS_OK) {
+              json_status = json_error.code;
+              goto json_cleanup_failed;
+            }
+          }
+          if (doc->tag_count > 0u) {
+            if (lonejson_writer_key(&writer, "tags", 4u, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_begin_array(&writer, &json_error) != LONEJSON_STATUS_OK) {
+              json_status = json_error.code;
+              goto json_cleanup_failed;
+            }
+            for (j = 0u; j < doc->tag_count; ++j) {
+              if (lonejson_writer_string(&writer,
+                                         doc->tags[j] != NULL ? doc->tags[j] : "",
+                                         doc->tags[j] != NULL ? strlen(doc->tags[j]) : 0u,
+                                         &json_error) != LONEJSON_STATUS_OK) {
+                json_status = json_error.code;
+                goto json_cleanup_failed;
+              }
+            }
+            if (lonejson_writer_end_array(&writer, &json_error) != LONEJSON_STATUS_OK) {
+              json_status = json_error.code;
+              goto json_cleanup_failed;
+            }
+          }
+          if (doc->request_schema.map != NULL) {
+            if (lonejson_writer_key(&writer, "requestBody", 11u, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_begin_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_key(&writer, "content", 7u, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_begin_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_key(&writer, "application/json", 16u, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_begin_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_key(&writer, "schema", 6u, &json_error) != LONEJSON_STATUS_OK ||
+                vectis_openapi_writer_ref(&writer, doc->request_schema, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_end_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_end_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_key(&writer, "required", 8u, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_bool(&writer, 1, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_end_object(&writer, &json_error) != LONEJSON_STATUS_OK) {
+              json_status = json_error.code;
+              goto json_cleanup_failed;
+            }
+          }
+          if (lonejson_writer_key(&writer, "responses", 9u, &json_error) != LONEJSON_STATUS_OK ||
+              lonejson_writer_begin_object(&writer, &json_error) != LONEJSON_STATUS_OK) {
             json_status = json_error.code;
             goto json_cleanup_failed;
           }
-        }
-        if (doc->request_schema.map != NULL) {
-          if (lonejson_writer_key(&writer, "requestBody", 11u, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_begin_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_key(&writer, "content", 7u, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_begin_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_key(&writer, "application/json", 16u, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_begin_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_key(&writer, "schema", 6u, &json_error) != LONEJSON_STATUS_OK ||
-              vectis_openapi_writer_ref(&writer, doc->request_schema, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_end_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_end_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_key(&writer, "required", 8u, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_bool(&writer, 1, &json_error) != LONEJSON_STATUS_OK ||
+          for (j = 0u; j < doc->response_count; ++j) {
+            (void)snprintf(status_key, sizeof(status_key), "%d", doc->responses[j].status_code);
+            if (lonejson_writer_key(&writer, status_key, strlen(status_key), &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_begin_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_key(&writer, "description", 11u, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_string(&writer,
+                                       doc->responses[j].description != NULL ? doc->responses[j].description : "",
+                                       doc->responses[j].description != NULL ? strlen(doc->responses[j].description) : 0u,
+                                       &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_key(&writer, "content", 7u, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_begin_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_key(&writer, "application/json", 16u, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_begin_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_key(&writer, "schema", 6u, &json_error) != LONEJSON_STATUS_OK ||
+                vectis_openapi_writer_ref(&writer, doc->responses[j].schema, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_end_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_end_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
+                lonejson_writer_end_object(&writer, &json_error) != LONEJSON_STATUS_OK) {
+              json_status = json_error.code;
+              goto json_cleanup_failed;
+            }
+          }
+          if (lonejson_writer_end_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
               lonejson_writer_end_object(&writer, &json_error) != LONEJSON_STATUS_OK) {
             json_status = json_error.code;
             goto json_cleanup_failed;
           }
-        }
-        if (lonejson_writer_key(&writer, "responses", 9u, &json_error) != LONEJSON_STATUS_OK ||
-            lonejson_writer_begin_object(&writer, &json_error) != LONEJSON_STATUS_OK) {
-          json_status = json_error.code;
-          goto json_cleanup_failed;
-        }
-        for (j = 0u; j < doc->response_count; ++j) {
-          (void)snprintf(status_key, sizeof(status_key), "%d", doc->responses[j].status_code);
-          if (lonejson_writer_key(&writer, status_key, strlen(status_key), &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_begin_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_key(&writer, "description", 11u, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_string(&writer,
-                                     doc->responses[j].description != NULL ? doc->responses[j].description : "",
-                                     doc->responses[j].description != NULL ? strlen(doc->responses[j].description) : 0u,
-                                     &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_key(&writer, "content", 7u, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_begin_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_key(&writer, "application/json", 16u, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_begin_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_key(&writer, "schema", 6u, &json_error) != LONEJSON_STATUS_OK ||
-              vectis_openapi_writer_ref(&writer, doc->responses[j].schema, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_end_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_end_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
-              lonejson_writer_end_object(&writer, &json_error) != LONEJSON_STATUS_OK) {
-            json_status = json_error.code;
-            goto json_cleanup_failed;
-          }
-        }
-        if (lonejson_writer_end_object(&writer, &json_error) != LONEJSON_STATUS_OK ||
-            lonejson_writer_end_object(&writer, &json_error) != LONEJSON_STATUS_OK) {
-          json_status = json_error.code;
-          goto json_cleanup_failed;
         }
       }
     }
@@ -4247,7 +4364,7 @@ static vectis_status vectis_generate_openapi_json(vectis_app_impl *impl,
   lonejson_writer_cleanup(&writer);
   lonejson_free(runtime);
   runtime = NULL;
-  vectis_string_builder_cleanup(&path_builder);
+  vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
   free(schemas);
   if (json_status == LONEJSON_STATUS_OK) {
     return VECTIS_OK;
@@ -4260,7 +4377,7 @@ json_failed:
   if (runtime != NULL) {
     lonejson_free(runtime);
   }
-  vectis_string_builder_cleanup(&path_builder);
+  vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
   free(schemas);
   vectis_set_errorf(error,
                     VECTIS_ERR_INVALID,
@@ -4278,20 +4395,21 @@ static vectis_status vectis_generate_openapi_yaml(vectis_app_impl *impl,
                                                   vectis_string_builder *builder,
                                                   vectis_error *error) {
   vectis_openapi_schema *schemas;
+  char **paths;
   size_t schema_count;
   size_t schema_capacity;
   size_t i;
   size_t j;
+  size_t k;
   vectis_http_method method;
-  vectis_string_builder path_builder;
   const vectis_openapi_route_doc *doc;
   const lonejson_map *map;
   const lonejson_field *field;
 
   schemas = NULL;
+  paths = NULL;
   schema_count = 0u;
   schema_capacity = 0u;
-  memset(&path_builder, 0, sizeof(path_builder));
   for (i = 0u; i < impl->openapi_doc_count; ++i) {
     if (vectis_openapi_collect_doc_schemas(&impl->openapi_docs[i].doc,
                                            &schemas,
@@ -4302,32 +4420,39 @@ static vectis_status vectis_generate_openapi_yaml(vectis_app_impl *impl,
       return error != NULL ? error->code : VECTIS_ERR_NOMEM;
     }
   }
+  if (vectis_openapi_collect_paths(impl, &paths, error) != VECTIS_OK) {
+    free(schemas);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
   if (vectis_string_builder_append(builder, "openapi: 3.1.0\ninfo:\n  title: ", error) != VECTIS_OK ||
       vectis_append_lonejson_string(builder, document->title, error) != VECTIS_OK ||
       vectis_string_builder_append(builder, "\n  version: ", error) != VECTIS_OK ||
       vectis_append_lonejson_string(builder, document->version, error) != VECTIS_OK ||
       vectis_string_builder_append(builder, "\npaths:\n", error) != VECTIS_OK) {
+    vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
     free(schemas);
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
   for (i = 0u; i < impl->openapi_doc_count; ++i) {
-    doc = &impl->openapi_docs[i].doc;
-    path_builder.size = 0u;
-    if (path_builder.data != NULL) {
-      path_builder.data[0] = '\0';
+    if (vectis_openapi_path_seen((const char *const *)paths, i)) {
+      continue;
     }
-    if (vectis_openapi_append_path(&path_builder, impl->openapi_docs[i].path, error) != VECTIS_OK ||
-        vectis_string_builder_append(builder, "  ", error) != VECTIS_OK ||
-        vectis_append_lonejson_string(builder, path_builder.data, error) != VECTIS_OK ||
+    if (vectis_string_builder_append(builder, "  ", error) != VECTIS_OK ||
+        vectis_append_lonejson_string(builder, paths[i], error) != VECTIS_OK ||
         vectis_string_builder_append(builder, ":\n", error) != VECTIS_OK) {
-      vectis_string_builder_cleanup(&path_builder);
+      vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
       free(schemas);
       return error != NULL ? error->code : VECTIS_ERR_NOMEM;
     }
-    for (method = VECTIS_HTTP_GET; method <= VECTIS_HTTP_OPTIONS; ++method) {
-      if ((impl->openapi_docs[i].methods & VECTIS_HTTP_METHOD_MASK(method)) != 0u) {
+    for (k = 0u; k < impl->openapi_doc_count; ++k) {
+      if (paths[k] == NULL || strcmp(paths[k], paths[i]) != 0) {
+        continue;
+      }
+      doc = &impl->openapi_docs[k].doc;
+      for (method = VECTIS_HTTP_GET; method <= VECTIS_HTTP_OPTIONS; ++method) {
+        if ((impl->openapi_docs[k].methods & VECTIS_HTTP_METHOD_MASK(method)) != 0u) {
         if (vectis_string_builder_appendf(builder, error, "    %s:\n", vectis_openapi_method_name(method)) != VECTIS_OK) {
-          vectis_string_builder_cleanup(&path_builder);
+          vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
           free(schemas);
           return error != NULL ? error->code : VECTIS_ERR_NOMEM;
         }
@@ -4335,7 +4460,7 @@ static vectis_status vectis_generate_openapi_yaml(vectis_app_impl *impl,
             (vectis_string_builder_append(builder, "      operationId: ", error) != VECTIS_OK ||
              vectis_append_lonejson_string(builder, doc->operation_id, error) != VECTIS_OK ||
              vectis_string_builder_append(builder, "\n", error) != VECTIS_OK)) {
-          vectis_string_builder_cleanup(&path_builder);
+          vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
           free(schemas);
           return error != NULL ? error->code : VECTIS_ERR_NOMEM;
         }
@@ -4343,13 +4468,13 @@ static vectis_status vectis_generate_openapi_yaml(vectis_app_impl *impl,
             (vectis_string_builder_append(builder, "      summary: ", error) != VECTIS_OK ||
              vectis_append_lonejson_string(builder, doc->summary, error) != VECTIS_OK ||
              vectis_string_builder_append(builder, "\n", error) != VECTIS_OK)) {
-          vectis_string_builder_cleanup(&path_builder);
+          vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
           free(schemas);
           return error != NULL ? error->code : VECTIS_ERR_NOMEM;
         }
         if (doc->tag_count > 0u) {
           if (vectis_string_builder_append(builder, "      tags:\n", error) != VECTIS_OK) {
-            vectis_string_builder_cleanup(&path_builder);
+            vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
             free(schemas);
             return error != NULL ? error->code : VECTIS_ERR_NOMEM;
           }
@@ -4357,7 +4482,7 @@ static vectis_status vectis_generate_openapi_yaml(vectis_app_impl *impl,
             if (vectis_string_builder_append(builder, "        - ", error) != VECTIS_OK ||
                 vectis_append_lonejson_string(builder, doc->tags[j], error) != VECTIS_OK ||
                 vectis_string_builder_append(builder, "\n", error) != VECTIS_OK) {
-              vectis_string_builder_cleanup(&path_builder);
+              vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
               free(schemas);
               return error != NULL ? error->code : VECTIS_ERR_NOMEM;
             }
@@ -4369,12 +4494,12 @@ static vectis_status vectis_generate_openapi_yaml(vectis_app_impl *impl,
                                           error) != VECTIS_OK ||
              vectis_string_builder_append(builder, vectis_openapi_schema_name(doc->request_schema), error) != VECTIS_OK ||
              vectis_string_builder_append(builder, "\"\n", error) != VECTIS_OK)) {
-          vectis_string_builder_cleanup(&path_builder);
+          vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
           free(schemas);
           return error != NULL ? error->code : VECTIS_ERR_NOMEM;
         }
         if (vectis_string_builder_append(builder, "      responses:\n", error) != VECTIS_OK) {
-          vectis_string_builder_cleanup(&path_builder);
+          vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
           free(schemas);
           return error != NULL ? error->code : VECTIS_ERR_NOMEM;
         }
@@ -4392,16 +4517,17 @@ static vectis_status vectis_generate_openapi_yaml(vectis_app_impl *impl,
                                            error) != VECTIS_OK ||
               vectis_string_builder_append(builder, vectis_openapi_schema_name(doc->responses[j].schema), error) != VECTIS_OK ||
               vectis_string_builder_append(builder, "\"\n", error) != VECTIS_OK) {
-            vectis_string_builder_cleanup(&path_builder);
+            vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
             free(schemas);
             return error != NULL ? error->code : VECTIS_ERR_NOMEM;
           }
+        }
         }
       }
     }
   }
   if (vectis_string_builder_append(builder, "components:\n  schemas:\n", error) != VECTIS_OK) {
-    vectis_string_builder_cleanup(&path_builder);
+    vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
     free(schemas);
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
@@ -4411,34 +4537,55 @@ static vectis_status vectis_generate_openapi_yaml(vectis_app_impl *impl,
                                       error,
                                       "    %s:\n      type: object\n      properties:\n",
                                       vectis_openapi_schema_name(schemas[i])) != VECTIS_OK) {
-      vectis_string_builder_cleanup(&path_builder);
+      vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
       free(schemas);
       return error != NULL ? error->code : VECTIS_ERR_NOMEM;
     }
     for (j = 0u; j < map->field_count; ++j) {
       field = &map->fields[j];
+      if (field->kind == LONEJSON_FIELD_KIND_OBJECT && field->submap != NULL) {
+        if (vectis_string_builder_appendf(builder,
+                                          error,
+                                          "        %s:\n          $ref: \"#/components/schemas/%s\"\n",
+                                          field->json_key,
+                                          field->submap->name) != VECTIS_OK) {
+          vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
+          free(schemas);
+          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        }
+        continue;
+      }
       if (vectis_string_builder_appendf(builder,
                                         error,
                                         "        %s:\n          type: %s\n",
                                         field->json_key,
                                         vectis_openapi_field_is_array(field) ?
                                             "array" : vectis_openapi_field_type(field)) != VECTIS_OK) {
-        vectis_string_builder_cleanup(&path_builder);
+        vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
         free(schemas);
         return error != NULL ? error->code : VECTIS_ERR_NOMEM;
       }
-      if (vectis_openapi_field_is_array(field) &&
+      if (field->kind == LONEJSON_FIELD_KIND_OBJECT_ARRAY && field->submap != NULL) {
+        if (vectis_string_builder_appendf(builder,
+                                          error,
+                                          "          items:\n            $ref: \"#/components/schemas/%s\"\n",
+                                          field->submap->name) != VECTIS_OK) {
+          vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
+          free(schemas);
+          return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+        }
+      } else if (vectis_openapi_field_is_array(field) &&
           vectis_string_builder_appendf(builder,
                                         error,
                                         "          items:\n            type: %s\n",
                                         vectis_openapi_field_type(field)) != VECTIS_OK) {
-        vectis_string_builder_cleanup(&path_builder);
+        vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
         free(schemas);
         return error != NULL ? error->code : VECTIS_ERR_NOMEM;
       }
     }
     if (vectis_string_builder_append(builder, "      required:\n", error) != VECTIS_OK) {
-      vectis_string_builder_cleanup(&path_builder);
+      vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
       free(schemas);
       return error != NULL ? error->code : VECTIS_ERR_NOMEM;
     }
@@ -4448,13 +4595,13 @@ static vectis_status vectis_generate_openapi_yaml(vectis_app_impl *impl,
                                         error,
                                         "        - %s\n",
                                         map->fields[j].json_key) != VECTIS_OK) {
-        vectis_string_builder_cleanup(&path_builder);
+        vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
         free(schemas);
         return error != NULL ? error->code : VECTIS_ERR_NOMEM;
       }
     }
   }
-  vectis_string_builder_cleanup(&path_builder);
+  vectis_openapi_paths_cleanup(paths, impl->openapi_doc_count);
   free(schemas);
   return VECTIS_OK;
 }
