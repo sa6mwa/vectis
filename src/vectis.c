@@ -2623,10 +2623,6 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
   }
   impl = (vectis_app_impl *)app->impl;
 
-  status = vectis_validate_startable(impl, error);
-  if (status != VECTIS_OK) {
-    return status;
-  }
   status = vectis_validate_lockd_startable(impl, error);
   if (status != VECTIS_OK) {
     return status;
@@ -2643,6 +2639,13 @@ static vectis_status vectis_app_start_impl(vectis_app *app, vectis_error *error)
   (void)pthread_mutex_lock(&impl->mutex);
   route_count = impl->route_count;
   (void)pthread_mutex_unlock(&impl->mutex);
+
+  if (route_count > 0u) {
+    status = vectis_validate_startable(impl, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
 
   if (route_count == 0u) {
     status = vectis_open_lockd_client(impl, error);

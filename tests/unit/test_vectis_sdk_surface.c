@@ -1775,6 +1775,9 @@ static void assert_tls_source_surface(void) {
   config.lockd.unix_socket_path = "/tmp/lockd.sock";
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/tls-client-ca", sample_route_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
   status = app->start(app, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "client_ca_bundle") != NULL);

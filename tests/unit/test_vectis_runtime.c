@@ -966,12 +966,32 @@ int main(void) {
   assert(vectis_internal_max_request_body_bytes(app) ==
          VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES);
   assert(vectis_internal_lockd_client(app) == NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/requires-tls", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
 
   status = app->start(app, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "manual TLS requires") != NULL);
   app->close(app);
 
+  vectis_app_config_init(&config);
+  config.lockd.unix_socket_path = "/tmp/vectis-missing-lockd.sock";
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK || status == VECTIS_ERR_STATE);
+  if (status == VECTIS_ERR_STATE) {
+    assert(error.source == VECTIS_ERROR_SOURCE_LOCKDC);
+    assert(strstr(error.message, "manual TLS requires") == NULL);
+  } else {
+    status = vectis_stop(app, &error);
+    assert(status == VECTIS_OK);
+  }
+  app->close(app);
+
+  vectis_app_config_init(&config);
   config.tls.cert_key_bundle = vectis_source_from_path("/tmp/server.pem");
   app = vectis_app_new(&config, &error);
   assert(app != NULL);

@@ -171,6 +171,9 @@ int main(void) {
   config.tls.acme_email = "ops@example.com";
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/acme-domain", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
   status = app->start(app, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "tls.domain") != NULL);
@@ -181,6 +184,9 @@ int main(void) {
   config.tls.domain = "api.example.com";
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/acme-email", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
   status = app->start(app, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "acme_email") != NULL);
