@@ -135,8 +135,13 @@ typedef struct vectis_error {
 
 /*
  * Public configuration structs must be initialized with their matching
- * vectis_*_init() function before use. Boolean fields default to zero; opt-out
- * fields such as *_disabled are used when Vectis enables behavior by default.
+ * vectis_*_init() function before use. NULL pointers and zero-valued scalar
+ * config fields mean "use the Vectis default" unless the field is a named
+ * enum/bitmask selector whose zero value is itself a documented option.
+ *
+ * Boolean fields default to zero. When Vectis enables behavior by default, the
+ * public field is phrased as an opt-out such as *_disabled so zero still means
+ * the default enabled behavior.
  */
 
 typedef vectis_status (*vectis_curl_configure_fn)(CURL *curl,
@@ -196,10 +201,10 @@ typedef struct vectis_dsv_config {
   int delimiter;
   int quote;
   int escape;
-  int has_header;
-  int strict_row_width;
-  int trim_cr;
-  int allow_indented_comments;
+  int header_disabled;
+  int strict_row_width_disabled;
+  int trim_cr_disabled;
+  int indented_comments_disabled;
   const char *comment_prefix;
   const char *const *columns;
   size_t column_count;
@@ -211,7 +216,7 @@ typedef struct vectis_xml_config {
   const char *text_key;
   const char *attribute_prefix;
   int trim_text;
-  int skip_unknown;
+  int skip_unknown_disabled;
   size_t max_depth;
   size_t max_text_bytes;
 } vectis_xml_config;

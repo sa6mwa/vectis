@@ -461,6 +461,21 @@ static void assert_http_surface(void) {
   assert(handle == NULL);
   assert(strstr(error.message, "non-negative") != NULL);
   client.low_speed_limit_bytes_per_sec = 0L;
+  client.timeout_ms = 0L;
+  client.connect_timeout_ms = 0L;
+  client.retry_max_attempts = 0u;
+  client.retry_initial_delay_ms = 0L;
+  client.retry_max_delay_ms = 0L;
+  status = vectis_http_client_new(&client, &handle, &error);
+  assert(status == VECTIS_OK);
+  assert(handle->config.timeout_ms == 30000L);
+  assert(handle->config.connect_timeout_ms == 10000L);
+  assert(handle->config.retry_max_attempts == 1u);
+  assert(handle->config.retry_initial_delay_ms == 250L);
+  assert(handle->config.retry_max_delay_ms == 2000L);
+  handle->close(handle);
+  handle = NULL;
+  vectis_http_client_config_init(&client);
   client.configure_curl = curl_config_ok;
   client.configure_curl_userdata = &curl_config_count;
 
@@ -836,6 +851,7 @@ static void assert_io_surface(void) {
   mqtt_handle = NULL;
   vectis_sftp_config_init(&sftp);
   assert(sftp.timeout_ms == 30000L);
+  sftp.timeout_ms = 0L;
   sftp_handle = (vectis_sftp *)(uintptr_t)1u;
   status = vectis_sftp_new(&sftp, &sftp_handle, &error);
   assert(status == VECTIS_ERR_INVALID);
@@ -848,6 +864,7 @@ static void assert_io_surface(void) {
   status = vectis_sftp_new(&sftp, &sftp_handle, &error);
   assert(status == VECTIS_OK);
   assert(sftp_handle != NULL);
+  assert(sftp_handle->config.timeout_ms == 30000L);
   assert(sftp_handle->upload_file != NULL);
   assert(sftp_handle->download_file != NULL);
   assert(sftp_handle->close != NULL);
@@ -861,6 +878,8 @@ static void assert_io_surface(void) {
   memset(&result, 0, sizeof(result));
   assert(ssh.port == 22u);
   assert(ssh.timeout_ms == 30000L);
+  ssh.port = 0u;
+  ssh.timeout_ms = 0L;
   ssh_handle = (vectis_ssh *)(uintptr_t)1u;
   status = vectis_ssh_new(&ssh, &ssh_handle, &error);
   assert(status == VECTIS_ERR_INVALID);
@@ -870,7 +889,6 @@ static void assert_io_surface(void) {
   status = vectis_ssh_exec(&ssh, "uptime", &result, &error);
   assert(status == VECTIS_ERR_INVALID);
   ssh.host = "127.0.0.1";
-  ssh.port = 1u;
   ssh.username = "vectis";
   ssh.password = "secret";
   status = vectis_ssh_new(&ssh, &ssh_handle, &error);
@@ -881,10 +899,13 @@ static void assert_io_surface(void) {
   assert(ssh_handle->sftp_download_file != NULL);
   assert(ssh_handle->close != NULL);
   assert(strcmp(ssh_handle->config.host, "127.0.0.1") == 0);
+  assert(ssh_handle->config.port == 22u);
+  assert(ssh_handle->config.timeout_ms == 30000L);
   status = ssh_handle->exec(NULL, "uptime", &result, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "SSH handle") != NULL);
   ssh_handle->close(ssh_handle);
+  ssh.port = 1u;
   ssh.password = NULL;
   ssh.private_key = vectis_source_from_memory(ssh_key_pem, sizeof(ssh_key_pem) - 1u);
   status = vectis_ssh_new(&ssh, &ssh_handle, &error);
@@ -902,6 +923,7 @@ static void assert_io_surface(void) {
   vectis_ssh_exec_result_cleanup(&result);
 
   vectis_mqtt_config_init(&mqtt);
+  mqtt.timeout_ms = 0L;
   mqtt_handle = (vectis_mqtt *)(uintptr_t)1u;
   status = vectis_mqtt_new(&mqtt, &mqtt_handle, &error);
   assert(status == VECTIS_ERR_INVALID);
@@ -923,6 +945,7 @@ static void assert_io_surface(void) {
   assert(mqtt_handle->publish_json != NULL);
   assert(mqtt_handle->close != NULL);
   assert(strcmp(mqtt_handle->config.broker_url, "mqtt://127.0.0.1:1") == 0);
+  assert(mqtt_handle->config.timeout_ms == 30000L);
   status = mqtt_handle->publish(NULL,
                                 "workflow/test",
                                 payload,
@@ -2093,7 +2116,7 @@ static void assert_dsv_surface(void) {
   assert(lc_source_from_memory("two|11|false\n", 13u, &source, NULL) == LC_OK);
   vectis_dsv_config_init(&config);
   config.delimiter = '|';
-  config.has_header = 0;
+  config.header_disabled = 1;
   config.columns = columns;
   config.column_count = 3u;
   memset(&rows, 0, sizeof(rows));
@@ -2419,7 +2442,7 @@ static void assert_xml_surface(void) {
   xml_source = vectis_source_from_memory(xml, sizeof(xml) - 1u);
   config = vectis_xml_default();
   config.root_element = "invoice";
-  config.skip_unknown = 0;
+  config.skip_unknown_disabled = 1;
   status = vectis_xml_parse_lonejson_source(&xml_source,
                                             &sample_xml_doc_map,
                                             &config,

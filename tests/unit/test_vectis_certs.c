@@ -285,7 +285,7 @@ int main(void) {
 
   make_temp_path(csr_key_path, sizeof(csr_key_path), "csr-key");
   key_config.output_key_path = csr_key_path;
-  key_config.key_bits = 2048u;
+  key_config.key_bits = 0u;
   status = vectis_cert_generate_private_key(&key_config, &error);
   assert(status == VECTIS_OK);
   assert_generated_key_is_parseable(csr_key_path);
@@ -332,7 +332,7 @@ int main(void) {
   assert(error.source == VECTIS_ERROR_SOURCE_OPENSSL);
 
   config.output_bundle_path = "/tmp/vectis-expired.pem";
-  config.valid_days = 0L;
+  config.valid_days = -1L;
   status = vectis_cert_generate_bundle(&config, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "valid_days") != NULL);
@@ -352,6 +352,8 @@ int main(void) {
   config.dns_names = "api.local, api.internal";
   config.ip_addresses = "127.0.0.1";
   config.output_bundle_path = bundle_path;
+  config.key_bits = 0u;
+  config.valid_days = 0L;
   status = vectis_cert_generate_bundle(&config, &error);
   assert(status == VECTIS_OK);
   assert(error.code == VECTIS_OK);

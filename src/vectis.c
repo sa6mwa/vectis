@@ -909,6 +909,116 @@ vectis_body_policy vectis_body_upload(void) {
   return vectis_body_upload_max(VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES);
 }
 
+static size_t vectis_default_size(size_t value, size_t default_value) {
+  return value == 0u ? default_value : value;
+}
+
+static long vectis_default_long(long value, long default_value) {
+  return value == 0L ? default_value : value;
+}
+
+static unsigned vectis_default_unsigned(unsigned value, unsigned default_value) {
+  return value == 0u ? default_value : value;
+}
+
+static unsigned short vectis_default_ushort(unsigned short value, unsigned short default_value) {
+  return value == 0u ? default_value : value;
+}
+
+static vectis_server_config vectis_effective_server_config(const vectis_server_config *config) {
+  vectis_server_config effective;
+
+  vectis_server_config_init(&effective);
+  if (config == NULL) {
+    return effective;
+  }
+  effective.max_connections =
+      vectis_default_size(config->max_connections, VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS);
+  effective.max_request_header_bytes =
+      vectis_default_size(config->max_request_header_bytes,
+                          VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES);
+  effective.max_request_body_bytes =
+      vectis_default_size(config->max_request_body_bytes,
+                          VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES);
+  effective.request_header_timeout_ms =
+      vectis_default_long(config->request_header_timeout_ms,
+                          VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS);
+  effective.request_body_idle_timeout_ms =
+      vectis_default_long(config->request_body_idle_timeout_ms,
+                          VECTIS_SERVER_DEFAULT_REQUEST_BODY_IDLE_TIMEOUT_MS);
+  effective.response_write_idle_timeout_ms =
+      vectis_default_long(config->response_write_idle_timeout_ms,
+                          VECTIS_SERVER_DEFAULT_RESPONSE_WRITE_IDLE_TIMEOUT_MS);
+  effective.request_body_min_rate_bytes_per_sec =
+      vectis_default_size(config->request_body_min_rate_bytes_per_sec,
+                          VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_BYTES_PER_SEC);
+  effective.request_body_min_rate_grace_ms =
+      vectis_default_long(config->request_body_min_rate_grace_ms,
+                          VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_GRACE_MS);
+  effective.idle_timeout_ms =
+      vectis_default_long(config->idle_timeout_ms, VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS);
+  effective.keepalive_disabled = config->keepalive_disabled;
+  effective.keepalive_timeout_ms =
+      vectis_default_long(config->keepalive_timeout_ms,
+                          VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS);
+  effective.keepalive_max_requests =
+      vectis_default_unsigned(config->keepalive_max_requests,
+                              VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS);
+  return effective;
+}
+
+static vectis_body_policy vectis_effective_body_policy(const vectis_body_policy *policy,
+                                                       const vectis_server_config *server) {
+  vectis_body_policy effective;
+  size_t server_max_body;
+  long server_body_idle_timeout;
+
+  vectis_body_policy_init(&effective);
+  if (policy == NULL) {
+    return effective;
+  }
+  effective = *policy;
+  if (effective.mode == VECTIS_BODY_NONE) {
+    return effective;
+  }
+
+  server_max_body = server != NULL && server->max_request_body_bytes > 0u
+      ? server->max_request_body_bytes
+      : VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
+  server_body_idle_timeout = server != NULL && server->request_body_idle_timeout_ms > 0L
+      ? server->request_body_idle_timeout_ms
+      : VECTIS_SERVER_DEFAULT_REQUEST_BODY_IDLE_TIMEOUT_MS;
+
+  if (effective.mode == VECTIS_BODY_STREAMING_UPLOAD) {
+    effective.max_bytes =
+        vectis_default_size(effective.max_bytes, VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES);
+    effective.memory_buffer_limit_bytes =
+        vectis_default_size(effective.memory_buffer_limit_bytes,
+                            VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES);
+    effective.idle_timeout_ms =
+        vectis_default_long(effective.idle_timeout_ms, server_body_idle_timeout);
+    effective.min_rate_bytes_per_sec =
+        vectis_default_size(effective.min_rate_bytes_per_sec,
+                            VECTIS_BODY_DEFAULT_UPLOAD_MIN_RATE_BYTES_PER_SEC);
+    effective.min_rate_grace_ms =
+        vectis_default_long(effective.min_rate_grace_ms,
+                            VECTIS_BODY_DEFAULT_UPLOAD_MIN_RATE_GRACE_MS);
+  } else {
+    effective.max_bytes = vectis_default_size(effective.max_bytes, server_max_body);
+    effective.memory_buffer_limit_bytes =
+        vectis_default_size(effective.memory_buffer_limit_bytes, effective.max_bytes);
+    effective.idle_timeout_ms =
+        vectis_default_long(effective.idle_timeout_ms, server_body_idle_timeout);
+    effective.min_rate_bytes_per_sec =
+        vectis_default_size(effective.min_rate_bytes_per_sec,
+                            VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_BYTES_PER_SEC);
+    effective.min_rate_grace_ms =
+        vectis_default_long(effective.min_rate_grace_ms,
+                            VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_GRACE_MS);
+  }
+  return effective;
+}
+
 void vectis_route_config_init(vectis_route_config *config) {
   if (config == NULL) {
     return;
@@ -1733,6 +1843,8 @@ static vectis_status vectis_validate_methods(vectis_http_method method,
 static vectis_status vectis_validate_body_policy(const vectis_body_policy *policy,
                                                  const vectis_server_config *server,
                                                  vectis_error *error) {
+  vectis_body_policy effective;
+
   if (policy == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "body policy is required");
     return VECTIS_ERR_INVALID;
@@ -1746,14 +1858,11 @@ static vectis_status vectis_validate_body_policy(const vectis_body_policy *polic
     vectis_set_error(error, VECTIS_ERR_INVALID, "body policy mode is invalid");
     return VECTIS_ERR_INVALID;
   }
-  if (policy->max_bytes == 0u) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "body policy max_bytes must be greater than zero");
-    return VECTIS_ERR_INVALID;
-  }
-  if (policy->idle_timeout_ms <= 0L) {
+  effective = vectis_effective_body_policy(policy, server);
+  if (policy->idle_timeout_ms < 0L) {
     vectis_set_error(error,
                      VECTIS_ERR_INVALID,
-                     "body policy idle_timeout_ms must be greater than zero");
+                     "body policy idle_timeout_ms must be non-negative");
     return VECTIS_ERR_INVALID;
   }
   if (policy->min_rate_grace_ms < 0L) {
@@ -1762,27 +1871,22 @@ static vectis_status vectis_validate_body_policy(const vectis_body_policy *polic
                      "body policy min_rate_grace_ms must be non-negative");
     return VECTIS_ERR_INVALID;
   }
-  if (policy->mode != VECTIS_BODY_STREAMING_UPLOAD) {
-    if (policy->memory_buffer_limit_bytes == 0u) {
-      vectis_set_error(error,
-                       VECTIS_ERR_INVALID,
-                       "buffered body policy memory_buffer_limit_bytes must be greater than zero");
-      return VECTIS_ERR_INVALID;
-    }
-    if (policy->memory_buffer_limit_bytes > policy->max_bytes) {
+  if (effective.mode != VECTIS_BODY_STREAMING_UPLOAD) {
+    if (effective.memory_buffer_limit_bytes > effective.max_bytes) {
       vectis_set_error(error,
                        VECTIS_ERR_INVALID,
                        "buffered body policy memory_buffer_limit_bytes must not exceed max_bytes");
       return VECTIS_ERR_INVALID;
     }
-  } else if (policy->disk_spool_disabled && policy->memory_buffer_limit_bytes < policy->max_bytes) {
+  } else if (effective.disk_spool_disabled &&
+             effective.memory_buffer_limit_bytes < effective.max_bytes) {
     vectis_set_error(error,
                      VECTIS_ERR_INVALID,
                      "streaming upload body policy cannot disable spooling unless fully buffered");
     return VECTIS_ERR_INVALID;
   }
   if (server != NULL && server->max_request_body_bytes > 0u &&
-      policy->max_bytes > server->max_request_body_bytes) {
+      effective.max_bytes > server->max_request_body_bytes) {
     vectis_set_error(error,
                      VECTIS_ERR_INVALID,
                      "body policy max_bytes exceeds server max_request_body_bytes");
@@ -2092,42 +2196,35 @@ static vectis_status vectis_validate_route(const vectis_route_config *route,
 
 static vectis_status vectis_validate_server_config(const vectis_server_config *config,
                                                    vectis_error *error) {
+  vectis_server_config effective;
+
   if (config == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "server config is required");
     return VECTIS_ERR_INVALID;
   }
-  if (config->max_connections == 0u) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "server max_connections must be greater than zero");
-    return VECTIS_ERR_INVALID;
-  }
-  if (config->max_request_header_bytes < 1024u) {
+  effective = vectis_effective_server_config(config);
+  if (effective.max_request_header_bytes < 1024u) {
     vectis_set_error(error,
                      VECTIS_ERR_INVALID,
                      "server max_request_header_bytes must be at least 1024");
     return VECTIS_ERR_INVALID;
   }
-  if (config->max_request_body_bytes == 0u) {
+  if (config->request_header_timeout_ms < 0L) {
     vectis_set_error(error,
                      VECTIS_ERR_INVALID,
-                     "server max_request_body_bytes must be greater than zero");
+                     "server request_header_timeout_ms must be non-negative");
     return VECTIS_ERR_INVALID;
   }
-  if (config->request_header_timeout_ms <= 0L) {
+  if (config->request_body_idle_timeout_ms < 0L) {
     vectis_set_error(error,
                      VECTIS_ERR_INVALID,
-                     "server request_header_timeout_ms must be greater than zero");
+                     "server request_body_idle_timeout_ms must be non-negative");
     return VECTIS_ERR_INVALID;
   }
-  if (config->request_body_idle_timeout_ms <= 0L) {
+  if (config->response_write_idle_timeout_ms < 0L) {
     vectis_set_error(error,
                      VECTIS_ERR_INVALID,
-                     "server request_body_idle_timeout_ms must be greater than zero");
-    return VECTIS_ERR_INVALID;
-  }
-  if (config->response_write_idle_timeout_ms <= 0L) {
-    vectis_set_error(error,
-                     VECTIS_ERR_INVALID,
-                     "server response_write_idle_timeout_ms must be greater than zero");
+                     "server response_write_idle_timeout_ms must be non-negative");
     return VECTIS_ERR_INVALID;
   }
   if (config->request_body_min_rate_grace_ms < 0L) {
@@ -2136,21 +2233,15 @@ static vectis_status vectis_validate_server_config(const vectis_server_config *c
                      "server request_body_min_rate_grace_ms must be non-negative");
     return VECTIS_ERR_INVALID;
   }
-  if (config->idle_timeout_ms <= 0L) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "server idle_timeout_ms must be greater than zero");
+  if (config->idle_timeout_ms < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "server idle_timeout_ms must be non-negative");
     return VECTIS_ERR_INVALID;
   }
   if (!config->keepalive_disabled) {
-    if (config->keepalive_timeout_ms <= 0L) {
+    if (config->keepalive_timeout_ms < 0L) {
       vectis_set_error(error,
                        VECTIS_ERR_INVALID,
-                       "server keepalive_timeout_ms must be greater than zero when keepalive is enabled");
-      return VECTIS_ERR_INVALID;
-    }
-    if (config->keepalive_max_requests == 0u) {
-      vectis_set_error(error,
-                       VECTIS_ERR_INVALID,
-                       "server keepalive_max_requests must be greater than zero when keepalive is enabled");
+                       "server keepalive_timeout_ms must be non-negative when keepalive is enabled");
       return VECTIS_ERR_INVALID;
     }
   }
@@ -2337,6 +2428,7 @@ static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
 vectis_app *vectis_app_new(const vectis_app_config *config, vectis_error *error) {
   vectis_app_config defaults;
   const vectis_app_config *effective;
+  vectis_server_config effective_server;
   vectis_app *app;
   vectis_app_impl *impl;
   vectis_status status;
@@ -2344,8 +2436,13 @@ vectis_app *vectis_app_new(const vectis_app_config *config, vectis_error *error)
   vectis_error_clear(error);
   vectis_app_config_init(&defaults);
   effective = config != NULL ? config : &defaults;
+  effective_server = vectis_effective_server_config(&effective->server);
   status = vectis_validate_server_config(&effective->server, error);
   if (status != VECTIS_OK) {
+    return NULL;
+  }
+  if (effective->lockd.timeout_ms < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lockd timeout_ms must be non-negative");
     return NULL;
   }
 
@@ -2398,11 +2495,11 @@ vectis_app *vectis_app_new(const vectis_app_config *config, vectis_error *error)
   impl->default_namespace = vectis_strdup(effective->lockd.default_namespace);
   impl->lockd_logger = effective->lockd.logger;
   impl->lockd_logger_disabled = effective->lockd.logger_disabled;
-  impl->timeout_ms = effective->lockd.timeout_ms;
-  impl->port = effective->tls.port;
+  impl->timeout_ms = vectis_default_long(effective->lockd.timeout_ms, 30000L);
+  impl->port = vectis_default_ushort(effective->tls.port, 8443u);
   impl->tls_mode = effective->tls.mode;
   impl->require_client_certificate = effective->tls.require_client_certificate;
-  impl->server = effective->server;
+  impl->server = effective_server;
 
   status = vectis_copy_source_bytes(&effective->tls.cert_key_bundle,
                                     effective->tls.cert_key_bundle_pem,
@@ -2702,6 +2799,7 @@ static vectis_status vectis_app_register_route_owned_userdata(vectis_app *app,
   size_t i;
   size_t next_capacity;
   vectis_status status;
+  vectis_body_policy effective_body;
 
   if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
@@ -2718,6 +2816,7 @@ static vectis_status vectis_app_register_route_owned_userdata(vectis_app *app,
   if (status != VECTIS_OK) {
     return status;
   }
+  effective_body = vectis_effective_body_policy(&route->body, &impl->server);
   (void)pthread_mutex_lock(&impl->mutex);
   for (i = 0u; i < impl->route_count; ++i) {
     if (vectis_route_conflicts(&impl->routes[i], route)) {
@@ -2746,7 +2845,7 @@ static vectis_status vectis_app_register_route_owned_userdata(vectis_app *app,
   impl->routes[impl->route_count].methods = vectis_normalize_methods(route->method, route->methods);
   impl->routes[impl->route_count].path_kind = route->path_kind;
   impl->routes[impl->route_count].path = vectis_strdup(route->path);
-  impl->routes[impl->route_count].body = route->body;
+  impl->routes[impl->route_count].body = effective_body;
   impl->routes[impl->route_count].handler = route->handler;
   impl->routes[impl->route_count].userdata = route->userdata;
   impl->routes[impl->route_count].owns_userdata = owns_userdata;
@@ -5173,10 +5272,6 @@ void vectis_dsv_config_init(vectis_dsv_config *config) {
   config->delimiter = ',';
   config->quote = '"';
   config->escape = '"';
-  config->has_header = 1;
-  config->strict_row_width = 1;
-  config->trim_cr = 1;
-  config->allow_indented_comments = 1;
   config->max_field_bytes = 1048576u;
 }
 
@@ -5199,7 +5294,7 @@ vectis_dsv_config vectis_dsv_csv_rows(void) {
   vectis_dsv_config config;
 
   config = vectis_dsv_csv();
-  config.has_header = 0;
+  config.header_disabled = 1;
   return config;
 }
 
@@ -5207,7 +5302,7 @@ vectis_dsv_config vectis_dsv_tsv_rows(void) {
   vectis_dsv_config config;
 
   config = vectis_dsv_tsv();
-  config.has_header = 0;
+  config.header_disabled = 1;
   return config;
 }
 
@@ -5423,7 +5518,7 @@ static vectis_status vectis_dsv_read_record(vectis_dsv_parser *parser,
     }
     if (c == '\r' || c == '\n') {
       if (c == '\r') {
-        parser->skip_next_lf = parser->config.trim_cr;
+        parser->skip_next_lf = !parser->config.trim_cr_disabled;
       }
       if (vectis_dsv_push_current_field(parser, error) != VECTIS_OK) {
         return error != NULL ? error->code : VECTIS_ERR_NOMEM;
@@ -5461,7 +5556,7 @@ static int vectis_dsv_record_is_comment(const vectis_dsv_parser *parser) {
   if (value == NULL) {
     return 0;
   }
-  if (parser->config.allow_indented_comments) {
+  if (!parser->config.indented_comments_disabled) {
     while (*value == ' ' || *value == '\t') {
       value++;
     }
@@ -5594,6 +5689,9 @@ static vectis_status vectis_dsv_effective_config(const vectis_dsv_config *config
   }
   if (out->escape == 0) {
     out->escape = out->quote;
+  }
+  if (out->max_field_bytes == 0u) {
+    out->max_field_bytes = defaults.max_field_bytes;
   }
   return VECTIS_OK;
 }
@@ -5920,7 +6018,7 @@ vectis_status vectis_dsv_parse_lonejson(struct lc_source *source,
     vectis_string_builder_cleanup(&parser.field);
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
-  if (effective.has_header) {
+  if (!effective.header_disabled) {
     status = vectis_dsv_read_data_record(&parser, &has_record, error);
     if (status != VECTIS_OK) {
       vectis_dsv_fields_cleanup(&parser.fields);
@@ -5989,7 +6087,7 @@ vectis_status vectis_dsv_parse_lonejson(struct lc_source *source,
     if (!has_record) {
       break;
     }
-    if (effective.strict_row_width && parser.fields.count != column_count) {
+    if (!effective.strict_row_width_disabled && parser.fields.count != column_count) {
       vectis_set_error(error, VECTIS_ERR_INVALID, "DSV row width does not match columns");
       status = VECTIS_ERR_INVALID;
       break;
@@ -6094,7 +6192,7 @@ static vectis_status vectis_dsv_to_json_array_impl(struct lc_source *source,
   columns = effective.columns;
   header_columns = NULL;
   column_count = effective.column_count;
-  if (effective.has_header) {
+  if (!effective.header_disabled) {
     status = vectis_dsv_read_data_record(&parser, &has_record, error);
     if (status != VECTIS_OK) {
       goto cleanup;
@@ -6140,7 +6238,7 @@ static vectis_status vectis_dsv_to_json_array_impl(struct lc_source *source,
     if (status != VECTIS_OK || !has_record) {
       break;
     }
-    if (effective.strict_row_width && parser.fields.count != column_count) {
+    if (!effective.strict_row_width_disabled && parser.fields.count != column_count) {
       vectis_set_error(error, VECTIS_ERR_INVALID, "DSV row width does not match columns");
       status = VECTIS_ERR_INVALID;
       break;
@@ -6571,7 +6669,7 @@ static vectis_status vectis_dsv_to_json_array_spill_impl(struct lc_source *sourc
   header_columns = NULL;
   column_count = effective.column_count;
   status = VECTIS_OK;
-  if (effective.has_header) {
+  if (!effective.header_disabled) {
     status = vectis_dsv_read_data_record(&parser, &has_record, error);
     if (status != VECTIS_OK) {
       goto cleanup;
@@ -6617,7 +6715,7 @@ static vectis_status vectis_dsv_to_json_array_spill_impl(struct lc_source *sourc
     if (status != VECTIS_OK || !has_record) {
       break;
     }
-    if (effective.strict_row_width && parser.fields.count != column_count) {
+    if (!effective.strict_row_width_disabled && parser.fields.count != column_count) {
       vectis_set_error(error, VECTIS_ERR_INVALID, "DSV row width does not match columns");
       status = VECTIS_ERR_INVALID;
       break;
@@ -6905,7 +7003,7 @@ static int vectis_dsv_needs_quote(const char *value,
       strncmp(value, config->comment_prefix, strlen(config->comment_prefix)) == 0) {
     return 1;
   }
-  if (first_field && config->allow_indented_comments &&
+  if (first_field && !config->indented_comments_disabled &&
       config->comment_prefix != NULL &&
       config->comment_prefix[0] != '\0') {
     i = 0u;
@@ -7063,7 +7161,7 @@ vectis_status vectis_dsv_write_lonejson_rows(struct lc_sink *sink,
     return status;
   }
   delimiter = (char)effective.delimiter;
-  if (effective.has_header) {
+  if (!effective.header_disabled) {
     for (column_index = 0u; column_index < column_count; ++column_index) {
       if (column_index > 0u &&
           vectis_dsv_sink_write(sink, &delimiter, 1u, error) != VECTIS_OK) {
@@ -7444,7 +7542,6 @@ void vectis_xml_config_init(vectis_xml_config *config) {
   config->text_key = "text";
   config->attribute_prefix = "";
   config->trim_text = 0;
-  config->skip_unknown = 1;
   config->max_depth = 64u;
   config->max_text_bytes = 67108864u;
 }
@@ -7484,6 +7581,9 @@ static vectis_status vectis_xml_effective_config(const vectis_xml_config *config
   *out = config != NULL ? *config : defaults;
   if (out->max_depth == 0u) {
     out->max_depth = defaults.max_depth;
+  }
+  if (out->max_text_bytes == 0u) {
+    out->max_text_bytes = defaults.max_text_bytes;
   }
   if (out->text_key == NULL) {
     out->text_key = defaults.text_key;
@@ -7970,7 +8070,7 @@ static vectis_status vectis_xml_stream_text_field(vectis_xml_field_state *states
   }
   field = vectis_xml_find_field(map, config->text_key);
   if (field == NULL) {
-    if (config->skip_unknown) {
+    if (!config->skip_unknown_disabled) {
       return VECTIS_OK;
     }
     vectis_set_errorf(error, VECTIS_ERR_INVALID, "unknown XML text field '%s'", config->text_key);
@@ -8045,7 +8145,7 @@ static vectis_status vectis_xml_stream_object(xmlTextReaderPtr reader,
           status = error->code;
           goto cleanup;
         }
-        if (config->skip_unknown) {
+        if (!config->skip_unknown_disabled) {
           continue;
         }
         vectis_set_errorf(error, VECTIS_ERR_INVALID, "unknown XML attribute '%s'", name);
@@ -8089,7 +8189,7 @@ static vectis_status vectis_xml_stream_object(xmlTextReaderPtr reader,
         name = vectis_xml_reader_local_name(reader);
         field = vectis_xml_find_field(map, name);
         if (field == NULL) {
-          if (!config->skip_unknown) {
+          if (config->skip_unknown_disabled) {
             vectis_set_errorf(error, VECTIS_ERR_INVALID, "unknown XML element '%s'", name);
             status = VECTIS_ERR_INVALID;
             goto cleanup;
@@ -10235,11 +10335,29 @@ void vectis_http_client_config_init(vectis_http_client_config *config) {
   config->retry_conditions = VECTIS_HTTP_RETRY_DEFAULT;
 }
 
+static vectis_http_client_config vectis_effective_http_client_config(
+    const vectis_http_client_config *config) {
+  vectis_http_client_config effective;
+
+  vectis_http_client_config_init(&effective);
+  if (config == NULL) {
+    return effective;
+  }
+  effective = *config;
+  effective.timeout_ms = vectis_default_long(config->timeout_ms, 30000L);
+  effective.connect_timeout_ms = vectis_default_long(config->connect_timeout_ms, 10000L);
+  effective.retry_max_attempts = vectis_default_unsigned(config->retry_max_attempts, 1u);
+  effective.retry_initial_delay_ms = vectis_default_long(config->retry_initial_delay_ms, 250L);
+  effective.retry_max_delay_ms = vectis_default_long(config->retry_max_delay_ms, 2000L);
+  return effective;
+}
+
 vectis_status vectis_http_client_new(const vectis_http_client_config *config,
                                      vectis_http_client **out,
                                      vectis_error *error) {
   vectis_http_client_config defaults;
   const vectis_http_client_config *effective;
+  vectis_http_client_config normalized;
   vectis_http_client *client;
 
   if (out == NULL) {
@@ -10249,6 +10367,7 @@ vectis_status vectis_http_client_new(const vectis_http_client_config *config,
   *out = NULL;
   vectis_http_client_config_init(&defaults);
   effective = config != NULL ? config : &defaults;
+  normalized = vectis_effective_http_client_config(effective);
   if (effective->timeout_ms < 0L ||
       effective->connect_timeout_ms < 0L ||
       effective->low_speed_limit_bytes_per_sec < 0L ||
@@ -10276,7 +10395,7 @@ vectis_status vectis_http_client_new(const vectis_http_client_config *config,
   client->put_json = vectis_http_client_put_json;
   client->patch_json = vectis_http_client_patch_json;
   client->close = vectis_http_client_destroy;
-  client->config = *effective;
+  client->config = normalized;
   vectis_error_clear(error);
   *out = client;
   return VECTIS_OK;
@@ -11438,6 +11557,9 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
                                   const vectis_http_request *request,
                                   vectis_http_response *response,
                                   vectis_error *error) {
+  vectis_http_client_config defaults;
+  vectis_http_client_config effective_client;
+  const vectis_http_client_config *client_config;
   vectis_error attempt_error;
   vectis_status status;
   unsigned max_attempts;
@@ -11446,19 +11568,26 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
   long max_delay_ms;
   vectis_http_retry_conditions retry_conditions;
 
+  vectis_http_client_config_init(&defaults);
+  client_config = client != NULL ? client : &defaults;
   if (request != NULL &&
       (request->retry_initial_delay_ms < 0L || request->retry_max_delay_ms < 0L)) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP request retry delays must be non-negative");
     return VECTIS_ERR_INVALID;
   }
-  if (client != NULL &&
-      (client->retry_initial_delay_ms < 0L || client->retry_max_delay_ms < 0L)) {
+  if (client_config->timeout_ms < 0L ||
+      client_config->connect_timeout_ms < 0L ||
+      client_config->low_speed_limit_bytes_per_sec < 0L ||
+      client_config->low_speed_time_seconds < 0L ||
+      client_config->retry_initial_delay_ms < 0L ||
+      client_config->retry_max_delay_ms < 0L) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP client retry delays must be non-negative");
     return VECTIS_ERR_INVALID;
   }
+  effective_client = vectis_effective_http_client_config(client_config);
 
-  max_attempts = vectis_http_effective_retry_attempts(client, request);
-  retry_conditions = vectis_http_effective_retry_conditions(client, request);
+  max_attempts = vectis_http_effective_retry_attempts(&effective_client, request);
+  retry_conditions = vectis_http_effective_retry_conditions(&effective_client, request);
   if (retry_conditions == VECTIS_HTTP_RETRY_NONE) {
     max_attempts = 1u;
   }
@@ -11469,15 +11598,15 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
     return VECTIS_ERR_INVALID;
   }
 
-  delay_ms = vectis_http_effective_retry_initial_delay(client, request);
-  max_delay_ms = vectis_http_effective_retry_max_delay(client, request);
+  delay_ms = vectis_http_effective_retry_initial_delay(&effective_client, request);
+  max_delay_ms = vectis_http_effective_retry_max_delay(&effective_client, request);
   if (max_delay_ms > 0L && delay_ms > max_delay_ms) {
     delay_ms = max_delay_ms;
   }
 
   vectis_error_clear(&attempt_error);
   for (attempt = 1u; attempt <= max_attempts; ++attempt) {
-    status = vectis_http_execute_once(client, request, response, &attempt_error);
+    status = vectis_http_execute_once(&effective_client, request, response, &attempt_error);
     if (status == VECTIS_OK) {
       if (attempt >= max_attempts ||
           !vectis_http_status_retryable(response->status_code, retry_conditions)) {
@@ -11729,6 +11858,17 @@ void vectis_sftp_config_init(vectis_sftp_config *config) {
   config->timeout_ms = 30000L;
 }
 
+static vectis_sftp_config vectis_effective_sftp_config(const vectis_sftp_config *config) {
+  vectis_sftp_config effective;
+
+  vectis_sftp_config_init(&effective);
+  if (config != NULL) {
+    effective = *config;
+    effective.timeout_ms = vectis_default_long(config->timeout_ms, 30000L);
+  }
+  return effective;
+}
+
 static vectis_status vectis_sftp_handle_upload_file(vectis_sftp *self,
                                                     const char *local_path,
                                                     const char *remote_path,
@@ -11756,6 +11896,7 @@ vectis_status vectis_sftp_new(const vectis_sftp_config *config,
                               vectis_error *error) {
   vectis_sftp_config defaults;
   const vectis_sftp_config *effective;
+  vectis_sftp_config normalized;
   vectis_sftp *sftp;
 
   if (out == NULL) {
@@ -11765,8 +11906,13 @@ vectis_status vectis_sftp_new(const vectis_sftp_config *config,
   *out = NULL;
   vectis_sftp_config_init(&defaults);
   effective = config != NULL ? config : &defaults;
+  normalized = vectis_effective_sftp_config(effective);
   if (effective->url == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP config with url is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (effective->timeout_ms < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP timeout_ms must be non-negative");
     return VECTIS_ERR_INVALID;
   }
   sftp = (vectis_sftp *)calloc(1u, sizeof(*sftp));
@@ -11777,7 +11923,7 @@ vectis_status vectis_sftp_new(const vectis_sftp_config *config,
   sftp->upload_file = vectis_sftp_handle_upload_file;
   sftp->download_file = vectis_sftp_handle_download_file;
   sftp->close = vectis_sftp_close;
-  sftp->config = *effective;
+  sftp->config = normalized;
   *out = sftp;
   vectis_error_clear(error);
   return VECTIS_OK;
@@ -11821,15 +11967,21 @@ vectis_status vectis_sftp_upload_file(const vectis_sftp_config *config,
   long file_size;
   char *url;
   char curl_error[CURL_ERROR_SIZE];
+  vectis_sftp_config effective;
 
   if (config == NULL || config->url == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP config with url is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->timeout_ms < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP timeout_ms must be non-negative");
     return VECTIS_ERR_INVALID;
   }
   if (local_path == NULL || remote_path == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP upload requires local_path and remote_path");
     return VECTIS_ERR_INVALID;
   }
+  effective = vectis_effective_sftp_config(config);
   memset(curl_error, 0, sizeof(curl_error));
   file = fopen(local_path, "rb");
   if (file == NULL) {
@@ -11855,8 +12007,8 @@ vectis_status vectis_sftp_upload_file(const vectis_sftp_config *config,
   }
   (void)curl_easy_setopt(curl, CURLOPT_URL, url);
   (void)curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error);
-  if (config->timeout_ms > 0L) {
-    (void)curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, config->timeout_ms);
+  if (effective.timeout_ms > 0L) {
+    (void)curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, effective.timeout_ms);
   }
   (void)curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
   (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION, vectis_curl_read_file);
@@ -11888,15 +12040,21 @@ vectis_status vectis_sftp_download_file(const vectis_sftp_config *config,
   FILE *file;
   char *url;
   char curl_error[CURL_ERROR_SIZE];
+  vectis_sftp_config effective;
 
   if (config == NULL || config->url == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP config with url is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->timeout_ms < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP timeout_ms must be non-negative");
     return VECTIS_ERR_INVALID;
   }
   if (remote_path == NULL || local_path == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "SFTP download requires remote_path and local_path");
     return VECTIS_ERR_INVALID;
   }
+  effective = vectis_effective_sftp_config(config);
   memset(curl_error, 0, sizeof(curl_error));
   url = vectis_join_url(config->url, remote_path, error);
   if (url == NULL) {
@@ -11918,8 +12076,8 @@ vectis_status vectis_sftp_download_file(const vectis_sftp_config *config,
   }
   (void)curl_easy_setopt(curl, CURLOPT_URL, url);
   (void)curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error);
-  if (config->timeout_ms > 0L) {
-    (void)curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, config->timeout_ms);
+  if (effective.timeout_ms > 0L) {
+    (void)curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, effective.timeout_ms);
   }
   (void)curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, vectis_curl_write_file);
   (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, file);
@@ -11949,6 +12107,18 @@ void vectis_ssh_config_init(vectis_ssh_config *config) {
   memset(config, 0, sizeof(*config));
   config->port = 22u;
   config->timeout_ms = 30000L;
+}
+
+static vectis_ssh_config vectis_effective_ssh_config(const vectis_ssh_config *config) {
+  vectis_ssh_config effective;
+
+  vectis_ssh_config_init(&effective);
+  if (config != NULL) {
+    effective = *config;
+    effective.port = vectis_default_ushort(config->port, 22u);
+    effective.timeout_ms = vectis_default_long(config->timeout_ms, 30000L);
+  }
+  return effective;
 }
 
 static vectis_status vectis_ssh_handle_exec(vectis_ssh *self,
@@ -11989,6 +12159,7 @@ vectis_status vectis_ssh_new(const vectis_ssh_config *config,
                              vectis_error *error) {
   vectis_ssh_config defaults;
   const vectis_ssh_config *effective;
+  vectis_ssh_config normalized;
   vectis_ssh *ssh;
 
   if (out == NULL) {
@@ -11998,8 +12169,13 @@ vectis_status vectis_ssh_new(const vectis_ssh_config *config,
   *out = NULL;
   vectis_ssh_config_init(&defaults);
   effective = config != NULL ? config : &defaults;
+  normalized = vectis_effective_ssh_config(effective);
   if (effective->host == NULL || effective->username == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "SSH config requires host and username");
+    return VECTIS_ERR_INVALID;
+  }
+  if (effective->timeout_ms < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH timeout_ms must be non-negative");
     return VECTIS_ERR_INVALID;
   }
   ssh = (vectis_ssh *)calloc(1u, sizeof(*ssh));
@@ -12011,7 +12187,7 @@ vectis_status vectis_ssh_new(const vectis_ssh_config *config,
   ssh->sftp_upload_file = vectis_ssh_handle_sftp_upload_file;
   ssh->sftp_download_file = vectis_ssh_handle_sftp_download_file;
   ssh->close = vectis_ssh_close;
-  ssh->config = *effective;
+  ssh->config = normalized;
   *out = ssh;
   vectis_error_clear(error);
   return VECTIS_OK;
@@ -12289,6 +12465,7 @@ vectis_status vectis_ssh_exec(const vectis_ssh_config *config,
                               const char *command,
                               vectis_ssh_exec_result *result,
                               vectis_error *error) {
+  vectis_ssh_config effective;
   LIBSSH2_SESSION *session;
   LIBSSH2_CHANNEL *channel;
   int fd;
@@ -12297,6 +12474,10 @@ vectis_status vectis_ssh_exec(const vectis_ssh_config *config,
 
   if (config == NULL || config->host == NULL || config->username == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "SSH config requires host and username");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->timeout_ms < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH timeout_ms must be non-negative");
     return VECTIS_ERR_INVALID;
   }
   if (command == NULL || command[0] == '\0') {
@@ -12311,6 +12492,8 @@ vectis_status vectis_ssh_exec(const vectis_ssh_config *config,
   fd = -1;
   session = NULL;
   channel = NULL;
+  effective = vectis_effective_ssh_config(config);
+  config = &effective;
 
   status = vectis_ssh_connect_socket(config, &fd, error);
   if (status != VECTIS_OK) {
@@ -12401,6 +12584,7 @@ vectis_status vectis_ssh_sftp_upload_file(const vectis_ssh_config *config,
                                           const char *local_path,
                                           const char *remote_path,
                                           vectis_error *error) {
+  vectis_ssh_config effective;
   int fd;
   int rc;
   FILE *local;
@@ -12418,10 +12602,16 @@ vectis_status vectis_ssh_sftp_upload_file(const vectis_ssh_config *config,
     vectis_set_error(error, VECTIS_ERR_INVALID, "SSH config requires host and username");
     return VECTIS_ERR_INVALID;
   }
+  if (config->timeout_ms < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH timeout_ms must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
   if (local_path == NULL || remote_path == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "SSH SFTP upload requires local_path and remote_path");
     return VECTIS_ERR_INVALID;
   }
+  effective = vectis_effective_ssh_config(config);
+  config = &effective;
   fd = -1;
   session = NULL;
   sftp = NULL;
@@ -12549,6 +12739,7 @@ vectis_status vectis_ssh_sftp_download_file(const vectis_ssh_config *config,
                                             const char *remote_path,
                                             const char *local_path,
                                             vectis_error *error) {
+  vectis_ssh_config effective;
   int fd;
   int rc;
   FILE *local;
@@ -12563,10 +12754,16 @@ vectis_status vectis_ssh_sftp_download_file(const vectis_ssh_config *config,
     vectis_set_error(error, VECTIS_ERR_INVALID, "SSH config requires host and username");
     return VECTIS_ERR_INVALID;
   }
+  if (config->timeout_ms < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH timeout_ms must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
   if (remote_path == NULL || local_path == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "SSH SFTP download requires remote_path and local_path");
     return VECTIS_ERR_INVALID;
   }
+  effective = vectis_effective_ssh_config(config);
+  config = &effective;
   fd = -1;
   session = NULL;
   sftp = NULL;
@@ -12689,6 +12886,17 @@ void vectis_mqtt_config_init(vectis_mqtt_config *config) {
   config->timeout_ms = 30000L;
 }
 
+static vectis_mqtt_config vectis_effective_mqtt_config(const vectis_mqtt_config *config) {
+  vectis_mqtt_config effective;
+
+  vectis_mqtt_config_init(&effective);
+  if (config != NULL) {
+    effective = *config;
+    effective.timeout_ms = vectis_default_long(config->timeout_ms, 30000L);
+  }
+  return effective;
+}
+
 static vectis_status vectis_mqtt_handle_publish(vectis_mqtt *self,
                                                 const char *topic,
                                                 const void *payload,
@@ -12719,6 +12927,7 @@ vectis_status vectis_mqtt_new(const vectis_mqtt_config *config,
                               vectis_error *error) {
   vectis_mqtt_config defaults;
   const vectis_mqtt_config *effective;
+  vectis_mqtt_config normalized;
   vectis_mqtt *mqtt;
 
   if (out == NULL) {
@@ -12728,8 +12937,13 @@ vectis_status vectis_mqtt_new(const vectis_mqtt_config *config,
   *out = NULL;
   vectis_mqtt_config_init(&defaults);
   effective = config != NULL ? config : &defaults;
+  normalized = vectis_effective_mqtt_config(effective);
   if (effective->broker_url == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "MQTT config with broker_url is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (effective->timeout_ms < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "MQTT timeout_ms must be non-negative");
     return VECTIS_ERR_INVALID;
   }
   mqtt = (vectis_mqtt *)calloc(1u, sizeof(*mqtt));
@@ -12740,7 +12954,7 @@ vectis_status vectis_mqtt_new(const vectis_mqtt_config *config,
   mqtt->publish = vectis_mqtt_handle_publish;
   mqtt->publish_json = vectis_mqtt_handle_publish_json;
   mqtt->close = vectis_mqtt_close;
-  mqtt->config = *effective;
+  mqtt->config = normalized;
   *out = mqtt;
   vectis_error_clear(error);
   return VECTIS_OK;
@@ -12760,10 +12974,15 @@ vectis_status vectis_mqtt_publish(const vectis_mqtt_config *config,
   CURLcode curl_code;
   char *url;
   char curl_error[CURL_ERROR_SIZE];
+  vectis_mqtt_config effective;
 
   (void)content_type;
   if (config == NULL || config->broker_url == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "MQTT config with broker_url is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->timeout_ms < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "MQTT timeout_ms must be non-negative");
     return VECTIS_ERR_INVALID;
   }
   if (topic == NULL || topic[0] == '\0') {
@@ -12774,8 +12993,9 @@ vectis_status vectis_mqtt_publish(const vectis_mqtt_config *config,
     vectis_set_error(error, VECTIS_ERR_INVALID, "MQTT payload is invalid");
     return VECTIS_ERR_INVALID;
   }
+  effective = vectis_effective_mqtt_config(config);
   memset(curl_error, 0, sizeof(curl_error));
-  url = vectis_join_url(config->broker_url, topic, error);
+  url = vectis_join_url(effective.broker_url, topic, error);
   if (url == NULL) {
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
@@ -12788,22 +13008,22 @@ vectis_status vectis_mqtt_publish(const vectis_mqtt_config *config,
   }
   (void)curl_easy_setopt(curl, CURLOPT_URL, url);
   (void)curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error);
-  if (config->timeout_ms > 0L) {
-    (void)curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, config->timeout_ms);
+  if (effective.timeout_ms > 0L) {
+    (void)curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, effective.timeout_ms);
   }
-  if (config->username != NULL) {
-    (void)curl_easy_setopt(curl, CURLOPT_USERNAME, config->username);
+  if (effective.username != NULL) {
+    (void)curl_easy_setopt(curl, CURLOPT_USERNAME, effective.username);
   }
-  if (config->password != NULL) {
-    (void)curl_easy_setopt(curl, CURLOPT_PASSWORD, config->password);
+  if (effective.password != NULL) {
+    (void)curl_easy_setopt(curl, CURLOPT_PASSWORD, effective.password);
   }
   if (vectis_curl_set_common_tls(curl,
-                                 &config->client_bundle,
-                                 config->client_bundle_path,
-                                 config->client_bundle_pem,
-                                 config->client_bundle_pem_size,
-                                 &config->ca_bundle,
-                                 config->ca_bundle_path,
+                                 &effective.client_bundle,
+                                 effective.client_bundle_path,
+                                 effective.client_bundle_pem,
+                                 effective.client_bundle_pem_size,
+                                 &effective.ca_bundle,
+                                 effective.ca_bundle_path,
                                  error) != VECTIS_OK) {
     curl_easy_cleanup(curl);
     free(url);
@@ -13598,6 +13818,7 @@ vectis_status vectis_cert_generate_private_key(const vectis_private_key_config *
                                                vectis_error *error) {
   EVP_PKEY *key;
   vectis_status status;
+  unsigned key_bits;
 
   if (config == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "private key config is required");
@@ -13607,12 +13828,13 @@ vectis_status vectis_cert_generate_private_key(const vectis_private_key_config *
     vectis_set_error(error, VECTIS_ERR_INVALID, "private key output_key_path is required");
     return VECTIS_ERR_INVALID;
   }
-  if (config->key_bits < 1024u) {
+  key_bits = vectis_default_unsigned(config->key_bits, 4096u);
+  if (key_bits < 1024u) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "private key key_bits must be at least 1024");
     return VECTIS_ERR_INVALID;
   }
 
-  key = vectis_cert_generate_rsa_key(config->key_bits, error);
+  key = vectis_cert_generate_rsa_key(key_bits, error);
   if (key == NULL) {
     if (error != NULL && error->source == VECTIS_ERROR_SOURCE_VECTIS) {
       error->source = VECTIS_ERROR_SOURCE_OPENSSL;
@@ -13758,6 +13980,8 @@ vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *confi
   X509 *cert;
   char *san;
   vectis_status status;
+  unsigned key_bits;
+  long valid_days;
 
   if (config == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "certificate bundle config is required");
@@ -13774,12 +13998,14 @@ vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *confi
                      "certificate output requires output_bundle_path or output_cert_path + output_key_path");
     return VECTIS_ERR_INVALID;
   }
-  if (config->key_bits < 1024u) {
+  key_bits = vectis_default_unsigned(config->key_bits, 4096u);
+  valid_days = vectis_default_long(config->valid_days, 397L);
+  if (key_bits < 1024u) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "certificate key_bits must be at least 1024");
     return VECTIS_ERR_INVALID;
   }
-  if (config->valid_days <= 0L) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "certificate valid_days must be greater than zero");
+  if (valid_days < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "certificate valid_days must be non-negative");
     return VECTIS_ERR_INVALID;
   }
 
@@ -13796,7 +14022,7 @@ vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *confi
   if (status != VECTIS_OK) {
     goto done;
   }
-  key = vectis_cert_generate_rsa_key(config->key_bits, error);
+  key = vectis_cert_generate_rsa_key(key_bits, error);
   if (key == NULL) {
     status = VECTIS_ERR_STATE;
     goto done;
@@ -13811,7 +14037,7 @@ vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *confi
   if (X509_set_version(cert, 2L) != 1 ||
       ASN1_INTEGER_set(X509_get_serialNumber(cert), (long)time(NULL)) != 1 ||
       X509_gmtime_adj(X509_get_notBefore(cert), 0L) == NULL ||
-      X509_gmtime_adj(X509_get_notAfter(cert), config->valid_days * 24L * 60L * 60L) == NULL ||
+      X509_gmtime_adj(X509_get_notAfter(cert), valid_days * 24L * 60L * 60L) == NULL ||
       X509_set_pubkey(cert, key) != 1) {
     status = VECTIS_ERR_STATE;
     vectis_set_error(error, VECTIS_ERR_STATE, "failed to initialize certificate");

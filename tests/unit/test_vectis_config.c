@@ -57,6 +57,29 @@ int main(void) {
   assert(strcmp(vectis_body_mode_string(VECTIS_BODY_STREAMING_UPLOAD), "streaming_upload") == 0);
 
   vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.port = 0u;
+  config.server.max_connections = 0u;
+  config.server.max_request_header_bytes = 0u;
+  config.server.max_request_body_bytes = 0u;
+  config.server.request_header_timeout_ms = 0L;
+  config.server.request_body_idle_timeout_ms = 0L;
+  config.server.response_write_idle_timeout_ms = 0L;
+  config.server.request_body_min_rate_bytes_per_sec = 0u;
+  config.server.request_body_min_rate_grace_ms = 0L;
+  config.server.idle_timeout_ms = 0L;
+  config.server.keepalive_timeout_ms = 0L;
+  config.server.keepalive_max_requests = 0u;
+  config.lockd.timeout_ms = 0L;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_POST, "/zero-default-body", sample_handler, NULL);
+  route.body = vectis_body_buffered_max(0u);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  app->close(app);
+
+  vectis_app_config_init(&config);
   config.lockd.endpoint_count = 1u;
   config.lockd.endpoints = NULL;
   app = vectis_app_new(&config, &error);

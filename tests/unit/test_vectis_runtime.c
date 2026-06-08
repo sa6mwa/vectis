@@ -358,6 +358,15 @@ static void assert_invalid_server_config(vectis_app_config *config,
   assert(strstr(error.message, expected_message) != NULL);
 }
 
+static void assert_valid_server_config(vectis_app_config *config) {
+  vectis_error error;
+  vectis_app *app;
+
+  app = vectis_app_new(config, &error);
+  assert(app != NULL);
+  app->close(app);
+}
+
 static void assert_server_config_validation(void) {
   vectis_app_config config;
   vectis_error error;
@@ -367,7 +376,17 @@ static void assert_server_config_validation(void) {
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
 
   config.server.max_connections = 0u;
-  assert_invalid_server_config(&config, "max_connections");
+  config.server.max_request_header_bytes = 0u;
+  config.server.max_request_body_bytes = 0u;
+  config.server.request_header_timeout_ms = 0L;
+  config.server.request_body_idle_timeout_ms = 0L;
+  config.server.response_write_idle_timeout_ms = 0L;
+  config.server.request_body_min_rate_bytes_per_sec = 0u;
+  config.server.request_body_min_rate_grace_ms = 0L;
+  config.server.idle_timeout_ms = 0L;
+  config.server.keepalive_timeout_ms = 0L;
+  config.server.keepalive_max_requests = 0u;
+  assert_valid_server_config(&config);
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
@@ -376,22 +395,17 @@ static void assert_server_config_validation(void) {
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
-  config.server.max_request_body_bytes = 0u;
-  assert_invalid_server_config(&config, "max_request_body_bytes");
-
-  vectis_app_config_init(&config);
-  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
-  config.server.request_header_timeout_ms = 0L;
+  config.server.request_header_timeout_ms = -1L;
   assert_invalid_server_config(&config, "request_header_timeout_ms");
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
-  config.server.request_body_idle_timeout_ms = 0L;
+  config.server.request_body_idle_timeout_ms = -1L;
   assert_invalid_server_config(&config, "request_body_idle_timeout_ms");
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
-  config.server.response_write_idle_timeout_ms = 0L;
+  config.server.response_write_idle_timeout_ms = -1L;
   assert_invalid_server_config(&config, "response_write_idle_timeout_ms");
 
   vectis_app_config_init(&config);
@@ -401,18 +415,13 @@ static void assert_server_config_validation(void) {
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
-  config.server.idle_timeout_ms = 0L;
+  config.server.idle_timeout_ms = -1L;
   assert_invalid_server_config(&config, "idle_timeout_ms");
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
-  config.server.keepalive_timeout_ms = 0L;
+  config.server.keepalive_timeout_ms = -1L;
   assert_invalid_server_config(&config, "keepalive_timeout_ms");
-
-  vectis_app_config_init(&config);
-  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
-  config.server.keepalive_max_requests = 0u;
-  assert_invalid_server_config(&config, "keepalive_max_requests");
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
@@ -471,19 +480,21 @@ static void assert_route_body_policy_validation(void) {
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "mode") != NULL);
 
-  route = vectis_route(VECTIS_HTTP_POST, "/zero-body", sample_handler, NULL);
-  route.body = vectis_body_buffered_max(1u);
+  route = vectis_route(VECTIS_HTTP_POST, "/zero-buffer-defaults", sample_handler, NULL);
+  route.body = vectis_body_buffered_max(64u);
   route.body.max_bytes = 0u;
-  status = vectis_register_route(app, &route, &error);
-  assert(status == VECTIS_ERR_INVALID);
-  assert(strstr(error.message, "max_bytes") != NULL);
-
-  route = vectis_route(VECTIS_HTTP_POST, "/zero-buffer", sample_handler, NULL);
-  route.body = vectis_body_buffered_max(1u);
   route.body.memory_buffer_limit_bytes = 0u;
+  route.body.idle_timeout_ms = 0L;
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+
+  route = vectis_upload_route_max(VECTIS_HTTP_POST, "/zero-upload-defaults", 64u, sample_handler, NULL);
+  route.body.max_bytes = 0u;
+  route.body.memory_buffer_limit_bytes = 0u;
+  route.body.idle_timeout_ms = 0L;
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_ERR_INVALID);
-  assert(strstr(error.message, "memory_buffer_limit_bytes") != NULL);
+  assert(strstr(error.message, "server max_request_body_bytes") != NULL);
 
   route = vectis_route(VECTIS_HTTP_POST, "/buffer-over-max", sample_handler, NULL);
   route.body = vectis_body_buffered_max(8u);
@@ -494,7 +505,7 @@ static void assert_route_body_policy_validation(void) {
 
   route = vectis_route(VECTIS_HTTP_POST, "/bad-idle", sample_handler, NULL);
   route.body = vectis_body_buffered_max(8u);
-  route.body.idle_timeout_ms = 0L;
+  route.body.idle_timeout_ms = -1L;
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "idle_timeout_ms") != NULL);
@@ -921,17 +932,17 @@ int main(void) {
   assert(status == VECTIS_OK);
 
   app->close(app);
-  config.server.request_header_timeout_ms = 0L;
+  config.server.request_header_timeout_ms = -1L;
   app = vectis_app_new(&config, &error);
   assert(app == NULL);
   assert(strstr(error.message, "request_header_timeout_ms") != NULL);
   vectis_app_config_init(&config);
   config.tls.cert_key_bundle = vectis_source_from_path("/tmp/server.pem");
   config.lockd.unix_socket_path = "/tmp/lockd.sock";
-  config.server.keepalive_max_requests = 0u;
+  config.server.keepalive_timeout_ms = -1L;
   app = vectis_app_new(&config, &error);
   assert(app == NULL);
-  assert(strstr(error.message, "keepalive_max_requests") != NULL);
+  assert(strstr(error.message, "keepalive_timeout_ms") != NULL);
   vectis_app_config_init(&config);
   config.tls.cert_key_bundle = vectis_source_from_path("/tmp/server.pem");
   config.lockd.unix_socket_path = "/tmp/lockd.sock";
