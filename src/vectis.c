@@ -801,6 +801,10 @@ static const void *vectis_source_memory_or_old(const vectis_source *source,
   return old_memory;
 }
 
+static size_t vectis_min_size(size_t a, size_t b) {
+  return a < b ? a : b;
+}
+
 void vectis_tls_config_init(vectis_tls_config *config) {
   if (config == NULL) {
     return;
@@ -874,7 +878,7 @@ vectis_body_policy vectis_body_json_default(void) {
   vectis_body_policy_init(&policy);
   policy.mode = VECTIS_BODY_JSON;
   policy.max_bytes = VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
-  policy.memory_buffer_limit_bytes = VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
+  policy.memory_buffer_limit_bytes = VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES;
   policy.disk_spool_disabled = 0;
   policy.idle_timeout_ms = VECTIS_SERVER_DEFAULT_REQUEST_BODY_IDLE_TIMEOUT_MS;
   policy.min_rate_bytes_per_sec = VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_BYTES_PER_SEC;
@@ -888,7 +892,9 @@ vectis_body_policy vectis_body_buffered_max(size_t max_bytes) {
   policy = vectis_body_json_default();
   policy.mode = VECTIS_BODY_BUFFERED;
   policy.max_bytes = max_bytes;
-  policy.memory_buffer_limit_bytes = max_bytes;
+  policy.memory_buffer_limit_bytes =
+      max_bytes == 0u ? VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES :
+      vectis_min_size(max_bytes, VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES);
   return policy;
 }
 
@@ -1006,7 +1012,9 @@ static vectis_body_policy vectis_effective_body_policy(const vectis_body_policy 
   } else {
     effective.max_bytes = vectis_default_size(effective.max_bytes, server_max_body);
     effective.memory_buffer_limit_bytes =
-        vectis_default_size(effective.memory_buffer_limit_bytes, effective.max_bytes);
+        vectis_default_size(effective.memory_buffer_limit_bytes,
+                            vectis_min_size(effective.max_bytes,
+                                            VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES));
     effective.idle_timeout_ms =
         vectis_default_long(effective.idle_timeout_ms, server_body_idle_timeout);
     effective.min_rate_bytes_per_sec =

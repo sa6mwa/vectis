@@ -121,6 +121,8 @@ int main(void) {
   route.body = vectis_body_json_default();
   assert(route.body.mode == VECTIS_BODY_JSON);
   assert(route.body.max_bytes == VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES);
+  assert(route.body.memory_buffer_limit_bytes == VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES);
+  assert(route.body.disk_spool_disabled == 0);
 
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
