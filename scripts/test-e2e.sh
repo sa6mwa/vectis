@@ -17,6 +17,9 @@ kore_downstream_port=${VECTIS_E2E_KORE_DOWNSTREAM_PORT:-$((kore_basic_port + 3))
 kore_static_port=${VECTIS_E2E_KORE_STATIC_PORT:-$((kore_basic_port + 4))}
 work_dir=$(mktemp -d)
 ssh_memory_key="$work_dir/vectis-e2e-ssh-key"
+ssh_bad_host_key="$work_dir/vectis-e2e-bad-host-key"
+ssh_known_hosts="$work_dir/vectis-e2e-known-hosts"
+ssh_bad_known_hosts="$work_dir/vectis-e2e-bad-known-hosts"
 server_pids=""
 
 cleanup() {
@@ -118,13 +121,26 @@ run_service_examples() {
     VECTIS_SSH_PORT="$ssh_port" \
     VECTIS_SSH_USERNAME="vectis" \
     VECTIS_SSH_PASSWORD="vectispass" \
+    VECTIS_SSH_KNOWN_HOSTS="$ssh_known_hosts" \
     "$repo_root/build/debug/examples/vectis_example_ssh"
+
+  printf '[e2e] ssh command rejects wrong known_hosts pin\n'
+  if env VECTIS_SSH_HOST="127.0.0.1" \
+      VECTIS_SSH_PORT="$ssh_port" \
+      VECTIS_SSH_USERNAME="vectis" \
+      VECTIS_SSH_PASSWORD="vectispass" \
+      VECTIS_SSH_KNOWN_HOSTS="$ssh_bad_known_hosts" \
+      "$repo_root/build/debug/examples/vectis_example_ssh"; then
+    printf '%s\n' "libssh2 SSH unexpectedly accepted mismatched known_hosts pin" >&2
+    return 1
+  fi
 
   printf '[e2e] ssh command with memory private key\n'
   env VECTIS_SSH_HOST="127.0.0.1" \
     VECTIS_SSH_PORT="$ssh_port" \
     VECTIS_SSH_USERNAME="vectis" \
     VECTIS_SSH_PRIVATE_KEY_MEMORY_FILE="$ssh_memory_key" \
+    VECTIS_SSH_KNOWN_HOSTS="$ssh_known_hosts" \
     "$repo_root/build/debug/examples/vectis_example_ssh"
 
   printf '[e2e] libssh2 sftp upload/download\n'
@@ -132,7 +148,19 @@ run_service_examples() {
     VECTIS_SSH_PORT="$ssh_port" \
     VECTIS_SSH_USERNAME="vectis" \
     VECTIS_SSH_PASSWORD="vectispass" \
+    VECTIS_SSH_KNOWN_HOSTS="$ssh_known_hosts" \
     "$repo_root/build/debug/examples/vectis_example_ssh_sftp"
+
+  printf '[e2e] libssh2 sftp rejects wrong known_hosts pin\n'
+  if env VECTIS_SSH_HOST="127.0.0.1" \
+      VECTIS_SSH_PORT="$ssh_port" \
+      VECTIS_SSH_USERNAME="vectis" \
+      VECTIS_SSH_PASSWORD="vectispass" \
+      VECTIS_SSH_KNOWN_HOSTS="$ssh_bad_known_hosts" \
+      "$repo_root/build/debug/examples/vectis_example_ssh_sftp"; then
+    printf '%s\n' "libssh2 SFTP unexpectedly accepted mismatched known_hosts pin" >&2
+    return 1
+  fi
 
   printf '[e2e] curl sftp upload/download\n'
   env VECTIS_SFTP_URL="sftp://127.0.0.1:$ssh_port" \
@@ -365,11 +393,12 @@ run_kore_examples() {
 }
 
 provision_ssh_public_key() {
-  if ! command -v ssh-keygen >/dev/null 2>&1; then
-    printf '%s\n' "ssh-keygen is required for source-backed SSH key e2e coverage" >&2
+  if ! command -v ssh-keygen >/dev/null 2>&1 || ! command -v ssh-keyscan >/dev/null 2>&1; then
+    printf '%s\n' "ssh-keygen and ssh-keyscan are required for SSH e2e coverage" >&2
     return 1
   fi
   ssh-keygen -q -t rsa -b 2048 -m PEM -N "" -f "$ssh_memory_key"
+  ssh-keygen -q -t rsa -b 2048 -m PEM -N "" -f "$ssh_bad_host_key"
 }
 
 install_ssh_public_key() {
@@ -378,10 +407,23 @@ install_ssh_public_key() {
     <"$ssh_memory_key.pub"
 }
 
+provision_ssh_known_hosts() {
+  if ! ssh-keyscan -p "$ssh_port" -T 10 127.0.0.1 >"$ssh_known_hosts" 2>/dev/null; then
+    printf '%s\n' "failed to scan SSH/SFTP host key" >&2
+    return 1
+  fi
+  if [ ! -s "$ssh_known_hosts" ]; then
+    printf '%s\n' "ssh-keyscan returned an empty known_hosts file" >&2
+    return 1
+  fi
+  printf '[127.0.0.1]:%s %s\n' "$ssh_port" "$(cat "$ssh_bad_host_key.pub")" >"$ssh_bad_known_hosts"
+}
+
 "$script_dir/dev-reset.sh"
 provision_ssh_public_key
 "$script_dir/dev-up.sh"
 install_ssh_public_key
+provision_ssh_known_hosts
 make -C "$repo_root" build-debug
 
 cd "$work_dir"

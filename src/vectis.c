@@ -12066,6 +12066,92 @@ static vectis_status vectis_ssh_connect_socket(const vectis_ssh_config *config,
   return VECTIS_OK;
 }
 
+static int vectis_ssh_knownhost_key_type(int hostkey_type) {
+  switch (hostkey_type) {
+  case LIBSSH2_HOSTKEY_TYPE_RSA:
+    return LIBSSH2_KNOWNHOST_KEY_SSHRSA;
+  case LIBSSH2_HOSTKEY_TYPE_DSS:
+    return LIBSSH2_KNOWNHOST_KEY_SSHDSS;
+  case LIBSSH2_HOSTKEY_TYPE_ECDSA_256:
+    return LIBSSH2_KNOWNHOST_KEY_ECDSA_256;
+  case LIBSSH2_HOSTKEY_TYPE_ECDSA_384:
+    return LIBSSH2_KNOWNHOST_KEY_ECDSA_384;
+  case LIBSSH2_HOSTKEY_TYPE_ECDSA_521:
+    return LIBSSH2_KNOWNHOST_KEY_ECDSA_521;
+  case LIBSSH2_HOSTKEY_TYPE_ED25519:
+    return LIBSSH2_KNOWNHOST_KEY_ED25519;
+  default:
+    return LIBSSH2_KNOWNHOST_KEY_UNKNOWN;
+  }
+}
+
+static vectis_status vectis_ssh_verify_known_host(LIBSSH2_SESSION *session,
+                                                  const vectis_ssh_config *config,
+                                                  vectis_error *error) {
+  LIBSSH2_KNOWNHOSTS *known_hosts;
+  const char *host_key;
+  size_t host_key_size;
+  int host_key_type;
+  int type_mask;
+  int rc;
+
+  if (config->known_hosts_path == NULL || config->known_hosts_path[0] == '\0') {
+    return VECTIS_OK;
+  }
+  known_hosts = libssh2_knownhost_init(session);
+  if (known_hosts == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to initialize SSH known_hosts verifier");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+    }
+    return VECTIS_ERR_NOMEM;
+  }
+  rc = libssh2_knownhost_readfile(known_hosts,
+                                  config->known_hosts_path,
+                                  LIBSSH2_KNOWNHOST_FILE_OPENSSH);
+  if (rc < 0) {
+    libssh2_knownhost_free(known_hosts);
+    vectis_set_errorf(error,
+                      VECTIS_ERR_STATE,
+                      "failed to read SSH known_hosts file: %s",
+                      config->known_hosts_path);
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+      error->dependency_code = (long)rc;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  host_key = libssh2_session_hostkey(session, &host_key_size, &host_key_type);
+  if (host_key == NULL || host_key_size == 0u) {
+    libssh2_knownhost_free(known_hosts);
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to read SSH server host key");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  type_mask = LIBSSH2_KNOWNHOST_TYPE_PLAIN |
+              LIBSSH2_KNOWNHOST_KEYENC_RAW |
+              vectis_ssh_knownhost_key_type(host_key_type);
+  rc = libssh2_knownhost_checkp(known_hosts,
+                                config->host,
+                                (int)config->port,
+                                host_key,
+                                host_key_size,
+                                type_mask,
+                                NULL);
+  libssh2_knownhost_free(known_hosts);
+  if (rc != LIBSSH2_KNOWNHOST_CHECK_MATCH) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "SSH host key verification failed");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+      error->dependency_code = (long)rc;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  return VECTIS_OK;
+}
+
 static vectis_status vectis_ssh_authenticate(LIBSSH2_SESSION *session,
                                              const vectis_ssh_config *config,
                                              vectis_error *error) {
@@ -12231,6 +12317,13 @@ vectis_status vectis_ssh_exec(const vectis_ssh_config *config,
     }
     return VECTIS_ERR_STATE;
   }
+  status = vectis_ssh_verify_known_host(session, config, error);
+  if (status != VECTIS_OK) {
+    libssh2_session_disconnect(session, "vectis shutdown");
+    libssh2_session_free(session);
+    (void)close(fd);
+    return status;
+  }
   status = vectis_ssh_authenticate(session, config, error);
   if (status != VECTIS_OK) {
     libssh2_session_disconnect(session, "vectis shutdown");
@@ -12344,6 +12437,14 @@ vectis_status vectis_ssh_sftp_upload_file(const vectis_ssh_config *config,
       error->dependency_code = (long)rc;
     }
     return VECTIS_ERR_STATE;
+  }
+  status = vectis_ssh_verify_known_host(session, config, error);
+  if (status != VECTIS_OK) {
+    (void)fclose(local);
+    libssh2_session_disconnect(session, "vectis shutdown");
+    libssh2_session_free(session);
+    (void)close(fd);
+    return status;
   }
   status = vectis_ssh_authenticate(session, config, error);
   if (status != VECTIS_OK) {
@@ -12481,6 +12582,14 @@ vectis_status vectis_ssh_sftp_download_file(const vectis_ssh_config *config,
       error->dependency_code = (long)rc;
     }
     return VECTIS_ERR_STATE;
+  }
+  status = vectis_ssh_verify_known_host(session, config, error);
+  if (status != VECTIS_OK) {
+    (void)fclose(local);
+    libssh2_session_disconnect(session, "vectis shutdown");
+    libssh2_session_free(session);
+    (void)close(fd);
+    return status;
   }
   status = vectis_ssh_authenticate(session, config, error);
   if (status != VECTIS_OK) {
