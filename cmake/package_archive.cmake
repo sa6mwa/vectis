@@ -66,42 +66,62 @@ get_filename_component(PACKAGE_PREFIX_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../" 
 
 include(CMakeFindDependencyMacro)
 find_dependency(Threads REQUIRED)
+set(OpenSSL_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/OpenSSL")
+set(ZLIB_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/zlib")
+set(nghttp2_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/nghttp2")
+set(Libssh2_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/libssh2")
+set(CURL_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/CURL")
+set(pslog_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/pslog")
+set(lonejson_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/lonejson")
+find_dependency(OpenSSL CONFIG REQUIRED)
+find_dependency(ZLIB CONFIG REQUIRED)
+find_dependency(nghttp2 CONFIG REQUIRED)
+find_dependency(Libssh2 CONFIG REQUIRED)
+find_dependency(CURL CONFIG REQUIRED)
+find_package(pslog CONFIG REQUIRED PATHS "${pslog_DIR}" NO_DEFAULT_PATH)
+find_package(lonejson CONFIG REQUIRED PATHS "${lonejson_DIR}" NO_DEFAULT_PATH)
 find_package(lockdc CONFIG REQUIRED PATHS "${PACKAGE_PREFIX_DIR}/lib/cmake/lockdc" NO_DEFAULT_PATH)
 
-function(_vectis_append_shared_dep out_var dep)
-  set(dep_candidates)
-  file(GLOB dep_candidates
-    LIST_DIRECTORIES false
-    "${PACKAGE_PREFIX_DIR}/lib/${CMAKE_SHARED_LIBRARY_PREFIX}${dep}${CMAKE_SHARED_LIBRARY_SUFFIX}"
-    "${PACKAGE_PREFIX_DIR}/lib/${CMAKE_SHARED_LIBRARY_PREFIX}${dep}${CMAKE_SHARED_LIBRARY_SUFFIX}*"
-    "${PACKAGE_PREFIX_DIR}/lib/${CMAKE_SHARED_LIBRARY_PREFIX}${dep}*${CMAKE_SHARED_LIBRARY_SUFFIX}"
+if(NOT TARGET vectis::bundled_libxml2_static)
+  add_library(vectis::bundled_libxml2_static STATIC IMPORTED)
+  set_target_properties(vectis::bundled_libxml2_static PROPERTIES
+    IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libxml2.a"
+    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include/libxml2"
   )
-  list(SORT dep_candidates)
-  if(dep_candidates)
-    list(GET dep_candidates 0 dep_library)
-    set(${out_var} "${${out_var}};${dep_library}" PARENT_SCOPE)
-  else()
-    set(${out_var} "${${out_var}};${dep}" PARENT_SCOPE)
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(vectis::bundled_libxml2_static INTERFACE m)
   endif()
-endfunction()
+endif()
+
+if(NOT TARGET vectis::bundled_libxml2_shared)
+  if(APPLE AND EXISTS "${PACKAGE_PREFIX_DIR}/lib/libxml2.dylib")
+    add_library(vectis::bundled_libxml2_shared SHARED IMPORTED)
+    set_target_properties(vectis::bundled_libxml2_shared PROPERTIES
+      IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libxml2.dylib"
+      INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include/libxml2"
+    )
+  elseif(EXISTS "${PACKAGE_PREFIX_DIR}/lib/libxml2.so")
+    add_library(vectis::bundled_libxml2_shared SHARED IMPORTED)
+    set_target_properties(vectis::bundled_libxml2_shared PROPERTIES
+      IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libxml2.so"
+      INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include/libxml2"
+    )
+  endif()
+endif()
 
 if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/lib/libvectis.a")
   set(_vectis_static_links
     lockdc::static
-    "${PACKAGE_PREFIX_DIR}/lib/libpslog.a"
-    "${PACKAGE_PREFIX_DIR}/lib/libcurl.a"
-    "${PACKAGE_PREFIX_DIR}/lib/libssh2.a"
-    "${PACKAGE_PREFIX_DIR}/lib/libssl.a"
-    "${PACKAGE_PREFIX_DIR}/lib/libcrypto.a"
-    "${PACKAGE_PREFIX_DIR}/lib/liblonejson.a"
-    "${PACKAGE_PREFIX_DIR}/lib/libxml2.a"
-    "${PACKAGE_PREFIX_DIR}/lib/libnghttp2.a"
-    "${PACKAGE_PREFIX_DIR}/lib/libz.a"
-    Threads::Threads
+    pslog::pslog_static
+    CURL::libcurl
+    Libssh2::libssh2
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    lonejson::lonejson_static
+    vectis::bundled_libxml2_static
+    nghttp2::nghttp2
+    ZLIB::ZLIB
   )
-  if(UNIX AND NOT APPLE)
-    list(APPEND _vectis_static_links m)
-  endif()
   add_library(vectis::static STATIC IMPORTED)
   set_target_properties(vectis::static PROPERTIES
     IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libvectis.a"
@@ -112,10 +132,18 @@ if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/lib/libvectis.a")
 endif()
 
 if(NOT TARGET vectis::shared)
-  set(_vectis_shared_links lockdc::shared Threads::Threads)
-  foreach(_vectis_shared_dep IN ITEMS pslog curl ssh2 ssl crypto lonejson xml2 nghttp2 z)
-    _vectis_append_shared_dep(_vectis_shared_links "${_vectis_shared_dep}")
-  endforeach()
+  set(_vectis_shared_links
+    lockdc::shared
+    pslog::pslog_shared
+    cpkt::curl_shared
+    cpkt::libssh2_shared
+    cpkt::openssl_ssl_shared
+    cpkt::openssl_crypto_shared
+    lonejson::lonejson
+    vectis::bundled_libxml2_shared
+    cpkt::nghttp2_shared
+    cpkt::zlib_shared
+  )
   if(APPLE AND EXISTS "${PACKAGE_PREFIX_DIR}/lib/libvectis.dylib")
     add_library(vectis::shared SHARED IMPORTED)
     set_target_properties(vectis::shared PROPERTIES

@@ -22,6 +22,23 @@ function(vectis_install_link_target target_name)
   endif()
 endfunction()
 
+if(VECTIS_CONSUMER_LINK STREQUAL "static")
+  get_target_property(vectis_static_links vectis::static INTERFACE_LINK_LIBRARIES)
+  foreach(required_target IN ITEMS CURL::libcurl OpenSSL::Crypto OpenSSL::SSL ZLIB::ZLIB)
+    if(NOT required_target IN_LIST vectis_static_links)
+      message(FATAL_ERROR "installed vectis::static is missing ${required_target}")
+    endif()
+  endforeach()
+endif()
+
+if(VECTIS_CONSUMER_LINK STREQUAL "static" AND UNIX AND NOT APPLE AND CMAKE_DL_LIBS)
+  get_target_property(openssl_crypto_links OpenSSL::Crypto INTERFACE_LINK_LIBRARIES)
+  if(NOT CMAKE_DL_LIBS IN_LIST openssl_crypto_links)
+    message(FATAL_ERROR
+      "OpenSSL::Crypto is missing CMAKE_DL_LIBS (${CMAKE_DL_LIBS})")
+  endif()
+endif()
+
 add_executable(vectis_install_consumer consumer.c)
 vectis_install_link_target(vectis_install_consumer)
 

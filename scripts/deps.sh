@@ -24,7 +24,7 @@ case "$preset" in
   deps-host-debug)
     deps_root="$repo_root/.cache/deps/host-debug"
     target_id="x86_64-linux-gnu"
-    system_sha256="4e6c4ca07c0647a05923b4a56ef12d440a1d1b53465224e30d990fc18777aa4e"
+    system_sha256="69e699d18374987ba16dfd82640ba1c263b71f0e1daeef8af2a2018a6f1e39ef"
     lockdc_sha256="0f2d52fd08109ffa2324fa7fc7de773ca804c3737d80aa3e03ff16b0c1976708"
     lonejson_sha256="f3f1de0f04b4d9491dacc856de38cd1ecde488fb8befc539bf615ac4d9490b54"
     pslog_sha256="91d2f93bc07bc66cf83d6a27a80cb6439c384d56bf84a2d11cd903215430d1d8"
@@ -39,7 +39,7 @@ case "$preset" in
   deps-x86_64-linux-gnu)
     deps_root="$repo_root/.cache/deps/x86_64-linux-gnu"
     target_id="x86_64-linux-gnu"
-    system_sha256="4e6c4ca07c0647a05923b4a56ef12d440a1d1b53465224e30d990fc18777aa4e"
+    system_sha256="69e699d18374987ba16dfd82640ba1c263b71f0e1daeef8af2a2018a6f1e39ef"
     lockdc_sha256="0f2d52fd08109ffa2324fa7fc7de773ca804c3737d80aa3e03ff16b0c1976708"
     lonejson_sha256="f3f1de0f04b4d9491dacc856de38cd1ecde488fb8befc539bf615ac4d9490b54"
     pslog_sha256="91d2f93bc07bc66cf83d6a27a80cb6439c384d56bf84a2d11cd903215430d1d8"
@@ -53,7 +53,7 @@ case "$preset" in
   deps-x86_64-linux-musl)
     deps_root="$repo_root/.cache/deps/x86_64-linux-musl"
     target_id="x86_64-linux-musl"
-    system_sha256="d44f70558b961125c96d356d27ce83fc7d50c9cc650a335c2016c8d3778d98aa"
+    system_sha256="dcb1923af1d7529531f31637476f083070ccf1051ec217012d77a155ff4132d4"
     lockdc_sha256="d5c33f652daeac137febac21d7dadc1156ab02027e8fa2f55e0800782295fe6b"
     lonejson_sha256="967c797ca17040960ee0fc3339abda040ab3f52c6f9b8d79e729284f433ad1af"
     pslog_sha256="b628d32f9207e5102c9a8ae3f7ad32ce36e61178c7db67e6aa4548eb9cae567d"
@@ -67,7 +67,7 @@ case "$preset" in
   deps-aarch64-linux-gnu)
     deps_root="$repo_root/.cache/deps/aarch64-linux-gnu"
     target_id="aarch64-linux-gnu"
-    system_sha256="c20969872de3087f984e8bca3e01fa98e495a3581940e426d07ebed014cf8190"
+    system_sha256="54e9ef336a0b092d0e68a84d2026a499c051df3c3e61b7a7dab1f0103d1e082b"
     lockdc_sha256="50163db0335c73d75dfb70578ac03482d2803d73c7e47b527392267854d7fb51"
     lonejson_sha256="1594b8da68a5acda24addcad19a65f4001a75b2fac26a86e8455229352732ca8"
     pslog_sha256="d936ae9416f539c4f40aeaa023b9147cbd568bc87b7a3c3b091adfd217d935bb"
@@ -81,7 +81,7 @@ case "$preset" in
   deps-aarch64-linux-musl)
     deps_root="$repo_root/.cache/deps/aarch64-linux-musl"
     target_id="aarch64-linux-musl"
-    system_sha256="8ff3cc3c457dc66918470beaea01744bc38c342a87c20c6b072761c56c858e19"
+    system_sha256="61f7cb43ca78f33a21b5719f84f864ac5ce5cf7d8268eef52a7a01da08582a38"
     lockdc_sha256="5829cbeaa88a78307e1162edabf38c8cc70e97c2845d170b7008c5f97b378496"
     lonejson_sha256="81f045090cb81b727bc390cfcc9bf46b9ee8a0ed80fcf75fd1b9cdced3f787e1"
     pslog_sha256="638725174cf39f3c5337fc6f118bc88c2a41d385a01be98170ff4bef3d57fcae"
@@ -95,7 +95,7 @@ case "$preset" in
   deps-armhf-linux-gnu)
     deps_root="$repo_root/.cache/deps/armhf-linux-gnu"
     target_id="armhf-linux-gnu"
-    system_sha256="26787953d690b0f01a11538e8692f68f9c746b8e97a9baf47ac15241d9a947fc"
+    system_sha256="33bfe771f2f2b36562c9e18094f79168d8d687dc7a55393584930ca434547d7d"
     lockdc_sha256="8b945b35fe70effa10f84f61659ea92600320e16f3cec32160a0cc142b17b4a8"
     lonejson_sha256="34d03906e00888a2aa9fb01073668b398c271faef01e9f70232523bf0b4be481"
     pslog_sha256="bc8530a3773666deb6d551263c7dd59a64c92629fa56d1e89c278d637472f2dc"
@@ -109,7 +109,7 @@ case "$preset" in
   deps-armhf-linux-musl)
     deps_root="$repo_root/.cache/deps/armhf-linux-musl"
     target_id="armhf-linux-musl"
-    system_sha256="f0172a6ff928111cfaeb503b01b48b3cdd2c05a04d54047630180ee79f65af31"
+    system_sha256="7edc2f61e01370da6af96c496ae5bfbec72e43761247dd2c310ac7627923c591"
     lockdc_sha256="3101c505c3dcd12c7ee9af5822b3b0c2c173be134e6b60dc072b49af853f3e2b"
     lonejson_sha256="c7fbeda5ba8318c01fda0fabe65903f8dce39d6f96564afa7efd1aca80230644"
     pslog_sha256="503d2bd882c053dc8f34dbfe718a328303a4973789bbb8fb37261e4822b3babe"
@@ -123,7 +123,7 @@ case "$preset" in
   deps-arm64-apple-darwin)
     deps_root="$repo_root/.cache/deps/arm64-apple-darwin"
     target_id="arm64-apple-darwin"
-    system_sha256="dba4424de9566c2418162f62e5e90c45b40266c6e750b5096d4a251bf96d8e9a"
+    system_sha256="204fcaa8d6d53b6affcdcb49668d60b0e41d2aa7ff5f4dc2c8fce0d24caa0022"
     lockdc_sha256="0a1890bdd04f377acd95afa699e2cf1ed81ccbacfad95cbd312599915626df99"
     lonejson_sha256="b833e8b2f385294ba085d12dd5d576dd2d8ac271abcbabdf36c81237b27fa14a"
     pslog_sha256="f8f4e18810ecad7278eb341fbfe7e3f9d85eb654891c4d08149f425f3a4c9b3d"
@@ -166,7 +166,7 @@ resolve_tool_path() {
 target_ar=$(resolve_tool_path "$target_ar")
 target_ranlib=$(resolve_tool_path "$target_ranlib")
 
-system_version="0.1.0"
+system_version="0.2.0"
 system_archive="c.pkt.systems-${system_version}-${target_id}.tar.gz"
 system_url="https://github.com/sa6mwa/c.pkt.systems/releases/download/v${system_version}/${system_archive}"
 system_download="$downloads_dir/$system_archive"

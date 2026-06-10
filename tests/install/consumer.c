@@ -17,8 +17,6 @@ int main(void) {
   vectis_error error;
   vectis_app *app;
   vectis_http_client *http;
-  lonejson *json_runtime;
-  lonejson_error json_error;
   struct lc_client *client;
   struct kore_server *server;
   LIBSSH2_SESSION *ssh;
@@ -28,7 +26,6 @@ int main(void) {
   pslog_logger logger;
 
   memset(&error, 0, sizeof(error));
-  memset(&json_error, 0, sizeof(json_error));
   memset(&logger, 0, sizeof(logger));
 
   vectis_app_config_init(&config);
@@ -72,15 +69,6 @@ int main(void) {
       vectis_body_mode_string(VECTIS_BODY_JSON) == NULL) {
     return 6;
   }
-  json_runtime = lonejson_new(NULL, &json_error);
-  if (json_runtime == NULL) {
-    return 7;
-  }
-  if (lonejson_validate_cstr(json_runtime, "{}", &json_error) != LONEJSON_STATUS_OK) {
-    lonejson_free(json_runtime);
-    return 7;
-  }
-  lonejson_free(json_runtime);
 
   client = NULL;
   server = NULL;
@@ -91,7 +79,7 @@ int main(void) {
 
   if (client != NULL || server != NULL || ssh != NULL || ssl != NULL ||
       curl_code != CURLE_OK || logger.impl != NULL || xml_version == NULL) {
-    return 8;
+    return 7;
   }
-  return error.code == VECTIS_OK ? 0 : 9;
+  return error.code == VECTIS_OK ? 0 : 8;
 }
