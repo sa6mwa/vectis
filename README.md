@@ -313,8 +313,8 @@ linked into a new runner binary.
 ## Dependency Baseline
 
 The current baseline is split across pinned target SDK archives: `liblockdc`
-0.10.0 provides the lockdc C headers/libraries, `c.pkt.systems` 0.1.0 provides
-curl, OpenSSL, libssh2, nghttp2, and zlib, `lonejson` 0.31.0 provides the C
+0.10.0 provides the lockdc C headers/libraries, `c.pkt.systems` 0.2.0 provides
+curl, OpenSSL, libssh2, nghttp2, and zlib, `lonejson` 0.32.0 provides the C
 JSON headers/libraries, and `libpslog` 0.4.1 provides the C logging
 headers/libraries. Vectis also vendors the pinned LoneJSON source tarball so the
 Lua binding can be compiled into the `vectis` executable against the same Lua
@@ -541,8 +541,8 @@ The current implementation provides:
 - `pslog`-backed owned or borrowed logger handling.
 - OpenSSL-backed self-signed and CA-signed certificate/key PEM bundle
   generation helpers.
-- Dependency provisioning from split `liblockdc` 0.10.0, `c.pkt.systems` 0.1.0,
-  `lonejson` 0.31.0, and `libpslog` 0.4.1 SDK bundles plus target-built Lua
+- Dependency provisioning from split `liblockdc` 0.10.0, `c.pkt.systems` 0.2.0,
+  `lonejson` 0.32.0, and `libpslog` 0.4.1 SDK bundles plus target-built Lua
   5.5.0 and libxml2 2.15.3.
 - Compile-checked examples grouped under `examples/kore`, `examples/lockd`,
   `examples/curl`, `examples/dsv`, `examples/ssh`, `examples/certs`, and
