@@ -11,8 +11,10 @@ typedef struct workflow_event {
 } workflow_event;
 
 static const lonejson_field workflow_event_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_event, id, "id", LONEJSON_OVERFLOW_FAIL),
-    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_event, type, "type", LONEJSON_OVERFLOW_FAIL)};
+    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_event, id, "id",
+                                    LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_event, type, "type",
+                                    LONEJSON_OVERFLOW_FAIL)};
 
 LONEJSON_MAP_DEFINE(workflow_event_map, workflow_event, workflow_event_fields);
 
@@ -48,7 +50,8 @@ int main(void) {
   mqtt = NULL;
   vectis_mqtt_config_init(&config);
   vectis_error_clear(&error);
-  config.broker_url = env_or_default("VECTIS_MQTT_URL", "mqtt://127.0.0.1:21883");
+  config.broker_url =
+      env_or_default("VECTIS_MQTT_URL", "mqtt://127.0.0.1:21883");
   config.username = getenv("VECTIS_MQTT_USERNAME");
   config.password = getenv("VECTIS_MQTT_PASSWORD");
   config.client_bundle_path = getenv("VECTIS_MQTT_CLIENT_BUNDLE");
@@ -67,20 +70,14 @@ int main(void) {
     return print_error("vectis_mqtt_new", &error);
   }
 
-  if (mqtt->publish(mqtt,
-                    "workflow/orders/raw",
-                    raw_payload,
-                    sizeof(raw_payload) - 1u,
-                    "text/plain",
+  if (mqtt->publish(mqtt, "workflow/orders/raw", raw_payload,
+                    sizeof(raw_payload) - 1u, "text/plain",
                     &error) != VECTIS_OK) {
     mqtt->close(mqtt);
     return print_error("mqtt->publish", &error);
   }
-  if (mqtt->publish_json(mqtt,
-                         "workflow/orders/json",
-                         &workflow_event_map,
-                         &event,
-                         &error) != VECTIS_OK) {
+  if (mqtt->publish_json(mqtt, "workflow/orders/json", &workflow_event_map,
+                         &event, &error) != VECTIS_OK) {
     mqtt->close(mqtt);
     return print_error("mqtt->publish_json", &error);
   }

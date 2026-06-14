@@ -1,12 +1,10 @@
+#include "vectis_internal.h"
 #include <assert.h>
 #include <string.h>
-#include "vectis_internal.h"
 #include <vectis/vectis.h>
 
-static vectis_status sample_handler(vectis_app *app,
-                                    vectis_request *request,
-                                    vectis_response *response,
-                                    void *userdata,
+static vectis_status sample_handler(vectis_app *app, vectis_request *request,
+                                    vectis_response *response, void *userdata,
                                     vectis_error *error) {
   (void)app;
   (void)request;
@@ -30,11 +28,15 @@ int main(void) {
   assert(config.tls.mode == VECTIS_TLS_MODE_MANUAL);
   assert(config.tls.port == 8443u);
   assert(strcmp(config.tls.domain, "*") == 0);
-  assert(strcmp(config.tls.acme_directory_url, VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION) == 0);
-  assert(config.server.max_connections == VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS);
-  assert(config.server.max_request_header_bytes == VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES);
+  assert(strcmp(config.tls.acme_directory_url,
+                VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION) == 0);
+  assert(config.server.max_connections ==
+         VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS);
+  assert(config.server.max_request_header_bytes ==
+         VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES);
   assert(config.server.max_request_body_bytes == 0u);
-  assert(config.server.request_header_timeout_ms == VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS);
+  assert(config.server.request_header_timeout_ms ==
+         VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS);
   assert(config.server.request_body_idle_timeout_ms ==
          VECTIS_SERVER_DEFAULT_REQUEST_BODY_IDLE_TIMEOUT_MS);
   assert(config.server.response_write_idle_timeout_ms ==
@@ -43,18 +45,24 @@ int main(void) {
          VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_BYTES_PER_SEC);
   assert(config.server.request_body_min_rate_grace_ms ==
          VECTIS_SERVER_DEFAULT_REQUEST_BODY_MIN_RATE_GRACE_MS);
-  assert(config.server.idle_timeout_ms == VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS);
+  assert(config.server.idle_timeout_ms ==
+         VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS);
   assert(config.server.keepalive_disabled == 0);
-  assert(config.server.keepalive_timeout_ms == VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS);
-  assert(config.server.keepalive_max_requests == VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS);
+  assert(config.server.keepalive_timeout_ms ==
+         VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS);
+  assert(config.server.keepalive_max_requests ==
+         VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS);
   assert(config.lockd.timeout_ms == 30000L);
   assert(config.lockd.logger == NULL);
   assert(config.lockd.logger_disabled == 0);
   vectis_error_clear(&error);
   assert(error.source == VECTIS_ERROR_SOURCE_NONE);
-  assert(strcmp(vectis_error_source_string(VECTIS_ERROR_SOURCE_CURL), "curl") == 0);
-  assert(strcmp(vectis_http_method_string(VECTIS_HTTP_OPTIONS), "OPTIONS") == 0);
-  assert(strcmp(vectis_body_mode_string(VECTIS_BODY_STREAMING_UPLOAD), "streaming_upload") == 0);
+  assert(strcmp(vectis_error_source_string(VECTIS_ERROR_SOURCE_CURL), "curl") ==
+         0);
+  assert(strcmp(vectis_http_method_string(VECTIS_HTTP_OPTIONS), "OPTIONS") ==
+         0);
+  assert(strcmp(vectis_body_mode_string(VECTIS_BODY_STREAMING_UPLOAD),
+                "streaming_upload") == 0);
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
@@ -73,7 +81,8 @@ int main(void) {
   config.lockd.timeout_ms = 0L;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
-  route = vectis_route(VECTIS_HTTP_POST, "/zero-default-body", sample_handler, NULL);
+  route = vectis_route(VECTIS_HTTP_POST, "/zero-default-body", sample_handler,
+                       NULL);
   route.body = vectis_body_buffered_max(0u);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
@@ -121,7 +130,8 @@ int main(void) {
   route.body = vectis_body_json_default();
   assert(route.body.mode == VECTIS_BODY_JSON);
   assert(route.body.max_bytes == VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES);
-  assert(route.body.memory_buffer_limit_bytes == VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES);
+  assert(route.body.memory_buffer_limit_bytes ==
+         VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES);
   assert(route.body.disk_spool_disabled == 0);
 
   status = vectis_register_route(app, &route, &error);
@@ -132,10 +142,9 @@ int main(void) {
   assert(status == VECTIS_ERR_CONFLICT);
   assert(strstr(error.message, "duplicate route registration") != NULL);
 
-  route = vectis_route_methods(VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD,
-                               "/health",
-                               sample_handler,
-                               NULL);
+  route =
+      vectis_route_methods(VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD,
+                           "/health", sample_handler, NULL);
   assert(route.method == VECTIS_HTTP_GET);
   assert((route.methods & VECTIS_HTTP_METHODS_HEAD) != 0u);
   status = vectis_register_route(app, &route, &error);
@@ -147,19 +156,15 @@ int main(void) {
   assert(status == VECTIS_OK);
   assert(vectis_route_count(app) == 3u);
 
-  param_route = vectis_route(VECTIS_HTTP_GET,
-                             "/orders/:id/items/:item_id",
-                             sample_handler,
-                             NULL);
+  param_route = vectis_route(VECTIS_HTTP_GET, "/orders/:id/items/:item_id",
+                             sample_handler, NULL);
   assert(param_route.path_kind == VECTIS_ROUTE_PATH_PARAMS);
   status = vectis_register_route(app, &param_route, &error);
   assert(status == VECTIS_OK);
   assert(vectis_route_count(app) == 4u);
 
-  param_route = vectis_route(VECTIS_HTTP_GET,
-                             "/orders/:id?/items/:item_id?",
-                             sample_handler,
-                             NULL);
+  param_route = vectis_route(VECTIS_HTTP_GET, "/orders/:id?/items/:item_id?",
+                             sample_handler, NULL);
   status = vectis_register_route(app, &param_route, &error);
   assert(status == VECTIS_OK);
   assert(vectis_route_count(app) == 5u);

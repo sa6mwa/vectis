@@ -1,5 +1,5 @@
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include <lc/lc.h>
 #include <pslog.h>
@@ -8,7 +8,8 @@ typedef struct consumer_context {
   pslog_logger *logger;
 } consumer_context;
 
-static int fail_with_error(pslog_logger *logger, const char *step, lc_error *error) {
+static int fail_with_error(pslog_logger *logger, const char *step,
+                           lc_error *error) {
   logger->errorf(logger, step, "code=%d http_status=%ld message=%s detail=%s",
                  error != NULL ? error->code : 0,
                  error != NULL ? error->http_status : 0L,
@@ -17,8 +18,7 @@ static int fail_with_error(pslog_logger *logger, const char *step, lc_error *err
   return 1;
 }
 
-static int handle_order(void *context,
-                        lc_consumer_message *message,
+static int handle_order(void *context, lc_consumer_message *message,
                         lc_error *error) {
   consumer_context *ctx;
   lc_sink *sink;
@@ -30,13 +30,15 @@ static int handle_order(void *context,
                      "consumer=%s queue=%s message=%s",
                      message->name != NULL ? message->name : "",
                      message->queue != NULL ? message->queue : "",
-                     message->message != NULL && message->message->message_id != NULL
+                     message->message != NULL &&
+                             message->message->message_id != NULL
                          ? message->message->message_id
                          : "");
   if (lc_sink_to_file("consumer-order.json", &sink, error) != LC_OK) {
     return LC_ERR_INVALID;
   }
-  if (message->message->write_payload(message->message, sink, &written, error) != LC_OK) {
+  if (message->message->write_payload(message->message, sink, &written,
+                                      error) != LC_OK) {
     lc_sink_close(sink);
     return LC_ERR_TRANSPORT;
   }
@@ -88,7 +90,8 @@ int main(void) {
   client = NULL;
   service = NULL;
 
-  endpoints[0] = getenv("LOCKD_ENDPOINT") != NULL ? getenv("LOCKD_ENDPOINT") : "https://127.0.0.1:8443";
+  endpoints[0] = getenv("LOCKD_ENDPOINT") != NULL ? getenv("LOCKD_ENDPOINT")
+                                                  : "https://127.0.0.1:8443";
   client_config.endpoints = endpoints;
   client_config.endpoint_count = 1u;
   client_config.client_bundle_path = getenv("LOCKD_CLIENT_BUNDLE");
@@ -98,8 +101,8 @@ int main(void) {
   client_config.logger = sdk_logger;
 
   example_logger->infof(example_logger, "example.lockd_consumer.start",
-                        "endpoint=%s namespace=%s queue=%s",
-                        endpoints[0], client_config.default_namespace, "orders");
+                        "endpoint=%s namespace=%s queue=%s", endpoints[0],
+                        client_config.default_namespace, "orders");
 
   if (lc_client_open(&client_config, &client, &error) != LC_OK) {
     rc = fail_with_error(example_logger, "lc_client_open", &error);
@@ -120,8 +123,10 @@ int main(void) {
   service_config.consumers = &consumer;
   service_config.consumer_count = 1u;
 
-  if (lc_client_new_consumer_service(client, &service_config, &service, &error) != LC_OK) {
-    rc = fail_with_error(example_logger, "client->new_consumer_service", &error);
+  if (lc_client_new_consumer_service(client, &service_config, &service,
+                                     &error) != LC_OK) {
+    rc =
+        fail_with_error(example_logger, "client->new_consumer_service", &error);
     lc_client_close(client);
     lc_error_cleanup(&error);
     example_logger->destroy(example_logger);

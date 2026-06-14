@@ -14,7 +14,8 @@ static const char *env_or_default(const char *name, const char *fallback) {
   return value;
 }
 
-static unsigned short env_port_or_default(const char *name, unsigned short fallback) {
+static unsigned short env_port_or_default(const char *name,
+                                          unsigned short fallback) {
   const char *value;
   long port;
 
@@ -99,12 +100,15 @@ int main(void) {
   config.port = env_port_or_default("VECTIS_SSH_PORT", 29222u);
   config.username = env_or_default("VECTIS_SSH_USERNAME", "vectis");
   password_env = getenv("VECTIS_SSH_PASSWORD");
-  config.password = password_env != NULL && password_env[0] != '\0' ? password_env : "vectispass";
+  config.password = password_env != NULL && password_env[0] != '\0'
+                        ? password_env
+                        : "vectispass";
   config.private_key_path = getenv("VECTIS_SSH_PRIVATE_KEY");
   memory_key_path = getenv("VECTIS_SSH_PRIVATE_KEY_MEMORY_FILE");
   if (memory_key_path != NULL && memory_key_path[0] != '\0') {
     if (!read_file(memory_key_path, &memory_key, &memory_key_size)) {
-      fprintf(stderr, "failed to read memory private key: %s\n", memory_key_path);
+      fprintf(stderr, "failed to read memory private key: %s\n",
+              memory_key_path);
       return 1;
     }
     config.private_key = vectis_source_from_memory(memory_key, memory_key_size);

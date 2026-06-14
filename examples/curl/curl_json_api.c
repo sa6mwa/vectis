@@ -9,10 +9,12 @@ typedef struct downstream_request {
 } downstream_request;
 
 static const lonejson_field downstream_request_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(downstream_request, event, "event", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(downstream_request, event, "event",
+                                    LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_I64(downstream_request, count, "count")};
 
-LONEJSON_MAP_DEFINE(downstream_request_map, downstream_request, downstream_request_fields);
+LONEJSON_MAP_DEFINE(downstream_request_map, downstream_request,
+                    downstream_request_fields);
 
 int main(void) {
   vectis_http_client_config client;
@@ -26,13 +28,14 @@ int main(void) {
   vectis_http_response_cleanup(&response);
 
   client.base_url = "https://api.example.com";
-  client.client_bundle = vectis_source_from_path("/etc/vectis/downstream-client.pem");
+  client.client_bundle =
+      vectis_source_from_path("/etc/vectis/downstream-client.pem");
   client.timeout_ms = 5000L;
   client.retry_max_attempts = 3u;
   client.retry_initial_delay_ms = 100L;
   client.retry_max_delay_ms = 1000L;
-  client.retry_conditions = VECTIS_HTTP_RETRY_TRANSPORT | VECTIS_HTTP_RETRY_429 |
-                            VECTIS_HTTP_RETRY_5XX;
+  client.retry_conditions = VECTIS_HTTP_RETRY_TRANSPORT |
+                            VECTIS_HTTP_RETRY_429 | VECTIS_HTTP_RETRY_5XX;
 
   payload.event[0] = 'o';
   payload.event[1] = 'r';
@@ -55,14 +58,18 @@ int main(void) {
   (void)handle->options(handle, "/events", &response, &error);
   vectis_http_response_cleanup(&response);
 
-  (void)handle->post_json(handle, "/events", &downstream_request_map, &payload, &response, &error);
-  (void)vectis_http_response_json_into(&response, &downstream_request_map, &payload, &error);
+  (void)handle->post_json(handle, "/events", &downstream_request_map, &payload,
+                          &response, &error);
+  (void)vectis_http_response_json_into(&response, &downstream_request_map,
+                                       &payload, &error);
   vectis_http_response_cleanup(&response);
 
-  (void)handle->put_json(handle, "/events/order", &downstream_request_map, &payload, &response, &error);
+  (void)handle->put_json(handle, "/events/order", &downstream_request_map,
+                         &payload, &response, &error);
   vectis_http_response_cleanup(&response);
 
-  (void)handle->patch_json(handle, "/events/order", &downstream_request_map, &payload, &response, &error);
+  (void)handle->patch_json(handle, "/events/order", &downstream_request_map,
+                           &payload, &response, &error);
   vectis_http_response_cleanup(&response);
 
   (void)handle->del(handle, "/events/order", &response, &error);

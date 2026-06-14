@@ -1,5 +1,5 @@
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include <lc/lc.h>
 #include <pslog.h>
@@ -39,19 +39,18 @@ static pslog_logger *new_scoped_logger(const char *component,
   return scoped;
 }
 
-static int handle_order(void *context,
-                        lc_consumer_message *message,
+static int handle_order(void *context, lc_consumer_message *message,
                         lc_error *error) {
   consumer_context *ctx;
 
   (void)error;
   ctx = (consumer_context *)context;
-  ctx->logger->infof(ctx->logger,
-                     "example.vectis_consumer.delivery",
+  ctx->logger->infof(ctx->logger, "example.vectis_consumer.delivery",
                      "consumer=%s queue=%s message=%s",
                      message->name != NULL ? message->name : "",
                      message->queue != NULL ? message->queue : "",
-                     message->message != NULL && message->message->message_id != NULL
+                     message->message != NULL &&
+                             message->message->message_id != NULL
                          ? message->message->message_id
                          : "");
   return LC_OK;
@@ -78,7 +77,8 @@ int main(void) {
   root_logger = NULL;
   lockd_root_logger = NULL;
   logger = new_scoped_logger("consumer", pslog_palette_default(), &root_logger);
-  lockd_logger = new_scoped_logger("lockd", &pslog_builtin_palette_horizon, &lockd_root_logger);
+  lockd_logger = new_scoped_logger("lockd", &pslog_builtin_palette_horizon,
+                                   &lockd_root_logger);
   if (logger == NULL || lockd_logger == NULL) {
     if (lockd_logger != NULL) {
       lockd_logger->destroy(lockd_logger);
@@ -123,11 +123,9 @@ int main(void) {
 
   app = vectis_app_new(&app_config, &error);
   if (app == NULL) {
-    logger->errorf(logger,
-                   "example.vectis_consumer.new_failed",
+    logger->errorf(logger, "example.vectis_consumer.new_failed",
                    "source=%s message=%s",
-                   vectis_error_source_string(error.source),
-                   error.message);
+                   vectis_error_source_string(error.source), error.message);
     logger->destroy(logger);
     lockd_logger->destroy(lockd_logger);
     lockd_root_logger->destroy(lockd_root_logger);
@@ -146,26 +144,19 @@ int main(void) {
   service_config.consumers = &consumer;
   service_config.consumer_count = 1u;
 
-  if (app->consumer_service(app, &service_config, &service, &error) != VECTIS_OK) {
-    logger->errorf(logger,
-                   "example.vectis_consumer.create_failed",
-                   "source=%s code=%d dependency=%ld http_status=%ld message=%s detail=%s",
-                   vectis_error_source_string(error.source),
-                   (int)error.code,
-                   error.dependency_code,
-                   error.http_status,
-                   error.message,
-                   error.detail);
+  if (app->consumer_service(app, &service_config, &service, &error) !=
+      VECTIS_OK) {
+    logger->errorf(
+        logger, "example.vectis_consumer.create_failed",
+        "source=%s code=%d dependency=%ld http_status=%ld message=%s detail=%s",
+        vectis_error_source_string(error.source), (int)error.code,
+        error.dependency_code, error.http_status, error.message, error.detail);
   } else if (service->run(service, &error) != VECTIS_OK) {
-    logger->errorf(logger,
-                   "example.vectis_consumer.run_failed",
-                   "source=%s code=%d dependency=%ld http_status=%ld message=%s detail=%s",
-                   vectis_error_source_string(error.source),
-                   (int)error.code,
-                   error.dependency_code,
-                   error.http_status,
-                   error.message,
-                   error.detail);
+    logger->errorf(
+        logger, "example.vectis_consumer.run_failed",
+        "source=%s code=%d dependency=%ld http_status=%ld message=%s detail=%s",
+        vectis_error_source_string(error.source), (int)error.code,
+        error.dependency_code, error.http_status, error.message, error.detail);
   } else {
     rc = 0;
   }

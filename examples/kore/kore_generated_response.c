@@ -9,15 +9,16 @@ typedef struct report_response {
 } report_response;
 
 static const lonejson_field report_response_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(report_response, id, "id", LONEJSON_OVERFLOW_FAIL),
-    LONEJSON_FIELD_STRING_FIXED_REQ(report_response, status, "status", LONEJSON_OVERFLOW_FAIL)};
+    LONEJSON_FIELD_STRING_FIXED_REQ(report_response, id, "id",
+                                    LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(report_response, status, "status",
+                                    LONEJSON_OVERFLOW_FAIL)};
 
-LONEJSON_MAP_DEFINE(report_response_map, report_response, report_response_fields);
+LONEJSON_MAP_DEFINE(report_response_map, report_response,
+                    report_response_fields);
 
-static vectis_status report(vectis_app *app,
-                            vectis_request *request,
-                            vectis_response *response,
-                            void *userdata,
+static vectis_status report(vectis_app *app, vectis_request *request,
+                            vectis_response *response, void *userdata,
                             vectis_error *error) {
   report_response body;
   const char *id;
@@ -30,7 +31,8 @@ static vectis_status report(vectis_app *app,
   }
   (void)snprintf(body.id, sizeof(body.id), "%s", id);
   (void)snprintf(body.status, sizeof(body.status), "ready");
-  return vectis_response_json_generated(response, 200, &report_response_map, &body, error);
+  return vectis_response_json_generated(response, 200, &report_response_map,
+                                        &body, error);
 }
 
 int main(void) {
@@ -41,7 +43,8 @@ int main(void) {
 
   vectis_app_config_init(&config);
   config.app_name = "generated-response-api";
-  config.tls.cert_key_bundle = vectis_source_from_path("/etc/vectis/server.pem");
+  config.tls.cert_key_bundle =
+      vectis_source_from_path("/etc/vectis/server.pem");
 
   app = vectis_app_new(&config, &error);
   if (app == NULL) {

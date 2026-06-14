@@ -7,10 +7,8 @@
 #include <lc/lc.h>
 #include <vectis/vectis.h>
 
-static vectis_status sample_handler(vectis_app *app,
-                                    vectis_request *request,
-                                    vectis_response *response,
-                                    void *userdata,
+static vectis_status sample_handler(vectis_app *app, vectis_request *request,
+                                    vectis_response *response, void *userdata,
                                     vectis_error *error) {
   (void)app;
   (void)request;
@@ -18,8 +16,7 @@ static vectis_status sample_handler(vectis_app *app,
   return vectis_response_text(response, 200, "text/plain", "ok", error);
 }
 
-static vectis_status https_get(const char *url,
-                               const char *ca_bundle_path,
+static vectis_status https_get(const char *url, const char *ca_bundle_path,
                                const char *client_bundle_path,
                                vectis_http_response *response,
                                vectis_error *error) {
@@ -82,22 +79,21 @@ static int read_file(const char *path, char **out, size_t *out_size) {
   return 1;
 }
 
-static void assert_https_fails(const char *url,
-                               const char *ca_bundle_path,
+static void assert_https_fails(const char *url, const char *ca_bundle_path,
                                const char *client_bundle_path) {
   vectis_http_response response;
   vectis_error error;
   vectis_status status;
 
   memset(&response, 0, sizeof(response));
-  status = https_get(url, ca_bundle_path, client_bundle_path, &response, &error);
+  status =
+      https_get(url, ca_bundle_path, client_bundle_path, &response, &error);
   assert(status != VECTIS_OK);
   assert(error.source == VECTIS_ERROR_SOURCE_CURL);
   vectis_http_response_cleanup(&response);
 }
 
-static void assert_https_ok(const char *url,
-                            const char *ca_bundle_path,
+static void assert_https_ok(const char *url, const char *ca_bundle_path,
                             const char *client_bundle_path) {
   vectis_http_response response;
   vectis_error error;
@@ -108,16 +104,15 @@ static void assert_https_ok(const char *url,
   status = VECTIS_ERR_STATE;
   for (attempt = 0; attempt < 100 && status != VECTIS_OK; ++attempt) {
     vectis_http_response_cleanup(&response);
-    status = https_get(url, ca_bundle_path, client_bundle_path, &response, &error);
+    status =
+        https_get(url, ca_bundle_path, client_bundle_path, &response, &error);
     if (status != VECTIS_OK) {
       usleep(100000u);
     }
   }
   if (status != VECTIS_OK) {
     fprintf(stderr, "https smoke failed: status=%s error=%s detail=%s\n",
-            vectis_status_string(status),
-            error.message,
-            error.detail);
+            vectis_status_string(status), error.message, error.detail);
   }
   assert(status == VECTIS_OK);
   assert(response.status_code == 200L);
@@ -126,7 +121,8 @@ static void assert_https_ok(const char *url,
   vectis_http_response_cleanup(&response);
 }
 
-static void assert_https_ca_source_ok(const char *url, vectis_source ca_source, const char *label) {
+static void assert_https_ca_source_ok(const char *url, vectis_source ca_source,
+                                      const char *label) {
   vectis_http_response response;
   vectis_error error;
   vectis_status status;
@@ -143,10 +139,7 @@ static void assert_https_ca_source_ok(const char *url, vectis_source ca_source, 
   }
   if (status != VECTIS_OK) {
     fprintf(stderr, "https %s CA smoke failed: status=%s error=%s detail=%s\n",
-            label,
-            vectis_status_string(status),
-            error.message,
-            error.detail);
+            label, vectis_status_string(status), error.message, error.detail);
   }
   assert(status == VECTIS_OK);
   assert(response.status_code == 200L);
@@ -165,11 +158,14 @@ int main(void) {
   const char root_bundle_path[] = "/tmp/vectis-runtime-root-bundle.pem";
   const char root_cert_path[] = "/tmp/vectis-runtime-root-cert.pem";
   const char root_key_path[] = "/tmp/vectis-runtime-root-key.pem";
-  const char wrong_root_bundle_path[] = "/tmp/vectis-runtime-wrong-root-bundle.pem";
+  const char wrong_root_bundle_path[] =
+      "/tmp/vectis-runtime-wrong-root-bundle.pem";
   const char wrong_root_cert_path[] = "/tmp/vectis-runtime-wrong-root-cert.pem";
   const char wrong_root_key_path[] = "/tmp/vectis-runtime-wrong-root-key.pem";
-  const char intermediate_cert_path[] = "/tmp/vectis-runtime-intermediate-cert.pem";
-  const char intermediate_key_path[] = "/tmp/vectis-runtime-intermediate-key.pem";
+  const char intermediate_cert_path[] =
+      "/tmp/vectis-runtime-intermediate-cert.pem";
+  const char intermediate_key_path[] =
+      "/tmp/vectis-runtime-intermediate-key.pem";
   const char server_cert_path[] = "/tmp/vectis-runtime-server-cert.pem";
   const char server_key_path[] = "/tmp/vectis-runtime-server-key.pem";
   char *root_cert_pem;
@@ -243,10 +239,11 @@ int main(void) {
 
   assert_https_ok("https://127.0.0.1:28443/secure", root_cert_path, NULL);
   assert(read_file(root_cert_path, &root_cert_pem, &root_cert_pem_size));
-  assert_https_ca_source_ok("https://127.0.0.1:28443/secure",
-                            vectis_source_from_memory(root_cert_pem, root_cert_pem_size),
-                            "memory");
-  assert(lc_source_from_memory(root_cert_pem, root_cert_pem_size, &root_cert_source, NULL) == LC_OK);
+  assert_https_ca_source_ok(
+      "https://127.0.0.1:28443/secure",
+      vectis_source_from_memory(root_cert_pem, root_cert_pem_size), "memory");
+  assert(lc_source_from_memory(root_cert_pem, root_cert_pem_size,
+                               &root_cert_source, NULL) == LC_OK);
   assert_https_ca_source_ok("https://127.0.0.1:28443/secure",
                             vectis_source_from_lc(root_cert_source),
                             "lc_source");
@@ -255,7 +252,8 @@ int main(void) {
   free(root_cert_pem);
   root_cert_pem = NULL;
   assert_https_fails("https://127.0.0.1:28443/secure", NULL, NULL);
-  assert_https_fails("https://127.0.0.1:28443/secure", wrong_root_cert_path, NULL);
+  assert_https_fails("https://127.0.0.1:28443/secure", wrong_root_cert_path,
+                     NULL);
   assert_https_fails("https://localhost:28443/secure", root_cert_path, NULL);
 
   status = vectis_stop(app, &error);

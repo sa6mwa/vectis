@@ -81,9 +81,12 @@ int main(void) {
   config.known_hosts_path = getenv("VECTIS_SFTP_KNOWN_HOSTS");
   config.timeout_ms = 10000L;
 
-  local_upload = env_or_default("VECTIS_SFTP_UPLOAD_FILE", "curl-sftp-upload.txt");
-  local_download = env_or_default("VECTIS_SFTP_DOWNLOAD_FILE", "curl-sftp-download.txt");
-  remote_path = env_or_default("VECTIS_SFTP_REMOTE_FILE", "/config/curl-sftp-upload.txt");
+  local_upload =
+      env_or_default("VECTIS_SFTP_UPLOAD_FILE", "curl-sftp-upload.txt");
+  local_download =
+      env_or_default("VECTIS_SFTP_DOWNLOAD_FILE", "curl-sftp-download.txt");
+  remote_path =
+      env_or_default("VECTIS_SFTP_REMOTE_FILE", "/config/curl-sftp-upload.txt");
 
   if (!write_file(local_upload, payload)) {
     fprintf(stderr, "failed to write %s\n", local_upload);
@@ -97,7 +100,8 @@ int main(void) {
     sftp->close(sftp);
     return print_error("sftp->upload_file", &error);
   }
-  if (sftp->download_file(sftp, remote_path, local_download, &error) != VECTIS_OK) {
+  if (sftp->download_file(sftp, remote_path, local_download, &error) !=
+      VECTIS_OK) {
     sftp->close(sftp);
     return print_error("sftp->download_file", &error);
   }

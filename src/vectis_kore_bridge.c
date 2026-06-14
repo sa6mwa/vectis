@@ -1,9 +1,9 @@
 #include "vectis_internal.h"
 
-#include <lc/lc.h>
 #include <kore/acme.h>
-#include <kore/kore.h>
 #include <kore/http.h>
+#include <kore/kore.h>
+#include <lc/lc.h>
 #if defined(__linux__)
 #include <kore/seccomp.h>
 #endif
@@ -24,7 +24,8 @@ extern char **environ;
 
 int vectis_kore_main(int argc, char **argv);
 int vectis_kore_route(struct http_request *req);
-int vectis_kore_body_chunk(struct http_request *req, const void *data, size_t len);
+int vectis_kore_body_chunk(struct http_request *req, const void *data,
+                           size_t len);
 void vectis_kore_request_free(struct http_request *req);
 void kore_parent_configure(int argc, char **argv);
 void kore_parent_teardown(void);
@@ -58,13 +59,13 @@ static const char vectis_kore_default_dhparams[] =
 #if defined(__linux__)
 static struct sock_filter vectis_kore_dependency_seccomp_filter[] = {
 #if defined(SYS_eventfd)
-  KORE_SYSCALL_ALLOW(eventfd),
+    KORE_SYSCALL_ALLOW(eventfd),
 #endif
 #if defined(SYS_eventfd2)
-  KORE_SYSCALL_ALLOW(eventfd2),
+    KORE_SYSCALL_ALLOW(eventfd2),
 #endif
 #if defined(SYS_shutdown)
-  KORE_SYSCALL_ALLOW(shutdown),
+    KORE_SYSCALL_ALLOW(shutdown),
 #endif
 };
 
@@ -83,10 +84,9 @@ typedef struct vectis_kore_material {
 } vectis_kore_material;
 
 static int vectis_kore_material_present(const vectis_kore_material *material);
-static vectis_status vectis_kore_material_bytes(const vectis_kore_material *material,
-                                                void **out,
-                                                size_t *out_size,
-                                                vectis_error *error);
+static vectis_status
+vectis_kore_material_bytes(const vectis_kore_material *material, void **out,
+                           size_t *out_size, vectis_error *error);
 
 static size_t vectis_kore_environment_size(void) {
   size_t total;
@@ -197,10 +197,8 @@ static char *vectis_kore_strdup(const char *value) {
   return copy;
 }
 
-static void vectis_kore_set_errorf(vectis_error *error,
-                                   vectis_status code,
-                                   const char *fmt,
-                                   ...) {
+static void vectis_kore_set_errorf(vectis_error *error, vectis_status code,
+                                   const char *fmt, ...) {
   va_list ap;
 
   if (error == NULL) {
@@ -227,7 +225,8 @@ static void vectis_kore_cleanup_config(vectis_kore_runtime_config *config) {
        strcmp(config->runtime_certkey, config->runtime_certfile) != 0)) {
     (void)unlink(config->runtime_certkey);
   }
-  if (config->runtime_client_ca_temporary && config->runtime_client_ca_file != NULL) {
+  if (config->runtime_client_ca_temporary &&
+      config->runtime_client_ca_file != NULL) {
     (void)unlink(config->runtime_client_ca_file);
   }
   free(config->runtime_certfile);
@@ -241,24 +240,28 @@ static void vectis_kore_cleanup_config(vectis_kore_runtime_config *config) {
   config->runtime_client_ca_temporary = 0;
 }
 
-static vectis_status vectis_kore_prepare_acme(vectis_kore_runtime_config *config,
-                                              vectis_error *error) {
+static vectis_status
+vectis_kore_prepare_acme(vectis_kore_runtime_config *config,
+                         vectis_error *error) {
   if (config->tls_mode != VECTIS_TLS_MODE_ACME) {
     return VECTIS_OK;
   }
   if (config->domain == NULL || config->domain[0] == '\0' ||
       strchr(config->domain, '*') != NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "ACME mode requires a concrete TLS domain");
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "ACME mode requires a concrete TLS domain");
     return VECTIS_ERR_INVALID;
   }
   if (config->acme_email == NULL || config->acme_email[0] == '\0') {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "ACME mode requires acme_email");
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "ACME mode requires acme_email");
     return VECTIS_ERR_INVALID;
   }
   return VECTIS_OK;
 }
 
-static void vectis_kore_cleanup_local_config(vectis_kore_runtime_config *config) {
+static void
+vectis_kore_cleanup_local_config(vectis_kore_runtime_config *config) {
   vectis_kore_cleanup_config(config);
 }
 
@@ -294,7 +297,8 @@ static vectis_status vectis_kore_temp_file_from_bytes(const void *data,
   int fd;
 
   if (path_out == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "temporary path output is required");
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "temporary path output is required");
     return VECTIS_ERR_INVALID;
   }
   *path_out = NULL;
@@ -305,32 +309,35 @@ static vectis_status vectis_kore_temp_file_from_bytes(const void *data,
 
   fd = mkstemp(template_path);
   if (fd < 0) {
-    vectis_set_error(error, VECTIS_ERR_STATE, "failed to create temporary TLS material file");
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to create temporary TLS material file");
     return VECTIS_ERR_STATE;
   }
   (void)fchmod(fd, S_IRUSR | S_IWUSR);
   if (!vectis_kore_write_all(fd, data, size) || fsync(fd) != 0) {
     (void)close(fd);
     (void)unlink(template_path);
-    vectis_set_error(error, VECTIS_ERR_STATE, "failed to write temporary TLS material file");
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to write temporary TLS material file");
     return VECTIS_ERR_STATE;
   }
   if (close(fd) != 0) {
     (void)unlink(template_path);
-    vectis_set_error(error, VECTIS_ERR_STATE, "failed to close temporary TLS material file");
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to close temporary TLS material file");
     return VECTIS_ERR_STATE;
   }
   *path_out = vectis_kore_strdup(template_path);
   if (*path_out == NULL) {
     (void)unlink(template_path);
-    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy temporary TLS material path");
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy temporary TLS material path");
     return VECTIS_ERR_NOMEM;
   }
   return VECTIS_OK;
 }
 
-static vectis_status vectis_kore_read_source(lc_source *source,
-                                             void **out,
+static vectis_status vectis_kore_read_source(lc_source *source, void **out,
                                              size_t *out_size,
                                              vectis_error *error) {
   unsigned char chunk[4096];
@@ -352,10 +359,9 @@ static vectis_status vectis_kore_read_source(lc_source *source,
   capacity = 0u;
   lc_error_init(&lcerr);
   if (source->reset != NULL && source->reset(source, &lcerr) != LC_OK) {
-    vectis_kore_set_errorf(error,
-                           VECTIS_ERR_STATE,
-                           "failed to reset TLS source: %s",
-                           lcerr.message != NULL ? lcerr.message : "unknown lockdc error");
+    vectis_kore_set_errorf(
+        error, VECTIS_ERR_STATE, "failed to reset TLS source: %s",
+        lcerr.message != NULL ? lcerr.message : "unknown lockdc error");
     lc_error_cleanup(&lcerr);
     return VECTIS_ERR_STATE;
   }
@@ -380,7 +386,8 @@ static vectis_status vectis_kore_read_source(lc_source *source,
       if (grown == NULL) {
         free(buffer);
         lc_error_cleanup(&lcerr);
-        vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to buffer TLS source");
+        vectis_set_error(error, VECTIS_ERR_NOMEM,
+                         "failed to buffer TLS source");
         return VECTIS_ERR_NOMEM;
       }
       buffer = grown;
@@ -402,16 +409,17 @@ static vectis_status vectis_kore_read_source(lc_source *source,
   return VECTIS_OK;
 }
 
-static vectis_status vectis_kore_material_to_file(const vectis_kore_material *material,
-                                                  char **path_out,
-                                                  int *temporary_out,
-                                                  vectis_error *error) {
+static vectis_status
+vectis_kore_material_to_file(const vectis_kore_material *material,
+                             char **path_out, int *temporary_out,
+                             vectis_error *error) {
   void *source_bytes;
   size_t source_size;
   vectis_status status;
 
   if (path_out == NULL || temporary_out == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "TLS material output is required");
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "TLS material output is required");
     return VECTIS_ERR_INVALID;
   }
   *path_out = NULL;
@@ -423,16 +431,15 @@ static vectis_status vectis_kore_material_to_file(const vectis_kore_material *ma
   if (material->path != NULL) {
     *path_out = vectis_kore_strdup(material->path);
     if (*path_out == NULL) {
-      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy TLS material path");
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy TLS material path");
       return VECTIS_ERR_NOMEM;
     }
     return VECTIS_OK;
   }
   if (material->memory != NULL && material->memory_size > 0u) {
-    status = vectis_kore_temp_file_from_bytes(material->memory,
-                                              material->memory_size,
-                                              path_out,
-                                              error);
+    status = vectis_kore_temp_file_from_bytes(
+        material->memory, material->memory_size, path_out, error);
     if (status == VECTIS_OK) {
       *temporary_out = 1;
     }
@@ -441,11 +448,13 @@ static vectis_status vectis_kore_material_to_file(const vectis_kore_material *ma
   if (material->source != NULL) {
     source_bytes = NULL;
     source_size = 0u;
-    status = vectis_kore_read_source(material->source, &source_bytes, &source_size, error);
+    status = vectis_kore_read_source(material->source, &source_bytes,
+                                     &source_size, error);
     if (status != VECTIS_OK) {
       return status;
     }
-    status = vectis_kore_temp_file_from_bytes(source_bytes, source_size, path_out, error);
+    status = vectis_kore_temp_file_from_bytes(source_bytes, source_size,
+                                              path_out, error);
     free(source_bytes);
     if (status == VECTIS_OK) {
       *temporary_out = 1;
@@ -456,11 +465,11 @@ static vectis_status vectis_kore_material_to_file(const vectis_kore_material *ma
   return VECTIS_ERR_INVALID;
 }
 
-static vectis_status vectis_kore_certificate_chain_to_file(const vectis_kore_material *certificate,
-                                                           const vectis_kore_material *ca_bundle,
-                                                           char **path_out,
-                                                           int *temporary_out,
-                                                           vectis_error *error) {
+static vectis_status
+vectis_kore_certificate_chain_to_file(const vectis_kore_material *certificate,
+                                      const vectis_kore_material *ca_bundle,
+                                      char **path_out, int *temporary_out,
+                                      vectis_error *error) {
   void *cert_bytes;
   void *ca_bytes;
   unsigned char *chain;
@@ -470,11 +479,13 @@ static vectis_status vectis_kore_certificate_chain_to_file(const vectis_kore_mat
   vectis_status status;
 
   if (certificate == NULL || path_out == NULL || temporary_out == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "TLS certificate output is required");
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "TLS certificate output is required");
     return VECTIS_ERR_INVALID;
   }
   if (!vectis_kore_material_present(ca_bundle)) {
-    return vectis_kore_material_to_file(certificate, path_out, temporary_out, error);
+    return vectis_kore_material_to_file(certificate, path_out, temporary_out,
+                                        error);
   }
 
   cert_bytes = NULL;
@@ -482,7 +493,8 @@ static vectis_status vectis_kore_certificate_chain_to_file(const vectis_kore_mat
   chain = NULL;
   cert_size = 0u;
   ca_size = 0u;
-  status = vectis_kore_material_bytes(certificate, &cert_bytes, &cert_size, error);
+  status =
+      vectis_kore_material_bytes(certificate, &cert_bytes, &cert_size, error);
   if (status != VECTIS_OK) {
     return status;
   }
@@ -494,18 +506,21 @@ static vectis_status vectis_kore_certificate_chain_to_file(const vectis_kore_mat
   if (ca_size > ((size_t)-1) - cert_size - 1u) {
     free(cert_bytes);
     free(ca_bytes);
-    vectis_set_error(error, VECTIS_ERR_NOMEM, "TLS certificate chain is too large");
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "TLS certificate chain is too large");
     return VECTIS_ERR_NOMEM;
   }
   chain_size = cert_size + ca_size;
-  if (cert_size > 0u && ((const unsigned char *)cert_bytes)[cert_size - 1u] != '\n') {
+  if (cert_size > 0u &&
+      ((const unsigned char *)cert_bytes)[cert_size - 1u] != '\n') {
     chain_size++;
   }
   chain = (unsigned char *)malloc(chain_size);
   if (chain == NULL) {
     free(cert_bytes);
     free(ca_bytes);
-    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate TLS certificate chain");
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate TLS certificate chain");
     return VECTIS_ERR_NOMEM;
   }
   memcpy(chain, cert_bytes, cert_size);
@@ -527,10 +542,9 @@ static vectis_status vectis_kore_certificate_chain_to_file(const vectis_kore_mat
 
 static const char *vectis_kore_find_private_key_marker(const char *data,
                                                        size_t size) {
-  const char *markers[] = {
-      "-----BEGIN PRIVATE KEY-----",
-      "-----BEGIN RSA PRIVATE KEY-----",
-      "-----BEGIN EC PRIVATE KEY-----"};
+  const char *markers[] = {"-----BEGIN PRIVATE KEY-----",
+                           "-----BEGIN RSA PRIVATE KEY-----",
+                           "-----BEGIN EC PRIVATE KEY-----"};
   const char *marker;
   size_t marker_size;
   size_t i;
@@ -554,8 +568,7 @@ static const char *vectis_kore_find_private_key_marker(const char *data,
   return NULL;
 }
 
-static vectis_status vectis_kore_read_path(const char *path,
-                                           void **out,
+static vectis_status vectis_kore_read_path(const char *path, void **out,
                                            size_t *out_size,
                                            vectis_error *error) {
   FILE *fp;
@@ -563,32 +576,37 @@ static vectis_status vectis_kore_read_path(const char *path,
   void *buffer;
 
   if (path == NULL || out == NULL || out_size == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "TLS material path is required");
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "TLS material path is required");
     return VECTIS_ERR_INVALID;
   }
   *out = NULL;
   *out_size = 0u;
   fp = fopen(path, "rb");
   if (fp == NULL) {
-    vectis_kore_set_errorf(error, VECTIS_ERR_STATE, "failed to open TLS material path: %s", path);
+    vectis_kore_set_errorf(error, VECTIS_ERR_STATE,
+                           "failed to open TLS material path: %s", path);
     return VECTIS_ERR_STATE;
   }
   if (fseek(fp, 0L, SEEK_END) != 0 || (len = ftell(fp)) <= 0L ||
       fseek(fp, 0L, SEEK_SET) != 0) {
     (void)fclose(fp);
-    vectis_set_error(error, VECTIS_ERR_STATE, "failed to size TLS material path");
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to size TLS material path");
     return VECTIS_ERR_STATE;
   }
   buffer = malloc((size_t)len);
   if (buffer == NULL) {
     (void)fclose(fp);
-    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to buffer TLS material path");
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to buffer TLS material path");
     return VECTIS_ERR_NOMEM;
   }
   if (fread(buffer, 1u, (size_t)len, fp) != (size_t)len) {
     free(buffer);
     (void)fclose(fp);
-    vectis_set_error(error, VECTIS_ERR_STATE, "failed to read TLS material path");
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to read TLS material path");
     return VECTIS_ERR_STATE;
   }
   (void)fclose(fp);
@@ -597,10 +615,9 @@ static vectis_status vectis_kore_read_path(const char *path,
   return VECTIS_OK;
 }
 
-static vectis_status vectis_kore_material_bytes(const vectis_kore_material *material,
-                                                void **out,
-                                                size_t *out_size,
-                                                vectis_error *error) {
+static vectis_status
+vectis_kore_material_bytes(const vectis_kore_material *material, void **out,
+                           size_t *out_size, vectis_error *error) {
   void *copy;
 
   if (material == NULL || out == NULL || out_size == NULL) {
@@ -624,12 +641,10 @@ static vectis_status vectis_kore_material_bytes(const vectis_kore_material *mate
   return vectis_kore_read_path(material->path, out, out_size, error);
 }
 
-static vectis_status vectis_kore_split_bundle(const vectis_kore_material *bundle,
-                                              char **certfile,
-                                              int *cert_temporary,
-                                              char **certkey,
-                                              int *key_temporary,
-                                              vectis_error *error) {
+static vectis_status
+vectis_kore_split_bundle(const vectis_kore_material *bundle, char **certfile,
+                         int *cert_temporary, char **certkey,
+                         int *key_temporary, vectis_error *error) {
   void *bundle_bytes;
   size_t bundle_size;
   const char *key_start;
@@ -638,26 +653,27 @@ static vectis_status vectis_kore_split_bundle(const vectis_kore_material *bundle
 
   bundle_bytes = NULL;
   bundle_size = 0u;
-  status = vectis_kore_material_bytes(bundle, &bundle_bytes, &bundle_size, error);
+  status =
+      vectis_kore_material_bytes(bundle, &bundle_bytes, &bundle_size, error);
   if (status != VECTIS_OK) {
     return status;
   }
-  key_start = vectis_kore_find_private_key_marker((const char *)bundle_bytes, bundle_size);
+  key_start = vectis_kore_find_private_key_marker((const char *)bundle_bytes,
+                                                  bundle_size);
   if (key_start == NULL || key_start == (const char *)bundle_bytes) {
     free(bundle_bytes);
-    vectis_set_error(error,
-                     VECTIS_ERR_INVALID,
-                     "TLS cert/key bundle must contain certificate data before a private key");
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "TLS cert/key bundle must contain certificate data before "
+                     "a private key");
     return VECTIS_ERR_INVALID;
   }
   cert_size = (size_t)(key_start - (const char *)bundle_bytes);
-  status = vectis_kore_temp_file_from_bytes(bundle_bytes, cert_size, certfile, error);
+  status = vectis_kore_temp_file_from_bytes(bundle_bytes, cert_size, certfile,
+                                            error);
   if (status == VECTIS_OK) {
     *cert_temporary = 1;
-    status = vectis_kore_temp_file_from_bytes(key_start,
-                                              bundle_size - cert_size,
-                                              certkey,
-                                              error);
+    status = vectis_kore_temp_file_from_bytes(
+        key_start, bundle_size - cert_size, certkey, error);
   }
   free(bundle_bytes);
   if (status != VECTIS_OK) {
@@ -675,8 +691,7 @@ static vectis_status vectis_kore_split_bundle(const vectis_kore_material *bundle
 
 static int vectis_kore_material_present(const vectis_kore_material *material) {
   return material != NULL &&
-         (material->path != NULL ||
-          material->source != NULL ||
+         (material->path != NULL || material->source != NULL ||
           (material->memory != NULL && material->memory_size > 0u));
 }
 
@@ -720,38 +735,31 @@ static vectis_status vectis_kore_prepare_tls(vectis_kore_runtime_config *config,
   client_ca.source = config->client_ca_bundle_source;
 
   if (vectis_kore_material_present(&bundle)) {
-    status = vectis_kore_split_bundle(&bundle,
-                                      &config->runtime_certfile,
-                                      &config->runtime_certfile_temporary,
-                                      &config->runtime_certkey,
-                                      &config->runtime_certkey_temporary,
-                                      error);
+    status = vectis_kore_split_bundle(
+        &bundle, &config->runtime_certfile, &config->runtime_certfile_temporary,
+        &config->runtime_certkey, &config->runtime_certkey_temporary, error);
     if (status != VECTIS_OK) {
       return status;
     }
   } else {
-    status = vectis_kore_certificate_chain_to_file(&certificate,
-                                                  &ca_bundle,
-                                                  &config->runtime_certfile,
-                                                  &config->runtime_certfile_temporary,
-                                                  error);
+    status = vectis_kore_certificate_chain_to_file(
+        &certificate, &ca_bundle, &config->runtime_certfile,
+        &config->runtime_certfile_temporary, error);
     if (status != VECTIS_OK) {
       return status;
     }
-    status = vectis_kore_material_to_file(&private_key,
-                                          &config->runtime_certkey,
-                                          &config->runtime_certkey_temporary,
-                                          error);
+    status =
+        vectis_kore_material_to_file(&private_key, &config->runtime_certkey,
+                                     &config->runtime_certkey_temporary, error);
     if (status != VECTIS_OK) {
       return status;
     }
   }
 
   if (config->require_client_certificate) {
-    status = vectis_kore_material_to_file(&client_ca,
-                                          &config->runtime_client_ca_file,
-                                          &config->runtime_client_ca_temporary,
-                                          error);
+    status = vectis_kore_material_to_file(
+        &client_ca, &config->runtime_client_ca_file,
+        &config->runtime_client_ca_temporary, error);
     if (status != VECTIS_OK) {
       return status;
     }
@@ -767,17 +775,17 @@ static vectis_status vectis_kore_load_default_dhparams(vectis_error *error) {
     return VECTIS_OK;
   }
   path = NULL;
-  status = vectis_kore_temp_file_from_bytes(vectis_kore_default_dhparams,
-                                            strlen(vectis_kore_default_dhparams),
-                                            &path,
-                                            error);
+  status = vectis_kore_temp_file_from_bytes(
+      vectis_kore_default_dhparams, strlen(vectis_kore_default_dhparams), &path,
+      error);
   if (status != VECTIS_OK) {
     return status;
   }
   if (!kore_tls_dh_load(path)) {
     (void)unlink(path);
     free(path);
-    vectis_set_error(error, VECTIS_ERR_STATE, "failed to load Vectis default DH parameters");
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to load Vectis default DH parameters");
     return VECTIS_ERR_STATE;
   }
   (void)unlink(path);
@@ -797,17 +805,24 @@ static void vectis_kore_apply_server_config(const vectis_server_config *server,
   http_header_max = vectis_kore_u16_from_size(server->max_request_header_bytes);
   http_body_max = server->max_request_body_bytes;
   http_body_disk_offload = 0u;
-  http_header_timeout = vectis_kore_seconds_from_ms(server->request_header_timeout_ms);
-  http_body_timeout = vectis_kore_seconds_from_ms(server->request_body_idle_timeout_ms);
+  http_header_timeout =
+      vectis_kore_seconds_from_ms(server->request_header_timeout_ms);
+  http_body_timeout =
+      vectis_kore_seconds_from_ms(server->request_body_idle_timeout_ms);
   http_response_write_timeout =
       vectis_kore_u32_from_size((size_t)server->response_write_idle_timeout_ms);
   http_body_min_rate = (u_int64_t)server->request_body_min_rate_bytes_per_sec;
-  http_body_min_rate_grace = server->request_body_min_rate_grace_ms > 0L ?
-      (u_int64_t)server->request_body_min_rate_grace_ms : 0u;
-  http_keepalive_time = server->keepalive_disabled ?
-      0u : vectis_kore_seconds_from_ms(server->keepalive_timeout_ms);
-  http_keepalive_max_requests = server->keepalive_disabled ?
-      0u : (u_int32_t)server->keepalive_max_requests;
+  http_body_min_rate_grace =
+      server->request_body_min_rate_grace_ms > 0L
+          ? (u_int64_t)server->request_body_min_rate_grace_ms
+          : 0u;
+  http_keepalive_time =
+      server->keepalive_disabled
+          ? 0u
+          : vectis_kore_seconds_from_ms(server->keepalive_timeout_ms);
+  http_keepalive_max_requests = server->keepalive_disabled
+                                    ? 0u
+                                    : (u_int32_t)server->keepalive_max_requests;
 }
 
 static void vectis_kore_setup_domain_tls(struct kore_domain *domain) {
@@ -818,10 +833,8 @@ static void vectis_kore_setup_domain_tls(struct kore_domain *domain) {
   cert_pem = NULL;
   cert_pem_size = 0u;
   vectis_error_clear(&error);
-  if (vectis_kore_read_path(vectis_kore_current.runtime_certfile,
-                            &cert_pem,
-                            &cert_pem_size,
-                            &error) != VECTIS_OK) {
+  if (vectis_kore_read_path(vectis_kore_current.runtime_certfile, &cert_pem,
+                            &cert_pem_size, &error) != VECTIS_OK) {
     fatal("failed to read Vectis TLS certificate material: %s", error.message);
   }
   kore_tls_domain_setup(domain, KORE_PEM_CERT_CHAIN, cert_pem, cert_pem_size);
@@ -852,10 +865,9 @@ static vectis_status vectis_kore_copy_headers(struct http_request *req,
     if (header->header == NULL || header->header[0] == '\0') {
       continue;
     }
-    status = vectis_internal_request_add_header(request,
-                                                header->header,
-                                                header->value != NULL ? header->value : "",
-                                                error);
+    status = vectis_internal_request_add_header(
+        request, header->header, header->value != NULL ? header->value : "",
+        error);
     if (status != VECTIS_OK) {
       return status;
     }
@@ -863,12 +875,10 @@ static vectis_status vectis_kore_copy_headers(struct http_request *req,
   return VECTIS_OK;
 }
 
-static vectis_status vectis_kore_add_query_pair(vectis_request *request,
-                                                const char *name,
-                                                size_t name_len,
-                                                const char *value,
-                                                size_t value_len,
-                                                vectis_error *error) {
+static vectis_status
+vectis_kore_add_query_pair(vectis_request *request, const char *name,
+                           size_t name_len, const char *value, size_t value_len,
+                           vectis_error *error) {
   char *owned_name;
   char *owned_value;
   vectis_status status;
@@ -881,17 +891,20 @@ static vectis_status vectis_kore_add_query_pair(vectis_request *request,
   if (owned_name == NULL || owned_value == NULL) {
     free(owned_name);
     free(owned_value);
-    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate query parameter");
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate query parameter");
     return VECTIS_ERR_NOMEM;
   }
   if (!http_argument_urldecode(owned_name, 1) ||
       !http_argument_urldecode(owned_value, 1)) {
     free(owned_name);
     free(owned_value);
-    vectis_set_error(error, VECTIS_ERR_INVALID, "failed to decode query parameter");
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "failed to decode query parameter");
     return VECTIS_ERR_INVALID;
   }
-  status = vectis_internal_request_add_query(request, owned_name, owned_value, error);
+  status = vectis_internal_request_add_query(request, owned_name, owned_value,
+                                             error);
   free(owned_name);
   free(owned_value);
   return status;
@@ -922,19 +935,11 @@ static vectis_status vectis_kore_copy_query(struct http_request *req,
       if (eq != NULL) {
         name_len = (size_t)(eq - pair);
         value_len = pair_len - name_len - 1u;
-        status = vectis_kore_add_query_pair(request,
-                                            pair,
-                                            name_len,
-                                            eq + 1,
-                                            value_len,
-                                            error);
+        status = vectis_kore_add_query_pair(request, pair, name_len, eq + 1,
+                                            value_len, error);
       } else {
-        status = vectis_kore_add_query_pair(request,
-                                            pair,
-                                            pair_len,
-                                            "",
-                                            0u,
-                                            error);
+        status =
+            vectis_kore_add_query_pair(request, pair, pair_len, "", 0u, error);
       }
       if (status != VECTIS_OK) {
         return status;
@@ -1036,19 +1041,22 @@ void vectis_kore_request_free(struct http_request *req) {
   vectis_kore_body_state_cleanup((vectis_kore_body_state *)req->hdlr_extra);
 }
 
-static size_t vectis_kore_policy_memory_limit(const vectis_body_policy *policy) {
+static size_t
+vectis_kore_policy_memory_limit(const vectis_body_policy *policy) {
   if (policy == NULL || policy->memory_buffer_limit_bytes == 0u) {
     return VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
   }
   return policy->memory_buffer_limit_bytes;
 }
 
-static vectis_kore_body_state *vectis_kore_body_state_get(struct http_request *req) {
+static vectis_kore_body_state *
+vectis_kore_body_state_get(struct http_request *req) {
   if (req == NULL) {
     return NULL;
   }
   if (req->hdlr_extra == NULL) {
-    return (vectis_kore_body_state *)http_state_create(req, sizeof(vectis_kore_body_state));
+    return (vectis_kore_body_state *)http_state_create(
+        req, sizeof(vectis_kore_body_state));
   }
   return (vectis_kore_body_state *)req->hdlr_extra;
 }
@@ -1082,8 +1090,8 @@ static int vectis_kore_body_state_spool(vectis_kore_body_state *state) {
     free(path);
     return 0;
   }
-  if (state->memory_size > 0u &&
-      fwrite(state->memory, 1u, state->memory_size, file) != state->memory_size) {
+  if (state->memory_size > 0u && fwrite(state->memory, 1u, state->memory_size,
+                                        file) != state->memory_size) {
     (void)fclose(file);
     (void)unlink(path);
     free(path);
@@ -1100,8 +1108,7 @@ static int vectis_kore_body_state_spool(vectis_kore_body_state *state) {
 }
 
 static int vectis_kore_body_state_append(vectis_kore_body_state *state,
-                                         const void *data,
-                                         size_t len) {
+                                         const void *data, size_t len) {
   unsigned char *next;
   size_t memory_limit;
   size_t next_capacity;
@@ -1130,7 +1137,8 @@ static int vectis_kore_body_state_append(vectis_kore_body_state *state,
     }
   } else {
     if (state->memory_size + len > state->memory_capacity) {
-      next_capacity = state->memory_capacity == 0u ? len : state->memory_capacity;
+      next_capacity =
+          state->memory_capacity == 0u ? len : state->memory_capacity;
       while (next_capacity < state->memory_size + len) {
         if (next_capacity > ((size_t)-1 / 2u)) {
           next_capacity = state->memory_size + len;
@@ -1154,8 +1162,7 @@ static int vectis_kore_body_state_append(vectis_kore_body_state *state,
 
 static void vectis_kore_reject_body_chunk(struct http_request *req,
                                           vectis_kore_body_state *state,
-                                          int status,
-                                          const char *message) {
+                                          int status, const char *message) {
   if (state != NULL) {
     state->error_status = status;
   }
@@ -1163,7 +1170,8 @@ static void vectis_kore_reject_body_chunk(struct http_request *req,
   req->flags |= HTTP_REQUEST_DELETE;
 }
 
-int vectis_kore_body_chunk(struct http_request *req, const void *data, size_t len) {
+int vectis_kore_body_chunk(struct http_request *req, const void *data,
+                           size_t len) {
   vectis_kore_body_state *state;
   vectis_error error;
   vectis_app *app;
@@ -1187,41 +1195,37 @@ int vectis_kore_body_chunk(struct http_request *req, const void *data, size_t le
       return KORE_RESULT_OK;
     }
     method = vectis_kore_method(req->method);
-    status = vectis_internal_route_body_policy(app, method, req->path, &state->policy, &error);
+    status = vectis_internal_route_body_policy(app, method, req->path,
+                                               &state->policy, &error);
     if (status != VECTIS_OK) {
       vectis_kore_reject_body_chunk(req, state, 404, NULL);
       return KORE_RESULT_OK;
     }
     state->expected_size = (size_t)req->http_body_length;
     if (state->policy.mode == VECTIS_BODY_NONE && req->http_body_length > 0u) {
-      vectis_kore_reject_body_chunk(req,
-                                    state,
-                                    413,
-                                    "request body is not allowed for this route");
+      vectis_kore_reject_body_chunk(
+          req, state, 413, "request body is not allowed for this route");
       return KORE_RESULT_OK;
     }
     if (req->http_body_length > (u_int64_t)((size_t)-1) ||
         state->expected_size > state->policy.max_bytes) {
-      vectis_kore_reject_body_chunk(req,
-                                    state,
-                                    413,
+      vectis_kore_reject_body_chunk(req, state, 413,
                                     "request body exceeds route limit");
       return KORE_RESULT_OK;
     }
     state->initialized = 1;
   }
   if (!vectis_kore_body_state_append(state, data, len)) {
-    vectis_kore_reject_body_chunk(req, state, 413, "failed to stream request body");
+    vectis_kore_reject_body_chunk(req, state, 413,
+                                  "failed to stream request body");
     return KORE_RESULT_OK;
   }
   return KORE_RESULT_OK;
 }
 
-static vectis_status vectis_kore_attach_streamed_body(struct http_request *req,
-                                                      const vectis_body_policy *policy,
-                                                      vectis_request *request,
-                                                      int *http_status,
-                                                      vectis_error *error) {
+static vectis_status vectis_kore_attach_streamed_body(
+    struct http_request *req, const vectis_body_policy *policy,
+    vectis_request *request, int *http_status, vectis_error *error) {
   vectis_kore_body_state *state;
   size_t body_size;
 
@@ -1229,7 +1233,8 @@ static vectis_status vectis_kore_attach_streamed_body(struct http_request *req,
     *http_status = 0;
   }
   if (req == NULL || policy == NULL || request == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "request body state is invalid");
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "request body state is invalid");
     return VECTIS_ERR_INVALID;
   }
   if (req->http_body_length > (u_int64_t)((size_t)-1)) {
@@ -1244,35 +1249,43 @@ static vectis_status vectis_kore_attach_streamed_body(struct http_request *req,
     if (http_status != NULL) {
       *http_status = 413;
     }
-    vectis_set_error(error, VECTIS_ERR_INVALID, "request body is not allowed for this route");
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "request body is not allowed for this route");
     return VECTIS_ERR_INVALID;
   }
   if (body_size > policy->max_bytes) {
     if (http_status != NULL) {
       *http_status = 413;
     }
-    vectis_set_error(error, VECTIS_ERR_INVALID, "request body exceeds route limit");
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "request body exceeds route limit");
     return VECTIS_ERR_INVALID;
   }
   if (body_size == 0u) {
     return vectis_internal_request_set_body(request, NULL, 0u, error);
   }
   state = (vectis_kore_body_state *)req->hdlr_extra;
-  if (state == NULL || state->error_status != 0 || state->total_size != body_size) {
+  if (state == NULL || state->error_status != 0 ||
+      state->total_size != body_size) {
     if (http_status != NULL) {
-      *http_status = state != NULL && state->error_status != 0 ? state->error_status : 400;
+      *http_status =
+          state != NULL && state->error_status != 0 ? state->error_status : 400;
     }
-    vectis_set_error(error, VECTIS_ERR_INVALID, "request body stream is incomplete");
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "request body stream is incomplete");
     return VECTIS_ERR_INVALID;
   }
   if (state->spooled) {
     if (state->file != NULL && fflush(state->file) != 0) {
-      vectis_set_error(error, VECTIS_ERR_STATE, "failed to flush streamed request body");
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to flush streamed request body");
       return VECTIS_ERR_STATE;
     }
-    return vectis_internal_request_set_body_path(request, state->path, state->total_size, error);
+    return vectis_internal_request_set_body_path(request, state->path,
+                                                 state->total_size, error);
   }
-  return vectis_internal_request_set_body(request, state->memory, state->memory_size, error);
+  return vectis_internal_request_set_body(request, state->memory,
+                                          state->memory_size, error);
 }
 
 static void vectis_kore_send_response(struct http_request *req,
@@ -1292,8 +1305,7 @@ static void vectis_kore_send_response(struct http_request *req,
     status = 204;
   }
   for (i = 0u; i < vectis_internal_response_header_count(response); ++i) {
-    http_response_header(req,
-                         vectis_internal_response_header_name(response, i),
+    http_response_header(req, vectis_internal_response_header_name(response, i),
                          vectis_internal_response_header_value(response, i));
   }
   content_type = vectis_internal_response_content_type(response);
@@ -1324,7 +1336,8 @@ static void vectis_kore_send_response(struct http_request *req,
     }
     ts.tv_sec = st.st_mtime;
     ts.tv_nsec = 0L;
-    ref = kore_fileref_create(req->owner->owner->server, file_path, fd, st.st_size, &ts);
+    ref = kore_fileref_create(req->owner->owner->server, file_path, fd,
+                              st.st_size, &ts);
     if (ref == NULL) {
       (void)close(fd);
       http_response(req, 500, NULL, 0);
@@ -1384,20 +1397,19 @@ int vectis_kore_route(struct http_request *req) {
   vectis_internal_request_set_method(request, method);
   status = vectis_kore_copy_request_metadata(req, request, &error);
   if (status == VECTIS_OK) {
-    status = vectis_internal_route_body_policy(app, method, req->path, &body_policy, &error);
+    status = vectis_internal_route_body_policy(app, method, req->path,
+                                               &body_policy, &error);
     if (status == VECTIS_OK) {
       route_matched = 1;
     }
   }
   if (status == VECTIS_OK) {
-    status = vectis_kore_attach_streamed_body(req,
-                                              &body_policy,
-                                              request,
-                                              &error_status,
-                                              &error);
+    status = vectis_kore_attach_streamed_body(req, &body_policy, request,
+                                              &error_status, &error);
   }
   if (status == VECTIS_OK) {
-    status = vectis_internal_dispatch_route(app, method, req->path, request, response, &error);
+    status = vectis_internal_dispatch_route(app, method, req->path, request,
+                                            response, &error);
   }
 
   if (status == VECTIS_OK) {
@@ -1432,24 +1444,26 @@ void kore_parent_configure(int argc, char **argv) {
   if (vectis_kore_current.logger != NULL) {
     kore_log_set_logger(vectis_kore_current.logger);
   }
-  vectis_kore_apply_server_config(&vectis_kore_current.server,
-                                  vectis_kore_current.body_disk_offload_bytes,
-                                  vectis_kore_current.body_disk_offload_configured);
-  server = kore_server_create(vectis_kore_current.app_name != NULL ?
-                              vectis_kore_current.app_name : "vectis");
+  vectis_kore_apply_server_config(
+      &vectis_kore_current.server, vectis_kore_current.body_disk_offload_bytes,
+      vectis_kore_current.body_disk_offload_configured);
+  server = kore_server_create(vectis_kore_current.app_name != NULL
+                                  ? vectis_kore_current.app_name
+                                  : "vectis");
   if (vectis_kore_current.tls_mode == VECTIS_TLS_MODE_DISABLED) {
     server->tls = 0;
   }
   (void)snprintf(port, sizeof(port), "%u", (unsigned)vectis_kore_current.port);
   if (!kore_server_bind(server,
-                        vectis_kore_current.bind != NULL ? vectis_kore_current.bind : "0.0.0.0",
-                        port,
-                        NULL)) {
+                        vectis_kore_current.bind != NULL
+                            ? vectis_kore_current.bind
+                            : "0.0.0.0",
+                        port, NULL)) {
     fatal("failed to bind Vectis Kore listener");
   }
   acme_domains = 0;
-  domain = kore_domain_new(vectis_kore_current.domain != NULL ?
-                           vectis_kore_current.domain : "*");
+  domain = kore_domain_new(
+      vectis_kore_current.domain != NULL ? vectis_kore_current.domain : "*");
   if (server->tls) {
     if (vectis_kore_current.tls_mode == VECTIS_TLS_MODE_ACME) {
       domain->acme = 1;
@@ -1460,9 +1474,10 @@ void kore_parent_configure(int argc, char **argv) {
       kore_free(acme_email);
       acme_email = kore_strdup(vectis_kore_current.acme_email);
       kore_free(acme_provider);
-      acme_provider = kore_strdup(vectis_kore_current.acme_directory_url != NULL ?
-                                  vectis_kore_current.acme_directory_url :
-                                  VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION);
+      acme_provider =
+          kore_strdup(vectis_kore_current.acme_directory_url != NULL
+                          ? vectis_kore_current.acme_directory_url
+                          : VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION);
     } else {
       domain->certfile = kore_strdup(vectis_kore_current.runtime_certfile);
       domain->certkey = kore_strdup(vectis_kore_current.runtime_certkey);
@@ -1502,14 +1517,16 @@ void kore_parent_teardown(void) {
   (void)pthread_mutex_unlock(&vectis_kore_mutex);
 }
 
-vectis_status vectis_internal_kore_start(const vectis_kore_runtime_config *config,
-                                         vectis_error *error) {
+vectis_status
+vectis_internal_kore_start(const vectis_kore_runtime_config *config,
+                           vectis_error *error) {
   vectis_kore_runtime_config prepared;
   vectis_status status;
   int rc;
 
   if (config == NULL || config->app == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "Kore runtime config is required");
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "Kore runtime config is required");
     return VECTIS_ERR_INVALID;
   }
   prepared = *config;
@@ -1540,7 +1557,8 @@ vectis_status vectis_internal_kore_start(const vectis_kore_runtime_config *confi
   if (vectis_kore_thread_active) {
     (void)pthread_mutex_unlock(&vectis_kore_mutex);
     vectis_kore_cleanup_local_config(&prepared);
-    vectis_set_error(error, VECTIS_ERR_STATE, "Kore runtime is already running");
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "Kore runtime is already running");
     return VECTIS_ERR_STATE;
   }
   vectis_kore_current = prepared;
@@ -1549,7 +1567,8 @@ vectis_status vectis_internal_kore_start(const vectis_kore_runtime_config *confi
     vectis_kore_cleanup_config(&vectis_kore_current);
     memset(&vectis_kore_current, 0, sizeof(vectis_kore_current));
     (void)pthread_mutex_unlock(&vectis_kore_mutex);
-    vectis_set_error(error, VECTIS_ERR_STATE, "failed to start Kore runtime thread");
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to start Kore runtime thread");
     return VECTIS_ERR_STATE;
   }
   vectis_kore_thread_active = 1;

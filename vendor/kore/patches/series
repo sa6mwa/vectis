@@ -5,3 +5,4 @@
 0005-kore-skip-dhparams-for-http-only-servers.patch
 0006-kore-vectis-direct-tls-runtime.patch
 0007-kore-vectis-http-guardrails.patch
+0008-kore-lifecycle-portability-fixes.patch

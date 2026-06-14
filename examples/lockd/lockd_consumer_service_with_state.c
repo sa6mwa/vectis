@@ -1,5 +1,5 @@
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <lc/lc.h>
@@ -16,42 +16,45 @@ typedef struct workflow_state {
 } workflow_state;
 
 static const lonejson_field workflow_state_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_state, id, "id", LONEJSON_OVERFLOW_FAIL),
-    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_state, phase, "phase", LONEJSON_OVERFLOW_FAIL)};
+    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_state, id, "id",
+                                    LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_state, phase, "phase",
+                                    LONEJSON_OVERFLOW_FAIL)};
 
 LONEJSON_MAP_DEFINE(workflow_state_map, workflow_state, workflow_state_fields);
 
-static int handle_stateful_order(void *context,
-                                 lc_consumer_message *message,
+static int handle_stateful_order(void *context, lc_consumer_message *message,
                                  lc_error *error) {
   stateful_context *ctx;
   workflow_state state = {"", ""};
 
   ctx = (stateful_context *)context;
   if (message->state == NULL) {
-    ctx->logger->errorf(ctx->logger, "example.lockd_state_consumer.missing_state",
-                        "queue=%s message=%s",
-                        message->queue != NULL ? message->queue : "",
-                        message->message != NULL && message->message->message_id != NULL
-                            ? message->message->message_id
-                            : "");
+    ctx->logger->errorf(
+        ctx->logger, "example.lockd_state_consumer.missing_state",
+        "queue=%s message=%s", message->queue != NULL ? message->queue : "",
+        message->message != NULL && message->message->message_id != NULL
+            ? message->message->message_id
+            : "");
     return LC_ERR_PROTOCOL;
   }
-  if (message->state->load(message->state, &workflow_state_map, &state, NULL, NULL, error) != LC_OK) {
+  if (message->state->load(message->state, &workflow_state_map, &state, NULL,
+                           NULL, error) != LC_OK) {
     return LC_ERR_TRANSPORT;
   }
   (void)snprintf(state.phase, sizeof(state.phase), "%s", "processed");
-  if (message->state->save(message->state, &workflow_state_map, &state, error) != LC_OK) {
+  if (message->state->save(message->state, &workflow_state_map, &state,
+                           error) != LC_OK) {
     return LC_ERR_TRANSPORT;
   }
   ctx->logger->infof(ctx->logger, "example.lockd_state_consumer.processed",
                      "queue=%s message=%s id=%s phase=%s",
                      message->queue != NULL ? message->queue : "",
-                     message->message != NULL && message->message->message_id != NULL
+                     message->message != NULL &&
+                             message->message->message_id != NULL
                          ? message->message->message_id
                          : "",
-                     state.id,
-                     state.phase);
+                     state.id, state.phase);
   return LC_OK;
 }
 
@@ -99,7 +102,8 @@ int main(void) {
   client = NULL;
   service = NULL;
 
-  endpoints[0] = getenv("LOCKD_ENDPOINT") != NULL ? getenv("LOCKD_ENDPOINT") : "https://127.0.0.1:8443";
+  endpoints[0] = getenv("LOCKD_ENDPOINT") != NULL ? getenv("LOCKD_ENDPOINT")
+                                                  : "https://127.0.0.1:8443";
   client_config.endpoints = endpoints;
   client_config.endpoint_count = 1u;
   client_config.client_bundle_path = getenv("LOCKD_CLIENT_BUNDLE");
@@ -109,8 +113,8 @@ int main(void) {
   client_config.logger = sdk_logger;
 
   example_logger->infof(example_logger, "example.lockd_state_consumer.start",
-                        "endpoint=%s namespace=%s queue=%s",
-                        endpoints[0], client_config.default_namespace, "orders-with-state");
+                        "endpoint=%s namespace=%s queue=%s", endpoints[0],
+                        client_config.default_namespace, "orders-with-state");
 
   if (lc_client_open(&client_config, &client, &error) != LC_OK) {
     example_logger->errorf(example_logger, "lc_client_open",
@@ -135,7 +139,8 @@ int main(void) {
   service_config.consumers = &consumer;
   service_config.consumer_count = 1u;
 
-  if (lc_client_new_consumer_service(client, &service_config, &service, &error) != LC_OK) {
+  if (lc_client_new_consumer_service(client, &service_config, &service,
+                                     &error) != LC_OK) {
     example_logger->errorf(example_logger, "client->new_consumer_service",
                            "code=%d http_status=%ld message=%s detail=%s",
                            error.code, error.http_status,

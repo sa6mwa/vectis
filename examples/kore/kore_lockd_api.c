@@ -13,8 +13,10 @@ typedef struct state_response {
 } state_response;
 
 static const lonejson_field state_response_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(state_response, id, "id", LONEJSON_OVERFLOW_FAIL),
-    LONEJSON_FIELD_STRING_FIXED_REQ(state_response, status, "status", LONEJSON_OVERFLOW_FAIL)};
+    LONEJSON_FIELD_STRING_FIXED_REQ(state_response, id, "id",
+                                    LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(state_response, status, "status",
+                                    LONEJSON_OVERFLOW_FAIL)};
 
 LONEJSON_MAP_DEFINE(state_response_map, state_response, state_response_fields);
 
@@ -28,7 +30,8 @@ static const char *env_or_default(const char *name, const char *fallback) {
   return value;
 }
 
-static unsigned short env_port_or_default(const char *name, unsigned short fallback) {
+static unsigned short env_port_or_default(const char *name,
+                                          unsigned short fallback) {
   const char *value;
   long port;
 
@@ -91,10 +94,8 @@ static pslog_logger *new_scoped_logger(const char *component,
   return scoped;
 }
 
-static vectis_status get_state(vectis_app *app,
-                               vectis_request *request,
-                               vectis_response *response,
-                               void *userdata,
+static vectis_status get_state(vectis_app *app, vectis_request *request,
+                               vectis_response *response, void *userdata,
                                vectis_error *error) {
   const char *id;
   struct lc_client *lockd;
@@ -115,50 +116,34 @@ static vectis_status get_state(vectis_app *app,
     logger->infof(logger, "example.kore_lockd.get_state", "id=%s", id);
   }
   if (lockd == NULL) {
-    return vectis_response_error_json(response,
-                                      503,
-                                      "lockd_unavailable",
-                                      "lockd client is not configured",
-                                      "",
+    return vectis_response_error_json(response, 503, "lockd_unavailable",
+                                      "lockd client is not configured", "",
                                       error);
   }
   (void)snprintf(state.id, sizeof(state.id), "%s", id);
   (void)snprintf(state.status, sizeof(state.status), "%s", "loaded");
   status = vectis_format_key(key, sizeof(key), error, "state/%s", id);
   if (status != VECTIS_OK) {
-    return vectis_response_error_json(response,
-                                      400,
-                                      "invalid_state_id",
+    return vectis_response_error_json(response, 400, "invalid_state_id",
                                       "state id cannot be used as a lockd key",
                                       error != NULL ? error->message : "",
                                       error);
   }
 
-  status = vectis_lockd_state_save(lockd,
-                                   key,
-                                   "vectis-kore-lockd-example",
-                                   30L,
-                                   &state_response_map,
-                                   &state,
-                                   error);
+  status = vectis_lockd_state_save(lockd, key, "vectis-kore-lockd-example", 30L,
+                                   &state_response_map, &state, error);
   if (status == VECTIS_OK) {
-    status = vectis_lockd_state_load(lockd,
-                                     key,
-                                     "vectis-kore-lockd-example",
-                                     30L,
-                                     &state_response_map,
-                                     &loaded,
-                                     error);
+    status = vectis_lockd_state_load(lockd, key, "vectis-kore-lockd-example",
+                                     30L, &state_response_map, &loaded, error);
   }
   if (status != VECTIS_OK) {
-    return vectis_response_error_json(response,
-                                      503,
-                                      "lockd_state_failed",
+    return vectis_response_error_json(response, 503, "lockd_state_failed",
                                       "failed to save or load lockd state",
                                       error != NULL ? error->message : "",
                                       error);
   }
-  return vectis_response_json(response, 200, &state_response_map, &loaded, error);
+  return vectis_response_json(response, 200, &state_response_map, &loaded,
+                              error);
 }
 
 int main(void) {
@@ -175,7 +160,8 @@ int main(void) {
   root_logger = NULL;
   lockd_root_logger = NULL;
   logger = new_scoped_logger("kore", pslog_palette_default(), &root_logger);
-  lockd_logger = new_scoped_logger("lockd", &pslog_builtin_palette_horizon, &lockd_root_logger);
+  lockd_logger = new_scoped_logger("lockd", &pslog_builtin_palette_horizon,
+                                   &lockd_root_logger);
   if (logger == NULL || lockd_logger == NULL) {
     if (lockd_logger != NULL) {
       lockd_logger->destroy(lockd_logger);
@@ -230,9 +216,8 @@ int main(void) {
     root_logger->destroy(root_logger);
     return 1;
   }
-  logger->infof(logger, "example.kore_lockd.start",
-                "endpoint=%s namespace=%s", endpoints[0],
-                config.lockd.default_namespace);
+  logger->infof(logger, "example.kore_lockd.start", "endpoint=%s namespace=%s",
+                endpoints[0], config.lockd.default_namespace);
   if (app->start(app, &error) != VECTIS_OK) {
     (void)print_error("app->start", &error);
     app->close(app);

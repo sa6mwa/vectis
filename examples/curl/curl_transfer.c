@@ -1,10 +1,8 @@
-#include <vectis/vectis.h>
 #include <stdio.h>
+#include <vectis/vectis.h>
 
-static vectis_status inspect_chunk(const void *data,
-                                   size_t size,
-                                   void *userdata,
-                                   vectis_error *error) {
+static vectis_status inspect_chunk(const void *data, size_t size,
+                                   void *userdata, vectis_error *error) {
   (void)error;
   (void)fprintf((FILE *)userdata, "received %lu bytes\n", (unsigned long)size);
   (void)data;
@@ -20,7 +18,8 @@ int main(void) {
 
   handle = NULL;
   vectis_http_client_config_init(&client);
-  client.client_bundle = vectis_source_from_path("/etc/vectis/downstream-client.pem");
+  client.client_bundle =
+      vectis_source_from_path("/etc/vectis/downstream-client.pem");
   client.timeout_ms = 60000L;
   client.low_speed_limit_bytes_per_sec = 1024L;
   client.low_speed_time_seconds = 30L;
@@ -33,10 +32,8 @@ int main(void) {
   }
 
   (void)handle->download_file(handle,
-                                         "https://api.example.com/export/orders.ndjson",
-                                         "var/orders.ndjson",
-                                         &response,
-                                         &error);
+                              "https://api.example.com/export/orders.ndjson",
+                              "var/orders.ndjson", &response, &error);
   vectis_http_response_cleanup(&response);
 
   vectis_http_request_init(&request);
@@ -47,13 +44,9 @@ int main(void) {
   (void)handle->execute(handle, &request, &response, &error);
   vectis_http_response_cleanup(&response);
 
-  (void)handle->upload_file(handle,
-                                       VECTIS_HTTP_PUT,
-                                       "https://api.example.com/import/orders.ndjson",
-                                       "var/orders.ndjson",
-                                       "application/octet-stream",
-                                       &response,
-                                       &error);
+  (void)handle->upload_file(
+      handle, VECTIS_HTTP_PUT, "https://api.example.com/import/orders.ndjson",
+      "var/orders.ndjson", "application/octet-stream", &response, &error);
   vectis_http_response_cleanup(&response);
 
   handle->close(handle);

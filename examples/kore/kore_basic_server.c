@@ -15,7 +15,8 @@ static const char *env_or_default(const char *name, const char *fallback) {
   return value;
 }
 
-static unsigned short env_port_or_default(const char *name, unsigned short fallback) {
+static unsigned short env_port_or_default(const char *name,
+                                          unsigned short fallback) {
   const char *value;
   long port;
 
@@ -48,10 +49,8 @@ static int print_error(const char *operation, const vectis_error *error) {
   return 1;
 }
 
-static vectis_status health(vectis_app *app,
-                            vectis_request *request,
-                            vectis_response *response,
-                            void *userdata,
+static vectis_status health(vectis_app *app, vectis_request *request,
+                            vectis_response *response, void *userdata,
                             vectis_error *error) {
   (void)app;
   (void)request;
@@ -95,10 +94,9 @@ int main(void) {
     return 1;
   }
 
-  route = vectis_route_methods(VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD,
-                               "/health",
-                               health,
-                               NULL);
+  route =
+      vectis_route_methods(VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD,
+                           "/health", health, NULL);
   if (app->route(app, &route, &error) != VECTIS_OK) {
     (void)print_error("app->route", &error);
     app->close(app);

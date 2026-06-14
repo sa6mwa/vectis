@@ -14,20 +14,18 @@ typedef struct echo_response {
 } echo_response;
 
 static const lonejson_field echo_request_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(echo_request, message, "message", LONEJSON_OVERFLOW_FAIL)};
+    LONEJSON_FIELD_STRING_FIXED_REQ(echo_request, message, "message",
+                                    LONEJSON_OVERFLOW_FAIL)};
 
 static const lonejson_field echo_response_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(echo_response, message, "message", LONEJSON_OVERFLOW_FAIL)};
+    LONEJSON_FIELD_STRING_FIXED_REQ(echo_response, message, "message",
+                                    LONEJSON_OVERFLOW_FAIL)};
 
 LONEJSON_MAP_DEFINE(echo_request_map, echo_request, echo_request_fields);
 LONEJSON_MAP_DEFINE(echo_response_map, echo_response, echo_response_fields);
 
-static vectis_status echo(vectis_app *app,
-                          vectis_request *request,
-                          void *input,
-                          void *output,
-                          void *userdata,
-                          vectis_error *error) {
+static vectis_status echo(vectis_app *app, vectis_request *request, void *input,
+                          void *output, void *userdata, vectis_error *error) {
   echo_request *in;
   echo_response *out;
 
@@ -61,7 +59,8 @@ int main(void) {
   vectis_app_config_init(&config);
   config.app_name = "json-kore-api";
   config.logger = logger;
-  config.tls.cert_key_bundle = vectis_source_from_path("/etc/vectis/server.pem");
+  config.tls.cert_key_bundle =
+      vectis_source_from_path("/etc/vectis/server.pem");
 
   app = vectis_app_new(&config, &error);
   if (app == NULL) {
@@ -69,14 +68,9 @@ int main(void) {
     return 1;
   }
 
-  route = vectis_json_route(VECTIS_HTTP_POST,
-                            "/echo",
-                            &echo_request_map,
-                            sizeof(echo_request),
-                            &echo_response_map,
-                            sizeof(echo_response),
-                            echo,
-                            NULL);
+  route = vectis_json_route(VECTIS_HTTP_POST, "/echo", &echo_request_map,
+                            sizeof(echo_request), &echo_response_map,
+                            sizeof(echo_response), echo, NULL);
 
   logger->infof(logger, "example.kore_json.register", "method=%s path=%s",
                 vectis_http_method_string(route.method), route.path);

@@ -36,9 +36,9 @@ int main(void) {
   acme.tls.domain = "api.example.com";
   acme.tls.acme_email = "ops@example.com";
 
-  logger->infof(logger, "example.kore_tls.manual",
-                "app=%s cert=%s key=%s", manual.app_name,
-                manual.tls.certificate_path, manual.tls.private_key_path);
+  logger->infof(logger, "example.kore_tls.manual", "app=%s cert=%s key=%s",
+                manual.app_name, manual.tls.certificate_path,
+                manual.tls.private_key_path);
   logger->infof(logger, "example.kore_tls.acme",
                 "app=%s domain=%s email=%s directory=%s", acme.app_name,
                 acme.tls.domain, acme.tls.acme_email,

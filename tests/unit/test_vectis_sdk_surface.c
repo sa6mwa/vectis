@@ -6,9 +6,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "vectis_internal.h"
 #include <lc/lc.h>
 #include <lonejson.h>
-#include "vectis_internal.h"
 #include <vectis/vectis.h>
 
 typedef struct sample_doc {
@@ -60,54 +60,61 @@ typedef struct sample_xml_blob_doc {
 } sample_xml_blob_doc;
 
 static const lonejson_field sample_doc_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(sample_doc, id, "id", LONEJSON_OVERFLOW_FAIL)};
+    LONEJSON_FIELD_STRING_FIXED_REQ(sample_doc, id, "id",
+                                    LONEJSON_OVERFLOW_FAIL)};
 
 static const lonejson_field sample_error_doc_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(sample_error_doc, code, "code", LONEJSON_OVERFLOW_FAIL),
-    LONEJSON_FIELD_STRING_FIXED_REQ(sample_error_doc, message, "message", LONEJSON_OVERFLOW_FAIL)};
+    LONEJSON_FIELD_STRING_FIXED_REQ(sample_error_doc, code, "code",
+                                    LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(sample_error_doc, message, "message",
+                                    LONEJSON_OVERFLOW_FAIL)};
 
 static const lonejson_field sample_dsv_doc_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(sample_dsv_doc, id, "id", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(sample_dsv_doc, id, "id",
+                                    LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_I64_REQ(sample_dsv_doc, count, "count"),
     LONEJSON_FIELD_BOOL_REQ(sample_dsv_doc, active, "active")};
 
 static const lonejson_field sample_xml_line_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(sample_xml_line, sku, "sku", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(sample_xml_line, sku, "sku",
+                                    LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_I64_REQ(sample_xml_line, quantity, "quantity")};
 
 static const lonejson_field sample_xml_amount_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(sample_xml_amount, currency, "currency", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(sample_xml_amount, currency, "currency",
+                                    LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_F64_REQ(sample_xml_amount, text, "text")};
 
-LONEJSON_MAP_DEFINE(sample_xml_line_map, sample_xml_line, sample_xml_line_fields);
-LONEJSON_MAP_DEFINE(sample_xml_amount_map, sample_xml_amount, sample_xml_amount_fields);
+LONEJSON_MAP_DEFINE(sample_xml_line_map, sample_xml_line,
+                    sample_xml_line_fields);
+LONEJSON_MAP_DEFINE(sample_xml_amount_map, sample_xml_amount,
+                    sample_xml_amount_fields);
 
 static const lonejson_field sample_xml_doc_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(sample_xml_doc, id, "id", LONEJSON_OVERFLOW_FAIL),
-    LONEJSON_FIELD_OBJECT_REQ(sample_xml_doc, amount, "amount", &sample_xml_amount_map),
-    LONEJSON_FIELD_OBJECT_ARRAY(sample_xml_doc,
-                                line,
-                                "line",
-                                sample_xml_line,
-                                &sample_xml_line_map,
+    LONEJSON_FIELD_STRING_FIXED_REQ(sample_xml_doc, id, "id",
+                                    LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_OBJECT_REQ(sample_xml_doc, amount, "amount",
+                              &sample_xml_amount_map),
+    LONEJSON_FIELD_OBJECT_ARRAY(sample_xml_doc, line, "line", sample_xml_line,
+                                &sample_xml_line_map, LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_ARRAY(sample_xml_doc, tag, "tag",
                                 LONEJSON_OVERFLOW_FAIL),
-    LONEJSON_FIELD_STRING_ARRAY(sample_xml_doc, tag, "tag", LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_BOOL_REQ(sample_xml_doc, active, "active")};
 
 static const lonejson_field sample_xml_blob_doc_fields[] = {
     LONEJSON_FIELD_STRING_STREAM_REQ(sample_xml_blob_doc, body, "body")};
 
 LONEJSON_MAP_DEFINE(sample_doc_map, sample_doc, sample_doc_fields);
-LONEJSON_MAP_DEFINE(sample_error_doc_map, sample_error_doc, sample_error_doc_fields);
+LONEJSON_MAP_DEFINE(sample_error_doc_map, sample_error_doc,
+                    sample_error_doc_fields);
 LONEJSON_MAP_DEFINE(sample_dsv_doc_map, sample_dsv_doc, sample_dsv_doc_fields);
 LONEJSON_MAP_DEFINE(sample_xml_doc_map, sample_xml_doc, sample_xml_doc_fields);
-LONEJSON_MAP_DEFINE(sample_xml_blob_doc_map, sample_xml_blob_doc, sample_xml_blob_doc_fields);
+LONEJSON_MAP_DEFINE(sample_xml_blob_doc_map, sample_xml_blob_doc,
+                    sample_xml_blob_doc_fields);
 
 static vectis_status sample_json_handler(vectis_app *app,
-                                         vectis_request *request,
-                                         void *input,
-                                         void *output,
-                                         void *userdata,
+                                         vectis_request *request, void *input,
+                                         void *output, void *userdata,
                                          vectis_error *error) {
   sample_doc *in_doc;
   sample_doc *out_doc;
@@ -124,12 +131,10 @@ static vectis_status sample_json_handler(vectis_app *app,
   return VECTIS_OK;
 }
 
-static vectis_status sample_json_typed_handler(vectis_app *app,
-                                               vectis_request *request,
-                                               void *input,
-                                               vectis_json_response *response,
-                                               void *userdata,
-                                               vectis_error *error) {
+static vectis_status
+sample_json_typed_handler(vectis_app *app, vectis_request *request, void *input,
+                          vectis_json_response *response, void *userdata,
+                          vectis_error *error) {
   sample_doc *in_doc;
   sample_doc out_doc;
   sample_error_doc error_doc;
@@ -142,8 +147,10 @@ static vectis_status sample_json_typed_handler(vectis_app *app,
   memset(&error_doc, 0, sizeof(error_doc));
   if (in_doc != NULL && strcmp(in_doc->id, "conflict") == 0) {
     (void)snprintf(error_doc.code, sizeof(error_doc.code), "conflict");
-    (void)snprintf(error_doc.message, sizeof(error_doc.message), "document already exists");
-    return vectis_json_reply(response, 409, &sample_error_doc_map, &error_doc, error);
+    (void)snprintf(error_doc.message, sizeof(error_doc.message),
+                   "document already exists");
+    return vectis_json_reply(response, 409, &sample_error_doc_map, &error_doc,
+                             error);
   }
   if (in_doc != NULL) {
     (void)snprintf(out_doc.id, sizeof(out_doc.id), "%s", in_doc->id);
@@ -151,7 +158,8 @@ static vectis_status sample_json_typed_handler(vectis_app *app,
   return vectis_json_reply(response, 201, &sample_doc_map, &out_doc, error);
 }
 
-static size_t failing_source_read(void *context, void *buffer, size_t count, lc_error *error) {
+static size_t failing_source_read(void *context, void *buffer, size_t count,
+                                  lc_error *error) {
   failing_source_context *state;
   const char partial[] = "partial certificate";
   size_t n;
@@ -187,8 +195,7 @@ static int failing_source_reset(void *context, lc_error *error) {
 static vectis_status sample_route_handler(vectis_app *app,
                                           vectis_request *request,
                                           vectis_response *response,
-                                          void *userdata,
-                                          vectis_error *error) {
+                                          void *userdata, vectis_error *error) {
   const char *id;
 
   (void)app;
@@ -200,8 +207,7 @@ static vectis_status sample_route_handler(vectis_app *app,
   return vectis_response_status(response, 204, error);
 }
 
-static int sample_consumer_handler(void *context,
-                                   lc_consumer_message *message,
+static int sample_consumer_handler(void *context, lc_consumer_message *message,
                                    lc_error *error) {
   (void)context;
   (void)message;
@@ -209,10 +215,8 @@ static int sample_consumer_handler(void *context,
   return LC_OK;
 }
 
-static vectis_status sample_dsv_row(void *userdata,
-                                    size_t row_number,
-                                    void *row,
-                                    vectis_error *error) {
+static vectis_status sample_dsv_row(void *userdata, size_t row_number,
+                                    void *row, vectis_error *error) {
   sample_dsv_rows *rows;
   sample_dsv_doc *doc;
 
@@ -229,10 +233,8 @@ static vectis_status sample_dsv_row(void *userdata,
   return VECTIS_OK;
 }
 
-static vectis_status sample_json_array_item(void *userdata,
-                                            size_t index,
-                                            void *item,
-                                            vectis_error *error) {
+static vectis_status sample_json_array_item(void *userdata, size_t index,
+                                            void *item, vectis_error *error) {
   sample_dsv_rows *rows;
   sample_dsv_doc *doc;
 
@@ -250,8 +252,7 @@ static vectis_status sample_json_array_item(void *userdata,
 }
 
 static vectis_status sample_json_array_fail_on_second(void *userdata,
-                                                      size_t index,
-                                                      void *item,
+                                                      size_t index, void *item,
                                                       vectis_error *error) {
   sample_dsv_rows *rows;
   sample_dsv_doc *doc;
@@ -268,11 +269,8 @@ static vectis_status sample_json_array_fail_on_second(void *userdata,
 }
 
 static lonejson_status sample_json_array_rewrite_item(
-    void *user,
-    const lonejson_array_rewrite_context *context,
-    void *item,
-    lonejson_array_rewrite_result *result,
-    lonejson_error *error) {
+    void *user, const lonejson_array_rewrite_context *context, void *item,
+    lonejson_array_rewrite_result *result, lonejson_error *error) {
   sample_dsv_rows *rows;
   sample_dsv_doc *doc;
 
@@ -292,11 +290,8 @@ static lonejson_status sample_json_array_rewrite_item(
 }
 
 static lonejson_status sample_json_array_rewrite_fail(
-    void *user,
-    const lonejson_array_rewrite_context *context,
-    void *item,
-    lonejson_array_rewrite_result *result,
-    lonejson_error *error) {
+    void *user, const lonejson_array_rewrite_context *context, void *item,
+    lonejson_array_rewrite_result *result, lonejson_error *error) {
   (void)user;
   (void)context;
   (void)item;
@@ -304,12 +299,14 @@ static lonejson_status sample_json_array_rewrite_fail(
   if (error != NULL) {
     lonejson_error_init(error);
     error->code = LONEJSON_STATUS_CALLBACK_FAILED;
-    (void)snprintf(error->message, sizeof(error->message), "%s", "rewrite callback stopped");
+    (void)snprintf(error->message, sizeof(error->message), "%s",
+                   "rewrite callback stopped");
   }
   return LONEJSON_STATUS_CALLBACK_FAILED;
 }
 
-static int failing_sink_write(lc_sink *self, const void *bytes, size_t count, lc_error *error) {
+static int failing_sink_write(lc_sink *self, const void *bytes, size_t count,
+                              lc_error *error) {
   char *message;
 
   (void)self;
@@ -319,14 +316,16 @@ static int failing_sink_write(lc_sink *self, const void *bytes, size_t count, lc
     error->code = LC_ERR_TRANSPORT;
     message = (char *)malloc(sizeof("intentional sink failure"));
     if (message != NULL) {
-      memcpy(message, "intentional sink failure", sizeof("intentional sink failure"));
+      memcpy(message, "intentional sink failure",
+             sizeof("intentional sink failure"));
     }
     error->message = message;
   }
   return 0;
 }
 
-static vectis_status curl_config_ok(CURL *curl, void *userdata, vectis_error *error) {
+static vectis_status curl_config_ok(CURL *curl, void *userdata,
+                                    vectis_error *error) {
   int *count;
 
   (void)error;
@@ -338,15 +337,15 @@ static vectis_status curl_config_ok(CURL *curl, void *userdata, vectis_error *er
   return VECTIS_OK;
 }
 
-static vectis_status curl_config_fail(CURL *curl, void *userdata, vectis_error *error) {
+static vectis_status curl_config_fail(CURL *curl, void *userdata,
+                                      vectis_error *error) {
   (void)curl;
   (void)userdata;
   vectis_set_error(error, VECTIS_ERR_STATE, "raw curl configuration failed");
   return VECTIS_ERR_STATE;
 }
 
-static vectis_status curl_config_fail_first_transfer(CURL *curl,
-                                                     void *userdata,
+static vectis_status curl_config_fail_first_transfer(CURL *curl, void *userdata,
                                                      vectis_error *error) {
   int *count;
 
@@ -355,16 +354,15 @@ static vectis_status curl_config_fail_first_transfer(CURL *curl,
   if (count != NULL) {
     (*count)++;
     if (*count == 1) {
-      (void)curl_easy_setopt(curl, CURLOPT_URL, "file:///tmp/vectis_http_missing_retry.txt");
+      (void)curl_easy_setopt(curl, CURLOPT_URL,
+                             "file:///tmp/vectis_http_missing_retry.txt");
     }
   }
   return VECTIS_OK;
 }
 
-static vectis_status response_stream_ok(const void *data,
-                                        size_t size,
-                                        void *userdata,
-                                        vectis_error *error) {
+static vectis_status response_stream_ok(const void *data, size_t size,
+                                        void *userdata, vectis_error *error) {
   sample_doc *doc;
 
   (void)error;
@@ -375,10 +373,8 @@ static vectis_status response_stream_ok(const void *data,
   return VECTIS_OK;
 }
 
-static vectis_status response_stream_fail(const void *data,
-                                          size_t size,
-                                          void *userdata,
-                                          vectis_error *error) {
+static vectis_status response_stream_fail(const void *data, size_t size,
+                                          void *userdata, vectis_error *error) {
   (void)data;
   (void)size;
   (void)userdata;
@@ -386,7 +382,8 @@ static vectis_status response_stream_fail(const void *data,
   return VECTIS_ERR_STATE;
 }
 
-static void assert_source_equals(lc_source *source, const void *expected, size_t expected_size) {
+static void assert_source_equals(lc_source *source, const void *expected,
+                                 size_t expected_size) {
   lc_sink *sink;
   lc_error error;
   const void *bytes;
@@ -429,8 +426,11 @@ static void assert_http_surface(void) {
   const char source_body[] = "vectis file body";
   const char upload_body[] = "upload body";
   const char json_body[] = "{\"id\":\"downstream\"}";
-  const char json_array_body[] = "{\"items\":[{\"id\":\"one\",\"count\":2,\"active\":true},{\"id\":\"two\",\"count\":5,\"active\":false}]}";
-  const char bad_json_array_body[] = "{\"items\":[{\"id\":\"broken\",\"count\":2,\"active\":true}";
+  const char json_array_body[] =
+      "{\"items\":[{\"id\":\"one\",\"count\":2,\"active\":true},{\"id\":"
+      "\"two\",\"count\":5,\"active\":false}]}";
+  const char bad_json_array_body[] =
+      "{\"items\":[{\"id\":\"broken\",\"count\":2,\"active\":true}";
   sample_dsv_doc array_item;
   sample_dsv_rows array_rows;
   int curl_config_count;
@@ -485,11 +485,13 @@ static void assert_http_surface(void) {
 
   fp = fopen(source_path, "wb");
   assert(fp != NULL);
-  assert(fwrite(source_body, 1u, sizeof(source_body) - 1u, fp) == sizeof(source_body) - 1u);
+  assert(fwrite(source_body, 1u, sizeof(source_body) - 1u, fp) ==
+         sizeof(source_body) - 1u);
   assert(fclose(fp) == 0);
   fp = fopen(json_path, "wb");
   assert(fp != NULL);
-  assert(fwrite(json_body, 1u, sizeof(json_body) - 1u, fp) == sizeof(json_body) - 1u);
+  assert(fwrite(json_body, 1u, sizeof(json_body) - 1u, fp) ==
+         sizeof(json_body) - 1u);
   assert(fclose(fp) == 0);
   fp = fopen(json_array_path, "wb");
   assert(fp != NULL);
@@ -498,12 +500,13 @@ static void assert_http_surface(void) {
   assert(fclose(fp) == 0);
   fp = fopen(bad_json_array_path, "wb");
   assert(fp != NULL);
-  assert(fwrite(bad_json_array_body, 1u, sizeof(bad_json_array_body) - 1u, fp) ==
-         sizeof(bad_json_array_body) - 1u);
+  assert(fwrite(bad_json_array_body, 1u, sizeof(bad_json_array_body) - 1u,
+                fp) == sizeof(bad_json_array_body) - 1u);
   assert(fclose(fp) == 0);
 
   client.base_url = "file:///tmp";
-  status = vectis_http_get(&client, "/vectis_http_source.txt", &response, &error);
+  status =
+      vectis_http_get(&client, "/vectis_http_source.txt", &response, &error);
   assert(status == VECTIS_OK);
   assert(curl_config_count == 1);
   assert(response.body_size == sizeof(source_body) - 1u);
@@ -513,22 +516,20 @@ static void assert_http_surface(void) {
   status = vectis_http_get(&client, "/vectis_http_doc.json", &response, &error);
   assert(status == VECTIS_OK);
   memset(&doc, 0, sizeof(doc));
-  status = vectis_http_response_json_into(&response, &sample_doc_map, &doc, &error);
+  status =
+      vectis_http_response_json_into(&response, &sample_doc_map, &doc, &error);
   assert(status == VECTIS_OK);
   assert(strcmp(doc.id, "downstream") == 0);
   vectis_http_response_cleanup(&response);
 
-  status = vectis_http_get(&client, "/vectis_http_array.json", &response, &error);
+  status =
+      vectis_http_get(&client, "/vectis_http_array.json", &response, &error);
   assert(status == VECTIS_OK);
   memset(&array_rows, 0, sizeof(array_rows));
   memset(&array_item, 0, sizeof(array_item));
-  status = vectis_http_response_json_array_each(&response,
-                                                "items",
-                                                &sample_dsv_doc_map,
-                                                &array_item,
-                                                sample_json_array_item,
-                                                &array_rows,
-                                                &error);
+  status = vectis_http_response_json_array_each(
+      &response, "items", &sample_dsv_doc_map, &array_item,
+      sample_json_array_item, &array_rows, &error);
   assert(status == VECTIS_OK);
   assert(array_rows.count == 2u);
   assert(array_rows.total == 7);
@@ -563,15 +564,9 @@ static void assert_http_surface(void) {
 
   memset(&array_rows, 0, sizeof(array_rows));
   memset(&array_item, 0, sizeof(array_item));
-  status = handle->get_json_array(handle,
-                                  "/vectis_http_array.json",
-                                  "items",
-                                  &sample_dsv_doc_map,
-                                  &array_item,
-                                  sample_json_array_item,
-                                  &array_rows,
-                                  &response,
-                                  &error);
+  status = handle->get_json_array(
+      handle, "/vectis_http_array.json", "items", &sample_dsv_doc_map,
+      &array_item, sample_json_array_item, &array_rows, &response, &error);
   assert(status == VECTIS_OK);
   assert(response.body == NULL);
   assert(response.body_size == 0u);
@@ -582,15 +577,10 @@ static void assert_http_surface(void) {
 
   memset(&array_rows, 0, sizeof(array_rows));
   memset(&array_item, 0, sizeof(array_item));
-  status = handle->get_json_array(handle,
-                                  "/vectis_http_array.json",
-                                  "items",
-                                  &sample_dsv_doc_map,
-                                  &array_item,
-                                  sample_json_array_fail_on_second,
-                                  &array_rows,
-                                  &response,
-                                  &error);
+  status = handle->get_json_array(handle, "/vectis_http_array.json", "items",
+                                  &sample_dsv_doc_map, &array_item,
+                                  sample_json_array_fail_on_second, &array_rows,
+                                  &response, &error);
   assert(status == VECTIS_ERR_STATE);
   assert(strstr(error.message, "array callback stopped") != NULL);
   assert(response.body == NULL);
@@ -600,15 +590,9 @@ static void assert_http_surface(void) {
 
   memset(&array_rows, 0, sizeof(array_rows));
   memset(&array_item, 0, sizeof(array_item));
-  status = handle->get_json_array(handle,
-                                  "/vectis_http_bad_array.json",
-                                  "items",
-                                  &sample_dsv_doc_map,
-                                  &array_item,
-                                  sample_json_array_item,
-                                  &array_rows,
-                                  &response,
-                                  &error);
+  status = handle->get_json_array(
+      handle, "/vectis_http_bad_array.json", "items", &sample_dsv_doc_map,
+      &array_item, sample_json_array_item, &array_rows, &response, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(error.source == VECTIS_ERROR_SOURCE_LONEJSON);
   assert(response.body == NULL);
@@ -642,7 +626,8 @@ static void assert_http_surface(void) {
   request.configure_curl = curl_config_fail_first_transfer;
   retry_config_count = 0;
   request.configure_curl_userdata = &retry_config_count;
-  status = no_retry_handle->execute(no_retry_handle, &request, &response, &error);
+  status =
+      no_retry_handle->execute(no_retry_handle, &request, &response, &error);
   assert(status == VECTIS_ERR_STATE);
   assert(error.source == VECTIS_ERROR_SOURCE_CURL);
   assert(retry_config_count == 1);
@@ -671,7 +656,8 @@ static void assert_http_surface(void) {
   request.response_body = response_stream_ok;
   request.response_body_userdata = &doc;
   memset(&doc, 0, sizeof(doc));
-  status = no_retry_handle->execute(no_retry_handle, &request, &response, &error);
+  status =
+      no_retry_handle->execute(no_retry_handle, &request, &response, &error);
   assert(status == VECTIS_OK);
   assert(response.body == NULL);
   assert(response.body_size == 0u);
@@ -689,17 +675,15 @@ static void assert_http_surface(void) {
   assert(status == VECTIS_ERR_STATE);
   assert(strstr(error.message, "raw curl") != NULL);
 
-  status = handle->download_file(handle,
-                                 "/vectis_http_source.txt",
-                                 helper_download_path,
-                                 &response,
-                                 &error);
+  status = handle->download_file(handle, "/vectis_http_source.txt",
+                                 helper_download_path, &response, &error);
   assert(status == VECTIS_OK);
   vectis_http_response_cleanup(&response);
   fp = fopen(helper_download_path, "rb");
   assert(fp != NULL);
   memset(&doc, 0, sizeof(doc));
-  assert(fread(doc.id, 1u, sizeof(source_body) - 1u, fp) == sizeof(source_body) - 1u);
+  assert(fread(doc.id, 1u, sizeof(source_body) - 1u, fp) ==
+         sizeof(source_body) - 1u);
   assert(fclose(fp) == 0);
   assert(memcmp(doc.id, source_body, sizeof(source_body) - 1u) == 0);
 
@@ -714,23 +698,21 @@ static void assert_http_surface(void) {
   fp = fopen(upload_path, "rb");
   assert(fp != NULL);
   memset(&doc, 0, sizeof(doc));
-  assert(fread(doc.id, 1u, sizeof(upload_body) - 1u, fp) == sizeof(upload_body) - 1u);
+  assert(fread(doc.id, 1u, sizeof(upload_body) - 1u, fp) ==
+         sizeof(upload_body) - 1u);
   assert(fclose(fp) == 0);
   assert(memcmp(doc.id, upload_body, sizeof(upload_body) - 1u) == 0);
 
-  status = vectis_http_upload_file(&client,
-                                   VECTIS_HTTP_PUT,
-                                   "file:///tmp/vectis_http_upload_helper.txt",
-                                   source_path,
-                                   "text/plain",
-                                   &response,
-                                   &error);
+  status = vectis_http_upload_file(
+      &client, VECTIS_HTTP_PUT, "file:///tmp/vectis_http_upload_helper.txt",
+      source_path, "text/plain", &response, &error);
   assert(status == VECTIS_OK);
   vectis_http_response_cleanup(&response);
   fp = fopen(helper_upload_path, "rb");
   assert(fp != NULL);
   memset(&doc, 0, sizeof(doc));
-  assert(fread(doc.id, 1u, sizeof(source_body) - 1u, fp) == sizeof(source_body) - 1u);
+  assert(fread(doc.id, 1u, sizeof(source_body) - 1u, fp) ==
+         sizeof(source_body) - 1u);
   assert(fclose(fp) == 0);
   assert(memcmp(doc.id, source_body, sizeof(source_body) - 1u) == 0);
 
@@ -763,13 +745,9 @@ static void assert_http_surface(void) {
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "download_path") != NULL);
 
-  status = handle->upload_file(handle,
-                               VECTIS_HTTP_GET,
+  status = handle->upload_file(handle, VECTIS_HTTP_GET,
                                "file:///tmp/vectis_http_missing_upload.txt",
-                               source_path,
-                               "text/plain",
-                               &response,
-                               &error);
+                               source_path, "text/plain", &response, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "upload-capable") != NULL);
 
@@ -803,7 +781,8 @@ static void assert_http_surface(void) {
   assert(status == VECTIS_OK);
   assert(response.body_size == 0u);
   vectis_http_response_cleanup(&response);
-  status = handle->options(handle, "/vectis_http_source.txt", &response, &error);
+  status =
+      handle->options(handle, "/vectis_http_source.txt", &response, &error);
   assert(status != VECTIS_ERR_NOT_IMPLEMENTED);
   vectis_http_response_cleanup(&response);
 
@@ -907,11 +886,13 @@ static void assert_io_surface(void) {
   ssh_handle->close(ssh_handle);
   ssh.port = 1u;
   ssh.password = NULL;
-  ssh.private_key = vectis_source_from_memory(ssh_key_pem, sizeof(ssh_key_pem) - 1u);
+  ssh.private_key =
+      vectis_source_from_memory(ssh_key_pem, sizeof(ssh_key_pem) - 1u);
   status = vectis_ssh_new(&ssh, &ssh_handle, &error);
   assert(status == VECTIS_OK);
   assert(ssh_handle->config.private_key.memory == ssh_key_pem);
-  assert(ssh_handle->config.private_key.memory_size == sizeof(ssh_key_pem) - 1u);
+  assert(ssh_handle->config.private_key.memory_size ==
+         sizeof(ssh_key_pem) - 1u);
   ssh_handle->close(ssh_handle);
   ssh.password = "secret";
   vectis_source_init(&ssh.private_key);
@@ -930,12 +911,8 @@ static void assert_io_surface(void) {
   assert(mqtt_handle == NULL);
   status = vectis_mqtt_new(&mqtt, &mqtt_handle, &error);
   assert(status == VECTIS_ERR_INVALID);
-  status = vectis_mqtt_publish(&mqtt,
-                               "workflow/test",
-                               payload,
-                               sizeof(payload) - 1u,
-                               "text/plain",
-                               &error);
+  status = vectis_mqtt_publish(&mqtt, "workflow/test", payload,
+                               sizeof(payload) - 1u, "text/plain", &error);
   assert(status == VECTIS_ERR_INVALID);
   mqtt.broker_url = "mqtt://127.0.0.1:1";
   status = vectis_mqtt_new(&mqtt, &mqtt_handle, &error);
@@ -946,12 +923,8 @@ static void assert_io_surface(void) {
   assert(mqtt_handle->close != NULL);
   assert(strcmp(mqtt_handle->config.broker_url, "mqtt://127.0.0.1:1") == 0);
   assert(mqtt_handle->config.timeout_ms == 30000L);
-  status = mqtt_handle->publish(NULL,
-                                "workflow/test",
-                                payload,
-                                sizeof(payload) - 1u,
-                                "text/plain",
-                                &error);
+  status = mqtt_handle->publish(NULL, "workflow/test", payload,
+                                sizeof(payload) - 1u, "text/plain", &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "MQTT handle") != NULL);
   mqtt_handle->close(mqtt_handle);
@@ -1010,7 +983,8 @@ static void assert_request_response_surface(void) {
   assert(request != NULL);
   assert(response != NULL);
 
-  status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
+  status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u,
+                                            &error);
   assert(status == VECTIS_OK);
   assert(vectis_request_body_reader(request) != NULL);
   memset(&body_copy, 0, sizeof(body_copy));
@@ -1023,14 +997,17 @@ static void assert_request_response_surface(void) {
   assert(body_copy.size == 0u);
   status = vectis_internal_request_add_path_param(request, "id", "abc", &error);
   assert(status == VECTIS_OK);
-  status = vectis_internal_request_add_query(request, "expand", "items", &error);
+  status =
+      vectis_internal_request_add_query(request, "expand", "items", &error);
   assert(status == VECTIS_OK);
-  status = vectis_internal_request_add_header(request, "content-type", "application/json", &error);
+  status = vectis_internal_request_add_header(request, "content-type",
+                                              "application/json", &error);
   assert(status == VECTIS_OK);
 
   assert(strcmp(vectis_request_path_param(request, "id"), "abc") == 0);
   assert(strcmp(vectis_request_query(request, "expand"), "items") == 0);
-  assert(strcmp(vectis_request_header(request, "content-type"), "application/json") == 0);
+  assert(strcmp(vectis_request_header(request, "content-type"),
+                "application/json") == 0);
   assert(vectis_request_header(request, "missing") == NULL);
   assert(vectis_request_kore(request) == NULL);
   assert(vectis_request_method(request) == VECTIS_HTTP_ANY);
@@ -1049,7 +1026,8 @@ static void assert_request_response_surface(void) {
   vectis_body_materialize_config_init(&materialize_config);
   materialize_config.buffer = small_body_buffer;
   materialize_config.buffer_size = sizeof(small_body_buffer);
-  status = vectis_request_body_materialize(request, &materialize_config, &materialized, &error);
+  status = vectis_request_body_materialize(request, &materialize_config,
+                                           &materialized, &error);
   assert(status == VECTIS_OK);
   assert(materialized.kind == VECTIS_BODY_MATERIALIZED_MEMORY);
   assert(materialized.memory.data == small_body_buffer);
@@ -1072,7 +1050,8 @@ static void assert_request_response_surface(void) {
   vectis_body_spill_config_init(&spill_config);
   spill_config.memory_limit_bytes = 64u;
   memset(&spill_result, 0, sizeof(spill_result));
-  status = vectis_request_body_spill(request, &spill_config, &spill_result, &error);
+  status =
+      vectis_request_body_spill(request, &spill_config, &spill_result, &error);
   assert(status == VECTIS_OK);
   assert(!spill_result.spooled_to_disk);
   assert(spill_result.memory.size == sizeof(json) - 1u);
@@ -1083,7 +1062,8 @@ static void assert_request_response_surface(void) {
   materialize_config.buffer = tiny_body_buffer;
   materialize_config.buffer_size = sizeof(tiny_body_buffer);
   materialize_config.prefix = "vectis-sdk-body";
-  status = vectis_request_body_materialize(request, &materialize_config, &materialized, &error);
+  status = vectis_request_body_materialize(request, &materialize_config,
+                                           &materialized, &error);
   assert(status == VECTIS_OK);
   assert(materialized.kind == VECTIS_BODY_MATERIALIZED_FILE);
   assert(materialized.path != NULL);
@@ -1100,7 +1080,8 @@ static void assert_request_response_surface(void) {
   spill_config.memory_limit_bytes = 4u;
   spill_config.prefix = "vectis-sdk-spill";
   memset(&spill_result, 0, sizeof(spill_result));
-  status = vectis_request_body_spill(request, &spill_config, &spill_result, &error);
+  status =
+      vectis_request_body_spill(request, &spill_config, &spill_result, &error);
   assert(status == VECTIS_OK);
   assert(spill_result.spooled_to_disk);
   assert(spill_result.path != NULL);
@@ -1115,7 +1096,8 @@ static void assert_request_response_surface(void) {
   assert(status == VECTIS_OK);
   body = vectis_internal_response_body(response);
   assert(vectis_internal_response_status_code(response) == 201);
-  assert(strcmp(vectis_internal_response_content_type(response), "text/plain") == 0);
+  assert(strcmp(vectis_internal_response_content_type(response),
+                "text/plain") == 0);
   assert(body.size == sizeof(text) - 1u);
   assert(memcmp(body.data, text, sizeof(text) - 1u) == 0);
 
@@ -1123,16 +1105,19 @@ static void assert_request_response_surface(void) {
   assert(status == VECTIS_OK);
   body = vectis_internal_response_body(response);
   assert(vectis_internal_response_status_code(response) == 200);
-  assert(strcmp(vectis_internal_response_content_type(response), "application/json") == 0);
+  assert(strcmp(vectis_internal_response_content_type(response),
+                "application/json") == 0);
   assert(body.size > 0u);
   assert(strstr((const char *)body.data, "\"abc\"") != NULL);
-  status = vectis_response_json_generated(response, 200, &sample_doc_map, &doc, &error);
+  status = vectis_response_json_generated(response, 200, &sample_doc_map, &doc,
+                                          &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_body(response).data == NULL);
   assert(vectis_internal_response_file_path(response) != NULL);
   assert(vectis_internal_response_file_temporary(response));
   source = NULL;
-  assert(lc_source_from_memory(text, sizeof(text) - 1u, &source, NULL) == LC_OK);
+  assert(lc_source_from_memory(text, sizeof(text) - 1u, &source, NULL) ==
+         LC_OK);
   status = vectis_response_source(response, 200, "text/plain", source, &error);
   lc_source_close(source);
   assert(status == VECTIS_OK);
@@ -1140,7 +1125,8 @@ static void assert_request_response_surface(void) {
   assert(vectis_internal_response_file_path(response) != NULL);
   assert(vectis_internal_response_file_temporary(response));
   assert(access(vectis_internal_response_file_path(response), F_OK) == 0);
-  assert(strlen(vectis_internal_response_file_path(response)) < sizeof(temp_response_path));
+  assert(strlen(vectis_internal_response_file_path(response)) <
+         sizeof(temp_response_path));
   strcpy(temp_response_path, vectis_internal_response_file_path(response));
   status = vectis_response_status(response, 204, &error);
   assert(status == VECTIS_OK);
@@ -1148,25 +1134,25 @@ static void assert_request_response_surface(void) {
   status = vectis_response_header(response, "x-vectis-test", "ok", &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_header_count(response) == 1u);
-  assert(strcmp(vectis_internal_response_header_name(response, 0u), "x-vectis-test") == 0);
-  assert(strcmp(vectis_internal_response_header_value(response, 0u), "ok") == 0);
+  assert(strcmp(vectis_internal_response_header_name(response, 0u),
+                "x-vectis-test") == 0);
+  assert(strcmp(vectis_internal_response_header_value(response, 0u), "ok") ==
+         0);
   status = vectis_response_header(response, "bad:name", "ok", &error);
   assert(status == VECTIS_ERR_INVALID);
   status = vectis_response_header(response, "x-bad", "bad\nvalue", &error);
   assert(status == VECTIS_ERR_INVALID);
 
-  status = vectis_response_error_json(response,
-                                      422,
-                                      "invalid_order",
-                                      "order is invalid",
-                                      "missing id",
-                                      &error);
+  status = vectis_response_error_json(response, 422, "invalid_order",
+                                      "order is invalid", "missing id", &error);
   assert(status == VECTIS_OK);
   body = vectis_internal_response_body(response);
   assert(vectis_internal_response_status_code(response) == 422);
-  assert(strcmp(vectis_internal_response_content_type(response), "application/json") == 0);
+  assert(strcmp(vectis_internal_response_content_type(response),
+                "application/json") == 0);
   assert(strstr((const char *)body.data, "\"code\":\"invalid_order\"") != NULL);
-  assert(strstr((const char *)body.data, "\"message\":\"order is invalid\"") != NULL);
+  assert(strstr((const char *)body.data, "\"message\":\"order is invalid\"") !=
+         NULL);
   assert(strstr((const char *)body.data, "\"detail\":\"missing id\"") != NULL);
 
   vectis_internal_request_free(request);
@@ -1231,20 +1217,24 @@ static void assert_json_route_surface(void) {
   assert(request != NULL);
   assert(response != NULL);
 
-  raw_route = vectis_route(VECTIS_HTTP_GET, "/state/:id?", sample_route_handler, NULL);
+  raw_route =
+      vectis_route(VECTIS_HTTP_GET, "/state/:id?", sample_route_handler, NULL);
   assert(raw_route.path_kind == VECTIS_ROUTE_PATH_PARAMS);
   status = app->route(app, &raw_route, &error);
   assert(status == VECTIS_OK);
 
-  raw_route = vectis_route_regex(VECTIS_HTTP_GET, "^/internal/[0-9]+$", sample_route_handler, NULL);
+  raw_route = vectis_route_regex(VECTIS_HTTP_GET, "^/internal/[0-9]+$",
+                                 sample_route_handler, NULL);
   assert(raw_route.path_kind == VECTIS_ROUTE_PATH_REGEX);
   status = app->route(app, &raw_route, &error);
   assert(status == VECTIS_OK);
-  raw_route = vectis_route_regex(VECTIS_HTTP_GET, "^/reports/[0-9]+$", sample_route_handler, NULL);
+  raw_route = vectis_route_regex(VECTIS_HTTP_GET, "^/reports/[0-9]+$",
+                                 sample_route_handler, NULL);
   status = app->prefixed_route(app, "/api", &raw_route, &error);
   assert(status == VECTIS_OK);
 
-  raw_route = vectis_json_body_route(VECTIS_HTTP_POST, "/raw-json", sample_route_handler, NULL);
+  raw_route = vectis_json_body_route(VECTIS_HTTP_POST, "/raw-json",
+                                     sample_route_handler, NULL);
   assert(raw_route.body.mode == VECTIS_BODY_JSON);
   assert(raw_route.path_kind == VECTIS_ROUTE_PATH_LITERAL);
   status = app->prefixed_route(app, "/api/v1", &raw_route, &error);
@@ -1274,7 +1264,8 @@ static void assert_json_route_surface(void) {
   status = app->static_directory(app, &static_dir, &error);
   assert(status == VECTIS_OK);
 
-  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/state/abc", request, response, &error);
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/state/abc",
+                                          request, response, &error);
   assert(status == VECTIS_OK);
   body = vectis_internal_response_body(response);
   assert(vectis_internal_response_status_code(response) == 200);
@@ -1283,97 +1274,93 @@ static void assert_json_route_surface(void) {
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
-  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/state", request, response, &error);
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/state",
+                                          request, response, &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 204);
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
-  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/internal/123", request, response, &error);
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/internal/123",
+                                          request, response, &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 204);
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
-  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/api/reports/42", request, response, &error);
+  status = vectis_internal_dispatch_route(
+      app, VECTIS_HTTP_GET, "/api/reports/42", request, response, &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 204);
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
-  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/api/reports/x", request, response, &error);
+  status = vectis_internal_dispatch_route(
+      app, VECTIS_HTTP_GET, "/api/reports/x", request, response, &error);
   assert(status == VECTIS_ERR_STATE);
   assert(strstr(error.message, "no route") != NULL);
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
-  route = vectis_json_route(VECTIS_HTTP_POST,
-                            "^/json-regex/[0-9]+$",
-                            &sample_doc_map,
-                            sizeof(sample_doc),
-                            &sample_doc_map,
-                            sizeof(sample_doc),
-                            sample_json_handler,
-                            NULL);
+  route =
+      vectis_json_route(VECTIS_HTTP_POST, "^/json-regex/[0-9]+$",
+                        &sample_doc_map, sizeof(sample_doc), &sample_doc_map,
+                        sizeof(sample_doc), sample_json_handler, NULL);
   assert(route.path_kind == VECTIS_ROUTE_PATH_REGEX);
   status = app->prefixed_json_route(app, "/api", &route, &error);
   assert(status == VECTIS_OK);
-  status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
+  status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u,
+                                            &error);
   assert(status == VECTIS_OK);
-  status = vectis_internal_dispatch_route(app,
-                                          VECTIS_HTTP_POST,
-                                          "/api/json-regex/42",
-                                          request,
-                                          response,
-                                          &error);
+  status = vectis_internal_dispatch_route(
+      app, VECTIS_HTTP_POST, "/api/json-regex/42", request, response, &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 200);
   body = vectis_internal_response_body(response);
   memset(&output, 0, sizeof(output));
-  assert(lonejson_parse_buffer(json_runtime, &sample_doc_map, &output, body.data, body.size, NULL) ==
-         LONEJSON_STATUS_OK);
+  assert(lonejson_parse_buffer(json_runtime, &sample_doc_map, &output,
+                               body.data, body.size,
+                               NULL) == LONEJSON_STATUS_OK);
   assert(strcmp(output.id, "abc") == 0);
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
-  typed_route = vectis_json_typed_route(VECTIS_HTTP_POST,
-                                        "^/typed-regex/[0-9]+$",
-                                        &sample_doc_map,
-                                        sizeof(sample_doc),
-                                        sample_json_typed_handler,
-                                        NULL);
+  typed_route = vectis_json_typed_route(
+      VECTIS_HTTP_POST, "^/typed-regex/[0-9]+$", &sample_doc_map,
+      sizeof(sample_doc), sample_json_typed_handler, NULL);
   assert(typed_route.path_kind == VECTIS_ROUTE_PATH_REGEX);
   status = app->prefixed_json_typed_route(app, "/api", &typed_route, &error);
   assert(status == VECTIS_OK);
-  status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
+  status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u,
+                                            &error);
   assert(status == VECTIS_OK);
-  status = vectis_internal_dispatch_route(app,
-                                          VECTIS_HTTP_POST,
-                                          "/api/typed-regex/7",
-                                          request,
-                                          response,
-                                          &error);
+  status = vectis_internal_dispatch_route(
+      app, VECTIS_HTTP_POST, "/api/typed-regex/7", request, response, &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 201);
   body = vectis_internal_response_body(response);
   memset(&output, 0, sizeof(output));
-  assert(lonejson_parse_buffer(json_runtime, &sample_doc_map, &output, body.data, body.size, NULL) ==
-         LONEJSON_STATUS_OK);
+  assert(lonejson_parse_buffer(json_runtime, &sample_doc_map, &output,
+                               body.data, body.size,
+                               NULL) == LONEJSON_STATUS_OK);
   assert(strcmp(output.id, "abc") == 0);
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
-  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/static-file", request, response, &error);
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/static-file",
+                                          request, response, &error);
   assert(status == VECTIS_OK);
   body = vectis_internal_response_body(response);
   assert(vectis_request_path(request) != NULL);
   assert(strcmp(vectis_request_path(request), "/static-file") == 0);
   assert(vectis_internal_response_status_code(response) == 200);
-  assert(strcmp(vectis_internal_response_file_path(response), static_file_path) == 0);
+  assert(strcmp(vectis_internal_response_file_path(response),
+                static_file_path) == 0);
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
-  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_HEAD, "/static-file", request, response, &error);
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_HEAD, "/static-file",
+                                          request, response, &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 200);
   body = vectis_internal_response_body(response);
@@ -1383,7 +1370,8 @@ static void assert_json_route_surface(void) {
   vectis_internal_request_cleanup(request);
 
   assert(remove(static_file_path) == 0);
-  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_HEAD, "/static-file", request, response, &error);
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_HEAD, "/static-file",
+                                          request, response, &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 404);
   body = vectis_internal_response_body(response);
@@ -1392,10 +1380,12 @@ static void assert_json_route_surface(void) {
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
-  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/assets/app.js", request, response, &error);
+  status = vectis_internal_dispatch_route(
+      app, VECTIS_HTTP_GET, "/assets/app.js", request, response, &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 200);
-  assert(strcmp(vectis_internal_response_file_path(response), static_dir_file_path) == 0);
+  assert(strcmp(vectis_internal_response_file_path(response),
+                static_dir_file_path) == 0);
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
@@ -1405,24 +1395,23 @@ static void assert_json_route_surface(void) {
   static_dir.path_prefix = "/";
   static_dir.root_dir = static_dir_path;
   static_dir.content_type = "application/javascript";
-  status = root_static_app->static_directory(root_static_app, &static_dir, &error);
+  status =
+      root_static_app->static_directory(root_static_app, &static_dir, &error);
   assert(status == VECTIS_OK);
-  status = vectis_internal_dispatch_route(root_static_app,
-                                          VECTIS_HTTP_GET,
-                                          "/app.js",
-                                          request,
-                                          response,
-                                          &error);
+  status = vectis_internal_dispatch_route(root_static_app, VECTIS_HTTP_GET,
+                                          "/app.js", request, response, &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 200);
-  assert(strcmp(vectis_internal_response_file_path(response), static_dir_file_path) == 0);
+  assert(strcmp(vectis_internal_response_file_path(response),
+                static_dir_file_path) == 0);
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
   root_static_app->close(root_static_app);
   root_static_app = NULL;
 
   assert(remove(static_dir_file_path) == 0);
-  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_HEAD, "/assets/app.js", request, response, &error);
+  status = vectis_internal_dispatch_route(
+      app, VECTIS_HTTP_HEAD, "/assets/app.js", request, response, &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 404);
   body = vectis_internal_response_body(response);
@@ -1431,111 +1420,93 @@ static void assert_json_route_surface(void) {
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
-  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/state/..", request, response, &error);
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/state/..",
+                                          request, response, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "dot segments") != NULL);
 
-  route = vectis_json_route(VECTIS_HTTP_POST,
-                            "/typed/:id",
-                            &sample_doc_map,
-                            sizeof(sample_doc),
-                            &sample_doc_map,
-                            sizeof(sample_doc),
-                            sample_json_handler,
-                            NULL);
+  route = vectis_json_route(VECTIS_HTTP_POST, "/typed/:id", &sample_doc_map,
+                            sizeof(sample_doc), &sample_doc_map,
+                            sizeof(sample_doc), sample_json_handler, NULL);
   assert(route.path_kind == VECTIS_ROUTE_PATH_PARAMS);
   assert(route.body.mode == VECTIS_BODY_JSON);
   status = app->prefixed_json_route(app, "/api/v1", &route, &error);
   assert(status == VECTIS_OK);
   assert(app->route_count(app) == 9u);
-  status = vectis_internal_route_body_policy(app, VECTIS_HTTP_POST, "/api/v1/typed/abc", &policy, &error);
+  status = vectis_internal_route_body_policy(
+      app, VECTIS_HTTP_POST, "/api/v1/typed/abc", &policy, &error);
   assert(status == VECTIS_OK);
   assert(policy.mode == VECTIS_BODY_JSON);
-  status = vectis_internal_route_body_policy(app, VECTIS_HTTP_DELETE, "/api/v1/typed/abc", &policy, &error);
+  status = vectis_internal_route_body_policy(
+      app, VECTIS_HTTP_DELETE, "/api/v1/typed/abc", &policy, &error);
   assert(status == VECTIS_ERR_STATE);
 
-  status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
+  status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u,
+                                            &error);
   assert(status == VECTIS_OK);
-  status = vectis_internal_dispatch_route(app,
-                                          VECTIS_HTTP_POST,
-                                          "/api/v1/typed/abc",
-                                          request,
-                                          response,
-                                          &error);
+  status = vectis_internal_dispatch_route(
+      app, VECTIS_HTTP_POST, "/api/v1/typed/abc", request, response, &error);
   assert(status == VECTIS_OK);
   body = vectis_internal_response_body(response);
   assert(vectis_internal_response_status_code(response) == 200);
-  assert(strcmp(vectis_internal_response_content_type(response), "application/json") == 0);
+  assert(strcmp(vectis_internal_response_content_type(response),
+                "application/json") == 0);
   assert(body.data != NULL);
   memset(&output, 0, sizeof(output));
-  assert(lonejson_parse_buffer(json_runtime, &sample_doc_map, &output, body.data, body.size, NULL) ==
-         LONEJSON_STATUS_OK);
+  assert(lonejson_parse_buffer(json_runtime, &sample_doc_map, &output,
+                               body.data, body.size,
+                               NULL) == LONEJSON_STATUS_OK);
   assert(strcmp(output.id, "abc") == 0);
 
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
-  typed_route = vectis_json_typed_route(VECTIS_HTTP_POST,
-                                        "/typed-response",
-                                        &sample_doc_map,
-                                        sizeof(sample_doc),
-                                        sample_json_typed_handler,
-                                        NULL);
+  typed_route = vectis_json_typed_route(VECTIS_HTTP_POST, "/typed-response",
+                                        &sample_doc_map, sizeof(sample_doc),
+                                        sample_json_typed_handler, NULL);
   status = app->prefixed_json_typed_route(app, "/api/v1", &typed_route, &error);
   assert(status == VECTIS_OK);
   assert(app->route_count(app) == 10u);
-  status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u, &error);
+  status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u,
+                                            &error);
   assert(status == VECTIS_OK);
-  status = vectis_internal_dispatch_route(app,
-                                          VECTIS_HTTP_POST,
-                                          "/api/v1/typed-response",
-                                          request,
-                                          response,
-                                          &error);
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_POST,
+                                          "/api/v1/typed-response", request,
+                                          response, &error);
   assert(status == VECTIS_OK);
   body = vectis_internal_response_body(response);
   assert(vectis_internal_response_status_code(response) == 201);
   memset(&output, 0, sizeof(output));
-  assert(lonejson_parse_buffer(json_runtime, &sample_doc_map, &output, body.data, body.size, NULL) ==
-         LONEJSON_STATUS_OK);
+  assert(lonejson_parse_buffer(json_runtime, &sample_doc_map, &output,
+                               body.data, body.size,
+                               NULL) == LONEJSON_STATUS_OK);
   assert(strcmp(output.id, "abc") == 0);
 
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
-  status = vectis_internal_request_set_body(request,
-                                            "{\"id\":\"conflict\"}",
-                                            sizeof("{\"id\":\"conflict\"}") - 1u,
-                                            &error);
+  status = vectis_internal_request_set_body(
+      request, "{\"id\":\"conflict\"}", sizeof("{\"id\":\"conflict\"}") - 1u,
+      &error);
   assert(status == VECTIS_OK);
-  status = vectis_internal_dispatch_route(app,
-                                          VECTIS_HTTP_POST,
-                                          "/api/v1/typed-response",
-                                          request,
-                                          response,
-                                          &error);
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_POST,
+                                          "/api/v1/typed-response", request,
+                                          response, &error);
   assert(status == VECTIS_OK);
   body = vectis_internal_response_body(response);
   assert(vectis_internal_response_status_code(response) == 409);
   memset(&error_output, 0, sizeof(error_output));
-  assert(lonejson_parse_buffer(json_runtime,
-                               &sample_error_doc_map,
-                               &error_output,
-                               body.data,
-                               body.size,
+  assert(lonejson_parse_buffer(json_runtime, &sample_error_doc_map,
+                               &error_output, body.data, body.size,
                                NULL) == LONEJSON_STATUS_OK);
   assert(strcmp(error_output.code, "conflict") == 0);
 
-  status = vectis_format_key(key, sizeof(key), &error, "state/%s/%s", "orders", "1001");
+  status = vectis_format_key(key, sizeof(key), &error, "state/%s/%s", "orders",
+                             "1001");
   assert(status == VECTIS_OK);
   assert(strcmp(key, "state/orders/1001") == 0);
   status = vectis_format_key(key, sizeof(key), &error, "state/%s", "../secret");
   assert(status == VECTIS_ERR_INVALID);
-  status = vectis_lockd_state_load(NULL,
-                                   key,
-                                   "owner",
-                                   30L,
-                                   &sample_doc_map,
-                                   &output,
-                                   &error);
+  status = vectis_lockd_state_load(NULL, key, "owner", 30L, &sample_doc_map,
+                                   &output, &error);
   assert(status == VECTIS_ERR_INVALID);
   status = vectis_consumer_service_run_until(NULL, NULL, 1L, &error);
   assert(status == VECTIS_ERR_INVALID);
@@ -1545,7 +1516,8 @@ static void assert_json_route_surface(void) {
   assert(fwrite(json, 1u, sizeof(json) - 1u, fp) == sizeof(json) - 1u);
   assert(fclose(fp) == 0);
   memset(&output, 0, sizeof(output));
-  status = vectis_internal_request_set_body_path(request, spool_path, sizeof(json) - 1u, &error);
+  status = vectis_internal_request_set_body_path(request, spool_path,
+                                                 sizeof(json) - 1u, &error);
   assert(status == VECTIS_OK);
   assert(vectis_request_body_is_spooled(request));
   assert(strcmp(vectis_request_body_path(request), spool_path) == 0);
@@ -1596,46 +1568,31 @@ static void assert_openapi_surface(void) {
   doc.operation_id = "createOrder";
   doc.tags = tags;
   doc.tag_count = 1u;
-  status = vectis_openapi_request_json(&doc,
-                                       vectis_openapi_lonejson_schema("OrderRequest",
-                                                                      &sample_xml_doc_map),
-                                       &error);
+  status = vectis_openapi_request_json(
+      &doc, vectis_openapi_lonejson_schema("OrderRequest", &sample_xml_doc_map),
+      &error);
   assert(status == VECTIS_OK);
-  status = vectis_openapi_response_json(&doc,
-                                        201,
-                                        "Created",
-                                        vectis_openapi_lonejson_schema("OrderCreated",
-                                                                       &sample_doc_map),
-                                        &error);
+  status = vectis_openapi_response_json(
+      &doc, 201, "Created",
+      vectis_openapi_lonejson_schema("OrderCreated", &sample_doc_map), &error);
   assert(status == VECTIS_OK);
-  status = vectis_openapi_response_json(&doc,
-                                        409,
-                                        "Conflict",
-                                        vectis_openapi_lonejson_schema("ApiError",
-                                                                       &sample_error_doc_map),
-                                        &error);
+  status = vectis_openapi_response_json(
+      &doc, 409, "Conflict",
+      vectis_openapi_lonejson_schema("ApiError", &sample_error_doc_map),
+      &error);
   assert(status == VECTIS_OK);
-  status = app->openapi_doc(app,
-                            VECTIS_HTTP_METHODS_POST,
-                            "/orders/:id?",
-                            &doc,
+  status = app->openapi_doc(app, VECTIS_HTTP_METHODS_POST, "/orders/:id?", &doc,
                             &error);
   assert(status == VECTIS_OK);
 
   get_doc.summary = "Get order";
   get_doc.operation_id = "getOrder";
-  status = vectis_openapi_response_json(&get_doc,
-                                        200,
-                                        "OK",
-                                        vectis_openapi_lonejson_schema("OrderCreated",
-                                                                       &sample_doc_map),
-                                        &error);
+  status = vectis_openapi_response_json(
+      &get_doc, 200, "OK",
+      vectis_openapi_lonejson_schema("OrderCreated", &sample_doc_map), &error);
   assert(status == VECTIS_OK);
-  status = app->openapi_doc(app,
-                            VECTIS_HTTP_METHODS_GET,
-                            "/orders/:id?",
-                            &get_doc,
-                            &error);
+  status = app->openapi_doc(app, VECTIS_HTTP_METHODS_GET, "/orders/:id?",
+                            &get_doc, &error);
   assert(status == VECTIS_OK);
 
   vectis_openapi_document_init(&document);
@@ -1649,16 +1606,21 @@ static void assert_openapi_surface(void) {
   path_json = strstr((const char *)json.data, "\"/orders/{id}\"");
   assert(path_json != NULL);
   assert(strstr(path_json + 1, "\"/orders/{id}\"") == NULL);
-  assert(strstr((const char *)json.data, "\"get\":{\"operationId\":\"getOrder\"") != NULL);
-  assert(strstr((const char *)json.data, "\"post\":{\"operationId\":\"createOrder\"") != NULL);
-  assert(strstr((const char *)json.data, "\"operationId\":\"createOrder\"") != NULL);
+  assert(strstr((const char *)json.data,
+                "\"get\":{\"operationId\":\"getOrder\"") != NULL);
+  assert(strstr((const char *)json.data,
+                "\"post\":{\"operationId\":\"createOrder\"") != NULL);
+  assert(strstr((const char *)json.data, "\"operationId\":\"createOrder\"") !=
+         NULL);
   assert(strstr((const char *)json.data, "\"201\"") != NULL);
   assert(strstr((const char *)json.data, "\"409\"") != NULL);
   assert(strstr((const char *)json.data, "\"OrderRequest\"") != NULL);
   assert(strstr((const char *)json.data, "\"sample_xml_amount\"") != NULL);
   assert(strstr((const char *)json.data, "\"sample_xml_line\"") != NULL);
-  assert(strstr((const char *)json.data, "\"$ref\":\"#/components/schemas/sample_xml_amount\"") != NULL);
-  assert(strstr((const char *)json.data, "\"$ref\":\"#/components/schemas/sample_xml_line\"") != NULL);
+  assert(strstr((const char *)json.data,
+                "\"$ref\":\"#/components/schemas/sample_xml_amount\"") != NULL);
+  assert(strstr((const char *)json.data,
+                "\"$ref\":\"#/components/schemas/sample_xml_line\"") != NULL);
   assert(strstr((const char *)json.data, "\"ApiError\"") != NULL);
   assert(strstr((const char *)json.data, "\"required\":[\"id\"]") != NULL);
   vectis_mutable_bytes_cleanup(&json);
@@ -1671,15 +1633,20 @@ static void assert_openapi_surface(void) {
   path_yaml = strstr((const char *)yaml.data, "\"/orders/{id}\":");
   assert(path_yaml != NULL);
   assert(strstr(path_yaml + 1, "\"/orders/{id}\":") == NULL);
-  assert(strstr((const char *)yaml.data, "    get:\n      operationId: \"getOrder\"") != NULL);
-  assert(strstr((const char *)yaml.data, "    post:\n      operationId: \"createOrder\"") != NULL);
-  assert(strstr((const char *)yaml.data, "operationId: \"createOrder\"") != NULL);
+  assert(strstr((const char *)yaml.data,
+                "    get:\n      operationId: \"getOrder\"") != NULL);
+  assert(strstr((const char *)yaml.data,
+                "    post:\n      operationId: \"createOrder\"") != NULL);
+  assert(strstr((const char *)yaml.data, "operationId: \"createOrder\"") !=
+         NULL);
   assert(strstr((const char *)yaml.data, "\"201\":") != NULL);
   assert(strstr((const char *)yaml.data, "OrderRequest:") != NULL);
   assert(strstr((const char *)yaml.data, "sample_xml_amount:") != NULL);
   assert(strstr((const char *)yaml.data, "sample_xml_line:") != NULL);
-  assert(strstr((const char *)yaml.data, "$ref: \"#/components/schemas/sample_xml_amount\"") != NULL);
-  assert(strstr((const char *)yaml.data, "$ref: \"#/components/schemas/sample_xml_line\"") != NULL);
+  assert(strstr((const char *)yaml.data,
+                "$ref: \"#/components/schemas/sample_xml_amount\"") != NULL);
+  assert(strstr((const char *)yaml.data,
+                "$ref: \"#/components/schemas/sample_xml_line\"") != NULL);
   assert(strstr((const char *)yaml.data, "ApiError:") != NULL);
   vectis_mutable_bytes_cleanup(&yaml);
 
@@ -1699,47 +1666,40 @@ static void assert_tls_source_surface(void) {
   vectis_source failing_cert_source;
   vectis_source private_key_source;
   char *certificate_only_bundle;
-  const char server_bundle[] =
-      "-----BEGIN CERTIFICATE-----\n"
-      "server\n"
-      "-----END CERTIFICATE-----\n"
-      "-----BEGIN PRIVATE KEY-----\n"
-      "key\n"
-      "-----END PRIVATE KEY-----\n";
-  const char client_ca[] =
-      "-----BEGIN CERTIFICATE-----\n"
-      "ca\n"
-      "-----END CERTIFICATE-----\n";
-  const char certificate_only[] =
-      "-----BEGIN CERTIFICATE-----\n"
-      "server\n"
-      "-----END CERTIFICATE-----\n";
-  const char private_key[] =
-      "-----BEGIN PRIVATE KEY-----\n"
-      "key\n"
-      "-----END PRIVATE KEY-----\n";
+  const char server_bundle[] = "-----BEGIN CERTIFICATE-----\n"
+                               "server\n"
+                               "-----END CERTIFICATE-----\n"
+                               "-----BEGIN PRIVATE KEY-----\n"
+                               "key\n"
+                               "-----END PRIVATE KEY-----\n";
+  const char client_ca[] = "-----BEGIN CERTIFICATE-----\n"
+                           "ca\n"
+                           "-----END CERTIFICATE-----\n";
+  const char certificate_only[] = "-----BEGIN CERTIFICATE-----\n"
+                                  "server\n"
+                                  "-----END CERTIFICATE-----\n";
+  const char private_key[] = "-----BEGIN PRIVATE KEY-----\n"
+                             "key\n"
+                             "-----END PRIVATE KEY-----\n";
 
   failing_source = NULL;
   memset(&failing_context, 0, sizeof(failing_context));
-  assert(lc_source_from_callbacks(failing_source_read,
-                                  failing_source_reset,
-                                  NULL,
-                                  &failing_context,
-                                  &failing_source,
+  assert(lc_source_from_callbacks(failing_source_read, failing_source_reset,
+                                  NULL, &failing_context, &failing_source,
                                   NULL) == LC_OK);
   failing_cert_source = vectis_source_from_lc(failing_source);
-  private_key_source = vectis_source_from_memory(private_key, sizeof(private_key) - 1u);
-  status = vectis_cert_validate_pair(&failing_cert_source,
-                                     &private_key_source,
-                                     NULL,
-                                     &error);
+  private_key_source =
+      vectis_source_from_memory(private_key, sizeof(private_key) - 1u);
+  status = vectis_cert_validate_pair(&failing_cert_source, &private_key_source,
+                                     NULL, &error);
   assert(status == VECTIS_ERR_STATE);
   assert(strstr(error.message, "source failed") != NULL);
   lc_source_close(failing_source);
   failing_source = NULL;
 
   vectis_app_config_init(&config);
-  config.tls.cert_key_bundle = vectis_source_from_memory(server_bundle, sizeof(server_bundle) - 1u);
+  config.tls.cert_key_bundle =
+      vectis_source_from_memory(server_bundle, sizeof(server_bundle) - 1u);
   config.lockd.unix_socket_path = "/tmp/lockd.sock";
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
@@ -1751,13 +1711,14 @@ static void assert_tls_source_surface(void) {
 
   certificate_only_bundle = malloc(sizeof(certificate_only) - 1u);
   assert(certificate_only_bundle != NULL);
-  memcpy(certificate_only_bundle, certificate_only, sizeof(certificate_only) - 1u);
+  memcpy(certificate_only_bundle, certificate_only,
+         sizeof(certificate_only) - 1u);
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_MANUAL;
   config.tls.bind = "127.0.0.1";
   config.tls.port = 28555u;
-  config.tls.cert_key_bundle = vectis_source_from_memory(certificate_only_bundle,
-                                                        sizeof(certificate_only) - 1u);
+  config.tls.cert_key_bundle = vectis_source_from_memory(
+      certificate_only_bundle, sizeof(certificate_only) - 1u);
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/tls", sample_route_handler, NULL);
@@ -1770,12 +1731,14 @@ static void assert_tls_source_surface(void) {
   free(certificate_only_bundle);
 
   vectis_app_config_init(&config);
-  config.tls.cert_key_bundle = vectis_source_from_memory(server_bundle, sizeof(server_bundle) - 1u);
+  config.tls.cert_key_bundle =
+      vectis_source_from_memory(server_bundle, sizeof(server_bundle) - 1u);
   config.tls.require_client_certificate = 1;
   config.lockd.unix_socket_path = "/tmp/lockd.sock";
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
-  route = vectis_route(VECTIS_HTTP_GET, "/tls-client-ca", sample_route_handler, NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/tls-client-ca", sample_route_handler,
+                       NULL);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
   status = app->start(app, &error);
@@ -1784,8 +1747,10 @@ static void assert_tls_source_surface(void) {
   app->close(app);
 
   vectis_app_config_init(&config);
-  config.tls.cert_key_bundle = vectis_source_from_memory(server_bundle, sizeof(server_bundle) - 1u);
-  config.tls.client_ca_bundle = vectis_source_from_memory(client_ca, sizeof(client_ca) - 1u);
+  config.tls.cert_key_bundle =
+      vectis_source_from_memory(server_bundle, sizeof(server_bundle) - 1u);
+  config.tls.client_ca_bundle =
+      vectis_source_from_memory(client_ca, sizeof(client_ca) - 1u);
   config.tls.require_client_certificate = 1;
   config.lockd.unix_socket_path = "/tmp/lockd.sock";
   app = vectis_app_new(&config, &error);
@@ -1854,20 +1819,20 @@ static void assert_consumer_service_surface(void) {
 }
 
 static void assert_dsv_surface(void) {
-  const char csv[] = "id,count,active\r\nalpha,2,true\r\n\"beta,quoted\",3,false\r\n";
-  const char commented_csv[] =
-      "  # export metadata\n"
-      "id,count,active\n"
-      "epsilon,23,true\n"
-      "# skipped row,999,false\n"
-      "\"#literal\",29,false\n";
-  const char csv_with_alt_header[] = "external_id,total,enabled\nnamed,17,true\n";
+  const char csv[] =
+      "id,count,active\r\nalpha,2,true\r\n\"beta,quoted\",3,false\r\n";
+  const char commented_csv[] = "  # export metadata\n"
+                               "id,count,active\n"
+                               "epsilon,23,true\n"
+                               "# skipped row,999,false\n"
+                               "\"#literal\",29,false\n";
+  const char csv_with_alt_header[] =
+      "external_id,total,enabled\nnamed,17,true\n";
   const char headerless_csv[] = "gamma,13,true\n";
-  const char headerless_commented_csv[] =
-      "# row-only export\n"
-      "zeta,31,true\n"
-      "  # skipped row,999,false\n"
-      "eta,37,false\n";
+  const char headerless_commented_csv[] = "# row-only export\n"
+                                          "zeta,31,true\n"
+                                          "  # skipped row,999,false\n"
+                                          "eta,37,false\n";
   const char tsv[] = "id\tcount\tactive\none\t7\ttrue\n";
   const char headerless_tsv[] = "delta\t19\tfalse\n";
   const char short_row_csv[] = "id,count,active\nbad,1\n";
@@ -1898,55 +1863,41 @@ static void assert_dsv_surface(void) {
   memset(&rows, 0, sizeof(rows));
   config = vectis_dsv_csv();
   vectis_source_init(&dsv_source);
-  status = vectis_dsv_parse_lonejson_source(&dsv_source,
-                                            &sample_dsv_doc_map,
-                                            &config,
-                                            sample_dsv_row,
-                                            &rows,
-                                            &error);
+  status = vectis_dsv_parse_lonejson_source(
+      &dsv_source, &sample_dsv_doc_map, &config, sample_dsv_row, &rows, &error);
   assert(status == VECTIS_ERR_INVALID);
   vectis_error_clear(&error);
 
   dsv_source = vectis_source_from_memory(csv, sizeof(csv) - 1u);
-  status = vectis_dsv_parse_lonejson_source(&dsv_source,
-                                            &sample_dsv_doc_map,
-                                            &config,
-                                            sample_dsv_row,
-                                            &rows,
-                                            &error);
+  status = vectis_dsv_parse_lonejson_source(
+      &dsv_source, &sample_dsv_doc_map, &config, sample_dsv_row, &rows, &error);
   assert(status == VECTIS_OK);
   assert(rows.count == 2u);
   assert(rows.total == 5);
   assert(rows.active_count == 1);
   assert(strcmp(rows.last_id, "beta,quoted") == 0);
 
-  dsv_source = vectis_source_from_memory(commented_csv, sizeof(commented_csv) - 1u);
+  dsv_source =
+      vectis_source_from_memory(commented_csv, sizeof(commented_csv) - 1u);
   config = vectis_dsv_csv();
   config.comment_prefix = "#";
   memset(&rows, 0, sizeof(rows));
-  status = vectis_dsv_parse_lonejson_source(&dsv_source,
-                                            &sample_dsv_doc_map,
-                                            &config,
-                                            sample_dsv_row,
-                                            &rows,
-                                            &error);
+  status = vectis_dsv_parse_lonejson_source(
+      &dsv_source, &sample_dsv_doc_map, &config, sample_dsv_row, &rows, &error);
   assert(status == VECTIS_OK);
   assert(rows.count == 2u);
   assert(rows.total == 52);
   assert(rows.active_count == 1);
   assert(strcmp(rows.last_id, "#literal") == 0);
 
-  dsv_source = vectis_source_from_memory(csv_with_alt_header, sizeof(csv_with_alt_header) - 1u);
+  dsv_source = vectis_source_from_memory(csv_with_alt_header,
+                                         sizeof(csv_with_alt_header) - 1u);
   config = vectis_dsv_csv();
   config.columns = columns;
   config.column_count = 3u;
   memset(&rows, 0, sizeof(rows));
-  status = vectis_dsv_parse_lonejson_source(&dsv_source,
-                                            &sample_dsv_doc_map,
-                                            &config,
-                                            sample_dsv_row,
-                                            &rows,
-                                            &error);
+  status = vectis_dsv_parse_lonejson_source(
+      &dsv_source, &sample_dsv_doc_map, &config, sample_dsv_row, &rows, &error);
   assert(status == VECTIS_OK);
   assert(rows.count == 1u);
   assert(rows.total == 17);
@@ -1955,10 +1906,7 @@ static void assert_dsv_surface(void) {
 
   memset(&json, 0, sizeof(json));
   dsv_source = vectis_source_from_memory(csv, sizeof(csv) - 1u);
-  status = vectis_dsv_source_to_json_array(&dsv_source,
-                                           &config,
-                                           &json,
-                                           &error);
+  status = vectis_dsv_source_to_json_array(&dsv_source, &config, &json, &error);
   assert(status == VECTIS_OK);
   assert(json.data != NULL);
   assert(strstr((const char *)json.data, "\"id\":\"alpha\"") != NULL);
@@ -1968,11 +1916,8 @@ static void assert_dsv_surface(void) {
 
   memset(&json, 0, sizeof(json));
   dsv_source = vectis_source_from_memory(csv, sizeof(csv) - 1u);
-  status = vectis_dsv_source_to_lonejson_array(&dsv_source,
-                                               &sample_dsv_doc_map,
-                                               &config,
-                                               &json,
-                                               &error);
+  status = vectis_dsv_source_to_lonejson_array(&dsv_source, &sample_dsv_doc_map,
+                                               &config, &json, &error);
   assert(status == VECTIS_OK);
   assert(json.data != NULL);
   assert(strstr((const char *)json.data, "\"id\":\"alpha\"") != NULL);
@@ -1982,13 +1927,9 @@ static void assert_dsv_surface(void) {
   dsv_source = vectis_source_from_memory(json.data, json.size);
   memset(&rows, 0, sizeof(rows));
   memset(&item, 0, sizeof(item));
-  status = vectis_json_array_each_source(&dsv_source,
-                                         "",
-                                         &sample_dsv_doc_map,
-                                         &item,
-                                         sample_json_array_item,
-                                         &rows,
-                                         &error);
+  status =
+      vectis_json_array_each_source(&dsv_source, "", &sample_dsv_doc_map, &item,
+                                    sample_json_array_item, &rows, &error);
   assert(status == VECTIS_OK);
   assert(rows.count == 2u);
   assert(rows.total == 5);
@@ -1997,17 +1938,14 @@ static void assert_dsv_surface(void) {
 
   request = vectis_internal_request_new(&error);
   assert(request != NULL);
-  status = vectis_internal_request_set_body(request, json.data, json.size, &error);
+  status =
+      vectis_internal_request_set_body(request, json.data, json.size, &error);
   assert(status == VECTIS_OK);
   memset(&rows, 0, sizeof(rows));
   memset(&item, 0, sizeof(item));
-  status = vectis_request_json_array_each(request,
-                                          "",
-                                          &sample_dsv_doc_map,
-                                          &item,
-                                          sample_json_array_item,
-                                          &rows,
-                                          &error);
+  status =
+      vectis_request_json_array_each(request, "", &sample_dsv_doc_map, &item,
+                                     sample_json_array_item, &rows, &error);
   assert(status == VECTIS_OK);
   assert(rows.count == 2u);
   assert(rows.total == 5);
@@ -2015,76 +1953,58 @@ static void assert_dsv_surface(void) {
 
   dsv_source = vectis_source_from_memory(json.data, json.size);
   memset(&item, 0, sizeof(item));
-  status = vectis_json_array_each_source(&dsv_source,
-                                         "",
-                                         NULL,
-                                         &item,
-                                         sample_json_array_item,
-                                         &rows,
-                                         &error);
+  status = vectis_json_array_each_source(&dsv_source, "", NULL, &item,
+                                         sample_json_array_item, &rows, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "map") != NULL);
 
   dsv_source = vectis_source_from_memory(json.data, json.size);
-  status = vectis_json_array_each_source(&dsv_source,
-                                         "",
-                                         &sample_dsv_doc_map,
-                                         NULL,
-                                         sample_json_array_item,
-                                         &rows,
-                                         &error);
+  status =
+      vectis_json_array_each_source(&dsv_source, "", &sample_dsv_doc_map, NULL,
+                                    sample_json_array_item, &rows, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "storage") != NULL);
 
   dsv_source = vectis_source_from_memory(json.data, json.size);
   memset(&item, 0, sizeof(item));
-  status = vectis_json_array_each_source(&dsv_source,
-                                         "",
-                                         &sample_dsv_doc_map,
-                                         &item,
-                                         NULL,
-                                         &rows,
-                                         &error);
+  status = vectis_json_array_each_source(&dsv_source, "", &sample_dsv_doc_map,
+                                         &item, NULL, &rows, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "callback") != NULL);
 
   dsv_source = vectis_source_from_memory(json.data, json.size);
   memset(&rows, 0, sizeof(rows));
   memset(&item, 0, sizeof(item));
-  status = vectis_json_array_each_source(&dsv_source,
-                                         "",
-                                         &sample_dsv_doc_map,
-                                         &item,
-                                         sample_json_array_fail_on_second,
-                                         &rows,
-                                         &error);
+  status = vectis_json_array_each_source(
+      &dsv_source, "", &sample_dsv_doc_map, &item,
+      sample_json_array_fail_on_second, &rows, &error);
   assert(status == VECTIS_ERR_STATE);
   assert(strstr(error.message, "array callback stopped") != NULL);
   assert(rows.count == 2u);
 
-  dsv_source = vectis_source_from_memory("{\"items\":[{\"id\":\"broken\",\"count\":2,\"active\":true}",
-                                         sizeof("{\"items\":[{\"id\":\"broken\",\"count\":2,\"active\":true}") - 1u);
+  dsv_source = vectis_source_from_memory(
+      "{\"items\":[{\"id\":\"broken\",\"count\":2,\"active\":true}",
+      sizeof("{\"items\":[{\"id\":\"broken\",\"count\":2,\"active\":true}") -
+          1u);
   memset(&rows, 0, sizeof(rows));
   memset(&item, 0, sizeof(item));
-  status = vectis_json_array_each_source(&dsv_source,
-                                         "items",
-                                         &sample_dsv_doc_map,
-                                         &item,
-                                         sample_json_array_item,
-                                         &rows,
-                                         &error);
+  status = vectis_json_array_each_source(&dsv_source, "items",
+                                         &sample_dsv_doc_map, &item,
+                                         sample_json_array_item, &rows, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(error.source == VECTIS_ERROR_SOURCE_LONEJSON);
   assert(rows.count == 0u);
 
   dsv_source = vectis_source_from_memory(json.data, json.size);
-  status = vectis_json_array_rewrite_source(&dsv_source, "", NULL, &rewrite_options, &error);
+  status = vectis_json_array_rewrite_source(&dsv_source, "", NULL,
+                                            &rewrite_options, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "sink") != NULL);
 
   assert(lc_sink_to_memory(&sink, NULL) == LC_OK);
   dsv_source = vectis_source_from_memory(json.data, json.size);
-  status = vectis_json_array_rewrite_source(&dsv_source, "", sink, NULL, &error);
+  status =
+      vectis_json_array_rewrite_source(&dsv_source, "", sink, NULL, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "options") != NULL);
   lc_sink_close(sink);
@@ -2098,7 +2018,8 @@ static void assert_dsv_surface(void) {
   rewrite_options.item = sample_json_array_rewrite_item;
   rewrite_options.user = &rows;
   dsv_source = vectis_source_from_memory(json.data, json.size);
-  status = vectis_json_array_rewrite_source(&dsv_source, "", sink, &rewrite_options, &error);
+  status = vectis_json_array_rewrite_source(&dsv_source, "", sink,
+                                            &rewrite_options, &error);
   assert(status == VECTIS_OK);
   assert(rows.count == 2u);
   assert(rows.total == 5);
@@ -2119,7 +2040,8 @@ static void assert_dsv_surface(void) {
   rewrite_options.item_dst = &item;
   rewrite_options.item = sample_json_array_rewrite_fail;
   dsv_source = vectis_source_from_memory(json.data, json.size);
-  status = vectis_json_array_rewrite_source(&dsv_source, "", sink, &rewrite_options, &error);
+  status = vectis_json_array_rewrite_source(&dsv_source, "", sink,
+                                            &rewrite_options, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(error.source == VECTIS_ERROR_SOURCE_LONEJSON);
   assert(strstr(error.message, "rewrite callback stopped") != NULL);
@@ -2133,7 +2055,8 @@ static void assert_dsv_surface(void) {
   rewrite_options.item_dst = &item;
   rewrite_options.item = sample_json_array_rewrite_item;
   dsv_source = vectis_source_from_memory(json.data, json.size);
-  status = vectis_json_array_rewrite_source(&dsv_source, "", &failing_sink, &rewrite_options, &error);
+  status = vectis_json_array_rewrite_source(&dsv_source, "", &failing_sink,
+                                            &rewrite_options, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(error.source == VECTIS_ERROR_SOURCE_LONEJSON);
   assert(strstr(error.message, "intentional sink failure") != NULL);
@@ -2143,12 +2066,8 @@ static void assert_dsv_surface(void) {
   memset(&rows, 0, sizeof(rows));
   assert(lc_source_from_memory(tsv, sizeof(tsv) - 1u, &source, NULL) == LC_OK);
   config = vectis_dsv_tsv();
-  status = vectis_dsv_parse_lonejson(source,
-                                     &sample_dsv_doc_map,
-                                     &config,
-                                     sample_dsv_row,
-                                     &rows,
-                                     &error);
+  status = vectis_dsv_parse_lonejson(source, &sample_dsv_doc_map, &config,
+                                     sample_dsv_row, &rows, &error);
   assert(status == VECTIS_OK);
   assert(rows.count == 1u);
   assert(rows.total == 7);
@@ -2162,27 +2081,20 @@ static void assert_dsv_surface(void) {
   config.columns = columns;
   config.column_count = 3u;
   memset(&rows, 0, sizeof(rows));
-  status = vectis_dsv_parse_lonejson(source,
-                                     &sample_dsv_doc_map,
-                                     &config,
-                                     sample_dsv_row,
-                                     &rows,
-                                     &error);
+  status = vectis_dsv_parse_lonejson(source, &sample_dsv_doc_map, &config,
+                                     sample_dsv_row, &rows, &error);
   assert(status == VECTIS_OK);
   assert(rows.count == 1u);
   assert(rows.total == 11);
   assert(rows.active_count == 0);
   lc_source_close(source);
 
-  assert(lc_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u, &source, NULL) == LC_OK);
+  assert(lc_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u,
+                               &source, NULL) == LC_OK);
   config = vectis_dsv_csv_rows();
   memset(&rows, 0, sizeof(rows));
-  status = vectis_dsv_parse_lonejson(source,
-                                     &sample_dsv_doc_map,
-                                     &config,
-                                     sample_dsv_row,
-                                     &rows,
-                                     &error);
+  status = vectis_dsv_parse_lonejson(source, &sample_dsv_doc_map, &config,
+                                     sample_dsv_row, &rows, &error);
   assert(status == VECTIS_OK);
   assert(rows.count == 1u);
   assert(rows.total == 13);
@@ -2195,27 +2107,20 @@ static void assert_dsv_surface(void) {
   config = vectis_dsv_csv_rows();
   config.comment_prefix = "#";
   memset(&rows, 0, sizeof(rows));
-  status = vectis_dsv_parse_lonejson_source(&dsv_source,
-                                            &sample_dsv_doc_map,
-                                            &config,
-                                            sample_dsv_row,
-                                            &rows,
-                                            &error);
+  status = vectis_dsv_parse_lonejson_source(
+      &dsv_source, &sample_dsv_doc_map, &config, sample_dsv_row, &rows, &error);
   assert(status == VECTIS_OK);
   assert(rows.count == 2u);
   assert(rows.total == 68);
   assert(rows.active_count == 1);
   assert(strcmp(rows.last_id, "eta") == 0);
 
-  assert(lc_source_from_memory(headerless_tsv, sizeof(headerless_tsv) - 1u, &source, NULL) == LC_OK);
+  assert(lc_source_from_memory(headerless_tsv, sizeof(headerless_tsv) - 1u,
+                               &source, NULL) == LC_OK);
   config = vectis_dsv_tsv_rows();
   memset(&rows, 0, sizeof(rows));
-  status = vectis_dsv_parse_lonejson(source,
-                                     &sample_dsv_doc_map,
-                                     &config,
-                                     sample_dsv_row,
-                                     &rows,
-                                     &error);
+  status = vectis_dsv_parse_lonejson(source, &sample_dsv_doc_map, &config,
+                                     sample_dsv_row, &rows, &error);
   assert(status == VECTIS_OK);
   assert(rows.count == 1u);
   assert(rows.total == 19);
@@ -2225,12 +2130,10 @@ static void assert_dsv_surface(void) {
 
   memset(&json, 0, sizeof(json));
   config = vectis_dsv_csv_rows();
-  dsv_source = vectis_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u);
-  status = vectis_dsv_source_to_lonejson_array(&dsv_source,
-                                               &sample_dsv_doc_map,
-                                               &config,
-                                               &json,
-                                               &error);
+  dsv_source =
+      vectis_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u);
+  status = vectis_dsv_source_to_lonejson_array(&dsv_source, &sample_dsv_doc_map,
+                                               &config, &json, &error);
   assert(status == VECTIS_OK);
   assert(strstr((const char *)json.data, "\"id\":\"gamma\"") != NULL);
   assert(strstr((const char *)json.data, "\"count\":13") != NULL);
@@ -2241,13 +2144,11 @@ static void assert_dsv_surface(void) {
   spill_config.memory_limit_bytes = 16u;
   spill_config.prefix = "vectis-dsv-json";
   memset(&spill_result, 0, sizeof(spill_result));
-  dsv_source = vectis_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u);
-  status = vectis_dsv_source_to_lonejson_array_spill(&dsv_source,
-                                                     &sample_dsv_doc_map,
-                                                     &config,
-                                                     &spill_config,
-                                                     &spill_result,
-                                                     &error);
+  dsv_source =
+      vectis_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u);
+  status = vectis_dsv_source_to_lonejson_array_spill(
+      &dsv_source, &sample_dsv_doc_map, &config, &spill_config, &spill_result,
+      &error);
   assert(status == VECTIS_OK);
   assert(spill_result.spooled_to_disk);
   assert(spill_result.path != NULL);
@@ -2264,13 +2165,11 @@ static void assert_dsv_surface(void) {
   vectis_body_spill_config_init(&spill_config);
   spill_config.memory_limit_bytes = 4096u;
   memset(&spill_result, 0, sizeof(spill_result));
-  dsv_source = vectis_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u);
-  status = vectis_dsv_source_to_lonejson_array_spill(&dsv_source,
-                                                     &sample_dsv_doc_map,
-                                                     &config,
-                                                     &spill_config,
-                                                     &spill_result,
-                                                     &error);
+  dsv_source =
+      vectis_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u);
+  status = vectis_dsv_source_to_lonejson_array_spill(
+      &dsv_source, &sample_dsv_doc_map, &config, &spill_config, &spill_result,
+      &error);
   assert(status == VECTIS_OK);
   assert(!spill_result.spooled_to_disk);
   assert(spill_result.memory.data != NULL);
@@ -2281,56 +2180,43 @@ static void assert_dsv_surface(void) {
   vectis_body_spill_result_cleanup(&spill_result);
 
   memset(&json, 0, sizeof(json));
-  dsv_source = vectis_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u);
+  dsv_source =
+      vectis_source_from_memory(headerless_csv, sizeof(headerless_csv) - 1u);
   status = vectis_dsv_source_to_json_array(&dsv_source, &config, &json, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "columns") != NULL);
   vectis_error_clear(&error);
 
-  assert(lc_source_from_memory(short_row_csv, sizeof(short_row_csv) - 1u, &source, NULL) == LC_OK);
+  assert(lc_source_from_memory(short_row_csv, sizeof(short_row_csv) - 1u,
+                               &source, NULL) == LC_OK);
   config = vectis_dsv_csv();
   memset(&rows, 0, sizeof(rows));
-  status = vectis_dsv_parse_lonejson(source,
-                                     &sample_dsv_doc_map,
-                                     &config,
-                                     sample_dsv_row,
-                                     &rows,
-                                     &error);
+  status = vectis_dsv_parse_lonejson(source, &sample_dsv_doc_map, &config,
+                                     sample_dsv_row, &rows, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "row width") != NULL);
   lc_source_close(source);
   vectis_error_clear(&error);
 
   assert(lc_source_from_memory(oversized_field_csv,
-                               sizeof(oversized_field_csv) - 1u,
-                               &source,
+                               sizeof(oversized_field_csv) - 1u, &source,
                                NULL) == LC_OK);
   config = vectis_dsv_csv();
   config.max_field_bytes = 2u;
   memset(&rows, 0, sizeof(rows));
-  status = vectis_dsv_parse_lonejson(source,
-                                     &sample_dsv_doc_map,
-                                     &config,
-                                     sample_dsv_row,
-                                     &rows,
-                                     &error);
+  status = vectis_dsv_parse_lonejson(source, &sample_dsv_doc_map, &config,
+                                     sample_dsv_row, &rows, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "max_field_bytes") != NULL);
   lc_source_close(source);
   vectis_error_clear(&error);
 
-  assert(lc_source_from_memory(unterminated_csv,
-                               sizeof(unterminated_csv) - 1u,
-                               &source,
-                               NULL) == LC_OK);
+  assert(lc_source_from_memory(unterminated_csv, sizeof(unterminated_csv) - 1u,
+                               &source, NULL) == LC_OK);
   config = vectis_dsv_csv();
   memset(&rows, 0, sizeof(rows));
-  status = vectis_dsv_parse_lonejson(source,
-                                     &sample_dsv_doc_map,
-                                     &config,
-                                     sample_dsv_row,
-                                     &rows,
-                                     &error);
+  status = vectis_dsv_parse_lonejson(source, &sample_dsv_doc_map, &config,
+                                     sample_dsv_row, &rows, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "unterminated") != NULL);
   lc_source_close(source);
@@ -2339,26 +2225,16 @@ static void assert_dsv_surface(void) {
   memset(&json, 0, sizeof(json));
   config = vectis_dsv_csv();
   config.comment_prefix = "#";
-  status = vectis_dsv_lonejson_rows_to_bytes(&sample_dsv_doc_map,
-                                             &config,
-                                             out_rows,
-                                             2u,
-                                             0u,
-                                             &json,
-                                             &error);
+  status = vectis_dsv_lonejson_rows_to_bytes(&sample_dsv_doc_map, &config,
+                                             out_rows, 2u, 0u, &json, &error);
   assert(status == VECTIS_OK);
-  assert(strcmp((const char *)json.data,
-                "id,count,active\n"
-                "\"alpha,quoted\",2,true\n"
-                "\" #comment\",3,false\n") == 0);
+  assert(strcmp((const char *)json.data, "id,count,active\n"
+                                         "\"alpha,quoted\",2,true\n"
+                                         "\" #comment\",3,false\n") == 0);
   dsv_source = vectis_source_from_memory(json.data, json.size);
   memset(&rows, 0, sizeof(rows));
-  status = vectis_dsv_parse_lonejson_source(&dsv_source,
-                                            &sample_dsv_doc_map,
-                                            &config,
-                                            sample_dsv_row,
-                                            &rows,
-                                            &error);
+  status = vectis_dsv_parse_lonejson_source(
+      &dsv_source, &sample_dsv_doc_map, &config, sample_dsv_row, &rows, &error);
   assert(status == VECTIS_OK);
   assert(rows.count == 2u);
   assert(rows.total == 5);
@@ -2370,43 +2246,32 @@ static void assert_dsv_surface(void) {
   config = vectis_dsv_tsv_rows();
   config.columns = reordered_columns;
   config.column_count = 2u;
-  status = vectis_dsv_lonejson_rows_to_bytes(&sample_dsv_doc_map,
-                                             &config,
-                                             out_rows,
-                                             1u,
-                                             0u,
-                                             &json,
-                                             &error);
+  status = vectis_dsv_lonejson_rows_to_bytes(&sample_dsv_doc_map, &config,
+                                             out_rows, 1u, 0u, &json, &error);
   assert(status == VECTIS_OK);
   assert(strcmp((const char *)json.data, "true\talpha,quoted\n") == 0);
   vectis_mutable_bytes_cleanup(&json);
 
   memset(&json, 0, sizeof(json));
   config = vectis_dsv_csv();
-  status = vectis_dsv_lonejson_rows_to_bytes(&sample_xml_doc_map,
-                                             &config,
-                                             NULL,
-                                             0u,
-                                             0u,
-                                             &json,
-                                             &error);
+  status = vectis_dsv_lonejson_rows_to_bytes(&sample_xml_doc_map, &config, NULL,
+                                             0u, 0u, &json, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "not a scalar") != NULL);
   vectis_error_clear(&error);
 }
 
 static void assert_xml_surface(void) {
-  const char xml[] =
-      "<invoice ignored=\"yes\">"
-      "<id> inv-001 </id>"
-      "<amount currency=\"SEK\">123.50</amount>"
-      "<line><sku>A-1</sku><quantity>2</quantity></line>"
-      "<line><sku>B-2</sku><quantity>3</quantity></line>"
-      "<tag>finance</tag>"
-      "<tag>xml</tag>"
-      "<active>1</active>"
-      "<unknown>ignored</unknown>"
-      "</invoice>";
+  const char xml[] = "<invoice ignored=\"yes\">"
+                     "<id> inv-001 </id>"
+                     "<amount currency=\"SEK\">123.50</amount>"
+                     "<line><sku>A-1</sku><quantity>2</quantity></line>"
+                     "<line><sku>B-2</sku><quantity>3</quantity></line>"
+                     "<tag>finance</tag>"
+                     "<tag>xml</tag>"
+                     "<active>1</active>"
+                     "<unknown>ignored</unknown>"
+                     "</invoice>";
   const char bad_root[] = "<statement><id>x</id></statement>";
   const char duplicate_scalar[] = "<invoice><id>a</id><id>b</id></invoice>";
   const char non_contiguous_array[] =
@@ -2430,11 +2295,8 @@ static void assert_xml_surface(void) {
   config.root_element = "invoice";
   memset(&doc, 0, sizeof(doc));
   xml_source = vectis_source_from_memory(xml, sizeof(xml) - 1u);
-  status = vectis_xml_parse_lonejson_source(&xml_source,
-                                            &sample_xml_doc_map,
-                                            &config,
-                                            &doc,
-                                            &error);
+  status = vectis_xml_parse_lonejson_source(&xml_source, &sample_xml_doc_map,
+                                            &config, &doc, &error);
   assert(status == VECTIS_OK);
   assert(strcmp(doc.id, " inv-001 ") == 0);
   assert(strcmp(doc.amount.currency, "SEK") == 0);
@@ -2452,31 +2314,24 @@ static void assert_xml_surface(void) {
   lonejson_cleanup(&sample_xml_doc_map, &doc);
 
   xml_source = vectis_source_from_memory(bad_root, sizeof(bad_root) - 1u);
-  status = vectis_xml_parse_lonejson_source(&xml_source,
-                                            &sample_xml_doc_map,
-                                            &config,
-                                            &doc,
-                                            &error);
+  status = vectis_xml_parse_lonejson_source(&xml_source, &sample_xml_doc_map,
+                                            &config, &doc, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "root element") != NULL);
   vectis_error_clear(&error);
 
-  xml_source = vectis_source_from_memory(duplicate_scalar, sizeof(duplicate_scalar) - 1u);
-  status = vectis_xml_parse_lonejson_source(&xml_source,
-                                            &sample_xml_doc_map,
-                                            &config,
-                                            &doc,
-                                            &error);
+  xml_source = vectis_source_from_memory(duplicate_scalar,
+                                         sizeof(duplicate_scalar) - 1u);
+  status = vectis_xml_parse_lonejson_source(&xml_source, &sample_xml_doc_map,
+                                            &config, &doc, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "duplicate") != NULL);
   vectis_error_clear(&error);
 
-  xml_source = vectis_source_from_memory(non_contiguous_array, sizeof(non_contiguous_array) - 1u);
-  status = vectis_xml_parse_lonejson_source(&xml_source,
-                                            &sample_xml_doc_map,
-                                            &config,
-                                            &doc,
-                                            &error);
+  xml_source = vectis_source_from_memory(non_contiguous_array,
+                                         sizeof(non_contiguous_array) - 1u);
+  status = vectis_xml_parse_lonejson_source(&xml_source, &sample_xml_doc_map,
+                                            &config, &doc, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "non-contiguous") != NULL);
   vectis_error_clear(&error);
@@ -2485,11 +2340,8 @@ static void assert_xml_surface(void) {
   config = vectis_xml_default();
   config.root_element = "invoice";
   config.skip_unknown_disabled = 1;
-  status = vectis_xml_parse_lonejson_source(&xml_source,
-                                            &sample_xml_doc_map,
-                                            &config,
-                                            &doc,
-                                            &error);
+  status = vectis_xml_parse_lonejson_source(&xml_source, &sample_xml_doc_map,
+                                            &config, &doc, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "unknown") != NULL);
   vectis_error_clear(&error);
@@ -2504,21 +2356,15 @@ static void assert_xml_surface(void) {
   config = vectis_xml_default();
   config.root_element = "doc";
   xml_source = vectis_source_from_memory(large_xml, large_body_size + 24u);
-  status = vectis_xml_parse_lonejson_source(&xml_source,
-                                            &sample_xml_blob_doc_map,
-                                            &config,
-                                            &blob_doc,
-                                            &error);
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_blob_doc_map, &config, &blob_doc, &error);
   assert(status == VECTIS_OK);
   assert(lonejson_spooled_size(&blob_doc.body) == large_body_size);
   assert(lonejson_spooled_spilled(&blob_doc.body));
   lonejson_cleanup(&sample_xml_blob_doc_map, &blob_doc);
   config.trim_text = 1;
-  status = vectis_xml_parse_lonejson_source(&xml_source,
-                                            &sample_xml_blob_doc_map,
-                                            &config,
-                                            &blob_doc,
-                                            &error);
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_blob_doc_map, &config, &blob_doc, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "trim_text=0") != NULL);
   vectis_error_clear(&error);

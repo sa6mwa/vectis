@@ -3,10 +3,8 @@
 #include <pslog.h>
 #include <vectis/vectis.h>
 
-static vectis_status report(vectis_app *app,
-                            vectis_request *request,
-                            vectis_response *response,
-                            void *userdata,
+static vectis_status report(vectis_app *app, vectis_request *request,
+                            vectis_response *response, void *userdata,
                             vectis_error *error) {
   pslog_logger *logger;
 
@@ -14,7 +12,8 @@ static vectis_status report(vectis_app *app,
   (void)userdata;
   logger = app->logger(app);
   if (logger != NULL) {
-    logger->infof(logger, "example.kore_regex.report", "route=%s", "^/reports/[0-9]+$");
+    logger->infof(logger, "example.kore_regex.report", "route=%s",
+                  "^/reports/[0-9]+$");
   }
   return vectis_response_text(response, 200, "text/plain", "report\n", error);
 }
@@ -39,7 +38,8 @@ int main(void) {
   vectis_app_config_init(&config);
   config.app_name = "regex-kore-api";
   config.logger = logger;
-  config.tls.cert_key_bundle = vectis_source_from_path("/etc/vectis/server.pem");
+  config.tls.cert_key_bundle =
+      vectis_source_from_path("/etc/vectis/server.pem");
 
   app = vectis_app_new(&config, &error);
   if (app == NULL) {
@@ -47,7 +47,8 @@ int main(void) {
     return 1;
   }
 
-  route = vectis_route_regex(VECTIS_HTTP_GET, "^/reports/[0-9]+$", report, NULL);
+  route =
+      vectis_route_regex(VECTIS_HTTP_GET, "^/reports/[0-9]+$", report, NULL);
   if (app->route(app, &route, &error) != VECTIS_OK) {
     app->close(app);
     logger->destroy(logger);

@@ -64,50 +64,40 @@ typedef struct workflow_counter_update {
 } workflow_counter_update;
 
 static const lonejson_field workflow_input_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_input,
-                                    content,
-                                    "content",
+    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_input, content, "content",
                                     LONEJSON_OVERFLOW_FAIL)};
 
 static const lonejson_field workflow_content_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_content,
-                                    id,
-                                    "id",
+    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_content, id, "id",
                                     LONEJSON_OVERFLOW_FAIL),
-    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_content,
-                                    content,
-                                    "content",
+    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_content, content, "content",
                                     LONEJSON_OVERFLOW_FAIL)};
 
 static const lonejson_field workflow_counter_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_counter,
-                                    id,
-                                    "id",
+    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_counter, id, "id",
                                     LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_I64_REQ(workflow_counter, counter, "counter")};
 
 static const lonejson_field workflow_message_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_message,
-                                    id,
-                                    "id",
+    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_message, id, "id",
                                     LONEJSON_OVERFLOW_FAIL)};
 
 static const lonejson_field workflow_response_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_response,
-                                    id,
-                                    "id",
+    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_response, id, "id",
                                     LONEJSON_OVERFLOW_FAIL),
-    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_response,
-                                    queue,
-                                    "queue",
+    LONEJSON_FIELD_STRING_FIXED_REQ(workflow_response, queue, "queue",
                                     LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_I64_REQ(workflow_response, counter, "counter")};
 
 LONEJSON_MAP_DEFINE(workflow_input_map, workflow_input, workflow_input_fields);
-LONEJSON_MAP_DEFINE(workflow_content_map, workflow_content, workflow_content_fields);
-LONEJSON_MAP_DEFINE(workflow_counter_map, workflow_counter, workflow_counter_fields);
-LONEJSON_MAP_DEFINE(workflow_message_map, workflow_message, workflow_message_fields);
-LONEJSON_MAP_DEFINE(workflow_response_map, workflow_response, workflow_response_fields);
+LONEJSON_MAP_DEFINE(workflow_content_map, workflow_content,
+                    workflow_content_fields);
+LONEJSON_MAP_DEFINE(workflow_counter_map, workflow_counter,
+                    workflow_counter_fields);
+LONEJSON_MAP_DEFINE(workflow_message_map, workflow_message,
+                    workflow_message_fields);
+LONEJSON_MAP_DEFINE(workflow_response_map, workflow_response,
+                    workflow_response_fields);
 
 static const workflow_input workflow_input_zero;
 static const workflow_content workflow_content_zero;
@@ -127,7 +117,8 @@ static const char *env_or_default(const char *name, const char *fallback) {
   return value;
 }
 
-static unsigned short env_port_or_default(const char *name, unsigned short fallback) {
+static unsigned short env_port_or_default(const char *name,
+                                          unsigned short fallback) {
   const char *value;
   long port;
 
@@ -144,14 +135,14 @@ static unsigned short env_port_or_default(const char *name, unsigned short fallb
 
 static void load_config(workflow_config *config) {
   config->endpoint = env_or_default("LOCKD_ENDPOINT", "https://127.0.0.1:8443");
-  config->bundle_path = env_or_default("LOCKD_CLIENT_BUNDLE",
-                                       "/etc/vectis/lockd-client.pem");
-  config->queue = env_or_default("VECTIS_E2E_WORKFLOW_QUEUE",
-                                 "vectis-e2e-workflow");
-  config->namespace_name = env_or_default("VECTIS_E2E_WORKFLOW_NAMESPACE",
-                                          "examples");
-  config->expected_content = env_or_default("VECTIS_E2E_WORKFLOW_CONTENT",
-                                            "vectis e2e content");
+  config->bundle_path =
+      env_or_default("LOCKD_CLIENT_BUNDLE", "/etc/vectis/lockd-client.pem");
+  config->queue =
+      env_or_default("VECTIS_E2E_WORKFLOW_QUEUE", "vectis-e2e-workflow");
+  config->namespace_name =
+      env_or_default("VECTIS_E2E_WORKFLOW_NAMESPACE", "examples");
+  config->expected_content =
+      env_or_default("VECTIS_E2E_WORKFLOW_CONTENT", "vectis e2e content");
   config->bind = env_or_default("VECTIS_KORE_BIND", "127.0.0.1");
   config->port = env_port_or_default("VECTIS_KORE_PORT", 28082u);
 }
@@ -162,7 +153,8 @@ static void serve_forever(void) {
   }
 }
 
-static int print_vectis_error(const char *operation, const vectis_error *error) {
+static int print_vectis_error(const char *operation,
+                              const vectis_error *error) {
   fprintf(stderr, "%s failed", operation);
   if (error != NULL && error->message[0] != '\0') {
     fprintf(stderr, ": %s", error->message);
@@ -183,8 +175,7 @@ static int print_lockd_error(const char *operation, const lc_error *error) {
   return 1;
 }
 
-static vectis_status save_content_state(lc_client *client,
-                                        const char *id,
+static vectis_status save_content_state(lc_client *client, const char *id,
                                         const char *content,
                                         vectis_error *error) {
   workflow_content doc;
@@ -192,23 +183,18 @@ static vectis_status save_content_state(lc_client *client,
   vectis_status status;
 
   doc = workflow_content_zero;
-  status = vectis_format_key(key, sizeof(key), error, "workflow/%s/content", id);
+  status =
+      vectis_format_key(key, sizeof(key), error, "workflow/%s/content", id);
   if (status != VECTIS_OK) {
     return status;
   }
   (void)snprintf(doc.id, sizeof(doc.id), "%s", id);
   (void)snprintf(doc.content, sizeof(doc.content), "%s", content);
-  return vectis_lockd_state_save(client,
-                                 key,
-                                 "vectis-e2e-kore-producer",
-                                 30L,
-                                 &workflow_content_map,
-                                 &doc,
-                                 error);
+  return vectis_lockd_state_save(client, key, "vectis-e2e-kore-producer", 30L,
+                                 &workflow_content_map, &doc, error);
 }
 
-static vectis_status save_counter_state(lc_client *client,
-                                        const char *id,
+static vectis_status save_counter_state(lc_client *client, const char *id,
                                         lonejson_int64 counter,
                                         const char *owner,
                                         vectis_error *error) {
@@ -217,67 +203,51 @@ static vectis_status save_counter_state(lc_client *client,
   vectis_status status;
 
   doc = workflow_counter_zero;
-  status = vectis_format_key(key, sizeof(key), error, "workflow/%s/counter", id);
+  status =
+      vectis_format_key(key, sizeof(key), error, "workflow/%s/counter", id);
   if (status != VECTIS_OK) {
     return status;
   }
   (void)snprintf(doc.id, sizeof(doc.id), "%s", id);
   doc.counter = counter;
-  return vectis_lockd_state_save(client,
-                                 key,
-                                 owner,
-                                 30L,
-                                 &workflow_counter_map,
-                                 &doc,
-                                 error);
+  return vectis_lockd_state_save(client, key, owner, 30L, &workflow_counter_map,
+                                 &doc, error);
 }
 
-static vectis_status load_content_state(lc_client *client,
-                                        const char *id,
+static vectis_status load_content_state(lc_client *client, const char *id,
                                         workflow_content *doc,
                                         vectis_error *error) {
   char key[160];
   vectis_status status;
 
   *doc = workflow_content_zero;
-  status = vectis_format_key(key, sizeof(key), error, "workflow/%s/content", id);
+  status =
+      vectis_format_key(key, sizeof(key), error, "workflow/%s/content", id);
   if (status != VECTIS_OK) {
     return status;
   }
-  return vectis_lockd_state_load(client,
-                                 key,
-                                 "vectis-e2e-content-reader",
-                                 30L,
-                                 &workflow_content_map,
-                                 doc,
-                                 error);
+  return vectis_lockd_state_load(client, key, "vectis-e2e-content-reader", 30L,
+                                 &workflow_content_map, doc, error);
 }
 
-static vectis_status load_counter_state(lc_client *client,
-                                        const char *id,
+static vectis_status load_counter_state(lc_client *client, const char *id,
                                         workflow_counter *doc,
                                         vectis_error *error) {
   char key[160];
   vectis_status status;
 
   *doc = workflow_counter_zero;
-  status = vectis_format_key(key, sizeof(key), error, "workflow/%s/counter", id);
+  status =
+      vectis_format_key(key, sizeof(key), error, "workflow/%s/counter", id);
   if (status != VECTIS_OK) {
     return status;
   }
-  return vectis_lockd_state_load(client,
-                                 key,
-                                 "vectis-e2e-counter-reader",
-                                 30L,
-                                 &workflow_counter_map,
-                                 doc,
-                                 error);
+  return vectis_lockd_state_load(client, key, "vectis-e2e-counter-reader", 30L,
+                                 &workflow_counter_map, doc, error);
 }
 
-static vectis_status update_counter_value(struct lc_lease *lease,
-                                          void *state,
-                                          int *save,
-                                          void *userdata,
+static vectis_status update_counter_value(struct lc_lease *lease, void *state,
+                                          int *save, void *userdata,
                                           vectis_error *error) {
   workflow_counter *doc;
   workflow_counter_update *update;
@@ -297,12 +267,10 @@ static vectis_status update_counter_value(struct lc_lease *lease,
   return VECTIS_OK;
 }
 
-static vectis_status update_counter_state(lc_client *client,
-                                          const char *id,
+static vectis_status update_counter_state(lc_client *client, const char *id,
                                           lonejson_int64 expected,
                                           lonejson_int64 next,
-                                          const char *owner,
-                                          int *matched,
+                                          const char *owner, int *matched,
                                           vectis_error *error) {
   workflow_counter doc;
   workflow_counter_update update;
@@ -316,19 +284,14 @@ static vectis_status update_counter_state(lc_client *client,
   if (matched != NULL) {
     *matched = 0;
   }
-  status = vectis_format_key(key, sizeof(key), error, "workflow/%s/counter", id);
+  status =
+      vectis_format_key(key, sizeof(key), error, "workflow/%s/counter", id);
   if (status != VECTIS_OK) {
     return status;
   }
-  status = vectis_lockd_state_update(client,
-                                     key,
-                                     owner,
-                                     30L,
-                                     &workflow_counter_map,
-                                     &doc,
-                                     update_counter_value,
-                                     &update,
-                                     error);
+  status =
+      vectis_lockd_state_update(client, key, owner, 30L, &workflow_counter_map,
+                                &doc, update_counter_value, &update, error);
   if (status == VECTIS_OK && matched != NULL) {
     *matched = update.matched;
   }
@@ -337,8 +300,7 @@ static vectis_status update_counter_state(lc_client *client,
 
 static int enqueue_workflow_message(lc_client *client,
                                     const workflow_config *config,
-                                    const char *id,
-                                    lc_error *error) {
+                                    const char *id, lc_error *error) {
   workflow_message message;
   lc_enqueue_req enqueue;
   lc_enqueue_res result;
@@ -359,14 +321,12 @@ static int enqueue_workflow_message(lc_client *client,
     fprintf(stderr, "lonejson runtime init failed: %s\n", json_error.message);
     return LC_ERR_NOMEM;
   }
-  json = lonejson_serialize_alloc(json_runtime,
-                                  &workflow_message_map,
-                                  &message,
-                                  &json_size,
-                                  &json_error);
+  json = lonejson_serialize_alloc(json_runtime, &workflow_message_map, &message,
+                                  &json_size, &json_error);
   lonejson_free(json_runtime);
   if (json == NULL) {
-    fprintf(stderr, "serialize workflow message failed: %s\n", json_error.message);
+    fprintf(stderr, "serialize workflow message failed: %s\n",
+            json_error.message);
     return LC_ERR_INVALID;
   }
   rc = lc_source_from_memory(json, json_size, &source, error);
@@ -386,10 +346,8 @@ static int enqueue_workflow_message(lc_client *client,
   return rc;
 }
 
-static vectis_status health(vectis_app *app,
-                            vectis_request *request,
-                            vectis_response *response,
-                            void *userdata,
+static vectis_status health(vectis_app *app, vectis_request *request,
+                            vectis_response *response, void *userdata,
                             vectis_error *error) {
   (void)app;
   (void)request;
@@ -397,10 +355,8 @@ static vectis_status health(vectis_app *app,
   return vectis_response_text(response, 200, "text/plain", "ok\n", error);
 }
 
-static vectis_status start_workflow(vectis_app *app,
-                                    vectis_request *request,
-                                    vectis_response *response,
-                                    void *userdata,
+static vectis_status start_workflow(vectis_app *app, vectis_request *request,
+                                    vectis_response *response, void *userdata,
                                     vectis_error *error) {
   workflow_server_context *context;
   workflow_input input;
@@ -417,14 +373,11 @@ static vectis_status start_workflow(vectis_app *app,
   lc_error_init(&lcerr);
   id = vectis_request_path_param(request, "id");
   if (id == NULL || id[0] == '\0') {
-    return vectis_response_error_json(response,
-                                      400,
-                                      "missing_id",
-                                      "workflow id is required",
-                                      NULL,
-                                      error);
+    return vectis_response_error_json(response, 400, "missing_id",
+                                      "workflow id is required", NULL, error);
   }
-  if (vectis_request_json_into(request, &workflow_input_map, &input, error) != VECTIS_OK) {
+  if (vectis_request_json_into(request, &workflow_input_map, &input, error) !=
+      VECTIS_OK) {
     return VECTIS_ERR_INVALID;
   }
   client = app->lockd_client(app);
@@ -433,7 +386,8 @@ static vectis_status start_workflow(vectis_app *app,
   }
   status = save_content_state(client, id, input.content, error);
   if (status == VECTIS_OK) {
-    status = save_counter_state(client, id, 1, "vectis-e2e-kore-producer", error);
+    status =
+        save_counter_state(client, id, 1, "vectis-e2e-kore-producer", error);
   }
   if (status != VECTIS_OK) {
     lc_error_cleanup(&lcerr);
@@ -445,14 +399,15 @@ static vectis_status start_workflow(vectis_app *app,
     return VECTIS_ERR_STATE;
   }
   (void)snprintf(output.id, sizeof(output.id), "%s", id);
-  (void)snprintf(output.queue, sizeof(output.queue), "%s", context->config.queue);
+  (void)snprintf(output.queue, sizeof(output.queue), "%s",
+                 context->config.queue);
   output.counter = 1;
   lc_error_cleanup(&lcerr);
-  return vectis_response_json(response, 202, &workflow_response_map, &output, error);
+  return vectis_response_json(response, 202, &workflow_response_map, &output,
+                              error);
 }
 
-static int parse_delivery_id(lc_message *message,
-                             workflow_message *workflow,
+static int parse_delivery_id(lc_message *message, workflow_message *workflow,
                              lc_error *error) {
   lc_sink *sink;
   const void *bytes;
@@ -480,15 +435,13 @@ static int parse_delivery_id(lc_message *message,
       fprintf(stderr, "lonejson runtime init failed: %s\n", json_error.message);
       rc = LC_ERR_NOMEM;
     } else {
-      json_status = lonejson_parse_buffer(json_runtime,
-                                        &workflow_message_map,
-                                        workflow,
-                                        (const char *)bytes,
-                                        length,
-                                        &json_error);
+      json_status =
+          lonejson_parse_buffer(json_runtime, &workflow_message_map, workflow,
+                                (const char *)bytes, length, &json_error);
       lonejson_free(json_runtime);
       if (json_status != LONEJSON_STATUS_OK) {
-        fprintf(stderr, "parse workflow message failed: %s\n", json_error.message);
+        fprintf(stderr, "parse workflow message failed: %s\n",
+                json_error.message);
         rc = LC_ERR_INVALID;
       }
     }
@@ -514,7 +467,8 @@ static int handle_workflow_message(void *userdata,
   vectis_error_clear(&verror);
   rc = parse_delivery_id(delivery->message, &message, error);
   if (rc == LC_OK) {
-    status = load_content_state(delivery->client, message.id, &content, &verror);
+    status =
+        load_content_state(delivery->client, message.id, &content, &verror);
     if (status != VECTIS_OK) {
       fprintf(stderr, "load content failed: %s\n", verror.message);
       rc = LC_ERR_PROTOCOL;
@@ -525,22 +479,17 @@ static int handle_workflow_message(void *userdata,
        strcmp(content.content, context->config.expected_content) != 0)) {
     fprintf(stderr,
             "unexpected content for %s: id=%s content=%s expected_content=%s\n",
-            message.id,
-            content.id,
-            content.content,
+            message.id, content.id, content.content,
             context->config.expected_content);
     rc = LC_ERR_PROTOCOL;
   }
   if (rc == LC_OK) {
-    status = update_counter_state(delivery->client,
-                                  message.id,
-                                  context->expected_counter,
-                                  context->next_counter,
-                                  context->ack_message
-                                      ? "vectis-e2e-consumer-second"
-                                      : "vectis-e2e-consumer-first",
-                                  &matched,
-                                  &verror);
+    status =
+        update_counter_state(delivery->client, message.id,
+                             context->expected_counter, context->next_counter,
+                             context->ack_message ? "vectis-e2e-consumer-second"
+                                                  : "vectis-e2e-consumer-first",
+                             &matched, &verror);
     if (status != VECTIS_OK) {
       fprintf(stderr, "update counter failed: %s\n", verror.message);
       rc = LC_ERR_PROTOCOL;
@@ -548,27 +497,21 @@ static int handle_workflow_message(void *userdata,
   }
   if (rc == LC_OK) {
     if (!matched) {
-      fprintf(stderr,
-              "workflow.consumer.not_ready id=%s expected=%ld ack=%d\n",
-              message.id,
-              (long)context->expected_counter,
+      fprintf(stderr, "workflow.consumer.not_ready id=%s expected=%ld ack=%d\n",
+              message.id, (long)context->expected_counter,
               context->ack_message);
       lc_nack_req_init(&nack);
       nack.delay_seconds = 0L;
       nack.intent = LC_NACK_INTENT_DEFER;
       rc = delivery->message->nack(delivery->message, &nack, error);
     } else if (context->ack_message) {
-      fprintf(stderr,
-              "workflow.consumer.ack id=%s expected=%ld next=%ld\n",
-              message.id,
-              (long)context->expected_counter,
+      fprintf(stderr, "workflow.consumer.ack id=%s expected=%ld next=%ld\n",
+              message.id, (long)context->expected_counter,
               (long)context->next_counter);
       rc = delivery->message->ack(delivery->message, error);
     } else {
-      fprintf(stderr,
-              "workflow.consumer.defer id=%s expected=%ld next=%ld\n",
-              message.id,
-              (long)context->expected_counter,
+      fprintf(stderr, "workflow.consumer.defer id=%s expected=%ld next=%ld\n",
+              message.id, (long)context->expected_counter,
               (long)context->next_counter);
       lc_nack_req_init(&nack);
       nack.delay_seconds = 0L;
@@ -588,10 +531,8 @@ static int handle_workflow_message(void *userdata,
   return rc;
 }
 
-static int new_logger(const char *component,
-                      const pslog_palette *palette,
-                      pslog_logger **root_out,
-                      pslog_logger **out) {
+static int new_logger(const char *component, const pslog_palette *palette,
+                      pslog_logger **root_out, pslog_logger **out) {
   pslog_config log_config;
   pslog_logger *root;
   pslog_logger *scoped;
@@ -643,7 +584,8 @@ static int run_server(void) {
   if (new_logger("kore", pslog_palette_default(), &root_logger, &logger) != 0) {
     return 1;
   }
-  if (new_logger("lockd", &pslog_builtin_palette_horizon, &lockd_root_logger, &lockd_logger) != 0) {
+  if (new_logger("lockd", &pslog_builtin_palette_horizon, &lockd_root_logger,
+                 &lockd_logger) != 0) {
     logger->destroy(logger);
     root_logger->destroy(root_logger);
     return 1;
@@ -657,7 +599,8 @@ static int run_server(void) {
   endpoints[0] = context.config.endpoint;
   app_config.lockd.endpoints = endpoints;
   app_config.lockd.endpoint_count = 1u;
-  app_config.lockd.client_bundle = vectis_source_from_path(context.config.bundle_path);
+  app_config.lockd.client_bundle =
+      vectis_source_from_path(context.config.bundle_path);
   app_config.lockd.default_namespace = context.config.namespace_name;
   app_config.lockd.logger = lockd_logger;
   app = vectis_app_new(&app_config, &error);
@@ -669,10 +612,9 @@ static int run_server(void) {
     root_logger->destroy(root_logger);
     return 1;
   }
-  route = vectis_route_methods(VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD,
-                               "/health",
-                               health,
-                               NULL);
+  route =
+      vectis_route_methods(VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD,
+                           "/health", health, NULL);
   if (app->route(app, &route, &error) != VECTIS_OK) {
     (void)print_vectis_error("app->route", &error);
     app->close(app);
@@ -682,7 +624,8 @@ static int run_server(void) {
     root_logger->destroy(root_logger);
     return 1;
   }
-  route = vectis_json_body_route(VECTIS_HTTP_POST, "/workflow/:id", start_workflow, &context);
+  route = vectis_json_body_route(VECTIS_HTTP_POST, "/workflow/:id",
+                                 start_workflow, &context);
   if (app->route(app, &route, &error) != VECTIS_OK) {
     (void)print_vectis_error("app->route", &error);
     app->close(app);
@@ -711,8 +654,7 @@ static int run_server(void) {
 }
 
 static int run_consumer(lonejson_int64 expected_counter,
-                        lonejson_int64 next_counter,
-                        int ack_message) {
+                        lonejson_int64 next_counter, int ack_message) {
   workflow_consumer_context context;
   vectis_app_config app_config;
   lc_consumer_config consumer;
@@ -736,10 +678,12 @@ static int run_consumer(lonejson_int64 expected_counter,
   context.expected_counter = expected_counter;
   context.next_counter = next_counter;
   context.ack_message = ack_message;
-  if (new_logger("consumer", pslog_palette_default(), &root_logger, &logger) != 0) {
+  if (new_logger("consumer", pslog_palette_default(), &root_logger, &logger) !=
+      0) {
     return 1;
   }
-  if (new_logger("lockd", &pslog_builtin_palette_horizon, &lockd_root_logger, &lockd_logger) != 0) {
+  if (new_logger("lockd", &pslog_builtin_palette_horizon, &lockd_root_logger,
+                 &lockd_logger) != 0) {
     logger->destroy(logger);
     root_logger->destroy(root_logger);
     return 1;
@@ -747,13 +691,14 @@ static int run_consumer(lonejson_int64 expected_counter,
   vectis_app_config_init(&app_config);
   lc_consumer_config_init(&consumer);
   lc_consumer_service_config_init(&service_config);
-  app_config.app_name = ack_message ? "vectis-e2e-consumer-second"
-                                    : "vectis-e2e-consumer-first";
+  app_config.app_name =
+      ack_message ? "vectis-e2e-consumer-second" : "vectis-e2e-consumer-first";
   app_config.logger = logger;
   endpoints[0] = context.config.endpoint;
   app_config.lockd.endpoints = endpoints;
   app_config.lockd.endpoint_count = 1u;
-  app_config.lockd.client_bundle = vectis_source_from_path(context.config.bundle_path);
+  app_config.lockd.client_bundle =
+      vectis_source_from_path(context.config.bundle_path);
   app_config.lockd.default_namespace = context.config.namespace_name;
   app_config.lockd.logger = lockd_logger;
   app = vectis_app_new(&app_config, &error);
@@ -786,7 +731,8 @@ static int run_consumer(lonejson_int64 expected_counter,
     } else if (context.handled && !context.failed) {
       rc = 0;
     } else {
-      fprintf(stderr, "workflow consumer stopped without handling expected phase\n");
+      fprintf(stderr,
+              "workflow consumer stopped without handling expected phase\n");
     }
   }
   service->close(service);
@@ -826,8 +772,7 @@ static int run_verify(void) {
   if (rc == LC_OK) {
     status = load_content_state(client,
                                 env_or_default("VECTIS_E2E_WORKFLOW_ID", "e2e"),
-                                &content,
-                                &verror);
+                                &content, &verror);
     if (status != VECTIS_OK) {
       fprintf(stderr, "verify content failed: %s\n", verror.message);
       rc = LC_ERR_PROTOCOL;
@@ -836,18 +781,15 @@ static int run_verify(void) {
   if (rc == LC_OK) {
     status = load_counter_state(client,
                                 env_or_default("VECTIS_E2E_WORKFLOW_ID", "e2e"),
-                                &counter,
-                                &verror);
+                                &counter, &verror);
     if (status != VECTIS_OK) {
       fprintf(stderr, "verify counter failed: %s\n", verror.message);
       rc = LC_ERR_PROTOCOL;
     }
   }
-  if (rc == LC_OK &&
-      (strcmp(content.content, config.expected_content) != 0 || counter.counter != 3)) {
-    fprintf(stderr,
-            "verify failed: content=%s counter=%ld\n",
-            content.content,
+  if (rc == LC_OK && (strcmp(content.content, config.expected_content) != 0 ||
+                      counter.counter != 3)) {
+    fprintf(stderr, "verify failed: content=%s counter=%ld\n", content.content,
             (long)counter.counter);
     rc = LC_ERR_PROTOCOL;
   }
@@ -859,10 +801,8 @@ static int run_verify(void) {
       rc = LC_ERR_PROTOCOL;
     } else {
       if (stats.available != 0 || stats.pending_candidates != 0) {
-        fprintf(stderr,
-                "verify queue not drained: available=%d pending=%d\n",
-                stats.available,
-                stats.pending_candidates);
+        fprintf(stderr, "verify queue not drained: available=%d pending=%d\n",
+                stats.available, stats.pending_candidates);
         rc = LC_ERR_PROTOCOL;
       }
       lc_queue_stats_res_cleanup(&stats);
@@ -880,7 +820,8 @@ static int run_verify(void) {
 
 int main(int argc, char **argv) {
   if (argc != 2) {
-    fputs("usage: vectis_example_workflow_e2e server|consumer-first|consumer-second|verify\n",
+    fputs("usage: vectis_example_workflow_e2e "
+          "server|consumer-first|consumer-second|verify\n",
           stderr);
     return 2;
   }

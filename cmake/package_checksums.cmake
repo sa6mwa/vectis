@@ -8,11 +8,26 @@ if((NOT DEFINED VECTIS_VERSION OR "${VECTIS_VERSION}" STREQUAL "")
    AND EXISTS "${VECTIS_BINARY_DIR}/package-metadata.cmake")
   include("${VECTIS_BINARY_DIR}/package-metadata.cmake")
 endif()
+if((NOT DEFINED VECTIS_VERSION OR "${VECTIS_VERSION}" STREQUAL "")
+   AND DEFINED VECTIS_ROOT
+   AND EXISTS "${VECTIS_ROOT}/scripts/release_version.sh")
+  execute_process(
+    COMMAND "${VECTIS_ROOT}/scripts/release_version.sh"
+    WORKING_DIRECTORY "${VECTIS_ROOT}"
+    OUTPUT_VARIABLE VECTIS_VERSION
+    RESULT_VARIABLE vectis_version_result
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  if(NOT vectis_version_result EQUAL 0)
+    message(FATAL_ERROR "failed to resolve VECTIS_VERSION")
+  endif()
+endif()
 set(checksums_name "vectis-${VECTIS_VERSION}-CHECKSUMS")
 set(checksums_path "${dist_dir}/${checksums_name}")
 
 file(MAKE_DIRECTORY "${dist_dir}")
 file(GLOB checksum_inputs RELATIVE "${dist_dir}" LIST_DIRECTORIES false
+  "${dist_dir}/vectis-${VECTIS_VERSION}.tar.gz"
   "${dist_dir}/vectis-${VECTIS_VERSION}-*.tar.gz"
   "${dist_dir}/vectis-${VECTIS_VERSION}-*.zip"
 )

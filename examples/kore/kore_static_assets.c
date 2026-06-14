@@ -1,8 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <vectis/vectis.h>
 
@@ -16,7 +16,8 @@ static const char *env_or_default(const char *name, const char *fallback) {
   return value;
 }
 
-static unsigned short env_port_or_default(const char *name, unsigned short fallback) {
+static unsigned short env_port_or_default(const char *name,
+                                          unsigned short fallback) {
   const char *value;
   long port;
 
@@ -59,8 +60,7 @@ static int write_file(const char *path, const char *body) {
   return fclose(fp) == 0 ? 0 : 1;
 }
 
-static int prepare_assets(const char *root_dir,
-                          const char *index_path,
+static int prepare_assets(const char *root_dir, const char *index_path,
                           const char *app_path) {
   (void)mkdir(root_dir, 0700);
   if (write_file(index_path, "<!doctype html><title>vectis</title>\n") != 0) {
@@ -89,8 +89,10 @@ int main(void) {
   const char *app_path;
 
   root_dir = env_or_default("VECTIS_STATIC_ROOT", "/tmp/vectis-static-assets");
-  index_path = env_or_default("VECTIS_STATIC_INDEX", "/tmp/vectis-static-assets/index.html");
-  app_path = env_or_default("VECTIS_STATIC_APP", "/tmp/vectis-static-assets/app.js");
+  index_path = env_or_default("VECTIS_STATIC_INDEX",
+                              "/tmp/vectis-static-assets/index.html");
+  app_path =
+      env_or_default("VECTIS_STATIC_APP", "/tmp/vectis-static-assets/app.js");
   if (prepare_assets(root_dir, index_path, app_path) != 0) {
     fprintf(stderr, "failed to prepare static asset fixtures\n");
     return 1;

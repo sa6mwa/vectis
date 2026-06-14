@@ -1,6 +1,7 @@
 build/
 dist/
 .cache/
+/VERSION
 compile_commands.json
 vendor/kore/upstream/
 coverage-report/

@@ -1,6 +1,23 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(vectis VERSION 0.0.0 LANGUAGES C)
+set(VECTIS_VERSION_OVERRIDE "" CACHE STRING "Deliberate release-candidate version override.")
+set(vectis_version_args)
+if(NOT VECTIS_VERSION_OVERRIDE STREQUAL "")
+  list(APPEND vectis_version_args --override "${VECTIS_VERSION_OVERRIDE}")
+endif()
+execute_process(
+  COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/release_version.sh" ${vectis_version_args}
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+  OUTPUT_VARIABLE vectis_detected_version
+  ERROR_VARIABLE vectis_version_error
+  RESULT_VARIABLE vectis_version_result
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if(NOT vectis_version_result EQUAL 0)
+  message(FATAL_ERROR "failed to resolve vectis version: ${vectis_version_error}")
+endif()
+
+project(vectis VERSION "${vectis_detected_version}" LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CMakeDependentOption)
@@ -30,6 +47,8 @@ set(VECTIS_TARGET_OS "${CMAKE_SYSTEM_NAME}"
     CACHE STRING "Release target operating system.")
 set(VECTIS_TARGET_LIBC ""
     CACHE STRING "Release target libc when applicable.")
+set(VECTIS_TARGET_ID ""
+    CACHE STRING "Release target identifier.")
 
 set(VECTIS_EXPECTED_SYSTEM_VERSION "0.2.0")
 set(VECTIS_EXPECTED_LOCKDC_VERSION "0.10.0")
@@ -42,19 +61,21 @@ set(VECTIS_EXPECTED_LIBPID0_SHA256 "29591e058ab5ad9d0bbe0cd4c0d783ace2dee4e2ae6c
 set(VECTIS_EXPECTED_LIBXML2_VERSION "2.15.3")
 set(VECTIS_EXPECTED_LIBXML2_SHA256 "5c6060277173270356c3f1c321a640ab629bdabc5e5ba9095b99e00759ba0c39")
 
-string(TOLOWER "${VECTIS_TARGET_ARCH}" VECTIS_TARGET_ARCH_LOWER)
-string(TOLOWER "${VECTIS_TARGET_OS}" VECTIS_TARGET_OS_LOWER)
-string(TOLOWER "${VECTIS_TARGET_LIBC}" VECTIS_TARGET_LIBC_LOWER)
-if(VECTIS_TARGET_OS_LOWER STREQUAL "darwin")
-  set(VECTIS_TARGET_ID "${VECTIS_TARGET_ARCH_LOWER}-apple-darwin")
-elseif(VECTIS_TARGET_OS_LOWER STREQUAL "linux")
-  if(NOT VECTIS_TARGET_LIBC_LOWER STREQUAL "")
-    set(VECTIS_TARGET_ID "${VECTIS_TARGET_ARCH_LOWER}-linux-${VECTIS_TARGET_LIBC_LOWER}")
+if(VECTIS_TARGET_ID STREQUAL "")
+  string(TOLOWER "${VECTIS_TARGET_ARCH}" VECTIS_TARGET_ARCH_LOWER)
+  string(TOLOWER "${VECTIS_TARGET_OS}" VECTIS_TARGET_OS_LOWER)
+  string(TOLOWER "${VECTIS_TARGET_LIBC}" VECTIS_TARGET_LIBC_LOWER)
+  if(VECTIS_TARGET_OS_LOWER STREQUAL "darwin")
+    set(VECTIS_TARGET_ID "${VECTIS_TARGET_ARCH_LOWER}-apple-darwin")
+  elseif(VECTIS_TARGET_OS_LOWER STREQUAL "linux")
+    if(NOT VECTIS_TARGET_LIBC_LOWER STREQUAL "")
+      set(VECTIS_TARGET_ID "${VECTIS_TARGET_ARCH_LOWER}-linux-${VECTIS_TARGET_LIBC_LOWER}")
+    else()
+      set(VECTIS_TARGET_ID "${VECTIS_TARGET_ARCH_LOWER}-linux")
+    endif()
   else()
-    set(VECTIS_TARGET_ID "${VECTIS_TARGET_ARCH_LOWER}-linux")
+    set(VECTIS_TARGET_ID "${VECTIS_TARGET_ARCH_LOWER}-${VECTIS_TARGET_OS_LOWER}")
   endif()
-else()
-  set(VECTIS_TARGET_ID "${VECTIS_TARGET_ARCH_LOWER}-${VECTIS_TARGET_OS_LOWER}")
 endif()
 
 function(vectis_manifest_value out_var key)
@@ -190,6 +211,16 @@ if(VECTIS_BUILD_FUZZERS AND NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
   message(FATAL_ERROR "VECTIS_BUILD_FUZZERS=ON requires Clang.")
 endif()
 
+function(vectis_apply_relocatable_paths target)
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(${target} PRIVATE
+      "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=."
+      "-ffile-prefix-map=${CMAKE_BINARY_DIR}=build"
+      "-ffile-prefix-map=${VECTIS_EXTERNAL_ROOT}=deps"
+    )
+  endif()
+endfunction()
+
 function(vectis_configure_c_target target)
   get_target_property(target_type ${target} TYPE)
   set_target_properties(${target} PROPERTIES
@@ -230,6 +261,7 @@ function(vectis_configure_c_target target)
   if(UNIX OR APPLE OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
     target_compile_definitions(${target} PRIVATE _POSIX_C_SOURCE=200809L)
   endif()
+  vectis_apply_relocatable_paths(${target})
   if(VECTIS_ENABLE_COVERAGE AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(${target} PRIVATE --coverage -O0)
     if(target_type STREQUAL "STATIC_LIBRARY")
@@ -327,6 +359,7 @@ set(vectis_shared_dependency_links
 
 set(vectis_public_headers
   include/vectis/vectis.h
+  "${CMAKE_BINARY_DIR}/generated/include/vectis/vectis_version.h"
 )
 
 set(vectis_sources
@@ -352,7 +385,8 @@ if(VECTIS_WITH_KORE_RUNTIME)
   )
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     execute_process(
-      COMMAND "${vectis_kore_root}/misc/linux-platform.sh"
+      COMMAND "${CMAKE_COMMAND}" -E env "TARGET_PLATFORM=${VECTIS_TARGET_ARCH}"
+              "${vectis_kore_root}/misc/linux-platform.sh"
       WORKING_DIRECTORY "${vectis_kore_root}"
       OUTPUT_FILE "${vectis_kore_generated_dir}/platform.h"
       RESULT_VARIABLE vectis_kore_platform_result
@@ -438,6 +472,7 @@ if(VECTIS_WITH_KORE_RUNTIME)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(vectis_kore_runtime PRIVATE -std=gnu99 -Wall -Wextra)
   endif()
+  vectis_apply_relocatable_paths(vectis_kore_runtime)
   list(APPEND vectis_sources src/vectis_kore_bridge.c $<TARGET_OBJECTS:vectis_kore_runtime>)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     set_source_files_properties(src/vectis_kore_bridge.c PROPERTIES
@@ -453,12 +488,19 @@ set(vectis_private_includes
   "${CMAKE_SOURCE_DIR}/src"
 )
 
+configure_file(
+  "${CMAKE_SOURCE_DIR}/cmake/vectis_version.h.in"
+  "${CMAKE_BINARY_DIR}/generated/include/vectis/vectis_version.h"
+  @ONLY
+)
+
 if(VECTIS_BUILD_STATIC)
   add_library(vectis_static STATIC ${vectis_sources} ${vectis_public_headers})
   add_library(vectis::vectis_static ALIAS vectis_static)
   target_include_directories(vectis_static
     PUBLIC
       "${CMAKE_SOURCE_DIR}/include"
+      "${CMAKE_BINARY_DIR}/generated/include"
     PRIVATE
       ${vectis_private_includes}
   )
@@ -486,6 +528,7 @@ if(VECTIS_BUILD_SHARED)
   target_include_directories(vectis_shared
     PUBLIC
       "${CMAKE_SOURCE_DIR}/include"
+      "${CMAKE_BINARY_DIR}/generated/include"
     PRIVATE
       ${vectis_private_includes}
   )
@@ -537,6 +580,7 @@ if(VECTIS_BUILD_BINARY)
     C_EXTENSIONS OFF
     POSITION_INDEPENDENT_CODE ON
   )
+  vectis_apply_relocatable_paths(vectis_lonejson_lua)
 
   add_executable(vectis_bin
     src/vectis_cli.c
@@ -545,6 +589,7 @@ if(VECTIS_BUILD_BINARY)
   )
   target_include_directories(vectis_bin PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_BINARY_DIR}/generated/include"
     "${vectis_external_include_dir}"
   )
   if(VECTIS_BUILD_STATIC)
@@ -580,6 +625,7 @@ if(VECTIS_BUILD_BINARY)
   if(UNIX OR APPLE OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
     target_compile_definitions(vectis_bin PRIVATE _POSIX_C_SOURCE=200809L)
   endif()
+  vectis_apply_relocatable_paths(vectis_bin)
 endif()
 
 if(VECTIS_BUILD_TESTS)
@@ -605,6 +651,10 @@ if(VECTIS_INSTALL)
     install(TARGETS vectis_bin RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
   endif()
   install(FILES ${vectis_public_headers} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/vectis")
+  install(FILES
+          "${CMAKE_SOURCE_DIR}/LICENSE"
+          "${CMAKE_SOURCE_DIR}/README.md"
+          DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/vectis")
   if(EXISTS "${vectis_kore_include_dir}/kore/kore.h")
     install(DIRECTORY "${vectis_kore_include_dir}/kore"
             DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")

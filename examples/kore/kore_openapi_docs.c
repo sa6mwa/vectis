@@ -18,15 +18,20 @@ typedef struct api_error {
 } api_error;
 
 static const lonejson_field order_request_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(order_request, id, "id", LONEJSON_OVERFLOW_FAIL)};
+    LONEJSON_FIELD_STRING_FIXED_REQ(order_request, id, "id",
+                                    LONEJSON_OVERFLOW_FAIL)};
 
 static const lonejson_field order_created_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(order_created, id, "id", LONEJSON_OVERFLOW_FAIL),
-    LONEJSON_FIELD_STRING_FIXED_REQ(order_created, status, "status", LONEJSON_OVERFLOW_FAIL)};
+    LONEJSON_FIELD_STRING_FIXED_REQ(order_created, id, "id",
+                                    LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(order_created, status, "status",
+                                    LONEJSON_OVERFLOW_FAIL)};
 
 static const lonejson_field api_error_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(api_error, code, "code", LONEJSON_OVERFLOW_FAIL),
-    LONEJSON_FIELD_STRING_FIXED_REQ(api_error, message, "message", LONEJSON_OVERFLOW_FAIL)};
+    LONEJSON_FIELD_STRING_FIXED_REQ(api_error, code, "code",
+                                    LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(api_error, message, "message",
+                                    LONEJSON_OVERFLOW_FAIL)};
 
 LONEJSON_MAP_DEFINE(order_request_map, order_request, order_request_fields);
 LONEJSON_MAP_DEFINE(order_created_map, order_created, order_created_fields);
@@ -53,26 +58,20 @@ int main(void) {
   route_doc.operation_id = "createOrder";
   route_doc.tags = tags;
   route_doc.tag_count = 1u;
-  if (vectis_openapi_request_json(&route_doc,
-                                  vectis_openapi_lonejson_schema("OrderRequest",
-                                                                 &order_request_map),
-                                  &error) != VECTIS_OK ||
-      vectis_openapi_response_json(&route_doc,
-                                   201,
-                                   "Created",
-                                   vectis_openapi_lonejson_schema("OrderCreated",
-                                                                  &order_created_map),
-                                   &error) != VECTIS_OK ||
-      vectis_openapi_response_json(&route_doc,
-                                   409,
-                                   "Conflict",
-                                   vectis_openapi_lonejson_schema("ApiError", &api_error_map),
-                                   &error) != VECTIS_OK ||
-      app->openapi_doc(app,
-                       VECTIS_HTTP_METHODS_POST,
-                       "/orders/:id?",
-                       &route_doc,
-                       &error) != VECTIS_OK) {
+  if (vectis_openapi_request_json(
+          &route_doc,
+          vectis_openapi_lonejson_schema("OrderRequest", &order_request_map),
+          &error) != VECTIS_OK ||
+      vectis_openapi_response_json(
+          &route_doc, 201, "Created",
+          vectis_openapi_lonejson_schema("OrderCreated", &order_created_map),
+          &error) != VECTIS_OK ||
+      vectis_openapi_response_json(
+          &route_doc, 409, "Conflict",
+          vectis_openapi_lonejson_schema("ApiError", &api_error_map),
+          &error) != VECTIS_OK ||
+      app->openapi_doc(app, VECTIS_HTTP_METHODS_POST, "/orders/:id?",
+                       &route_doc, &error) != VECTIS_OK) {
     vectis_openapi_route_doc_cleanup(&route_doc);
     app->close(app);
     return 1;
@@ -81,7 +80,8 @@ int main(void) {
   vectis_openapi_document_init(&document);
   document.title = "Orders API";
   document.version = "1.0.0";
-  if (app->openapi(app, &document, VECTIS_OPENAPI_YAML, &yaml, &error) != VECTIS_OK) {
+  if (app->openapi(app, &document, VECTIS_OPENAPI_YAML, &yaml, &error) !=
+      VECTIS_OK) {
     vectis_openapi_route_doc_cleanup(&route_doc);
     app->close(app);
     return 1;

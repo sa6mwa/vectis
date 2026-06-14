@@ -26,7 +26,7 @@ static void assert_generated_bundle_is_parseable(const char *path) {
   X509 *cert;
   EVP_PKEY *key;
   char common_name[128];
-  STACK_OF(GENERAL_NAME) *names;
+  STACK_OF(GENERAL_NAME) * names;
   int found_dns;
   int found_ip;
   int i;
@@ -43,10 +43,8 @@ static void assert_generated_bundle_is_parseable(const char *path) {
 
   assert(X509_check_private_key(cert, key) == 1);
   memset(common_name, 0, sizeof(common_name));
-  assert(X509_NAME_get_text_by_NID(X509_get_subject_name(cert),
-                                   NID_commonName,
-                                   common_name,
-                                   (int)sizeof(common_name)) > 0);
+  assert(X509_NAME_get_text_by_NID(X509_get_subject_name(cert), NID_commonName,
+                                   common_name, (int)sizeof(common_name)) > 0);
   assert(strcmp(common_name, "api.local") == 0);
 
   found_dns = 0;
@@ -55,14 +53,13 @@ static void assert_generated_bundle_is_parseable(const char *path) {
   assert(names != NULL);
   for (i = 0; i < sk_GENERAL_NAME_num(names); ++i) {
     name = sk_GENERAL_NAME_value(names, i);
-    if (name->type == GEN_DNS &&
-        ASN1_STRING_length(name->d.dNSName) == 9 &&
+    if (name->type == GEN_DNS && ASN1_STRING_length(name->d.dNSName) == 9 &&
         memcmp(ASN1_STRING_get0_data(name->d.dNSName), "api.local", 9u) == 0) {
       found_dns = 1;
     }
-    if (name->type == GEN_IPADD &&
-        ASN1_STRING_length(name->d.iPAddress) == 4 &&
-        memcmp(ASN1_STRING_get0_data(name->d.iPAddress), expected_ip, sizeof(expected_ip)) == 0) {
+    if (name->type == GEN_IPADD && ASN1_STRING_length(name->d.iPAddress) == 4 &&
+        memcmp(ASN1_STRING_get0_data(name->d.iPAddress), expected_ip,
+               sizeof(expected_ip)) == 0) {
       found_ip = 1;
     }
   }
@@ -93,8 +90,8 @@ static void assert_generated_csr_is_parseable(const char *csr_path,
   X509_REQ *request;
   EVP_PKEY *key;
   char common_name[128];
-  STACK_OF(X509_EXTENSION) *extensions;
-  STACK_OF(GENERAL_NAME) *names;
+  STACK_OF(X509_EXTENSION) * extensions;
+  STACK_OF(GENERAL_NAME) * names;
   X509_EXTENSION *extension;
   int found_dns;
   int found_ip;
@@ -118,8 +115,7 @@ static void assert_generated_csr_is_parseable(const char *csr_path,
   assert(X509_REQ_verify(request, key) == 1);
   memset(common_name, 0, sizeof(common_name));
   assert(X509_NAME_get_text_by_NID(X509_REQ_get_subject_name(request),
-                                   NID_commonName,
-                                   common_name,
+                                   NID_commonName, common_name,
                                    (int)sizeof(common_name)) > 0);
   assert(strcmp(common_name, "csr.local") == 0);
 
@@ -135,14 +131,15 @@ static void assert_generated_csr_is_parseable(const char *csr_path,
       assert(names != NULL);
       for (nid = 0; nid < sk_GENERAL_NAME_num(names); ++nid) {
         name = sk_GENERAL_NAME_value(names, nid);
-        if (name->type == GEN_DNS &&
-            ASN1_STRING_length(name->d.dNSName) == 9 &&
-            memcmp(ASN1_STRING_get0_data(name->d.dNSName), "csr.local", 9u) == 0) {
+        if (name->type == GEN_DNS && ASN1_STRING_length(name->d.dNSName) == 9 &&
+            memcmp(ASN1_STRING_get0_data(name->d.dNSName), "csr.local", 9u) ==
+                0) {
           found_dns = 1;
         }
         if (name->type == GEN_IPADD &&
             ASN1_STRING_length(name->d.iPAddress) == 4 &&
-            memcmp(ASN1_STRING_get0_data(name->d.iPAddress), expected_ip, sizeof(expected_ip)) == 0) {
+            memcmp(ASN1_STRING_get0_data(name->d.iPAddress), expected_ip,
+                   sizeof(expected_ip)) == 0) {
           found_ip = 1;
         }
       }
@@ -184,10 +181,8 @@ static void assert_bundle_is_signed_by(const char *bundle_path,
   fclose(fp);
 
   memset(common_name, 0, sizeof(common_name));
-  assert(X509_NAME_get_text_by_NID(X509_get_issuer_name(cert),
-                                   NID_commonName,
-                                   common_name,
-                                   (int)sizeof(common_name)) > 0);
+  assert(X509_NAME_get_text_by_NID(X509_get_issuer_name(cert), NID_commonName,
+                                   common_name, (int)sizeof(common_name)) > 0);
   assert(strcmp(common_name, issuer_cn) == 0);
   assert(X509_check_private_key(cert, key) == 1);
   assert(X509_check_private_key(ca_cert, ca_key) == 1);
@@ -226,18 +221,16 @@ static void write_expired_bundle(const char *path) {
   assert(cert != NULL);
   assert(X509_set_version(cert, 2L) == 1);
   assert(ASN1_INTEGER_set(X509_get_serialNumber(cert), 42L) == 1);
-  assert(X509_gmtime_adj(X509_get_notBefore(cert), -2L * 24L * 60L * 60L) != NULL);
-  assert(X509_gmtime_adj(X509_get_notAfter(cert), -1L * 24L * 60L * 60L) != NULL);
+  assert(X509_gmtime_adj(X509_get_notBefore(cert), -2L * 24L * 60L * 60L) !=
+         NULL);
+  assert(X509_gmtime_adj(X509_get_notAfter(cert), -1L * 24L * 60L * 60L) !=
+         NULL);
   assert(X509_set_pubkey(cert, key) == 1);
   name = X509_get_subject_name(cert);
   assert(name != NULL);
-  assert(X509_NAME_add_entry_by_txt(name,
-                                    "CN",
-                                    MBSTRING_ASC,
-                                    (const unsigned char *)"expired.local",
-                                    -1,
-                                    -1,
-                                    0) == 1);
+  assert(X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                                    (const unsigned char *)"expired.local", -1,
+                                    -1, 0) == 1);
   assert(X509_set_issuer_name(cert, name) == 1);
   assert(X509_sign(cert, key, EVP_sha256()) > 0);
 
@@ -387,7 +380,8 @@ int main(void) {
   vectis_cert_bundle_config_init(&ca_config);
   vectis_cert_bundle_config_init(&config);
   make_temp_path(ca_bundle_path, sizeof(ca_bundle_path), "ca-bundle");
-  make_temp_path(signed_bundle_path, sizeof(signed_bundle_path), "signed-bundle");
+  make_temp_path(signed_bundle_path, sizeof(signed_bundle_path),
+                 "signed-bundle");
   make_temp_path(signed_cert_path, sizeof(signed_cert_path), "signed-cert");
   make_temp_path(signed_key_path, sizeof(signed_key_path), "signed-key");
   ca_config.subject.common_name = "Vectis Test CA";
@@ -406,14 +400,16 @@ int main(void) {
   config.valid_days = 30L;
   status = vectis_cert_generate_bundle(&config, &error);
   assert(status == VECTIS_OK);
-  assert_bundle_is_signed_by(signed_bundle_path, ca_bundle_path, "Vectis Test CA");
+  assert_bundle_is_signed_by(signed_bundle_path, ca_bundle_path,
+                             "Vectis Test CA");
   source = vectis_source_from_path(signed_bundle_path);
   status = vectis_cert_validate_bundle(&source, &error);
   assert(status == VECTIS_OK);
   cert_source = vectis_source_from_path(signed_cert_path);
   key_source = vectis_source_from_path(signed_key_path);
   ca_source = vectis_source_from_path(ca_bundle_path);
-  status = vectis_cert_validate_pair(&cert_source, &key_source, &ca_source, &error);
+  status =
+      vectis_cert_validate_pair(&cert_source, &key_source, &ca_source, &error);
   assert(status == VECTIS_OK);
   remove(ca_bundle_path);
   remove(signed_bundle_path);

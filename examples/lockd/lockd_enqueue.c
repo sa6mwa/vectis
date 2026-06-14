@@ -18,7 +18,8 @@ int main(void) {
   client = NULL;
   payload = NULL;
 
-  endpoints[0] = getenv("LOCKD_ENDPOINT") != NULL ? getenv("LOCKD_ENDPOINT") : "https://127.0.0.1:8443";
+  endpoints[0] = getenv("LOCKD_ENDPOINT") != NULL ? getenv("LOCKD_ENDPOINT")
+                                                  : "https://127.0.0.1:8443";
   config.endpoints = endpoints;
   config.endpoint_count = 1u;
   config.client_bundle_path = getenv("LOCKD_CLIENT_BUNDLE");
@@ -30,7 +31,8 @@ int main(void) {
     lc_error_cleanup(&error);
     return 1;
   }
-  if (lc_source_from_memory(json, sizeof(json) - 1u, &payload, &error) != LC_OK) {
+  if (lc_source_from_memory(json, sizeof(json) - 1u, &payload, &error) !=
+      LC_OK) {
     lc_client_close(client);
     lc_error_cleanup(&error);
     return 1;

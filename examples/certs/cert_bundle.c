@@ -1,5 +1,5 @@
-#include <vectis/vectis.h>
 #include <stdio.h>
+#include <vectis/vectis.h>
 
 int main(void) {
   vectis_cert_bundle_config ca;
@@ -49,7 +49,8 @@ int main(void) {
   server.key_bits = 4096u;
   server.valid_days = 90L;
   if (vectis_cert_generate_bundle(&server, &error) != VECTIS_OK) {
-    fprintf(stderr, "server certificate generation failed: %s\n", error.message);
+    fprintf(stderr, "server certificate generation failed: %s\n",
+            error.message);
     return 1;
   }
   bundle = vectis_source_from_path(server.output_bundle_path);
@@ -66,7 +67,8 @@ int main(void) {
   client.output_bundle_path = "/tmp/vectis-example-lockd-client.pem";
   client.valid_days = 90L;
   if (vectis_cert_generate_bundle(&client, &error) != VECTIS_OK) {
-    fprintf(stderr, "client certificate generation failed: %s\n", error.message);
+    fprintf(stderr, "client certificate generation failed: %s\n",
+            error.message);
     return 1;
   }
   bundle = vectis_source_from_path(client.output_bundle_path);

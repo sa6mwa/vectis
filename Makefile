@@ -16,9 +16,9 @@ FUZZ_PRESET := fuzz
 	help \
 	deps-debug deps-release deps-cross \
 	build build-debug build-release build-asan build-coverage build-fuzz \
-	test test-debug test-asan test-coverage test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
+	test test-debug test-lifecycle test-target-tools test-release-privacy-contracts asan test-asan coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
 	dev-up dev-down dev-reset dev-ps dev-logs \
-	package \
+	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy release-matrix prerelease-hardening release print-release-version clean-dist finalize-slice prerelease \
 	build-kore verify-kore-patches \
 	format clean \
 	vendor-kore vendor-kore-apply vendor-kore-status vendor-kore-upgrade
@@ -27,9 +27,18 @@ help:
 	@printf '%s\n' \
 		'make build              Configure and build the debug preset.' \
 		'make test               Run the debug unit test preset.' \
+		'make test-lifecycle     Run lifecycle command/version/preset/privacy contract tests.' \
+		'make test-target-tools  Run target tool discovery regression tests.' \
 		'make test-no-kore       Configure and link a VECTIS_WITH_KORE_RUNTIME=OFF build.' \
 		'make test-e2e           Reset and run the local compose-backed lockd e2e smoke tests.' \
 		'make test-all           Run unit tests and local e2e smoke tests.' \
+		'make asan               Build and run the ASan/UBSan preset.' \
+		'make fuzz               Configure and build the fuzz preset.' \
+		'make fuzz-smoke         Build fuzz targets; bounded execution will be added with the lifecycle verifier.' \
+		'make coverage           Configure and test the coverage preset.' \
+		'make finalize-slice     Format and run the narrow local pre-commit gate.' \
+		'make prerelease         Run deterministic local pre-release checks available in this checkout.' \
+		'make print-release-version Print the version used by packaging and release targets.' \
 		'make test-install-tree  Build a native installed SDK tree and verify static/shared downstream consumers.' \
 		'make dev-up             Start the local lockd/MinIO/SSH/SFTP/MQTT integration environment.' \
 		'make dev-down           Stop the local integration environment.' \
@@ -45,16 +54,36 @@ help:
 		'make deps-release       Provision x86_64 GNU and musl release dependencies.' \
 		'make deps-cross         Provision aarch64 and armhf GNU/musl release dependencies, plus Darwin when osxcross is available.' \
 		'make package            Build release SDK archives; Darwin is included only when osxcross is available.' \
+		'make package-source     Build the source release archive with injected VERSION.' \
+		'make package-source-smoke Extract and verify the source release archive.' \
+		'make package-checksums  Generate the versioned checksum manifest for dist artifacts.' \
+		'make package-verify     Verify checksum-listed artifacts, privacy, and relocatability.' \
+		'make verify-release-archives Verify checksum-listed release archive layout.' \
+		'make verify-release-privacy Verify release artifacts contain no local paths.' \
+		'make release-matrix     Build, checksum, and verify release artifacts for supported targets.' \
+		'make prerelease-hardening Run expensive deterministic hardening gates plus release matrix.' \
+		'make release            Clean final tagged release artifact pipeline; refuses untagged 0.0.0.' \
 		'make vendor-kore        Clone or refresh the vendored Kore upstream checkout.' \
 		'make vendor-kore-apply  Assert and apply the local Kore patch series.' \
 		'make vendor-kore-status Show Kore upstream revision and patch-series status.' \
 		'make vendor-kore-upgrade Fetch upstream and refresh the local checkout.' \
 		'make build-kore         Build patched Kore against the host debug dependency bundle.' \
 		'make verify-kore-patches Non-destructively verify patch application and build from a clean Kore clone.' \
+		'make clean-dist         Remove dist/ release artifacts.' \
 		'make clean              Remove build/, dist/, .cache/, and generated vendor checkout state.'
 
 build: build-debug
 test: test-debug
+
+test-lifecycle:
+	$(TIMED) test-lifecycle bash ./scripts/test_lifecycle_contracts.sh
+	$(TIMED) test-release-privacy-contracts bash ./scripts/test_release_privacy_contracts.sh
+
+test-release-privacy-contracts:
+	$(TIMED) test-release-privacy-contracts bash ./scripts/test_release_privacy_contracts.sh
+
+test-target-tools:
+	$(TIMED) test-target-tools bash ./scripts/test_discover_target_tools.sh
 
 deps-debug:
 	$(TIMED) deps-debug bash ./scripts/deps.sh deps-host-debug
@@ -101,17 +130,62 @@ build-release: deps-release deps-cross
 package:
 	$(TIMED) package bash ./scripts/package.sh all
 
+package-source:
+	$(TIMED) package-source bash ./scripts/stage_release_sources.sh
+
+package-source-smoke: package-source
+	$(TIMED) package-source-smoke bash ./scripts/test_release_from_source.sh dist/vectis-$(shell bash ./scripts/release_version.sh).tar.gz
+
+package-checksums:
+	$(TIMED) package-checksums $(CMAKE) -DVECTIS_ROOT=$(ROOT) -DVECTIS_DIST_DIR=$(ROOT)/dist -P $(ROOT)/cmake/package_checksums.cmake
+
+verify-release-archives:
+	$(TIMED) verify-release-archives bash ./scripts/verify_release_artifacts.sh
+
+verify-release-privacy:
+	$(TIMED) verify-release-privacy bash ./scripts/verify_release_privacy.sh
+
+package-verify:
+	$(TIMED) package-verify bash ./scripts/package-verify.sh
+
+release-matrix: package package-source package-checksums package-verify
+
+prerelease-hardening: prerelease release-matrix
+
+release:
+	@if [ "$$(bash ./scripts/release_version.sh)" = "0.0.0" ]; then \
+		printf '%s\n' 'make release requires an exact lightweight vX.Y.Z tag on HEAD or an explicit VECTIS_VERSION_OVERRIDE for a non-publishable rehearsal.' >&2; \
+		exit 2; \
+	fi
+	$(MAKE) clean
+	$(MAKE) release-matrix
+
+print-release-version:
+	@bash ./scripts/release_version.sh
+
 build-asan: deps-debug
 	$(TIMED) build-asan $(CMAKE) --preset $(ASAN_PRESET)
 	$(TIMED) build-asan-compile $(CMAKE) --build --preset $(ASAN_PRESET)
+
+asan: test-asan
 
 build-coverage: deps-debug
 	$(TIMED) build-coverage $(CMAKE) --preset $(COVERAGE_PRESET)
 	$(TIMED) build-coverage-compile $(CMAKE) --build --preset $(COVERAGE_PRESET)
 
+coverage: test-coverage
+
 build-fuzz: deps-debug
 	$(TIMED) build-fuzz $(CMAKE) --preset $(FUZZ_PRESET)
 	$(TIMED) build-fuzz-compile $(CMAKE) --build --preset $(FUZZ_PRESET)
+
+fuzz: build-fuzz
+
+fuzz-smoke: build-fuzz
+
+finalize-slice: format test-lifecycle test-target-tools test
+
+prerelease: format test-lifecycle test-target-tools test-all asan fuzz-smoke test-install-tree package-source-smoke package-checksums package-verify
 
 test-debug: build-debug
 	$(TIMED) test-debug $(CTEST) --preset $(DEBUG_PRESET)
@@ -182,3 +256,6 @@ dev-logs:
 
 clean:
 	$(TIMED) clean bash ./scripts/clean.sh
+
+clean-dist:
+	$(TIMED) clean-dist $(CMAKE) -DVECTIS_ROOT=$(ROOT) -DVECTIS_DIST_DIR=$(ROOT)/dist -P $(ROOT)/cmake/package_clean_dist.cmake

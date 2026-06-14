@@ -18,7 +18,8 @@ typedef struct stream_capture {
 } stream_capture;
 
 static const lonejson_field downstream_doc_fields[] = {
-    LONEJSON_FIELD_STRING_FIXED_REQ(downstream_doc, id, "id", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(downstream_doc, id, "id",
+                                    LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_I64(downstream_doc, count, "count")};
 
 LONEJSON_MAP_DEFINE(downstream_doc_map, downstream_doc, downstream_doc_fields);
@@ -33,7 +34,8 @@ static const char *env_or_default(const char *name, const char *fallback) {
   return value;
 }
 
-static unsigned short env_port_or_default(const char *name, unsigned short fallback) {
+static unsigned short env_port_or_default(const char *name,
+                                          unsigned short fallback) {
   const char *value;
   long port;
 
@@ -66,17 +68,13 @@ static int print_error(const char *operation, const vectis_error *error) {
   return 1;
 }
 
-static int require_status(vectis_status status,
-                          vectis_status expected,
-                          const char *operation,
-                          const vectis_error *error) {
+static int require_status(vectis_status status, vectis_status expected,
+                          const char *operation, const vectis_error *error) {
   if (status == expected) {
     return 0;
   }
-  fprintf(stderr, "%s returned %s, expected %s\n",
-          operation,
-          vectis_status_string(status),
-          vectis_status_string(expected));
+  fprintf(stderr, "%s returned %s, expected %s\n", operation,
+          vectis_status_string(status), vectis_status_string(expected));
   if (error != NULL && error->message[0] != '\0') {
     fprintf(stderr, "%s\n", error->message);
   }
@@ -84,22 +82,17 @@ static int require_status(vectis_status status,
 }
 
 static int require_http_status(const vectis_http_response *response,
-                               long expected,
-                               const char *operation) {
+                               long expected, const char *operation) {
   if (response != NULL && response->status_code == expected) {
     return 0;
   }
-  fprintf(stderr, "%s returned HTTP %ld, expected %ld\n",
-          operation,
-          response != NULL ? response->status_code : 0L,
-          expected);
+  fprintf(stderr, "%s returned HTTP %ld, expected %ld\n", operation,
+          response != NULL ? response->status_code : 0L, expected);
   return 1;
 }
 
-static vectis_status health_handler(vectis_app *app,
-                                    vectis_request *request,
-                                    vectis_response *response,
-                                    void *userdata,
+static vectis_status health_handler(vectis_app *app, vectis_request *request,
+                                    vectis_response *response, void *userdata,
                                     vectis_error *error) {
   (void)app;
   (void)userdata;
@@ -109,10 +102,8 @@ static vectis_status health_handler(vectis_app *app,
   return vectis_response_text(response, 200, "text/plain", "ok\n", error);
 }
 
-static vectis_status event_handler(vectis_app *app,
-                                   vectis_request *request,
-                                   vectis_response *response,
-                                   void *userdata,
+static vectis_status event_handler(vectis_app *app, vectis_request *request,
+                                   vectis_response *response, void *userdata,
                                    vectis_error *error) {
   downstream_doc input;
   downstream_doc output;
@@ -125,8 +116,9 @@ static vectis_status event_handler(vectis_app *app,
   memset(&output, 0, sizeof(output));
   method = vectis_request_method(request);
   if (method == VECTIS_HTTP_OPTIONS) {
-    if (vectis_response_header(response, "allow", "OPTIONS, POST, PUT, PATCH, DELETE", error) !=
-        VECTIS_OK) {
+    if (vectis_response_header(response, "allow",
+                               "OPTIONS, POST, PUT, PATCH, DELETE",
+                               error) != VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_STATE;
     }
     return vectis_response_status(response, 204, error);
@@ -134,7 +126,8 @@ static vectis_status event_handler(vectis_app *app,
   if (method == VECTIS_HTTP_DELETE) {
     return vectis_response_status(response, 204, error);
   }
-  if (vectis_request_json_into(request, &downstream_doc_map, &input, error) != VECTIS_OK) {
+  if (vectis_request_json_into(request, &downstream_doc_map, &input, error) !=
+      VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
   id = vectis_request_path_param(request, "id");
@@ -146,13 +139,12 @@ static vectis_status event_handler(vectis_app *app,
     return VECTIS_ERR_STATE;
   }
   output.count = input.count + 1;
-  return vectis_response_json(response, 200, &downstream_doc_map, &output, error);
+  return vectis_response_json(response, 200, &downstream_doc_map, &output,
+                              error);
 }
 
-static vectis_status stream_handler(vectis_app *app,
-                                    vectis_request *request,
-                                    vectis_response *response,
-                                    void *userdata,
+static vectis_status stream_handler(vectis_app *app, vectis_request *request,
+                                    vectis_response *response, void *userdata,
                                     vectis_error *error) {
   char payload[96];
   const char *id;
@@ -166,7 +158,8 @@ static vectis_status stream_handler(vectis_app *app,
     id = "missing";
   }
   if (snprintf(payload, sizeof(payload), "stream:%s", id) < 0) {
-    vectis_set_error(error, VECTIS_ERR_STATE, "failed to format stream payload");
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to format stream payload");
     return VECTIS_ERR_STATE;
   }
   source = NULL;
@@ -179,20 +172,17 @@ static vectis_status stream_handler(vectis_app *app,
   return status;
 }
 
-static vectis_status file_handler(vectis_app *app,
-                                  vectis_request *request,
-                                  vectis_response *response,
-                                  void *userdata,
+static vectis_status file_handler(vectis_app *app, vectis_request *request,
+                                  vectis_response *response, void *userdata,
                                   vectis_error *error) {
   (void)app;
   (void)request;
-  return vectis_response_file(response, 200, "text/plain", (const char *)userdata, error);
+  return vectis_response_file(response, 200, "text/plain",
+                              (const char *)userdata, error);
 }
 
-static vectis_status upload_handler(vectis_app *app,
-                                    vectis_request *request,
-                                    vectis_response *response,
-                                    void *userdata,
+static vectis_status upload_handler(vectis_app *app, vectis_request *request,
+                                    vectis_response *response, void *userdata,
                                     vectis_error *error) {
   vectis_body_materialize_config materialize;
   vectis_body_materialized body;
@@ -216,21 +206,25 @@ static vectis_status upload_handler(vectis_app *app,
   }
   size = 0u;
   ok = 0;
-  if (body.kind == VECTIS_BODY_MATERIALIZED_MEMORY && body.memory.data != NULL) {
+  if (body.kind == VECTIS_BODY_MATERIALIZED_MEMORY &&
+      body.memory.data != NULL) {
     size = body.memory.size;
     ok = size == strlen("upload-body") &&
          memcmp(body.memory.data, "upload-body", strlen("upload-body")) == 0;
   }
   vectis_body_materialized_cleanup(&body);
   if (!ok) {
-    return vectis_response_text(response, 422, "text/plain", "bad upload", error);
+    return vectis_response_text(response, 422, "text/plain", "bad upload",
+                                error);
   }
   id = vectis_request_path_param(request, "id");
   if (id == NULL) {
     id = "missing";
   }
-  if (snprintf(text, sizeof(text), "uploaded:%s:%lu", id, (unsigned long)size) < 0) {
-    vectis_set_error(error, VECTIS_ERR_STATE, "failed to format upload response");
+  if (snprintf(text, sizeof(text), "uploaded:%s:%lu", id, (unsigned long)size) <
+      0) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to format upload response");
     return VECTIS_ERR_STATE;
   }
   return vectis_response_text(response, 200, "text/plain", text, error);
@@ -252,9 +246,7 @@ static int write_file(const char *path, const char *body) {
   return fclose(fp) == 0 ? 0 : 1;
 }
 
-static int bytes_contains(const void *data,
-                          size_t size,
-                          const char *needle) {
+static int bytes_contains(const void *data, size_t size, const char *needle) {
   const unsigned char *bytes;
   size_t needle_size;
   size_t i;
@@ -299,10 +291,9 @@ static int run_server(void) {
   if (app == NULL) {
     return print_error("vectis_app_new", &error);
   }
-  route = vectis_route_methods(VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD,
-                               "/health",
-                               health_handler,
-                               NULL);
+  route =
+      vectis_route_methods(VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD,
+                           "/health", health_handler, NULL);
   if (app->route(app, &route, &error) != VECTIS_OK) {
     (void)print_error("register /health", &error);
     app->close(app);
@@ -314,13 +305,15 @@ static int run_server(void) {
     app->close(app);
     return 1;
   }
-  route = vectis_json_body_route(VECTIS_HTTP_POST, "/events", event_handler, NULL);
+  route =
+      vectis_json_body_route(VECTIS_HTTP_POST, "/events", event_handler, NULL);
   if (app->route(app, &route, &error) != VECTIS_OK) {
     (void)print_error("register POST /events", &error);
     app->close(app);
     return 1;
   }
-  route = vectis_json_body_route(VECTIS_HTTP_POST, "/limited", event_handler, NULL);
+  route =
+      vectis_json_body_route(VECTIS_HTTP_POST, "/limited", event_handler, NULL);
   route.body.max_bytes = 4u;
   route.body.memory_buffer_limit_bytes = 4u;
   if (app->route(app, &route, &error) != VECTIS_OK) {
@@ -328,10 +321,9 @@ static int run_server(void) {
     app->close(app);
     return 1;
   }
-  route = vectis_json_body_route_methods(VECTIS_HTTP_METHODS_PUT | VECTIS_HTTP_METHODS_PATCH,
-                                         "/events/:id",
-                                         event_handler,
-                                         NULL);
+  route = vectis_json_body_route_methods(VECTIS_HTTP_METHODS_PUT |
+                                             VECTIS_HTTP_METHODS_PATCH,
+                                         "/events/:id", event_handler, NULL);
   if (app->route(app, &route, &error) != VECTIS_OK) {
     (void)print_error("register PUT/PATCH /events/:id", &error);
     app->close(app);
@@ -349,13 +341,15 @@ static int run_server(void) {
     app->close(app);
     return 1;
   }
-  route = vectis_route(VECTIS_HTTP_GET, "/download", file_handler, (void *)download_path);
+  route = vectis_route(VECTIS_HTTP_GET, "/download", file_handler,
+                       (void *)download_path);
   if (app->route(app, &route, &error) != VECTIS_OK) {
     (void)print_error("register /download", &error);
     app->close(app);
     return 1;
   }
-  route = vectis_upload_route(VECTIS_HTTP_PUT, "/upload/:id", upload_handler, NULL);
+  route =
+      vectis_upload_route(VECTIS_HTTP_PUT, "/upload/:id", upload_handler, NULL);
   if (app->route(app, &route, &error) != VECTIS_OK) {
     (void)print_error("register /upload/:id", &error);
     app->close(app);
@@ -371,10 +365,8 @@ static int run_server(void) {
   return 0;
 }
 
-static vectis_status stream_capture_body(const void *data,
-                                         size_t size,
-                                         void *userdata,
-                                         vectis_error *error) {
+static vectis_status stream_capture_body(const void *data, size_t size,
+                                         void *userdata, vectis_error *error) {
   stream_capture *capture;
 
   (void)error;
@@ -389,10 +381,8 @@ static vectis_status stream_capture_body(const void *data,
   return VECTIS_OK;
 }
 
-static int run_json_call(vectis_http_client *client,
-                         vectis_http_method method,
-                         const char *path,
-                         const char *expected_id,
+static int run_json_call(vectis_http_client *client, vectis_http_method method,
+                         const char *path, const char *expected_id,
                          lonejson_int64 count) {
   vectis_http_request request;
   vectis_http_response response;
@@ -419,14 +409,14 @@ static int run_json_call(vectis_http_client *client,
     vectis_http_response_cleanup(&response);
     return 1;
   }
-  status = vectis_http_response_json_into(&response, &downstream_doc_map, &output, &error);
+  status = vectis_http_response_json_into(&response, &downstream_doc_map,
+                                          &output, &error);
   if (require_status(status, VECTIS_OK, "parse JSON response", &error) != 0) {
     vectis_http_response_cleanup(&response);
     return 1;
   }
   if (strcmp(output.id, expected_id) != 0 || output.count != count + 1) {
-    fprintf(stderr, "unexpected JSON response id=%s count=%ld\n",
-            output.id,
+    fprintf(stderr, "unexpected JSON response id=%s count=%ld\n", output.id,
             (long)output.count);
     vectis_http_response_cleanup(&response);
     return 1;
@@ -452,7 +442,8 @@ static int run_client(void) {
 
   client = NULL;
   memset(&response, 0, sizeof(response));
-  base_url = env_or_default("VECTIS_DOWNSTREAM_BASE_URL", "http://127.0.0.1:28083");
+  base_url =
+      env_or_default("VECTIS_DOWNSTREAM_BASE_URL", "http://127.0.0.1:28083");
   upload_path = env_or_default("VECTIS_DOWNSTREAM_UPLOAD_PATH",
                                "/tmp/vectis-downstream-upload.txt");
   bad_upload_path = env_or_default("VECTIS_DOWNSTREAM_BAD_UPLOAD_PATH",
@@ -478,8 +469,7 @@ static int run_client(void) {
   status = client->get(client, "/health", &response, &error);
   if (require_status(status, VECTIS_OK, "GET /health", &error) != 0 ||
       require_http_status(&response, 200L, "GET /health") != 0 ||
-      response.body_size != 3u ||
-      memcmp(response.body, "ok\n", 3u) != 0) {
+      response.body_size != 3u || memcmp(response.body, "ok\n", 3u) != 0) {
     vectis_http_response_cleanup(&response);
     client->close(client);
     return 1;
@@ -502,8 +492,10 @@ static int run_client(void) {
   request.body_size = strlen("{bad-json");
   request.content_type = "application/json";
   status = client->execute(client, &request, &response, &error);
-  if (require_status(status, VECTIS_OK, "POST /events malformed JSON", &error) != 0 ||
-      require_http_status(&response, 400L, "POST /events malformed JSON") != 0) {
+  if (require_status(status, VECTIS_OK, "POST /events malformed JSON",
+                     &error) != 0 ||
+      require_http_status(&response, 400L, "POST /events malformed JSON") !=
+          0) {
     vectis_http_response_cleanup(&response);
     client->close(client);
     return 1;
@@ -517,8 +509,10 @@ static int run_client(void) {
   request.body_size = strlen("{}");
   request.content_type = "application/json";
   status = client->execute(client, &request, &response, &error);
-  if (require_status(status, VECTIS_OK, "POST /events missing required field", &error) != 0 ||
-      require_http_status(&response, 400L, "POST /events missing required field") != 0) {
+  if (require_status(status, VECTIS_OK, "POST /events missing required field",
+                     &error) != 0 ||
+      require_http_status(&response, 400L,
+                          "POST /events missing required field") != 0) {
     vectis_http_response_cleanup(&response);
     client->close(client);
     return 1;
@@ -532,8 +526,10 @@ static int run_client(void) {
   request.body_size = strlen("12345");
   request.content_type = "application/json";
   status = client->execute(client, &request, &response, &error);
-  if (require_status(status, VECTIS_OK, "POST /limited oversized body", &error) != 0 ||
-      require_http_status(&response, 413L, "POST /limited oversized body") != 0) {
+  if (require_status(status, VECTIS_OK, "POST /limited oversized body",
+                     &error) != 0 ||
+      require_http_status(&response, 413L, "POST /limited oversized body") !=
+          0) {
     vectis_http_response_cleanup(&response);
     client->close(client);
     return 1;
@@ -559,15 +555,19 @@ static int run_client(void) {
   }
   vectis_http_response_cleanup(&response);
 
-  if (run_json_call(client, VECTIS_HTTP_POST, "/events", "order-1001", 1) != 0 ||
-      run_json_call(client, VECTIS_HTTP_PUT, "/events/order-1001", "order-1001", 2) != 0 ||
-      run_json_call(client, VECTIS_HTTP_PATCH, "/events/order-1001", "order-1001", 3) != 0) {
+  if (run_json_call(client, VECTIS_HTTP_POST, "/events", "order-1001", 1) !=
+          0 ||
+      run_json_call(client, VECTIS_HTTP_PUT, "/events/order-1001", "order-1001",
+                    2) != 0 ||
+      run_json_call(client, VECTIS_HTTP_PATCH, "/events/order-1001",
+                    "order-1001", 3) != 0) {
     client->close(client);
     return 1;
   }
 
   status = client->del(client, "/events/order-1001", &response, &error);
-  if (require_status(status, VECTIS_OK, "DELETE /events/order-1001", &error) != 0 ||
+  if (require_status(status, VECTIS_OK, "DELETE /events/order-1001", &error) !=
+          0 ||
       require_http_status(&response, 204L, "DELETE /events/order-1001") != 0) {
     vectis_http_response_cleanup(&response);
     client->close(client);
@@ -582,7 +582,8 @@ static int run_client(void) {
   request.response_body = stream_capture_body;
   request.response_body_userdata = &capture;
   status = client->execute(client, &request, &response, &error);
-  if (require_status(status, VECTIS_OK, "GET /stream/order-1001", &error) != 0 ||
+  if (require_status(status, VECTIS_OK, "GET /stream/order-1001", &error) !=
+          0 ||
       require_http_status(&response, 200L, "GET /stream/order-1001") != 0 ||
       strcmp(capture.data, "stream:order-1001") != 0) {
     vectis_http_response_cleanup(&response);
@@ -591,7 +592,8 @@ static int run_client(void) {
   }
   vectis_http_response_cleanup(&response);
 
-  status = client->download_file(client, "/download", download_path, &response, &error);
+  status = client->download_file(client, "/download", download_path, &response,
+                                 &error);
   if (require_status(status, VECTIS_OK, "GET /download", &error) != 0 ||
       require_http_status(&response, 200L, "GET /download") != 0) {
     vectis_http_response_cleanup(&response);
@@ -605,7 +607,8 @@ static int run_client(void) {
     return 1;
   }
   memset(downloaded, 0, sizeof(downloaded));
-  if (fread(downloaded, 1u, strlen("download-body\n"), fp) != strlen("download-body\n")) {
+  if (fread(downloaded, 1u, strlen("download-body\n"), fp) !=
+      strlen("download-body\n")) {
     (void)fclose(fp);
     client->close(client);
     return 1;
@@ -617,32 +620,27 @@ static int run_client(void) {
     return 1;
   }
 
-  status = client->upload_file(client,
-                                          VECTIS_HTTP_PUT,
-                                          "/upload/order-1001",
-                                          upload_path,
-                                          "text/plain",
-                                          &response,
-                                          &error);
-  if (require_status(status, VECTIS_OK, "PUT /upload/order-1001", &error) != 0 ||
+  status = client->upload_file(client, VECTIS_HTTP_PUT, "/upload/order-1001",
+                               upload_path, "text/plain", &response, &error);
+  if (require_status(status, VECTIS_OK, "PUT /upload/order-1001", &error) !=
+          0 ||
       require_http_status(&response, 200L, "PUT /upload/order-1001") != 0 ||
       response.body_size == 0u ||
-      !bytes_contains(response.body, response.body_size, "uploaded:order-1001")) {
+      !bytes_contains(response.body, response.body_size,
+                      "uploaded:order-1001")) {
     vectis_http_response_cleanup(&response);
     client->close(client);
     return 1;
   }
   vectis_http_response_cleanup(&response);
 
-  status = client->upload_file(client,
-                                          VECTIS_HTTP_PUT,
-                                          "/upload/order-1001",
-                                          bad_upload_path,
-                                          "text/plain",
-                                          &response,
-                                          &error);
-  if (require_status(status, VECTIS_OK, "PUT /upload/order-1001 bad body", &error) != 0 ||
-      require_http_status(&response, 422L, "PUT /upload/order-1001 bad body") != 0) {
+  status =
+      client->upload_file(client, VECTIS_HTTP_PUT, "/upload/order-1001",
+                          bad_upload_path, "text/plain", &response, &error);
+  if (require_status(status, VECTIS_OK, "PUT /upload/order-1001 bad body",
+                     &error) != 0 ||
+      require_http_status(&response, 422L, "PUT /upload/order-1001 bad body") !=
+          0) {
     vectis_http_response_cleanup(&response);
     client->close(client);
     return 1;
@@ -662,6 +660,7 @@ int main(int argc, char **argv) {
   if (argc == 2 && strcmp(argv[1], "client") == 0) {
     return run_client();
   }
-  fprintf(stderr, "usage: %s server|client\n", argc > 0 ? argv[0] : "curl_downstream_e2e");
+  fprintf(stderr, "usage: %s server|client\n",
+          argc > 0 ? argv[0] : "curl_downstream_e2e");
   return 2;
 }

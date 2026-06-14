@@ -3,10 +3,8 @@
 #include <pslog.h>
 #include <vectis/vectis.h>
 
-static vectis_status upload_file(vectis_app *app,
-                                 vectis_request *request,
-                                 vectis_response *response,
-                                 void *userdata,
+static vectis_status upload_file(vectis_app *app, vectis_request *request,
+                                 vectis_response *response, void *userdata,
                                  vectis_error *error) {
   pslog_logger *logger;
   const char *name;
@@ -25,12 +23,11 @@ static vectis_status upload_file(vectis_app *app,
     return status;
   }
   if (logger != NULL) {
-    logger->infof(logger,
-                  "example.kore_file_upload.accept",
+    logger->infof(logger, "example.kore_file_upload.accept",
                   "name=%s bytes=%lu storage=%s path=%s",
-                  name != NULL ? name : "unnamed",
-                  (unsigned long)body.size,
-                  body.kind == VECTIS_BODY_MATERIALIZED_FILE ? "file" : "memory",
+                  name != NULL ? name : "unnamed", (unsigned long)body.size,
+                  body.kind == VECTIS_BODY_MATERIALIZED_FILE ? "file"
+                                                             : "memory",
                   body.path != NULL ? body.path : "");
   }
   if (body.kind == VECTIS_BODY_MATERIALIZED_FILE && body.path != NULL) {
@@ -60,7 +57,8 @@ int main(void) {
   vectis_app_config_init(&config);
   config.app_name = "upload-api";
   config.logger = logger;
-  config.tls.cert_key_bundle = vectis_source_from_path("/etc/vectis/server.pem");
+  config.tls.cert_key_bundle =
+      vectis_source_from_path("/etc/vectis/server.pem");
   config.server.max_request_body_bytes = VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES;
 
   app = vectis_app_new(&config, &error);
@@ -69,19 +67,20 @@ int main(void) {
     return 1;
   }
 
-  route = vectis_upload_route(VECTIS_HTTP_POST, "/files/:name", upload_file, NULL);
+  route =
+      vectis_upload_route(VECTIS_HTTP_POST, "/files/:name", upload_file, NULL);
   if (app->route(app, &route, &error) != VECTIS_OK) {
     app->close(app);
     logger->destroy(logger);
     return 1;
   }
 
-  logger->infof(logger,
-                "example.kore_file_upload.start",
-                "body_mode=%s max_body=%lu min_rate=%lu",
-                vectis_body_mode_string(route.body.mode),
-                (unsigned long)route.body.max_bytes,
-                (unsigned long)config.server.request_body_min_rate_bytes_per_sec);
+  logger->infof(
+      logger, "example.kore_file_upload.start",
+      "body_mode=%s max_body=%lu min_rate=%lu",
+      vectis_body_mode_string(route.body.mode),
+      (unsigned long)route.body.max_bytes,
+      (unsigned long)config.server.request_body_min_rate_bytes_per_sec);
   (void)app->start(app, &error);
   app->close(app);
   logger->destroy(logger);

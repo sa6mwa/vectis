@@ -293,6 +293,7 @@ build_libxml2() {
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$deps_root" \
     -DCMAKE_C_COMPILER="$target_cc" \
+    "-DCMAKE_C_FLAGS=-ffile-prefix-map=$repo_root=. -ffile-prefix-map=$libxml2_source_dir=libxml2 -ffile-prefix-map=$libxml2_build_root=libxml2-build" \
     -DCMAKE_AR="$target_ar" \
     -DCMAKE_RANLIB="$target_ranlib" \
     -DCMAKE_SYSTEM_NAME="$target_cmake_system_name" \
@@ -305,6 +306,7 @@ build_libxml2() {
     -DLIBXML2_WITH_PYTHON=OFF \
     -DLIBXML2_WITH_ICONV=OFF \
     -DLIBXML2_WITH_ICU=OFF \
+    -DLIBXML2_WITH_CATALOG=OFF \
     -DLIBXML2_WITH_MODULES=OFF \
     -DLIBXML2_WITH_READLINE=OFF \
     -DLIBXML2_WITH_ZLIB=OFF
@@ -389,5 +391,6 @@ libxml2_sha256=$libxml2_sha256
 libxml2_source=GNOME
 libxml2_iconv=disabled
 libxml2_zlib=disabled
+libxml2_catalog=disabled
 libxml2_linkage=static+shared
 EOF

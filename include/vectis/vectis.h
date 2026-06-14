@@ -1,15 +1,16 @@
 #ifndef VECTIS_VECTIS_H
 #define VECTIS_VECTIS_H
 
-#include <stddef.h>
 #include <curl/curl.h>
+#include <stddef.h>
 #ifndef LONEJSON_WITH_CURL
 #define LONEJSON_WITH_CURL 1
 #endif
 #include <lonejson.h>
 #include <pslog.h>
 
-#define VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION "https://acme-v02.api.letsencrypt.org/directory"
+#define VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION                           \
+  "https://acme-v02.api.letsencrypt.org/directory"
 #define VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS 1024u
 #define VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES 65536u
 #define VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES 10485760u
@@ -23,7 +24,8 @@
 #define VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS 100u
 #define VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES ((size_t)3221225472UL)
 #define VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES 262144u
-#define VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES
+#define VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES                          \
+  VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES
 
 #ifdef __cplusplus
 extern "C" {
@@ -85,16 +87,17 @@ typedef unsigned int vectis_http_retry_conditions;
 #define VECTIS_HTTP_METHODS_DELETE VECTIS_HTTP_METHOD_MASK(VECTIS_HTTP_DELETE)
 #define VECTIS_HTTP_METHODS_HEAD VECTIS_HTTP_METHOD_MASK(VECTIS_HTTP_HEAD)
 #define VECTIS_HTTP_METHODS_OPTIONS VECTIS_HTTP_METHOD_MASK(VECTIS_HTTP_OPTIONS)
-#define VECTIS_HTTP_METHODS_ALL \
-  (VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_POST | VECTIS_HTTP_METHODS_PUT | \
-   VECTIS_HTTP_METHODS_PATCH | VECTIS_HTTP_METHODS_DELETE | VECTIS_HTTP_METHODS_HEAD | \
+#define VECTIS_HTTP_METHODS_ALL                                                \
+  (VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_POST |                        \
+   VECTIS_HTTP_METHODS_PUT | VECTIS_HTTP_METHODS_PATCH |                       \
+   VECTIS_HTTP_METHODS_DELETE | VECTIS_HTTP_METHODS_HEAD |                     \
    VECTIS_HTTP_METHODS_OPTIONS)
 
 #define VECTIS_HTTP_RETRY_NONE 0u
 #define VECTIS_HTTP_RETRY_TRANSPORT 1u
 #define VECTIS_HTTP_RETRY_429 2u
 #define VECTIS_HTTP_RETRY_5XX 4u
-#define VECTIS_HTTP_RETRY_DEFAULT \
+#define VECTIS_HTTP_RETRY_DEFAULT                                              \
   (VECTIS_HTTP_RETRY_TRANSPORT | VECTIS_HTTP_RETRY_429 | VECTIS_HTTP_RETRY_5XX)
 #define VECTIS_HTTP_RETRY_INHERIT ((vectis_http_retry_conditions)~0u)
 
@@ -143,8 +146,7 @@ typedef struct vectis_error {
  * the default enabled behavior.
  */
 
-typedef vectis_status (*vectis_curl_configure_fn)(CURL *curl,
-                                                  void *userdata,
+typedef vectis_status (*vectis_curl_configure_fn)(CURL *curl, void *userdata,
                                                   vectis_error *error);
 typedef vectis_status (*vectis_http_response_body_fn)(const void *data,
                                                       size_t size,
@@ -317,21 +319,16 @@ typedef struct vectis_static_directory_config {
 
 typedef vectis_status (*vectis_json_route_handler_fn)(vectis_app *app,
                                                       vectis_request *request,
-                                                      void *input,
-                                                      void *output,
+                                                      void *input, void *output,
                                                       void *userdata,
                                                       vectis_error *error);
 
-typedef vectis_status (*vectis_json_typed_route_handler_fn)(vectis_app *app,
-                                                            vectis_request *request,
-                                                            void *input,
-                                                            vectis_json_response *response,
-                                                            void *userdata,
-                                                            vectis_error *error);
+typedef vectis_status (*vectis_json_typed_route_handler_fn)(
+    vectis_app *app, vectis_request *request, void *input,
+    vectis_json_response *response, void *userdata, vectis_error *error);
 
 typedef vectis_status (*vectis_lockd_state_update_fn)(struct lc_lease *lease,
-                                                      void *state,
-                                                      int *save,
+                                                      void *state, int *save,
                                                       void *userdata,
                                                       vectis_error *error);
 
@@ -342,14 +339,14 @@ typedef vectis_status (*vectis_dsv_lonejson_row_fn)(void *userdata,
 /**
  * Callback invoked for each item decoded from a selected JSON array.
  *
- * `index` is zero-based within the selected array. `item` points at caller-owned
- * storage initialized and populated through the supplied `lonejson_map`; the
- * pointer is valid only for the duration of the callback and is reused for the
- * next element. Return `VECTIS_OK` to continue or any other `vectis_status` to
- * stop streaming and propagate that status to the caller.
+ * `index` is zero-based within the selected array. `item` points at
+ * caller-owned storage initialized and populated through the supplied
+ * `lonejson_map`; the pointer is valid only for the duration of the callback
+ * and is reused for the next element. Return `VECTIS_OK` to continue or any
+ * other `vectis_status` to stop streaming and propagate that status to the
+ * caller.
  */
-typedef vectis_status (*vectis_json_array_item_fn)(void *userdata,
-                                                   size_t index,
+typedef vectis_status (*vectis_json_array_item_fn)(void *userdata, size_t index,
                                                    void *item,
                                                    vectis_error *error);
 
@@ -603,8 +600,7 @@ struct vectis_app {
    * vectis_json_route(), and vectis_upload_route() are intentionally still free
    * functions because they produce value configs, not owned handles.
    */
-  vectis_status (*route)(vectis_app *self,
-                         const vectis_route_config *route,
+  vectis_status (*route)(vectis_app *self, const vectis_route_config *route,
                          vectis_error *error);
   vectis_status (*json_route)(vectis_app *self,
                               const vectis_json_route_config *route,
@@ -612,39 +608,34 @@ struct vectis_app {
   vectis_status (*json_typed_route)(vectis_app *self,
                                     const vectis_json_typed_route_config *route,
                                     vectis_error *error);
-  vectis_status (*prefixed_route)(vectis_app *self,
-                                  const char *prefix,
+  vectis_status (*prefixed_route)(vectis_app *self, const char *prefix,
                                   const vectis_route_config *route,
                                   vectis_error *error);
-  vectis_status (*prefixed_json_route)(vectis_app *self,
-                                       const char *prefix,
+  vectis_status (*prefixed_json_route)(vectis_app *self, const char *prefix,
                                        const vectis_json_route_config *route,
                                        vectis_error *error);
-  vectis_status (*prefixed_json_typed_route)(vectis_app *self,
-                                             const char *prefix,
-                                             const vectis_json_typed_route_config *route,
-                                             vectis_error *error);
+  vectis_status (*prefixed_json_typed_route)(
+      vectis_app *self, const char *prefix,
+      const vectis_json_typed_route_config *route, vectis_error *error);
   vectis_status (*static_file)(vectis_app *self,
                                const vectis_static_file_config *config,
                                vectis_error *error);
-  vectis_status (*static_directory)(vectis_app *self,
-                                    const vectis_static_directory_config *config,
-                                    vectis_error *error);
+  vectis_status (*static_directory)(
+      vectis_app *self, const vectis_static_directory_config *config,
+      vectis_error *error);
 
   /* Attach per-route OpenAPI metadata or generate an OpenAPI document from the
    * current route registry. Generation writes to `out`; callers clean it with
    * vectis_mutable_bytes_cleanup().
    */
-  vectis_status (*openapi_doc)(vectis_app *self,
-                               vectis_http_methods methods,
+  vectis_status (*openapi_doc)(vectis_app *self, vectis_http_methods methods,
                                const char *path,
                                const vectis_openapi_route_doc *doc,
                                vectis_error *error);
   vectis_status (*openapi)(vectis_app *self,
                            const vectis_openapi_document *document,
                            vectis_openapi_format format,
-                           vectis_mutable_bytes *out,
-                           vectis_error *error);
+                           vectis_mutable_bytes *out, vectis_error *error);
   size_t (*route_count)(const vectis_app *self);
   pslog_logger *(*logger)(vectis_app *self);
 
@@ -657,10 +648,9 @@ struct vectis_app {
   /* Create a Vectis-owned wrapper around a liblockdc consumer service. The
    * lc_consumer_service_config and its callbacks remain caller-owned.
    */
-  vectis_status (*consumer_service)(vectis_app *self,
-                                    const struct lc_consumer_service_config *config,
-                                    vectis_consumer_service **out,
-                                    vectis_error *error);
+  vectis_status (*consumer_service)(
+      vectis_app *self, const struct lc_consumer_service_config *config,
+      vectis_consumer_service **out, vectis_error *error);
   void (*close)(vectis_app *self);
   void *impl;
 };
@@ -675,8 +665,7 @@ struct vectis_consumer_service {
   vectis_status (*stop)(vectis_consumer_service *self, vectis_error *error);
   vectis_status (*wait)(vectis_consumer_service *self, vectis_error *error);
   vectis_status (*run_until)(vectis_consumer_service *self,
-                             const volatile int *done,
-                             long timeout_ms,
+                             const volatile int *done, long timeout_ms,
                              vectis_error *error);
   void (*close)(vectis_consumer_service *self);
   void *impl;
@@ -688,67 +677,44 @@ struct vectis_http_client {
    */
   vectis_status (*execute)(vectis_http_client *self,
                            const vectis_http_request *request,
-                           vectis_http_response *response,
-                           vectis_error *error);
-  vectis_status (*get)(vectis_http_client *self,
-                       const char *url,
-                       vectis_http_response *response,
-                       vectis_error *error);
+                           vectis_http_response *response, vectis_error *error);
+  vectis_status (*get)(vectis_http_client *self, const char *url,
+                       vectis_http_response *response, vectis_error *error);
   /* Stream a selected JSON array from an HTTP GET response body. The response
    * body is consumed incrementally and is not materialized in `response->body`.
    */
-  vectis_status (*get_json_array)(vectis_http_client *self,
-                                  const char *url,
-                                  const char *array_path,
-                                  const lonejson_map *map,
-                                  void *item,
-                                  vectis_json_array_item_fn callback,
-                                  void *userdata,
-                                  vectis_http_response *response,
-                                  vectis_error *error);
+  vectis_status (*get_json_array)(
+      vectis_http_client *self, const char *url, const char *array_path,
+      const lonejson_map *map, void *item, vectis_json_array_item_fn callback,
+      void *userdata, vectis_http_response *response, vectis_error *error);
   /* HTTP DELETE. Named `del` so vectis.h remains usable from C++ translation
    * units where `delete` is a keyword.
    */
-  vectis_status (*del)(vectis_http_client *self,
-                       const char *url,
-                       vectis_http_response *response,
-                       vectis_error *error);
-  vectis_status (*head)(vectis_http_client *self,
-                        const char *url,
-                        vectis_http_response *response,
-                        vectis_error *error);
-  vectis_status (*options)(vectis_http_client *self,
-                           const char *url,
-                           vectis_http_response *response,
-                           vectis_error *error);
-  vectis_status (*download_file)(vectis_http_client *self,
-                                 const char *url,
+  vectis_status (*del)(vectis_http_client *self, const char *url,
+                       vectis_http_response *response, vectis_error *error);
+  vectis_status (*head)(vectis_http_client *self, const char *url,
+                        vectis_http_response *response, vectis_error *error);
+  vectis_status (*options)(vectis_http_client *self, const char *url,
+                           vectis_http_response *response, vectis_error *error);
+  vectis_status (*download_file)(vectis_http_client *self, const char *url,
                                  const char *local_path,
                                  vectis_http_response *response,
                                  vectis_error *error);
   vectis_status (*upload_file)(vectis_http_client *self,
-                               vectis_http_method method,
-                               const char *url,
-                               const char *local_path,
-                               const char *content_type,
+                               vectis_http_method method, const char *url,
+                               const char *local_path, const char *content_type,
                                vectis_http_response *response,
                                vectis_error *error);
-  vectis_status (*post_json)(vectis_http_client *self,
-                             const char *url,
-                             const lonejson_map *map,
-                             const void *value,
+  vectis_status (*post_json)(vectis_http_client *self, const char *url,
+                             const lonejson_map *map, const void *value,
                              vectis_http_response *response,
                              vectis_error *error);
-  vectis_status (*put_json)(vectis_http_client *self,
-                            const char *url,
-                            const lonejson_map *map,
-                            const void *value,
+  vectis_status (*put_json)(vectis_http_client *self, const char *url,
+                            const lonejson_map *map, const void *value,
                             vectis_http_response *response,
                             vectis_error *error);
-  vectis_status (*patch_json)(vectis_http_client *self,
-                              const char *url,
-                              const lonejson_map *map,
-                              const void *value,
+  vectis_status (*patch_json)(vectis_http_client *self, const char *url,
+                              const lonejson_map *map, const void *value,
                               vectis_http_response *response,
                               vectis_error *error);
   void (*close)(vectis_http_client *self);
@@ -759,14 +725,10 @@ struct vectis_http_client {
 };
 
 struct vectis_sftp {
-  vectis_status (*upload_file)(vectis_sftp *self,
-                               const char *local_path,
-                               const char *remote_path,
-                               vectis_error *error);
-  vectis_status (*download_file)(vectis_sftp *self,
-                                 const char *remote_path,
-                                 const char *local_path,
-                                 vectis_error *error);
+  vectis_status (*upload_file)(vectis_sftp *self, const char *local_path,
+                               const char *remote_path, vectis_error *error);
+  vectis_status (*download_file)(vectis_sftp *self, const char *remote_path,
+                                 const char *local_path, vectis_error *error);
   void (*close)(vectis_sftp *self);
 
   /* Shallow effective config copy used by the methods above. */
@@ -775,16 +737,12 @@ struct vectis_sftp {
 };
 
 struct vectis_ssh {
-  vectis_status (*exec)(vectis_ssh *self,
-                        const char *command,
-                        vectis_ssh_exec_result *result,
-                        vectis_error *error);
-  vectis_status (*sftp_upload_file)(vectis_ssh *self,
-                                    const char *local_path,
+  vectis_status (*exec)(vectis_ssh *self, const char *command,
+                        vectis_ssh_exec_result *result, vectis_error *error);
+  vectis_status (*sftp_upload_file)(vectis_ssh *self, const char *local_path,
                                     const char *remote_path,
                                     vectis_error *error);
-  vectis_status (*sftp_download_file)(vectis_ssh *self,
-                                      const char *remote_path,
+  vectis_status (*sftp_download_file)(vectis_ssh *self, const char *remote_path,
                                       const char *local_path,
                                       vectis_error *error);
   void (*close)(vectis_ssh *self);
@@ -795,16 +753,11 @@ struct vectis_ssh {
 };
 
 struct vectis_mqtt {
-  vectis_status (*publish)(vectis_mqtt *self,
-                           const char *topic,
-                           const void *payload,
-                           size_t payload_size,
-                           const char *content_type,
-                           vectis_error *error);
-  vectis_status (*publish_json)(vectis_mqtt *self,
-                                const char *topic,
-                                const lonejson_map *map,
-                                const void *value,
+  vectis_status (*publish)(vectis_mqtt *self, const char *topic,
+                           const void *payload, size_t payload_size,
+                           const char *content_type, vectis_error *error);
+  vectis_status (*publish_json)(vectis_mqtt *self, const char *topic,
+                                const lonejson_map *map, const void *value,
                                 vectis_error *error);
   void (*close)(vectis_mqtt *self);
 
@@ -834,7 +787,8 @@ vectis_body_policy vectis_body_upload(void);
 vectis_body_policy vectis_body_upload_max(size_t max_bytes);
 void vectis_route_config_init(vectis_route_config *config);
 void vectis_json_route_config_init(vectis_json_route_config *config);
-void vectis_json_typed_route_config_init(vectis_json_typed_route_config *config);
+void vectis_json_typed_route_config_init(
+    vectis_json_typed_route_config *config);
 void vectis_openapi_document_init(vectis_openapi_document *document);
 void vectis_openapi_route_doc_init(vectis_openapi_route_doc *doc);
 void vectis_openapi_route_doc_cleanup(vectis_openapi_route_doc *doc);
@@ -848,8 +802,7 @@ vectis_status vectis_openapi_response_json(vectis_openapi_route_doc *doc,
                                            const char *description,
                                            vectis_openapi_schema schema,
                                            vectis_error *error);
-vectis_route_config vectis_route(vectis_http_method method,
-                                 const char *path,
+vectis_route_config vectis_route(vectis_http_method method, const char *path,
                                  vectis_route_handler_fn handler,
                                  void *userdata);
 vectis_route_config vectis_route_methods(vectis_http_methods methods,
@@ -860,10 +813,9 @@ vectis_route_config vectis_json_body_route(vectis_http_method method,
                                            const char *path,
                                            vectis_route_handler_fn handler,
                                            void *userdata);
-vectis_route_config vectis_json_body_route_methods(vectis_http_methods methods,
-                                                   const char *path,
-                                                   vectis_route_handler_fn handler,
-                                                   void *userdata);
+vectis_route_config
+vectis_json_body_route_methods(vectis_http_methods methods, const char *path,
+                               vectis_route_handler_fn handler, void *userdata);
 vectis_route_config vectis_route_regex(vectis_http_method method,
                                        const char *pattern,
                                        vectis_route_handler_fn handler,
@@ -881,47 +833,37 @@ vectis_route_config vectis_upload_route_methods(vectis_http_methods methods,
                                                 vectis_route_handler_fn handler,
                                                 void *userdata);
 vectis_route_config vectis_upload_route_max(vectis_http_method method,
-                                            const char *path,
-                                            size_t max_bytes,
+                                            const char *path, size_t max_bytes,
                                             vectis_route_handler_fn handler,
                                             void *userdata);
-vectis_route_config vectis_upload_route_max_methods(vectis_http_methods methods,
-                                                    const char *path,
-                                                    size_t max_bytes,
-                                                    vectis_route_handler_fn handler,
-                                                    void *userdata);
-vectis_json_route_config vectis_json_route(vectis_http_method method,
-                                           const char *path,
-                                           const lonejson_map *input_map,
-                                           size_t input_size,
-                                           const lonejson_map *output_map,
-                                           size_t output_size,
-                                           vectis_json_route_handler_fn handler,
-                                           void *userdata);
-vectis_json_route_config vectis_json_route_methods(vectis_http_methods methods,
-                                                   const char *path,
-                                                   const lonejson_map *input_map,
-                                                   size_t input_size,
-                                                   const lonejson_map *output_map,
-                                                   size_t output_size,
-                                                   vectis_json_route_handler_fn handler,
-                                                   void *userdata);
-vectis_json_typed_route_config vectis_json_typed_route(vectis_http_method method,
-                                                       const char *path,
-                                                       const lonejson_map *input_map,
-                                                       size_t input_size,
-                                                       vectis_json_typed_route_handler_fn handler,
-                                                       void *userdata);
-vectis_json_typed_route_config vectis_json_typed_route_methods(vectis_http_methods methods,
-                                                               const char *path,
-                                                               const lonejson_map *input_map,
-                                                               size_t input_size,
-                                                               vectis_json_typed_route_handler_fn handler,
-                                                               void *userdata);
+vectis_route_config vectis_upload_route_max_methods(
+    vectis_http_methods methods, const char *path, size_t max_bytes,
+    vectis_route_handler_fn handler, void *userdata);
+vectis_json_route_config
+vectis_json_route(vectis_http_method method, const char *path,
+                  const lonejson_map *input_map, size_t input_size,
+                  const lonejson_map *output_map, size_t output_size,
+                  vectis_json_route_handler_fn handler, void *userdata);
+vectis_json_route_config
+vectis_json_route_methods(vectis_http_methods methods, const char *path,
+                          const lonejson_map *input_map, size_t input_size,
+                          const lonejson_map *output_map, size_t output_size,
+                          vectis_json_route_handler_fn handler, void *userdata);
+vectis_json_typed_route_config
+vectis_json_typed_route(vectis_http_method method, const char *path,
+                        const lonejson_map *input_map, size_t input_size,
+                        vectis_json_typed_route_handler_fn handler,
+                        void *userdata);
+vectis_json_typed_route_config vectis_json_typed_route_methods(
+    vectis_http_methods methods, const char *path,
+    const lonejson_map *input_map, size_t input_size,
+    vectis_json_typed_route_handler_fn handler, void *userdata);
 void vectis_static_file_config_init(vectis_static_file_config *config);
-void vectis_static_directory_config_init(vectis_static_directory_config *config);
+void vectis_static_directory_config_init(
+    vectis_static_directory_config *config);
 
-vectis_app *vectis_app_new(const vectis_app_config *config, vectis_error *error);
+vectis_app *vectis_app_new(const vectis_app_config *config,
+                           vectis_error *error);
 vectis_app *vectis_new(const vectis_app_config *config, vectis_error *error);
 void vectis_app_close(vectis_app *app);
 void vectis_destroy(vectis_app *app);
@@ -933,27 +875,29 @@ vectis_status vectis_register_route(vectis_app *app,
 vectis_status vectis_register_json_route(vectis_app *app,
                                          const vectis_json_route_config *route,
                                          vectis_error *error);
-vectis_status vectis_register_json_typed_route(vectis_app *app,
-                                               const vectis_json_typed_route_config *route,
-                                               vectis_error *error);
+vectis_status
+vectis_register_json_typed_route(vectis_app *app,
+                                 const vectis_json_typed_route_config *route,
+                                 vectis_error *error);
 vectis_status vectis_register_prefixed_route(vectis_app *app,
                                              const char *prefix,
                                              const vectis_route_config *route,
                                              vectis_error *error);
-vectis_status vectis_register_prefixed_json_route(vectis_app *app,
-                                                  const char *prefix,
-                                                  const vectis_json_route_config *route,
-                                                  vectis_error *error);
-vectis_status vectis_register_prefixed_json_typed_route(vectis_app *app,
-                                                        const char *prefix,
-                                                        const vectis_json_typed_route_config *route,
-                                                        vectis_error *error);
-vectis_status vectis_register_static_file(vectis_app *app,
-                                          const vectis_static_file_config *config,
-                                          vectis_error *error);
-vectis_status vectis_register_static_directory(vectis_app *app,
-                                               const vectis_static_directory_config *config,
-                                               vectis_error *error);
+vectis_status
+vectis_register_prefixed_json_route(vectis_app *app, const char *prefix,
+                                    const vectis_json_route_config *route,
+                                    vectis_error *error);
+vectis_status vectis_register_prefixed_json_typed_route(
+    vectis_app *app, const char *prefix,
+    const vectis_json_typed_route_config *route, vectis_error *error);
+vectis_status
+vectis_register_static_file(vectis_app *app,
+                            const vectis_static_file_config *config,
+                            vectis_error *error);
+vectis_status
+vectis_register_static_directory(vectis_app *app,
+                                 const vectis_static_directory_config *config,
+                                 vectis_error *error);
 vectis_status vectis_attach_openapi_doc(vectis_app *app,
                                         vectis_http_methods methods,
                                         const char *path,
@@ -971,11 +915,12 @@ pslog_logger *vectis_logger(vectis_app *app);
  * NULL is reserved for invalid apps or pre-start lifecycle inspection.
  */
 struct lc_client *vectis_lockd_client(vectis_app *app);
-vectis_status vectis_consumer_service_new(vectis_app *app,
-                                          const struct lc_consumer_service_config *config,
-                                          vectis_consumer_service **out,
-                                          vectis_error *error);
-struct lc_consumer_service *vectis_consumer_service_raw(vectis_consumer_service *service);
+vectis_status
+vectis_consumer_service_new(vectis_app *app,
+                            const struct lc_consumer_service_config *config,
+                            vectis_consumer_service **out, vectis_error *error);
+struct lc_consumer_service *
+vectis_consumer_service_raw(vectis_consumer_service *service);
 vectis_status vectis_consumer_service_run(vectis_consumer_service *service,
                                           vectis_error *error);
 vectis_status vectis_consumer_service_start(vectis_consumer_service *service,
@@ -984,10 +929,10 @@ vectis_status vectis_consumer_service_stop(vectis_consumer_service *service,
                                            vectis_error *error);
 vectis_status vectis_consumer_service_wait(vectis_consumer_service *service,
                                            vectis_error *error);
-vectis_status vectis_consumer_service_run_until(vectis_consumer_service *service,
-                                                const volatile int *done,
-                                                long timeout_ms,
-                                                vectis_error *error);
+vectis_status
+vectis_consumer_service_run_until(vectis_consumer_service *service,
+                                  const volatile int *done, long timeout_ms,
+                                  vectis_error *error);
 void vectis_consumer_service_destroy(vectis_consumer_service *service);
 vectis_status vectis_json_validate_cstr(const char *json, vectis_error *error);
 void vectis_dsv_config_init(vectis_dsv_config *config);
@@ -999,8 +944,7 @@ vectis_status vectis_dsv_parse_lonejson(struct lc_source *source,
                                         const lonejson_map *map,
                                         const vectis_dsv_config *config,
                                         vectis_dsv_lonejson_row_fn row,
-                                        void *userdata,
-                                        vectis_error *error);
+                                        void *userdata, vectis_error *error);
 vectis_status vectis_dsv_parse_lonejson_source(const vectis_source *source,
                                                const lonejson_map *map,
                                                const vectis_dsv_config *config,
@@ -1012,67 +956,55 @@ vectis_status vectis_dsv_to_json_array(struct lc_source *source,
                                        vectis_mutable_bytes *out,
                                        vectis_error *error);
 vectis_status vectis_dsv_source_to_json_array(const vectis_source *source,
-                                             const vectis_dsv_config *config,
-                                             vectis_mutable_bytes *out,
-                                             vectis_error *error);
+                                              const vectis_dsv_config *config,
+                                              vectis_mutable_bytes *out,
+                                              vectis_error *error);
 vectis_status vectis_dsv_to_lonejson_array(struct lc_source *source,
                                            const lonejson_map *map,
                                            const vectis_dsv_config *config,
                                            vectis_mutable_bytes *out,
                                            vectis_error *error);
-vectis_status vectis_dsv_source_to_lonejson_array(const vectis_source *source,
-                                                 const lonejson_map *map,
-                                                 const vectis_dsv_config *config,
-                                                 vectis_mutable_bytes *out,
-                                                 vectis_error *error);
-vectis_status vectis_dsv_to_json_array_spill(struct lc_source *source,
-                                             const vectis_dsv_config *config,
-                                             const vectis_body_spill_config *spill,
-                                             vectis_body_spill_result *out,
-                                             vectis_error *error);
-vectis_status vectis_dsv_source_to_json_array_spill(const vectis_source *source,
-                                                   const vectis_dsv_config *config,
-                                                   const vectis_body_spill_config *spill,
-                                                   vectis_body_spill_result *out,
-                                                   vectis_error *error);
-vectis_status vectis_dsv_to_lonejson_array_spill(struct lc_source *source,
-                                                 const lonejson_map *map,
-                                                 const vectis_dsv_config *config,
-                                                 const vectis_body_spill_config *spill,
-                                                 vectis_body_spill_result *out,
-                                                 vectis_error *error);
-vectis_status vectis_dsv_source_to_lonejson_array_spill(const vectis_source *source,
-                                                       const lonejson_map *map,
-                                                       const vectis_dsv_config *config,
-                                                       const vectis_body_spill_config *spill,
-                                                       vectis_body_spill_result *out,
-                                                       vectis_error *error);
+vectis_status vectis_dsv_source_to_lonejson_array(
+    const vectis_source *source, const lonejson_map *map,
+    const vectis_dsv_config *config, vectis_mutable_bytes *out,
+    vectis_error *error);
+vectis_status vectis_dsv_to_json_array_spill(
+    struct lc_source *source, const vectis_dsv_config *config,
+    const vectis_body_spill_config *spill, vectis_body_spill_result *out,
+    vectis_error *error);
+vectis_status vectis_dsv_source_to_json_array_spill(
+    const vectis_source *source, const vectis_dsv_config *config,
+    const vectis_body_spill_config *spill, vectis_body_spill_result *out,
+    vectis_error *error);
+vectis_status vectis_dsv_to_lonejson_array_spill(
+    struct lc_source *source, const lonejson_map *map,
+    const vectis_dsv_config *config, const vectis_body_spill_config *spill,
+    vectis_body_spill_result *out, vectis_error *error);
+vectis_status vectis_dsv_source_to_lonejson_array_spill(
+    const vectis_source *source, const lonejson_map *map,
+    const vectis_dsv_config *config, const vectis_body_spill_config *spill,
+    vectis_body_spill_result *out, vectis_error *error);
 vectis_status vectis_dsv_write_lonejson_rows(struct lc_sink *sink,
                                              const lonejson_map *map,
                                              const vectis_dsv_config *config,
-                                             const void *rows,
-                                             size_t row_count,
+                                             const void *rows, size_t row_count,
                                              size_t row_stride,
                                              vectis_error *error);
-vectis_status vectis_dsv_lonejson_rows_to_bytes(const lonejson_map *map,
-                                                const vectis_dsv_config *config,
-                                                const void *rows,
-                                                size_t row_count,
-                                                size_t row_stride,
-                                                vectis_mutable_bytes *out,
-                                                vectis_error *error);
+vectis_status vectis_dsv_lonejson_rows_to_bytes(
+    const lonejson_map *map, const vectis_dsv_config *config, const void *rows,
+    size_t row_count, size_t row_stride, vectis_mutable_bytes *out,
+    vectis_error *error);
 /**
  * Stream a selected JSON array from a Vectis source.
  *
- * `array_path` is a LoneJSON selected-array path; pass `NULL` or an empty string
- * for a root JSON array. Each element is decoded into `item` using `map`, passed
- * to `callback`, then cleaned up before the next element is read. The full JSON
- * document and selected array are not materialized.
+ * `array_path` is a LoneJSON selected-array path; pass `NULL` or an empty
+ * string for a root JSON array. Each element is decoded into `item` using
+ * `map`, passed to `callback`, then cleaned up before the next element is read.
+ * The full JSON document and selected array are not materialized.
  */
 vectis_status vectis_json_array_each_source(const vectis_source *source,
                                             const char *array_path,
-                                            const lonejson_map *map,
-                                            void *item,
+                                            const lonejson_map *map, void *item,
                                             vectis_json_array_item_fn callback,
                                             void *userdata,
                                             vectis_error *error);
@@ -1084,55 +1016,38 @@ vectis_status vectis_json_array_each_source(const vectis_source *source,
  * an empty string for a root JSON array. `options` owns the item map, item
  * storage, and rewrite callback policy.
  */
-vectis_status vectis_json_array_rewrite_source(const vectis_source *source,
-                                               const char *selector,
-                                               struct lc_sink *sink,
-                                               const lonejson_array_rewrite_options *options,
-                                               vectis_error *error);
+vectis_status vectis_json_array_rewrite_source(
+    const vectis_source *source, const char *selector, struct lc_sink *sink,
+    const lonejson_array_rewrite_options *options, vectis_error *error);
 void vectis_xml_config_init(vectis_xml_config *config);
 vectis_xml_config vectis_xml_default(void);
 vectis_status vectis_xml_parse_lonejson(struct lc_source *source,
                                         const lonejson_map *map,
                                         const vectis_xml_config *config,
-                                        void *out,
-                                        vectis_error *error);
+                                        void *out, vectis_error *error);
 vectis_status vectis_xml_parse_lonejson_source(const vectis_source *source,
                                                const lonejson_map *map,
                                                const vectis_xml_config *config,
-                                               void *out,
-                                               vectis_error *error);
-vectis_status vectis_format_key(char *out,
-                                size_t out_size,
-                                vectis_error *error,
-                                const char *format,
-                                ...);
-vectis_status vectis_lockd_state_load(struct lc_client *client,
-                                      const char *key,
-                                      const char *owner,
-                                      long ttl_seconds,
-                                      const lonejson_map *map,
-                                      void *out,
+                                               void *out, vectis_error *error);
+vectis_status vectis_format_key(char *out, size_t out_size, vectis_error *error,
+                                const char *format, ...);
+vectis_status vectis_lockd_state_load(struct lc_client *client, const char *key,
+                                      const char *owner, long ttl_seconds,
+                                      const lonejson_map *map, void *out,
                                       vectis_error *error);
-vectis_status vectis_lockd_state_save(struct lc_client *client,
-                                      const char *key,
-                                      const char *owner,
-                                      long ttl_seconds,
+vectis_status vectis_lockd_state_save(struct lc_client *client, const char *key,
+                                      const char *owner, long ttl_seconds,
                                       const lonejson_map *map,
-                                      const void *value,
-                                      vectis_error *error);
+                                      const void *value, vectis_error *error);
 vectis_status vectis_lockd_state_update(struct lc_client *client,
-                                        const char *key,
-                                        const char *owner,
+                                        const char *key, const char *owner,
                                         long ttl_seconds,
-                                        const lonejson_map *map,
-                                        void *state,
+                                        const lonejson_map *map, void *state,
                                         vectis_lockd_state_update_fn update,
-                                        void *userdata,
-                                        vectis_error *error);
+                                        void *userdata, vectis_error *error);
 
 vectis_status vectis_request_json_into(vectis_request *request,
-                                       const lonejson_map *map,
-                                       void *out,
+                                       const lonejson_map *map, void *out,
                                        vectis_error *error);
 /**
  * Stream a selected JSON array from a request body.
@@ -1141,32 +1056,29 @@ vectis_status vectis_request_json_into(vectis_request *request,
  * parse of the request body; use `vectis_request_json_into()` only when the
  * complete JSON object is the desired API contract.
  */
-vectis_status vectis_request_json_array_each(vectis_request *request,
-                                             const char *array_path,
-                                             const lonejson_map *map,
-                                             void *item,
-                                             vectis_json_array_item_fn callback,
-                                             void *userdata,
-                                             vectis_error *error);
+vectis_status
+vectis_request_json_array_each(vectis_request *request, const char *array_path,
+                               const lonejson_map *map, void *item,
+                               vectis_json_array_item_fn callback,
+                               void *userdata, vectis_error *error);
 vectis_http_method vectis_request_method(vectis_request *request);
 const char *vectis_request_path(vectis_request *request);
 const char *vectis_request_path_param(vectis_request *request,
                                       const char *name);
-const char *vectis_request_query(vectis_request *request,
-                                 const char *name);
-const char *vectis_request_header(vectis_request *request,
-                                  const char *name);
+const char *vectis_request_query(vectis_request *request, const char *name);
+const char *vectis_request_header(vectis_request *request, const char *name);
 struct http_request *vectis_request_kore(vectis_request *request);
 struct lc_source *vectis_request_body_reader(vectis_request *request);
-void vectis_body_materialize_config_init(vectis_body_materialize_config *config);
+void vectis_body_materialize_config_init(
+    vectis_body_materialize_config *config);
 void vectis_body_materialized_cleanup(vectis_body_materialized *body);
-vectis_status vectis_body_materialized_open_reader(const vectis_body_materialized *body,
-                                                   struct lc_source **out,
-                                                   vectis_error *error);
-vectis_status vectis_request_body_materialize(vectis_request *request,
-                                              const vectis_body_materialize_config *config,
-                                              vectis_body_materialized *out,
-                                              vectis_error *error);
+vectis_status
+vectis_body_materialized_open_reader(const vectis_body_materialized *body,
+                                     struct lc_source **out,
+                                     vectis_error *error);
+vectis_status vectis_request_body_materialize(
+    vectis_request *request, const vectis_body_materialize_config *config,
+    vectis_body_materialized *out, vectis_error *error);
 void vectis_body_spill_config_init(vectis_body_spill_config *config);
 void vectis_body_spill_result_cleanup(vectis_body_spill_result *result);
 vectis_status vectis_request_body_read_all(vectis_request *request,
@@ -1177,62 +1089,46 @@ vectis_status vectis_request_body_spill(vectis_request *request,
                                         vectis_body_spill_result *out,
                                         vectis_error *error);
 vectis_status vectis_request_body_bytes(vectis_request *request,
-                                        vectis_bytes *out,
-                                        vectis_error *error);
+                                        vectis_bytes *out, vectis_error *error);
 vectis_status vectis_request_body_copy(vectis_request *request,
                                        vectis_mutable_bytes *out,
                                        vectis_error *error);
 void vectis_mutable_bytes_cleanup(vectis_mutable_bytes *bytes);
 const char *vectis_request_body_path(vectis_request *request);
 int vectis_request_body_is_spooled(vectis_request *request);
-vectis_status vectis_response_status(vectis_response *response,
-                                     int status_code,
+vectis_status vectis_response_status(vectis_response *response, int status_code,
                                      vectis_error *error);
 vectis_status vectis_response_header(vectis_response *response,
-                                     const char *name,
-                                     const char *value,
+                                     const char *name, const char *value,
                                      vectis_error *error);
-vectis_status vectis_response_text(vectis_response *response,
-                                   int status_code,
-                                   const char *content_type,
-                                   const char *text,
+vectis_status vectis_response_text(vectis_response *response, int status_code,
+                                   const char *content_type, const char *text,
                                    vectis_error *error);
-vectis_status vectis_response_bytes(vectis_response *response,
-                                    int status_code,
-                                    const char *content_type,
-                                    vectis_bytes body,
+vectis_status vectis_response_bytes(vectis_response *response, int status_code,
+                                    const char *content_type, vectis_bytes body,
                                     vectis_error *error);
-vectis_status vectis_response_file(vectis_response *response,
-                                   int status_code,
-                                   const char *content_type,
-                                   const char *path,
+vectis_status vectis_response_file(vectis_response *response, int status_code,
+                                   const char *content_type, const char *path,
                                    vectis_error *error);
-vectis_status vectis_response_source(vectis_response *response,
-                                     int status_code,
+vectis_status vectis_response_source(vectis_response *response, int status_code,
                                      const char *content_type,
                                      struct lc_source *source,
                                      vectis_error *error);
-vectis_status vectis_response_json(vectis_response *response,
-                                   int status_code,
-                                   const lonejson_map *map,
-                                   const void *value,
+vectis_status vectis_response_json(vectis_response *response, int status_code,
+                                   const lonejson_map *map, const void *value,
                                    vectis_error *error);
 vectis_status vectis_response_json_generated(vectis_response *response,
                                              int status_code,
                                              const lonejson_map *map,
                                              const void *value,
                                              vectis_error *error);
-vectis_status vectis_json_reply(vectis_json_response *response,
-                                int status_code,
-                                const lonejson_map *map,
-                                const void *value,
+vectis_status vectis_json_reply(vectis_json_response *response, int status_code,
+                                const lonejson_map *map, const void *value,
                                 vectis_error *error);
 vectis_status vectis_json_reply_status(vectis_json_response *response,
-                                       int status_code,
-                                       vectis_error *error);
+                                       int status_code, vectis_error *error);
 vectis_status vectis_response_error_json(vectis_response *response,
-                                         int status_code,
-                                         const char *code,
+                                         int status_code, const char *code,
                                          const char *message,
                                          const char *detail,
                                          vectis_error *error);
@@ -1241,32 +1137,30 @@ void vectis_http_client_config_init(vectis_http_client_config *config);
 vectis_status vectis_http_client_new(const vectis_http_client_config *config,
                                      vectis_http_client **out,
                                      vectis_error *error);
-vectis_status vectis_http_client_from_app(vectis_app *app,
-                                          const vectis_http_client_config *config,
-                                          vectis_http_client **out,
-                                          vectis_error *error);
+vectis_status
+vectis_http_client_from_app(vectis_app *app,
+                            const vectis_http_client_config *config,
+                            vectis_http_client **out, vectis_error *error);
 void vectis_http_client_destroy(vectis_http_client *client);
 void vectis_http_client_close(vectis_http_client *client);
 void vectis_http_request_init(vectis_http_request *request);
 void vectis_http_response_cleanup(vectis_http_response *response);
-vectis_status vectis_http_response_json_into(const vectis_http_response *response,
-                                             const lonejson_map *map,
-                                             void *out,
-                                             vectis_error *error);
+vectis_status
+vectis_http_response_json_into(const vectis_http_response *response,
+                               const lonejson_map *map, void *out,
+                               vectis_error *error);
 /**
  * Iterate a selected JSON array from an already-buffered HTTP response.
  *
  * This helper streams the selected array out of `response->body`, but the HTTP
- * transport has already materialized the response. Use `vectis_http_get_json_array()`
- * when the body itself must be consumed incrementally from the network.
+ * transport has already materialized the response. Use
+ * `vectis_http_get_json_array()` when the body itself must be consumed
+ * incrementally from the network.
  */
-vectis_status vectis_http_response_json_array_each(const vectis_http_response *response,
-                                                   const char *array_path,
-                                                   const lonejson_map *map,
-                                                   void *item,
-                                                   vectis_json_array_item_fn callback,
-                                                   void *userdata,
-                                                   vectis_error *error);
+vectis_status vectis_http_response_json_array_each(
+    const vectis_http_response *response, const char *array_path,
+    const lonejson_map *map, void *item, vectis_json_array_item_fn callback,
+    void *userdata, vectis_error *error);
 vectis_status vectis_http_client_execute(vectis_http_client *client,
                                          const vectis_http_request *request,
                                          vectis_http_response *response,
@@ -1276,20 +1170,16 @@ vectis_status vectis_http_client_get(vectis_http_client *client,
                                      vectis_http_response *response,
                                      vectis_error *error);
 /**
- * Stream a selected JSON array from an HTTP GET response through a client handle.
+ * Stream a selected JSON array from an HTTP GET response through a client
+ * handle.
  *
  * The response metadata is still populated, but the body bytes are consumed by
  * LoneJSON and are not copied into `response->body`.
  */
-vectis_status vectis_http_client_get_json_array(vectis_http_client *client,
-                                                const char *url,
-                                                const char *array_path,
-                                                const lonejson_map *map,
-                                                void *item,
-                                                vectis_json_array_item_fn callback,
-                                                void *userdata,
-                                                vectis_http_response *response,
-                                                vectis_error *error);
+vectis_status vectis_http_client_get_json_array(
+    vectis_http_client *client, const char *url, const char *array_path,
+    const lonejson_map *map, void *item, vectis_json_array_item_fn callback,
+    void *userdata, vectis_http_response *response, vectis_error *error);
 vectis_status vectis_http_client_delete(vectis_http_client *client,
                                         const char *url,
                                         vectis_http_response *response,
@@ -1307,38 +1197,25 @@ vectis_status vectis_http_client_download_file(vectis_http_client *client,
                                                const char *local_path,
                                                vectis_http_response *response,
                                                vectis_error *error);
-vectis_status vectis_http_client_upload_file(vectis_http_client *client,
-                                             vectis_http_method method,
-                                             const char *url,
-                                             const char *local_path,
-                                             const char *content_type,
-                                             vectis_http_response *response,
-                                             vectis_error *error);
-vectis_status vectis_http_client_post_json(vectis_http_client *client,
-                                           const char *url,
-                                           const lonejson_map *map,
-                                           const void *value,
-                                           vectis_http_response *response,
-                                           vectis_error *error);
-vectis_status vectis_http_client_put_json(vectis_http_client *client,
-                                          const char *url,
-                                          const lonejson_map *map,
-                                          const void *value,
-                                          vectis_http_response *response,
-                                          vectis_error *error);
-vectis_status vectis_http_client_patch_json(vectis_http_client *client,
-                                            const char *url,
-                                            const lonejson_map *map,
-                                            const void *value,
-                                            vectis_http_response *response,
-                                            vectis_error *error);
+vectis_status vectis_http_client_upload_file(
+    vectis_http_client *client, vectis_http_method method, const char *url,
+    const char *local_path, const char *content_type,
+    vectis_http_response *response, vectis_error *error);
+vectis_status vectis_http_client_post_json(
+    vectis_http_client *client, const char *url, const lonejson_map *map,
+    const void *value, vectis_http_response *response, vectis_error *error);
+vectis_status vectis_http_client_put_json(
+    vectis_http_client *client, const char *url, const lonejson_map *map,
+    const void *value, vectis_http_response *response, vectis_error *error);
+vectis_status vectis_http_client_patch_json(
+    vectis_http_client *client, const char *url, const lonejson_map *map,
+    const void *value, vectis_http_response *response, vectis_error *error);
 vectis_status vectis_http_execute(const vectis_http_client_config *client,
                                   const vectis_http_request *request,
                                   vectis_http_response *response,
                                   vectis_error *error);
 vectis_status vectis_http_get(const vectis_http_client_config *client,
-                              const char *url,
-                              vectis_http_response *response,
+                              const char *url, vectis_http_response *response,
                               vectis_error *error);
 /**
  * Stream a selected JSON array from an HTTP GET response.
@@ -1347,62 +1224,52 @@ vectis_status vectis_http_get(const vectis_http_client_config *client,
  * `response->body` remains `NULL`; callers observe elements through `callback`
  * as they arrive and can abort by returning a non-OK status.
  */
-vectis_status vectis_http_get_json_array(const vectis_http_client_config *client,
-                                         const char *url,
-                                         const char *array_path,
-                                         const lonejson_map *map,
-                                         void *item,
-                                         vectis_json_array_item_fn callback,
-                                         void *userdata,
-                                         vectis_http_response *response,
-                                         vectis_error *error);
+vectis_status
+vectis_http_get_json_array(const vectis_http_client_config *client,
+                           const char *url, const char *array_path,
+                           const lonejson_map *map, void *item,
+                           vectis_json_array_item_fn callback, void *userdata,
+                           vectis_http_response *response, vectis_error *error);
 vectis_status vectis_http_delete(const vectis_http_client_config *client,
                                  const char *url,
                                  vectis_http_response *response,
                                  vectis_error *error);
 vectis_status vectis_http_head(const vectis_http_client_config *client,
-                               const char *url,
-                               vectis_http_response *response,
+                               const char *url, vectis_http_response *response,
                                vectis_error *error);
 vectis_status vectis_http_options(const vectis_http_client_config *client,
                                   const char *url,
                                   vectis_http_response *response,
                                   vectis_error *error);
 vectis_status vectis_http_download_file(const vectis_http_client_config *client,
-                                        const char *url,
-                                        const char *local_path,
+                                        const char *url, const char *local_path,
                                         vectis_http_response *response,
                                         vectis_error *error);
 vectis_status vectis_http_upload_file(const vectis_http_client_config *client,
                                       vectis_http_method method,
-                                      const char *url,
-                                      const char *local_path,
+                                      const char *url, const char *local_path,
                                       const char *content_type,
                                       vectis_http_response *response,
                                       vectis_error *error);
 vectis_status vectis_http_post_json(const vectis_http_client_config *client,
-                                    const char *url,
-                                    const lonejson_map *map,
+                                    const char *url, const lonejson_map *map,
                                     const void *value,
                                     vectis_http_response *response,
                                     vectis_error *error);
 vectis_status vectis_http_put_json(const vectis_http_client_config *client,
-                                   const char *url,
-                                   const lonejson_map *map,
+                                   const char *url, const lonejson_map *map,
                                    const void *value,
                                    vectis_http_response *response,
                                    vectis_error *error);
 vectis_status vectis_http_patch_json(const vectis_http_client_config *client,
-                                     const char *url,
-                                     const lonejson_map *map,
+                                     const char *url, const lonejson_map *map,
                                      const void *value,
                                      vectis_http_response *response,
                                      vectis_error *error);
 
 void vectis_sftp_config_init(vectis_sftp_config *config);
 vectis_status vectis_sftp_new(const vectis_sftp_config *config,
-                              vectis_sftp **out,
-                              vectis_error *error);
+                              vectis_sftp **out, vectis_error *error);
 void vectis_sftp_close(vectis_sftp *sftp);
 vectis_status vectis_sftp_upload_file(const vectis_sftp_config *config,
                                       const char *local_path,
@@ -1414,8 +1281,7 @@ vectis_status vectis_sftp_download_file(const vectis_sftp_config *config,
                                         vectis_error *error);
 
 void vectis_ssh_config_init(vectis_ssh_config *config);
-vectis_status vectis_ssh_new(const vectis_ssh_config *config,
-                             vectis_ssh **out,
+vectis_status vectis_ssh_new(const vectis_ssh_config *config, vectis_ssh **out,
                              vectis_error *error);
 void vectis_ssh_close(vectis_ssh *ssh);
 void vectis_ssh_exec_result_cleanup(vectis_ssh_exec_result *result);
@@ -1434,31 +1300,29 @@ vectis_status vectis_ssh_sftp_download_file(const vectis_ssh_config *config,
 
 void vectis_mqtt_config_init(vectis_mqtt_config *config);
 vectis_status vectis_mqtt_new(const vectis_mqtt_config *config,
-                              vectis_mqtt **out,
-                              vectis_error *error);
+                              vectis_mqtt **out, vectis_error *error);
 void vectis_mqtt_close(vectis_mqtt *mqtt);
 vectis_status vectis_mqtt_publish(const vectis_mqtt_config *config,
-                                  const char *topic,
-                                  const void *payload,
-                                  size_t payload_size,
-                                  const char *content_type,
+                                  const char *topic, const void *payload,
+                                  size_t payload_size, const char *content_type,
                                   vectis_error *error);
 vectis_status vectis_mqtt_publish_json(const vectis_mqtt_config *config,
                                        const char *topic,
                                        const lonejson_map *map,
-                                       const void *value,
-                                       vectis_error *error);
+                                       const void *value, vectis_error *error);
 
 void vectis_cert_subject_init(vectis_cert_subject *subject);
 void vectis_cert_bundle_config_init(vectis_cert_bundle_config *config);
 void vectis_private_key_config_init(vectis_private_key_config *config);
 void vectis_csr_config_init(vectis_csr_config *config);
-vectis_status vectis_cert_generate_private_key(const vectis_private_key_config *config,
-                                               vectis_error *error);
+vectis_status
+vectis_cert_generate_private_key(const vectis_private_key_config *config,
+                                 vectis_error *error);
 vectis_status vectis_cert_generate_csr(const vectis_csr_config *config,
                                        vectis_error *error);
-vectis_status vectis_cert_generate_bundle(const vectis_cert_bundle_config *config,
-                                          vectis_error *error);
+vectis_status
+vectis_cert_generate_bundle(const vectis_cert_bundle_config *config,
+                            vectis_error *error);
 vectis_status vectis_cert_validate_bundle(const vectis_source *bundle,
                                           vectis_error *error);
 vectis_status vectis_cert_validate_pair(const vectis_source *certificate,

@@ -36,11 +36,8 @@ int main(void) {
   if (app == NULL) {
     return 2;
   }
-  if (app->route_count == NULL ||
-      app->route_count(app) != 0u ||
-      app->logger == NULL ||
-      app->logger(app) == NULL ||
-      app->close == NULL) {
+  if (app->route_count == NULL || app->route_count(app) != 0u ||
+      app->logger == NULL || app->logger(app) == NULL || app->close == NULL) {
     app->close(app);
     return 3;
   }
@@ -51,12 +48,8 @@ int main(void) {
   if (vectis_http_client_new(&http_config, &http, &error) != VECTIS_OK) {
     return 4;
   }
-  if (http == NULL ||
-      http->execute == NULL ||
-      http->get == NULL ||
-      http->del == NULL ||
-      http->post_json == NULL ||
-      http->close == NULL) {
+  if (http == NULL || http->execute == NULL || http->get == NULL ||
+      http->del == NULL || http->post_json == NULL || http->close == NULL) {
     if (http != NULL) {
       http->close(http);
     }

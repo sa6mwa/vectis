@@ -60,6 +60,17 @@ if(EXISTS "${VECTIS_EXTERNAL_ROOT}/share")
   file(COPY "${VECTIS_EXTERNAL_ROOT}/share/" DESTINATION "${package_root}/share")
 endif()
 
+file(GLOB_RECURSE vectis_package_pc_files LIST_DIRECTORIES false
+     "${package_root}/lib/pkgconfig/*.pc")
+foreach(vectis_package_pc_file IN LISTS vectis_package_pc_files)
+  file(READ "${vectis_package_pc_file}" vectis_package_pc_contents)
+  string(REPLACE "${VECTIS_EXTERNAL_ROOT}" "\${pcfiledir}/../.."
+         vectis_package_pc_contents "${vectis_package_pc_contents}")
+  string(REPLACE "${package_root}" "\${pcfiledir}/../.."
+         vectis_package_pc_contents "${vectis_package_pc_contents}")
+  file(WRITE "${vectis_package_pc_file}" "${vectis_package_pc_contents}")
+endforeach()
+
 file(MAKE_DIRECTORY "${package_root}/lib/cmake/vectis")
 file(WRITE "${package_root}/lib/cmake/vectis/vectisConfig.cmake" [=[
 get_filename_component(PACKAGE_PREFIX_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../" ABSOLUTE)
