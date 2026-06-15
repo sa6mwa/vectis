@@ -127,7 +127,6 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_manifest(libpid0_sha256 "${VECTIS_EXPECTED_LIBPID0_SHA256}")
   vectis_require_manifest(libxml2_version "${VECTIS_EXPECTED_LIBXML2_VERSION}")
   vectis_require_manifest(libxml2_sha256 "${VECTIS_EXPECTED_LIBXML2_SHA256}")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/lc/lc.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/lonejson.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/pslog.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/cai.h")
@@ -146,12 +145,12 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_dependency_file("${Libssh2_DIR}/libssh2-config.cmake")
   vectis_require_dependency_file("${nghttp2_DIR}/nghttp2Config.cmake")
   vectis_require_dependency_file("${ZLIB_DIR}/ZLIBConfig.cmake")
+  vectis_require_dependency_file("${vectis_lockdc_config_dir}/lockdcConfig.cmake")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lockdc-source/src/lua/lockdc_lua.c")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lockdc-source/lua/lockdc/init.lua")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lonejson-source/src/lua/lonejson_lua.c")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lonejson-source/lua/lonejson/init.lua")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/cai-lua-source/lua/cai_lua.c")
-  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblockdc.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblonejson.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libpslog.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcai.a")
@@ -164,7 +163,6 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblua.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libxml2.a")
   if(APPLE)
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblockdc.dylib")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblonejson.dylib")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libpslog.dylib")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcai.dylib")
@@ -176,7 +174,6 @@ if(EXISTS "${vectis_dependency_manifest}")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libz.dylib")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libxml2.dylib")
   else()
-    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblockdc.so")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblonejson.so")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libpslog.so")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcai.so")
@@ -192,14 +189,7 @@ else()
   message(STATUS "vectis dependency manifest not found yet: ${vectis_dependency_manifest}")
 endif()
 
-if(APPLE)
-  set(vectis_lockdc_shared_library "${VECTIS_EXTERNAL_ROOT}/lib/liblockdc.dylib")
-else()
-  set(vectis_lockdc_shared_library "${VECTIS_EXTERNAL_ROOT}/lib/liblockdc.so")
-endif()
-if(EXISTS "${vectis_lockdc_config_dir}/lockdcConfig.cmake")
-  find_package(lockdc CONFIG REQUIRED PATHS "${vectis_lockdc_config_dir}" NO_DEFAULT_PATH)
-endif()
+find_package(lockdc CONFIG REQUIRED PATHS "${vectis_lockdc_config_dir}" NO_DEFAULT_PATH)
 find_package(CURL CONFIG REQUIRED PATHS "${CURL_DIR}" NO_DEFAULT_PATH)
 find_package(OpenSSL CONFIG REQUIRED PATHS "${OpenSSL_DIR}" NO_DEFAULT_PATH)
 find_package(Libssh2 CONFIG REQUIRED PATHS "${Libssh2_DIR}" NO_DEFAULT_PATH)
@@ -218,10 +208,17 @@ if(NOT VECTIS_BUILD_STATIC AND NOT VECTIS_BUILD_SHARED)
   message(FATAL_ERROR "Enable at least one of VECTIS_BUILD_STATIC or VECTIS_BUILD_SHARED.")
 endif()
 
-if(VECTIS_BUILD_SHARED AND NOT EXISTS "${vectis_lockdc_shared_library}")
+if(VECTIS_BUILD_STATIC AND NOT TARGET lockdc::static)
   message(FATAL_ERROR
-    "VECTIS_BUILD_SHARED=ON requires a usable ${vectis_lockdc_shared_library}. "
-    "Provision the liblockdc SDK bundle before enabling shared vectis builds."
+    "VECTIS_BUILD_STATIC=ON requires lockdc::static from the provisioned "
+    "lockdc CMake package metadata. Provision a complete liblockdc SDK bundle."
+  )
+endif()
+
+if(VECTIS_BUILD_SHARED AND NOT TARGET lockdc::shared)
+  message(FATAL_ERROR
+    "VECTIS_BUILD_SHARED=ON requires lockdc::shared from the provisioned "
+    "lockdc CMake package metadata. Provision a complete liblockdc SDK bundle."
   )
 endif()
 
@@ -321,21 +318,8 @@ if(EXISTS "${vectis_kore_include_dir}/kore/kore.h")
   target_include_directories(vectis_external_headers INTERFACE "${vectis_kore_include_dir}")
 endif()
 
-if(TARGET lockdc::static)
-  set(vectis_lockdc_static_target lockdc::static)
-endif()
-
-if(TARGET lockdc::shared)
-  set(vectis_lockdc_shared_target lockdc::shared)
-elseif(TARGET lockdc::static)
-  set(vectis_lockdc_shared_target lockdc::static)
-endif()
-
-if(EXISTS "${vectis_lockdc_shared_library}")
-  set(vectis_lockdc_shared_link "${vectis_lockdc_shared_library}")
-elseif(DEFINED vectis_lockdc_shared_target)
-  set(vectis_lockdc_shared_link "${vectis_lockdc_shared_target}")
-endif()
+set(vectis_lockdc_static_target lockdc::static)
+set(vectis_lockdc_shared_target lockdc::shared)
 
 add_library(vectis_bundled_libxml2_static STATIC IMPORTED)
 set_target_properties(vectis_bundled_libxml2_static PROPERTIES
@@ -562,7 +546,7 @@ if(VECTIS_BUILD_SHARED)
     PUBLIC
       Threads::Threads
       vectis_external_headers
-      ${vectis_lockdc_shared_link}
+      ${vectis_lockdc_shared_target}
       ${vectis_shared_dependency_links}
   )
   set_target_properties(vectis_shared PROPERTIES
