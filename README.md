@@ -314,7 +314,7 @@ linked into a new runner binary.
 ## Dependency Baseline
 
 The current baseline is split across pinned target SDK archives: `liblockdc`
-0.10.0 provides the lockdc C headers/libraries, `c.pkt.systems` 0.2.0 provides
+0.12.0 provides the lockdc C headers/libraries, `c.pkt.systems` 0.2.0 provides
 curl, OpenSSL, libssh2, nghttp2, and zlib, `lonejson` 0.32.0 provides the C
 JSON headers/libraries, `cai` 0.1.2 provides the OpenAI API, agent, tool, and
 MCP C headers/libraries, and `libpslog` 0.4.1 provides the C logging
@@ -543,7 +543,7 @@ The current implementation provides:
 - `pslog`-backed owned or borrowed logger handling.
 - OpenSSL-backed self-signed and CA-signed certificate/key PEM bundle
   generation helpers.
-- Dependency provisioning from split `liblockdc` 0.10.0, `c.pkt.systems` 0.2.0,
+- Dependency provisioning from split `liblockdc` 0.12.0, `c.pkt.systems` 0.2.0,
   `lonejson` 0.32.0, `cai` 0.1.2, and `libpslog` 0.4.1 SDK bundles plus
   source-rock-backed LockDC/LoneJSON/CAI Lua bindings, target-built Lua 5.5.0,
   and libxml2 2.15.3.
