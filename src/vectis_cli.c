@@ -25,6 +25,7 @@ typedef struct vectis_lua_runtime_context {
 static vectis_lua_runtime_context vectis_lua_current;
 
 extern int luaopen_lonejson_core(lua_State *lua);
+extern int luaopen_cai(lua_State *lua);
 
 static const char vectis_lonejson_lua_init[] =
     "local core = require(\"lonejson.core\")\n"
@@ -368,6 +369,8 @@ static void vectis_lua_preload(lua_State *lua) {
   lua_setfield(lua, -2, "lonejson.core");
   lua_pushcfunction(lua, luaopen_lonejson);
   lua_setfield(lua, -2, "lonejson");
+  lua_pushcfunction(lua, luaopen_cai);
+  lua_setfield(lua, -2, "cai");
   lua_pop(lua, 2);
 }
 

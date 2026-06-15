@@ -1,5 +1,6 @@
 local vectis = require("vectis")
 local lonejson = require("lonejson")
+local cai = require("cai")
 
 assert(type(vectis) == "table")
 assert(vectis.version == "0.0.0")
@@ -11,6 +12,12 @@ assert(arg[2] == "second")
 
 assert(type(lonejson) == "table")
 assert(lonejson.encode_json(lonejson.json_null) == "null")
+
+assert(type(cai) == "table")
+assert(type(cai.open) == "function")
+assert(type(cai.mcp_handler) == "function")
+assert(type(cai.MODEL_DEFAULT_RESPONSES) == "string")
+assert(type(cai.MCP_PROTOCOL_VERSION) == "string")
 
 local encoded = lonejson.encode_json({
   b = true,

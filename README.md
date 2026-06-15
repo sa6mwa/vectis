@@ -36,6 +36,7 @@ hand.
 - `liblockdc` provides the lockd client and lockd Lua binding for durable state,
   queues, leases, and coordination.
 - `lonejson` provides JSON parsing and serialization for C and Lua.
+- `cai` provides OpenAI API, agent, tool, and MCP primitives for C and Lua.
 - `libpslog` provides structured logging for C and Lua.
 - libcurl provides HTTP(S), SFTP, and other URL-oriented client operations.
 - OpenSSL provides TLS and certificate handling.
@@ -315,13 +316,15 @@ linked into a new runner binary.
 The current baseline is split across pinned target SDK archives: `liblockdc`
 0.10.0 provides the lockdc C headers/libraries, `c.pkt.systems` 0.2.0 provides
 curl, OpenSSL, libssh2, nghttp2, and zlib, `lonejson` 0.32.0 provides the C
-JSON headers/libraries, and `libpslog` 0.4.1 provides the C logging
-headers/libraries. Vectis also vendors the pinned LoneJSON source tarball so the
-Lua binding can be compiled into the `vectis` executable against the same Lua
-ABI as the runner. The 0.10.0 `liblockdc` release also ships the `lockdc` Lua
-rock, and the libpslog release ships its Lua rock separately. This split is
-deliberate: Vectis provisions each provider as its own binary SDK archive
-instead of relying on liblockdc as an umbrella dependency bundle.
+JSON headers/libraries, `cai` 0.1.2 provides the OpenAI API, agent, tool, and
+MCP C headers/libraries, and `libpslog` 0.4.1 provides the C logging
+headers/libraries. Vectis also vendors the pinned LoneJSON and CAI source rocks
+so their Lua bindings can be compiled into the `vectis` executable against the
+same Lua ABI as the runner without invoking LuaRocks. The 0.10.0 `liblockdc`
+release also ships the `lockdc` Lua rock, and the libpslog release ships its
+Lua rock separately. This split is deliberate: Vectis provisions each provider
+as its own binary SDK archive instead of relying on liblockdc as an umbrella
+dependency bundle.
 
 Vectis owns the Lua dependency for the `vectis` executable. The dependency
 provisioning step downloads pinned Lua 5.5.0 from lua.org, verifies its
@@ -542,8 +545,8 @@ The current implementation provides:
 - OpenSSL-backed self-signed and CA-signed certificate/key PEM bundle
   generation helpers.
 - Dependency provisioning from split `liblockdc` 0.10.0, `c.pkt.systems` 0.2.0,
-  `lonejson` 0.32.0, and `libpslog` 0.4.1 SDK bundles plus target-built Lua
-  5.5.0 and libxml2 2.15.3.
+  `lonejson` 0.32.0, `cai` 0.1.2, and `libpslog` 0.4.1 SDK bundles plus
+  target-built Lua 5.5.0 and libxml2 2.15.3.
 - Compile-checked examples grouped under `examples/kore`, `examples/lockd`,
   `examples/curl`, `examples/dsv`, `examples/ssh`, `examples/certs`, and
   `examples/raw` that exercise the intended C SDK DX without local helper

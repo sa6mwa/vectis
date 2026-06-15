@@ -1,6 +1,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#include <cai/cai.h>
 #include <curl/curl.h>
 #include <kore/kore.h>
 #include <lc/lc.h>
@@ -23,6 +24,7 @@ int main(void) {
   const char *xml_version;
   SSL_CTX *ssl;
   CURLcode curl_code;
+  cai_client_config cai_config;
   pslog_logger logger;
 
   memset(&error, 0, sizeof(error));
@@ -63,6 +65,12 @@ int main(void) {
     return 6;
   }
 
+  cai_client_config_init(&cai_config);
+  if (cai_config.base_url != NULL ||
+      strcmp(CAI_MODEL_DEFAULT_RESPONSES, "") == 0) {
+    return 7;
+  }
+
   client = NULL;
   server = NULL;
   ssh = NULL;
@@ -72,7 +80,7 @@ int main(void) {
 
   if (client != NULL || server != NULL || ssh != NULL || ssl != NULL ||
       curl_code != CURLE_OK || logger.impl != NULL || xml_version == NULL) {
-    return 7;
+    return 8;
   }
-  return error.code == VECTIS_OK ? 0 : 8;
+  return error.code == VECTIS_OK ? 0 : 9;
 }

@@ -54,6 +54,7 @@ set(VECTIS_EXPECTED_SYSTEM_VERSION "0.2.0")
 set(VECTIS_EXPECTED_LOCKDC_VERSION "0.10.0")
 set(VECTIS_EXPECTED_LONEJSON_VERSION "0.32.0")
 set(VECTIS_EXPECTED_PSLOG_VERSION "0.4.1")
+set(VECTIS_EXPECTED_CAI_VERSION "0.1.2")
 set(VECTIS_EXPECTED_LUA_VERSION "5.5.0")
 set(VECTIS_EXPECTED_LUA_SHA256 "57ccc32bbbd005cab75bcc52444052535af691789dba2b9016d5c50640d68b3d")
 set(VECTIS_EXPECTED_LIBPID0_VERSION "0.3.0")
@@ -112,12 +113,14 @@ set(nghttp2_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/nghttp2")
 set(ZLIB_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/zlib")
 set(lonejson_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/lonejson")
 set(pslog_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/pslog")
+set(cai_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/cai")
 set(vectis_dependency_manifest "${VECTIS_EXTERNAL_ROOT}/manifest.txt")
 if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_manifest(system_version "${VECTIS_EXPECTED_SYSTEM_VERSION}")
   vectis_require_manifest(liblockdc_version "${VECTIS_EXPECTED_LOCKDC_VERSION}")
   vectis_require_manifest(lonejson_version "${VECTIS_EXPECTED_LONEJSON_VERSION}")
   vectis_require_manifest(pslog_version "${VECTIS_EXPECTED_PSLOG_VERSION}")
+  vectis_require_manifest(cai_version "${VECTIS_EXPECTED_CAI_VERSION}")
   vectis_require_manifest(lua_version "${VECTIS_EXPECTED_LUA_VERSION}")
   vectis_require_manifest(lua_sha256 "${VECTIS_EXPECTED_LUA_SHA256}")
   vectis_require_manifest(libpid0_version "${VECTIS_EXPECTED_LIBPID0_VERSION}")
@@ -127,6 +130,9 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/lc/lc.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/lonejson.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/pslog.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/cai.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/mcp.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/auth.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/curl/curl.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/openssl/ssl.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/libssh2.h")
@@ -142,9 +148,11 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_dependency_file("${ZLIB_DIR}/ZLIBConfig.cmake")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lonejson-source/src/lua/lonejson_lua.c")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lonejson-source/lua/lonejson/init.lua")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/cai-lua-source/lua/cai_lua.c")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblockdc.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblonejson.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libpslog.a")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcai.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcurl.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssh2.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssl.a")
@@ -157,6 +165,7 @@ if(EXISTS "${vectis_dependency_manifest}")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblockdc.dylib")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblonejson.dylib")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libpslog.dylib")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcai.dylib")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcurl.dylib")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssh2.dylib")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssl.dylib")
@@ -168,6 +177,7 @@ if(EXISTS "${vectis_dependency_manifest}")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblockdc.so")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblonejson.so")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libpslog.so")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcai.so")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcurl.so")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssh2.so")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssl.so")
@@ -195,6 +205,12 @@ find_package(nghttp2 CONFIG REQUIRED PATHS "${nghttp2_DIR}" NO_DEFAULT_PATH)
 find_package(ZLIB CONFIG REQUIRED PATHS "${ZLIB_DIR}" NO_DEFAULT_PATH)
 find_package(lonejson CONFIG REQUIRED PATHS "${lonejson_DIR}" NO_DEFAULT_PATH)
 find_package(pslog CONFIG REQUIRED PATHS "${pslog_DIR}" NO_DEFAULT_PATH)
+find_package(cai CONFIG REQUIRED PATHS "${cai_DIR}" NO_DEFAULT_PATH)
+
+if(TARGET cai::cai_static AND TARGET lonejson::lonejson_static)
+  set_property(TARGET cai::cai_static PROPERTY
+    INTERFACE_LINK_LIBRARIES "CURL::libcurl;Threads::Threads;OpenSSL::Crypto;lonejson::lonejson_static")
+endif()
 
 if(NOT VECTIS_BUILD_STATIC AND NOT VECTIS_BUILD_SHARED)
   message(FATAL_ERROR "Enable at least one of VECTIS_BUILD_STATIC or VECTIS_BUILD_SHARED.")
@@ -279,6 +295,7 @@ if(NOT EXISTS "${vectis_external_include_dir}/pslog.h")
 endif()
 set(vectis_lua_static_library "${VECTIS_EXTERNAL_ROOT}/lib/liblua.a")
 set(vectis_lonejson_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/lonejson-source")
+set(vectis_cai_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/cai-lua-source")
 set(vectis_libxml2_static_library "${VECTIS_EXTERNAL_ROOT}/lib/libxml2.a")
 if(APPLE)
   set(vectis_libxml2_shared_library "${VECTIS_EXTERNAL_ROOT}/lib/libxml2.dylib")
@@ -335,6 +352,7 @@ if(EXISTS "${vectis_libxml2_shared_library}")
 endif()
 
 set(vectis_static_dependency_links
+  cai::cai_static
   pslog::pslog_static
   CURL::libcurl
   Libssh2::libssh2
@@ -346,6 +364,7 @@ set(vectis_static_dependency_links
   ZLIB::ZLIB
 )
 set(vectis_shared_dependency_links
+  cai::cai_shared
   pslog::pslog_shared
   cpkt::curl_shared
   cpkt::libssh2_shared
@@ -566,6 +585,7 @@ endif()
 if(VECTIS_BUILD_BINARY)
   set(vectis_lonejson_lua_source
     "${vectis_lonejson_lua_source_dir}/src/lua/lonejson_lua.c")
+  set(vectis_cai_lua_source "${vectis_cai_lua_source_dir}/lua/cai_lua.c")
   add_library(vectis_lonejson_lua OBJECT "${vectis_lonejson_lua_source}")
   target_include_directories(vectis_lonejson_lua PRIVATE
     "${vectis_external_include_dir}"
@@ -582,10 +602,25 @@ if(VECTIS_BUILD_BINARY)
   )
   vectis_apply_relocatable_paths(vectis_lonejson_lua)
 
+  add_library(vectis_cai_lua OBJECT "${vectis_cai_lua_source}")
+  target_include_directories(vectis_cai_lua PRIVATE
+    "${vectis_external_include_dir}"
+  )
+  target_compile_definitions(vectis_cai_lua PRIVATE
+    _POSIX_C_SOURCE=200809L)
+  set_target_properties(vectis_cai_lua PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON
+  )
+  vectis_apply_relocatable_paths(vectis_cai_lua)
+
   add_executable(vectis_bin
     src/vectis_cli.c
     src/vectis_main.c
     $<TARGET_OBJECTS:vectis_lonejson_lua>
+    $<TARGET_OBJECTS:vectis_cai_lua>
   )
   target_include_directories(vectis_bin PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
@@ -597,7 +632,7 @@ if(VECTIS_BUILD_BINARY)
   elseif(VECTIS_BUILD_SHARED)
     target_link_libraries(vectis_bin PRIVATE vectis_shared)
   endif()
-  target_link_libraries(vectis_bin PRIVATE "${vectis_lua_static_library}")
+  target_link_libraries(vectis_bin PRIVATE cai::cai_static "${vectis_lua_static_library}")
   if(UNIX AND NOT APPLE)
     target_link_libraries(vectis_bin PRIVATE m)
   endif()

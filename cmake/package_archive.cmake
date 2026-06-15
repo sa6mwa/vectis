@@ -84,6 +84,7 @@ set(Libssh2_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/libssh2")
 set(CURL_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/CURL")
 set(pslog_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/pslog")
 set(lonejson_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/lonejson")
+set(cai_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/cai")
 find_dependency(OpenSSL CONFIG REQUIRED)
 find_dependency(ZLIB CONFIG REQUIRED)
 find_dependency(nghttp2 CONFIG REQUIRED)
@@ -91,7 +92,13 @@ find_dependency(Libssh2 CONFIG REQUIRED)
 find_dependency(CURL CONFIG REQUIRED)
 find_package(pslog CONFIG REQUIRED PATHS "${pslog_DIR}" NO_DEFAULT_PATH)
 find_package(lonejson CONFIG REQUIRED PATHS "${lonejson_DIR}" NO_DEFAULT_PATH)
+find_package(cai CONFIG REQUIRED PATHS "${cai_DIR}" NO_DEFAULT_PATH)
 find_package(lockdc CONFIG REQUIRED PATHS "${PACKAGE_PREFIX_DIR}/lib/cmake/lockdc" NO_DEFAULT_PATH)
+
+if(TARGET cai::cai_static AND TARGET lonejson::lonejson_static)
+  set_property(TARGET cai::cai_static PROPERTY
+    INTERFACE_LINK_LIBRARIES "CURL::libcurl;Threads::Threads;OpenSSL::Crypto;lonejson::lonejson_static")
+endif()
 
 if(NOT TARGET vectis::bundled_libxml2_static)
   add_library(vectis::bundled_libxml2_static STATIC IMPORTED)
@@ -123,6 +130,7 @@ endif()
 if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/lib/libvectis.a")
   set(_vectis_static_links
     lockdc::static
+    cai::cai_static
     pslog::pslog_static
     CURL::libcurl
     Libssh2::libssh2
@@ -145,6 +153,7 @@ endif()
 if(NOT TARGET vectis::shared)
   set(_vectis_shared_links
     lockdc::shared
+    cai::cai_shared
     pslog::pslog_shared
     cpkt::curl_shared
     cpkt::libssh2_shared
