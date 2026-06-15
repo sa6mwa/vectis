@@ -1,4 +1,5 @@
 local vectis = require("vectis")
+local lockdc = require("lockdc")
 local lonejson = require("lonejson")
 local cai = require("cai")
 
@@ -12,6 +13,11 @@ assert(arg[2] == "second")
 
 assert(type(lonejson) == "table")
 assert(lonejson.encode_json(lonejson.json_null) == "null")
+
+assert(type(lockdc) == "table")
+assert(type(lockdc.open) == "function")
+assert(type(lockdc.version_string()) == "string")
+assert(lockdc.encode_json({ ok = true }) == '{"ok":true}')
 
 assert(type(cai) == "table")
 assert(type(cai.open) == "function")

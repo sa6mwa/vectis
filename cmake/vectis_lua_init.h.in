@@ -1,0 +1,2 @@
+static const unsigned char vectis_lockdc_lua_init[] = {
+@vectis_lockdc_lua_init_c@};

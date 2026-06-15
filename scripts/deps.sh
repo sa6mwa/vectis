@@ -184,6 +184,12 @@ lockdc_version="0.10.0"
 lockdc_archive="liblockdc-${lockdc_version}-${target_id}.tar.gz"
 lockdc_url="https://github.com/sa6mwa/liblockdc/releases/download/v${lockdc_version}/${lockdc_archive}"
 lockdc_download="$downloads_dir/$lockdc_archive"
+lockdc_lua_archive="lockdc-${lockdc_version}-1.src.rock"
+lockdc_lua_payload="lockdc-${lockdc_version}-1.tar.gz"
+lockdc_lua_url="https://github.com/sa6mwa/liblockdc/releases/download/v${lockdc_version}/${lockdc_lua_archive}"
+lockdc_lua_download="$downloads_dir/$lockdc_lua_archive"
+lockdc_lua_sha256="ad611622da77d44b0bdcd91437e89f579c9f3647c962cbda378269a3efa37b8f"
+lockdc_lua_source_dir="$deps_root/share/lockdc-source"
 lonejson_version="0.32.0"
 lonejson_archive="liblonejson-${lonejson_version}-${target_id}.tar.gz"
 lonejson_url="https://github.com/sa6mwa/lonejson/releases/download/v${lonejson_version}/${lonejson_archive}"
@@ -242,6 +248,7 @@ download_if_missing() {
 
 download_if_missing "$system_url" "$system_download"
 download_if_missing "$lockdc_url" "$lockdc_download"
+download_if_missing "$lockdc_lua_url" "$lockdc_lua_download"
 download_if_missing "$lonejson_url" "$lonejson_download"
 download_if_missing "$lonejson_lua_url" "$lonejson_lua_download"
 download_if_missing "$pslog_url" "$pslog_download"
@@ -263,6 +270,13 @@ if [ "$actual_sha256" != "$lockdc_sha256" ]; then
   echo "checksum mismatch for $lockdc_archive" >&2
   echo "expected $lockdc_sha256" >&2
   echo "actual   $actual_sha256" >&2
+  exit 1
+fi
+actual_lockdc_lua_sha256=$(sha256sum "$lockdc_lua_download" | awk '{print $1}')
+if [ "$actual_lockdc_lua_sha256" != "$lockdc_lua_sha256" ]; then
+  echo "checksum mismatch for $lockdc_lua_archive" >&2
+  echo "expected $lockdc_lua_sha256" >&2
+  echo "actual   $actual_lockdc_lua_sha256" >&2
   exit 1
 fi
 actual_lonejson_sha256=$(sha256sum "$lonejson_download" | awk '{print $1}')
@@ -355,6 +369,9 @@ rm -rf "$deps_root/include" "$deps_root/lib" "$deps_root/share"
 mkdir -p "$deps_root"
 tar -xzf "$system_download" -C "$deps_root" --strip-components 1
 tar -xzf "$lockdc_download" -C "$deps_root" --strip-components 1
+mkdir -p "$lockdc_lua_source_dir"
+"$unzip_tool" -p "$lockdc_lua_download" "$lockdc_lua_payload" |
+  tar -xzf - -C "$lockdc_lua_source_dir" --strip-components 1
 tar -xzf "$lonejson_download" -C "$deps_root" --strip-components 1
 mkdir -p "$lonejson_source_dir"
 "$unzip_tool" -p "$lonejson_lua_download" "$lonejson_lua_payload" |
@@ -403,6 +420,9 @@ system_sha256=$system_sha256
 liblockdc_archive=$lockdc_archive
 liblockdc_version=$lockdc_version
 liblockdc_sha256=$lockdc_sha256
+lockdc_lua_archive=$lockdc_lua_archive
+lockdc_lua_payload=$lockdc_lua_payload
+lockdc_lua_sha256=$lockdc_lua_sha256
 lonejson_archive=$lonejson_archive
 lonejson_version=$lonejson_version
 lonejson_sha256=$lonejson_sha256
@@ -421,6 +441,7 @@ cai_lua_payload=$cai_lua_payload
 cai_lua_sha256=$cai_lua_sha256
 cai_source=cai-release
 cai_lua_source=cai-src-rock
+lockdc_lua_source=lockdc-src-rock
 lonejson_lua_source=lonejson-src-rock
 curl_source=c.pkt.systems
 openssl_source=c.pkt.systems

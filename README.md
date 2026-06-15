@@ -318,13 +318,12 @@ The current baseline is split across pinned target SDK archives: `liblockdc`
 curl, OpenSSL, libssh2, nghttp2, and zlib, `lonejson` 0.32.0 provides the C
 JSON headers/libraries, `cai` 0.1.2 provides the OpenAI API, agent, tool, and
 MCP C headers/libraries, and `libpslog` 0.4.1 provides the C logging
-headers/libraries. Vectis also vendors the pinned LoneJSON and CAI source rocks
-so their Lua bindings can be compiled into the `vectis` executable against the
-same Lua ABI as the runner without invoking LuaRocks. The 0.10.0 `liblockdc`
-release also ships the `lockdc` Lua rock, and the libpslog release ships its
-Lua rock separately. This split is deliberate: Vectis provisions each provider
-as its own binary SDK archive instead of relying on liblockdc as an umbrella
-dependency bundle.
+headers/libraries. Vectis also vendors the pinned LockDC, LoneJSON, and CAI
+source rocks so their Lua bindings can be compiled into the `vectis` executable
+against the same Lua ABI as the runner without invoking LuaRocks. The libpslog
+release ships its Lua rock separately. This split is deliberate: Vectis
+provisions each provider as its own binary SDK archive instead of relying on
+liblockdc as an umbrella dependency bundle.
 
 Vectis owns the Lua dependency for the `vectis` executable. The dependency
 provisioning step downloads pinned Lua 5.5.0 from lua.org, verifies its
@@ -534,7 +533,7 @@ The current implementation provides:
   `vectis script.lua` execution for unpacked binaries.
 - `vectis pack --lockd-bundle client.pem` embeds lockd client certificate/key
   bytes into the packed executable, validates their hash before Lua execution,
-  and keeps them in memory for the future statically registered lockdc module to
+  and keeps them in memory for the statically registered lockdc module to
   consume without writing private material to disk.
 - Thread-safe app object lifecycle and route registry management.
 - `lonejson`-backed JSON validation helpers.
@@ -546,7 +545,8 @@ The current implementation provides:
   generation helpers.
 - Dependency provisioning from split `liblockdc` 0.10.0, `c.pkt.systems` 0.2.0,
   `lonejson` 0.32.0, `cai` 0.1.2, and `libpslog` 0.4.1 SDK bundles plus
-  target-built Lua 5.5.0 and libxml2 2.15.3.
+  source-rock-backed LockDC/LoneJSON/CAI Lua bindings, target-built Lua 5.5.0,
+  and libxml2 2.15.3.
 - Compile-checked examples grouped under `examples/kore`, `examples/lockd`,
   `examples/curl`, `examples/dsv`, `examples/ssh`, `examples/certs`, and
   `examples/raw` that exercise the intended C SDK DX without local helper

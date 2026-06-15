@@ -146,6 +146,8 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_dependency_file("${Libssh2_DIR}/libssh2-config.cmake")
   vectis_require_dependency_file("${nghttp2_DIR}/nghttp2Config.cmake")
   vectis_require_dependency_file("${ZLIB_DIR}/ZLIBConfig.cmake")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lockdc-source/src/lua/lockdc_lua.c")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lockdc-source/lua/lockdc/init.lua")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lonejson-source/src/lua/lonejson_lua.c")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lonejson-source/lua/lonejson/init.lua")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/cai-lua-source/lua/cai_lua.c")
@@ -294,6 +296,7 @@ if(NOT EXISTS "${vectis_external_include_dir}/pslog.h")
   message(STATUS "vectis external headers not provisioned yet: ${vectis_external_include_dir}/pslog.h")
 endif()
 set(vectis_lua_static_library "${VECTIS_EXTERNAL_ROOT}/lib/liblua.a")
+set(vectis_lockdc_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/lockdc-source")
 set(vectis_lonejson_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/lonejson-source")
 set(vectis_cai_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/cai-lua-source")
 set(vectis_libxml2_static_library "${VECTIS_EXTERNAL_ROOT}/lib/libxml2.a")
@@ -583,9 +586,54 @@ elseif(VECTIS_BUILD_SHARED)
 endif()
 
 if(VECTIS_BUILD_BINARY)
+  file(READ "${vectis_lockdc_lua_source_dir}/lua/lockdc/init.lua"
+    vectis_lockdc_lua_init_hex HEX)
+  string(REGEX MATCHALL ".." vectis_lockdc_lua_init_bytes
+    "${vectis_lockdc_lua_init_hex}")
+  set(vectis_lockdc_lua_init_c "")
+  set(vectis_lockdc_lua_init_column 0)
+  foreach(vectis_lockdc_lua_init_byte IN LISTS vectis_lockdc_lua_init_bytes)
+    if(vectis_lockdc_lua_init_column EQUAL 0)
+      string(APPEND vectis_lockdc_lua_init_c "    ")
+    endif()
+    string(APPEND vectis_lockdc_lua_init_c "0x${vectis_lockdc_lua_init_byte},")
+    math(EXPR vectis_lockdc_lua_init_column "${vectis_lockdc_lua_init_column} + 1")
+    if(vectis_lockdc_lua_init_column EQUAL 16)
+      string(APPEND vectis_lockdc_lua_init_c "\n")
+      set(vectis_lockdc_lua_init_column 0)
+    else()
+      string(APPEND vectis_lockdc_lua_init_c " ")
+    endif()
+  endforeach()
+  if(NOT vectis_lockdc_lua_init_column EQUAL 0)
+    string(APPEND vectis_lockdc_lua_init_c "\n")
+  endif()
+  configure_file(
+    "${CMAKE_SOURCE_DIR}/cmake/vectis_lua_init.h.in"
+    "${CMAKE_BINARY_DIR}/generated/include/vectis_lockdc_lua_init.h"
+    @ONLY
+  )
+  set(vectis_lockdc_lua_source
+    "${vectis_lockdc_lua_source_dir}/src/lua/lockdc_lua.c")
   set(vectis_lonejson_lua_source
     "${vectis_lonejson_lua_source_dir}/src/lua/lonejson_lua.c")
   set(vectis_cai_lua_source "${vectis_cai_lua_source_dir}/lua/cai_lua.c")
+  add_library(vectis_lockdc_lua OBJECT "${vectis_lockdc_lua_source}")
+  target_include_directories(vectis_lockdc_lua PRIVATE
+    "${vectis_external_include_dir}"
+    "${vectis_lockdc_lua_source_dir}/src"
+    "${vectis_lockdc_lua_source_dir}/src/lua"
+  )
+  target_compile_definitions(vectis_lockdc_lua PRIVATE
+    _POSIX_C_SOURCE=200809L)
+  set_target_properties(vectis_lockdc_lua PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON
+  )
+  vectis_apply_relocatable_paths(vectis_lockdc_lua)
+
   add_library(vectis_lonejson_lua OBJECT "${vectis_lonejson_lua_source}")
   target_include_directories(vectis_lonejson_lua PRIVATE
     "${vectis_external_include_dir}"
@@ -619,6 +667,7 @@ if(VECTIS_BUILD_BINARY)
   add_executable(vectis_bin
     src/vectis_cli.c
     src/vectis_main.c
+    $<TARGET_OBJECTS:vectis_lockdc_lua>
     $<TARGET_OBJECTS:vectis_lonejson_lua>
     $<TARGET_OBJECTS:vectis_cai_lua>
   )

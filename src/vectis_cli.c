@@ -13,6 +13,8 @@
 #include <vectis/vectis.h>
 #include <vectis/vectis_version.h>
 
+#include "vectis_lockdc_lua_init.h"
+
 #define VECTIS_PACK_FOOTER_SIZE 128u
 #define VECTIS_PACK_MAGIC "VECTIS_PACK_V1"
 #define VECTIS_PACK_MAGIC_SIZE 14u
@@ -25,6 +27,7 @@ typedef struct vectis_lua_runtime_context {
 static vectis_lua_runtime_context vectis_lua_current;
 
 extern int luaopen_lonejson_core(lua_State *lua);
+extern int luaopen_lockdc_core(lua_State *lua);
 extern int luaopen_cai(lua_State *lua);
 
 static const char vectis_lonejson_lua_init[] =
@@ -360,11 +363,30 @@ static int luaopen_lonejson(lua_State *lua) {
   return 1;
 }
 
+static int luaopen_lockdc(lua_State *lua) {
+  int status;
+
+  status = luaL_loadbuffer(lua, (const char *)vectis_lockdc_lua_init,
+                           sizeof(vectis_lockdc_lua_init), "lockdc.init");
+  if (status != LUA_OK) {
+    return lua_error(lua);
+  }
+  status = lua_pcall(lua, 0, 1, 0);
+  if (status != LUA_OK) {
+    return lua_error(lua);
+  }
+  return 1;
+}
+
 static void vectis_lua_preload(lua_State *lua) {
   lua_getglobal(lua, "package");
   lua_getfield(lua, -1, "preload");
   lua_pushcfunction(lua, luaopen_vectis);
   lua_setfield(lua, -2, "vectis");
+  lua_pushcfunction(lua, luaopen_lockdc_core);
+  lua_setfield(lua, -2, "lockdc.core");
+  lua_pushcfunction(lua, luaopen_lockdc);
+  lua_setfield(lua, -2, "lockdc");
   lua_pushcfunction(lua, luaopen_lonejson_core);
   lua_setfield(lua, -2, "lonejson.core");
   lua_pushcfunction(lua, luaopen_lonejson);
