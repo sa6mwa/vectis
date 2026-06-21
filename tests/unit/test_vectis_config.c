@@ -14,11 +14,38 @@ static vectis_status sample_handler(vectis_app *app, vectis_request *request,
   return VECTIS_OK;
 }
 
+static vectis_status sample_json_handler(vectis_app *app,
+                                         vectis_request *request, void *input,
+                                         void *output, void *userdata,
+                                         vectis_error *error) {
+  (void)app;
+  (void)request;
+  (void)input;
+  (void)output;
+  (void)userdata;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status sample_json_typed_handler(
+    vectis_app *app, vectis_request *request, void *input,
+    vectis_json_response *response, void *userdata, vectis_error *error) {
+  (void)app;
+  (void)request;
+  (void)input;
+  (void)response;
+  (void)userdata;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 int main(void) {
   vectis_app_config config;
   vectis_error error;
   vectis_app *app;
   vectis_route_config route;
+  vectis_json_route_config json_route;
+  vectis_json_typed_route_config typed_json_route;
   vectis_route_config param_route;
   vectis_status status;
   const char *bad_endpoints[1];
@@ -149,6 +176,23 @@ int main(void) {
   assert((route.methods & VECTIS_HTTP_METHODS_HEAD) != 0u);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
+  assert(vectis_route_count(app) == 2u);
+
+  json_route = vectis_json_route_methods(VECTIS_HTTP_METHODS_NONE,
+                                         "/json-empty-methods", NULL, 0u, NULL,
+                                         0u, sample_json_handler, NULL);
+  status = vectis_register_json_route(app, &json_route, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "at least one HTTP method") != NULL);
+  assert(vectis_route_count(app) == 2u);
+
+  typed_json_route =
+      vectis_json_typed_route_methods(VECTIS_HTTP_METHODS_NONE,
+                                      "/typed-json-empty-methods", NULL, 0u,
+                                      sample_json_typed_handler, NULL);
+  status = vectis_register_json_typed_route(app, &typed_json_route, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "at least one HTTP method") != NULL);
   assert(vectis_route_count(app) == 2u);
 
   param_route = vectis_route(VECTIS_HTTP_HEAD, "/orders", sample_handler, NULL);

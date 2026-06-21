@@ -1335,9 +1335,11 @@ vectis_json_route_methods(vectis_http_methods methods, const char *path,
                           void *userdata) {
   vectis_json_route_config route;
 
-  route =
-      vectis_json_route(vectis_first_method(methods), path, input_map,
-                        input_size, output_map, output_size, handler, userdata);
+  route = vectis_json_route(methods == VECTIS_HTTP_METHODS_NONE
+                                ? (vectis_http_method)-1
+                                : vectis_first_method(methods),
+                            path, input_map, input_size, output_map,
+                            output_size, handler, userdata);
   route.methods = methods;
   return route;
 }
@@ -1368,8 +1370,11 @@ vectis_json_typed_route_config vectis_json_typed_route_methods(
     vectis_json_typed_route_handler_fn handler, void *userdata) {
   vectis_json_typed_route_config route;
 
-  route = vectis_json_typed_route(vectis_first_method(methods), path, input_map,
-                                  input_size, handler, userdata);
+  route = vectis_json_typed_route(methods == VECTIS_HTTP_METHODS_NONE
+                                      ? (vectis_http_method)-1
+                                      : vectis_first_method(methods),
+                                  path, input_map, input_size, handler,
+                                  userdata);
   route.methods = methods;
   return route;
 }
