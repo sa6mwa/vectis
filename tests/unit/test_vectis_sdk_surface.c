@@ -1187,6 +1187,10 @@ static void assert_json_route_surface(void) {
   vectis_app_config config;
   vectis_json_route_config route;
   vectis_json_typed_route_config typed_route;
+  vectis_xml_route_config xml_route;
+  vectis_dsv_route_config dsv_route;
+  vectis_xml_config xml_config;
+  vectis_dsv_config dsv_config;
   vectis_route_config raw_route;
   vectis_static_file_config static_file;
   vectis_static_directory_config static_dir;
@@ -1223,12 +1227,16 @@ static void assert_json_route_surface(void) {
   assert(app->route != NULL);
   assert(app->json_route != NULL);
   assert(app->json_typed_route != NULL);
+  assert(app->xml_route != NULL);
+  assert(app->dsv_route != NULL);
   assert(app->upload_stream != NULL);
   assert(app->upload_file != NULL);
   assert(app->upload_reader != NULL);
   assert(app->prefixed_route != NULL);
   assert(app->prefixed_json_route != NULL);
   assert(app->prefixed_json_typed_route != NULL);
+  assert(app->prefixed_xml_route != NULL);
+  assert(app->prefixed_dsv_route != NULL);
   assert(app->static_file != NULL);
   assert(app->static_directory != NULL);
   assert(app->openapi_doc != NULL);
@@ -1373,6 +1381,26 @@ static void assert_json_route_surface(void) {
   assert(strcmp(output.id, "abc") == 0);
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
+
+  xml_config = vectis_xml_default();
+  xml_config.root_element = "sample";
+  xml_route = vectis_xml_route(VECTIS_HTTP_POST, "/xml", &xml_config, NULL,
+                               NULL);
+  assert(xml_route.body.mode == VECTIS_BODY_STREAMING_UPLOAD);
+  assert(xml_route.buffer_bytes ==
+         VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES);
+  assert(strcmp(xml_route.config.root_element, "sample") == 0);
+
+  dsv_config = vectis_dsv_csv();
+  dsv_route = vectis_dsv_route(VECTIS_HTTP_POST, "/dsv", &sample_dsv_doc_map,
+                               sizeof(sample_dsv_doc), &dsv_config, NULL,
+                               NULL);
+  assert(dsv_route.body.mode == VECTIS_BODY_STREAMING_UPLOAD);
+  assert(dsv_route.buffer_bytes ==
+         VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES);
+  assert(dsv_route.row_map == &sample_dsv_doc_map);
+  assert(dsv_route.row_size == sizeof(sample_dsv_doc));
+  assert(dsv_route.config.delimiter == ',');
 
   status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/static-file",
                                           request, response, &error);

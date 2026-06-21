@@ -20,6 +20,18 @@ typedef struct source_json_doc {
   lonejson_source payload;
 } source_json_doc;
 
+typedef struct runtime_dsv_row {
+  char id[32];
+  lonejson_int64 count;
+  int active;
+} runtime_dsv_row;
+
+typedef struct runtime_dsv_summary {
+  size_t rows;
+  lonejson_int64 total;
+  size_t active;
+} runtime_dsv_summary;
+
 typedef struct stream_probe_context {
   size_t open_count;
   size_t write_count;
@@ -33,8 +45,16 @@ typedef struct stream_probe_context {
 static const lonejson_field source_json_doc_fields[] = {
     LONEJSON_FIELD_STRING_SOURCE_REQ(source_json_doc, payload, "payload")};
 
+static const lonejson_field runtime_dsv_row_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(runtime_dsv_row, id, "id",
+                                    LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_I64_REQ(runtime_dsv_row, count, "count"),
+    LONEJSON_FIELD_BOOL_REQ(runtime_dsv_row, active, "active")};
+
 LONEJSON_MAP_DEFINE(source_json_doc_map, source_json_doc,
                     source_json_doc_fields);
+LONEJSON_MAP_DEFINE(runtime_dsv_row_map, runtime_dsv_row,
+                    runtime_dsv_row_fields);
 
 static vectis_status sample_handler(vectis_app *app, vectis_request *request,
                                     vectis_response *response, void *userdata,
@@ -325,6 +345,95 @@ static vectis_status stream_reader_handler(
   }
   lc_error_cleanup(&lcerr);
   (void)snprintf(text, sizeof(text), "%lu", (unsigned long)total);
+  return vectis_response_text(response, 200, "text/plain", text, error);
+}
+
+static vectis_status xml_route_handler(vectis_app *app, vectis_request *request,
+                                       struct lc_source *reader,
+                                       vectis_response *response,
+                                       void *userdata, vectis_error *error) {
+  lc_error lcerr;
+  unsigned char chunk[257];
+  size_t total;
+  size_t nread;
+  char text[64];
+
+  (void)app;
+  (void)userdata;
+  if (reader == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML reader is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_request_body_reader(request) != NULL ||
+      vectis_request_body_path(request) != NULL ||
+      vectis_request_body_is_spooled(request)) {
+    return vectis_response_text(response, 500, "text/plain", "materialized",
+                                error);
+  }
+  total = 0u;
+  lc_error_init(&lcerr);
+  for (;;) {
+    nread = reader->read(reader, chunk, sizeof(chunk), &lcerr);
+    if (nread == 0u) {
+      if (lcerr.code != 0) {
+        vectis_set_error(error, VECTIS_ERR_STATE, "failed to read XML upload");
+        lc_error_cleanup(&lcerr);
+        return VECTIS_ERR_STATE;
+      }
+      break;
+    }
+    total += nread;
+  }
+  lc_error_cleanup(&lcerr);
+  (void)snprintf(text, sizeof(text), "%lu", (unsigned long)total);
+  return vectis_response_text(response, 200, "text/plain", text, error);
+}
+
+static vectis_status dsv_route_handler(vectis_app *app, vectis_request *request,
+                                       vectis_dsv_rows *rows,
+                                       vectis_response *response,
+                                       void *userdata, vectis_error *error) {
+  runtime_dsv_summary *summary;
+  const runtime_dsv_row *row;
+  const void *row_ptr;
+  size_t row_number;
+  int has_row;
+  char text[128];
+  vectis_status status;
+
+  (void)app;
+  summary = (runtime_dsv_summary *)userdata;
+  if (summary == NULL || rows == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV summary is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_request_body_reader(request) != NULL ||
+      vectis_request_body_path(request) != NULL ||
+      vectis_request_body_is_spooled(request)) {
+    return vectis_response_text(response, 500, "text/plain", "materialized",
+                                error);
+  }
+  memset(summary, 0, sizeof(*summary));
+  for (;;) {
+    status =
+        vectis_dsv_rows_next(rows, &has_row, &row_number, &row_ptr, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    if (!has_row) {
+      break;
+    }
+    row = (const runtime_dsv_row *)row_ptr;
+    assert(row_number == summary->rows + 1u);
+    summary->rows++;
+    summary->total += row->count;
+    if (row->active) {
+      summary->active++;
+    }
+  }
+  (void)snprintf(text, sizeof(text), "%lu:%lld:%lu",
+                 (unsigned long)summary->rows, (long long)summary->total,
+                 (unsigned long)summary->active);
   return vectis_response_text(response, 200, "text/plain", text, error);
 }
 
@@ -848,8 +957,11 @@ static void assert_kore_smoke(void) {
   vectis_http_response stream_response;
   vectis_http_response stream_reader_response;
   vectis_http_response stream_file_response;
+  vectis_http_response xml_route_response;
+  vectis_http_response dsv_route_response;
   source_json_doc json_source_doc;
   stream_probe_context stream_context;
+  runtime_dsv_summary dsv_summary;
   vectis_route_config route;
   vectis_route_config limited_route;
   vectis_route_config upload_route;
@@ -859,12 +971,18 @@ static void assert_kore_smoke(void) {
   vectis_upload_route_config stream_route;
   vectis_upload_reader_route_config stream_reader_route;
   vectis_upload_file_route_config stream_file_route;
+  vectis_xml_route_config xml_route;
+  vectis_dsv_route_config dsv_route;
+  vectis_xml_config xml_config;
+  vectis_dsv_config dsv_config;
   vectis_app_config second_config;
   vectis_route_config second_route;
   const char *headers[] = {"x-vectis-trace: runtime-smoke"};
   const char upload_path[] = "/tmp/vectis-runtime-upload.bin";
   const char stream_upload_path[] = "/tmp/vectis-runtime-stream-source.bin";
   const char stream_file_path[] = "/tmp/vectis-runtime-stream-upload.bin";
+  const char xml_upload_path[] = "/tmp/vectis-runtime-upload.xml";
+  const char dsv_upload_path[] = "/tmp/vectis-runtime-upload.csv";
   const char json_source_path[] = "/tmp/vectis-runtime-json-source.txt";
   const char response_file_path[] = "/tmp/vectis-runtime-response.txt";
   const char response_file_body[] = "file-response";
@@ -878,8 +996,13 @@ static void assert_kore_smoke(void) {
   char *default_spooled_body;
   char *stream_body;
   char size_text[64];
+  char dsv_text[128];
   size_t default_spooled_body_size;
   size_t stream_body_size;
+  size_t xml_body_size;
+  size_t dsv_rows;
+  long long dsv_total;
+  size_t dsv_active;
   long stream_file_size;
   int attempt;
   int i;
@@ -899,7 +1022,10 @@ static void assert_kore_smoke(void) {
   memset(&stream_response, 0, sizeof(stream_response));
   memset(&stream_reader_response, 0, sizeof(stream_reader_response));
   memset(&stream_file_response, 0, sizeof(stream_file_response));
+  memset(&xml_route_response, 0, sizeof(xml_route_response));
+  memset(&dsv_route_response, 0, sizeof(dsv_route_response));
   memset(&stream_context, 0, sizeof(stream_context));
+  memset(&dsv_summary, 0, sizeof(dsv_summary));
   memset(&json_source_request, 0, sizeof(json_source_request));
   memset(&no_body_request, 0, sizeof(no_body_request));
   memset(&json_source_doc, 0, sizeof(json_source_doc));
@@ -990,6 +1116,24 @@ static void assert_kore_smoke(void) {
   stream_reader_route.body.memory_buffer_limit_bytes = 8u;
   stream_reader_route.buffer_bytes = 8u;
   status = app->upload_reader(app, &stream_reader_route, &error);
+  assert(status == VECTIS_OK);
+  xml_config = vectis_xml_default();
+  xml_config.root_element = "doc";
+  xml_route = vectis_xml_route(VECTIS_HTTP_POST, "/xml-upload", &xml_config,
+                               xml_route_handler, NULL);
+  xml_route.body.max_bytes = 2097152u;
+  xml_route.body.memory_buffer_limit_bytes = 8u;
+  xml_route.buffer_bytes = 4096u;
+  status = app->xml_route(app, &xml_route, &error);
+  assert(status == VECTIS_OK);
+  dsv_config = vectis_dsv_csv();
+  dsv_route = vectis_dsv_route(VECTIS_HTTP_POST, "/dsv-upload",
+                               &runtime_dsv_row_map, sizeof(runtime_dsv_row),
+                               &dsv_config, dsv_route_handler, &dsv_summary);
+  dsv_route.body.max_bytes = 2097152u;
+  dsv_route.body.memory_buffer_limit_bytes = 8u;
+  dsv_route.buffer_bytes = 4096u;
+  status = app->dsv_route(app, &dsv_route, &error);
   assert(status == VECTIS_OK);
   stream_file_route = vectis_upload_file_route(
       VECTIS_HTTP_POST, "/stream-file", stream_file_path,
@@ -1256,6 +1400,62 @@ static void assert_kore_smoke(void) {
          0);
   vectis_http_response_cleanup(&stream_reader_response);
 
+  xml_body_size = 1024u;
+  fp = fopen(xml_upload_path, "wb");
+  assert(fp != NULL);
+  assert(fwrite("<doc><body>", 1u, 11u, fp) == 11u);
+  for (i = 0; i < (int)xml_body_size; ++i) {
+    assert(fputc('x', fp) == 'x');
+  }
+  assert(fwrite("</body></doc>", 1u, 13u, fp) == 13u);
+  assert(fclose(fp) == 0);
+  (void)snprintf(size_text, sizeof(size_text), "%lu",
+                 (unsigned long)(xml_body_size + 24u));
+  status = vectis_http_upload_file(
+      &http, VECTIS_HTTP_POST, "http://127.0.0.1:28080/xml-upload",
+      xml_upload_path, "application/xml", &xml_route_response, &error);
+  assert(status == VECTIS_OK);
+  assert(xml_route_response.status_code == 200L);
+  assert(xml_route_response.body_size == strlen(size_text));
+  assert(memcmp(xml_route_response.body, size_text, strlen(size_text)) == 0);
+  vectis_http_response_cleanup(&xml_route_response);
+
+  dsv_rows = 3000u;
+  dsv_total = 0;
+  dsv_active = 0u;
+  fp = fopen(dsv_upload_path, "wb");
+  assert(fp != NULL);
+  assert(fputs("id,count,active,pad\n", fp) >= 0);
+  for (i = 0; i < (int)dsv_rows; ++i) {
+    int active;
+    int j;
+
+    active = (i % 2) == 0;
+    dsv_total += 1;
+    if (active) {
+      dsv_active++;
+    }
+    assert(fprintf(fp, "row-%05d,1,%s,", i, active ? "true" : "false") > 0);
+    for (j = 0; j < 400; ++j) {
+      assert(fputc('x', fp) == 'x');
+    }
+    assert(fputc('\n', fp) == '\n');
+  }
+  assert(fclose(fp) == 0);
+  (void)snprintf(dsv_text, sizeof(dsv_text), "%lu:%lld:%lu",
+                 (unsigned long)dsv_rows, dsv_total,
+                 (unsigned long)dsv_active);
+  status = vectis_http_upload_file(
+      &http, VECTIS_HTTP_POST, "http://127.0.0.1:28080/dsv-upload",
+      dsv_upload_path, "text/csv", &dsv_route_response, &error);
+  assert(status == VECTIS_OK);
+  assert(dsv_route_response.status_code == 200L);
+  assert(dsv_route_response.body_size == strlen(dsv_text));
+  assert(memcmp(dsv_route_response.body, dsv_text, strlen(dsv_text)) == 0);
+  vectis_http_response_cleanup(&dsv_route_response);
+
+  (void)snprintf(size_text, sizeof(size_text), "%lu",
+                 (unsigned long)stream_body_size);
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
   request.url = "http://127.0.0.1:28080/stream-file";
@@ -1278,6 +1478,8 @@ static void assert_kore_smoke(void) {
   remove(upload_path);
   remove(stream_upload_path);
   remove(stream_file_path);
+  remove(xml_upload_path);
+  remove(dsv_upload_path);
   remove(response_file_path);
 
   status = vectis_stop(app, &error);

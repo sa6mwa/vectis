@@ -68,6 +68,22 @@ typedef struct vectis_json_typed_route_adapter {
   void *userdata;
 } vectis_json_typed_route_adapter;
 
+typedef struct vectis_xml_route_adapter {
+  vectis_xml_config config;
+  vectis_xml_route_handler_fn handler;
+  void *userdata;
+  size_t buffer_bytes;
+} vectis_xml_route_adapter;
+
+typedef struct vectis_dsv_route_adapter {
+  const lonejson_map *row_map;
+  size_t row_size;
+  vectis_dsv_config config;
+  vectis_dsv_route_handler_fn handler;
+  void *userdata;
+  size_t buffer_bytes;
+} vectis_dsv_route_adapter;
+
 typedef struct vectis_static_route_data {
   int directory;
   const char *path_prefix;
@@ -98,6 +114,7 @@ typedef struct vectis_upload_reader_adapter {
   vectis_upload_reader_handler_fn handler;
   void *userdata;
   size_t buffer_bytes;
+  void (*free_userdata)(void *userdata);
 } vectis_upload_reader_adapter;
 
 typedef struct vectis_upload_reader_state {
@@ -172,6 +189,20 @@ typedef struct vectis_dsv_parser {
   int eof;
   int skip_next_lf;
 } vectis_dsv_parser;
+
+struct vectis_dsv_rows {
+  vectis_dsv_parser parser;
+  vectis_dsv_fields headers;
+  const lonejson_map *map;
+  const char *const *columns;
+  const char **header_columns;
+  size_t column_count;
+  size_t row_size;
+  size_t data_row;
+  void *value;
+  lonejson *runtime;
+  int done;
+};
 
 typedef struct vectis_xml_field_state {
   size_t count;
@@ -380,6 +411,13 @@ static vectis_status vectis_upload_file_write(
 static vectis_status vectis_upload_reader_write(
     vectis_app *app, vectis_request *request, const void *data, size_t size,
     void *state, void *userdata, vectis_error *error);
+static vectis_status vectis_dsv_rows_open(vectis_dsv_rows *rows,
+                                          struct lc_source *source,
+                                          const lonejson_map *map,
+                                          size_t row_size,
+                                          const vectis_dsv_config *config,
+                                          vectis_error *error);
+static void vectis_dsv_rows_cleanup(vectis_dsv_rows *rows);
 vectis_status vectis_register_upload_stream(
     vectis_app *app, const vectis_upload_route_config *route,
     vectis_error *error);
@@ -388,6 +426,18 @@ vectis_status vectis_register_upload_file(
     vectis_error *error);
 vectis_status vectis_register_upload_reader(
     vectis_app *app, const vectis_upload_reader_route_config *route,
+    vectis_error *error);
+vectis_status vectis_register_xml_route(vectis_app *app,
+                                        const vectis_xml_route_config *route,
+                                        vectis_error *error);
+vectis_status vectis_register_dsv_route(vectis_app *app,
+                                        const vectis_dsv_route_config *route,
+                                        vectis_error *error);
+vectis_status vectis_register_prefixed_xml_route(
+    vectis_app *app, const char *prefix, const vectis_xml_route_config *route,
+    vectis_error *error);
+vectis_status vectis_register_prefixed_dsv_route(
+    vectis_app *app, const char *prefix, const vectis_dsv_route_config *route,
     vectis_error *error);
 static size_t vectis_app_route_count_impl(const vectis_app *app);
 static size_t vectis_app_max_request_body_bytes(vectis_app_impl *impl);
@@ -1148,6 +1198,32 @@ void vectis_json_typed_route_config_init(
   config->body = vectis_body_json_default();
 }
 
+void vectis_xml_route_config_init(vectis_xml_route_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->method = VECTIS_HTTP_ANY;
+  config->methods = VECTIS_HTTP_METHODS_NONE;
+  config->path_kind = VECTIS_ROUTE_PATH_LITERAL;
+  config->body = vectis_body_upload();
+  config->buffer_bytes = VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+  vectis_xml_config_init(&config->config);
+}
+
+void vectis_dsv_route_config_init(vectis_dsv_route_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->method = VECTIS_HTTP_ANY;
+  config->methods = VECTIS_HTTP_METHODS_NONE;
+  config->path_kind = VECTIS_ROUTE_PATH_LITERAL;
+  config->body = vectis_body_upload();
+  config->buffer_bytes = VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+  vectis_dsv_config_init(&config->config);
+}
+
 void vectis_openapi_document_init(vectis_openapi_document *document) {
   if (document == NULL) {
     return;
@@ -1571,6 +1647,74 @@ vectis_json_typed_route_config vectis_json_typed_route_methods(
                                       : vectis_first_method(methods),
                                   path, input_map, input_size, handler,
                                   userdata);
+  route.methods = methods;
+  return route;
+}
+
+vectis_xml_route_config vectis_xml_route(
+    vectis_http_method method, const char *path,
+    const vectis_xml_config *config, vectis_xml_route_handler_fn handler,
+    void *userdata) {
+  vectis_xml_route_config route;
+
+  vectis_xml_route_config_init(&route);
+  route.method = method;
+  route.methods = vectis_method_mask(method);
+  route.path = path;
+  route.path_kind = vectis_infer_route_path_kind(path);
+  if (config != NULL) {
+    route.config = *config;
+  }
+  route.handler = handler;
+  route.userdata = userdata;
+  return route;
+}
+
+vectis_xml_route_config vectis_xml_route_methods(
+    vectis_http_methods methods, const char *path,
+    const vectis_xml_config *config, vectis_xml_route_handler_fn handler,
+    void *userdata) {
+  vectis_xml_route_config route;
+
+  route = vectis_xml_route(methods == VECTIS_HTTP_METHODS_NONE
+                               ? (vectis_http_method)-1
+                               : vectis_first_method(methods),
+                           path, config, handler, userdata);
+  route.methods = methods;
+  return route;
+}
+
+vectis_dsv_route_config vectis_dsv_route(
+    vectis_http_method method, const char *path, const lonejson_map *row_map,
+    size_t row_size, const vectis_dsv_config *config,
+    vectis_dsv_route_handler_fn handler, void *userdata) {
+  vectis_dsv_route_config route;
+
+  vectis_dsv_route_config_init(&route);
+  route.method = method;
+  route.methods = vectis_method_mask(method);
+  route.path = path;
+  route.path_kind = vectis_infer_route_path_kind(path);
+  route.row_map = row_map;
+  route.row_size = row_size;
+  if (config != NULL) {
+    route.config = *config;
+  }
+  route.handler = handler;
+  route.userdata = userdata;
+  return route;
+}
+
+vectis_dsv_route_config vectis_dsv_route_methods(
+    vectis_http_methods methods, const char *path, const lonejson_map *row_map,
+    size_t row_size, const vectis_dsv_config *config,
+    vectis_dsv_route_handler_fn handler, void *userdata) {
+  vectis_dsv_route_config route;
+
+  route = vectis_dsv_route(methods == VECTIS_HTTP_METHODS_NONE
+                               ? (vectis_http_method)-1
+                               : vectis_first_method(methods),
+                           path, row_map, row_size, config, handler, userdata);
   route.methods = methods;
   return route;
 }
@@ -2147,6 +2291,7 @@ static pslog_logger *vectis_make_owned_logger(const vectis_app_config *config,
 
 static void vectis_route_entry_free_userdata(vectis_route_entry *route) {
   vectis_upload_file_adapter *file_adapter;
+  vectis_upload_reader_adapter *reader_adapter;
 
   if (route == NULL || !route->owns_userdata || route->userdata == NULL) {
     return;
@@ -2157,6 +2302,13 @@ static void vectis_route_entry_free_userdata(vectis_route_entry *route) {
     free(file_adapter->file_path);
     free(file_adapter->content_type);
     free(file_adapter);
+  } else if (route->kind == VECTIS_ROUTE_ENTRY_UPLOAD_STREAM &&
+             route->upload_write == vectis_upload_reader_write) {
+    reader_adapter = (vectis_upload_reader_adapter *)route->userdata;
+    if (reader_adapter->free_userdata != NULL) {
+      reader_adapter->free_userdata(reader_adapter->userdata);
+    }
+    free(reader_adapter);
   } else {
     free(route->userdata);
   }
@@ -2834,12 +2986,16 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   app->route = vectis_register_route;
   app->json_route = vectis_register_json_route;
   app->json_typed_route = vectis_register_json_typed_route;
+  app->xml_route = vectis_register_xml_route;
+  app->dsv_route = vectis_register_dsv_route;
   app->upload_stream = vectis_register_upload_stream;
   app->upload_file = vectis_register_upload_file;
   app->upload_reader = vectis_register_upload_reader;
   app->prefixed_route = vectis_register_prefixed_route;
   app->prefixed_json_route = vectis_register_prefixed_json_route;
   app->prefixed_json_typed_route = vectis_register_prefixed_json_typed_route;
+  app->prefixed_xml_route = vectis_register_prefixed_xml_route;
+  app->prefixed_dsv_route = vectis_register_prefixed_dsv_route;
   app->static_file = vectis_register_static_file;
   app->static_directory = vectis_register_static_directory;
   app->openapi_doc = vectis_attach_openapi_doc;
@@ -4212,11 +4368,32 @@ vectis_status vectis_register_upload_file(
   return status;
 }
 
+static vectis_status vectis_register_upload_reader_adapter(
+    vectis_app *app, const vectis_upload_reader_route_config *route,
+    vectis_upload_reader_adapter *adapter, vectis_error *error) {
+  vectis_upload_route_config stream_route;
+  vectis_status status;
+
+  vectis_upload_route_config_init(&stream_route);
+  stream_route.method = route->method;
+  stream_route.methods = route->methods;
+  stream_route.path = route->path;
+  stream_route.path_kind = route->path_kind;
+  stream_route.body = route->body;
+  stream_route.open = vectis_upload_reader_open;
+  stream_route.write = vectis_upload_reader_write;
+  stream_route.finish = vectis_upload_reader_finish;
+  stream_route.close = vectis_upload_reader_close;
+  stream_route.userdata = adapter;
+  status =
+      vectis_app_register_upload_owned_userdata(app, &stream_route, 1, error);
+  return status;
+}
+
 vectis_status vectis_register_upload_reader(
     vectis_app *app, const vectis_upload_reader_route_config *route,
     vectis_error *error) {
   vectis_upload_reader_adapter *adapter;
-  vectis_upload_route_config stream_route;
   vectis_status status;
 
   if (route == NULL) {
@@ -4240,20 +4417,191 @@ vectis_status vectis_register_upload_reader(
   adapter->buffer_bytes =
       route->buffer_bytes > 0u ? route->buffer_bytes
                                : VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
-  vectis_upload_route_config_init(&stream_route);
-  stream_route.method = route->method;
-  stream_route.methods = route->methods;
-  stream_route.path = route->path;
-  stream_route.path_kind = route->path_kind;
-  stream_route.body = route->body;
-  stream_route.open = vectis_upload_reader_open;
-  stream_route.write = vectis_upload_reader_write;
-  stream_route.finish = vectis_upload_reader_finish;
-  stream_route.close = vectis_upload_reader_close;
-  stream_route.userdata = adapter;
-  status =
-      vectis_app_register_upload_owned_userdata(app, &stream_route, 1, error);
+  status = vectis_register_upload_reader_adapter(app, route, adapter, error);
   if (status != VECTIS_OK) {
+    free(adapter);
+  }
+  return status;
+}
+
+static vectis_status vectis_validate_lonejson_struct(
+    const lonejson_map *map, size_t size, const char *label,
+    vectis_error *error) {
+  if (map == NULL) {
+    vectis_set_errorf(error, VECTIS_ERR_INVALID, "%s map is required", label);
+    return VECTIS_ERR_INVALID;
+  }
+  if (size == 0u || size > 10485760u) {
+    vectis_set_errorf(error, VECTIS_ERR_INVALID, "%s size is invalid", label);
+    return VECTIS_ERR_INVALID;
+  }
+  if (size != map->struct_size) {
+    vectis_set_errorf(error, VECTIS_ERR_INVALID,
+                      "%s size does not match lonejson map", label);
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_xml_route_dispatch(
+    vectis_app *app, vectis_request *request, struct lc_source *reader,
+    vectis_response *response, void *userdata, vectis_error *error) {
+  vectis_xml_route_adapter *adapter;
+
+  adapter = (vectis_xml_route_adapter *)userdata;
+  if (adapter == NULL || adapter->handler == NULL || reader == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML route is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  return adapter->handler(app, request, reader, response, adapter->userdata,
+                          error);
+}
+
+static vectis_status vectis_dsv_route_dispatch(
+    vectis_app *app, vectis_request *request, struct lc_source *reader,
+    vectis_response *response, void *userdata, vectis_error *error) {
+  vectis_dsv_route_adapter *adapter;
+  vectis_dsv_rows rows;
+  vectis_status status;
+
+  adapter = (vectis_dsv_route_adapter *)userdata;
+  if (adapter == NULL || adapter->handler == NULL || reader == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV route is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_dsv_rows_open(&rows, reader, adapter->row_map,
+                                adapter->row_size, &adapter->config, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = adapter->handler(app, request, &rows, response, adapter->userdata,
+                            error);
+  vectis_dsv_rows_cleanup(&rows);
+  return status;
+}
+
+vectis_status vectis_register_xml_route(vectis_app *app,
+                                        const vectis_xml_route_config *route,
+                                        vectis_error *error) {
+  vectis_xml_route_adapter *adapter;
+  vectis_upload_reader_adapter *upload_adapter;
+  vectis_upload_reader_route_config upload_route;
+  vectis_status status;
+
+  if (route == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML route is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (route->handler == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "XML route handler is required");
+    return VECTIS_ERR_INVALID;
+  }
+  adapter = (vectis_xml_route_adapter *)calloc(1u, sizeof(*adapter));
+  if (adapter == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate XML route adapter");
+    return VECTIS_ERR_NOMEM;
+  }
+  adapter->config = route->config;
+  adapter->handler = route->handler;
+  adapter->userdata = route->userdata;
+  adapter->buffer_bytes =
+      route->buffer_bytes > 0u ? route->buffer_bytes
+                               : VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+  upload_adapter =
+      (vectis_upload_reader_adapter *)calloc(1u, sizeof(*upload_adapter));
+  if (upload_adapter == NULL) {
+    free(adapter);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate XML upload reader adapter");
+    return VECTIS_ERR_NOMEM;
+  }
+  upload_adapter->handler = vectis_xml_route_dispatch;
+  upload_adapter->userdata = adapter;
+  upload_adapter->buffer_bytes = adapter->buffer_bytes;
+  upload_adapter->free_userdata = free;
+  vectis_upload_reader_route_config_init(&upload_route);
+  upload_route.method = route->method;
+  upload_route.methods = route->methods;
+  upload_route.path = route->path;
+  upload_route.path_kind = route->path_kind;
+  upload_route.body = route->body;
+  upload_route.buffer_bytes = adapter->buffer_bytes;
+  upload_route.handler = vectis_xml_route_dispatch;
+  upload_route.userdata = adapter;
+  status =
+      vectis_register_upload_reader_adapter(app, &upload_route, upload_adapter,
+                                            error);
+  if (status != VECTIS_OK) {
+    free(upload_adapter);
+    free(adapter);
+  }
+  return status;
+}
+
+vectis_status vectis_register_dsv_route(vectis_app *app,
+                                        const vectis_dsv_route_config *route,
+                                        vectis_error *error) {
+  vectis_dsv_route_adapter *adapter;
+  vectis_upload_reader_adapter *upload_adapter;
+  vectis_upload_reader_route_config upload_route;
+  vectis_status status;
+
+  if (route == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV route is required");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_validate_lonejson_struct(route->row_map, route->row_size,
+                                           "DSV route row", error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (route->handler == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "DSV route handler is required");
+    return VECTIS_ERR_INVALID;
+  }
+  adapter = (vectis_dsv_route_adapter *)calloc(1u, sizeof(*adapter));
+  if (adapter == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate DSV route adapter");
+    return VECTIS_ERR_NOMEM;
+  }
+  adapter->row_map = route->row_map;
+  adapter->row_size = route->row_size;
+  adapter->config = route->config;
+  adapter->handler = route->handler;
+  adapter->userdata = route->userdata;
+  adapter->buffer_bytes =
+      route->buffer_bytes > 0u ? route->buffer_bytes
+                               : VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+  upload_adapter =
+      (vectis_upload_reader_adapter *)calloc(1u, sizeof(*upload_adapter));
+  if (upload_adapter == NULL) {
+    free(adapter);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate DSV upload reader adapter");
+    return VECTIS_ERR_NOMEM;
+  }
+  upload_adapter->handler = vectis_dsv_route_dispatch;
+  upload_adapter->userdata = adapter;
+  upload_adapter->buffer_bytes = adapter->buffer_bytes;
+  upload_adapter->free_userdata = free;
+  vectis_upload_reader_route_config_init(&upload_route);
+  upload_route.method = route->method;
+  upload_route.methods = route->methods;
+  upload_route.path = route->path;
+  upload_route.path_kind = route->path_kind;
+  upload_route.body = route->body;
+  upload_route.buffer_bytes = adapter->buffer_bytes;
+  upload_route.handler = vectis_dsv_route_dispatch;
+  upload_route.userdata = adapter;
+  status =
+      vectis_register_upload_reader_adapter(app, &upload_route, upload_adapter,
+                                            error);
+  if (status != VECTIS_OK) {
+    free(upload_adapter);
     free(adapter);
   }
   return status;
@@ -4630,6 +4978,66 @@ vectis_status vectis_register_prefixed_json_typed_route(
     prefixed.path_kind = VECTIS_ROUTE_PATH_REGEX;
   }
   status = vectis_register_json_typed_route(app, &prefixed, error);
+  free(path);
+  return status;
+}
+
+vectis_status vectis_register_prefixed_xml_route(
+    vectis_app *app, const char *prefix, const vectis_xml_route_config *route,
+    vectis_error *error) {
+  vectis_xml_route_config prefixed;
+  char *path;
+  vectis_status status;
+
+  if (route == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML route is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (route->path_kind == VECTIS_ROUTE_PATH_REGEX) {
+    path = vectis_join_regex_route_prefix(prefix, route->path, error);
+  } else {
+    path = vectis_join_route_prefix(prefix, route->path, error);
+  }
+  if (path == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  prefixed = *route;
+  prefixed.path = path;
+  prefixed.path_kind = vectis_infer_route_path_kind(path);
+  if (route->path_kind == VECTIS_ROUTE_PATH_REGEX) {
+    prefixed.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  }
+  status = vectis_register_xml_route(app, &prefixed, error);
+  free(path);
+  return status;
+}
+
+vectis_status vectis_register_prefixed_dsv_route(
+    vectis_app *app, const char *prefix, const vectis_dsv_route_config *route,
+    vectis_error *error) {
+  vectis_dsv_route_config prefixed;
+  char *path;
+  vectis_status status;
+
+  if (route == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV route is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (route->path_kind == VECTIS_ROUTE_PATH_REGEX) {
+    path = vectis_join_regex_route_prefix(prefix, route->path, error);
+  } else {
+    path = vectis_join_route_prefix(prefix, route->path, error);
+  }
+  if (path == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  prefixed = *route;
+  prefixed.path = path;
+  prefixed.path_kind = vectis_infer_route_path_kind(path);
+  if (route->path_kind == VECTIS_ROUTE_PATH_REGEX) {
+    prefixed.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  }
+  status = vectis_register_dsv_route(app, &prefixed, error);
   free(path);
   return status;
 }
@@ -7554,6 +7962,185 @@ vectis_status vectis_dsv_parse_lonejson_source(const vectis_source *source,
     lc_source_close(reader);
   }
   return status;
+}
+
+static void vectis_dsv_rows_cleanup_value(vectis_dsv_rows *rows) {
+  if (rows == NULL || rows->value == NULL) {
+    return;
+  }
+  lonejson_cleanup(rows->map, rows->value);
+  free(rows->value);
+  rows->value = NULL;
+}
+
+static void vectis_dsv_rows_cleanup(vectis_dsv_rows *rows) {
+  if (rows == NULL) {
+    return;
+  }
+  vectis_dsv_rows_cleanup_value(rows);
+  vectis_dsv_fields_cleanup(&rows->headers);
+  vectis_dsv_fields_cleanup(&rows->parser.fields);
+  vectis_string_builder_cleanup(&rows->parser.field);
+  free(rows->header_columns);
+  if (rows->runtime != NULL) {
+    lonejson_free(rows->runtime);
+  }
+  memset(rows, 0, sizeof(*rows));
+}
+
+static vectis_status vectis_dsv_rows_open(vectis_dsv_rows *rows,
+                                          struct lc_source *source,
+                                          const lonejson_map *map,
+                                          size_t row_size,
+                                          const vectis_dsv_config *config,
+                                          vectis_error *error) {
+  vectis_dsv_config effective;
+  int has_record;
+  size_t i;
+  vectis_status status;
+
+  if (rows == NULL || source == NULL || map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "DSV route rows require source and map");
+    return VECTIS_ERR_INVALID;
+  }
+  if (row_size == 0u || row_size != map->struct_size) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "DSV route row_size does not match lonejson map");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(rows, 0, sizeof(*rows));
+  if (vectis_dsv_effective_config(config, &effective, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  rows->map = map;
+  rows->row_size = row_size;
+  rows->parser.config = effective;
+  rows->parser.source = source;
+  rows->columns = effective.columns;
+  rows->column_count = effective.column_count;
+  rows->runtime = vectis_lonejson_new(error);
+  if (rows->runtime == NULL) {
+    vectis_dsv_rows_cleanup(rows);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+
+  if (!effective.header_disabled) {
+    status = vectis_dsv_read_data_record(&rows->parser, &has_record, error);
+    if (status != VECTIS_OK) {
+      vectis_dsv_rows_cleanup(rows);
+      return status;
+    }
+    if (!has_record) {
+      rows->done = 1;
+      vectis_error_clear(error);
+      return VECTIS_OK;
+    }
+    rows->headers = rows->parser.fields;
+    memset(&rows->parser.fields, 0, sizeof(rows->parser.fields));
+    if (rows->columns == NULL) {
+      if (rows->headers.count == 0u) {
+        vectis_set_error(error, VECTIS_ERR_INVALID, "DSV header row is empty");
+        vectis_dsv_rows_cleanup(rows);
+        return VECTIS_ERR_INVALID;
+      }
+      rows->header_columns =
+          (const char **)calloc(rows->headers.count, sizeof(rows->columns[0]));
+      if (rows->header_columns == NULL) {
+        vectis_set_error(error, VECTIS_ERR_NOMEM,
+                         "failed to allocate DSV route header columns");
+        vectis_dsv_rows_cleanup(rows);
+        return VECTIS_ERR_NOMEM;
+      }
+      for (i = 0u; i < rows->headers.count; ++i) {
+        rows->header_columns[i] = rows->headers.items[i];
+      }
+      rows->columns = rows->header_columns;
+      rows->column_count = rows->headers.count;
+    }
+  } else if (rows->columns == NULL) {
+    status = vectis_dsv_columns_from_map(map, &rows->header_columns,
+                                         &rows->column_count, error);
+    if (status != VECTIS_OK) {
+      vectis_dsv_rows_cleanup(rows);
+      return status;
+    }
+    rows->columns = rows->header_columns;
+  }
+  if (rows->columns == NULL || rows->column_count == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "DSV columns are required when no header row is used");
+    vectis_dsv_rows_cleanup(rows);
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_dsv_rows_next(vectis_dsv_rows *rows, int *has_row,
+                                   size_t *row_number, const void **row,
+                                   vectis_error *error) {
+  int has_record;
+  vectis_status status;
+
+  if (has_row != NULL) {
+    *has_row = 0;
+  }
+  if (row_number != NULL) {
+    *row_number = 0u;
+  }
+  if (row != NULL) {
+    *row = NULL;
+  }
+  if (rows == NULL || has_row == NULL || row_number == NULL || row == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "DSV row iterator output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_dsv_rows_cleanup_value(rows);
+  if (rows->done) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  status = vectis_dsv_read_data_record(&rows->parser, &has_record, error);
+  if (status != VECTIS_OK) {
+    rows->done = 1;
+    return status;
+  }
+  if (!has_record) {
+    rows->done = 1;
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (!rows->parser.config.strict_row_width_disabled &&
+      rows->parser.fields.count != rows->column_count) {
+    rows->done = 1;
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "DSV row width does not match columns");
+    return VECTIS_ERR_INVALID;
+  }
+  rows->value = calloc(1u, rows->row_size);
+  if (rows->value == NULL) {
+    rows->done = 1;
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate DSV route row");
+    return VECTIS_ERR_NOMEM;
+  }
+  lonejson_init(rows->runtime, rows->map, rows->value);
+  status = vectis_dsv_fields_to_lonejson_value(
+      rows->map, rows->columns, rows->column_count, &rows->parser.fields,
+      rows->value, error);
+  if (status != VECTIS_OK) {
+    vectis_dsv_rows_cleanup_value(rows);
+    rows->done = 1;
+    return status;
+  }
+  rows->data_row++;
+  *has_row = 1;
+  *row_number = rows->data_row;
+  *row = rows->value;
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 static vectis_status
