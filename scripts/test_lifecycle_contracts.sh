@@ -30,6 +30,31 @@ assert_contains() {
   fi
 }
 
+assert_host_debug_target() {
+  host_system=$1
+  host_machine=$2
+  expected_target=$3
+  expected_processor=$4
+  output=$(
+    VECTIS_DEPS_DRY_RUN=1 \
+      VECTIS_HOST_UNAME_S="$host_system" \
+      VECTIS_HOST_UNAME_M="$host_machine" \
+      "$repo_root/scripts/deps.sh" deps-host-debug
+  )
+
+  if ! printf '%s\n' "$output" | grep -Eq "^target_id=$expected_target$"; then
+    echo "deps-host-debug selected wrong target for $host_system $host_machine" >&2
+    printf '%s\n' "$output" >&2
+    exit 1
+  fi
+  if ! printf '%s\n' "$output" |
+    grep -Eq "^target_cmake_system_processor=$expected_processor$"; then
+    echo "deps-host-debug selected wrong processor for $host_system $host_machine" >&2
+    printf '%s\n' "$output" >&2
+    exit 1
+  fi
+}
+
 if [ -f "$version_path" ]; then
   had_version=1
   saved_version=$(cat "$version_path")
@@ -40,6 +65,17 @@ assert_contains "$repo_root/scripts/package.sh" 'target_toolchain_available\.sh'
 
 if ! "$repo_root/scripts/target_toolchain_available.sh" x86_64-linux-gnu >/dev/null 2>&1; then
   echo "host x86_64-linux-gnu toolchain availability check failed" >&2
+  exit 1
+fi
+
+assert_host_debug_target Linux x86_64 x86_64-linux-gnu x86_64
+assert_host_debug_target Linux aarch64 aarch64-linux-gnu aarch64
+assert_host_debug_target Linux armv7l armhf-linux-gnu arm
+if VECTIS_DEPS_DRY_RUN=1 \
+  VECTIS_HOST_UNAME_S=Darwin \
+  VECTIS_HOST_UNAME_M=arm64 \
+  "$repo_root/scripts/deps.sh" deps-host-debug >/dev/null 2>&1; then
+  echo "deps-host-debug accepted unsupported Darwin host" >&2
   exit 1
 fi
 

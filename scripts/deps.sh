@@ -19,34 +19,74 @@ target_ranlib=
 target_cmake_system_name=
 target_cmake_system_processor=
 
+set_linux_gnu_dependency_target() {
+  target_id=$1
+  case "$target_id" in
+    x86_64-linux-gnu)
+      system_sha256="745fde56d564dcdcb22ed9f16a7b73c8c2e18f947d5fe37ab774e5154ef554b1"
+      lockdc_sha256="3c850cc155f7032b60f2c8e078a78cce58e55426b64aeaeaa6bef9a88942e098"
+      lonejson_sha256="2626df65f8ac33aadd76b9d33a22fd8038cadf4ee6b7fecad3b60739c359db1a"
+      pslog_sha256="91d2f93bc07bc66cf83d6a27a80cb6439c384d56bf84a2d11cd903215430d1d8"
+      cai_sha256="84e401154f7e81707657da3068f0a57b58bf0899c930a296c98ebe46a5619661"
+      target_cmake_system_processor="x86_64"
+      ;;
+    aarch64-linux-gnu)
+      system_sha256="574e02e193330fd8e8fa5c56442ae8d11e9c901b3e89a53f299d66557941b67c"
+      lockdc_sha256="f281cf8e01cc80ac38c9d7d9726253f041b642fc5753917ce0fe536eee7f2034"
+      lonejson_sha256="949a55b0958f0b4ac16295056a0302613ca2bc02b8dcfa6c6fb356231e7a04bf"
+      pslog_sha256="d936ae9416f539c4f40aeaa023b9147cbd568bc87b7a3c3b091adfd217d935bb"
+      cai_sha256="4df06b5e31c2f4b98a29031591bd2994aa77d372efc63e702dcffd3ec035968b"
+      target_cmake_system_processor="aarch64"
+      ;;
+    armhf-linux-gnu)
+      system_sha256="1e4de9dd3de7345629c86cd140177d4dc591c740f7432041bcd423be9bf82496"
+      lockdc_sha256="b727af6d49f3de0f229d8d394764fe78d2d66fdd211a1b6b6f2753b8cbd78986"
+      lonejson_sha256="0621cae1f1d5a3e8830f34005f3adf9b5fee7195486ab71b649bc8a61ca0c1b6"
+      pslog_sha256="bc8530a3773666deb6d551263c7dd59a64c92629fa56d1e89c278d637472f2dc"
+      cai_sha256="0ed692d3b14e86e404f8ac5d9982d732291e67f8b56e3e028db4d55192318854"
+      target_cmake_system_processor="arm"
+      ;;
+    *)
+      echo "unsupported Linux GNU dependency target: $target_id" >&2
+      exit 2
+      ;;
+  esac
+  target_cc="${CC:-cc}"
+  target_ar="${AR:-ar}"
+  target_ranlib="${RANLIB:-ranlib}"
+  target_cmake_system_name="Linux"
+}
+
+set_host_debug_target() {
+  host_system=${VECTIS_HOST_UNAME_S:-$(uname -s)}
+  host_machine=${VECTIS_HOST_UNAME_M:-$(uname -m)}
+
+  case "$host_system:$host_machine" in
+    Linux:x86_64 | Linux:amd64)
+      set_linux_gnu_dependency_target "x86_64-linux-gnu"
+      ;;
+    Linux:aarch64 | Linux:arm64)
+      set_linux_gnu_dependency_target "aarch64-linux-gnu"
+      ;;
+    Linux:armv6l | Linux:armv7l | Linux:armv8l)
+      set_linux_gnu_dependency_target "armhf-linux-gnu"
+      ;;
+    *)
+      echo "unsupported host for deps-host-debug: $host_system $host_machine" >&2
+      echo "supported hosts: Linux x86_64, Linux aarch64, Linux armv6l/armv7l/armv8l" >&2
+      exit 2
+      ;;
+  esac
+}
+
 case "$preset" in
   deps-host-debug)
     deps_root="$repo_root/.cache/deps/host-debug"
-    target_id="x86_64-linux-gnu"
-    system_sha256="745fde56d564dcdcb22ed9f16a7b73c8c2e18f947d5fe37ab774e5154ef554b1"
-    lockdc_sha256="3c850cc155f7032b60f2c8e078a78cce58e55426b64aeaeaa6bef9a88942e098"
-    lonejson_sha256="2626df65f8ac33aadd76b9d33a22fd8038cadf4ee6b7fecad3b60739c359db1a"
-    pslog_sha256="91d2f93bc07bc66cf83d6a27a80cb6439c384d56bf84a2d11cd903215430d1d8"
-    cai_sha256="84e401154f7e81707657da3068f0a57b58bf0899c930a296c98ebe46a5619661"
-    target_cc="${CC:-cc}"
-    target_ar="${AR:-ar}"
-    target_ranlib="${RANLIB:-ranlib}"
-    target_cmake_system_name="Linux"
-    target_cmake_system_processor="x86_64"
+    set_host_debug_target
     ;;
   deps-x86_64-linux-gnu)
     deps_root="$repo_root/.cache/deps/x86_64-linux-gnu"
-    target_id="x86_64-linux-gnu"
-    system_sha256="745fde56d564dcdcb22ed9f16a7b73c8c2e18f947d5fe37ab774e5154ef554b1"
-    lockdc_sha256="3c850cc155f7032b60f2c8e078a78cce58e55426b64aeaeaa6bef9a88942e098"
-    lonejson_sha256="2626df65f8ac33aadd76b9d33a22fd8038cadf4ee6b7fecad3b60739c359db1a"
-    pslog_sha256="91d2f93bc07bc66cf83d6a27a80cb6439c384d56bf84a2d11cd903215430d1d8"
-    cai_sha256="84e401154f7e81707657da3068f0a57b58bf0899c930a296c98ebe46a5619661"
-    target_cc="${CC:-cc}"
-    target_ar="${AR:-ar}"
-    target_ranlib="${RANLIB:-ranlib}"
-    target_cmake_system_name="Linux"
-    target_cmake_system_processor="x86_64"
+    set_linux_gnu_dependency_target "x86_64-linux-gnu"
     ;;
   deps-x86_64-linux-musl)
     deps_root="$repo_root/.cache/deps/x86_64-linux-musl"
@@ -64,17 +104,10 @@ case "$preset" in
     ;;
   deps-aarch64-linux-gnu)
     deps_root="$repo_root/.cache/deps/aarch64-linux-gnu"
-    target_id="aarch64-linux-gnu"
-    system_sha256="574e02e193330fd8e8fa5c56442ae8d11e9c901b3e89a53f299d66557941b67c"
-    lockdc_sha256="f281cf8e01cc80ac38c9d7d9726253f041b642fc5753917ce0fe536eee7f2034"
-    lonejson_sha256="949a55b0958f0b4ac16295056a0302613ca2bc02b8dcfa6c6fb356231e7a04bf"
-    pslog_sha256="d936ae9416f539c4f40aeaa023b9147cbd568bc87b7a3c3b091adfd217d935bb"
-    cai_sha256="4df06b5e31c2f4b98a29031591bd2994aa77d372efc63e702dcffd3ec035968b"
+    set_linux_gnu_dependency_target "aarch64-linux-gnu"
     target_cc="${CC:-aarch64-linux-gnu-gcc}"
     target_ar="${AR:-aarch64-linux-gnu-ar}"
     target_ranlib="${RANLIB:-aarch64-linux-gnu-ranlib}"
-    target_cmake_system_name="Linux"
-    target_cmake_system_processor="aarch64"
     ;;
   deps-aarch64-linux-musl)
     deps_root="$repo_root/.cache/deps/aarch64-linux-musl"
@@ -92,17 +125,10 @@ case "$preset" in
     ;;
   deps-armhf-linux-gnu)
     deps_root="$repo_root/.cache/deps/armhf-linux-gnu"
-    target_id="armhf-linux-gnu"
-    system_sha256="1e4de9dd3de7345629c86cd140177d4dc591c740f7432041bcd423be9bf82496"
-    lockdc_sha256="b727af6d49f3de0f229d8d394764fe78d2d66fdd211a1b6b6f2753b8cbd78986"
-    lonejson_sha256="0621cae1f1d5a3e8830f34005f3adf9b5fee7195486ab71b649bc8a61ca0c1b6"
-    pslog_sha256="bc8530a3773666deb6d551263c7dd59a64c92629fa56d1e89c278d637472f2dc"
-    cai_sha256="0ed692d3b14e86e404f8ac5d9982d732291e67f8b56e3e028db4d55192318854"
+    set_linux_gnu_dependency_target "armhf-linux-gnu"
     target_cc="${CC:-arm-linux-gnueabihf-gcc}"
     target_ar="${AR:-arm-linux-gnueabihf-ar}"
     target_ranlib="${RANLIB:-arm-linux-gnueabihf-ranlib}"
-    target_cmake_system_name="Linux"
-    target_cmake_system_processor="arm"
     ;;
   deps-armhf-linux-musl)
     deps_root="$repo_root/.cache/deps/armhf-linux-musl"
@@ -143,6 +169,25 @@ case "$preset" in
     exit 2
     ;;
 esac
+
+if [ "${VECTIS_DEPS_DRY_RUN:-0}" = "1" ]; then
+  cat <<EOF
+preset=$preset
+deps_root=$deps_root
+target_id=$target_id
+target_cc=$target_cc
+target_ar=$target_ar
+target_ranlib=$target_ranlib
+target_cmake_system_name=$target_cmake_system_name
+target_cmake_system_processor=$target_cmake_system_processor
+system_sha256=$system_sha256
+liblockdc_sha256=$lockdc_sha256
+lonejson_sha256=$lonejson_sha256
+pslog_sha256=$pslog_sha256
+cai_sha256=$cai_sha256
+EOF
+  exit 0
+fi
 
 mkdir -p "$downloads_dir" "$deps_root/include" "$deps_root/lib"
 
@@ -321,6 +366,7 @@ gzip -dc "$pid0_download" > "$deps_root/include/$pid0_header"
 
 cat > "$manifest_path" <<EOF
 preset=$preset
+target_id=$target_id
 system_archive=$system_archive
 system_version=$system_version
 system_sha256=$system_sha256
