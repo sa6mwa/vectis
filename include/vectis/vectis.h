@@ -302,6 +302,17 @@ typedef void (*vectis_upload_close_fn)(vectis_app *app,
                                        void *userdata);
 
 /**
+ * Handler for a live streaming upload reader.
+ *
+ * `reader` is borrowed and valid only for the duration of the callback. Read
+ * from it until EOF; Vectis applies bounded in-memory backpressure while the
+ * transport feeds request chunks. Do not close or reset the borrowed reader.
+ */
+typedef vectis_status (*vectis_upload_reader_handler_fn)(
+    vectis_app *app, vectis_request *request, struct lc_source *reader,
+    vectis_response *response, void *userdata, vectis_error *error);
+
+/**
  * Callback invoked for each item decoded from a selected JSON array.
  *
  * `index` is zero-based within the selected array. `item` points at
@@ -354,6 +365,17 @@ typedef struct vectis_upload_file_route_config {
   const char *file_path;
   const char *content_type;
 } vectis_upload_file_route_config;
+
+typedef struct vectis_upload_reader_route_config {
+  vectis_http_method method;
+  vectis_http_methods methods;
+  const char *path;
+  vectis_route_path_kind path_kind;
+  vectis_body_policy body;
+  size_t buffer_bytes;
+  vectis_upload_reader_handler_fn handler;
+  void *userdata;
+} vectis_upload_reader_route_config;
 
 typedef struct vectis_static_file_config {
   const char *path;
@@ -654,6 +676,9 @@ struct vectis_app {
   vectis_status (*upload_file)(
       vectis_app *self, const vectis_upload_file_route_config *route,
       vectis_error *error);
+  vectis_status (*upload_reader)(
+      vectis_app *self, const vectis_upload_reader_route_config *route,
+      vectis_error *error);
   vectis_status (*prefixed_route)(vectis_app *self, const char *prefix,
                                   const vectis_route_config *route,
                                   vectis_error *error);
@@ -835,6 +860,8 @@ void vectis_route_config_init(vectis_route_config *config);
 void vectis_upload_route_config_init(vectis_upload_route_config *config);
 void vectis_upload_file_route_config_init(
     vectis_upload_file_route_config *config);
+void vectis_upload_reader_route_config_init(
+    vectis_upload_reader_route_config *config);
 void vectis_json_route_config_init(vectis_json_route_config *config);
 void vectis_json_typed_route_config_init(
     vectis_json_typed_route_config *config);
@@ -899,6 +926,12 @@ vectis_upload_route_config vectis_stream_upload_route_methods(
 vectis_upload_file_route_config
 vectis_upload_file_route(vectis_http_method method, const char *path,
                          const char *file_path, const char *content_type);
+vectis_upload_reader_route_config vectis_upload_reader_route(
+    vectis_http_method method, const char *path,
+    vectis_upload_reader_handler_fn handler, void *userdata);
+vectis_upload_reader_route_config vectis_upload_reader_route_methods(
+    vectis_http_methods methods, const char *path,
+    vectis_upload_reader_handler_fn handler, void *userdata);
 vectis_json_route_config
 vectis_json_route(vectis_http_method method, const char *path,
                   const lonejson_map *input_map, size_t input_size,
@@ -937,6 +970,9 @@ vectis_status vectis_register_upload_stream(
     vectis_error *error);
 vectis_status vectis_register_upload_file(
     vectis_app *app, const vectis_upload_file_route_config *route,
+    vectis_error *error);
+vectis_status vectis_register_upload_reader(
+    vectis_app *app, const vectis_upload_reader_route_config *route,
     vectis_error *error);
 vectis_status vectis_register_json_route(vectis_app *app,
                                          const vectis_json_route_config *route,

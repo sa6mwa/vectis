@@ -87,6 +87,44 @@ typedef struct vectis_upload_file_state {
   size_t size;
 } vectis_upload_file_state;
 
+typedef struct vectis_upload_reader_chunk {
+  struct vectis_upload_reader_chunk *next;
+  size_t offset;
+  size_t size;
+  unsigned char data[1];
+} vectis_upload_reader_chunk;
+
+typedef struct vectis_upload_reader_adapter {
+  vectis_upload_reader_handler_fn handler;
+  void *userdata;
+  size_t buffer_bytes;
+} vectis_upload_reader_adapter;
+
+typedef struct vectis_upload_reader_state {
+  pthread_mutex_t mutex;
+  pthread_cond_t readable;
+  pthread_cond_t writable;
+  vectis_upload_reader_chunk *head;
+  vectis_upload_reader_chunk *tail;
+  size_t queued;
+  size_t capacity;
+  int eof;
+  int failed;
+  int closed;
+  int handler_done;
+  int sync_initialized;
+  int thread_started;
+  pthread_t thread;
+  lc_source *source;
+  vectis_app *app;
+  vectis_request *request;
+  vectis_response *response;
+  vectis_error error;
+  vectis_status status;
+  vectis_upload_reader_handler_fn handler;
+  void *userdata;
+} vectis_upload_reader_state;
+
 typedef struct vectis_kv {
   char *name;
   char *value;
@@ -339,11 +377,17 @@ vectis_set_lonejson_error(vectis_error *error, lonejson_status status,
 static vectis_status vectis_upload_file_write(
     vectis_app *app, vectis_request *request, const void *data, size_t size,
     void *state, void *userdata, vectis_error *error);
+static vectis_status vectis_upload_reader_write(
+    vectis_app *app, vectis_request *request, const void *data, size_t size,
+    void *state, void *userdata, vectis_error *error);
 vectis_status vectis_register_upload_stream(
     vectis_app *app, const vectis_upload_route_config *route,
     vectis_error *error);
 vectis_status vectis_register_upload_file(
     vectis_app *app, const vectis_upload_file_route_config *route,
+    vectis_error *error);
+vectis_status vectis_register_upload_reader(
+    vectis_app *app, const vectis_upload_reader_route_config *route,
     vectis_error *error);
 static size_t vectis_app_route_count_impl(const vectis_app *app);
 static size_t vectis_app_max_request_body_bytes(vectis_app_impl *impl);
@@ -1068,6 +1112,19 @@ void vectis_upload_file_route_config_init(
   config->content_type = "application/octet-stream";
 }
 
+void vectis_upload_reader_route_config_init(
+    vectis_upload_reader_route_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->method = VECTIS_HTTP_ANY;
+  config->methods = VECTIS_HTTP_METHODS_NONE;
+  config->path_kind = VECTIS_ROUTE_PATH_LITERAL;
+  config->body = vectis_body_upload();
+  config->buffer_bytes = VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+}
+
 void vectis_json_route_config_init(vectis_json_route_config *config) {
   if (config == NULL) {
     return;
@@ -1413,6 +1470,34 @@ vectis_upload_file_route(vectis_http_method method, const char *path,
   route.file_path = file_path;
   route.content_type = content_type != NULL ? content_type
                                             : "application/octet-stream";
+  return route;
+}
+
+vectis_upload_reader_route_config vectis_upload_reader_route(
+    vectis_http_method method, const char *path,
+    vectis_upload_reader_handler_fn handler, void *userdata) {
+  vectis_upload_reader_route_config route;
+
+  vectis_upload_reader_route_config_init(&route);
+  route.method = method;
+  route.methods = vectis_method_mask(method);
+  route.path = path;
+  route.path_kind = vectis_infer_route_path_kind(path);
+  route.handler = handler;
+  route.userdata = userdata;
+  return route;
+}
+
+vectis_upload_reader_route_config vectis_upload_reader_route_methods(
+    vectis_http_methods methods, const char *path,
+    vectis_upload_reader_handler_fn handler, void *userdata) {
+  vectis_upload_reader_route_config route;
+
+  route = vectis_upload_reader_route(methods == VECTIS_HTTP_METHODS_NONE
+                                         ? (vectis_http_method)-1
+                                         : vectis_first_method(methods),
+                                     path, handler, userdata);
+  route.methods = methods;
   return route;
 }
 
@@ -2751,6 +2836,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   app->json_typed_route = vectis_register_json_typed_route;
   app->upload_stream = vectis_register_upload_stream;
   app->upload_file = vectis_register_upload_file;
+  app->upload_reader = vectis_register_upload_reader;
   app->prefixed_route = vectis_register_prefixed_route;
   app->prefixed_json_route = vectis_register_prefixed_json_route;
   app->prefixed_json_typed_route = vectis_register_prefixed_json_typed_route;
@@ -3695,6 +3781,381 @@ static void vectis_upload_file_close(vectis_app *app, vectis_request *request,
   }
 }
 
+static void vectis_upload_reader_set_lc_error(lc_error *error,
+                                              const char *message) {
+  if (error == NULL) {
+    return;
+  }
+  lc_error_cleanup(error);
+  error->code = LC_ERR_TRANSPORT;
+  error->message = vectis_strdup(message != NULL ? message
+                                                 : "upload reader failed");
+}
+
+static void vectis_upload_reader_signal_failure(
+    vectis_upload_reader_state *reader_state) {
+  if (reader_state == NULL || !reader_state->sync_initialized) {
+    return;
+  }
+  (void)pthread_mutex_lock(&reader_state->mutex);
+  reader_state->failed = 1;
+  (void)pthread_cond_broadcast(&reader_state->readable);
+  (void)pthread_cond_broadcast(&reader_state->writable);
+  (void)pthread_mutex_unlock(&reader_state->mutex);
+}
+
+static size_t vectis_upload_reader_source_read(void *context, void *buffer,
+                                               size_t count, lc_error *error) {
+  vectis_upload_reader_state *reader_state;
+  vectis_upload_reader_chunk *chunk;
+  size_t nread;
+
+  reader_state = (vectis_upload_reader_state *)context;
+  if (reader_state == NULL || (buffer == NULL && count > 0u)) {
+    vectis_upload_reader_set_lc_error(error, "upload reader is invalid");
+    return 0u;
+  }
+  if (count == 0u) {
+    return 0u;
+  }
+
+  (void)pthread_mutex_lock(&reader_state->mutex);
+  while (reader_state->head == NULL && !reader_state->eof &&
+         !reader_state->failed && !reader_state->closed) {
+    (void)pthread_cond_wait(&reader_state->readable, &reader_state->mutex);
+  }
+  if (reader_state->failed || reader_state->closed) {
+    (void)pthread_mutex_unlock(&reader_state->mutex);
+    vectis_upload_reader_set_lc_error(error, "upload reader was closed");
+    return 0u;
+  }
+  chunk = reader_state->head;
+  if (chunk == NULL) {
+    (void)pthread_mutex_unlock(&reader_state->mutex);
+    return 0u;
+  }
+  nread = chunk->size - chunk->offset;
+  if (nread > count) {
+    nread = count;
+  }
+  memcpy(buffer, chunk->data + chunk->offset, nread);
+  chunk->offset += nread;
+  reader_state->queued -= nread;
+  if (chunk->offset == chunk->size) {
+    reader_state->head = chunk->next;
+    if (reader_state->head == NULL) {
+      reader_state->tail = NULL;
+    }
+  } else {
+    chunk = NULL;
+  }
+  (void)pthread_cond_signal(&reader_state->writable);
+  (void)pthread_mutex_unlock(&reader_state->mutex);
+  free(chunk);
+  if (error != NULL) {
+    lc_error_init(error);
+  }
+  return nread;
+}
+
+static void vectis_upload_reader_source_close(void *context) {
+  vectis_upload_reader_state *reader_state;
+
+  reader_state = (vectis_upload_reader_state *)context;
+  if (reader_state == NULL || !reader_state->sync_initialized) {
+    return;
+  }
+  (void)pthread_mutex_lock(&reader_state->mutex);
+  reader_state->closed = 1;
+  (void)pthread_cond_broadcast(&reader_state->readable);
+  (void)pthread_cond_broadcast(&reader_state->writable);
+  (void)pthread_mutex_unlock(&reader_state->mutex);
+}
+
+static void *vectis_upload_reader_thread_main(void *userdata) {
+  vectis_upload_reader_state *reader_state;
+  vectis_status status;
+
+  reader_state = (vectis_upload_reader_state *)userdata;
+  status = reader_state->handler(reader_state->app, reader_state->request,
+                                 reader_state->source,
+                                 reader_state->response,
+                                 reader_state->userdata, &reader_state->error);
+  (void)pthread_mutex_lock(&reader_state->mutex);
+  reader_state->status = status;
+  reader_state->handler_done = 1;
+  if (status != VECTIS_OK) {
+    reader_state->failed = 1;
+  }
+  (void)pthread_cond_broadcast(&reader_state->readable);
+  (void)pthread_cond_broadcast(&reader_state->writable);
+  (void)pthread_mutex_unlock(&reader_state->mutex);
+  return NULL;
+}
+
+static vectis_status vectis_upload_reader_open(
+    vectis_app *app, vectis_request *request, void *userdata, void **state,
+    vectis_error *error) {
+  vectis_upload_reader_adapter *adapter;
+  vectis_upload_reader_state *reader_state;
+  lc_error lcerr;
+  int mutex_ready;
+  int readable_ready;
+  int writable_ready;
+  int rc;
+
+  mutex_ready = 0;
+  readable_ready = 0;
+  writable_ready = 0;
+  adapter = (vectis_upload_reader_adapter *)userdata;
+  if (adapter == NULL || adapter->handler == NULL || state == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "upload reader route is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  reader_state =
+      (vectis_upload_reader_state *)calloc(1u, sizeof(*reader_state));
+  if (reader_state == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate upload reader state");
+    return VECTIS_ERR_NOMEM;
+  }
+  reader_state->capacity =
+      adapter->buffer_bytes > 0u ? adapter->buffer_bytes
+                                : VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+  reader_state->app = app;
+  reader_state->request = request;
+  reader_state->handler = adapter->handler;
+  reader_state->userdata = adapter->userdata;
+  reader_state->status = VECTIS_OK;
+  reader_state->response = vectis_internal_response_new(error);
+  if (reader_state->response == NULL) {
+    free(reader_state);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  vectis_error_clear(&reader_state->error);
+  if (pthread_mutex_init(&reader_state->mutex, NULL) == 0) {
+    mutex_ready = 1;
+  }
+  if (mutex_ready &&
+      pthread_cond_init(&reader_state->readable, NULL) == 0) {
+    readable_ready = 1;
+  }
+  if (readable_ready &&
+      pthread_cond_init(&reader_state->writable, NULL) == 0) {
+    writable_ready = 1;
+  }
+  if (!mutex_ready || !readable_ready || !writable_ready) {
+    vectis_internal_response_free(reader_state->response);
+    if (writable_ready) {
+      (void)pthread_cond_destroy(&reader_state->writable);
+    }
+    if (readable_ready) {
+      (void)pthread_cond_destroy(&reader_state->readable);
+    }
+    if (mutex_ready) {
+      (void)pthread_mutex_destroy(&reader_state->mutex);
+    }
+    free(reader_state);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to initialize upload reader synchronization");
+    return VECTIS_ERR_STATE;
+  }
+  reader_state->sync_initialized = 1;
+  lc_error_init(&lcerr);
+  rc = lc_source_from_callbacks(vectis_upload_reader_source_read, NULL,
+                                vectis_upload_reader_source_close,
+                                reader_state, &reader_state->source, &lcerr);
+  if (rc != LC_OK) {
+    vectis_internal_response_free(reader_state->response);
+    (void)pthread_cond_destroy(&reader_state->writable);
+    (void)pthread_cond_destroy(&reader_state->readable);
+    (void)pthread_mutex_destroy(&reader_state->mutex);
+    free(reader_state);
+    (void)vectis_source_error(error, rc, &lcerr,
+                              "failed to create upload reader source");
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  if (pthread_create(&reader_state->thread, NULL,
+                     vectis_upload_reader_thread_main, reader_state) != 0) {
+    lc_source_close(reader_state->source);
+    reader_state->source = NULL;
+    vectis_internal_response_free(reader_state->response);
+    (void)pthread_cond_destroy(&reader_state->writable);
+    (void)pthread_cond_destroy(&reader_state->readable);
+    (void)pthread_mutex_destroy(&reader_state->mutex);
+    free(reader_state);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to start upload reader handler");
+    return VECTIS_ERR_STATE;
+  }
+  reader_state->thread_started = 1;
+  *state = reader_state;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_upload_reader_write(
+    vectis_app *app, vectis_request *request, const void *data, size_t size,
+    void *state, void *userdata, vectis_error *error) {
+  vectis_upload_reader_state *reader_state;
+  vectis_upload_reader_chunk *chunk;
+  const unsigned char *bytes;
+  size_t offset;
+  size_t ncopy;
+  size_t room;
+
+  (void)app;
+  (void)request;
+  (void)userdata;
+  reader_state = (vectis_upload_reader_state *)state;
+  if (reader_state == NULL || (data == NULL && size > 0u)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "upload reader chunk is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  bytes = (const unsigned char *)data;
+  offset = 0u;
+  while (offset < size) {
+    (void)pthread_mutex_lock(&reader_state->mutex);
+    while (reader_state->queued >= reader_state->capacity &&
+           !reader_state->failed && !reader_state->closed &&
+           !reader_state->handler_done) {
+      (void)pthread_cond_wait(&reader_state->writable, &reader_state->mutex);
+    }
+    if (reader_state->failed || reader_state->closed ||
+        reader_state->handler_done) {
+      (void)pthread_mutex_unlock(&reader_state->mutex);
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "upload reader handler stopped before consuming body");
+      return VECTIS_ERR_STATE;
+    }
+    room = reader_state->capacity - reader_state->queued;
+    ncopy = size - offset;
+    if (ncopy > room) {
+      ncopy = room;
+    }
+    if (ncopy == 0u) {
+      (void)pthread_mutex_unlock(&reader_state->mutex);
+      continue;
+    }
+    chunk = (vectis_upload_reader_chunk *)malloc(sizeof(*chunk) + ncopy - 1u);
+    if (chunk == NULL) {
+      reader_state->failed = 1;
+      (void)pthread_cond_broadcast(&reader_state->readable);
+      (void)pthread_cond_broadcast(&reader_state->writable);
+      (void)pthread_mutex_unlock(&reader_state->mutex);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to allocate upload reader chunk");
+      return VECTIS_ERR_NOMEM;
+    }
+    chunk->next = NULL;
+    chunk->offset = 0u;
+    chunk->size = ncopy;
+    memcpy(chunk->data, bytes + offset, ncopy);
+    if (reader_state->tail != NULL) {
+      reader_state->tail->next = chunk;
+    } else {
+      reader_state->head = chunk;
+    }
+    reader_state->tail = chunk;
+    reader_state->queued += ncopy;
+    offset += ncopy;
+    (void)pthread_cond_signal(&reader_state->readable);
+    (void)pthread_mutex_unlock(&reader_state->mutex);
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static void vectis_response_move(vectis_response *dst, vectis_response *src) {
+  if (dst == NULL || src == NULL) {
+    return;
+  }
+  vectis_internal_response_cleanup(dst);
+  *dst = *src;
+  memset(src, 0, sizeof(*src));
+}
+
+static vectis_status vectis_upload_reader_finish(
+    vectis_app *app, vectis_request *request, vectis_response *response,
+    void *state, void *userdata, vectis_error *error) {
+  vectis_upload_reader_state *reader_state;
+
+  (void)app;
+  (void)request;
+  (void)userdata;
+  reader_state = (vectis_upload_reader_state *)state;
+  if (reader_state == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "upload reader stream is not initialized");
+    return VECTIS_ERR_INVALID;
+  }
+  (void)pthread_mutex_lock(&reader_state->mutex);
+  reader_state->eof = 1;
+  (void)pthread_cond_broadcast(&reader_state->readable);
+  (void)pthread_mutex_unlock(&reader_state->mutex);
+  if (reader_state->thread_started) {
+    (void)pthread_join(reader_state->thread, NULL);
+    reader_state->thread_started = 0;
+  }
+  if (reader_state->status != VECTIS_OK) {
+    if (error != NULL) {
+      *error = reader_state->error;
+    }
+    return reader_state->status;
+  }
+  if (reader_state->response == NULL ||
+      reader_state->response->status_code == 0) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "upload reader handler did not produce a response");
+    return VECTIS_ERR_STATE;
+  }
+  vectis_response_move(response, reader_state->response);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static void vectis_upload_reader_close(vectis_app *app,
+                                       vectis_request *request, void *state,
+                                       void *userdata) {
+  vectis_upload_reader_state *reader_state;
+  vectis_upload_reader_chunk *chunk;
+  vectis_upload_reader_chunk *next;
+
+  (void)app;
+  (void)request;
+  (void)userdata;
+  reader_state = (vectis_upload_reader_state *)state;
+  if (reader_state == NULL) {
+    return;
+  }
+  vectis_upload_reader_signal_failure(reader_state);
+  if (reader_state->thread_started) {
+    (void)pthread_join(reader_state->thread, NULL);
+    reader_state->thread_started = 0;
+  }
+  if (reader_state->source != NULL) {
+    lc_source_close(reader_state->source);
+    reader_state->source = NULL;
+  }
+  chunk = reader_state->head;
+  while (chunk != NULL) {
+    next = chunk->next;
+    free(chunk);
+    chunk = next;
+  }
+  vectis_internal_response_free(reader_state->response);
+  if (reader_state->sync_initialized) {
+    (void)pthread_cond_destroy(&reader_state->writable);
+    (void)pthread_cond_destroy(&reader_state->readable);
+    (void)pthread_mutex_destroy(&reader_state->mutex);
+  }
+  free(reader_state);
+}
+
 vectis_status vectis_register_upload_file(
     vectis_app *app, const vectis_upload_file_route_config *route,
     vectis_error *error) {
@@ -3746,6 +4207,53 @@ vectis_status vectis_register_upload_file(
   if (status != VECTIS_OK) {
     free(adapter->file_path);
     free(adapter->content_type);
+    free(adapter);
+  }
+  return status;
+}
+
+vectis_status vectis_register_upload_reader(
+    vectis_app *app, const vectis_upload_reader_route_config *route,
+    vectis_error *error) {
+  vectis_upload_reader_adapter *adapter;
+  vectis_upload_route_config stream_route;
+  vectis_status status;
+
+  if (route == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "upload reader route is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (route->handler == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "upload reader route handler is required");
+    return VECTIS_ERR_INVALID;
+  }
+  adapter = (vectis_upload_reader_adapter *)calloc(1u, sizeof(*adapter));
+  if (adapter == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate upload reader adapter");
+    return VECTIS_ERR_NOMEM;
+  }
+  adapter->handler = route->handler;
+  adapter->userdata = route->userdata;
+  adapter->buffer_bytes =
+      route->buffer_bytes > 0u ? route->buffer_bytes
+                               : VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+  vectis_upload_route_config_init(&stream_route);
+  stream_route.method = route->method;
+  stream_route.methods = route->methods;
+  stream_route.path = route->path;
+  stream_route.path_kind = route->path_kind;
+  stream_route.body = route->body;
+  stream_route.open = vectis_upload_reader_open;
+  stream_route.write = vectis_upload_reader_write;
+  stream_route.finish = vectis_upload_reader_finish;
+  stream_route.close = vectis_upload_reader_close;
+  stream_route.userdata = adapter;
+  status =
+      vectis_app_register_upload_owned_userdata(app, &stream_route, 1, error);
+  if (status != VECTIS_OK) {
     free(adapter);
   }
   return status;
