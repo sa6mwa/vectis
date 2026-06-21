@@ -338,7 +338,7 @@ static int vectis_lua_embedded_lockd_bundle_size(lua_State *lua) {
 
 static int luaopen_vectis(lua_State *lua) {
   lua_newtable(lua);
-  lua_pushliteral(lua, "0.0.0");
+  lua_pushliteral(lua, VECTIS_VERSION);
   lua_setfield(lua, -2, "version");
   lua_pushinteger(lua, VECTIS_OK);
   lua_setfield(lua, -2, "OK");

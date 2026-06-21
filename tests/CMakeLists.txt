@@ -8,6 +8,8 @@ if(TARGET vectis_bin)
   add_test(NAME vectis_cli_version COMMAND vectis_bin --version)
   add_test(NAME vectis_lua_smoke
            COMMAND vectis_bin "${CMAKE_SOURCE_DIR}/tests/lua/smoke.lua" first second)
+  set_tests_properties(vectis_lua_smoke PROPERTIES
+    ENVIRONMENT "VECTIS_EXPECTED_VERSION=${PROJECT_VERSION}")
   add_test(NAME vectis_lua_shebang
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"

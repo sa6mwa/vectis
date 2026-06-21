@@ -4,7 +4,7 @@ local lonejson = require("lonejson")
 local cai = require("cai")
 
 assert(type(vectis) == "table")
-assert(vectis.version == "0.0.0")
+assert(vectis.version == (os.getenv("VECTIS_EXPECTED_VERSION") or "0.0.0"))
 assert(vectis.status_string(vectis.OK) == "ok")
 assert(vectis.status_string(vectis.ERR_INVALID) == "invalid")
 assert(arg[0]:match("smoke%.lua$"))
