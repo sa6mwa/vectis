@@ -2801,6 +2801,15 @@ static vectis_status vectis_app_register_route_owned_userdata(
   }
 
   impl = (vectis_app_impl *)app->impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  if (impl->started) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "routes cannot be registered after app start");
+    return VECTIS_ERR_STATE;
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
+
   status = vectis_validate_body_policy(
       &route->body,
       impl->server.max_request_body_bytes > 0u ? &impl->server : NULL, error);

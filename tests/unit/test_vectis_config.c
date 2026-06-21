@@ -116,6 +116,19 @@ int main(void) {
   app->close(app);
 
   vectis_app_config_init(&config);
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_route_count(app) == 0u);
+  route = vectis_route(VECTIS_HTTP_GET, "/late", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "after app start") != NULL);
+  assert(vectis_route_count(app) == 0u);
+  app->close(app);
+
+  vectis_app_config_init(&config);
   config.lockd.endpoint_count = 1u;
   config.lockd.endpoints = NULL;
   app = vectis_app_new(&config, &error);
