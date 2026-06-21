@@ -572,6 +572,92 @@ static void assert_large_header_rejected(unsigned short port) {
   (void)close(fd);
 }
 
+static void assert_default_header_limit_accepts_64k(void) {
+  vectis_app_config config;
+  vectis_http_client_config http;
+  vectis_http_response response;
+  vectis_route_config route;
+  vectis_error error;
+  vectis_app *app;
+  vectis_status status;
+  const char *prefix;
+  const char *suffix;
+  char reply[1024];
+  char *request;
+  ssize_t nread;
+  size_t request_size;
+  size_t prefix_size;
+  size_t suffix_size;
+  size_t value_size;
+  int fd;
+  int attempt;
+
+  memset(&response, 0, sizeof(response));
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = 28082u;
+  config.server.keepalive_disabled = 1;
+  config.server.keepalive_timeout_ms = 0L;
+  config.server.keepalive_max_requests = 0u;
+  assert(config.server.max_request_header_bytes ==
+         VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES);
+
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/health", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+
+  vectis_http_client_config_init(&http);
+  http.timeout_ms = 1000L;
+  http.connect_timeout_ms = 200L;
+  status = VECTIS_ERR_STATE;
+  for (attempt = 0; attempt < 100 && status != VECTIS_OK; ++attempt) {
+    vectis_http_response_cleanup(&response);
+    status = vectis_http_get(&http, "http://127.0.0.1:28082/health", &response,
+                             &error);
+    if (status != VECTIS_OK) {
+      usleep(100000u);
+    }
+  }
+  assert(status == VECTIS_OK);
+  vectis_http_response_cleanup(&response);
+
+  prefix = "GET /health HTTP/1.1\r\n"
+           "Host: localhost\r\n"
+           "Connection: close\r\n"
+           "X-Boundary: ";
+  suffix = "\r\n\r\n";
+  prefix_size = strlen(prefix);
+  suffix_size = strlen(suffix);
+  request_size = VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES;
+  assert(request_size > prefix_size + suffix_size);
+  value_size = request_size - prefix_size - suffix_size;
+  request = (char *)malloc(request_size);
+  assert(request != NULL);
+  memcpy(request, prefix, prefix_size);
+  memset(request + prefix_size, 'a', value_size);
+  memcpy(request + prefix_size + value_size, suffix, suffix_size);
+
+  fd = connect_local(28082u);
+  socket_send_all(fd, request, request_size);
+  free(request);
+  memset(reply, 0, sizeof(reply));
+  nread = socket_recv_some(fd, reply, sizeof(reply) - 1u, 2000L);
+  assert(nread > 0);
+  reply[(size_t)nread] = '\0';
+  assert(strstr(reply, " 200 ") != NULL);
+  (void)shutdown(fd, SHUT_RDWR);
+  (void)close(fd);
+
+  status = vectis_stop(app, &error);
+  assert(status == VECTIS_OK);
+  app->close(app);
+}
+
 static void assert_keepalive_limit(unsigned short port) {
   const char *request;
   char response[2048];
@@ -944,6 +1030,12 @@ static void assert_kore_smoke(void) {
   app->close(app);
 }
 
+#ifdef VECTIS_RUNTIME_HEADER_LIMIT_ONLY
+int main(void) {
+  assert_default_header_limit_accepts_64k();
+  return 0;
+}
+#else
 int main(void) {
   vectis_app_config config;
   vectis_error error;
@@ -1163,3 +1255,4 @@ int main(void) {
   assert_kore_smoke();
   return 0;
 }
+#endif

@@ -49,6 +49,10 @@ if(VECTIS_WITH_KORE_RUNTIME)
   vectis_add_unit_test(vectis_unit_https_runtime test_vectis_https_runtime.c)
   vectis_add_unit_test(vectis_unit_https_mtls_runtime test_vectis_https_mtls_runtime.c)
   vectis_add_unit_test(vectis_unit_runtime test_vectis_runtime.c)
+  vectis_add_unit_test(vectis_unit_runtime_header_limit
+    test_vectis_runtime.c)
+  target_compile_definitions(vectis_unit_runtime_header_limit PRIVATE
+    VECTIS_RUNTIME_HEADER_LIMIT_ONLY)
   vectis_add_unit_test(vectis_unit_sdk_surface test_vectis_sdk_surface.c)
 else()
   message(STATUS "Kore runtime disabled; skipping Kore runtime unit tests")

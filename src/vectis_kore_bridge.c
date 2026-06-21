@@ -167,13 +167,6 @@ static u_int16_t vectis_kore_seconds_from_ms(long ms) {
   return (u_int16_t)seconds;
 }
 
-static u_int16_t vectis_kore_u16_from_size(size_t value) {
-  if (value > 65535u) {
-    return 65535u;
-  }
-  return (u_int16_t)value;
-}
-
 static u_int32_t vectis_kore_u32_from_size(size_t value) {
   if (value > (size_t)((u_int32_t)-1)) {
     return (u_int32_t)-1;
@@ -802,7 +795,7 @@ static void vectis_kore_apply_server_config(const vectis_server_config *server,
   worker_max_connections = vectis_kore_u32_from_size(server->max_connections);
   worker_idle_timeout = (u_int64_t)server->idle_timeout_ms;
   http_request_limit = vectis_kore_u32_from_size(server->max_connections);
-  http_header_max = vectis_kore_u16_from_size(server->max_request_header_bytes);
+  http_header_max = server->max_request_header_bytes;
   http_body_max = server->max_request_body_bytes;
   http_body_disk_offload = 0u;
   http_header_timeout =
