@@ -47,6 +47,16 @@ typedef struct vectis_kore_runtime_config {
   int runtime_client_ca_temporary;
 } vectis_kore_runtime_config;
 
+typedef struct vectis_upload_stream_runtime {
+  vectis_body_policy policy;
+  vectis_upload_write_fn write;
+  vectis_upload_finish_fn finish;
+  vectis_upload_close_fn close;
+  void *userdata;
+  void *state;
+  int opened;
+} vectis_upload_stream_runtime;
+
 void vectis_set_error(vectis_error *error, vectis_status code,
                       const char *message);
 struct lc_client *vectis_internal_lockd_client(vectis_app *app);
@@ -68,6 +78,20 @@ vectis_status vectis_internal_route_body_policy(vectis_app *app,
                                                 const char *path,
                                                 vectis_body_policy *policy,
                                                 vectis_error *error);
+vectis_status vectis_internal_upload_stream_open(
+    vectis_app *app, vectis_http_method method, const char *path,
+    vectis_request *request, vectis_upload_stream_runtime *stream,
+    vectis_error *error);
+vectis_status vectis_internal_upload_stream_write(
+    vectis_app *app, vectis_request *request,
+    vectis_upload_stream_runtime *stream, const void *data, size_t size,
+    vectis_error *error);
+vectis_status vectis_internal_upload_stream_finish(
+    vectis_app *app, vectis_request *request, vectis_response *response,
+    vectis_upload_stream_runtime *stream, vectis_error *error);
+void vectis_internal_upload_stream_close(
+    vectis_app *app, vectis_request *request,
+    vectis_upload_stream_runtime *stream);
 
 vectis_request *vectis_internal_request_new(vectis_error *error);
 void vectis_internal_request_init(vectis_request *request);
@@ -89,6 +113,8 @@ vectis_status vectis_internal_request_set_body_path(vectis_request *request,
 vectis_status vectis_internal_request_set_body_reader(
     vectis_request *request, struct lc_source *source, size_t body_size,
     int owned, const vectis_body_policy *policy, vectis_error *error);
+void vectis_internal_request_set_streaming_upload(vectis_request *request,
+                                                  const vectis_body_policy *policy);
 void vectis_internal_request_set_kore(vectis_request *request,
                                       struct http_request *kore_request);
 vectis_status vectis_internal_request_add_path_param(vectis_request *request,

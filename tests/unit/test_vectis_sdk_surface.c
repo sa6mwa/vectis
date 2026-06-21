@@ -1223,6 +1223,8 @@ static void assert_json_route_surface(void) {
   assert(app->route != NULL);
   assert(app->json_route != NULL);
   assert(app->json_typed_route != NULL);
+  assert(app->upload_stream != NULL);
+  assert(app->upload_file != NULL);
   assert(app->prefixed_route != NULL);
   assert(app->prefixed_json_route != NULL);
   assert(app->prefixed_json_typed_route != NULL);

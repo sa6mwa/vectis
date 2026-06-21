@@ -31,13 +31,23 @@
 #include <time.h>
 #include <unistd.h>
 
+typedef enum vectis_route_entry_kind {
+  VECTIS_ROUTE_ENTRY_HANDLER = 0,
+  VECTIS_ROUTE_ENTRY_UPLOAD_STREAM = 1
+} vectis_route_entry_kind;
+
 typedef struct vectis_route_entry {
+  vectis_route_entry_kind kind;
   vectis_http_method method;
   vectis_http_methods methods;
   char *path;
   vectis_route_path_kind path_kind;
   vectis_body_policy body;
   vectis_route_handler_fn handler;
+  vectis_upload_open_fn upload_open;
+  vectis_upload_write_fn upload_write;
+  vectis_upload_finish_fn upload_finish;
+  vectis_upload_close_fn upload_close;
   void *userdata;
   int owns_userdata;
 } vectis_route_entry;
@@ -66,6 +76,16 @@ typedef struct vectis_static_route_data {
   const char *content_type;
   const char *index_file;
 } vectis_static_route_data;
+
+typedef struct vectis_upload_file_adapter {
+  char *file_path;
+  char *content_type;
+} vectis_upload_file_adapter;
+
+typedef struct vectis_upload_file_state {
+  FILE *file;
+  size_t size;
+} vectis_upload_file_state;
 
 typedef struct vectis_kv {
   char *name;
@@ -217,6 +237,7 @@ struct vectis_request {
   int owns_body_reader;
   char *body_path;
   int body_spooled;
+  int body_streaming_upload;
   vectis_body_policy body_policy;
   vectis_kv *path_params;
   size_t path_param_count;
@@ -307,6 +328,22 @@ static vectis_status vectis_app_register_route_impl(
     vectis_app *app, const vectis_route_config *route, vectis_error *error);
 static vectis_status vectis_app_register_route_owned_userdata(
     vectis_app *app, const vectis_route_config *route, int owns_userdata,
+    vectis_error *error);
+static vectis_status vectis_app_register_upload_owned_userdata(
+    vectis_app *app, const vectis_upload_route_config *route, int owns_userdata,
+    vectis_error *error);
+static vectis_status
+vectis_set_lonejson_error(vectis_error *error, lonejson_status status,
+                          const lonejson_error *json_error,
+                          const char *message);
+static vectis_status vectis_upload_file_write(
+    vectis_app *app, vectis_request *request, const void *data, size_t size,
+    void *state, void *userdata, vectis_error *error);
+vectis_status vectis_register_upload_stream(
+    vectis_app *app, const vectis_upload_route_config *route,
+    vectis_error *error);
+vectis_status vectis_register_upload_file(
+    vectis_app *app, const vectis_upload_file_route_config *route,
     vectis_error *error);
 static size_t vectis_app_route_count_impl(const vectis_app *app);
 static size_t vectis_app_max_request_body_bytes(vectis_app_impl *impl);
@@ -1007,6 +1044,30 @@ void vectis_route_config_init(vectis_route_config *config) {
   config->body = vectis_body_none();
 }
 
+void vectis_upload_route_config_init(vectis_upload_route_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->method = VECTIS_HTTP_ANY;
+  config->methods = VECTIS_HTTP_METHODS_NONE;
+  config->path_kind = VECTIS_ROUTE_PATH_LITERAL;
+  config->body = vectis_body_upload();
+}
+
+void vectis_upload_file_route_config_init(
+    vectis_upload_file_route_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->method = VECTIS_HTTP_ANY;
+  config->methods = VECTIS_HTTP_METHODS_NONE;
+  config->path_kind = VECTIS_ROUTE_PATH_LITERAL;
+  config->body = vectis_body_upload();
+  config->content_type = "application/octet-stream";
+}
+
 void vectis_json_route_config_init(vectis_json_route_config *config) {
   if (config == NULL) {
     return;
@@ -1302,6 +1363,56 @@ vectis_route_config vectis_upload_route_max_methods(
 
   route = vectis_route_methods(methods, path, handler, userdata);
   route.body = vectis_body_upload_max(max_bytes);
+  return route;
+}
+
+vectis_upload_route_config vectis_stream_upload_route(
+    vectis_http_method method, const char *path, vectis_upload_open_fn open,
+    vectis_upload_write_fn write, vectis_upload_finish_fn finish,
+    vectis_upload_close_fn close, void *userdata) {
+  vectis_upload_route_config route;
+
+  vectis_upload_route_config_init(&route);
+  route.method = method;
+  route.methods = vectis_method_mask(method);
+  route.path = path;
+  route.path_kind = vectis_infer_route_path_kind(path);
+  route.open = open;
+  route.write = write;
+  route.finish = finish;
+  route.close = close;
+  route.userdata = userdata;
+  return route;
+}
+
+vectis_upload_route_config vectis_stream_upload_route_methods(
+    vectis_http_methods methods, const char *path, vectis_upload_open_fn open,
+    vectis_upload_write_fn write, vectis_upload_finish_fn finish,
+    vectis_upload_close_fn close, void *userdata) {
+  vectis_upload_route_config route;
+
+  route = vectis_stream_upload_route(methods == VECTIS_HTTP_METHODS_NONE
+                                         ? (vectis_http_method)-1
+                                         : vectis_first_method(methods),
+                                     path, open, write, finish, close,
+                                     userdata);
+  route.methods = methods;
+  return route;
+}
+
+vectis_upload_file_route_config
+vectis_upload_file_route(vectis_http_method method, const char *path,
+                         const char *file_path, const char *content_type) {
+  vectis_upload_file_route_config route;
+
+  vectis_upload_file_route_config_init(&route);
+  route.method = method;
+  route.methods = vectis_method_mask(method);
+  route.path = path;
+  route.path_kind = vectis_infer_route_path_kind(path);
+  route.file_path = file_path;
+  route.content_type = content_type != NULL ? content_type
+                                            : "application/octet-stream";
   return route;
 }
 
@@ -1949,14 +2060,30 @@ static pslog_logger *vectis_make_owned_logger(const vectis_app_config *config,
   return scoped;
 }
 
+static void vectis_route_entry_free_userdata(vectis_route_entry *route) {
+  vectis_upload_file_adapter *file_adapter;
+
+  if (route == NULL || !route->owns_userdata || route->userdata == NULL) {
+    return;
+  }
+  if (route->kind == VECTIS_ROUTE_ENTRY_UPLOAD_STREAM &&
+      route->upload_write == vectis_upload_file_write) {
+    file_adapter = (vectis_upload_file_adapter *)route->userdata;
+    free(file_adapter->file_path);
+    free(file_adapter->content_type);
+    free(file_adapter);
+  } else {
+    free(route->userdata);
+  }
+  route->userdata = NULL;
+}
+
 static void vectis_free_routes(vectis_app_impl *impl) {
   size_t i;
 
   for (i = 0u; i < impl->route_count; ++i) {
     free(impl->routes[i].path);
-    if (impl->routes[i].owns_userdata) {
-      free(impl->routes[i].userdata);
-    }
+    vectis_route_entry_free_userdata(&impl->routes[i]);
   }
   free(impl->routes);
   impl->routes = NULL;
@@ -2176,6 +2303,42 @@ static vectis_status vectis_validate_route(const vectis_route_config *route,
   }
   if (route->handler == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "route handler is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_validate_body_policy(&route->body, NULL, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status
+vectis_validate_upload_route(const vectis_upload_route_config *route,
+                             vectis_error *error) {
+  if (route == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "upload route is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_validate_methods(route->method, route->methods, error) !=
+      VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (vectis_validate_route_path(route->path, route->path_kind, error) !=
+      VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (route->write == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "upload route write callback is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (route->finish == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "upload route finish callback is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (route->body.mode != VECTIS_BODY_STREAMING_UPLOAD) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "upload route requires streaming upload body policy");
     return VECTIS_ERR_INVALID;
   }
   if (vectis_validate_body_policy(&route->body, NULL, error) != VECTIS_OK) {
@@ -2586,6 +2749,8 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   app->route = vectis_register_route;
   app->json_route = vectis_register_json_route;
   app->json_typed_route = vectis_register_json_typed_route;
+  app->upload_stream = vectis_register_upload_stream;
+  app->upload_file = vectis_register_upload_file;
   app->prefixed_route = vectis_register_prefixed_route;
   app->prefixed_json_route = vectis_register_prefixed_json_route;
   app->prefixed_json_typed_route = vectis_register_prefixed_json_typed_route;
@@ -2766,13 +2931,15 @@ vectis_status vectis_stop(vectis_app *app, vectis_error *error) {
 }
 
 static int vectis_route_conflicts(const vectis_route_entry *existing,
-                                  const vectis_route_config *candidate) {
-  vectis_http_methods methods;
+                                  vectis_http_method method,
+                                  vectis_http_methods methods,
+                                  vectis_route_path_kind path_kind,
+                                  const char *path) {
+  vectis_http_methods mask;
 
-  methods = vectis_normalize_methods(candidate->method, candidate->methods);
-  return (existing->methods & methods) != 0u &&
-         existing->path_kind == candidate->path_kind &&
-         strcmp(existing->path, candidate->path) == 0;
+  mask = vectis_normalize_methods(method, methods);
+  return (existing->methods & mask) != 0u &&
+         existing->path_kind == path_kind && strcmp(existing->path, path) == 0;
 }
 
 static vectis_status vectis_app_register_route_impl(
@@ -2819,7 +2986,8 @@ static vectis_status vectis_app_register_route_owned_userdata(
   effective_body = vectis_effective_body_policy(&route->body, &impl->server);
   (void)pthread_mutex_lock(&impl->mutex);
   for (i = 0u; i < impl->route_count; ++i) {
-    if (vectis_route_conflicts(&impl->routes[i], route)) {
+    if (vectis_route_conflicts(&impl->routes[i], route->method, route->methods,
+                               route->path_kind, route->path)) {
       (void)pthread_mutex_unlock(&impl->mutex);
       vectis_set_errorf(error, VECTIS_ERR_CONFLICT,
                         "duplicate route registration for %s", route->path);
@@ -2841,6 +3009,7 @@ static vectis_status vectis_app_register_route_owned_userdata(
     impl->route_capacity = next_capacity;
   }
 
+  impl->routes[impl->route_count].kind = VECTIS_ROUTE_ENTRY_HANDLER;
   impl->routes[impl->route_count].method = route->method;
   impl->routes[impl->route_count].methods =
       vectis_normalize_methods(route->method, route->methods);
@@ -2869,6 +3038,103 @@ vectis_status vectis_register_route(vectis_app *app,
     return VECTIS_ERR_INVALID;
   }
   return vectis_app_register_route_impl(app, route, error);
+}
+
+static vectis_status vectis_app_register_upload_owned_userdata(
+    vectis_app *app, const vectis_upload_route_config *route, int owns_userdata,
+    vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_route_entry *grown;
+  size_t i;
+  size_t next_capacity;
+  vectis_status status;
+  vectis_body_policy effective_body;
+
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+
+  status = vectis_validate_upload_route(route, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+
+  impl = (vectis_app_impl *)app->impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  if (impl->started) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "routes cannot be registered after app start");
+    return VECTIS_ERR_STATE;
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
+
+  status = vectis_validate_body_policy(
+      &route->body,
+      impl->server.max_request_body_bytes > 0u ? &impl->server : NULL, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  effective_body = vectis_effective_body_policy(&route->body, &impl->server);
+  (void)pthread_mutex_lock(&impl->mutex);
+  for (i = 0u; i < impl->route_count; ++i) {
+    if (vectis_route_conflicts(&impl->routes[i], route->method, route->methods,
+                               route->path_kind, route->path)) {
+      (void)pthread_mutex_unlock(&impl->mutex);
+      vectis_set_errorf(error, VECTIS_ERR_CONFLICT,
+                        "duplicate route registration for %s", route->path);
+      return VECTIS_ERR_CONFLICT;
+    }
+  }
+
+  if (impl->route_count == impl->route_capacity) {
+    next_capacity = impl->route_capacity == 0u ? 4u : impl->route_capacity * 2u;
+    grown = (vectis_route_entry *)realloc(impl->routes,
+                                          next_capacity * sizeof(*grown));
+    if (grown == NULL) {
+      (void)pthread_mutex_unlock(&impl->mutex);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to grow route registry");
+      return VECTIS_ERR_NOMEM;
+    }
+    impl->routes = grown;
+    impl->route_capacity = next_capacity;
+  }
+
+  impl->routes[impl->route_count].kind = VECTIS_ROUTE_ENTRY_UPLOAD_STREAM;
+  impl->routes[impl->route_count].method = route->method;
+  impl->routes[impl->route_count].methods =
+      vectis_normalize_methods(route->method, route->methods);
+  impl->routes[impl->route_count].path_kind = route->path_kind;
+  impl->routes[impl->route_count].path = vectis_strdup(route->path);
+  impl->routes[impl->route_count].body = effective_body;
+  impl->routes[impl->route_count].handler = NULL;
+  impl->routes[impl->route_count].upload_open = route->open;
+  impl->routes[impl->route_count].upload_write = route->write;
+  impl->routes[impl->route_count].upload_finish = route->finish;
+  impl->routes[impl->route_count].upload_close = route->close;
+  impl->routes[impl->route_count].userdata = route->userdata;
+  impl->routes[impl->route_count].owns_userdata = owns_userdata;
+  if (impl->routes[impl->route_count].path == NULL) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy route path");
+    return VECTIS_ERR_NOMEM;
+  }
+  impl->route_count++;
+  (void)pthread_mutex_unlock(&impl->mutex);
+
+  return VECTIS_OK;
+}
+
+vectis_status vectis_register_upload_stream(
+    vectis_app *app, const vectis_upload_route_config *route,
+    vectis_error *error) {
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_app_register_upload_owned_userdata(app, route, 0, error);
 }
 
 static char *vectis_join_route_prefix(const char *prefix, const char *path,
@@ -3326,6 +3592,161 @@ vectis_register_static_directory(vectis_app *app,
   free(regex);
   if (status != VECTIS_OK) {
     free(data);
+  }
+  return status;
+}
+
+static vectis_status vectis_upload_file_open(vectis_app *app,
+                                             vectis_request *request,
+                                             void *userdata, void **state,
+                                             vectis_error *error) {
+  vectis_upload_file_adapter *adapter;
+  vectis_upload_file_state *file_state;
+
+  (void)app;
+  (void)request;
+  adapter = (vectis_upload_file_adapter *)userdata;
+  if (adapter == NULL || adapter->file_path == NULL || state == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "upload file route is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  file_state = (vectis_upload_file_state *)calloc(1u, sizeof(*file_state));
+  if (file_state == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate upload file state");
+    return VECTIS_ERR_NOMEM;
+  }
+  file_state->file = fopen(adapter->file_path, "wb");
+  if (file_state->file == NULL) {
+    free(file_state);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to open upload output file");
+    return VECTIS_ERR_STATE;
+  }
+  *state = file_state;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_upload_file_write(
+    vectis_app *app, vectis_request *request, const void *data, size_t size,
+    void *state, void *userdata, vectis_error *error) {
+  vectis_upload_file_state *file_state;
+
+  (void)app;
+  (void)request;
+  (void)userdata;
+  file_state = (vectis_upload_file_state *)state;
+  if (file_state == NULL || file_state->file == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "upload file state is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (size > 0u && fwrite(data, 1u, size, file_state->file) != size) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to write upload output file");
+    return VECTIS_ERR_STATE;
+  }
+  file_state->size += size;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_upload_file_finish(
+    vectis_app *app, vectis_request *request, vectis_response *response,
+    void *state, void *userdata, vectis_error *error) {
+  vectis_upload_file_adapter *adapter;
+  vectis_upload_file_state *file_state;
+  char message[64];
+
+  (void)app;
+  (void)request;
+  adapter = (vectis_upload_file_adapter *)userdata;
+  file_state = (vectis_upload_file_state *)state;
+  if (adapter == NULL || file_state == NULL || file_state->file == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "upload file state is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (fflush(file_state->file) != 0) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to flush upload output file");
+    return VECTIS_ERR_STATE;
+  }
+  (void)snprintf(message, sizeof(message), "%lu",
+                 (unsigned long)file_state->size);
+  return vectis_response_text(response, 200, "text/plain", message, error);
+}
+
+static void vectis_upload_file_close(vectis_app *app, vectis_request *request,
+                                     void *state, void *userdata) {
+  vectis_upload_file_state *file_state;
+
+  (void)app;
+  (void)request;
+  (void)userdata;
+  file_state = (vectis_upload_file_state *)state;
+  if (file_state != NULL) {
+    if (file_state->file != NULL) {
+      (void)fclose(file_state->file);
+    }
+    free(file_state);
+  }
+}
+
+vectis_status vectis_register_upload_file(
+    vectis_app *app, const vectis_upload_file_route_config *route,
+    vectis_error *error) {
+  vectis_upload_file_adapter *adapter;
+  vectis_upload_route_config stream_route;
+  vectis_status status;
+
+  if (route == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "upload file route is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (route->file_path == NULL || route->file_path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "upload file route file_path is required");
+    return VECTIS_ERR_INVALID;
+  }
+  adapter = (vectis_upload_file_adapter *)calloc(1u, sizeof(*adapter));
+  if (adapter == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate upload file adapter");
+    return VECTIS_ERR_NOMEM;
+  }
+  adapter->file_path = vectis_strdup(route->file_path);
+  adapter->content_type = vectis_strdup(
+      route->content_type != NULL ? route->content_type
+                                  : "application/octet-stream");
+  if (adapter->file_path == NULL || adapter->content_type == NULL) {
+    free(adapter->file_path);
+    free(adapter->content_type);
+    free(adapter);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy upload file adapter");
+    return VECTIS_ERR_NOMEM;
+  }
+  vectis_upload_route_config_init(&stream_route);
+  stream_route.method = route->method;
+  stream_route.methods = route->methods;
+  stream_route.path = route->path;
+  stream_route.path_kind = route->path_kind;
+  stream_route.body = route->body;
+  stream_route.open = vectis_upload_file_open;
+  stream_route.write = vectis_upload_file_write;
+  stream_route.finish = vectis_upload_file_finish;
+  stream_route.close = vectis_upload_file_close;
+  stream_route.userdata = adapter;
+  status =
+      vectis_app_register_upload_owned_userdata(app, &stream_route, 1, error);
+  if (status != VECTIS_OK) {
+    free(adapter->file_path);
+    free(adapter->content_type);
+    free(adapter);
   }
   return status;
 }
@@ -5150,6 +5571,9 @@ vectis_internal_dispatch_route(vectis_app *app, vectis_http_method method,
   for (i = 0u; i < impl->route_count; ++i) {
     vectis_kv_truncate(&request->path_params, &request->path_param_count,
                        saved_count);
+    if (impl->routes[i].kind != VECTIS_ROUTE_ENTRY_HANDLER) {
+      continue;
+    }
     if (!vectis_route_method_matches(&impl->routes[i], method)) {
       continue;
     }
@@ -5236,6 +5660,155 @@ vectis_status vectis_internal_route_body_policy(vectis_app *app,
     vectis_set_error(error, VECTIS_ERR_STATE, "no route matched request");
   }
   return status;
+}
+
+vectis_status vectis_internal_upload_stream_open(
+    vectis_app *app, vectis_http_method method, const char *path,
+    vectis_request *request, vectis_upload_stream_runtime *stream,
+    vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_upload_open_fn open;
+  void *userdata;
+  size_t i;
+  size_t saved_count;
+  vectis_status status;
+
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (stream == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "upload stream runtime is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_validate_request_path(path, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (vectis_method_mask(method) == VECTIS_HTTP_METHODS_NONE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP method is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_internal_request_set_path(request, path, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  vectis_internal_request_set_method(request, method);
+
+  memset(stream, 0, sizeof(*stream));
+  impl = (vectis_app_impl *)app->impl;
+  open = NULL;
+  userdata = NULL;
+  saved_count = request->path_param_count;
+  status = VECTIS_ERR_STATE;
+  vectis_error_clear(error);
+
+  (void)pthread_mutex_lock(&impl->mutex);
+  for (i = 0u; i < impl->route_count; ++i) {
+    vectis_kv_truncate(&request->path_params, &request->path_param_count,
+                       saved_count);
+    if (impl->routes[i].kind != VECTIS_ROUTE_ENTRY_UPLOAD_STREAM) {
+      continue;
+    }
+    if (!vectis_route_method_matches(&impl->routes[i], method)) {
+      continue;
+    }
+    if (vectis_route_path_matches(&impl->routes[i], path, request, error)) {
+      stream->policy = impl->routes[i].body;
+      stream->write = impl->routes[i].upload_write;
+      stream->finish = impl->routes[i].upload_finish;
+      stream->close = impl->routes[i].upload_close;
+      stream->userdata = impl->routes[i].userdata;
+      open = impl->routes[i].upload_open;
+      userdata = impl->routes[i].userdata;
+      status = VECTIS_OK;
+      break;
+    }
+    if (error != NULL && error->code == VECTIS_ERR_NOMEM) {
+      status = VECTIS_ERR_NOMEM;
+      break;
+    }
+    if (error != NULL && error->code == VECTIS_ERR_INVALID) {
+      status = VECTIS_ERR_INVALID;
+      break;
+    }
+  }
+  if (status != VECTIS_OK) {
+    vectis_kv_truncate(&request->path_params, &request->path_param_count,
+                       saved_count);
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
+  if (status != VECTIS_OK) {
+    if (status == VECTIS_ERR_STATE) {
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "no streaming upload route matched request");
+    }
+    return status;
+  }
+  if (stream->write == NULL || stream->finish == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "streaming upload route is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_internal_request_set_streaming_upload(request, &stream->policy);
+  if (open != NULL) {
+    status = open(app, request, userdata, &stream->state, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
+  stream->opened = 1;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_internal_upload_stream_write(
+    vectis_app *app, vectis_request *request,
+    vectis_upload_stream_runtime *stream, const void *data, size_t size,
+    vectis_error *error) {
+  if (stream == NULL || !stream->opened || stream->write == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "streaming upload is not open");
+    return VECTIS_ERR_INVALID;
+  }
+  if (data == NULL && size > 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "streaming upload chunk is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (size == 0u) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  return stream->write(app, request, data, size, stream->state,
+                       stream->userdata, error);
+}
+
+vectis_status vectis_internal_upload_stream_finish(
+    vectis_app *app, vectis_request *request, vectis_response *response,
+    vectis_upload_stream_runtime *stream, vectis_error *error) {
+  if (stream == NULL || !stream->opened || stream->finish == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "streaming upload is not open");
+    return VECTIS_ERR_INVALID;
+  }
+  return stream->finish(app, request, response, stream->state, stream->userdata,
+                        error);
+}
+
+void vectis_internal_upload_stream_close(
+    vectis_app *app, vectis_request *request,
+    vectis_upload_stream_runtime *stream) {
+  if (stream == NULL || !stream->opened) {
+    return;
+  }
+  if (stream->close != NULL) {
+    stream->close(app, request, stream->state, stream->userdata);
+  }
+  memset(stream, 0, sizeof(*stream));
 }
 
 static pslog_logger *vectis_app_logger_impl(vectis_app *app) {
@@ -9170,6 +9743,7 @@ vectis_status vectis_internal_request_set_body(vectis_request *request,
   free(request->body_path);
   request->body_path = NULL;
   request->body_spooled = 0;
+  request->body_streaming_upload = 0;
   request->body.data = body;
   request->body.size = body_size;
   vectis_body_policy_init(&request->body_policy);
@@ -9218,6 +9792,7 @@ vectis_status vectis_internal_request_set_body_path(vectis_request *request,
   free(request->body_path);
   request->body_path = path_copy;
   request->body_spooled = 1;
+  request->body_streaming_upload = 0;
   request->body.data = NULL;
   request->body.size = body_size;
   vectis_body_policy_init(&request->body_policy);
@@ -9243,6 +9818,7 @@ vectis_status vectis_internal_request_set_body_reader(
   free(request->body_path);
   request->body_path = NULL;
   request->body_spooled = 0;
+  request->body_streaming_upload = 0;
   request->body.data = NULL;
   request->body.size = body_size;
   vectis_request_close_body_reader(request);
@@ -9255,6 +9831,25 @@ vectis_status vectis_internal_request_set_body_reader(
   }
   vectis_error_clear(error);
   return VECTIS_OK;
+}
+
+void vectis_internal_request_set_streaming_upload(
+    vectis_request *request, const vectis_body_policy *policy) {
+  if (request == NULL) {
+    return;
+  }
+  free(request->body_path);
+  request->body_path = NULL;
+  request->body_spooled = 0;
+  request->body_streaming_upload = 1;
+  request->body.data = NULL;
+  request->body.size = 0u;
+  vectis_request_close_body_reader(request);
+  if (policy != NULL) {
+    request->body_policy = *policy;
+  } else {
+    vectis_body_policy_init(&request->body_policy);
+  }
 }
 
 void vectis_internal_request_set_kore(vectis_request *request,
@@ -9440,6 +10035,12 @@ vectis_status vectis_request_json_into(vectis_request *request,
                      "json output struct is required");
     return VECTIS_ERR_INVALID;
   }
+  if (request->body_streaming_upload) {
+    vectis_set_error(
+        error, VECTIS_ERR_INVALID,
+        "streaming upload body is only available through the upload reader");
+    return VECTIS_ERR_INVALID;
+  }
   if (request->body_reader == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "request body reader is not available");
@@ -9591,7 +10192,7 @@ struct http_request *vectis_request_kore(vectis_request *request) {
 }
 
 struct lc_source *vectis_request_body_reader(vectis_request *request) {
-  if (request == NULL) {
+  if (request == NULL || request->body_streaming_upload) {
     return NULL;
   }
   return request->body_reader;
@@ -9712,6 +10313,12 @@ vectis_status vectis_request_body_materialize(
   if (out == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "materialized request body output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->body_streaming_upload) {
+    vectis_set_error(
+        error, VECTIS_ERR_INVALID,
+        "streaming upload body is only available through the upload reader");
     return VECTIS_ERR_INVALID;
   }
   if (request->body_reader == NULL) {
@@ -10016,6 +10623,12 @@ vectis_status vectis_request_body_bytes(vectis_request *request,
                      "request body output is required");
     return VECTIS_ERR_INVALID;
   }
+  if (request->body_streaming_upload) {
+    vectis_set_error(
+        error, VECTIS_ERR_INVALID,
+        "streaming upload body is only available through the upload reader");
+    return VECTIS_ERR_INVALID;
+  }
   if (request->body.data == NULL && request->body.size > 0u) {
     vectis_set_error(
         error, VECTIS_ERR_STATE,
@@ -10044,14 +10657,16 @@ void vectis_mutable_bytes_cleanup(vectis_mutable_bytes *bytes) {
 }
 
 const char *vectis_request_body_path(vectis_request *request) {
-  if (request == NULL || !request->body_spooled) {
+  if (request == NULL || request->body_streaming_upload ||
+      !request->body_spooled) {
     return NULL;
   }
   return request->body_path;
 }
 
 int vectis_request_body_is_spooled(vectis_request *request) {
-  return request != NULL && request->body_spooled;
+  return request != NULL && !request->body_streaming_upload &&
+         request->body_spooled;
 }
 
 vectis_status vectis_response_status(vectis_response *response, int status_code,

@@ -285,6 +285,36 @@ typedef vectis_status (*vectis_route_handler_fn)(vectis_app *app,
                                                  void *userdata,
                                                  vectis_error *error);
 
+typedef vectis_status (*vectis_upload_open_fn)(vectis_app *app,
+                                               vectis_request *request,
+                                               void *userdata, void **state,
+                                               vectis_error *error);
+typedef vectis_status (*vectis_upload_write_fn)(
+    vectis_app *app, vectis_request *request, const void *data, size_t size,
+    void *state, void *userdata, vectis_error *error);
+typedef vectis_status (*vectis_upload_finish_fn)(vectis_app *app,
+                                                 vectis_request *request,
+                                                 vectis_response *response,
+                                                 void *state, void *userdata,
+                                                 vectis_error *error);
+typedef void (*vectis_upload_close_fn)(vectis_app *app,
+                                       vectis_request *request, void *state,
+                                       void *userdata);
+
+/**
+ * Callback invoked for each item decoded from a selected JSON array.
+ *
+ * `index` is zero-based within the selected array. `item` points at
+ * caller-owned storage initialized and populated through the supplied
+ * `lonejson_map`; the pointer is valid only for the duration of the callback
+ * and is reused for the next element. Return `VECTIS_OK` to continue or any
+ * other `vectis_status` to stop streaming and propagate that status to the
+ * caller.
+ */
+typedef vectis_status (*vectis_json_array_item_fn)(void *userdata, size_t index,
+                                                   void *item,
+                                                   vectis_error *error);
+
 typedef struct vectis_body_policy {
   vectis_body_mode mode;
   size_t max_bytes;
@@ -301,6 +331,29 @@ typedef struct vectis_route_config {
   vectis_route_handler_fn handler;
   void *userdata;
 } vectis_route_config;
+
+typedef struct vectis_upload_route_config {
+  vectis_http_method method;
+  vectis_http_methods methods;
+  const char *path;
+  vectis_route_path_kind path_kind;
+  vectis_body_policy body;
+  vectis_upload_open_fn open;
+  vectis_upload_write_fn write;
+  vectis_upload_finish_fn finish;
+  vectis_upload_close_fn close;
+  void *userdata;
+} vectis_upload_route_config;
+
+typedef struct vectis_upload_file_route_config {
+  vectis_http_method method;
+  vectis_http_methods methods;
+  const char *path;
+  vectis_route_path_kind path_kind;
+  vectis_body_policy body;
+  const char *file_path;
+  const char *content_type;
+} vectis_upload_file_route_config;
 
 typedef struct vectis_static_file_config {
   const char *path;
@@ -336,19 +389,6 @@ typedef vectis_status (*vectis_dsv_lonejson_row_fn)(void *userdata,
                                                     size_t row_number,
                                                     void *row,
                                                     vectis_error *error);
-/**
- * Callback invoked for each item decoded from a selected JSON array.
- *
- * `index` is zero-based within the selected array. `item` points at
- * caller-owned storage initialized and populated through the supplied
- * `lonejson_map`; the pointer is valid only for the duration of the callback
- * and is reused for the next element. Return `VECTIS_OK` to continue or any
- * other `vectis_status` to stop streaming and propagate that status to the
- * caller.
- */
-typedef vectis_status (*vectis_json_array_item_fn)(void *userdata, size_t index,
-                                                   void *item,
-                                                   vectis_error *error);
 
 typedef struct vectis_json_route_config {
   vectis_http_method method;
@@ -608,6 +648,12 @@ struct vectis_app {
   vectis_status (*json_typed_route)(vectis_app *self,
                                     const vectis_json_typed_route_config *route,
                                     vectis_error *error);
+  vectis_status (*upload_stream)(vectis_app *self,
+                                 const vectis_upload_route_config *route,
+                                 vectis_error *error);
+  vectis_status (*upload_file)(
+      vectis_app *self, const vectis_upload_file_route_config *route,
+      vectis_error *error);
   vectis_status (*prefixed_route)(vectis_app *self, const char *prefix,
                                   const vectis_route_config *route,
                                   vectis_error *error);
@@ -786,6 +832,9 @@ vectis_body_policy vectis_body_buffered_max(size_t max_bytes);
 vectis_body_policy vectis_body_upload(void);
 vectis_body_policy vectis_body_upload_max(size_t max_bytes);
 void vectis_route_config_init(vectis_route_config *config);
+void vectis_upload_route_config_init(vectis_upload_route_config *config);
+void vectis_upload_file_route_config_init(
+    vectis_upload_file_route_config *config);
 void vectis_json_route_config_init(vectis_json_route_config *config);
 void vectis_json_typed_route_config_init(
     vectis_json_typed_route_config *config);
@@ -839,6 +888,17 @@ vectis_route_config vectis_upload_route_max(vectis_http_method method,
 vectis_route_config vectis_upload_route_max_methods(
     vectis_http_methods methods, const char *path, size_t max_bytes,
     vectis_route_handler_fn handler, void *userdata);
+vectis_upload_route_config vectis_stream_upload_route(
+    vectis_http_method method, const char *path, vectis_upload_open_fn open,
+    vectis_upload_write_fn write, vectis_upload_finish_fn finish,
+    vectis_upload_close_fn close, void *userdata);
+vectis_upload_route_config vectis_stream_upload_route_methods(
+    vectis_http_methods methods, const char *path, vectis_upload_open_fn open,
+    vectis_upload_write_fn write, vectis_upload_finish_fn finish,
+    vectis_upload_close_fn close, void *userdata);
+vectis_upload_file_route_config
+vectis_upload_file_route(vectis_http_method method, const char *path,
+                         const char *file_path, const char *content_type);
 vectis_json_route_config
 vectis_json_route(vectis_http_method method, const char *path,
                   const lonejson_map *input_map, size_t input_size,
@@ -872,6 +932,12 @@ vectis_status vectis_stop(vectis_app *app, vectis_error *error);
 vectis_status vectis_register_route(vectis_app *app,
                                     const vectis_route_config *route,
                                     vectis_error *error);
+vectis_status vectis_register_upload_stream(
+    vectis_app *app, const vectis_upload_route_config *route,
+    vectis_error *error);
+vectis_status vectis_register_upload_file(
+    vectis_app *app, const vectis_upload_file_route_config *route,
+    vectis_error *error);
 vectis_status vectis_register_json_route(vectis_app *app,
                                          const vectis_json_route_config *route,
                                          vectis_error *error);

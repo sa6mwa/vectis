@@ -19,6 +19,16 @@ typedef struct source_json_doc {
   lonejson_source payload;
 } source_json_doc;
 
+typedef struct stream_probe_context {
+  size_t open_count;
+  size_t write_count;
+  size_t finish_count;
+  size_t close_count;
+  size_t total_size;
+  int saw_body_reader;
+  int saw_body_path;
+} stream_probe_context;
+
 static const lonejson_field source_json_doc_fields[] = {
     LONEJSON_FIELD_STRING_SOURCE_REQ(source_json_doc, payload, "payload")};
 
@@ -182,6 +192,90 @@ static vectis_status default_spooled_upload_handler(vectis_app *app,
   vectis_body_materialized_cleanup(&body);
   return vectis_response_text(response, 200, "text/plain", "default-spooled",
                               error);
+}
+
+static vectis_status stream_probe_open(vectis_app *app,
+                                       vectis_request *request, void *userdata,
+                                       void **state, vectis_error *error) {
+  stream_probe_context *context;
+
+  (void)app;
+  (void)request;
+  context = (stream_probe_context *)userdata;
+  if (context == NULL || state == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "stream context is required");
+    return VECTIS_ERR_INVALID;
+  }
+  context->open_count++;
+  *state = context;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status stream_probe_write(
+    vectis_app *app, vectis_request *request, const void *data, size_t size,
+    void *state, void *userdata, vectis_error *error) {
+  stream_probe_context *context;
+  vectis_bytes body;
+  vectis_status status;
+
+  (void)app;
+  (void)userdata;
+  context = (stream_probe_context *)state;
+  if (context == NULL || data == NULL || size == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "stream chunk is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_request_body_reader(request) != NULL) {
+    context->saw_body_reader = 1;
+  }
+  if (vectis_request_body_path(request) != NULL ||
+      vectis_request_body_is_spooled(request)) {
+    context->saw_body_path = 1;
+  }
+  status = vectis_request_body_bytes(request, &body, error);
+  if (status != VECTIS_ERR_INVALID) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "streaming upload exposed materialized body bytes");
+    return VECTIS_ERR_STATE;
+  }
+  context->write_count++;
+  context->total_size += size;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status stream_probe_finish(
+    vectis_app *app, vectis_request *request, vectis_response *response,
+    void *state, void *userdata, vectis_error *error) {
+  stream_probe_context *context;
+  char text[64];
+
+  (void)app;
+  (void)request;
+  (void)userdata;
+  context = (stream_probe_context *)state;
+  if (context == NULL || context->saw_body_reader || context->saw_body_path) {
+    return vectis_response_text(response, 500, "text/plain", "materialized",
+                                error);
+  }
+  context->finish_count++;
+  (void)snprintf(text, sizeof(text), "%lu",
+                 (unsigned long)context->total_size);
+  return vectis_response_text(response, 200, "text/plain", text, error);
+}
+
+static void stream_probe_close(vectis_app *app, vectis_request *request,
+                               void *state, void *userdata) {
+  stream_probe_context *context;
+
+  (void)app;
+  (void)request;
+  (void)userdata;
+  context = (stream_probe_context *)state;
+  if (context != NULL) {
+    context->close_count++;
+  }
 }
 
 static vectis_status file_handler(vectis_app *app, vectis_request *request,
@@ -701,17 +795,23 @@ static void assert_kore_smoke(void) {
   vectis_http_response upload_response;
   vectis_http_response spooled_upload_response;
   vectis_http_response default_spooled_upload_response;
+  vectis_http_response stream_response;
+  vectis_http_response stream_file_response;
   source_json_doc json_source_doc;
+  stream_probe_context stream_context;
   vectis_route_config route;
   vectis_route_config limited_route;
   vectis_route_config upload_route;
   vectis_route_config spooled_upload_route;
   vectis_route_config default_spooled_upload_route;
   vectis_route_config file_route;
+  vectis_upload_route_config stream_route;
+  vectis_upload_file_route_config stream_file_route;
   vectis_app_config second_config;
   vectis_route_config second_route;
   const char *headers[] = {"x-vectis-trace: runtime-smoke"};
   const char upload_path[] = "/tmp/vectis-runtime-upload.bin";
+  const char stream_file_path[] = "/tmp/vectis-runtime-stream-upload.bin";
   const char json_source_path[] = "/tmp/vectis-runtime-json-source.txt";
   const char response_file_path[] = "/tmp/vectis-runtime-response.txt";
   const char response_file_body[] = "file-response";
@@ -723,7 +823,11 @@ static void assert_kore_smoke(void) {
   vectis_app *second_app;
   FILE *fp;
   char *default_spooled_body;
+  char *stream_body;
+  char size_text[64];
   size_t default_spooled_body_size;
+  size_t stream_body_size;
+  long stream_file_size;
   int attempt;
   int i;
 
@@ -739,6 +843,9 @@ static void assert_kore_smoke(void) {
   memset(&spooled_upload_response, 0, sizeof(spooled_upload_response));
   memset(&default_spooled_upload_response, 0,
          sizeof(default_spooled_upload_response));
+  memset(&stream_response, 0, sizeof(stream_response));
+  memset(&stream_file_response, 0, sizeof(stream_file_response));
+  memset(&stream_context, 0, sizeof(stream_context));
   memset(&json_source_request, 0, sizeof(json_source_request));
   memset(&no_body_request, 0, sizeof(no_body_request));
   memset(&json_source_doc, 0, sizeof(json_source_doc));
@@ -747,7 +854,7 @@ static void assert_kore_smoke(void) {
   config.tls.bind = "127.0.0.1";
   config.tls.port = 28080u;
   config.server.max_request_header_bytes = 1024u;
-  config.server.max_request_body_bytes = 524288u;
+  config.server.max_request_body_bytes = 2097152u;
   config.server.request_header_timeout_ms = 1000L;
   config.server.request_body_idle_timeout_ms = 1000L;
   config.server.request_body_min_rate_bytes_per_sec = 1024u;
@@ -814,6 +921,22 @@ static void assert_kore_smoke(void) {
   assert(default_spooled_upload_route.body.disk_spool_disabled == 0);
   status = vectis_register_route(app, &default_spooled_upload_route, &error);
   assert(status == VECTIS_OK);
+  stream_route =
+      vectis_stream_upload_route(VECTIS_HTTP_POST, "/stream-upload",
+                                 stream_probe_open, stream_probe_write,
+                                 stream_probe_finish, stream_probe_close,
+                                 &stream_context);
+  stream_route.body.max_bytes = 2097152u;
+  stream_route.body.memory_buffer_limit_bytes = 8u;
+  status = app->upload_stream(app, &stream_route, &error);
+  assert(status == VECTIS_OK);
+  stream_file_route = vectis_upload_file_route(
+      VECTIS_HTTP_POST, "/stream-file", stream_file_path,
+      "application/octet-stream");
+  stream_file_route.body.max_bytes = 2097152u;
+  stream_file_route.body.memory_buffer_limit_bytes = 8u;
+  status = app->upload_file(app, &stream_file_route, &error);
+  assert(status == VECTIS_OK);
   file_route = vectis_route(VECTIS_HTTP_GET, "/file", file_handler,
                             (void *)response_file_path);
   status = vectis_register_route(app, &file_route, &error);
@@ -838,7 +961,7 @@ static void assert_kore_smoke(void) {
   vectis_destroy(second_app);
 
   vectis_http_client_config_init(&http);
-  http.timeout_ms = 1000L;
+  http.timeout_ms = 10000L;
   http.connect_timeout_ms = 200L;
   status = VECTIS_ERR_STATE;
   for (attempt = 0; attempt < 100 && status != VECTIS_OK; ++attempt) {
@@ -1022,7 +1145,48 @@ static void assert_kore_smoke(void) {
   assert(memcmp(default_spooled_upload_response.body, "default-spooled", 15u) ==
          0);
   vectis_http_response_cleanup(&default_spooled_upload_response);
+
+  stream_body_size = 1048576u + 3u;
+  stream_body = (char *)malloc(stream_body_size);
+  assert(stream_body != NULL);
+  for (i = 0; i < (int)stream_body_size; ++i) {
+    stream_body[i] = (char)('a' + (i % 26));
+  }
+  (void)snprintf(size_text, sizeof(size_text), "%lu",
+                 (unsigned long)stream_body_size);
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = "http://127.0.0.1:28080/stream-upload";
+  request.body = stream_body;
+  request.body_size = stream_body_size;
+  status = vectis_http_execute(&http, &request, &stream_response, &error);
+  assert(status == VECTIS_OK);
+  assert(stream_response.status_code == 200L);
+  assert(stream_response.body_size == strlen(size_text));
+  assert(memcmp(stream_response.body, size_text, strlen(size_text)) == 0);
+  vectis_http_response_cleanup(&stream_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = "http://127.0.0.1:28080/stream-file";
+  request.body = stream_body;
+  request.body_size = stream_body_size;
+  status = vectis_http_execute(&http, &request, &stream_file_response, &error);
+  assert(status == VECTIS_OK);
+  assert(stream_file_response.status_code == 200L);
+  assert(stream_file_response.body_size == strlen(size_text));
+  assert(memcmp(stream_file_response.body, size_text, strlen(size_text)) == 0);
+  fp = fopen(stream_file_path, "rb");
+  assert(fp != NULL);
+  assert(fseek(fp, 0L, SEEK_END) == 0);
+  stream_file_size = ftell(fp);
+  assert(stream_file_size == (long)stream_body_size);
+  assert(fclose(fp) == 0);
+  vectis_http_response_cleanup(&stream_file_response);
+  free(stream_body);
+
   remove(upload_path);
+  remove(stream_file_path);
   remove(response_file_path);
 
   status = vectis_stop(app, &error);
