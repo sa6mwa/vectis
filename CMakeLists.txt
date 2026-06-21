@@ -21,6 +21,7 @@ project(vectis VERSION "${vectis_detected_version}" LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CMakeDependentOption)
+include(CMakePackageConfigHelpers)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -535,6 +536,16 @@ configure_file(
   "${CMAKE_BINARY_DIR}/package-metadata.cmake"
   @ONLY
 )
+configure_package_config_file(
+  "${CMAKE_SOURCE_DIR}/cmake/vectisConfig.cmake.in"
+  "${CMAKE_BINARY_DIR}/generated/cmake/vectisConfig.cmake"
+  INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/vectis"
+)
+write_basic_package_version_file(
+  "${CMAKE_BINARY_DIR}/generated/cmake/vectisConfigVersion.cmake"
+  VERSION "${PROJECT_VERSION}"
+  COMPATIBILITY SameMajorVersion
+)
 
 if(VECTIS_BUILD_STATIC)
   set(vectis_test_link_target vectis_static)
@@ -696,6 +707,10 @@ if(VECTIS_INSTALL)
           "${CMAKE_SOURCE_DIR}/LICENSE"
           "${CMAKE_SOURCE_DIR}/README.md"
           DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/vectis")
+  install(FILES
+          "${CMAKE_BINARY_DIR}/generated/cmake/vectisConfig.cmake"
+          "${CMAKE_BINARY_DIR}/generated/cmake/vectisConfigVersion.cmake"
+          DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/vectis")
   if(EXISTS "${vectis_kore_include_dir}/kore/kore.h")
     install(DIRECTORY "${vectis_kore_include_dir}/kore"
             DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")

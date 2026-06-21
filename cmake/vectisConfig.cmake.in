@@ -1,0 +1,130 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+find_dependency(Threads REQUIRED)
+find_dependency(OpenSSL CONFIG REQUIRED)
+find_dependency(ZLIB CONFIG REQUIRED)
+find_dependency(nghttp2 CONFIG REQUIRED)
+find_dependency(Libssh2 CONFIG REQUIRED)
+find_dependency(CURL CONFIG REQUIRED)
+find_package(LibXml2 CONFIG REQUIRED)
+find_package(pslog CONFIG REQUIRED)
+find_package(lonejson CONFIG REQUIRED)
+find_package(cai CONFIG REQUIRED)
+find_package(lockdc CONFIG REQUIRED)
+
+if(TARGET cai::cai_static AND TARGET lonejson::lonejson_static)
+  set_property(TARGET cai::cai_static PROPERTY
+    INTERFACE_LINK_LIBRARIES "CURL::libcurl;Threads::Threads;OpenSSL::Crypto;lonejson::lonejson_static")
+endif()
+
+set(_vectis_dependency_link_dirs)
+foreach(_vectis_dependency_target IN ITEMS
+    lockdc::static
+    lockdc::shared
+    cai::cai_static
+    cai::cai_shared
+    pslog::pslog_static
+    pslog::pslog_shared
+    CURL::libcurl
+    Libssh2::libssh2
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    lonejson::lonejson_static
+    lonejson::lonejson
+    LibXml2::LibXml2
+    nghttp2::nghttp2
+    ZLIB::ZLIB
+    cpkt::curl_shared
+    cpkt::libssh2_shared
+    cpkt::openssl_ssl_shared
+    cpkt::openssl_crypto_shared
+    cpkt::libxml2_shared
+    cpkt::nghttp2_shared
+    cpkt::zlib_shared)
+  if(TARGET "${_vectis_dependency_target}")
+    get_target_property(_vectis_dependency_location
+      "${_vectis_dependency_target}" IMPORTED_LOCATION)
+    if(NOT _vectis_dependency_location)
+      get_target_property(_vectis_dependency_location
+        "${_vectis_dependency_target}" IMPORTED_LOCATION_RELEASE)
+    endif()
+    if(_vectis_dependency_location)
+      get_filename_component(_vectis_dependency_link_dir
+        "${_vectis_dependency_location}" DIRECTORY)
+      list(APPEND _vectis_dependency_link_dirs
+        "${_vectis_dependency_link_dir}")
+    endif()
+  endif()
+endforeach()
+list(REMOVE_DUPLICATES _vectis_dependency_link_dirs)
+
+if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/libvectis.a")
+  set(_vectis_static_links
+    lockdc::static
+    cai::cai_static
+    pslog::pslog_static
+    CURL::libcurl
+    Libssh2::libssh2
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    lonejson::lonejson_static
+    LibXml2::LibXml2
+    nghttp2::nghttp2
+    ZLIB::ZLIB
+  )
+  add_library(vectis::static STATIC IMPORTED)
+  set_target_properties(vectis::static PROPERTIES
+    IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/libvectis.a"
+    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@"
+    INTERFACE_LINK_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@;${_vectis_dependency_link_dirs}"
+    INTERFACE_LINK_LIBRARIES "${_vectis_static_links}"
+  )
+endif()
+
+if(NOT TARGET vectis::shared)
+  set(_vectis_shared_links
+    lockdc::shared
+    cai::cai_shared
+    pslog::pslog_shared
+    cpkt::curl_shared
+    cpkt::libssh2_shared
+    cpkt::openssl_ssl_shared
+    cpkt::openssl_crypto_shared
+    lonejson::lonejson
+    cpkt::libxml2_shared
+    cpkt::nghttp2_shared
+    cpkt::zlib_shared
+  )
+  if(APPLE AND EXISTS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/libvectis.dylib")
+    add_library(vectis::shared SHARED IMPORTED)
+    set_target_properties(vectis::shared PROPERTIES
+      IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/libvectis.dylib"
+      INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@"
+      INTERFACE_LINK_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@;${_vectis_dependency_link_dirs}"
+      INTERFACE_LINK_LIBRARIES "${_vectis_shared_links}"
+    )
+  elseif(EXISTS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/libvectis.so")
+    add_library(vectis::shared SHARED IMPORTED)
+    set_target_properties(vectis::shared PROPERTIES
+      IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/libvectis.so"
+      INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@"
+      INTERFACE_LINK_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@;${_vectis_dependency_link_dirs}"
+      INTERFACE_LINK_LIBRARIES "${_vectis_shared_links}"
+    )
+  endif()
+endif()
+
+if(NOT TARGET vectis::vectis)
+  if(TARGET vectis::static)
+    add_library(vectis::vectis ALIAS vectis::static)
+  elseif(TARGET vectis::shared)
+    add_library(vectis::vectis ALIAS vectis::shared)
+  endif()
+endif()
+
+unset(_vectis_dependency_link_dir)
+unset(_vectis_dependency_link_dirs)
+unset(_vectis_dependency_location)
+unset(_vectis_dependency_target)
