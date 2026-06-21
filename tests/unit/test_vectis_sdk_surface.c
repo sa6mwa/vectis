@@ -809,6 +809,8 @@ static void assert_http_surface(void) {
 static void assert_io_surface(void) {
   vectis_sftp_config sftp;
   vectis_sftp *sftp_handle;
+  lc_source *sftp_key_source;
+  failing_source_context sftp_key_context;
   vectis_ssh_config ssh;
   vectis_ssh *ssh_handle;
   vectis_ssh_exec_result result;
@@ -821,11 +823,13 @@ static void assert_io_surface(void) {
   const char bundle_path[] = "/tmp/vectis-test-bundle.pem";
   const char cert_path[] = "/tmp/vectis-test-cert.pem";
   const char key_path[] = "/tmp/vectis-test-key.pem";
+  const char sftp_upload_path[] = "/tmp/vectis-test-sftp-upload.txt";
   const char ssh_key_pem[] = "not a real ssh key";
   char line[128];
   FILE *fp;
 
   sftp_handle = NULL;
+  sftp_key_source = NULL;
   ssh_handle = NULL;
   mqtt_handle = NULL;
   vectis_sftp_config_init(&sftp);
@@ -852,6 +856,26 @@ static void assert_io_surface(void) {
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "SFTP handle") != NULL);
   sftp_handle->close(sftp_handle);
+
+  fp = fopen(sftp_upload_path, "wb");
+  assert(fp != NULL);
+  assert(fwrite(payload, 1u, sizeof(payload) - 1u, fp) == sizeof(payload) - 1u);
+  assert(fclose(fp) == 0);
+  memset(&sftp_key_context, 0, sizeof(sftp_key_context));
+  assert(lc_source_from_callbacks(failing_source_read, failing_source_reset,
+                                  NULL, &sftp_key_context, &sftp_key_source,
+                                  NULL) == LC_OK);
+  sftp.private_key = vectis_source_from_lc(sftp_key_source);
+  sftp.private_key_path = NULL;
+  status = vectis_sftp_upload_file(&sftp, sftp_upload_path, "/remote", &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "SFTP private key") != NULL);
+  assert(strstr(error.message, "source failed") != NULL);
+  assert(sftp_key_context.read_count > 0);
+  lc_source_close(sftp_key_source);
+  sftp_key_source = NULL;
+  vectis_source_init(&sftp.private_key);
+  (void)remove(sftp_upload_path);
 
   vectis_ssh_config_init(&ssh);
   memset(&result, 0, sizeof(result));

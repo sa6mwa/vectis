@@ -12205,14 +12205,129 @@ vectis_status vectis_sftp_new(const vectis_sftp_config *config,
 
 void vectis_sftp_close(vectis_sftp *sftp) { free(sftp); }
 
+typedef struct vectis_sftp_private_key_file {
+  char *path;
+  int temporary;
+} vectis_sftp_private_key_file;
+
+static void vectis_sftp_private_key_file_cleanup(
+    vectis_sftp_private_key_file *key_file) {
+  if (key_file == NULL) {
+    return;
+  }
+  if (key_file->temporary && key_file->path != NULL) {
+    (void)unlink(key_file->path);
+  }
+  free(key_file->path);
+  key_file->path = NULL;
+  key_file->temporary = 0;
+}
+
+static vectis_status vectis_sftp_private_key_file_prepare(
+    const vectis_source *private_key, const char *private_key_path,
+    vectis_sftp_private_key_file *out, vectis_error *error) {
+  const char *path;
+  const char *tmpdir;
+  char tmp_template[PATH_MAX];
+  const unsigned char *cursor;
+  void *key_pem;
+  size_t key_pem_size;
+  size_t remaining;
+  ssize_t nwritten;
+  int fd;
+  int n;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SFTP private key file output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  out->path = NULL;
+  out->temporary = 0;
+
+  path = vectis_source_path_or_old(private_key, private_key_path);
+  if (path != NULL) {
+    out->path = vectis_strdup(path);
+    if (out->path == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy SFTP private key path");
+      return VECTIS_ERR_NOMEM;
+    }
+    return VECTIS_OK;
+  }
+  if (private_key == NULL ||
+      ((private_key->memory == NULL || private_key->memory_size == 0u) &&
+       private_key->source == NULL)) {
+    return VECTIS_OK;
+  }
+
+  key_pem = NULL;
+  key_pem_size = 0u;
+  if (vectis_read_source_bytes(private_key, &key_pem, &key_pem_size,
+                               "SFTP private key", error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+
+  tmpdir = getenv("TMPDIR");
+  if (tmpdir == NULL || tmpdir[0] == '\0') {
+    tmpdir = "/tmp";
+  }
+  n = snprintf(tmp_template, sizeof(tmp_template),
+               "%s/vectis-sftp-key-XXXXXX", tmpdir);
+  if (n < 0 || (size_t)n >= sizeof(tmp_template)) {
+    free(key_pem);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SFTP private key temp path is too long");
+    return VECTIS_ERR_INVALID;
+  }
+  fd = mkstemp(tmp_template);
+  if (fd < 0) {
+    free(key_pem);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to create SFTP private key temp file");
+    return VECTIS_ERR_STATE;
+  }
+  (void)chmod(tmp_template, S_IRUSR | S_IWUSR);
+
+  cursor = (const unsigned char *)key_pem;
+  remaining = key_pem_size;
+  while (remaining > 0u) {
+    nwritten = write(fd, cursor, remaining);
+    if (nwritten <= 0) {
+      (void)close(fd);
+      (void)unlink(tmp_template);
+      free(key_pem);
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to write SFTP private key temp file");
+      return VECTIS_ERR_STATE;
+    }
+    cursor += (size_t)nwritten;
+    remaining -= (size_t)nwritten;
+  }
+  if (close(fd) != 0) {
+    (void)unlink(tmp_template);
+    free(key_pem);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to close SFTP private key temp file");
+    return VECTIS_ERR_STATE;
+  }
+  free(key_pem);
+
+  out->path = vectis_strdup(tmp_template);
+  if (out->path == NULL) {
+    (void)unlink(tmp_template);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy SFTP private key temp path");
+    return VECTIS_ERR_NOMEM;
+  }
+  out->temporary = 1;
+  return VECTIS_OK;
+}
+
 static vectis_status vectis_curl_set_ssh(CURL *curl, const char *username,
                                          const char *password,
-                                         const vectis_source *private_key,
-                                         const char *private_key_path,
+                                         const char *key_path,
                                          const char *known_hosts_path) {
-  const char *key_path;
-
-  key_path = vectis_source_path_or_old(private_key, private_key_path);
   if (username != NULL) {
     (void)curl_easy_setopt(curl, CURLOPT_USERNAME, username);
   }
@@ -12239,7 +12354,9 @@ vectis_status vectis_sftp_upload_file(const vectis_sftp_config *config,
   char *url;
   char curl_error[CURL_ERROR_SIZE];
   vectis_sftp_config effective;
+  vectis_sftp_private_key_file key_file;
 
+  memset(&key_file, 0, sizeof(key_file));
   if (config == NULL || config->url == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "SFTP config with url is required");
@@ -12281,6 +12398,14 @@ vectis_status vectis_sftp_upload_file(const vectis_sftp_config *config,
                      "failed to initialize curl easy handle");
     return VECTIS_ERR_NOMEM;
   }
+  if (vectis_sftp_private_key_file_prepare(
+          &config->private_key, config->private_key_path, &key_file, error) !=
+      VECTIS_OK) {
+    curl_easy_cleanup(curl);
+    (void)fclose(file);
+    free(url);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
   (void)curl_easy_setopt(curl, CURLOPT_URL, url);
   (void)curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error);
   if (effective.timeout_ms > 0L) {
@@ -12291,9 +12416,9 @@ vectis_status vectis_sftp_upload_file(const vectis_sftp_config *config,
   (void)curl_easy_setopt(curl, CURLOPT_READDATA, file);
   (void)curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t)file_size);
   (void)vectis_curl_set_ssh(curl, config->username, config->password,
-                            &config->private_key, config->private_key_path,
-                            config->known_hosts_path);
+                            key_file.path, config->known_hosts_path);
   curl_code = curl_easy_perform(curl);
+  vectis_sftp_private_key_file_cleanup(&key_file);
   (void)fclose(file);
   curl_easy_cleanup(curl);
   free(url);
@@ -12315,7 +12440,9 @@ vectis_status vectis_sftp_download_file(const vectis_sftp_config *config,
   char *url;
   char curl_error[CURL_ERROR_SIZE];
   vectis_sftp_config effective;
+  vectis_sftp_private_key_file key_file;
 
+  memset(&key_file, 0, sizeof(key_file));
   if (config == NULL || config->url == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "SFTP config with url is required");
@@ -12353,6 +12480,14 @@ vectis_status vectis_sftp_download_file(const vectis_sftp_config *config,
                      "failed to initialize curl easy handle");
     return VECTIS_ERR_NOMEM;
   }
+  if (vectis_sftp_private_key_file_prepare(
+          &config->private_key, config->private_key_path, &key_file, error) !=
+      VECTIS_OK) {
+    curl_easy_cleanup(curl);
+    (void)fclose(file);
+    free(url);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
   (void)curl_easy_setopt(curl, CURLOPT_URL, url);
   (void)curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error);
   if (effective.timeout_ms > 0L) {
@@ -12361,9 +12496,9 @@ vectis_status vectis_sftp_download_file(const vectis_sftp_config *config,
   (void)curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, vectis_curl_write_file);
   (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, file);
   (void)vectis_curl_set_ssh(curl, config->username, config->password,
-                            &config->private_key, config->private_key_path,
-                            config->known_hosts_path);
+                            key_file.path, config->known_hosts_path);
   curl_code = curl_easy_perform(curl);
+  vectis_sftp_private_key_file_cleanup(&key_file);
   if (fclose(file) != 0 && curl_code == CURLE_OK) {
     curl_code = CURLE_WRITE_ERROR;
   }
