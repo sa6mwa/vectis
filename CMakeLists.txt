@@ -50,17 +50,15 @@ set(VECTIS_TARGET_LIBC ""
 set(VECTIS_TARGET_ID ""
     CACHE STRING "Release target identifier.")
 
-set(VECTIS_EXPECTED_SYSTEM_VERSION "0.2.0")
+set(VECTIS_EXPECTED_SYSTEM_VERSION "0.4.0")
 set(VECTIS_EXPECTED_LOCKDC_VERSION "0.12.0")
-set(VECTIS_EXPECTED_LONEJSON_VERSION "0.32.0")
+set(VECTIS_EXPECTED_LONEJSON_VERSION "0.32.1")
 set(VECTIS_EXPECTED_PSLOG_VERSION "0.4.1")
 set(VECTIS_EXPECTED_CAI_VERSION "0.1.2")
 set(VECTIS_EXPECTED_LUA_VERSION "5.5.0")
-set(VECTIS_EXPECTED_LUA_SHA256 "57ccc32bbbd005cab75bcc52444052535af691789dba2b9016d5c50640d68b3d")
 set(VECTIS_EXPECTED_LIBPID0_VERSION "0.3.0")
 set(VECTIS_EXPECTED_LIBPID0_SHA256 "29591e058ab5ad9d0bbe0cd4c0d783ace2dee4e2ae6c590a0ba1d9f146f025f9")
 set(VECTIS_EXPECTED_LIBXML2_VERSION "2.15.3")
-set(VECTIS_EXPECTED_LIBXML2_SHA256 "5c6060277173270356c3f1c321a640ab629bdabc5e5ba9095b99e00759ba0c39")
 
 if(VECTIS_TARGET_ID STREQUAL "")
   string(TOLOWER "${VECTIS_TARGET_ARCH}" VECTIS_TARGET_ARCH_LOWER)
@@ -111,6 +109,9 @@ set(OpenSSL_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/OpenSSL")
 set(Libssh2_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/libssh2")
 set(nghttp2_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/nghttp2")
 set(ZLIB_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/zlib")
+set(Lua_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/Lua")
+set(CpktLuaRuntime_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/CpktLuaRuntime")
+set(LibXml2_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/libxml2")
 set(lonejson_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/lonejson")
 set(pslog_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/pslog")
 set(cai_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/cai")
@@ -122,11 +123,10 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_manifest(pslog_version "${VECTIS_EXPECTED_PSLOG_VERSION}")
   vectis_require_manifest(cai_version "${VECTIS_EXPECTED_CAI_VERSION}")
   vectis_require_manifest(lua_version "${VECTIS_EXPECTED_LUA_VERSION}")
-  vectis_require_manifest(lua_sha256 "${VECTIS_EXPECTED_LUA_SHA256}")
+  vectis_require_manifest(lua_runtime_facade_abi "0")
   vectis_require_manifest(libpid0_version "${VECTIS_EXPECTED_LIBPID0_VERSION}")
   vectis_require_manifest(libpid0_sha256 "${VECTIS_EXPECTED_LIBPID0_SHA256}")
   vectis_require_manifest(libxml2_version "${VECTIS_EXPECTED_LIBXML2_VERSION}")
-  vectis_require_manifest(libxml2_sha256 "${VECTIS_EXPECTED_LIBXML2_SHA256}")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/lonejson.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/pslog.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/cai.h")
@@ -145,6 +145,9 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_dependency_file("${Libssh2_DIR}/libssh2-config.cmake")
   vectis_require_dependency_file("${nghttp2_DIR}/nghttp2Config.cmake")
   vectis_require_dependency_file("${ZLIB_DIR}/ZLIBConfig.cmake")
+  vectis_require_dependency_file("${Lua_DIR}/LuaConfig.cmake")
+  vectis_require_dependency_file("${CpktLuaRuntime_DIR}/CpktLuaRuntimeConfig.cmake")
+  vectis_require_dependency_file("${LibXml2_DIR}/libxml2-config.cmake")
   vectis_require_dependency_file("${vectis_lockdc_config_dir}/lockdcConfig.cmake")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lockdc-source/src/lua/lockdc_lua.c")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lockdc-source/lua/lockdc/init.lua")
@@ -161,6 +164,7 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libnghttp2.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libz.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblua.a")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcpkt_lua_runtime.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libxml2.a")
   if(APPLE)
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblonejson.dylib")
@@ -195,6 +199,8 @@ find_package(OpenSSL CONFIG REQUIRED PATHS "${OpenSSL_DIR}" NO_DEFAULT_PATH)
 find_package(Libssh2 CONFIG REQUIRED PATHS "${Libssh2_DIR}" NO_DEFAULT_PATH)
 find_package(nghttp2 CONFIG REQUIRED PATHS "${nghttp2_DIR}" NO_DEFAULT_PATH)
 find_package(ZLIB CONFIG REQUIRED PATHS "${ZLIB_DIR}" NO_DEFAULT_PATH)
+find_package(CpktLuaRuntime CONFIG REQUIRED PATHS "${CpktLuaRuntime_DIR}" NO_DEFAULT_PATH)
+find_package(LibXml2 CONFIG REQUIRED PATHS "${LibXml2_DIR}" NO_DEFAULT_PATH)
 find_package(lonejson CONFIG REQUIRED PATHS "${lonejson_DIR}" NO_DEFAULT_PATH)
 find_package(pslog CONFIG REQUIRED PATHS "${pslog_DIR}" NO_DEFAULT_PATH)
 find_package(cai CONFIG REQUIRED PATHS "${cai_DIR}" NO_DEFAULT_PATH)
@@ -292,51 +298,18 @@ set(vectis_kore_include_dir "${CMAKE_SOURCE_DIR}/vendor/kore/upstream/include")
 if(NOT EXISTS "${vectis_external_include_dir}/pslog.h")
   message(STATUS "vectis external headers not provisioned yet: ${vectis_external_include_dir}/pslog.h")
 endif()
-set(vectis_lua_static_library "${VECTIS_EXTERNAL_ROOT}/lib/liblua.a")
 set(vectis_lockdc_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/lockdc-source")
 set(vectis_lonejson_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/lonejson-source")
 set(vectis_cai_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/cai-lua-source")
-set(vectis_libxml2_static_library "${VECTIS_EXTERNAL_ROOT}/lib/libxml2.a")
-if(APPLE)
-  set(vectis_libxml2_shared_library "${VECTIS_EXTERNAL_ROOT}/lib/libxml2.dylib")
-else()
-  set(vectis_libxml2_shared_library "${VECTIS_EXTERNAL_ROOT}/lib/libxml2.so")
-endif()
-if(VECTIS_BUILD_BINARY AND NOT EXISTS "${vectis_lua_static_library}")
-  message(FATAL_ERROR
-    "VECTIS_BUILD_BINARY=ON requires Lua in the provisioned dependency root: "
-    "${vectis_lua_static_library}. Run scripts/deps.sh for this target first."
-  )
-endif()
 
 add_library(vectis_external_headers INTERFACE)
 target_include_directories(vectis_external_headers INTERFACE "${vectis_external_include_dir}")
-if(EXISTS "${vectis_external_include_dir}/libxml2/libxml/parser.h")
-  target_include_directories(vectis_external_headers INTERFACE "${vectis_external_include_dir}/libxml2")
-endif()
 if(EXISTS "${vectis_kore_include_dir}/kore/kore.h")
   target_include_directories(vectis_external_headers INTERFACE "${vectis_kore_include_dir}")
 endif()
 
 set(vectis_lockdc_static_target lockdc::static)
 set(vectis_lockdc_shared_target lockdc::shared)
-
-add_library(vectis_bundled_libxml2_static STATIC IMPORTED)
-set_target_properties(vectis_bundled_libxml2_static PROPERTIES
-  IMPORTED_LOCATION "${vectis_libxml2_static_library}"
-  INTERFACE_INCLUDE_DIRECTORIES "${vectis_external_include_dir}/libxml2"
-)
-if(UNIX AND NOT APPLE)
-  target_link_libraries(vectis_bundled_libxml2_static INTERFACE m)
-endif()
-
-if(EXISTS "${vectis_libxml2_shared_library}")
-  add_library(vectis_bundled_libxml2_shared SHARED IMPORTED)
-  set_target_properties(vectis_bundled_libxml2_shared PROPERTIES
-    IMPORTED_LOCATION "${vectis_libxml2_shared_library}"
-    INTERFACE_INCLUDE_DIRECTORIES "${vectis_external_include_dir}/libxml2"
-  )
-endif()
 
 set(vectis_static_dependency_links
   cai::cai_static
@@ -346,7 +319,7 @@ set(vectis_static_dependency_links
   OpenSSL::SSL
   OpenSSL::Crypto
   lonejson::lonejson_static
-  vectis_bundled_libxml2_static
+  LibXml2::LibXml2
   nghttp2::nghttp2
   ZLIB::ZLIB
 )
@@ -358,7 +331,7 @@ set(vectis_shared_dependency_links
   cpkt::openssl_ssl_shared
   cpkt::openssl_crypto_shared
   lonejson::lonejson
-  vectis_bundled_libxml2_shared
+  cpkt::libxml2_shared
   cpkt::nghttp2_shared
   cpkt::zlib_shared
 )
@@ -665,7 +638,7 @@ if(VECTIS_BUILD_BINARY)
   elseif(VECTIS_BUILD_SHARED)
     target_link_libraries(vectis_bin PRIVATE vectis_shared)
   endif()
-  target_link_libraries(vectis_bin PRIVATE cai::cai_static "${vectis_lua_static_library}")
+  target_link_libraries(vectis_bin PRIVATE cpkt::lua_runtime cai::cai_static)
   if(UNIX AND NOT APPLE)
     target_link_libraries(vectis_bin PRIVATE m)
   endif()

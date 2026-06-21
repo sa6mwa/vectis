@@ -82,6 +82,7 @@ set(ZLIB_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/zlib")
 set(nghttp2_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/nghttp2")
 set(Libssh2_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/libssh2")
 set(CURL_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/CURL")
+set(LibXml2_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/libxml2")
 set(pslog_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/pslog")
 set(lonejson_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/lonejson")
 set(cai_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/cai")
@@ -90,6 +91,7 @@ find_dependency(ZLIB CONFIG REQUIRED)
 find_dependency(nghttp2 CONFIG REQUIRED)
 find_dependency(Libssh2 CONFIG REQUIRED)
 find_dependency(CURL CONFIG REQUIRED)
+find_package(LibXml2 CONFIG REQUIRED PATHS "${LibXml2_DIR}" NO_DEFAULT_PATH)
 find_package(pslog CONFIG REQUIRED PATHS "${pslog_DIR}" NO_DEFAULT_PATH)
 find_package(lonejson CONFIG REQUIRED PATHS "${lonejson_DIR}" NO_DEFAULT_PATH)
 find_package(cai CONFIG REQUIRED PATHS "${cai_DIR}" NO_DEFAULT_PATH)
@@ -98,33 +100,6 @@ find_package(lockdc CONFIG REQUIRED PATHS "${PACKAGE_PREFIX_DIR}/lib/cmake/lockd
 if(TARGET cai::cai_static AND TARGET lonejson::lonejson_static)
   set_property(TARGET cai::cai_static PROPERTY
     INTERFACE_LINK_LIBRARIES "CURL::libcurl;Threads::Threads;OpenSSL::Crypto;lonejson::lonejson_static")
-endif()
-
-if(NOT TARGET vectis::bundled_libxml2_static)
-  add_library(vectis::bundled_libxml2_static STATIC IMPORTED)
-  set_target_properties(vectis::bundled_libxml2_static PROPERTIES
-    IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libxml2.a"
-    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include/libxml2"
-  )
-  if(UNIX AND NOT APPLE)
-    target_link_libraries(vectis::bundled_libxml2_static INTERFACE m)
-  endif()
-endif()
-
-if(NOT TARGET vectis::bundled_libxml2_shared)
-  if(APPLE AND EXISTS "${PACKAGE_PREFIX_DIR}/lib/libxml2.dylib")
-    add_library(vectis::bundled_libxml2_shared SHARED IMPORTED)
-    set_target_properties(vectis::bundled_libxml2_shared PROPERTIES
-      IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libxml2.dylib"
-      INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include/libxml2"
-    )
-  elseif(EXISTS "${PACKAGE_PREFIX_DIR}/lib/libxml2.so")
-    add_library(vectis::bundled_libxml2_shared SHARED IMPORTED)
-    set_target_properties(vectis::bundled_libxml2_shared PROPERTIES
-      IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libxml2.so"
-      INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include/libxml2"
-    )
-  endif()
 endif()
 
 if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/lib/libvectis.a")
@@ -137,7 +112,7 @@ if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/lib/libvectis.a")
     OpenSSL::SSL
     OpenSSL::Crypto
     lonejson::lonejson_static
-    vectis::bundled_libxml2_static
+    LibXml2::LibXml2
     nghttp2::nghttp2
     ZLIB::ZLIB
   )
@@ -160,7 +135,7 @@ if(NOT TARGET vectis::shared)
     cpkt::openssl_ssl_shared
     cpkt::openssl_crypto_shared
     lonejson::lonejson
-    vectis::bundled_libxml2_shared
+    cpkt::libxml2_shared
     cpkt::nghttp2_shared
     cpkt::zlib_shared
   )

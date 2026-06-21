@@ -18,16 +18,14 @@ target_ar=
 target_ranlib=
 target_cmake_system_name=
 target_cmake_system_processor=
-target_lua_syscflags=
-target_lua_mycflags="-fPIC"
 
 case "$preset" in
   deps-host-debug)
     deps_root="$repo_root/.cache/deps/host-debug"
     target_id="x86_64-linux-gnu"
-    system_sha256="69e699d18374987ba16dfd82640ba1c263b71f0e1daeef8af2a2018a6f1e39ef"
+    system_sha256="745fde56d564dcdcb22ed9f16a7b73c8c2e18f947d5fe37ab774e5154ef554b1"
     lockdc_sha256="e7d2e64570c46889a0528cd26d97e2e4e5e76fb8482e4a9a551623add6e1571e"
-    lonejson_sha256="84f0abae33a1b1d91a0f962ad78ecd7be91a4055c4c6a4aa69e0df816f42812c"
+    lonejson_sha256="2626df65f8ac33aadd76b9d33a22fd8038cadf4ee6b7fecad3b60739c359db1a"
     pslog_sha256="91d2f93bc07bc66cf83d6a27a80cb6439c384d56bf84a2d11cd903215430d1d8"
     cai_sha256="84e401154f7e81707657da3068f0a57b58bf0899c930a296c98ebe46a5619661"
     target_cc="${CC:-cc}"
@@ -35,15 +33,13 @@ case "$preset" in
     target_ranlib="${RANLIB:-ranlib}"
     target_cmake_system_name="Linux"
     target_cmake_system_processor="x86_64"
-    target_lua_syscflags="-DLUA_USE_POSIX"
-    target_lua_mycflags="-fPIC -DLUA_USE_APICHECK"
     ;;
   deps-x86_64-linux-gnu)
     deps_root="$repo_root/.cache/deps/x86_64-linux-gnu"
     target_id="x86_64-linux-gnu"
-    system_sha256="69e699d18374987ba16dfd82640ba1c263b71f0e1daeef8af2a2018a6f1e39ef"
+    system_sha256="745fde56d564dcdcb22ed9f16a7b73c8c2e18f947d5fe37ab774e5154ef554b1"
     lockdc_sha256="e7d2e64570c46889a0528cd26d97e2e4e5e76fb8482e4a9a551623add6e1571e"
-    lonejson_sha256="84f0abae33a1b1d91a0f962ad78ecd7be91a4055c4c6a4aa69e0df816f42812c"
+    lonejson_sha256="2626df65f8ac33aadd76b9d33a22fd8038cadf4ee6b7fecad3b60739c359db1a"
     pslog_sha256="91d2f93bc07bc66cf83d6a27a80cb6439c384d56bf84a2d11cd903215430d1d8"
     cai_sha256="84e401154f7e81707657da3068f0a57b58bf0899c930a296c98ebe46a5619661"
     target_cc="${CC:-cc}"
@@ -51,14 +47,13 @@ case "$preset" in
     target_ranlib="${RANLIB:-ranlib}"
     target_cmake_system_name="Linux"
     target_cmake_system_processor="x86_64"
-    target_lua_syscflags="-DLUA_USE_POSIX"
     ;;
   deps-x86_64-linux-musl)
     deps_root="$repo_root/.cache/deps/x86_64-linux-musl"
     target_id="x86_64-linux-musl"
-    system_sha256="dcb1923af1d7529531f31637476f083070ccf1051ec217012d77a155ff4132d4"
+    system_sha256="e3a563a71d6bb9e1e3bdf14343d65bcc0ad8897713e6a8ddfd97cc7bc6b9c6f3"
     lockdc_sha256="96ec66ef828e8a1642bdbf4ee4010a2c25a1e67f7457aa84193b8c471516e9fb"
-    lonejson_sha256="326ee1f75e632db9899e05ac02f669b87a437064086242603519fe5197ea654a"
+    lonejson_sha256="1d5668be9d88e625735dadaa312bdff7fc0df51754a7891a3efb2be331c2adca"
     pslog_sha256="b628d32f9207e5102c9a8ae3f7ad32ce36e61178c7db67e6aa4548eb9cae567d"
     cai_sha256="ef85c84cdf82f2d37d3db3ebe7c97bcb28dc36072285779df993d8ee8a12d959"
     target_cc="${CC:-x86_64-linux-musl-gcc}"
@@ -66,14 +61,13 @@ case "$preset" in
     target_ranlib="${RANLIB:-x86_64-linux-musl-ranlib}"
     target_cmake_system_name="Linux"
     target_cmake_system_processor="x86_64"
-    target_lua_syscflags="-DLUA_USE_POSIX"
     ;;
   deps-aarch64-linux-gnu)
     deps_root="$repo_root/.cache/deps/aarch64-linux-gnu"
     target_id="aarch64-linux-gnu"
-    system_sha256="54e9ef336a0b092d0e68a84d2026a499c051df3c3e61b7a7dab1f0103d1e082b"
+    system_sha256="574e02e193330fd8e8fa5c56442ae8d11e9c901b3e89a53f299d66557941b67c"
     lockdc_sha256="b59bfdbd75adfde8a84eb0e6859d84af115696d86e75d488b5d099d854c50c00"
-    lonejson_sha256="74a515fcce5574f82dbae46a6ce3399d6b5d07d249fa9c98d53293b7baf8c35b"
+    lonejson_sha256="949a55b0958f0b4ac16295056a0302613ca2bc02b8dcfa6c6fb356231e7a04bf"
     pslog_sha256="d936ae9416f539c4f40aeaa023b9147cbd568bc87b7a3c3b091adfd217d935bb"
     cai_sha256="4df06b5e31c2f4b98a29031591bd2994aa77d372efc63e702dcffd3ec035968b"
     target_cc="${CC:-aarch64-linux-gnu-gcc}"
@@ -81,14 +75,13 @@ case "$preset" in
     target_ranlib="${RANLIB:-aarch64-linux-gnu-ranlib}"
     target_cmake_system_name="Linux"
     target_cmake_system_processor="aarch64"
-    target_lua_syscflags="-DLUA_USE_POSIX"
     ;;
   deps-aarch64-linux-musl)
     deps_root="$repo_root/.cache/deps/aarch64-linux-musl"
     target_id="aarch64-linux-musl"
-    system_sha256="61f7cb43ca78f33a21b5719f84f864ac5ce5cf7d8268eef52a7a01da08582a38"
+    system_sha256="c1b1e6b482172760f5967d484d2ef271e1d44defaf7f8f6e35bc66811f4f48fc"
     lockdc_sha256="29a99868b047e5d2514af713161e1ff0ebe651295380e678fa796121d61ba41a"
-    lonejson_sha256="0f2b6048caf74f5c9c02d332cea00bd67e2352764ba1b0d2f65b4266719fcd39"
+    lonejson_sha256="2891e18cfe7843dd7c15e71a4d1bd03dea6f4d178eb189fd8f3b6ad7caf067d7"
     pslog_sha256="638725174cf39f3c5337fc6f118bc88c2a41d385a01be98170ff4bef3d57fcae"
     cai_sha256="04808e14b8c55e2d624ba6ac01866b33b61c4a5913be92418966c557baf393e1"
     target_cc="${CC:-aarch64-linux-musl-gcc}"
@@ -96,14 +89,13 @@ case "$preset" in
     target_ranlib="${RANLIB:-aarch64-linux-musl-ranlib}"
     target_cmake_system_name="Linux"
     target_cmake_system_processor="aarch64"
-    target_lua_syscflags="-DLUA_USE_POSIX"
     ;;
   deps-armhf-linux-gnu)
     deps_root="$repo_root/.cache/deps/armhf-linux-gnu"
     target_id="armhf-linux-gnu"
-    system_sha256="33bfe771f2f2b36562c9e18094f79168d8d687dc7a55393584930ca434547d7d"
+    system_sha256="1e4de9dd3de7345629c86cd140177d4dc591c740f7432041bcd423be9bf82496"
     lockdc_sha256="d56b3eda355e09d36a6ac91c1d8c754f431e9c55505bbf81a408020c577b34d4"
-    lonejson_sha256="8adad849699ea6380dc16ee9228f4d9695e9b3d49ce6c68b7f391e3196e9d6ad"
+    lonejson_sha256="0621cae1f1d5a3e8830f34005f3adf9b5fee7195486ab71b649bc8a61ca0c1b6"
     pslog_sha256="bc8530a3773666deb6d551263c7dd59a64c92629fa56d1e89c278d637472f2dc"
     cai_sha256="0ed692d3b14e86e404f8ac5d9982d732291e67f8b56e3e028db4d55192318854"
     target_cc="${CC:-arm-linux-gnueabihf-gcc}"
@@ -111,14 +103,13 @@ case "$preset" in
     target_ranlib="${RANLIB:-arm-linux-gnueabihf-ranlib}"
     target_cmake_system_name="Linux"
     target_cmake_system_processor="arm"
-    target_lua_syscflags="-DLUA_USE_POSIX"
     ;;
   deps-armhf-linux-musl)
     deps_root="$repo_root/.cache/deps/armhf-linux-musl"
     target_id="armhf-linux-musl"
-    system_sha256="7edc2f61e01370da6af96c496ae5bfbec72e43761247dd2c310ac7627923c591"
+    system_sha256="222236dacf9df80f01fbc14768ed5163e08cbcdb32ae6460a0f494df14330f0b"
     lockdc_sha256="0aced190335092d7fcac0a4147e1e220368105900f4e2a34cdec77e602ce1680"
-    lonejson_sha256="e62f512dae09e5fe6402e876edaf1f6517159854e049ff161c32ee52df864566"
+    lonejson_sha256="975be93eff3e4ed08973f52fc57498d0a5faeec87b1ffa84eed8325c068c5344"
     pslog_sha256="503d2bd882c053dc8f34dbfe718a328303a4973789bbb8fb37261e4822b3babe"
     cai_sha256="c9c899f6881a977a5d88218505649531cdac200a4c969400d5c1a7e88a529056"
     target_cc="${CC:-arm-linux-musleabihf-gcc}"
@@ -126,14 +117,13 @@ case "$preset" in
     target_ranlib="${RANLIB:-arm-linux-musleabihf-ranlib}"
     target_cmake_system_name="Linux"
     target_cmake_system_processor="arm"
-    target_lua_syscflags="-DLUA_USE_POSIX"
     ;;
   deps-arm64-apple-darwin)
     deps_root="$repo_root/.cache/deps/arm64-apple-darwin"
     target_id="arm64-apple-darwin"
-    system_sha256="204fcaa8d6d53b6affcdcb49668d60b0e41d2aa7ff5f4dc2c8fce0d24caa0022"
+    system_sha256="c5c0160ee65c94084350ee54eb21fc64c410b76c1d104071b29fb5e170ae0081"
     lockdc_sha256="cf8b078881bab163bf725c624b788b3002bfe57aeb0a1f340ee64faf71be3dc5"
-    lonejson_sha256="2a73b6bb7e2e690b1accfb811c64de075b2efb569bf9cc299547f4f577c151f7"
+    lonejson_sha256="1e51e13d3850de920f689a245c3372cd6949a8c9531863b574fc05425726be51"
     pslog_sha256="f8f4e18810ecad7278eb341fbfe7e3f9d85eb654891c4d08149f425f3a4c9b3d"
     cai_sha256="f18732d80e0510b1ffc32c5218429eed44665927e939ab8e5695984e41934071"
     if [ -n "${OSXCROSS_ROOT:-}" ]; then
@@ -147,7 +137,6 @@ case "$preset" in
     target_ranlib="${RANLIB:-$osxcross_root/bin/$osxcross_host-ranlib}"
     target_cmake_system_name="Darwin"
     target_cmake_system_processor="arm64"
-    target_lua_syscflags="-DLUA_USE_POSIX"
     ;;
   *)
     echo "usage: scripts/deps.sh [deps-host-debug|deps-x86_64-linux-gnu|deps-x86_64-linux-musl|deps-aarch64-linux-gnu|deps-aarch64-linux-musl|deps-armhf-linux-gnu|deps-armhf-linux-musl|deps-arm64-apple-darwin]" >&2
@@ -176,7 +165,7 @@ target_ar=$(resolve_tool_path "$target_ar")
 target_ranlib=$(resolve_tool_path "$target_ranlib")
 unzip_tool=$(resolve_tool_path "${UNZIP:-unzip}")
 
-system_version="0.2.0"
+system_version="0.4.0"
 system_archive="c.pkt.systems-${system_version}-${target_id}.tar.gz"
 system_url="https://github.com/sa6mwa/c.pkt.systems/releases/download/v${system_version}/${system_archive}"
 system_download="$downloads_dir/$system_archive"
@@ -190,7 +179,7 @@ lockdc_lua_url="https://github.com/sa6mwa/liblockdc/releases/download/v${lockdc_
 lockdc_lua_download="$downloads_dir/$lockdc_lua_archive"
 lockdc_lua_sha256="6554425bea5e4f28f328776af9914ba458369a5ead2df9a81355d5c4d51036fa"
 lockdc_lua_source_dir="$deps_root/share/lockdc-source"
-lonejson_version="0.32.0"
+lonejson_version="0.32.1"
 lonejson_archive="liblonejson-${lonejson_version}-${target_id}.tar.gz"
 lonejson_url="https://github.com/sa6mwa/lonejson/releases/download/v${lonejson_version}/${lonejson_archive}"
 lonejson_download="$downloads_dir/$lonejson_archive"
@@ -198,7 +187,7 @@ lonejson_lua_archive="lonejson-${lonejson_version}-1.src.rock"
 lonejson_lua_payload="lonejson-${lonejson_version}.tar.gz"
 lonejson_lua_url="https://github.com/sa6mwa/lonejson/releases/download/v${lonejson_version}/${lonejson_lua_archive}"
 lonejson_lua_download="$downloads_dir/$lonejson_lua_archive"
-lonejson_lua_sha256="87a680b338399de7f981c2dac0681c6cddc8542463d9a3cf6f2f0f17808e47d2"
+lonejson_lua_sha256="0991c3029539c3716688f53d0ccbefe09cec199816389b865ecb146a665f013d"
 lonejson_source_dir="$deps_root/share/lonejson-source"
 pslog_version="0.4.1"
 pslog_archive="libpslog-${pslog_version}-${target_id}.tar.gz"
@@ -220,22 +209,8 @@ pid0_header_gz="${pid0_header}.gz"
 pid0_url="https://github.com/sa6mwa/libpid0/releases/download/v${pid0_version}/${pid0_header_gz}"
 pid0_download="$downloads_dir/$pid0_header_gz"
 pid0_sha256="29591e058ab5ad9d0bbe0cd4c0d783ace2dee4e2ae6c590a0ba1d9f146f025f9"
-lua_version="5.5.0"
-lua_archive="lua-${lua_version}.tar.gz"
-lua_url="https://www.lua.org/ftp/${lua_archive}"
-lua_download="$downloads_dir/$lua_archive"
-lua_sha256="57ccc32bbbd005cab75bcc52444052535af691789dba2b9016d5c50640d68b3d"
-lua_build_root="$repo_root/.cache/deps-build/$preset"
-lua_build_dir="$lua_build_root/lua-${lua_version}"
 libxml2_version="2.15.3"
-libxml2_archive="libxml2-${libxml2_version}.tar.gz"
-libxml2_url="https://github.com/GNOME/libxml2/archive/refs/tags/v${libxml2_version}.tar.gz"
-libxml2_download="$downloads_dir/$libxml2_archive"
-libxml2_sha256="5c6060277173270356c3f1c321a640ab629bdabc5e5ba9095b99e00759ba0c39"
-libxml2_build_root="$repo_root/.cache/deps-build/$preset/libxml2-${libxml2_version}"
-libxml2_source_dir="$libxml2_build_root/src"
-libxml2_static_build_dir="$libxml2_build_root/build-static"
-libxml2_shared_build_dir="$libxml2_build_root/build-shared"
+lua_version="5.5.0"
 manifest_path="$deps_root/manifest.txt"
 
 download_if_missing() {
@@ -255,8 +230,6 @@ download_if_missing "$pslog_url" "$pslog_download"
 download_if_missing "$cai_url" "$cai_download"
 download_if_missing "$cai_lua_url" "$cai_lua_download"
 download_if_missing "$pid0_url" "$pid0_download"
-download_if_missing "$lua_url" "$lua_download"
-download_if_missing "$libxml2_url" "$libxml2_download"
 
 actual_system_sha256=$(sha256sum "$system_download" | awk '{print $1}')
 if [ "$actual_system_sha256" != "$system_sha256" ]; then
@@ -321,50 +294,6 @@ if [ "$actual_pid0_sha256" != "$pid0_sha256" ]; then
   echo "actual   $actual_pid0_sha256" >&2
   exit 1
 fi
-actual_lua_sha256=$(sha256sum "$lua_download" | awk '{print $1}')
-if [ "$actual_lua_sha256" != "$lua_sha256" ]; then
-  echo "checksum mismatch for $lua_archive" >&2
-  echo "expected $lua_sha256" >&2
-  echo "actual   $actual_lua_sha256" >&2
-  exit 1
-fi
-actual_libxml2_sha256=$(sha256sum "$libxml2_download" | awk '{print $1}')
-if [ "$actual_libxml2_sha256" != "$libxml2_sha256" ]; then
-  echo "checksum mismatch for $libxml2_archive" >&2
-  echo "expected $libxml2_sha256" >&2
-  echo "actual   $actual_libxml2_sha256" >&2
-  exit 1
-fi
-
-build_libxml2() {
-  build_dir=$1
-  shared=$2
-
-  cmake -S "$libxml2_source_dir" -B "$build_dir" -GNinja \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX="$deps_root" \
-    -DCMAKE_C_COMPILER="$target_cc" \
-    "-DCMAKE_C_FLAGS=-ffile-prefix-map=$repo_root=. -ffile-prefix-map=$libxml2_source_dir=libxml2 -ffile-prefix-map=$libxml2_build_root=libxml2-build" \
-    -DCMAKE_AR="$target_ar" \
-    -DCMAKE_RANLIB="$target_ranlib" \
-    -DCMAKE_SYSTEM_NAME="$target_cmake_system_name" \
-    -DCMAKE_SYSTEM_PROCESSOR="$target_cmake_system_processor" \
-    -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
-    -DBUILD_SHARED_LIBS="$shared" \
-    -DLIBXML2_WITH_DOCS=OFF \
-    -DLIBXML2_WITH_PROGRAMS=OFF \
-    -DLIBXML2_WITH_TESTS=OFF \
-    -DLIBXML2_WITH_PYTHON=OFF \
-    -DLIBXML2_WITH_ICONV=OFF \
-    -DLIBXML2_WITH_ICU=OFF \
-    -DLIBXML2_WITH_CATALOG=OFF \
-    -DLIBXML2_WITH_MODULES=OFF \
-    -DLIBXML2_WITH_READLINE=OFF \
-    -DLIBXML2_WITH_ZLIB=OFF
-  cmake --build "$build_dir"
-  cmake --install "$build_dir"
-}
-
 rm -rf "$deps_root/include" "$deps_root/lib" "$deps_root/share"
 mkdir -p "$deps_root"
 tar -xzf "$system_download" -C "$deps_root" --strip-components 1
@@ -378,8 +307,8 @@ mkdir -p "$lonejson_source_dir"
   tar -xzf - -C "$lonejson_source_dir" --strip-components 1
 case "$target_cmake_system_name" in
   Linux)
-    if [ -e "$deps_root/lib/liblonejson.so.0.32.0" ] && [ ! -e "$deps_root/lib/liblonejson.so.16" ]; then
-      ln -s liblonejson.so.0.32.0 "$deps_root/lib/liblonejson.so.16"
+    if [ -e "$deps_root/lib/liblonejson.so.$lonejson_version" ] && [ ! -e "$deps_root/lib/liblonejson.so.16" ]; then
+      ln -s "liblonejson.so.$lonejson_version" "$deps_root/lib/liblonejson.so.16"
     fi
     ;;
 esac
@@ -389,28 +318,6 @@ mkdir -p "$cai_lua_source_dir"
 "$unzip_tool" -p "$cai_lua_download" "$cai_lua_payload" |
   tar -xzf - -C "$cai_lua_source_dir" --strip-components 1
 gzip -dc "$pid0_download" > "$deps_root/include/$pid0_header"
-rm -rf "$lua_build_dir"
-mkdir -p "$lua_build_root"
-tar -xzf "$lua_download" -C "$lua_build_root"
-MAKEFLAGS= make -C "$lua_build_dir/src" a \
-  CC="$target_cc -std=gnu99" \
-  AR="$target_ar rc" \
-  RANLIB="$target_ranlib" \
-  SYSCFLAGS="$target_lua_syscflags" \
-  MYCFLAGS="$target_lua_mycflags" \
-  SYSLIBS=""
-cp "$lua_build_dir/src/liblua.a" "$deps_root/lib/liblua.a"
-cp "$lua_build_dir/src/lua.h" "$deps_root/include/lua.h"
-cp "$lua_build_dir/src/luaconf.h" "$deps_root/include/luaconf.h"
-cp "$lua_build_dir/src/lualib.h" "$deps_root/include/lualib.h"
-cp "$lua_build_dir/src/lauxlib.h" "$deps_root/include/lauxlib.h"
-cp "$lua_build_dir/src/lua.hpp" "$deps_root/include/lua.hpp"
-rm -rf "$libxml2_build_root"
-mkdir -p "$libxml2_build_root"
-tar -xzf "$libxml2_download" -C "$libxml2_build_root"
-mv "$libxml2_build_root/libxml2-$libxml2_version" "$libxml2_source_dir"
-build_libxml2 "$libxml2_static_build_dir" OFF
-build_libxml2 "$libxml2_shared_build_dir" ON
 
 cat > "$manifest_path" <<EOF
 preset=$preset
@@ -452,17 +359,14 @@ libpid0_version=$pid0_version
 libpid0_header=$pid0_header
 libpid0_sha256=$pid0_sha256
 lua_version=$lua_version
-lua_archive=$lua_archive
-lua_sha256=$lua_sha256
-lua_source=lua.org
-lua_linkage=static
-lua_runtime_module_loading=static-package-preload
+lua_source=c.pkt.systems
+lua_linkage=static+shared
+lua_runtime_facade=cpkt-lua-runtime
+lua_runtime_facade_abi=0
 libxml2_version=$libxml2_version
-libxml2_archive=$libxml2_archive
-libxml2_sha256=$libxml2_sha256
-libxml2_source=GNOME
-libxml2_iconv=disabled
-libxml2_zlib=disabled
-libxml2_catalog=disabled
+libxml2_source=c.pkt.systems
+libxml2_iconv=enabled
+libxml2_zlib=enabled
+libxml2_catalog=default
 libxml2_linkage=static+shared
 EOF
