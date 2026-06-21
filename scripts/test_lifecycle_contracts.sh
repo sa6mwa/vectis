@@ -5,6 +5,8 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 version_path="$repo_root/VERSION"
 version_work="$repo_root/build/test-release-version"
+source_stage_dist="$version_work/source-dist"
+untracked_source_probe="$repo_root/vectis-untracked-source-probe.txt"
 saved_version=
 had_version=0
 
@@ -14,6 +16,7 @@ cleanup() {
   else
     rm -f "$version_path"
   fi
+  rm -f "$untracked_source_probe"
   rm -rf "$version_work"
 }
 trap cleanup EXIT INT TERM
@@ -83,6 +86,19 @@ git -C "$version_work" tag -a v2.0.0 -m 'annotated test tag'
 annotated_version=$("$version_work/scripts/release_version.sh")
 if [ "$annotated_version" != "0.0.0" ]; then
   echo "annotated HEAD tag was accepted as release version" >&2
+  exit 1
+fi
+
+printf '%s\n' 'must not ship' >"$untracked_source_probe"
+mkdir -p "$source_stage_dist"
+source_archive=$(VECTIS_DIST_DIR="$source_stage_dist" "$repo_root/scripts/stage_release_sources.sh")
+if tar -tzf "$source_archive" | grep -Eq '/vectis-untracked-source-probe\.txt$'; then
+  echo "source archive included a non-ignored untracked worktree file" >&2
+  exit 1
+fi
+if tar -xOzf "$source_archive" "vectis-$("$repo_root/scripts/release_version.sh")/RELEASE_MANIFEST" |
+   grep -Eq '^vectis-untracked-source-probe\.txt$'; then
+  echo "source archive manifest included a non-ignored untracked worktree file" >&2
   exit 1
 fi
 

@@ -21,7 +21,9 @@ fi
 rm -rf "$stage_parent"
 mkdir -p "$stage_root" "$dist_dir"
 
-git -C "$repo_root" ls-files --cached --others --exclude-standard | sort >"$manifest_tmp"
+git -C "$repo_root" ls-files --cached |
+  grep -vx 'VERSION' |
+  sort >"$manifest_tmp"
 if [ ! -d "$repo_root/vendor/kore/upstream" ]; then
   echo "source archive staging requires vendor/kore/upstream; run 'make vendor-kore-apply' first" >&2
   exit 1
