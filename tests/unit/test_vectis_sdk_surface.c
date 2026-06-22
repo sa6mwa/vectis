@@ -1384,11 +1384,14 @@ static void assert_json_route_surface(void) {
 
   xml_config = vectis_xml_default();
   xml_config.root_element = "sample";
-  xml_route = vectis_xml_route(VECTIS_HTTP_POST, "/xml", &xml_config, NULL,
+  xml_route = vectis_xml_route(VECTIS_HTTP_POST, "/xml", &sample_xml_doc_map,
+                               sizeof(sample_xml_doc), &xml_config, NULL,
                                NULL);
   assert(xml_route.body.mode == VECTIS_BODY_STREAMING_UPLOAD);
   assert(xml_route.buffer_bytes ==
          VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES);
+  assert(xml_route.input_map == &sample_xml_doc_map);
+  assert(xml_route.input_size == sizeof(sample_xml_doc));
   assert(strcmp(xml_route.config.root_element, "sample") == 0);
 
   dsv_config = vectis_dsv_csv();

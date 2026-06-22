@@ -26,6 +26,10 @@ typedef struct runtime_dsv_row {
   int active;
 } runtime_dsv_row;
 
+typedef struct runtime_xml_doc {
+  char body[2048];
+} runtime_xml_doc;
+
 typedef struct runtime_dsv_summary {
   size_t rows;
   lonejson_int64 total;
@@ -51,10 +55,16 @@ static const lonejson_field runtime_dsv_row_fields[] = {
     LONEJSON_FIELD_I64_REQ(runtime_dsv_row, count, "count"),
     LONEJSON_FIELD_BOOL_REQ(runtime_dsv_row, active, "active")};
 
+static const lonejson_field runtime_xml_doc_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(runtime_xml_doc, body, "body",
+                                    LONEJSON_OVERFLOW_FAIL)};
+
 LONEJSON_MAP_DEFINE(source_json_doc_map, source_json_doc,
                     source_json_doc_fields);
 LONEJSON_MAP_DEFINE(runtime_dsv_row_map, runtime_dsv_row,
                     runtime_dsv_row_fields);
+LONEJSON_MAP_DEFINE(runtime_xml_doc_map, runtime_xml_doc,
+                    runtime_xml_doc_fields);
 
 static vectis_status sample_handler(vectis_app *app, vectis_request *request,
                                     vectis_response *response, void *userdata,
@@ -349,19 +359,16 @@ static vectis_status stream_reader_handler(
 }
 
 static vectis_status xml_route_handler(vectis_app *app, vectis_request *request,
-                                       struct lc_source *reader,
-                                       vectis_response *response,
+                                       void *input, vectis_response *response,
                                        void *userdata, vectis_error *error) {
-  lc_error lcerr;
-  unsigned char chunk[257];
-  size_t total;
-  size_t nread;
+  runtime_xml_doc *doc;
   char text[64];
 
   (void)app;
   (void)userdata;
-  if (reader == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "XML reader is required");
+  doc = (runtime_xml_doc *)input;
+  if (doc == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML input is required");
     return VECTIS_ERR_INVALID;
   }
   if (vectis_request_body_reader(request) != NULL ||
@@ -370,22 +377,8 @@ static vectis_status xml_route_handler(vectis_app *app, vectis_request *request,
     return vectis_response_text(response, 500, "text/plain", "materialized",
                                 error);
   }
-  total = 0u;
-  lc_error_init(&lcerr);
-  for (;;) {
-    nread = reader->read(reader, chunk, sizeof(chunk), &lcerr);
-    if (nread == 0u) {
-      if (lcerr.code != 0) {
-        vectis_set_error(error, VECTIS_ERR_STATE, "failed to read XML upload");
-        lc_error_cleanup(&lcerr);
-        return VECTIS_ERR_STATE;
-      }
-      break;
-    }
-    total += nread;
-  }
-  lc_error_cleanup(&lcerr);
-  (void)snprintf(text, sizeof(text), "%lu", (unsigned long)total);
+  (void)snprintf(text, sizeof(text), "%lu",
+                 (unsigned long)strlen(doc->body));
   return vectis_response_text(response, 200, "text/plain", text, error);
 }
 
@@ -1119,8 +1112,9 @@ static void assert_kore_smoke(void) {
   assert(status == VECTIS_OK);
   xml_config = vectis_xml_default();
   xml_config.root_element = "doc";
-  xml_route = vectis_xml_route(VECTIS_HTTP_POST, "/xml-upload", &xml_config,
-                               xml_route_handler, NULL);
+  xml_route = vectis_xml_route(VECTIS_HTTP_POST, "/xml-upload",
+                               &runtime_xml_doc_map, sizeof(runtime_xml_doc),
+                               &xml_config, xml_route_handler, NULL);
   xml_route.body.max_bytes = 2097152u;
   xml_route.body.memory_buffer_limit_bytes = 8u;
   xml_route.buffer_bytes = 4096u;
@@ -1410,7 +1404,7 @@ static void assert_kore_smoke(void) {
   assert(fwrite("</body></doc>", 1u, 13u, fp) == 13u);
   assert(fclose(fp) == 0);
   (void)snprintf(size_text, sizeof(size_text), "%lu",
-                 (unsigned long)(xml_body_size + 24u));
+                 (unsigned long)xml_body_size);
   status = vectis_http_upload_file(
       &http, VECTIS_HTTP_POST, "http://127.0.0.1:28080/xml-upload",
       xml_upload_path, "application/xml", &xml_route_response, &error);

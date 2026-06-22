@@ -404,7 +404,7 @@ typedef vectis_status (*vectis_json_typed_route_handler_fn)(
     vectis_json_response *response, void *userdata, vectis_error *error);
 
 typedef vectis_status (*vectis_xml_route_handler_fn)(
-    vectis_app *app, vectis_request *request, struct lc_source *reader,
+    vectis_app *app, vectis_request *request, void *input,
     vectis_response *response, void *userdata, vectis_error *error);
 
 typedef vectis_status (*vectis_dsv_route_handler_fn)(
@@ -454,6 +454,8 @@ typedef struct vectis_xml_route_config {
   vectis_route_path_kind path_kind;
   vectis_body_policy body;
   size_t buffer_bytes;
+  const lonejson_map *input_map;
+  size_t input_size;
   vectis_xml_config config;
   vectis_xml_route_handler_fn handler;
   void *userdata;
@@ -1001,11 +1003,12 @@ vectis_json_typed_route_config vectis_json_typed_route_methods(
     const lonejson_map *input_map, size_t input_size,
     vectis_json_typed_route_handler_fn handler, void *userdata);
 vectis_xml_route_config vectis_xml_route(
-    vectis_http_method method, const char *path,
-    const vectis_xml_config *config, vectis_xml_route_handler_fn handler,
-    void *userdata);
+    vectis_http_method method, const char *path, const lonejson_map *input_map,
+    size_t input_size, const vectis_xml_config *config,
+    vectis_xml_route_handler_fn handler, void *userdata);
 vectis_xml_route_config vectis_xml_route_methods(
     vectis_http_methods methods, const char *path,
+    const lonejson_map *input_map, size_t input_size,
     const vectis_xml_config *config, vectis_xml_route_handler_fn handler,
     void *userdata);
 vectis_dsv_route_config vectis_dsv_route(
