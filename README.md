@@ -1,72 +1,74 @@
 # vectis
 
-`vectis`, or `veCtis`, is an unfinished SDK and runtime for building small,
-workflow-driven services in C and Lua. The target is an API service stack that
-can expose HTTP/TLS endpoints, serialize and deserialize JSON, coordinate state
-through lockd, enqueue and consume queue work, call downstream APIs, move files
-over SFTP, run remote SSH commands, and emit structured operational logs from
-one coherent developer experience.
+Vectis is a C SDK and Lua-capable runtime for building small operational
+services without assembling a separate web, state, protocol, certificate, and
+automation stack by hand.
 
-The project has two deliverables:
+The project is intentionally service-oriented. It wraps a set of lower-level
+libraries into one SDK shape for HTTP/TLS APIs, typed data routes, durable
+state and queue workflows, downstream protocol clients, AI/tool integrations,
+certificate handling, and local/release lifecycle automation.
 
-- A C SDK installed as headers plus a static or shared `libvectis`, including
-  the dependency headers needed by downstream C applications.
-- A `vectis` executable that runs Lua scripts with the Vectis framework and all
-  provided native bindings available to the script.
+## What It Ships
 
-The Lua executable is intended to support scripts with a shebang such as:
+Vectis has two primary deliverables:
 
-```lua
-#!/usr/local/bin/vectis
-local vectis = require("vectis")
-```
+- `libvectis`: a C SDK installed as public headers plus static and/or shared
+  libraries.
+- `vectis`: an executable that embeds the provisioned Lua runtime and statically
+  registered native modules for script and packed-service execution.
 
-The end state is that a developer can write a REST API, use lockd for document
-storage, retrieval, queries, leases, queue workflows, and coordination, call
-external HTTP APIs, store or retrieve SFTP files, run SSH commands, and handle
-JSON and structured logging without assembling a separate C/Lua runtime stack by
-hand.
+The C SDK is the primary surface today. The Lua runtime is present and can run
+scripts, but the higher-level Lua framework is still being filled in.
 
-## Runtime Model
+## Scope
 
-`vectis` integrates these components:
+Vectis is for services that need several of these concerns in one process or
+one deployable package:
 
-- Kore provides the HTTP/TLS server runtime, routing boundary, process model,
-  ACME support, and web-server features.
-- `liblockdc` provides the lockd client and lockd Lua binding for durable state,
-  queues, leases, and coordination.
-- `lonejson` provides JSON parsing and serialization for C and Lua.
-- `cai` provides OpenAI API, agent, tool, and MCP primitives for C and Lua.
-- `libpslog` provides structured logging for C and Lua.
-- libcurl provides HTTP(S), SFTP, and other URL-oriented client operations.
-- OpenSSL provides TLS and certificate handling.
-- libssh2 provides SSH command execution and lower-level SSH/SFTP capability.
-- libxml2 provides streaming XML parsing for document formats common in finance
-  and integration workflows.
+- Kore-backed HTTP/TLS servers with route registration, static assets, upload
+  handling, OpenAPI metadata, and explicit runtime guardrails.
+- Typed JSON, XML, and delimiter-separated input mapped into `lonejson` structs.
+- Lockd-backed state, leases, attachments, queue producers, and consumer
+  services through `liblockdc`.
+- Downstream HTTP, SFTP, MQTT, and transfer clients through libcurl.
+- SSH command execution and SFTP transfers through libssh2.
+- OpenSSL-backed key, CSR, certificate, CA, and PEM bundle workflows.
+- Structured logging through `libpslog`.
+- CAI-backed OpenAI API, agent, tool, and MCP primitives.
+- A raw escape hatch to the bundled dependency headers when the Vectis facade is
+  intentionally not enough.
 
-The C SDK should present these as one stable surface: one application object,
-one configuration layer, one logger, one lockd configuration, one TLS/certificate
-configuration story, one HTTP server boundary, and coherent helper APIs for JSON,
-queue, downstream HTTP, SFTP, and SSH workflows.
+MTConnect is planned as a protocol surface. It is not documented here as an
+implemented runtime feature yet; the intended direction is to make it a typed
+protocol integration alongside XML/DSV/JSON and the existing curl/SSH/SFTP/MQTT
+client surfaces.
+
+## Dependency Baseline
+
+Debug and release builds consume pinned SDK bundles provisioned under `.cache/`.
+The current expected dependency set is:
+
+- `c.pkt.systems` 0.4.0 for curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.0,
+  the C89 Lua runtime facade, libxml2 2.15.3, and supporting package metadata.
+- `liblockdc` 0.12.1 for lockd C and Lua surfaces.
+- `lonejson` 0.32.1 for typed JSON parsing, serialization, streaming arrays,
+  spooled fields, and C/Lua bindings.
+- `cai` 0.1.2 for OpenAI API, agent, tool, MCP, and Lua binding sources.
+- `libpslog` 0.4.1 for structured logging.
+- `libpid0` 0.3.0 for Linux PID 1 behavior in the `vectis` executable.
+
+Vectis validates the dependency manifest during CMake configure. A stale or
+mixed dependency root should fail early instead of producing a subtly mismatched
+SDK.
+
+## C SDK Model
 
 Public configuration structs must be initialized with their matching
-`vectis_*_init()` function before use. Local C variables are not automatically
-zeroed, and the init helpers also apply Vectis' non-zero operational defaults
-for limits, timeouts, and retry behavior. Boolean fields default to zero; when a
-feature is enabled by default, the public option is an explicit opt-out such as
-`*_disabled`.
+`vectis_*_init()` function before use. The init helpers apply non-zero defaults
+for timeouts, limits, retry behavior, TLS mode, and route body policies.
 
-The primary C SDK lifecycle uses handle structs with explicit `self`
-arguments, matching the `liblockdc` style:
-
-1. initialize a config struct with `vectis_app_config_init()`,
-2. attach borrowed dependencies such as `pslog` loggers or externally owned
-   lockd clients only when the app should not own them,
-3. create the app with `vectis_app_new()`,
-4. register routes, static assets, JSON handlers, or consumer handlers through
-   the returned handle,
-5. start the app or consumer runtime through the handle,
-6. close the Vectis-owned handle after shutdown.
+Stateful SDK objects use handle structs with explicit `self` method calls:
 
 ```c
 vectis_app_config config;
@@ -86,9 +88,7 @@ if (app == NULL) {
 }
 
 route = vectis_route_methods(VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD,
-                             "/health",
-                             health,
-                             NULL);
+                             "/health", health, NULL);
 if (app->route(app, &route, &error) != VECTIS_OK) {
   app->close(app);
   return 1;
@@ -102,284 +102,150 @@ if (app->start(app, &error) != VECTIS_OK) {
 app->close(app);
 ```
 
-Stateful/resource-owning SDK surfaces follow the same pattern:
+The same pattern applies to HTTP clients, SFTP sessions, SSH sessions, MQTT
+publishers, and lockd consumer services: initialize config, construct a handle,
+call methods with explicit `self`, and close the handle. Free functions remain
+available for lower-level use and compatibility.
 
-```c
-vectis_ssh_config config;
-vectis_ssh *ssh;
-vectis_ssh_exec_result result;
+Borrowed inputs stay borrowed. Strings, `vectis_source` backing storage,
+`lc_source` objects, loggers, callbacks, and raw dependency handles supplied
+through config or route registration must outlive the Vectis object or route
+that references them.
 
-vectis_ssh_config_init(&config);
-config.host = "127.0.0.1";
-config.username = "deploy";
-config.password = "secret";
+## Typed Routes And Streaming
 
-ssh = NULL;
-if (vectis_ssh_new(&config, &ssh, &error) != VECTIS_OK) {
-  return 1;
-}
-if (ssh->exec(ssh, "uname -a", &result, &error) != VECTIS_OK) {
-  ssh->close(ssh);
-  return 1;
-}
-vectis_ssh_exec_result_cleanup(&result);
-ssh->close(ssh);
+Vectis has both typed route helpers and raw streaming escape hatches.
+
+Typed routes parse into caller-provided static `lonejson_map` structs:
+
+- `vectis_json_typed_route()` parses JSON request bodies into a mapped input
+  struct and lets the handler respond with status-specific mapped output through
+  `vectis_json_reply()`.
+- `vectis_xml_route()` parses XML with libxml2's reader API directly into the
+  mapped input struct. It does not build an XML DOM and does not translate XML
+  through generated JSON.
+- `vectis_dsv_route()` gives handlers a pull iterator over typed DSV rows
+  parsed into mapped row structs.
+
+Raw streaming upload routes are separate. Use `vectis_upload_reader_route()`
+when the handler needs the upload byte stream itself instead of a typed parser.
+Use file upload routes when the product contract is file-oriented.
+
+Request-body policy is explicit:
+
+- Small API bodies can be materialized through `vectis_request_body_materialize()`.
+- Streaming routes use bounded internal buffers and live reader flow.
+- Upload/file routes can set max bytes and memory thresholds deliberately.
+- Vectis never silently raises the server-wide Kore body ceiling from route
+  registration.
+
+## Data Formats
+
+JSON is handled by LoneJSON. Vectis uses mapped structs for request parsing,
+response serialization, HTTP client bodies, selected-array streaming, and
+source-to-sink array rewriting.
+
+XML is parsed with libxml2 tokens and LoneJSON maps. Elements map by key,
+attributes map by name or configured prefix, nested objects recurse through
+submaps, repeated contiguous elements fill LoneJSON arrays, and large text
+fields can use LoneJSON spooled stream fields. Non-contiguous repeated array
+elements are rejected rather than buffered and reordered.
+
+DSV covers CSV, TSV, and configurable delimiter-separated values. Row-only input
+can infer column order from a map; headered input can infer names from the first
+record or use explicit columns. DSV row parsing is streaming. Conversion helpers
+that produce a complete JSON array are named and treated as materializing APIs.
+
+## Runtime And Protocol Surfaces
+
+Kore is the embedded HTTP/TLS runtime. Vectis currently allows one active
+Kore-backed routed app per process. Independent servers or separate blocking
+consumer loops should run in separate processes.
+
+Lockd is optional for Kore-only services. When configured, app-owned lockd
+clients are process-local and opened lazily in Kore workers where appropriate.
+Non-Kore consumer services fail fast during startup when lockd configuration is
+invalid.
+
+CAI is included in the dependency set and runtime registration plan as the AI
+and tool protocol layer. The intended Vectis role is to make CAI usable beside
+ordinary service work: lockd-backed state, HTTP routes, queue consumers, tool
+callbacks, MCP integration, and OpenAI API calls should share the same logging,
+configuration, and packaging story.
+
+MTConnect is the next protocol family planned for this stack. The expected
+shape is a typed, streaming-aware integration rather than a raw string/DOM API.
+Until that surface lands, MTConnect should be treated as forward-looking
+roadmap, not an advertised SDK feature.
+
+## Lua Runtime
+
+The `vectis` executable embeds the provisioned Lua 5.5 runtime facade and does
+not depend on host Lua, LuaRocks, `LUA_PATH`, `LUA_CPATH`, or dynamically
+discovered Lua modules for normal execution.
+
+Typical script entry:
+
+```lua
+#!/usr/bin/env vectis
+local vectis = require("vectis")
 ```
 
-HTTP clients, SFTP sessions, SSH sessions, MQTT publishers, Vectis apps, and
-consumer services all use the same shape: init config, construct handle, call
-methods with explicit `self`, and close the handle. Constructors clear `*out`
-before validation, so failed construction never leaves a stale output pointer.
-Handle config fields are shallow effective config copies; any borrowed strings,
-sources, loggers, or callback contexts must outlive the handle.
+Bundled modules are registered statically through `package.preload`. The
+runtime currently registers Vectis-owned Lua support plus dependency bindings
+such as lockdc, lonejson, and cai where available from the provisioned sources.
 
-```c
-vectis_http_client_config config;
-vectis_http_client *client;
-vectis_http_response response = {0};
+`vectis pack` can append a Lua script, and optionally a lockd client bundle, to
+the Linux executable with hashes and trailer metadata. Embedded private material
+is kept in memory for consumers that support source-backed configuration.
 
-vectis_http_client_config_init(&config);
-config.base_url = "https://api.example.com";
+The high-level Lua web/service framework is still an active implementation
+area. The C SDK is the stable design source until Lua parity catches up.
 
-if (vectis_http_client_new(&config, &client, &error) != VECTIS_OK) {
-  return 1;
-}
-if (client->post_json(client, "/orders", &order_map, &order, &response, &error) != VECTIS_OK) {
-  client->close(client);
-  return 1;
-}
-vectis_http_response_cleanup(&response);
-client->close(client);
+## Local Development
+
+The normal local loop is:
+
+```sh
+make build
+make test
 ```
 
-The free functions such as `vectis_register_route()`, `vectis_start()`,
-`vectis_http_client_get()`, `vectis_ssh_exec()`, and `vectis_mqtt_publish()`
-remain public lower-level levers and compatibility entry points. New examples
-should prefer the handle methods unless they are deliberately demonstrating
-the lower-level API.
+Useful gates:
 
-Borrowed pointers stay borrowed. Loggers, raw dependency handles, string
-storage, `lc_source` objects, and callback contexts supplied through config or
-route registration must outlive the Vectis object or route that references
-them. Vectis-owned handles are returned with method pointers and have a
-matching `close()` method.
-
-Lockd is configured when the service needs it, but it is not mandatory for
-Kore-only services. If no lockd endpoint or Unix socket is configured, Vectis
-starts as an HTTP/TLS service without an app-owned lockd client. If TCP lockd
-transport is configured, Vectis requires client bundle material from path,
-`lc_source`, or memory.
-`config.lockd.logger` can be set when the lockd client should use a different
-`pslog` scope, level, or palette than the application/Kore logger. If it is
-left unset, Vectis uses the app logger for lockd client logging. Set
-`config.lockd.logger_disabled = 1` to disable lockd client logging while keeping
-the application/Kore logger enabled.
-
-```c
-vectis_app_config config;
-
-vectis_app_config_init(&config);
-config.logger = kore_logger;
-config.lockd.logger_disabled = 1; /* Keep Kore/app logging, silence lockd. */
+```sh
+make finalize-slice
+make asan
+make test-all
+make prerelease
 ```
 
-For Kore-backed services, the app-owned lockd client is process-local. Vectis
-does not open a lockd socket in the parent before Kore forks workers; route
-handlers get a lazily opened client in their current worker process through
-`app->lockd_client(app)`. Non-Kore runtimes still open configured lockd
-clients during startup so configuration errors fail fast.
+`make help` is the authoritative command index. Important targets include:
 
-The HTTP server boundary is defensive by default. `vectis_app_config_init()`
-sets explicit guardrails for maximum concurrent connections, request-header
-size, default request-body size, header-read deadline, body-read idle timeout,
-minimum body transfer rate, response-write idle timeout, idle timeout,
-keepalive timeout, and maximum requests per keepalive connection. These
-defaults are intentionally part of the Vectis SDK surface so Kore integration
-cannot accidentally inherit unsafe runtime defaults later.
+- `make deps-debug` provisions host debug dependencies into `.cache/`.
+- `make test-e2e` runs the compose-backed integration smoke suite.
+- `make test-install-tree` verifies downstream CMake/pkg-config consumers from
+  an installed SDK tree.
+- `make package` builds release SDK archives.
+- `make package-verify` verifies checksums, archive layout, privacy, and
+  relocatability.
+- `make release-matrix` builds, checksums, and verifies supported release
+  targets.
 
-Request-body size is split into two layers. `vectis_server_config` owns the
-hard Kore ingress ceiling through `max_request_body_bytes`; Vectis never raises
-that global limit implicitly from route registration. Route body policies are
-semantic/materialization limits for individual handlers and must fit under the
-server ceiling. Normal API routes default to a bounded body shape suitable for
-JSON. File upload routes can opt into streaming/spool-to-disk behavior with
-`vectis_body_upload()` or set an explicit cap with
-`vectis_body_upload_max(bytes)`. Services that accept multi-GB uploads should
-set the server ceiling deliberately, or run those upload routes in a separate
-Vectis/Kore process from small JSON APIs.
-For the common case, `vectis_upload_route()` creates a route with the default
-streaming upload policy already attached.
-
-The dependency headers and libraries are shipped intentionally. C users should
-be able to include and use Kore, `liblockdc`, `lonejson`, `libpslog`, libcurl,
-OpenSSL, libssh2, and libxml2 directly when Vectis does not cover a case or
-when they need exact low-level control. That raw access is an escape hatch, not
-the main experience. The primary C SDK should be Vectis-owned and
-service-oriented.
-
-The Lua runtime should mirror that same model. Lua scripts should have raw
-module access where useful, but the primary DX should expose Vectis-owned
-helpers with the same naming, defaults, error behavior, and workflow shape as
-the C SDK:
-
-- configure certificates and lockd once,
-- generate keys, CSRs, certificates, and client/server bundles through a Vectis
-  certificate workflow backed by OpenSSL,
-- start a Kore-backed API server,
-- register route or method handlers,
-- parse and emit JSON through `lonejson`,
-- acquire/release coordination locks and load/save/query documents through
-  lockd,
-- enqueue follow-up work and run lockd consumer services,
-- send JSON API requests and download/upload files through curl,
-- run remote SSH commands through libssh2,
-- run a separate consumer process when queue processing needs a blocking
-  consumer loop.
-
-Kore startup/configuration, lockd consumer service control, curl handles,
-OpenSSL primitives, and libssh2 sessions may be exposed directly, but Vectis
-should provide the friendly path on top for normal API-service work.
-
-Vectis route paths should support both common named path parameters such as
-`/orders/:id/items/:item_id`, optional named parameters such as
-`/orders/:id?`, and explicit Kore/POSIX regex routes. Named
-parameters are a Vectis-owned convenience layer and must be validated as whole
-path segments with safe parameter names. Regex routes are an escape hatch for
-Kore-compatible matching and are kept separate from named parameter extraction.
-Vectis mirrors Kore's HTTP method set: `GET`, `POST`, `PUT`, `DELETE`, `HEAD`,
-`OPTIONS`, and `PATCH`. A route can be registered for one method or for a method
-mask, so common cases such as `GET | HEAD` can share one handler without
-duplicating route declarations.
-
-## Concurrency Boundary
-
-Lua is single-threaded in the current dependency stack. Until Vectis owns a real
-Lua thread/runtime manager, a single Lua process must not try to run both the
-Kore server loop and a blocking `liblockdc` consumer service loop.
-
-The supported model is:
-
-- API process: run Kore through `vectis`, perform normal lockd operations, and
-  use dequeue explicitly inside handlers where appropriate.
-- Worker process: run a separate Vectis Lua script as a lockd consumer service.
-- Async workflow: API handlers enqueue lockd queue messages; worker processes
-  consume and process them.
-
-This boundary should be reflected in both the C API and Lua DX. If a future
-runtime manager changes the constraint, it should be a deliberate new design,
-not an accidental side effect.
-
-## Single Binary Services
-
-Vectis should support a packaging mode that combines the `vectis` runner, one
-Lua script, and optionally a liblockdc certificate bundle into a single output
-binary.
-
-The preferred implementation is a self-describing trailer appended to the Vectis
-ELF binary:
-
-- a fixed magic value and format version,
-- offsets and lengths for embedded Lua and optional certificate bundle payloads,
-- hashes for integrity checks,
-- metadata needed by the runner to decide whether to execute an embedded script
-  or a script path from argv.
-
-Embedded lockd client bundles should be handed to liblockdc through its
-`lc_source`-based in-memory or callback bundle loading APIs, rather than being
-materialized to temporary files. Runtime file materialization should be reserved
-for dependencies that still require path-only configuration.
-
-The same rule applies to Vectis/Kore TLS material. Server cert/key bundles,
-split certificate/private-key material, CA bundles, and client-CA bundles for
-mTLS verification should be configurable from paths, borrowed sources, or
-in-memory PEM bytes so packed services do not need to unpack certificates before
-startup.
-
-Manual TLS uses a wildcard Kore domain by default. ACME needs a concrete SNI
-name, so `VECTIS_TLS_MODE_ACME` requires `tls.domain` to be set to the public
-hostname being issued and rejects wildcard domains. ACME mode defaults to the
-Let's Encrypt production directory
-`VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION` unless the application overrides
-`tls.acme_directory_url`.
-
-Appending data to an ELF executable is technically viable on Linux because the
-loader uses the ELF program headers rather than requiring end-of-file to match
-the last loaded segment. The implementation still needs to be conservative:
-validate all trailer fields, never scan unbounded data, fail closed on malformed
-payloads, preserve normal `vectis script.lua` execution, and document that some
-signing, packaging, or hardening tools may strip or reject appended data. If that
-becomes a deployment issue, the fallback is an ELF section or generated object
-linked into a new runner binary.
-
-## Dependency Baseline
-
-The current baseline is split across pinned target SDK archives: `liblockdc`
-0.12.1 provides the lockdc C headers/libraries, `c.pkt.systems` 0.4.0 provides
-curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.0, the C89 Lua runtime facade,
-and libxml2 2.15.3, `lonejson` 0.32.1 provides the C JSON headers/libraries,
-`cai` 0.1.2 provides the OpenAI API, agent, tool, and MCP C headers/libraries,
-and `libpslog` 0.4.1 provides the C logging headers/libraries. Vectis also
-vendors the pinned LockDC, LoneJSON, and CAI source rocks so their Lua bindings
-can be compiled into the `vectis` executable against the same Lua ABI as the
-runner without invoking LuaRocks. The libpslog release ships its Lua rock
-separately. This split is deliberate: Vectis provisions each provider as its own
-binary SDK archive instead of relying on liblockdc as an umbrella dependency
-bundle.
-
-Vectis consumes the `c.pkt.systems` Lua runtime facade as a private static
-implementation dependency of the `vectis` executable. Vectis owns the
-dependency-specific module registrations for `vectis`, `lockdc`, `lonejson`,
-and `cai`, while cpkt owns the generic Lua state lifecycle, argv setup, preload
-registration mechanism, and Lua/libxml2 package metadata. The C SDK does not
-make downstream C consumers depend on Lua by default.
-
-The Vectis binary runtime must not depend on host Lua, LuaRocks, runtime
-`LUA_PATH`/`LUA_CPATH`, or dynamically discovered Lua `.so` modules. Bundled Lua
-modules should be compiled against the provisioned Lua 5.5 ABI and registered
-statically through `package.preload`. LuaRocks is still useful for distribution:
-Vectis should publish a thin `vectis` rock for users who want to run the Vectis
-facade inside their own Lua 5.5 environment, but that rock is not part of the
-self-contained `vectis` binary runtime contract.
-
-The bindings still missing from Vectis are:
-
-- Kore Lua bindings and the high-level Kore/Vectis Lua web framework.
-- libcurl Lua bindings with JSON-friendly request/response helpers.
-- OpenSSL Lua bindings for certificate and TLS configuration workflows.
-- libssh2 Lua bindings for remote command execution and lower-level SSH/SFTP
-  operations where curl is not enough.
+Generated state lives under `build/`, `dist/`, `.cache/`, `devenv/volumes/`,
+and the generated Kore upstream checkout. `make clean` removes generated state.
 
 ## Local Integration Environment
 
-`docker-compose.yaml` defines the Vectis-owned local integration environment.
-Its default host ports deliberately avoid the sibling `lockd` and `liblockdc`
-development environments:
+`docker-compose.yaml` defines the local service environment used by e2e tests:
 
-- MinIO S3 API: `29000`
-- MinIO console: `29001`
-- lockd disk transport with generated mTLS material: `29441`
-- lockd S3 transport, backed by local MinIO, with generated mTLS material:
-  `29443`
-- SSH/SFTP test server: `29222`
-- MQTT broker: `21883`
+- MinIO for S3-backed lockd testing.
+- lockd disk transport with generated mTLS material.
+- lockd S3 transport with generated mTLS material.
+- SSH/SFTP test server.
+- MQTT broker.
 
-Each port can be overridden with the matching `VECTIS_*_PORT` environment
-variable in the compose file. All lockd services in this environment must run
-with mTLS enabled; generated CA, server, and client bundles live under the
-ignored `devenv/volumes/` tree. The compose file uses one-shot bootstrap
-services for MinIO bucket creation and lockd certificate generation; those jobs
-are expected to exit `0`, while `restart: on-failure` makes transient ordering
-races self-heal under `nerdctl compose`. Both lockd services use the same
-generated client bundle at `devenv/volumes/lockd-config/client.pem`, with
-service-specific server bundles signed by the same CA. Vectis intentionally uses
-disk and S3-backed lockd instances here rather than `mem://`, because
-integration tests should exercise durable backends and the S3 path through
-MinIO. The SSH/SFTP service uses the small `lscr.io/linuxserver/openssh-server`
-image with password auth enabled only for local tests. MQTT uses
-`emqx/nanomq:0.24.13`; NanoMQ is a slim MQTT broker suitable for local protocol
-testing without introducing a larger broker stack.
-
-The normal entrypoints are Make targets:
+Entry points:
 
 ```sh
 make dev-up
@@ -388,203 +254,59 @@ make dev-logs
 make dev-down
 make dev-reset
 make test-e2e
-make test-all
 ```
 
-`make test-e2e` resets generated dev state before starting compose, then runs
-lockd disk/S3, MQTT publish, SSH command, curl-backed SFTP, and libssh2-backed
-SFTP smoke tests through the built examples. The reset keeps the generated
-lockd CA/client/server bundles and the encrypted durable lockd stores in sync,
-which avoids false failures after certificate material has been rotated locally.
-The reset is intentionally scoped to lockd and MinIO state; the SSH/SFTP image
-owns root-created config files in its bind mount, so SSH/SFTP cleanup is handled
-by the test working directory and compose lifecycle instead. The e2e target
-stops compose services when it exits; set
-`VECTIS_E2E_KEEP_DEVSERVICES=1` when you want to keep them running for
-inspection after a failed or manual run.
+`make test-e2e` resets generated state, starts the local services, runs lockd,
+MQTT, SSH, curl-backed SFTP, and libssh2-backed SFTP smoke tests, and then stops
+the services unless `VECTIS_E2E_KEEP_DEVSERVICES=1` is set.
 
-Darwin arm64 on-device verification should use GitHub-hosted macOS arm64
-runners rather than EC2 Mac Dedicated Hosts. GitHub provides standard M1 macOS
-runner labels such as `macos-14`, `macos-15`, `macos-26`, and `macos-latest`,
-which are enough for running the Darwin smoke zip and codesign verification
-without managing 24-hour Mac host allocations.
+## Examples
 
-## Current State
+Examples live under `examples/` and are built by the normal debug build. They
+are DX probes for the public SDK:
 
-The current implementation provides:
+- `examples/kore`: HTTP/TLS servers, JSON routes, OpenAPI, static assets, file
+  upload, generated responses, and lockd-backed APIs.
+- `examples/lockd`: state, leases, attachments, queues, and consumer services.
+- `examples/curl`: HTTP JSON clients, file transfer, SFTP, and MQTT.
+- `examples/dsv`: typed DSV parsing and serialization.
+- `examples/xml`: typed XML parsing into LoneJSON structs.
+- `examples/ssh`: SSH commands and libssh2 SFTP.
+- `examples/certs`: certificate and PEM bundle generation.
+- `examples/raw`: direct dependency escape hatches.
 
-- The initial C `vectis` runtime/config API and method-table surface.
-- Draft C SDK helper surface for curl-backed HTTP/SFTP/MQTT, libssh2 command
-  execution, OpenSSL certificate bundle generation, JSON request/response
-  handling, and JSON-aware route registration. The current C helpers are
-  dependency-backed and covered by unit/runtime smoke tests where local
-  verification is practical.
-- A common `vectis_source` input model for path, `lc_source`, and in-memory
-  bytes across lockd client bundles, Kore TLS material, downstream HTTP/MQTT
-  client bundles, and SSH/SFTP private-key inputs.
-- A first-pass `vectis_server_config` with explicit DDoS/slow-client guardrails
-  for connection counts, request sizes, keepalive behavior, idle read/write
-  timeouts, and minimum request-body transfer rate.
-- A real embedded Kore runtime path for C routes, including HTTP smoke coverage,
-  request metadata mapping, reader-first request bodies, body-size guardrails,
-  `pslog` runtime logging, and manual HTTPS startup from path, memory, or
-  `lc_source` cert/key material.
-- One Kore runtime may be active per process. Multiple app objects can be
-  constructed, but starting a second routed app while one Kore runtime is
-  running returns `VECTIS_ERR_STATE`; use separate processes for independent
-  servers or consumer services.
-- Per-route request-body policy presets for no-body routes, JSON/buffered
-  bodies, and streaming large uploads.
-- Handlers always receive a request body reader. `vectis_request_body_materialize()`
-  can use a caller-provided fixed buffer or configured memory cap, then
-  transparently spills to a temp file if the body does not fit.
-- OpenSSL-backed private-key, CSR, self-signed, CA, and CA-signed
-  client/server PEM bundle generation plus validation helpers for bundles and
-  split cert/key material.
-- `vectis_request_json_into()` streams the request reader into lonejson, so JSON
-  routes do not require a prebuffered request body.
-- `vectis_json_typed_route()` parses a mapped input struct up front and lets the
-  handler reply with any status-specific lonejson output map through
-  `vectis_json_reply()`, which covers ordinary success/error variants without a
-  forced envelope type.
-- Optional OpenAPI docs can be attached separately from route execution and
-  generated as JSON or YAML from route metadata plus named lonejson maps.
-- CSV, TSV, and configurable delimiter-separated input can stream from
-  `vectis_source` or raw `lc_source` readers into `lonejson` mapped row structs.
-  Headerless row-only files can infer columns from the map field order with
-  `vectis_dsv_csv_rows()`/`vectis_dsv_tsv_rows()`, while headered files can infer
-  names from the first row or ignore that row and use explicit column names.
-  Whole-record comments are opt-in with `config.comment_prefix`; quoted values
-  are never treated as comments. The `*_to_json_array()` helpers are explicitly
-  materializing conversion APIs, and the `*_to_json_array_spill()` variants use
-  `vectis_body_spill_result` to stay in memory up to a configured limit and then
-  spill to disk. Use `vectis_dsv_parse_lonejson*()` for streaming typed row
-  processing. The reverse path, `vectis_dsv_write_lonejson_rows()`, streams
-  scalar mapped structs to `lc_sink` outputs, with
-  `vectis_dsv_lonejson_rows_to_bytes()` available as a small-export convenience.
-- XML input can stream through libxml2's reader API from `vectis_source` or raw
-  `lc_source` readers into `lonejson` mapped structs using
-  `lonejson_parse_reader()`. The first mapping contract is intentionally
-  map-shaped: child elements map by JSON key, repeated child elements fill
-  lonejson arrays, attributes map by attribute name or configured prefix, and
-  text inside object elements maps to `config.text_key` which defaults to
-  `text`. Repeated XML elements for one mapped array must be contiguous; a later
-  repeat after another field is rejected instead of buffered and reordered.
-  Large XML text/blob fields should be mapped with LoneJSON's spooled stream
-  fields. Those fields use the default `config.trim_text = 0`; enabling trimming
-  for spooled fields is rejected because exact right-trim would require buffering
-  an unbounded trailing whitespace run.
-- `vectis_request_body_reader()` exposes the raw `lc_source` escape hatch, while
-  `vectis_request_body_materialize()` gives handlers one memory-or-file result
-  without making them decide the storage class up front.
-- `vectis_response_file()` lets C handlers return large files through the Kore
-  runtime without first buffering the whole response in application memory.
-- `vectis_response_source()` and `vectis_response_json_generated()` write
-  generated payloads to temporary files first, then hand those files to Kore so
-  handlers do not need one contiguous response buffer.
-- `vectis_response_header()` adds ordinary response headers with CR/LF-safe
-  validation before the Kore bridge sends the response.
-- Optional lockd configuration, so Kore-only examples and services do not need
-  placeholder lockd sockets.
-- Route constructors for literal paths, named and optional path parameters, and
-  explicit regex routes, with automatic path-kind inference for the common
-  `vectis_route()` and `vectis_json_route()` cases.
-- Static file and static directory helpers register GET/HEAD routes with
-  Vectis-owned request path validation and traversal-safe directory resolution.
-- A first pass at a dependency-aware error model that records Vectis status,
-  error source, dependency code, HTTP status, summary message, and detail text.
-- Stable string helpers for statuses, error sources, HTTP methods, and body
-  modes so examples and applications do not grow ad hoc name tables.
-- A handle-shaped HTTP client API that can be created directly or from an app
-  so app logging/defaults can flow into downstream calls.
-- `vectis_request_method()` exposes the matched HTTP method to handlers, which
-  keeps shared GET/HEAD or PUT/PATCH route handlers inside the Vectis request
-  abstraction.
-- A raw curl configuration callback on HTTP client configs and individual HTTP
-  requests for protocol/options escape hatches without leaving Vectis helpers.
-- A raw Kore request accessor, `vectis_request_kore()`, for C handlers that need
-  low-level Kore request APIs as an explicit escape hatch.
-- First-class C curl settings for proxy URLs, connect/overall timeouts,
-  low-speed aborts, redirects, request headers, client certificates, CA bundles,
-  bounded retries, file downloads/uploads, and streaming response-body callbacks.
-- Mapped JSON request bodies are serialized through LoneJSON's pull-style
-  generator into curl instead of prebuffering. Vectis attempts
-  `lonejson_generator_measure()` for replayable mapped structs, including
-  source-backed and spooled fields, so HTTP servers that require
-  `Content-Length` still work when the value is measurable; genuinely
-  non-rewindable JSON values remain chunked.
-- `vectis_http_response_json_into()` parses downstream HTTP JSON response bodies
-  directly into lonejson mapped structs.
-- The compose-backed e2e suite includes a controlled downstream HTTP
-  server/client flow for JSON API calls, HEAD/OPTIONS, streaming responses,
-  uploads, and downloads.
-- A `vectis` executable that embeds the provisioned Lua 5.5 runtime, supports
-  normal script and shebang execution, and is wrapped on Linux with the
-  single-header `libpid0` 0.3.0 helper so it can run correctly as PID 1 in
-  `FROM scratch` containers.
-- `vectis pack --script script.lua --output service` on Linux for creating a
-  single executable with an appended, hashed Lua payload while preserving normal
-  `vectis script.lua` execution for unpacked binaries.
-- `vectis pack --lockd-bundle client.pem` embeds lockd client certificate/key
-  bytes into the packed executable, validates their hash before Lua execution,
-  and keeps them in memory for the statically registered lockdc module to
-  consume without writing private material to disk.
-- Thread-safe app object lifecycle and route registry management.
-- `lonejson`-backed JSON validation helpers.
-- Selected-array JSON streaming helpers for Vectis sources, request bodies,
-  buffered HTTP responses, and streaming HTTP GET responses, plus source-to-sink
-  selected-array rewrite helpers backed by LoneJSON.
-- `pslog`-backed owned or borrowed logger handling.
-- OpenSSL-backed self-signed and CA-signed certificate/key PEM bundle
-  generation helpers.
-- Dependency provisioning from split `liblockdc` 0.12.1, `c.pkt.systems` 0.4.0,
-  `lonejson` 0.32.1, `cai` 0.1.2, and `libpslog` 0.4.1 SDK bundles plus
-  source-rock-backed LockDC/LoneJSON/CAI Lua bindings, cpkt Lua 5.5.0 and C89
-  runtime facade, and cpkt libxml2 2.15.3.
-- Compile-checked examples grouped under `examples/kore`, `examples/lockd`,
-  `examples/curl`, `examples/dsv`, `examples/ssh`, `examples/certs`, and
-  `examples/raw` that exercise the intended C SDK DX without local helper
-  layers.
-- A Kore upstream checkout plus tracked patch-series workflow.
-- A patched Kore build path that links against the bundled OpenSSL, libcurl,
-  libssh2, pslog, lonejson, and libxml2 toolchain. Vectis builds embedded Kore
-  with direct TLS material loading so the in-process runtime does not depend on
-  Kore's external key-manager flow.
-- A C89 portability contract for the `vectis` public API and implementation.
+See [examples/README.md](examples/README.md) for the file-by-file map.
 
-The active implementation phase is focused on finishing and refining the C SDK
-surface. The Lua framework facade, missing Lua bindings, Darwin-specific pack
-format/signing work, deeper Kore feature coverage, and any remaining C helper
-refinements remain tracked in [TODO.md](TODO.md).
+## Packaging
 
-## Build
+Binary SDK archives are produced under `dist/`:
 
-Typical local development flow:
-
-```sh
-make build
-make test
+```text
+dist/vectis-<version>-<target-id>.tar.gz
+dist/vectis-<version>-CHECKSUMS
 ```
 
-The default debug flow provisions dependencies into `.cache/deps/host-debug`.
+Supported Linux target IDs include:
 
-On Linux, the `vectis` executable is compiled with the single-header
-`libpid0` helper. When `vectis` runs as PID 1, `libpid0` supervises the actual
-runner child, forwards signals to its process group, and reaps adopted
-children. When it is not PID 1, it calls the runner directly.
+- `x86_64-linux-gnu`
+- `x86_64-linux-musl`
+- `aarch64-linux-gnu`
+- `aarch64-linux-musl`
+- `armhf-linux-gnu`
+- `armhf-linux-musl`
 
-Release packaging:
+`arm64-apple-darwin` is built when the configured osxcross toolchain is
+available.
 
-```sh
-make package
-```
+SDK archives are expected to contain relocatable headers, libraries, CMake
+package metadata, pkg-config metadata, docs, examples when shipped, and package
+metadata. Package verification extracts checksum-listed artifacts and scans for
+local paths, non-relocatable runtime paths, stale artifacts, missing metadata,
+and broken downstream consumers.
 
-Darwin arm64 packaging is release-only and optional. It is built when an
-osxcross toolchain is available under `OSXCROSS_ROOT` or
-`$HOME/.local/cross/osxcross`; otherwise the Darwin archive and smoke zip are
-skipped without failing the Linux-first release flow.
+## Vendored Kore
 
-## Kore Workflow
+Vectis carries a patched Kore workflow:
 
 ```sh
 make vendor-kore
@@ -594,16 +316,34 @@ make verify-kore-patches
 make vendor-kore-upgrade
 ```
 
-`vendor/kore/upstream/` is a local checkout of `https://git.kore.io/kore.git`.
-Patch files are stored in `vendor/kore/patches/` and ordered by
-`vendor/kore/patches/series`.
+Patch files are tracked under `vendor/kore/patches/` and applied to
+`vendor/kore/upstream/`. Vectis builds Kore as an embedded runtime dependency
+against the same provisioned SDK root as the rest of the project.
 
-Current Kore policy in `vectis`:
+## Current Status
 
-- `vectis` does not expose Kore JSON-RPC and does not enable Kore's `JSONRPC`
-  build feature.
-- Kore ACME JSON parsing is patched to use `lonejson`.
-- Kore logging is being moved behind a `pslog` backend so HTTP/runtime logs can
-  converge on one structured logger.
-- Embedded Vectis/Kore TLS currently supports manual cert/key material from
-  paths, memory, and `lc_source`; ACME remains a tracked implementation area.
+Implemented and covered by local tests:
+
+- C SDK object/config/error surfaces.
+- Kore-backed route registration, startup, request mapping, static assets,
+  response helpers, and upload handling.
+- Typed JSON, XML, and DSV parser/route helpers.
+- OpenAPI JSON/YAML generation from route metadata and LoneJSON maps.
+- curl-backed HTTP, transfer, SFTP, and MQTT helpers.
+- libssh2-backed SSH and SFTP helpers.
+- OpenSSL-backed certificate/key/bundle helpers.
+- Optional lockd app integration and managed consumer-service helpers.
+- Lua runner, shebang/script execution, and Linux packed-script support.
+- Release packaging, install-tree checks, lifecycle tests, privacy checks, and
+  generated SDK verification.
+
+Still active or planned:
+
+- Higher-level Lua service framework and broader Lua protocol helpers.
+- Deeper CAI/Vectis facade integration beyond bundled dependency/runtime
+  registration.
+- MTConnect protocol support.
+- Darwin-specific packed-service signing/runtime polish.
+- Additional protocol examples and long-running hardening gates.
+
+Track detailed engineering work in [TODO.md](TODO.md).
