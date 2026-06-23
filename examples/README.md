@@ -77,6 +77,20 @@ surface directly, without local helper layers that would hide awkward API shape.
   the parser never buffers and reorders XML. Use LoneJSON spooled stream fields
   with the default `trim_text = 0` for large XML text/blob payloads.
 
+## `mdf/`
+
+- `mdf/mdf_render.c`: libmdf Markdown rendering from both a C string and a
+  callback-backed source into a callback-backed sink.
+
+## `lua/`
+
+- `lua/mdf_render.lua`: libmdf Lua Markdown rendering through both
+  `render()` and `render_stream()`.
+- `lua/lockd_state.lua`: lockdc Lua client acquire, JSON state update/load,
+  and lease release against `LOCKD_ENDPOINT`.
+- `lua/lockd_queue.lua`: lockdc Lua queue enqueue, dequeue, JSON payload read,
+  and ack against `LOCKD_ENDPOINT`.
+
 ## `ssh/`
 
 - `ssh/ssh_command.c`: libssh2 command execution.

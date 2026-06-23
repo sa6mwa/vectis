@@ -255,6 +255,9 @@ run_lua_examples() {
     'assert(vectis.status_string(vectis.OK) == "ok")' >"$pack_script"
   "$repo_root/build/debug/vectis" pack --script "$pack_script" --output "$packed"
   "$packed"
+
+  printf '[e2e] lua libmdf example\n'
+  "$repo_root/build/debug/vectis" "$repo_root/examples/lua/mdf_render.lua"
 }
 
 run_tls_cert_examples() {

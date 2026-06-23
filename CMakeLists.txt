@@ -765,6 +765,7 @@ if(VECTIS_INSTALL)
           DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/vectis/examples"
           FILES_MATCHING
           PATTERN "*.c"
+          PATTERN "*.lua"
           PATTERN "README.md"
           PATTERN "CMakeLists.txt")
 endif()

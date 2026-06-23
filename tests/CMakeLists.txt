@@ -20,4 +20,6 @@ if(TARGET vectis_bin)
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
                    -P "${CMAKE_SOURCE_DIR}/tests/lua/pack.cmake")
+  add_test(NAME vectis_example_lua_mdf_render
+           COMMAND vectis_bin "${CMAKE_SOURCE_DIR}/examples/lua/mdf_render.lua")
 endif()
