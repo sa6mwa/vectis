@@ -36,6 +36,7 @@ one deployable package:
 - OpenSSL-backed key, CSR, certificate, CA, and PEM bundle workflows.
 - Structured logging through `libpslog`.
 - CAI-backed OpenAI API, agent, tool, and MCP primitives.
+- libmdf-backed Markdown rendering for terminal and HTML output.
 - A raw escape hatch to the bundled dependency headers when the Vectis facade is
   intentionally not enough.
 
@@ -55,6 +56,7 @@ The current expected dependency set is:
 - `lonejson` 0.32.1 for typed JSON parsing, serialization, streaming arrays,
   spooled fields, and C/Lua bindings.
 - `cai` 0.1.2 for OpenAI API, agent, tool, MCP, and Lua binding sources.
+- `libmdf` 0.1.0 for Markdown-to-ANSI/HTML rendering and Lua binding sources.
 - `libpslog` 0.4.1 for structured logging.
 - `libpid0` 0.3.0 for Linux PID 1 behavior in the `vectis` executable.
 
@@ -167,11 +169,16 @@ clients are process-local and opened lazily in Kore workers where appropriate.
 Non-Kore consumer services fail fast during startup when lockd configuration is
 invalid.
 
-CAI is included in the dependency set and runtime registration plan as the AI
-and tool protocol layer. The intended Vectis role is to make CAI usable beside
-ordinary service work: lockd-backed state, HTTP routes, queue consumers, tool
-callbacks, MCP integration, and OpenAI API calls should share the same logging,
+CAI is included in the dependency set and Lua runtime as the AI and tool
+protocol layer. The intended Vectis role is to make CAI usable beside ordinary
+service work: lockd-backed state, HTTP routes, queue consumers, tool callbacks,
+MCP integration, and OpenAI API calls should share the same logging,
 configuration, and packaging story.
+
+libmdf is included so AI/agent response streams can be rendered as Markdown for
+terminal-facing workflows. Vectis does not yet wire CAI streaming responses
+through libmdf automatically, but the C SDK dependency and `require("libmdf")`
+Lua module are available for that integration.
 
 MTConnect is the next protocol family planned for this stack. The expected
 shape is a typed, streaming-aware integration rather than a raw string/DOM API.
@@ -193,7 +200,8 @@ local vectis = require("vectis")
 
 Bundled modules are registered statically through `package.preload`. The
 runtime currently registers Vectis-owned Lua support plus dependency bindings
-such as lockdc, lonejson, and cai where available from the provisioned sources.
+such as lockdc, lonejson, cai, and libmdf where available from the provisioned
+sources.
 
 `vectis pack` can append a Lua script, and optionally a lockd client bundle, to
 the Linux executable with hashes and trailer metadata. Embedded private material
@@ -334,14 +342,16 @@ Implemented and covered by local tests:
 - OpenSSL-backed certificate/key/bundle helpers.
 - Optional lockd app integration and managed consumer-service helpers.
 - Lua runner, shebang/script execution, and Linux packed-script support.
+- Bundled CAI and libmdf Lua modules for AI/tool workflows and Markdown
+  rendering.
 - Release packaging, install-tree checks, lifecycle tests, privacy checks, and
   generated SDK verification.
 
 Still active or planned:
 
 - Higher-level Lua service framework and broader Lua protocol helpers.
-- Deeper CAI/Vectis facade integration beyond bundled dependency/runtime
-  registration.
+- Deeper CAI/Vectis/libmdf facade integration beyond bundled
+  dependency/runtime registration.
 - MTConnect protocol support.
 - Darwin-specific packed-service signing/runtime polish.
 - Additional protocol examples and long-running hardening gates.

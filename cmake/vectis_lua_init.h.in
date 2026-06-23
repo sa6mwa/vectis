@@ -1,2 +1,2 @@
-static const unsigned char vectis_lockdc_lua_init[] = {
-@vectis_lockdc_lua_init_c@};
+static const unsigned char @vectis_lua_init_symbol@[] = {
+@vectis_lua_init_c@};

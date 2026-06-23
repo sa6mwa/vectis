@@ -14,6 +14,7 @@
 #include <vectis/vectis_version.h>
 
 #include "vectis_lockdc_lua_init.h"
+#include "vectis_libmdf_lua_init.h"
 
 #define VECTIS_PACK_FOOTER_SIZE 128u
 #define VECTIS_PACK_MAGIC "VECTIS_PACK_V1"
@@ -27,6 +28,7 @@ typedef struct vectis_lua_runtime_context {
 extern int luaopen_lonejson_core(lua_State *lua);
 extern int luaopen_lockdc_core(lua_State *lua);
 extern int luaopen_cai(lua_State *lua);
+extern int luaopen_libmdf_core(lua_State *lua);
 
 static const char vectis_lonejson_lua_init[] =
     "local core = require(\"lonejson.core\")\n"
@@ -371,6 +373,10 @@ static int vectis_luaopen_cai(void *lua_state) {
   return luaopen_cai((lua_State *)lua_state);
 }
 
+static int vectis_luaopen_libmdf_core(void *lua_state) {
+  return luaopen_libmdf_core((lua_State *)lua_state);
+}
+
 static int vectis_lua_report_status(cpkt_lua_runtime *runtime,
                                     cpkt_lua_runtime_status status) {
   const char *message;
@@ -420,8 +426,19 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  return cpkt_lua_runtime_register_c_module(runtime, "cai",
-                                            vectis_luaopen_cai);
+  status = cpkt_lua_runtime_register_c_module(runtime, "cai",
+                                              vectis_luaopen_cai);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_c_module(runtime, "libmdf.core",
+                                              vectis_luaopen_libmdf_core);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  return cpkt_lua_runtime_register_lua_module(
+      runtime, "libmdf", vectis_libmdf_lua_init,
+      sizeof(vectis_libmdf_lua_init), "libmdf.init");
 }
 
 static int vectis_lua_prepare_runtime(cpkt_lua_runtime **out,

@@ -12,6 +12,7 @@ find_package(LibXml2 CONFIG REQUIRED)
 find_package(pslog CONFIG REQUIRED)
 find_package(lonejson CONFIG REQUIRED)
 find_package(cai CONFIG REQUIRED)
+find_package(libmdf CONFIG REQUIRED)
 find_package(lockdc CONFIG REQUIRED)
 
 if(TARGET cai::cai_static AND TARGET lonejson::lonejson_static)
@@ -25,6 +26,8 @@ foreach(_vectis_dependency_target IN ITEMS
     lockdc::shared
     cai::cai_static
     cai::cai_shared
+    libmdf::mdf_static
+    libmdf::mdf_shared
     pslog::pslog_static
     pslog::pslog_shared
     CURL::libcurl
@@ -64,6 +67,7 @@ if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LI
   set(_vectis_static_links
     lockdc::static
     cai::cai_static
+    libmdf::mdf_static
     pslog::pslog_static
     CURL::libcurl
     Libssh2::libssh2
@@ -87,6 +91,7 @@ if(NOT TARGET vectis::shared)
   set(_vectis_shared_links
     lockdc::shared
     cai::cai_shared
+    libmdf::mdf_shared
     pslog::pslog_shared
     cpkt::curl_shared
     cpkt::libssh2_shared

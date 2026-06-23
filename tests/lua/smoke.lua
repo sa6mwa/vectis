@@ -2,6 +2,7 @@ local vectis = require("vectis")
 local lockdc = require("lockdc")
 local lonejson = require("lonejson")
 local cai = require("cai")
+local libmdf = require("libmdf")
 
 assert(type(vectis) == "table")
 assert(vectis.version == (os.getenv("VECTIS_EXPECTED_VERSION") or "0.0.0"))
@@ -24,6 +25,13 @@ assert(type(cai.open) == "function")
 assert(type(cai.mcp_handler) == "function")
 assert(type(cai.MODEL_DEFAULT_RESPONSES) == "string")
 assert(type(cai.MCP_PROTOCOL_VERSION) == "string")
+
+assert(type(libmdf) == "table")
+assert(type(libmdf.render) == "function")
+assert(type(libmdf.render_stream) == "function")
+local rendered_markdown = libmdf.render("# Vectis\n\n**ok**", { format = "html" })
+assert(rendered_markdown:match("Vectis"))
+assert(rendered_markdown:match("ok"))
 
 local encoded = lonejson.encode_json({
   b = true,
