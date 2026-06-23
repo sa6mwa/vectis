@@ -638,6 +638,9 @@ if(VECTIS_BUILD_BINARY)
   )
   target_compile_definitions(vectis_lonejson_lua PRIVATE
     _POSIX_C_SOURCE=200809L)
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(vectis_lonejson_lua PRIVATE -fvisibility=hidden)
+  endif()
   set_target_properties(vectis_lonejson_lua PROPERTIES
     C_STANDARD 99
     C_STANDARD_REQUIRED ON
@@ -645,6 +648,37 @@ if(VECTIS_BUILD_BINARY)
     POSITION_INDEPENDENT_CODE ON
   )
   vectis_apply_relocatable_paths(vectis_lonejson_lua)
+  if(CMAKE_OBJCOPY)
+    set(vectis_objcopy "${CMAKE_OBJCOPY}")
+  else()
+    find_program(vectis_objcopy NAMES llvm-objcopy objcopy)
+  endif()
+  if(NOT vectis_objcopy)
+    message(FATAL_ERROR
+      "objcopy is required to embed lonejson Lua without exporting its private lonejson symbols")
+  endif()
+  set(vectis_lonejson_lua_private_object
+    "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/vectis_lonejson_lua_private.dir/lonejson_lua.c${CMAKE_C_OUTPUT_EXTENSION}")
+  add_custom_command(
+    OUTPUT "${vectis_lonejson_lua_private_object}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/vectis_lonejson_lua_private.dir"
+    COMMAND "${vectis_objcopy}" --wildcard --localize-symbol=lonejson_*
+            $<TARGET_OBJECTS:vectis_lonejson_lua>
+            "${vectis_lonejson_lua_private_object}"
+    DEPENDS vectis_lonejson_lua $<TARGET_OBJECTS:vectis_lonejson_lua>
+    VERBATIM
+  )
+  set_source_files_properties("${vectis_lonejson_lua_private_object}" PROPERTIES
+    EXTERNAL_OBJECT TRUE
+    GENERATED TRUE
+  )
+  add_library(vectis_lonejson_lua_archive STATIC
+    "${vectis_lonejson_lua_private_object}")
+  set_target_properties(vectis_lonejson_lua_archive PROPERTIES
+    OUTPUT_NAME vectis_lonejson_lua
+    LINKER_LANGUAGE C
+  )
 
   add_library(vectis_cai_lua OBJECT "${vectis_cai_lua_source}")
   target_include_directories(vectis_cai_lua PRIVATE
@@ -678,7 +712,6 @@ if(VECTIS_BUILD_BINARY)
     src/vectis_cli.c
     src/vectis_main.c
     $<TARGET_OBJECTS:vectis_lockdc_lua>
-    $<TARGET_OBJECTS:vectis_lonejson_lua>
     $<TARGET_OBJECTS:vectis_cai_lua>
     $<TARGET_OBJECTS:vectis_libmdf_lua>
   )
@@ -695,7 +728,8 @@ if(VECTIS_BUILD_BINARY)
   target_link_libraries(vectis_bin PRIVATE
     cpkt::lua_runtime
     cai::cai_static
-    libmdf::mdf_static)
+    libmdf::mdf_static
+    vectis_lonejson_lua_archive)
   if(UNIX AND NOT APPLE)
     target_link_libraries(vectis_bin PRIVATE m)
   endif()

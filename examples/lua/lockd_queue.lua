@@ -33,8 +33,11 @@ local message, dequeue_err = client:dequeue({
 })
 assert(message, dequeue_err and dequeue_err.message or "dequeue failed")
 
-local payload, payload_err = message:payload_json()
-assert(payload, payload_err and payload_err.message or "payload failed")
+local payload, payload_written_or_err = message:payload_json()
+if payload == nil then
+  error(payload_written_or_err and payload_written_or_err.message or "payload failed")
+end
+assert(payload_written_or_err > 0)
 assert(payload.type == "order.created")
 assert(payload.id == "1001")
 

@@ -111,6 +111,31 @@ run_lockd_failure_examples() {
   fi
 }
 
+run_lockd_lua_examples() {
+  endpoint=$1
+  label=$2
+
+  printf '[e2e] lockd lua %s open/close\n' "$label"
+  env LOCKD_ENDPOINT="$endpoint" \
+    LOCKD_CLIENT_BUNDLE="$client_bundle" \
+    LOCKD_NAMESPACE="examples" \
+    "$repo_root/build/debug/vectis" "$repo_root/tests/lua/lockdc_open_close.lua"
+
+  printf '[e2e] lockd lua %s state\n' "$label"
+  env LOCKD_ENDPOINT="$endpoint" \
+    LOCKD_CLIENT_BUNDLE="$client_bundle" \
+    LOCKD_NAMESPACE="examples" \
+    LOCKD_STATE_KEY="lua/e2e/$label/state-$$" \
+    "$repo_root/build/debug/vectis" "$repo_root/examples/lua/lockd_state.lua"
+
+  printf '[e2e] lockd lua %s queue\n' "$label"
+  env LOCKD_ENDPOINT="$endpoint" \
+    LOCKD_CLIENT_BUNDLE="$client_bundle" \
+    LOCKD_NAMESPACE="examples" \
+    LOCKD_QUEUE="lua-e2e-$label-$$" \
+    "$repo_root/build/debug/vectis" "$repo_root/examples/lua/lockd_queue.lua"
+}
+
 run_service_examples() {
   printf '[e2e] mqtt publish\n'
   env VECTIS_MQTT_URL="mqtt://127.0.0.1:$mqtt_port" \
@@ -434,6 +459,8 @@ run_lua_examples
 run_tls_cert_examples
 run_lockd_examples "$disk_endpoint" disk
 run_lockd_examples "$s3_endpoint" s3
+run_lockd_lua_examples "$disk_endpoint" disk
+run_lockd_lua_examples "$s3_endpoint" s3
 run_lockd_failure_examples
 run_service_examples
 run_downstream_http_examples
