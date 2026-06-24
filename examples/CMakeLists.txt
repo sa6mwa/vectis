@@ -23,6 +23,23 @@ else()
   message(FATAL_ERROR "VECTIS_EXAMPLE_LINK must be static or shared")
 endif()
 
+function(vectis_configure_example_warnings target_name)
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(${target_name} PRIVATE
+      -Wall
+      -Wextra
+      -Werror
+      -Wpedantic
+      -Wstrict-prototypes
+      -Wmissing-prototypes
+      -Wshadow
+      -Wpointer-arith
+      -Wcast-qual
+      -Wwrite-strings
+    )
+  endif()
+endfunction()
+
 function(vectis_add_example target_name source_file)
   add_executable(${target_name} ${source_file})
   target_link_libraries(${target_name} PRIVATE ${vectis_examples_link_target})
@@ -34,6 +51,10 @@ function(vectis_add_example target_name source_file)
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF
   )
+  if(UNIX OR APPLE OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+    target_compile_definitions(${target_name} PRIVATE _POSIX_C_SOURCE=200809L)
+  endif()
+  vectis_configure_example_warnings(${target_name})
 endfunction()
 
 vectis_add_example(vectis_example_kore_basic kore/kore_basic_server.c)

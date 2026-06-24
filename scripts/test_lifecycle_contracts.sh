@@ -62,6 +62,10 @@ fi
 
 assert_contains "$repo_root/.gitignore" '^/VERSION$'
 assert_contains "$repo_root/scripts/package.sh" 'target_toolchain_available\.sh'
+assert_contains "$repo_root/CMakeLists.txt" 'target_compile_options\(\$\{target\} PRIVATE'
+assert_contains "$repo_root/CMakeLists.txt" 'Werror'
+assert_contains "$repo_root/examples/CMakeLists.txt" 'target_compile_options\(\$\{target_name\} PRIVATE'
+assert_contains "$repo_root/examples/CMakeLists.txt" 'Werror'
 
 if ! "$repo_root/scripts/target_toolchain_available.sh" x86_64-linux-gnu >/dev/null 2>&1; then
   echo "host x86_64-linux-gnu toolchain availability check failed" >&2

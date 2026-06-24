@@ -48,7 +48,7 @@ int main(void) {
   lc_client_config config;
   lc_client *client;
   lc_error error;
-  vectis_error vectis_error;
+  vectis_error verror;
   account_doc saved = {"", "", 0};
   account_doc loaded = {"", "", 0};
   const char *endpoints[1];
@@ -56,7 +56,7 @@ int main(void) {
 
   lc_client_config_init(&config);
   lc_error_init(&error);
-  vectis_error_clear(&vectis_error);
+  vectis_error_clear(&verror);
   client = NULL;
 
   endpoints[0] = getenv("LOCKD_ENDPOINT") != NULL ? getenv("LOCKD_ENDPOINT")
@@ -79,14 +79,14 @@ int main(void) {
   saved.version = 1;
   status =
       vectis_lockd_state_save(client, "accounts/1001", "vectis-lockd-example",
-                              30L, &account_doc_map, &saved, &vectis_error);
+                              30L, &account_doc_map, &saved, &verror);
   if (status == VECTIS_OK) {
     status =
         vectis_lockd_state_load(client, "accounts/1001", "vectis-lockd-example",
-                                30L, &account_doc_map, &loaded, &vectis_error);
+                                30L, &account_doc_map, &loaded, &verror);
   }
   if (status != VECTIS_OK) {
-    print_vectis_error("vectis_lockd_state_save/load", &vectis_error);
+    print_vectis_error("vectis_lockd_state_save/load", &verror);
     lc_client_close(client);
     lc_error_cleanup(&error);
     return 1;

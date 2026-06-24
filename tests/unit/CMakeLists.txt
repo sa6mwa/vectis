@@ -14,6 +14,9 @@ function(vectis_add_unit_test target_name)
     target_compile_options(${target_name} PRIVATE --coverage -O0 -g)
     target_link_options(${target_name} PRIVATE --coverage)
   endif()
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(${target_name} PRIVATE -UNDEBUG)
+  endif()
   add_test(NAME ${target_name} COMMAND ${target_name})
   set_tests_properties(${target_name} PROPERTIES TIMEOUT 180)
 endfunction()
@@ -31,6 +34,7 @@ function(vectis_add_cpp_header_test target_name)
   )
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(${target_name} PRIVATE
+      -UNDEBUG
       -Wall
       -Wextra
       -Werror

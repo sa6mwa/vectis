@@ -17,6 +17,10 @@ typedef struct stream_capture {
   size_t size;
 } stream_capture;
 
+typedef struct file_route_config {
+  const char *path;
+} file_route_config;
+
 static const lonejson_field downstream_doc_fields[] = {
     LONEJSON_FIELD_STRING_FIXED_REQ(downstream_doc, id, "id",
                                     LONEJSON_OVERFLOW_FAIL),
@@ -135,7 +139,7 @@ static vectis_status event_handler(vectis_app *app, vectis_request *request,
     id = input.id;
   }
   if (snprintf(output.id, sizeof(output.id), "%s", id) < 0) {
-    vectis_set_error(error, VECTIS_ERR_STATE, "failed to format response id");
+    (void)error;
     return VECTIS_ERR_STATE;
   }
   output.count = input.count + 1;
@@ -158,13 +162,12 @@ static vectis_status stream_handler(vectis_app *app, vectis_request *request,
     id = "missing";
   }
   if (snprintf(payload, sizeof(payload), "stream:%s", id) < 0) {
-    vectis_set_error(error, VECTIS_ERR_STATE,
-                     "failed to format stream payload");
+    (void)error;
     return VECTIS_ERR_STATE;
   }
   source = NULL;
   if (lc_source_from_memory(payload, strlen(payload), &source, NULL) != LC_OK) {
-    vectis_set_error(error, VECTIS_ERR_STATE, "failed to create stream source");
+    (void)error;
     return VECTIS_ERR_STATE;
   }
   status = vectis_response_source(response, 200, "text/plain", source, error);
@@ -175,10 +178,16 @@ static vectis_status stream_handler(vectis_app *app, vectis_request *request,
 static vectis_status file_handler(vectis_app *app, vectis_request *request,
                                   vectis_response *response, void *userdata,
                                   vectis_error *error) {
+  const file_route_config *file_config;
+
   (void)app;
   (void)request;
-  return vectis_response_file(response, 200, "text/plain",
-                              (const char *)userdata, error);
+  file_config = (const file_route_config *)userdata;
+  if (file_config == NULL || file_config->path == NULL) {
+    return VECTIS_ERR_STATE;
+  }
+  return vectis_response_file(response, 200, "text/plain", file_config->path,
+                              error);
 }
 
 static vectis_status upload_handler(vectis_app *app, vectis_request *request,
@@ -223,8 +232,7 @@ static vectis_status upload_handler(vectis_app *app, vectis_request *request,
   }
   if (snprintf(text, sizeof(text), "uploaded:%s:%lu", id, (unsigned long)size) <
       0) {
-    vectis_set_error(error, VECTIS_ERR_STATE,
-                     "failed to format upload response");
+    (void)error;
     return VECTIS_ERR_STATE;
   }
   return vectis_response_text(response, 200, "text/plain", text, error);
@@ -273,6 +281,7 @@ static int run_server(void) {
   vectis_error error;
   vectis_app *app;
   const char *download_path;
+  file_route_config file_config;
 
   download_path = env_or_default("VECTIS_DOWNSTREAM_DOWNLOAD_PATH",
                                  "/tmp/vectis-downstream-download.txt");
@@ -280,6 +289,7 @@ static int run_server(void) {
     fprintf(stderr, "failed to create downstream download file\n");
     return 1;
   }
+  file_config.path = download_path;
   vectis_app_config_init(&config);
   config.app_name = "curl-downstream-e2e";
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
@@ -341,8 +351,8 @@ static int run_server(void) {
     app->close(app);
     return 1;
   }
-  route = vectis_route(VECTIS_HTTP_GET, "/download", file_handler,
-                       (void *)download_path);
+  route =
+      vectis_route(VECTIS_HTTP_GET, "/download", file_handler, &file_config);
   if (app->route(app, &route, &error) != VECTIS_OK) {
     (void)print_error("register /download", &error);
     app->close(app);
