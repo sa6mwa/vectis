@@ -16,7 +16,7 @@ FUZZ_PRESET := fuzz
 	help \
 	deps-debug deps-release deps-cross \
 	build build-debug build-release build-asan build-coverage build-fuzz \
-	test test-debug test-lifecycle test-target-tools test-release-privacy-contracts asan test-asan coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
+	test test-debug test-lifecycle test-target-tools test-darwin-linker-route test-release-privacy-contracts asan test-asan coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
 	dev-up dev-down dev-reset dev-ps dev-logs \
 	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy release-matrix prerelease-hardening release print-release-version clean-dist finalize-slice prerelease \
 	build-kore verify-kore-patches \
@@ -29,6 +29,7 @@ help:
 		'make test               Run the debug unit test preset.' \
 		'make test-lifecycle     Run lifecycle command/version/preset/privacy contract tests.' \
 		'make test-target-tools  Run target tool discovery regression tests.' \
+		'make test-darwin-linker-route Run osxcross Darwin linker-route regression tests.' \
 		'make test-no-kore       Configure and link a VECTIS_WITH_KORE_RUNTIME=OFF build.' \
 		'make test-e2e           Reset and run the local compose-backed lockd e2e smoke tests.' \
 		'make test-all           Run unit tests and local e2e smoke tests.' \
@@ -84,6 +85,10 @@ test-release-privacy-contracts:
 
 test-target-tools:
 	$(TIMED) test-target-tools bash ./scripts/test_discover_target_tools.sh
+	$(TIMED) test-darwin-linker-route bash ./scripts/test_darwin_linker_route.sh
+
+test-darwin-linker-route:
+	$(TIMED) test-darwin-linker-route bash ./scripts/test_darwin_linker_route.sh
 
 deps-debug:
 	$(TIMED) deps-debug bash ./scripts/deps.sh deps-host-debug
@@ -121,8 +126,9 @@ build-release: deps-release deps-cross
 	$(TIMED) build-armhf-musl $(CMAKE) --preset armhf-linux-musl-release
 	$(TIMED) build-armhf-musl-compile $(CMAKE) --build --preset armhf-linux-musl-release
 	@if bash ./scripts/osxcross_available.sh; then \
-		$(TIMED) build-arm64-darwin $(CMAKE) --preset arm64-apple-darwin-release; \
-		$(TIMED) build-arm64-darwin-compile $(CMAKE) --build --preset arm64-apple-darwin-release; \
+		osxcross_root=$${OSXCROSS_ROOT:-$${HOME}/.local/cross/osxcross}; \
+		PATH="$$osxcross_root/bin:$$PATH" $(TIMED) build-arm64-darwin $(CMAKE) --preset arm64-apple-darwin-release; \
+		PATH="$$osxcross_root/bin:$$PATH" $(TIMED) build-arm64-darwin-compile $(CMAKE) --build --preset arm64-apple-darwin-release; \
 	else \
 		printf '[build] skipping arm64-apple-darwin-release: osxcross toolchain not available\n'; \
 	fi

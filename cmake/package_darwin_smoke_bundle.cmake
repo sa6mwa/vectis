@@ -27,6 +27,7 @@ endfunction()
 vectis_import_cache_path(CMAKE_C_COMPILER)
 vectis_import_cache_path(CMAKE_TOOLCHAIN_FILE)
 vectis_import_cache_path(CMAKE_BUILD_TYPE)
+vectis_import_cache_path(VECTIS_OSXCROSS_BIN_DIR)
 vectis_import_cache_path(VECTIS_OTOOL)
 
 include("${VECTIS_BINARY_DIR}/package-metadata.cmake")
@@ -136,7 +137,8 @@ if(CMAKE_TOOLCHAIN_FILE)
 endif()
 
 execute_process(
-  COMMAND "${CMAKE_COMMAND}" ${configure_args}
+  COMMAND "${CMAKE_COMMAND}" -E env "PATH=${VECTIS_OSXCROSS_BIN_DIR}:$ENV{PATH}"
+          "${CMAKE_COMMAND}" ${configure_args}
   RESULT_VARIABLE configure_result
   OUTPUT_VARIABLE configure_stdout
   ERROR_VARIABLE configure_stderr
@@ -149,7 +151,8 @@ if(NOT configure_result EQUAL 0)
 endif()
 
 execute_process(
-  COMMAND "${CMAKE_COMMAND}" --build "${consumer_bin_dir}"
+  COMMAND "${CMAKE_COMMAND}" -E env "PATH=${VECTIS_OSXCROSS_BIN_DIR}:$ENV{PATH}"
+          "${CMAKE_COMMAND}" --build "${consumer_bin_dir}"
   RESULT_VARIABLE build_result
   OUTPUT_VARIABLE build_stdout
   ERROR_VARIABLE build_stderr

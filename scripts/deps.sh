@@ -165,7 +165,7 @@ case "$preset" in
     else
       osxcross_root="${HOME:-}/.local/cross/osxcross"
     fi
-    osxcross_host="${VECTIS_OSXCROSS_HOST:-arm64-apple-darwin25}"
+    osxcross_host="${VECTIS_OSXCROSS_HOST:-${CPKT_OSXCROSS_HOST:-arm64-apple-darwin25}}"
     target_cc="${CC:-$osxcross_root/bin/$osxcross_host-clang}"
     target_ar="${AR:-$osxcross_root/bin/$osxcross_host-ar}"
     target_ranlib="${RANLIB:-$osxcross_root/bin/$osxcross_host-ranlib}"

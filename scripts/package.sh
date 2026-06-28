@@ -45,6 +45,31 @@ target_id_for_preset() {
   printf '%s\n' "${preset%-release}"
 }
 
+osxcross_bin_dir() {
+  local osxcross_root
+
+  if [ -n "${OSXCROSS_ROOT:-}" ]; then
+    osxcross_root=$OSXCROSS_ROOT
+  else
+    osxcross_root=${HOME:?HOME is required when OSXCROSS_ROOT is not set}/.local/cross/osxcross
+  fi
+  printf '%s\n' "$osxcross_root/bin"
+}
+
+run_with_target_path() {
+  local target_id="$1"
+  shift
+
+  case "$target_id" in
+    arm64-apple-darwin)
+      PATH="$(osxcross_bin_dir):$PATH" "$@"
+      ;;
+    *)
+      "$@"
+      ;;
+  esac
+}
+
 emit_toolchain_skip() {
   local target_id="$1"
   printf '[package] skipping %s: target toolchain not available\n' "$target_id" >&2
@@ -94,19 +119,20 @@ run_optional_target() {
 run_target() {
   local preset="$1"
   local build_dir="$repo_root/build/$preset"
+  local target_id="${preset%-release}"
   local tool_args=()
 
-  bash "$script_dir/deps.sh" "deps-${preset%-release}"
-  "$cmake_bin" --preset "$preset"
-  "$cmake_bin" --build --preset "$preset"
-  eval "$("$script_dir/discover_target_tools.sh" --build-dir "$build_dir" --target-id "${preset%-release}")"
+  bash "$script_dir/deps.sh" "deps-$target_id"
+  run_with_target_path "$target_id" "$cmake_bin" --preset "$preset"
+  run_with_target_path "$target_id" "$cmake_bin" --build --preset "$preset"
+  eval "$("$script_dir/discover_target_tools.sh" --build-dir "$build_dir" --target-id "$target_id")"
   if [ -n "${STRIP:-}" ]; then
     tool_args+=("-DCMAKE_STRIP=$STRIP")
   fi
   if [ -n "${OTOOL:-}" ]; then
     tool_args+=("-DVECTIS_OTOOL=$OTOOL")
   fi
-  "$cmake_bin" \
+  run_with_target_path "$target_id" "$cmake_bin" \
     -DVECTIS_BINARY_DIR="$build_dir" \
     -DVECTIS_ROOT="$repo_root" \
     -DVECTIS_DIST_DIR="$repo_root/dist" \
@@ -123,7 +149,7 @@ run_darwin_target_if_osxcross() {
   if "$script_dir/osxcross_available.sh"; then
     run_target "$preset"
     eval "$("$script_dir/discover_target_tools.sh" --build-dir "$build_dir" --target-id arm64-apple-darwin)"
-    "$cmake_bin" \
+    run_with_target_path arm64-apple-darwin "$cmake_bin" \
       -DVECTIS_BINARY_DIR="$build_dir" \
       -DVECTIS_ROOT="$repo_root" \
       -DVECTIS_DIST_DIR="$repo_root/dist" \

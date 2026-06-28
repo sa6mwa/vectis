@@ -7,10 +7,10 @@ else
   osxcross_root=${HOME:?HOME is required when OSXCROSS_ROOT is not set}/.local/cross/osxcross
 fi
 
-host=${VECTIS_OSXCROSS_HOST:-arm64-apple-darwin25}
+host=${VECTIS_OSXCROSS_HOST:-${CPKT_OSXCROSS_HOST:-arm64-apple-darwin25}}
 bin_dir="$osxcross_root/bin"
 
-for tool in clang ar ranlib otool; do
+for tool in clang ar ranlib ld otool; do
   if [ ! -x "$bin_dir/$host-$tool" ]; then
     exit 1
   fi
@@ -32,6 +32,6 @@ cat >"$probe_c" <<'EOF'
 int main(void) { return 0; }
 EOF
 
-if ! "$bin_dir/$host-clang" "$probe_c" -o "$probe_bin" >/dev/null 2>&1; then
+if ! PATH="$bin_dir:$PATH" "$bin_dir/$host-clang" "-fuse-ld=$bin_dir/$host-ld" "$probe_c" -o "$probe_bin" >/dev/null 2>&1; then
   exit 1
 fi
