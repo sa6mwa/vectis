@@ -18,7 +18,9 @@ function(vectis_add_unit_test target_name)
     target_compile_options(${target_name} PRIVATE -UNDEBUG)
   endif()
   add_test(NAME ${target_name} COMMAND ${target_name})
-  set_tests_properties(${target_name} PROPERTIES TIMEOUT 180)
+  set_tests_properties(${target_name} PROPERTIES
+    LABELS "unit;local"
+    TIMEOUT 180)
 endfunction()
 
 function(vectis_add_cpp_header_test target_name)
@@ -46,7 +48,9 @@ function(vectis_add_cpp_header_test target_name)
     )
   endif()
   add_test(NAME ${target_name} COMMAND ${target_name})
-  set_tests_properties(${target_name} PROPERTIES TIMEOUT 180)
+  set_tests_properties(${target_name} PROPERTIES
+    LABELS "unit;local"
+    TIMEOUT 180)
 endfunction()
 
 vectis_add_unit_test(vectis_unit_config test_vectis_config.c)

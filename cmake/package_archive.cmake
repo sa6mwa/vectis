@@ -25,6 +25,9 @@ function(vectis_import_cache_path var_name)
 endfunction()
 
 vectis_import_cache_path(VECTIS_EXTERNAL_ROOT)
+vectis_import_cache_path(CMAKE_INSTALL_NAME_TOOL)
+vectis_import_cache_path(VECTIS_OTOOL)
+vectis_import_cache_path(CMAKE_OTOOL)
 
 include("${VECTIS_BINARY_DIR}/package-metadata.cmake")
 
@@ -54,9 +57,120 @@ endif()
 
 file(COPY "${VECTIS_EXTERNAL_ROOT}/include/" DESTINATION "${package_root}/include")
 file(COPY "${VECTIS_EXTERNAL_ROOT}/lib/" DESTINATION "${package_root}/lib")
-if(EXISTS "${VECTIS_EXTERNAL_ROOT}/share")
-  file(COPY "${VECTIS_EXTERNAL_ROOT}/share/" DESTINATION "${package_root}/share")
+if(EXISTS "${VECTIS_EXTERNAL_ROOT}/share/doc")
+  file(COPY "${VECTIS_EXTERNAL_ROOT}/share/doc/" DESTINATION "${package_root}/share/doc")
 endif()
+if(EXISTS "${VECTIS_EXTERNAL_ROOT}/share/c.pkt.systems")
+  file(COPY "${VECTIS_EXTERNAL_ROOT}/share/c.pkt.systems" DESTINATION "${package_root}/share")
+endif()
+
+function(vectis_darwin_fixup_dylibs)
+  if(NOT VECTIS_TARGET_ID MATCHES "apple-darwin$")
+    return()
+  endif()
+  if(NOT CMAKE_INSTALL_NAME_TOOL OR NOT EXISTS "${CMAKE_INSTALL_NAME_TOOL}")
+    message(FATAL_ERROR
+      "Darwin package fixup requires target install_name_tool; got ${CMAKE_INSTALL_NAME_TOOL}")
+  endif()
+  if(NOT VECTIS_OTOOL AND CMAKE_OTOOL)
+    set(VECTIS_OTOOL "${CMAKE_OTOOL}")
+  endif()
+  if(NOT VECTIS_OTOOL OR NOT EXISTS "${VECTIS_OTOOL}")
+    message(FATAL_ERROR "Darwin package fixup requires target otool; got ${VECTIS_OTOOL}")
+  endif()
+
+  file(GLOB vectis_darwin_dylibs LIST_DIRECTORIES false
+       "${package_root}/lib/*.dylib")
+  set(vectis_darwin_dylib_names "")
+  foreach(vectis_darwin_dylib IN LISTS vectis_darwin_dylibs)
+    get_filename_component(vectis_darwin_dylib_name
+                           "${vectis_darwin_dylib}" NAME)
+    list(APPEND vectis_darwin_dylib_names "${vectis_darwin_dylib_name}")
+  endforeach()
+
+  foreach(vectis_darwin_dylib IN LISTS vectis_darwin_dylibs)
+    get_filename_component(vectis_darwin_dylib_name
+                           "${vectis_darwin_dylib}" NAME)
+    execute_process(
+      COMMAND "${VECTIS_OTOOL}" -D "${vectis_darwin_dylib}"
+      RESULT_VARIABLE vectis_darwin_id_probe_result
+      OUTPUT_VARIABLE vectis_darwin_id_probe_output
+      ERROR_QUIET
+      OUTPUT_STRIP_TRAILING_WHITESPACE)
+    set(vectis_darwin_install_id_name "${vectis_darwin_dylib_name}")
+    if(vectis_darwin_id_probe_result EQUAL 0)
+      string(REPLACE "\n" ";" vectis_darwin_id_probe_lines
+             "${vectis_darwin_id_probe_output}")
+      list(LENGTH vectis_darwin_id_probe_lines
+           vectis_darwin_id_probe_line_count)
+      if(vectis_darwin_id_probe_line_count GREATER 1)
+        list(GET vectis_darwin_id_probe_lines 1 vectis_darwin_install_id)
+        string(STRIP "${vectis_darwin_install_id}" vectis_darwin_install_id)
+        get_filename_component(vectis_darwin_existing_id_name
+                               "${vectis_darwin_install_id}" NAME)
+        list(FIND vectis_darwin_dylib_names
+             "${vectis_darwin_existing_id_name}"
+             vectis_darwin_existing_id_index)
+        if(NOT vectis_darwin_existing_id_index EQUAL -1)
+          set(vectis_darwin_install_id_name
+              "${vectis_darwin_existing_id_name}")
+        endif()
+      endif()
+    endif()
+    execute_process(
+      COMMAND "${CMAKE_INSTALL_NAME_TOOL}" -id
+              "@rpath/${vectis_darwin_install_id_name}"
+              "${vectis_darwin_dylib}"
+      RESULT_VARIABLE vectis_darwin_id_result)
+    if(NOT vectis_darwin_id_result EQUAL 0)
+      message(FATAL_ERROR
+        "failed to set Darwin install name for ${vectis_darwin_dylib}")
+    endif()
+  endforeach()
+
+  file(GLOB vectis_darwin_loaders LIST_DIRECTORIES false
+       "${package_root}/bin/*" "${package_root}/lib/*.dylib")
+  foreach(vectis_darwin_loader IN LISTS vectis_darwin_loaders)
+    execute_process(
+      COMMAND "${VECTIS_OTOOL}" -L "${vectis_darwin_loader}"
+      RESULT_VARIABLE vectis_darwin_otool_result
+      OUTPUT_VARIABLE vectis_darwin_otool_output
+      ERROR_QUIET)
+    if(NOT vectis_darwin_otool_result EQUAL 0)
+      continue()
+    endif()
+    string(REPLACE "\n" ";" vectis_darwin_otool_lines
+           "${vectis_darwin_otool_output}")
+    foreach(vectis_darwin_line IN LISTS vectis_darwin_otool_lines)
+      string(STRIP "${vectis_darwin_line}" vectis_darwin_line)
+      if(NOT vectis_darwin_line MATCHES "^/")
+        continue()
+      endif()
+      string(REGEX REPLACE " .*" "" vectis_darwin_dep
+             "${vectis_darwin_line}")
+      get_filename_component(vectis_darwin_dep_name
+                             "${vectis_darwin_dep}" NAME)
+      list(FIND vectis_darwin_dylib_names "${vectis_darwin_dep_name}"
+           vectis_darwin_dep_index)
+      if(NOT vectis_darwin_dep_index EQUAL -1)
+        execute_process(
+          COMMAND "${CMAKE_INSTALL_NAME_TOOL}" -change
+                  "${vectis_darwin_dep}"
+                  "@rpath/${vectis_darwin_dep_name}"
+                  "${vectis_darwin_loader}"
+          RESULT_VARIABLE vectis_darwin_change_result)
+        if(NOT vectis_darwin_change_result EQUAL 0)
+          message(FATAL_ERROR
+            "failed to rewrite Darwin dependency ${vectis_darwin_dep} "
+            "in ${vectis_darwin_loader}")
+        endif()
+      endif()
+      unset(vectis_darwin_dep_index)
+    endforeach()
+  endforeach()
+endfunction()
+
+vectis_darwin_fixup_dylibs()
 
 file(GLOB_RECURSE vectis_package_pc_files LIST_DIRECTORIES false
      "${package_root}/lib/pkgconfig/*.pc")

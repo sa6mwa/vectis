@@ -7638,12 +7638,97 @@ vectis_dsv_set_lonejson_string_field(const lonejson_field *field, void *value,
   return VECTIS_OK;
 }
 
+static int vectis_parse_lonejson_u64_text(const char *text,
+                                          lonejson_uint64 *value) {
+  lonejson_uint64 limit;
+  lonejson_uint64 parsed;
+
+  while (isspace((unsigned char)*text)) {
+    text++;
+  }
+  if (*text == '+') {
+    text++;
+  } else if (*text == '-') {
+    return 0;
+  }
+  if (!isdigit((unsigned char)*text)) {
+    return 0;
+  }
+  limit = ~(lonejson_uint64)0u;
+  parsed = 0u;
+  do {
+    lonejson_uint64 digit;
+
+    digit = (lonejson_uint64)(*text - '0');
+    if (parsed > (limit - digit) / 10u) {
+      return 0;
+    }
+    parsed = (lonejson_uint64)(parsed * 10u + digit);
+    text++;
+  } while (isdigit((unsigned char)*text));
+  if (*text != '\0') {
+    return 0;
+  }
+  *value = parsed;
+  return 1;
+}
+
+static int vectis_parse_lonejson_i64_text(const char *text,
+                                          lonejson_int64 *value) {
+  lonejson_uint64 signed_max;
+  lonejson_uint64 limit;
+  lonejson_uint64 parsed;
+  int negative;
+
+  while (isspace((unsigned char)*text)) {
+    text++;
+  }
+  negative = 0;
+  if (*text == '-') {
+    negative = 1;
+    text++;
+  } else if (*text == '+') {
+    text++;
+  }
+  if (!isdigit((unsigned char)*text)) {
+    return 0;
+  }
+  signed_max = (~(lonejson_uint64)0u) >> 1u;
+  limit = negative ? signed_max + 1u : signed_max;
+  parsed = 0u;
+  do {
+    lonejson_uint64 digit;
+
+    digit = (lonejson_uint64)(*text - '0');
+    if (parsed > (limit - digit) / 10u) {
+      return 0;
+    }
+    parsed = (lonejson_uint64)(parsed * 10u + digit);
+    text++;
+  } while (isdigit((unsigned char)*text));
+  if (*text != '\0') {
+    return 0;
+  }
+  if (negative) {
+    if (parsed == signed_max + 1u) {
+      *value = (lonejson_int64)(-((lonejson_int64)signed_max) - 1);
+    } else {
+      *value = (lonejson_int64)(-((lonejson_int64)parsed));
+    }
+  } else {
+    *value = (lonejson_int64)parsed;
+  }
+  return 1;
+}
+
 static vectis_status
 vectis_dsv_set_lonejson_scalar_field(const lonejson_field *field, void *value,
                                      const char *text, size_t text_size,
                                      vectis_error *error) {
   char buffer[128];
   char *end;
+  lonejson_int64 i64_value;
+  lonejson_uint64 u64_value;
 
   if (field->flags & LONEJSON_FIELD_HAS_PRESENCE) {
     *(int *)((unsigned char *)value + field->presence_offset) = 1;
@@ -7661,13 +7746,23 @@ vectis_dsv_set_lonejson_scalar_field(const lonejson_field *field, void *value,
     return vectis_dsv_set_lonejson_string_field(field, value, text, text_size,
                                                 error);
   case LONEJSON_FIELD_KIND_I64:
+    if (!vectis_parse_lonejson_i64_text(buffer, &i64_value)) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "DSV lonejson scalar field is invalid");
+      return VECTIS_ERR_INVALID;
+    }
     *(lonejson_int64 *)((unsigned char *)value + field->struct_offset) =
-        (lonejson_int64)strtoll(buffer, &end, 10);
-    break;
+        i64_value;
+    return VECTIS_OK;
   case LONEJSON_FIELD_KIND_U64:
+    if (!vectis_parse_lonejson_u64_text(buffer, &u64_value)) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "DSV lonejson scalar field is invalid");
+      return VECTIS_ERR_INVALID;
+    }
     *(lonejson_uint64 *)((unsigned char *)value + field->struct_offset) =
-        (lonejson_uint64)strtoull(buffer, &end, 10);
-    break;
+        u64_value;
+    return VECTIS_OK;
   case LONEJSON_FIELD_KIND_F64:
     *(double *)((unsigned char *)value + field->struct_offset) =
         strtod(buffer, &end);
@@ -9770,6 +9865,8 @@ static vectis_status vectis_xml_set_lonejson_scalar_field(
   size_t text_size;
   char buffer[128];
   char *end;
+  lonejson_int64 i64_value;
+  lonejson_uint64 u64_value;
 
   text = data;
   text_size = size;
@@ -9798,13 +9895,23 @@ static vectis_status vectis_xml_set_lonejson_scalar_field(
   errno = 0;
   switch (field->kind) {
   case LONEJSON_FIELD_KIND_I64:
+    if (!vectis_parse_lonejson_i64_text(buffer, &i64_value)) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "XML scalar field is invalid");
+      return VECTIS_ERR_INVALID;
+    }
     *(lonejson_int64 *)((unsigned char *)value + field->struct_offset) =
-        (lonejson_int64)strtoll(buffer, &end, 10);
-    break;
+        i64_value;
+    return VECTIS_OK;
   case LONEJSON_FIELD_KIND_U64:
+    if (!vectis_parse_lonejson_u64_text(buffer, &u64_value)) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "XML scalar field is invalid");
+      return VECTIS_ERR_INVALID;
+    }
     *(lonejson_uint64 *)((unsigned char *)value + field->struct_offset) =
-        (lonejson_uint64)strtoull(buffer, &end, 10);
-    break;
+        u64_value;
+    return VECTIS_OK;
   case LONEJSON_FIELD_KIND_F64:
     *(double *)((unsigned char *)value + field->struct_offset) =
         strtod(buffer, &end);

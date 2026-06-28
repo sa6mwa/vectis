@@ -92,6 +92,9 @@ find_package(vectis CONFIG REQUIRED)
 
 add_executable(vectis_static_smoke smoke.c)
 target_link_libraries(vectis_static_smoke PRIVATE vectis::static)
+set_target_properties(vectis_static_smoke PROPERTIES
+  BUILD_WITH_INSTALL_RPATH TRUE
+  INSTALL_RPATH "@executable_path/../lib")
 ]=])
 
 file(WRITE "${consumer_src_dir}/smoke.c" [=[

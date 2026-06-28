@@ -212,6 +212,9 @@ verify_darwin_root() {
 
   find "$package_root" \( -path "$package_root/bin/*" -o -path "$package_root/lib/*" \) -type f -print |
   while IFS= read -r file; do
+    case "$file" in
+      *.a) continue ;;
+    esac
     if loads=$("$otool" -L "$file" 2>/dev/null); then
       verify_darwin_install_name "$otool" "$file"
       verify_darwin_dependencies "$otool" "$file" "$loads"

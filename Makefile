@@ -17,8 +17,9 @@ FUZZ_PRESET := fuzz
 	deps-debug deps-release deps-cross \
 	build build-debug build-release build-asan build-coverage build-fuzz \
 	test test-debug test-lifecycle test-target-tools test-darwin-linker-route test-release-privacy-contracts asan test-asan coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
+	lua-env lua-test \
 	dev-up dev-down dev-reset dev-ps dev-logs \
-	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy release-matrix prerelease-hardening release print-release-version clean-dist finalize-slice prerelease \
+	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy release-darwin-smoke-bundle release-matrix prerelease-hardening release print-release-version clean-dist finalize-slice prerelease \
 	build-kore verify-kore-patches \
 	format clean \
 	vendor-kore vendor-kore-apply vendor-kore-status vendor-kore-upgrade
@@ -30,6 +31,8 @@ help:
 		'make test-lifecycle     Run lifecycle command/version/preset/privacy contract tests.' \
 		'make test-target-tools  Run target tool discovery regression tests.' \
 		'make test-darwin-linker-route Run osxcross Darwin linker-route regression tests.' \
+		'make lua-test           Run Lua runner/facade smoke tests through the built vectis CLI.' \
+		'make lua-env            Print shell exports for running Lua examples with the built vectis CLI.' \
 		'make test-no-kore       Configure and link a VECTIS_WITH_KORE_RUNTIME=OFF build.' \
 		'make test-e2e           Reset and run the local compose-backed lockd e2e smoke tests.' \
 		'make test-all           Run unit tests and local e2e smoke tests.' \
@@ -61,6 +64,7 @@ help:
 		'make package-verify     Verify checksum-listed artifacts, privacy, and relocatability.' \
 		'make verify-release-archives Verify checksum-listed release archive layout.' \
 		'make verify-release-privacy Verify release artifacts contain no local paths.' \
+		'make release-darwin-smoke-bundle Build the Darwin SDK and smoke bundle when osxcross is available.' \
 		'make release-matrix     Build, checksum, and verify release artifacts for supported targets.' \
 		'make prerelease-hardening Run expensive deterministic hardening gates plus release matrix.' \
 		'make release            Clean final tagged release artifact pipeline; refuses untagged 0.0.0.' \
@@ -154,6 +158,9 @@ verify-release-privacy:
 package-verify:
 	$(TIMED) package-verify bash ./scripts/package-verify.sh
 
+release-darwin-smoke-bundle:
+	$(TIMED) release-darwin-smoke-bundle bash ./scripts/package.sh arm64-apple-darwin
+
 release-matrix: package package-source package-checksums package-verify
 
 prerelease-hardening: prerelease release-matrix
@@ -191,7 +198,15 @@ fuzz-smoke: build-fuzz
 
 finalize-slice: format test-lifecycle test-target-tools test
 
-prerelease: format test-lifecycle test-target-tools test-all asan fuzz-smoke test-install-tree package-source-smoke package-checksums package-verify
+lua-test: build-debug
+	$(TIMED) lua-test $(CTEST) --preset $(DEBUG_PRESET) -L lua
+
+lua-env: build-debug
+	@printf '%s\n' 'export VECTIS_BIN="$(ROOT)/build/debug/vectis"'
+	@printf '%s\n' 'export PATH="$(ROOT)/build/debug:$$PATH"'
+	@printf '%s\n' '# Example: "$$VECTIS_BIN" examples/lua/mdf_render.lua'
+
+prerelease: format test-lifecycle test-target-tools lua-test test-all asan fuzz-smoke test-install-tree package-source-smoke package-checksums package-verify
 
 test-debug: build-debug
 	$(TIMED) test-debug $(CTEST) --preset $(DEBUG_PRESET)

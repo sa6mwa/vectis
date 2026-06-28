@@ -96,6 +96,7 @@ include("${repo_root}/cmake/toolchains/arm64-apple-darwin.cmake")
 
 set(expected_bin "${osxcross_bin}")
 set(expected_ld "${osxcross_bin}/${host}-ld")
+set(expected_otool "${osxcross_bin}/${host}-otool")
 
 string(FIND "\$ENV{PATH}" "\${expected_bin}:" path_index)
 if(NOT path_index EQUAL 0)
@@ -105,6 +106,12 @@ endif()
 if(NOT CMAKE_LINKER STREQUAL "\${expected_ld}")
   message(FATAL_ERROR "Darwin toolchain selected wrong linker: \${CMAKE_LINKER}")
 endif()
+
+foreach(otool_var VECTIS_OTOOL CMAKE_OTOOL CPKT_OTOOL _cai_otool)
+  if(NOT "\${\${otool_var}}" STREQUAL "\${expected_otool}")
+    message(FATAL_ERROR "Darwin toolchain selected wrong Mach-O inspector in \${otool_var}: \${\${otool_var}}")
+  endif()
+endforeach()
 
 foreach(flag_var CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS CMAKE_MODULE_LINKER_FLAGS)
   string(FIND "\${\${flag_var}}" "-fuse-ld=\${expected_ld}" fuse_index)

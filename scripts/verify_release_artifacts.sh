@@ -72,7 +72,18 @@ while IFS= read -r artifact_name; do
           [ -f "$root/share/doc/vectis/LICENSE" ] || fail "binary SDK missing license" "$artifact_name"
           [ -f "$root/share/doc/vectis/README.md" ] || fail "binary SDK missing README" "$artifact_name"
           [ -f "$root/lib/cmake/vectis/vectisConfig.cmake" ] || fail "binary SDK missing CMake config" "$artifact_name"
+          [ -f "$root/lib/cmake/vectis/vectisConfigVersion.cmake" ] || fail "binary SDK missing CMake version config" "$artifact_name"
           [ -f "$root/include/vectis/vectis_version.h" ] || fail "binary SDK missing generated version header" "$artifact_name"
+          grep -F "#define VECTIS_VERSION \"$version\"" "$root/include/vectis/vectis_version.h" >/dev/null ||
+            fail "binary SDK version header mismatch" "$artifact_name"
+          if find "$root/share" -mindepth 1 -maxdepth 1 -type d \
+             \( -name '*-source' -o -name '*lua*source*' \) | grep . >/dev/null; then
+            fail "binary SDK contains dependency source tree" "$artifact_name"
+          fi
+          if find "$root/share" -type f \
+             \( -name '*.rockspec' -o -name '*.rockspec.in' -o -name '*_lua.c' \) | grep . >/dev/null; then
+            fail "binary SDK contains Lua package or binding source" "$artifact_name"
+          fi
           if [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ] &&
              [ "$root_name" = "vectis-$version-x86_64-linux-gnu" ]; then
             if [ -f "$root/lib/libvectis.a" ]; then

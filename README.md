@@ -50,7 +50,7 @@ client surfaces.
 Debug and release builds consume pinned SDK bundles provisioned under `.cache/`.
 The current expected dependency set is:
 
-- `c.pkt.systems` 0.4.0 for curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.0,
+- `c.pkt.systems` 0.5.0 for curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.0,
   the C89 Lua runtime facade, libxml2 2.15.3, and supporting package metadata.
 - `liblockdc` 0.12.1 for lockd C and Lua surfaces.
 - `lonejson` 0.32.1 for typed JSON parsing, serialization, streaming arrays,
@@ -231,12 +231,16 @@ make prerelease
 `make help` is the authoritative command index. Important targets include:
 
 - `make deps-debug` provisions host debug dependencies into `.cache/`.
+- `make lua-test` runs the embedded Lua runtime and bundled module smoke tests.
+- `make lua-env` prints exports for running Lua examples with the built CLI.
 - `make test-e2e` runs the compose-backed integration smoke suite.
 - `make test-install-tree` verifies downstream CMake/pkg-config consumers from
   an installed SDK tree.
 - `make package` builds release SDK archives.
 - `make package-verify` verifies checksums, archive layout, privacy, and
   relocatability.
+- `make release-darwin-smoke-bundle` builds the Darwin SDK and smoke bundle
+  when osxcross is available.
 - `make release-matrix` builds, checksums, and verifies supported release
   targets.
 

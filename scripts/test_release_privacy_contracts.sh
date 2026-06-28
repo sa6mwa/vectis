@@ -160,4 +160,23 @@ expect_darwin_failure "Darwin project dylib install name is not @rpath-relative"
 expect_darwin_failure "non-system absolute Darwin dependency path" bad_dependency
 expect_darwin_failure "non-relocatable Darwin rpath" bad_rpath
 
+rm -rf "$dist" "$payload"
+mkdir -p "$dist" "$payload/vectis-$version-arm64-apple-darwin/lib" "$work/fakebin"
+printf 'not really a static archive\n' >"$payload/vectis-$version-arm64-apple-darwin/lib/liblua.a"
+tar -C "$payload" -czf "$dist/vectis-$version-arm64-apple-darwin.tar.gz" \
+  "vectis-$version-arm64-apple-darwin"
+(cd "$dist" && sha256sum "vectis-$version-arm64-apple-darwin.tar.gz" >"vectis-$version-CHECKSUMS")
+cat >"$work/fakebin/otool" <<EOF
+#!/bin/sh
+printf '%s:\\n' "\$2"
+printf '%s\\n' '$repo_root/build/not-a-load-command/liblua.a(lapi.o):'
+EOF
+chmod +x "$work/fakebin/otool"
+VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist VECTIS_OTOOL="$work/fakebin/otool" \
+  "$repo_root/scripts/verify_release_privacy.sh" >"$work/static-archive.out" 2>"$work/static-archive.err" || {
+    echo "privacy verifier rejected Darwin static archive member label" >&2
+    cat "$work/static-archive.err" >&2
+    exit 1
+  }
+
 echo "release privacy contracts ok"

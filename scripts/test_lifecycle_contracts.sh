@@ -62,8 +62,15 @@ fi
 
 assert_contains "$repo_root/.gitignore" '^/VERSION$'
 assert_contains "$repo_root/scripts/package.sh" 'target_toolchain_available\.sh'
+assert_contains "$repo_root/cmake/package_archive.cmake" 'share/c\.pkt\.systems'
+assert_contains "$repo_root/cmake/package_archive.cmake" 'CMAKE_INSTALL_NAME_TOOL'
+assert_contains "$repo_root/cmake/package_archive.cmake" '@rpath/\$\{vectis_darwin_dep_name\}'
+assert_contains "$repo_root/cmake/package_darwin_smoke_bundle.cmake" '@executable_path/\.\./lib'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK contains dependency source tree'
+assert_contains "$repo_root/tests/CMakeLists.txt" 'LABELS "lua;smoke;local"'
 assert_contains "$repo_root/CMakeLists.txt" 'target_compile_options\(\$\{target\} PRIVATE'
 assert_contains "$repo_root/CMakeLists.txt" 'Werror'
+assert_contains "$repo_root/CMakeLists.txt" '_DARWIN_C_SOURCE'
 assert_contains "$repo_root/examples/CMakeLists.txt" 'target_compile_options\(\$\{target_name\} PRIVATE'
 assert_contains "$repo_root/examples/CMakeLists.txt" 'Werror'
 
@@ -164,11 +171,14 @@ for target in \
   package-verify \
   verify-release-archives \
   verify-release-privacy \
+  release-darwin-smoke-bundle \
   release-matrix \
   prerelease-hardening \
   release \
   finalize-slice \
   prerelease \
+  lua-test \
+  lua-env \
   clean-dist
 do
   assert_contains "$repo_root/Makefile" "^$target:"
