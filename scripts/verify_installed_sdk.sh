@@ -9,6 +9,7 @@ extra_prefix=${3:-}
 cmake_bin=${CMAKE:-cmake}
 build_root=${TMPDIR:-/tmp}/vectis-install-sdk-${link_mode}-$$
 examples_build_root=${TMPDIR:-/tmp}/vectis-install-examples-${link_mode}-$$
+pkg_config_build_root=${TMPDIR:-/tmp}/vectis-install-pkg-config-${link_mode}-$$
 
 package_root=$(CDPATH= cd -- "$package_root" && pwd)
 if [ -n "$extra_prefix" ]; then
@@ -34,6 +35,7 @@ esac
 cleanup() {
   rm -rf "$build_root"
   rm -rf "$examples_build_root"
+  rm -rf "$pkg_config_build_root"
 }
 trap cleanup EXIT INT TERM
 
@@ -43,6 +45,27 @@ trap cleanup EXIT INT TERM
   -DCMAKE_PREFIX_PATH="$cmake_prefix_path" \
   -DVECTIS_CONSUMER_LINK="$link_mode"
 "$cmake_bin" --build "$build_root"
+
+if command -v pkg-config >/dev/null 2>&1; then
+  mkdir -p "$pkg_config_build_root"
+  cat >"$pkg_config_build_root/consumer.c" <<'EOF'
+#include <vectis/vectis.h>
+
+int main(void) {
+  vectis_app_config config;
+  vectis_app_config_init(&config);
+  return config.tls.port == 8443u ? 0 : 1;
+}
+EOF
+  PKG_CONFIG_PATH="$package_root/lib/pkgconfig${extra_prefix:+:$extra_prefix/lib/pkgconfig}" \
+    pkg-config --exists vectis
+  PKG_CONFIG_PATH="$package_root/lib/pkgconfig${extra_prefix:+:$extra_prefix/lib/pkgconfig}" \
+    pkg-config --static --cflags --libs vectis >"$pkg_config_build_root/vectis.pc.flags"
+  cc "$pkg_config_build_root/consumer.c" \
+    -o "$pkg_config_build_root/vectis_pkg_config_consumer" \
+    $(PKG_CONFIG_PATH="$package_root/lib/pkgconfig${extra_prefix:+:$extra_prefix/lib/pkgconfig}" \
+        pkg-config --static --cflags --libs vectis)
+fi
 
 if [ "$link_mode" = "shared" ]; then
   if [ "$(uname -s)" = "Darwin" ]; then

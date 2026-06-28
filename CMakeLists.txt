@@ -602,6 +602,11 @@ write_basic_package_version_file(
   VERSION "${PROJECT_VERSION}"
   COMPATIBILITY SameMajorVersion
 )
+configure_file(
+  "${CMAKE_SOURCE_DIR}/cmake/vectis.pc.in"
+  "${CMAKE_BINARY_DIR}/generated/pkgconfig/vectis.pc"
+  @ONLY
+)
 
 if(VECTIS_BUILD_STATIC)
   set(vectis_test_link_target vectis_static)
@@ -809,6 +814,9 @@ if(VECTIS_INSTALL)
           "${CMAKE_BINARY_DIR}/generated/cmake/vectisConfig.cmake"
           "${CMAKE_BINARY_DIR}/generated/cmake/vectisConfigVersion.cmake"
           DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/vectis")
+  install(FILES
+          "${CMAKE_BINARY_DIR}/generated/pkgconfig/vectis.pc"
+          DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
   if(EXISTS "${vectis_kore_include_dir}/kore/kore.h")
     install(DIRECTORY "${vectis_kore_include_dir}/kore"
             DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")

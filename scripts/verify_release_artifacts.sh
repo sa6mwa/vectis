@@ -73,6 +73,7 @@ while IFS= read -r artifact_name; do
           [ -f "$root/share/doc/vectis/README.md" ] || fail "binary SDK missing README" "$artifact_name"
           [ -f "$root/lib/cmake/vectis/vectisConfig.cmake" ] || fail "binary SDK missing CMake config" "$artifact_name"
           [ -f "$root/lib/cmake/vectis/vectisConfigVersion.cmake" ] || fail "binary SDK missing CMake version config" "$artifact_name"
+          [ -f "$root/lib/pkgconfig/vectis.pc" ] || fail "binary SDK missing pkg-config metadata" "$artifact_name"
           [ -f "$root/include/vectis/vectis_version.h" ] || fail "binary SDK missing generated version header" "$artifact_name"
           grep -F "#define VECTIS_VERSION \"$version\"" "$root/include/vectis/vectis_version.h" >/dev/null ||
             fail "binary SDK version header mismatch" "$artifact_name"
