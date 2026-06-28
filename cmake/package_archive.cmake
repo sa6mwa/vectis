@@ -25,8 +25,6 @@ function(vectis_import_cache_path var_name)
 endfunction()
 
 vectis_import_cache_path(VECTIS_EXTERNAL_ROOT)
-vectis_import_cache_path(CMAKE_INSTALL_NAME_TOOL)
-vectis_import_cache_path(VECTIS_OTOOL)
 
 include("${VECTIS_BINARY_DIR}/package-metadata.cmake")
 
@@ -172,24 +170,6 @@ endif()
 ]=])
 
 file(WRITE "${package_root}/lib/cmake/vectis/vectisConfigVersion.cmake" "set(PACKAGE_VERSION \"${VECTIS_VERSION}\")\nset(PACKAGE_VERSION_COMPATIBLE TRUE)\n")
-
-if(VECTIS_TARGET_ID MATCHES "apple-darwin$")
-  if(NOT CMAKE_INSTALL_NAME_TOOL OR NOT EXISTS "${CMAKE_INSTALL_NAME_TOOL}")
-    message(FATAL_ERROR "CMAKE_INSTALL_NAME_TOOL is required for Darwin package fixups")
-  endif()
-  file(GLOB vectis_dylibs LIST_DIRECTORIES false "${package_root}/lib/*.dylib")
-  foreach(vectis_dylib IN LISTS vectis_dylibs)
-    get_filename_component(vectis_dylib_name "${vectis_dylib}" NAME)
-    execute_process(
-      COMMAND "${CMAKE_INSTALL_NAME_TOOL}" -id "@rpath/${vectis_dylib_name}" "${vectis_dylib}"
-      RESULT_VARIABLE id_result
-      ERROR_VARIABLE id_error
-    )
-    if(NOT id_result EQUAL 0)
-      message(FATAL_ERROR "failed to rewrite install name for ${vectis_dylib}\n${id_error}")
-    endif()
-  endforeach()
-endif()
 
 file(MAKE_DIRECTORY "${vectis_dist_dir}")
 set(archive_base "${vectis_dist_dir}/${package_prefix_name}.tar")

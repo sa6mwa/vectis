@@ -103,9 +103,6 @@ run_target() {
   if [ -n "${STRIP:-}" ]; then
     tool_args+=("-DCMAKE_STRIP=$STRIP")
   fi
-  if [ -n "${INSTALL_NAME_TOOL:-}" ]; then
-    tool_args+=("-DCMAKE_INSTALL_NAME_TOOL=$INSTALL_NAME_TOOL")
-  fi
   if [ -n "${OTOOL:-}" ]; then
     tool_args+=("-DVECTIS_OTOOL=$OTOOL")
   fi

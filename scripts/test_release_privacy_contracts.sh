@@ -80,4 +80,84 @@ grep -F "non-relocatable ELF runtime path" "$work/rpath.err" >/dev/null || {
   exit 1
 }
 
+write_darwin_artifact() {
+  rm -rf "$dist" "$payload"
+  mkdir -p "$dist" "$payload/vectis-$version-arm64-apple-darwin/lib" "$work/fakebin"
+  printf 'not really a mach-o\n' >"$payload/vectis-$version-arm64-apple-darwin/lib/libvectis.0.dylib"
+  tar -C "$payload" -czf "$dist/vectis-$version-arm64-apple-darwin.tar.gz" \
+    "vectis-$version-arm64-apple-darwin"
+  (cd "$dist" && sha256sum "vectis-$version-arm64-apple-darwin.tar.gz" >"vectis-$version-CHECKSUMS")
+}
+
+cat >"$work/fakebin/otool" <<'EOF'
+#!/bin/sh
+mode=${VECTIS_FAKE_OTOOL_CASE:-ok}
+option=$1
+file=$2
+
+case "$option" in
+  -D)
+    printf '%s:\n' "$file"
+    case "$mode" in
+      bad_install_name) printf '%s\n' '/usr/local/lib/libvectis.0.dylib' ;;
+      *) printf '%s\n' '@rpath/libvectis.0.dylib' ;;
+    esac
+    ;;
+  -L)
+    printf '%s:\n' "$file"
+    case "$mode" in
+      bad_dependency)
+        printf '\t%s\n' '/lib/libbad.dylib (compatibility version 1.0.0, current version 1.0.0)'
+        ;;
+      *)
+        printf '\t%s\n' '/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1.0.0)'
+        ;;
+    esac
+    ;;
+  -l)
+    case "$mode" in
+      bad_rpath)
+        cat <<'RPATH'
+Load command 1
+          cmd LC_RPATH
+      cmdsize 32
+         path /tmp/vectis-local (offset 12)
+RPATH
+        ;;
+      *)
+        cat <<'LOADS'
+Load command 1
+          cmd LC_CODE_SIGNATURE
+      cmdsize 16
+LOADS
+        ;;
+    esac
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$work/fakebin/otool"
+
+expect_darwin_failure() {
+  label=$1
+  mode=$2
+
+  write_darwin_artifact
+  if VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist VECTIS_OTOOL="$work/fakebin/otool" \
+     VECTIS_FAKE_OTOOL_CASE=$mode \
+     "$repo_root/scripts/verify_release_privacy.sh" >"$work/$mode.out" 2>"$work/$mode.err"; then
+    echo "privacy verifier accepted $label" >&2
+    exit 1
+  fi
+  grep -F "$label" "$work/$mode.err" >/dev/null || {
+    echo "privacy verifier did not report expected $label" >&2
+    cat "$work/$mode.err" >&2
+    exit 1
+  }
+}
+
+expect_darwin_failure "Darwin project dylib install name is not @rpath-relative" bad_install_name
+expect_darwin_failure "non-system absolute Darwin dependency path" bad_dependency
+expect_darwin_failure "non-relocatable Darwin rpath" bad_rpath
+
 echo "release privacy contracts ok"

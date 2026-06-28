@@ -572,6 +572,15 @@ if(VECTIS_BUILD_SHARED)
     VERSION ${PROJECT_VERSION}
     SOVERSION 0
   )
+  if(APPLE)
+    set_target_properties(vectis_shared PROPERTIES
+      MACOSX_RPATH ON
+      BUILD_WITH_INSTALL_NAME_DIR ON
+      BUILD_WITH_INSTALL_RPATH TRUE
+      INSTALL_NAME_DIR "@rpath"
+      INSTALL_RPATH "@loader_path"
+    )
+  endif()
   vectis_configure_c_target(vectis_shared)
 endif()
 
@@ -739,6 +748,12 @@ if(VECTIS_BUILD_BINARY)
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF
   )
+  if(APPLE)
+    set_target_properties(vectis_bin PROPERTIES
+      BUILD_WITH_INSTALL_RPATH TRUE
+      INSTALL_RPATH "@executable_path/../lib"
+    )
+  endif()
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(vectis_bin PRIVATE
       -std=c99
