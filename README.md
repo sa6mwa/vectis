@@ -50,7 +50,7 @@ client surfaces.
 Debug and release builds consume pinned SDK bundles provisioned under `.cache/`.
 The current expected dependency set is:
 
-- `c.pkt.systems` 0.5.0 for curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.0,
+- `c.pkt.systems` 0.6.0 for curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.0,
   the C89 Lua runtime facade, libxml2 2.15.3, and supporting package metadata.
 - `liblockdc` 0.12.1 for lockd C and Lua surfaces.
 - `lonejson` 0.32.1 for typed JSON parsing, serialization, streaming arrays,
