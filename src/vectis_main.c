@@ -2,7 +2,7 @@
 
 #ifdef __linux__
 #define PID0_IMPLEMENTATION 1
-#include <libpid0-0.3.0.h>
+#include <libpid0-0.4.0.h>
 #endif
 
 int main(int argc, char **argv) {

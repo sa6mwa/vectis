@@ -58,7 +58,7 @@ The current expected dependency set is:
 - `cai` 0.1.2 for OpenAI API, agent, tool, MCP, and Lua binding sources.
 - `libmdf` 0.1.0 for Markdown-to-ANSI/HTML rendering and Lua binding sources.
 - `libpslog` 0.4.1 for structured logging.
-- `libpid0` 0.3.0 for Linux PID 1 behavior in the `vectis` executable.
+- `libpid0` 0.4.0 for Linux PID 1 behavior in the `vectis` executable.
 
 Vectis validates the dependency manifest during CMake configure. A stale or
 mixed dependency root should fail early instead of producing a subtly mismatched

@@ -76,6 +76,8 @@ assert_contains "$repo_root/tests/CMakeLists.txt" 'LABELS "lua;smoke;local"'
 assert_contains "$repo_root/CMakeLists.txt" 'target_compile_options\(\$\{target\} PRIVATE'
 assert_contains "$repo_root/CMakeLists.txt" 'Werror'
 assert_contains "$repo_root/CMakeLists.txt" '_DARWIN_C_SOURCE'
+assert_contains "$repo_root/CMakeLists.txt" 'libpid0_enabled "0"'
+assert_contains "$repo_root/scripts/deps.sh" 'libpid0_enabled=\$pid0_enabled'
 assert_contains "$repo_root/examples/CMakeLists.txt" 'target_compile_options\(\$\{target_name\} PRIVATE'
 assert_contains "$repo_root/examples/CMakeLists.txt" 'Werror'
 
@@ -87,6 +89,32 @@ fi
 assert_host_debug_target Linux x86_64 x86_64-linux-gnu x86_64
 assert_host_debug_target Linux aarch64 aarch64-linux-gnu aarch64
 assert_host_debug_target Linux armv7l armhf-linux-gnu arm
+linux_deps_output=$(
+  VECTIS_DEPS_DRY_RUN=1 "$repo_root/scripts/deps.sh" deps-x86_64-linux-gnu
+)
+if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^libpid0_enabled=1$'; then
+  echo "Linux dependency preset did not enable libpid0" >&2
+  printf '%s\n' "$linux_deps_output" >&2
+  exit 1
+fi
+if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^libpid0_version=0\.4\.0$'; then
+  echo "Linux dependency preset did not pin libpid0 0.4.0" >&2
+  printf '%s\n' "$linux_deps_output" >&2
+  exit 1
+fi
+darwin_deps_output=$(
+  VECTIS_DEPS_DRY_RUN=1 "$repo_root/scripts/deps.sh" deps-arm64-apple-darwin
+)
+if ! printf '%s\n' "$darwin_deps_output" | grep -Eq '^libpid0_enabled=0$'; then
+  echo "Darwin dependency preset did not disable libpid0" >&2
+  printf '%s\n' "$darwin_deps_output" >&2
+  exit 1
+fi
+if printf '%s\n' "$darwin_deps_output" | grep -Eq '^libpid0_version='; then
+  echo "Darwin dependency preset exposed libpid0 version metadata" >&2
+  printf '%s\n' "$darwin_deps_output" >&2
+  exit 1
+fi
 if VECTIS_DEPS_DRY_RUN=1 \
   VECTIS_HOST_UNAME_S=Darwin \
   VECTIS_HOST_UNAME_M=arm64 \

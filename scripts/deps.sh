@@ -19,6 +19,7 @@ target_ar=
 target_ranlib=
 target_cmake_system_name=
 target_cmake_system_processor=
+pid0_enabled=0
 
 set_linux_gnu_dependency_target() {
   target_id=$1
@@ -178,6 +179,11 @@ case "$preset" in
     ;;
 esac
 
+case "$target_cmake_system_name" in
+  Linux) pid0_enabled=1 ;;
+  *) pid0_enabled=0 ;;
+esac
+
 if [ "${VECTIS_DEPS_DRY_RUN:-0}" = "1" ]; then
   cat <<EOF
 preset=$preset
@@ -194,7 +200,14 @@ lonejson_sha256=$lonejson_sha256
 pslog_sha256=$pslog_sha256
 cai_sha256=$cai_sha256
 mdf_sha256=$mdf_sha256
+libpid0_enabled=$pid0_enabled
 EOF
+  if [ "$pid0_enabled" -eq 1 ]; then
+    cat <<EOF
+libpid0_version=0.4.0
+libpid0_sha256=dd8cd103725eea43b355d7d4e53de40fa851dbd4abd858b4008dbb4c7c4e6474
+EOF
+  fi
   exit 0
 fi
 
@@ -267,12 +280,12 @@ mdf_lua_url="https://github.com/sa6mwa/libmdf/releases/download/v${mdf_version}/
 mdf_lua_download="$downloads_dir/$mdf_lua_archive"
 mdf_lua_sha256="11faa11a11cf11aa566fcc5bfff82968f975750d1a96feb0c391cb02e9f3c595"
 mdf_lua_source_dir="$deps_root/share/libmdf-lua-source"
-pid0_version="0.3.0"
+pid0_version="0.4.0"
 pid0_header="libpid0-${pid0_version}.h"
 pid0_header_gz="${pid0_header}.gz"
 pid0_url="https://github.com/sa6mwa/libpid0/releases/download/v${pid0_version}/${pid0_header_gz}"
 pid0_download="$downloads_dir/$pid0_header_gz"
-pid0_sha256="29591e058ab5ad9d0bbe0cd4c0d783ace2dee4e2ae6c590a0ba1d9f146f025f9"
+pid0_sha256="dd8cd103725eea43b355d7d4e53de40fa851dbd4abd858b4008dbb4c7c4e6474"
 libxml2_version="2.15.3"
 lua_version="5.5.0"
 manifest_path="$deps_root/manifest.txt"
@@ -295,7 +308,12 @@ download_if_missing "$cai_url" "$cai_download"
 download_if_missing "$cai_lua_url" "$cai_lua_download"
 download_if_missing "$mdf_url" "$mdf_download"
 download_if_missing "$mdf_lua_url" "$mdf_lua_download"
-download_if_missing "$pid0_url" "$pid0_download"
+case "$target_cmake_system_name" in
+  Linux)
+    pid0_enabled=1
+    download_if_missing "$pid0_url" "$pid0_download"
+    ;;
+esac
 
 actual_system_sha256=$(sha256sum "$system_download" | awk '{print $1}')
 if [ "$actual_system_sha256" != "$system_sha256" ]; then
@@ -367,12 +385,14 @@ if [ "$actual_mdf_lua_sha256" != "$mdf_lua_sha256" ]; then
   echo "actual   $actual_mdf_lua_sha256" >&2
   exit 1
 fi
-actual_pid0_sha256=$(sha256sum "$pid0_download" | awk '{print $1}')
-if [ "$actual_pid0_sha256" != "$pid0_sha256" ]; then
-  echo "checksum mismatch for $pid0_header_gz" >&2
-  echo "expected $pid0_sha256" >&2
-  echo "actual   $actual_pid0_sha256" >&2
-  exit 1
+if [ "$pid0_enabled" -eq 1 ]; then
+  actual_pid0_sha256=$(sha256sum "$pid0_download" | awk '{print $1}')
+  if [ "$actual_pid0_sha256" != "$pid0_sha256" ]; then
+    echo "checksum mismatch for $pid0_header_gz" >&2
+    echo "expected $pid0_sha256" >&2
+    echo "actual   $actual_pid0_sha256" >&2
+    exit 1
+  fi
 fi
 rm -rf "$deps_root/include" "$deps_root/lib" "$deps_root/share"
 mkdir -p "$deps_root"
@@ -401,7 +421,9 @@ tar -xzf "$mdf_download" -C "$deps_root" --strip-components 1
 mkdir -p "$mdf_lua_source_dir"
 "$unzip_tool" -p "$mdf_lua_download" "$mdf_lua_payload" |
   tar -xzf - -C "$mdf_lua_source_dir" --strip-components 1
-gzip -dc "$pid0_download" > "$deps_root/include/$pid0_header"
+if [ "$pid0_enabled" -eq 1 ]; then
+  gzip -dc "$pid0_download" > "$deps_root/include/$pid0_header"
+fi
 
 cat > "$manifest_path" <<EOF
 preset=$preset
@@ -448,9 +470,16 @@ openssl_source=c.pkt.systems
 libssh2_source=c.pkt.systems
 nghttp2_source=c.pkt.systems
 zlib_source=c.pkt.systems
+libpid0_enabled=$pid0_enabled
+EOF
+if [ "$pid0_enabled" -eq 1 ]; then
+  cat >> "$manifest_path" <<EOF
 libpid0_version=$pid0_version
 libpid0_header=$pid0_header
 libpid0_sha256=$pid0_sha256
+EOF
+fi
+cat >> "$manifest_path" <<EOF
 lua_version=$lua_version
 lua_source=c.pkt.systems
 lua_linkage=static+shared
