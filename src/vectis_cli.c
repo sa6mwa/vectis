@@ -13,8 +13,8 @@
 #include <vectis/vectis.h>
 #include <vectis/vectis_version.h>
 
-#include "vectis_lockdc_lua_init.h"
 #include "vectis_libmdf_lua_init.h"
+#include "vectis_lockdc_lua_init.h"
 
 #define VECTIS_PACK_FOOTER_SIZE 128u
 #define VECTIS_PACK_MAGIC "VECTIS_PACK_V1"
@@ -29,6 +29,7 @@ extern int luaopen_lonejson_core(lua_State *lua);
 extern int luaopen_lockdc_core(lua_State *lua);
 extern int luaopen_cai(lua_State *lua);
 extern int luaopen_libmdf_core(lua_State *lua);
+extern int luaopen_softline(lua_State *lua);
 
 static const char vectis_lonejson_lua_init[] =
     "local core = require(\"lonejson.core\")\n"
@@ -319,8 +320,8 @@ static int vectis_lua_status_string(lua_State *lua) {
 static int vectis_lua_has_embedded_lockd_bundle(lua_State *lua) {
   vectis_lua_runtime_context *context;
 
-  context = (vectis_lua_runtime_context *)
-      cpkt_lua_runtime_context_from_state((void *)lua);
+  context = (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(
+      (void *)lua);
   lua_pushboolean(lua, context != NULL &&
                            context->embedded_lockd_bundle != NULL &&
                            context->embedded_lockd_bundle_size > 0u);
@@ -330,8 +331,8 @@ static int vectis_lua_has_embedded_lockd_bundle(lua_State *lua) {
 static int vectis_lua_embedded_lockd_bundle_size(lua_State *lua) {
   vectis_lua_runtime_context *context;
 
-  context = (vectis_lua_runtime_context *)
-      cpkt_lua_runtime_context_from_state((void *)lua);
+  context = (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(
+      (void *)lua);
   lua_pushinteger(lua, context != NULL
                            ? (lua_Integer)context->embedded_lockd_bundle_size
                            : (lua_Integer)0);
@@ -377,6 +378,10 @@ static int vectis_luaopen_libmdf_core(void *lua_state) {
   return luaopen_libmdf_core((lua_State *)lua_state);
 }
 
+static int vectis_luaopen_softline(void *lua_state) {
+  return luaopen_softline((lua_State *)lua_state);
+}
+
 static int vectis_lua_report_status(cpkt_lua_runtime *runtime,
                                     cpkt_lua_runtime_status status) {
   const char *message;
@@ -410,8 +415,8 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
     return status;
   }
   status = cpkt_lua_runtime_register_lua_module(
-      runtime, "lockdc", vectis_lockdc_lua_init,
-      sizeof(vectis_lockdc_lua_init), "lockdc.init");
+      runtime, "lockdc", vectis_lockdc_lua_init, sizeof(vectis_lockdc_lua_init),
+      "lockdc.init");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
@@ -426,8 +431,8 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_c_module(runtime, "cai",
-                                              vectis_luaopen_cai);
+  status =
+      cpkt_lua_runtime_register_c_module(runtime, "cai", vectis_luaopen_cai);
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
@@ -436,9 +441,14 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  return cpkt_lua_runtime_register_lua_module(
-      runtime, "libmdf", vectis_libmdf_lua_init,
-      sizeof(vectis_libmdf_lua_init), "libmdf.init");
+  status = cpkt_lua_runtime_register_lua_module(
+      runtime, "libmdf", vectis_libmdf_lua_init, sizeof(vectis_libmdf_lua_init),
+      "libmdf.init");
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  return cpkt_lua_runtime_register_c_module(runtime, "softline",
+                                            vectis_luaopen_softline);
 }
 
 static int vectis_lua_prepare_runtime(cpkt_lua_runtime **out,

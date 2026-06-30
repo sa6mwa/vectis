@@ -10,6 +10,7 @@
 #include <lonejson.h>
 #include <openssl/ssl.h>
 #include <pslog.h>
+#include <softline/softline.h>
 #include <vectis/vectis.h>
 
 int main(void) {
@@ -25,6 +26,7 @@ int main(void) {
   SSL_CTX *ssl;
   CURLcode curl_code;
   cai_client_config cai_config;
+  sl_config_t softline_config;
   pslog_logger logger;
 
   memset(&error, 0, sizeof(error));
@@ -70,6 +72,10 @@ int main(void) {
       strcmp(CAI_MODEL_DEFAULT_RESPONSES, "") == 0) {
     return 7;
   }
+  sl_config_init(&softline_config);
+  if (softline_config.line_max_len == 0u) {
+    return 8;
+  }
 
   client = NULL;
   server = NULL;
@@ -80,7 +86,7 @@ int main(void) {
 
   if (client != NULL || server != NULL || ssh != NULL || ssl != NULL ||
       curl_code != CURLE_OK || logger.impl != NULL || xml_version == NULL) {
-    return 8;
+    return 9;
   }
-  return error.code == VECTIS_OK ? 0 : 9;
+  return error.code == VECTIS_OK ? 0 : 10;
 }

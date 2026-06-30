@@ -14,6 +14,7 @@ lonejson_sha256=
 pslog_sha256=
 cai_sha256=
 mdf_sha256=
+softline_sha256=
 target_cc=
 target_ar=
 target_ranlib=
@@ -31,6 +32,7 @@ set_linux_gnu_dependency_target() {
       pslog_sha256="91d2f93bc07bc66cf83d6a27a80cb6439c384d56bf84a2d11cd903215430d1d8"
       cai_sha256="84e401154f7e81707657da3068f0a57b58bf0899c930a296c98ebe46a5619661"
       mdf_sha256="30627cf2e9d6b42c3973db46d4a779ffd889066244a3c98475aed56ea7417a31"
+      softline_sha256="440a44dac2750389086da1e9ba86ec92046e6f438b4effd55aa6bc357f3dae1a"
       target_cmake_system_processor="x86_64"
       ;;
     aarch64-linux-gnu)
@@ -40,6 +42,7 @@ set_linux_gnu_dependency_target() {
       pslog_sha256="d936ae9416f539c4f40aeaa023b9147cbd568bc87b7a3c3b091adfd217d935bb"
       cai_sha256="4df06b5e31c2f4b98a29031591bd2994aa77d372efc63e702dcffd3ec035968b"
       mdf_sha256="abfb5602ee7b888a776b9ca7d675bd7d1c86eecc2290d6f93282893dc6f48e3a"
+      softline_sha256="e7b0429937c74ee8ddc277b8714e2ba38734acbaf4096126c74dc32480bd507d"
       target_cmake_system_processor="aarch64"
       ;;
     armhf-linux-gnu)
@@ -49,6 +52,7 @@ set_linux_gnu_dependency_target() {
       pslog_sha256="bc8530a3773666deb6d551263c7dd59a64c92629fa56d1e89c278d637472f2dc"
       cai_sha256="0ed692d3b14e86e404f8ac5d9982d732291e67f8b56e3e028db4d55192318854"
       mdf_sha256="692c0902342cd7e16009dec1e57ba0160f65b5ec83e03e329a1447af56e375c8"
+      softline_sha256="1218c18bad6a33688c303f0cd5e2c633409fa1211d3bc049052c7680c07a2e34"
       target_cmake_system_processor="arm"
       ;;
     *)
@@ -102,6 +106,7 @@ case "$preset" in
     pslog_sha256="b628d32f9207e5102c9a8ae3f7ad32ce36e61178c7db67e6aa4548eb9cae567d"
     cai_sha256="ef85c84cdf82f2d37d3db3ebe7c97bcb28dc36072285779df993d8ee8a12d959"
     mdf_sha256="110bc7f80377679791a20fd7c7f06206f1d52e0c66915a8545bb8aecce2a5fb5"
+    softline_sha256="c2156243c83ad6bafb4c49b33b6de004234b44d37b4a068dd8c341f47c396337"
     target_cc="${CC:-x86_64-linux-musl-gcc}"
     target_ar="${AR:-x86_64-linux-musl-ar}"
     target_ranlib="${RANLIB:-x86_64-linux-musl-ranlib}"
@@ -124,6 +129,7 @@ case "$preset" in
     pslog_sha256="638725174cf39f3c5337fc6f118bc88c2a41d385a01be98170ff4bef3d57fcae"
     cai_sha256="04808e14b8c55e2d624ba6ac01866b33b61c4a5913be92418966c557baf393e1"
     mdf_sha256="36072af2ad0152ebf39c213f764e56126dc56585c3507ddbbe25276dfbee6439"
+    softline_sha256="c80c1dc7b9c9d702ea1a9e61783550fdb578d3a431e878774b12862e0917c281"
     target_cc="${CC:-aarch64-linux-musl-gcc}"
     target_ar="${AR:-aarch64-linux-musl-ar}"
     target_ranlib="${RANLIB:-aarch64-linux-musl-ranlib}"
@@ -146,6 +152,7 @@ case "$preset" in
     pslog_sha256="503d2bd882c053dc8f34dbfe718a328303a4973789bbb8fb37261e4822b3babe"
     cai_sha256="c9c899f6881a977a5d88218505649531cdac200a4c969400d5c1a7e88a529056"
     mdf_sha256="35b50760bd747c8c7836993a47a8f7329e76ea65929a60bf57a215124ea6830d"
+    softline_sha256="c8537a7c90d7015c5d0a1b2721825839aedd0479cab42d450a6fd21bd00cbf19"
     target_cc="${CC:-arm-linux-musleabihf-gcc}"
     target_ar="${AR:-arm-linux-musleabihf-ar}"
     target_ranlib="${RANLIB:-arm-linux-musleabihf-ranlib}"
@@ -161,6 +168,7 @@ case "$preset" in
     pslog_sha256="f8f4e18810ecad7278eb341fbfe7e3f9d85eb654891c4d08149f425f3a4c9b3d"
     cai_sha256="f18732d80e0510b1ffc32c5218429eed44665927e939ab8e5695984e41934071"
     mdf_sha256="aef93565e1221d891be5abfdc27c0eb9eb31a6aaadb99ab320a7898d6018d7e2"
+    softline_sha256="60a44e1a540986f8946cd38410af36f03eef01e64b6eee7d2d1fef237d5d5d86"
     if [ -n "${OSXCROSS_ROOT:-}" ]; then
       osxcross_root=$OSXCROSS_ROOT
     else
@@ -200,6 +208,7 @@ lonejson_sha256=$lonejson_sha256
 pslog_sha256=$pslog_sha256
 cai_sha256=$cai_sha256
 mdf_sha256=$mdf_sha256
+softline_sha256=$softline_sha256
 libpid0_enabled=$pid0_enabled
 EOF
   if [ "$pid0_enabled" -eq 1 ]; then
@@ -280,6 +289,16 @@ mdf_lua_url="https://github.com/sa6mwa/libmdf/releases/download/v${mdf_version}/
 mdf_lua_download="$downloads_dir/$mdf_lua_archive"
 mdf_lua_sha256="11faa11a11cf11aa566fcc5bfff82968f975750d1a96feb0c391cb02e9f3c595"
 mdf_lua_source_dir="$deps_root/share/libmdf-lua-source"
+softline_version="0.1.0"
+softline_archive="softline-${softline_version}-${target_id}.tar.gz"
+softline_url="https://github.com/sa6mwa/softline/releases/download/v${softline_version}/${softline_archive}"
+softline_download="$downloads_dir/$softline_archive"
+softline_lua_archive="softline-${softline_version}-1.src.rock"
+softline_lua_payload="softline-lua-${softline_version}.tar.gz"
+softline_lua_url="https://github.com/sa6mwa/softline/releases/download/v${softline_version}/${softline_lua_archive}"
+softline_lua_download="$downloads_dir/$softline_lua_archive"
+softline_lua_sha256="14b0f4cb8cada394a0befe79a7ae552365f327e689352559cbbf673cf0317260"
+softline_lua_source_dir="$deps_root/share/softline-lua-source"
 pid0_version="0.4.0"
 pid0_header="libpid0-${pid0_version}.h"
 pid0_header_gz="${pid0_header}.gz"
@@ -308,6 +327,8 @@ download_if_missing "$cai_url" "$cai_download"
 download_if_missing "$cai_lua_url" "$cai_lua_download"
 download_if_missing "$mdf_url" "$mdf_download"
 download_if_missing "$mdf_lua_url" "$mdf_lua_download"
+download_if_missing "$softline_url" "$softline_download"
+download_if_missing "$softline_lua_url" "$softline_lua_download"
 case "$target_cmake_system_name" in
   Linux)
     pid0_enabled=1
@@ -385,6 +406,20 @@ if [ "$actual_mdf_lua_sha256" != "$mdf_lua_sha256" ]; then
   echo "actual   $actual_mdf_lua_sha256" >&2
   exit 1
 fi
+actual_softline_sha256=$(sha256sum "$softline_download" | awk '{print $1}')
+if [ "$actual_softline_sha256" != "$softline_sha256" ]; then
+  echo "checksum mismatch for $softline_archive" >&2
+  echo "expected $softline_sha256" >&2
+  echo "actual   $actual_softline_sha256" >&2
+  exit 1
+fi
+actual_softline_lua_sha256=$(sha256sum "$softline_lua_download" | awk '{print $1}')
+if [ "$actual_softline_lua_sha256" != "$softline_lua_sha256" ]; then
+  echo "checksum mismatch for $softline_lua_archive" >&2
+  echo "expected $softline_lua_sha256" >&2
+  echo "actual   $actual_softline_lua_sha256" >&2
+  exit 1
+fi
 if [ "$pid0_enabled" -eq 1 ]; then
   actual_pid0_sha256=$(sha256sum "$pid0_download" | awk '{print $1}')
   if [ "$actual_pid0_sha256" != "$pid0_sha256" ]; then
@@ -421,6 +456,10 @@ tar -xzf "$mdf_download" -C "$deps_root" --strip-components 1
 mkdir -p "$mdf_lua_source_dir"
 "$unzip_tool" -p "$mdf_lua_download" "$mdf_lua_payload" |
   tar -xzf - -C "$mdf_lua_source_dir" --strip-components 1
+tar -xzf "$softline_download" -C "$deps_root" --strip-components 1
+mkdir -p "$softline_lua_source_dir"
+"$unzip_tool" -p "$softline_lua_download" "$softline_lua_payload" |
+  tar -xzf - -C "$softline_lua_source_dir" --strip-components 1
 if [ "$pid0_enabled" -eq 1 ]; then
   gzip -dc "$pid0_download" > "$deps_root/include/$pid0_header"
 fi
@@ -463,6 +502,14 @@ libmdf_lua_payload=$mdf_lua_payload
 libmdf_lua_sha256=$mdf_lua_sha256
 libmdf_source=libmdf-release
 libmdf_lua_source=libmdf-src-rock
+softline_archive=$softline_archive
+softline_version=$softline_version
+softline_sha256=$softline_sha256
+softline_lua_archive=$softline_lua_archive
+softline_lua_payload=$softline_lua_payload
+softline_lua_sha256=$softline_lua_sha256
+softline_source=softline-release
+softline_lua_source=softline-src-rock
 lockdc_lua_source=lockdc-src-rock
 lonejson_lua_source=lonejson-src-rock
 curl_source=c.pkt.systems

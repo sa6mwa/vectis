@@ -6,7 +6,7 @@ includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
 Name: vectis
 Description: C SDK and runtime integration layer for pkt.systems services
 Version: @PROJECT_VERSION@
-Requires.private: lockdc cai libmdf pslog libcurl libssh2 openssl lonejson libxml-2.0 libnghttp2 zlib
+Requires.private: lockdc cai libmdf softline pslog libcurl libssh2 openssl lonejson libxml-2.0 libnghttp2 zlib
 Libs: -L${libdir} -lvectis
 Libs.private: -pthread -ldl -lm
 Cflags: -I${includedir}

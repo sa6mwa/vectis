@@ -57,6 +57,8 @@ The current expected dependency set is:
   spooled fields, and C/Lua bindings.
 - `cai` 0.1.2 for OpenAI API, agent, tool, MCP, and Lua binding sources.
 - `libmdf` 0.1.0 for Markdown-to-ANSI/HTML rendering and Lua binding sources.
+- `softline` 0.1.0 for line editing, terminal prompt UX, and Lua binding
+  sources.
 - `libpslog` 0.4.1 for structured logging.
 - `libpid0` 0.4.0 for Linux PID 1 behavior in the `vectis` executable.
 
@@ -175,10 +177,11 @@ service work: lockd-backed state, HTTP routes, queue consumers, tool callbacks,
 MCP integration, and OpenAI API calls should share the same logging,
 configuration, and packaging story.
 
-libmdf is included so AI/agent response streams can be rendered as Markdown for
-terminal-facing workflows. Vectis does not yet wire CAI streaming responses
-through libmdf automatically, but the C SDK dependency and `require("libmdf")`
-Lua module are available for that integration.
+libmdf and softline are included so AI/agent terminal workflows have the
+rendering and prompt-editing dependencies needed by future Agent Smith work.
+Vectis does not yet wire CAI streaming responses through libmdf or softline
+automatically, but the C SDK dependencies and `require("libmdf")` /
+`require("softline")` Lua modules are available for that integration.
 
 MTConnect is the next protocol family planned for this stack. The expected
 shape is a typed, streaming-aware integration rather than a raw string/DOM API.
@@ -200,8 +203,8 @@ local vectis = require("vectis")
 
 Bundled modules are registered statically through `package.preload`. The
 runtime currently registers Vectis-owned Lua support plus dependency bindings
-such as lockdc, lonejson, cai, and libmdf where available from the provisioned
-sources.
+such as lockdc, lonejson, cai, libmdf, and softline where available from the
+provisioned sources.
 
 `vectis pack` can append a Lua script, and optionally a lockd client bundle, to
 the Linux executable with hashes and trailer metadata. Embedded private material
@@ -346,15 +349,15 @@ Implemented and covered by local tests:
 - OpenSSL-backed certificate/key/bundle helpers.
 - Optional lockd app integration and managed consumer-service helpers.
 - Lua runner, shebang/script execution, and Linux packed-script support.
-- Bundled CAI and libmdf Lua modules for AI/tool workflows and Markdown
-  rendering.
+- Bundled CAI, libmdf, and softline Lua modules for AI/tool workflows,
+  Markdown rendering, and terminal prompt UX.
 - Release packaging, install-tree checks, lifecycle tests, privacy checks, and
   generated SDK verification.
 
 Still active or planned:
 
 - Higher-level Lua service framework and broader Lua protocol helpers.
-- Deeper CAI/Vectis/libmdf facade integration beyond bundled
+- Deeper CAI/Vectis/libmdf/softline facade integration beyond bundled
   dependency/runtime registration.
 - MTConnect protocol support.
 - Darwin-specific packed-service signing/runtime polish.

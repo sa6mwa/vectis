@@ -3,6 +3,7 @@ local lockdc = require("lockdc")
 local lonejson = require("lonejson")
 local cai = require("cai")
 local libmdf = require("libmdf")
+local softline = require("softline")
 
 assert(type(vectis) == "table")
 assert(vectis.version == (os.getenv("VECTIS_EXPECTED_VERSION") or "0.0.0"))
@@ -32,6 +33,14 @@ assert(type(libmdf.render_stream) == "function")
 local rendered_markdown = libmdf.render("# Vectis\n\n**ok**", { format = "html" })
 assert(rendered_markdown:match("Vectis"))
 assert(rendered_markdown:match("ok"))
+
+assert(type(softline) == "table")
+assert(type(softline.new) == "function")
+local line = assert(softline.new({ line_max_len = 32 }))
+assert(line:set_buffer("draft"))
+assert(line:insert("++"))
+assert(line:buffer():match("%+%+"))
+line:close()
 
 local encoded = lonejson.encode_json({
   b = true,

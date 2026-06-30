@@ -24,7 +24,7 @@ endfunction()
 
 if(VECTIS_CONSUMER_LINK STREQUAL "static")
   get_target_property(vectis_static_links vectis::static INTERFACE_LINK_LIBRARIES)
-  foreach(required_target IN ITEMS cai::cai_static CURL::libcurl OpenSSL::Crypto OpenSSL::SSL ZLIB::ZLIB)
+  foreach(required_target IN ITEMS cai::cai_static softline::softline_static CURL::libcurl OpenSSL::Crypto OpenSSL::SSL ZLIB::ZLIB)
     if(NOT required_target IN_LIST vectis_static_links)
       message(FATAL_ERROR "installed vectis::static is missing ${required_target}")
     endif()

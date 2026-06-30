@@ -57,6 +57,7 @@ set(VECTIS_EXPECTED_LONEJSON_VERSION "0.32.1")
 set(VECTIS_EXPECTED_PSLOG_VERSION "0.4.1")
 set(VECTIS_EXPECTED_CAI_VERSION "0.1.2")
 set(VECTIS_EXPECTED_LIBMDF_VERSION "0.1.0")
+set(VECTIS_EXPECTED_SOFTLINE_VERSION "0.1.0")
 set(VECTIS_EXPECTED_LUA_VERSION "5.5.0")
 set(VECTIS_EXPECTED_LIBPID0_VERSION "0.4.0")
 set(VECTIS_EXPECTED_LIBPID0_SHA256 "dd8cd103725eea43b355d7d4e53de40fa851dbd4abd858b4008dbb4c7c4e6474")
@@ -118,6 +119,7 @@ set(lonejson_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/lonejson")
 set(pslog_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/pslog")
 set(cai_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/cai")
 set(libmdf_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/libmdf")
+set(softline_DIR "${VECTIS_EXTERNAL_ROOT}/lib/cmake/softline")
 set(vectis_dependency_manifest "${VECTIS_EXTERNAL_ROOT}/manifest.txt")
 if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_manifest(system_version "${VECTIS_EXPECTED_SYSTEM_VERSION}")
@@ -126,6 +128,7 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_manifest(pslog_version "${VECTIS_EXPECTED_PSLOG_VERSION}")
   vectis_require_manifest(cai_version "${VECTIS_EXPECTED_CAI_VERSION}")
   vectis_require_manifest(libmdf_version "${VECTIS_EXPECTED_LIBMDF_VERSION}")
+  vectis_require_manifest(softline_version "${VECTIS_EXPECTED_SOFTLINE_VERSION}")
   vectis_require_manifest(lua_version "${VECTIS_EXPECTED_LUA_VERSION}")
   vectis_require_manifest(lua_runtime_facade_abi "0")
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -143,6 +146,7 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/auth.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/libmdf.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/libmdf/mdf.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/softline/softline.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/curl/curl.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/openssl/ssl.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/libssh2.h")
@@ -162,6 +166,7 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_dependency_file("${CpktLuaRuntime_DIR}/CpktLuaRuntimeConfig.cmake")
   vectis_require_dependency_file("${LibXml2_DIR}/libxml2-config.cmake")
   vectis_require_dependency_file("${libmdf_DIR}/libmdfConfig.cmake")
+  vectis_require_dependency_file("${softline_DIR}/softlineConfig.cmake")
   vectis_require_dependency_file("${vectis_lockdc_config_dir}/lockdcConfig.cmake")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lockdc-source/src/lua/lockdc_lua.c")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lockdc-source/lua/lockdc/init.lua")
@@ -170,10 +175,12 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/cai-lua-source/lua/cai_lua.c")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/libmdf-lua-source/lua/libmdf.lua")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/libmdf-lua-source/lua/libmdf_core.c")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/softline-lua-source/lua/softline_lua.c")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/liblonejson.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libpslog.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcai.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libmdf.a")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libsoftline.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcurl.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssh2.a")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssl.a")
@@ -188,6 +195,7 @@ if(EXISTS "${vectis_dependency_manifest}")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libpslog.dylib")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcai.dylib")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libmdf.dylib")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libsoftline.dylib")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcurl.dylib")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssh2.dylib")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssl.dylib")
@@ -200,6 +208,7 @@ if(EXISTS "${vectis_dependency_manifest}")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libpslog.so")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcai.so")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libmdf.so")
+    vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libsoftline.so")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libcurl.so")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssh2.so")
     vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/lib/libssl.so")
@@ -224,6 +233,7 @@ find_package(lonejson CONFIG REQUIRED PATHS "${lonejson_DIR}" NO_DEFAULT_PATH)
 find_package(pslog CONFIG REQUIRED PATHS "${pslog_DIR}" NO_DEFAULT_PATH)
 find_package(cai CONFIG REQUIRED PATHS "${cai_DIR}" NO_DEFAULT_PATH)
 find_package(libmdf CONFIG REQUIRED PATHS "${libmdf_DIR}" NO_DEFAULT_PATH)
+find_package(softline CONFIG REQUIRED PATHS "${softline_DIR}" NO_DEFAULT_PATH)
 
 if(TARGET cai::cai_static AND TARGET lonejson::lonejson_static)
   set_property(TARGET cai::cai_static PROPERTY
@@ -325,6 +335,8 @@ set(vectis_lockdc_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/lockdc-source")
 set(vectis_lonejson_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/lonejson-source")
 set(vectis_cai_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/cai-lua-source")
 set(vectis_libmdf_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/libmdf-lua-source")
+set(vectis_softline_lua_source_dir
+    "${VECTIS_EXTERNAL_ROOT}/share/softline-lua-source")
 
 function(vectis_generate_lua_init_header source_path symbol output_path)
   file(READ "${source_path}" vectis_lua_init_hex HEX)
@@ -367,6 +379,7 @@ set(vectis_lockdc_shared_target lockdc::shared)
 set(vectis_static_dependency_links
   cai::cai_static
   libmdf::mdf_static
+  softline::softline_static
   pslog::pslog_static
   CURL::libcurl
   Libssh2::libssh2
@@ -380,6 +393,7 @@ set(vectis_static_dependency_links
 set(vectis_shared_dependency_links
   cai::cai_shared
   libmdf::mdf_shared
+  softline::softline
   pslog::pslog_shared
   cpkt::curl_shared
   cpkt::libssh2_shared
@@ -644,6 +658,8 @@ if(VECTIS_BUILD_BINARY)
     "${vectis_lonejson_lua_source_dir}/src/lua/lonejson_lua.c")
   set(vectis_cai_lua_source "${vectis_cai_lua_source_dir}/lua/cai_lua.c")
   set(vectis_libmdf_lua_source "${vectis_libmdf_lua_source_dir}/lua/libmdf_core.c")
+  set(vectis_softline_lua_source
+    "${vectis_softline_lua_source_dir}/lua/softline_lua.c")
   add_library(vectis_lockdc_lua OBJECT "${vectis_lockdc_lua_source}")
   target_include_directories(vectis_lockdc_lua PRIVATE
     "${vectis_external_include_dir}"
@@ -738,12 +754,28 @@ if(VECTIS_BUILD_BINARY)
   )
   vectis_apply_relocatable_paths(vectis_libmdf_lua)
 
+  add_library(vectis_softline_lua OBJECT "${vectis_softline_lua_source}")
+  target_include_directories(vectis_softline_lua PRIVATE
+    "${vectis_external_include_dir}"
+    "${vectis_softline_lua_source_dir}/include"
+  )
+  target_compile_definitions(vectis_softline_lua PRIVATE
+    _POSIX_C_SOURCE=200809L)
+  set_target_properties(vectis_softline_lua PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON
+  )
+  vectis_apply_relocatable_paths(vectis_softline_lua)
+
   add_executable(vectis_bin
     src/vectis_cli.c
     src/vectis_main.c
     $<TARGET_OBJECTS:vectis_lockdc_lua>
     $<TARGET_OBJECTS:vectis_cai_lua>
     $<TARGET_OBJECTS:vectis_libmdf_lua>
+    $<TARGET_OBJECTS:vectis_softline_lua>
   )
   target_include_directories(vectis_bin PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
@@ -759,6 +791,7 @@ if(VECTIS_BUILD_BINARY)
     cpkt::lua_runtime
     cai::cai_static
     libmdf::mdf_static
+    softline::softline_static
     vectis_lonejson_lua_archive)
   if(UNIX AND NOT APPLE)
     target_link_libraries(vectis_bin PRIVATE m)

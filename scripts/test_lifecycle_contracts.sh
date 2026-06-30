@@ -102,6 +102,11 @@ if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^libpid0_version=0\.4\.0$'; 
   printf '%s\n' "$linux_deps_output" >&2
   exit 1
 fi
+if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^softline_sha256='; then
+  echo "Linux dependency preset did not expose softline metadata" >&2
+  printf '%s\n' "$linux_deps_output" >&2
+  exit 1
+fi
 darwin_deps_output=$(
   VECTIS_DEPS_DRY_RUN=1 "$repo_root/scripts/deps.sh" deps-arm64-apple-darwin
 )
@@ -112,6 +117,11 @@ if ! printf '%s\n' "$darwin_deps_output" | grep -Eq '^libpid0_enabled=0$'; then
 fi
 if printf '%s\n' "$darwin_deps_output" | grep -Eq '^libpid0_version='; then
   echo "Darwin dependency preset exposed libpid0 version metadata" >&2
+  printf '%s\n' "$darwin_deps_output" >&2
+  exit 1
+fi
+if ! printf '%s\n' "$darwin_deps_output" | grep -Eq '^softline_sha256='; then
+  echo "Darwin dependency preset did not expose softline metadata" >&2
   printf '%s\n' "$darwin_deps_output" >&2
   exit 1
 fi

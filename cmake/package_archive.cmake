@@ -199,6 +199,7 @@ set(pslog_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/pslog")
 set(lonejson_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/lonejson")
 set(cai_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/cai")
 set(libmdf_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/libmdf")
+set(softline_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/softline")
 find_dependency(OpenSSL CONFIG REQUIRED)
 find_dependency(ZLIB CONFIG REQUIRED)
 find_dependency(nghttp2 CONFIG REQUIRED)
@@ -209,6 +210,7 @@ find_package(pslog CONFIG REQUIRED PATHS "${pslog_DIR}" NO_DEFAULT_PATH)
 find_package(lonejson CONFIG REQUIRED PATHS "${lonejson_DIR}" NO_DEFAULT_PATH)
 find_package(cai CONFIG REQUIRED PATHS "${cai_DIR}" NO_DEFAULT_PATH)
 find_package(libmdf CONFIG REQUIRED PATHS "${libmdf_DIR}" NO_DEFAULT_PATH)
+find_package(softline CONFIG REQUIRED PATHS "${softline_DIR}" NO_DEFAULT_PATH)
 find_package(lockdc CONFIG REQUIRED PATHS "${PACKAGE_PREFIX_DIR}/lib/cmake/lockdc" NO_DEFAULT_PATH)
 
 if(TARGET cai::cai_static AND TARGET lonejson::lonejson_static)
@@ -221,6 +223,7 @@ if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/lib/libvectis.a")
     lockdc::static
     cai::cai_static
     libmdf::mdf_static
+    softline::softline_static
     pslog::pslog_static
     CURL::libcurl
     Libssh2::libssh2
@@ -245,6 +248,7 @@ if(NOT TARGET vectis::shared)
     lockdc::shared
     cai::cai_shared
     libmdf::mdf_shared
+    softline::softline
     pslog::pslog_shared
     cpkt::curl_shared
     cpkt::libssh2_shared
