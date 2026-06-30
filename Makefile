@@ -195,6 +195,8 @@ build-fuzz: deps-debug
 fuzz: build-fuzz
 
 fuzz-smoke: build-fuzz
+	$(TIMED) fuzz-json-validate build/$(FUZZ_PRESET)/tests/fuzz/vectis_fuzz_json_validate -runs=64
+	$(TIMED) fuzz-kore-bridge build/$(FUZZ_PRESET)/tests/fuzz/vectis_fuzz_kore_bridge tests/fuzz/corpus/kore_bridge -runs=0
 
 finalize-slice: format test-lifecycle test-target-tools test
 

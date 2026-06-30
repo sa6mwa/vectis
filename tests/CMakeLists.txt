@@ -1,4 +1,6 @@
-add_subdirectory(unit)
+if(VECTIS_BUILD_TESTS)
+  add_subdirectory(unit)
+endif()
 
 if(VECTIS_BUILD_FUZZERS)
   add_subdirectory(fuzz)
