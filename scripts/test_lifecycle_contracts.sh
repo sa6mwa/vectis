@@ -102,6 +102,11 @@ if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^libpid0_version=0\.4\.0$'; 
   printf '%s\n' "$linux_deps_output" >&2
   exit 1
 fi
+if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^pslog_sha256='; then
+  echo "Linux dependency preset did not expose libpslog metadata" >&2
+  printf '%s\n' "$linux_deps_output" >&2
+  exit 1
+fi
 if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^softline_sha256='; then
   echo "Linux dependency preset did not expose softline metadata" >&2
   printf '%s\n' "$linux_deps_output" >&2

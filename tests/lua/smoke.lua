@@ -2,6 +2,7 @@ local vectis = require("vectis")
 local lockdc = require("lockdc")
 local lonejson = require("lonejson")
 local cai = require("cai")
+local pslog = require("pslog")
 local libmdf = require("libmdf")
 local softline = require("softline")
 
@@ -26,6 +27,19 @@ assert(type(cai.open) == "function")
 assert(type(cai.mcp_handler) == "function")
 assert(type(cai.MODEL_DEFAULT_RESPONSES) == "string")
 assert(type(cai.MCP_PROTOCOL_VERSION) == "string")
+
+assert(type(pslog) == "table")
+assert(type(pslog.new_json) == "function")
+assert(type(pslog.version()) == "string")
+local log_chunks = {}
+local log = assert(pslog.new_json(function(chunk)
+  log_chunks[#log_chunks + 1] = chunk
+end, { timestamps = false }))
+log:info("lua smoke", "component", "vectis")
+log:close()
+local log_payload = table.concat(log_chunks)
+assert(log_payload:match('"msg":"lua smoke"'))
+assert(log_payload:match('"component":"vectis"'))
 
 assert(type(libmdf) == "table")
 assert(type(libmdf.render) == "function")

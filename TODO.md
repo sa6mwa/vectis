@@ -246,9 +246,9 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Configure Lua package paths so bundled/native Vectis modules load without user setup.
 - [x] Provide the first statically preloaded `require("vectis")` facade for the embedded Lua runner.
 - [ ] Expand `require("vectis")` into the full high-level framework facade.
-- [ ] Integrate existing Lua rocks for lockdc and pslog; LoneJSON is statically preloaded from the pinned source tarball.
-- [ ] Build lockdc, pslog, and Vectis-owned Lua modules against the provisioned Lua 5.5 ABI; LoneJSON is already built against that ABI.
-- [ ] Register bundled Lua modules statically through `package.preload` in the `vectis` binary; LoneJSON and `vectis` are registered, lockdc/pslog remain.
+- [x] Integrate existing Lua rocks/source archives for lockdc, pslog, and dependency Lua modules from pinned dependency sources.
+- [x] Build lockdc, pslog, and Vectis-owned Lua modules against the provisioned Lua 5.5 ABI.
+- [x] Register bundled Lua modules statically through `package.preload` in the `vectis` binary.
 - [ ] Publish a separate `vectis` Lua rock for users who want to run the Vectis facade inside their own Lua 5.5 environment.
 - [ ] Keep LuaRocks out of the `vectis` binary runtime and release artifacts.
 - [ ] Add Vectis-owned Lua modules for Kore, curl, OpenSSL certificate workflows, and libssh2.

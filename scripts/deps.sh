@@ -29,7 +29,7 @@ set_linux_gnu_dependency_target() {
       system_sha256="0e3f96cef656ad927ff952e5fb195fabaea551150017df0368f6fd30c5fa8039"
       lockdc_sha256="3c850cc155f7032b60f2c8e078a78cce58e55426b64aeaeaa6bef9a88942e098"
       lonejson_sha256="2626df65f8ac33aadd76b9d33a22fd8038cadf4ee6b7fecad3b60739c359db1a"
-      pslog_sha256="91d2f93bc07bc66cf83d6a27a80cb6439c384d56bf84a2d11cd903215430d1d8"
+      pslog_sha256="6b11f175cf6a6726d85a9ac2eb5a6900d975a1c59d78f3f5272651eee898f261"
       cai_sha256="84e401154f7e81707657da3068f0a57b58bf0899c930a296c98ebe46a5619661"
       mdf_sha256="30627cf2e9d6b42c3973db46d4a779ffd889066244a3c98475aed56ea7417a31"
       softline_sha256="440a44dac2750389086da1e9ba86ec92046e6f438b4effd55aa6bc357f3dae1a"
@@ -39,7 +39,7 @@ set_linux_gnu_dependency_target() {
       system_sha256="350421ac3fc8b35374886766ad183601d3f6f4eed0f666b411e4666d1a13f3d8"
       lockdc_sha256="f281cf8e01cc80ac38c9d7d9726253f041b642fc5753917ce0fe536eee7f2034"
       lonejson_sha256="949a55b0958f0b4ac16295056a0302613ca2bc02b8dcfa6c6fb356231e7a04bf"
-      pslog_sha256="d936ae9416f539c4f40aeaa023b9147cbd568bc87b7a3c3b091adfd217d935bb"
+      pslog_sha256="4b607d1c48d5473ef37a16c1911e3871816c95ec1ed6bacd4c4e0308aba65f80"
       cai_sha256="4df06b5e31c2f4b98a29031591bd2994aa77d372efc63e702dcffd3ec035968b"
       mdf_sha256="abfb5602ee7b888a776b9ca7d675bd7d1c86eecc2290d6f93282893dc6f48e3a"
       softline_sha256="e7b0429937c74ee8ddc277b8714e2ba38734acbaf4096126c74dc32480bd507d"
@@ -49,7 +49,7 @@ set_linux_gnu_dependency_target() {
       system_sha256="b29c74a1d3ebba2420dea732f07708a7d67f08e9dde2bd3c21a9ca93dd50bad2"
       lockdc_sha256="b727af6d49f3de0f229d8d394764fe78d2d66fdd211a1b6b6f2753b8cbd78986"
       lonejson_sha256="0621cae1f1d5a3e8830f34005f3adf9b5fee7195486ab71b649bc8a61ca0c1b6"
-      pslog_sha256="bc8530a3773666deb6d551263c7dd59a64c92629fa56d1e89c278d637472f2dc"
+      pslog_sha256="2bdeeda2dc174c886fdda8d9b8d44377c599cd9116e561cac06b656c569f0813"
       cai_sha256="0ed692d3b14e86e404f8ac5d9982d732291e67f8b56e3e028db4d55192318854"
       mdf_sha256="692c0902342cd7e16009dec1e57ba0160f65b5ec83e03e329a1447af56e375c8"
       softline_sha256="1218c18bad6a33688c303f0cd5e2c633409fa1211d3bc049052c7680c07a2e34"
@@ -103,7 +103,7 @@ case "$preset" in
     system_sha256="76956e0a903b115323107af17f83a899ed010c276f25ea5c0e3c4c90d341d773"
     lockdc_sha256="6e4c55a229570cd6ad7b888b2298977d8341147862ead915d5cedeaf518352af"
     lonejson_sha256="1d5668be9d88e625735dadaa312bdff7fc0df51754a7891a3efb2be331c2adca"
-    pslog_sha256="b628d32f9207e5102c9a8ae3f7ad32ce36e61178c7db67e6aa4548eb9cae567d"
+    pslog_sha256="c67b5193473eb08a0831e0e8a45e82509c179473a7234100e9ee39c54c13bca3"
     cai_sha256="ef85c84cdf82f2d37d3db3ebe7c97bcb28dc36072285779df993d8ee8a12d959"
     mdf_sha256="110bc7f80377679791a20fd7c7f06206f1d52e0c66915a8545bb8aecce2a5fb5"
     softline_sha256="c2156243c83ad6bafb4c49b33b6de004234b44d37b4a068dd8c341f47c396337"
@@ -126,7 +126,7 @@ case "$preset" in
     system_sha256="c45330b50f6551378d85306b6deba177d52184128983a3af6acb5cd7e180c826"
     lockdc_sha256="1972ef73a9963c0a280c93d8b2da1d8e5cbf4da6af0f566f7d3471dfc8370b3a"
     lonejson_sha256="2891e18cfe7843dd7c15e71a4d1bd03dea6f4d178eb189fd8f3b6ad7caf067d7"
-    pslog_sha256="638725174cf39f3c5337fc6f118bc88c2a41d385a01be98170ff4bef3d57fcae"
+    pslog_sha256="cd3645309ef158c6f5206c531e68612536a3d1faf2389ae2268bdc5d99e5ee36"
     cai_sha256="04808e14b8c55e2d624ba6ac01866b33b61c4a5913be92418966c557baf393e1"
     mdf_sha256="36072af2ad0152ebf39c213f764e56126dc56585c3507ddbbe25276dfbee6439"
     softline_sha256="c80c1dc7b9c9d702ea1a9e61783550fdb578d3a431e878774b12862e0917c281"
@@ -149,7 +149,7 @@ case "$preset" in
     system_sha256="692a0def17b680d9f5f80ffa8894d89366527ca2c8c1d3eff72973368d770bf8"
     lockdc_sha256="ea6dc0080a8494b206f5d43ec4d3e175f0ee46d2b94d9b06e6b2a2e1ca7a5095"
     lonejson_sha256="975be93eff3e4ed08973f52fc57498d0a5faeec87b1ffa84eed8325c068c5344"
-    pslog_sha256="503d2bd882c053dc8f34dbfe718a328303a4973789bbb8fb37261e4822b3babe"
+    pslog_sha256="bcf5fc63db355a3fde108718e7102406111e37e0fd2beceb59f2256445db46ef"
     cai_sha256="c9c899f6881a977a5d88218505649531cdac200a4c969400d5c1a7e88a529056"
     mdf_sha256="35b50760bd747c8c7836993a47a8f7329e76ea65929a60bf57a215124ea6830d"
     softline_sha256="c8537a7c90d7015c5d0a1b2721825839aedd0479cab42d450a6fd21bd00cbf19"
@@ -165,7 +165,7 @@ case "$preset" in
     system_sha256="59007ba861b657e2433c97b063355d40b71173d52f84bc5dd6ed98dfeffcbfb1"
     lockdc_sha256="429db62552856cdf81ed60fd9e93d453887790557a8fd565985109d0aeba12ff"
     lonejson_sha256="1e51e13d3850de920f689a245c3372cd6949a8c9531863b574fc05425726be51"
-    pslog_sha256="f8f4e18810ecad7278eb341fbfe7e3f9d85eb654891c4d08149f425f3a4c9b3d"
+    pslog_sha256="d842ee22881eef69d10c02dccd8c31f7c98011ca962062c125b500cbfdb16aa0"
     cai_sha256="f18732d80e0510b1ffc32c5218429eed44665927e939ab8e5695984e41934071"
     mdf_sha256="aef93565e1221d891be5abfdc27c0eb9eb31a6aaadb99ab320a7898d6018d7e2"
     softline_sha256="60a44e1a540986f8946cd38410af36f03eef01e64b6eee7d2d1fef237d5d5d86"
@@ -265,10 +265,15 @@ lonejson_lua_url="https://github.com/sa6mwa/lonejson/releases/download/v${lonejs
 lonejson_lua_download="$downloads_dir/$lonejson_lua_archive"
 lonejson_lua_sha256="0991c3029539c3716688f53d0ccbefe09cec199816389b865ecb146a665f013d"
 lonejson_source_dir="$deps_root/share/lonejson-source"
-pslog_version="0.4.1"
+pslog_version="0.5.0"
 pslog_archive="libpslog-${pslog_version}-${target_id}.tar.gz"
 pslog_url="https://github.com/sa6mwa/libpslog/releases/download/v${pslog_version}/${pslog_archive}"
 pslog_download="$downloads_dir/$pslog_archive"
+pslog_lua_archive="lua-pslog-${pslog_version}.tar.gz"
+pslog_lua_url="https://github.com/sa6mwa/libpslog/releases/download/v${pslog_version}/${pslog_lua_archive}"
+pslog_lua_download="$downloads_dir/$pslog_lua_archive"
+pslog_lua_sha256="af5d47058de29517b0929c11c1914d19e811d915c173f02f8acf6b9b1469c828"
+pslog_lua_source_dir="$deps_root/share/pslog-lua-source"
 cai_version="0.1.2"
 cai_archive="cai-${cai_version}-${target_id}.tar.gz"
 cai_url="https://github.com/sa6mwa/cai/releases/download/v${cai_version}/${cai_archive}"
@@ -323,6 +328,7 @@ download_if_missing "$lockdc_lua_url" "$lockdc_lua_download"
 download_if_missing "$lonejson_url" "$lonejson_download"
 download_if_missing "$lonejson_lua_url" "$lonejson_lua_download"
 download_if_missing "$pslog_url" "$pslog_download"
+download_if_missing "$pslog_lua_url" "$pslog_lua_download"
 download_if_missing "$cai_url" "$cai_download"
 download_if_missing "$cai_lua_url" "$cai_lua_download"
 download_if_missing "$mdf_url" "$mdf_download"
@@ -376,6 +382,13 @@ if [ "$actual_pslog_sha256" != "$pslog_sha256" ]; then
   echo "checksum mismatch for $pslog_archive" >&2
   echo "expected $pslog_sha256" >&2
   echo "actual   $actual_pslog_sha256" >&2
+  exit 1
+fi
+actual_pslog_lua_sha256=$(sha256sum "$pslog_lua_download" | awk '{print $1}')
+if [ "$actual_pslog_lua_sha256" != "$pslog_lua_sha256" ]; then
+  echo "checksum mismatch for $pslog_lua_archive" >&2
+  echo "expected $pslog_lua_sha256" >&2
+  echo "actual   $actual_pslog_lua_sha256" >&2
   exit 1
 fi
 actual_cai_sha256=$(sha256sum "$cai_download" | awk '{print $1}')
@@ -448,6 +461,8 @@ case "$target_cmake_system_name" in
     ;;
 esac
 tar -xzf "$pslog_download" -C "$deps_root" --strip-components 1
+mkdir -p "$pslog_lua_source_dir"
+tar -xzf "$pslog_lua_download" -C "$pslog_lua_source_dir" --strip-components 1
 tar -xzf "$cai_download" -C "$deps_root" --strip-components 1
 mkdir -p "$cai_lua_source_dir"
 "$unzip_tool" -p "$cai_lua_download" "$cai_lua_payload" |
@@ -486,6 +501,9 @@ pslog_archive=$pslog_archive
 pslog_version=$pslog_version
 pslog_sha256=$pslog_sha256
 pslog_source=libpslog-release
+pslog_lua_archive=$pslog_lua_archive
+pslog_lua_sha256=$pslog_lua_sha256
+pslog_lua_source=lua-pslog-source-archive
 cai_archive=$cai_archive
 cai_version=$cai_version
 cai_sha256=$cai_sha256

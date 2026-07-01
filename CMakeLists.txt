@@ -54,7 +54,7 @@ set(VECTIS_TARGET_ID ""
 set(VECTIS_EXPECTED_SYSTEM_VERSION "0.6.0")
 set(VECTIS_EXPECTED_LOCKDC_VERSION "0.12.1")
 set(VECTIS_EXPECTED_LONEJSON_VERSION "0.32.1")
-set(VECTIS_EXPECTED_PSLOG_VERSION "0.4.1")
+set(VECTIS_EXPECTED_PSLOG_VERSION "0.5.0")
 set(VECTIS_EXPECTED_CAI_VERSION "0.1.2")
 set(VECTIS_EXPECTED_LIBMDF_VERSION "0.1.0")
 set(VECTIS_EXPECTED_SOFTLINE_VERSION "0.1.0")
@@ -172,6 +172,8 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lockdc-source/lua/lockdc/init.lua")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lonejson-source/src/lua/lonejson_lua.c")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lonejson-source/lua/lonejson/init.lua")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/pslog-lua-source/lua/pslog/init.lua")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/pslog-lua-source/lua/src/pslog_lua.c")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/cai-lua-source/lua/cai_lua.c")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/libmdf-lua-source/lua/libmdf.lua")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/libmdf-lua-source/lua/libmdf_core.c")
@@ -333,6 +335,7 @@ if(NOT EXISTS "${vectis_external_include_dir}/pslog.h")
 endif()
 set(vectis_lockdc_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/lockdc-source")
 set(vectis_lonejson_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/lonejson-source")
+set(vectis_pslog_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/pslog-lua-source")
 set(vectis_cai_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/cai-lua-source")
 set(vectis_libmdf_lua_source_dir "${VECTIS_EXTERNAL_ROOT}/share/libmdf-lua-source")
 set(vectis_softline_lua_source_dir
@@ -652,10 +655,17 @@ if(VECTIS_BUILD_BINARY)
     "vectis_libmdf_lua_init"
     "${CMAKE_BINARY_DIR}/generated/include/vectis_libmdf_lua_init.h"
   )
+  vectis_generate_lua_init_header(
+    "${vectis_pslog_lua_source_dir}/lua/pslog/init.lua"
+    "vectis_pslog_lua_init"
+    "${CMAKE_BINARY_DIR}/generated/include/vectis_pslog_lua_init.h"
+  )
   set(vectis_lockdc_lua_source
     "${vectis_lockdc_lua_source_dir}/src/lua/lockdc_lua.c")
   set(vectis_lonejson_lua_source
     "${vectis_lonejson_lua_source_dir}/src/lua/lonejson_lua.c")
+  set(vectis_pslog_lua_source
+    "${vectis_pslog_lua_source_dir}/lua/src/pslog_lua.c")
   set(vectis_cai_lua_source "${vectis_cai_lua_source_dir}/lua/cai_lua.c")
   set(vectis_libmdf_lua_source "${vectis_libmdf_lua_source_dir}/lua/libmdf_core.c")
   set(vectis_softline_lua_source
@@ -726,6 +736,20 @@ if(VECTIS_BUILD_BINARY)
     LINKER_LANGUAGE C
   )
 
+  add_library(vectis_pslog_lua OBJECT "${vectis_pslog_lua_source}")
+  target_include_directories(vectis_pslog_lua PRIVATE
+    "${vectis_external_include_dir}"
+  )
+  target_compile_definitions(vectis_pslog_lua PRIVATE
+    _POSIX_C_SOURCE=200809L)
+  set_target_properties(vectis_pslog_lua PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON
+  )
+  vectis_apply_relocatable_paths(vectis_pslog_lua)
+
   add_library(vectis_cai_lua OBJECT "${vectis_cai_lua_source}")
   target_include_directories(vectis_cai_lua PRIVATE
     "${vectis_external_include_dir}"
@@ -773,6 +797,7 @@ if(VECTIS_BUILD_BINARY)
     src/vectis_cli.c
     src/vectis_main.c
     $<TARGET_OBJECTS:vectis_lockdc_lua>
+    $<TARGET_OBJECTS:vectis_pslog_lua>
     $<TARGET_OBJECTS:vectis_cai_lua>
     $<TARGET_OBJECTS:vectis_libmdf_lua>
     $<TARGET_OBJECTS:vectis_softline_lua>
@@ -791,6 +816,7 @@ if(VECTIS_BUILD_BINARY)
     cpkt::lua_runtime
     cai::cai_static
     libmdf::mdf_static
+    pslog::pslog_static
     softline::softline_static
     vectis_lonejson_lua_archive)
   if(UNIX AND NOT APPLE)

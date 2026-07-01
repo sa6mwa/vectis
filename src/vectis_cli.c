@@ -15,6 +15,7 @@
 
 #include "vectis_libmdf_lua_init.h"
 #include "vectis_lockdc_lua_init.h"
+#include "vectis_pslog_lua_init.h"
 
 #define VECTIS_PACK_FOOTER_SIZE 128u
 #define VECTIS_PACK_MAGIC "VECTIS_PACK_V1"
@@ -29,6 +30,7 @@ extern int luaopen_lonejson_core(lua_State *lua);
 extern int luaopen_lockdc_core(lua_State *lua);
 extern int luaopen_cai(lua_State *lua);
 extern int luaopen_libmdf_core(lua_State *lua);
+extern int luaopen_pslog_core(lua_State *lua);
 extern int luaopen_softline(lua_State *lua);
 
 static const char vectis_lonejson_lua_init[] =
@@ -378,6 +380,10 @@ static int vectis_luaopen_libmdf_core(void *lua_state) {
   return luaopen_libmdf_core((lua_State *)lua_state);
 }
 
+static int vectis_luaopen_pslog_core(void *lua_state) {
+  return luaopen_pslog_core((lua_State *)lua_state);
+}
+
 static int vectis_luaopen_softline(void *lua_state) {
   return luaopen_softline((lua_State *)lua_state);
 }
@@ -433,6 +439,17 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   }
   status =
       cpkt_lua_runtime_register_c_module(runtime, "cai", vectis_luaopen_cai);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_c_module(runtime, "pslog.core",
+                                              vectis_luaopen_pslog_core);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_lua_module(
+      runtime, "pslog", vectis_pslog_lua_init, sizeof(vectis_pslog_lua_init),
+      "pslog.init");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
