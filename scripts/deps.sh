@@ -31,7 +31,7 @@ set_linux_gnu_dependency_target() {
       lonejson_sha256="2626df65f8ac33aadd76b9d33a22fd8038cadf4ee6b7fecad3b60739c359db1a"
       pslog_sha256="6b11f175cf6a6726d85a9ac2eb5a6900d975a1c59d78f3f5272651eee898f261"
       cai_sha256="84e401154f7e81707657da3068f0a57b58bf0899c930a296c98ebe46a5619661"
-      mdf_sha256="30627cf2e9d6b42c3973db46d4a779ffd889066244a3c98475aed56ea7417a31"
+      mdf_sha256="37ce7d4a93618b3d607de073a4f7c3518873a5d4583bbac670ee36f13e1c2ce9"
       softline_sha256="440a44dac2750389086da1e9ba86ec92046e6f438b4effd55aa6bc357f3dae1a"
       target_cmake_system_processor="x86_64"
       ;;
@@ -41,7 +41,7 @@ set_linux_gnu_dependency_target() {
       lonejson_sha256="949a55b0958f0b4ac16295056a0302613ca2bc02b8dcfa6c6fb356231e7a04bf"
       pslog_sha256="4b607d1c48d5473ef37a16c1911e3871816c95ec1ed6bacd4c4e0308aba65f80"
       cai_sha256="4df06b5e31c2f4b98a29031591bd2994aa77d372efc63e702dcffd3ec035968b"
-      mdf_sha256="abfb5602ee7b888a776b9ca7d675bd7d1c86eecc2290d6f93282893dc6f48e3a"
+      mdf_sha256="053416ffe7ffc2c1fcab4ad6bf13e4b1507e6822745403384b0cfb7805f73cd4"
       softline_sha256="e7b0429937c74ee8ddc277b8714e2ba38734acbaf4096126c74dc32480bd507d"
       target_cmake_system_processor="aarch64"
       ;;
@@ -51,7 +51,7 @@ set_linux_gnu_dependency_target() {
       lonejson_sha256="0621cae1f1d5a3e8830f34005f3adf9b5fee7195486ab71b649bc8a61ca0c1b6"
       pslog_sha256="2bdeeda2dc174c886fdda8d9b8d44377c599cd9116e561cac06b656c569f0813"
       cai_sha256="0ed692d3b14e86e404f8ac5d9982d732291e67f8b56e3e028db4d55192318854"
-      mdf_sha256="692c0902342cd7e16009dec1e57ba0160f65b5ec83e03e329a1447af56e375c8"
+      mdf_sha256="b86ae3ece3af537bf382d299fa5730e33328d9401be3807f25678e7195f78be9"
       softline_sha256="1218c18bad6a33688c303f0cd5e2c633409fa1211d3bc049052c7680c07a2e34"
       target_cmake_system_processor="arm"
       ;;
@@ -105,7 +105,7 @@ case "$preset" in
     lonejson_sha256="1d5668be9d88e625735dadaa312bdff7fc0df51754a7891a3efb2be331c2adca"
     pslog_sha256="c67b5193473eb08a0831e0e8a45e82509c179473a7234100e9ee39c54c13bca3"
     cai_sha256="ef85c84cdf82f2d37d3db3ebe7c97bcb28dc36072285779df993d8ee8a12d959"
-    mdf_sha256="110bc7f80377679791a20fd7c7f06206f1d52e0c66915a8545bb8aecce2a5fb5"
+    mdf_sha256="cd6b7497e2a43cda1cd8606a0dfb796ad8b2b2ff8a49100a5e2b2a4507dc8c70"
     softline_sha256="c2156243c83ad6bafb4c49b33b6de004234b44d37b4a068dd8c341f47c396337"
     target_cc="${CC:-x86_64-linux-musl-gcc}"
     target_ar="${AR:-x86_64-linux-musl-ar}"
@@ -128,7 +128,7 @@ case "$preset" in
     lonejson_sha256="2891e18cfe7843dd7c15e71a4d1bd03dea6f4d178eb189fd8f3b6ad7caf067d7"
     pslog_sha256="cd3645309ef158c6f5206c531e68612536a3d1faf2389ae2268bdc5d99e5ee36"
     cai_sha256="04808e14b8c55e2d624ba6ac01866b33b61c4a5913be92418966c557baf393e1"
-    mdf_sha256="36072af2ad0152ebf39c213f764e56126dc56585c3507ddbbe25276dfbee6439"
+    mdf_sha256="4725396cda74282bb90a31a0a06eb362c5407c9d66c23ddd33b387149081c7fa"
     softline_sha256="c80c1dc7b9c9d702ea1a9e61783550fdb578d3a431e878774b12862e0917c281"
     target_cc="${CC:-aarch64-linux-musl-gcc}"
     target_ar="${AR:-aarch64-linux-musl-ar}"
@@ -151,7 +151,7 @@ case "$preset" in
     lonejson_sha256="975be93eff3e4ed08973f52fc57498d0a5faeec87b1ffa84eed8325c068c5344"
     pslog_sha256="bcf5fc63db355a3fde108718e7102406111e37e0fd2beceb59f2256445db46ef"
     cai_sha256="c9c899f6881a977a5d88218505649531cdac200a4c969400d5c1a7e88a529056"
-    mdf_sha256="35b50760bd747c8c7836993a47a8f7329e76ea65929a60bf57a215124ea6830d"
+    mdf_sha256="889786f8332e3ba0a86d2cf31a47229efe374d1d470cd3b86d193e5c5379297d"
     softline_sha256="c8537a7c90d7015c5d0a1b2721825839aedd0479cab42d450a6fd21bd00cbf19"
     target_cc="${CC:-arm-linux-musleabihf-gcc}"
     target_ar="${AR:-arm-linux-musleabihf-ar}"
@@ -167,7 +167,7 @@ case "$preset" in
     lonejson_sha256="1e51e13d3850de920f689a245c3372cd6949a8c9531863b574fc05425726be51"
     pslog_sha256="d842ee22881eef69d10c02dccd8c31f7c98011ca962062c125b500cbfdb16aa0"
     cai_sha256="f18732d80e0510b1ffc32c5218429eed44665927e939ab8e5695984e41934071"
-    mdf_sha256="aef93565e1221d891be5abfdc27c0eb9eb31a6aaadb99ab320a7898d6018d7e2"
+    mdf_sha256="85757b37735b14e26abf46f9dfb1f7a41afbb04f6f7251d13a605e3c0c79a97d"
     softline_sha256="60a44e1a540986f8946cd38410af36f03eef01e64b6eee7d2d1fef237d5d5d86"
     if [ -n "${OSXCROSS_ROOT:-}" ]; then
       osxcross_root=$OSXCROSS_ROOT
@@ -284,15 +284,14 @@ cai_lua_url="https://github.com/sa6mwa/cai/releases/download/v${cai_version}/${c
 cai_lua_download="$downloads_dir/$cai_lua_archive"
 cai_lua_sha256="beaae3f21230f472aa70079993919ef5bf1ea84dd57678d573ddace7e417a1eb"
 cai_lua_source_dir="$deps_root/share/cai-lua-source"
-mdf_version="0.1.0"
+mdf_version="0.6.0"
 mdf_archive="libmdf-${mdf_version}-${target_id}.tar.gz"
 mdf_url="https://github.com/sa6mwa/libmdf/releases/download/v${mdf_version}/${mdf_archive}"
 mdf_download="$downloads_dir/$mdf_archive"
-mdf_lua_archive="libmdf-${mdf_version}-1.src.rock"
-mdf_lua_payload="libmdf-lua-${mdf_version}.tar.gz"
+mdf_lua_archive="libmdf-lua-${mdf_version}.tar.gz"
 mdf_lua_url="https://github.com/sa6mwa/libmdf/releases/download/v${mdf_version}/${mdf_lua_archive}"
 mdf_lua_download="$downloads_dir/$mdf_lua_archive"
-mdf_lua_sha256="11faa11a11cf11aa566fcc5bfff82968f975750d1a96feb0c391cb02e9f3c595"
+mdf_lua_sha256="7541650d2aa1f29a290ce16512a37db81924cb1b63d860338f1790ae9b2326e4"
 mdf_lua_source_dir="$deps_root/share/libmdf-lua-source"
 softline_version="0.1.0"
 softline_archive="softline-${softline_version}-${target_id}.tar.gz"
@@ -469,8 +468,7 @@ mkdir -p "$cai_lua_source_dir"
   tar -xzf - -C "$cai_lua_source_dir" --strip-components 1
 tar -xzf "$mdf_download" -C "$deps_root" --strip-components 1
 mkdir -p "$mdf_lua_source_dir"
-"$unzip_tool" -p "$mdf_lua_download" "$mdf_lua_payload" |
-  tar -xzf - -C "$mdf_lua_source_dir" --strip-components 1
+tar -xzf "$mdf_lua_download" -C "$mdf_lua_source_dir" --strip-components 1
 tar -xzf "$softline_download" -C "$deps_root" --strip-components 1
 mkdir -p "$softline_lua_source_dir"
 "$unzip_tool" -p "$softline_lua_download" "$softline_lua_payload" |
@@ -516,10 +514,9 @@ libmdf_archive=$mdf_archive
 libmdf_version=$mdf_version
 libmdf_sha256=$mdf_sha256
 libmdf_lua_archive=$mdf_lua_archive
-libmdf_lua_payload=$mdf_lua_payload
 libmdf_lua_sha256=$mdf_lua_sha256
 libmdf_source=libmdf-release
-libmdf_lua_source=libmdf-src-rock
+libmdf_lua_source=libmdf-lua-source-archive
 softline_archive=$softline_archive
 softline_version=$softline_version
 softline_sha256=$softline_sha256

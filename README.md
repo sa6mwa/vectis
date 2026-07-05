@@ -56,7 +56,7 @@ The current expected dependency set is:
 - `lonejson` 0.32.1 for typed JSON parsing, serialization, streaming arrays,
   spooled fields, and C/Lua bindings.
 - `cai` 0.1.2 for OpenAI API, agent, tool, MCP, and Lua binding sources.
-- `libmdf` 0.1.0 for Markdown-to-ANSI/HTML rendering and Lua binding sources.
+- `libmdf` 0.6.0 for Markdown-to-ANSI/HTML rendering and Lua binding sources.
 - `softline` 0.1.0 for line editing, terminal prompt UX, and Lua binding
   sources.
 - `libpslog` 0.5.0 for structured logging and Lua binding sources.
