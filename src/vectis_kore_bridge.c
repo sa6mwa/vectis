@@ -67,6 +67,9 @@ static struct sock_filter vectis_kore_dependency_seccomp_filter[] = {
 #if defined(SYS_shutdown)
     KORE_SYSCALL_ALLOW(shutdown),
 #endif
+#if defined(SYS_gettimeofday)
+    KORE_SYSCALL_ALLOW(gettimeofday),
+#endif
 };
 
 void kore_seccomp_hook(void) {

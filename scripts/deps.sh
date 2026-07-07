@@ -26,7 +26,7 @@ set_linux_gnu_dependency_target() {
   target_id=$1
   case "$target_id" in
     x86_64-linux-gnu)
-      system_sha256="0e3f96cef656ad927ff952e5fb195fabaea551150017df0368f6fd30c5fa8039"
+      system_sha256="35e50e02ca4b0f7ba7ff0e3683c1c19b1ae07aa0c47b349e52025e45e0e35b28"
       lockdc_sha256="3c850cc155f7032b60f2c8e078a78cce58e55426b64aeaeaa6bef9a88942e098"
       lonejson_sha256="2626df65f8ac33aadd76b9d33a22fd8038cadf4ee6b7fecad3b60739c359db1a"
       pslog_sha256="6b11f175cf6a6726d85a9ac2eb5a6900d975a1c59d78f3f5272651eee898f261"
@@ -36,7 +36,7 @@ set_linux_gnu_dependency_target() {
       target_cmake_system_processor="x86_64"
       ;;
     aarch64-linux-gnu)
-      system_sha256="350421ac3fc8b35374886766ad183601d3f6f4eed0f666b411e4666d1a13f3d8"
+      system_sha256="b0cd27ef2939d3538b324793f0718d6b444cd487df6dfb8835ae15c170d51f42"
       lockdc_sha256="f281cf8e01cc80ac38c9d7d9726253f041b642fc5753917ce0fe536eee7f2034"
       lonejson_sha256="949a55b0958f0b4ac16295056a0302613ca2bc02b8dcfa6c6fb356231e7a04bf"
       pslog_sha256="4b607d1c48d5473ef37a16c1911e3871816c95ec1ed6bacd4c4e0308aba65f80"
@@ -46,7 +46,7 @@ set_linux_gnu_dependency_target() {
       target_cmake_system_processor="aarch64"
       ;;
     armhf-linux-gnu)
-      system_sha256="b29c74a1d3ebba2420dea732f07708a7d67f08e9dde2bd3c21a9ca93dd50bad2"
+      system_sha256="04765c76cec60db56c6efed263dcdd7b8a0929b4eac679b693b62cc5b47b4090"
       lockdc_sha256="b727af6d49f3de0f229d8d394764fe78d2d66fdd211a1b6b6f2753b8cbd78986"
       lonejson_sha256="0621cae1f1d5a3e8830f34005f3adf9b5fee7195486ab71b649bc8a61ca0c1b6"
       pslog_sha256="2bdeeda2dc174c886fdda8d9b8d44377c599cd9116e561cac06b656c569f0813"
@@ -100,7 +100,7 @@ case "$preset" in
   deps-x86_64-linux-musl)
     deps_root="$repo_root/.cache/deps/x86_64-linux-musl"
     target_id="x86_64-linux-musl"
-    system_sha256="76956e0a903b115323107af17f83a899ed010c276f25ea5c0e3c4c90d341d773"
+    system_sha256="4340cba25a7d44810b167ad955ce18ee4f370c1f54914a16bb462463e13051a1"
     lockdc_sha256="6e4c55a229570cd6ad7b888b2298977d8341147862ead915d5cedeaf518352af"
     lonejson_sha256="1d5668be9d88e625735dadaa312bdff7fc0df51754a7891a3efb2be331c2adca"
     pslog_sha256="c67b5193473eb08a0831e0e8a45e82509c179473a7234100e9ee39c54c13bca3"
@@ -123,7 +123,7 @@ case "$preset" in
   deps-aarch64-linux-musl)
     deps_root="$repo_root/.cache/deps/aarch64-linux-musl"
     target_id="aarch64-linux-musl"
-    system_sha256="c45330b50f6551378d85306b6deba177d52184128983a3af6acb5cd7e180c826"
+    system_sha256="7705dda7f17e40afbbfb81f6404715a2064afcfadc009317a7d41863d93960e8"
     lockdc_sha256="1972ef73a9963c0a280c93d8b2da1d8e5cbf4da6af0f566f7d3471dfc8370b3a"
     lonejson_sha256="2891e18cfe7843dd7c15e71a4d1bd03dea6f4d178eb189fd8f3b6ad7caf067d7"
     pslog_sha256="cd3645309ef158c6f5206c531e68612536a3d1faf2389ae2268bdc5d99e5ee36"
@@ -146,7 +146,7 @@ case "$preset" in
   deps-armhf-linux-musl)
     deps_root="$repo_root/.cache/deps/armhf-linux-musl"
     target_id="armhf-linux-musl"
-    system_sha256="692a0def17b680d9f5f80ffa8894d89366527ca2c8c1d3eff72973368d770bf8"
+    system_sha256="dea4ca0fc75517e007484786f3c0168bdc10b6b5eb658808c45032d922d83516"
     lockdc_sha256="ea6dc0080a8494b206f5d43ec4d3e175f0ee46d2b94d9b06e6b2a2e1ca7a5095"
     lonejson_sha256="975be93eff3e4ed08973f52fc57498d0a5faeec87b1ffa84eed8325c068c5344"
     pslog_sha256="bcf5fc63db355a3fde108718e7102406111e37e0fd2beceb59f2256445db46ef"
@@ -162,7 +162,7 @@ case "$preset" in
   deps-arm64-apple-darwin)
     deps_root="$repo_root/.cache/deps/arm64-apple-darwin"
     target_id="arm64-apple-darwin"
-    system_sha256="59007ba861b657e2433c97b063355d40b71173d52f84bc5dd6ed98dfeffcbfb1"
+    system_sha256="c581c88541ae0d445e546700bfb8721a47708a63a82fa1df152964ededc6a02d"
     lockdc_sha256="429db62552856cdf81ed60fd9e93d453887790557a8fd565985109d0aeba12ff"
     lonejson_sha256="1e51e13d3850de920f689a245c3372cd6949a8c9531863b574fc05425726be51"
     pslog_sha256="d842ee22881eef69d10c02dccd8c31f7c98011ca962062c125b500cbfdb16aa0"
@@ -241,7 +241,7 @@ target_ar=$(resolve_tool_path "$target_ar")
 target_ranlib=$(resolve_tool_path "$target_ranlib")
 unzip_tool=$(resolve_tool_path "${UNZIP:-unzip}")
 
-system_version="0.6.0"
+system_version="0.7.0"
 system_archive="c.pkt.systems-${system_version}-${target_id}.tar.gz"
 system_url="https://github.com/sa6mwa/c.pkt.systems/releases/download/v${system_version}/${system_archive}"
 system_download="$downloads_dir/$system_archive"
