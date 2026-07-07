@@ -54,7 +54,7 @@ set(VECTIS_TARGET_ID ""
 set(VECTIS_EXPECTED_SYSTEM_VERSION "0.7.0")
 set(VECTIS_EXPECTED_LOCKDC_VERSION "0.12.1")
 set(VECTIS_EXPECTED_LONEJSON_VERSION "0.32.1")
-set(VECTIS_EXPECTED_PSLOG_VERSION "0.5.0")
+set(VECTIS_EXPECTED_PSLOG_VERSION "0.8.0")
 set(VECTIS_EXPECTED_CAI_VERSION "0.1.2")
 set(VECTIS_EXPECTED_LIBMDF_VERSION "0.6.0")
 set(VECTIS_EXPECTED_SOFTLINE_VERSION "0.1.0")
@@ -174,6 +174,7 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/lonejson-source/lua/lonejson/init.lua")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/pslog-lua-source/lua/pslog/init.lua")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/pslog-lua-source/lua/src/pslog_lua.c")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/pslog-lua-source/include/pslog_lua.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/cai-lua-source/lua/cai_lua.c")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/libmdf-lua-source/lua/libmdf.lua")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/share/libmdf-lua-source/lua/libmdf_core.c")
@@ -739,6 +740,7 @@ if(VECTIS_BUILD_BINARY)
   add_library(vectis_pslog_lua OBJECT "${vectis_pslog_lua_source}")
   target_include_directories(vectis_pslog_lua PRIVATE
     "${vectis_external_include_dir}"
+    "${vectis_pslog_lua_source_dir}/include"
   )
   target_compile_definitions(vectis_pslog_lua PRIVATE
     _POSIX_C_SOURCE=200809L)

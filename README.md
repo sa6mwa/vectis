@@ -59,7 +59,7 @@ The current expected dependency set is:
 - `libmdf` 0.6.0 for Markdown-to-ANSI/HTML rendering and Lua binding sources.
 - `softline` 0.1.0 for line editing, terminal prompt UX, and Lua binding
   sources.
-- `libpslog` 0.5.0 for structured logging and Lua binding sources.
+- `libpslog` 0.8.0 for structured logging and Lua binding sources.
 - `libpid0` 0.4.0 for Linux PID 1 behavior in the `vectis` executable.
 
 Vectis validates the dependency manifest during CMake configure. A stale or
