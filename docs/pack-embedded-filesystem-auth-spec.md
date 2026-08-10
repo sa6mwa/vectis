@@ -366,6 +366,9 @@ Template rules:
 - browser forms should post to `{{continue_action}}`; `{{webdav_key_action}}`
   remains available for explicit lower-level WebDAV-key finalization links or
   diagnostics,
+- the built-in default form renders email transaction/token inputs and an
+  email-token request form only when the route policy requires the email-token
+  factor,
 - no bespoke JSON or HTML parser is introduced,
 - responses include cache-control headers preventing credential caching.
 

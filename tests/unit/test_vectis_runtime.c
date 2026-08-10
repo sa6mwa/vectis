@@ -1735,6 +1735,8 @@ static void assert_kore_smoke(void) {
          0);
   assert(bytes_contain(auth_login_response.body, auth_login_response.body_size,
                        "action=\"/auth/continue\""));
+  assert(!bytes_contain(auth_login_response.body, auth_login_response.body_size,
+                        "name=\"email_token\""));
   vectis_http_response_cleanup(&auth_login_response);
 
   vectis_http_request_init(&request);

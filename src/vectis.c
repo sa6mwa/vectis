@@ -5563,6 +5563,19 @@ vectis_auth_render_login_template(const vectis_auth_route_data *data,
   return VECTIS_OK;
 }
 
+static unsigned int
+vectis_auth_route_required_factors(const vectis_auth_route_data *data) {
+  unsigned int required_factors;
+
+  required_factors = data->required_factors != 0u
+                         ? data->required_factors
+                         : VECTIS_AUTH_ROUTE_FACTOR_PASSWORD;
+  if (data->require_email_token) {
+    required_factors |= VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN;
+  }
+  return required_factors;
+}
+
 static vectis_status
 vectis_auth_login_form_response(const vectis_auth_route_data *data,
                                 vectis_response *response,
@@ -5570,6 +5583,7 @@ vectis_auth_login_form_response(const vectis_auth_route_data *data,
   vectis_string_builder html;
   vectis_bytes body;
   vectis_status status;
+  unsigned int required_factors;
 
   if (data->login_template_html != NULL) {
     memset(&html, 0, sizeof(html));
@@ -5585,6 +5599,7 @@ vectis_auth_login_form_response(const vectis_auth_route_data *data,
     vectis_string_builder_cleanup(&html);
     return status;
   }
+  required_factors = vectis_auth_route_required_factors(data);
   memset(&html, 0, sizeof(html));
   status = vectis_string_builder_append(
       &html, "<!doctype html><html><head><meta charset=\"utf-8\"><title>",
@@ -5604,19 +5619,54 @@ vectis_auth_login_form_response(const vectis_auth_route_data *data,
         &html, "</h1><form method=\"post\" action=\"", error);
   }
   if (status == VECTIS_OK) {
-    status = vectis_auth_html_escape(&html, data->path_prefix, error);
+    status = vectis_auth_template_action(&html, data, "/continue", error);
   }
   if (status == VECTIS_OK) {
     status = vectis_string_builder_append(
         &html,
-        "/continue\"><label>Username <input name=\"username\" "
+        "\"><label>Username <input name=\"username\" "
         "autocomplete=\"username\"></label><label>Password <input "
         "type=\"password\" name=\"password\" autocomplete=\"current-password\">"
         "</label><label>TOTP <input name=\"totp_code\" "
-        "inputmode=\"numeric\" autocomplete=\"one-time-code\"></label>"
-        "<button type=\"submit\">Create WebDAV key</button></form></main>"
-        "</body></html>",
+        "inputmode=\"numeric\" autocomplete=\"one-time-code\"></label>",
         error);
+  }
+  if (status == VECTIS_OK &&
+      (required_factors & VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN) != 0u) {
+    status = vectis_string_builder_append(
+        &html,
+        "<label>Email transaction <input name=\"email_transaction_id\" "
+        "autocomplete=\"one-time-code\"></label><label>Email token <input "
+        "name=\"email_token\" autocomplete=\"one-time-code\"></label>",
+        error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(
+        &html, "<button type=\"submit\">Create WebDAV key</button></form>",
+        error);
+  }
+  if (status == VECTIS_OK &&
+      (required_factors & VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN) != 0u) {
+    status = vectis_string_builder_append(
+        &html, "<form method=\"post\" action=\"", error);
+  }
+  if (status == VECTIS_OK &&
+      (required_factors & VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN) != 0u) {
+    status = vectis_auth_template_action(&html, data, "/email-token", error);
+  }
+  if (status == VECTIS_OK &&
+      (required_factors & VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN) != 0u) {
+    status = vectis_string_builder_append(
+        &html,
+        "\"><label>Username <input name=\"username\" "
+        "autocomplete=\"username\"></label><label>Email <input "
+        "type=\"email\" name=\"email\" autocomplete=\"email\"></label>"
+        "<button type=\"submit\">Send email token</button></form>",
+        error);
+  }
+  if (status == VECTIS_OK) {
+    status =
+        vectis_string_builder_append(&html, "</main></body></html>", error);
   }
   if (status != VECTIS_OK) {
     vectis_string_builder_cleanup(&html);
@@ -5901,12 +5951,7 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
   if (status != VECTIS_OK) {
     return status;
   }
-  required_factors = data->required_factors != 0u
-                         ? data->required_factors
-                         : VECTIS_AUTH_ROUTE_FACTOR_PASSWORD;
-  if (data->require_email_token) {
-    required_factors |= VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN;
-  }
+  required_factors = vectis_auth_route_required_factors(data);
   if ((required_factors & ~(VECTIS_AUTH_ROUTE_FACTOR_PASSWORD |
                             VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN)) != 0u) {
     vectis_auth_form_cleanup(&fields);
