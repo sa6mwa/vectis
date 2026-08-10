@@ -144,6 +144,18 @@ Required C concepts:
 - lookup, list, open/read, and stream-to-sink operations.
 - extraction operations from embedded fs to disk with explicit policy.
 
+API ownership:
+
+- Core pack, embedded filesystem, WebDAV, auth, SMTP/email-token, Kore serving,
+  and lockd consumer integration surfaces are C-owned receiver-style handles
+  where they have stateful lifecycle.
+- Lua exposes thin adapters over those C surfaces. Lua may register
+  application callbacks and route glue, but it must not own the native
+  implementation semantics for the built-in pack/auth/WebDAV/server services.
+- Developer-provided Lua auth or route callbacks cross the C/Lua boundary
+  through explicit callback contracts; the native implementation remains usable
+  from C without Lua translation.
+
 Required Lua concepts:
 
 - `vectis.embedded.has_assets()`
@@ -178,6 +190,12 @@ There are two supported serving modes:
    The application calls an extraction helper to create or verify a filesystem
    docroot, then registers WebDAV over that directory. WebDAV writes operate on
    the extracted directory only.
+
+Kore HTTP/API serving, WebDAV serving, and liblockdc `startconsumer` client
+services must be composable in one Vectis process. Starting the web server must
+not preclude an application-owned lockd consumer service from running, and
+starting the lockd consumer must not monopolize the process such that Kore
+routes or WebDAV requests stop making progress.
 
 The WebDAV overlay model must support:
 
