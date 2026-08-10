@@ -329,6 +329,7 @@ run_lua_examples() {
   packed_https_log="$work_dir/lua-packed-https.log"
   packed_service_queue="vectis-e2e-packed-$$"
   packed_service_namespace="examples"
+  auth_headers=
   webdav_key_response=
   webdav_key_headers=
   webdav_client_id=
@@ -831,8 +832,11 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed static PUT status: $static_put_status" >&2
     return 1
   fi
-  body=$(curl_or_log "$packed_service_log" "packed auth login" --max-time 3 -fsS \
+  auth_headers="$work_dir/packed-auth-login.headers"
+  body=$(curl_or_log "$packed_service_log" "packed auth login" \
+    --max-time 3 -fsS -D "$auth_headers" \
     "http://127.0.0.1:$kore_packed_port/auth/login")
+  assert_no_store_headers "$auth_headers" "packed auth login"
   case "$body" in
     *'Packed E2E Login'*'action="/auth/webdav-key"'*) ;;
     *)
@@ -840,7 +844,9 @@ run_lua_examples() {
       return 1
       ;;
   esac
-  password_only_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+  auth_headers="$work_dir/packed-password-only.headers"
+  password_only_status=$(curl --max-time 3 -sS -D "$auth_headers" \
+    -o /dev/null -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data 'username=packed-user%40example.com&password=packed-password&totp_code=287082' \
@@ -849,11 +855,14 @@ run_lua_examples() {
     printf '%s\n' "Packed auth issued WebDAV key without email token" >&2
     return 1
   fi
+  assert_no_store_headers "$auth_headers" "packed password-only auth"
+  auth_headers="$work_dir/packed-no-totp-email-token.headers"
   no_totp_email_token_response=$(curl_or_log "$packed_service_log" \
-    "packed no-totp email token" --max-time 3 -fsS -X POST \
+    "packed no-totp email token" --max-time 3 -fsS -D "$auth_headers" -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data 'username=packed-email-only%40example.com&email=packed-email-only%40example.test' \
     "http://127.0.0.1:$kore_packed_port/auth-local/email-token")
+  assert_no_store_headers "$auth_headers" "packed no-totp email token"
   no_totp_email_transaction_id=$(printf '%s\n' "$no_totp_email_token_response" |
     sed -n 's/^transaction_id=//p')
   no_totp_email_token=$(printf '%s\n' "$no_totp_email_token_response" |
@@ -863,11 +872,13 @@ run_lua_examples() {
     printf '%s\n' "$no_totp_email_token_response" >&2
     return 1
   fi
+  auth_headers="$work_dir/packed-no-totp-webdav-key.headers"
   no_totp_key_response=$(curl_or_log "$packed_service_log" \
-    "packed no-totp webdav key" --max-time 3 -fsS -X POST \
+    "packed no-totp webdav key" --max-time 3 -fsS -D "$auth_headers" -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-email-only%40example.com&password=packed-password&email_transaction_id=$no_totp_email_transaction_id&email_token=$no_totp_email_token" \
     "http://127.0.0.1:$kore_packed_port/auth-local/webdav-key")
+  assert_no_store_headers "$auth_headers" "packed no-totp webdav key"
   no_totp_client_id=$(printf '%s\n' "$no_totp_key_response" |
     sed -n 's/^client_id=//p')
   no_totp_client_secret=$(printf '%s\n' "$no_totp_key_response" |
@@ -884,7 +895,8 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed no-TOTP guarded API response: $body" >&2
     return 1
   fi
-  email_only_unknown_status=$(curl --max-time 3 -sS \
+  auth_headers="$work_dir/packed-email-only-unknown.headers"
+  email_only_unknown_status=$(curl --max-time 3 -sS -D "$auth_headers" \
     -o "$work_dir/packed-email-only-unknown.txt" -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
@@ -896,6 +908,7 @@ run_lua_examples() {
     printf '%s\n' "$email_only_unknown_body" >&2
     return 1
   fi
+  assert_no_store_headers "$auth_headers" "packed email-only unknown user"
   if [ "$email_only_unknown_body" != "login failed" ]; then
     printf '%s\n' "Packed email-only auth returned unexpected unknown-user body: $email_only_unknown_body" >&2
     return 1
@@ -906,11 +919,13 @@ run_lua_examples() {
       return 1
       ;;
   esac
+  auth_headers="$work_dir/packed-email-only-token.headers"
   email_only_token_response=$(curl_or_log "$packed_service_log" \
-    "packed email-only token" --max-time 3 -fsS -X POST \
+    "packed email-only token" --max-time 3 -fsS -D "$auth_headers" -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data 'username=packed-email-only%40example.com&email=packed-email-only%40example.test' \
     "http://127.0.0.1:$kore_packed_port/auth-email-only/email-token")
+  assert_no_store_headers "$auth_headers" "packed email-only token"
   email_only_transaction_id=$(printf '%s\n' "$email_only_token_response" |
     sed -n 's/^transaction_id=//p')
   email_only_token=$(printf '%s\n' "$email_only_token_response" |
@@ -920,7 +935,8 @@ run_lua_examples() {
     printf '%s\n' "$email_only_token_response" >&2
     return 1
   fi
-  email_only_missing_user_status=$(curl --max-time 3 -sS \
+  auth_headers="$work_dir/packed-email-only-missing-user.headers"
+  email_only_missing_user_status=$(curl --max-time 3 -sS -D "$auth_headers" \
     -o "$work_dir/packed-email-only-missing-user.txt" -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
@@ -932,15 +948,18 @@ run_lua_examples() {
     printf '%s\n' "$email_only_missing_user_body" >&2
     return 1
   fi
+  assert_no_store_headers "$auth_headers" "packed email-only missing user"
   if [ "$email_only_missing_user_body" != "username is required" ]; then
     printf '%s\n' "Packed email-only auth returned unexpected missing-user body: $email_only_missing_user_body" >&2
     return 1
   fi
+  auth_headers="$work_dir/packed-email-only-webdav-key.headers"
   email_only_key_response=$(curl_or_log "$packed_service_log" \
-    "packed email-only webdav key" --max-time 3 -fsS -X POST \
+    "packed email-only webdav key" --max-time 3 -fsS -D "$auth_headers" -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-email-only%40example.com&email_transaction_id=$email_only_transaction_id&email_token=$email_only_token" \
     "http://127.0.0.1:$kore_packed_port/auth-email-only/webdav-key")
+  assert_no_store_headers "$auth_headers" "packed email-only webdav key"
   email_only_client_id=$(printf '%s\n' "$email_only_key_response" |
     sed -n 's/^client_id=//p')
   email_only_client_secret=$(printf '%s\n' "$email_only_key_response" |
@@ -957,11 +976,13 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed email-only guarded API response: $body" >&2
     return 1
   fi
+  auth_headers="$work_dir/packed-password-email-start.headers"
   password_email_start_response=$(curl_or_log "$packed_service_log" \
-    "packed password-email start" --max-time 3 -fsS -X POST \
+    "packed password-email start" --max-time 3 -fsS -D "$auth_headers" -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data 'username=packed-email-only%40example.com&password=packed-password' \
     "http://127.0.0.1:$kore_packed_port/auth-password-email/webdav-key")
+  assert_no_store_headers "$auth_headers" "packed password-email start"
   password_email_pending_id=$(printf '%s\n' "$password_email_start_response" |
     sed -n 's/^pending_transaction_id=//p')
   if [ -z "$password_email_pending_id" ]; then
@@ -977,11 +998,13 @@ run_lua_examples() {
       return 1
       ;;
   esac
+  auth_headers="$work_dir/packed-password-email-token.headers"
   password_email_token_response=$(curl_or_log "$packed_service_log" \
-    "packed password-email token" --max-time 3 -fsS -X POST \
+    "packed password-email token" --max-time 3 -fsS -D "$auth_headers" -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-email-only%40example.com&email=packed-email-only%40example.test&pending_transaction_id=$password_email_pending_id" \
     "http://127.0.0.1:$kore_packed_port/auth-password-email/email-token")
+  assert_no_store_headers "$auth_headers" "packed password-email token"
   password_email_transaction_id=$(printf '%s\n' "$password_email_token_response" |
     sed -n 's/^transaction_id=//p')
   password_email_token=$(printf '%s\n' "$password_email_token_response" |
@@ -991,11 +1014,13 @@ run_lua_examples() {
     printf '%s\n' "$password_email_token_response" >&2
     return 1
   fi
+  auth_headers="$work_dir/packed-password-email-wrong-pending-start.headers"
   password_email_wrong_pending_response=$(curl_or_log "$packed_service_log" \
-    "packed password-email wrong-pending start" --max-time 3 -fsS -X POST \
+    "packed password-email wrong-pending start" --max-time 3 -fsS -D "$auth_headers" -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data 'username=packed-email-only%40example.com&password=packed-password' \
     "http://127.0.0.1:$kore_packed_port/auth-password-email/webdav-key")
+  assert_no_store_headers "$auth_headers" "packed password-email wrong-pending start"
   password_email_wrong_pending_id=$(printf '%s\n' "$password_email_wrong_pending_response" |
     sed -n 's/^pending_transaction_id=//p')
   if [ -z "$password_email_wrong_pending_id" ] ||
@@ -1004,7 +1029,8 @@ run_lua_examples() {
     printf '%s\n' "$password_email_wrong_pending_response" >&2
     return 1
   fi
-  password_email_wrong_pending_status=$(curl --max-time 3 -sS \
+  auth_headers="$work_dir/packed-password-email-wrong-pending.headers"
+  password_email_wrong_pending_status=$(curl --max-time 3 -sS -D "$auth_headers" \
     -o "$work_dir/packed-password-email-wrong-pending.txt" -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
@@ -1016,6 +1042,7 @@ run_lua_examples() {
     printf '%s\n' "$password_email_wrong_pending_body" >&2
     return 1
   fi
+  assert_no_store_headers "$auth_headers" "packed password-email wrong pending"
   if [ "$password_email_wrong_pending_body" != "login failed" ]; then
     printf '%s\n' "Packed password-email auth returned unexpected wrong-pending body: $password_email_wrong_pending_body" >&2
     return 1
@@ -1026,11 +1053,13 @@ run_lua_examples() {
       return 1
       ;;
   esac
+  auth_headers="$work_dir/packed-password-email-webdav-key.headers"
   password_email_key_response=$(curl_or_log "$packed_service_log" \
-    "packed password-email webdav key" --max-time 3 -fsS -X POST \
+    "packed password-email webdav key" --max-time 3 -fsS -D "$auth_headers" -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-email-only%40example.com&pending_transaction_id=$password_email_pending_id&email_transaction_id=$password_email_transaction_id&email_token=$password_email_token" \
     "http://127.0.0.1:$kore_packed_port/auth-password-email/webdav-key")
+  assert_no_store_headers "$auth_headers" "packed password-email webdav key"
   password_email_client_id=$(printf '%s\n' "$password_email_key_response" |
     sed -n 's/^client_id=//p')
   password_email_client_secret=$(printf '%s\n' "$password_email_key_response" |
@@ -1047,11 +1076,13 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed password-email guarded API response: $body" >&2
     return 1
   fi
+  auth_headers="$work_dir/packed-limited-email-token.headers"
   limited_token_response=$(curl_or_log "$packed_service_log" \
-    "packed limited email token" --max-time 3 -fsS -X POST \
+    "packed limited email token" --max-time 3 -fsS -D "$auth_headers" -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data 'username=packed-user%40example.com&email=packed-user%40example.test' \
     "http://127.0.0.1:$kore_packed_port/auth-limited/email-token")
+  assert_no_store_headers "$auth_headers" "packed limited email token"
   limited_transaction_id=$(printf '%s\n' "$limited_token_response" |
     sed -n 's/^transaction_id=//p')
   limited_token=$(printf '%s\n' "$limited_token_response" |
@@ -1061,7 +1092,9 @@ run_lua_examples() {
     printf '%s\n' "$limited_token_response" >&2
     return 1
   fi
-  limited_wrong_one_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+  auth_headers="$work_dir/packed-limited-wrong-one.headers"
+  limited_wrong_one_status=$(curl --max-time 3 -sS -D "$auth_headers" \
+    -o /dev/null -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$limited_transaction_id&email_token=wrong-one" \
@@ -1070,7 +1103,10 @@ run_lua_examples() {
     printf '%s\n' "Packed limited auth first wrong token returned unexpected status: $limited_wrong_one_status" >&2
     return 1
   fi
-  limited_wrong_two_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+  assert_no_store_headers "$auth_headers" "packed limited first wrong token"
+  auth_headers="$work_dir/packed-limited-wrong-two.headers"
+  limited_wrong_two_status=$(curl --max-time 3 -sS -D "$auth_headers" \
+    -o /dev/null -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$limited_transaction_id&email_token=wrong-two" \
@@ -1079,7 +1115,10 @@ run_lua_examples() {
     printf '%s\n' "Packed limited auth second wrong token returned unexpected status: $limited_wrong_two_status" >&2
     return 1
   fi
-  limited_after_budget_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+  assert_no_store_headers "$auth_headers" "packed limited second wrong token"
+  auth_headers="$work_dir/packed-limited-after-budget.headers"
+  limited_after_budget_status=$(curl --max-time 3 -sS -D "$auth_headers" \
+    -o /dev/null -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$limited_transaction_id&email_token=$limited_token" \
@@ -1088,11 +1127,14 @@ run_lua_examples() {
     printf '%s\n' "Packed limited auth accepted token after attempt budget: $limited_after_budget_status" >&2
     return 1
   fi
+  assert_no_store_headers "$auth_headers" "packed limited after budget"
+  auth_headers="$work_dir/packed-expired-email-token.headers"
   expired_token_response=$(curl_or_log "$packed_service_log" \
-    "packed expired email token" --max-time 3 -fsS -X POST \
+    "packed expired email token" --max-time 3 -fsS -D "$auth_headers" -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data 'username=packed-email-only%40example.com&email=packed-email-only%40example.test' \
     "http://127.0.0.1:$kore_packed_port/auth-local/email-token")
+  assert_no_store_headers "$auth_headers" "packed expired email token"
   expired_transaction_id=$(printf '%s\n' "$expired_token_response" |
     sed -n 's/^transaction_id=//p')
   expired_token=$(printf '%s\n' "$expired_token_response" |
@@ -1110,7 +1152,9 @@ run_lua_examples() {
     printf '%s\n' "$expired_token_response" >&2
     return 1
   fi
-  expired_token_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+  auth_headers="$work_dir/packed-expired-token-webdav-key.headers"
+  expired_token_status=$(curl --max-time 3 -sS -D "$auth_headers" \
+    -o /dev/null -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-email-only%40example.com&password=packed-password&email_transaction_id=$expired_transaction_id&email_token=$expired_token" \
@@ -1119,7 +1163,10 @@ run_lua_examples() {
     printf '%s\n' "Packed auth expired email token returned unexpected status: $expired_token_status" >&2
     return 1
   fi
-  expired_token_replay_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+  assert_no_store_headers "$auth_headers" "packed expired token webdav key"
+  auth_headers="$work_dir/packed-expired-token-replay.headers"
+  expired_token_replay_status=$(curl --max-time 3 -sS -D "$auth_headers" \
+    -o /dev/null -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-email-only%40example.com&password=packed-password&email_transaction_id=$expired_transaction_id&email_token=$expired_token" \
@@ -1128,7 +1175,10 @@ run_lua_examples() {
     printf '%s\n' "Packed auth expired email token replay returned unexpected status: $expired_token_replay_status" >&2
     return 1
   fi
-  blocked_email_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+  assert_no_store_headers "$auth_headers" "packed expired token replay"
+  auth_headers="$work_dir/packed-blocked-email-token.headers"
+  blocked_email_status=$(curl --max-time 3 -sS -D "$auth_headers" \
+    -o /dev/null -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data 'username=packed-user%40example.com&email=packed-user%40blocked.test' \
@@ -1137,15 +1187,18 @@ run_lua_examples() {
     printf '%s\n' "Packed auth allowlisted SMTP route returned unexpected blocked-email status: $blocked_email_status" >&2
     return 1
   fi
+  assert_no_store_headers "$auth_headers" "packed blocked email token"
   if [ -e "$packed_service_mailbox" ]; then
     printf '%s\n' "Packed SMTP harness mailbox was written for blocked recipient" >&2
     return 1
   fi
+  auth_headers="$work_dir/packed-smtp-email-token.headers"
   email_token_response=$(curl_or_log "$packed_service_log" \
-    "packed smtp email token" --max-time 3 -fsS -X POST \
+    "packed smtp email token" --max-time 3 -fsS -D "$auth_headers" -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data 'username=packed-user%40example.com&email=packed-user%40example.test' \
     "http://127.0.0.1:$kore_packed_port/auth/email-token")
+  assert_no_store_headers "$auth_headers" "packed smtp email token"
   email_transaction_id=$(printf '%s\n' "$email_token_response" |
     sed -n 's/^transaction_id=//p')
   if [ -z "$email_transaction_id" ]; then
@@ -1180,7 +1233,9 @@ run_lua_examples() {
     printf '%s\n' "$mail_body" >&2
     return 1
   fi
-  wrong_token_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+  auth_headers="$work_dir/packed-wrong-email-token.headers"
+  wrong_token_status=$(curl --max-time 3 -sS -D "$auth_headers" \
+    -o /dev/null -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$email_transaction_id&email_token=wrong" \
@@ -1189,7 +1244,10 @@ run_lua_examples() {
     printf '%s\n' "Packed auth wrong email token returned unexpected status: $wrong_token_status" >&2
     return 1
   fi
-  missing_totp_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+  assert_no_store_headers "$auth_headers" "packed wrong email token"
+  auth_headers="$work_dir/packed-missing-totp.headers"
+  missing_totp_status=$(curl --max-time 3 -sS -D "$auth_headers" \
+    -o /dev/null -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-user%40example.com&password=packed-password&email_transaction_id=$email_transaction_id&email_token=$email_token" \
@@ -1198,7 +1256,10 @@ run_lua_examples() {
     printf '%s\n' "Packed auth missing TOTP returned unexpected status: $missing_totp_status" >&2
     return 1
   fi
-  wrong_totp_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+  assert_no_store_headers "$auth_headers" "packed missing TOTP"
+  auth_headers="$work_dir/packed-wrong-totp.headers"
+  wrong_totp_status=$(curl --max-time 3 -sS -D "$auth_headers" \
+    -o /dev/null -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-user%40example.com&password=packed-password&totp_code=000000&email_transaction_id=$email_transaction_id&email_token=$email_token" \
@@ -1207,6 +1268,7 @@ run_lua_examples() {
     printf '%s\n' "Packed auth wrong TOTP returned unexpected status: $wrong_totp_status" >&2
     return 1
   fi
+  assert_no_store_headers "$auth_headers" "packed wrong TOTP"
   webdav_key_headers="$work_dir/packed-webdav-key.headers"
   webdav_key_response=$(curl_or_log "$packed_service_log" \
     "packed webdav key" --max-time 3 -fsS -D "$webdav_key_headers" -X POST \
@@ -1214,7 +1276,9 @@ run_lua_examples() {
     --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$email_transaction_id&email_token=$email_token" \
     "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
   assert_no_store_headers "$webdav_key_headers" "packed webdav key"
-  replay_token_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+  auth_headers="$work_dir/packed-replay-email-token.headers"
+  replay_token_status=$(curl --max-time 3 -sS -D "$auth_headers" \
+    -o /dev/null -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$email_transaction_id&email_token=$email_token" \
@@ -1223,6 +1287,7 @@ run_lua_examples() {
     printf '%s\n' "Packed auth replayed email token returned unexpected status: $replay_token_status" >&2
     return 1
   fi
+  assert_no_store_headers "$auth_headers" "packed replayed email token"
   webdav_client_id=$(printf '%s\n' "$webdav_key_response" |
     sed -n 's/^client_id=//p')
   webdav_client_secret=$(printf '%s\n' "$webdav_key_response" |
