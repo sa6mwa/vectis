@@ -1,3 +1,5 @@
+#include "vectis_internal.h"
+
 #include <vectis/webdav.h>
 
 #include <ctype.h>
@@ -657,6 +659,29 @@ const char *vectis_webdav_status_string(vectis_webdav_status status) {
   default:
     return "unknown";
   }
+}
+
+vectis_status
+vectis_webdav_content_dir(const vectis_webdav_config *config,
+                          char out[VECTIS_WEBDAV_STORAGE_PATH_MAX],
+                          vectis_error *error) {
+  char base[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "WebDAV content dir output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  out[0] = '\0';
+  if (!vectis_webdav_base(config, base, sizeof(base)) ||
+      !vectis_webdav_path_append(out, VECTIS_WEBDAV_STORAGE_PATH_MAX, base,
+                                 "content")) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "WebDAV storage config is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 vectis_webdav_status vectis_webdav_lookup(const vectis_webdav_config *config,

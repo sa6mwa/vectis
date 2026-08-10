@@ -85,6 +85,7 @@ allow_webdav_auth(const vectis_webdav_auth_request *request,
 int main(void) {
   char temp[] = "/tmp/vectis-webdav-unit.XXXXXX";
   char normalized[VECTIS_WEBDAV_PATH_MAX + 1u];
+  char content_dir[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   unsigned char *body;
   size_t body_size;
   vectis_webdav_config config;
@@ -93,6 +94,7 @@ int main(void) {
   vectis_webdav_auth_response auth_response;
   vectis_webdav_entry entry;
   vectis_webdav_status status;
+  vectis_status cstatus;
   vectis_app_config app_config;
   vectis_error error;
   vectis_app *app;
@@ -108,6 +110,10 @@ int main(void) {
   config.site_id = "test";
   config.max_file_bytes = 16u;
   config.max_total_bytes = 64u;
+  cstatus = vectis_webdav_content_dir(&config, content_dir, &error);
+  expect(cstatus == VECTIS_OK &&
+             strstr(content_dir, "/webdav/test/content") != NULL,
+         "reports WebDAV mutable content directory");
 
   vectis_webdav_mount_config_init(&mount);
   expect(mount.auth_required == 1 && mount.conceal_unauthorized == 1 &&

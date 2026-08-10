@@ -1059,6 +1059,8 @@ static void assert_kore_smoke(void) {
   vectis_http_response embedded_head_response;
   vectis_http_response embedded_missing_response;
   vectis_http_response embedded_method_response;
+  vectis_http_response embedded_webdav_response;
+  vectis_http_response embedded_webdav_get_response;
   vectis_http_response webdav_response;
   vectis_http_response webdav_get_response;
   vectis_http_response webdav_propfind_response;
@@ -1078,6 +1080,7 @@ static void assert_kore_smoke(void) {
   vectis_dsv_route_config dsv_route;
   vectis_static_embedded_config embedded_mount;
   vectis_embedded_fs_config embedded_fs_config;
+  vectis_webdav_embedded_site_config embedded_webdav_mount;
   vectis_webdav_config webdav_storage;
   vectis_webdav_mount_config webdav_mount;
   vectis_xml_config xml_config;
@@ -1151,6 +1154,9 @@ static void assert_kore_smoke(void) {
   memset(&embedded_head_response, 0, sizeof(embedded_head_response));
   memset(&embedded_missing_response, 0, sizeof(embedded_missing_response));
   memset(&embedded_method_response, 0, sizeof(embedded_method_response));
+  memset(&embedded_webdav_response, 0, sizeof(embedded_webdav_response));
+  memset(&embedded_webdav_get_response, 0,
+         sizeof(embedded_webdav_get_response));
   memset(&webdav_response, 0, sizeof(webdav_response));
   memset(&webdav_get_response, 0, sizeof(webdav_get_response));
   memset(&webdav_propfind_response, 0, sizeof(webdav_propfind_response));
@@ -1297,6 +1303,15 @@ static void assert_kore_smoke(void) {
   embedded_mount.fs = embedded_fs;
   status = app->static_embedded(app, &embedded_mount, &error);
   assert(status == VECTIS_OK);
+  vectis_webdav_embedded_site_config_init(&embedded_webdav_mount);
+  embedded_webdav_mount.path_prefix = "/dav-embedded";
+  embedded_webdav_mount.storage = webdav_storage;
+  embedded_webdav_mount.storage.site_id = "runtime-embedded";
+  embedded_webdav_mount.fs = embedded_fs;
+  embedded_webdav_mount.auth = runtime_webdav_auth;
+  status =
+      vectis_register_webdav_embedded_site(app, &embedded_webdav_mount, &error);
+  assert(status == VECTIS_OK);
   vectis_webdav_mount_config_init(&webdav_mount);
   webdav_mount.path_prefix = "/dav";
   webdav_mount.storage = webdav_storage;
@@ -1416,6 +1431,56 @@ static void assert_kore_smoke(void) {
   assert(embedded_method_response.status_code == 405L);
   assert(embedded_method_response.body_size == 0u);
   vectis_http_response_cleanup(&embedded_method_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = "http://127.0.0.1:28080/dav-embedded/assets/app.txt";
+  request.headers = webdav_headers;
+  request.header_count = 1u;
+  status = vectis_http_execute(&http, &request, &embedded_webdav_get_response,
+                               &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_webdav_get_response.status_code == 200L);
+  assert(embedded_webdav_get_response.body_size == 4u);
+  assert(memcmp(embedded_webdav_get_response.body, "app\n", 4u) == 0);
+  vectis_http_response_cleanup(&embedded_webdav_get_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_PUT;
+  request.url = "http://127.0.0.1:28080/dav-embedded/assets/app.txt";
+  request.headers = webdav_headers;
+  request.header_count = 1u;
+  request.body = "mutated webdav asset\n";
+  request.body_size = strlen("mutated webdav asset\n");
+  status =
+      vectis_http_execute(&http, &request, &embedded_webdav_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_webdav_response.status_code == 201L);
+  vectis_http_response_cleanup(&embedded_webdav_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = "http://127.0.0.1:28080/dav-embedded/assets/app.txt";
+  request.headers = webdav_headers;
+  request.header_count = 1u;
+  status = vectis_http_execute(&http, &request, &embedded_webdav_get_response,
+                               &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_webdav_get_response.status_code == 200L);
+  assert(embedded_webdav_get_response.body_size ==
+         strlen("mutated webdav asset\n"));
+  assert(memcmp(embedded_webdav_get_response.body, "mutated webdav asset\n",
+                strlen("mutated webdav asset\n")) == 0);
+  vectis_http_response_cleanup(&embedded_webdav_get_response);
+
+  status =
+      vectis_http_get(&http, "http://127.0.0.1:28080/embedded/assets/app.txt",
+                      &embedded_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_response.status_code == 200L);
+  assert(embedded_response.body_size == 4u);
+  assert(memcmp(embedded_response.body, "app\n", 4u) == 0);
+  vectis_http_response_cleanup(&embedded_response);
 
   status = vectis_http_get(&http, "http://127.0.0.1:28080/dav/runtime.txt",
                            &webdav_get_response, &error);

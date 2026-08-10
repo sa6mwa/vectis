@@ -4156,6 +4156,19 @@ void vectis_webdav_mount_config_init(vectis_webdav_mount_config *config) {
   config->conceal_unauthorized = 1;
 }
 
+void vectis_webdav_embedded_site_config_init(
+    vectis_webdav_embedded_site_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->path_prefix = "/";
+  vectis_webdav_config_init(&config->storage);
+  config->extract_policy = VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING;
+  config->auth_required = 1;
+  config->conceal_unauthorized = 1;
+}
+
 void vectis_webdav_auth_response_init(vectis_webdav_auth_response *response) {
   if (response == NULL) {
     return;
@@ -4830,6 +4843,40 @@ vectis_status vectis_register_webdav_site(vectis_app *app,
   config.path_prefix = path_prefix;
   config.storage = *storage;
   return vectis_register_webdav(app, &config, error);
+}
+
+vectis_status vectis_register_webdav_embedded_site(
+    vectis_app *app, const vectis_webdav_embedded_site_config *config,
+    vectis_error *error) {
+  vectis_webdav_mount_config mount;
+  vectis_embedded_fs_extract_config extract;
+  char content_dir[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  vectis_status status;
+
+  if (app == NULL || config == NULL || config->fs == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "WebDAV embedded site app, config, and fs are required");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_webdav_content_dir(&config->storage, content_dir, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  vectis_embedded_fs_extract_config_init(&extract);
+  extract.output_dir = content_dir;
+  extract.policy = config->extract_policy;
+  status = vectis_embedded_fs_extract(config->fs, &extract, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  vectis_webdav_mount_config_init(&mount);
+  mount.path_prefix = config->path_prefix;
+  mount.storage = config->storage;
+  mount.auth_required = config->auth_required;
+  mount.conceal_unauthorized = config->conceal_unauthorized;
+  mount.auth = config->auth;
+  mount.auth_userdata = config->auth_userdata;
+  return vectis_register_webdav(app, &mount, error);
 }
 
 static vectis_status vectis_upload_file_open(vectis_app *app,

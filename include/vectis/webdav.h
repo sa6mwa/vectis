@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <time.h>
 #include <vectis/auth.h>
+#include <vectis/embedded_fs.h>
 #include <vectis/vectis.h>
 
 #ifdef __cplusplus
@@ -106,6 +107,23 @@ typedef struct vectis_webdav_mount_config {
   void *auth_userdata;
 } vectis_webdav_mount_config;
 
+/*
+ * Extract an embedded filesystem into the WebDAV mutable content tree, then
+ * register a normal WebDAV mount over that storage. The init helper defaults to
+ * VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING so user-edited files survive
+ * restart; set extract_policy to OVERWRITE for repair/restore behavior.
+ */
+typedef struct vectis_webdav_embedded_site_config {
+  const char *path_prefix;
+  vectis_webdav_config storage;
+  const vectis_embedded_fs *fs;
+  vectis_embedded_fs_extract_policy extract_policy;
+  int auth_required;
+  int conceal_unauthorized;
+  vectis_webdav_auth_fn auth;
+  void *auth_userdata;
+} vectis_webdav_embedded_site_config;
+
 typedef struct vectis_webdav_auth_provider_config {
   const vectis_auth_provider *provider;
   const char *purpose;
@@ -116,6 +134,10 @@ void vectis_webdav_config_init(vectis_webdav_config *config);
 int vectis_webdav_path_normalize(const char *path,
                                  char out[VECTIS_WEBDAV_PATH_MAX + 1u]);
 const char *vectis_webdav_status_string(vectis_webdav_status status);
+vectis_status
+vectis_webdav_content_dir(const vectis_webdav_config *config,
+                          char out[VECTIS_WEBDAV_STORAGE_PATH_MAX],
+                          vectis_error *error);
 
 vectis_webdav_status vectis_webdav_lookup(const vectis_webdav_config *config,
                                           const char *path,
@@ -145,6 +167,8 @@ vectis_webdav_status vectis_webdav_list(const vectis_webdav_config *config,
 
 void vectis_webdav_auth_response_init(vectis_webdav_auth_response *response);
 void vectis_webdav_mount_config_init(vectis_webdav_mount_config *config);
+void vectis_webdav_embedded_site_config_init(
+    vectis_webdav_embedded_site_config *config);
 void vectis_webdav_auth_provider_config_init(
     vectis_webdav_auth_provider_config *config);
 vectis_status
@@ -158,6 +182,9 @@ vectis_status vectis_register_webdav_site(vectis_app *app,
                                           const char *path_prefix,
                                           const vectis_webdav_config *storage,
                                           vectis_error *error);
+vectis_status vectis_register_webdav_embedded_site(
+    vectis_app *app, const vectis_webdav_embedded_site_config *config,
+    vectis_error *error);
 
 #ifdef __cplusplus
 }
