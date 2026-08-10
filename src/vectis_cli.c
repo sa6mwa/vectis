@@ -47,6 +47,22 @@ extern int luaopen_libmdf_core(lua_State *lua);
 extern int luaopen_pslog_core(lua_State *lua);
 extern int luaopen_softline(lua_State *lua);
 
+static char *vectis_cli_strdup(const char *value) {
+  char *copy;
+  size_t size;
+
+  if (value == NULL) {
+    return NULL;
+  }
+  size = strlen(value) + 1u;
+  copy = (char *)malloc(size);
+  if (copy == NULL) {
+    return NULL;
+  }
+  memcpy(copy, value, size);
+  return copy;
+}
+
 static const char vectis_lonejson_lua_init[] =
     "local core = require(\"lonejson.core\")\n"
     "local M = {}\n"
@@ -835,6 +851,20 @@ static int vectis_lua_table_bool(lua_State *lua, int index, const char *field,
   return value;
 }
 
+static int64_t vectis_lua_table_i64(lua_State *lua, int index,
+                                    const char *field, int64_t fallback) {
+  int64_t value;
+
+  lua_getfield(lua, index, field);
+  if (lua_isnil(lua, -1)) {
+    value = fallback;
+  } else {
+    value = (int64_t)luaL_checkinteger(lua, -1);
+  }
+  lua_pop(lua, 1);
+  return value;
+}
+
 static unsigned vectis_lua_auth_mode_value(const char *mode) {
   if (mode == NULL || strcmp(mode, "default") == 0) {
     return VECTIS_AUTH_MODE_DEFAULT;
@@ -951,6 +981,75 @@ static void vectis_lua_auth_push_issued_credential(
     lua_pushstring(lua, credential->claim_json);
     lua_setfield(lua, -2, "claim_json");
   }
+}
+
+static int vectis_lua_auth_copy_token_flow_string(lua_State *lua, int index,
+                                                  const char *field,
+                                                  char **out) {
+  const char *value;
+
+  value = vectis_lua_table_string(lua, index, field);
+  if (value == NULL) {
+    *out = NULL;
+    return 1;
+  }
+  *out = vectis_cli_strdup(value);
+  return *out != NULL;
+}
+
+static int
+vectis_lua_auth_token_flow_config(lua_State *lua, int index,
+                                  vectis_auth_oauth2_token_flow *flow) {
+  vectis_auth_oauth2_token_flow_init(flow);
+  if (!vectis_lua_auth_copy_token_flow_string(lua, index, "access_token",
+                                              &flow->access_token) ||
+      !vectis_lua_auth_copy_token_flow_string(lua, index, "token_type",
+                                              &flow->token_type) ||
+      !vectis_lua_auth_copy_token_flow_string(lua, index, "refresh_token",
+                                              &flow->refresh_token) ||
+      !vectis_lua_auth_copy_token_flow_string(lua, index, "scope",
+                                              &flow->scope) ||
+      !vectis_lua_auth_copy_token_flow_string(lua, index, "id_token",
+                                              &flow->id_token)) {
+    vectis_auth_oauth2_token_flow_cleanup(flow);
+    return 0;
+  }
+  flow->expires_at = vectis_lua_table_i64(lua, index, "expires_at", 0);
+  flow->has_expires_at = vectis_lua_table_bool(lua, index, "has_expires_at",
+                                               flow->expires_at != 0);
+  return 1;
+}
+
+static void
+vectis_lua_auth_push_token_flow(lua_State *lua,
+                                const vectis_auth_oauth2_token_flow *flow) {
+  lua_newtable(lua);
+  if (flow != NULL && flow->access_token != NULL) {
+    lua_pushstring(lua, flow->access_token);
+    lua_setfield(lua, -2, "access_token");
+  }
+  if (flow != NULL && flow->token_type != NULL) {
+    lua_pushstring(lua, flow->token_type);
+    lua_setfield(lua, -2, "token_type");
+  }
+  if (flow != NULL && flow->refresh_token != NULL) {
+    lua_pushstring(lua, flow->refresh_token);
+    lua_setfield(lua, -2, "refresh_token");
+  }
+  if (flow != NULL && flow->scope != NULL) {
+    lua_pushstring(lua, flow->scope);
+    lua_setfield(lua, -2, "scope");
+  }
+  if (flow != NULL && flow->id_token != NULL) {
+    lua_pushstring(lua, flow->id_token);
+    lua_setfield(lua, -2, "id_token");
+  }
+  if (flow != NULL && flow->has_expires_at) {
+    lua_pushinteger(lua, (lua_Integer)flow->expires_at);
+    lua_setfield(lua, -2, "expires_at");
+  }
+  lua_pushboolean(lua, flow != NULL && flow->has_expires_at);
+  lua_setfield(lua, -2, "has_expires_at");
 }
 
 static void vectis_lua_auth_push_provider_response(
@@ -1251,6 +1350,107 @@ static int vectis_lua_auth_oidc_authorization(lua_State *lua) {
     lua_setfield(lua, -2, "nonce");
   }
   vectis_auth_oidc_authorization_cleanup(&authorization);
+  return 1;
+}
+
+static int vectis_lua_auth_oauth2_flow_upsert(lua_State *lua) {
+  vectis_auth_oauth2_token_flow_store_config config;
+  vectis_error error;
+  vectis_status status;
+  int flow_index;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_error_clear(&error);
+  vectis_auth_oauth2_token_flow_store_config_init(&config);
+  vectis_lua_auth_store_config(lua, 1, &config.store);
+  config.flow_id = vectis_lua_table_string(lua, 1, "flow_id");
+  config.subject = vectis_lua_table_string(lua, 1, "subject");
+  config.webdav_client_id = vectis_lua_table_string(lua, 1, "webdav_client_id");
+  lua_getfield(lua, 1, "flow");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    if (!vectis_lua_auth_token_flow_config(lua, 1, &config.flow)) {
+      return vectis_lua_push_error(lua, VECTIS_ERR_NOMEM, &error);
+    }
+  } else {
+    luaL_checktype(lua, -1, LUA_TTABLE);
+    flow_index = lua_absindex(lua, -1);
+    if (!vectis_lua_auth_token_flow_config(lua, flow_index, &config.flow)) {
+      lua_pop(lua, 1);
+      return vectis_lua_push_error(lua, VECTIS_ERR_NOMEM, &error);
+    }
+    lua_pop(lua, 1);
+  }
+  status = vectis_auth_oauth2_token_flow_upsert(&config, &error);
+  vectis_auth_oauth2_token_flow_cleanup(&config.flow);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_auth_oauth2_flow_load(lua_State *lua) {
+  vectis_auth_store_config store;
+  vectis_auth_oauth2_stored_token_flow flow;
+  vectis_error error;
+  vectis_status status;
+  const char *flow_id;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_error_clear(&error);
+  vectis_lua_auth_store_config(lua, 1, &store);
+  flow_id = vectis_lua_table_string(lua, 1, "flow_id");
+  vectis_auth_oauth2_stored_token_flow_init(&flow);
+  status = vectis_auth_oauth2_token_flow_load(&store, flow_id, &flow, &error);
+  if (status != VECTIS_OK) {
+    vectis_auth_oauth2_stored_token_flow_cleanup(&flow);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_newtable(lua);
+  lua_pushboolean(lua, flow.found);
+  lua_setfield(lua, -2, "found");
+  if (flow.flow_id != NULL) {
+    lua_pushstring(lua, flow.flow_id);
+    lua_setfield(lua, -2, "flow_id");
+  }
+  if (flow.subject != NULL) {
+    lua_pushstring(lua, flow.subject);
+    lua_setfield(lua, -2, "subject");
+  }
+  if (flow.webdav_client_id != NULL) {
+    lua_pushstring(lua, flow.webdav_client_id);
+    lua_setfield(lua, -2, "webdav_client_id");
+  }
+  vectis_lua_auth_push_token_flow(lua, &flow.flow);
+  lua_setfield(lua, -2, "flow");
+  vectis_auth_oauth2_stored_token_flow_cleanup(&flow);
+  return 1;
+}
+
+static int vectis_lua_auth_oauth2_webdav_key(lua_State *lua) {
+  vectis_auth_oauth2_webdav_key_config config;
+  vectis_auth_issued_credential credential;
+  vectis_error error;
+  vectis_status status;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_error_clear(&error);
+  vectis_auth_oauth2_webdav_key_config_init(&config);
+  vectis_lua_auth_store_config(lua, 1, &config.store);
+  config.flow_id = vectis_lua_table_string(lua, 1, "flow_id");
+  config.subject = vectis_lua_table_string(lua, 1, "subject");
+  config.max_record_bytes =
+      vectis_lua_table_size(lua, 1, "max_record_bytes", 0u);
+  vectis_auth_issued_credential_init(&credential);
+  status = vectis_auth_issue_webdav_key_for_oauth2_flow(&config, &credential,
+                                                        &error);
+  if (status != VECTIS_OK) {
+    vectis_auth_issued_credential_cleanup(&credential);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  vectis_lua_auth_push_issued_credential(lua, &credential);
+  vectis_auth_issued_credential_cleanup(&credential);
   return 1;
 }
 
@@ -1573,6 +1773,12 @@ static void vectis_lua_push_auth_table(lua_State *lua) {
   lua_setfield(lua, -2, "webdav_key");
   lua_pushcfunction(lua, vectis_lua_auth_oidc_authorization);
   lua_setfield(lua, -2, "oidc_authorization");
+  lua_pushcfunction(lua, vectis_lua_auth_oauth2_flow_upsert);
+  lua_setfield(lua, -2, "oauth2_flow_upsert");
+  lua_pushcfunction(lua, vectis_lua_auth_oauth2_flow_load);
+  lua_setfield(lua, -2, "oauth2_flow_load");
+  lua_pushcfunction(lua, vectis_lua_auth_oauth2_webdav_key);
+  lua_setfield(lua, -2, "oauth2_webdav_key");
   lua_pushcfunction(lua, vectis_lua_auth_provider_native);
   lua_setfield(lua, -2, "provider_native");
   lua_pushcfunction(lua, vectis_lua_auth_provider_callback);

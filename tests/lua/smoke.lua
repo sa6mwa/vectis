@@ -6,6 +6,27 @@ local pslog = require("pslog")
 local libmdf = require("libmdf")
 local softline = require("softline")
 
+local function base64_encode(input)
+  local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+  local out = {}
+  local index = 1
+  for i = 1, #input, 3 do
+    local a = input:byte(i)
+    local b = input:byte(i + 1)
+    local c = input:byte(i + 2)
+    local triple = a * 65536 + (b or 0) * 256 + (c or 0)
+    local first = math.floor(triple / 262144) % 64 + 1
+    local second = math.floor(triple / 4096) % 64 + 1
+    local third = math.floor(triple / 64) % 64 + 1
+    out[index] = alphabet:sub(first, first)
+    out[index + 1] = alphabet:sub(second, second)
+    out[index + 2] = b and alphabet:sub(third, third) or "="
+    out[index + 3] = c and alphabet:sub(triple % 64 + 1, triple % 64 + 1) or "="
+    index = index + 4
+  end
+  return table.concat(out)
+end
+
 assert(type(vectis) == "table")
 assert(vectis.version == (os.getenv("VECTIS_EXPECTED_VERSION") or "0.0.0"))
 assert(vectis.status_string(vectis.OK) == "ok")
@@ -34,6 +55,47 @@ assert(oidc.nonce == "lua-nonce")
 local auth_path = os.tmpname()
 os.remove(auth_path)
 assert(vectis.auth.store_init({ credentials_path = auth_path }))
+assert(vectis.auth.oauth2_flow_upsert({
+  credentials_path = auth_path,
+  flow_id = "lua-flow",
+  subject = "lua-oidc@example.com",
+  flow = {
+    access_token = "lua-access-token",
+    token_type = "Bearer",
+    refresh_token = "lua-refresh-token",
+    scope = "openid dav",
+    id_token = "lua-id-token",
+    expires_at = 5200,
+    has_expires_at = true,
+  },
+}))
+local loaded_flow = assert(vectis.auth.oauth2_flow_load({
+  credentials_path = auth_path,
+  flow_id = "lua-flow",
+}))
+assert(loaded_flow.found == true)
+assert(loaded_flow.flow_id == "lua-flow")
+assert(loaded_flow.subject == "lua-oidc@example.com")
+assert(loaded_flow.flow.access_token == "lua-access-token")
+assert(loaded_flow.flow.refresh_token == "lua-refresh-token")
+assert(loaded_flow.flow.expires_at == 5200)
+assert(loaded_flow.flow.has_expires_at == true)
+local oauth_webdav_key = assert(vectis.auth.oauth2_webdav_key({
+  credentials_path = auth_path,
+  flow_id = "lua-flow",
+  subject = "lua-oidc@example.com",
+}))
+assert(type(oauth_webdav_key.client_id) == "string")
+assert(type(oauth_webdav_key.client_secret) == "string")
+assert(oauth_webdav_key.claim_json:match('"oauth2_flow_id":"lua%-flow"'))
+local oauth_webdav_verified = assert(vectis.auth.verify({
+  credentials_path = auth_path,
+  authorization = "Basic " .. base64_encode(
+    oauth_webdav_key.client_id .. ":" .. oauth_webdav_key.client_secret),
+  allowed_modes = { "basic" },
+}))
+assert(oauth_webdav_verified.authenticated == true)
+assert(oauth_webdav_verified.claim_json:match('"oauth2_flow_id":"lua%-flow"'))
 local issued = assert(vectis.auth.issue({
   credentials_path = auth_path,
   subject = "lua@example.com",
