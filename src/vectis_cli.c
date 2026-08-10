@@ -49,19 +49,28 @@ typedef struct vectis_lua_runtime_context {
   vectis_embedded_fs *embedded_fs;
 } vectis_lua_runtime_context;
 
-typedef struct vectis_lua_server_webdav_auth {
+typedef struct vectis_lua_server_native_auth {
   char *credentials_path;
   char *purpose;
   char *realm;
   vectis_auth_native_provider_config native_config;
   vectis_auth_provider provider;
   vectis_webdav_auth_provider_config webdav_config;
-  struct vectis_lua_server_webdav_auth *next;
-} vectis_lua_server_webdav_auth;
+  struct vectis_lua_server_native_auth *next;
+} vectis_lua_server_native_auth;
+
+typedef struct vectis_lua_server_auth_json_route {
+  char *body;
+  char *content_type;
+  char *purpose;
+  vectis_lua_server_native_auth *auth;
+  struct vectis_lua_server_auth_json_route *next;
+} vectis_lua_server_auth_json_route;
 
 typedef struct vectis_lua_server {
   vectis_app *app;
-  vectis_lua_server_webdav_auth *webdav_auths;
+  vectis_lua_server_native_auth *native_auths;
+  vectis_lua_server_auth_json_route *auth_json_routes;
 } vectis_lua_server;
 
 typedef struct vectis_pack_asset {
@@ -3089,7 +3098,7 @@ static vectis_app *vectis_lua_server_app(lua_State *lua, int index) {
 }
 
 static void
-vectis_lua_server_webdav_auth_free(vectis_lua_server_webdav_auth *auth) {
+vectis_lua_server_native_auth_free(vectis_lua_server_native_auth *auth) {
   if (auth == NULL) {
     return;
   }
@@ -3099,26 +3108,54 @@ vectis_lua_server_webdav_auth_free(vectis_lua_server_webdav_auth *auth) {
   free(auth);
 }
 
-static void vectis_lua_server_webdav_auth_free_all(vectis_lua_server *server) {
-  vectis_lua_server_webdav_auth *auth;
-  vectis_lua_server_webdav_auth *next;
+static void vectis_lua_server_native_auth_free_all(vectis_lua_server *server) {
+  vectis_lua_server_native_auth *auth;
+  vectis_lua_server_native_auth *next;
 
   if (server == NULL) {
     return;
   }
-  auth = server->webdav_auths;
-  server->webdav_auths = NULL;
+  auth = server->native_auths;
+  server->native_auths = NULL;
   while (auth != NULL) {
     next = auth->next;
-    vectis_lua_server_webdav_auth_free(auth);
+    vectis_lua_server_native_auth_free(auth);
     auth = next;
   }
 }
 
-static vectis_lua_server_webdav_auth *
-vectis_lua_server_webdav_auth_new(lua_State *lua, int index,
-                                  vectis_error *error) {
-  vectis_lua_server_webdav_auth *auth;
+static void vectis_lua_server_auth_json_route_free(
+    vectis_lua_server_auth_json_route *route) {
+  if (route == NULL) {
+    return;
+  }
+  free(route->body);
+  free(route->content_type);
+  free(route->purpose);
+  free(route);
+}
+
+static void
+vectis_lua_server_auth_json_route_free_all(vectis_lua_server *server) {
+  vectis_lua_server_auth_json_route *route;
+  vectis_lua_server_auth_json_route *next;
+
+  if (server == NULL) {
+    return;
+  }
+  route = server->auth_json_routes;
+  server->auth_json_routes = NULL;
+  while (route != NULL) {
+    next = route->next;
+    vectis_lua_server_auth_json_route_free(route);
+    route = next;
+  }
+}
+
+static vectis_lua_server_native_auth *
+vectis_lua_server_native_auth_new(lua_State *lua, int index,
+                                  const char *context, vectis_error *error) {
+  vectis_lua_server_native_auth *auth;
   const char *credentials_path;
   const char *kind;
   const char *purpose;
@@ -3126,10 +3163,11 @@ vectis_lua_server_webdav_auth_new(lua_State *lua, int index,
   unsigned modes;
 
   index = lua_absindex(lua, index);
+  (void)context;
   kind = vectis_lua_table_string(lua, index, "kind");
   if (kind != NULL && strcmp(kind, "native") != 0) {
     vectis_cli_error_set(error, VECTIS_ERR_INVALID,
-                         "webdav embedded site auth kind must be native");
+                         "native auth kind must be native");
     return NULL;
   }
   credentials_path = vectis_lua_table_string(lua, index, "credentials_path");
@@ -3137,9 +3175,8 @@ vectis_lua_server_webdav_auth_new(lua_State *lua, int index,
     credentials_path = vectis_lua_table_string(lua, index, "path");
   }
   if (credentials_path == NULL || credentials_path[0] == '\0') {
-    vectis_cli_error_set(
-        error, VECTIS_ERR_INVALID,
-        "webdav embedded site auth credentials_path is required");
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "native auth credentials_path is required");
     return NULL;
   }
   purpose = vectis_lua_table_string(lua, index, "purpose");
@@ -3150,10 +3187,10 @@ vectis_lua_server_webdav_auth_new(lua_State *lua, int index,
                                         VECTIS_AUTH_MODE_BASIC);
   }
 
-  auth = (vectis_lua_server_webdav_auth *)calloc(1u, sizeof(*auth));
+  auth = (vectis_lua_server_native_auth *)calloc(1u, sizeof(*auth));
   if (auth == NULL) {
     vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
-                         "failed to allocate WebDAV auth adapter");
+                         "failed to allocate native auth adapter");
     return NULL;
   }
   auth->credentials_path = vectis_cli_strdup(credentials_path);
@@ -3161,9 +3198,9 @@ vectis_lua_server_webdav_auth_new(lua_State *lua, int index,
   auth->realm = vectis_cli_strdup(realm != NULL ? realm : "vectis");
   if (auth->credentials_path == NULL || auth->purpose == NULL ||
       auth->realm == NULL) {
-    vectis_lua_server_webdav_auth_free(auth);
+    vectis_lua_server_native_auth_free(auth);
     vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
-                         "failed to copy WebDAV auth adapter config");
+                         "failed to copy native auth adapter config");
     return NULL;
   }
 
@@ -3180,10 +3217,20 @@ vectis_lua_server_webdav_auth_new(lua_State *lua, int index,
   auth->webdav_config.allowed_auth_modes = modes;
   if (vectis_auth_provider_from_native_store(
           &auth->provider, &auth->native_config, error) != VECTIS_OK) {
-    vectis_lua_server_webdav_auth_free(auth);
+    vectis_lua_server_native_auth_free(auth);
     return NULL;
   }
   return auth;
+}
+
+static void
+vectis_lua_server_native_auth_retain(vectis_lua_server *server,
+                                     vectis_lua_server_native_auth *auth) {
+  if (server == NULL || auth == NULL) {
+    return;
+  }
+  auth->next = server->native_auths;
+  server->native_auths = auth;
 }
 
 static int vectis_lua_server_close(lua_State *lua) {
@@ -3194,7 +3241,8 @@ static int vectis_lua_server_close(lua_State *lua) {
     server->app->close(server->app);
     server->app = NULL;
   }
-  vectis_lua_server_webdav_auth_free_all(server);
+  vectis_lua_server_auth_json_route_free_all(server);
+  vectis_lua_server_native_auth_free_all(server);
   return 0;
 }
 
@@ -3271,7 +3319,7 @@ static int vectis_lua_server_webdav_embedded_site(lua_State *lua) {
   vectis_lua_server *server;
   vectis_app *app;
   vectis_webdav_embedded_site_config config;
-  vectis_lua_server_webdav_auth *auth;
+  vectis_lua_server_native_auth *auth;
   vectis_error error;
   vectis_status status;
   const char *path_prefix;
@@ -3327,7 +3375,8 @@ static int vectis_lua_server_webdav_embedded_site(lua_State *lua) {
           lua, VECTIS_ERR_INVALID,
           "webdav embedded site requires auth when auth_required is true");
     }
-    auth = vectis_lua_server_webdav_auth_new(lua, -1, &error);
+    auth = vectis_lua_server_native_auth_new(lua, -1, "webdav embedded site",
+                                             &error);
     lua_pop(lua, 1);
     if (auth == NULL) {
       return vectis_lua_push_error(
@@ -3339,13 +3388,198 @@ static int vectis_lua_server_webdav_embedded_site(lua_State *lua) {
 
   status = app->webdav_embedded_site(app, &config, &error);
   if (status != VECTIS_OK) {
-    vectis_lua_server_webdav_auth_free(auth);
+    vectis_lua_server_native_auth_free(auth);
     return vectis_lua_push_error(lua, status, &error);
   }
   if (auth != NULL) {
-    auth->next = server->webdav_auths;
-    server->webdav_auths = auth;
+    vectis_lua_server_native_auth_retain(server, auth);
   }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static vectis_status
+vectis_lua_auth_json_response(vectis_response *response, int status_code,
+                              const char *content_type, const void *body,
+                              size_t body_size, const char *fallback_body,
+                              vectis_error *error) {
+  vectis_bytes bytes;
+
+  if (body != NULL || body_size > 0u) {
+    bytes.data = body;
+    bytes.size = body_size;
+    return vectis_response_bytes(response, status_code, content_type, bytes,
+                                 error);
+  }
+  return vectis_response_text(response, status_code, content_type,
+                              fallback_body, error);
+}
+
+static vectis_status
+vectis_lua_server_auth_json_dispatch(vectis_app *app, vectis_request *request,
+                                     vectis_response *response, void *userdata,
+                                     vectis_error *error) {
+  vectis_lua_server_auth_json_route *route;
+  vectis_auth_provider_request auth_request;
+  vectis_auth_provider_response auth_response;
+  vectis_status status;
+  int status_code;
+
+  (void)app;
+  route = (vectis_lua_server_auth_json_route *)userdata;
+  if (route == NULL || route->auth == NULL) {
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "auth JSON route configuration is required");
+    return VECTIS_ERR_INVALID;
+  }
+
+  vectis_auth_provider_request_init(&auth_request);
+  auth_request.request = request;
+  auth_request.purpose = route->purpose;
+  auth_request.allowed_auth_modes =
+      route->auth->native_config.allowed_auth_modes;
+  vectis_auth_provider_response_init(&auth_response);
+  status = vectis_auth_provider_authenticate(
+      &route->auth->provider, &auth_request, &auth_response, error);
+  if (status != VECTIS_OK) {
+    vectis_auth_provider_response_cleanup(&auth_response);
+    return status;
+  }
+
+  switch (auth_response.action) {
+  case VECTIS_AUTH_ALLOW:
+    status =
+        vectis_response_header(response, "cache-control", "no-store", error);
+    if (status == VECTIS_OK) {
+      status = vectis_response_text(response, 200, route->content_type,
+                                    route->body, error);
+    }
+    break;
+  case VECTIS_AUTH_REQUIRED:
+    if (auth_response.www_authenticate[0] != '\0') {
+      status = vectis_response_header(response, "www-authenticate",
+                                      auth_response.www_authenticate, error);
+      if (status != VECTIS_OK) {
+        break;
+      }
+    }
+    status_code =
+        auth_response.status_code > 0 ? auth_response.status_code : 401;
+    status = vectis_lua_auth_json_response(
+        response, status_code,
+        auth_response.content_type != NULL ? auth_response.content_type
+                                           : "text/plain; charset=utf-8",
+        auth_response.body, auth_response.body_size,
+        "authentication required\n", error);
+    break;
+  case VECTIS_AUTH_REDIRECT:
+    if (auth_response.location != NULL && auth_response.location[0] != '\0') {
+      status = vectis_response_header(response, "location",
+                                      auth_response.location, error);
+      if (status != VECTIS_OK) {
+        break;
+      }
+    }
+    status_code =
+        auth_response.status_code > 0 ? auth_response.status_code : 302;
+    status = vectis_lua_auth_json_response(
+        response, status_code,
+        auth_response.content_type != NULL ? auth_response.content_type
+                                           : "text/plain; charset=utf-8",
+        auth_response.body, auth_response.body_size,
+        "authentication required\n", error);
+    break;
+  case VECTIS_AUTH_DENY:
+  default:
+    status_code =
+        auth_response.status_code > 0 ? auth_response.status_code : 403;
+    status = vectis_lua_auth_json_response(
+        response, status_code,
+        auth_response.content_type != NULL ? auth_response.content_type
+                                           : "text/plain; charset=utf-8",
+        auth_response.body, auth_response.body_size, "forbidden\n", error);
+    break;
+  }
+
+  vectis_auth_provider_response_cleanup(&auth_response);
+  return status;
+}
+
+static int vectis_lua_server_auth_json(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_app *app;
+  vectis_lua_server_native_auth *auth;
+  vectis_lua_server_auth_json_route *route_data;
+  vectis_route_config route;
+  vectis_error error;
+  vectis_status status;
+  const char *path;
+  const char *body;
+  const char *content_type;
+
+  server = vectis_lua_check_server(lua, 1);
+  app = vectis_lua_server_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  path = vectis_lua_table_string(lua, 2, "path");
+  if (path == NULL || path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "auth JSON route path is required");
+  }
+  body = vectis_lua_table_string(lua, 2, "body");
+  if (body == NULL) {
+    body = "{\"ok\":true}\n";
+  }
+  content_type = vectis_lua_table_string(lua, 2, "content_type");
+  if (content_type == NULL) {
+    content_type = "application/json";
+  }
+
+  lua_getfield(lua, 2, "auth");
+  if (!lua_istable(lua, -1)) {
+    lua_pop(lua, 1);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "auth JSON route auth is required");
+  }
+  vectis_error_clear(&error);
+  auth = vectis_lua_server_native_auth_new(lua, -1, "auth JSON route", &error);
+  lua_pop(lua, 1);
+  if (auth == NULL) {
+    return vectis_lua_push_error(
+        lua, error.code != VECTIS_OK ? error.code : VECTIS_ERR_NOMEM, &error);
+  }
+
+  route_data =
+      (vectis_lua_server_auth_json_route *)calloc(1u, sizeof(*route_data));
+  if (route_data == NULL) {
+    vectis_lua_server_native_auth_free(auth);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to allocate auth JSON route");
+  }
+  route_data->body = vectis_cli_strdup(body);
+  route_data->content_type = vectis_cli_strdup(content_type);
+  route_data->purpose = vectis_cli_strdup(auth->purpose);
+  route_data->auth = auth;
+  if (route_data->body == NULL || route_data->content_type == NULL ||
+      route_data->purpose == NULL) {
+    vectis_lua_server_auth_json_route_free(route_data);
+    vectis_lua_server_native_auth_free(auth);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to copy auth JSON route config");
+  }
+
+  route = vectis_route(VECTIS_HTTP_GET, path,
+                       vectis_lua_server_auth_json_dispatch, route_data);
+  vectis_error_clear(&error);
+  status = app->route(app, &route, &error);
+  if (status != VECTIS_OK) {
+    vectis_lua_server_auth_json_route_free(route_data);
+    vectis_lua_server_native_auth_free(auth);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+
+  vectis_lua_server_native_auth_retain(server, auth);
+  route_data->next = server->auth_json_routes;
+  server->auth_json_routes = route_data;
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -3428,7 +3662,8 @@ static int vectis_lua_server_new(lua_State *lua) {
   config.tls.port = (unsigned short)port;
   server = (vectis_lua_server *)lua_newuserdata(lua, sizeof(*server));
   server->app = NULL;
-  server->webdav_auths = NULL;
+  server->native_auths = NULL;
+  server->auth_json_routes = NULL;
   vectis_error_clear(&error);
   server->app = vectis_app_new(&config, &error);
   if (server->app == NULL) {
@@ -5783,6 +6018,8 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "webdav_embedded_site");
     lua_pushcfunction(lua, vectis_lua_server_auth_routes);
     lua_setfield(lua, -2, "auth_routes");
+    lua_pushcfunction(lua, vectis_lua_server_auth_json);
+    lua_setfield(lua, -2, "auth_json");
     lua_pushcfunction(lua, vectis_lua_server_start);
     lua_setfield(lua, -2, "start");
     lua_pushcfunction(lua, vectis_lua_server_stop);

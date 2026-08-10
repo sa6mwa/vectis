@@ -207,6 +207,8 @@ Required Lua concepts:
 - `server:webdav_embedded_site({path_prefix=..., cache_dir=..., site_id=...,
   extract_policy=..., auth={kind="native", credentials_path=...}})`
 - `server:auth_routes({path_prefix=..., credentials_path=..., realm=...})`
+- `server:auth_json({path=..., auth={kind="native", credentials_path=...},
+  body=...})` for small C-owned guarded JSON endpoints in service scenarios.
 - `server:start()`, `server:stop()`, and `server:close()`
 
 Streaming semantics:
