@@ -3959,6 +3959,10 @@ vectis_webdav_auth_provider(const vectis_webdav_auth_request *request,
   }
   vectis_auth_provider_request_init(&auth_request);
   auth_request.request = request->request;
+  if (request->request != NULL) {
+    auth_request.authorization =
+        vectis_request_header(request->request, "authorization");
+  }
   auth_request.purpose = config->purpose;
   auth_request.resource = request->resource_path;
   auth_request.allowed_auth_modes = config->allowed_auth_modes;

@@ -68,6 +68,7 @@ typedef enum vectis_auth_action {
 
 typedef struct vectis_auth_provider_request {
   vectis_request *request;
+  /* Borrowed raw HTTP Authorization header, when the caller already has it. */
   const char *authorization;
   const char *purpose;
   const char *resource;
@@ -77,6 +78,7 @@ typedef struct vectis_auth_provider_request {
 typedef struct vectis_auth_provider_response {
   vectis_auth_action action;
   int status_code;
+  /* Borrowed adapter-owned response fields. Vectis does not free them. */
   const char *location;
   const char *content_type;
   const void *body;

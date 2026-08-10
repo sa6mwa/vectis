@@ -133,6 +133,21 @@ sample_auth_provider(const vectis_auth_provider_request *request,
                    sizeof(response->www_authenticate), "Basic realm=\"unit\"");
     return VECTIS_OK;
   }
+  if (strcmp(mode, "redirect") == 0) {
+    vectis_auth_provider_response_cleanup(response);
+    response->action = VECTIS_AUTH_REDIRECT;
+    response->status_code = 303;
+    response->location = "/auth/login?next=/dav/docs";
+    response->content_type = "text/plain";
+    response->body = "login required";
+    response->body_size = strlen((const char *)response->body);
+    return VECTIS_OK;
+  }
+  if (strcmp(mode, "header") == 0) {
+    expect(request->authorization != NULL &&
+               strcmp(request->authorization, "Bearer webdav-token") == 0,
+           "provider receives forwarded authorization header");
+  }
   expect(request->purpose != NULL && strcmp(request->purpose, "webdav") == 0,
          "provider receives purpose");
   expect(request->resource != NULL && strcmp(request->resource, "/docs") == 0,
@@ -795,6 +810,49 @@ int main(void) {
              strcmp(webdav_response.www_authenticate, "Basic realm=\"unit\"") ==
                  0,
          "WebDAV adapter preserves auth challenge");
+
+  status = vectis_auth_provider_from_callback(
+      &custom_provider, sample_auth_provider, (void *)"redirect", &error);
+  expect_ok(status, &error, "creates redirect callback auth provider");
+  status = vectis_webdav_auth_provider(&webdav_request, &webdav_response,
+                                       &webdav_auth_config, &error);
+  expect_ok(status, &error, "maps auth redirect provider into WebDAV");
+  expect(webdav_response.action == VECTIS_WEBDAV_AUTH_REDIRECT,
+         "WebDAV adapter preserves auth redirect");
+  expect(webdav_response.status_code == 303,
+         "WebDAV adapter preserves redirect status");
+  expect(webdav_response.location != NULL &&
+             strcmp(webdav_response.location, "/auth/login?next=/dav/docs") ==
+                 0,
+         "WebDAV adapter preserves redirect location");
+  expect(webdav_response.content_type != NULL &&
+             strcmp(webdav_response.content_type, "text/plain") == 0 &&
+             webdav_response.body_size == strlen("login required") &&
+             memcmp(webdav_response.body, "login required",
+                    strlen("login required")) == 0,
+         "WebDAV adapter preserves auth response body");
+
+  status = vectis_auth_provider_from_callback(
+      &custom_provider, sample_auth_provider, (void *)"header", &error);
+  expect_ok(status, &error, "creates header callback auth provider");
+  webdav_vectis_request = vectis_internal_request_new(&error);
+  expect(webdav_vectis_request != NULL,
+         "creates internal request for WebDAV callback auth");
+  if (webdav_vectis_request != NULL) {
+    status = vectis_internal_request_add_header(
+        webdav_vectis_request, "authorization", "Bearer webdav-token", &error);
+    expect_ok(status, &error, "adds callback Authorization header");
+    webdav_request.request = webdav_vectis_request;
+    status = vectis_webdav_auth_provider(&webdav_request, &webdav_response,
+                                         &webdav_auth_config, &error);
+    expect_ok(status, &error,
+              "forwards Authorization header through WebDAV adapter");
+    expect(webdav_response.action == VECTIS_WEBDAV_AUTH_ALLOW,
+           "WebDAV adapter allows header-aware provider");
+    vectis_internal_request_free(webdav_vectis_request);
+    webdav_vectis_request = NULL;
+    webdav_request.request = NULL;
+  }
 
   status = vectis_auth_revoke_client(
       &store, basic.client_id != NULL ? basic.client_id : "", &error);

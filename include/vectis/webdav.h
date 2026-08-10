@@ -54,8 +54,11 @@ typedef int (*vectis_webdav_list_callback)(const char *path,
                                            size_t size, void *userdata);
 
 /*
- * WebDAV auth is adapter-owned. Vectis never issues WebDAV credentials and
- * never parses a built-in credential format for protected mounts.
+ * WebDAV auth is adapter-owned. Protected mounts call a registered adapter
+ * callback, either application-provided or vectis_webdav_auth_provider() backed
+ * by a vectis_auth_provider. Vectis-issued WebDAV app keys are verified by the
+ * native auth provider; the WebDAV mount only depends on this callback
+ * contract.
  */
 typedef enum vectis_webdav_auth_action {
   /* Stop the WebDAV operation. Defaults to 404 when conceal_unauthorized is
@@ -79,6 +82,7 @@ typedef struct vectis_webdav_auth_request {
 typedef struct vectis_webdav_auth_response {
   vectis_webdav_auth_action action;
   int status_code;
+  /* Borrowed adapter-owned response fields. Vectis does not free them. */
   const char *location;
   const char *www_authenticate;
   const char *content_type;
