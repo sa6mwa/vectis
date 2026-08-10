@@ -278,7 +278,7 @@ run_lua_examples() {
   printf '%s\n' \
     'local vectis = require("vectis")' \
     'assert(vectis.status_string(vectis.OK) == "ok")' >"$pack_script"
-  "$repo_root/build/debug/vectis" pack --script "$pack_script" --output "$packed"
+  "$repo_root/build/debug/vectis" -a pack --script "$pack_script" --output "$packed"
   "$packed"
 
   printf '[e2e] lua libmdf example\n'

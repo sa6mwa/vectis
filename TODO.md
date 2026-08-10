@@ -260,7 +260,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 
 ## Area 13: Single Binary Packaging
 
-- [x] Add a `vectis pack` command that creates a new runnable binary from the Vectis runner plus a Lua script on Linux.
+- [x] Add a `vectis -a pack` action that creates a new runnable binary from the Vectis runner plus a Lua script on Linux.
 - [x] On Linux/ELF, use a self-describing appended trailer with magic, version, lengths, hashes, and metadata.
 - [ ] On Darwin/Mach-O, embed Lua and certificate payloads through a generated object/section layout rather than relying on arbitrary appended EOF data.
 - [ ] Define one shared payload manifest format across ELF and Mach-O so runtime validation and Lua startup behavior stay platform-independent.

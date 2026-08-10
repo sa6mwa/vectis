@@ -140,17 +140,17 @@ static const char vectis_lonejson_lua_init[] =
 static void vectis_cli_usage(FILE *stream) {
   fputs("usage: vectis [--version] [--help] [-x] script.lua [args...]\n"
         "       -x traces Lua line execution to stderr\n"
-        "       vectis pack --script script.lua --output output "
+        "       vectis -a|--action pack --script script.lua --output output "
         "[--lockd-bundle bundle.pem]\n"
-        "       vectis -a credentials [--store credentials.json] "
+        "       vectis -a|--action credentials [--store credentials.json] "
         "(--init | --issue --subject user [--purpose name] "
         "[--basic] [--bearer] | --verify authorization | "
         "--revoke client_id)\n"
-        "       vectis -a users [--store credentials.json] "
+        "       vectis -a|--action users [--store credentials.json] "
         "(--add username [--password value] [--totp] | "
         "--login username --password value [--totp-code code] | "
         "--webdav-key username --password value [--totp-code code])\n"
-        "       vectis -a oauth2 [--store credentials.json] "
+        "       vectis -a|--action oauth2 [--store credentials.json] "
         "(--authorize --authorization-endpoint url --client-id id "
         "--redirect-uri uri | --exchange-callback flow_id --subject user "
         "--token-endpoint url --client-id id --redirect-uri uri "
@@ -1337,25 +1337,30 @@ static int vectis_cli_oauth2_command(int argc, char **argv, int index) {
   return 0;
 }
 
-static int vectis_admin_command(int argc, char **argv, int index) {
-  const char *operation;
+static int vectis_pack_command(int argc, char **argv, int index);
+
+static int vectis_action_command(int argc, char **argv, int index) {
+  const char *action;
 
   if (index >= argc) {
-    fputs("vectis: -a/--admin-operation requires an operation\n", stderr);
+    fputs("vectis: -a/--action requires an action\n", stderr);
     return 64;
   }
-  operation = argv[index];
+  action = argv[index];
   index++;
-  if (strcmp(operation, "credentials") == 0) {
+  if (strcmp(action, "pack") == 0) {
+    return vectis_pack_command(argc, argv, index);
+  }
+  if (strcmp(action, "credentials") == 0) {
     return vectis_cli_credentials_command(argc, argv, index);
   }
-  if (strcmp(operation, "users") == 0) {
+  if (strcmp(action, "users") == 0) {
     return vectis_cli_users_command(argc, argv, index);
   }
-  if (strcmp(operation, "oauth2") == 0) {
+  if (strcmp(action, "oauth2") == 0) {
     return vectis_cli_oauth2_command(argc, argv, index);
   }
-  fprintf(stderr, "vectis: unknown admin operation: %s\n", operation);
+  fprintf(stderr, "vectis: unknown action: %s\n", action);
   return 64;
 }
 
@@ -1395,7 +1400,7 @@ static int vectis_self_path(const char *argv0, char *path, size_t path_size) {
   return 0;
 }
 
-static int vectis_pack_command(int argc, char **argv) {
+static int vectis_pack_command(int argc, char **argv, int index) {
   const char *script_path;
   const char *output_path;
   const char *bundle_path;
@@ -1415,7 +1420,7 @@ static int vectis_pack_command(int argc, char **argv) {
   script_path = NULL;
   output_path = NULL;
   bundle_path = NULL;
-  for (i = 2; i < argc; ++i) {
+  for (i = index; i < argc; ++i) {
     if (strcmp(argv[i], "--script") == 0 && i + 1 < argc) {
       script_path = argv[++i];
     } else if (strcmp(argv[i], "--output") == 0 && i + 1 < argc) {
@@ -3418,12 +3423,9 @@ int vectis_cli_main(int argc, char **argv) {
     puts("vectis " VECTIS_VERSION);
     return 0;
   }
-  if (argc > 1 && strcmp(argv[1], "pack") == 0) {
-    return vectis_pack_command(argc, argv);
-  }
-  if (argc > 1 && (strcmp(argv[1], "-a") == 0 ||
-                   strcmp(argv[1], "--admin-operation") == 0)) {
-    return vectis_admin_command(argc, argv, 2);
+  if (argc > 1 &&
+      (strcmp(argv[1], "-a") == 0 || strcmp(argv[1], "--action") == 0)) {
+    return vectis_action_command(argc, argv, 2);
   }
   if (argc > 1 && strcmp(argv[1], "-x") == 0) {
     if (argc > 2) {

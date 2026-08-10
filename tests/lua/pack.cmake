@@ -7,12 +7,12 @@ set(corrupt_output "${WORK_DIR}/vectis-pack-bundle-corrupt")
 
 file(WRITE "${script}" "local vectis = require(\"vectis\")\nassert(vectis.status_string(vectis.OK) == \"ok\")\nassert(vectis.has_embedded_lockd_bundle() == false)\nassert(vectis.embedded_lockd_bundle_size() == 0)\nassert(arg[0]:match(\"vectis%-pack%-smoke$\"))\nassert(arg[1] == \"first\")\nassert(arg[2] == \"second\")\n")
 
-execute_process(COMMAND "${VECTIS_BIN}" pack --script "${script}" --output "${output}"
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${script}" --output "${output}"
                 RESULT_VARIABLE pack_result
                 OUTPUT_VARIABLE pack_stdout
                 ERROR_VARIABLE pack_stderr)
 if(NOT pack_result EQUAL 0)
-  message(FATAL_ERROR "vectis pack failed: ${pack_stdout}${pack_stderr}")
+  message(FATAL_ERROR "vectis -a pack failed: ${pack_stdout}${pack_stderr}")
 endif()
 
 execute_process(COMMAND "${output}" first second
@@ -27,12 +27,12 @@ file(WRITE "${bundle}" "embedded lockd client bundle bytes\n")
 file(SIZE "${bundle}" bundle_size)
 file(WRITE "${bundle_script}" "local vectis = require(\"vectis\")\nassert(vectis.has_embedded_lockd_bundle() == true)\nassert(vectis.embedded_lockd_bundle_size() == ${bundle_size})\nassert(arg[1] == \"bundle-arg\")\n")
 
-execute_process(COMMAND "${VECTIS_BIN}" pack --script "${bundle_script}" --output "${bundle_output}" --lockd-bundle "${bundle}"
+execute_process(COMMAND "${VECTIS_BIN}" --action pack --script "${bundle_script}" --output "${bundle_output}" --lockd-bundle "${bundle}"
                 RESULT_VARIABLE bundle_pack_result
                 OUTPUT_VARIABLE bundle_pack_stdout
                 ERROR_VARIABLE bundle_pack_stderr)
 if(NOT bundle_pack_result EQUAL 0)
-  message(FATAL_ERROR "vectis pack with bundle failed: ${bundle_pack_stdout}${bundle_pack_stderr}")
+  message(FATAL_ERROR "vectis --action pack with bundle failed: ${bundle_pack_stdout}${bundle_pack_stderr}")
 endif()
 
 execute_process(COMMAND "${bundle_output}" bundle-arg

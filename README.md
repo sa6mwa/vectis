@@ -214,7 +214,7 @@ runtime currently registers Vectis-owned Lua support plus dependency bindings
 such as lockdc, lonejson, cai, libmdf, and softline where available from the
 provisioned sources.
 
-`vectis pack` can append a Lua script, and optionally a lockd client bundle, to
+`vectis -a pack` can append a Lua script, and optionally a lockd client bundle, to
 the Linux executable with hashes and trailer metadata. Embedded private material
 is kept in memory for consumers that support source-backed configuration.
 
