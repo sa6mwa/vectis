@@ -453,6 +453,8 @@ set(vectis_static_dependency_links
   OpenSSL::SSL
   OpenSSL::Crypto
   lonejson::lonejson_static
+  lonejson::openssl
+  lonejson::oidc
   liblql::lql_static
   LibXml2::LibXml2
   nghttp2::nghttp2
@@ -471,6 +473,8 @@ set(vectis_shared_dependency_links
   cpkt::openssl_ssl_shared
   cpkt::openssl_crypto_shared
   lonejson::lonejson
+  lonejson::openssl
+  lonejson::oidc
   liblql::lql_shared
   cpkt::libxml2_shared
   cpkt::nghttp2_shared
@@ -479,12 +483,14 @@ set(vectis_shared_dependency_links
 
 set(vectis_public_headers
   include/vectis/vectis.h
+  include/vectis/auth.h
   include/vectis/webdav.h
   "${CMAKE_BINARY_DIR}/generated/include/vectis/vectis_version.h"
 )
 
 set(vectis_sources
   src/vectis.c
+  src/vectis_auth.c
   src/vectis_webdav.c
 )
 

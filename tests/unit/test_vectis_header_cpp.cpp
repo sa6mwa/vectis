@@ -1,10 +1,13 @@
 #include <cstring>
 
+#include <vectis/auth.h>
 #include <vectis/vectis.h>
 
 int main() {
   vectis_app_config app_config;
   vectis_http_client_config http_config;
+  vectis_auth_store_config auth_store_config;
+  vectis_auth_issue_config auth_issue_config;
   vectis_error error;
   vectis_app *app;
   vectis_http_client *client;
@@ -12,6 +15,8 @@ int main() {
   std::memset(&error, 0, sizeof(error));
   vectis_app_config_init(&app_config);
   vectis_http_client_config_init(&http_config);
+  vectis_auth_store_config_init(&auth_store_config);
+  vectis_auth_issue_config_init(&auth_issue_config);
 
   app = vectis_app_new(&app_config, &error);
   if (app == 0) {

@@ -230,6 +230,8 @@ if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/lib/libvectis.a")
     OpenSSL::SSL
     OpenSSL::Crypto
     lonejson::lonejson_static
+    lonejson::openssl
+    lonejson::oidc
     LibXml2::LibXml2
     nghttp2::nghttp2
     ZLIB::ZLIB
@@ -255,6 +257,8 @@ if(NOT TARGET vectis::shared)
     cpkt::openssl_ssl_shared
     cpkt::openssl_crypto_shared
     lonejson::lonejson
+    lonejson::openssl
+    lonejson::oidc
     cpkt::libxml2_shared
     cpkt::nghttp2_shared
     cpkt::zlib_shared
