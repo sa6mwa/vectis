@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <vectis/auth.h>
 #include <vectis/embedded_fs.h>
 #include <vectis/vectis.h>
 #include <vectis/webdav.h>
@@ -554,6 +555,79 @@ static int bytes_contain(const void *haystack, size_t haystack_size,
   return 0;
 }
 
+static char runtime_base64_digit(unsigned value) {
+  static const char table[] =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+  return table[value & 63u];
+}
+
+static int runtime_base64_encode(const char *input, char *out,
+                                 size_t out_size) {
+  size_t input_len;
+  size_t offset;
+  size_t written;
+  unsigned a;
+  unsigned b;
+  unsigned c;
+
+  input_len = strlen(input);
+  written = 0u;
+  for (offset = 0u; offset < input_len; offset += 3u) {
+    if (written + 4u >= out_size) {
+      return 0;
+    }
+    a = (unsigned)(unsigned char)input[offset];
+    b = offset + 1u < input_len ? (unsigned)(unsigned char)input[offset + 1u]
+                                : 0u;
+    c = offset + 2u < input_len ? (unsigned)(unsigned char)input[offset + 2u]
+                                : 0u;
+    out[written++] = runtime_base64_digit(a >> 2u);
+    out[written++] = runtime_base64_digit(((a & 3u) << 4u) | (b >> 4u));
+    out[written++] = offset + 1u < input_len
+                         ? runtime_base64_digit(((b & 15u) << 2u) | (c >> 6u))
+                         : '=';
+    out[written++] = offset + 2u < input_len ? runtime_base64_digit(c) : '=';
+  }
+  out[written] = '\0';
+  return 1;
+}
+
+static int runtime_response_line_value(const void *body, size_t body_size,
+                                       const char *key, char *out,
+                                       size_t out_size) {
+  const unsigned char *bytes;
+  size_t key_size;
+  size_t start;
+  size_t end;
+  size_t value_size;
+
+  if (body == NULL || key == NULL || out == NULL || out_size == 0u) {
+    return 0;
+  }
+  bytes = (const unsigned char *)body;
+  key_size = strlen(key);
+  for (start = 0u; start + key_size < body_size; ++start) {
+    if ((start == 0u || bytes[start - 1u] == '\n') &&
+        memcmp(bytes + start, key, key_size) == 0 &&
+        bytes[start + key_size] == '=') {
+      start += key_size + 1u;
+      end = start;
+      while (end < body_size && bytes[end] != '\n') {
+        end++;
+      }
+      value_size = end - start;
+      if (value_size >= out_size) {
+        return 0;
+      }
+      memcpy(out, bytes + start, value_size);
+      out[value_size] = '\0';
+      return 1;
+    }
+  }
+  return 0;
+}
+
 static vectis_status
 runtime_webdav_auth(const vectis_webdav_auth_request *request,
                     vectis_webdav_auth_response *response, void *userdata,
@@ -1064,6 +1138,11 @@ static void assert_kore_smoke(void) {
   vectis_http_response webdav_response;
   vectis_http_response webdav_get_response;
   vectis_http_response webdav_propfind_response;
+  vectis_http_response auth_login_response;
+  vectis_http_response auth_bad_response;
+  vectis_http_response auth_key_response;
+  vectis_http_response native_webdav_response;
+  vectis_http_response native_webdav_get_response;
   source_json_doc json_source_doc;
   stream_probe_context stream_context;
   runtime_dsv_summary dsv_summary;
@@ -1083,6 +1162,14 @@ static void assert_kore_smoke(void) {
   vectis_webdav_embedded_site_config embedded_webdav_mount;
   vectis_webdav_config webdav_storage;
   vectis_webdav_mount_config webdav_mount;
+  vectis_auth_store_config auth_store;
+  vectis_auth_user_config auth_user;
+  vectis_auth_user_enrollment auth_enrollment;
+  vectis_auth_routes_config auth_routes;
+  vectis_auth_native_provider_config native_auth;
+  vectis_auth_provider native_auth_provider;
+  vectis_webdav_auth_provider_config native_webdav_auth;
+  vectis_webdav_mount_config native_webdav_mount;
   vectis_xml_config xml_config;
   vectis_dsv_config dsv_config;
   vectis_app_config second_config;
@@ -1095,6 +1182,7 @@ static void assert_kore_smoke(void) {
   const char dsv_upload_path[] = "/tmp/vectis-runtime-upload.csv";
   const char json_source_path[] = "/tmp/vectis-runtime-json-source.txt";
   const char response_file_path[] = "/tmp/vectis-runtime-response.txt";
+  const char auth_store_path[] = "/tmp/vectis-runtime-auth.json";
   const char response_file_body[] = "file-response";
   static const unsigned char embedded_payload[] = "hello\napp\n";
   static const char embedded_manifest[] =
@@ -1111,6 +1199,7 @@ static void assert_kore_smoke(void) {
   const char *webdav_headers[] = {"x-vectis-webdav-auth: ok"};
   const char *webdav_required_headers[] = {"x-vectis-webdav-auth: required"};
   const char *webdav_deny_headers[] = {"x-vectis-webdav-auth: deny"};
+  const char *native_webdav_headers[1];
   vectis_error error;
   vectis_error second_error;
   vectis_status status;
@@ -1123,6 +1212,11 @@ static void assert_kore_smoke(void) {
   char *stream_body;
   char size_text[64];
   char dsv_text[128];
+  char auth_client_id[128];
+  char auth_client_secret[128];
+  char auth_clear[320];
+  char auth_token[448];
+  char auth_header[480];
   size_t default_spooled_body_size;
   size_t stream_body_size;
   size_t xml_body_size;
@@ -1160,12 +1254,19 @@ static void assert_kore_smoke(void) {
   memset(&webdav_response, 0, sizeof(webdav_response));
   memset(&webdav_get_response, 0, sizeof(webdav_get_response));
   memset(&webdav_propfind_response, 0, sizeof(webdav_propfind_response));
+  memset(&auth_login_response, 0, sizeof(auth_login_response));
+  memset(&auth_bad_response, 0, sizeof(auth_bad_response));
+  memset(&auth_key_response, 0, sizeof(auth_key_response));
+  memset(&native_webdav_response, 0, sizeof(native_webdav_response));
+  memset(&native_webdav_get_response, 0, sizeof(native_webdav_get_response));
   memset(&stream_context, 0, sizeof(stream_context));
   memset(&dsv_summary, 0, sizeof(dsv_summary));
   memset(&json_source_request, 0, sizeof(json_source_request));
   memset(&no_body_request, 0, sizeof(no_body_request));
   memset(&json_source_doc, 0, sizeof(json_source_doc));
   embedded_fs = NULL;
+  vectis_auth_user_enrollment_init(&auth_enrollment);
+  vectis_auth_provider_init(&native_auth_provider);
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
@@ -1183,6 +1284,18 @@ static void assert_kore_smoke(void) {
          sizeof(response_file_body) - 1u);
   assert(fclose(fp) == 0);
   assert(mkdtemp(webdav_cache_dir) != NULL);
+  (void)remove(auth_store_path);
+  vectis_auth_store_config_init(&auth_store);
+  auth_store.credentials_path = auth_store_path;
+  status = vectis_auth_store_init(&auth_store, &error);
+  assert(status == VECTIS_OK);
+  vectis_auth_user_config_init(&auth_user);
+  auth_user.username = "runtime-user";
+  auth_user.password = "runtime-password";
+  status = vectis_auth_user_add_or_update(&auth_store, &auth_user,
+                                          &auth_enrollment, &error);
+  assert(status == VECTIS_OK);
+  vectis_auth_user_enrollment_cleanup(&auth_enrollment);
   vectis_webdav_config_init(&webdav_storage);
   webdav_storage.cache_dir = webdav_cache_dir;
   webdav_storage.site_id = "runtime";
@@ -1317,6 +1430,31 @@ static void assert_kore_smoke(void) {
   webdav_mount.storage = webdav_storage;
   webdav_mount.auth = runtime_webdav_auth;
   status = vectis_register_webdav(app, &webdav_mount, &error);
+  assert(status == VECTIS_OK);
+  vectis_auth_routes_config_init(&auth_routes);
+  auth_routes.path_prefix = "/auth";
+  auth_routes.store = auth_store;
+  auth_routes.login_title = "Runtime Login";
+  status = vectis_register_auth_routes(app, &auth_routes, &error);
+  assert(status == VECTIS_OK);
+  vectis_auth_native_provider_config_init(&native_auth);
+  native_auth.store = auth_store;
+  native_auth.realm = "runtime";
+  native_auth.allowed_auth_modes = VECTIS_AUTH_MODE_BASIC;
+  status = vectis_auth_provider_from_native_store(&native_auth_provider,
+                                                  &native_auth, &error);
+  assert(status == VECTIS_OK);
+  vectis_webdav_auth_provider_config_init(&native_webdav_auth);
+  native_webdav_auth.provider = &native_auth_provider;
+  native_webdav_auth.purpose = "webdav";
+  native_webdav_auth.allowed_auth_modes = VECTIS_AUTH_MODE_BASIC;
+  vectis_webdav_mount_config_init(&native_webdav_mount);
+  native_webdav_mount.path_prefix = "/dav-native";
+  native_webdav_mount.storage = webdav_storage;
+  native_webdav_mount.storage.site_id = "runtime-native";
+  native_webdav_mount.auth = vectis_webdav_auth_provider;
+  native_webdav_mount.auth_userdata = &native_webdav_auth;
+  status = vectis_register_webdav(app, &native_webdav_mount, &error);
   assert(status == VECTIS_OK);
   status = app->start(app, &error);
   assert(status == VECTIS_OK);
@@ -1552,6 +1690,85 @@ static void assert_kore_smoke(void) {
   assert(bytes_contain(webdav_propfind_response.body,
                        webdav_propfind_response.body_size, "/dav/runtime.txt"));
   vectis_http_response_cleanup(&webdav_propfind_response);
+
+  status = vectis_http_get(&http, "http://127.0.0.1:28080/auth/login",
+                           &auth_login_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_login_response.status_code == 200L);
+  assert(auth_login_response.content_type != NULL);
+  assert(strcmp(auth_login_response.content_type, "text/html; charset=utf-8") ==
+         0);
+  assert(bytes_contain(auth_login_response.body, auth_login_response.body_size,
+                       "action=\"/auth/webdav-key\""));
+  vectis_http_response_cleanup(&auth_login_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = "http://127.0.0.1:28080/auth/webdav-key";
+  request.content_type = "application/x-www-form-urlencoded";
+  request.body = "username=runtime-user&password=wrong";
+  request.body_size = strlen("username=runtime-user&password=wrong");
+  status = vectis_http_execute(&http, &request, &auth_bad_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_bad_response.status_code == 401L);
+  assert(bytes_contain(auth_bad_response.body, auth_bad_response.body_size,
+                       "login failed"));
+  vectis_http_response_cleanup(&auth_bad_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = "http://127.0.0.1:28080/auth/webdav-key";
+  request.content_type = "application/x-www-form-urlencoded";
+  request.body = "username=runtime-user&password=runtime-password";
+  request.body_size = strlen("username=runtime-user&password=runtime-password");
+  status = vectis_http_execute(&http, &request, &auth_key_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_key_response.status_code == 200L);
+  assert(runtime_response_line_value(auth_key_response.body,
+                                     auth_key_response.body_size, "client_id",
+                                     auth_client_id, sizeof(auth_client_id)));
+  assert(runtime_response_line_value(
+      auth_key_response.body, auth_key_response.body_size, "client_secret",
+      auth_client_secret, sizeof(auth_client_secret)));
+  assert(bytes_contain(auth_key_response.body, auth_key_response.body_size,
+                       "\"purpose\":\"webdav\""));
+  assert(bytes_contain(auth_key_response.body, auth_key_response.body_size,
+                       "\"sub\":\"runtime-user\""));
+  vectis_http_response_cleanup(&auth_key_response);
+
+  assert(snprintf(auth_clear, sizeof(auth_clear), "%s:%s", auth_client_id,
+                  auth_client_secret) > 0);
+  assert(runtime_base64_encode(auth_clear, auth_token, sizeof(auth_token)));
+  assert(snprintf(auth_header, sizeof(auth_header), "Authorization: Basic %s",
+                  auth_token) > 0);
+  native_webdav_headers[0] = auth_header;
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_PUT;
+  request.url = "http://127.0.0.1:28080/dav-native/from-auth.txt";
+  request.headers = native_webdav_headers;
+  request.header_count = 1u;
+  request.body = "native-webdav-body";
+  request.body_size = strlen("native-webdav-body");
+  status =
+      vectis_http_execute(&http, &request, &native_webdav_response, &error);
+  assert(status == VECTIS_OK);
+  assert(native_webdav_response.status_code == 201L);
+  vectis_http_response_cleanup(&native_webdav_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = "http://127.0.0.1:28080/dav-native/from-auth.txt";
+  request.headers = native_webdav_headers;
+  request.header_count = 1u;
+  status =
+      vectis_http_execute(&http, &request, &native_webdav_get_response, &error);
+  assert(status == VECTIS_OK);
+  assert(native_webdav_get_response.status_code == 200L);
+  assert(native_webdav_get_response.body_size == strlen("native-webdav-body"));
+  assert(memcmp(native_webdav_get_response.body, "native-webdav-body",
+                strlen("native-webdav-body")) == 0);
+  vectis_http_response_cleanup(&native_webdav_get_response);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
@@ -1836,6 +2053,7 @@ static void assert_kore_smoke(void) {
   remove(dsv_upload_path);
   remove(response_file_path);
   remove_tree(webdav_cache_dir);
+  (void)remove(auth_store_path);
 
   status = vectis_stop(app, &error);
   assert(status == VECTIS_OK);

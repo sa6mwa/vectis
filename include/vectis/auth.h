@@ -105,6 +105,23 @@ typedef struct vectis_auth_native_provider_config {
   unsigned allowed_auth_modes;
 } vectis_auth_native_provider_config;
 
+/*
+ * Native browser/login route set. Registers:
+ *   GET  <path_prefix>/login
+ *   POST <path_prefix>/webdav-key
+ * The POST endpoint accepts application/x-www-form-urlencoded fields
+ * username, password, and optional totp_code, then issues a WebDAV Basic app
+ * key through the native credentials store.
+ */
+typedef struct vectis_auth_routes_config {
+  const char *path_prefix;
+  vectis_auth_store_config store;
+  const char *realm;
+  const char *login_title;
+  const char *login_template_html;
+  size_t max_body_bytes;
+} vectis_auth_routes_config;
+
 typedef struct vectis_auth_user_config {
   /* Stable local username/principal. */
   const char *username;
@@ -336,6 +353,7 @@ void vectis_auth_provider_response_cleanup(
 void vectis_auth_provider_init(vectis_auth_provider *provider);
 void vectis_auth_native_provider_config_init(
     vectis_auth_native_provider_config *config);
+void vectis_auth_routes_config_init(vectis_auth_routes_config *config);
 void vectis_auth_user_config_init(vectis_auth_user_config *config);
 void vectis_auth_user_enrollment_init(vectis_auth_user_enrollment *enrollment);
 void vectis_auth_user_enrollment_cleanup(
@@ -459,6 +477,10 @@ vectis_status vectis_auth_provider_response_set_authenticated(
     vectis_auth_provider_response *response, const char *principal,
     const char *client_id, const char *claim_json, unsigned auth_mode,
     vectis_error *error);
+vectis_status
+vectis_register_auth_routes(vectis_app *app,
+                            const vectis_auth_routes_config *config,
+                            vectis_error *error);
 
 #ifdef __cplusplus
 }

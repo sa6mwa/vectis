@@ -4138,6 +4138,21 @@ typedef struct vectis_webdav_route_data {
   int conceal_unauthorized;
 } vectis_webdav_route_data;
 
+typedef struct vectis_auth_route_data {
+  vectis_auth_store_config store;
+  const char *path_prefix;
+  const char *realm;
+  const char *login_title;
+  const char *login_template_html;
+  size_t max_body_bytes;
+} vectis_auth_route_data;
+
+typedef struct vectis_auth_form_fields {
+  char *username;
+  char *password;
+  char *totp_code;
+} vectis_auth_form_fields;
+
 typedef struct vectis_webdav_propfind_state {
   const vectis_webdav_route_data *data;
   vectis_string_builder *xml;
@@ -4877,6 +4892,514 @@ vectis_status vectis_register_webdav_embedded_site(
   mount.auth = config->auth;
   mount.auth_userdata = config->auth_userdata;
   return vectis_register_webdav(app, &mount, error);
+}
+
+static vectis_auth_route_data *
+vectis_auth_route_data_new(const vectis_auth_routes_config *config,
+                           const char *path_prefix, vectis_error *error) {
+  vectis_auth_route_data *data;
+  char *cursor;
+  size_t total;
+  size_t len;
+
+  total = sizeof(*data);
+  total += config->store.credentials_path != NULL
+               ? strlen(config->store.credentials_path) + 1u
+               : 0u;
+  total += path_prefix != NULL ? strlen(path_prefix) + 1u : 0u;
+  total += config->realm != NULL ? strlen(config->realm) + 1u : 0u;
+  total += config->login_title != NULL ? strlen(config->login_title) + 1u : 0u;
+  total += config->login_template_html != NULL
+               ? strlen(config->login_template_html) + 1u
+               : 0u;
+  data = (vectis_auth_route_data *)calloc(1u, total);
+  if (data == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate auth route data");
+    return NULL;
+  }
+  data->store = config->store;
+  data->max_body_bytes = config->max_body_bytes;
+  cursor = (char *)(data + 1);
+#define VECTIS_COPY_AUTH_ROUTE_FIELD(field, value)                             \
+  do {                                                                         \
+    if ((value) != NULL) {                                                     \
+      len = strlen(value) + 1u;                                                \
+      memcpy(cursor, value, len);                                              \
+      data->field = cursor;                                                    \
+      cursor += len;                                                           \
+    }                                                                          \
+  } while (0)
+  VECTIS_COPY_AUTH_ROUTE_FIELD(store.credentials_path,
+                               config->store.credentials_path);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(path_prefix, path_prefix);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(realm, config->realm);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(login_title, config->login_title);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(login_template_html,
+                               config->login_template_html);
+#undef VECTIS_COPY_AUTH_ROUTE_FIELD
+  (void)len;
+  return data;
+}
+
+static int vectis_auth_form_hex(char ch) {
+  if (ch >= '0' && ch <= '9') {
+    return ch - '0';
+  }
+  if (ch >= 'a' && ch <= 'f') {
+    return ch - 'a' + 10;
+  }
+  if (ch >= 'A' && ch <= 'F') {
+    return ch - 'A' + 10;
+  }
+  return -1;
+}
+
+static char *vectis_auth_form_decode(const char *text, size_t size,
+                                     vectis_error *error) {
+  char *out;
+  size_t i;
+  size_t j;
+  int hi;
+  int lo;
+
+  out = (char *)malloc(size + 1u);
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate decoded form field");
+    return NULL;
+  }
+  i = 0u;
+  j = 0u;
+  while (i < size) {
+    if (text[i] == '+') {
+      out[j++] = ' ';
+      i++;
+    } else if (text[i] == '%') {
+      if (i + 2u >= size) {
+        free(out);
+        vectis_set_error(error, VECTIS_ERR_INVALID,
+                         "form field percent escape is incomplete");
+        return NULL;
+      }
+      hi = vectis_auth_form_hex(text[i + 1u]);
+      lo = vectis_auth_form_hex(text[i + 2u]);
+      if (hi < 0 || lo < 0) {
+        free(out);
+        vectis_set_error(error, VECTIS_ERR_INVALID,
+                         "form field percent escape is invalid");
+        return NULL;
+      }
+      out[j++] = (char)((hi << 4) | lo);
+      i += 3u;
+    } else {
+      out[j++] = text[i++];
+    }
+  }
+  out[j] = '\0';
+  return out;
+}
+
+static void vectis_auth_form_cleanup(vectis_auth_form_fields *fields) {
+  if (fields == NULL) {
+    return;
+  }
+  free(fields->username);
+  free(fields->password);
+  free(fields->totp_code);
+  memset(fields, 0, sizeof(*fields));
+}
+
+static vectis_status vectis_auth_form_set(vectis_auth_form_fields *fields,
+                                          char *key, char *value) {
+  char **target;
+
+  target = NULL;
+  if (strcmp(key, "username") == 0) {
+    target = &fields->username;
+  } else if (strcmp(key, "password") == 0) {
+    target = &fields->password;
+  } else if (strcmp(key, "totp_code") == 0 || strcmp(key, "totp") == 0) {
+    target = &fields->totp_code;
+  }
+  if (target == NULL) {
+    free(value);
+    return VECTIS_OK;
+  }
+  free(*target);
+  *target = value;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_parse_form(const char *body, size_t size,
+                                            vectis_auth_form_fields *fields,
+                                            vectis_error *error) {
+  size_t cursor;
+  size_t pair_end;
+  size_t equals;
+  char *key;
+  char *value;
+
+  if (fields == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "form output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(fields, 0, sizeof(*fields));
+  cursor = 0u;
+  while (cursor <= size) {
+    pair_end = cursor;
+    while (pair_end < size && body[pair_end] != '&') {
+      pair_end++;
+    }
+    if (pair_end > cursor) {
+      equals = cursor;
+      while (equals < pair_end && body[equals] != '=') {
+        equals++;
+      }
+      key = vectis_auth_form_decode(body + cursor, equals - cursor, error);
+      if (key == NULL) {
+        vectis_auth_form_cleanup(fields);
+        return error != NULL ? error->code : VECTIS_ERR_INVALID;
+      }
+      value = equals < pair_end
+                  ? vectis_auth_form_decode(body + equals + 1u,
+                                            pair_end - equals - 1u, error)
+                  : vectis_strdup("");
+      if (value == NULL) {
+        free(key);
+        vectis_auth_form_cleanup(fields);
+        if (error != NULL && error->code != VECTIS_OK) {
+          return error->code;
+        }
+        vectis_set_error(error, VECTIS_ERR_NOMEM,
+                         "failed to allocate decoded form value");
+        return VECTIS_ERR_NOMEM;
+      }
+      (void)vectis_auth_form_set(fields, key, value);
+      free(key);
+    }
+    if (pair_end == size) {
+      break;
+    }
+    cursor = pair_end + 1u;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_html_escape(vectis_string_builder *builder,
+                                             const char *text,
+                                             vectis_error *error) {
+  const char *p;
+
+  for (p = text != NULL ? text : ""; *p != '\0'; ++p) {
+    switch (*p) {
+    case '&':
+      if (vectis_string_builder_append(builder, "&amp;", error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+      break;
+    case '<':
+      if (vectis_string_builder_append(builder, "&lt;", error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+      break;
+    case '>':
+      if (vectis_string_builder_append(builder, "&gt;", error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+      break;
+    case '"':
+      if (vectis_string_builder_append(builder, "&quot;", error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+      break;
+    default:
+      if (vectis_string_builder_append_n(builder, p, 1u, error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+      break;
+    }
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status
+vectis_auth_login_form_response(const vectis_auth_route_data *data,
+                                vectis_response *response,
+                                vectis_error *error) {
+  vectis_string_builder html;
+  vectis_bytes body;
+  vectis_status status;
+
+  if (data->login_template_html != NULL) {
+    return vectis_response_text(response, 200, "text/html; charset=utf-8",
+                                data->login_template_html, error);
+  }
+  memset(&html, 0, sizeof(html));
+  status = vectis_string_builder_append(
+      &html, "<!doctype html><html><head><meta charset=\"utf-8\"><title>",
+      error);
+  if (status == VECTIS_OK) {
+    status = vectis_auth_html_escape(&html, data->login_title, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(
+        &html, "</title></head><body><main><h1>", error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_html_escape(&html, data->login_title, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(
+        &html, "</h1><form method=\"post\" action=\"", error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_html_escape(&html, data->path_prefix, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(
+        &html,
+        "/webdav-key\"><label>Username <input name=\"username\" "
+        "autocomplete=\"username\"></label><label>Password <input "
+        "type=\"password\" name=\"password\" autocomplete=\"current-password\">"
+        "</label><label>TOTP <input name=\"totp_code\" "
+        "inputmode=\"numeric\" autocomplete=\"one-time-code\"></label>"
+        "<button type=\"submit\">Create WebDAV key</button></form></main>"
+        "</body></html>",
+        error);
+  }
+  if (status != VECTIS_OK) {
+    vectis_string_builder_cleanup(&html);
+    return status;
+  }
+  body.data = html.data;
+  body.size = html.size;
+  status = vectis_response_bytes(response, 200, "text/html; charset=utf-8",
+                                 body, error);
+  vectis_string_builder_cleanup(&html);
+  return status;
+}
+
+static vectis_status
+vectis_auth_webdav_key_response(vectis_auth_issued_credential *credential,
+                                vectis_response *response,
+                                vectis_error *error) {
+  vectis_string_builder text;
+  vectis_bytes body;
+  vectis_status status;
+
+  memset(&text, 0, sizeof(text));
+  status = vectis_string_builder_appendf(
+      &text, error, "client_id=%s\nclient_secret=%s\n",
+      credential->client_id != NULL ? credential->client_id : "",
+      credential->client_secret != NULL ? credential->client_secret : "");
+  if (status == VECTIS_OK && credential->claim_json != NULL) {
+    status = vectis_string_builder_append(&text, "claim_json=", error);
+    if (status == VECTIS_OK) {
+      status =
+          vectis_string_builder_append(&text, credential->claim_json, error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_string_builder_append(&text, "\n", error);
+    }
+  }
+  if (status != VECTIS_OK) {
+    vectis_string_builder_cleanup(&text);
+    return status;
+  }
+  body.data = text.data;
+  body.size = text.size;
+  status = vectis_response_bytes(response, 200, "text/plain; charset=utf-8",
+                                 body, error);
+  vectis_string_builder_cleanup(&text);
+  return status;
+}
+
+static vectis_status vectis_auth_login_dispatch(vectis_app *app,
+                                                vectis_request *request,
+                                                vectis_response *response,
+                                                void *userdata,
+                                                vectis_error *error) {
+  vectis_auth_route_data *data;
+
+  (void)app;
+  (void)request;
+  data = (vectis_auth_route_data *)userdata;
+  if (data == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth route is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_auth_login_form_response(data, response, error);
+}
+
+static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
+                                                     vectis_request *request,
+                                                     vectis_response *response,
+                                                     void *userdata,
+                                                     vectis_error *error) {
+  vectis_auth_route_data *data;
+  vectis_mutable_bytes body;
+  vectis_auth_form_fields fields;
+  vectis_auth_login_config login;
+  vectis_auth_issued_credential credential;
+  const char *content_type;
+  vectis_status status;
+
+  (void)app;
+  data = (vectis_auth_route_data *)userdata;
+  if (data == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth route is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  content_type = vectis_request_header(request, "content-type");
+  if (content_type != NULL &&
+      strncasecmp(content_type, "application/x-www-form-urlencoded",
+                  strlen("application/x-www-form-urlencoded")) != 0) {
+    return vectis_response_status(response, 415, error);
+  }
+  memset(&body, 0, sizeof(body));
+  status = vectis_request_body_read_all(request, &body, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_auth_parse_form((const char *)body.data, body.size, &fields,
+                                  error);
+  vectis_mutable_bytes_cleanup(&body);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (fields.username == NULL || fields.password == NULL) {
+    vectis_auth_form_cleanup(&fields);
+    return vectis_response_text(response, 400, "text/plain; charset=utf-8",
+                                "username and password are required\n", error);
+  }
+  vectis_auth_login_config_init(&login);
+  login.username = fields.username;
+  login.password = fields.password;
+  login.totp_code = fields.totp_code;
+  vectis_auth_issued_credential_init(&credential);
+  status = vectis_auth_issue_webdav_key_for_login(&data->store, &login,
+                                                  &credential, error);
+  vectis_auth_form_cleanup(&fields);
+  if (status != VECTIS_OK) {
+    vectis_auth_issued_credential_cleanup(&credential);
+    if (status == VECTIS_ERR_INVALID) {
+      vectis_error_clear(error);
+      return vectis_response_text(response, 401, "text/plain; charset=utf-8",
+                                  "login failed\n", error);
+    }
+    return status;
+  }
+  if (credential.client_id == NULL || credential.client_secret == NULL) {
+    vectis_auth_issued_credential_cleanup(&credential);
+    return vectis_response_status(response, 401, error);
+  }
+  status = vectis_auth_webdav_key_response(&credential, response, error);
+  vectis_auth_issued_credential_cleanup(&credential);
+  return status;
+}
+
+static char *vectis_auth_route_prefix_normalize(const char *prefix,
+                                                vectis_error *error) {
+  char *normalized;
+  size_t len;
+
+  if (prefix == NULL || prefix[0] != '/') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth route path_prefix is required");
+    return NULL;
+  }
+  len = strlen(prefix);
+  while (len > 1u && prefix[len - 1u] == '/') {
+    len--;
+  }
+  normalized = (char *)malloc(len + 1u);
+  if (normalized == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to normalize auth route path_prefix");
+    return NULL;
+  }
+  memcpy(normalized, prefix, len);
+  normalized[len] = '\0';
+  return normalized;
+}
+
+static vectis_status vectis_register_auth_route_one(
+    vectis_app *app, const vectis_auth_routes_config *config,
+    const char *path_prefix, const char *suffix, vectis_http_method method,
+    vectis_route_handler_fn handler, vectis_error *error) {
+  vectis_route_config route;
+  vectis_auth_route_data *data;
+  vectis_status status;
+  char *path;
+
+  path = vectis_join_route_prefix(path_prefix, suffix, error);
+  if (path == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  data = vectis_auth_route_data_new(config, path_prefix, error);
+  if (data == NULL) {
+    free(path);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  route = vectis_route(method, path, handler, data);
+  if (method == VECTIS_HTTP_POST) {
+    route.body = vectis_body_buffered_max(
+        config->max_body_bytes > 0u ? config->max_body_bytes : 8192u);
+  }
+  status = vectis_app_register_route_owned_userdata(app, &route, 1, error);
+  free(path);
+  if (status != VECTIS_OK) {
+    free(data);
+  }
+  return status;
+}
+
+vectis_status
+vectis_register_auth_routes(vectis_app *app,
+                            const vectis_auth_routes_config *config,
+                            vectis_error *error) {
+  vectis_auth_routes_config defaults;
+  const vectis_auth_routes_config *effective;
+  vectis_status status;
+  char *path_prefix;
+
+  if (app == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config == NULL) {
+    vectis_auth_routes_config_init(&defaults);
+    effective = &defaults;
+  } else {
+    effective = config;
+  }
+  if (effective->store.credentials_path == NULL ||
+      effective->store.credentials_path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth route credentials_path is required");
+    return VECTIS_ERR_INVALID;
+  }
+  path_prefix =
+      vectis_auth_route_prefix_normalize(effective->path_prefix, error);
+  if (path_prefix == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (vectis_validate_route_path(path_prefix, VECTIS_ROUTE_PATH_LITERAL,
+                                 error) != VECTIS_OK) {
+    free(path_prefix);
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  status = vectis_register_auth_route_one(app, effective, path_prefix, "/login",
+                                          VECTIS_HTTP_GET,
+                                          vectis_auth_login_dispatch, error);
+  if (status == VECTIS_OK) {
+    status = vectis_register_auth_route_one(
+        app, effective, path_prefix, "/webdav-key", VECTIS_HTTP_POST,
+        vectis_auth_webdav_key_dispatch, error);
+  }
+  free(path_prefix);
+  return status;
 }
 
 static vectis_status vectis_upload_file_open(vectis_app *app,

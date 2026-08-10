@@ -1543,6 +1543,18 @@ void vectis_auth_native_provider_config_init(
   config->allowed_auth_modes = VECTIS_AUTH_MODE_DEFAULT;
 }
 
+void vectis_auth_routes_config_init(vectis_auth_routes_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->path_prefix = "/_vectis/auth";
+  vectis_auth_store_config_init(&config->store);
+  config->realm = "vectis";
+  config->login_title = "Vectis Login";
+  config->max_body_bytes = 8192u;
+}
+
 void vectis_auth_user_config_init(vectis_auth_user_config *config) {
   if (config == NULL) {
     return;
