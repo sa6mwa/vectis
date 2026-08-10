@@ -393,7 +393,8 @@ Required deterministic e2e coverage:
 - serve extracted docroot,
 - protect WebDAV with native auth,
 - deny anonymous WebDAV writes,
-- complete login with the configured factor policy,
+- complete login with the configured factor policy, including deterministic
+  TOTP rejection and success through the native HTTP login route,
 - issue a WebDAV app key after successful auth,
 - write, move, copy, list, and delete files through WebDAV with the app key,
 - verify user mutations affect only the extracted docroot, not embedded assets,
