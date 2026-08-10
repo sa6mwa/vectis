@@ -290,6 +290,12 @@ run_lua_examples() {
   email_token_response=
   email_transaction_id=
   email_token=
+  no_totp_key_response=
+  no_totp_client_id=
+  no_totp_client_secret=
+  no_totp_email_token_response=
+  no_totp_email_transaction_id=
+  no_totp_email_token=
   expired_token_response=
   expired_transaction_id=
   expired_token=
@@ -617,6 +623,38 @@ run_lua_examples() {
     "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
   if [ "$password_only_status" = "200" ]; then
     printf '%s\n' "Packed auth issued WebDAV key without email token" >&2
+    return 1
+  fi
+  no_totp_email_token_response=$(curl --max-time 3 -fsS -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-email-only%40example.com&email=packed-email-only%40example.test' \
+    "http://127.0.0.1:$kore_packed_port/auth-local/email-token")
+  no_totp_email_transaction_id=$(printf '%s\n' "$no_totp_email_token_response" |
+    sed -n 's/^transaction_id=//p')
+  no_totp_email_token=$(printf '%s\n' "$no_totp_email_token_response" |
+    sed -n 's/^token=//p')
+  if [ -z "$no_totp_email_transaction_id" ] || [ -z "$no_totp_email_token" ]; then
+    printf '%s\n' "Packed local auth did not expose a no-TOTP email token" >&2
+    printf '%s\n' "$no_totp_email_token_response" >&2
+    return 1
+  fi
+  no_totp_key_response=$(curl --max-time 3 -fsS -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-email-only%40example.com&password=packed-password&email_transaction_id=$no_totp_email_transaction_id&email_token=$no_totp_email_token" \
+    "http://127.0.0.1:$kore_packed_port/auth-local/webdav-key")
+  no_totp_client_id=$(printf '%s\n' "$no_totp_key_response" |
+    sed -n 's/^client_id=//p')
+  no_totp_client_secret=$(printf '%s\n' "$no_totp_key_response" |
+    sed -n 's/^client_secret=//p')
+  if [ -z "$no_totp_client_id" ] || [ -z "$no_totp_client_secret" ]; then
+    printf '%s\n' "Packed no-TOTP auth did not issue WebDAV credentials" >&2
+    printf '%s\n' "$no_totp_key_response" >&2
+    return 1
+  fi
+  body=$(curl --max-time 3 -fsS -u "$no_totp_client_id:$no_totp_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/api/private")
+  if [ "$body" != '{"ok":true,"surface":"packed-api"}' ]; then
+    printf '%s\n' "Unexpected packed no-TOTP guarded API response: $body" >&2
     return 1
   fi
   expired_token_response=$(curl --max-time 3 -fsS -X POST \

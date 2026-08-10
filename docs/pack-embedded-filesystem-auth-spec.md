@@ -454,15 +454,17 @@ delivers an email token through a local mock SMTP server, rejects password-only,
 wrong-token, and replayed-token WebDAV key requests, rejects expired email-token
 transactions, rejects SMTP delivery to non-allowlisted recipients, rejects a
 wrong TOTP code with an otherwise valid email-token transaction, issues a WebDAV
-key after deterministic password+TOTP+email-token login, protects the WebDAV
-mount, serves embedded content through authenticated WebDAV, accepts mutable
-WebDAV writes, verifies those writes land in the extracted docroot, exercises
-WebDAV PROPFIND/MKCOL/COPY/MOVE/DELETE, and proves WebDAV mutations do not
-change embedded read-only assets. It also embeds the lockd client bundle, starts
-a C-owned lockd consumer service from the packed Lua server config, enqueues a
-lockd message through the Lua `lockdc` facade, proves the packed consumer writes
-WebDAV-visible markers, and proves WebDAV remains responsive while the packed
-consumer service is processing. Focused packed Lua smoke coverage in
+key after deterministic password+email-token login for a non-TOTP user, issues
+a WebDAV key after deterministic password+TOTP+email-token login for a TOTP
+user, protects the WebDAV mount, serves embedded content through authenticated
+WebDAV, accepts mutable WebDAV writes, verifies those writes land in the
+extracted docroot, exercises WebDAV PROPFIND/MKCOL/COPY/MOVE/DELETE, and proves
+WebDAV mutations do not change embedded read-only assets. It also embeds the
+lockd client bundle, starts a C-owned lockd consumer service from the packed Lua
+server config, enqueues a lockd message through the Lua `lockdc` facade, proves
+the packed consumer writes WebDAV-visible markers, and proves WebDAV remains
+responsive while the packed consumer service is processing. Focused packed Lua
+smoke coverage in
 `vectis_lua_pack` also packages and executes a native-auth API service artifact,
 packages and executes a lockd consumer-service registration artifact with an
 embedded client bundle, proves the raw statically registered `lockdc` Lua
@@ -486,8 +488,8 @@ Email-token e2e coverage:
 Current coverage: the packed webserver smokes cover mock SMTP startup,
 configured delivery, mailbox capture, continued login, wrong token rejection,
 expired token rejection and consumption, replay rejection, recipient allowlist
-rejection, and WebDAV use of the issued key. Broader packed auth matrix
-coverage remains future hardening work.
+rejection, password+email-token success without TOTP, and WebDAV use of issued
+keys. Broader packed auth matrix coverage remains future hardening work.
 
 ## Implementation Slices
 
