@@ -284,6 +284,7 @@ run_lua_examples() {
   guarded_status=
   password_only_status=
   wrong_token_status=
+  missing_totp_status=
   wrong_totp_status=
   replay_token_status=
   blocked_email_status=
@@ -754,6 +755,15 @@ run_lua_examples() {
     "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
   if [ "$wrong_token_status" != "401" ]; then
     printf '%s\n' "Packed auth wrong email token returned unexpected status: $wrong_token_status" >&2
+    return 1
+  fi
+  missing_totp_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-user%40example.com&password=packed-password&email_transaction_id=$email_transaction_id&email_token=$email_token" \
+    "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
+  if [ "$missing_totp_status" != "401" ]; then
+    printf '%s\n' "Packed auth missing TOTP returned unexpected status: $missing_totp_status" >&2
     return 1
   fi
   wrong_totp_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
