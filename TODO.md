@@ -197,6 +197,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add C proxy, low-speed, and streaming-response helpers where the current curl configuration callback is not enough.
 - [x] Add C retry helpers where the current curl configuration callback is not enough.
 - [x] Add a C libcurl SMTP helper for native email-token auth delivery with deterministic mock-SMTP unit coverage.
+- [x] Add packed webserver smoke coverage for SMTP-delivered email-token login before WebDAV key issuance.
 - [ ] Provide Lua Vectis helpers for JSON API requests, downloads, uploads, streaming responses, SFTP upload/download, retries, and structured errors.
 - [x] Expose raw curl option configuration callbacks for complete protocol coverage escape hatches.
 - [x] Support SFTP file retrieval and storage through curl where it is sufficient.

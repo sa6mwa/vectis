@@ -357,8 +357,10 @@ and optional `require_email_token` enforcement on `/webdav-key`: when enabled,
 WebDAV key issuance requires password, any configured TOTP, and a verified
 single-use email token transaction. C-owned SMTP delivery is available through
 the route config's `email_smtp` settings; Lua only passes configuration into the
-native route registration and does not own auth or delivery semantics. Full
-packed SMTP e2e coverage remains a scenario item.
+native route registration and does not own auth or delivery semantics. The
+packed service smoke now exercises SMTP delivery through a local mock SMTP
+harness and reads the delivered token from a mock mailbox before issuing a
+WebDAV app key.
 
 ## Configuration Model
 
@@ -432,6 +434,12 @@ Email-token e2e coverage:
 - continue login with token within the default 300-second TTL,
 - prove expired, replayed, and wrong tokens fail,
 - prove an allowlist blocks delivery to unauthorized recipients.
+
+Current coverage: the packed webserver smoke covers mock SMTP startup,
+configured delivery, mailbox capture, continued login, wrong token rejection,
+replay rejection, and WebDAV use of the issued key. Expiry and recipient
+allowlist behavior are covered by native auth unit tests; broader packed auth
+matrix coverage remains future hardening work.
 
 ## Implementation Slices
 

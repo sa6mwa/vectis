@@ -6,6 +6,18 @@ if(VECTIS_BUILD_FUZZERS)
   add_subdirectory(fuzz)
 endif()
 
+add_executable(vectis_pack_smtp_harness
+  helpers/vectis_pack_smtp_harness.c)
+target_link_libraries(vectis_pack_smtp_harness PRIVATE Threads::Threads)
+set_target_properties(vectis_pack_smtp_harness PROPERTIES
+  C_STANDARD 90
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF
+)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(vectis_pack_smtp_harness PRIVATE -UNDEBUG)
+endif()
+
 if(TARGET vectis_bin)
   add_test(NAME vectis_cli_version COMMAND vectis_bin --version)
   set_tests_properties(vectis_cli_version PROPERTIES
@@ -43,6 +55,7 @@ if(TARGET vectis_bin)
   add_test(NAME vectis_lua_pack
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DVECTIS_PACK_SMTP_HARNESS=$<TARGET_FILE:vectis_pack_smtp_harness>"
                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
                    -P "${CMAKE_SOURCE_DIR}/tests/lua/pack.cmake")
   set_tests_properties(vectis_lua_pack PROPERTIES
