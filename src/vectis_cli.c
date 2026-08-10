@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 #include <vectis/auth.h>
@@ -38,6 +39,7 @@
 #define VECTIS_PACK_MAGIC_SIZE 11u
 #define VECTIS_LUA_CURL_RESPONSE_BODY_LIMIT (8u * 1024u * 1024u)
 #define VECTIS_LUA_CURL_RESPONSE_HEADER_LIMIT (64u * 1024u)
+#define VECTIS_PACK_MAX_DIR_STACK 1024u
 #define VECTIS_LUA_SERVER "vectis.server"
 
 typedef struct vectis_lua_runtime_context {
@@ -154,7 +156,18 @@ typedef struct vectis_pack_asset_manifest {
 typedef struct vectis_pack_asset_manifest_state {
   vectis_pack_asset_list *assets;
   const vectis_pack_content_type_map *content_types;
+  int follow_symlinks;
 } vectis_pack_asset_manifest_state;
+
+typedef struct vectis_pack_dir_visit {
+  dev_t dev;
+  ino_t ino;
+} vectis_pack_dir_visit;
+
+typedef struct vectis_pack_dir_stack {
+  vectis_pack_dir_visit items[VECTIS_PACK_MAX_DIR_STACK];
+  size_t count;
+} vectis_pack_dir_stack;
 
 static const lonejson_field vectis_pack_content_type_map_doc_item_fields[] = {
     LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_pack_content_type_map_doc_item,
@@ -332,7 +345,8 @@ static void vectis_cli_usage(FILE *stream) {
         "       vectis -a|--action pack --script script.lua --output output "
         "[--lockd-bundle bundle.pem] [--asset source=/path] "
         "[--asset-dir /mount:dir] [--asset-manifest assets.json] "
-        "[--content-type-map types.json] [--extract-mode mode]\n"
+        "[--content-type-map types.json] [--extract-mode mode] "
+        "[--follow-symlinks]\n"
         "       vectis -a|--action credentials [--store credentials.json] "
         "(--init | --issue --subject user [--purpose name] "
         "[--basic] [--bearer] | --verify authorization | "
@@ -769,14 +783,78 @@ static void vectis_pack_asset_list_cleanup(vectis_pack_asset_list *list) {
   memset(list, 0, sizeof(*list));
 }
 
+static int vectis_pack_stat_source(const char *source_path, int follow_symlinks,
+                                   struct stat *out) {
+  struct stat link_st;
+
+  if (source_path == NULL || out == NULL) {
+    return -1;
+  }
+  if (lstat(source_path, &link_st) != 0) {
+    fprintf(stderr, "vectis: failed to stat embedded asset: %s\n", source_path);
+    return -1;
+  }
+  if (S_ISLNK(link_st.st_mode)) {
+    if (!follow_symlinks) {
+      fprintf(stderr,
+              "vectis: embedded asset symlink requires --follow-symlinks: %s\n",
+              source_path);
+      return -1;
+    }
+    if (stat(source_path, out) != 0) {
+      fprintf(stderr, "vectis: failed to follow embedded asset symlink: %s\n",
+              source_path);
+      return -1;
+    }
+    return 0;
+  }
+  *out = link_st;
+  return 0;
+}
+
+static int vectis_pack_dir_stack_push(vectis_pack_dir_stack *stack,
+                                      const struct stat *st,
+                                      const char *source_path) {
+  size_t i;
+
+  for (i = 0u; i < stack->count; ++i) {
+    if (stack->items[i].dev == st->st_dev &&
+        stack->items[i].ino == st->st_ino) {
+      fprintf(stderr,
+              "vectis: embedded asset symlink cycle detected at directory: "
+              "%s\n",
+              source_path != NULL ? source_path : "(null)");
+      return -1;
+    }
+  }
+  if (stack->count >= VECTIS_PACK_MAX_DIR_STACK) {
+    fprintf(stderr,
+            "vectis: embedded asset directory nesting is too deep at: %s\n",
+            source_path != NULL ? source_path : "(null)");
+    return -1;
+  }
+  stack->items[stack->count].dev = st->st_dev;
+  stack->items[stack->count].ino = st->st_ino;
+  stack->count++;
+  return 0;
+}
+
+static void vectis_pack_dir_stack_pop(vectis_pack_dir_stack *stack) {
+  if (stack != NULL && stack->count > 0u) {
+    stack->count--;
+  }
+}
+
 static int vectis_pack_asset_add(vectis_pack_asset_list *list,
                                  const char *source_path,
                                  const char *logical_path,
                                  const char *content_type_override,
-                                 const vectis_pack_content_type_map *map) {
+                                 const vectis_pack_content_type_map *map,
+                                 int follow_symlinks) {
   vectis_pack_asset *asset;
   unsigned char *data;
   const char *content_type;
+  struct stat st;
   size_t size;
 
   if (!vectis_pack_logical_path_valid(logical_path)) {
@@ -788,6 +866,14 @@ static int vectis_pack_asset_add(vectis_pack_asset_list *list,
       !vectis_pack_content_type_valid(content_type_override)) {
     fprintf(stderr, "vectis: invalid embedded asset content type: %s\n",
             content_type_override);
+    return -1;
+  }
+  if (vectis_pack_stat_source(source_path, follow_symlinks, &st) != 0) {
+    return -1;
+  }
+  if (!S_ISREG(st.st_mode)) {
+    fprintf(stderr, "vectis: unsupported embedded asset type: %s\n",
+            source_path != NULL ? source_path : "(null)");
     return -1;
   }
   if (vectis_read_all(source_path, &data, &size) != 0) {
@@ -915,7 +1001,8 @@ vectis_pack_asset_manifest_item_cb(void *user, void *item,
   state = (vectis_pack_asset_manifest_state *)user;
   asset = (const vectis_pack_asset_manifest_item *)item;
   if (vectis_pack_asset_add(state->assets, asset->source, asset->path,
-                            asset->content_type, state->content_types) != 0) {
+                            asset->content_type, state->content_types,
+                            state->follow_symlinks) != 0) {
     return LONEJSON_STATUS_INVALID_JSON;
   }
   return LONEJSON_STATUS_OK;
@@ -923,7 +1010,7 @@ vectis_pack_asset_manifest_item_cb(void *user, void *item,
 
 static int vectis_pack_read_asset_manifest(
     vectis_pack_asset_list *assets, const char *path,
-    const vectis_pack_content_type_map *content_types) {
+    const vectis_pack_content_type_map *content_types, int follow_symlinks) {
   unsigned char *json;
   size_t json_size;
   lonejson *runtime;
@@ -959,6 +1046,7 @@ static int vectis_pack_read_asset_manifest(
   doc.assets = (lonejson_mapped_array_stream)LONEJSON_MAPPED_ARRAY_STREAM_INIT;
   state.assets = assets;
   state.content_types = content_types;
+  state.follow_symlinks = follow_symlinks;
   handler.item_map = &vectis_pack_asset_manifest_item_map;
   handler.item_dst = &item;
   handler.item = vectis_pack_asset_manifest_item_cb;
@@ -998,7 +1086,9 @@ static int vectis_pack_asset_compare(const void *a, const void *b) {
 static int vectis_pack_collect_dir(vectis_pack_asset_list *list,
                                    const char *source_dir,
                                    const char *logical_root,
-                                   const vectis_pack_content_type_map *map) {
+                                   const vectis_pack_content_type_map *map,
+                                   int follow_symlinks,
+                                   vectis_pack_dir_stack *dir_stack) {
   DIR *dir;
   struct dirent *entry;
   struct stat st;
@@ -1006,10 +1096,22 @@ static int vectis_pack_collect_dir(vectis_pack_asset_list *list,
   char *logical_child;
   int rc;
 
+  if (vectis_pack_stat_source(source_dir, follow_symlinks, &st) != 0) {
+    return -1;
+  }
+  if (!S_ISDIR(st.st_mode)) {
+    fprintf(stderr, "vectis: embedded asset directory is not a directory: %s\n",
+            source_dir != NULL ? source_dir : "(null)");
+    return -1;
+  }
+  if (vectis_pack_dir_stack_push(dir_stack, &st, source_dir) != 0) {
+    return -1;
+  }
   dir = opendir(source_dir);
   if (dir == NULL) {
     fprintf(stderr, "vectis: failed to open embedded asset directory: %s\n",
             source_dir);
+    vectis_pack_dir_stack_pop(dir_stack);
     return -1;
   }
   rc = 0;
@@ -1025,18 +1127,18 @@ static int vectis_pack_collect_dir(vectis_pack_asset_list *list,
       rc = -1;
       break;
     }
-    if (lstat(source_child, &st) != 0) {
-      fprintf(stderr, "vectis: failed to stat embedded asset: %s\n",
-              source_child);
+    if (vectis_pack_stat_source(source_child, follow_symlinks, &st) != 0) {
       free(source_child);
       free(logical_child);
       rc = -1;
       break;
     }
     if (S_ISDIR(st.st_mode)) {
-      rc = vectis_pack_collect_dir(list, source_child, logical_child, map);
+      rc = vectis_pack_collect_dir(list, source_child, logical_child, map,
+                                   follow_symlinks, dir_stack);
     } else if (S_ISREG(st.st_mode)) {
-      rc = vectis_pack_asset_add(list, source_child, logical_child, NULL, map);
+      rc = vectis_pack_asset_add(list, source_child, logical_child, NULL, map,
+                                 follow_symlinks);
     } else {
       fprintf(stderr, "vectis: unsupported embedded asset type: %s\n",
               source_child);
@@ -1051,6 +1153,7 @@ static int vectis_pack_collect_dir(vectis_pack_asset_list *list,
   if (closedir(dir) != 0 && rc == 0) {
     rc = -1;
   }
+  vectis_pack_dir_stack_pop(dir_stack);
   return rc;
 }
 
@@ -2434,17 +2537,21 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   unsigned char footer[VECTIS_PACK_FOOTER_SIZE];
   vectis_pack_asset_list assets;
   vectis_pack_content_type_map content_types;
+  vectis_pack_dir_stack dir_stack;
   vectis_embedded_fs_extract_policy extract_policy;
   char self_path[4096];
   FILE *out;
   int i;
+  int follow_symlinks;
 
   script_path = NULL;
   output_path = NULL;
   bundle_path = NULL;
   extract_mode = NULL;
+  follow_symlinks = 0;
   memset(&assets, 0, sizeof(assets));
   memset(&content_types, 0, sizeof(content_types));
+  memset(&dir_stack, 0, sizeof(dir_stack));
   for (i = index; i < argc; ++i) {
     if (strcmp(argv[i], "--script") == 0 && i + 1 < argc) {
       script_path = argv[++i];
@@ -2467,6 +2574,8 @@ static int vectis_pack_command(int argc, char **argv, int index) {
         vectis_pack_command_cleanup(&assets, &content_types);
         return 1;
       }
+    } else if (strcmp(argv[i], "--follow-symlinks") == 0) {
+      follow_symlinks = 1;
     } else if ((strcmp(argv[i], "--asset") == 0 ||
                 strcmp(argv[i], "--asset-dir") == 0 ||
                 strcmp(argv[i], "--asset-manifest") == 0) &&
@@ -2481,6 +2590,8 @@ static int vectis_pack_command(int argc, char **argv, int index) {
          strcmp(argv[i], "--content-type-map") == 0) &&
         i + 1 < argc) {
       i++;
+    } else if (strcmp(argv[i], "--follow-symlinks") == 0) {
+      continue;
     } else if (strcmp(argv[i], "--asset") == 0 && i + 1 < argc) {
       asset_arg = argv[++i];
       separator = strchr(asset_arg, '=');
@@ -2500,7 +2611,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
       }
       asset_source[separator - asset_arg] = '\0';
       if (vectis_pack_asset_add(&assets, asset_source, asset_logical, NULL,
-                                &content_types) != 0) {
+                                &content_types, follow_symlinks) != 0) {
         free(asset_source);
         free(asset_logical);
         vectis_pack_command_cleanup(&assets, &content_types);
@@ -2527,7 +2638,8 @@ static int vectis_pack_command(int argc, char **argv, int index) {
       }
       asset_logical[separator - asset_arg] = '\0';
       if (vectis_pack_collect_dir(&assets, asset_source, asset_logical,
-                                  &content_types) != 0) {
+                                  &content_types, follow_symlinks,
+                                  &dir_stack) != 0) {
         free(asset_source);
         free(asset_logical);
         vectis_pack_command_cleanup(&assets, &content_types);
@@ -2536,8 +2648,8 @@ static int vectis_pack_command(int argc, char **argv, int index) {
       free(asset_source);
       free(asset_logical);
     } else if (strcmp(argv[i], "--asset-manifest") == 0 && i + 1 < argc) {
-      if (vectis_pack_read_asset_manifest(&assets, argv[++i], &content_types) !=
-          0) {
+      if (vectis_pack_read_asset_manifest(&assets, argv[++i], &content_types,
+                                          follow_symlinks) != 0) {
         vectis_pack_command_cleanup(&assets, &content_types);
         return 1;
       }

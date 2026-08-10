@@ -16,10 +16,14 @@ set(consumer_service_output "${WORK_DIR}/vectis-pack-consumer-service")
 set(consumer_service_cache_dir "${WORK_DIR}/consumer-service-cache")
 set(asset_dir "${WORK_DIR}/site")
 set(asset_manifest "${WORK_DIR}/assets.json")
+set(asset_symlink_manifest "${WORK_DIR}/assets-symlink.json")
 set(asset_manifest_template "${WORK_DIR}/login-template.html")
 set(content_type_map "${WORK_DIR}/content-types.json")
 set(asset_script "${WORK_DIR}/vectis-pack-assets.lua")
 set(asset_output "${WORK_DIR}/vectis-pack-assets")
+set(asset_symlink_reject_output "${WORK_DIR}/vectis-pack-assets-symlink-reject")
+set(asset_symlink_asset_reject_output "${WORK_DIR}/vectis-pack-assets-symlink-asset-reject")
+set(asset_symlink_manifest_reject_output "${WORK_DIR}/vectis-pack-assets-symlink-manifest-reject")
 set(asset_corrupt_output "${WORK_DIR}/vectis-pack-assets-corrupt")
 set(asset_duplicate_output "${WORK_DIR}/vectis-pack-assets-duplicate")
 set(asset_invalid_extract_mode_output "${WORK_DIR}/vectis-pack-invalid-extract-mode")
@@ -257,11 +261,35 @@ file(WRITE "${asset_dir}/assets/app.txt" "generic embedded asset\n")
 file(WRITE "${asset_dir}/assets/app.css" "body { color: #123456; }\n")
 file(WRITE "${asset_dir}/assets/app.js" "globalThis.vectisPackAsset = true;\n")
 file(WRITE "${asset_dir}/assets/logo.vxsite" "VX\n")
+execute_process(COMMAND "${CMAKE_COMMAND}" -E create_symlink "app.txt" "${asset_dir}/assets/app-link.txt"
+                RESULT_VARIABLE asset_symlink_result
+                OUTPUT_VARIABLE asset_symlink_stdout
+                ERROR_VARIABLE asset_symlink_stderr)
+if(NOT asset_symlink_result EQUAL 0)
+  message(FATAL_ERROR "failed to create pack asset symlink: ${asset_symlink_stdout}${asset_symlink_stderr}")
+endif()
 file(WRITE "${asset_manifest_template}" "<form method=\"post\"><input name=\"username\"></form>\n")
 file(WRITE "${asset_manifest}" "{\"assets\":[{\"source\":\"${asset_manifest_template}\",\"path\":\"/templates/login.html\",\"content_type\":\"text/html; charset=utf-8\"}]}\n")
+file(WRITE "${asset_symlink_manifest}" "{\"assets\":[{\"source\":\"${asset_dir}/assets/app-link.txt\",\"path\":\"/assets/manifest-link.txt\"}]}\n")
 file(WRITE "${content_type_map}" "{\"types\":[{\"extension\":\"vxsite\",\"content_type\":\"application/x-vectis-site\"}]}\n")
 file(WRITE "${asset_script}" "local vectis = require(\"vectis\")\nlocal curl = require(\"curl\")\nlocal extract_to = [[${asset_extract_dir}]]\nlocal webdav_cache = [[${asset_webdav_cache_dir}]]\nlocal webdav_credentials = [[${asset_webdav_credentials}]]\nlocal function read_file(path)\n  local fp = assert(io.open(path, \"rb\"))\n  local body = fp:read(\"*a\")\n  fp:close()\n  return body\nend\nlocal function write_file(path, body)\n  local fp = assert(io.open(path, \"wb\"))\n  fp:write(body)\n  fp:close()\nend\nlocal b64chars = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\"\nlocal function base64(data)\n  local out = {}\n  for i = 1, #data, 3 do\n    local a = data:byte(i) or 0\n    local b = data:byte(i + 1) or 0\n    local c = data:byte(i + 2) or 0\n    local n = a * 65536 + b * 256 + c\n    local pad = (#data - i == 0) and 2 or ((#data - i == 1) and 1 or 0)\n    out[#out + 1] = b64chars:sub(math.floor(n / 262144) % 64 + 1, math.floor(n / 262144) % 64 + 1)\n    out[#out + 1] = b64chars:sub(math.floor(n / 4096) % 64 + 1, math.floor(n / 4096) % 64 + 1)\n    out[#out + 1] = pad >= 2 and \"=\" or b64chars:sub(math.floor(n / 64) % 64 + 1, math.floor(n / 64) % 64 + 1)\n    out[#out + 1] = pad >= 1 and \"=\" or b64chars:sub(n % 64 + 1, n % 64 + 1)\n  end\n  return table.concat(out)\nend\nassert(vectis.embedded.has_assets() == true)\nassert(vectis.embedded.default_extract_policy() == \"repair\")\nassert(vectis.embedded.stat(\"/index.html\").content_type == \"text/html\")\nassert(vectis.embedded.stat(\"/assets/app.css\").content_type == \"text/css\")\nassert(vectis.embedded.stat(\"/assets/app.js\").content_type == \"application/javascript\")\nassert(vectis.embedded.stat(\"/assets/app.txt\").content_type == \"text/plain\")\nassert(vectis.embedded.stat(\"/assets/logo.vxsite\").content_type == \"application/x-vectis-site\")\nassert(vectis.embedded.stat(\"/templates/login.html\").content_type == \"text/html; charset=utf-8\")\nassert(vectis.embedded.stat(\"/assets/app.txt\").size == 23)\nlocal app_txt_sha = vectis.embedded.stat(\"/assets/app.txt\").sha256\nassert(#app_txt_sha == 64)\nassert(app_txt_sha:match(\"^[0-9a-f]+$\"))\nassert(vectis.embedded.read(\"/index.html\"):match(\"Acme Test\"))\nassert(vectis.embedded.read(\"/assets/app.txt\") == \"generic embedded asset\\n\")\nassert(vectis.embedded.read(\"/assets/logo.vxsite\") == \"VX\\n\")\nassert(vectis.embedded.read(\"/templates/login.html\"):match(\"username\"))\nlocal chunks = {}\nfor chunk in vectis.embedded.chunks(\"/assets/app.txt\", 8) do\n  chunks[#chunks + 1] = chunk\nend\nassert(#chunks == 3)\nassert(table.concat(chunks) == \"generic embedded asset\\n\")\nlocal listed = table.concat(vectis.embedded.list(\"/\"), \"\\n\")\nassert(listed:match(\"/index%.html\"))\nassert(listed:match(\"/assets/app%.txt\"))\nassert(listed:match(\"/assets/app%.css\"))\nassert(listed:match(\"/assets/app%.js\"))\nassert(listed:match(\"/assets/logo%.vxsite\"))\nassert(listed:match(\"/templates/login%.html\"))\nlocal missing, err = vectis.embedded.read(\"/missing.txt\")\nassert(missing == nil)\nassert(err == \"embedded asset not found\")\nlocal missing_stat, missing_stat_err = vectis.embedded.stat(\"/missing.txt\")\nassert(missing_stat == nil)\nassert(missing_stat_err == \"embedded asset not found\")\nlocal missing_chunks, missing_chunks_err = vectis.embedded.chunks(\"/missing.txt\", 4)\nassert(missing_chunks == nil)\nassert(missing_chunks_err == \"embedded asset not found\")\nassert(vectis.auth.store_init({credentials_path = webdav_credentials}) == true)\nassert(vectis.auth.user_add({credentials_path = webdav_credentials, username = \"pack-user\", password = \"pack-password\"}).username == \"pack-user\")\nlocal webdav_key = assert(vectis.auth.webdav_key({credentials_path = webdav_credentials, username = \"pack-user\", password = \"pack-password\"}))\nassert(type(webdav_key.client_id) == \"string\")\nassert(type(webdav_key.client_secret) == \"string\")\nlocal basic_auth = \"Basic \" .. base64(webdav_key.client_id .. \":\" .. webdav_key.client_secret)\nlocal server = assert(vectis.server.new({bind = \"127.0.0.1\", port = 28181}))\nassert(server:webdav_embedded_site({path_prefix = \"/dav\", cache_dir = webdav_cache, site_id = \"pack\", extract_policy = \"repair\", auth = {kind = \"native\", credentials_path = webdav_credentials, realm = \"pack\", purpose = \"webdav\"}}) == true)\nassert(server:static_embedded({path_prefix = \"/\", cache_control = \"max-age=60\"}) == true)\nassert(server:start() == true)\nlocal function fetch_http(path)\n  local response\n  for _ = 1, 20 do\n    response = curl.perform({url = \"http://127.0.0.1:28181\" .. path, protocols = \"http\", timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true})\n    if response.ok then return response end\n    os.execute(\"sleep 0.1\")\n  end\n  return response\nend\nlocal function request_http(method, path, body, authorization)\n  return curl.perform({url = \"http://127.0.0.1:28181\" .. path, method = method, body = body, headers = authorization and {Authorization = authorization} or nil, protocols = \"http\", timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true})\nend\nlocal served_root = fetch_http(\"/\")\nassert(served_root.ok == true, served_root.error)\nassert(served_root.status == 200)\nassert(served_root.body:match(\"Acme Test\"))\nlocal served_asset = fetch_http(\"/assets/app.txt\")\nassert(served_asset.ok == true, served_asset.error)\nassert(served_asset.status == 200)\nassert(served_asset.body == \"generic embedded asset\\n\")\nassert(served_asset.headers:lower():find(\"etag:\", 1, true))\nassert(served_asset.headers:lower():find(\"cache-control: max-age=60\", 1, true))\nlocal anonymous_put = request_http(\"PUT\", \"/dav/assets/app.txt\", \"blocked\\n\")\nassert(anonymous_put.status == 401)\nlocal webdav_read = request_http(\"GET\", \"/dav/assets/app.txt\", nil, basic_auth)\nassert(webdav_read.ok == true, webdav_read.error)\nassert(webdav_read.status == 200)\nassert(webdav_read.body == \"generic embedded asset\\n\")\nlocal webdav_put = request_http(\"PUT\", \"/dav/assets/app.txt\", \"webdav mutated\\n\", basic_auth)\nassert(webdav_put.ok == true, webdav_put.error)\nassert(webdav_put.status == 201 or webdav_put.status == 204)\nlocal webdav_mutated = request_http(\"GET\", \"/dav/assets/app.txt\", nil, basic_auth)\nassert(webdav_mutated.ok == true, webdav_mutated.error)\nassert(webdav_mutated.status == 200)\nassert(webdav_mutated.body == \"webdav mutated\\n\")\nlocal embedded_after_webdav = fetch_http(\"/assets/app.txt\")\nassert(embedded_after_webdav.body == \"generic embedded asset\\n\")\nassert(server:stop() == true)\nserver:close()\nassert(vectis.embedded.extract({to = extract_to}) == true)\nassert(read_file(extract_to .. \"/index.html\"):match(\"Acme Test\"))\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\nassert(read_file(extract_to .. \"/assets/app.css\"):match(\"#123456\"))\nassert(read_file(extract_to .. \"/assets/app.js\"):match(\"vectisPackAsset\"))\nassert(read_file(extract_to .. \"/assets/logo.vxsite\") == \"VX\\n\")\nassert(read_file(extract_to .. \"/templates/login.html\"):match(\"username\"))\nassert(vectis.embedded.extract({to = extract_to, policy = \"verify\"}) == true)\nlocal extracted, extract_err = vectis.embedded.extract({to = extract_to, policy = \"fail_exists\"})\nassert(extracted == nil)\nassert(extract_err:match(\"embedded asset already exists\"))\nwrite_file(extract_to .. \"/assets/app.txt\", \"mutated\\n\")\nassert(vectis.embedded.extract({to = extract_to}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\nwrite_file(extract_to .. \"/assets/app.txt\", \"mutated\\n\")\nlocal verified, verify_err = vectis.embedded.extract({to = extract_to, policy = \"verify\"})\nassert(verified == nil)\nassert(verify_err:match(\"embedded asset verification failed\"))\nassert(vectis.embedded.extract({to = extract_to, policy = \"skip-existing\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"mutated\\n\")\nassert(vectis.embedded.extract({to = extract_to, policy = \"repair\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\nwrite_file(extract_to .. \"/user-created.txt\", \"user\\n\")\nos.remove(extract_to .. \"/assets/app.txt\")\nlocal missing_verify, missing_verify_err = vectis.embedded.extract({to = extract_to, policy = \"verify\"})\nassert(missing_verify == nil)\nassert(missing_verify_err:match(\"embedded asset is missing\"))\nassert(vectis.embedded.extract({to = extract_to, policy = \"repair\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\nassert(read_file(extract_to .. \"/user-created.txt\") == \"user\\n\")\nassert(vectis.embedded.extract({to = extract_to, policy = \"overwrite\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\n")
 file(READ "${asset_script}" asset_script_body)
+string(REPLACE
+       "assert(vectis.embedded.stat(\"/assets/app.txt\").content_type == \"text/plain\")"
+       "assert(vectis.embedded.stat(\"/assets/app.txt\").content_type == \"text/plain\")\nassert(vectis.embedded.stat(\"/assets/app-link.txt\").content_type == \"text/plain\")\nassert(vectis.embedded.stat(\"/assets/manifest-link.txt\").content_type == \"text/plain\")"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "assert(vectis.embedded.read(\"/assets/app.txt\") == \"generic embedded asset\\n\")"
+       "assert(vectis.embedded.read(\"/assets/app.txt\") == \"generic embedded asset\\n\")\nassert(vectis.embedded.read(\"/assets/app-link.txt\") == \"generic embedded asset\\n\")\nassert(vectis.embedded.read(\"/assets/manifest-link.txt\") == \"generic embedded asset\\n\")"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "assert(listed:match(\"/assets/app%.txt\"))"
+       "assert(listed:match(\"/assets/app%.txt\"))\nassert(listed:match(\"/assets/app%-link%.txt\"))\nassert(listed:match(\"/assets/manifest%-link%.txt\"))"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "assert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")"
+       "assert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\nassert(read_file(extract_to .. \"/assets/app-link.txt\") == \"generic embedded asset\\n\")\nassert(read_file(extract_to .. \"/assets/manifest-link.txt\") == \"generic embedded asset\\n\")"
+       asset_script_body "${asset_script_body}")
 string(REPLACE
        "local webdav_credentials = [[${asset_webdav_credentials}]]"
        "local webdav_credentials = [[${asset_webdav_credentials}]]\nlocal https_cert_bundle = [[${asset_https_cert_bundle}]]\nlocal smtp_url = assert(os.getenv(\"VECTIS_PACK_SMTP_URL\"))\nlocal smtp_mailbox = assert(os.getenv(\"VECTIS_PACK_SMTP_MAILBOX\"))"
@@ -324,7 +352,40 @@ string(REPLACE
        asset_script_body "${asset_script_body}")
 file(WRITE "${asset_script}" "${asset_script_body}")
 
-execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${asset_script}" --output "${asset_output}" --asset-dir "/:${asset_dir}" --content-type-map "${content_type_map}" --asset-manifest "${asset_manifest}" --extract-mode repair
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${asset_script}" --output "${asset_symlink_reject_output}" --asset-dir "/:${asset_dir}" --content-type-map "${content_type_map}" --asset-manifest "${asset_manifest}" --extract-mode repair
+                RESULT_VARIABLE asset_symlink_reject_result
+                OUTPUT_VARIABLE asset_symlink_reject_stdout
+                ERROR_VARIABLE asset_symlink_reject_stderr)
+if(asset_symlink_reject_result EQUAL 0)
+  message(FATAL_ERROR "pack asset directory symlink unexpectedly succeeded without --follow-symlinks")
+endif()
+if(NOT asset_symlink_reject_stderr MATCHES "requires --follow-symlinks")
+  message(FATAL_ERROR "pack asset directory symlink failed with unexpected error: ${asset_symlink_reject_stdout}${asset_symlink_reject_stderr}")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${asset_script}" --output "${asset_symlink_asset_reject_output}" --asset "${asset_dir}/assets/app-link.txt=/assets/app-link.txt"
+                RESULT_VARIABLE asset_symlink_asset_reject_result
+                OUTPUT_VARIABLE asset_symlink_asset_reject_stdout
+                ERROR_VARIABLE asset_symlink_asset_reject_stderr)
+if(asset_symlink_asset_reject_result EQUAL 0)
+  message(FATAL_ERROR "pack --asset symlink unexpectedly succeeded without --follow-symlinks")
+endif()
+if(NOT asset_symlink_asset_reject_stderr MATCHES "requires --follow-symlinks")
+  message(FATAL_ERROR "pack --asset symlink failed with unexpected error: ${asset_symlink_asset_reject_stdout}${asset_symlink_asset_reject_stderr}")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${asset_script}" --output "${asset_symlink_manifest_reject_output}" --asset-manifest "${asset_symlink_manifest}"
+                RESULT_VARIABLE asset_symlink_manifest_reject_result
+                OUTPUT_VARIABLE asset_symlink_manifest_reject_stdout
+                ERROR_VARIABLE asset_symlink_manifest_reject_stderr)
+if(asset_symlink_manifest_reject_result EQUAL 0)
+  message(FATAL_ERROR "pack asset manifest symlink unexpectedly succeeded without --follow-symlinks")
+endif()
+if(NOT asset_symlink_manifest_reject_stderr MATCHES "requires --follow-symlinks")
+  message(FATAL_ERROR "pack asset manifest symlink failed with unexpected error: ${asset_symlink_manifest_reject_stdout}${asset_symlink_manifest_reject_stderr}")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${asset_script}" --output "${asset_output}" --asset-dir "/:${asset_dir}" --content-type-map "${content_type_map}" --asset-manifest "${asset_manifest}" --asset-manifest "${asset_symlink_manifest}" --extract-mode repair --follow-symlinks
                 RESULT_VARIABLE asset_pack_result
                 OUTPUT_VARIABLE asset_pack_stdout
                 ERROR_VARIABLE asset_pack_stderr)

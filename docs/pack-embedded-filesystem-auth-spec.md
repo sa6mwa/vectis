@@ -477,9 +477,12 @@ embedded client bundle, proves the raw statically registered `lockdc` Lua
 module can open a client from the packed in-memory lockd bundle source without
 writing a runtime PEM file, generates a private self-signed certificate bundle,
 starts an HTTPS packed asset server with `tls.mode = "manual"`, and fetches the
-embedded site over HTTPS. Lua smoke coverage validates ACME-mode server config
-parsing and native startup diagnostics for missing domain or email without
-contacting a live ACME provider.
+embedded site over HTTPS. Pack smoke coverage also proves symlink asset sources
+are rejected by default for directory, single-file, and manifest inputs, then
+opt-in `--follow-symlinks` packages followed file content as ordinary embedded
+read-only assets. Lua smoke coverage validates ACME-mode server config parsing
+and native startup diagnostics for missing domain or email without contacting a
+live ACME provider.
 
 Email-token e2e coverage:
 
