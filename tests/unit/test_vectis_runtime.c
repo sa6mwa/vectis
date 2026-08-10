@@ -569,6 +569,21 @@ runtime_webdav_auth(const vectis_webdav_auth_request *request,
                    "runtime-user");
     return VECTIS_OK;
   }
+  if (token != NULL && strcmp(token, "required") == 0) {
+    static const char body[] = "runtime auth required";
+
+    response->action = VECTIS_WEBDAV_AUTH_REQUIRED;
+    response->status_code = 401;
+    response->www_authenticate = "Basic realm=\"runtime\"";
+    response->content_type = "text/plain";
+    response->body = body;
+    response->body_size = sizeof(body) - 1u;
+    return VECTIS_OK;
+  }
+  if (token != NULL && strcmp(token, "deny") == 0) {
+    response->action = VECTIS_WEBDAV_AUTH_DENY;
+    return VECTIS_OK;
+  }
   response->action = VECTIS_WEBDAV_AUTH_REDIRECT;
   response->status_code = 302;
   response->location = "/auth/webdav";
@@ -1073,6 +1088,8 @@ static void assert_kore_smoke(void) {
   const char response_file_body[] = "file-response";
   char webdav_cache_dir[] = "/tmp/vectis-runtime-webdav.XXXXXX";
   const char *webdav_headers[] = {"x-vectis-webdav-auth: ok"};
+  const char *webdav_required_headers[] = {"x-vectis-webdav-auth: required"};
+  const char *webdav_deny_headers[] = {"x-vectis-webdav-auth: deny"};
   vectis_error error;
   vectis_error second_error;
   vectis_status status;
@@ -1313,6 +1330,31 @@ static void assert_kore_smoke(void) {
                            &webdav_get_response, &error);
   assert(status == VECTIS_OK);
   assert(webdav_get_response.status_code == 302L);
+  vectis_http_response_cleanup(&webdav_get_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = "http://127.0.0.1:28080/dav/runtime.txt";
+  request.headers = webdav_required_headers;
+  request.header_count = 1u;
+  status = vectis_http_execute(&http, &request, &webdav_get_response, &error);
+  assert(status == VECTIS_OK);
+  assert(webdav_get_response.status_code == 401L);
+  assert(webdav_get_response.content_type != NULL);
+  assert(strcmp(webdav_get_response.content_type, "text/plain") == 0);
+  assert(webdav_get_response.body_size == strlen("runtime auth required"));
+  assert(memcmp(webdav_get_response.body, "runtime auth required",
+                strlen("runtime auth required")) == 0);
+  vectis_http_response_cleanup(&webdav_get_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = "http://127.0.0.1:28080/dav/runtime.txt";
+  request.headers = webdav_deny_headers;
+  request.header_count = 1u;
+  status = vectis_http_execute(&http, &request, &webdav_get_response, &error);
+  assert(status == VECTIS_OK);
+  assert(webdav_get_response.status_code == 404L);
   vectis_http_response_cleanup(&webdav_get_response);
 
   vectis_http_request_init(&request);
