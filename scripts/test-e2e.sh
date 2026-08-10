@@ -342,6 +342,8 @@ run_lua_examples() {
   email_only_token_response=
   email_only_transaction_id=
   email_only_token=
+  email_only_missing_user_body=
+  email_only_missing_user_status=
   email_only_unknown_body=
   email_only_unknown_status=
   password_email_key_response=
@@ -869,6 +871,22 @@ run_lua_examples() {
   if [ -z "$email_only_transaction_id" ] || [ -z "$email_only_token" ]; then
     printf '%s\n' "Packed email-only auth did not expose an email token" >&2
     printf '%s\n' "$email_only_token_response" >&2
+    return 1
+  fi
+  email_only_missing_user_status=$(curl --max-time 3 -sS \
+    -o "$work_dir/packed-email-only-missing-user.txt" -w '%{http_code}' \
+    -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "email_transaction_id=$email_only_transaction_id&email_token=$email_only_token" \
+    "http://127.0.0.1:$kore_packed_port/auth-email-only/webdav-key")
+  email_only_missing_user_body=$(cat "$work_dir/packed-email-only-missing-user.txt")
+  if [ "$email_only_missing_user_status" != "400" ]; then
+    printf '%s\n' "Packed email-only auth returned unexpected missing-user status: $email_only_missing_user_status" >&2
+    printf '%s\n' "$email_only_missing_user_body" >&2
+    return 1
+  fi
+  if [ "$email_only_missing_user_body" != "username is required" ]; then
+    printf '%s\n' "Packed email-only auth returned unexpected missing-user body: $email_only_missing_user_body" >&2
     return 1
   fi
   email_only_key_response=$(curl_or_log "$packed_service_log" \
