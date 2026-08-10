@@ -50,6 +50,13 @@ typedef struct vectis_lua_runtime_context {
   vectis_embedded_fs *embedded_fs;
 } vectis_lua_runtime_context;
 
+typedef struct vectis_lua_memory_source {
+  const unsigned char *data;
+  size_t size;
+  size_t offset;
+  int closed;
+} vectis_lua_memory_source;
+
 typedef struct vectis_lua_server_native_auth {
   char *credentials_path;
   char *purpose;
@@ -2734,6 +2741,95 @@ static int vectis_lua_embedded_lockd_bundle_size(lua_State *lua) {
   lua_pushinteger(lua, context != NULL
                            ? (lua_Integer)context->embedded_lockd_bundle_size
                            : (lua_Integer)0);
+  return 1;
+}
+
+static vectis_lua_memory_source *vectis_lua_check_memory_source(lua_State *lua,
+                                                                int index) {
+  vectis_lua_memory_source *source;
+
+  source = (vectis_lua_memory_source *)lua_touserdata(lua, index);
+  if (source == NULL) {
+    (void)luaL_error(lua, "embedded memory source state is required");
+  }
+  return source;
+}
+
+static int vectis_lua_memory_source_read(lua_State *lua) {
+  vectis_lua_memory_source *source;
+  lua_Integer requested;
+  size_t count;
+  size_t remaining;
+  size_t chunk;
+
+  source = vectis_lua_check_memory_source(lua, lua_upvalueindex(1));
+  requested = luaL_checkinteger(lua, 1);
+  if (requested < 0) {
+    return luaL_error(lua, "source read size must not be negative");
+  }
+  if (source->closed || source->offset >= source->size) {
+    lua_pushnil(lua);
+    lua_pushnil(lua);
+    return 2;
+  }
+  count = (size_t)requested;
+  remaining = source->size - source->offset;
+  chunk = remaining < count ? remaining : count;
+  lua_pushlstring(lua, (const char *)source->data + source->offset, chunk);
+  source->offset += chunk;
+  lua_pushnil(lua);
+  return 2;
+}
+
+static int vectis_lua_memory_source_reset(lua_State *lua) {
+  vectis_lua_memory_source *source;
+
+  source = vectis_lua_check_memory_source(lua, lua_upvalueindex(1));
+  source->offset = 0u;
+  source->closed = 0;
+  lua_pushboolean(lua, 1);
+  lua_pushnil(lua);
+  return 2;
+}
+
+static int vectis_lua_memory_source_close(lua_State *lua) {
+  vectis_lua_memory_source *source;
+
+  source = vectis_lua_check_memory_source(lua, lua_upvalueindex(1));
+  source->closed = 1;
+  source->offset = source->size;
+  return 0;
+}
+
+static int vectis_lua_embedded_lockd_bundle_source(lua_State *lua) {
+  vectis_lua_runtime_context *context;
+  vectis_lua_memory_source *source;
+  int table_index;
+
+  context = (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(
+      (void *)lua);
+  if (context == NULL || context->embedded_lockd_bundle == NULL ||
+      context->embedded_lockd_bundle_size == 0u) {
+    lua_pushnil(lua);
+    lua_pushliteral(lua, "no embedded lockd bundle");
+    return 2;
+  }
+
+  lua_newtable(lua);
+  table_index = lua_gettop(lua);
+  source = (vectis_lua_memory_source *)lua_newuserdata(lua, sizeof(*source));
+  source->data = context->embedded_lockd_bundle;
+  source->size = context->embedded_lockd_bundle_size;
+  source->offset = 0u;
+  source->closed = 0;
+  lua_pushvalue(lua, -1);
+  lua_pushcclosure(lua, vectis_lua_memory_source_read, 1);
+  lua_setfield(lua, table_index, "read");
+  lua_pushvalue(lua, -1);
+  lua_pushcclosure(lua, vectis_lua_memory_source_reset, 1);
+  lua_setfield(lua, table_index, "reset");
+  lua_pushcclosure(lua, vectis_lua_memory_source_close, 1);
+  lua_setfield(lua, table_index, "close");
   return 1;
 }
 
@@ -6699,6 +6795,8 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "has_embedded_lockd_bundle");
   lua_pushcfunction(lua, vectis_lua_embedded_lockd_bundle_size);
   lua_setfield(lua, -2, "embedded_lockd_bundle_size");
+  lua_pushcfunction(lua, vectis_lua_embedded_lockd_bundle_source);
+  lua_setfield(lua, -2, "embedded_lockd_bundle_source");
   lua_newtable(lua);
   lua_pushcfunction(lua, vectis_lua_embedded_has_assets);
   lua_setfield(lua, -2, "has_assets");

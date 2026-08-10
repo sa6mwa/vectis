@@ -460,7 +460,9 @@ WebDAV-visible markers, and proves WebDAV remains responsive while the packed
 consumer service is processing. Focused packed Lua smoke coverage in
 `vectis_lua_pack` also packages and executes a native-auth API service artifact,
 packages and executes a lockd consumer-service registration artifact with an
-embedded client bundle, generates a private self-signed certificate bundle,
+embedded client bundle, proves the raw statically registered `lockdc` Lua
+module can open a client from the packed in-memory lockd bundle source without
+writing a runtime PEM file, generates a private self-signed certificate bundle,
 starts an HTTPS packed asset server with `tls.mode = "manual"`, and fetches the
 embedded site over HTTPS. Lua smoke coverage validates ACME-mode server config
 parsing and native startup diagnostics for missing domain or email without

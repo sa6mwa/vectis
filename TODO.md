@@ -125,7 +125,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add Vectis-owned OpenSSL-backed helpers for generating self-signed certificates, CA material, and CA-signed client/server PEM bundles.
 - [x] Add Vectis-owned OpenSSL-backed helpers for generating standalone private keys and CSRs.
 - [ ] Expose lower-level OpenSSL access for advanced users while keeping certificate workflows as the primary C and Lua DX.
-- [ ] Support embedding a lockd client certificate bundle into a packaged Vectis binary.
+- [x] Support embedding a lockd client certificate bundle into a packaged Vectis binary.
 - [x] Support ACME runtime configuration through Kore for C services.
 - [ ] Add ACME lifecycle examples/tests beyond startup validation, using a controlled ACME test server if practical.
 - [ ] Support reload/update of key material where Kore allows it.
@@ -270,7 +270,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Define one shared payload manifest format across ELF and Mach-O so runtime validation and Lua startup behavior stay platform-independent.
 - [x] Support optional embedding of the liblockdc client certificate bundle payload in the Linux pack format.
 - [x] Validate embedded lockd client bundle hashes before executing a packed Lua script.
-- [ ] Wire embedded lockd client bundles into the statically registered lockdc Lua module through liblockdc 0.9.0 flexible bundle sources (`lc_source` memory/callback sources) without writing private runtime files.
+- [x] Wire embedded lockd client bundles into the statically registered lockdc Lua module through flexible bundle sources (`lc_source` memory/callback sources) without writing private runtime files.
 - [x] Validate payload bounds and hashes before executing embedded Lua.
 - [x] Preserve normal `vectis script.lua` execution when no embedded payload exists.
 - [ ] Add Darwin packing flags for automatic codesigning after the final Mach-O artifact is produced, including `--codesign <identity>`, `--ad-hoc-codesign`, `--hardened-runtime`, `--timestamp`, and `--entitlements <path>`.
