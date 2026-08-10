@@ -545,9 +545,10 @@ configured delivery, mailbox capture, continued login, wrong token rejection,
 expired token rejection and consumption, replay rejection, recipient allowlist
 rejection, password+TOTP+email-token success, email-token-only WebDAV-key
 issuance, password+email-token WebDAV-key issuance for a non-TOTP user, and
-unknown-user and missing-username email-token issuance/finalization rejection
-in the full packed webserver path, and WebDAV use of issued keys. Broader
-packed auth matrix coverage remains future hardening work.
+pending-transaction mismatch rejection, unknown-user and missing-username
+email-token issuance/finalization rejection in the full packed webserver path,
+and WebDAV use of issued keys. Broader packed auth matrix coverage remains
+future hardening work.
 
 ## Implementation Slices
 

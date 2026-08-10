@@ -354,6 +354,10 @@ run_lua_examples() {
   password_email_token_response=
   password_email_transaction_id=
   password_email_token=
+  password_email_wrong_pending_body=
+  password_email_wrong_pending_id=
+  password_email_wrong_pending_response=
+  password_email_wrong_pending_status=
   expired_token_response=
   expired_transaction_id=
   expired_token=
@@ -944,6 +948,41 @@ run_lua_examples() {
     printf '%s\n' "$password_email_token_response" >&2
     return 1
   fi
+  password_email_wrong_pending_response=$(curl_or_log "$packed_service_log" \
+    "packed password-email wrong-pending start" --max-time 3 -fsS -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-email-only%40example.com&password=packed-password' \
+    "http://127.0.0.1:$kore_packed_port/auth-password-email/webdav-key")
+  password_email_wrong_pending_id=$(printf '%s\n' "$password_email_wrong_pending_response" |
+    sed -n 's/^pending_transaction_id=//p')
+  if [ -z "$password_email_wrong_pending_id" ] ||
+      [ "$password_email_wrong_pending_id" = "$password_email_pending_id" ]; then
+    printf '%s\n' "Packed password-email auth did not create a distinct wrong-pending transaction" >&2
+    printf '%s\n' "$password_email_wrong_pending_response" >&2
+    return 1
+  fi
+  password_email_wrong_pending_status=$(curl --max-time 3 -sS \
+    -o "$work_dir/packed-password-email-wrong-pending.txt" -w '%{http_code}' \
+    -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-email-only%40example.com&pending_transaction_id=$password_email_wrong_pending_id&email_transaction_id=$password_email_transaction_id&email_token=$password_email_token" \
+    "http://127.0.0.1:$kore_packed_port/auth-password-email/webdav-key")
+  password_email_wrong_pending_body=$(cat "$work_dir/packed-password-email-wrong-pending.txt")
+  if [ "$password_email_wrong_pending_status" != "401" ]; then
+    printf '%s\n' "Packed password-email auth returned unexpected wrong-pending status: $password_email_wrong_pending_status" >&2
+    printf '%s\n' "$password_email_wrong_pending_body" >&2
+    return 1
+  fi
+  if [ "$password_email_wrong_pending_body" != "login failed" ]; then
+    printf '%s\n' "Packed password-email auth returned unexpected wrong-pending body: $password_email_wrong_pending_body" >&2
+    return 1
+  fi
+  case "$password_email_wrong_pending_body" in
+    *client_id=*|*client_secret=*)
+      printf '%s\n' "Packed password-email auth exposed credentials for wrong-pending token" >&2
+      return 1
+      ;;
+  esac
   password_email_key_response=$(curl_or_log "$packed_service_log" \
     "packed password-email webdav key" --max-time 3 -fsS -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
