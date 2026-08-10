@@ -204,6 +204,8 @@ Required Lua concepts:
 - `vectis.embedded.extract({to=..., policy=...})`
 - `vectis.server.new({bind=..., port=...})`
 - `server:static_embedded({path_prefix=..., cache_control=...})`
+- `server:webdav_embedded_site({path_prefix=..., cache_dir=..., site_id=...,
+  extract_policy=..., auth={kind="native", credentials_path=...}})`
 - `server:start()`, `server:stop()`, and `server:close()`
 
 Streaming semantics:
