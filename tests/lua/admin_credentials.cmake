@@ -1,3 +1,13 @@
+if(NOT DEFINED VECTIS_BIN)
+  message(FATAL_ERROR "VECTIS_BIN is required")
+endif()
+if(NOT DEFINED WORK_DIR)
+  message(FATAL_ERROR "WORK_DIR is required")
+endif()
+if(NOT DEFINED VECTIS_SOURCE_DIR)
+  message(FATAL_ERROR "VECTIS_SOURCE_DIR is required")
+endif()
+
 file(MAKE_DIRECTORY "${WORK_DIR}/admin")
 set(store "${WORK_DIR}/admin/credentials.json")
 file(REMOVE "${store}" "${store}.lock")
@@ -233,13 +243,14 @@ if(NOT webdav_key_output MATCHES "\"purpose\":\"webdav\"")
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -x "${CMAKE_SOURCE_DIR}/tests/lua/smoke.lua"
+  COMMAND "${VECTIS_BIN}" -x "${VECTIS_SOURCE_DIR}/tests/lua/smoke.lua" first
+          second
   RESULT_VARIABLE trace_result
   OUTPUT_VARIABLE trace_output
   ERROR_VARIABLE trace_error)
-if(trace_result EQUAL 0)
-  message(FATAL_ERROR "-x unexpectedly executed Lua tracing successfully")
+if(NOT trace_result EQUAL 0)
+  message(FATAL_ERROR "-x Lua tracing failed (${trace_result}): ${trace_error}")
 endif()
-if(NOT trace_error MATCHES "Lua execution tracing")
-  message(FATAL_ERROR "-x did not report reserved Lua tracing semantics")
+if(NOT trace_error MATCHES "\\+ .*smoke\\.lua:[0-9]+")
+  message(FATAL_ERROR "-x did not emit Lua line trace output: ${trace_error}")
 endif()

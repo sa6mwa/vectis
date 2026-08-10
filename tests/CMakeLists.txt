@@ -37,7 +37,7 @@ if(TARGET vectis_bin)
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
-                   "-DCMAKE_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
                    -P "${CMAKE_SOURCE_DIR}/tests/lua/admin_credentials.cmake")
   set_tests_properties(vectis_cli_admin_credentials PROPERTIES
     LABELS "cli;local"

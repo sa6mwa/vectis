@@ -139,6 +139,7 @@ static const char vectis_lonejson_lua_init[] =
 
 static void vectis_cli_usage(FILE *stream) {
   fputs("usage: vectis [--version] [--help] [-x] script.lua [args...]\n"
+        "       -x traces Lua line execution to stderr\n"
         "       vectis pack --script script.lua --output output "
         "[--lockd-bundle bundle.pem]\n"
         "       vectis -a credentials [--store credentials.json] "
@@ -2822,6 +2823,31 @@ static int vectis_luaopen_softline(void *lua_state) {
   return luaopen_softline((lua_State *)lua_state);
 }
 
+static void vectis_lua_trace_hook(lua_State *lua, lua_Debug *debug) {
+  const char *source;
+
+  if (lua == NULL || debug == NULL) {
+    return;
+  }
+  if (lua_getinfo(lua, "Sl", debug) == 0 || debug->currentline <= 0) {
+    return;
+  }
+  source = debug->short_src[0] != '\0' ? debug->short_src : "?";
+  fprintf(stderr, "+ %s:%d\n", source, debug->currentline);
+}
+
+static int vectis_luaopen_trace(void *lua_state) {
+  lua_State *lua;
+
+  lua = (lua_State *)lua_state;
+  if (lua == NULL) {
+    return 0;
+  }
+  lua_sethook(lua, vectis_lua_trace_hook, LUA_MASKLINE, 0);
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
 static int vectis_lua_report_status(cpkt_lua_runtime *runtime,
                                     cpkt_lua_runtime_status status) {
   const char *message;
@@ -2903,7 +2929,8 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
 }
 
 static int vectis_lua_prepare_runtime(cpkt_lua_runtime **out,
-                                      vectis_lua_runtime_context *context) {
+                                      vectis_lua_runtime_context *context,
+                                      int trace_enabled) {
   cpkt_lua_runtime *runtime;
   cpkt_lua_runtime_status status;
   int rc;
@@ -2917,6 +2944,13 @@ static int vectis_lua_prepare_runtime(cpkt_lua_runtime **out,
   if (status == CPKT_LUA_RUNTIME_OK) {
     status = vectis_lua_register_modules(runtime);
   }
+  if (status == CPKT_LUA_RUNTIME_OK && trace_enabled) {
+    status = cpkt_lua_runtime_register_c_module(runtime, "__vectis_trace",
+                                                vectis_luaopen_trace);
+  }
+  if (status == CPKT_LUA_RUNTIME_OK && trace_enabled) {
+    status = cpkt_lua_runtime_require(runtime, "__vectis_trace");
+  }
   if (status != CPKT_LUA_RUNTIME_OK) {
     rc = vectis_lua_report_status(runtime, status);
     cpkt_lua_runtime_free(runtime);
@@ -2926,10 +2960,12 @@ static int vectis_lua_prepare_runtime(cpkt_lua_runtime **out,
   return 0;
 }
 
-static int
-vectis_lua_run_buffer(const char *script_name, const unsigned char *script,
-                      size_t script_size, const unsigned char *lockd_bundle,
-                      size_t lockd_bundle_size, int argc, char **argv) {
+static int vectis_lua_run_buffer(const char *script_name,
+                                 const unsigned char *script,
+                                 size_t script_size,
+                                 const unsigned char *lockd_bundle,
+                                 size_t lockd_bundle_size, int argc,
+                                 char **argv, int trace_enabled) {
   cpkt_lua_runtime *runtime;
   vectis_lua_runtime_context context;
   const unsigned char *load_script;
@@ -2939,7 +2975,7 @@ vectis_lua_run_buffer(const char *script_name, const unsigned char *script,
 
   context.embedded_lockd_bundle = lockd_bundle;
   context.embedded_lockd_bundle_size = lockd_bundle_size;
-  rc = vectis_lua_prepare_runtime(&runtime, &context);
+  rc = vectis_lua_prepare_runtime(&runtime, &context, trace_enabled);
   if (rc != 0) {
     return rc;
   }
@@ -2964,14 +3000,15 @@ vectis_lua_run_buffer(const char *script_name, const unsigned char *script,
   return rc;
 }
 
-static int vectis_lua_run_script(int argc, char **argv, int script_index) {
+static int vectis_lua_run_script(int argc, char **argv, int script_index,
+                                 int trace_enabled) {
   cpkt_lua_runtime *runtime;
   vectis_lua_runtime_context context;
   cpkt_lua_runtime_status status;
   int rc;
 
   memset(&context, 0, sizeof(context));
-  rc = vectis_lua_prepare_runtime(&runtime, &context);
+  rc = vectis_lua_prepare_runtime(&runtime, &context, trace_enabled);
   if (rc != 0) {
     return rc;
   }
@@ -3042,7 +3079,7 @@ static int vectis_lua_run_embedded(int argc, char **argv) {
   }
   rc = vectis_lua_run_buffer(argv[0], script, script_size,
                              bundle_size > 0u ? bundle : NULL, bundle_size,
-                             argc, argv);
+                             argc, argv, 0);
   free(self);
   return rc;
 }
@@ -3071,14 +3108,15 @@ int vectis_cli_main(int argc, char **argv) {
     return vectis_admin_command(argc, argv, 2);
   }
   if (argc > 1 && strcmp(argv[1], "-x") == 0) {
-    fputs("vectis: Lua execution tracing (-x) is not supported by the "
-          "current Lua runtime facade\n",
-          stderr);
+    if (argc > 2) {
+      return vectis_lua_run_script(argc, argv, 2, 1);
+    }
+    vectis_cli_usage(stderr);
     return 64;
   }
 
   if (argc > 1) {
-    return vectis_lua_run_script(argc, argv, 1);
+    return vectis_lua_run_script(argc, argv, 1, 0);
   }
   vectis_cli_usage(stderr);
   return 64;
