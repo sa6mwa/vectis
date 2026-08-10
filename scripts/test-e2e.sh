@@ -342,6 +342,8 @@ run_lua_examples() {
   email_only_token_response=
   email_only_transaction_id=
   email_only_token=
+  email_only_unknown_body=
+  email_only_unknown_status=
   expired_token_response=
   expired_transaction_id=
   expired_token=
@@ -816,6 +818,28 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed no-TOTP guarded API response: $body" >&2
     return 1
   fi
+  email_only_unknown_status=$(curl --max-time 3 -sS \
+    -o "$work_dir/packed-email-only-unknown.txt" -w '%{http_code}' \
+    -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-unknown%40example.com&email=packed-unknown%40example.test' \
+    "http://127.0.0.1:$kore_packed_port/auth-email-only/email-token")
+  email_only_unknown_body=$(cat "$work_dir/packed-email-only-unknown.txt")
+  if [ "$email_only_unknown_status" != "401" ]; then
+    printf '%s\n' "Packed email-only auth returned unexpected unknown-user status: $email_only_unknown_status" >&2
+    printf '%s\n' "$email_only_unknown_body" >&2
+    return 1
+  fi
+  if [ "$email_only_unknown_body" != "login failed" ]; then
+    printf '%s\n' "Packed email-only auth returned unexpected unknown-user body: $email_only_unknown_body" >&2
+    return 1
+  fi
+  case "$email_only_unknown_body" in
+    *transaction_id=*)
+      printf '%s\n' "Packed email-only auth exposed transaction id for unknown user" >&2
+      return 1
+      ;;
+  esac
   email_only_token_response=$(curl_or_log "$packed_service_log" \
     "packed email-only token" --max-time 3 -fsS -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \

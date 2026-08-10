@@ -544,9 +544,9 @@ Current coverage: the packed webserver smokes cover mock SMTP startup,
 configured delivery, mailbox capture, continued login, wrong token rejection,
 expired token rejection and consumption, replay rejection, recipient allowlist
 rejection, password+TOTP+email-token success, email-token-only WebDAV-key
-issuance in the full packed webserver path, unknown-user email-token issuance
-rejection, and WebDAV use of issued keys. Broader packed auth matrix coverage
-remains future hardening work.
+issuance and unknown-user email-token issuance rejection in the full packed
+webserver path, and WebDAV use of issued keys. Broader packed auth matrix
+coverage remains future hardening work.
 
 ## Implementation Slices
 
