@@ -1,6 +1,7 @@
 #include "vectis_internal.h"
 
 #include <vectis/auth.h>
+#include <vectis/totp_qr.h>
 #include <vectis/webdav.h>
 
 #include <dirent.h>
@@ -132,11 +133,19 @@ int main(void) {
   char basic_clear[1024];
   char basic_token[1400];
   char basic_header[1500];
+  char login_basic_clear[1024];
+  char login_basic_token[1400];
+  char login_basic_header[1500];
+  char totp_code[VECTIS_TOTP_CODE_LENGTH + 1u];
   int written;
   vectis_auth_store_config store;
+  vectis_auth_user_config user;
+  vectis_auth_user_enrollment enrollment;
+  vectis_auth_login_config login;
   vectis_auth_issue_config issue;
   vectis_auth_issued_credential bearer;
   vectis_auth_issued_credential basic;
+  vectis_auth_issued_credential webdav_key;
   vectis_auth_result result;
   vectis_auth_native_provider_config native_provider_config;
   vectis_auth_provider provider;
@@ -149,9 +158,14 @@ int main(void) {
   vectis_request *webdav_vectis_request;
   vectis_error error;
   vectis_status status;
+  vectis_totp totp;
 
+  vectis_auth_user_config_init(&user);
+  vectis_auth_user_enrollment_init(&enrollment);
+  vectis_auth_login_config_init(&login);
   vectis_auth_issued_credential_init(&bearer);
   vectis_auth_issued_credential_init(&basic);
+  vectis_auth_issued_credential_init(&webdav_key);
   vectis_auth_result_init(&result);
   vectis_auth_provider_init(&provider);
   vectis_auth_provider_init(&custom_provider);
@@ -177,6 +191,32 @@ int main(void) {
   store.credentials_path = credentials_path;
   status = vectis_auth_store_init(&store, &error);
   expect_ok(status, &error, "initializes credentials store");
+
+  vectis_auth_user_config_init(&user);
+  user.username = "dav-user@example.com";
+  user.password = "correct horse battery staple";
+  user.enable_totp = 1;
+  user.totp_secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+  user.totp_label = "Vectis:dav-user@example.com";
+  user.totp_issuer = "Vectis";
+  status = vectis_auth_user_add_or_update(&store, &user, &enrollment, &error);
+  expect_ok(status, &error, "adds TOTP user");
+  expect(enrollment.username != NULL &&
+             strcmp(enrollment.username, "dav-user@example.com") == 0,
+         "user enrollment returns username");
+  expect(enrollment.generated_password == NULL,
+         "user enrollment omits provided password");
+  expect(enrollment.totp_secret != NULL &&
+             strcmp(enrollment.totp_secret,
+                    "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ") == 0,
+         "user enrollment returns normalized TOTP secret");
+  expect(enrollment.totp_uri != NULL &&
+             strstr(enrollment.totp_uri, "otpauth://totp/") != NULL,
+         "user enrollment returns TOTP URI");
+  expect(enrollment.totp_qr_ansi != NULL &&
+             strstr(enrollment.totp_qr_ansi, "\342\226\210") != NULL,
+         "user enrollment returns terminal QR");
+  vectis_auth_user_enrollment_cleanup(&enrollment);
 
   vectis_auth_issue_config_init(&issue);
   issue.subject = "mike@example.com";
@@ -247,6 +287,65 @@ int main(void) {
   expect(result.claim_json != NULL &&
              strstr(result.claim_json, "\"purpose\":\"webdav\"") != NULL,
          "reports WebDAV purpose");
+  vectis_auth_result_cleanup(&result);
+
+  vectis_auth_login_config_init(&login);
+  login.username = "dav-user@example.com";
+  login.password = "correct horse battery staple";
+  status = vectis_auth_user_login(&store, &login, &result, &error);
+  expect_ok(status, &error, "checks TOTP user login without TOTP code");
+  expect(!result.authenticated, "rejects TOTP user without TOTP code");
+  vectis_auth_result_cleanup(&result);
+
+  expect(vectis_totp_init(&totp, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ") ==
+             VECTIS_TOTP_QR_OK,
+         "initializes test TOTP");
+  expect(vectis_totp_generate(&totp, 59u, totp_code) == VECTIS_TOTP_QR_OK,
+         "generates deterministic TOTP code");
+  vectis_auth_login_config_init(&login);
+  login.username = "dav-user@example.com";
+  login.password = "correct horse battery staple";
+  login.totp_code = totp_code;
+  login.unix_seconds = 59u;
+  login.totp_window = 0u;
+  status = vectis_auth_user_login(&store, &login, &result, &error);
+  expect_ok(status, &error, "authenticates TOTP user");
+  expect(result.authenticated, "allows TOTP user with password and code");
+  expect(result.claim_json != NULL &&
+             strstr(result.claim_json, "\"purpose\":\"login\"") != NULL,
+         "login result carries login purpose");
+  vectis_auth_result_cleanup(&result);
+
+  status = vectis_auth_issue_webdav_key_for_login(&store, &login, &webdav_key,
+                                                  &error);
+  expect_ok(status, &error, "issues WebDAV key after TOTP login");
+  expect(webdav_key.client_id != NULL, "login WebDAV key includes client_id");
+  expect(webdav_key.client_secret != NULL,
+         "login WebDAV key includes client_secret");
+  written = snprintf(login_basic_clear, sizeof(login_basic_clear), "%s:%s",
+                     webdav_key.client_id != NULL ? webdav_key.client_id : "",
+                     webdav_key.client_secret != NULL ? webdav_key.client_secret
+                                                      : "");
+  expect(written > 0 && (size_t)written < sizeof(login_basic_clear),
+         "formats login WebDAV key cleartext");
+  expect(base64_encode(login_basic_clear, login_basic_token,
+                       sizeof(login_basic_token)),
+         "encodes login WebDAV key");
+  written = snprintf(login_basic_header, sizeof(login_basic_header), "Basic %s",
+                     login_basic_token);
+  expect(written > 0 && (size_t)written < sizeof(login_basic_header),
+         "formats login WebDAV Basic header");
+  status = vectis_auth_verify_authorization(
+      &store, login_basic_header, VECTIS_AUTH_MODE_BASIC, &result, &error);
+  expect_ok(status, &error, "verifies login-issued WebDAV key");
+  expect(result.authenticated, "authenticates login-issued WebDAV key");
+  expect(result.claim_json != NULL &&
+             strstr(result.claim_json, "\"sub\":\"dav-user@example.com\"") !=
+                 NULL,
+         "login-issued WebDAV key carries user subject");
+  expect(result.claim_json != NULL &&
+             strstr(result.claim_json, "\"purpose\":\"webdav\"") != NULL,
+         "login-issued WebDAV key carries webdav purpose");
   vectis_auth_result_cleanup(&result);
 
   vectis_auth_native_provider_config_init(&native_provider_config);
@@ -367,6 +466,7 @@ int main(void) {
   expect(result.authenticated, "retains unrelated bearer credential");
 
   vectis_auth_result_cleanup(&result);
+  vectis_auth_issued_credential_cleanup(&webdav_key);
   vectis_auth_issued_credential_cleanup(&basic);
   vectis_auth_issued_credential_cleanup(&bearer);
   vectis_internal_request_free(webdav_vectis_request);

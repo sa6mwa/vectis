@@ -77,6 +77,74 @@ if(NOT revoked_verify_output MATCHES "authenticated=false")
 endif()
 
 execute_process(
+  COMMAND "${VECTIS_BIN}" -a users --store "${store}" --add
+          "admin-user@example.com" --password "admin-password"
+          --totp-secret "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+          --label "Vectis:admin-user@example.com" --issuer "Vectis"
+  RESULT_VARIABLE user_add_result
+  OUTPUT_VARIABLE user_add_output
+  ERROR_VARIABLE user_add_error)
+if(NOT user_add_result EQUAL 0)
+  message(FATAL_ERROR "users add failed: ${user_add_error}")
+endif()
+if(NOT user_add_output MATCHES "username=admin-user@example.com")
+  message(FATAL_ERROR "users add did not report username")
+endif()
+if(NOT user_add_output MATCHES "totp_secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
+  message(FATAL_ERROR "users add did not report TOTP secret")
+endif()
+if(NOT user_add_output MATCHES "totp_qr:")
+  message(FATAL_ERROR "users add did not print terminal QR")
+endif()
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users --store "${store}" --login
+          "admin-user@example.com" --password "admin-password"
+  RESULT_VARIABLE user_login_missing_result
+  OUTPUT_VARIABLE user_login_missing_output
+  ERROR_VARIABLE user_login_missing_error)
+if(NOT user_login_missing_result EQUAL 0)
+  message(FATAL_ERROR "users login missing TOTP failed hard: ${user_login_missing_error}")
+endif()
+if(NOT user_login_missing_output MATCHES "authenticated=false")
+  message(FATAL_ERROR "users login without TOTP was not rejected")
+endif()
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users --store "${store}" --login
+          "admin-user@example.com" --password "admin-password"
+          --totp-code "287082" --time "59" --window "0"
+  RESULT_VARIABLE user_login_result
+  OUTPUT_VARIABLE user_login_output
+  ERROR_VARIABLE user_login_error)
+if(NOT user_login_result EQUAL 0)
+  message(FATAL_ERROR "users login failed: ${user_login_error}")
+endif()
+if(NOT user_login_output MATCHES "authenticated=true")
+  message(FATAL_ERROR "users login did not authenticate with TOTP")
+endif()
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users --store "${store}" --webdav-key
+          "admin-user@example.com" --password "admin-password"
+          --totp-code "287082" --time "59" --window "0"
+  RESULT_VARIABLE webdav_key_result
+  OUTPUT_VARIABLE webdav_key_output
+  ERROR_VARIABLE webdav_key_error)
+if(NOT webdav_key_result EQUAL 0)
+  message(FATAL_ERROR "users webdav-key failed: ${webdav_key_error}")
+endif()
+if(NOT webdav_key_output MATCHES "client_id=")
+  message(FATAL_ERROR "users webdav-key did not print client_id")
+endif()
+if(NOT webdav_key_output MATCHES "client_secret=")
+  message(FATAL_ERROR "users webdav-key did not print client_secret")
+endif()
+if(NOT webdav_key_output MATCHES "\"purpose\":\"webdav\"")
+  message(FATAL_ERROR "users webdav-key did not carry webdav purpose")
+endif()
+
+execute_process(
   COMMAND "${VECTIS_BIN}" -x "${CMAKE_SOURCE_DIR}/tests/lua/smoke.lua"
   RESULT_VARIABLE trace_result
   OUTPUT_VARIABLE trace_output

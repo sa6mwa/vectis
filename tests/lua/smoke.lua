@@ -55,6 +55,43 @@ end))
 local callback_allowed = assert(callback_provider:authenticate({ resource = "/lua" }))
 assert(callback_allowed.action == "allow")
 assert(callback_allowed.principal == "/lua")
+local user = assert(vectis.auth.user_add({
+  credentials_path = auth_path,
+  username = "lua-user@example.com",
+  password = "lua-password",
+  totp_secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+  totp_label = "Vectis:lua-user@example.com",
+  issuer = "Vectis",
+}))
+assert(user.username == "lua-user@example.com")
+assert(user.totp_secret == "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
+assert(user.totp_uri:find("otpauth://totp/", 1, true) == 1)
+assert(user.totp_qr:find("\226\150\136", 1, true))
+local missing_totp = assert(vectis.auth.user_login({
+  credentials_path = auth_path,
+  username = "lua-user@example.com",
+  password = "lua-password",
+}))
+assert(missing_totp.authenticated == false)
+local logged_in = assert(vectis.auth.user_login({
+  credentials_path = auth_path,
+  username = "lua-user@example.com",
+  password = "lua-password",
+  totp_code = "287082",
+  time = 59,
+  window = 0,
+}))
+assert(logged_in.authenticated == true)
+local webdav_key = assert(vectis.auth.webdav_key({
+  credentials_path = auth_path,
+  username = "lua-user@example.com",
+  password = "lua-password",
+  totp_code = "287082",
+  time = 59,
+  window = 0,
+}))
+assert(type(webdav_key.client_id) == "string")
+assert(type(webdav_key.client_secret) == "string")
 local totp = assert(vectis.auth.totp.new("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"))
 assert(totp:secret() == "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 assert(totp:generate(59) == "287082")

@@ -109,7 +109,11 @@ static void vectis_cli_usage(FILE *stream) {
         "       vectis -a credentials [--store credentials.json] "
         "(--init | --issue --subject user [--purpose name] "
         "[--basic] [--bearer] | --verify authorization | "
-        "--revoke client_id)\n",
+        "--revoke client_id)\n"
+        "       vectis -a users [--store credentials.json] "
+        "(--add username [--password value] [--totp] | "
+        "--login username --password value [--totp-code code] | "
+        "--webdav-key username --password value [--totp-code code])\n",
         stream);
 }
 
@@ -381,6 +385,210 @@ static int vectis_cli_credentials_command(int argc, char **argv, int index) {
   return 0;
 }
 
+static int vectis_cli_users_time_arg(const char *value, uint64_t *out) {
+  char *end;
+  unsigned long long parsed;
+
+  if (value == NULL || out == NULL) {
+    return -1;
+  }
+  errno = 0;
+  end = NULL;
+  parsed = strtoull(value, &end, 10);
+  if (errno != 0 || end == value || end == NULL || *end != '\0') {
+    return -1;
+  }
+  *out = (uint64_t)parsed;
+  return 0;
+}
+
+static int
+vectis_cli_print_credential(const vectis_auth_issued_credential *credential) {
+  if (credential->client_id != NULL) {
+    printf("client_id=%s\n", credential->client_id);
+  }
+  if (credential->client_secret != NULL) {
+    printf("client_secret=%s\n", credential->client_secret);
+  }
+  if (credential->api_key != NULL) {
+    printf("api_key=%s\n", credential->api_key);
+  }
+  if (credential->claim_json != NULL) {
+    printf("claim_json=%s\n", credential->claim_json);
+  }
+  return 0;
+}
+
+static int vectis_cli_users_command(int argc, char **argv, int index) {
+  vectis_auth_store_config store;
+  vectis_auth_user_config user;
+  vectis_auth_user_enrollment enrollment;
+  vectis_auth_login_config login;
+  vectis_auth_result result;
+  vectis_auth_issued_credential credential;
+  vectis_error error;
+  vectis_status status;
+  char default_path[4096];
+  const char *action;
+
+  if (vectis_cli_credentials_default_path(default_path, sizeof(default_path)) !=
+      0) {
+    fputs("vectis: unable to resolve default credentials path\n", stderr);
+    return 1;
+  }
+  vectis_auth_store_config_init(&store);
+  store.credentials_path = default_path;
+  vectis_auth_user_config_init(&user);
+  vectis_auth_login_config_init(&login);
+  action = NULL;
+  while (index < argc) {
+    if (strcmp(argv[index], "--store") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --store requires a path\n", stderr);
+        return 64;
+      }
+      store.credentials_path = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--add") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --add requires a username\n", stderr);
+        return 64;
+      }
+      action = "add";
+      user.username = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--login") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --login requires a username\n", stderr);
+        return 64;
+      }
+      action = "login";
+      login.username = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--webdav-key") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --webdav-key requires a username\n", stderr);
+        return 64;
+      }
+      action = "webdav-key";
+      login.username = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--password") == 0 ||
+               strcmp(argv[index], "-p") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --password requires a value\n", stderr);
+        return 64;
+      }
+      user.password = argv[index + 1];
+      login.password = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--totp") == 0) {
+      user.enable_totp = 1;
+      index++;
+    } else if (strcmp(argv[index], "--totp-secret") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --totp-secret requires a value\n", stderr);
+        return 64;
+      }
+      user.enable_totp = 1;
+      user.totp_secret = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--totp-code") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --totp-code requires a value\n", stderr);
+        return 64;
+      }
+      login.totp_code = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--issuer") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --issuer requires a value\n", stderr);
+        return 64;
+      }
+      user.totp_issuer = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--label") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --label requires a value\n", stderr);
+        return 64;
+      }
+      user.totp_label = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--time") == 0) {
+      if (index + 1 >= argc || vectis_cli_users_time_arg(
+                                   argv[index + 1], &login.unix_seconds) != 0) {
+        fputs("vectis: --time requires a non-negative integer\n", stderr);
+        return 64;
+      }
+      index += 2;
+    } else if (strcmp(argv[index], "--window") == 0) {
+      uint64_t parsed;
+
+      if (index + 1 >= argc ||
+          vectis_cli_users_time_arg(argv[index + 1], &parsed) != 0 ||
+          parsed > 10u) {
+        fputs("vectis: --window requires an integer from 0 to 10\n", stderr);
+        return 64;
+      }
+      login.totp_window = (unsigned int)parsed;
+      index += 2;
+    } else {
+      fprintf(stderr, "vectis: unknown users option: %s\n", argv[index]);
+      return 64;
+    }
+  }
+  vectis_error_clear(&error);
+  if (action == NULL) {
+    fputs("vectis: users requires --add, --login, or --webdav-key\n", stderr);
+    return 64;
+  }
+  if (strcmp(action, "add") == 0) {
+    vectis_auth_user_enrollment_init(&enrollment);
+    status = vectis_auth_user_add_or_update(&store, &user, &enrollment, &error);
+    if (status != VECTIS_OK) {
+      return vectis_cli_auth_status(status, &error);
+    }
+    printf("username=%s\n", enrollment.username);
+    if (enrollment.generated_password != NULL) {
+      printf("password=%s\n", enrollment.generated_password);
+    }
+    if (enrollment.totp_secret != NULL) {
+      printf("totp_secret=%s\n", enrollment.totp_secret);
+    }
+    if (enrollment.totp_uri != NULL) {
+      printf("totp_uri=%s\n", enrollment.totp_uri);
+    }
+    if (enrollment.totp_qr_ansi != NULL) {
+      fputs("totp_qr:\n", stdout);
+      fputs(enrollment.totp_qr_ansi, stdout);
+    }
+    vectis_auth_user_enrollment_cleanup(&enrollment);
+    return 0;
+  }
+  if (strcmp(action, "login") == 0) {
+    vectis_auth_result_init(&result);
+    status = vectis_auth_user_login(&store, &login, &result, &error);
+    if (status != VECTIS_OK) {
+      return vectis_cli_auth_status(status, &error);
+    }
+    printf("authenticated=%s\n", result.authenticated ? "true" : "false");
+    if (result.claim_json != NULL) {
+      printf("claim_json=%s\n", result.claim_json);
+    }
+    vectis_auth_result_cleanup(&result);
+    return 0;
+  }
+  vectis_auth_issued_credential_init(&credential);
+  status = vectis_auth_issue_webdav_key_for_login(&store, &login, &credential,
+                                                  &error);
+  if (status != VECTIS_OK) {
+    return vectis_cli_auth_status(status, &error);
+  }
+  (void)vectis_cli_print_credential(&credential);
+  vectis_auth_issued_credential_cleanup(&credential);
+  return 0;
+}
+
 static int vectis_admin_command(int argc, char **argv, int index) {
   const char *operation;
 
@@ -392,6 +600,9 @@ static int vectis_admin_command(int argc, char **argv, int index) {
   index++;
   if (strcmp(operation, "credentials") == 0) {
     return vectis_cli_credentials_command(argc, argv, index);
+  }
+  if (strcmp(operation, "users") == 0) {
+    return vectis_cli_users_command(argc, argv, index);
   }
   fprintf(stderr, "vectis: unknown admin operation: %s\n", operation);
   return 64;
@@ -610,6 +821,20 @@ static size_t vectis_lua_table_size(lua_State *lua, int index,
   return value;
 }
 
+static int vectis_lua_table_bool(lua_State *lua, int index, const char *field,
+                                 int fallback) {
+  int value;
+
+  lua_getfield(lua, index, field);
+  if (lua_isnil(lua, -1)) {
+    value = fallback;
+  } else {
+    value = lua_toboolean(lua, -1);
+  }
+  lua_pop(lua, 1);
+  return value;
+}
+
 static unsigned vectis_lua_auth_mode_value(const char *mode) {
   if (mode == NULL || strcmp(mode, "default") == 0) {
     return VECTIS_AUTH_MODE_DEFAULT;
@@ -707,6 +932,27 @@ static void vectis_lua_auth_push_result(lua_State *lua,
   }
 }
 
+static void vectis_lua_auth_push_issued_credential(
+    lua_State *lua, const vectis_auth_issued_credential *credential) {
+  lua_newtable(lua);
+  if (credential != NULL && credential->client_id != NULL) {
+    lua_pushstring(lua, credential->client_id);
+    lua_setfield(lua, -2, "client_id");
+  }
+  if (credential != NULL && credential->client_secret != NULL) {
+    lua_pushstring(lua, credential->client_secret);
+    lua_setfield(lua, -2, "client_secret");
+  }
+  if (credential != NULL && credential->api_key != NULL) {
+    lua_pushstring(lua, credential->api_key);
+    lua_setfield(lua, -2, "api_key");
+  }
+  if (credential != NULL && credential->claim_json != NULL) {
+    lua_pushstring(lua, credential->claim_json);
+    lua_setfield(lua, -2, "claim_json");
+  }
+}
+
 static void vectis_lua_auth_push_provider_response(
     lua_State *lua, const vectis_auth_provider_response *response) {
   lua_newtable(lua);
@@ -789,23 +1035,7 @@ static int vectis_lua_auth_issue(lua_State *lua) {
   if (status != VECTIS_OK) {
     return vectis_lua_push_error(lua, status, &error);
   }
-  lua_newtable(lua);
-  if (credential.client_id != NULL) {
-    lua_pushstring(lua, credential.client_id);
-    lua_setfield(lua, -2, "client_id");
-  }
-  if (credential.client_secret != NULL) {
-    lua_pushstring(lua, credential.client_secret);
-    lua_setfield(lua, -2, "client_secret");
-  }
-  if (credential.api_key != NULL) {
-    lua_pushstring(lua, credential.api_key);
-    lua_setfield(lua, -2, "api_key");
-  }
-  if (credential.claim_json != NULL) {
-    lua_pushstring(lua, credential.claim_json);
-    lua_setfield(lua, -2, "claim_json");
-  }
+  vectis_lua_auth_push_issued_credential(lua, &credential);
   vectis_auth_issued_credential_cleanup(&credential);
   return 1;
 }
@@ -850,6 +1080,124 @@ static int vectis_lua_auth_revoke(lua_State *lua) {
     return vectis_lua_push_error(lua, status, &error);
   }
   lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static void vectis_lua_auth_user_config(lua_State *lua, int index,
+                                        vectis_auth_user_config *config) {
+  const char *issuer;
+
+  vectis_auth_user_config_init(config);
+  config->username = vectis_lua_table_string(lua, index, "username");
+  config->password = vectis_lua_table_string(lua, index, "password");
+  config->enable_totp = vectis_lua_table_bool(lua, index, "totp", 0);
+  config->totp_secret = vectis_lua_table_string(lua, index, "totp_secret");
+  if (config->totp_secret != NULL) {
+    config->enable_totp = 1;
+  }
+  config->totp_label = vectis_lua_table_string(lua, index, "totp_label");
+  issuer = vectis_lua_table_string(lua, index, "totp_issuer");
+  if (issuer == NULL) {
+    issuer = vectis_lua_table_string(lua, index, "issuer");
+  }
+  if (issuer != NULL) {
+    config->totp_issuer = issuer;
+  }
+}
+
+static void vectis_lua_auth_login_config(lua_State *lua, int index,
+                                         vectis_auth_login_config *config) {
+  vectis_auth_login_config_init(config);
+  config->username = vectis_lua_table_string(lua, index, "username");
+  config->password = vectis_lua_table_string(lua, index, "password");
+  config->totp_code = vectis_lua_table_string(lua, index, "totp_code");
+  config->unix_seconds =
+      (uint64_t)vectis_lua_table_size(lua, index, "time", 0u);
+  config->totp_window =
+      (unsigned int)vectis_lua_table_size(lua, index, "window", 1u);
+}
+
+static int vectis_lua_auth_user_add(lua_State *lua) {
+  vectis_auth_store_config store;
+  vectis_auth_user_config user;
+  vectis_auth_user_enrollment enrollment;
+  vectis_error error;
+  vectis_status status;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_error_clear(&error);
+  vectis_lua_auth_store_config(lua, 1, &store);
+  vectis_lua_auth_user_config(lua, 1, &user);
+  vectis_auth_user_enrollment_init(&enrollment);
+  status = vectis_auth_user_add_or_update(&store, &user, &enrollment, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_newtable(lua);
+  if (enrollment.username != NULL) {
+    lua_pushstring(lua, enrollment.username);
+    lua_setfield(lua, -2, "username");
+  }
+  if (enrollment.generated_password != NULL) {
+    lua_pushstring(lua, enrollment.generated_password);
+    lua_setfield(lua, -2, "password");
+  }
+  if (enrollment.totp_secret != NULL) {
+    lua_pushstring(lua, enrollment.totp_secret);
+    lua_setfield(lua, -2, "totp_secret");
+  }
+  if (enrollment.totp_uri != NULL) {
+    lua_pushstring(lua, enrollment.totp_uri);
+    lua_setfield(lua, -2, "totp_uri");
+  }
+  if (enrollment.totp_qr_ansi != NULL) {
+    lua_pushstring(lua, enrollment.totp_qr_ansi);
+    lua_setfield(lua, -2, "totp_qr");
+  }
+  vectis_auth_user_enrollment_cleanup(&enrollment);
+  return 1;
+}
+
+static int vectis_lua_auth_user_login(lua_State *lua) {
+  vectis_auth_store_config store;
+  vectis_auth_login_config login;
+  vectis_auth_result result;
+  vectis_error error;
+  vectis_status status;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_error_clear(&error);
+  vectis_lua_auth_store_config(lua, 1, &store);
+  vectis_lua_auth_login_config(lua, 1, &login);
+  vectis_auth_result_init(&result);
+  status = vectis_auth_user_login(&store, &login, &result, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  vectis_lua_auth_push_result(lua, &result);
+  vectis_auth_result_cleanup(&result);
+  return 1;
+}
+
+static int vectis_lua_auth_webdav_key(lua_State *lua) {
+  vectis_auth_store_config store;
+  vectis_auth_login_config login;
+  vectis_auth_issued_credential credential;
+  vectis_error error;
+  vectis_status status;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_error_clear(&error);
+  vectis_lua_auth_store_config(lua, 1, &store);
+  vectis_lua_auth_login_config(lua, 1, &login);
+  vectis_auth_issued_credential_init(&credential);
+  status = vectis_auth_issue_webdav_key_for_login(&store, &login, &credential,
+                                                  &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  vectis_lua_auth_push_issued_credential(lua, &credential);
+  vectis_auth_issued_credential_cleanup(&credential);
   return 1;
 }
 
@@ -1164,6 +1512,12 @@ static void vectis_lua_push_auth_table(lua_State *lua) {
   lua_setfield(lua, -2, "verify");
   lua_pushcfunction(lua, vectis_lua_auth_revoke);
   lua_setfield(lua, -2, "revoke");
+  lua_pushcfunction(lua, vectis_lua_auth_user_add);
+  lua_setfield(lua, -2, "user_add");
+  lua_pushcfunction(lua, vectis_lua_auth_user_login);
+  lua_setfield(lua, -2, "user_login");
+  lua_pushcfunction(lua, vectis_lua_auth_webdav_key);
+  lua_setfield(lua, -2, "webdav_key");
   lua_pushcfunction(lua, vectis_lua_auth_provider_native);
   lua_setfield(lua, -2, "provider_native");
   lua_pushcfunction(lua, vectis_lua_auth_provider_callback);

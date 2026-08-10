@@ -2,6 +2,7 @@
 #define VECTIS_AUTH_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <vectis/vectis.h>
 
 #ifdef __cplusplus
@@ -11,6 +12,7 @@ extern "C" {
 #define VECTIS_AUTH_DEFAULT_MAX_STORE_BYTES (1024u * 1024u)
 #define VECTIS_AUTH_PRINCIPAL_MAX 254u
 #define VECTIS_AUTH_CHALLENGE_MAX 255u
+#define VECTIS_AUTH_GENERATED_PASSWORD_MAX 64u
 
 typedef enum vectis_auth_mode {
   VECTIS_AUTH_MODE_DEFAULT = 0,
@@ -99,6 +101,40 @@ typedef struct vectis_auth_native_provider_config {
   unsigned allowed_auth_modes;
 } vectis_auth_native_provider_config;
 
+typedef struct vectis_auth_user_config {
+  /* Stable local username/principal. */
+  const char *username;
+  /* Optional password. Empty or NULL generates one and returns it in out. */
+  const char *password;
+  /* Enables TOTP enrollment for this user. */
+  int enable_totp;
+  /* Optional existing base32 TOTP secret. Empty or NULL generates one. */
+  const char *totp_secret;
+  /* Optional enrollment label/issuer used for otpauth URI and QR rendering. */
+  const char *totp_label;
+  const char *totp_issuer;
+} vectis_auth_user_config;
+
+typedef struct vectis_auth_user_enrollment {
+  /* Owned strings. Release with vectis_auth_user_enrollment_cleanup(). */
+  char *username;
+  char *generated_password;
+  char *totp_secret;
+  char *totp_uri;
+  char *totp_qr_ansi;
+} vectis_auth_user_enrollment;
+
+typedef struct vectis_auth_login_config {
+  const char *username;
+  const char *password;
+  /* Required when the stored user has TOTP enabled. */
+  const char *totp_code;
+  /* Zero uses current time. Non-zero supports deterministic verification. */
+  uint64_t unix_seconds;
+  /* Defaults to 1 time-step. */
+  unsigned int totp_window;
+} vectis_auth_login_config;
+
 void vectis_auth_store_config_init(vectis_auth_store_config *config);
 void vectis_auth_issue_config_init(vectis_auth_issue_config *config);
 void vectis_auth_issued_credential_init(
@@ -115,6 +151,11 @@ void vectis_auth_provider_response_cleanup(
 void vectis_auth_provider_init(vectis_auth_provider *provider);
 void vectis_auth_native_provider_config_init(
     vectis_auth_native_provider_config *config);
+void vectis_auth_user_config_init(vectis_auth_user_config *config);
+void vectis_auth_user_enrollment_init(vectis_auth_user_enrollment *enrollment);
+void vectis_auth_user_enrollment_cleanup(
+    vectis_auth_user_enrollment *enrollment);
+void vectis_auth_login_config_init(vectis_auth_login_config *config);
 
 vectis_status vectis_auth_store_init(const vectis_auth_store_config *config,
                                      vectis_error *error);
@@ -137,6 +178,19 @@ vectis_status vectis_auth_verify_authorization(
 vectis_status
 vectis_auth_revoke_client(const vectis_auth_store_config *store_config,
                           const char *client_id, vectis_error *error);
+vectis_status
+vectis_auth_user_add_or_update(const vectis_auth_store_config *store_config,
+                               const vectis_auth_user_config *user_config,
+                               vectis_auth_user_enrollment *out,
+                               vectis_error *error);
+vectis_status
+vectis_auth_user_login(const vectis_auth_store_config *store_config,
+                       const vectis_auth_login_config *login_config,
+                       vectis_auth_result *out, vectis_error *error);
+vectis_status vectis_auth_issue_webdav_key_for_login(
+    const vectis_auth_store_config *store_config,
+    const vectis_auth_login_config *login_config,
+    vectis_auth_issued_credential *out, vectis_error *error);
 
 vectis_status
 vectis_auth_provider_from_callback(vectis_auth_provider *provider,
