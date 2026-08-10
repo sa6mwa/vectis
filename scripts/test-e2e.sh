@@ -813,6 +813,14 @@ run_lua_examples() {
     printf '%s\n' "Packed WebDAV unexpectedly allowed unauthenticated PUT: $unauth_dav_put_status" >&2
     return 1
   fi
+  body=$(cat "$packed_service_docroot/index.html")
+  case "$body" in
+    *'packed service asset'*) ;;
+    *)
+      printf '%s\n' "Anonymous packed WebDAV PUT mutated extracted docroot: $body" >&2
+      return 1
+      ;;
+  esac
   guarded_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
     "http://127.0.0.1:$kore_packed_port/api/private")
   if [ "$guarded_status" = "200" ]; then
