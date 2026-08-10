@@ -278,7 +278,7 @@ static void vectis_cli_usage(FILE *stream) {
         "       vectis -a|--action pack --script script.lua --output output "
         "[--lockd-bundle bundle.pem] [--asset source=/path] "
         "[--asset-dir /mount:dir] [--asset-manifest assets.json] "
-        "[--content-type-map types.json]\n"
+        "[--content-type-map types.json] [--extract-mode mode]\n"
         "       vectis -a|--action credentials [--store credentials.json] "
         "(--init | --issue --subject user [--purpose name] "
         "[--basic] [--bearer] | --verify authorization | "
@@ -1001,6 +1001,7 @@ static int vectis_pack_collect_dir(vectis_pack_asset_list *list,
 }
 
 static int vectis_pack_build_manifest(vectis_pack_asset_list *assets,
+                                      const char *extract_mode,
                                       unsigned char **out, size_t *out_size) {
   lonejson *runtime;
   lonejson_writer writer;
@@ -1034,6 +1035,13 @@ static int vectis_pack_build_manifest(vectis_pack_asset_list *assets,
   }
   if (status == LONEJSON_STATUS_OK) {
     status = lonejson_writer_string(&writer, "vectis-pack", 11u, &error);
+  }
+  if (status == LONEJSON_STATUS_OK && extract_mode != NULL) {
+    status = lonejson_writer_key(&writer, "extract_mode", 12u, &error);
+  }
+  if (status == LONEJSON_STATUS_OK && extract_mode != NULL) {
+    status = lonejson_writer_string(&writer, extract_mode, strlen(extract_mode),
+                                    &error);
   }
   if (status == LONEJSON_STATUS_OK) {
     status = lonejson_writer_key(&writer, "assets", 6u, &error);
@@ -2338,6 +2346,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   const char *script_path;
   const char *output_path;
   const char *bundle_path;
+  const char *extract_mode;
   const char *asset_arg;
   const char *separator;
   char *asset_source;
@@ -2359,6 +2368,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   unsigned char footer[VECTIS_PACK_FOOTER_SIZE];
   vectis_pack_asset_list assets;
   vectis_pack_content_type_map content_types;
+  vectis_embedded_fs_extract_policy extract_policy;
   char self_path[4096];
   FILE *out;
   int i;
@@ -2366,6 +2376,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   script_path = NULL;
   output_path = NULL;
   bundle_path = NULL;
+  extract_mode = NULL;
   memset(&assets, 0, sizeof(assets));
   memset(&content_types, 0, sizeof(content_types));
   for (i = index; i < argc; ++i) {
@@ -2375,6 +2386,16 @@ static int vectis_pack_command(int argc, char **argv, int index) {
       output_path = argv[++i];
     } else if (strcmp(argv[i], "--lockd-bundle") == 0 && i + 1 < argc) {
       bundle_path = argv[++i];
+    } else if (strcmp(argv[i], "--extract-mode") == 0 && i + 1 < argc) {
+      if (!vectis_embedded_fs_extract_policy_parse(argv[++i],
+                                                   &extract_policy)) {
+        fputs("vectis: --extract-mode must be fail-exists, skip-existing, "
+              "overwrite, verify, or repair\n",
+              stderr);
+        vectis_pack_command_cleanup(&assets, &content_types);
+        return 64;
+      }
+      extract_mode = vectis_embedded_fs_extract_policy_string(extract_policy);
     } else if (strcmp(argv[i], "--content-type-map") == 0 && i + 1 < argc) {
       if (vectis_pack_read_content_type_map(&content_types, argv[++i]) != 0) {
         vectis_pack_command_cleanup(&assets, &content_types);
@@ -2390,6 +2411,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   for (i = index; i < argc; ++i) {
     if ((strcmp(argv[i], "--script") == 0 || strcmp(argv[i], "--output") == 0 ||
          strcmp(argv[i], "--lockd-bundle") == 0 ||
+         strcmp(argv[i], "--extract-mode") == 0 ||
          strcmp(argv[i], "--content-type-map") == 0) &&
         i + 1 < argc) {
       i++;
@@ -2528,7 +2550,8 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     vectis_pack_command_cleanup(&assets, &content_types);
     return 1;
   }
-  if (vectis_pack_build_manifest(&assets, &manifest, &manifest_size) != 0) {
+  if (vectis_pack_build_manifest(&assets, extract_mode, &manifest,
+                                 &manifest_size) != 0) {
     fprintf(stderr, "vectis: failed to build embedded asset manifest\n");
     free(bundle);
     free(script);
@@ -2661,6 +2684,19 @@ static int vectis_lua_embedded_has_assets(lua_State *lua) {
   context = (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(
       (void *)lua);
   lua_pushboolean(lua, context != NULL && context->embedded_fs != NULL);
+  return 1;
+}
+
+static int vectis_lua_embedded_default_extract_policy(lua_State *lua) {
+  vectis_lua_runtime_context *context;
+  vectis_embedded_fs_extract_policy policy;
+
+  context = (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(
+      (void *)lua);
+  policy = context != NULL
+               ? vectis_embedded_fs_default_extract_policy(context->embedded_fs)
+               : VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS;
+  lua_pushstring(lua, vectis_embedded_fs_extract_policy_string(policy));
   return 1;
 }
 
@@ -2873,24 +2909,15 @@ static int vectis_lua_embedded_list(lua_State *lua) {
 
 static vectis_embedded_fs_extract_policy
 vectis_lua_embedded_extract_policy(lua_State *lua, const char *policy) {
-  if (policy == NULL || strcmp(policy, "fail_exists") == 0 ||
-      strcmp(policy, "fail") == 0) {
-    return VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS;
-  }
-  if (strcmp(policy, "skip_existing") == 0 || strcmp(policy, "skip") == 0) {
-    return VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING;
-  }
-  if (strcmp(policy, "overwrite") == 0) {
-    return VECTIS_EMBEDDED_FS_EXTRACT_OVERWRITE;
-  }
-  if (strcmp(policy, "verify") == 0) {
-    return VECTIS_EMBEDDED_FS_EXTRACT_VERIFY;
-  }
-  if (strcmp(policy, "repair") == 0) {
-    return VECTIS_EMBEDDED_FS_EXTRACT_REPAIR;
+  vectis_embedded_fs_extract_policy parsed;
+
+  if (policy != NULL &&
+      vectis_embedded_fs_extract_policy_parse(policy, &parsed)) {
+    return parsed;
   }
   (void)luaL_error(lua, "embedded extract policy must be fail_exists, "
-                        "skip_existing, overwrite, verify, or repair");
+                        "fail-exists, skip_existing, skip-existing, "
+                        "overwrite, verify, or repair");
   return VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS;
 }
 
@@ -2917,7 +2944,11 @@ static int vectis_lua_embedded_extract(lua_State *lua) {
   }
   vectis_embedded_fs_extract_config_init(&config);
   config.output_dir = output_dir;
-  config.policy = vectis_lua_embedded_extract_policy(lua, policy);
+  config.policy =
+      vectis_embedded_fs_default_extract_policy(context->embedded_fs);
+  if (policy != NULL) {
+    config.policy = vectis_lua_embedded_extract_policy(lua, policy);
+  }
   vectis_error_clear(&error);
   status = vectis_embedded_fs_extract(context->embedded_fs, &config, &error);
   if (status != VECTIS_OK) {
@@ -5362,6 +5393,8 @@ static int luaopen_vectis(lua_State *lua) {
   lua_newtable(lua);
   lua_pushcfunction(lua, vectis_lua_embedded_has_assets);
   lua_setfield(lua, -2, "has_assets");
+  lua_pushcfunction(lua, vectis_lua_embedded_default_extract_policy);
+  lua_setfield(lua, -2, "default_extract_policy");
   lua_pushcfunction(lua, vectis_lua_embedded_read);
   lua_setfield(lua, -2, "read");
   lua_pushcfunction(lua, vectis_lua_embedded_stat);

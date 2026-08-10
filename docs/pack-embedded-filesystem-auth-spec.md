@@ -154,8 +154,10 @@ Optional:
   take precedence over the map.
 - `--follow-symlinks` enables symlink traversal during packaging. Default is
   refuse.
-- `--extract-mode <skip-existing|overwrite|verify|repair>` records the default
-  extraction policy for application helpers.
+- `--extract-mode <fail-exists|skip-existing|overwrite|verify|repair>`
+  records the default extraction policy for application helpers as manifest
+  `extract_mode`. Hyphenated CLI spellings are accepted and stored in canonical
+  underscore form.
 - `--lockd-bundle <path>` keeps the current lockd bundle behavior.
 
 `--asset-dir` and `--asset` may be repeated. Logical asset destinations must
@@ -194,6 +196,7 @@ Required Lua concepts:
 - `vectis.embedded.list(path)`
 - `vectis.embedded.read(path)`
 - `vectis.embedded.chunks(path, chunk_size)`
+- `vectis.embedded.default_extract_policy()`
 - `vectis.embedded.extract({to=..., policy=...})`
 
 Streaming semantics:

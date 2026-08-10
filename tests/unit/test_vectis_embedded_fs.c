@@ -169,6 +169,16 @@ int main(void) {
       "{\"path\":\"/bad.txt\",\"offset\":50,\"size\":4,"
       "\"sha256\":"
       "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\"}]}";
+  static const char repair_manifest[] =
+      "{\"format\":\"vectis-pack\",\"extract_mode\":\"repair\",\"assets\":["
+      "{\"path\":\"/index.html\",\"offset\":0,\"size\":6,"
+      "\"sha256\":"
+      "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"}]}";
+  static const char invalid_extract_mode_manifest[] =
+      "{\"format\":\"vectis-pack\",\"extract_mode\":\"invalid\",\"assets\":["
+      "{\"path\":\"/index.html\",\"offset\":0,\"size\":6,"
+      "\"sha256\":"
+      "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"}]}";
   vectis_embedded_fs_config config;
 
   vectis_error_clear(&error);
@@ -176,6 +186,17 @@ int main(void) {
   if (fs == NULL) {
     return 1;
   }
+  expect(vectis_embedded_fs_default_extract_policy(fs) ==
+             VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS,
+         "manifest without extract_mode defaults to fail_exists");
+  expect(strcmp(vectis_embedded_fs_extract_policy_string(
+                    VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING),
+                "skip_existing") == 0,
+         "extract policy has canonical string");
+  expect(vectis_embedded_fs_extract_policy_parse("skip-existing",
+                                                 &extract.policy) &&
+             extract.policy == VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING,
+         "extract policy parser accepts CLI hyphen alias");
 
   found = 0;
   memset(&entry, 0, sizeof(entry));
@@ -284,6 +305,29 @@ int main(void) {
   status = vectis_embedded_fs_from_pack(&config, &fs, &error);
   expect(status == VECTIS_ERR_INVALID && fs == NULL,
          "rejects out-of-bounds embedded assets");
+
+  vectis_embedded_fs_config_init(&config);
+  config.payload = "hello\n";
+  config.payload_size = 6u;
+  config.manifest_json = repair_manifest;
+  config.manifest_json_size = sizeof(repair_manifest) - 1u;
+  fs = NULL;
+  status = vectis_embedded_fs_from_pack(&config, &fs, &error);
+  expect(status == VECTIS_OK && fs != NULL &&
+             vectis_embedded_fs_default_extract_policy(fs) ==
+                 VECTIS_EMBEDDED_FS_EXTRACT_REPAIR,
+         "reads manifest default extract policy");
+  vectis_embedded_fs_close(fs);
+
+  vectis_embedded_fs_config_init(&config);
+  config.payload = "hello\n";
+  config.payload_size = 6u;
+  config.manifest_json = invalid_extract_mode_manifest;
+  config.manifest_json_size = sizeof(invalid_extract_mode_manifest) - 1u;
+  fs = NULL;
+  status = vectis_embedded_fs_from_pack(&config, &fs, &error);
+  expect(status == VECTIS_ERR_INVALID && fs == NULL,
+         "rejects invalid manifest default extract policy");
 
   vectis_embedded_fs_config_init(&config);
   config.payload = bad_payload;

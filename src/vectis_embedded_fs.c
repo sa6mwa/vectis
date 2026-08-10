@@ -28,6 +28,7 @@ typedef struct vectis_embedded_fs_impl {
   vectis_embedded_fs_impl_entry *entries;
   size_t count;
   size_t capacity;
+  vectis_embedded_fs_extract_policy default_extract_policy;
   char *index_path;
   char *not_found_path;
 } vectis_embedded_fs_impl;
@@ -42,6 +43,7 @@ typedef struct vectis_embedded_manifest_asset {
 
 typedef struct vectis_embedded_manifest {
   char *format;
+  char *extract_mode;
   lonejson_mapped_array_stream assets;
 } vectis_embedded_manifest;
 
@@ -68,6 +70,8 @@ LONEJSON_MAP_DEFINE(vectis_embedded_manifest_asset_map,
 
 static const lonejson_field vectis_embedded_manifest_fields[] = {
     LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_embedded_manifest, format, "format"),
+    LONEJSON_FIELD_STRING_ALLOC(vectis_embedded_manifest, extract_mode,
+                                "extract_mode"),
     LONEJSON_FIELD_MAPPED_ARRAY_STREAM_REQ(vectis_embedded_manifest, assets,
                                            "assets")};
 
@@ -199,6 +203,50 @@ vectis_embedded_sha256_hex(const unsigned char sha[SHA256_DIGEST_LENGTH],
   out[SHA256_DIGEST_LENGTH * 2u] = '\0';
 }
 
+const char *vectis_embedded_fs_extract_policy_string(
+    vectis_embedded_fs_extract_policy policy) {
+  switch (policy) {
+  case VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS:
+    return "fail_exists";
+  case VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING:
+    return "skip_existing";
+  case VECTIS_EMBEDDED_FS_EXTRACT_OVERWRITE:
+    return "overwrite";
+  case VECTIS_EMBEDDED_FS_EXTRACT_VERIFY:
+    return "verify";
+  case VECTIS_EMBEDDED_FS_EXTRACT_REPAIR:
+    return "repair";
+  }
+  return "unknown";
+}
+
+int vectis_embedded_fs_extract_policy_parse(
+    const char *value, vectis_embedded_fs_extract_policy *out) {
+  vectis_embedded_fs_extract_policy policy;
+
+  if (value == NULL || out == NULL) {
+    return 0;
+  }
+  if (strcmp(value, "fail_exists") == 0 || strcmp(value, "fail-exists") == 0 ||
+      strcmp(value, "fail") == 0) {
+    policy = VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS;
+  } else if (strcmp(value, "skip_existing") == 0 ||
+             strcmp(value, "skip-existing") == 0 ||
+             strcmp(value, "skip") == 0) {
+    policy = VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING;
+  } else if (strcmp(value, "overwrite") == 0) {
+    policy = VECTIS_EMBEDDED_FS_EXTRACT_OVERWRITE;
+  } else if (strcmp(value, "verify") == 0) {
+    policy = VECTIS_EMBEDDED_FS_EXTRACT_VERIFY;
+  } else if (strcmp(value, "repair") == 0) {
+    policy = VECTIS_EMBEDDED_FS_EXTRACT_REPAIR;
+  } else {
+    return 0;
+  }
+  *out = policy;
+  return 1;
+}
+
 static int vectis_embedded_reserve(vectis_embedded_fs_impl *impl,
                                    size_t capacity) {
   vectis_embedded_fs_impl_entry *grown;
@@ -323,6 +371,17 @@ static void vectis_embedded_impl_destroy(vectis_embedded_fs_impl *impl) {
   free(impl->index_path);
   free(impl->not_found_path);
   free(impl);
+}
+
+static vectis_embedded_fs_extract_policy
+vectis_embedded_default_extract_policy_impl(const vectis_embedded_fs *self) {
+  const vectis_embedded_fs_impl *impl;
+
+  if (self == NULL || self->impl == NULL) {
+    return VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS;
+  }
+  impl = (const vectis_embedded_fs_impl *)self->impl;
+  return impl->default_extract_policy;
 }
 
 static vectis_status vectis_embedded_lookup_impl(const vectis_embedded_fs *self,
@@ -810,12 +869,15 @@ vectis_embedded_fs_from_pack(const vectis_embedded_fs_config *config,
     return VECTIS_ERR_NOMEM;
   }
   impl->api.lookup = vectis_embedded_lookup_impl;
+  impl->api.default_extract_policy =
+      vectis_embedded_default_extract_policy_impl;
   impl->api.read = vectis_embedded_read_impl;
   impl->api.list = vectis_embedded_list_impl;
   impl->api.stream = vectis_embedded_stream_impl;
   impl->api.extract = vectis_embedded_extract_impl;
   impl->api.close = vectis_embedded_close_impl;
   impl->api.impl = impl;
+  impl->default_extract_policy = VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS;
   impl->index_path = vectis_embedded_strdup(
       config->index_path != NULL ? config->index_path : "/index.html");
   if (config->not_found_path != NULL) {
@@ -883,6 +945,17 @@ vectis_embedded_fs_from_pack(const vectis_embedded_fs_config *config,
                      "embedded fs manifest format is unsupported");
     return VECTIS_ERR_INVALID;
   }
+  if (doc.extract_mode != NULL &&
+      !vectis_embedded_fs_extract_policy_parse(doc.extract_mode,
+                                               &impl->default_extract_policy)) {
+    lonejson_cleanup(&vectis_embedded_manifest_map, &doc);
+    lonejson_cleanup(&vectis_embedded_manifest_asset_map, &item);
+    lonejson_free(runtime);
+    vectis_embedded_impl_destroy(impl);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "embedded fs manifest extract_mode is invalid");
+    return VECTIS_ERR_INVALID;
+  }
   if (impl->count > 1u) {
     qsort(impl->entries, impl->count, sizeof(impl->entries[0]),
           vectis_embedded_entry_compare);
@@ -904,6 +977,14 @@ vectis_embedded_fs_from_pack(const vectis_embedded_fs_config *config,
   lonejson_free(runtime);
   *out = &impl->api;
   return VECTIS_OK;
+}
+
+vectis_embedded_fs_extract_policy
+vectis_embedded_fs_default_extract_policy(const vectis_embedded_fs *fs) {
+  if (fs == NULL || fs->default_extract_policy == NULL) {
+    return VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS;
+  }
+  return fs->default_extract_policy(fs);
 }
 
 vectis_status vectis_embedded_fs_lookup(const vectis_embedded_fs *fs,

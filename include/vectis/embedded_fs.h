@@ -63,6 +63,9 @@ typedef vectis_status (*vectis_embedded_fs_chunk_fn)(const void *data,
                                                      vectis_error *error);
 
 struct vectis_embedded_fs {
+  /* Return the manifest-recorded default extraction policy. */
+  vectis_embedded_fs_extract_policy (*default_extract_policy)(
+      const vectis_embedded_fs *self);
   /* Lookup a file by absolute embedded path. "/" resolves to index_path. */
   vectis_status (*lookup)(const vectis_embedded_fs *self, const char *path,
                           int *found, vectis_embedded_fs_entry *out,
@@ -95,10 +98,25 @@ void vectis_embedded_fs_config_init(vectis_embedded_fs_config *config);
 /* Initialize extraction defaults. */
 void vectis_embedded_fs_extract_config_init(
     vectis_embedded_fs_extract_config *config);
+/* Return the canonical string for an extraction policy. Invalid values return
+ * "unknown".
+ */
+const char *vectis_embedded_fs_extract_policy_string(
+    vectis_embedded_fs_extract_policy policy);
+/* Parse an extraction policy string. Accepts canonical underscore spellings and
+ * CLI-friendly hyphen aliases. Returns non-zero on success.
+ */
+int vectis_embedded_fs_extract_policy_parse(
+    const char *value, vectis_embedded_fs_extract_policy *out);
 /* Parse a Vectis pack manifest and return an owned receiver-shell handle. */
 vectis_status
 vectis_embedded_fs_from_pack(const vectis_embedded_fs_config *config,
                              vectis_embedded_fs **out, vectis_error *error);
+/* Free-function wrapper for fs->default_extract_policy. NULL fs returns
+ * fail_exists.
+ */
+vectis_embedded_fs_extract_policy
+vectis_embedded_fs_default_extract_policy(const vectis_embedded_fs *fs);
 /* Free-function wrapper for fs->lookup. */
 vectis_status vectis_embedded_fs_lookup(const vectis_embedded_fs *fs,
                                         const char *path, int *found,
