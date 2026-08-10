@@ -496,6 +496,10 @@ run_lua_examples() {
     '    done_body = "handled\n",' \
     '  },' \
     '}))' \
+    'assert(server:static_embedded({' \
+    '  path_prefix = "/",' \
+    '  cache_control = "no-store",' \
+    '}))' \
     'assert(server:start())' \
     'while true do' \
     '  os.execute("sleep 3600")' \
@@ -553,6 +557,15 @@ run_lua_examples() {
     *'packed service asset'*) ;;
     *)
       printf '%s\n' "Unexpected packed static response: $body" >&2
+      return 1
+      ;;
+  esac
+  body=$(curl_or_log "$packed_service_log" "packed root static index" --max-time 3 -fsS \
+    "http://127.0.0.1:$kore_packed_port/")
+  case "$body" in
+    *'packed service asset'*) ;;
+    *)
+      printf '%s\n' "Unexpected packed root static response: $body" >&2
       return 1
       ;;
   esac
