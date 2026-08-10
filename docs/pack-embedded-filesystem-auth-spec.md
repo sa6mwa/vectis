@@ -333,6 +333,9 @@ Required deterministic e2e coverage:
 - verify user mutations affect only the extracted docroot, not embedded assets,
 - expose one auth-guarded routed page or JSON endpoint through the same auth
   provider,
+- run Kore HTTP/WebDAV and a liblockdc consumer service in the same Vectis
+  process, proving the web server remains responsive while the consumer service
+  receives and handles lockd messages,
 - run HTTPS using a generated private self-signed certificate,
 - run HTTP listener behavior expected by the app, such as direct HTTP serving or
   redirect to HTTPS depending on config,
@@ -376,6 +379,12 @@ Email-token e2e coverage:
 7. Full packed webserver e2e.
    Generate a generic site, pack it, run HTTP/HTTPS, auth-guard a route,
    extract docroot, and run WebDAV operations.
+
+8. Kore plus lockd consumer-service e2e.
+   Run one Vectis process with Kore HTTP/WebDAV routes and an app-owned
+   liblockdc consumer service, enqueue lockd messages, prove the consumer
+   receives them, and prove HTTP/WebDAV requests still succeed during consumer
+   service activity.
 
 ## Open Decisions
 

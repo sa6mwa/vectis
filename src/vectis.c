@@ -30,6 +30,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#include <vectis/embedded_fs.h>
 #include <vectis/webdav.h>
 
 typedef enum vectis_route_entry_kind {
@@ -94,6 +95,11 @@ typedef struct vectis_static_route_data {
   const char *root_dir;
   const char *content_type;
   const char *index_file;
+  const vectis_embedded_fs *embedded_fs;
+  const char *cache_control;
+  const char *not_found_body;
+  const char *not_found_content_type;
+  vectis_http_methods allowed_methods;
 } vectis_static_route_data;
 
 typedef struct vectis_upload_file_adapter {
@@ -1778,6 +1784,18 @@ void vectis_static_directory_config_init(
   config->methods = VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD;
 }
 
+void vectis_static_embedded_config_init(vectis_static_embedded_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->content_type = "application/octet-stream";
+  config->cache_control = "no-cache";
+  config->not_found_body = "not found\n";
+  config->not_found_content_type = "text/plain; charset=utf-8";
+  config->methods = VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD;
+}
+
 static char *vectis_strdup(const char *value) {
   size_t len;
   char *copy;
@@ -3037,6 +3055,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   app->prefixed_dsv_route = vectis_register_prefixed_dsv_route;
   app->static_file = vectis_register_static_file;
   app->static_directory = vectis_register_static_directory;
+  app->static_embedded = vectis_register_static_embedded;
   app->openapi_doc = vectis_attach_openapi_doc;
   app->openapi = vectis_generate_openapi;
   app->route_count = vectis_route_count;
@@ -3532,11 +3551,12 @@ vectis_static_methods_or_default(vectis_http_methods methods) {
   return methods;
 }
 
-static vectis_static_route_data *
-vectis_static_route_data_new(int directory, const char *path_prefix,
-                             const char *file_path, const char *root_dir,
-                             const char *content_type, const char *index_file,
-                             vectis_error *error) {
+static vectis_static_route_data *vectis_static_route_data_new(
+    int directory, const char *path_prefix, const char *file_path,
+    const char *root_dir, const char *content_type, const char *index_file,
+    const vectis_embedded_fs *embedded_fs, const char *cache_control,
+    const char *not_found_body, const char *not_found_content_type,
+    vectis_http_methods allowed_methods, vectis_error *error) {
   vectis_static_route_data *data;
   char *cursor;
   size_t total;
@@ -3548,6 +3568,10 @@ vectis_static_route_data_new(int directory, const char *path_prefix,
   total += root_dir != NULL ? strlen(root_dir) + 1u : 0u;
   total += content_type != NULL ? strlen(content_type) + 1u : 0u;
   total += index_file != NULL ? strlen(index_file) + 1u : 0u;
+  total += cache_control != NULL ? strlen(cache_control) + 1u : 0u;
+  total += not_found_body != NULL ? strlen(not_found_body) + 1u : 0u;
+  total +=
+      not_found_content_type != NULL ? strlen(not_found_content_type) + 1u : 0u;
   data = (vectis_static_route_data *)calloc(1u, total);
   if (data == NULL) {
     vectis_set_error(error, VECTIS_ERR_NOMEM,
@@ -3555,6 +3579,8 @@ vectis_static_route_data_new(int directory, const char *path_prefix,
     return NULL;
   }
   data->directory = directory;
+  data->embedded_fs = embedded_fs;
+  data->allowed_methods = allowed_methods;
   cursor = (char *)(data + 1);
 #define VECTIS_COPY_STATIC_FIELD(field, value)                                 \
   do {                                                                         \
@@ -3570,6 +3596,9 @@ vectis_static_route_data_new(int directory, const char *path_prefix,
   VECTIS_COPY_STATIC_FIELD(root_dir, root_dir);
   VECTIS_COPY_STATIC_FIELD(content_type, content_type);
   VECTIS_COPY_STATIC_FIELD(index_file, index_file);
+  VECTIS_COPY_STATIC_FIELD(cache_control, cache_control);
+  VECTIS_COPY_STATIC_FIELD(not_found_body, not_found_body);
+  VECTIS_COPY_STATIC_FIELD(not_found_content_type, not_found_content_type);
 #undef VECTIS_COPY_STATIC_FIELD
   (void)len;
   return data;
@@ -3709,6 +3738,150 @@ static vectis_status vectis_static_directory_dispatch(vectis_app *app,
   return status;
 }
 
+static const char *vectis_static_embedded_allow(vectis_http_methods methods) {
+  if ((methods & VECTIS_HTTP_METHODS_GET) != 0u &&
+      (methods & VECTIS_HTTP_METHODS_HEAD) != 0u) {
+    return "GET, HEAD";
+  }
+  if ((methods & VECTIS_HTTP_METHODS_HEAD) != 0u) {
+    return "HEAD";
+  }
+  return "GET";
+}
+
+static vectis_status vectis_static_embedded_header(vectis_response *response,
+                                                   const char *name,
+                                                   const char *value,
+                                                   vectis_error *error) {
+  if (value == NULL || value[0] == '\0') {
+    return VECTIS_OK;
+  }
+  return vectis_response_header(response, name, value, error);
+}
+
+static vectis_status vectis_static_embedded_not_found(
+    const vectis_static_route_data *data, vectis_request *request,
+    vectis_response *response, vectis_error *error) {
+  vectis_bytes body;
+  const char *not_found_body;
+  const char *content_type;
+  size_t body_size;
+
+  not_found_body = data->not_found_body != NULL ? data->not_found_body : "";
+  body_size = strlen(not_found_body);
+  content_type = data->not_found_content_type != NULL
+                     ? data->not_found_content_type
+                     : "text/plain; charset=utf-8";
+  if (vectis_response_header(response, "cache-control", "no-store", error) !=
+          VECTIS_OK ||
+      vectis_static_embedded_header(response, "content-type", content_type,
+                                    error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (vectis_request_method(request) == VECTIS_HTTP_HEAD) {
+    return vectis_response_status(response, 404, error);
+  }
+  body.data = not_found_body;
+  body.size = body_size;
+  return vectis_response_bytes(response, 404, content_type, body, error);
+}
+
+static vectis_status vectis_static_embedded_response(
+    const vectis_static_route_data *data, vectis_request *request,
+    vectis_response *response, const vectis_embedded_fs_entry *entry,
+    vectis_error *error) {
+  vectis_bytes body;
+  const char *content_type;
+  char etag[80];
+
+  content_type =
+      entry->content_type != NULL ? entry->content_type : data->content_type;
+  if (content_type == NULL || content_type[0] == '\0') {
+    content_type = "application/octet-stream";
+  }
+  if (data->cache_control != NULL &&
+      vectis_response_header(response, "cache-control", data->cache_control,
+                             error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (entry->sha256 != NULL && strlen(entry->sha256) + 3u <= sizeof(etag)) {
+    (void)snprintf(etag, sizeof(etag), "\"%s\"", entry->sha256);
+    if (vectis_response_header(response, "etag", etag, error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    }
+  }
+  if (vectis_request_method(request) == VECTIS_HTTP_HEAD) {
+    if (vectis_static_embedded_header(response, "content-type", content_type,
+                                      error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    }
+    return vectis_response_status(response, 200, error);
+  }
+  body.data = entry->data;
+  body.size = entry->size;
+  return vectis_response_bytes(response, 200, content_type, body, error);
+}
+
+static vectis_status vectis_static_embedded_dispatch(vectis_app *app,
+                                                     vectis_request *request,
+                                                     vectis_response *response,
+                                                     void *userdata,
+                                                     vectis_error *error) {
+  vectis_static_route_data *data;
+  vectis_embedded_fs_entry entry;
+  vectis_http_method method;
+  vectis_http_methods method_mask;
+  const char *path;
+  const char *embedded_path;
+  size_t prefix_len;
+  int found;
+  vectis_status status;
+
+  (void)app;
+  data = (vectis_static_route_data *)userdata;
+  path = vectis_request_path(request);
+  if (data == NULL || data->path_prefix == NULL || data->embedded_fs == NULL ||
+      path == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "static embedded route is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  method = vectis_request_method(request);
+  method_mask = vectis_method_mask(method);
+  if (method_mask == VECTIS_HTTP_METHODS_NONE ||
+      (data->allowed_methods & method_mask) == 0u) {
+    if (vectis_response_header(
+            response, "allow",
+            vectis_static_embedded_allow(data->allowed_methods),
+            error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    }
+    return vectis_response_status(response, 405, error);
+  }
+  prefix_len = strlen(data->path_prefix);
+  if (strcmp(data->path_prefix, "/") == 0) {
+    embedded_path = path;
+  } else if (path[prefix_len] == '\0') {
+    embedded_path = "/";
+  } else if (path[prefix_len] == '/') {
+    embedded_path = path + prefix_len;
+  } else {
+    return vectis_static_embedded_not_found(data, request, response, error);
+  }
+  memset(&entry, 0, sizeof(entry));
+  found = 0;
+  status = data->embedded_fs->lookup(data->embedded_fs, embedded_path, &found,
+                                     &entry, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (!found) {
+    return vectis_static_embedded_not_found(data, request, response, error);
+  }
+  return vectis_static_embedded_response(data, request, response, &entry,
+                                         error);
+}
+
 static char *vectis_static_directory_regex(const char *prefix,
                                            vectis_error *error) {
   const char *p;
@@ -3796,11 +3969,11 @@ vectis_register_static_file(vectis_app *app,
                      "static file path and file_path are required");
     return VECTIS_ERR_INVALID;
   }
-  data = vectis_static_route_data_new(0, NULL, config->file_path, NULL,
-                                      config->content_type != NULL
-                                          ? config->content_type
-                                          : "application/octet-stream",
-                                      NULL, error);
+  data = vectis_static_route_data_new(
+      0, NULL, config->file_path, NULL,
+      config->content_type != NULL ? config->content_type
+                                   : "application/octet-stream",
+      NULL, NULL, NULL, NULL, NULL, VECTIS_HTTP_METHODS_NONE, error);
   if (data == NULL) {
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
@@ -3854,7 +4027,8 @@ vectis_register_static_directory(vectis_app *app,
       1, path_prefix, NULL, config->root_dir,
       config->content_type != NULL ? config->content_type
                                    : "application/octet-stream",
-      config->index_file != NULL ? config->index_file : "index.html", error);
+      config->index_file != NULL ? config->index_file : "index.html", NULL,
+      NULL, NULL, NULL, VECTIS_HTTP_METHODS_NONE, error);
   if (data == NULL) {
     free(path_prefix);
     free(regex);
@@ -3869,6 +4043,83 @@ vectis_register_static_directory(vectis_app *app,
   route.path_kind = VECTIS_ROUTE_PATH_REGEX;
   route.body = vectis_body_none();
   route.handler = vectis_static_directory_dispatch;
+  route.userdata = data;
+  status = vectis_app_register_route_owned_userdata(app, &route, 1, error);
+  free(regex);
+  if (status != VECTIS_OK) {
+    free(data);
+  }
+  return status;
+}
+
+vectis_status
+vectis_register_static_embedded(vectis_app *app,
+                                const vectis_static_embedded_config *config,
+                                vectis_error *error) {
+  vectis_route_config route;
+  vectis_static_route_data *data;
+  vectis_status status;
+  char *regex;
+  char *path_prefix;
+  vectis_http_methods allowed_methods;
+
+  path_prefix = NULL;
+  if (config == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "static embedded config is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->path_prefix == NULL || config->fs == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "static embedded path_prefix and fs are required");
+    return VECTIS_ERR_INVALID;
+  }
+  allowed_methods = vectis_static_methods_or_default(config->methods);
+  if (allowed_methods == VECTIS_HTTP_METHODS_NONE ||
+      (allowed_methods &
+       ~(VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD)) != 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "static embedded methods must be GET and/or HEAD");
+    return VECTIS_ERR_INVALID;
+  }
+  path_prefix =
+      vectis_normalize_static_directory_prefix(config->path_prefix, error);
+  if (path_prefix == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  if (vectis_validate_route_path(path_prefix, VECTIS_ROUTE_PATH_LITERAL,
+                                 error) != VECTIS_OK) {
+    free(path_prefix);
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  regex = vectis_static_directory_regex(path_prefix, error);
+  if (regex == NULL) {
+    free(path_prefix);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  data = vectis_static_route_data_new(
+      2, path_prefix, NULL, NULL,
+      config->content_type != NULL ? config->content_type
+                                   : "application/octet-stream",
+      NULL, config->fs,
+      config->cache_control != NULL ? config->cache_control : "no-cache",
+      config->not_found_body != NULL ? config->not_found_body : "not found\n",
+      config->not_found_content_type != NULL ? config->not_found_content_type
+                                             : "text/plain; charset=utf-8",
+      allowed_methods, error);
+  if (data == NULL) {
+    free(path_prefix);
+    free(regex);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  free(path_prefix);
+  vectis_route_config_init(&route);
+  route.method = VECTIS_HTTP_GET;
+  route.methods = VECTIS_HTTP_METHODS_ALL;
+  route.path = regex;
+  route.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  route.body = vectis_body_none();
+  route.handler = vectis_static_embedded_dispatch;
   route.userdata = data;
   status = vectis_app_register_route_owned_userdata(app, &route, 1, error);
   free(regex);

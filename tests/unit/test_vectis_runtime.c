@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <vectis/embedded_fs.h>
 #include <vectis/vectis.h>
 #include <vectis/webdav.h>
 
@@ -1054,6 +1055,10 @@ static void assert_kore_smoke(void) {
   vectis_http_response stream_file_response;
   vectis_http_response xml_route_response;
   vectis_http_response dsv_route_response;
+  vectis_http_response embedded_response;
+  vectis_http_response embedded_head_response;
+  vectis_http_response embedded_missing_response;
+  vectis_http_response embedded_method_response;
   vectis_http_response webdav_response;
   vectis_http_response webdav_get_response;
   vectis_http_response webdav_propfind_response;
@@ -1071,6 +1076,8 @@ static void assert_kore_smoke(void) {
   vectis_upload_file_route_config stream_file_route;
   vectis_xml_route_config xml_route;
   vectis_dsv_route_config dsv_route;
+  vectis_static_embedded_config embedded_mount;
+  vectis_embedded_fs_config embedded_fs_config;
   vectis_webdav_config webdav_storage;
   vectis_webdav_mount_config webdav_mount;
   vectis_xml_config xml_config;
@@ -1086,6 +1093,17 @@ static void assert_kore_smoke(void) {
   const char json_source_path[] = "/tmp/vectis-runtime-json-source.txt";
   const char response_file_path[] = "/tmp/vectis-runtime-response.txt";
   const char response_file_body[] = "file-response";
+  static const unsigned char embedded_payload[] = "hello\napp\n";
+  static const char embedded_manifest[] =
+      "{\"format\":\"vectis-pack\",\"assets\":["
+      "{\"path\":\"/index.html\",\"offset\":0,\"size\":6,"
+      "\"sha256\":"
+      "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\","
+      "\"content_type\":\"text/html\"},"
+      "{\"path\":\"/assets/app.txt\",\"offset\":6,\"size\":4,"
+      "\"sha256\":"
+      "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\","
+      "\"content_type\":\"text/plain\"}]}";
   char webdav_cache_dir[] = "/tmp/vectis-runtime-webdav.XXXXXX";
   const char *webdav_headers[] = {"x-vectis-webdav-auth: ok"};
   const char *webdav_required_headers[] = {"x-vectis-webdav-auth: required"};
@@ -1096,6 +1114,7 @@ static void assert_kore_smoke(void) {
   vectis_status second_status;
   vectis_app *app;
   vectis_app *second_app;
+  vectis_embedded_fs *embedded_fs;
   FILE *fp;
   char *default_spooled_body;
   char *stream_body;
@@ -1128,6 +1147,10 @@ static void assert_kore_smoke(void) {
   memset(&stream_file_response, 0, sizeof(stream_file_response));
   memset(&xml_route_response, 0, sizeof(xml_route_response));
   memset(&dsv_route_response, 0, sizeof(dsv_route_response));
+  memset(&embedded_response, 0, sizeof(embedded_response));
+  memset(&embedded_head_response, 0, sizeof(embedded_head_response));
+  memset(&embedded_missing_response, 0, sizeof(embedded_missing_response));
+  memset(&embedded_method_response, 0, sizeof(embedded_method_response));
   memset(&webdav_response, 0, sizeof(webdav_response));
   memset(&webdav_get_response, 0, sizeof(webdav_get_response));
   memset(&webdav_propfind_response, 0, sizeof(webdav_propfind_response));
@@ -1136,6 +1159,7 @@ static void assert_kore_smoke(void) {
   memset(&json_source_request, 0, sizeof(json_source_request));
   memset(&no_body_request, 0, sizeof(no_body_request));
   memset(&json_source_doc, 0, sizeof(json_source_doc));
+  embedded_fs = NULL;
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
@@ -1158,6 +1182,15 @@ static void assert_kore_smoke(void) {
   webdav_storage.site_id = "runtime";
   webdav_storage.max_file_bytes = 4096u;
   webdav_storage.max_total_bytes = 65536u;
+  vectis_embedded_fs_config_init(&embedded_fs_config);
+  embedded_fs_config.manifest_json = embedded_manifest;
+  embedded_fs_config.manifest_json_size = sizeof(embedded_manifest) - 1u;
+  embedded_fs_config.payload = embedded_payload;
+  embedded_fs_config.payload_size = sizeof(embedded_payload) - 1u;
+  status =
+      vectis_embedded_fs_from_pack(&embedded_fs_config, &embedded_fs, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_fs != NULL);
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/health", sample_handler, NULL);
@@ -1259,6 +1292,11 @@ static void assert_kore_smoke(void) {
                             (void *)response_file_path);
   status = vectis_register_route(app, &file_route, &error);
   assert(status == VECTIS_OK);
+  vectis_static_embedded_config_init(&embedded_mount);
+  embedded_mount.path_prefix = "/embedded";
+  embedded_mount.fs = embedded_fs;
+  status = app->static_embedded(app, &embedded_mount, &error);
+  assert(status == VECTIS_OK);
   vectis_webdav_mount_config_init(&webdav_mount);
   webdav_mount.path_prefix = "/dav";
   webdav_mount.storage = webdav_storage;
@@ -1325,6 +1363,59 @@ static void assert_kore_smoke(void) {
   assert_repeated_file_responses_do_not_leak_fds(
       &http, "http://127.0.0.1:28080/file", response_file_body,
       sizeof(response_file_body) - 1u, &error);
+
+  status = vectis_http_get(&http, "http://127.0.0.1:28080/embedded",
+                           &embedded_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_response.status_code == 200L);
+  assert(embedded_response.content_type != NULL);
+  assert(strcmp(embedded_response.content_type, "text/html") == 0);
+  assert(embedded_response.body_size == 6u);
+  assert(memcmp(embedded_response.body, "hello\n", 6u) == 0);
+  vectis_http_response_cleanup(&embedded_response);
+
+  status =
+      vectis_http_get(&http, "http://127.0.0.1:28080/embedded/assets/app.txt",
+                      &embedded_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_response.status_code == 200L);
+  assert(embedded_response.content_type != NULL);
+  assert(strcmp(embedded_response.content_type, "text/plain") == 0);
+  assert(embedded_response.body_size == 4u);
+  assert(memcmp(embedded_response.body, "app\n", 4u) == 0);
+  vectis_http_response_cleanup(&embedded_response);
+
+  status =
+      vectis_http_head(&http, "http://127.0.0.1:28080/embedded/assets/app.txt",
+                       &embedded_head_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_head_response.status_code == 200L);
+  assert(embedded_head_response.content_type != NULL);
+  assert(strcmp(embedded_head_response.content_type, "text/plain") == 0);
+  assert(embedded_head_response.body_size == 0u);
+  vectis_http_response_cleanup(&embedded_head_response);
+
+  status = vectis_http_get(&http, "http://127.0.0.1:28080/embedded/missing",
+                           &embedded_missing_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_missing_response.status_code == 404L);
+  assert(embedded_missing_response.content_type != NULL);
+  assert(strcmp(embedded_missing_response.content_type,
+                "text/plain; charset=utf-8") == 0);
+  assert(embedded_missing_response.body_size == strlen("not found\n"));
+  assert(memcmp(embedded_missing_response.body, "not found\n",
+                strlen("not found\n")) == 0);
+  vectis_http_response_cleanup(&embedded_missing_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_DELETE;
+  request.url = "http://127.0.0.1:28080/embedded/assets/app.txt";
+  status =
+      vectis_http_execute(&http, &request, &embedded_method_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_method_response.status_code == 405L);
+  assert(embedded_method_response.body_size == 0u);
+  vectis_http_response_cleanup(&embedded_method_response);
 
   status = vectis_http_get(&http, "http://127.0.0.1:28080/dav/runtime.txt",
                            &webdav_get_response, &error);
@@ -1684,6 +1775,7 @@ static void assert_kore_smoke(void) {
   status = vectis_stop(app, &error);
   assert(status == VECTIS_OK);
   app->close(app);
+  vectis_embedded_fs_close(embedded_fs);
 }
 
 #ifdef VECTIS_RUNTIME_HEADER_LIMIT_ONLY

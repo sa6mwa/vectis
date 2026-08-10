@@ -44,6 +44,7 @@ struct lc_consumer_service_config;
 typedef struct vectis_app vectis_app;
 typedef struct vectis_consumer_service vectis_consumer_service;
 typedef struct vectis_http_client vectis_http_client;
+typedef struct vectis_embedded_fs vectis_embedded_fs;
 typedef struct vectis_sftp vectis_sftp;
 typedef struct vectis_ssh vectis_ssh;
 typedef struct vectis_mqtt vectis_mqtt;
@@ -407,6 +408,24 @@ typedef struct vectis_static_directory_config {
   const char *index_file;
   vectis_http_methods methods;
 } vectis_static_directory_config;
+
+/* Read-only HTTP mount over a borrowed vectis_embedded_fs handle. The caller
+ * must keep fs alive until the app is closed or the route is no longer used.
+ * NULL content_type defaults to application/octet-stream for entries without a
+ * manifest content type. NULL cache_control defaults to no-cache. NULL
+ * not_found_body defaults to "not found\n"; NULL not_found_content_type
+ * defaults to text/plain; charset=utf-8. methods may contain only GET and HEAD
+ * and defaults to both.
+ */
+typedef struct vectis_static_embedded_config {
+  const char *path_prefix;
+  const vectis_embedded_fs *fs;
+  const char *content_type;
+  const char *cache_control;
+  const char *not_found_body;
+  const char *not_found_content_type;
+  vectis_http_methods methods;
+} vectis_static_embedded_config;
 
 typedef vectis_status (*vectis_json_route_handler_fn)(vectis_app *app,
                                                       vectis_request *request,
@@ -785,6 +804,9 @@ struct vectis_app {
   vectis_status (*static_directory)(
       vectis_app *self, const vectis_static_directory_config *config,
       vectis_error *error);
+  vectis_status (*static_embedded)(vectis_app *self,
+                                   const vectis_static_embedded_config *config,
+                                   vectis_error *error);
 
   /* Attach per-route OpenAPI metadata or generate an OpenAPI document from the
    * current route registry. Generation writes to `out`; callers clean it with
@@ -1069,6 +1091,7 @@ vectis_dsv_route_methods(vectis_http_methods methods, const char *path,
 void vectis_static_file_config_init(vectis_static_file_config *config);
 void vectis_static_directory_config_init(
     vectis_static_directory_config *config);
+void vectis_static_embedded_config_init(vectis_static_embedded_config *config);
 
 vectis_app *vectis_app_new(const vectis_app_config *config,
                            vectis_error *error);
@@ -1132,6 +1155,10 @@ vectis_status
 vectis_register_static_directory(vectis_app *app,
                                  const vectis_static_directory_config *config,
                                  vectis_error *error);
+vectis_status
+vectis_register_static_embedded(vectis_app *app,
+                                const vectis_static_embedded_config *config,
+                                vectis_error *error);
 vectis_status vectis_attach_openapi_doc(vectis_app *app,
                                         vectis_http_methods methods,
                                         const char *path,

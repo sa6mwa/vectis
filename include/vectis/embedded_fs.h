@@ -8,8 +8,6 @@
 extern "C" {
 #endif
 
-typedef struct vectis_embedded_fs vectis_embedded_fs;
-
 /* Extraction behavior when an embedded asset already exists on disk. */
 typedef enum vectis_embedded_fs_extract_policy {
   VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS = 0,
