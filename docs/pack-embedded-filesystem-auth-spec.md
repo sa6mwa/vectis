@@ -490,7 +490,9 @@ embedded site over HTTPS. Pack smoke coverage also proves symlink asset sources
 are rejected by default for directory, single-file, and manifest inputs, then
 opt-in `--follow-symlinks` packages followed file content as ordinary embedded
 read-only assets. Native auth route smoke coverage proves custom login
-templates can be loaded from the filesystem and from packed embedded assets.
+templates can be loaded from the filesystem and from packed embedded assets, and
+that supported login-template placeholders are expanded through escaped
+substitution before serving.
 Lua smoke coverage validates ACME-mode server config parsing and native startup
 diagnostics for missing domain or email without contacting a live ACME provider.
 

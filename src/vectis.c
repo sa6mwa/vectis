@@ -5446,6 +5446,118 @@ static vectis_status vectis_auth_html_escape(vectis_string_builder *builder,
   return VECTIS_OK;
 }
 
+static int vectis_auth_template_space(char ch) {
+  return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == '\f';
+}
+
+static int vectis_auth_template_name_equals(const char *name, size_t name_len,
+                                            const char *expected) {
+  size_t expected_len;
+
+  expected_len = strlen(expected);
+  return name_len == expected_len && strncmp(name, expected, name_len) == 0;
+}
+
+static vectis_status
+vectis_auth_template_action(vectis_string_builder *builder,
+                            const vectis_auth_route_data *data,
+                            const char *suffix, vectis_error *error) {
+  vectis_string_builder action;
+  vectis_status status;
+
+  memset(&action, 0, sizeof(action));
+  status = vectis_string_builder_append(
+      &action, data->path_prefix != NULL ? data->path_prefix : "", error);
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(&action, suffix, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_html_escape(builder, action.data, error);
+  }
+  vectis_string_builder_cleanup(&action);
+  return status;
+}
+
+static vectis_status vectis_auth_template_placeholder(
+    vectis_string_builder *builder, const vectis_auth_route_data *data,
+    const char *name, size_t name_len, int *matched, vectis_error *error) {
+  const char *value;
+
+  *matched = 1;
+  value = NULL;
+  if (vectis_auth_template_name_equals(name, name_len, "login_title")) {
+    value = data->login_title;
+  } else if (vectis_auth_template_name_equals(name, name_len, "realm")) {
+    value = data->realm;
+  } else if (vectis_auth_template_name_equals(name, name_len, "path_prefix")) {
+    value = data->path_prefix;
+  } else if (vectis_auth_template_name_equals(name, name_len,
+                                              "email_token_action")) {
+    return vectis_auth_template_action(builder, data, "/email-token", error);
+  } else if (vectis_auth_template_name_equals(name, name_len,
+                                              "webdav_key_action")) {
+    return vectis_auth_template_action(builder, data, "/webdav-key", error);
+  } else {
+    *matched = 0;
+    return VECTIS_OK;
+  }
+  return vectis_auth_html_escape(builder, value, error);
+}
+
+static vectis_status
+vectis_auth_render_login_template(const vectis_auth_route_data *data,
+                                  vectis_string_builder *html,
+                                  vectis_error *error) {
+  const char *cursor;
+  const char *open;
+  const char *close;
+  const char *name_start;
+  const char *name_end;
+  vectis_status status;
+  size_t literal_len;
+  int matched;
+
+  cursor = data->login_template_html;
+  while (cursor != NULL && *cursor != '\0') {
+    open = strstr(cursor, "{{");
+    if (open == NULL) {
+      return vectis_string_builder_append(html, cursor, error);
+    }
+    literal_len = (size_t)(open - cursor);
+    status = vectis_string_builder_append_n(html, cursor, literal_len, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    close = strstr(open + 2, "}}");
+    if (close == NULL) {
+      return vectis_string_builder_append(html, open, error);
+    }
+    name_start = open + 2;
+    name_end = close;
+    while (name_start < name_end && vectis_auth_template_space(*name_start)) {
+      name_start++;
+    }
+    while (name_end > name_start && vectis_auth_template_space(name_end[-1])) {
+      name_end--;
+    }
+    status = vectis_auth_template_placeholder(html, data, name_start,
+                                              (size_t)(name_end - name_start),
+                                              &matched, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    if (!matched) {
+      status = vectis_string_builder_append_n(
+          html, open, (size_t)((close + 2) - open), error);
+      if (status != VECTIS_OK) {
+        return status;
+      }
+    }
+    cursor = close + 2;
+  }
+  return VECTIS_OK;
+}
+
 static vectis_status
 vectis_auth_login_form_response(const vectis_auth_route_data *data,
                                 vectis_response *response,
@@ -5455,8 +5567,18 @@ vectis_auth_login_form_response(const vectis_auth_route_data *data,
   vectis_status status;
 
   if (data->login_template_html != NULL) {
-    return vectis_response_text(response, 200, "text/html; charset=utf-8",
-                                data->login_template_html, error);
+    memset(&html, 0, sizeof(html));
+    status = vectis_auth_render_login_template(data, &html, error);
+    if (status != VECTIS_OK) {
+      vectis_string_builder_cleanup(&html);
+      return status;
+    }
+    body.data = html.data;
+    body.size = html.size;
+    status = vectis_response_bytes(response, 200, "text/html; charset=utf-8",
+                                   body, error);
+    vectis_string_builder_cleanup(&html);
+    return status;
   }
   memset(&html, 0, sizeof(html));
   status = vectis_string_builder_append(
