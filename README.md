@@ -171,8 +171,10 @@ that produce a complete JSON array are named and treated as materializing APIs.
 ## Runtime And Protocol Surfaces
 
 Kore is the embedded HTTP/TLS runtime. Vectis currently allows one active
-Kore-backed routed app per process. Independent servers or separate blocking
-consumer loops should run in separate processes.
+Kore-backed routed app per process. That process must still be able to host
+ordinary API routes, WebDAV routes, and app-owned lockd consumer services
+together; separate processes are for independent service instances, not for the
+normal web server plus consumer app shape.
 
 Lockd is optional for Kore-only services. When configured, app-owned lockd
 clients are process-local and opened lazily in Kore workers where appropriate.

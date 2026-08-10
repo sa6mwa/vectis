@@ -13,6 +13,7 @@ extern "C" {
 #define VECTIS_AUTH_PRINCIPAL_MAX 254u
 #define VECTIS_AUTH_CHALLENGE_MAX 255u
 #define VECTIS_AUTH_GENERATED_PASSWORD_MAX 64u
+#define VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS 300u
 
 typedef enum vectis_auth_mode {
   VECTIS_AUTH_MODE_DEFAULT = 0,
@@ -159,6 +160,44 @@ typedef struct vectis_auth_login_config {
   /* Defaults to 1 time-step. */
   unsigned int totp_window;
 } vectis_auth_login_config;
+
+typedef struct vectis_auth_email_token_issue_config {
+  vectis_auth_store_config store;
+  const char *username;
+  const char *realm;
+  const char *email;
+  /* Optional deterministic values for tests or externally created flows. */
+  const char *transaction_id;
+  const char *token;
+  uint64_t now_seconds;
+  uint64_t ttl_seconds;
+} vectis_auth_email_token_issue_config;
+
+typedef struct vectis_auth_email_token {
+  /* Owned strings. Release with vectis_auth_email_token_cleanup(). */
+  char *transaction_id;
+  char *token;
+  uint64_t expires_at;
+} vectis_auth_email_token;
+
+typedef struct vectis_auth_email_token_verify_config {
+  vectis_auth_store_config store;
+  const char *transaction_id;
+  const char *username;
+  const char *realm;
+  const char *token;
+  uint64_t now_seconds;
+} vectis_auth_email_token_verify_config;
+
+typedef struct vectis_auth_email_token_result {
+  int verified;
+  int expired;
+  /* Owned strings when the transaction is found. Release with
+   * vectis_auth_email_token_result_cleanup(). */
+  char *username;
+  char *realm;
+  char *email;
+} vectis_auth_email_token_result;
 
 typedef struct vectis_auth_oauth2_http_request {
   const char *method;
@@ -363,6 +402,16 @@ void vectis_auth_user_enrollment_init(vectis_auth_user_enrollment *enrollment);
 void vectis_auth_user_enrollment_cleanup(
     vectis_auth_user_enrollment *enrollment);
 void vectis_auth_login_config_init(vectis_auth_login_config *config);
+void vectis_auth_email_token_issue_config_init(
+    vectis_auth_email_token_issue_config *config);
+void vectis_auth_email_token_init(vectis_auth_email_token *token);
+void vectis_auth_email_token_cleanup(vectis_auth_email_token *token);
+void vectis_auth_email_token_verify_config_init(
+    vectis_auth_email_token_verify_config *config);
+void vectis_auth_email_token_result_init(
+    vectis_auth_email_token_result *result);
+void vectis_auth_email_token_result_cleanup(
+    vectis_auth_email_token_result *result);
 void vectis_auth_oauth2_http_response_init(
     vectis_auth_oauth2_http_response *response);
 void vectis_auth_oauth2_http_response_cleanup(
@@ -434,6 +483,12 @@ vectis_status
 vectis_auth_user_login(const vectis_auth_store_config *store_config,
                        const vectis_auth_login_config *login_config,
                        vectis_auth_result *out, vectis_error *error);
+vectis_status vectis_auth_email_token_issue(
+    const vectis_auth_email_token_issue_config *config,
+    vectis_auth_email_token *out, vectis_error *error);
+vectis_status vectis_auth_email_token_verify(
+    const vectis_auth_email_token_verify_config *config,
+    vectis_auth_email_token_result *out, vectis_error *error);
 vectis_status vectis_auth_issue_webdav_key_for_login(
     const vectis_auth_store_config *store_config,
     const vectis_auth_login_config *login_config,

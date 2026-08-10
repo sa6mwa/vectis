@@ -177,8 +177,10 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Make lockd optional for Kore-only C services while preserving validation for configured lockd transports.
 - [x] Define consumer registration and lifecycle APIs for C.
 - [x] Expose lockd consumer service startup/configuration directly, then layer Vectis-owned worker DX on top.
-- [ ] Define Lua consumer-service runner mode as a separate process from Kore server mode.
-- [ ] Make it clear in API errors when a Lua script attempts to run incompatible server and consumer loops in one process.
+- [ ] Allow one Vectis process to run a Kore-backed API/WebDAV server and an app-owned liblockdc `startconsumer` service simultaneously, with receiver-shell C APIs and Lua registration hooks.
+- [ ] Add a scenario test that serves WebDAV while receiving lockd messages through `startconsumer`, proving HTTP/WebDAV responsiveness during consumer activity.
+- [ ] Define Lua consumer-service runner behavior for the combined server-plus-consumer process model.
+- [ ] Make API errors explicit when a Lua script attempts to run genuinely incompatible runtime loops in one process.
 - [x] Add integration tests covering enqueue/dequeue/ack workflows.
 - [x] Add raw liblockdc C examples for open client, lease save/load, query, attachments, enqueue, manual dequeue, and managed consumer services.
 
@@ -275,6 +277,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Document operational limits around signing, notarization, stripping, hardening tools, and platform-specific executable formats.
 - [x] Add first smoke test that packages and executes a Lua script artifact.
 - [ ] Add tests that package a Lua API service and a Lua consumer service, then execute both artifacts.
+- [ ] Add a packed-service scenario that runs the embedded site/WebDAV server and lockd `startconsumer` service in one self-contained Vectis binary.
 
 ## Area 14: Verification and Release
 

@@ -259,6 +259,10 @@ int main(void) {
   vectis_auth_oauth2_stored_token_flow stored_flow;
   vectis_auth_oauth2_stored_token_flow_policy stored_policy;
   vectis_auth_oauth2_webdav_key_config oauth_webdav_config;
+  vectis_auth_email_token_issue_config email_issue;
+  vectis_auth_email_token email_token;
+  vectis_auth_email_token_verify_config email_verify;
+  vectis_auth_email_token_result email_result;
   vectis_auth_oidc_authorization_config oidc_authorization_config;
   vectis_auth_oidc_authorization oidc_authorization;
   vectis_auth_oidc_token_exchange_config oidc_exchange_config;
@@ -294,6 +298,10 @@ int main(void) {
   vectis_auth_oauth2_stored_token_flow_init(&stored_flow);
   vectis_auth_oauth2_stored_token_flow_policy_init(&stored_policy);
   vectis_auth_oauth2_webdav_key_config_init(&oauth_webdav_config);
+  vectis_auth_email_token_issue_config_init(&email_issue);
+  vectis_auth_email_token_init(&email_token);
+  vectis_auth_email_token_verify_config_init(&email_verify);
+  vectis_auth_email_token_result_init(&email_result);
   vectis_auth_oidc_authorization_config_init(&oidc_authorization_config);
   vectis_auth_oidc_authorization_init(&oidc_authorization);
   vectis_auth_oidc_token_exchange_config_init(&oidc_exchange_config);
@@ -327,6 +335,89 @@ int main(void) {
   store.credentials_path = credentials_path;
   status = vectis_auth_store_init(&store, &error);
   expect_ok(status, &error, "initializes credentials store");
+
+  vectis_auth_email_token_issue_config_init(&email_issue);
+  email_issue.store = store;
+  email_issue.username = "email-user@example.com";
+  email_issue.realm = "unit";
+  email_issue.email = "email-user@example.com";
+  email_issue.transaction_id = "email-tx-1";
+  email_issue.token = "123456";
+  email_issue.now_seconds = 1000;
+  email_issue.ttl_seconds = 300;
+  status = vectis_auth_email_token_issue(&email_issue, &email_token, &error);
+  expect_ok(status, &error, "issues email auth token");
+  expect(email_token.transaction_id != NULL &&
+             strcmp(email_token.transaction_id, "email-tx-1") == 0,
+         "email token carries transaction id");
+  expect(email_token.token != NULL && strcmp(email_token.token, "123456") == 0,
+         "email token carries configured token");
+  expect(email_token.expires_at == 1300, "email token applies ttl");
+
+  vectis_auth_email_token_verify_config_init(&email_verify);
+  email_verify.store = store;
+  email_verify.transaction_id = "email-tx-1";
+  email_verify.username = "email-user@example.com";
+  email_verify.realm = "unit";
+  email_verify.token = "000000";
+  email_verify.now_seconds = 1100;
+  status = vectis_auth_email_token_verify(&email_verify, &email_result, &error);
+  expect_ok(status, &error, "checks wrong email token");
+  expect(!email_result.verified && !email_result.expired,
+         "wrong email token is rejected without consuming transaction");
+  vectis_auth_email_token_result_cleanup(&email_result);
+
+  email_verify.token = "123456";
+  status = vectis_auth_email_token_verify(&email_verify, &email_result, &error);
+  expect_ok(status, &error, "verifies email auth token");
+  expect(email_result.verified && !email_result.expired,
+         "email token verifies before expiry");
+  expect(email_result.username != NULL &&
+             strcmp(email_result.username, "email-user@example.com") == 0,
+         "email token result carries username");
+  expect(email_result.realm != NULL && strcmp(email_result.realm, "unit") == 0,
+         "email token result carries realm");
+  expect(email_result.email != NULL &&
+             strcmp(email_result.email, "email-user@example.com") == 0,
+         "email token result carries email");
+  vectis_auth_email_token_result_cleanup(&email_result);
+
+  status = vectis_auth_email_token_verify(&email_verify, &email_result, &error);
+  expect_ok(status, &error, "checks replayed email token");
+  expect(!email_result.verified && !email_result.expired,
+         "verified email token is consumed");
+  vectis_auth_email_token_result_cleanup(&email_result);
+  vectis_auth_email_token_cleanup(&email_token);
+
+  vectis_auth_email_token_issue_config_init(&email_issue);
+  email_issue.store = store;
+  email_issue.username = "email-user@example.com";
+  email_issue.realm = "unit";
+  email_issue.email = "email-user@example.com";
+  email_issue.transaction_id = "email-tx-expired";
+  email_issue.token = "654321";
+  email_issue.now_seconds = 2000;
+  email_issue.ttl_seconds = 60;
+  status = vectis_auth_email_token_issue(&email_issue, &email_token, &error);
+  expect_ok(status, &error, "issues expiring email auth token");
+  vectis_auth_email_token_verify_config_init(&email_verify);
+  email_verify.store = store;
+  email_verify.transaction_id = "email-tx-expired";
+  email_verify.username = "email-user@example.com";
+  email_verify.realm = "unit";
+  email_verify.token = "654321";
+  email_verify.now_seconds = 2061;
+  status = vectis_auth_email_token_verify(&email_verify, &email_result, &error);
+  expect_ok(status, &error, "checks expired email token");
+  expect(!email_result.verified && email_result.expired,
+         "expired email token is rejected and reported");
+  vectis_auth_email_token_result_cleanup(&email_result);
+  status = vectis_auth_email_token_verify(&email_verify, &email_result, &error);
+  expect_ok(status, &error, "checks consumed expired email token");
+  expect(!email_result.verified && !email_result.expired,
+         "expired email token is consumed");
+  vectis_auth_email_token_result_cleanup(&email_result);
+  vectis_auth_email_token_cleanup(&email_token);
 
   vectis_auth_oidc_authorization_config_init(&oidc_authorization_config);
   oidc_authorization_config.authorization_endpoint =
@@ -869,6 +960,8 @@ int main(void) {
   expect(result.authenticated, "retains unrelated bearer credential");
 
   vectis_auth_result_cleanup(&result);
+  vectis_auth_email_token_result_cleanup(&email_result);
+  vectis_auth_email_token_cleanup(&email_token);
   vectis_auth_issued_credential_cleanup(&oauth_webdav_key);
   vectis_auth_issued_credential_cleanup(&webdav_key);
   vectis_auth_issued_credential_cleanup(&basic);
