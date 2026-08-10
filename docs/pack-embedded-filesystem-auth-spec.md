@@ -147,6 +147,7 @@ Required C concepts:
 Required Lua concepts:
 
 - `vectis.embedded.has_assets()`
+- `vectis.embedded.stat(path)`
 - `vectis.embedded.list(path)`
 - `vectis.embedded.read(path)`
 - `vectis.embedded.chunks(path, chunk_size)`

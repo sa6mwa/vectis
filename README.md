@@ -220,9 +220,9 @@ including SMTP usage through the same option-table model.
 
 `vectis -a pack` can append a Lua script, optional site/template assets, and
 optionally a lockd client bundle to the Linux executable with hashes and trailer
-metadata. Packed Lua can use `vectis.embedded.has_assets()`, `list()`, `read()`,
-`chunks()`, and `extract()` to serve read-only assets or initialize an extracted
-WebDAV docroot.
+metadata. Packed Lua can use `vectis.embedded.has_assets()`, `stat()`,
+`list()`, `read()`, `chunks()`, and `extract()` to serve read-only assets or
+initialize an extracted WebDAV docroot.
 
 The high-level Lua web/service framework is still an active implementation
 area. The C SDK is the stable design source until Lua parity catches up.

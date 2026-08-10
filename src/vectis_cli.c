@@ -49,6 +49,7 @@ typedef struct vectis_lua_runtime_context {
 typedef struct vectis_pack_asset {
   char *source_path;
   char *logical_path;
+  char *content_type;
   unsigned char *data;
   size_t size;
   size_t offset;
@@ -332,6 +333,90 @@ static int vectis_pack_logical_path_valid(const char *path) {
   return 1;
 }
 
+static int vectis_ascii_equal_ci(const char *left, const char *right) {
+  unsigned char a;
+  unsigned char b;
+
+  if (left == NULL || right == NULL) {
+    return 0;
+  }
+  while (*left != '\0' && *right != '\0') {
+    a = (unsigned char)*left++;
+    b = (unsigned char)*right++;
+    if (a >= 'A' && a <= 'Z') {
+      a = (unsigned char)(a - 'A' + 'a');
+    }
+    if (b >= 'A' && b <= 'Z') {
+      b = (unsigned char)(b - 'A' + 'a');
+    }
+    if (a != b) {
+      return 0;
+    }
+  }
+  return *left == '\0' && *right == '\0';
+}
+
+static const char *vectis_pack_content_type_for_path(const char *path) {
+  const char *slash;
+  const char *dot;
+
+  if (path == NULL) {
+    return NULL;
+  }
+  slash = strrchr(path, '/');
+  dot = strrchr(path, '.');
+  if (dot == NULL || (slash != NULL && dot < slash) || dot[1] == '\0') {
+    return NULL;
+  }
+  if (vectis_ascii_equal_ci(dot, ".html") ||
+      vectis_ascii_equal_ci(dot, ".htm")) {
+    return "text/html";
+  }
+  if (vectis_ascii_equal_ci(dot, ".css")) {
+    return "text/css";
+  }
+  if (vectis_ascii_equal_ci(dot, ".js") || vectis_ascii_equal_ci(dot, ".mjs")) {
+    return "application/javascript";
+  }
+  if (vectis_ascii_equal_ci(dot, ".json") ||
+      vectis_ascii_equal_ci(dot, ".map")) {
+    return "application/json";
+  }
+  if (vectis_ascii_equal_ci(dot, ".txt") ||
+      vectis_ascii_equal_ci(dot, ".text")) {
+    return "text/plain";
+  }
+  if (vectis_ascii_equal_ci(dot, ".svg")) {
+    return "image/svg+xml";
+  }
+  if (vectis_ascii_equal_ci(dot, ".png")) {
+    return "image/png";
+  }
+  if (vectis_ascii_equal_ci(dot, ".jpg") ||
+      vectis_ascii_equal_ci(dot, ".jpeg")) {
+    return "image/jpeg";
+  }
+  if (vectis_ascii_equal_ci(dot, ".gif")) {
+    return "image/gif";
+  }
+  if (vectis_ascii_equal_ci(dot, ".webp")) {
+    return "image/webp";
+  }
+  if (vectis_ascii_equal_ci(dot, ".ico")) {
+    return "image/x-icon";
+  }
+  if (vectis_ascii_equal_ci(dot, ".woff")) {
+    return "font/woff";
+  }
+  if (vectis_ascii_equal_ci(dot, ".woff2")) {
+    return "font/woff2";
+  }
+  if (vectis_ascii_equal_ci(dot, ".wasm")) {
+    return "application/wasm";
+  }
+  return NULL;
+}
+
 static char *vectis_pack_join_path(const char *left, const char *right,
                                    char separator) {
   size_t left_size;
@@ -392,6 +477,7 @@ static void vectis_pack_asset_list_cleanup(vectis_pack_asset_list *list) {
   for (i = 0u; i < list->count; ++i) {
     free(list->items[i].source_path);
     free(list->items[i].logical_path);
+    free(list->items[i].content_type);
     free(list->items[i].data);
   }
   free(list->items);
@@ -403,6 +489,7 @@ static int vectis_pack_asset_add(vectis_pack_asset_list *list,
                                  const char *logical_path) {
   vectis_pack_asset *asset;
   unsigned char *data;
+  const char *content_type;
   size_t size;
 
   if (!vectis_pack_logical_path_valid(logical_path)) {
@@ -423,9 +510,15 @@ static int vectis_pack_asset_add(vectis_pack_asset_list *list,
   memset(asset, 0, sizeof(*asset));
   asset->source_path = vectis_cli_strdup(source_path);
   asset->logical_path = vectis_cli_strdup(logical_path);
-  if (asset->source_path == NULL || asset->logical_path == NULL) {
+  content_type = vectis_pack_content_type_for_path(logical_path);
+  if (content_type != NULL) {
+    asset->content_type = vectis_cli_strdup(content_type);
+  }
+  if (asset->source_path == NULL || asset->logical_path == NULL ||
+      (content_type != NULL && asset->content_type == NULL)) {
     free(asset->source_path);
     free(asset->logical_path);
+    free(asset->content_type);
     free(data);
     memset(asset, 0, sizeof(*asset));
     return -1;
@@ -578,6 +671,14 @@ static int vectis_pack_build_manifest(vectis_pack_asset_list *assets,
     if (status == LONEJSON_STATUS_OK) {
       status =
           lonejson_writer_string(&writer, sha_hex, strlen(sha_hex), &error);
+    }
+    if (status == LONEJSON_STATUS_OK && assets->items[i].content_type != NULL) {
+      status = lonejson_writer_key(&writer, "content_type", 12u, &error);
+    }
+    if (status == LONEJSON_STATUS_OK && assets->items[i].content_type != NULL) {
+      status =
+          lonejson_writer_string(&writer, assets->items[i].content_type,
+                                 strlen(assets->items[i].content_type), &error);
     }
     if (status == LONEJSON_STATUS_OK) {
       status = lonejson_writer_end_object(&writer, &error);
@@ -2160,6 +2261,55 @@ static int vectis_lua_embedded_read(lua_State *lua) {
     return 2;
   }
   lua_pushlstring(lua, (const char *)body.data, body.size);
+  return 1;
+}
+
+static int vectis_lua_embedded_stat(lua_State *lua) {
+  vectis_lua_runtime_context *context;
+  const char *path;
+  vectis_embedded_fs_entry entry;
+  vectis_error error;
+  vectis_status status;
+  int found;
+
+  path = luaL_checkstring(lua, 1);
+  context = (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(
+      (void *)lua);
+  if (context == NULL || context->embedded_fs == NULL) {
+    lua_pushnil(lua);
+    lua_pushliteral(lua, "no embedded assets");
+    return 2;
+  }
+  vectis_error_clear(&error);
+  found = 0;
+  memset(&entry, 0, sizeof(entry));
+  status = vectis_embedded_fs_lookup(context->embedded_fs, path, &found, &entry,
+                                     &error);
+  if (status != VECTIS_OK) {
+    lua_pushnil(lua);
+    lua_pushstring(lua, error.message[0] != '\0'
+                            ? error.message
+                            : vectis_status_string(status));
+    return 2;
+  }
+  if (!found) {
+    lua_pushnil(lua);
+    lua_pushliteral(lua, "embedded asset not found");
+    return 2;
+  }
+  lua_newtable(lua);
+  lua_pushstring(lua, entry.path);
+  lua_setfield(lua, -2, "path");
+  lua_pushinteger(lua, (lua_Integer)entry.size);
+  lua_setfield(lua, -2, "size");
+  if (entry.content_type != NULL) {
+    lua_pushstring(lua, entry.content_type);
+    lua_setfield(lua, -2, "content_type");
+  }
+  if (entry.sha256 != NULL) {
+    lua_pushstring(lua, entry.sha256);
+    lua_setfield(lua, -2, "sha256");
+  }
   return 1;
 }
 
@@ -4770,6 +4920,8 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "has_assets");
   lua_pushcfunction(lua, vectis_lua_embedded_read);
   lua_setfield(lua, -2, "read");
+  lua_pushcfunction(lua, vectis_lua_embedded_stat);
+  lua_setfield(lua, -2, "stat");
   lua_pushcfunction(lua, vectis_lua_embedded_chunks);
   lua_setfield(lua, -2, "chunks");
   lua_pushcfunction(lua, vectis_lua_embedded_list);
