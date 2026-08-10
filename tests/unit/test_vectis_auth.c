@@ -1,3 +1,5 @@
+#include "vectis_internal.h"
+
 #include <vectis/auth.h>
 #include <vectis/webdav.h>
 
@@ -144,6 +146,7 @@ int main(void) {
   vectis_webdav_auth_provider_config webdav_auth_config;
   vectis_webdav_auth_request webdav_request;
   vectis_webdav_auth_response webdav_response;
+  vectis_request *webdav_vectis_request;
   vectis_error error;
   vectis_status status;
 
@@ -156,6 +159,7 @@ int main(void) {
   vectis_auth_provider_response_init(&provider_response);
   vectis_webdav_auth_provider_config_init(&webdav_auth_config);
   vectis_webdav_auth_response_init(&webdav_response);
+  webdav_vectis_request = NULL;
   vectis_error_clear(&error);
 
   if (mkdtemp(temp) == NULL) {
@@ -291,6 +295,33 @@ int main(void) {
          "native provider denies purpose mismatch");
   vectis_auth_provider_response_cleanup(&provider_response);
 
+  webdav_vectis_request = vectis_internal_request_new(&error);
+  expect(webdav_vectis_request != NULL,
+         "creates internal request for native WebDAV auth");
+  if (webdav_vectis_request != NULL) {
+    status = vectis_internal_request_add_header(
+        webdav_vectis_request, "authorization", basic_header, &error);
+    expect_ok(status, &error, "adds Basic Authorization header");
+    vectis_webdav_auth_provider_config_init(&webdav_auth_config);
+    webdav_auth_config.provider = &provider;
+    webdav_auth_config.purpose = "webdav";
+    webdav_auth_config.allowed_auth_modes = VECTIS_AUTH_MODE_BASIC;
+    memset(&webdav_request, 0, sizeof(webdav_request));
+    webdav_request.request = webdav_vectis_request;
+    webdav_request.method = VECTIS_HTTP_PROPFIND;
+    webdav_request.mount_path_prefix = "/dav";
+    webdav_request.resource_path = "/docs";
+    status = vectis_webdav_auth_provider(&webdav_request, &webdav_response,
+                                         &webdav_auth_config, &error);
+    expect_ok(status, &error, "maps native Basic provider into WebDAV");
+    expect(webdav_response.action == VECTIS_WEBDAV_AUTH_ALLOW,
+           "WebDAV adapter allows native Basic credential");
+    expect(strcmp(webdav_response.principal, "mike@example.com") == 0,
+           "WebDAV adapter maps native principal");
+    vectis_internal_request_free(webdav_vectis_request);
+    webdav_vectis_request = NULL;
+  }
+
   status = vectis_auth_provider_from_callback(
       &custom_provider, sample_auth_provider, (void *)"allow", &error);
   expect_ok(status, &error, "creates callback auth provider");
@@ -338,6 +369,7 @@ int main(void) {
   vectis_auth_result_cleanup(&result);
   vectis_auth_issued_credential_cleanup(&basic);
   vectis_auth_issued_credential_cleanup(&bearer);
+  vectis_internal_request_free(webdav_vectis_request);
   remove_tree(temp);
   return failures == 0 ? 0 : 1;
 }
