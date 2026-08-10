@@ -28,6 +28,7 @@
 #define VECTIS_AUTH_PASSWORD_ITERATIONS 150000u
 #define VECTIS_AUTH_RANDOM_PASSWORD_BYTES 24u
 #define VECTIS_AUTH_RANDOM_TOTP_BYTES 20u
+#define VECTIS_AUTH_RANDOM_OIDC_BYTES 16u
 
 typedef struct vectis_auth_store_lock {
   int fd;
@@ -1725,6 +1726,67 @@ void vectis_auth_oauth2_webdav_key_config_init(
   vectis_auth_store_config_init(&config->store);
 }
 
+void vectis_auth_oidc_authorization_config_init(
+    vectis_auth_oidc_authorization_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->scope = "openid";
+}
+
+void vectis_auth_oidc_authorization_init(
+    vectis_auth_oidc_authorization *authorization) {
+  if (authorization == NULL) {
+    return;
+  }
+  memset(authorization, 0, sizeof(*authorization));
+}
+
+void vectis_auth_oidc_authorization_cleanup(
+    vectis_auth_oidc_authorization *authorization) {
+  if (authorization == NULL) {
+    return;
+  }
+  free(authorization->authorization_url);
+  free(authorization->code_verifier);
+  free(authorization->code_challenge);
+  free(authorization->state);
+  free(authorization->nonce);
+  vectis_auth_oidc_authorization_init(authorization);
+}
+
+void vectis_auth_oidc_token_exchange_config_init(
+    vectis_auth_oidc_token_exchange_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  vectis_auth_oauth2_transport_config_init(&config->transport);
+}
+
+void vectis_auth_oidc_token_exchange_init(
+    vectis_auth_oidc_token_exchange *exchange) {
+  if (exchange == NULL) {
+    return;
+  }
+  memset(exchange, 0, sizeof(*exchange));
+  vectis_auth_oauth2_token_response_init(&exchange->token);
+  vectis_auth_oauth2_token_flow_init(&exchange->flow);
+}
+
+void vectis_auth_oidc_token_exchange_cleanup(
+    vectis_auth_oidc_token_exchange *exchange) {
+  if (exchange == NULL) {
+    return;
+  }
+  free(exchange->code);
+  free(exchange->state);
+  vectis_auth_oauth2_token_response_cleanup(&exchange->token);
+  vectis_auth_oauth2_token_flow_cleanup(&exchange->flow);
+  vectis_auth_oidc_token_exchange_init(exchange);
+}
+
 static void vectis_auth_hex_encode(const unsigned char *data, size_t len,
                                    char *out) {
   static const char digits[] = "0123456789abcdef";
@@ -1830,6 +1892,23 @@ static vectis_status vectis_auth_generate_totp_secret(char *out,
     out[n++] = base32[(buffer << (5u - bits)) & 31u];
   }
   out[n] = '\0';
+  OPENSSL_cleanse(bytes, sizeof(bytes));
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_generate_oidc_value(char *out, size_t out_size,
+                                                     vectis_error *error) {
+  unsigned char bytes[VECTIS_AUTH_RANDOM_OIDC_BYTES];
+
+  if (out == NULL || out_size < VECTIS_AUTH_RANDOM_OIDC_BYTES * 2u + 1u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OIDC random value buffer is too small");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_auth_random_bytes(bytes, sizeof(bytes), error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  vectis_auth_hex_encode(bytes, sizeof(bytes), out);
   OPENSSL_cleanse(bytes, sizeof(bytes));
   return VECTIS_OK;
 }
@@ -3679,6 +3758,220 @@ vectis_status vectis_auth_issue_webdav_key_for_oauth2_flow(
   issue.auth_modes = VECTIS_AUTH_MODE_BASIC;
   issue.max_record_bytes = config->max_record_bytes;
   status = vectis_auth_issue_credential(&config->store, &issue, out, error);
+  return status;
+}
+
+vectis_status vectis_auth_oidc_authorization_start(
+    const vectis_auth_oidc_authorization_config *config,
+    vectis_auth_oidc_authorization *out, vectis_error *error) {
+  lonejson *runtime;
+  lonejson_oidc_pkce pkce;
+  lonejson_oidc_authorization_request request;
+  lonejson_owned_buffer challenge;
+  lonejson_owned_buffer url;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  vectis_status status;
+  char state[VECTIS_AUTH_RANDOM_OIDC_BYTES * 2u + 1u];
+  char nonce[VECTIS_AUTH_RANDOM_OIDC_BYTES * 2u + 1u];
+  const char *state_value;
+  const char *nonce_value;
+  const char *verifier_value;
+  const char *challenge_value;
+
+  if (config == NULL || out == NULL || config->authorization_endpoint == NULL ||
+      config->authorization_endpoint[0] == '\0' || config->client_id == NULL ||
+      config->client_id[0] == '\0' || config->redirect_uri == NULL ||
+      config->redirect_uri[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OIDC authorization endpoint, client_id, and "
+                     "redirect_uri are required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_oidc_authorization_init(out);
+  state[0] = '\0';
+  nonce[0] = '\0';
+  state_value = config->state;
+  nonce_value = config->nonce;
+  if (state_value == NULL || state_value[0] == '\0') {
+    status = vectis_auth_generate_oidc_value(state, sizeof(state), error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    state_value = state;
+  }
+  if (nonce_value == NULL || nonce_value[0] == '\0') {
+    status = vectis_auth_generate_oidc_value(nonce, sizeof(nonce), error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    nonce_value = nonce;
+  }
+  runtime = NULL;
+  status = vectis_auth_lonejson_runtime(&runtime, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  lonejson_oidc_pkce_init(&pkce);
+  lonejson_owned_buffer_init(&challenge);
+  lonejson_owned_buffer_init(&url);
+  lonejson_error_init(&json_error);
+  verifier_value = config->code_verifier;
+  challenge_value = config->code_challenge;
+  if (verifier_value == NULL || verifier_value[0] == '\0') {
+    if (challenge_value == NULL || challenge_value[0] == '\0') {
+      json_status = lonejson_oidc_pkce_generate_with_runtime(
+          runtime, config->verifier_bytes, &pkce, &json_error);
+      if (json_status != LONEJSON_STATUS_OK) {
+        lonejson_free(runtime);
+        return vectis_auth_lonejson_error(error, json_status, &json_error,
+                                          "failed to generate OIDC PKCE");
+      }
+      verifier_value = pkce.code_verifier;
+      challenge_value = pkce.code_challenge;
+    }
+  } else if (challenge_value == NULL || challenge_value[0] == '\0') {
+    json_status = lonejson_oidc_pkce_challenge_with_runtime(
+        runtime, verifier_value, &challenge, &json_error);
+    if (json_status != LONEJSON_STATUS_OK) {
+      lonejson_oidc_pkce_cleanup(&pkce);
+      lonejson_free(runtime);
+      return vectis_auth_lonejson_error(error, json_status, &json_error,
+                                        "failed to compute OIDC PKCE "
+                                        "challenge");
+    }
+    challenge_value = challenge.data;
+  }
+  memset(&request, 0, sizeof(request));
+  request.authorization_endpoint = config->authorization_endpoint;
+  request.client_id = config->client_id;
+  request.redirect_uri = config->redirect_uri;
+  request.scope = config->scope;
+  request.state = state_value;
+  request.nonce = nonce_value;
+  request.code_challenge = challenge_value;
+  request.audience = config->audience;
+  request.resource = config->resource;
+  request.max_url_bytes = config->max_url_bytes;
+  json_status = lonejson_oidc_authorization_url(&request, &url, &json_error);
+  if (json_status == LONEJSON_STATUS_OK) {
+    out->authorization_url = vectis_auth_strdup(url.data);
+    if (verifier_value != NULL) {
+      out->code_verifier = vectis_auth_strdup(verifier_value);
+    }
+    out->code_challenge = vectis_auth_strdup(challenge_value);
+    out->state = vectis_auth_strdup(state_value);
+    out->nonce = vectis_auth_strdup(nonce_value);
+    if (out->authorization_url == NULL ||
+        (verifier_value != NULL && out->code_verifier == NULL) ||
+        out->code_challenge == NULL || out->state == NULL ||
+        out->nonce == NULL) {
+      vectis_auth_oidc_authorization_cleanup(out);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy OIDC authorization result");
+      status = VECTIS_ERR_NOMEM;
+    } else {
+      status = VECTIS_OK;
+    }
+  } else {
+    status = vectis_auth_lonejson_error(error, json_status, &json_error,
+                                        "failed to build OIDC authorization "
+                                        "URL");
+  }
+  lonejson_owned_buffer_free(&url);
+  lonejson_owned_buffer_free(&challenge);
+  lonejson_oidc_pkce_cleanup(&pkce);
+  lonejson_free(runtime);
+  return status;
+}
+
+vectis_status vectis_auth_oidc_exchange_callback(
+    const vectis_auth_oidc_token_exchange_config *config,
+    vectis_auth_oidc_token_exchange *out, vectis_error *error) {
+  lonejson *runtime;
+  lonejson_http_provider provider;
+  vectis_auth_oauth2_http_adapter adapter;
+  lonejson_oidc_authorization_callback callback;
+  lonejson_oidc_authorization_code_token request;
+  lonejson_oauth2_token_response token;
+  lonejson_oauth2_token_flow flow;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  vectis_status status;
+  int64_t now;
+
+  if (config == NULL || out == NULL || config->token_endpoint == NULL ||
+      config->token_endpoint[0] == '\0' || config->client_id == NULL ||
+      config->client_id[0] == '\0' || config->redirect_uri == NULL ||
+      config->redirect_uri[0] == '\0' || config->code_verifier == NULL ||
+      config->code_verifier[0] == '\0' || config->callback_query == NULL ||
+      config->expected_state == NULL || config->expected_state[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OIDC token endpoint, client_id, redirect_uri, "
+                     "code_verifier, callback_query, and expected_state are "
+                     "required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_oidc_token_exchange_init(out);
+  runtime = NULL;
+  status = vectis_auth_lonejson_runtime(&runtime, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_auth_oauth2_install_http_provider(runtime, &config->transport,
+                                                    &adapter, &provider, error);
+  if (status != VECTIS_OK) {
+    lonejson_free(runtime);
+    return status;
+  }
+  lonejson_oidc_authorization_callback_init(&callback);
+  lonejson_oauth2_token_response_init(&token);
+  lonejson_oauth2_token_flow_init(&flow);
+  lonejson_error_init(&json_error);
+  json_status = lonejson_oidc_authorization_callback_parse_query(
+      config->callback_query, strlen(config->callback_query),
+      config->expected_state, config->max_query_bytes, &callback, &json_error);
+  if (json_status == LONEJSON_STATUS_OK) {
+    memset(&request, 0, sizeof(request));
+    request.client_id = config->client_id;
+    request.code = callback.code;
+    request.redirect_uri = config->redirect_uri;
+    request.code_verifier = config->code_verifier;
+    request.client_secret = config->client_secret;
+    request.max_body_bytes = config->max_body_bytes;
+    json_status = lonejson_oidc_authorization_code_token_request(
+        runtime, config->token_endpoint, &request, config->max_response_bytes,
+        &token, &json_error);
+  }
+  if (json_status == LONEJSON_STATUS_OK) {
+    now = config->now != 0 ? config->now : (int64_t)time(NULL);
+    json_status = lonejson_oauth2_token_flow_update_response(&flow, &token, now,
+                                                             &json_error);
+  }
+  if (json_status == LONEJSON_STATUS_OK) {
+    out->code = vectis_auth_strdup(callback.code);
+    out->state = vectis_auth_strdup(callback.state);
+    status = vectis_auth_oauth2_copy_token_response(&token, &out->token, error);
+    if (status == VECTIS_OK) {
+      status = vectis_auth_oauth2_copy_token_flow_from_lonejson(
+          &flow, &out->flow, error);
+    }
+    if (status != VECTIS_OK || out->code == NULL || out->state == NULL) {
+      vectis_auth_oidc_token_exchange_cleanup(out);
+      if (status == VECTIS_OK) {
+        vectis_set_error(error, VECTIS_ERR_NOMEM,
+                         "failed to copy OIDC token exchange result");
+        status = VECTIS_ERR_NOMEM;
+      }
+    }
+  } else {
+    status = vectis_auth_lonejson_error(error, json_status, &json_error,
+                                        "OIDC callback token exchange failed");
+  }
+  lonejson_oauth2_token_flow_cleanup(&flow);
+  lonejson_oauth2_token_response_cleanup(&token);
+  lonejson_oidc_authorization_callback_cleanup(&callback);
+  lonejson_free(runtime);
   return status;
 }
 

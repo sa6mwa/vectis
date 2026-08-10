@@ -1201,6 +1201,59 @@ static int vectis_lua_auth_webdav_key(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_auth_oidc_authorization(lua_State *lua) {
+  vectis_auth_oidc_authorization_config config;
+  vectis_auth_oidc_authorization authorization;
+  vectis_error error;
+  vectis_status status;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_error_clear(&error);
+  vectis_auth_oidc_authorization_config_init(&config);
+  config.authorization_endpoint =
+      vectis_lua_table_string(lua, 1, "authorization_endpoint");
+  config.client_id = vectis_lua_table_string(lua, 1, "client_id");
+  config.redirect_uri = vectis_lua_table_string(lua, 1, "redirect_uri");
+  config.scope = vectis_lua_table_string(lua, 1, "scope");
+  config.state = vectis_lua_table_string(lua, 1, "state");
+  config.nonce = vectis_lua_table_string(lua, 1, "nonce");
+  config.code_verifier = vectis_lua_table_string(lua, 1, "code_verifier");
+  config.code_challenge = vectis_lua_table_string(lua, 1, "code_challenge");
+  config.audience = vectis_lua_table_string(lua, 1, "audience");
+  config.resource = vectis_lua_table_string(lua, 1, "resource");
+  config.verifier_bytes = vectis_lua_table_size(lua, 1, "verifier_bytes", 0u);
+  config.max_url_bytes = vectis_lua_table_size(lua, 1, "max_url_bytes", 0u);
+  vectis_auth_oidc_authorization_init(&authorization);
+  status =
+      vectis_auth_oidc_authorization_start(&config, &authorization, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_newtable(lua);
+  if (authorization.authorization_url != NULL) {
+    lua_pushstring(lua, authorization.authorization_url);
+    lua_setfield(lua, -2, "authorization_url");
+  }
+  if (authorization.code_verifier != NULL) {
+    lua_pushstring(lua, authorization.code_verifier);
+    lua_setfield(lua, -2, "code_verifier");
+  }
+  if (authorization.code_challenge != NULL) {
+    lua_pushstring(lua, authorization.code_challenge);
+    lua_setfield(lua, -2, "code_challenge");
+  }
+  if (authorization.state != NULL) {
+    lua_pushstring(lua, authorization.state);
+    lua_setfield(lua, -2, "state");
+  }
+  if (authorization.nonce != NULL) {
+    lua_pushstring(lua, authorization.nonce);
+    lua_setfield(lua, -2, "nonce");
+  }
+  vectis_auth_oidc_authorization_cleanup(&authorization);
+  return 1;
+}
+
 static int vectis_lua_auth_native_provider_authenticate(lua_State *lua) {
   vectis_auth_native_provider_config config;
   vectis_auth_provider provider;
@@ -1518,6 +1571,8 @@ static void vectis_lua_push_auth_table(lua_State *lua) {
   lua_setfield(lua, -2, "user_login");
   lua_pushcfunction(lua, vectis_lua_auth_webdav_key);
   lua_setfield(lua, -2, "webdav_key");
+  lua_pushcfunction(lua, vectis_lua_auth_oidc_authorization);
+  lua_setfield(lua, -2, "oidc_authorization");
   lua_pushcfunction(lua, vectis_lua_auth_provider_native);
   lua_setfield(lua, -2, "provider_native");
   lua_pushcfunction(lua, vectis_lua_auth_provider_callback);

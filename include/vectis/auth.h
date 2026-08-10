@@ -269,6 +269,55 @@ typedef struct vectis_auth_oauth2_webdav_key_config {
   size_t max_record_bytes;
 } vectis_auth_oauth2_webdav_key_config;
 
+typedef struct vectis_auth_oidc_authorization_config {
+  const char *authorization_endpoint;
+  const char *client_id;
+  const char *redirect_uri;
+  const char *scope;
+  const char *state;
+  const char *nonce;
+  const char *code_verifier;
+  const char *code_challenge;
+  const char *audience;
+  const char *resource;
+  size_t verifier_bytes;
+  size_t max_url_bytes;
+} vectis_auth_oidc_authorization_config;
+
+typedef struct vectis_auth_oidc_authorization {
+  /* Owned strings. Release with vectis_auth_oidc_authorization_cleanup(). */
+  char *authorization_url;
+  char *code_verifier;
+  char *code_challenge;
+  char *state;
+  char *nonce;
+} vectis_auth_oidc_authorization;
+
+typedef struct vectis_auth_oidc_token_exchange_config {
+  vectis_auth_oauth2_transport_config transport;
+  const char *token_endpoint;
+  const char *client_id;
+  const char *client_secret;
+  const char *redirect_uri;
+  const char *code_verifier;
+  const char *callback_query;
+  const char *expected_state;
+  int64_t now;
+  size_t max_query_bytes;
+  size_t max_response_bytes;
+  size_t max_body_bytes;
+} vectis_auth_oidc_token_exchange_config;
+
+typedef struct vectis_auth_oidc_token_exchange {
+  /* Owned strings and nested OAuth2 outputs. Release with
+   * vectis_auth_oidc_token_exchange_cleanup().
+   */
+  char *code;
+  char *state;
+  vectis_auth_oauth2_token_response token;
+  vectis_auth_oauth2_token_flow flow;
+} vectis_auth_oidc_token_exchange;
+
 void vectis_auth_store_config_init(vectis_auth_store_config *config);
 void vectis_auth_issue_config_init(vectis_auth_issue_config *config);
 void vectis_auth_issued_credential_init(
@@ -318,6 +367,18 @@ void vectis_auth_oauth2_stored_token_flow_policy_init(
     vectis_auth_oauth2_stored_token_flow_policy *policy);
 void vectis_auth_oauth2_webdav_key_config_init(
     vectis_auth_oauth2_webdav_key_config *config);
+void vectis_auth_oidc_authorization_config_init(
+    vectis_auth_oidc_authorization_config *config);
+void vectis_auth_oidc_authorization_init(
+    vectis_auth_oidc_authorization *authorization);
+void vectis_auth_oidc_authorization_cleanup(
+    vectis_auth_oidc_authorization *authorization);
+void vectis_auth_oidc_token_exchange_config_init(
+    vectis_auth_oidc_token_exchange_config *config);
+void vectis_auth_oidc_token_exchange_init(
+    vectis_auth_oidc_token_exchange *exchange);
+void vectis_auth_oidc_token_exchange_cleanup(
+    vectis_auth_oidc_token_exchange *exchange);
 
 vectis_status vectis_auth_store_init(const vectis_auth_store_config *config,
                                      vectis_error *error);
@@ -373,6 +434,12 @@ vectis_status vectis_auth_oauth2_stored_token_flow_ensure(
 vectis_status vectis_auth_issue_webdav_key_for_oauth2_flow(
     const vectis_auth_oauth2_webdav_key_config *config,
     vectis_auth_issued_credential *out, vectis_error *error);
+vectis_status vectis_auth_oidc_authorization_start(
+    const vectis_auth_oidc_authorization_config *config,
+    vectis_auth_oidc_authorization *out, vectis_error *error);
+vectis_status vectis_auth_oidc_exchange_callback(
+    const vectis_auth_oidc_token_exchange_config *config,
+    vectis_auth_oidc_token_exchange *out, vectis_error *error);
 
 vectis_status
 vectis_auth_provider_from_callback(vectis_auth_provider *provider,

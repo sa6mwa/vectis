@@ -15,6 +15,22 @@ assert(arg[1] == "first")
 assert(arg[2] == "second")
 
 assert(type(vectis.auth) == "table")
+local oidc = assert(vectis.auth.oidc_authorization({
+  authorization_endpoint = "https://idp.example.test/authorize",
+  client_id = "vectis-client",
+  redirect_uri = "http://127.0.0.1/callback",
+  scope = "openid dav",
+  state = "lua-state",
+  nonce = "lua-nonce",
+  code_verifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~abc",
+}))
+assert(oidc.authorization_url:find("https://idp.example.test/authorize?", 1, true) == 1)
+assert(oidc.authorization_url:find("response_type=code", 1, true))
+assert(oidc.authorization_url:find("code_challenge_method=S256", 1, true))
+assert(oidc.code_verifier == "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~abc")
+assert(type(oidc.code_challenge) == "string" and #oidc.code_challenge > 0)
+assert(oidc.state == "lua-state")
+assert(oidc.nonce == "lua-nonce")
 local auth_path = os.tmpname()
 os.remove(auth_path)
 assert(vectis.auth.store_init({ credentials_path = auth_path }))

@@ -172,7 +172,19 @@ oauth2_mock_transport(const vectis_auth_oauth2_http_request *request,
     vectis_set_error(error, VECTIS_ERR_INVALID, "mock OAuth2 refresh failed");
     return VECTIS_ERR_INVALID;
   }
-  if (strcmp(mode, "client") == 0) {
+  if (strcmp(mode, "code") == 0) {
+    expect(strstr(body, "grant_type=authorization_code") != NULL,
+           "OIDC code exchange body carries grant type");
+    expect(strstr(body, "code=auth-code") != NULL,
+           "OIDC code exchange body carries code");
+    expect(strstr(body, "client_id=vectis-client") != NULL,
+           "OIDC code exchange body carries client id");
+    expect(strstr(body, "code_verifier=") != NULL,
+           "OIDC code exchange body carries PKCE verifier");
+    json = "{\"access_token\":\"browser-token\",\"token_type\":\"Bearer\","
+           "\"refresh_token\":\"browser-refresh\",\"scope\":\"openid dav\","
+           "\"id_token\":\"id-token\",\"expires_in\":4200}";
+  } else if (strcmp(mode, "client") == 0) {
     expect(strstr(body, "grant_type=client_credentials") != NULL,
            "OAuth2 client credentials body carries grant type");
     expect(strstr(body, "client_id=vectis-client") != NULL,
@@ -232,6 +244,10 @@ int main(void) {
   vectis_auth_oauth2_stored_token_flow stored_flow;
   vectis_auth_oauth2_stored_token_flow_policy stored_policy;
   vectis_auth_oauth2_webdav_key_config oauth_webdav_config;
+  vectis_auth_oidc_authorization_config oidc_authorization_config;
+  vectis_auth_oidc_authorization oidc_authorization;
+  vectis_auth_oidc_token_exchange_config oidc_exchange_config;
+  vectis_auth_oidc_token_exchange oidc_exchange;
   vectis_auth_issue_config issue;
   vectis_auth_issued_credential bearer;
   vectis_auth_issued_credential basic;
@@ -263,6 +279,10 @@ int main(void) {
   vectis_auth_oauth2_stored_token_flow_init(&stored_flow);
   vectis_auth_oauth2_stored_token_flow_policy_init(&stored_policy);
   vectis_auth_oauth2_webdav_key_config_init(&oauth_webdav_config);
+  vectis_auth_oidc_authorization_config_init(&oidc_authorization_config);
+  vectis_auth_oidc_authorization_init(&oidc_authorization);
+  vectis_auth_oidc_token_exchange_config_init(&oidc_exchange_config);
+  vectis_auth_oidc_token_exchange_init(&oidc_exchange);
   vectis_auth_issued_credential_init(&bearer);
   vectis_auth_issued_credential_init(&basic);
   vectis_auth_issued_credential_init(&webdav_key);
@@ -292,6 +312,81 @@ int main(void) {
   store.credentials_path = credentials_path;
   status = vectis_auth_store_init(&store, &error);
   expect_ok(status, &error, "initializes credentials store");
+
+  vectis_auth_oidc_authorization_config_init(&oidc_authorization_config);
+  oidc_authorization_config.authorization_endpoint =
+      "https://idp.example.test/authorize";
+  oidc_authorization_config.client_id = "vectis-client";
+  oidc_authorization_config.redirect_uri = "http://127.0.0.1/callback";
+  oidc_authorization_config.scope = "openid dav";
+  oidc_authorization_config.state = "state-1";
+  oidc_authorization_config.nonce = "nonce-1";
+  oidc_authorization_config.code_verifier =
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~abc";
+  status = vectis_auth_oidc_authorization_start(&oidc_authorization_config,
+                                                &oidc_authorization, &error);
+  expect_ok(status, &error, "builds OIDC authorization URL");
+  expect(oidc_authorization.authorization_url != NULL &&
+             strstr(oidc_authorization.authorization_url,
+                    "https://idp.example.test/authorize?") != NULL,
+         "OIDC authorization URL uses endpoint");
+  expect(oidc_authorization.authorization_url != NULL &&
+             strstr(oidc_authorization.authorization_url,
+                    "response_type=code") != NULL,
+         "OIDC authorization URL requests code flow");
+  expect(oidc_authorization.authorization_url != NULL &&
+             strstr(oidc_authorization.authorization_url,
+                    "code_challenge_method=S256") != NULL,
+         "OIDC authorization URL uses PKCE S256");
+  expect(oidc_authorization.code_verifier != NULL &&
+             strcmp(oidc_authorization.code_verifier,
+                    oidc_authorization_config.code_verifier) == 0,
+         "OIDC authorization returns verifier");
+  expect(oidc_authorization.code_challenge != NULL &&
+             oidc_authorization.code_challenge[0] != '\0',
+         "OIDC authorization returns challenge");
+  expect(oidc_authorization.state != NULL &&
+             strcmp(oidc_authorization.state, "state-1") == 0,
+         "OIDC authorization returns state");
+  expect(oidc_authorization.nonce != NULL &&
+             strcmp(oidc_authorization.nonce, "nonce-1") == 0,
+         "OIDC authorization returns nonce");
+
+  vectis_auth_oidc_token_exchange_config_init(&oidc_exchange_config);
+  oidc_exchange_config.transport.request = oauth2_mock_transport;
+  oidc_exchange_config.transport.request_userdata = (void *)"code";
+  oidc_exchange_config.transport.user_agent = "vectis-unit";
+  oidc_exchange_config.token_endpoint = "https://idp.example.test/token";
+  oidc_exchange_config.client_id = "vectis-client";
+  oidc_exchange_config.client_secret = "vectis-secret";
+  oidc_exchange_config.redirect_uri = "http://127.0.0.1/callback";
+  oidc_exchange_config.code_verifier = oidc_authorization.code_verifier;
+  oidc_exchange_config.callback_query = "?code=auth-code&state=state-1";
+  oidc_exchange_config.expected_state = oidc_authorization.state;
+  oidc_exchange_config.now = 1000;
+  status = vectis_auth_oidc_exchange_callback(&oidc_exchange_config,
+                                              &oidc_exchange, &error);
+  expect_ok(status, &error, "exchanges OIDC callback code");
+  expect(oidc_exchange.code != NULL &&
+             strcmp(oidc_exchange.code, "auth-code") == 0,
+         "OIDC exchange returns parsed code");
+  expect(oidc_exchange.state != NULL &&
+             strcmp(oidc_exchange.state, "state-1") == 0,
+         "OIDC exchange returns parsed state");
+  expect(oidc_exchange.token.access_token != NULL &&
+             strcmp(oidc_exchange.token.access_token, "browser-token") == 0,
+         "OIDC exchange returns access token");
+  expect(oidc_exchange.token.id_token != NULL &&
+             strcmp(oidc_exchange.token.id_token, "id-token") == 0,
+         "OIDC exchange returns ID token");
+  expect(oidc_exchange.flow.access_token != NULL &&
+             strcmp(oidc_exchange.flow.access_token, "browser-token") == 0,
+         "OIDC exchange initializes token flow");
+  expect(oidc_exchange.flow.has_expires_at &&
+             oidc_exchange.flow.expires_at == 5200,
+         "OIDC exchange initializes absolute expiry");
+  vectis_auth_oidc_token_exchange_cleanup(&oidc_exchange);
+  vectis_auth_oidc_authorization_cleanup(&oidc_authorization);
 
   vectis_auth_oauth2_client_credentials_config_init(&oauth2_client);
   oauth2_client.transport.request = oauth2_mock_transport;
