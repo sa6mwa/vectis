@@ -211,10 +211,14 @@ Required Lua concepts:
 - `server:auth_routes({path_prefix=..., credentials_path=..., realm=...})`
 - `server:auth_json({path=..., auth={kind="native", credentials_path=...},
   body=...})` for small C-owned guarded JSON endpoints in service scenarios.
-- `server:consumer_service({ ... })` is the reserved Lua registration point for
-  same-process lockd consumer service wiring. Until Vectis provides a C-owned
-  adapter or worker-owned Lua bridge, it must fail with `ERR_NOT_IMPLEMENTED`
-  instead of invoking script callbacks from liblockdc worker threads.
+- `server:consumer_service({ ... })` is the Lua registration point for
+  same-process lockd consumer service wiring. It creates a C-owned
+  `vectis_consumer_service` receiver around liblockdc and starts it by default.
+  The initial built-in handler is `handler.kind = "webdav_marker"`, which
+  writes configured marker files into a WebDAV storage cache from the C worker
+  callback. Direct Lua `on_message` callbacks remain rejected; a future Lua
+  callback implementation needs an explicit C adapter or worker-owned Lua
+  state/queue bridge.
 - `server:start()`, `server:stop()`, and `server:close()`
 
 Streaming semantics:
@@ -251,13 +255,12 @@ routes or WebDAV requests stop making progress.
 
 The implementation boundary for this model is C-first. Consumer-service
 receivers are C-owned shells around liblockdc lifecycle objects. Lua may
-configure the Vectis server and reserved consumer registration surface, but a
-Lua script-owned state must not be called directly from liblockdc consumer
-worker threads. A future Lua callback implementation needs an explicit
-C adapter or worker-owned Lua state/queue bridge that serializes callback
-execution and preserves the Kore worker lifecycle. Until then,
-`server:consumer_service()` returns a structured `ERR_NOT_IMPLEMENTED` error so
-mixed runtime-loop attempts fail predictably.
+configure the Vectis server and supported C-owned consumer handlers, but Lua
+script-owned state must not be called directly from liblockdc consumer worker
+threads. A future Lua callback implementation needs an explicit C adapter or
+worker-owned Lua state/queue bridge that serializes callback execution and
+preserves the Kore worker lifecycle. Direct Lua callbacks are rejected with a
+structured validation error so mixed runtime-loop attempts fail predictably.
 
 The WebDAV overlay model must support:
 
@@ -450,8 +453,11 @@ requests, issues a WebDAV key after deterministic password+TOTP+email-token
 login, protects the WebDAV mount, serves embedded content through authenticated
 WebDAV, accepts mutable WebDAV writes, exercises WebDAV
 PROPFIND/MKCOL/COPY/MOVE/DELETE, and proves WebDAV mutations do not change
-embedded read-only assets. The remaining full-contract check is same-process
-lockd `startconsumer` coverage in a packed executable.
+embedded read-only assets. It also embeds the lockd client bundle, starts a
+C-owned lockd consumer service from the packed Lua server config, enqueues a
+lockd message through the Lua `lockdc` facade, proves the packed consumer writes
+WebDAV-visible markers, and proves WebDAV remains responsive while the packed
+consumer service is processing.
 
 Email-token e2e coverage:
 
@@ -505,6 +511,10 @@ matrix coverage remains future hardening work.
    service activity. Lua may provide route or callback glue in the scenario,
    but must not own the built-in server, WebDAV, auth, pack, or consumer
    service lifecycle semantics.
+
+   Current coverage includes both a direct C example and a packed Lua
+   executable that configures the C-owned consumer adapter with an embedded
+   lockd client bundle.
 
 ## Open Decisions
 

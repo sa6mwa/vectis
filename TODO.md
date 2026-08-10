@@ -177,7 +177,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Make lockd optional for Kore-only C services while preserving validation for configured lockd transports.
 - [x] Define consumer registration and lifecycle APIs for C.
 - [x] Expose lockd consumer service startup/configuration directly, then layer Vectis-owned worker DX on top.
-- [ ] Allow one Vectis process to run a Kore-backed API/WebDAV server and an app-owned liblockdc `startconsumer` service simultaneously, with receiver-shell C APIs and Lua registration hooks.
+- [x] Allow one Vectis process to run a Kore-backed API/WebDAV server and an app-owned liblockdc `startconsumer` service simultaneously, with receiver-shell C APIs and Lua registration hooks.
 - [x] Add a same-process scenario test that serves an API/WebDAV mount while receiving lockd messages through `startconsumer`, proving HTTP/WebDAV responsiveness during active consumer work.
 - [x] Define Lua consumer-service runner behavior for the combined server-plus-consumer process model.
 - [x] Make API errors explicit when a Lua script attempts to run genuinely incompatible runtime loops in one process.
@@ -280,7 +280,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add first smoke test that packages and executes a Lua script artifact.
 - [x] Add deterministic e2e coverage for a packed Lua webserver with generated embedded assets, native auth routes, SMTP-delivered email-token login, auth-guarded JSON API route, WebDAV key issuance, authenticated embedded WebDAV reads, mutable WebDAV writes, WebDAV list/copy/move/delete, traversal denial, and embedded-versus-WebDAV mutation isolation.
 - [ ] Add tests that package a Lua API service and a Lua consumer service, then execute both artifacts.
-- [ ] Add a packed-service scenario that runs the embedded site/WebDAV server and lockd `startconsumer` service in the same self-contained Vectis binary and process.
+- [x] Add a packed-service scenario that runs the embedded site/WebDAV server and lockd `startconsumer` service in the same self-contained Vectis binary and process.
 
 ## Area 14: Verification and Release
 

@@ -8,6 +8,7 @@
 #ifndef LONEJSON_WITH_CURL
 #define LONEJSON_WITH_CURL 1
 #endif
+#include <lc/lc.h>
 #include <lonejson.h>
 #include <lonejson_lua.h>
 #include <lua.h>
@@ -67,10 +68,30 @@ typedef struct vectis_lua_server_auth_json_route {
   struct vectis_lua_server_auth_json_route *next;
 } vectis_lua_server_auth_json_route;
 
+typedef struct vectis_lua_consumer_registration {
+  vectis_consumer_service *service;
+  vectis_webdav_config storage;
+  lc_consumer_config consumer;
+  lc_consumer_service_config service_config;
+  char *name;
+  char *queue;
+  char *owner;
+  char *cache_dir;
+  char *site_id;
+  char *processing_path;
+  char *done_path;
+  char *processing_body;
+  char *done_body;
+  long processing_delay_seconds;
+  int started;
+  struct vectis_lua_consumer_registration *next;
+} vectis_lua_consumer_registration;
+
 typedef struct vectis_lua_server {
   vectis_app *app;
   vectis_lua_server_native_auth *native_auths;
   vectis_lua_server_auth_json_route *auth_json_routes;
+  vectis_lua_consumer_registration *consumer_services;
 } vectis_lua_server;
 
 typedef struct vectis_pack_asset {
@@ -3276,6 +3297,101 @@ vectis_lua_server_auth_json_route_free_all(vectis_lua_server *server) {
   }
 }
 
+static int
+vectis_lua_consumer_write_marker(vectis_lua_consumer_registration *service,
+                                 const char *path, const char *body) {
+  vectis_webdav_status status;
+
+  if (service == NULL || path == NULL || body == NULL) {
+    return LC_ERR_PROTOCOL;
+  }
+  status = vectis_webdav_put(&service->storage, path,
+                             (const unsigned char *)body, strlen(body));
+  return status == VECTIS_WEBDAV_OK ? LC_OK : LC_ERR_PROTOCOL;
+}
+
+static int vectis_lua_consumer_marker_handle(void *userdata,
+                                             lc_consumer_message *delivery,
+                                             lc_error *error) {
+  vectis_lua_consumer_registration *service;
+  int rc;
+
+  service = (vectis_lua_consumer_registration *)userdata;
+  rc = vectis_lua_consumer_write_marker(service, service->processing_path,
+                                        service->processing_body);
+  if (rc == LC_OK && service->processing_delay_seconds > 0L) {
+    (void)sleep((unsigned int)service->processing_delay_seconds);
+  }
+  if (rc == LC_OK && delivery != NULL && delivery->message != NULL) {
+    rc = delivery->message->ack(delivery->message, error);
+  }
+  if (rc == LC_OK) {
+    rc = vectis_lua_consumer_write_marker(service, service->done_path,
+                                          service->done_body);
+  }
+  return rc;
+}
+
+static void vectis_lua_server_consumer_service_free(
+    vectis_lua_consumer_registration *service) {
+  vectis_error error;
+
+  if (service == NULL) {
+    return;
+  }
+  if (service->service != NULL) {
+    if (service->started) {
+      vectis_error_clear(&error);
+      (void)service->service->stop(service->service, &error);
+      vectis_error_clear(&error);
+      (void)service->service->wait(service->service, &error);
+      service->started = 0;
+    }
+    service->service->close(service->service);
+    service->service = NULL;
+  }
+  free(service->name);
+  free(service->queue);
+  free(service->owner);
+  free(service->cache_dir);
+  free(service->site_id);
+  free(service->processing_path);
+  free(service->done_path);
+  free(service->processing_body);
+  free(service->done_body);
+  free(service);
+}
+
+static void
+vectis_lua_server_consumer_service_free_all(vectis_lua_server *server) {
+  vectis_lua_consumer_registration *service;
+  vectis_lua_consumer_registration *next;
+
+  if (server == NULL) {
+    return;
+  }
+  service = server->consumer_services;
+  server->consumer_services = NULL;
+  while (service != NULL) {
+    next = service->next;
+    vectis_lua_server_consumer_service_free(service);
+    service = next;
+  }
+}
+
+static int vectis_lua_copy_string_field(lua_State *lua, int index,
+                                        const char *field, const char *fallback,
+                                        char **out) {
+  const char *value;
+
+  value = vectis_lua_table_string(lua, index, field);
+  if (value == NULL) {
+    value = fallback;
+  }
+  *out = vectis_cli_strdup(value);
+  return value == NULL || *out != NULL;
+}
+
 static vectis_lua_server_native_auth *
 vectis_lua_server_native_auth_new(lua_State *lua, int index,
                                   const char *context, vectis_error *error) {
@@ -3361,6 +3477,7 @@ static int vectis_lua_server_close(lua_State *lua) {
   vectis_lua_server *server;
 
   server = vectis_lua_check_server(lua, 1);
+  vectis_lua_server_consumer_service_free_all(server);
   if (server->app != NULL) {
     server->app->close(server->app);
     server->app = NULL;
@@ -3401,13 +3518,148 @@ static int vectis_lua_server_stop(lua_State *lua) {
 }
 
 static int vectis_lua_server_consumer_service(lua_State *lua) {
-  (void)vectis_lua_server_app(lua, 1);
+  vectis_lua_server *server;
+  vectis_app *app;
+  vectis_lua_consumer_registration *service;
+  vectis_error error;
+  vectis_status status;
+  const char *queue;
+  const char *owner;
+  const char *name;
+  const char *kind;
+  int handler_index;
+  int start_service;
+
+  server = vectis_lua_check_server(lua, 1);
+  app = vectis_lua_server_app(lua, 1);
   luaL_checktype(lua, 2, LUA_TTABLE);
-  return vectis_lua_push_error_text(
-      lua, VECTIS_ERR_NOT_IMPLEMENTED,
-      "server:consumer_service requires a C-side lockd consumer adapter; "
-      "direct Lua callbacks from liblockdc consumer worker threads are not "
-      "supported");
+
+  lua_getfield(lua, 2, "on_message");
+  if (!lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID,
+        "server:consumer_service direct Lua callbacks are not supported; "
+        "register a C-owned handler table instead");
+  }
+  lua_pop(lua, 1);
+
+  queue = vectis_lua_table_string(lua, 2, "queue");
+  if (queue == NULL || queue[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "consumer service queue is required");
+  }
+  owner = vectis_lua_table_string(lua, 2, "owner");
+  if (owner == NULL || owner[0] == '\0') {
+    owner = "vectis-lua-consumer";
+  }
+  name = vectis_lua_table_string(lua, 2, "name");
+  if (name == NULL || name[0] == '\0') {
+    name = owner;
+  }
+
+  lua_getfield(lua, 2, "handler");
+  if (!lua_istable(lua, -1)) {
+    lua_pop(lua, 1);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "consumer service handler is required");
+  }
+  handler_index = lua_absindex(lua, -1);
+  kind = vectis_lua_table_string(lua, handler_index, "kind");
+  if (kind == NULL || strcmp(kind, "webdav_marker") != 0) {
+    lua_pop(lua, 1);
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID,
+        "consumer service handler.kind must be webdav_marker");
+  }
+
+  service = (vectis_lua_consumer_registration *)calloc(1u, sizeof(*service));
+  if (service == NULL) {
+    lua_pop(lua, 1);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to allocate consumer service");
+  }
+  if (!vectis_lua_copy_string_field(lua, 2, "name", name, &service->name) ||
+      !vectis_lua_copy_string_field(lua, 2, "queue", queue, &service->queue) ||
+      !vectis_lua_copy_string_field(lua, 2, "owner", owner, &service->owner) ||
+      !vectis_lua_copy_string_field(lua, handler_index, "cache_dir", NULL,
+                                    &service->cache_dir) ||
+      !vectis_lua_copy_string_field(lua, handler_index, "site_id", "consumer",
+                                    &service->site_id) ||
+      !vectis_lua_copy_string_field(lua, handler_index, "processing_path",
+                                    "/consumer-processing.txt",
+                                    &service->processing_path) ||
+      !vectis_lua_copy_string_field(lua, handler_index, "done_path",
+                                    "/consumer-done.txt",
+                                    &service->done_path) ||
+      !vectis_lua_copy_string_field(lua, handler_index, "processing_body",
+                                    "processing\n",
+                                    &service->processing_body) ||
+      !vectis_lua_copy_string_field(lua, handler_index, "done_body",
+                                    "handled\n", &service->done_body)) {
+    lua_pop(lua, 1);
+    vectis_lua_server_consumer_service_free(service);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to copy consumer service config");
+  }
+  lua_pop(lua, 1);
+
+  if (service->cache_dir == NULL || service->cache_dir[0] == '\0') {
+    vectis_lua_server_consumer_service_free(service);
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID,
+        "webdav_marker consumer handler cache_dir is required");
+  }
+
+  vectis_webdav_config_init(&service->storage);
+  service->storage.cache_dir = service->cache_dir;
+  service->storage.site_id = service->site_id;
+  service->storage.max_file_bytes = vectis_lua_table_size(
+      lua, 2, "max_file_bytes", service->storage.max_file_bytes);
+  service->storage.max_total_bytes = vectis_lua_table_size(
+      lua, 2, "max_total_bytes", service->storage.max_total_bytes);
+  service->storage.max_resources = vectis_lua_table_size(
+      lua, 2, "max_resources", service->storage.max_resources);
+  service->processing_delay_seconds =
+      (long)vectis_lua_table_size(lua, 2, "processing_delay_seconds", 0u);
+
+  lc_consumer_config_init(&service->consumer);
+  service->consumer.name = service->name;
+  service->consumer.request.queue = service->queue;
+  service->consumer.request.owner = service->owner;
+  service->consumer.request.visibility_timeout_seconds =
+      (long)vectis_lua_table_size(lua, 2, "visibility_timeout_seconds", 30u);
+  service->consumer.request.wait_seconds =
+      (long)vectis_lua_table_size(lua, 2, "wait_seconds", 1u);
+  service->consumer.worker_count =
+      (unsigned int)vectis_lua_table_size(lua, 2, "worker_count", 1u);
+  service->consumer.handle = vectis_lua_consumer_marker_handle;
+  service->consumer.context = service;
+  lc_consumer_service_config_init(&service->service_config);
+  service->service_config.consumers = &service->consumer;
+  service->service_config.consumer_count = 1u;
+
+  vectis_error_clear(&error);
+  status = app->consumer_service(app, &service->service_config,
+                                 &service->service, &error);
+  if (status != VECTIS_OK) {
+    vectis_lua_server_consumer_service_free(service);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  start_service = vectis_lua_table_bool(lua, 2, "start", 1);
+  if (start_service) {
+    status = service->service->start(service->service, &error);
+    if (status != VECTIS_OK) {
+      vectis_lua_server_consumer_service_free(service);
+      return vectis_lua_push_error(lua, status, &error);
+    }
+    service->started = 1;
+  }
+
+  service->next = server->consumer_services;
+  server->consumer_services = service;
+  lua_pushboolean(lua, 1);
+  return 1;
 }
 
 static int vectis_lua_server_static_embedded(lua_State *lua) {
@@ -3898,6 +4150,7 @@ static int vectis_lua_server_new(lua_State *lua) {
   server->app = NULL;
   server->native_auths = NULL;
   server->auth_json_routes = NULL;
+  server->consumer_services = NULL;
   vectis_error_clear(&error);
   server->app = vectis_app_new(&config, &error);
   free(lockd_endpoints);

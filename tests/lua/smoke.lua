@@ -44,9 +44,8 @@ local consumer_service, consumer_service_error = server:consumer_service({
 })
 assert(consumer_service == nil)
 assert(type(consumer_service_error) == "table")
-assert(consumer_service_error.status == vectis.ERR_NOT_IMPLEMENTED)
-assert(consumer_service_error.status_string == "not_implemented")
-assert(consumer_service_error.message:match("C%-side lockd consumer adapter"))
+assert(consumer_service_error.status == vectis.ERR_INVALID)
+assert(consumer_service_error.status_string == "invalid")
 assert(consumer_service_error.message:match("direct Lua callbacks"))
 server:close()
 

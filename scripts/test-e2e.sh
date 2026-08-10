@@ -263,10 +263,13 @@ run_lua_examples() {
   packed_service_cache="$work_dir/vectis-e2e-packed-cache"
   packed_service_credentials="$work_dir/vectis-e2e-packed-credentials.json"
   packed_service_mailbox="$work_dir/vectis-e2e-packed-mailbox.txt"
+  packed_service_enqueue="$work_dir/vectis-e2e-packed-enqueue.lua"
   packed_content_types="$work_dir/vectis-e2e-packed-content-types.json"
   shebang_script="$work_dir/vectis-e2e-shebang.lua"
   packed="$work_dir/vectis-e2e-packed"
   packed_service="$work_dir/vectis-e2e-packed-service"
+  packed_service_queue="vectis-e2e-packed-$$"
+  packed_service_namespace="examples"
   webdav_key_response=
   webdav_client_id=
   webdav_client_secret=
@@ -285,6 +288,7 @@ run_lua_examples() {
   email_transaction_id=
   email_token=
   mail_body=
+  packed_consumer_body=
 
   printf '[e2e] lua runner\n'
   printf '%s\n' \
@@ -338,6 +342,9 @@ run_lua_examples() {
     'local credentials_path = assert(os.getenv("VECTIS_PACKED_SERVICE_CREDENTIALS"))' \
     'local cache_dir = assert(os.getenv("VECTIS_PACKED_SERVICE_CACHE"))' \
     'local smtp_url = assert(os.getenv("VECTIS_PACK_SMTP_URL"))' \
+    'local lockd_endpoint = assert(os.getenv("VECTIS_PACKED_SERVICE_LOCKD_ENDPOINT"))' \
+    'local lockd_queue = assert(os.getenv("VECTIS_PACKED_SERVICE_LOCKD_QUEUE"))' \
+    'local lockd_namespace = os.getenv("VECTIS_PACKED_SERVICE_LOCKD_NAMESPACE") or "examples"' \
     'assert(vectis.embedded.has_assets())' \
     'local index = assert(vectis.embedded.read("/index.html"))' \
     'assert(index:match("packed service asset"))' \
@@ -358,6 +365,11 @@ run_lua_examples() {
     '  bind = "127.0.0.1",' \
     '  port = port,' \
     '  tls = { mode = "disabled" },' \
+    '  lockd = {' \
+    '    endpoints = { lockd_endpoint },' \
+    '    client_bundle = "embedded",' \
+    '    namespace = lockd_namespace,' \
+    '  },' \
     '}))' \
     'assert(server:static_embedded({' \
     '  path_prefix = "/site",' \
@@ -399,6 +411,24 @@ run_lua_examples() {
     '  },' \
     '  body = [[{"ok":true,"surface":"packed-api"}]],' \
     '}))' \
+    'assert(server:consumer_service({' \
+    '  queue = lockd_queue,' \
+    '  owner = "packed-consumer",' \
+    '  name = "packed-consumer",' \
+    '  worker_count = 1,' \
+    '  wait_seconds = 1,' \
+    '  visibility_timeout_seconds = 30,' \
+    '  processing_delay_seconds = 3,' \
+    '  handler = {' \
+    '    kind = "webdav_marker",' \
+    '    cache_dir = cache_dir,' \
+    '    site_id = "packed-service-e2e",' \
+    '    processing_path = "/consumer-processing.txt",' \
+    '    done_path = "/consumer-done.txt",' \
+    '    processing_body = "processing\n",' \
+    '    done_body = "handled\n",' \
+    '  },' \
+    '}))' \
     'assert(server:start())' \
     'while true do' \
     '  os.execute("sleep 3600")' \
@@ -408,11 +438,15 @@ run_lua_examples() {
     --asset-dir "/:$packed_service_site" \
     --content-type-map "$packed_content_types" \
     --extract-mode repair \
+    --lockd-bundle "$client_bundle" \
     --output "$packed_service"
   start_server "lua packed webserver" "$work_dir/lua-packed-webserver.log" \
     env VECTIS_PACKED_SERVICE_PORT="$kore_packed_port" \
       VECTIS_PACKED_SERVICE_CREDENTIALS="$packed_service_credentials" \
       VECTIS_PACKED_SERVICE_CACHE="$packed_service_cache" \
+      VECTIS_PACKED_SERVICE_LOCKD_ENDPOINT="$disk_endpoint" \
+      VECTIS_PACKED_SERVICE_LOCKD_QUEUE="$packed_service_queue" \
+      VECTIS_PACKED_SERVICE_LOCKD_NAMESPACE="$packed_service_namespace" \
       "$pack_smtp_harness" "$packed_service" "$packed_service_mailbox"
   wait_for_http "http://127.0.0.1:$kore_packed_port/site/index.html" \
     "lua packed webserver"
@@ -580,6 +614,76 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed guarded API response: $body" >&2
     return 1
   fi
+  printf '%s\n' \
+    'local lockdc = require("lockdc")' \
+    'local endpoint = assert(os.getenv("LOCKD_ENDPOINT"))' \
+    'local bundle = assert(os.getenv("LOCKD_CLIENT_BUNDLE"))' \
+    'local queue = assert(os.getenv("LOCKD_QUEUE"))' \
+    'local namespace = assert(os.getenv("LOCKD_NAMESPACE"))' \
+    'local client = assert(lockdc.open({' \
+    '  endpoints = { endpoint },' \
+    '  client_bundle_path = bundle,' \
+    '  default_namespace = namespace,' \
+    '}))' \
+    'assert(client:enqueue({' \
+    '  queue = queue,' \
+    '  visibility_timeout_seconds = 30,' \
+    '  ttl_seconds = 3600,' \
+    '  max_attempts = 5,' \
+    '  content_type = "text/plain",' \
+    '}, "packed-consumer-message"))' \
+    'client:close()' >"$packed_service_enqueue"
+  env LOCKD_ENDPOINT="$disk_endpoint" \
+    LOCKD_CLIENT_BUNDLE="$client_bundle" \
+    LOCKD_QUEUE="$packed_service_queue" \
+    LOCKD_NAMESPACE="$packed_service_namespace" \
+    "$repo_root/build/debug/vectis" "$packed_service_enqueue"
+  count=0
+  while :; do
+    packed_consumer_body=$(curl --max-time 3 -fsS \
+      -u "$webdav_client_id:$webdav_client_secret" \
+      "http://127.0.0.1:$kore_packed_port/dav/consumer-processing.txt" || true)
+    if [ "$packed_consumer_body" = "processing" ]; then
+      break
+    fi
+    count=$((count + 1))
+    if [ "$count" -ge 30 ]; then
+      sed 's/^/[lua-packed-webserver] /' "$work_dir/lua-packed-webserver.log" >&2
+      printf '%s\n' "Packed consumer did not enter processing state: $packed_consumer_body" >&2
+      return 1
+    fi
+    sleep 1
+  done
+  method_status=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' \
+    -u "$webdav_client_id:$webdav_client_secret" \
+    -X PUT --data 'webdav during packed consumer' \
+    "http://127.0.0.1:$kore_packed_port/dav/live-during-consumer.txt")
+  if [ "$method_status" != "201" ] && [ "$method_status" != "204" ]; then
+    printf '%s\n' "Unexpected packed WebDAV PUT status during consumer work: $method_status" >&2
+    return 1
+  fi
+  body=$(curl --max-time 5 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/live-during-consumer.txt")
+  if [ "$body" != "webdav during packed consumer" ]; then
+    printf '%s\n' "Unexpected packed WebDAV body during consumer work: $body" >&2
+    return 1
+  fi
+  count=0
+  while :; do
+    packed_consumer_body=$(curl --max-time 3 -fsS \
+      -u "$webdav_client_id:$webdav_client_secret" \
+      "http://127.0.0.1:$kore_packed_port/dav/consumer-done.txt" || true)
+    if [ "$packed_consumer_body" = "handled" ]; then
+      break
+    fi
+    count=$((count + 1))
+    if [ "$count" -ge 30 ]; then
+      sed 's/^/[lua-packed-webserver] /' "$work_dir/lua-packed-webserver.log" >&2
+      printf '%s\n' "Packed consumer did not finish: $packed_consumer_body" >&2
+      return 1
+    fi
+    sleep 1
+  done
   body=$(curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
     "http://127.0.0.1:$kore_packed_port/dav/index.html")
   case "$body" in
