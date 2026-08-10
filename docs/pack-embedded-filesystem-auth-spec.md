@@ -490,10 +490,12 @@ with a generated private self-signed certificate, verifies content types, ETag
 and cache metadata, rejects traversal attempts, rejects writes through the
 read-only mount, extracts the embedded
 assets into the disk WebDAV content tree before accepting WebDAV operations,
-verifies generated files are present in that extracted docroot, exposes native
-auth routes, protects a JSON API route through the same native provider,
-delivers an email token through a local mock SMTP server, turns password-only
-login for a TOTP/email-token route into a pending transaction, rejects
+verifies generated files are present in that extracted docroot, verifies repair
+restores stale embedded files while preserving pre-existing mutable files,
+exposes native auth routes, protects a JSON API route through the same native
+provider, delivers an email token through a local mock SMTP server, turns
+password-only login for a TOTP/email-token route into a pending transaction,
+rejects
 wrong-token and replayed-token WebDAV key requests, rejects expired email-token
 transactions, rejects SMTP delivery to non-allowlisted recipients, rejects a
 missing or wrong TOTP code with an otherwise valid email-token transaction,

@@ -617,6 +617,10 @@ run_lua_examples() {
     --extract-mode repair \
     --lockd-bundle "$client_bundle" \
     --output "$packed_service"
+  mkdir -p "$packed_service_docroot/assets"
+  printf '%s\n' 'stale extracted css' >"$packed_service_docroot/app.css"
+  printf '%s\n' 'preexisting mutable content' \
+    >"$packed_service_docroot/user-created-before-repair.txt"
   start_server "lua packed webserver" "$packed_service_log" \
     env VECTIS_PACKED_SERVICE_PORT="$kore_packed_port" \
       VECTIS_PACKED_SERVICE_CREDENTIALS="$packed_service_credentials" \
@@ -647,6 +651,16 @@ run_lua_examples() {
   body=$(cat "$packed_service_docroot/assets/logo.txt")
   if [ "$body" != "VX packed logo" ]; then
     printf '%s\n' "Unexpected extracted packed logo body: $body" >&2
+    return 1
+  fi
+  body=$(cat "$packed_service_docroot/app.css")
+  if [ "$body" != "body { color: #123456; }" ]; then
+    printf '%s\n' "Packed WebDAV repair did not restore stale CSS: $body" >&2
+    return 1
+  fi
+  body=$(cat "$packed_service_docroot/user-created-before-repair.txt")
+  if [ "$body" != "preexisting mutable content" ]; then
+    printf '%s\n' "Packed WebDAV repair did not preserve user-created file: $body" >&2
     return 1
   fi
   body=$(cat "$packed_service_docroot/templates/login.html")
@@ -1417,6 +1431,13 @@ run_lua_examples() {
     "http://127.0.0.1:$kore_packed_port/dav/live-during-consumer.txt")
   if [ "$body" != "webdav during packed consumer" ]; then
     printf '%s\n' "Unexpected packed WebDAV body during consumer work: $body" >&2
+    return 1
+  fi
+  body=$(curl_or_log "$packed_service_log" "packed webdav preserved file" \
+    --max-time 5 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/user-created-before-repair.txt")
+  if [ "$body" != "preexisting mutable content" ]; then
+    printf '%s\n' "Unexpected packed WebDAV preserved file body: $body" >&2
     return 1
   fi
   body=$(curl_or_log "$packed_service_log" "packed guarded api during consumer" \
