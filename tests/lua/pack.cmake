@@ -1,9 +1,19 @@
 set(script "${WORK_DIR}/vectis-pack-smoke.lua")
 set(output "${WORK_DIR}/vectis-pack-smoke")
 set(bundle_script "${WORK_DIR}/vectis-pack-bundle.lua")
+set(bundle_generator_script "${WORK_DIR}/vectis-pack-bundle-generator.lua")
 set(bundle "${WORK_DIR}/lockd-client.pem")
+set(bundle_ca_cert "${WORK_DIR}/lockd-ca-cert.pem")
+set(bundle_ca_key "${WORK_DIR}/lockd-ca-key.pem")
 set(bundle_output "${WORK_DIR}/vectis-pack-bundle")
 set(corrupt_output "${WORK_DIR}/vectis-pack-bundle-corrupt")
+set(api_service_script "${WORK_DIR}/vectis-pack-api-service.lua")
+set(api_service_output "${WORK_DIR}/vectis-pack-api-service")
+set(api_service_credentials "${WORK_DIR}/api-service-credentials.json")
+set(api_service_port 28210)
+set(consumer_service_script "${WORK_DIR}/vectis-pack-consumer-service.lua")
+set(consumer_service_output "${WORK_DIR}/vectis-pack-consumer-service")
+set(consumer_service_cache_dir "${WORK_DIR}/consumer-service-cache")
 set(asset_dir "${WORK_DIR}/site")
 set(asset_manifest "${WORK_DIR}/assets.json")
 set(asset_manifest_template "${WORK_DIR}/login-template.html")
@@ -50,7 +60,14 @@ if(NOT invalid_extract_mode_stderr MATCHES "--extract-mode must be")
   message(FATAL_ERROR "invalid pack extract mode failed with unexpected error: ${invalid_extract_mode_stdout}${invalid_extract_mode_stderr}")
 endif()
 
-file(WRITE "${bundle}" "embedded lockd client bundle bytes\n")
+file(WRITE "${bundle_generator_script}" "local vectis = require(\"vectis\")\nlocal function read_file(path)\n  local fp = assert(io.open(path, \"rb\"))\n  local body = fp:read(\"*a\")\n  fp:close()\n  return body\nend\nassert(vectis.cert.generate_bundle({common_name = \"Vectis Pack Lockd CA\", is_ca = true, output_cert_path = [[${bundle_ca_cert}]], output_key_path = [[${bundle_ca_key}]], key_bits = 2048, valid_days = 1}) == true)\nassert(vectis.cert.generate_bundle({common_name = \"lockd-client.local\", output_bundle_path = [[${bundle}]], ca_cert_path = [[${bundle_ca_cert}]], ca_key_path = [[${bundle_ca_key}]], key_bits = 2048, valid_days = 1}) == true)\nlocal fp = assert(io.open([[${bundle}]], \"ab\"))\nfp:write(read_file([[${bundle_ca_cert}]]))\nfp:close()\n")
+execute_process(COMMAND "${VECTIS_BIN}" "${bundle_generator_script}"
+                RESULT_VARIABLE bundle_generate_result
+                OUTPUT_VARIABLE bundle_generate_stdout
+                ERROR_VARIABLE bundle_generate_stderr)
+if(NOT bundle_generate_result EQUAL 0)
+  message(FATAL_ERROR "failed to generate lockd client bundle: ${bundle_generate_stdout}${bundle_generate_stderr}")
+endif()
 file(SIZE "${bundle}" bundle_size)
 file(WRITE "${bundle_script}" "local vectis = require(\"vectis\")\nassert(vectis.has_embedded_lockd_bundle() == true)\nassert(vectis.embedded_lockd_bundle_size() == ${bundle_size})\nlocal server = assert(vectis.server.new({lockd = {endpoints = {\"https://127.0.0.1:1\"}, client_bundle = \"embedded\", namespace = \"pack\"}}))\nserver:close()\nassert(arg[1] == \"bundle-arg\")\n")
 
@@ -91,6 +108,147 @@ if(corrupt_run_result EQUAL 0)
 endif()
 if(NOT corrupt_run_stderr MATCHES "embedded lockd bundle hash mismatch")
   message(FATAL_ERROR "corrupted packed bundle failed with unexpected error: ${corrupt_run_stdout}${corrupt_run_stderr}")
+endif()
+
+string(CONFIGURE [=[
+local vectis = require("vectis")
+local curl = require("curl")
+local credentials = [[@api_service_credentials@]]
+local port = @api_service_port@
+local function base64(data)
+  local chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+  local out = {}
+  for i = 1, #data, 3 do
+    local a = data:byte(i) or 0
+    local b = data:byte(i + 1) or 0
+    local c = data:byte(i + 2) or 0
+    local n = a * 65536 + b * 256 + c
+    local pad = (#data - i == 0) and 2 or ((#data - i == 1) and 1 or 0)
+    out[#out + 1] = chars:sub(math.floor(n / 262144) % 64 + 1, math.floor(n / 262144) % 64 + 1)
+    out[#out + 1] = chars:sub(math.floor(n / 4096) % 64 + 1, math.floor(n / 4096) % 64 + 1)
+    out[#out + 1] = pad >= 2 and "=" or chars:sub(math.floor(n / 64) % 64 + 1, math.floor(n / 64) % 64 + 1)
+    out[#out + 1] = pad >= 1 and "=" or chars:sub(n % 64 + 1, n % 64 + 1)
+  end
+  return table.concat(out)
+end
+assert(vectis.auth.store_init({ credentials_path = credentials }) == true)
+assert(vectis.auth.user_add({
+  credentials_path = credentials,
+  username = "api-user",
+  password = "api-password",
+}).username == "api-user")
+local key = assert(vectis.auth.webdav_key({
+  credentials_path = credentials,
+  username = "api-user",
+  password = "api-password",
+}))
+local authorization = "Basic " .. base64(key.client_id .. ":" .. key.client_secret)
+local server = assert(vectis.server.new({
+  app_name = "packed-api-service",
+  bind = "127.0.0.1",
+  port = port,
+}))
+assert(server:auth_json({
+  path = "/api/status",
+  auth = { kind = "native", credentials_path = credentials, realm = "api", purpose = "webdav" },
+  body = '{"ok":true,"service":"api"}\n',
+}) == true)
+assert(server:start() == true)
+local function request(headers)
+  local response
+  for _ = 1, 20 do
+    response = curl.perform({
+      url = "http://127.0.0.1:" .. port .. "/api/status",
+      headers = headers,
+      protocols = "http",
+      timeout_ms = 2000,
+      connect_timeout_ms = 1000,
+      no_signal = true,
+    })
+    if response.ok or response.status == 401 then
+      return response
+    end
+    os.execute("sleep 0.1")
+  end
+  return response
+end
+local anonymous = request()
+assert(anonymous.status == 401)
+assert(anonymous.headers:lower():find('www-authenticate: basic realm="api"', 1, true))
+local authenticated = request({ Authorization = authorization })
+assert(authenticated.ok == true, authenticated.error)
+assert(authenticated.status == 200)
+assert(authenticated.body == '{"ok":true,"service":"api"}\n')
+assert(authenticated.headers:lower():find("cache-control: no-store", 1, true))
+assert(server:stop() == true)
+server:close()
+]=] api_service_script_body @ONLY)
+file(WRITE "${api_service_script}" "${api_service_script_body}")
+
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${api_service_script}" --output "${api_service_output}"
+                RESULT_VARIABLE api_service_pack_result
+                OUTPUT_VARIABLE api_service_pack_stdout
+                ERROR_VARIABLE api_service_pack_stderr)
+if(NOT api_service_pack_result EQUAL 0)
+  message(FATAL_ERROR "packed API service packaging failed: ${api_service_pack_stdout}${api_service_pack_stderr}")
+endif()
+
+file(REMOVE "${api_service_credentials}")
+execute_process(COMMAND "${api_service_output}"
+                RESULT_VARIABLE api_service_run_result
+                OUTPUT_VARIABLE api_service_run_stdout
+                ERROR_VARIABLE api_service_run_stderr)
+if(NOT api_service_run_result EQUAL 0)
+  message(FATAL_ERROR "packed API service failed: ${api_service_run_stdout}${api_service_run_stderr}")
+endif()
+
+string(CONFIGURE [=[
+local vectis = require("vectis")
+local cache_dir = [[@consumer_service_cache_dir@]]
+assert(vectis.has_embedded_lockd_bundle() == true)
+assert(vectis.embedded_lockd_bundle_size() > 0)
+local server = assert(vectis.server.new({
+  app_name = "packed-consumer-service",
+  bind = "127.0.0.1",
+  port = 28211,
+  lockd = {
+    endpoints = { "https://127.0.0.1:1" },
+    client_bundle = "embedded",
+    namespace = "packed-consumer",
+  },
+}))
+local registered, err = server:consumer_service({
+  queue = "packed-consumer",
+  owner = "packed-consumer",
+  start = false,
+  handler = {
+    kind = "webdav_marker",
+    cache_dir = cache_dir,
+    site_id = "packed-consumer",
+    processing_path = "/processing.txt",
+    done_path = "/done.txt",
+  },
+})
+assert(registered == true, err and err.message or tostring(err))
+server:close()
+]=] consumer_service_script_body @ONLY)
+file(WRITE "${consumer_service_script}" "${consumer_service_script_body}")
+
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${consumer_service_script}" --output "${consumer_service_output}" --lockd-bundle "${bundle}"
+                RESULT_VARIABLE consumer_service_pack_result
+                OUTPUT_VARIABLE consumer_service_pack_stdout
+                ERROR_VARIABLE consumer_service_pack_stderr)
+if(NOT consumer_service_pack_result EQUAL 0)
+  message(FATAL_ERROR "packed consumer service packaging failed: ${consumer_service_pack_stdout}${consumer_service_pack_stderr}")
+endif()
+
+file(REMOVE_RECURSE "${consumer_service_cache_dir}")
+execute_process(COMMAND "${consumer_service_output}"
+                RESULT_VARIABLE consumer_service_run_result
+                OUTPUT_VARIABLE consumer_service_run_stdout
+                ERROR_VARIABLE consumer_service_run_stderr)
+if(NOT consumer_service_run_result EQUAL 0)
+  message(FATAL_ERROR "packed consumer service failed: ${consumer_service_run_stdout}${consumer_service_run_stderr}")
 endif()
 
 file(MAKE_DIRECTORY "${asset_dir}/assets")

@@ -279,7 +279,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Document operational limits around signing, notarization, stripping, hardening tools, and platform-specific executable formats.
 - [x] Add first smoke test that packages and executes a Lua script artifact.
 - [x] Add deterministic e2e coverage for a packed Lua webserver with generated embedded assets, native auth routes, SMTP-delivered email-token login, auth-guarded JSON API route, WebDAV key issuance, authenticated embedded WebDAV reads, mutable WebDAV writes, WebDAV list/copy/move/delete, traversal denial, and embedded-versus-WebDAV mutation isolation.
-- [ ] Add tests that package a Lua API service and a Lua consumer service, then execute both artifacts.
+- [x] Add tests that package a Lua API service and a Lua consumer service, then execute both artifacts.
 - [x] Add a packed-service scenario that runs the embedded site/WebDAV server and lockd `startconsumer` service in the same self-contained Vectis binary and process.
 
 ## Area 14: Verification and Release
