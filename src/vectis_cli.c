@@ -3869,7 +3869,9 @@ static int vectis_lua_curl_apply_method(lua_State *lua, CURL *curl,
                              (curl_off_t)(body != NULL ? body_size : 0u));
     }
   } else if (strcmp(method, "PUT") == 0 || strcmp(method, "PATCH") == 0 ||
-             strcmp(method, "DELETE") == 0) {
+             strcmp(method, "DELETE") == 0 || strcmp(method, "OPTIONS") == 0 ||
+             strcmp(method, "PROPFIND") == 0 || strcmp(method, "MKCOL") == 0 ||
+             strcmp(method, "COPY") == 0 || strcmp(method, "MOVE") == 0) {
     (void)curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
     if (has_streaming_upload) {
       (void)curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);

@@ -34,8 +34,9 @@ libcurl into `lonejson_curl_write_callback()`.
 - `url`: required string. The URL scheme selects the libcurl protocol.
 - `protocols`: libcurl protocol allowlist string, such as
   `http,https,smtp,smtps,sftp,scp,ftp,file,mqtt`.
-- `method`: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, or `HEAD` for
-  HTTP-oriented transfers.
+- `method`: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`,
+  `PROPFIND`, `MKCOL`, `COPY`, or `MOVE` for HTTP-oriented transfers,
+  including WebDAV.
 - `headers`: table of protocol headers. String keys produce `name: value`;
   array values are passed as raw header lines.
 - `body`: request, upload, SMTP, or publish payload string.
@@ -63,9 +64,9 @@ libcurl into `lonejson_curl_write_callback()`.
   `use_ssl`, and optional `probe`.
 
 The option families above cover the main protocol classes expected from the
-bundled libcurl build: HTTP/HTTPS, SMTP/SMTPS, SFTP/SCP, FTP/file transfer, and
-MQTT-style publish payloads. Unsupported URL schemes remain libcurl runtime
-errors and are reported in the result table.
+bundled libcurl build: HTTP/HTTPS, WebDAV, SMTP/SMTPS, SFTP/SCP, FTP/file
+transfer, and MQTT-style publish payloads. Unsupported URL schemes remain
+libcurl runtime errors and are reported in the result table.
 
 ## JSON
 
