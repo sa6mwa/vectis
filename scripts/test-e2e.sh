@@ -261,6 +261,7 @@ run_lua_examples() {
   packed_service_script="$work_dir/vectis-e2e-packed-service.lua"
   packed_service_site="$work_dir/vectis-e2e-packed-site"
   packed_service_cache="$work_dir/vectis-e2e-packed-cache"
+  packed_service_docroot="$packed_service_cache/webdav/packed-service-e2e/content"
   packed_service_credentials="$work_dir/vectis-e2e-packed-credentials.json"
   packed_service_mailbox="$work_dir/vectis-e2e-packed-mailbox.txt"
   packed_service_enqueue="$work_dir/vectis-e2e-packed-enqueue.lua"
@@ -490,6 +491,36 @@ run_lua_examples() {
       "$pack_smtp_harness" "$packed_service" "$packed_service_mailbox"
   wait_for_http "http://127.0.0.1:$kore_packed_port/site/index.html" \
     "lua packed webserver"
+  if [ ! -f "$packed_service_docroot/index.html" ] ||
+      [ ! -f "$packed_service_docroot/app.css" ] ||
+      [ ! -f "$packed_service_docroot/app.js" ] ||
+      [ ! -f "$packed_service_docroot/assets/logo.txt" ] ||
+      [ ! -f "$packed_service_docroot/templates/login.html" ]; then
+    printf '%s\n' "Packed WebDAV extracted docroot was not initialized at $packed_service_docroot" >&2
+    find "$packed_service_cache" -maxdepth 5 -type f -print 2>/dev/null >&2 || true
+    return 1
+  fi
+  body=$(cat "$packed_service_docroot/index.html")
+  case "$body" in
+    *'packed service asset'*) ;;
+    *)
+      printf '%s\n' "Unexpected extracted packed index body: $body" >&2
+      return 1
+      ;;
+  esac
+  body=$(cat "$packed_service_docroot/assets/logo.txt")
+  if [ "$body" != "VX packed logo" ]; then
+    printf '%s\n' "Unexpected extracted packed logo body: $body" >&2
+    return 1
+  fi
+  body=$(cat "$packed_service_docroot/templates/login.html")
+  case "$body" in
+    *'packed-login'*'username'*) ;;
+    *)
+      printf '%s\n' "Unexpected extracted packed template body: $body" >&2
+      return 1
+      ;;
+  esac
   body=$(curl --max-time 3 -fsS \
     "http://127.0.0.1:$kore_packed_port/site/index.html")
   case "$body" in
@@ -885,6 +916,11 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed WebDAV index override: $body" >&2
     return 1
   fi
+  body=$(cat "$packed_service_docroot/index.html")
+  if [ "$body" != "webdav index override" ]; then
+    printf '%s\n' "Packed WebDAV index override did not mutate extracted docroot: $body" >&2
+    return 1
+  fi
   body=$(curl --max-time 3 -fsS \
     "http://127.0.0.1:$kore_packed_port/site/index.html")
   case "$body" in
@@ -902,6 +938,11 @@ run_lua_examples() {
     "http://127.0.0.1:$kore_packed_port/dav/note.txt")
   if [ "$dav_write_body" != "mutable packed note" ]; then
     printf '%s\n' "Unexpected packed WebDAV write response: $dav_write_body" >&2
+    return 1
+  fi
+  body=$(cat "$packed_service_docroot/note.txt")
+  if [ "$body" != "mutable packed note" ]; then
+    printf '%s\n' "Packed WebDAV write did not land in extracted docroot: $body" >&2
     return 1
   fi
   method_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
