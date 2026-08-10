@@ -3079,6 +3079,45 @@ static long vectis_lua_table_long(lua_State *lua, int index, const char *field,
   return value;
 }
 
+static const char **vectis_lua_string_array_field(lua_State *lua, int index,
+                                                  const char *field,
+                                                  size_t *out_count) {
+  const char **values;
+  size_t count;
+  size_t i;
+
+  if (out_count != NULL) {
+    *out_count = 0u;
+  }
+  lua_getfield(lua, index, field);
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return NULL;
+  }
+  luaL_checktype(lua, -1, LUA_TTABLE);
+  count = lua_rawlen(lua, -1);
+  if (count == 0u) {
+    lua_pop(lua, 1);
+    return NULL;
+  }
+  values = (const char **)calloc(count, sizeof(*values));
+  if (values == NULL) {
+    lua_pop(lua, 1);
+    luaL_error(lua, "failed to allocate Lua string array");
+    return NULL;
+  }
+  for (i = 0u; i < count; ++i) {
+    lua_rawgeti(lua, -1, (lua_Integer)i + 1);
+    values[i] = luaL_checkstring(lua, -1);
+    lua_pop(lua, 1);
+  }
+  lua_pop(lua, 1);
+  if (out_count != NULL) {
+    *out_count = count;
+  }
+  return values;
+}
+
 static unsigned vectis_lua_auth_modes_field(lua_State *lua, int index,
                                             const char *field,
                                             unsigned fallback);
@@ -3614,9 +3653,14 @@ static int vectis_lua_server_auth_routes(lua_State *lua) {
   const char *realm;
   const char *login_title;
   const char *login_template_html;
+  const char **smtp_allowed_recipients;
+  size_t smtp_allowed_recipient_count;
+  int smtp_index;
 
   app = vectis_lua_server_app(lua, 1);
   luaL_checktype(lua, 2, LUA_TTABLE);
+  smtp_allowed_recipients = NULL;
+  smtp_allowed_recipient_count = 0u;
   path_prefix = vectis_lua_table_string(lua, 2, "path_prefix");
   if (path_prefix == NULL) {
     path_prefix = vectis_lua_table_string(lua, 2, "prefix");
@@ -3654,9 +3698,52 @@ static int vectis_lua_server_auth_routes(lua_State *lua) {
       vectis_lua_table_bool(lua, 2, "require_email_token", 0);
   config.email_token_ttl_seconds = (uint64_t)vectis_lua_table_size(
       lua, 2, "email_token_ttl_seconds", config.email_token_ttl_seconds);
+  lua_getfield(lua, 2, "email_smtp");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, 2, "smtp");
+  }
+  if (!lua_isnil(lua, -1)) {
+    luaL_checktype(lua, -1, LUA_TTABLE);
+    smtp_index = lua_gettop(lua);
+    config.email_smtp.url = vectis_lua_table_string(lua, smtp_index, "url");
+    config.email_smtp.mail_from =
+        vectis_lua_table_string(lua, smtp_index, "mail_from");
+    config.email_smtp.username =
+        vectis_lua_table_string(lua, smtp_index, "username");
+    config.email_smtp.password =
+        vectis_lua_table_string(lua, smtp_index, "password");
+    config.email_smtp.subject =
+        vectis_lua_table_string(lua, smtp_index, "subject");
+    config.email_smtp.ca_bundle_path =
+        vectis_lua_table_string(lua, smtp_index, "ca_bundle_path");
+    config.email_smtp.timeout_ms = vectis_lua_table_long(
+        lua, smtp_index, "timeout_ms", config.email_smtp.timeout_ms);
+    config.email_smtp.connect_timeout_ms =
+        vectis_lua_table_long(lua, smtp_index, "connect_timeout_ms",
+                              config.email_smtp.connect_timeout_ms);
+    config.email_smtp.use_ssl =
+        vectis_lua_table_bool(lua, smtp_index, "use_ssl", 0);
+    config.email_smtp.tls_verify_peer_disabled =
+        !vectis_lua_table_bool(lua, smtp_index, "verify_peer", 1);
+    config.email_smtp.tls_verify_host_disabled =
+        !vectis_lua_table_bool(lua, smtp_index, "verify_host", 1);
+    config.email_smtp.allowed_recipient_domain =
+        vectis_lua_table_string(lua, smtp_index, "allowed_recipient_domain");
+    if (config.email_smtp.allowed_recipient_domain == NULL) {
+      config.email_smtp.allowed_recipient_domain =
+          vectis_lua_table_string(lua, smtp_index, "allowed_domain");
+    }
+    smtp_allowed_recipients = vectis_lua_string_array_field(
+        lua, smtp_index, "allowed_recipients", &smtp_allowed_recipient_count);
+    config.email_smtp.allowed_recipients = smtp_allowed_recipients;
+    config.email_smtp.allowed_recipient_count = smtp_allowed_recipient_count;
+  }
+  lua_pop(lua, 1);
 
   vectis_error_clear(&error);
   status = app->auth_routes(app, &config, &error);
+  free((void *)smtp_allowed_recipients);
   if (status != VECTIS_OK) {
     return vectis_lua_push_error(lua, status, &error);
   }

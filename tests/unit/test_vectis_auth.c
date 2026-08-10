@@ -4,15 +4,29 @@
 #include <vectis/totp_qr.h>
 #include <vectis/webdav.h>
 
+#include <arpa/inet.h>
 #include <dirent.h>
+#include <errno.h>
+#include <netinet/in.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
 static int failures = 0;
+
+typedef struct smtp_mock_server {
+  int listen_fd;
+  unsigned short port;
+  pthread_t thread;
+  char data[8192];
+  size_t data_size;
+  int started;
+} smtp_mock_server;
 
 static char *test_strdup(const char *value) {
   char *copy;
@@ -34,6 +48,161 @@ static void expect(int condition, const char *message) {
   if (!condition) {
     fprintf(stderr, "failure: %s\n", message);
     failures++;
+  }
+}
+
+static int smtp_mock_send_all(int fd, const char *text) {
+  size_t len;
+  size_t sent;
+  ssize_t n;
+
+  len = strlen(text);
+  sent = 0u;
+  while (sent < len) {
+    n = send(fd, text + sent, len - sent, 0);
+    if (n <= 0) {
+      return 0;
+    }
+    sent += (size_t)n;
+  }
+  return 1;
+}
+
+static int smtp_mock_read_line(int fd, char *line, size_t line_size) {
+  size_t used;
+  char ch;
+  ssize_t n;
+
+  used = 0u;
+  while (used + 1u < line_size) {
+    n = recv(fd, &ch, 1u, 0);
+    if (n <= 0) {
+      return 0;
+    }
+    line[used++] = ch;
+    if (ch == '\n') {
+      break;
+    }
+  }
+  line[used] = '\0';
+  return used > 0u;
+}
+
+static void smtp_mock_capture(smtp_mock_server *server, const char *line) {
+  size_t len;
+  size_t copy;
+
+  if (server == NULL || line == NULL) {
+    return;
+  }
+  len = strlen(line);
+  if (server->data_size >= sizeof(server->data) - 1u) {
+    return;
+  }
+  copy = len;
+  if (copy > sizeof(server->data) - 1u - server->data_size) {
+    copy = sizeof(server->data) - 1u - server->data_size;
+  }
+  memcpy(server->data + server->data_size, line, copy);
+  server->data_size += copy;
+  server->data[server->data_size] = '\0';
+}
+
+static void *smtp_mock_thread(void *userdata) {
+  smtp_mock_server *server;
+  struct sockaddr_in peer;
+  socklen_t peer_len;
+  char line[1024];
+  int client_fd;
+  int in_data;
+
+  server = (smtp_mock_server *)userdata;
+  peer_len = (socklen_t)sizeof(peer);
+  client_fd = accept(server->listen_fd, (struct sockaddr *)&peer, &peer_len);
+  if (client_fd < 0) {
+    return NULL;
+  }
+  in_data = 0;
+  (void)smtp_mock_send_all(client_fd, "220 vectis smtp mock\r\n");
+  while (smtp_mock_read_line(client_fd, line, sizeof(line))) {
+    if (in_data) {
+      if (strcmp(line, ".\r\n") == 0 || strcmp(line, ".\n") == 0) {
+        in_data = 0;
+        (void)smtp_mock_send_all(client_fd, "250 queued\r\n");
+      } else {
+        smtp_mock_capture(server, line);
+      }
+    } else if (strncmp(line, "EHLO", 4u) == 0 ||
+               strncmp(line, "HELO", 4u) == 0) {
+      (void)smtp_mock_send_all(client_fd, "250-localhost\r\n250 OK\r\n");
+    } else if (strncmp(line, "MAIL FROM:", 10u) == 0 ||
+               strncmp(line, "RCPT TO:", 8u) == 0) {
+      (void)smtp_mock_send_all(client_fd, "250 OK\r\n");
+    } else if (strncmp(line, "DATA", 4u) == 0) {
+      in_data = 1;
+      (void)smtp_mock_send_all(client_fd, "354 end with dot\r\n");
+    } else if (strncmp(line, "QUIT", 4u) == 0) {
+      (void)smtp_mock_send_all(client_fd, "221 bye\r\n");
+      break;
+    } else {
+      (void)smtp_mock_send_all(client_fd, "250 OK\r\n");
+    }
+  }
+  (void)close(client_fd);
+  return NULL;
+}
+
+static int smtp_mock_start(smtp_mock_server *server) {
+  struct sockaddr_in addr;
+  socklen_t addr_len;
+  int enabled;
+
+  memset(server, 0, sizeof(*server));
+  server->listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (server->listen_fd < 0) {
+    return 0;
+  }
+  enabled = 1;
+  (void)setsockopt(server->listen_fd, SOL_SOCKET, SO_REUSEADDR, &enabled,
+                   (socklen_t)sizeof(enabled));
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+  if (bind(server->listen_fd, (struct sockaddr *)&addr, sizeof(addr)) != 0 ||
+      listen(server->listen_fd, 1) != 0) {
+    (void)close(server->listen_fd);
+    server->listen_fd = -1;
+    return 0;
+  }
+  addr_len = (socklen_t)sizeof(addr);
+  if (getsockname(server->listen_fd, (struct sockaddr *)&addr, &addr_len) !=
+      0) {
+    (void)close(server->listen_fd);
+    server->listen_fd = -1;
+    return 0;
+  }
+  server->port = ntohs(addr.sin_port);
+  if (pthread_create(&server->thread, NULL, smtp_mock_thread, server) != 0) {
+    (void)close(server->listen_fd);
+    server->listen_fd = -1;
+    return 0;
+  }
+  server->started = 1;
+  return 1;
+}
+
+static void smtp_mock_stop(smtp_mock_server *server) {
+  if (server == NULL) {
+    return;
+  }
+  if (server->started) {
+    (void)pthread_join(server->thread, NULL);
+    server->started = 0;
+  }
+  if (server->listen_fd >= 0) {
+    (void)close(server->listen_fd);
+    server->listen_fd = -1;
   }
 }
 
@@ -244,6 +413,7 @@ int main(void) {
   char oauth_basic_clear[1024];
   char oauth_basic_token[1400];
   char oauth_basic_header[1500];
+  char smtp_url[128];
   char totp_code[VECTIS_TOTP_CODE_LENGTH + 1u];
   int written;
   vectis_auth_store_config store;
@@ -263,6 +433,9 @@ int main(void) {
   vectis_auth_email_token email_token;
   vectis_auth_email_token_verify_config email_verify;
   vectis_auth_email_token_result email_result;
+  vectis_auth_smtp_config smtp_config;
+  vectis_auth_email_message email_message;
+  smtp_mock_server smtp_server;
   vectis_auth_oidc_authorization_config oidc_authorization_config;
   vectis_auth_oidc_authorization oidc_authorization;
   vectis_auth_oidc_token_exchange_config oidc_exchange_config;
@@ -302,6 +475,10 @@ int main(void) {
   vectis_auth_email_token_init(&email_token);
   vectis_auth_email_token_verify_config_init(&email_verify);
   vectis_auth_email_token_result_init(&email_result);
+  vectis_auth_smtp_config_init(&smtp_config);
+  memset(&email_message, 0, sizeof(email_message));
+  memset(&smtp_server, 0, sizeof(smtp_server));
+  smtp_server.listen_fd = -1;
   vectis_auth_oidc_authorization_config_init(&oidc_authorization_config);
   vectis_auth_oidc_authorization_init(&oidc_authorization);
   vectis_auth_oidc_token_exchange_config_init(&oidc_exchange_config);
@@ -418,6 +595,48 @@ int main(void) {
          "expired email token is consumed");
   vectis_auth_email_token_result_cleanup(&email_result);
   vectis_auth_email_token_cleanup(&email_token);
+
+  vectis_auth_smtp_config_init(&smtp_config);
+  smtp_config.url = "smtp://127.0.0.1:9";
+  smtp_config.mail_from = "<sender@example.test>";
+  smtp_config.allowed_recipient_domain = "example.test";
+  memset(&email_message, 0, sizeof(email_message));
+  email_message.username = "email-user@example.com";
+  email_message.realm = "unit";
+  email_message.email = "blocked@example.invalid";
+  email_message.transaction_id = "email-tx-smtp-blocked";
+  email_message.token = "999999";
+  email_message.expires_at = 1300;
+  status = vectis_auth_email_token_deliver_smtp(&smtp_config, &email_message,
+                                                &error);
+  expect(status == VECTIS_ERR_INVALID, "SMTP helper enforces recipient domain");
+  vectis_error_clear(&error);
+
+  if (smtp_mock_start(&smtp_server)) {
+    written = snprintf(smtp_url, sizeof(smtp_url), "smtp://127.0.0.1:%u",
+                       (unsigned)smtp_server.port);
+    expect(written > 0 && (size_t)written < sizeof(smtp_url),
+           "formats SMTP mock URL");
+    smtp_config.url = smtp_url;
+    smtp_config.timeout_ms = 5000L;
+    smtp_config.connect_timeout_ms = 2000L;
+    email_message.email = "email-user@example.test";
+    email_message.transaction_id = "email-tx-smtp";
+    email_message.token = "135790";
+    email_message.expires_at = 1600;
+    status = vectis_auth_email_token_deliver_smtp(&smtp_config, &email_message,
+                                                  &error);
+    expect_ok(status, &error, "delivers email token through SMTP");
+    smtp_mock_stop(&smtp_server);
+    expect(strstr(smtp_server.data, "Subject: Vectis login token") != NULL,
+           "SMTP delivery includes subject");
+    expect(strstr(smtp_server.data, "135790") != NULL,
+           "SMTP delivery includes token");
+    expect(strstr(smtp_server.data, "email-tx-smtp") != NULL,
+           "SMTP delivery includes transaction id");
+  } else {
+    expect(0, "starts SMTP mock server");
+  }
 
   vectis_auth_oidc_authorization_config_init(&oidc_authorization_config);
   oidc_authorization_config.authorization_endpoint =

@@ -1694,6 +1694,7 @@ void vectis_auth_routes_config_init(vectis_auth_routes_config *config) {
   config->login_title = "Vectis Login";
   config->max_body_bytes = 8192u;
   config->email_token_ttl_seconds = VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS;
+  vectis_auth_smtp_config_init(&config->email_smtp);
 }
 
 void vectis_auth_user_config_init(vectis_auth_user_config *config) {
@@ -1786,6 +1787,16 @@ void vectis_auth_email_token_result_cleanup(
   free(result->realm);
   free(result->email);
   vectis_auth_email_token_result_init(result);
+}
+
+void vectis_auth_smtp_config_init(vectis_auth_smtp_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->subject = "Vectis login token";
+  config->timeout_ms = 30000L;
+  config->connect_timeout_ms = 10000L;
 }
 
 void vectis_auth_oauth2_http_response_init(

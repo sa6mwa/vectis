@@ -106,6 +106,34 @@ typedef struct vectis_auth_native_provider_config {
   unsigned allowed_auth_modes;
 } vectis_auth_native_provider_config;
 
+typedef struct vectis_auth_email_message {
+  const char *username;
+  const char *realm;
+  const char *email;
+  const char *transaction_id;
+  const char *token;
+  uint64_t expires_at;
+} vectis_auth_email_message;
+
+typedef struct vectis_auth_smtp_config {
+  const char *url;
+  const char *mail_from;
+  const char *username;
+  const char *password;
+  const char *subject;
+  const char *ca_bundle_path;
+  long timeout_ms;
+  long connect_timeout_ms;
+  int use_ssl;
+  int tls_verify_peer_disabled;
+  int tls_verify_host_disabled;
+  const char *allowed_recipient_domain;
+  const char *const *allowed_recipients;
+  size_t allowed_recipient_count;
+  vectis_curl_configure_fn configure_curl;
+  void *configure_curl_userdata;
+} vectis_auth_smtp_config;
+
 /*
  * Native browser/login route set. Registers:
  *   GET  <path_prefix>/login
@@ -113,7 +141,7 @@ typedef struct vectis_auth_native_provider_config {
  *   POST <path_prefix>/webdav-key
  * The email-token endpoint accepts application/x-www-form-urlencoded fields
  * username and email, creates a single-use token transaction, and returns the
- * transaction data. SMTP delivery is intentionally separate from this route.
+ * transaction data unless SMTP delivery is configured.
  * The webdav-key endpoint accepts username, password, optional totp_code, and
  * when require_email_token is set, email_transaction_id plus email_token. It
  * then issues a WebDAV Basic app key through the native credentials store.
@@ -133,6 +161,12 @@ struct vectis_auth_routes_config {
   int require_email_token;
   /* Zero uses VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS. */
   uint64_t email_token_ttl_seconds;
+  /*
+   * Optional SMTP delivery for email-token issuance. When email_smtp.url is
+   * set, <path_prefix>/email-token sends the token through SMTP and omits it
+   * from the HTTP response.
+   */
+  vectis_auth_smtp_config email_smtp;
 };
 
 typedef struct vectis_auth_user_config {
@@ -420,6 +454,7 @@ void vectis_auth_email_token_result_init(
     vectis_auth_email_token_result *result);
 void vectis_auth_email_token_result_cleanup(
     vectis_auth_email_token_result *result);
+void vectis_auth_smtp_config_init(vectis_auth_smtp_config *config);
 void vectis_auth_oauth2_http_response_init(
     vectis_auth_oauth2_http_response *response);
 void vectis_auth_oauth2_http_response_cleanup(
@@ -497,6 +532,10 @@ vectis_status vectis_auth_email_token_issue(
 vectis_status vectis_auth_email_token_verify(
     const vectis_auth_email_token_verify_config *config,
     vectis_auth_email_token_result *out, vectis_error *error);
+vectis_status
+vectis_auth_email_token_deliver_smtp(const vectis_auth_smtp_config *config,
+                                     const vectis_auth_email_message *message,
+                                     vectis_error *error);
 vectis_status vectis_auth_issue_webdav_key_for_login(
     const vectis_auth_store_config *store_config,
     const vectis_auth_login_config *login_config,

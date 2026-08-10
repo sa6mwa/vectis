@@ -4255,6 +4255,7 @@ typedef struct vectis_auth_route_data {
   unsigned int totp_window;
   int require_email_token;
   uint64_t email_token_ttl_seconds;
+  vectis_auth_smtp_config email_smtp;
 } vectis_auth_route_data;
 
 typedef struct vectis_auth_form_fields {
@@ -5012,8 +5013,10 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
                            const char *path_prefix, vectis_error *error) {
   vectis_auth_route_data *data;
   char *cursor;
+  const char **recipient_copy;
   size_t total;
   size_t len;
+  size_t i;
 
   total = sizeof(*data);
   total += config->store.credentials_path != NULL
@@ -5025,6 +5028,36 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   total += config->login_template_html != NULL
                ? strlen(config->login_template_html) + 1u
                : 0u;
+  total +=
+      config->email_smtp.url != NULL ? strlen(config->email_smtp.url) + 1u : 0u;
+  total += config->email_smtp.mail_from != NULL
+               ? strlen(config->email_smtp.mail_from) + 1u
+               : 0u;
+  total += config->email_smtp.username != NULL
+               ? strlen(config->email_smtp.username) + 1u
+               : 0u;
+  total += config->email_smtp.password != NULL
+               ? strlen(config->email_smtp.password) + 1u
+               : 0u;
+  total += config->email_smtp.subject != NULL
+               ? strlen(config->email_smtp.subject) + 1u
+               : 0u;
+  total += config->email_smtp.ca_bundle_path != NULL
+               ? strlen(config->email_smtp.ca_bundle_path) + 1u
+               : 0u;
+  total += config->email_smtp.allowed_recipient_domain != NULL
+               ? strlen(config->email_smtp.allowed_recipient_domain) + 1u
+               : 0u;
+  if (config->email_smtp.allowed_recipients != NULL &&
+      config->email_smtp.allowed_recipient_count > 0u) {
+    total +=
+        config->email_smtp.allowed_recipient_count * sizeof(*recipient_copy);
+    for (i = 0u; i < config->email_smtp.allowed_recipient_count; ++i) {
+      total += config->email_smtp.allowed_recipients[i] != NULL
+                   ? strlen(config->email_smtp.allowed_recipients[i]) + 1u
+                   : 0u;
+    }
+  }
   data = (vectis_auth_route_data *)calloc(1u, total);
   if (data == NULL) {
     vectis_set_error(error, VECTIS_ERR_NOMEM,
@@ -5037,7 +5070,20 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   data->totp_window = config->totp_window;
   data->require_email_token = config->require_email_token;
   data->email_token_ttl_seconds = config->email_token_ttl_seconds;
+  data->email_smtp = config->email_smtp;
   cursor = (char *)(data + 1);
+  if (config->email_smtp.allowed_recipients != NULL &&
+      config->email_smtp.allowed_recipient_count > 0u) {
+    recipient_copy = (const char **)(void *)cursor;
+    data->email_smtp.allowed_recipients =
+        (const char *const *)(void *)recipient_copy;
+    cursor +=
+        config->email_smtp.allowed_recipient_count * sizeof(*recipient_copy);
+  } else {
+    recipient_copy = NULL;
+    data->email_smtp.allowed_recipients = NULL;
+    data->email_smtp.allowed_recipient_count = 0u;
+  }
 #define VECTIS_COPY_AUTH_ROUTE_FIELD(field, value)                             \
   do {                                                                         \
     if ((value) != NULL) {                                                     \
@@ -5054,6 +5100,28 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   VECTIS_COPY_AUTH_ROUTE_FIELD(login_title, config->login_title);
   VECTIS_COPY_AUTH_ROUTE_FIELD(login_template_html,
                                config->login_template_html);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(email_smtp.url, config->email_smtp.url);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(email_smtp.mail_from,
+                               config->email_smtp.mail_from);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(email_smtp.username,
+                               config->email_smtp.username);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(email_smtp.password,
+                               config->email_smtp.password);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(email_smtp.subject, config->email_smtp.subject);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(email_smtp.ca_bundle_path,
+                               config->email_smtp.ca_bundle_path);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(email_smtp.allowed_recipient_domain,
+                               config->email_smtp.allowed_recipient_domain);
+  if (recipient_copy != NULL) {
+    for (i = 0u; i < config->email_smtp.allowed_recipient_count; ++i) {
+      if (config->email_smtp.allowed_recipients[i] != NULL) {
+        len = strlen(config->email_smtp.allowed_recipients[i]) + 1u;
+        memcpy(cursor, config->email_smtp.allowed_recipients[i], len);
+        recipient_copy[i] = cursor;
+        cursor += len;
+      }
+    }
+  }
 #undef VECTIS_COPY_AUTH_ROUTE_FIELD
   (void)len;
   return data;
@@ -5342,20 +5410,26 @@ vectis_auth_webdav_key_response(vectis_auth_issued_credential *credential,
   return status;
 }
 
-static vectis_status
-vectis_auth_email_token_route_response(vectis_auth_email_token *token,
-                                       vectis_response *response,
-                                       vectis_error *error) {
+static vectis_status vectis_auth_email_token_route_response(
+    vectis_auth_email_token *token, int include_token,
+    vectis_response *response, vectis_error *error) {
   vectis_string_builder text;
   vectis_bytes body;
   vectis_status status;
 
   memset(&text, 0, sizeof(text));
   status = vectis_string_builder_appendf(
-      &text, error, "transaction_id=%s\ntoken=%s\nexpires_at=%llu\n",
-      token->transaction_id != NULL ? token->transaction_id : "",
-      token->token != NULL ? token->token : "",
-      (unsigned long long)token->expires_at);
+      &text, error, "transaction_id=%s\n",
+      token->transaction_id != NULL ? token->transaction_id : "");
+  if (status == VECTIS_OK && include_token) {
+    status = vectis_string_builder_appendf(
+        &text, error, "token=%s\n", token->token != NULL ? token->token : "");
+  }
+  if (status == VECTIS_OK) {
+    status =
+        vectis_string_builder_appendf(&text, error, "expires_at=%llu\n",
+                                      (unsigned long long)token->expires_at);
+  }
   if (status != VECTIS_OK) {
     vectis_string_builder_cleanup(&text);
     return status;
@@ -5395,8 +5469,10 @@ static vectis_status vectis_auth_email_token_dispatch(vectis_app *app,
   vectis_auth_form_fields fields;
   vectis_auth_email_token_issue_config issue;
   vectis_auth_email_token token;
+  vectis_auth_email_message message;
   const char *content_type;
   vectis_status status;
+  int smtp_enabled;
 
   (void)app;
   data = (vectis_auth_route_data *)userdata;
@@ -5436,12 +5512,45 @@ static vectis_status vectis_auth_email_token_dispatch(vectis_app *app,
   issue.ttl_seconds = data->email_token_ttl_seconds;
   vectis_auth_email_token_init(&token);
   status = vectis_auth_email_token_issue(&issue, &token, error);
-  vectis_auth_form_cleanup(&fields);
   if (status != VECTIS_OK) {
+    vectis_auth_form_cleanup(&fields);
     vectis_auth_email_token_cleanup(&token);
     return status;
   }
-  status = vectis_auth_email_token_route_response(&token, response, error);
+  smtp_enabled =
+      data->email_smtp.url != NULL && data->email_smtp.url[0] != '\0';
+  if (smtp_enabled) {
+    memset(&message, 0, sizeof(message));
+    message.username = fields.username;
+    message.realm = data->realm;
+    message.email = fields.email;
+    message.transaction_id = token.transaction_id;
+    message.token = token.token;
+    message.expires_at = token.expires_at;
+    status = vectis_auth_email_token_deliver_smtp(&data->email_smtp, &message,
+                                                  error);
+    if (status != VECTIS_OK) {
+      vectis_auth_email_token_verify_config consume;
+      vectis_auth_email_token_result consume_result;
+
+      vectis_auth_email_token_verify_config_init(&consume);
+      consume.store = data->store;
+      consume.transaction_id = token.transaction_id;
+      consume.username = fields.username;
+      consume.realm = data->realm;
+      consume.token = token.token;
+      consume.now_seconds = data->unix_seconds;
+      vectis_auth_email_token_result_init(&consume_result);
+      (void)vectis_auth_email_token_verify(&consume, &consume_result, NULL);
+      vectis_auth_email_token_result_cleanup(&consume_result);
+      vectis_auth_form_cleanup(&fields);
+      vectis_auth_email_token_cleanup(&token);
+      return status;
+    }
+  }
+  vectis_auth_form_cleanup(&fields);
+  status = vectis_auth_email_token_route_response(&token, !smtp_enabled,
+                                                  response, error);
   vectis_auth_email_token_cleanup(&token);
   return status;
 }
@@ -15163,6 +15272,198 @@ static vectis_status vectis_curl_set_error(vectis_error *error, CURLcode code,
     error->dependency_code = (long)code;
   }
   return VECTIS_ERR_STATE;
+}
+
+static int vectis_auth_email_header_safe(const char *value) {
+  const char *p;
+
+  if (value == NULL || value[0] == '\0') {
+    return 0;
+  }
+  for (p = value; *p != '\0'; ++p) {
+    if (*p == '\r' || *p == '\n') {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static int
+vectis_auth_smtp_recipient_allowed(const vectis_auth_smtp_config *config,
+                                   const char *email) {
+  const char *at;
+  size_t i;
+
+  if (config == NULL || email == NULL || email[0] == '\0') {
+    return 0;
+  }
+  if (config->allowed_recipients != NULL &&
+      config->allowed_recipient_count > 0u) {
+    for (i = 0u; i < config->allowed_recipient_count; ++i) {
+      if (config->allowed_recipients[i] != NULL &&
+          strcasecmp(config->allowed_recipients[i], email) == 0) {
+        return 1;
+      }
+    }
+    return 0;
+  }
+  if (config->allowed_recipient_domain != NULL &&
+      config->allowed_recipient_domain[0] != '\0') {
+    at = strrchr(email, '@');
+    return at != NULL && at[1] != '\0' &&
+           strcasecmp(at + 1, config->allowed_recipient_domain) == 0;
+  }
+  return 1;
+}
+
+static vectis_status
+vectis_auth_smtp_build_body(const vectis_auth_smtp_config *config,
+                            const vectis_auth_email_message *message,
+                            vectis_string_builder *body, vectis_error *error) {
+  vectis_status status;
+
+  memset(body, 0, sizeof(*body));
+  status = vectis_string_builder_appendf(
+      body, error,
+      "From: %s\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/plain; "
+      "charset=utf-8\r\n\r\n",
+      config->mail_from, message->email,
+      config->subject != NULL && config->subject[0] != '\0'
+          ? config->subject
+          : "Vectis login token");
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_appendf(
+        body, error,
+        "Your Vectis login token is: %s\r\n\r\nTransaction: %s\r\nRealm: "
+        "%s\r\nExpires at: %llu\r\n",
+        message->token, message->transaction_id,
+        message->realm != NULL ? message->realm : "vectis",
+        (unsigned long long)message->expires_at);
+  }
+  return status;
+}
+
+vectis_status
+vectis_auth_email_token_deliver_smtp(const vectis_auth_smtp_config *config,
+                                     const vectis_auth_email_message *message,
+                                     vectis_error *error) {
+  CURL *curl;
+  CURLcode curl_code;
+  struct curl_slist *recipients;
+  vectis_curl_request_body upload;
+  vectis_string_builder body;
+  char curl_error[CURL_ERROR_SIZE];
+  vectis_status status;
+
+  if (config == NULL || config->url == NULL || config->url[0] == '\0' ||
+      config->mail_from == NULL || config->mail_from[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SMTP url and mail_from are required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (message == NULL || message->email == NULL || message->email[0] == '\0' ||
+      message->transaction_id == NULL || message->transaction_id[0] == '\0' ||
+      message->token == NULL || message->token[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SMTP email token message is incomplete");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!vectis_auth_email_header_safe(config->mail_from) ||
+      !vectis_auth_email_header_safe(message->email) ||
+      (config->subject != NULL && config->subject[0] != '\0' &&
+       !vectis_auth_email_header_safe(config->subject))) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SMTP email fields must not contain newlines");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!vectis_auth_smtp_recipient_allowed(config, message->email)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SMTP recipient is not allowed");
+    return VECTIS_ERR_INVALID;
+  }
+
+  memset(&body, 0, sizeof(body));
+  status = vectis_auth_smtp_build_body(config, message, &body, error);
+  if (status != VECTIS_OK) {
+    vectis_string_builder_cleanup(&body);
+    return status;
+  }
+  memset(&upload, 0, sizeof(upload));
+  upload.data = body.data;
+  upload.size = body.size;
+  recipients = NULL;
+  memset(curl_error, 0, sizeof(curl_error));
+
+  (void)pthread_once(&vectis_curl_once, vectis_curl_global_init_once);
+  curl = curl_easy_init();
+  if (curl == NULL) {
+    vectis_string_builder_cleanup(&body);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to initialize curl easy handle");
+    return VECTIS_ERR_NOMEM;
+  }
+  recipients = curl_slist_append(recipients, message->email);
+  if (recipients == NULL) {
+    curl_easy_cleanup(curl);
+    vectis_string_builder_cleanup(&body);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate SMTP recipient");
+    return VECTIS_ERR_NOMEM;
+  }
+
+  (void)curl_easy_setopt(curl, CURLOPT_URL, config->url);
+  (void)curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error);
+  (void)curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+  if (config->timeout_ms > 0L) {
+    (void)curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, config->timeout_ms);
+  }
+  if (config->connect_timeout_ms > 0L) {
+    (void)curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS,
+                           config->connect_timeout_ms);
+  }
+  if (config->username != NULL && config->username[0] != '\0') {
+    (void)curl_easy_setopt(curl, CURLOPT_USERNAME, config->username);
+  }
+  if (config->password != NULL && config->password[0] != '\0') {
+    (void)curl_easy_setopt(curl, CURLOPT_PASSWORD, config->password);
+  }
+  if (config->use_ssl) {
+    (void)curl_easy_setopt(curl, CURLOPT_USE_SSL, (long)CURLUSESSL_ALL);
+  }
+  if (config->tls_verify_peer_disabled) {
+    (void)curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+  }
+  if (config->tls_verify_host_disabled) {
+    (void)curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+  }
+  if (config->ca_bundle_path != NULL && config->ca_bundle_path[0] != '\0') {
+    (void)curl_easy_setopt(curl, CURLOPT_CAINFO, config->ca_bundle_path);
+  }
+  (void)curl_easy_setopt(curl, CURLOPT_MAIL_FROM, config->mail_from);
+  (void)curl_easy_setopt(curl, CURLOPT_MAIL_RCPT, recipients);
+  (void)curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+  (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION, vectis_curl_read_memory);
+  (void)curl_easy_setopt(curl, CURLOPT_READDATA, &upload);
+  (void)curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE,
+                         (curl_off_t)upload.size);
+  if (config->configure_curl != NULL &&
+      config->configure_curl(curl, config->configure_curl_userdata, error) !=
+          VECTIS_OK) {
+    curl_slist_free_all(recipients);
+    curl_easy_cleanup(curl);
+    vectis_string_builder_cleanup(&body);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  curl_code = curl_easy_perform(curl);
+  curl_slist_free_all(recipients);
+  curl_easy_cleanup(curl);
+  vectis_string_builder_cleanup(&body);
+  if (curl_code != CURLE_OK) {
+    return vectis_curl_set_error(error, curl_code, "SMTP delivery failed",
+                                 curl_error);
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 static int vectis_http_method_upload_capable(vectis_http_method method) {
