@@ -17,6 +17,7 @@ kore_downstream_port=${VECTIS_E2E_KORE_DOWNSTREAM_PORT:-$((kore_basic_port + 3))
 kore_static_port=${VECTIS_E2E_KORE_STATIC_PORT:-$((kore_basic_port + 4))}
 kore_combined_port=${VECTIS_E2E_KORE_COMBINED_PORT:-$((kore_basic_port + 5))}
 kore_packed_port=${VECTIS_E2E_KORE_PACKED_PORT:-$((kore_basic_port + 6))}
+pack_smtp_harness=${VECTIS_E2E_PACK_SMTP_HARNESS:-$repo_root/build/debug/tests/vectis_pack_smtp_harness}
 work_dir=$(mktemp -d)
 ssh_memory_key="$work_dir/vectis-e2e-ssh-key"
 ssh_bad_host_key="$work_dir/vectis-e2e-bad-host-key"
@@ -261,6 +262,7 @@ run_lua_examples() {
   packed_service_site="$work_dir/vectis-e2e-packed-site"
   packed_service_cache="$work_dir/vectis-e2e-packed-cache"
   packed_service_credentials="$work_dir/vectis-e2e-packed-credentials.json"
+  packed_service_mailbox="$work_dir/vectis-e2e-packed-mailbox.txt"
   packed_content_types="$work_dir/vectis-e2e-packed-content-types.json"
   shebang_script="$work_dir/vectis-e2e-shebang.lua"
   packed="$work_dir/vectis-e2e-packed"
@@ -276,6 +278,13 @@ run_lua_examples() {
   propfind_status=
   method_status=
   guarded_status=
+  password_only_status=
+  wrong_token_status=
+  replay_token_status=
+  email_token_response=
+  email_transaction_id=
+  email_token=
+  mail_body=
 
   printf '[e2e] lua runner\n'
   printf '%s\n' \
@@ -301,6 +310,10 @@ run_lua_examples() {
   "$packed"
 
   printf '[e2e] lua packed webserver\n'
+  if [ ! -x "$pack_smtp_harness" ]; then
+    printf '%s\n' "packed SMTP harness is missing: $pack_smtp_harness" >&2
+    return 1
+  fi
   mkdir -p "$packed_service_site"
   printf '%s\n' \
     '<!doctype html>' \
@@ -324,6 +337,7 @@ run_lua_examples() {
     'local port = tonumber(assert(os.getenv("VECTIS_PACKED_SERVICE_PORT")))' \
     'local credentials_path = assert(os.getenv("VECTIS_PACKED_SERVICE_CREDENTIALS"))' \
     'local cache_dir = assert(os.getenv("VECTIS_PACKED_SERVICE_CACHE"))' \
+    'local smtp_url = assert(os.getenv("VECTIS_PACK_SMTP_URL"))' \
     'assert(vectis.embedded.has_assets())' \
     'local index = assert(vectis.embedded.read("/index.html"))' \
     'assert(index:match("packed service asset"))' \
@@ -366,6 +380,15 @@ run_lua_examples() {
     '  realm = "packed-e2e",' \
     '  login_title = "Packed E2E Login",' \
     '  time = 59,' \
+    '  require_email_token = true,' \
+    '  email_token_ttl_seconds = 300,' \
+    '  email_smtp = {' \
+    '    url = smtp_url,' \
+    '    mail_from = "sender@example.test",' \
+    '    allowed_domain = "example.test",' \
+    '    timeout_ms = 5000,' \
+    '    connect_timeout_ms = 2000,' \
+    '  },' \
     '}))' \
     'assert(server:auth_json({' \
     '  path = "/api/private",' \
@@ -390,7 +413,7 @@ run_lua_examples() {
     env VECTIS_PACKED_SERVICE_PORT="$kore_packed_port" \
       VECTIS_PACKED_SERVICE_CREDENTIALS="$packed_service_credentials" \
       VECTIS_PACKED_SERVICE_CACHE="$packed_service_cache" \
-      "$packed_service"
+      "$pack_smtp_harness" "$packed_service" "$packed_service_mailbox"
   wait_for_http "http://127.0.0.1:$kore_packed_port/site/index.html" \
     "lua packed webserver"
   body=$(curl --max-time 3 -fsS \
@@ -461,10 +484,75 @@ run_lua_examples() {
       return 1
       ;;
   esac
-  webdav_key_response=$(curl --max-time 3 -fsS -X POST \
+  password_only_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data 'username=packed-user%40example.com&password=packed-password&totp_code=287082' \
     "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
+  if [ "$password_only_status" = "200" ]; then
+    printf '%s\n' "Packed auth issued WebDAV key without email token" >&2
+    return 1
+  fi
+  email_token_response=$(curl --max-time 3 -fsS -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-user%40example.com&email=packed-user%40example.test' \
+    "http://127.0.0.1:$kore_packed_port/auth/email-token")
+  email_transaction_id=$(printf '%s\n' "$email_token_response" |
+    sed -n 's/^transaction_id=//p')
+  if [ -z "$email_transaction_id" ]; then
+    printf '%s\n' "Packed auth did not issue an email transaction" >&2
+    printf '%s\n' "$email_token_response" >&2
+    return 1
+  fi
+  case "$email_token_response" in
+    *'token='*)
+      printf '%s\n' "Packed auth exposed SMTP-delivered token in HTTP response" >&2
+      printf '%s\n' "$email_token_response" >&2
+      return 1
+      ;;
+  esac
+  if [ ! -s "$packed_service_mailbox" ]; then
+    printf '%s\n' "Packed SMTP harness did not capture a mailbox" >&2
+    return 1
+  fi
+  mail_body=$(cat "$packed_service_mailbox")
+  case "$mail_body" in
+    *'Subject: Vectis login token'*"Transaction: $email_transaction_id"*) ;;
+    *)
+      printf '%s\n' "Packed SMTP mailbox did not contain expected token email" >&2
+      printf '%s\n' "$mail_body" >&2
+      return 1
+      ;;
+  esac
+  email_token=$(printf '%s\n' "$mail_body" |
+    sed -n 's/.*Your Vectis login token is: \([^[:space:]]*\).*/\1/p')
+  if [ -z "$email_token" ]; then
+    printf '%s\n' "Packed SMTP mailbox did not contain a login token" >&2
+    printf '%s\n' "$mail_body" >&2
+    return 1
+  fi
+  wrong_token_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$email_transaction_id&email_token=wrong" \
+    "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
+  if [ "$wrong_token_status" = "200" ]; then
+    printf '%s\n' "Packed auth accepted a wrong email token" >&2
+    return 1
+  fi
+  webdav_key_response=$(curl --max-time 3 -fsS -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$email_transaction_id&email_token=$email_token" \
+    "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
+  replay_token_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$email_transaction_id&email_token=$email_token" \
+    "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
+  if [ "$replay_token_status" = "200" ]; then
+    printf '%s\n' "Packed auth accepted a replayed email token" >&2
+    return 1
+  fi
   webdav_client_id=$(printf '%s\n' "$webdav_key_response" |
     sed -n 's/^client_id=//p')
   webdav_client_secret=$(printf '%s\n' "$webdav_key_response" |

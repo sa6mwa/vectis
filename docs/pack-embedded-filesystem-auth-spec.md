@@ -444,12 +444,13 @@ webserver script plus generated HTML/CSS/JavaScript assets, runs the packed
 executable, serves the embedded read-only docroot, verifies content types,
 ETag and cache metadata, rejects traversal attempts, rejects writes through the
 read-only mount, exposes native auth routes, protects a JSON API route through
-the same native provider, issues a WebDAV key after deterministic
-password+TOTP login, protects the WebDAV mount, serves embedded content through
-authenticated WebDAV, accepts mutable WebDAV writes, exercises WebDAV
+the same native provider, delivers an email token through a local mock SMTP
+server, rejects password-only, wrong-token, and replayed-token WebDAV key
+requests, issues a WebDAV key after deterministic password+TOTP+email-token
+login, protects the WebDAV mount, serves embedded content through authenticated
+WebDAV, accepts mutable WebDAV writes, exercises WebDAV
 PROPFIND/MKCOL/COPY/MOVE/DELETE, and proves WebDAV mutations do not change
-embedded read-only assets. The remaining full-contract checks are SMTP
-email-token coverage in the same generated packed-service path and same-process
+embedded read-only assets. The remaining full-contract check is same-process
 lockd `startconsumer` coverage in a packed executable.
 
 Email-token e2e coverage:
@@ -462,7 +463,7 @@ Email-token e2e coverage:
 - prove expired, replayed, and wrong tokens fail,
 - prove an allowlist blocks delivery to unauthorized recipients.
 
-Current coverage: the packed webserver smoke covers mock SMTP startup,
+Current coverage: the packed webserver smokes cover mock SMTP startup,
 configured delivery, mailbox capture, continued login, wrong token rejection,
 replay rejection, and WebDAV use of the issued key. Expiry and recipient
 allowlist behavior are covered by native auth unit tests; broader packed auth
