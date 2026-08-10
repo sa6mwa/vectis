@@ -90,9 +90,13 @@ static const char vectis_lonejson_lua_init[] =
     "return M\n";
 
 static void vectis_cli_usage(FILE *stream) {
-  fputs("usage: vectis [--version] [--help] script.lua [args...]\n"
+  fputs("usage: vectis [--version] [--help] [-x] script.lua [args...]\n"
         "       vectis pack --script script.lua --output output "
-        "[--lockd-bundle bundle.pem]\n",
+        "[--lockd-bundle bundle.pem]\n"
+        "       vectis -a credentials [--store credentials.json] "
+        "(--init | --issue --subject user [--purpose name] "
+        "[--basic] [--bearer] | --verify authorization | "
+        "--revoke client_id)\n",
         stream);
 }
 
@@ -169,6 +173,215 @@ static int vectis_write_all(FILE *fp, const void *data, size_t size) {
     return 0;
   }
   return fwrite(data, 1u, size, fp) == size ? 0 : -1;
+}
+
+static const char *vectis_cli_auth_mode_name(unsigned mode) {
+  if ((mode & VECTIS_AUTH_MODE_BASIC) != 0u) {
+    return "basic";
+  }
+  if ((mode & VECTIS_AUTH_MODE_BEARER) != 0u) {
+    return "bearer";
+  }
+  return "default";
+}
+
+static int vectis_cli_credentials_default_path(char *out, size_t out_size) {
+  const char *config_dir;
+  const char *home;
+  int written;
+
+  config_dir = getenv("VECTIS_CONFIG_DIR");
+  if (config_dir != NULL && config_dir[0] != '\0') {
+    written = snprintf(out, out_size, "%s/credentials.json", config_dir);
+    return written > 0 && (size_t)written < out_size ? 0 : -1;
+  }
+  config_dir = getenv("XDG_CONFIG_HOME");
+  if (config_dir != NULL && config_dir[0] != '\0') {
+    written = snprintf(out, out_size, "%s/vectis/credentials.json", config_dir);
+    return written > 0 && (size_t)written < out_size ? 0 : -1;
+  }
+  home = getenv("HOME");
+  if (home == NULL || home[0] == '\0') {
+    return -1;
+  }
+  written = snprintf(out, out_size, "%s/.config/vectis/credentials.json", home);
+  return written > 0 && (size_t)written < out_size ? 0 : -1;
+}
+
+static int vectis_cli_auth_status(vectis_status status,
+                                  const vectis_error *error) {
+  const char *message;
+
+  message = error != NULL && error->message[0] != '\0'
+                ? error->message
+                : vectis_status_string(status);
+  fprintf(stderr, "vectis: %s\n", message != NULL ? message : "auth failed");
+  return status == VECTIS_ERR_NOMEM ? 70 : 1;
+}
+
+static int vectis_cli_credentials_command(int argc, char **argv, int index) {
+  vectis_auth_store_config store;
+  vectis_auth_issue_config issue;
+  vectis_auth_issued_credential credential;
+  vectis_auth_result result;
+  vectis_error error;
+  vectis_status status;
+  char default_path[4096];
+  const char *action;
+  const char *authorization;
+  const char *revoke_client_id;
+  unsigned explicit_modes;
+
+  if (vectis_cli_credentials_default_path(default_path, sizeof(default_path)) !=
+      0) {
+    fputs("vectis: unable to resolve default credentials path\n", stderr);
+    return 1;
+  }
+  vectis_auth_store_config_init(&store);
+  store.credentials_path = default_path;
+  vectis_auth_issue_config_init(&issue);
+  action = NULL;
+  authorization = NULL;
+  revoke_client_id = NULL;
+  explicit_modes = 0u;
+  while (index < argc) {
+    if (strcmp(argv[index], "--store") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --store requires a path\n", stderr);
+        return 64;
+      }
+      store.credentials_path = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--init") == 0) {
+      action = "init";
+      index++;
+    } else if (strcmp(argv[index], "--issue") == 0) {
+      action = "issue";
+      index++;
+    } else if (strcmp(argv[index], "--verify") == 0 ||
+               strcmp(argv[index], "--authorization") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --verify requires an Authorization header value\n",
+              stderr);
+        return 64;
+      }
+      action = "verify";
+      authorization = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--revoke") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --revoke requires a client id\n", stderr);
+        return 64;
+      }
+      action = "revoke";
+      revoke_client_id = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--subject") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --subject requires a value\n", stderr);
+        return 64;
+      }
+      issue.subject = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--purpose") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --purpose requires a value\n", stderr);
+        return 64;
+      }
+      issue.purpose = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--basic") == 0) {
+      explicit_modes |= VECTIS_AUTH_MODE_BASIC;
+      index++;
+    } else if (strcmp(argv[index], "--bearer") == 0) {
+      explicit_modes |= VECTIS_AUTH_MODE_BEARER;
+      index++;
+    } else {
+      fprintf(stderr, "vectis: unknown credentials option: %s\n", argv[index]);
+      return 64;
+    }
+  }
+  vectis_error_clear(&error);
+  if (action == NULL) {
+    fputs("vectis: credentials requires --init, --issue, --verify, or "
+          "--revoke\n",
+          stderr);
+    return 64;
+  }
+  if (strcmp(action, "init") == 0) {
+    status = vectis_auth_store_init(&store, &error);
+    if (status != VECTIS_OK) {
+      return vectis_cli_auth_status(status, &error);
+    }
+    printf("initialized=%s\n", store.credentials_path);
+    return 0;
+  }
+  if (strcmp(action, "issue") == 0) {
+    if (explicit_modes != 0u) {
+      issue.auth_modes = explicit_modes;
+    }
+    vectis_auth_issued_credential_init(&credential);
+    status = vectis_auth_issue_credential(&store, &issue, &credential, &error);
+    if (status != VECTIS_OK) {
+      return vectis_cli_auth_status(status, &error);
+    }
+    if (credential.client_id != NULL) {
+      printf("client_id=%s\n", credential.client_id);
+    }
+    if (credential.client_secret != NULL) {
+      printf("client_secret=%s\n", credential.client_secret);
+    }
+    if (credential.api_key != NULL) {
+      printf("api_key=%s\n", credential.api_key);
+    }
+    if (credential.claim_json != NULL) {
+      printf("claim_json=%s\n", credential.claim_json);
+    }
+    vectis_auth_issued_credential_cleanup(&credential);
+    return 0;
+  }
+  if (strcmp(action, "verify") == 0) {
+    vectis_auth_result_init(&result);
+    status = vectis_auth_verify_authorization(
+        &store, authorization,
+        explicit_modes != 0u ? explicit_modes : VECTIS_AUTH_MODE_DEFAULT,
+        &result, &error);
+    if (status != VECTIS_OK) {
+      return vectis_cli_auth_status(status, &error);
+    }
+    printf("authenticated=%s\n", result.authenticated ? "true" : "false");
+    printf("auth_mode=%s\n", vectis_cli_auth_mode_name(result.auth_mode));
+    if (result.client_id != NULL) {
+      printf("client_id=%s\n", result.client_id);
+    }
+    if (result.claim_json != NULL) {
+      printf("claim_json=%s\n", result.claim_json);
+    }
+    vectis_auth_result_cleanup(&result);
+    return 0;
+  }
+  status = vectis_auth_revoke_client(&store, revoke_client_id, &error);
+  if (status != VECTIS_OK) {
+    return vectis_cli_auth_status(status, &error);
+  }
+  printf("revoked=%s\n", revoke_client_id);
+  return 0;
+}
+
+static int vectis_admin_command(int argc, char **argv, int index) {
+  const char *operation;
+
+  if (index >= argc) {
+    fputs("vectis: -a/--admin-operation requires an operation\n", stderr);
+    return 64;
+  }
+  operation = argv[index];
+  index++;
+  if (strcmp(operation, "credentials") == 0) {
+    return vectis_cli_credentials_command(argc, argv, index);
+  }
+  fprintf(stderr, "vectis: unknown admin operation: %s\n", operation);
+  return 64;
 }
 
 static void vectis_pack_make_footer(unsigned char *footer,
@@ -1040,6 +1253,16 @@ int vectis_cli_main(int argc, char **argv) {
   }
   if (argc > 1 && strcmp(argv[1], "pack") == 0) {
     return vectis_pack_command(argc, argv);
+  }
+  if (argc > 1 && (strcmp(argv[1], "-a") == 0 ||
+                   strcmp(argv[1], "--admin-operation") == 0)) {
+    return vectis_admin_command(argc, argv, 2);
+  }
+  if (argc > 1 && strcmp(argv[1], "-x") == 0) {
+    fputs("vectis: Lua execution tracing (-x) is not supported by the "
+          "current Lua runtime facade\n",
+          stderr);
+    return 64;
   }
 
   if (argc > 1) {
