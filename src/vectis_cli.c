@@ -4188,7 +4188,10 @@ static int vectis_lua_server_auth_routes(lua_State *lua) {
   const char *realm;
   const char *login_title;
   const char *login_template_html;
+  const char *login_template_path;
+  const char *login_template_embedded_path;
   const char **smtp_allowed_recipients;
+  vectis_lua_runtime_context *context;
   size_t smtp_allowed_recipient_count;
   int smtp_index;
 
@@ -4223,6 +4226,30 @@ static int vectis_lua_server_auth_routes(lua_State *lua) {
   login_template_html = vectis_lua_table_string(lua, 2, "login_template_html");
   if (login_template_html != NULL) {
     config.login_template_html = login_template_html;
+  }
+  login_template_path = vectis_lua_table_string(lua, 2, "login_template_path");
+  if (login_template_path == NULL) {
+    login_template_path = vectis_lua_table_string(lua, 2, "template_path");
+  }
+  if (login_template_path != NULL) {
+    config.login_template_path = login_template_path;
+  }
+  login_template_embedded_path =
+      vectis_lua_table_string(lua, 2, "login_template_embedded_path");
+  if (login_template_embedded_path == NULL) {
+    login_template_embedded_path =
+        vectis_lua_table_string(lua, 2, "template_embedded_path");
+  }
+  if (login_template_embedded_path != NULL) {
+    context =
+        (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(lua);
+    if (context == NULL || context->embedded_fs == NULL) {
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_INVALID,
+          "auth route embedded login template requires packed assets");
+    }
+    config.login_template_embedded_path = login_template_embedded_path;
+    config.login_template_fs = context->embedded_fs;
   }
   config.max_body_bytes =
       vectis_lua_table_size(lua, 2, "max_body_bytes", config.max_body_bytes);

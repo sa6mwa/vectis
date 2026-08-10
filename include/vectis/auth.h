@@ -151,7 +151,16 @@ struct vectis_auth_routes_config {
   vectis_auth_store_config store;
   const char *realm;
   const char *login_title;
+  /*
+   * Login form template sources. Set at most one. login_template_html is an
+   * inline HTML string; login_template_path is read from the local filesystem
+   * during registration; login_template_embedded_path is read from
+   * login_template_fs during registration.
+   */
   const char *login_template_html;
+  const char *login_template_path;
+  const char *login_template_embedded_path;
+  const vectis_embedded_fs *login_template_fs;
   size_t max_body_bytes;
   /* Zero uses current time. Non-zero supports deterministic TOTP checks. */
   uint64_t unix_seconds;

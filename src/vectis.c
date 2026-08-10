@@ -5127,6 +5127,134 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   return data;
 }
 
+static int
+vectis_auth_template_source_count(const vectis_auth_routes_config *config) {
+  int count;
+
+  count = 0;
+  if (config->login_template_html != NULL) {
+    count++;
+  }
+  if (config->login_template_path != NULL) {
+    count++;
+  }
+  if (config->login_template_embedded_path != NULL) {
+    count++;
+  }
+  return count;
+}
+
+static vectis_status vectis_auth_read_template_file(const char *path,
+                                                    char **out,
+                                                    vectis_error *error) {
+  FILE *file;
+  long size;
+  char *data;
+  size_t nread;
+
+  if (path == NULL || path[0] == '\0' || out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "login template path is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  file = fopen(path, "rb");
+  if (file == NULL) {
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "failed to open login template path: %s", path);
+    return VECTIS_ERR_STATE;
+  }
+  if (fseek(file, 0L, SEEK_END) != 0) {
+    (void)fclose(file);
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "failed to seek login template path: %s", path);
+    return VECTIS_ERR_STATE;
+  }
+  size = ftell(file);
+  if (size < 0L || fseek(file, 0L, SEEK_SET) != 0) {
+    (void)fclose(file);
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "failed to size login template path: %s", path);
+    return VECTIS_ERR_STATE;
+  }
+  data = (char *)malloc((size_t)size + 1u);
+  if (data == NULL) {
+    (void)fclose(file);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate login template");
+    return VECTIS_ERR_NOMEM;
+  }
+  nread = fread(data, 1u, (size_t)size, file);
+  if (nread != (size_t)size || ferror(file)) {
+    (void)fclose(file);
+    free(data);
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "failed to read login template path: %s", path);
+    return VECTIS_ERR_STATE;
+  }
+  if (fclose(file) != 0) {
+    free(data);
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "failed to close login template path: %s", path);
+    return VECTIS_ERR_STATE;
+  }
+  data[(size_t)size] = '\0';
+  *out = data;
+  return VECTIS_OK;
+}
+
+static vectis_status
+vectis_auth_resolve_login_template(const vectis_auth_routes_config *config,
+                                   char **out, vectis_error *error) {
+  vectis_bytes body;
+  vectis_status status;
+  int found;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "login template output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  if (vectis_auth_template_source_count(config) > 1) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "set only one login template source");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->login_template_path != NULL) {
+    return vectis_auth_read_template_file(config->login_template_path, out,
+                                          error);
+  }
+  if (config->login_template_embedded_path != NULL) {
+    if (config->login_template_fs == NULL) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "login template embedded fs is required");
+      return VECTIS_ERR_INVALID;
+    }
+    status = vectis_embedded_fs_read(config->login_template_fs,
+                                     config->login_template_embedded_path,
+                                     &found, &body, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    if (!found) {
+      vectis_set_errorf(error, VECTIS_ERR_INVALID,
+                        "embedded login template not found: %s",
+                        config->login_template_embedded_path);
+      return VECTIS_ERR_INVALID;
+    }
+    *out = (char *)malloc(body.size + 1u);
+    if (*out == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to allocate embedded login template");
+      return VECTIS_ERR_NOMEM;
+    }
+    memcpy(*out, body.data, body.size);
+    (*out)[body.size] = '\0';
+  }
+  return VECTIS_OK;
+}
+
 static int vectis_auth_form_hex(char ch) {
   if (ch >= '0' && ch <= '9') {
     return ch - '0';
@@ -5753,9 +5881,12 @@ vectis_register_auth_routes(vectis_app *app,
                             vectis_error *error) {
   vectis_auth_routes_config defaults;
   const vectis_auth_routes_config *effective;
+  vectis_auth_routes_config resolved;
   vectis_status status;
+  char *login_template_html;
   char *path_prefix;
 
+  login_template_html = NULL;
   if (app == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
     return VECTIS_ERR_INVALID;
@@ -5782,19 +5913,33 @@ vectis_register_auth_routes(vectis_app *app,
     free(path_prefix);
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
-  status = vectis_register_auth_route_one(app, effective, path_prefix, "/login",
+  status = vectis_auth_resolve_login_template(effective, &login_template_html,
+                                              error);
+  if (status != VECTIS_OK) {
+    free(path_prefix);
+    return status;
+  }
+  resolved = *effective;
+  if (login_template_html != NULL) {
+    resolved.login_template_html = login_template_html;
+    resolved.login_template_path = NULL;
+    resolved.login_template_embedded_path = NULL;
+    resolved.login_template_fs = NULL;
+  }
+  status = vectis_register_auth_route_one(app, &resolved, path_prefix, "/login",
                                           VECTIS_HTTP_GET,
                                           vectis_auth_login_dispatch, error);
   if (status == VECTIS_OK) {
     status = vectis_register_auth_route_one(
-        app, effective, path_prefix, "/email-token", VECTIS_HTTP_POST,
+        app, &resolved, path_prefix, "/email-token", VECTIS_HTTP_POST,
         vectis_auth_email_token_dispatch, error);
   }
   if (status == VECTIS_OK) {
     status = vectis_register_auth_route_one(
-        app, effective, path_prefix, "/webdav-key", VECTIS_HTTP_POST,
+        app, &resolved, path_prefix, "/webdav-key", VECTIS_HTTP_POST,
         vectis_auth_webdav_key_dispatch, error);
   }
+  free(login_template_html);
   free(path_prefix);
   return status;
 }

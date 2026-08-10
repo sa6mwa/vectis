@@ -208,7 +208,10 @@ Required Lua concepts:
 - `server:static_embedded({path_prefix=..., cache_control=...})`
 - `server:webdav_embedded_site({path_prefix=..., cache_dir=..., site_id=...,
   extract_policy=..., auth={kind="native", credentials_path=...}})`
-- `server:auth_routes({path_prefix=..., credentials_path=..., realm=...})`
+- `server:auth_routes({path_prefix=..., credentials_path=..., realm=...,
+  login_template_path=...})`
+- `server:auth_routes({path_prefix=..., credentials_path=..., realm=...,
+  login_template_embedded_path="/templates/login.html"})`
 - `server:auth_json({path=..., auth={kind="native", credentials_path=...},
   body=...})` for small C-owned guarded JSON endpoints in service scenarios.
 - `server:consumer_service({ ... })` is the Lua registration point for
@@ -480,9 +483,10 @@ starts an HTTPS packed asset server with `tls.mode = "manual"`, and fetches the
 embedded site over HTTPS. Pack smoke coverage also proves symlink asset sources
 are rejected by default for directory, single-file, and manifest inputs, then
 opt-in `--follow-symlinks` packages followed file content as ordinary embedded
-read-only assets. Lua smoke coverage validates ACME-mode server config parsing
-and native startup diagnostics for missing domain or email without contacting a
-live ACME provider.
+read-only assets. Native auth route smoke coverage proves custom login
+templates can be loaded from the filesystem and from packed embedded assets.
+Lua smoke coverage validates ACME-mode server config parsing and native startup
+diagnostics for missing domain or email without contacting a live ACME provider.
 
 Email-token e2e coverage:
 
@@ -545,8 +549,6 @@ keys. Broader packed auth matrix coverage remains future hardening work.
 
 - Whether extraction repair mode should remove files not present in the
   embedded manifest. The safer default is no pruning.
-- Whether symlink entries are needed in the first implementation slice. The
-  safer default is to reject symlinks.
 - Whether pending auth state lives inside the main credentials JSON or a
   separate state file/directory. A separate state path is likely cleaner for
   locking and TTL cleanup.
