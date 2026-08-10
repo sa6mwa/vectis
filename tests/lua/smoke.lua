@@ -306,6 +306,83 @@ local logged_in = assert(vectis.auth.user_login({
   window = 0,
 }))
 assert(logged_in.authenticated == true)
+local email_token = assert(vectis.auth.email_token_issue({
+  credentials_path = auth_path,
+  username = "lua-user@example.com",
+  realm = "lua",
+  email = "lua-user@example.com",
+  transaction_id = "lua-email-tx-1",
+  token = "123456",
+  now = 1000,
+  ttl_seconds = 300,
+}))
+assert(email_token.transaction_id == "lua-email-tx-1")
+assert(email_token.token == "123456")
+assert(email_token.expires_at == 1300)
+local wrong_email_token = assert(vectis.auth.email_token_verify({
+  credentials_path = auth_path,
+  transaction_id = "lua-email-tx-1",
+  username = "lua-user@example.com",
+  realm = "lua",
+  token = "000000",
+  now = 1100,
+}))
+assert(wrong_email_token.verified == false)
+assert(wrong_email_token.expired == false)
+local verified_email_token = assert(vectis.auth.email_token_verify({
+  credentials_path = auth_path,
+  transaction_id = "lua-email-tx-1",
+  username = "lua-user@example.com",
+  realm = "lua",
+  token = "123456",
+  now = 1100,
+}))
+assert(verified_email_token.verified == true)
+assert(verified_email_token.expired == false)
+assert(verified_email_token.username == "lua-user@example.com")
+assert(verified_email_token.realm == "lua")
+assert(verified_email_token.email == "lua-user@example.com")
+local replayed_email_token = assert(vectis.auth.email_token_verify({
+  credentials_path = auth_path,
+  transaction_id = "lua-email-tx-1",
+  username = "lua-user@example.com",
+  realm = "lua",
+  token = "123456",
+  now = 1100,
+}))
+assert(replayed_email_token.verified == false)
+assert(replayed_email_token.expired == false)
+local expiring_email_token = assert(vectis.auth.email_token_issue({
+  credentials_path = auth_path,
+  username = "lua-user@example.com",
+  realm = "lua",
+  email = "lua-user@example.com",
+  transaction_id = "lua-email-tx-2",
+  token = "654321",
+  now = 1000,
+  ttl_seconds = 300,
+}))
+assert(expiring_email_token.expires_at == 1300)
+local expired_email_token = assert(vectis.auth.email_token_verify({
+  credentials_path = auth_path,
+  transaction_id = "lua-email-tx-2",
+  username = "lua-user@example.com",
+  realm = "lua",
+  token = "654321",
+  now = 1400,
+}))
+assert(expired_email_token.verified == false)
+assert(expired_email_token.expired == true)
+local expired_replay_email_token = assert(vectis.auth.email_token_verify({
+  credentials_path = auth_path,
+  transaction_id = "lua-email-tx-2",
+  username = "lua-user@example.com",
+  realm = "lua",
+  token = "654321",
+  now = 1400,
+}))
+assert(expired_replay_email_token.verified == false)
+assert(expired_replay_email_token.expired == false)
 local webdav_key = assert(vectis.auth.webdav_key({
   credentials_path = auth_path,
   username = "lua-user@example.com",

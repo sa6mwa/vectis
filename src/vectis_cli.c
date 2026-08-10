@@ -5293,6 +5293,93 @@ static int vectis_lua_auth_webdav_key(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_auth_email_token_issue(lua_State *lua) {
+  vectis_auth_email_token_issue_config config;
+  vectis_auth_email_token token;
+  vectis_error error;
+  vectis_status status;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_error_clear(&error);
+  vectis_auth_email_token_issue_config_init(&config);
+  vectis_lua_auth_store_config(lua, 1, &config.store);
+  config.username = vectis_lua_table_string(lua, 1, "username");
+  config.realm = vectis_lua_table_string(lua, 1, "realm");
+  config.email = vectis_lua_table_string(lua, 1, "email");
+  config.transaction_id = vectis_lua_table_string(lua, 1, "transaction_id");
+  config.token = vectis_lua_table_string(lua, 1, "token");
+  config.now_seconds = (uint64_t)vectis_lua_table_size(lua, 1, "now", 0u);
+  if (config.now_seconds == 0u) {
+    config.now_seconds = (uint64_t)vectis_lua_table_size(lua, 1, "time", 0u);
+  }
+  config.ttl_seconds =
+      (uint64_t)vectis_lua_table_size(lua, 1, "ttl_seconds", 0u);
+  vectis_auth_email_token_init(&token);
+  status = vectis_auth_email_token_issue(&config, &token, &error);
+  if (status != VECTIS_OK) {
+    vectis_auth_email_token_cleanup(&token);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_newtable(lua);
+  if (token.transaction_id != NULL) {
+    lua_pushstring(lua, token.transaction_id);
+    lua_setfield(lua, -2, "transaction_id");
+  }
+  if (token.token != NULL) {
+    lua_pushstring(lua, token.token);
+    lua_setfield(lua, -2, "token");
+  }
+  lua_pushinteger(lua, (lua_Integer)token.expires_at);
+  lua_setfield(lua, -2, "expires_at");
+  vectis_auth_email_token_cleanup(&token);
+  return 1;
+}
+
+static int vectis_lua_auth_email_token_verify(lua_State *lua) {
+  vectis_auth_email_token_verify_config config;
+  vectis_auth_email_token_result result;
+  vectis_error error;
+  vectis_status status;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_error_clear(&error);
+  vectis_auth_email_token_verify_config_init(&config);
+  vectis_lua_auth_store_config(lua, 1, &config.store);
+  config.transaction_id = vectis_lua_table_string(lua, 1, "transaction_id");
+  config.username = vectis_lua_table_string(lua, 1, "username");
+  config.realm = vectis_lua_table_string(lua, 1, "realm");
+  config.token = vectis_lua_table_string(lua, 1, "token");
+  config.now_seconds = (uint64_t)vectis_lua_table_size(lua, 1, "now", 0u);
+  if (config.now_seconds == 0u) {
+    config.now_seconds = (uint64_t)vectis_lua_table_size(lua, 1, "time", 0u);
+  }
+  vectis_auth_email_token_result_init(&result);
+  status = vectis_auth_email_token_verify(&config, &result, &error);
+  if (status != VECTIS_OK) {
+    vectis_auth_email_token_result_cleanup(&result);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_newtable(lua);
+  lua_pushboolean(lua, result.verified);
+  lua_setfield(lua, -2, "verified");
+  lua_pushboolean(lua, result.expired);
+  lua_setfield(lua, -2, "expired");
+  if (result.username != NULL) {
+    lua_pushstring(lua, result.username);
+    lua_setfield(lua, -2, "username");
+  }
+  if (result.realm != NULL) {
+    lua_pushstring(lua, result.realm);
+    lua_setfield(lua, -2, "realm");
+  }
+  if (result.email != NULL) {
+    lua_pushstring(lua, result.email);
+    lua_setfield(lua, -2, "email");
+  }
+  vectis_auth_email_token_result_cleanup(&result);
+  return 1;
+}
+
 static int vectis_lua_auth_oidc_authorization(lua_State *lua) {
   vectis_auth_oidc_authorization_config config;
   vectis_auth_oidc_authorization authorization;
@@ -6103,6 +6190,10 @@ static void vectis_lua_push_auth_table(lua_State *lua) {
   lua_setfield(lua, -2, "user_login");
   lua_pushcfunction(lua, vectis_lua_auth_webdav_key);
   lua_setfield(lua, -2, "webdav_key");
+  lua_pushcfunction(lua, vectis_lua_auth_email_token_issue);
+  lua_setfield(lua, -2, "email_token_issue");
+  lua_pushcfunction(lua, vectis_lua_auth_email_token_verify);
+  lua_setfield(lua, -2, "email_token_verify");
   lua_pushcfunction(lua, vectis_lua_auth_oidc_authorization);
   lua_setfield(lua, -2, "oidc_authorization");
   lua_pushcfunction(lua, vectis_lua_auth_oidc_exchange_callback);
