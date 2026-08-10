@@ -6058,6 +6058,61 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
   return status;
 }
 
+static vectis_status vectis_auth_logout_dispatch(vectis_app *app,
+                                                 vectis_request *request,
+                                                 vectis_response *response,
+                                                 void *userdata,
+                                                 vectis_error *error) {
+  vectis_auth_route_data *data;
+  vectis_auth_result result;
+  const char *authorization;
+  vectis_status status;
+
+  (void)app;
+  data = (vectis_auth_route_data *)userdata;
+  if (data == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth route is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_no_store(response, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  authorization = vectis_request_header(request, "authorization");
+  if (authorization == NULL || authorization[0] == '\0') {
+    if (vectis_response_header(response, "www-authenticate", "Basic", error) !=
+        VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    }
+    return vectis_response_text(response, 401, "text/plain; charset=utf-8",
+                                "authorization is required\n", error);
+  }
+  vectis_auth_result_init(&result);
+  status = vectis_auth_verify_authorization(
+      &data->store, authorization,
+      VECTIS_AUTH_MODE_BASIC | VECTIS_AUTH_MODE_BEARER, &result, error);
+  if (status != VECTIS_OK) {
+    vectis_auth_result_cleanup(&result);
+    return status;
+  }
+  if (!result.authenticated || result.client_id == NULL) {
+    vectis_auth_result_cleanup(&result);
+    if (vectis_response_header(response, "www-authenticate", "Basic", error) !=
+        VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    }
+    return vectis_response_text(response, 401, "text/plain; charset=utf-8",
+                                "login failed\n", error);
+  }
+  status = vectis_auth_revoke_client(&data->store, result.client_id, error);
+  vectis_auth_result_cleanup(&result);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  return vectis_response_text(response, 200, "text/plain; charset=utf-8",
+                              "logged_out=1\n", error);
+}
+
 static char *vectis_auth_route_prefix_normalize(const char *prefix,
                                                 vectis_error *error) {
   char *normalized;
@@ -6187,6 +6242,11 @@ vectis_register_auth_routes(vectis_app *app,
     status = vectis_register_auth_route_one(
         app, &resolved, path_prefix, "/webdav-key", VECTIS_HTTP_POST,
         vectis_auth_webdav_key_dispatch, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_register_auth_route_one(app, &resolved, path_prefix,
+                                            "/logout", VECTIS_HTTP_POST,
+                                            vectis_auth_logout_dispatch, error);
   }
   free(login_template_html);
   free(path_prefix);

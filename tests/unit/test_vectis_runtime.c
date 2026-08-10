@@ -1142,6 +1142,7 @@ static void assert_kore_smoke(void) {
   vectis_http_response auth_login_response;
   vectis_http_response auth_bad_response;
   vectis_http_response auth_key_response;
+  vectis_http_response auth_logout_response;
   vectis_http_response native_webdav_response;
   vectis_http_response native_webdav_get_response;
   source_json_doc json_source_doc;
@@ -1262,6 +1263,7 @@ static void assert_kore_smoke(void) {
   memset(&auth_login_response, 0, sizeof(auth_login_response));
   memset(&auth_bad_response, 0, sizeof(auth_bad_response));
   memset(&auth_key_response, 0, sizeof(auth_key_response));
+  memset(&auth_logout_response, 0, sizeof(auth_logout_response));
   memset(&native_webdav_response, 0, sizeof(native_webdav_response));
   memset(&native_webdav_get_response, 0, sizeof(native_webdav_get_response));
   memset(&stream_context, 0, sizeof(stream_context));
@@ -1845,6 +1847,32 @@ static void assert_kore_smoke(void) {
   assert(native_webdav_get_response.body_size == strlen("native-webdav-body"));
   assert(memcmp(native_webdav_get_response.body, "native-webdav-body",
                 strlen("native-webdav-body")) == 0);
+  vectis_http_response_cleanup(&native_webdav_get_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = "http://127.0.0.1:28080/auth/logout";
+  request.headers = native_webdav_headers;
+  request.header_count = 1u;
+  request.content_type = "application/x-www-form-urlencoded";
+  request.body = "";
+  request.body_size = 0u;
+  status = vectis_http_execute(&http, &request, &auth_logout_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_logout_response.status_code == 200L);
+  assert(bytes_contain(auth_logout_response.body,
+                       auth_logout_response.body_size, "logged_out=1"));
+  vectis_http_response_cleanup(&auth_logout_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = "http://127.0.0.1:28080/dav-native/from-auth.txt";
+  request.headers = native_webdav_headers;
+  request.header_count = 1u;
+  status =
+      vectis_http_execute(&http, &request, &native_webdav_get_response, &error);
+  assert(status == VECTIS_OK);
+  assert(native_webdav_get_response.status_code == 401L);
   vectis_http_response_cleanup(&native_webdav_get_response);
 
   vectis_http_request_init(&request);

@@ -144,6 +144,7 @@ typedef struct vectis_auth_smtp_config {
  *   POST <path_prefix>/email-token
  *   POST <path_prefix>/continue
  *   POST <path_prefix>/webdav-key
+ *   POST <path_prefix>/logout
  * The email-token endpoint accepts application/x-www-form-urlencoded fields
  * username and email, creates a single-use token transaction, and returns the
  * transaction data unless SMTP delivery is configured.
@@ -151,6 +152,8 @@ typedef struct vectis_auth_smtp_config {
  * password, optional totp_code, and when require_email_token is set,
  * email_transaction_id plus email_token. They then issue a WebDAV Basic app
  * key through the native credentials store.
+ * The logout endpoint verifies the presented Authorization header and revokes
+ * that client_id from the native credentials store.
  */
 struct vectis_auth_routes_config {
   const char *path_prefix;

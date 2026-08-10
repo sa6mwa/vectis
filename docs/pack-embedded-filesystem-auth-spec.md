@@ -384,12 +384,13 @@ Suggested route contract:
 Applications may mount the handlers elsewhere or implement equivalent Lua
 routes against the same C auth/session APIs.
 
-Current native route behavior includes a C-owned `/email-token` issue endpoint
-and `/login`, `/continue`, plus `/webdav-key` credential finalization endpoints
-using the same factor policy. Native login templates render `continue_action`
-as the default browser form action, while `webdav_key_action` remains a
-supported alias placeholder for explicit lower-level flows. Routes default to
-the password factor, which also enforces enrolled-user TOTP.
+Current native route behavior includes a C-owned `/email-token` issue endpoint,
+`/login`, `/continue`, and `/webdav-key` credential finalization endpoints
+using the same factor policy, plus `/logout` to revoke the credential presented
+in the Authorization header. Native login templates render `continue_action` as
+the default browser form action, while `webdav_key_action` remains a supported
+alias placeholder for explicit lower-level flows. Routes default to the password
+factor, which also enforces enrolled-user TOTP.
 `required_factors={"email_token"}` allows an email-token-only WebDAV-key flow,
 while `require_email_token=true` remains a
 compatibility shorthand that adds the email-token factor to the default password
