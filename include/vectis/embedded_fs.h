@@ -8,11 +8,20 @@
 extern "C" {
 #endif
 
-/* Extraction behavior when an embedded asset already exists on disk. */
+/* Extraction behavior for embedded assets:
+ * fail_exists writes only missing files and fails on existing files;
+ * skip_existing writes missing files and preserves existing files;
+ * overwrite writes every embedded file;
+ * verify writes nothing and requires every embedded file to exist and match;
+ * repair writes missing or mismatched embedded files and preserves unrelated
+ * files.
+ */
 typedef enum vectis_embedded_fs_extract_policy {
   VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS = 0,
   VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING = 1,
-  VECTIS_EMBEDDED_FS_EXTRACT_OVERWRITE = 2
+  VECTIS_EMBEDDED_FS_EXTRACT_OVERWRITE = 2,
+  VECTIS_EMBEDDED_FS_EXTRACT_VERIFY = 3,
+  VECTIS_EMBEDDED_FS_EXTRACT_REPAIR = 4
 } vectis_embedded_fs_extract_policy;
 
 /*

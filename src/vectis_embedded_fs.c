@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <lonejson.h>
+#include <openssl/evp.h>
 #include <openssl/sha.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -183,6 +184,19 @@ static int vectis_embedded_sha256_matches(const unsigned char *data,
   }
   SHA256(data, size, actual);
   return memcmp(actual, expected, SHA256_DIGEST_LENGTH) == 0;
+}
+
+static void
+vectis_embedded_sha256_hex(const unsigned char sha[SHA256_DIGEST_LENGTH],
+                           char out[SHA256_DIGEST_LENGTH * 2u + 1u]) {
+  static const char hex[] = "0123456789abcdef";
+  size_t i;
+
+  for (i = 0u; i < SHA256_DIGEST_LENGTH; ++i) {
+    out[i * 2u] = hex[(sha[i] >> 4) & 0x0f];
+    out[i * 2u + 1u] = hex[sha[i] & 0x0f];
+  }
+  out[SHA256_DIGEST_LENGTH * 2u] = '\0';
 }
 
 static int vectis_embedded_reserve(vectis_embedded_fs_impl *impl,
@@ -589,6 +603,67 @@ vectis_embedded_write_file(const char *path,
 }
 
 static vectis_status
+vectis_embedded_file_matches_entry(const char *path,
+                                   const vectis_embedded_fs_impl_entry *entry,
+                                   int *matches, vectis_error *error) {
+  EVP_MD_CTX *ctx;
+  FILE *fp;
+  unsigned char buffer[64u * 1024u];
+  unsigned char digest[SHA256_DIGEST_LENGTH];
+  char digest_hex[SHA256_DIGEST_LENGTH * 2u + 1u];
+  unsigned int digest_size;
+  size_t nread;
+  int failed;
+
+  if (matches == NULL || entry == NULL || entry->sha256 == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "embedded asset verification input is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *matches = 0;
+  fp = fopen(path, "rb");
+  if (fp == NULL) {
+    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                               "failed to open embedded asset for verify: %s",
+                               path);
+    return VECTIS_ERR_INVALID;
+  }
+  ctx = EVP_MD_CTX_new();
+  if (ctx == NULL) {
+    (void)fclose(fp);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate embedded asset verifier");
+    return VECTIS_ERR_NOMEM;
+  }
+  failed = EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1;
+  while (!failed && (nread = fread(buffer, 1u, sizeof(buffer), fp)) > 0u) {
+    if (EVP_DigestUpdate(ctx, buffer, nread) != 1) {
+      failed = 1;
+    }
+  }
+  if (ferror(fp)) {
+    failed = 1;
+  }
+  digest_size = 0u;
+  if (!failed && (EVP_DigestFinal_ex(ctx, digest, &digest_size) != 1 ||
+                  digest_size != SHA256_DIGEST_LENGTH)) {
+    failed = 1;
+  }
+  EVP_MD_CTX_free(ctx);
+  if (fclose(fp) != 0) {
+    failed = 1;
+  }
+  if (failed) {
+    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                               "failed to verify embedded asset: %s", path);
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_embedded_sha256_hex(digest, digest_hex);
+  *matches = strcmp(digest_hex, entry->sha256) == 0;
+  return VECTIS_OK;
+}
+
+static vectis_status
 vectis_embedded_extract_impl(const vectis_embedded_fs *self,
                              const vectis_embedded_fs_extract_config *config,
                              vectis_error *error) {
@@ -597,6 +672,7 @@ vectis_embedded_extract_impl(const vectis_embedded_fs *self,
   struct stat st;
   size_t i;
   vectis_status status;
+  int matches;
 
   if (self == NULL || self->impl == NULL || config == NULL ||
       config->output_dir == NULL || config->output_dir[0] == '\0') {
@@ -620,16 +696,56 @@ vectis_embedded_extract_impl(const vectis_embedded_fs *self,
       return VECTIS_ERR_NOMEM;
     }
     if (stat(path, &st) == 0) {
+      if (!S_ISREG(st.st_mode)) {
+        vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                   "embedded asset output is not a file: %s",
+                                   path);
+        free(path);
+        return VECTIS_ERR_CONFLICT;
+      }
       if (config->policy == VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING) {
         free(path);
         continue;
       }
-      if (config->policy != VECTIS_EMBEDDED_FS_EXTRACT_OVERWRITE) {
-        vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
-                                   "embedded asset already exists: %s", path);
-        free(path);
-        return VECTIS_ERR_CONFLICT;
+      if (config->policy == VECTIS_EMBEDDED_FS_EXTRACT_VERIFY ||
+          config->policy == VECTIS_EMBEDDED_FS_EXTRACT_REPAIR) {
+        matches = 0;
+        status = vectis_embedded_file_matches_entry(path, &impl->entries[i],
+                                                    &matches, error);
+        if (status != VECTIS_OK) {
+          free(path);
+          return status;
+        }
+        if (matches) {
+          free(path);
+          continue;
+        }
+        if (config->policy == VECTIS_EMBEDDED_FS_EXTRACT_VERIFY) {
+          vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                     "embedded asset verification failed: %s",
+                                     path);
+          free(path);
+          return VECTIS_ERR_CONFLICT;
+        }
       }
+      if (config->policy != VECTIS_EMBEDDED_FS_EXTRACT_OVERWRITE) {
+        if (config->policy != VECTIS_EMBEDDED_FS_EXTRACT_REPAIR) {
+          vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                     "embedded asset already exists: %s", path);
+          free(path);
+          return VECTIS_ERR_CONFLICT;
+        }
+      }
+    } else if (errno != ENOENT) {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                                 "failed to inspect embedded asset: %s", path);
+      free(path);
+      return VECTIS_ERR_INVALID;
+    } else if (config->policy == VECTIS_EMBEDDED_FS_EXTRACT_VERIFY) {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                 "embedded asset is missing: %s", path);
+      free(path);
+      return VECTIS_ERR_CONFLICT;
     }
     status = vectis_embedded_write_file(path, &impl->entries[i], error);
     free(path);

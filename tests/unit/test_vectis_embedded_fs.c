@@ -131,6 +131,15 @@ static void read_file(const char *path, char *buffer, size_t buffer_size) {
   (void)fclose(fp);
 }
 
+static void write_file(const char *path, const char *body) {
+  FILE *fp;
+
+  fp = fopen(path, "wb");
+  assert(fp != NULL);
+  assert(fwrite(body, 1u, strlen(body), fp) == strlen(body));
+  assert(fclose(fp) == 0);
+}
+
 int main(void) {
   vectis_error error;
   vectis_embedded_fs *fs;
@@ -141,6 +150,8 @@ int main(void) {
   chunk_state chunked;
   char temp[] = "/tmp/vectis-embedded-fs.XXXXXX";
   char extracted[512];
+  char extracted_app[512];
+  char user_file[512];
   char buffer[32];
   int found;
   vectis_status status;
@@ -221,6 +232,35 @@ int main(void) {
   extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_OVERWRITE;
   status = vectis_embedded_fs_extract(fs, &extract, &error);
   expect(status == VECTIS_OK, "overwrite extract policy succeeds");
+  extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_VERIFY;
+  status = vectis_embedded_fs_extract(fs, &extract, &error);
+  expect(status == VECTIS_OK, "verify extract policy accepts matching files");
+  (void)snprintf(extracted_app, sizeof(extracted_app), "%s/assets/app.txt",
+                 temp);
+  write_file(extracted_app, "mutated\n");
+  status = vectis_embedded_fs_extract(fs, &extract, &error);
+  expect(status == VECTIS_ERR_CONFLICT,
+         "verify extract policy rejects mismatched files");
+  extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_REPAIR;
+  status = vectis_embedded_fs_extract(fs, &extract, &error);
+  expect(status == VECTIS_OK,
+         "repair extract policy restores mismatched files");
+  read_file(extracted_app, buffer, sizeof(buffer));
+  expect(strcmp(buffer, "app\n") == 0, "repair restored app content");
+  (void)snprintf(user_file, sizeof(user_file), "%s/user-created.txt", temp);
+  write_file(user_file, "user\n");
+  (void)remove(extracted_app);
+  extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_VERIFY;
+  status = vectis_embedded_fs_extract(fs, &extract, &error);
+  expect(status == VECTIS_ERR_CONFLICT,
+         "verify extract policy rejects missing files");
+  extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_REPAIR;
+  status = vectis_embedded_fs_extract(fs, &extract, &error);
+  expect(status == VECTIS_OK, "repair extract policy restores missing files");
+  read_file(extracted_app, buffer, sizeof(buffer));
+  expect(strcmp(buffer, "app\n") == 0, "repair restored missing app content");
+  read_file(user_file, buffer, sizeof(buffer));
+  expect(strcmp(buffer, "user\n") == 0, "repair keeps user-created files");
   remove_tree(temp);
 
   vectis_embedded_fs_close(fs);

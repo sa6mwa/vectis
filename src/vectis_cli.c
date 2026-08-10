@@ -2445,8 +2445,14 @@ vectis_lua_embedded_extract_policy(lua_State *lua, const char *policy) {
   if (strcmp(policy, "overwrite") == 0) {
     return VECTIS_EMBEDDED_FS_EXTRACT_OVERWRITE;
   }
+  if (strcmp(policy, "verify") == 0) {
+    return VECTIS_EMBEDDED_FS_EXTRACT_VERIFY;
+  }
+  if (strcmp(policy, "repair") == 0) {
+    return VECTIS_EMBEDDED_FS_EXTRACT_REPAIR;
+  }
   (void)luaL_error(lua, "embedded extract policy must be fail_exists, "
-                        "skip_existing, or overwrite");
+                        "skip_existing, overwrite, verify, or repair");
   return VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS;
 }
 

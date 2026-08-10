@@ -159,6 +159,9 @@ Streaming semantics:
   file reads. They must not materialize whole files unless the caller requests
   `read()`.
 - Extraction streams file-by-file and verifies hashes after writing.
+- `verify` extraction policy checks existing files without writing.
+- `repair` extraction policy restores missing or hash-mismatched embedded files
+  without pruning unrelated files.
 - A failed extraction must leave actionable diagnostics and must not silently
   publish partial files as complete.
 
