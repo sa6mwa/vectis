@@ -325,7 +325,7 @@ run_lua_examples() {
     printf '%s\n' "packed SMTP harness is missing: $pack_smtp_harness" >&2
     return 1
   fi
-  mkdir -p "$packed_service_site"
+  mkdir -p "$packed_service_site/assets" "$packed_service_site/templates"
   printf '%s\n' \
     '<!doctype html>' \
     '<html><head><title>Vectis packed e2e</title></head>' \
@@ -337,6 +337,12 @@ run_lua_examples() {
   printf '%s\n' \
     'body { color: #123456; }' \
     >"$packed_service_site/app.css"
+  printf '%s\n' \
+    'VX packed logo' \
+    >"$packed_service_site/assets/logo.txt"
+  printf '%s\n' \
+    '<form id="packed-login"><input name="username"></form>' \
+    >"$packed_service_site/templates/login.html"
   printf '%s\n' \
     '{"types":[' \
     '{"extension":".html","content_type":"text/html; charset=utf-8"},' \
@@ -358,6 +364,10 @@ run_lua_examples() {
     'local stat = assert(vectis.embedded.stat("/app.js"))' \
     'assert(stat.content_type == "application/javascript")' \
     'assert(assert(vectis.embedded.stat("/app.css")).content_type == "text/css")' \
+    'assert(assert(vectis.embedded.stat("/assets/logo.txt")).content_type == "text/plain")' \
+    'assert(assert(vectis.embedded.stat("/templates/login.html")).content_type == "text/html; charset=utf-8")' \
+    'assert(assert(vectis.embedded.read("/assets/logo.txt")):match("VX packed logo"))' \
+    'assert(assert(vectis.embedded.read("/templates/login.html")):match("packed%-login"))' \
     'assert(vectis.auth.store_init({ credentials_path = credentials_path }))' \
     'assert(vectis.auth.user_add({' \
     '  credentials_path = credentials_path,' \
@@ -519,6 +529,27 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed CSS response: $body" >&2
     return 1
   fi
+  body=$(curl --max-time 3 -fsS \
+    "http://127.0.0.1:$kore_packed_port/site/assets/logo.txt")
+  if [ "$body" != "VX packed logo" ]; then
+    printf '%s\n' "Unexpected packed logo response: $body" >&2
+    return 1
+  fi
+  curl --max-time 3 -fsSI \
+    "http://127.0.0.1:$kore_packed_port/site/templates/login.html" |
+    grep -qi '^content-type: text/html; charset=utf-8' || {
+      printf '%s\n' "Packed template content type was not text/html; charset=utf-8" >&2
+      return 1
+    }
+  body=$(curl --max-time 3 -fsS \
+    "http://127.0.0.1:$kore_packed_port/site/templates/login.html")
+  case "$body" in
+    *'packed-login'*'username'*) ;;
+    *)
+      printf '%s\n' "Unexpected packed template response: $body" >&2
+      return 1
+      ;;
+  esac
   for traversal_path in \
     "/site/../secret" \
     "/site/%2e%2e/secret" \
@@ -813,6 +844,35 @@ run_lua_examples() {
     *'<D:href>/dav/app.js</D:href>'*) ;;
     *)
       printf '%s\n' "Packed WebDAV PROPFIND did not list app.js: $propfind_body" >&2
+      return 1
+      ;;
+  esac
+  case "$propfind_body" in
+    *'<D:href>/dav/assets</D:href>'*|*'<D:href>/dav/assets/</D:href>'*) ;;
+    *)
+      printf '%s\n' "Packed WebDAV PROPFIND did not list assets directory: $propfind_body" >&2
+      return 1
+      ;;
+  esac
+  case "$propfind_body" in
+    *'<D:href>/dav/templates</D:href>'*|*'<D:href>/dav/templates/</D:href>'*) ;;
+    *)
+      printf '%s\n' "Packed WebDAV PROPFIND did not list templates directory: $propfind_body" >&2
+      return 1
+      ;;
+  esac
+  body=$(curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/assets/logo.txt")
+  if [ "$body" != "VX packed logo" ]; then
+    printf '%s\n' "Unexpected packed WebDAV logo response: $body" >&2
+    return 1
+  fi
+  body=$(curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/templates/login.html")
+  case "$body" in
+    *'packed-login'*'username'*) ;;
+    *)
+      printf '%s\n' "Unexpected packed WebDAV template response: $body" >&2
       return 1
       ;;
   esac
