@@ -1065,6 +1065,56 @@ int main(void) {
          "wrong-TOTP pending transaction cannot be replayed");
   vectis_auth_pending_login_result_cleanup(&pending_result);
 
+  pending_issue.transaction_id = "pending-login-verify";
+  status =
+      vectis_auth_pending_login_issue(&pending_issue, &pending_login, &error);
+  expect_ok(status, &error, "issues pending login for verify preflight");
+  expect(pending_login.authenticated,
+         "verify preflight pending login is authenticated");
+  vectis_auth_pending_login_cleanup(&pending_login);
+
+  pending_consume.transaction_id = "pending-login-verify";
+  pending_consume.totp_code = totp_code;
+  status = vectis_auth_pending_login_verify(&pending_consume, &pending_result,
+                                            &error);
+  expect_ok(status, &error, "verifies pending login without consuming it");
+  expect(pending_result.authenticated,
+         "pending login verify accepts correct TOTP");
+  vectis_auth_pending_login_result_cleanup(&pending_result);
+
+  status = vectis_auth_pending_login_consume(&pending_consume, &pending_result,
+                                             &error);
+  expect_ok(status, &error,
+            "consume still accepts pending login after verify preflight");
+  expect(pending_result.authenticated,
+         "pending login verify preflight is non-consuming");
+  vectis_auth_pending_login_result_cleanup(&pending_result);
+
+  pending_issue.transaction_id = "pending-login-first";
+  status =
+      vectis_auth_pending_login_issue(&pending_issue, &pending_login, &error);
+  expect_ok(status, &error, "issues first duplicate-user pending login");
+  expect(pending_login.authenticated,
+         "first duplicate-user pending login is authenticated");
+  vectis_auth_pending_login_cleanup(&pending_login);
+
+  pending_issue.transaction_id = "pending-login-second";
+  status =
+      vectis_auth_pending_login_issue(&pending_issue, &pending_login, &error);
+  expect_ok(status, &error, "issues second duplicate-user pending login");
+  expect(pending_login.authenticated,
+         "second duplicate-user pending login is authenticated");
+  vectis_auth_pending_login_cleanup(&pending_login);
+
+  pending_consume.transaction_id = "pending-login-first";
+  pending_consume.totp_code = totp_code;
+  status = vectis_auth_pending_login_verify(&pending_consume, &pending_result,
+                                            &error);
+  expect_ok(status, &error, "verifies first duplicate-user pending login");
+  expect(pending_result.authenticated,
+         "duplicate-user pending lookup verifies requested transaction");
+  vectis_auth_pending_login_result_cleanup(&pending_result);
+
   pending_issue.transaction_id = "pending-login-ok";
   status =
       vectis_auth_pending_login_issue(&pending_issue, &pending_login, &error);

@@ -637,6 +637,16 @@ vectis_auth_user_password_check(const vectis_auth_password_check_config *config,
 vectis_status vectis_auth_pending_login_issue(
     const vectis_auth_pending_login_issue_config *config,
     vectis_auth_pending_login *out, vectis_error *error);
+/* Verifies a pending login without removing it from the store. Use this before
+ * checking later factors that may fail independently, then call consume after
+ * every required factor has passed.
+ */
+vectis_status vectis_auth_pending_login_verify(
+    const vectis_auth_pending_login_consume_config *config,
+    vectis_auth_pending_login_result *out, vectis_error *error);
+/* Verifies and removes terminal pending-login records from the store. A
+ * matching accepted, expired, or wrong-TOTP transaction is single-use.
+ */
 vectis_status vectis_auth_pending_login_consume(
     const vectis_auth_pending_login_consume_config *config,
     vectis_auth_pending_login_result *out, vectis_error *error);

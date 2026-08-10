@@ -4766,9 +4766,10 @@ vectis_status vectis_auth_pending_login_issue(
   return status;
 }
 
-vectis_status vectis_auth_pending_login_consume(
+static vectis_status vectis_auth_pending_login_check(
     const vectis_auth_pending_login_consume_config *config,
-    vectis_auth_pending_login_result *out, vectis_error *error) {
+    vectis_auth_pending_login_result *out, int consume_record,
+    vectis_error *error) {
   vectis_auth_store_lock lock;
   vectis_auth_pending_login_record record;
   vectis_auth_user_record user;
@@ -4854,7 +4855,7 @@ vectis_status vectis_auth_pending_login_consume(
       config->totp_code[0] != '\0') {
     drop_record = 1;
   }
-  if (status == VECTIS_OK && drop_record) {
+  if (status == VECTIS_OK && consume_record && drop_record) {
     status = vectis_auth_drop_pending_login_to_temp_locked(
         &config->store, runtime, config->transaction_id, temp_path,
         sizeof(temp_path), error);
@@ -4871,6 +4872,18 @@ vectis_status vectis_auth_pending_login_consume(
   }
   lonejson_free(runtime);
   return status;
+}
+
+vectis_status vectis_auth_pending_login_verify(
+    const vectis_auth_pending_login_consume_config *config,
+    vectis_auth_pending_login_result *out, vectis_error *error) {
+  return vectis_auth_pending_login_check(config, out, 0, error);
+}
+
+vectis_status vectis_auth_pending_login_consume(
+    const vectis_auth_pending_login_consume_config *config,
+    vectis_auth_pending_login_result *out, vectis_error *error) {
+  return vectis_auth_pending_login_check(config, out, 1, error);
 }
 
 vectis_status vectis_auth_issue_webdav_key_for_login(

@@ -5973,6 +5973,7 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
   int has_pending;
   int missing_email_token;
   int needs_pending;
+  int pending_verified;
 
   (void)app;
   data = (vectis_auth_route_data *)userdata;
@@ -6016,6 +6017,7 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
   }
   has_pending = fields.pending_transaction_id != NULL &&
                 fields.pending_transaction_id[0] != '\0';
+  pending_verified = 0;
   missing_email_token =
       (required_factors & VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN) != 0u &&
       (fields.email_transaction_id == NULL ||
@@ -6057,8 +6059,8 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
         pending_consume.totp_window = data->totp_window;
       }
       vectis_auth_pending_login_result_init(&pending_result);
-      status = vectis_auth_pending_login_consume(&pending_consume,
-                                                 &pending_result, error);
+      status = vectis_auth_pending_login_verify(&pending_consume,
+                                                &pending_result, error);
       if (status != VECTIS_OK) {
         vectis_auth_form_cleanup(&fields);
         vectis_auth_pending_login_result_cleanup(&pending_result);
@@ -6066,6 +6068,18 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
         return status;
       }
       if (!pending_result.authenticated) {
+        if (pending_result.expired ||
+            (fields.totp_code != NULL && fields.totp_code[0] != '\0')) {
+          vectis_auth_pending_login_result_cleanup(&pending_result);
+          status = vectis_auth_pending_login_consume(&pending_consume,
+                                                     &pending_result, error);
+          if (status != VECTIS_OK) {
+            vectis_auth_form_cleanup(&fields);
+            vectis_auth_pending_login_result_cleanup(&pending_result);
+            vectis_auth_issued_credential_cleanup(&credential);
+            return status;
+          }
+        }
         vectis_auth_form_cleanup(&fields);
         vectis_auth_pending_login_result_cleanup(&pending_result);
         vectis_auth_issued_credential_cleanup(&credential);
@@ -6073,6 +6087,7 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
         return vectis_response_text(response, 401, "text/plain; charset=utf-8",
                                     "login failed\n", error);
       }
+      pending_verified = 1;
       vectis_auth_pending_login_result_cleanup(&pending_result);
     } else {
       vectis_auth_password_check_config_init(&password_check);
@@ -6183,6 +6198,26 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
                                   "login failed\n", error);
     }
     vectis_auth_email_token_result_cleanup(&email_result);
+  }
+  if (pending_verified) {
+    vectis_auth_pending_login_result_init(&pending_result);
+    status = vectis_auth_pending_login_consume(&pending_consume,
+                                               &pending_result, error);
+    if (status != VECTIS_OK) {
+      vectis_auth_form_cleanup(&fields);
+      vectis_auth_pending_login_result_cleanup(&pending_result);
+      vectis_auth_issued_credential_cleanup(&credential);
+      return status;
+    }
+    if (!pending_result.authenticated) {
+      vectis_auth_form_cleanup(&fields);
+      vectis_auth_pending_login_result_cleanup(&pending_result);
+      vectis_auth_issued_credential_cleanup(&credential);
+      vectis_error_clear(error);
+      return vectis_response_text(response, 401, "text/plain; charset=utf-8",
+                                  "login failed\n", error);
+    }
+    vectis_auth_pending_login_result_cleanup(&pending_result);
   }
   vectis_auth_issue_config_init(&issue);
   issue.subject = fields.username;
