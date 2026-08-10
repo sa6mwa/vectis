@@ -17,6 +17,7 @@ kore_downstream_port=${VECTIS_E2E_KORE_DOWNSTREAM_PORT:-$((kore_basic_port + 3))
 kore_static_port=${VECTIS_E2E_KORE_STATIC_PORT:-$((kore_basic_port + 4))}
 kore_combined_port=${VECTIS_E2E_KORE_COMBINED_PORT:-$((kore_basic_port + 5))}
 kore_packed_port=${VECTIS_E2E_KORE_PACKED_PORT:-$((kore_basic_port + 6))}
+kore_packed_https_port=${VECTIS_E2E_KORE_PACKED_HTTPS_PORT:-$((kore_basic_port + 7))}
 pack_smtp_harness=${VECTIS_E2E_PACK_SMTP_HARNESS:-$repo_root/build/debug/tests/vectis_pack_smtp_harness}
 work_dir=$(mktemp -d)
 ssh_memory_key="$work_dir/vectis-e2e-ssh-key"
@@ -46,6 +47,20 @@ wait_for_http() {
   label=$2
   count=0
   while ! curl --max-time 3 -fsS "$url" >/dev/null 2>&1; do
+    count=$((count + 1))
+    if [ "$count" -ge 60 ]; then
+      printf '%s\n' "Timed out waiting for $label at $url" >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+wait_for_https_insecure() {
+  url=$1
+  label=$2
+  count=0
+  while ! curl --max-time 3 -k -fsS "$url" >/dev/null 2>&1; do
     count=$((count + 1))
     if [ "$count" -ge 60 ]; then
       printf '%s\n' "Timed out waiting for $label at $url" >&2
@@ -276,17 +291,21 @@ run_lua_examples() {
   script="$work_dir/vectis-e2e.lua"
   pack_script="$work_dir/vectis-e2e-pack.lua"
   packed_service_script="$work_dir/vectis-e2e-packed-service.lua"
+  packed_https_script="$work_dir/vectis-e2e-packed-https.lua"
   packed_service_site="$work_dir/vectis-e2e-packed-site"
   packed_service_cache="$work_dir/vectis-e2e-packed-cache"
   packed_service_docroot="$packed_service_cache/webdav/packed-service-e2e/content"
   packed_service_credentials="$work_dir/vectis-e2e-packed-credentials.json"
   packed_service_mailbox="$work_dir/vectis-e2e-packed-mailbox.txt"
   packed_service_enqueue="$work_dir/vectis-e2e-packed-enqueue.lua"
+  packed_https_cert="$work_dir/vectis-e2e-packed-https.pem"
   packed_content_types="$work_dir/vectis-e2e-packed-content-types.json"
   shebang_script="$work_dir/vectis-e2e-shebang.lua"
   packed="$work_dir/vectis-e2e-packed"
   packed_service="$work_dir/vectis-e2e-packed-service"
+  packed_https="$work_dir/vectis-e2e-packed-https"
   packed_service_log="$work_dir/lua-packed-webserver.log"
+  packed_https_log="$work_dir/lua-packed-https.log"
   packed_service_queue="vectis-e2e-packed-$$"
   packed_service_namespace="examples"
   webdav_key_response=
@@ -569,6 +588,61 @@ run_lua_examples() {
       return 1
       ;;
   esac
+  printf '%s\n' \
+    'local vectis = require("vectis")' \
+    'local port = tonumber(assert(os.getenv("VECTIS_PACKED_HTTPS_PORT")))' \
+    'local cert = assert(os.getenv("VECTIS_PACKED_HTTPS_CERT"))' \
+    'assert(vectis.cert.generate_bundle({' \
+    '  common_name = "localhost",' \
+    '  ip_addresses = "127.0.0.1",' \
+    '  output_bundle_path = cert,' \
+    '  key_bits = 2048,' \
+    '  valid_days = 1,' \
+    '}))' \
+    'local server = assert(vectis.server.new({' \
+    '  app_name = "vectis-packed-https-e2e",' \
+    '  bind = "127.0.0.1",' \
+    '  port = port,' \
+    '  tls = {' \
+    '    mode = "manual",' \
+    '    cert_key_bundle_path = cert,' \
+    '    domain = "localhost",' \
+    '  },' \
+    '}))' \
+    'assert(server:static_embedded({' \
+    '  path_prefix = "/",' \
+    '  cache_control = "max-age=30",' \
+    '}))' \
+    'assert(server:start())' \
+    'while true do' \
+    '  os.execute("sleep 3600")' \
+    'end' >"$packed_https_script"
+  "$repo_root/build/debug/vectis" -a pack \
+    --script "$packed_https_script" \
+    --asset-dir "/:$packed_service_site" \
+    --content-type-map "$packed_content_types" \
+    --output "$packed_https"
+  start_server "lua packed https" "$packed_https_log" \
+    env VECTIS_PACKED_HTTPS_PORT="$kore_packed_https_port" \
+      VECTIS_PACKED_HTTPS_CERT="$packed_https_cert" \
+      "$packed_https"
+  wait_for_https_insecure "https://localhost:$kore_packed_https_port/" \
+    "lua packed https"
+  body=$(curl_or_log "$packed_https_log" "packed https root" --max-time 3 -k -fsS \
+    "https://localhost:$kore_packed_https_port/")
+  case "$body" in
+    *'packed service asset'*) ;;
+    *)
+      printf '%s\n' "Unexpected packed HTTPS root response: $body" >&2
+      return 1
+      ;;
+  esac
+  curl_or_log "$packed_https_log" "packed https root headers" --max-time 3 \
+    -k -fsSI "https://localhost:$kore_packed_https_port/" |
+    grep -qi '^cache-control: max-age=30' || {
+      printf '%s\n' "Packed HTTPS root response did not include cache-control" >&2
+      return 1
+    }
   curl_or_log "$packed_service_log" "packed static app.js headers" --max-time 3 -fsSI \
     "http://127.0.0.1:$kore_packed_port/site/app.js" |
     grep -qi '^content-type: application/javascript' || {
