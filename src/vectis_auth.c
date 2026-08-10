@@ -36,6 +36,16 @@ typedef struct vectis_auth_revoke_state {
   int matched;
 } vectis_auth_revoke_state;
 
+typedef struct vectis_auth_claim_string_probe {
+  const char *key;
+  size_t key_len;
+  char *out;
+  size_t out_size;
+  size_t size;
+  int matched;
+  int overflow;
+} vectis_auth_claim_string_probe;
+
 static char *vectis_auth_strdup(const char *value) {
   size_t len;
   char *copy;
@@ -50,6 +60,25 @@ static char *vectis_auth_strdup(const char *value) {
   }
   memcpy(copy, value, len);
   return copy;
+}
+
+static void vectis_auth_copy_fixed(char *out, size_t out_size,
+                                   const char *value) {
+  size_t len;
+
+  if (out == NULL || out_size == 0u) {
+    return;
+  }
+  out[0] = '\0';
+  if (value == NULL) {
+    return;
+  }
+  len = strlen(value);
+  if (len >= out_size) {
+    len = out_size - 1u;
+  }
+  memcpy(out, value, len);
+  out[len] = '\0';
 }
 
 static void vectis_auth_set_errorf(vectis_error *error, vectis_status code,
@@ -350,6 +379,77 @@ static int vectis_auth_path_is_client_id(const lonejson_value_path *path) {
          memcmp(path->segments[0].data, "client_id", 9u) == 0;
 }
 
+static int vectis_auth_path_matches_key(const lonejson_value_path *path,
+                                        const char *key, size_t key_len) {
+  return path != NULL && key != NULL && path->segment_count == 1u &&
+         path->segments[0].len == key_len &&
+         memcmp(path->segments[0].data, key, key_len) == 0;
+}
+
+static lonejson_status
+vectis_auth_claim_string_chunk(void *user, const lonejson_value_path *path,
+                               const char *data, size_t len,
+                               lonejson_error *error) {
+  vectis_auth_claim_string_probe *probe;
+
+  (void)error;
+  probe = (vectis_auth_claim_string_probe *)user;
+  if (probe == NULL || probe->matched || probe->overflow ||
+      !vectis_auth_path_matches_key(path, probe->key, probe->key_len)) {
+    return LONEJSON_STATUS_OK;
+  }
+  if (probe->size + len >= probe->out_size) {
+    probe->overflow = 1;
+    return LONEJSON_STATUS_OK;
+  }
+  memcpy(probe->out + probe->size, data, len);
+  probe->size += len;
+  probe->out[probe->size] = '\0';
+  return LONEJSON_STATUS_OK;
+}
+
+static lonejson_status
+vectis_auth_claim_string_end(void *user, const lonejson_value_path *path,
+                             lonejson_error *error) {
+  vectis_auth_claim_string_probe *probe;
+
+  (void)error;
+  probe = (vectis_auth_claim_string_probe *)user;
+  if (probe != NULL &&
+      vectis_auth_path_matches_key(path, probe->key, probe->key_len) &&
+      !probe->overflow) {
+    probe->matched = 1;
+  }
+  return LONEJSON_STATUS_OK;
+}
+
+static int vectis_auth_claim_string(lonejson *runtime, const char *claim_json,
+                                    const char *key, char *out,
+                                    size_t out_size) {
+  vectis_auth_claim_string_probe probe;
+  lonejson_path_value_visitor visitor;
+  lonejson_error json_error;
+  lonejson_status status;
+
+  if (runtime == NULL || claim_json == NULL || key == NULL || out == NULL ||
+      out_size == 0u) {
+    return 0;
+  }
+  memset(&probe, 0, sizeof(probe));
+  probe.key = key;
+  probe.key_len = strlen(key);
+  probe.out = out;
+  probe.out_size = out_size;
+  out[0] = '\0';
+  visitor = lonejson_default_path_value_visitor();
+  visitor.string_chunk = vectis_auth_claim_string_chunk;
+  visitor.string_end = vectis_auth_claim_string_end;
+  lonejson_error_init(&json_error);
+  status = lonejson_visit_path_value_buffer(
+      runtime, claim_json, strlen(claim_json), &visitor, &probe, &json_error);
+  return status == LONEJSON_STATUS_OK && probe.matched && !probe.overflow;
+}
+
 static lonejson_status
 vectis_auth_probe_client_id_chunk(void *user, const lonejson_value_path *path,
                                   const char *data, size_t len,
@@ -611,6 +711,51 @@ void vectis_auth_result_cleanup(vectis_auth_result *result) {
   free(result->client_id);
   free(result->claim_json);
   vectis_auth_result_init(result);
+}
+
+void vectis_auth_provider_request_init(vectis_auth_provider_request *request) {
+  if (request == NULL) {
+    return;
+  }
+  memset(request, 0, sizeof(*request));
+  request->allowed_auth_modes = VECTIS_AUTH_MODE_DEFAULT;
+}
+
+void vectis_auth_provider_response_init(
+    vectis_auth_provider_response *response) {
+  if (response == NULL) {
+    return;
+  }
+  memset(response, 0, sizeof(*response));
+  response->action = VECTIS_AUTH_DENY;
+  vectis_auth_result_init(&response->result);
+}
+
+void vectis_auth_provider_response_cleanup(
+    vectis_auth_provider_response *response) {
+  if (response == NULL) {
+    return;
+  }
+  vectis_auth_result_cleanup(&response->result);
+  vectis_auth_provider_response_init(response);
+}
+
+void vectis_auth_provider_init(vectis_auth_provider *provider) {
+  if (provider == NULL) {
+    return;
+  }
+  memset(provider, 0, sizeof(*provider));
+}
+
+void vectis_auth_native_provider_config_init(
+    vectis_auth_native_provider_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  vectis_auth_store_config_init(&config->store);
+  config->realm = "vectis";
+  config->allowed_auth_modes = VECTIS_AUTH_MODE_DEFAULT;
 }
 
 vectis_status vectis_auth_store_init(const vectis_auth_store_config *config,
@@ -918,4 +1063,200 @@ vectis_auth_revoke_client(const vectis_auth_store_config *store_config,
   lonejson_free(runtime);
   vectis_auth_lock_close(&lock);
   return VECTIS_OK;
+}
+
+vectis_status vectis_auth_provider_response_set_authenticated(
+    vectis_auth_provider_response *response, const char *principal,
+    const char *client_id, const char *claim_json, unsigned auth_mode,
+    vectis_error *error) {
+  char *client_id_copy;
+  char *claim_copy;
+
+  if (response == NULL || client_id == NULL || claim_json == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth response, client_id, and claim_json are required");
+    return VECTIS_ERR_INVALID;
+  }
+  client_id_copy = vectis_auth_strdup(client_id);
+  claim_copy = vectis_auth_strdup(claim_json);
+  if (client_id_copy == NULL || claim_copy == NULL) {
+    free(client_id_copy);
+    free(claim_copy);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy authenticated auth response");
+    return VECTIS_ERR_NOMEM;
+  }
+  vectis_auth_result_cleanup(&response->result);
+  response->action = VECTIS_AUTH_ALLOW;
+  response->status_code = 0;
+  response->location = NULL;
+  response->content_type = NULL;
+  response->body = NULL;
+  response->body_size = 0u;
+  response->www_authenticate[0] = '\0';
+  vectis_auth_copy_fixed(response->principal, sizeof(response->principal),
+                         principal != NULL ? principal : client_id);
+  response->result.authenticated = 1;
+  response->result.auth_mode = auth_mode;
+  response->result.client_id = client_id_copy;
+  response->result.claim_json = claim_copy;
+  return VECTIS_OK;
+}
+
+static int vectis_auth_realm_valid(const char *realm) {
+  const unsigned char *cursor;
+
+  if (realm == NULL || realm[0] == '\0') {
+    return 0;
+  }
+  cursor = (const unsigned char *)realm;
+  while (*cursor != '\0') {
+    if (*cursor < 0x20u || *cursor == '"' || *cursor == '\\') {
+      return 0;
+    }
+    cursor++;
+  }
+  return 1;
+}
+
+static void
+vectis_auth_provider_require(const vectis_auth_native_provider_config *config,
+                             unsigned modes,
+                             vectis_auth_provider_response *response) {
+  const char *realm;
+
+  vectis_auth_provider_response_cleanup(response);
+  response->action = VECTIS_AUTH_REQUIRED;
+  response->status_code = 401;
+  realm = config != NULL && vectis_auth_realm_valid(config->realm)
+              ? config->realm
+              : "vectis";
+  if (modes == VECTIS_AUTH_MODE_DEFAULT ||
+      (modes & VECTIS_AUTH_MODE_BASIC) != 0u) {
+    (void)snprintf(response->www_authenticate,
+                   sizeof(response->www_authenticate), "Basic realm=\"%s\"",
+                   realm);
+  } else if ((modes & VECTIS_AUTH_MODE_BEARER) != 0u) {
+    vectis_auth_copy_fixed(response->www_authenticate,
+                           sizeof(response->www_authenticate), "Bearer");
+  }
+}
+
+static vectis_status vectis_auth_native_provider_authenticate(
+    const vectis_auth_provider_request *request,
+    vectis_auth_provider_response *response, void *userdata,
+    vectis_error *error) {
+  const vectis_auth_native_provider_config *config;
+  const char *authorization;
+  const char *purpose;
+  vectis_auth_result result;
+  lonejson *runtime;
+  vectis_status status;
+  unsigned allowed_modes;
+  char principal[VECTIS_AUTH_PRINCIPAL_MAX + 1u];
+  char credential_purpose[128];
+
+  config = (const vectis_auth_native_provider_config *)userdata;
+  if (config == NULL || response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "native auth provider config is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_provider_response_init(response);
+  authorization = request != NULL ? request->authorization : NULL;
+  if ((authorization == NULL || authorization[0] == '\0') && request != NULL &&
+      request->request != NULL) {
+    authorization = vectis_request_header(request->request, "authorization");
+  }
+  allowed_modes =
+      request != NULL && request->allowed_auth_modes != VECTIS_AUTH_MODE_DEFAULT
+          ? request->allowed_auth_modes
+          : config->allowed_auth_modes;
+  if (authorization == NULL || authorization[0] == '\0') {
+    vectis_auth_provider_require(config, allowed_modes, response);
+    return VECTIS_OK;
+  }
+  vectis_auth_result_init(&result);
+  status = vectis_auth_verify_authorization(&config->store, authorization,
+                                            allowed_modes, &result, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (!result.authenticated) {
+    vectis_auth_result_cleanup(&result);
+    vectis_auth_provider_require(config, allowed_modes, response);
+    return VECTIS_OK;
+  }
+  runtime = NULL;
+  status = vectis_auth_lonejson_runtime(&runtime, error);
+  if (status != VECTIS_OK) {
+    vectis_auth_result_cleanup(&result);
+    return status;
+  }
+  purpose = request != NULL && request->purpose != NULL ? request->purpose
+                                                        : config->purpose;
+  if (purpose != NULL && purpose[0] != '\0') {
+    if (!vectis_auth_claim_string(runtime, result.claim_json, "purpose",
+                                  credential_purpose,
+                                  sizeof(credential_purpose)) ||
+        strcmp(credential_purpose, purpose) != 0) {
+      lonejson_free(runtime);
+      vectis_auth_result_cleanup(&result);
+      response->action = VECTIS_AUTH_DENY;
+      return VECTIS_OK;
+    }
+  }
+  if (!vectis_auth_claim_string(runtime, result.claim_json, "sub", principal,
+                                sizeof(principal))) {
+    vectis_auth_copy_fixed(principal, sizeof(principal), result.client_id);
+  }
+  status = vectis_auth_provider_response_set_authenticated(
+      response, principal, result.client_id, result.claim_json,
+      result.auth_mode, error);
+  lonejson_free(runtime);
+  vectis_auth_result_cleanup(&result);
+  return status;
+}
+
+vectis_status
+vectis_auth_provider_from_callback(vectis_auth_provider *provider,
+                                   vectis_auth_provider_fn authenticate,
+                                   void *userdata, vectis_error *error) {
+  if (provider == NULL || authenticate == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth provider callback is required");
+    return VECTIS_ERR_INVALID;
+  }
+  provider->authenticate = authenticate;
+  provider->userdata = userdata;
+  return VECTIS_OK;
+}
+
+vectis_status vectis_auth_provider_from_native_store(
+    vectis_auth_provider *provider, vectis_auth_native_provider_config *config,
+    vectis_error *error) {
+  if (provider == NULL || config == NULL ||
+      config->store.credentials_path == NULL ||
+      config->store.credentials_path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "native auth provider store path is required");
+    return VECTIS_ERR_INVALID;
+  }
+  provider->authenticate = vectis_auth_native_provider_authenticate;
+  provider->userdata = config;
+  return VECTIS_OK;
+}
+
+vectis_status
+vectis_auth_provider_authenticate(const vectis_auth_provider *provider,
+                                  const vectis_auth_provider_request *request,
+                                  vectis_auth_provider_response *response,
+                                  vectis_error *error) {
+  if (provider == NULL || provider->authenticate == NULL || response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth provider authenticate callback is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_provider_response_init(response);
+  return provider->authenticate(request, response, provider->userdata, error);
 }

@@ -1,4 +1,5 @@
 #include <vectis/auth.h>
+#include <vectis/webdav.h>
 
 #include <dirent.h>
 #include <stdio.h>
@@ -93,6 +94,35 @@ static void expect_ok(vectis_status status, const vectis_error *error,
   }
 }
 
+static vectis_status
+sample_auth_provider(const vectis_auth_provider_request *request,
+                     vectis_auth_provider_response *response, void *userdata,
+                     vectis_error *error) {
+  const char *mode;
+
+  mode = (const char *)userdata;
+  if (request == NULL || response == NULL || mode == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "sample auth provider input is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (strcmp(mode, "required") == 0) {
+    vectis_auth_provider_response_cleanup(response);
+    response->action = VECTIS_AUTH_REQUIRED;
+    response->status_code = 401;
+    (void)snprintf(response->www_authenticate,
+                   sizeof(response->www_authenticate), "Basic realm=\"unit\"");
+    return VECTIS_OK;
+  }
+  expect(request->purpose != NULL && strcmp(request->purpose, "webdav") == 0,
+         "provider receives purpose");
+  expect(request->resource != NULL && strcmp(request->resource, "/docs") == 0,
+         "provider receives resource");
+  return vectis_auth_provider_response_set_authenticated(
+      response, "unit-user", "client-1", "{\"sub\":\"unit-user\"}",
+      VECTIS_AUTH_MODE_BASIC, error);
+}
+
 int main(void) {
   char temp[] = "/tmp/vectis-auth-unit.XXXXXX";
   char credentials_path[4096];
@@ -106,12 +136,26 @@ int main(void) {
   vectis_auth_issued_credential bearer;
   vectis_auth_issued_credential basic;
   vectis_auth_result result;
+  vectis_auth_native_provider_config native_provider_config;
+  vectis_auth_provider provider;
+  vectis_auth_provider custom_provider;
+  vectis_auth_provider_request provider_request;
+  vectis_auth_provider_response provider_response;
+  vectis_webdav_auth_provider_config webdav_auth_config;
+  vectis_webdav_auth_request webdav_request;
+  vectis_webdav_auth_response webdav_response;
   vectis_error error;
   vectis_status status;
 
   vectis_auth_issued_credential_init(&bearer);
   vectis_auth_issued_credential_init(&basic);
   vectis_auth_result_init(&result);
+  vectis_auth_provider_init(&provider);
+  vectis_auth_provider_init(&custom_provider);
+  vectis_auth_provider_request_init(&provider_request);
+  vectis_auth_provider_response_init(&provider_response);
+  vectis_webdav_auth_provider_config_init(&webdav_auth_config);
+  vectis_webdav_auth_response_init(&webdav_response);
   vectis_error_clear(&error);
 
   if (mkdtemp(temp) == NULL) {
@@ -200,6 +244,82 @@ int main(void) {
              strstr(result.claim_json, "\"purpose\":\"webdav\"") != NULL,
          "reports WebDAV purpose");
   vectis_auth_result_cleanup(&result);
+
+  vectis_auth_native_provider_config_init(&native_provider_config);
+  native_provider_config.store = store;
+  native_provider_config.allowed_auth_modes = VECTIS_AUTH_MODE_BASIC;
+  native_provider_config.realm = "unit";
+  status = vectis_auth_provider_from_native_store(
+      &provider, &native_provider_config, &error);
+  expect_ok(status, &error, "creates native auth provider");
+
+  vectis_auth_provider_request_init(&provider_request);
+  provider_request.authorization = basic_header;
+  provider_request.purpose = "webdav";
+  status = vectis_auth_provider_authenticate(&provider, &provider_request,
+                                             &provider_response, &error);
+  expect_ok(status, &error, "authenticates native provider");
+  expect(provider_response.action == VECTIS_AUTH_ALLOW,
+         "native provider allows valid WebDAV key");
+  expect(strcmp(provider_response.principal, "mike@example.com") == 0,
+         "native provider maps principal from claim subject");
+  expect(provider_response.result.authenticated,
+         "native provider carries result");
+  vectis_auth_provider_response_cleanup(&provider_response);
+
+  vectis_auth_provider_request_init(&provider_request);
+  provider_request.purpose = "webdav";
+  status = vectis_auth_provider_authenticate(&provider, &provider_request,
+                                             &provider_response, &error);
+  expect_ok(status, &error, "challenges missing native provider credentials");
+  expect(provider_response.action == VECTIS_AUTH_REQUIRED,
+         "native provider requires missing credentials");
+  expect(provider_response.status_code == 401,
+         "native provider challenge status");
+  expect(strcmp(provider_response.www_authenticate, "Basic realm=\"unit\"") ==
+             0,
+         "native provider challenge realm");
+  vectis_auth_provider_response_cleanup(&provider_response);
+
+  vectis_auth_provider_request_init(&provider_request);
+  provider_request.authorization = basic_header;
+  provider_request.purpose = "admin";
+  status = vectis_auth_provider_authenticate(&provider, &provider_request,
+                                             &provider_response, &error);
+  expect_ok(status, &error, "checks native provider purpose mismatch");
+  expect(provider_response.action == VECTIS_AUTH_DENY,
+         "native provider denies purpose mismatch");
+  vectis_auth_provider_response_cleanup(&provider_response);
+
+  status = vectis_auth_provider_from_callback(
+      &custom_provider, sample_auth_provider, (void *)"allow", &error);
+  expect_ok(status, &error, "creates callback auth provider");
+  vectis_webdav_auth_provider_config_init(&webdav_auth_config);
+  webdav_auth_config.provider = &custom_provider;
+  webdav_auth_config.purpose = "webdav";
+  webdav_auth_config.allowed_auth_modes = VECTIS_AUTH_MODE_BASIC;
+  memset(&webdav_request, 0, sizeof(webdav_request));
+  webdav_request.resource_path = "/docs";
+  status = vectis_webdav_auth_provider(&webdav_request, &webdav_response,
+                                       &webdav_auth_config, &error);
+  expect_ok(status, &error, "maps callback auth provider into WebDAV");
+  expect(webdav_response.action == VECTIS_WEBDAV_AUTH_ALLOW,
+         "WebDAV adapter allows provider success");
+  expect(strcmp(webdav_response.principal, "unit-user") == 0,
+         "WebDAV adapter copies provider principal");
+
+  status = vectis_auth_provider_from_callback(
+      &custom_provider, sample_auth_provider, (void *)"required", &error);
+  expect_ok(status, &error, "creates required callback auth provider");
+  status = vectis_webdav_auth_provider(&webdav_request, &webdav_response,
+                                       &webdav_auth_config, &error);
+  expect_ok(status, &error, "maps auth-required provider into WebDAV");
+  expect(webdav_response.action == VECTIS_WEBDAV_AUTH_REQUIRED,
+         "WebDAV adapter preserves auth required");
+  expect(webdav_response.www_authenticate != NULL &&
+             strcmp(webdav_response.www_authenticate, "Basic realm=\"unit\"") ==
+                 0,
+         "WebDAV adapter preserves auth challenge");
 
   status = vectis_auth_revoke_client(
       &store, basic.client_id != NULL ? basic.client_id : "", &error);

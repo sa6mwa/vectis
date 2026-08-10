@@ -3913,6 +3913,95 @@ void vectis_webdav_auth_response_init(vectis_webdav_auth_response *response) {
   response->action = VECTIS_WEBDAV_AUTH_DENY;
 }
 
+void vectis_webdav_auth_provider_config_init(
+    vectis_webdav_auth_provider_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->allowed_auth_modes = VECTIS_AUTH_MODE_DEFAULT;
+}
+
+static void vectis_webdav_copy_fixed(char *out, size_t out_size,
+                                     const char *value) {
+  size_t len;
+
+  if (out == NULL || out_size == 0u) {
+    return;
+  }
+  out[0] = '\0';
+  if (value == NULL) {
+    return;
+  }
+  len = strlen(value);
+  if (len >= out_size) {
+    len = out_size - 1u;
+  }
+  memcpy(out, value, len);
+  out[len] = '\0';
+}
+
+vectis_status
+vectis_webdav_auth_provider(const vectis_webdav_auth_request *request,
+                            vectis_webdav_auth_response *response,
+                            void *userdata, vectis_error *error) {
+  const vectis_webdav_auth_provider_config *config;
+  vectis_auth_provider_request auth_request;
+  vectis_auth_provider_response auth_response;
+  vectis_status status;
+
+  config = (const vectis_webdav_auth_provider_config *)userdata;
+  if (request == NULL || response == NULL || config == NULL ||
+      config->provider == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "WebDAV auth provider config is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_provider_request_init(&auth_request);
+  auth_request.request = request->request;
+  auth_request.purpose = config->purpose;
+  auth_request.resource = request->resource_path;
+  auth_request.allowed_auth_modes = config->allowed_auth_modes;
+  vectis_auth_provider_response_init(&auth_response);
+  status = vectis_auth_provider_authenticate(config->provider, &auth_request,
+                                             &auth_response, error);
+  if (status != VECTIS_OK) {
+    vectis_auth_provider_response_cleanup(&auth_response);
+    return status;
+  }
+  vectis_webdav_auth_response_init(response);
+  response->status_code = auth_response.status_code;
+  response->location = auth_response.location;
+  response->content_type = auth_response.content_type;
+  response->body = auth_response.body;
+  response->body_size = auth_response.body_size;
+  if (auth_response.www_authenticate[0] != '\0') {
+    vectis_webdav_copy_fixed(response->www_authenticate_value,
+                             sizeof(response->www_authenticate_value),
+                             auth_response.www_authenticate);
+    response->www_authenticate = response->www_authenticate_value;
+  }
+  vectis_webdav_copy_fixed(response->principal, sizeof(response->principal),
+                           auth_response.principal);
+  switch (auth_response.action) {
+  case VECTIS_AUTH_ALLOW:
+    response->action = VECTIS_WEBDAV_AUTH_ALLOW;
+    break;
+  case VECTIS_AUTH_REQUIRED:
+    response->action = VECTIS_WEBDAV_AUTH_REQUIRED;
+    break;
+  case VECTIS_AUTH_REDIRECT:
+    response->action = VECTIS_WEBDAV_AUTH_REDIRECT;
+    break;
+  case VECTIS_AUTH_DENY:
+  default:
+    response->action = VECTIS_WEBDAV_AUTH_DENY;
+    break;
+  }
+  vectis_auth_provider_response_cleanup(&auth_response);
+  return VECTIS_OK;
+}
+
 static int vectis_webdav_prefix_valid(const char *prefix) {
   return prefix != NULL && prefix[0] == '/' &&
          vectis_static_relative_path_safe(prefix + 1u);

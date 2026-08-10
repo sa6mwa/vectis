@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <time.h>
+#include <vectis/auth.h>
 #include <vectis/vectis.h>
 
 #ifdef __cplusplus
@@ -83,6 +84,7 @@ typedef struct vectis_webdav_auth_response {
   const char *content_type;
   const void *body;
   size_t body_size;
+  char www_authenticate_value[VECTIS_AUTH_CHALLENGE_MAX + 1u];
   char principal[VECTIS_WEBDAV_PRINCIPAL_MAX + 1u];
 } vectis_webdav_auth_response;
 
@@ -99,6 +101,12 @@ typedef struct vectis_webdav_mount_config {
   vectis_webdav_auth_fn auth;
   void *auth_userdata;
 } vectis_webdav_mount_config;
+
+typedef struct vectis_webdav_auth_provider_config {
+  const vectis_auth_provider *provider;
+  const char *purpose;
+  unsigned allowed_auth_modes;
+} vectis_webdav_auth_provider_config;
 
 void vectis_webdav_config_init(vectis_webdav_config *config);
 int vectis_webdav_path_normalize(const char *path,
@@ -133,6 +141,12 @@ vectis_webdav_status vectis_webdav_list(const vectis_webdav_config *config,
 
 void vectis_webdav_auth_response_init(vectis_webdav_auth_response *response);
 void vectis_webdav_mount_config_init(vectis_webdav_mount_config *config);
+void vectis_webdav_auth_provider_config_init(
+    vectis_webdav_auth_provider_config *config);
+vectis_status
+vectis_webdav_auth_provider(const vectis_webdav_auth_request *request,
+                            vectis_webdav_auth_response *response,
+                            void *userdata, vectis_error *error);
 vectis_status vectis_register_webdav(vectis_app *app,
                                      const vectis_webdav_mount_config *config,
                                      vectis_error *error);
