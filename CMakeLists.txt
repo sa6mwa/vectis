@@ -484,6 +484,7 @@ set(vectis_shared_dependency_links
 set(vectis_public_headers
   include/vectis/vectis.h
   include/vectis/auth.h
+  include/vectis/totp_qr.h
   include/vectis/webdav.h
   "${CMAKE_BINARY_DIR}/generated/include/vectis/vectis_version.h"
 )
@@ -491,6 +492,7 @@ set(vectis_public_headers
 set(vectis_sources
   src/vectis.c
   src/vectis_auth.c
+  src/vectis_totp_qr.c
   src/vectis_webdav.c
 )
 

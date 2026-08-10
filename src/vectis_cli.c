@@ -9,8 +9,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 #include <vectis/auth.h>
+#include <vectis/totp_qr.h>
 #include <vectis/vectis.h>
 #include <vectis/vectis_version.h>
 
@@ -26,6 +28,17 @@ typedef struct vectis_lua_runtime_context {
   const unsigned char *embedded_lockd_bundle;
   size_t embedded_lockd_bundle_size;
 } vectis_lua_runtime_context;
+
+typedef struct vectis_lua_totp {
+  vectis_totp value;
+} vectis_lua_totp;
+
+typedef struct vectis_lua_qr {
+  vectis_qr value;
+} vectis_lua_qr;
+
+#define VECTIS_LUA_TOTP "vectis.totp"
+#define VECTIS_LUA_QR "vectis.qr"
 
 extern int luaopen_lonejson_core(lua_State *lua);
 extern int luaopen_lockdc_core(lua_State *lua);
@@ -941,6 +954,202 @@ static int vectis_lua_auth_provider_callback(lua_State *lua) {
   return 1;
 }
 
+static vectis_lua_totp *vectis_lua_check_totp(lua_State *lua, int index) {
+  return (vectis_lua_totp *)luaL_checkudata(lua, index, VECTIS_LUA_TOTP);
+}
+
+static vectis_lua_qr *vectis_lua_check_qr(lua_State *lua, int index) {
+  return (vectis_lua_qr *)luaL_checkudata(lua, index, VECTIS_LUA_QR);
+}
+
+static uint64_t vectis_lua_totp_time(lua_State *lua, int index) {
+  lua_Integer value;
+
+  if (lua_isnoneornil(lua, index)) {
+    return (uint64_t)time(NULL);
+  }
+  value = luaL_checkinteger(lua, index);
+  if (value < 0) {
+    luaL_error(lua, "TOTP unix time must not be negative");
+  }
+  return (uint64_t)value;
+}
+
+static int vectis_lua_totp_new(lua_State *lua) {
+  vectis_lua_totp *totp;
+  vectis_totp_qr_status status;
+  const char *secret;
+
+  secret = luaL_checkstring(lua, 1);
+  totp = (vectis_lua_totp *)lua_newuserdata(lua, sizeof(*totp));
+  status = vectis_totp_init(&totp->value, secret);
+  if (status != VECTIS_TOTP_QR_OK) {
+    return luaL_error(lua, "TOTP secret is invalid: %s",
+                      vectis_totp_qr_status_string(status));
+  }
+  luaL_getmetatable(lua, VECTIS_LUA_TOTP);
+  lua_setmetatable(lua, -2);
+  return 1;
+}
+
+static int vectis_lua_totp_secret(lua_State *lua) {
+  vectis_lua_totp *totp;
+
+  totp = vectis_lua_check_totp(lua, 1);
+  lua_pushstring(lua, totp->value.secret);
+  return 1;
+}
+
+static int vectis_lua_totp_generate(lua_State *lua) {
+  vectis_lua_totp *totp;
+  vectis_totp_qr_status status;
+  char code[VECTIS_TOTP_CODE_LENGTH + 1u];
+
+  totp = vectis_lua_check_totp(lua, 1);
+  status =
+      vectis_totp_generate(&totp->value, vectis_lua_totp_time(lua, 2), code);
+  if (status != VECTIS_TOTP_QR_OK) {
+    return luaL_error(lua, "TOTP generation failed: %s",
+                      vectis_totp_qr_status_string(status));
+  }
+  lua_pushstring(lua, code);
+  return 1;
+}
+
+static int vectis_lua_totp_validate(lua_State *lua) {
+  vectis_lua_totp *totp;
+  lua_Integer window;
+  const char *code;
+
+  totp = vectis_lua_check_totp(lua, 1);
+  code = luaL_checkstring(lua, 2);
+  window = lua_isnoneornil(lua, 4) ? 1 : luaL_checkinteger(lua, 4);
+  if (window < 0 || window > 10) {
+    return luaL_error(lua, "TOTP validation window must be between 0 and 10");
+  }
+  lua_pushboolean(lua, vectis_totp_validate(&totp->value, code,
+                                            vectis_lua_totp_time(lua, 3),
+                                            (unsigned int)window));
+  return 1;
+}
+
+static int vectis_lua_qr_ansi_value(lua_State *lua, const vectis_qr *qr) {
+  vectis_totp_qr_status status;
+  char *rendered;
+  size_t rendered_len;
+
+  rendered = NULL;
+  rendered_len = 0u;
+  status = vectis_qr_render_ansi(qr, &rendered, &rendered_len);
+  if (status != VECTIS_TOTP_QR_OK) {
+    return luaL_error(lua, "terminal QR rendering failed: %s",
+                      vectis_totp_qr_status_string(status));
+  }
+  lua_pushlstring(lua, rendered, rendered_len);
+  vectis_totp_qr_free(rendered);
+  return 1;
+}
+
+static int vectis_lua_totp_uri(lua_State *lua) {
+  vectis_lua_totp *totp;
+  vectis_totp_qr_status status;
+  const char *label;
+  const char *issuer;
+  char *uri;
+
+  totp = vectis_lua_check_totp(lua, 1);
+  label = luaL_checkstring(lua, 2);
+  issuer = luaL_checkstring(lua, 3);
+  uri = NULL;
+  status = vectis_totp_uri(&totp->value, label, issuer, &uri);
+  if (status != VECTIS_TOTP_QR_OK) {
+    return luaL_error(lua, "TOTP URI generation failed: %s",
+                      vectis_totp_qr_status_string(status));
+  }
+  lua_pushstring(lua, uri);
+  vectis_totp_qr_free(uri);
+  return 1;
+}
+
+static int vectis_lua_totp_qr(lua_State *lua) {
+  vectis_lua_totp *totp;
+  vectis_totp_qr_status status;
+  const char *label;
+  const char *issuer;
+  vectis_qr qr;
+
+  totp = vectis_lua_check_totp(lua, 1);
+  label = luaL_checkstring(lua, 2);
+  issuer = luaL_checkstring(lua, 3);
+  status = vectis_totp_enrollment_qr(&totp->value, label, issuer, &qr);
+  if (status != VECTIS_TOTP_QR_OK) {
+    return luaL_error(lua, "TOTP QR generation failed: %s",
+                      vectis_totp_qr_status_string(status));
+  }
+  return vectis_lua_qr_ansi_value(lua, &qr);
+}
+
+static int vectis_lua_qr_new(lua_State *lua) {
+  vectis_lua_qr *qr;
+  vectis_totp_qr_status status;
+  const char *text;
+  size_t text_len;
+
+  text = luaL_checkstring(lua, 1);
+  text_len = strlen(text);
+  qr = (vectis_lua_qr *)lua_newuserdata(lua, sizeof(*qr));
+  status = vectis_qr_encode(&qr->value, (const unsigned char *)text, text_len);
+  if (status != VECTIS_TOTP_QR_OK) {
+    return luaL_error(lua, "QR text is invalid: %s",
+                      vectis_totp_qr_status_string(status));
+  }
+  luaL_getmetatable(lua, VECTIS_LUA_QR);
+  lua_setmetatable(lua, -2);
+  return 1;
+}
+
+static int vectis_lua_qr_ansi(lua_State *lua) {
+  vectis_lua_qr *qr;
+
+  qr = vectis_lua_check_qr(lua, 1);
+  return vectis_lua_qr_ansi_value(lua, &qr->value);
+}
+
+static int vectis_lua_qr_size(lua_State *lua) {
+  vectis_lua_qr *qr;
+
+  qr = vectis_lua_check_qr(lua, 1);
+  lua_pushinteger(lua, (lua_Integer)vectis_qr_size(&qr->value));
+  return 1;
+}
+
+static void vectis_lua_register_totp_qr(lua_State *lua) {
+  if (luaL_newmetatable(lua, VECTIS_LUA_TOTP)) {
+    lua_newtable(lua);
+    lua_pushcfunction(lua, vectis_lua_totp_secret);
+    lua_setfield(lua, -2, "secret");
+    lua_pushcfunction(lua, vectis_lua_totp_generate);
+    lua_setfield(lua, -2, "generate");
+    lua_pushcfunction(lua, vectis_lua_totp_validate);
+    lua_setfield(lua, -2, "validate");
+    lua_pushcfunction(lua, vectis_lua_totp_uri);
+    lua_setfield(lua, -2, "uri");
+    lua_pushcfunction(lua, vectis_lua_totp_qr);
+    lua_setfield(lua, -2, "qr");
+    lua_setfield(lua, -2, "__index");
+  }
+  lua_pop(lua, 1);
+  if (luaL_newmetatable(lua, VECTIS_LUA_QR)) {
+    lua_newtable(lua);
+    lua_pushcfunction(lua, vectis_lua_qr_ansi);
+    lua_setfield(lua, -2, "ansi");
+    lua_pushcfunction(lua, vectis_lua_qr_size);
+    lua_setfield(lua, -2, "size");
+    lua_setfield(lua, -2, "__index");
+  }
+  lua_pop(lua, 1);
+}
+
 static void vectis_lua_push_auth_table(lua_State *lua) {
   lua_newtable(lua);
   lua_pushinteger(lua, VECTIS_AUTH_MODE_BASIC);
@@ -959,9 +1168,18 @@ static void vectis_lua_push_auth_table(lua_State *lua) {
   lua_setfield(lua, -2, "provider_native");
   lua_pushcfunction(lua, vectis_lua_auth_provider_callback);
   lua_setfield(lua, -2, "provider_callback");
+  lua_newtable(lua);
+  lua_pushcfunction(lua, vectis_lua_totp_new);
+  lua_setfield(lua, -2, "new");
+  lua_setfield(lua, -2, "totp");
+  lua_newtable(lua);
+  lua_pushcfunction(lua, vectis_lua_qr_new);
+  lua_setfield(lua, -2, "new");
+  lua_setfield(lua, -2, "qr");
 }
 
 static int luaopen_vectis(lua_State *lua) {
+  vectis_lua_register_totp_qr(lua);
   lua_newtable(lua);
   lua_pushliteral(lua, VECTIS_VERSION);
   lua_setfield(lua, -2, "version");

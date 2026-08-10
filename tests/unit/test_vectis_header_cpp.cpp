@@ -1,6 +1,7 @@
 #include <cstring>
 
 #include <vectis/auth.h>
+#include <vectis/totp_qr.h>
 #include <vectis/vectis.h>
 #include <vectis/webdav.h>
 
@@ -10,6 +11,7 @@ int main() {
   vectis_auth_store_config auth_store_config;
   vectis_auth_issue_config auth_issue_config;
   vectis_webdav_auth_provider_config webdav_auth_provider_config;
+  vectis_totp totp;
   vectis_error error;
   vectis_app *app;
   vectis_http_client *client;
@@ -20,6 +22,7 @@ int main() {
   vectis_auth_store_config_init(&auth_store_config);
   vectis_auth_issue_config_init(&auth_issue_config);
   vectis_webdav_auth_provider_config_init(&webdav_auth_provider_config);
+  std::memset(&totp, 0, sizeof(totp));
 
   app = vectis_app_new(&app_config, &error);
   if (app == 0) {

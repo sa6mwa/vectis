@@ -55,6 +55,17 @@ end))
 local callback_allowed = assert(callback_provider:authenticate({ resource = "/lua" }))
 assert(callback_allowed.action == "allow")
 assert(callback_allowed.principal == "/lua")
+local totp = assert(vectis.auth.totp.new("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"))
+assert(totp:secret() == "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
+assert(totp:generate(59) == "287082")
+assert(totp:validate("287082", 59, 0))
+assert(not totp:validate("287083", 59, 0))
+assert(totp:uri("Vectis:auth", "Vectis") ==
+  "otpauth://totp/Vectis%3Aauth?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Vectis")
+assert(totp:qr("Vectis:auth", "Vectis"):find("\226\150\136", 1, true))
+local qr = assert(vectis.auth.qr.new("vectis"))
+assert(qr:size() > 0)
+assert(qr:ansi():find("\226\150\136", 1, true))
 assert(vectis.auth.revoke({ credentials_path = auth_path, client_id = issued.client_id }))
 local revoked = assert(vectis.auth.verify({
   credentials_path = auth_path,
