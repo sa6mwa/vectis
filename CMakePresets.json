@@ -27,14 +27,20 @@
     {
       "name": "debug",
       "inherits": "base",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/x86_64-linux-gnu.cmake",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/host-debug"
+        "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/host-debug",
+        "VECTIS_TARGET_ID": "x86_64-linux-gnu",
+        "VECTIS_TARGET_ARCH": "x86_64",
+        "VECTIS_TARGET_OS": "linux",
+        "VECTIS_TARGET_LIBC": "gnu"
       }
     },
     {
       "name": "x86_64-linux-gnu-release",
       "inherits": "base",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/x86_64-linux-gnu.cmake",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/x86_64-linux-gnu",

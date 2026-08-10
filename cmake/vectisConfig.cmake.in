@@ -8,9 +8,13 @@ find_dependency(ZLIB CONFIG REQUIRED)
 find_dependency(nghttp2 CONFIG REQUIRED)
 find_dependency(Libssh2 CONFIG REQUIRED)
 find_dependency(CURL CONFIG REQUIRED)
+find_dependency(CpktAudio CONFIG REQUIRED)
+find_dependency(CpktOpcUa CONFIG REQUIRED)
+find_dependency(CpktSus CONFIG REQUIRED)
 find_package(LibXml2 CONFIG REQUIRED)
 find_package(pslog CONFIG REQUIRED)
 find_package(lonejson CONFIG REQUIRED)
+find_package(liblql CONFIG REQUIRED)
 find_package(cai CONFIG REQUIRED)
 find_package(libmdf CONFIG REQUIRED)
 find_package(softline CONFIG REQUIRED)
@@ -25,6 +29,12 @@ set(_vectis_dependency_link_dirs)
 foreach(_vectis_dependency_target IN ITEMS
     lockdc::static
     lockdc::shared
+    cpkt::opcua
+    cpkt::opcua_shared
+    cpkt::sus
+    cpkt::sus_shared
+    cpkt::audio
+    cpkt::audio_shared
     cai::cai_static
     cai::cai_shared
     libmdf::mdf_static
@@ -39,6 +49,8 @@ foreach(_vectis_dependency_target IN ITEMS
     OpenSSL::Crypto
     lonejson::lonejson_static
     lonejson::lonejson
+    liblql::lql_static
+    liblql::lql_shared
     LibXml2::LibXml2
     nghttp2::nghttp2
     ZLIB::ZLIB
@@ -69,6 +81,9 @@ list(REMOVE_DUPLICATES _vectis_dependency_link_dirs)
 if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/libvectis.a")
   set(_vectis_static_links
     lockdc::static
+    cpkt::opcua
+    cpkt::sus
+    cpkt::audio
     cai::cai_static
     libmdf::mdf_static
     softline::softline_static
@@ -78,6 +93,7 @@ if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LI
     OpenSSL::SSL
     OpenSSL::Crypto
     lonejson::lonejson_static
+    liblql::lql_static
     LibXml2::LibXml2
     nghttp2::nghttp2
     ZLIB::ZLIB
@@ -94,6 +110,9 @@ endif()
 if(NOT TARGET vectis::shared)
   set(_vectis_shared_links
     lockdc::shared
+    cpkt::opcua_shared
+    cpkt::sus_shared
+    cpkt::audio_shared
     cai::cai_shared
     libmdf::mdf_shared
     softline::softline
@@ -103,6 +122,7 @@ if(NOT TARGET vectis::shared)
     cpkt::openssl_ssl_shared
     cpkt::openssl_crypto_shared
     lonejson::lonejson
+    liblql::lql_shared
     cpkt::libxml2_shared
     cpkt::nghttp2_shared
     cpkt::zlib_shared

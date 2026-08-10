@@ -107,7 +107,7 @@ CMAKE_STRIP:FILEPATH=
 CMAKE_INSTALL_NAME_TOOL:FILEPATH=
 CMAKE_OTOOL:FILEPATH=
 EOF
-  output=$(PATH="$pathbin:$PATH" "$repo_root/scripts/discover_target_tools.sh" --build-dir "$build" --target-id arm64-apple-darwin)
+  output=$(PATH="$pathbin:/usr/bin:/bin" "$repo_root/scripts/discover_target_tools.sh" --build-dir "$build" --target-id arm64-apple-darwin)
   assert_output_contains "$output" "STRIP=''"
   assert_output_contains "$output" "INSTALL_NAME_TOOL=''"
   assert_output_contains "$output" "OTOOL=''"

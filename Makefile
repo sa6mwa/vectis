@@ -16,10 +16,10 @@ FUZZ_PRESET := fuzz
 	help \
 	deps-debug deps-release deps-cross \
 	build build-debug build-release build-asan build-coverage build-fuzz \
-	test test-debug test-lifecycle test-target-tools test-darwin-linker-route test-release-privacy-contracts asan test-asan coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
+	test test-debug test-lifecycle test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
 	lua-env lua-test \
 	dev-up dev-down dev-reset dev-ps dev-logs \
-	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy release-darwin-smoke-bundle release-matrix prerelease-hardening release print-release-version clean-dist finalize-slice prerelease \
+	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy release-darwin-smoke-bundle release-matrix prerelease-hardening lifecycle-version-contract release print-release-version clean-dist finalize-slice prerelease \
 	build-kore verify-kore-patches \
 	format clean \
 	vendor-kore vendor-kore-apply vendor-kore-status vendor-kore-upgrade
@@ -30,6 +30,7 @@ help:
 		'make test               Run the debug unit test preset.' \
 		'make test-lifecycle     Run lifecycle command/version/preset/privacy contract tests.' \
 		'make test-target-tools  Run target tool discovery regression tests.' \
+		'make test-cpkt-toolchains Run pinned Bootlin/AFL++ resolver contract tests.' \
 		'make test-darwin-linker-route Run osxcross Darwin linker-route regression tests.' \
 		'make lua-test           Run Lua runner/facade smoke tests through the built vectis CLI.' \
 		'make lua-env            Print shell exports for running Lua examples with the built vectis CLI.' \
@@ -37,6 +38,7 @@ help:
 		'make test-e2e           Reset and run the local compose-backed lockd e2e smoke tests.' \
 		'make test-all           Run unit tests and local e2e smoke tests.' \
 		'make asan               Build and run the ASan/UBSan preset.' \
+		'make valgrind           Run debug CTest tests under host Valgrind when available.' \
 		'make fuzz               Configure and build the fuzz preset.' \
 		'make fuzz-smoke         Build fuzz targets; bounded execution will be added with the lifecycle verifier.' \
 		'make coverage           Configure and test the coverage preset.' \
@@ -67,6 +69,7 @@ help:
 		'make release-darwin-smoke-bundle Build the Darwin SDK and smoke bundle when osxcross is available.' \
 		'make release-matrix     Build, checksum, and verify release artifacts for supported targets.' \
 		'make prerelease-hardening Run expensive deterministic hardening gates plus release matrix.' \
+		'make lifecycle-version-contract Verify exact lightweight tag version behavior for release.' \
 		'make release            Clean final tagged release artifact pipeline; refuses untagged 0.0.0.' \
 		'make vendor-kore        Clone or refresh the vendored Kore upstream checkout.' \
 		'make vendor-kore-apply  Assert and apply the local Kore patch series.' \
@@ -90,6 +93,10 @@ test-release-privacy-contracts:
 test-target-tools:
 	$(TIMED) test-target-tools bash ./scripts/test_discover_target_tools.sh
 	$(TIMED) test-darwin-linker-route bash ./scripts/test_darwin_linker_route.sh
+
+test-cpkt-toolchains:
+	$(TIMED) test-cpkt-toolchain-resolvers bash ./scripts/test-cpkt-toolchain-resolvers.sh
+	$(TIMED) test-cpkt-aflpp-resolver bash ./scripts/test-cpkt-aflpp-resolver.sh
 
 test-darwin-linker-route:
 	$(TIMED) test-darwin-linker-route bash ./scripts/test_darwin_linker_route.sh
@@ -165,7 +172,11 @@ release-matrix: package package-source package-checksums package-verify
 
 prerelease-hardening: prerelease release-matrix
 
+lifecycle-version-contract:
+	$(TIMED) lifecycle-version-contract bash ./scripts/test-release-tag-contract.sh
+
 release:
+	$(MAKE) lifecycle-version-contract
 	@if [ "$$(bash ./scripts/release_version.sh)" = "0.0.0" ]; then \
 		printf '%s\n' 'make release requires an exact lightweight vX.Y.Z tag on HEAD or an explicit VECTIS_VERSION_OVERRIDE for a non-publishable rehearsal.' >&2; \
 		exit 2; \
@@ -181,6 +192,10 @@ build-asan: deps-debug
 	$(TIMED) build-asan-compile $(CMAKE) --build --preset $(ASAN_PRESET)
 
 asan: test-asan
+
+valgrind: build-debug
+	@command -v valgrind >/dev/null 2>&1 || { printf '%s\n' 'valgrind is required for make valgrind' >&2; exit 2; }
+	$(TIMED) valgrind $(CTEST) --test-dir build/$(DEBUG_PRESET) --output-on-failure -T memcheck
 
 build-coverage: deps-debug
 	$(TIMED) build-coverage $(CMAKE) --preset $(COVERAGE_PRESET)
@@ -198,7 +213,7 @@ fuzz-smoke: build-fuzz
 	$(TIMED) fuzz-json-validate build/$(FUZZ_PRESET)/tests/fuzz/vectis_fuzz_json_validate -runs=64
 	$(TIMED) fuzz-kore-bridge build/$(FUZZ_PRESET)/tests/fuzz/vectis_fuzz_kore_bridge tests/fuzz/corpus/kore_bridge -runs=0
 
-finalize-slice: format test-lifecycle test-target-tools test
+finalize-slice: format test-lifecycle test-target-tools test-cpkt-toolchains test
 
 lua-test: build-debug
 	$(TIMED) lua-test $(CTEST) --preset $(DEBUG_PRESET) -L lua
@@ -208,7 +223,7 @@ lua-env: build-debug
 	@printf '%s\n' 'export PATH="$(ROOT)/build/debug:$$PATH"'
 	@printf '%s\n' '# Example: "$$VECTIS_BIN" examples/lua/mdf_render.lua'
 
-prerelease: format test-lifecycle test-target-tools lua-test test-all asan fuzz-smoke test-install-tree package-source-smoke package-checksums package-verify
+prerelease: format test-lifecycle test-target-tools test-cpkt-toolchains lua-test test-all asan fuzz-smoke test-install-tree package-source-smoke package-checksums package-verify
 
 test-debug: build-debug
 	$(TIMED) test-debug $(CTEST) --preset $(DEBUG_PRESET)

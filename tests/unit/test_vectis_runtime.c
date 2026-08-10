@@ -235,9 +235,9 @@ static vectis_status default_spooled_upload_handler(vectis_app *app,
                               error);
 }
 
-static vectis_status stream_probe_open(vectis_app *app,
-                                       vectis_request *request, void *userdata,
-                                       void **state, vectis_error *error) {
+static vectis_status stream_probe_open(vectis_app *app, vectis_request *request,
+                                       void *userdata, void **state,
+                                       vectis_error *error) {
   stream_probe_context *context;
 
   (void)app;
@@ -253,9 +253,11 @@ static vectis_status stream_probe_open(vectis_app *app,
   return VECTIS_OK;
 }
 
-static vectis_status stream_probe_write(
-    vectis_app *app, vectis_request *request, const void *data, size_t size,
-    void *state, void *userdata, vectis_error *error) {
+static vectis_status stream_probe_write(vectis_app *app,
+                                        vectis_request *request,
+                                        const void *data, size_t size,
+                                        void *state, void *userdata,
+                                        vectis_error *error) {
   stream_probe_context *context;
   vectis_bytes body;
   vectis_status status;
@@ -286,9 +288,10 @@ static vectis_status stream_probe_write(
   return VECTIS_OK;
 }
 
-static vectis_status stream_probe_finish(
-    vectis_app *app, vectis_request *request, vectis_response *response,
-    void *state, void *userdata, vectis_error *error) {
+static vectis_status stream_probe_finish(vectis_app *app,
+                                         vectis_request *request,
+                                         vectis_response *response, void *state,
+                                         void *userdata, vectis_error *error) {
   stream_probe_context *context;
   char text[64];
 
@@ -301,8 +304,7 @@ static vectis_status stream_probe_finish(
                                 error);
   }
   context->finish_count++;
-  (void)snprintf(text, sizeof(text), "%lu",
-                 (unsigned long)context->total_size);
+  (void)snprintf(text, sizeof(text), "%lu", (unsigned long)context->total_size);
   return vectis_response_text(response, 200, "text/plain", text, error);
 }
 
@@ -319,9 +321,10 @@ static void stream_probe_close(vectis_app *app, vectis_request *request,
   }
 }
 
-static vectis_status stream_reader_handler(
-    vectis_app *app, vectis_request *request, struct lc_source *reader,
-    vectis_response *response, void *userdata, vectis_error *error) {
+static vectis_status
+stream_reader_handler(vectis_app *app, vectis_request *request,
+                      struct lc_source *reader, vectis_response *response,
+                      void *userdata, vectis_error *error) {
   lc_error lcerr;
   vectis_bytes body;
   vectis_status status;
@@ -387,8 +390,7 @@ static vectis_status xml_route_handler(vectis_app *app, vectis_request *request,
     return vectis_response_text(response, 500, "text/plain", "materialized",
                                 error);
   }
-  (void)snprintf(text, sizeof(text), "%lu",
-                 (unsigned long)strlen(doc->body));
+  (void)snprintf(text, sizeof(text), "%lu", (unsigned long)strlen(doc->body));
   return vectis_response_text(response, 200, "text/plain", text, error);
 }
 
@@ -418,8 +420,7 @@ static vectis_status dsv_route_handler(vectis_app *app, vectis_request *request,
   }
   memset(summary, 0, sizeof(*summary));
   for (;;) {
-    status =
-        vectis_dsv_rows_next(rows, &has_row, &row_number, &row_ptr, error);
+    status = vectis_dsv_rows_next(rows, &has_row, &row_number, &row_ptr, error);
     if (status != VECTIS_OK) {
       return status;
     }
@@ -1104,11 +1105,9 @@ static void assert_kore_smoke(void) {
   assert(default_spooled_upload_route.body.disk_spool_disabled == 0);
   status = vectis_register_route(app, &default_spooled_upload_route, &error);
   assert(status == VECTIS_OK);
-  stream_route =
-      vectis_stream_upload_route(VECTIS_HTTP_POST, "/stream-upload",
-                                 stream_probe_open, stream_probe_write,
-                                 stream_probe_finish, stream_probe_close,
-                                 &stream_context);
+  stream_route = vectis_stream_upload_route(
+      VECTIS_HTTP_POST, "/stream-upload", stream_probe_open, stream_probe_write,
+      stream_probe_finish, stream_probe_close, &stream_context);
   stream_route.body.max_bytes = 2097152u;
   stream_route.body.memory_buffer_limit_bytes = 8u;
   status = app->upload_stream(app, &stream_route, &error);
@@ -1140,9 +1139,9 @@ static void assert_kore_smoke(void) {
   dsv_route.buffer_bytes = 4096u;
   status = app->dsv_route(app, &dsv_route, &error);
   assert(status == VECTIS_OK);
-  stream_file_route = vectis_upload_file_route(
-      VECTIS_HTTP_POST, "/stream-file", stream_file_path,
-      "application/octet-stream");
+  stream_file_route =
+      vectis_upload_file_route(VECTIS_HTTP_POST, "/stream-file",
+                               stream_file_path, "application/octet-stream");
   stream_file_route.body.max_bytes = 2097152u;
   stream_file_route.body.memory_buffer_limit_bytes = 8u;
   status = app->upload_file(app, &stream_file_route, &error);

@@ -68,7 +68,8 @@ static int render_html_cstr(void) {
 }
 
 static int render_stream(void) {
-  const char markdown[] = "\n## Streaming\n\n- bounded reads\n- direct sink writes\n";
+  const char markdown[] =
+      "\n## Streaming\n\n- bounded reads\n- direct sink writes\n";
   example_source input;
   mdf_source source;
   mdf_sink sink;

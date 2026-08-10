@@ -32,6 +32,9 @@ one deployable package:
 - Lockd-backed state, leases, attachments, queue producers, and consumer
   services through `liblockdc`.
 - Downstream HTTP, SFTP, MQTT, and transfer clients through libcurl.
+- OPC UA clients through the `c.pkt.systems` C89 OPC UA facade.
+- Audio capture/playback and whisper-backed speech surfaces through the
+  `c.pkt.systems` audio and SUS facades.
 - SSH command execution and SFTP transfers through libssh2.
 - OpenSSL-backed key, CSR, certificate, CA, and PEM bundle workflows.
 - Structured logging through `libpslog`.
@@ -47,20 +50,25 @@ client surfaces.
 
 ## Dependency Baseline
 
-Debug and release builds consume pinned SDK bundles provisioned under `.cache/`.
-The current expected dependency set is:
+Debug and release builds consume pinned SDK bundles extracted under `.cache/`.
+Release archives are fetched through the shared verified
+`${CPKT_DEPENDENCY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/c.pkt.systems/deps}`
+archive cache. The current expected dependency set is:
 
-- `c.pkt.systems` 0.7.0 for curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.0,
-  the C89 Lua runtime facade, libxml2 2.15.3, and supporting package metadata.
-- `liblockdc` 0.12.1 for lockd C and Lua surfaces.
-- `lonejson` 0.32.1 for typed JSON parsing, serialization, streaming arrays,
+- `c.pkt.systems` 0.9.0 for curl, OpenSSL, libssh2, nghttp2, zlib, Lua 5.5.0,
+  the C89 Lua runtime facade, libxml2 2.15.3, OPC UA, audio/miniaudio,
+  SUS/whisper, and supporting package metadata.
+- `liblockdc` 0.13.0 for lockd C and Lua surfaces, including pouch local
+  storage support.
+- `lonejson` 0.42.0 for typed JSON parsing, serialization, streaming arrays,
   spooled fields, and C/Lua bindings.
-- `cai` 0.1.2 for OpenAI API, agent, tool, MCP, and Lua binding sources.
+- `cai` 0.3.0 for OpenAI API, agent, tool, MCP, and Lua binding sources.
+- `liblql` 0.2.0 for the LQL dependency exposed by `liblockdc` 0.13.0.
 - `libmdf` 0.6.0 for Markdown-to-ANSI/HTML rendering and Lua binding sources.
-- `softline` 0.1.0 for line editing, terminal prompt UX, and Lua binding
+- `softline` 0.2.0 for line editing, terminal prompt UX, and Lua binding
   sources.
-- `libpslog` 0.8.0 for structured logging and Lua binding sources.
-- `libpid0` 0.4.0 for Linux PID 1 behavior in the `vectis` executable.
+- `libpslog` 0.9.0 for structured logging and Lua binding sources.
+- `libpid0` 0.4.2 for Linux PID 1 behavior in the `vectis` executable.
 
 Vectis validates the dependency manifest during CMake configure. A stale or
 mixed dependency root should fail early instead of producing a subtly mismatched

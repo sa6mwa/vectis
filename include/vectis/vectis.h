@@ -290,17 +290,18 @@ typedef vectis_status (*vectis_upload_open_fn)(vectis_app *app,
                                                vectis_request *request,
                                                void *userdata, void **state,
                                                vectis_error *error);
-typedef vectis_status (*vectis_upload_write_fn)(
-    vectis_app *app, vectis_request *request, const void *data, size_t size,
-    void *state, void *userdata, vectis_error *error);
+typedef vectis_status (*vectis_upload_write_fn)(vectis_app *app,
+                                                vectis_request *request,
+                                                const void *data, size_t size,
+                                                void *state, void *userdata,
+                                                vectis_error *error);
 typedef vectis_status (*vectis_upload_finish_fn)(vectis_app *app,
                                                  vectis_request *request,
                                                  vectis_response *response,
                                                  void *state, void *userdata,
                                                  vectis_error *error);
-typedef void (*vectis_upload_close_fn)(vectis_app *app,
-                                       vectis_request *request, void *state,
-                                       void *userdata);
+typedef void (*vectis_upload_close_fn)(vectis_app *app, vectis_request *request,
+                                       void *state, void *userdata);
 
 /**
  * Handler for a live streaming upload reader.
@@ -716,12 +717,12 @@ struct vectis_app {
   vectis_status (*upload_stream)(vectis_app *self,
                                  const vectis_upload_route_config *route,
                                  vectis_error *error);
-  vectis_status (*upload_file)(
-      vectis_app *self, const vectis_upload_file_route_config *route,
-      vectis_error *error);
-  vectis_status (*upload_reader)(
-      vectis_app *self, const vectis_upload_reader_route_config *route,
-      vectis_error *error);
+  vectis_status (*upload_file)(vectis_app *self,
+                               const vectis_upload_file_route_config *route,
+                               vectis_error *error);
+  vectis_status (*upload_reader)(vectis_app *self,
+                                 const vectis_upload_reader_route_config *route,
+                                 vectis_error *error);
   vectis_status (*prefixed_route)(vectis_app *self, const char *prefix,
                                   const vectis_route_config *route,
                                   vectis_error *error);
@@ -977,9 +978,10 @@ vectis_upload_route_config vectis_stream_upload_route_methods(
 vectis_upload_file_route_config
 vectis_upload_file_route(vectis_http_method method, const char *path,
                          const char *file_path, const char *content_type);
-vectis_upload_reader_route_config vectis_upload_reader_route(
-    vectis_http_method method, const char *path,
-    vectis_upload_reader_handler_fn handler, void *userdata);
+vectis_upload_reader_route_config
+vectis_upload_reader_route(vectis_http_method method, const char *path,
+                           vectis_upload_reader_handler_fn handler,
+                           void *userdata);
 vectis_upload_reader_route_config vectis_upload_reader_route_methods(
     vectis_http_methods methods, const char *path,
     vectis_upload_reader_handler_fn handler, void *userdata);
@@ -1002,23 +1004,26 @@ vectis_json_typed_route_config vectis_json_typed_route_methods(
     vectis_http_methods methods, const char *path,
     const lonejson_map *input_map, size_t input_size,
     vectis_json_typed_route_handler_fn handler, void *userdata);
-vectis_xml_route_config vectis_xml_route(
-    vectis_http_method method, const char *path, const lonejson_map *input_map,
-    size_t input_size, const vectis_xml_config *config,
-    vectis_xml_route_handler_fn handler, void *userdata);
-vectis_xml_route_config vectis_xml_route_methods(
-    vectis_http_methods methods, const char *path,
-    const lonejson_map *input_map, size_t input_size,
-    const vectis_xml_config *config, vectis_xml_route_handler_fn handler,
-    void *userdata);
-vectis_dsv_route_config vectis_dsv_route(
-    vectis_http_method method, const char *path, const lonejson_map *row_map,
-    size_t row_size, const vectis_dsv_config *config,
-    vectis_dsv_route_handler_fn handler, void *userdata);
-vectis_dsv_route_config vectis_dsv_route_methods(
-    vectis_http_methods methods, const char *path, const lonejson_map *row_map,
-    size_t row_size, const vectis_dsv_config *config,
-    vectis_dsv_route_handler_fn handler, void *userdata);
+vectis_xml_route_config
+vectis_xml_route(vectis_http_method method, const char *path,
+                 const lonejson_map *input_map, size_t input_size,
+                 const vectis_xml_config *config,
+                 vectis_xml_route_handler_fn handler, void *userdata);
+vectis_xml_route_config
+vectis_xml_route_methods(vectis_http_methods methods, const char *path,
+                         const lonejson_map *input_map, size_t input_size,
+                         const vectis_xml_config *config,
+                         vectis_xml_route_handler_fn handler, void *userdata);
+vectis_dsv_route_config
+vectis_dsv_route(vectis_http_method method, const char *path,
+                 const lonejson_map *row_map, size_t row_size,
+                 const vectis_dsv_config *config,
+                 vectis_dsv_route_handler_fn handler, void *userdata);
+vectis_dsv_route_config
+vectis_dsv_route_methods(vectis_http_methods methods, const char *path,
+                         const lonejson_map *row_map, size_t row_size,
+                         const vectis_dsv_config *config,
+                         vectis_dsv_route_handler_fn handler, void *userdata);
 void vectis_static_file_config_init(vectis_static_file_config *config);
 void vectis_static_directory_config_init(
     vectis_static_directory_config *config);
@@ -1033,15 +1038,18 @@ vectis_status vectis_stop(vectis_app *app, vectis_error *error);
 vectis_status vectis_register_route(vectis_app *app,
                                     const vectis_route_config *route,
                                     vectis_error *error);
-vectis_status vectis_register_upload_stream(
-    vectis_app *app, const vectis_upload_route_config *route,
-    vectis_error *error);
-vectis_status vectis_register_upload_file(
-    vectis_app *app, const vectis_upload_file_route_config *route,
-    vectis_error *error);
-vectis_status vectis_register_upload_reader(
-    vectis_app *app, const vectis_upload_reader_route_config *route,
-    vectis_error *error);
+vectis_status
+vectis_register_upload_stream(vectis_app *app,
+                              const vectis_upload_route_config *route,
+                              vectis_error *error);
+vectis_status
+vectis_register_upload_file(vectis_app *app,
+                            const vectis_upload_file_route_config *route,
+                            vectis_error *error);
+vectis_status
+vectis_register_upload_reader(vectis_app *app,
+                              const vectis_upload_reader_route_config *route,
+                              vectis_error *error);
 vectis_status vectis_register_json_route(vectis_app *app,
                                          const vectis_json_route_config *route,
                                          vectis_error *error);
@@ -1066,12 +1074,14 @@ vectis_register_prefixed_json_route(vectis_app *app, const char *prefix,
 vectis_status vectis_register_prefixed_json_typed_route(
     vectis_app *app, const char *prefix,
     const vectis_json_typed_route_config *route, vectis_error *error);
-vectis_status vectis_register_prefixed_xml_route(
-    vectis_app *app, const char *prefix, const vectis_xml_route_config *route,
-    vectis_error *error);
-vectis_status vectis_register_prefixed_dsv_route(
-    vectis_app *app, const char *prefix, const vectis_dsv_route_config *route,
-    vectis_error *error);
+vectis_status
+vectis_register_prefixed_xml_route(vectis_app *app, const char *prefix,
+                                   const vectis_xml_route_config *route,
+                                   vectis_error *error);
+vectis_status
+vectis_register_prefixed_dsv_route(vectis_app *app, const char *prefix,
+                                   const vectis_dsv_route_config *route,
+                                   vectis_error *error);
 vectis_status
 vectis_register_static_file(vectis_app *app,
                             const vectis_static_file_config *config,

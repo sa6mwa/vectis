@@ -1,4 +1,5 @@
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)
-set(CMAKE_C_COMPILER aarch64-linux-musl-gcc)
-
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+include("${CMAKE_CURRENT_LIST_DIR}/../cpkt_bootlin_toolchain.cmake")
+cpkt_configure_bootlin_toolchain(aarch64-linux-musl)

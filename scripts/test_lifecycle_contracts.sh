@@ -97,11 +97,26 @@ if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^libpid0_enabled=1$'; then
   printf '%s\n' "$linux_deps_output" >&2
   exit 1
 fi
-if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^libpid0_version=0\.4\.0$'; then
-  echo "Linux dependency preset did not pin libpid0 0.4.0" >&2
+if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^libpid0_version=0\.4\.2$'; then
+  echo "Linux dependency preset did not pin libpid0 0.4.2" >&2
   printf '%s\n' "$linux_deps_output" >&2
   exit 1
 fi
+for expected in \
+  '^system_sha256=0bbb1cbaf60b0a94fb5a6b3756123088b45e2bef9e38079038f22e3c07febb2e$' \
+  '^liblockdc_sha256=ef73caef7f06e629d90495304ed263541e01ed5d8785410b45af8424cc2d90fb$' \
+  '^lonejson_sha256=e04f80b907d92f7e38f825fbd339297e85372fc1ce110abb9a93715ee450ece3$' \
+  '^pslog_sha256=7981ce7e60f6f1e144042e7a9192bb661472756ae34336fb0c2ed8316b31945f$' \
+  '^cai_sha256=e344102fa5b46e8c05d67a5120ea0c74bf9ee8ad9ec0bc01e08ea5ccc1f1bdc9$' \
+  '^lql_sha256=a32b3ecc33b0634df23c630843b1c2c16a8a2caa947109a33bad20965e47a399$' \
+  '^softline_sha256=5d5e662269cf5bae9276f1ba7216dfb7e63127ea89c7c9b5f23cb33dbc970012$'
+do
+  if ! printf '%s\n' "$linux_deps_output" | grep -Eq "$expected"; then
+    echo "Linux dependency preset did not expose expected upgraded dependency pin: $expected" >&2
+    printf '%s\n' "$linux_deps_output" >&2
+    exit 1
+  fi
+done
 if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^pslog_sha256='; then
   echo "Linux dependency preset did not expose libpslog metadata" >&2
   printf '%s\n' "$linux_deps_output" >&2
@@ -227,9 +242,26 @@ for target in \
   prerelease \
   lua-test \
   lua-env \
-  clean-dist
+  clean-dist \
+  valgrind \
+  lifecycle-version-contract \
+  test-cpkt-toolchains
 do
   assert_contains "$repo_root/Makefile" "^$target:"
 done
+
+assert_contains "$repo_root/cmake/toolchains/x86_64-linux-gnu.cmake" 'cpkt_configure_bootlin_toolchain\(x86_64-linux-gnu\)'
+assert_contains "$repo_root/cmake/toolchains/x86_64-linux-musl.cmake" 'cpkt_configure_bootlin_toolchain\(x86_64-linux-musl\)'
+assert_contains "$repo_root/cmake/toolchains/aarch64-linux-gnu.cmake" 'cpkt_configure_bootlin_toolchain\(aarch64-linux-gnu\)'
+assert_contains "$repo_root/cmake/toolchains/aarch64-linux-musl.cmake" 'cpkt_configure_bootlin_toolchain\(aarch64-linux-musl\)'
+assert_contains "$repo_root/cmake/toolchains/armhf-linux-gnu.cmake" 'cpkt_configure_bootlin_toolchain\(armhf-linux-gnu\)'
+assert_contains "$repo_root/cmake/toolchains/armhf-linux-musl.cmake" 'cpkt_configure_bootlin_toolchain\(armhf-linux-musl\)'
+assert_contains "$repo_root/CMakeLists.txt" 'find_package\(CpktOpcUa CONFIG REQUIRED'
+assert_contains "$repo_root/CMakeLists.txt" 'find_package\(CpktSus CONFIG REQUIRED'
+assert_contains "$repo_root/CMakeLists.txt" 'find_package\(CpktAudio CONFIG REQUIRED'
+assert_contains "$repo_root/CMakeLists.txt" 'find_package\(liblql CONFIG REQUIRED'
+assert_contains "$repo_root/CMakeLists.txt" 'OBJECT_DEPENDS "\$\{vectis_dependency_manifest\}"'
+assert_contains "$repo_root/cmake/vectis.pc.in" 'cpkt-opcua cpkt-sus cpkt-audio'
+assert_contains "$repo_root/cmake/vectis.pc.in" 'liblql'
 
 echo "lifecycle contracts ok"
