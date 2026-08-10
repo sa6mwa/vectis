@@ -390,7 +390,10 @@ using the same factor policy, plus `/logout` to revoke the credential presented
 in the Authorization header. Native login templates render `continue_action` as
 the default browser form action, while `webdav_key_action` remains a supported
 alias placeholder for explicit lower-level flows. Routes default to the password
-factor, which also enforces enrolled-user TOTP.
+factor, which also enforces enrolled-user TOTP. `required_factors` can also
+name an explicit `totp` factor together with `password`; that policy fails
+closed for users without TOTP enrollment instead of silently accepting password
+only.
 Password-first browser continuation is backed by locked credentials JSON
 `pending_logins` records: when the password is valid but TOTP or email-token
 factors are still missing, the native route returns a short-lived

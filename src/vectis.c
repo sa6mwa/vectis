@@ -5586,6 +5586,19 @@ vectis_auth_route_required_factors(const vectis_auth_route_data *data) {
   return required_factors;
 }
 
+static int vectis_auth_route_required_factors_valid(unsigned int factors) {
+  if ((factors & ~(VECTIS_AUTH_ROUTE_FACTOR_PASSWORD |
+                   VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN |
+                   VECTIS_AUTH_ROUTE_FACTOR_TOTP)) != 0u) {
+    return 0;
+  }
+  if ((factors & VECTIS_AUTH_ROUTE_FACTOR_TOTP) != 0u &&
+      (factors & VECTIS_AUTH_ROUTE_FACTOR_PASSWORD) == 0u) {
+    return 0;
+  }
+  return 1;
+}
+
 static vectis_status
 vectis_auth_login_form_response(const vectis_auth_route_data *data,
                                 vectis_response *response,
@@ -6008,8 +6021,7 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
     return status;
   }
   required_factors = vectis_auth_route_required_factors(data);
-  if ((required_factors & ~(VECTIS_AUTH_ROUTE_FACTOR_PASSWORD |
-                            VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN)) != 0u) {
+  if (!vectis_auth_route_required_factors_valid(required_factors)) {
     vectis_auth_form_cleanup(&fields);
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "auth route required_factors is invalid");
@@ -6093,6 +6105,15 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
                                     "login failed\n", error);
       }
       pending_verified = 1;
+      if ((required_factors & VECTIS_AUTH_ROUTE_FACTOR_TOTP) != 0u &&
+          !pending_result.totp_required) {
+        vectis_auth_pending_login_result_cleanup(&pending_result);
+        vectis_auth_form_cleanup(&fields);
+        vectis_auth_issued_credential_cleanup(&credential);
+        vectis_error_clear(error);
+        return vectis_response_text(response, 401, "text/plain; charset=utf-8",
+                                    "login failed\n", error);
+      }
       vectis_auth_pending_login_result_cleanup(&pending_result);
     } else {
       vectis_auth_password_check_config_init(&password_check);
@@ -6114,9 +6135,18 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
         return vectis_response_text(response, 401, "text/plain; charset=utf-8",
                                     "login failed\n", error);
       }
+      if ((required_factors & VECTIS_AUTH_ROUTE_FACTOR_TOTP) != 0u &&
+          !password_result.totp_required) {
+        vectis_auth_form_cleanup(&fields);
+        vectis_auth_issued_credential_cleanup(&credential);
+        vectis_error_clear(error);
+        return vectis_response_text(response, 401, "text/plain; charset=utf-8",
+                                    "login failed\n", error);
+      }
       needs_pending =
           missing_email_token ||
-          (password_result.totp_required &&
+          ((password_result.totp_required ||
+            (required_factors & VECTIS_AUTH_ROUTE_FACTOR_TOTP) != 0u) &&
            (fields.totp_code == NULL || fields.totp_code[0] == '\0'));
       if (needs_pending) {
         vectis_auth_pending_login_issue_config_init(&pending_issue);
@@ -6371,6 +6401,7 @@ vectis_register_auth_routes(vectis_app *app,
   vectis_status status;
   char *login_template_html;
   char *path_prefix;
+  unsigned int required_factors;
 
   login_template_html = NULL;
   if (app == NULL) {
@@ -6398,6 +6429,18 @@ vectis_register_auth_routes(vectis_app *app,
                                  error) != VECTIS_OK) {
     free(path_prefix);
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  required_factors = effective->required_factors != 0u
+                         ? effective->required_factors
+                         : VECTIS_AUTH_ROUTE_FACTOR_PASSWORD;
+  if (effective->require_email_token) {
+    required_factors |= VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN;
+  }
+  if (!vectis_auth_route_required_factors_valid(required_factors)) {
+    free(path_prefix);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth route required_factors is invalid");
+    return VECTIS_ERR_INVALID;
   }
   status = vectis_auth_resolve_login_template(effective, &login_template_html,
                                               error);

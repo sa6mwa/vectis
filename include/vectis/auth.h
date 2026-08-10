@@ -138,6 +138,7 @@ typedef struct vectis_auth_smtp_config {
 
 #define VECTIS_AUTH_ROUTE_FACTOR_PASSWORD 0x01u
 #define VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN 0x02u
+#define VECTIS_AUTH_ROUTE_FACTOR_TOTP 0x04u
 
 /*
  * Native browser/login route set. Registers:
@@ -187,7 +188,9 @@ struct vectis_auth_routes_config {
   /*
    * WebDAV-key factor policy. Zero preserves the default password factor.
    * The password factor validates the password and any enrolled TOTP for the
-   * user. The email-token factor requires a verified email token transaction.
+   * user. The TOTP factor makes TOTP enrollment mandatory for the user and
+   * must be combined with the password factor. The email-token factor requires
+   * a verified email token transaction.
    */
   unsigned int required_factors;
   /* Require email_transaction_id and email_token before issuing WebDAV keys. */

@@ -3309,6 +3309,11 @@ static int vectis_lua_auth_factor_bit(const char *name, unsigned int *out) {
     *out = VECTIS_AUTH_ROUTE_FACTOR_PASSWORD;
     return 1;
   }
+  if (strcmp(name, "totp") == 0 || strcmp(name, "totp_code") == 0 ||
+      strcmp(name, "totp-code") == 0) {
+    *out = VECTIS_AUTH_ROUTE_FACTOR_TOTP;
+    return 1;
+  }
   if (strcmp(name, "email_token") == 0 || strcmp(name, "email-token") == 0 ||
       strcmp(name, "email") == 0) {
     *out = VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN;

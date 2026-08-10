@@ -1458,6 +1458,23 @@ static void assert_kore_smoke(void) {
   auth_routes.unix_seconds = 59u;
   status = app->auth_routes(app, &auth_routes, &error);
   assert(status == VECTIS_OK);
+  vectis_auth_routes_config_init(&auth_routes);
+  auth_routes.path_prefix = "/auth-totp-only";
+  auth_routes.store = auth_store;
+  auth_routes.required_factors = VECTIS_AUTH_ROUTE_FACTOR_TOTP;
+  status = app->auth_routes(app, &auth_routes, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "required_factors") != NULL);
+  vectis_error_clear(&error);
+  vectis_auth_routes_config_init(&auth_routes);
+  auth_routes.path_prefix = "/auth-totp-required";
+  auth_routes.store = auth_store;
+  auth_routes.login_title = "Runtime Explicit TOTP Login";
+  auth_routes.unix_seconds = 59u;
+  auth_routes.required_factors =
+      VECTIS_AUTH_ROUTE_FACTOR_PASSWORD | VECTIS_AUTH_ROUTE_FACTOR_TOTP;
+  status = app->auth_routes(app, &auth_routes, &error);
+  assert(status == VECTIS_OK);
   vectis_auth_native_provider_config_init(&native_auth);
   native_auth.store = auth_store;
   native_auth.realm = "runtime";
@@ -1802,6 +1819,65 @@ static void assert_kore_smoke(void) {
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
   request.url = "http://127.0.0.1:28080/auth/continue";
+  request.content_type = "application/x-www-form-urlencoded";
+  request.body = auth_totp_form;
+  request.body_size = strlen(auth_totp_form);
+  status = vectis_http_execute(&http, &request, &auth_key_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_key_response.status_code == 200L);
+  assert(runtime_response_line_value(auth_key_response.body,
+                                     auth_key_response.body_size, "client_id",
+                                     auth_client_id, sizeof(auth_client_id)));
+  assert(runtime_response_line_value(
+      auth_key_response.body, auth_key_response.body_size, "client_secret",
+      auth_client_secret, sizeof(auth_client_secret)));
+  assert(bytes_contain(auth_key_response.body, auth_key_response.body_size,
+                       "\"purpose\":\"webdav\""));
+  assert(bytes_contain(auth_key_response.body, auth_key_response.body_size,
+                       "\"sub\":\"runtime-totp\""));
+  vectis_http_response_cleanup(&auth_key_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = "http://127.0.0.1:28080/auth-totp-required/login";
+  request.content_type = "application/x-www-form-urlencoded";
+  request.body = "username=runtime-user&password=runtime-password&"
+                 "totp_code=287082";
+  request.body_size = strlen("username=runtime-user&password=runtime-password&"
+                             "totp_code=287082");
+  status = vectis_http_execute(&http, &request, &auth_bad_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_bad_response.status_code == 401L);
+  assert(bytes_contain(auth_bad_response.body, auth_bad_response.body_size,
+                       "login failed"));
+  vectis_http_response_cleanup(&auth_bad_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = "http://127.0.0.1:28080/auth-totp-required/login";
+  request.content_type = "application/x-www-form-urlencoded";
+  request.body = "username=runtime-totp&password=runtime-totp-password";
+  request.body_size =
+      strlen("username=runtime-totp&password=runtime-totp-password");
+  status = vectis_http_execute(&http, &request, &auth_bad_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_bad_response.status_code == 202L);
+  assert(bytes_contain(auth_bad_response.body, auth_bad_response.body_size,
+                       "totp_required=1"));
+  assert(runtime_response_line_value(
+      auth_bad_response.body, auth_bad_response.body_size,
+      "pending_transaction_id", auth_pending_transaction_id,
+      sizeof(auth_pending_transaction_id)));
+  vectis_http_response_cleanup(&auth_bad_response);
+
+  written = snprintf(auth_totp_form, sizeof(auth_totp_form),
+                     "username=runtime-totp&pending_transaction_id=%s&"
+                     "totp_code=%s",
+                     auth_pending_transaction_id, auth_totp_code);
+  assert(written > 0 && (size_t)written < sizeof(auth_totp_form));
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = "http://127.0.0.1:28080/auth-totp-required/continue";
   request.content_type = "application/x-www-form-urlencoded";
   request.body = auth_totp_form;
   request.body_size = strlen(auth_totp_form);
