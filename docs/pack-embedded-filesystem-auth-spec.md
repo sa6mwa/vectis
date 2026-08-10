@@ -485,8 +485,10 @@ password+TOTP+email-token login for a TOTP user, protects the WebDAV mount,
 rejects anonymous WebDAV reads and writes without mutating the extracted
 docroot, serves embedded content through authenticated WebDAV, accepts mutable
 WebDAV writes, verifies those writes land in the extracted docroot, exercises
-WebDAV PROPFIND/MKCOL/COPY/MOVE/DELETE, and proves WebDAV mutations do not
-change embedded read-only assets. It also embeds
+WebDAV PROPFIND/MKCOL/COPY/MOVE/DELETE, revokes the issued WebDAV key through
+the native logout route, proves the revoked key is rejected by both guarded API
+routes and WebDAV, and proves WebDAV mutations do not change embedded read-only
+assets. It also embeds
 the lockd client bundle, starts a C-owned lockd consumer service from the packed
 Lua server config, enqueues a lockd message through the Lua `lockdc` facade,
 proves the packed consumer writes WebDAV-visible markers, and proves WebDAV
