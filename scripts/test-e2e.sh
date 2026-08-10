@@ -330,6 +330,8 @@ run_lua_examples() {
   packed_service_queue="vectis-e2e-packed-$$"
   packed_service_namespace="examples"
   auth_headers=
+  browser_continue_start_response=
+  browser_pending_id=
   webdav_key_response=
   webdav_key_headers=
   webdav_client_id=
@@ -838,9 +840,38 @@ run_lua_examples() {
     "http://127.0.0.1:$kore_packed_port/auth/login")
   assert_no_store_headers "$auth_headers" "packed auth login"
   case "$body" in
-    *'Packed E2E Login'*'action="/auth/webdav-key"'*) ;;
+    *'Packed E2E Login'*'action="/auth/continue"'*) ;;
     *)
       printf '%s\n' "Unexpected packed auth login response: $body" >&2
+      return 1
+      ;;
+  esac
+  case "$body" in
+    *'action="/auth/webdav-key"'*)
+      printf '%s\n' "Packed auth login form should use the continue action" >&2
+      printf '%s\n' "$body" >&2
+      return 1
+      ;;
+  esac
+  auth_headers="$work_dir/packed-browser-continue-start.headers"
+  browser_continue_start_response=$(curl_or_log "$packed_service_log" \
+    "packed browser continue start" --max-time 3 -fsS -D "$auth_headers" -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-user%40example.com&password=packed-password' \
+    "http://127.0.0.1:$kore_packed_port/auth/continue")
+  assert_no_store_headers "$auth_headers" "packed browser continue start"
+  browser_pending_id=$(printf '%s\n' "$browser_continue_start_response" |
+    sed -n 's/^pending_transaction_id=//p')
+  if [ -z "$browser_pending_id" ]; then
+    printf '%s\n' "Packed browser continue did not return a pending transaction" >&2
+    printf '%s\n' "$browser_continue_start_response" >&2
+    return 1
+  fi
+  case "$browser_continue_start_response" in
+    *'totp_required=1'*) ;;
+    *)
+      printf '%s\n' "Packed browser continue did not require TOTP" >&2
+      printf '%s\n' "$browser_continue_start_response" >&2
       return 1
       ;;
   esac
@@ -1196,7 +1227,7 @@ run_lua_examples() {
   email_token_response=$(curl_or_log "$packed_service_log" \
     "packed smtp email token" --max-time 3 -fsS -D "$auth_headers" -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data 'username=packed-user%40example.com&email=packed-user%40example.test' \
+    --data "username=packed-user%40example.com&email=packed-user%40example.test&pending_transaction_id=$browser_pending_id" \
     "http://127.0.0.1:$kore_packed_port/auth/email-token")
   assert_no_store_headers "$auth_headers" "packed smtp email token"
   email_transaction_id=$(printf '%s\n' "$email_token_response" |
@@ -1238,8 +1269,8 @@ run_lua_examples() {
     -o /dev/null -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$email_transaction_id&email_token=wrong" \
-    "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
+    --data "username=packed-user%40example.com&pending_transaction_id=$browser_pending_id&totp_code=287082&email_transaction_id=$email_transaction_id&email_token=wrong" \
+    "http://127.0.0.1:$kore_packed_port/auth/continue")
   if [ "$wrong_token_status" != "401" ]; then
     printf '%s\n' "Packed auth wrong email token returned unexpected status: $wrong_token_status" >&2
     return 1
@@ -1250,8 +1281,8 @@ run_lua_examples() {
     -o /dev/null -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data "username=packed-user%40example.com&password=packed-password&email_transaction_id=$email_transaction_id&email_token=$email_token" \
-    "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
+    --data "username=packed-user%40example.com&pending_transaction_id=$browser_pending_id&email_transaction_id=$email_transaction_id&email_token=$email_token" \
+    "http://127.0.0.1:$kore_packed_port/auth/continue")
   if [ "$missing_totp_status" != "401" ]; then
     printf '%s\n' "Packed auth missing TOTP returned unexpected status: $missing_totp_status" >&2
     return 1
@@ -1262,27 +1293,27 @@ run_lua_examples() {
     -o /dev/null -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data "username=packed-user%40example.com&password=packed-password&totp_code=000000&email_transaction_id=$email_transaction_id&email_token=$email_token" \
-    "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
+    --data "username=packed-user%40example.com&pending_transaction_id=$browser_pending_id&totp_code=000000&email_transaction_id=$email_transaction_id&email_token=$email_token" \
+    "http://127.0.0.1:$kore_packed_port/auth/continue")
   if [ "$wrong_totp_status" != "401" ]; then
     printf '%s\n' "Packed auth wrong TOTP returned unexpected status: $wrong_totp_status" >&2
     return 1
   fi
   assert_no_store_headers "$auth_headers" "packed wrong TOTP"
-  webdav_key_headers="$work_dir/packed-webdav-key.headers"
+  webdav_key_headers="$work_dir/packed-browser-continue-webdav-key.headers"
   webdav_key_response=$(curl_or_log "$packed_service_log" \
-    "packed webdav key" --max-time 3 -fsS -D "$webdav_key_headers" -X POST \
+    "packed browser continue webdav key" --max-time 3 -fsS -D "$webdav_key_headers" -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$email_transaction_id&email_token=$email_token" \
-    "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
-  assert_no_store_headers "$webdav_key_headers" "packed webdav key"
+    --data "username=packed-user%40example.com&pending_transaction_id=$browser_pending_id&totp_code=287082&email_transaction_id=$email_transaction_id&email_token=$email_token" \
+    "http://127.0.0.1:$kore_packed_port/auth/continue")
+  assert_no_store_headers "$webdav_key_headers" "packed browser continue webdav key"
   auth_headers="$work_dir/packed-replay-email-token.headers"
   replay_token_status=$(curl --max-time 3 -sS -D "$auth_headers" \
     -o /dev/null -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$email_transaction_id&email_token=$email_token" \
-    "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
+    --data "username=packed-user%40example.com&pending_transaction_id=$browser_pending_id&totp_code=287082&email_transaction_id=$email_transaction_id&email_token=$email_token" \
+    "http://127.0.0.1:$kore_packed_port/auth/continue")
   if [ "$replay_token_status" != "401" ]; then
     printf '%s\n' "Packed auth replayed email token returned unexpected status: $replay_token_status" >&2
     return 1
