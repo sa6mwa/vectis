@@ -120,6 +120,10 @@ struct vectis_auth_routes_config {
   const char *login_title;
   const char *login_template_html;
   size_t max_body_bytes;
+  /* Zero uses current time. Non-zero supports deterministic TOTP checks. */
+  uint64_t unix_seconds;
+  /* Zero uses the login default. */
+  unsigned int totp_window;
 };
 
 typedef struct vectis_auth_user_config {

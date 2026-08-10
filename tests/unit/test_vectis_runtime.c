@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <vectis/auth.h>
 #include <vectis/embedded_fs.h>
+#include <vectis/totp_qr.h>
 #include <vectis/vectis.h>
 #include <vectis/webdav.h>
 
@@ -1217,6 +1218,8 @@ static void assert_kore_smoke(void) {
   char auth_clear[320];
   char auth_token[448];
   char auth_header[480];
+  char auth_totp_code[VECTIS_TOTP_CODE_LENGTH + 1u];
+  char auth_totp_form[256];
   size_t default_spooled_body_size;
   size_t stream_body_size;
   size_t xml_body_size;
@@ -1226,6 +1229,8 @@ static void assert_kore_smoke(void) {
   long stream_file_size;
   int attempt;
   int i;
+  int written;
+  vectis_totp auth_totp;
 
   memset(&response, 0, sizeof(response));
   memset(&metadata_response, 0, sizeof(metadata_response));
@@ -1296,6 +1301,19 @@ static void assert_kore_smoke(void) {
                                           &auth_enrollment, &error);
   assert(status == VECTIS_OK);
   vectis_auth_user_enrollment_cleanup(&auth_enrollment);
+  vectis_auth_user_config_init(&auth_user);
+  auth_user.username = "runtime-totp";
+  auth_user.password = "runtime-totp-password";
+  auth_user.enable_totp = 1;
+  auth_user.totp_secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+  status = vectis_auth_user_add_or_update(&auth_store, &auth_user,
+                                          &auth_enrollment, &error);
+  assert(status == VECTIS_OK);
+  vectis_auth_user_enrollment_cleanup(&auth_enrollment);
+  assert(vectis_totp_init(&auth_totp, "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ") ==
+         VECTIS_TOTP_QR_OK);
+  assert(vectis_totp_generate(&auth_totp, 59u, auth_totp_code) ==
+         VECTIS_TOTP_QR_OK);
   vectis_webdav_config_init(&webdav_storage);
   webdav_storage.cache_dir = webdav_cache_dir;
   webdav_storage.site_id = "runtime";
@@ -1434,6 +1452,7 @@ static void assert_kore_smoke(void) {
   auth_routes.path_prefix = "/auth";
   auth_routes.store = auth_store;
   auth_routes.login_title = "Runtime Login";
+  auth_routes.unix_seconds = 59u;
   status = app->auth_routes(app, &auth_routes, &error);
   assert(status == VECTIS_OK);
   vectis_auth_native_provider_config_init(&native_auth);
@@ -1733,6 +1752,46 @@ static void assert_kore_smoke(void) {
                        "\"purpose\":\"webdav\""));
   assert(bytes_contain(auth_key_response.body, auth_key_response.body_size,
                        "\"sub\":\"runtime-user\""));
+  vectis_http_response_cleanup(&auth_key_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = "http://127.0.0.1:28080/auth/webdav-key";
+  request.content_type = "application/x-www-form-urlencoded";
+  request.body = "username=runtime-totp&password=runtime-totp-password";
+  request.body_size =
+      strlen("username=runtime-totp&password=runtime-totp-password");
+  status = vectis_http_execute(&http, &request, &auth_bad_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_bad_response.status_code == 401L);
+  assert(bytes_contain(auth_bad_response.body, auth_bad_response.body_size,
+                       "login failed"));
+  vectis_http_response_cleanup(&auth_bad_response);
+
+  written = snprintf(auth_totp_form, sizeof(auth_totp_form),
+                     "username=runtime-totp&password=runtime-totp-password&"
+                     "totp_code=%s",
+                     auth_totp_code);
+  assert(written > 0 && (size_t)written < sizeof(auth_totp_form));
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = "http://127.0.0.1:28080/auth/webdav-key";
+  request.content_type = "application/x-www-form-urlencoded";
+  request.body = auth_totp_form;
+  request.body_size = strlen(auth_totp_form);
+  status = vectis_http_execute(&http, &request, &auth_key_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_key_response.status_code == 200L);
+  assert(runtime_response_line_value(auth_key_response.body,
+                                     auth_key_response.body_size, "client_id",
+                                     auth_client_id, sizeof(auth_client_id)));
+  assert(runtime_response_line_value(
+      auth_key_response.body, auth_key_response.body_size, "client_secret",
+      auth_client_secret, sizeof(auth_client_secret)));
+  assert(bytes_contain(auth_key_response.body, auth_key_response.body_size,
+                       "\"purpose\":\"webdav\""));
+  assert(bytes_contain(auth_key_response.body, auth_key_response.body_size,
+                       "\"sub\":\"runtime-totp\""));
   vectis_http_response_cleanup(&auth_key_response);
 
   assert(snprintf(auth_clear, sizeof(auth_clear), "%s:%s", auth_client_id,

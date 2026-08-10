@@ -4148,6 +4148,8 @@ typedef struct vectis_auth_route_data {
   const char *login_title;
   const char *login_template_html;
   size_t max_body_bytes;
+  uint64_t unix_seconds;
+  unsigned int totp_window;
 } vectis_auth_route_data;
 
 typedef struct vectis_auth_form_fields {
@@ -4923,6 +4925,8 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   }
   data->store = config->store;
   data->max_body_bytes = config->max_body_bytes;
+  data->unix_seconds = config->unix_seconds;
+  data->totp_window = config->totp_window;
   cursor = (char *)(data + 1);
 #define VECTIS_COPY_AUTH_ROUTE_FIELD(field, value)                             \
   do {                                                                         \
@@ -5280,6 +5284,10 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
   login.username = fields.username;
   login.password = fields.password;
   login.totp_code = fields.totp_code;
+  login.unix_seconds = data->unix_seconds;
+  if (data->totp_window != 0u) {
+    login.totp_window = data->totp_window;
+  }
   vectis_auth_issued_credential_init(&credential);
   status = vectis_auth_issue_webdav_key_for_login(&data->store, &login,
                                                   &credential, error);
