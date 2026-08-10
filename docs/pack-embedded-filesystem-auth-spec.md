@@ -436,9 +436,12 @@ Email-token e2e coverage:
 
 8. Kore plus lockd `startconsumer` e2e.
    Run one Vectis process with Kore HTTP/API routes, WebDAV routes, and an
-   app-owned liblockdc `startconsumer` client service, enqueue lockd messages,
-   prove the consumer receives them, and prove HTTP/WebDAV requests still
-   succeed during consumer service activity.
+   app-owned liblockdc `startconsumer` client service wired through the C
+   receiver-style service handles, enqueue lockd messages, prove the consumer
+   receives them, and prove HTTP/WebDAV requests still succeed during consumer
+   service activity. Lua may provide route or callback glue in the scenario,
+   but must not own the built-in server, WebDAV, auth, pack, or consumer
+   service lifecycle semantics.
 
 ## Open Decisions
 
