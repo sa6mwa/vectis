@@ -53,6 +53,45 @@ if(NOT oauth_authorize_output MATCHES "nonce=admin-nonce")
 endif()
 
 execute_process(
+  COMMAND "${VECTIS_BIN}" -a oauth2 --store "${store}" --exchange-callback
+          "bad-callback-flow" --subject "admin-oidc@example.com"
+          --token-endpoint "https://idp.example.test/token"
+          --client-id "admin-client"
+          --redirect-uri "http://127.0.0.1/callback"
+          --code-verifier "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~admin"
+          --callback-query "?code=admin-code&state=wrong-state"
+          --expected-state "admin-state"
+  RESULT_VARIABLE oauth_exchange_bad_result
+  OUTPUT_VARIABLE oauth_exchange_bad_output
+  ERROR_VARIABLE oauth_exchange_bad_error)
+if(oauth_exchange_bad_result EQUAL 0)
+  message(FATAL_ERROR "oauth2 exchange-callback accepted mismatched state")
+endif()
+if(NOT oauth_exchange_bad_error MATCHES "OIDC callback token exchange failed")
+  message(FATAL_ERROR "oauth2 exchange-callback did not report callback failure")
+endif()
+if(oauth_exchange_bad_output MATCHES "stored_flow=")
+  message(FATAL_ERROR "oauth2 exchange-callback stored a failed callback flow")
+endif()
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a oauth2 --store "${store}" --client-credentials
+          "bad-client-flow" --subject "admin-m2m@example.com"
+          --client-id "admin-client" --client-secret "admin-secret"
+  RESULT_VARIABLE oauth_client_bad_result
+  OUTPUT_VARIABLE oauth_client_bad_output
+  ERROR_VARIABLE oauth_client_bad_error)
+if(oauth_client_bad_result EQUAL 0)
+  message(FATAL_ERROR "oauth2 client-credentials accepted missing token endpoint")
+endif()
+if(NOT oauth_client_bad_error MATCHES "OAuth2 client credentials require token endpoint")
+  message(FATAL_ERROR "oauth2 client-credentials did not validate token endpoint")
+endif()
+if(oauth_client_bad_output MATCHES "stored_flow=")
+  message(FATAL_ERROR "oauth2 client-credentials stored an invalid flow")
+endif()
+
+execute_process(
   COMMAND "${VECTIS_BIN}" -a oauth2 --store "${store}" --upsert-flow
           "admin-flow" --subject "admin-oidc@example.com"
           --access-token "admin-access-token" --token-type "Bearer"
