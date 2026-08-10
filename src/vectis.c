@@ -30,6 +30,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#include <vectis/webdav.h>
 
 typedef enum vectis_route_entry_kind {
   VECTIS_ROUTE_ENTRY_HANDLER = 0,
@@ -827,6 +828,14 @@ const char *vectis_http_method_string(vectis_http_method method) {
     return "HEAD";
   case VECTIS_HTTP_OPTIONS:
     return "OPTIONS";
+  case VECTIS_HTTP_PROPFIND:
+    return "PROPFIND";
+  case VECTIS_HTTP_MKCOL:
+    return "MKCOL";
+  case VECTIS_HTTP_COPY:
+    return "COPY";
+  case VECTIS_HTTP_MOVE:
+    return "MOVE";
   default:
     return "UNKNOWN";
   }
@@ -956,6 +965,17 @@ void vectis_server_config_init(vectis_server_config *config) {
   config->idle_timeout_ms = VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS;
   config->keepalive_timeout_ms = VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS;
   config->keepalive_max_requests = VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS;
+  vectis_autoblock_config_init(&config->autoblock);
+}
+
+void vectis_autoblock_config_init(vectis_autoblock_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->window_seconds = 1800u;
+  config->block_seconds = 3600u;
+  config->max_entries = 8192u;
 }
 
 void vectis_app_config_init(vectis_app_config *config) {
@@ -1084,6 +1104,13 @@ vectis_effective_server_config(const vectis_server_config *config) {
   effective.keepalive_max_requests =
       vectis_default_unsigned(config->keepalive_max_requests,
                               VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS);
+  effective.autoblock = config->autoblock;
+  effective.autoblock.window_seconds =
+      vectis_default_unsigned(config->autoblock.window_seconds, 1800u);
+  effective.autoblock.block_seconds =
+      vectis_default_unsigned(config->autoblock.block_seconds, 3600u);
+  effective.autoblock.max_entries =
+      vectis_default_unsigned(config->autoblock.max_entries, 8192u);
   return effective;
 }
 
@@ -1330,7 +1357,7 @@ static vectis_http_methods vectis_method_mask(vectis_http_method method) {
   if (method == VECTIS_HTTP_ANY) {
     return VECTIS_HTTP_METHODS_ALL;
   }
-  if (method < VECTIS_HTTP_GET || method > VECTIS_HTTP_OPTIONS) {
+  if (method < VECTIS_HTTP_GET || method > VECTIS_HTTP_MOVE) {
     return VECTIS_HTTP_METHODS_NONE;
   }
   return VECTIS_HTTP_METHOD_MASK(method);
@@ -1366,6 +1393,18 @@ static vectis_http_method vectis_first_method(vectis_http_methods methods) {
   }
   if (methods & VECTIS_HTTP_METHODS_OPTIONS) {
     return VECTIS_HTTP_OPTIONS;
+  }
+  if (methods & VECTIS_HTTP_METHODS_PROPFIND) {
+    return VECTIS_HTTP_PROPFIND;
+  }
+  if (methods & VECTIS_HTTP_METHODS_MKCOL) {
+    return VECTIS_HTTP_MKCOL;
+  }
+  if (methods & VECTIS_HTTP_METHODS_COPY) {
+    return VECTIS_HTTP_COPY;
+  }
+  if (methods & VECTIS_HTTP_METHODS_MOVE) {
+    return VECTIS_HTTP_MOVE;
   }
   return VECTIS_HTTP_ANY;
 }
@@ -3839,6 +3878,616 @@ vectis_register_static_directory(vectis_app *app,
   return status;
 }
 
+typedef struct vectis_webdav_route_data {
+  vectis_webdav_config storage;
+  char *path_prefix;
+  vectis_webdav_auth_fn auth;
+  void *auth_userdata;
+  int auth_required;
+  int conceal_unauthorized;
+} vectis_webdav_route_data;
+
+typedef struct vectis_webdav_propfind_state {
+  const vectis_webdav_route_data *data;
+  vectis_string_builder *xml;
+  vectis_error *error;
+  vectis_status status;
+} vectis_webdav_propfind_state;
+
+void vectis_webdav_mount_config_init(vectis_webdav_mount_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->path_prefix = "/";
+  vectis_webdav_config_init(&config->storage);
+  config->auth_required = 1;
+  config->conceal_unauthorized = 1;
+}
+
+void vectis_webdav_auth_response_init(vectis_webdav_auth_response *response) {
+  if (response == NULL) {
+    return;
+  }
+  memset(response, 0, sizeof(*response));
+  response->action = VECTIS_WEBDAV_AUTH_DENY;
+}
+
+static int vectis_webdav_prefix_valid(const char *prefix) {
+  return prefix != NULL && prefix[0] == '/' &&
+         vectis_static_relative_path_safe(prefix + 1u);
+}
+
+static int
+vectis_webdav_storage_config_present(const vectis_webdav_config *storage) {
+  return storage != NULL && storage->cache_dir != NULL &&
+         storage->cache_dir[0] == '/' && storage->site_id != NULL &&
+         storage->site_id[0] != '\0';
+}
+
+static vectis_webdav_route_data *
+vectis_webdav_route_data_new(const vectis_webdav_mount_config *config,
+                             const char *path_prefix, vectis_error *error) {
+  vectis_webdav_route_data *data;
+  char *cursor;
+  size_t prefix_len;
+  size_t cache_len;
+  size_t site_len;
+  size_t total;
+
+  prefix_len = strlen(path_prefix) + 1u;
+  cache_len = strlen(config->storage.cache_dir) + 1u;
+  site_len = strlen(config->storage.site_id) + 1u;
+  total = sizeof(*data) + prefix_len + cache_len + site_len;
+  data = (vectis_webdav_route_data *)calloc(1u, total);
+  if (data == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate WebDAV route data");
+    return NULL;
+  }
+  cursor = (char *)(data + 1);
+  data->path_prefix = cursor;
+  memcpy(cursor, path_prefix, prefix_len);
+  cursor += prefix_len;
+  data->storage = config->storage;
+  data->storage.cache_dir = cursor;
+  memcpy(cursor, config->storage.cache_dir, cache_len);
+  cursor += cache_len;
+  data->storage.site_id = cursor;
+  memcpy(cursor, config->storage.site_id, site_len);
+  data->auth = config->auth;
+  data->auth_userdata = config->auth_userdata;
+  data->auth_required = config->auth_required ? 1 : 0;
+  data->conceal_unauthorized = config->conceal_unauthorized ? 1 : 0;
+  return data;
+}
+
+static int
+vectis_webdav_request_resource_path(const vectis_webdav_route_data *data,
+                                    const char *request_path,
+                                    char out[VECTIS_WEBDAV_PATH_MAX + 1u]) {
+  const char *resource;
+  size_t prefix_len;
+
+  if (data == NULL || data->path_prefix == NULL || request_path == NULL) {
+    return 0;
+  }
+  if (strcmp(data->path_prefix, "/") == 0) {
+    resource = request_path;
+  } else {
+    prefix_len = strlen(data->path_prefix);
+    if (strncmp(request_path, data->path_prefix, prefix_len) != 0) {
+      return 0;
+    }
+    if (request_path[prefix_len] == '\0') {
+      resource = "/";
+    } else if (request_path[prefix_len] == '/') {
+      resource = request_path + prefix_len;
+    } else {
+      return 0;
+    }
+  }
+  return vectis_webdav_path_normalize(resource, out);
+}
+
+static vectis_status
+vectis_webdav_auth_contract_response(const vectis_webdav_route_data *data,
+                                     const vectis_webdav_auth_response *auth,
+                                     vectis_response *response,
+                                     vectis_error *error) {
+  int status_code;
+  const char *content_type;
+  vectis_bytes body;
+
+  if (auth == NULL) {
+    return vectis_response_status(
+        response, data != NULL && data->conceal_unauthorized ? 404 : 403,
+        error);
+  }
+  switch (auth->action) {
+  case VECTIS_WEBDAV_AUTH_REQUIRED:
+    status_code = auth->status_code != 0 ? auth->status_code : 401;
+    break;
+  case VECTIS_WEBDAV_AUTH_REDIRECT:
+    status_code = auth->status_code != 0 ? auth->status_code : 302;
+    break;
+  case VECTIS_WEBDAV_AUTH_DENY:
+  default:
+    status_code =
+        auth->status_code != 0
+            ? auth->status_code
+            : (data != NULL && data->conceal_unauthorized ? 404 : 403);
+    break;
+  }
+  if (auth->www_authenticate != NULL &&
+      vectis_response_header(response, "www-authenticate",
+                             auth->www_authenticate, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (auth->location != NULL &&
+      vectis_response_header(response, "location", auth->location, error) !=
+          VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (auth->body != NULL && auth->body_size > 0u) {
+    content_type =
+        auth->content_type != NULL ? auth->content_type : "text/plain";
+    body.data = auth->body;
+    body.size = auth->body_size;
+    return vectis_response_bytes(response, status_code, content_type, body,
+                                 error);
+  }
+  return vectis_response_status(response, status_code, error);
+}
+
+static vectis_status vectis_webdav_authenticate_request(
+    const vectis_webdav_route_data *data, vectis_request *request,
+    vectis_http_method method, const char *resource, vectis_response *response,
+    int *authorized, vectis_error *error) {
+  vectis_webdav_auth_request auth_request;
+  vectis_webdav_auth_response auth_response;
+  vectis_status status;
+
+  if (data == NULL || request == NULL || resource == NULL ||
+      authorized == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "WebDAV route is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  *authorized = 0;
+  if (!data->auth_required) {
+    *authorized = 1;
+    return VECTIS_OK;
+  }
+  vectis_webdav_auth_response_init(&auth_response);
+  auth_request.request = request;
+  auth_request.method = method;
+  auth_request.mount_path_prefix = data->path_prefix;
+  auth_request.resource_path = resource;
+  status =
+      data->auth(&auth_request, &auth_response, data->auth_userdata, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (auth_response.action == VECTIS_WEBDAV_AUTH_ALLOW) {
+    *authorized = 1;
+    return VECTIS_OK;
+  }
+  return vectis_webdav_auth_contract_response(data, &auth_response, response,
+                                              error);
+}
+
+static vectis_status vectis_webdav_status_response(vectis_webdav_status status,
+                                                   vectis_response *response,
+                                                   vectis_error *error) {
+  switch (status) {
+  case VECTIS_WEBDAV_OK:
+    return vectis_response_status(response, 204, error);
+  case VECTIS_WEBDAV_NOT_FOUND:
+    return vectis_response_status(response, 404, error);
+  case VECTIS_WEBDAV_EXISTS:
+    return vectis_response_status(response, 412, error);
+  case VECTIS_WEBDAV_INVALID:
+    return vectis_response_status(response, 400, error);
+  case VECTIS_WEBDAV_LIMIT:
+    return vectis_response_status(response, 413, error);
+  case VECTIS_WEBDAV_CONFLICT:
+  case VECTIS_WEBDAV_TOMBSTONED:
+    return vectis_response_status(response, 409, error);
+  default:
+    return vectis_response_status(response, 500, error);
+  }
+}
+
+static vectis_status vectis_webdav_xml_escape(vectis_string_builder *xml,
+                                              const char *value,
+                                              vectis_error *error) {
+  const char *p;
+
+  for (p = value != NULL ? value : ""; *p != '\0'; ++p) {
+    switch (*p) {
+    case '&':
+      if (vectis_string_builder_append(xml, "&amp;", error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+      break;
+    case '<':
+      if (vectis_string_builder_append(xml, "&lt;", error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+      break;
+    case '>':
+      if (vectis_string_builder_append(xml, "&gt;", error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+      break;
+    case '"':
+      if (vectis_string_builder_append(xml, "&quot;", error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+      break;
+    default:
+      if (vectis_string_builder_append_n(xml, p, 1u, error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+      }
+      break;
+    }
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_webdav_href_for_resource(
+    const vectis_webdav_route_data *data, const char *resource,
+    vectis_string_builder *href, vectis_error *error) {
+  if (strcmp(data->path_prefix, "/") == 0) {
+    return vectis_webdav_xml_escape(href, resource, error);
+  }
+  if (strcmp(resource, "/") == 0) {
+    return vectis_webdav_xml_escape(href, data->path_prefix, error);
+  }
+  if (vectis_webdav_xml_escape(href, data->path_prefix, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  return vectis_webdav_xml_escape(href, resource, error);
+}
+
+static vectis_status
+vectis_webdav_append_prop(const vectis_webdav_route_data *data,
+                          const char *resource, vectis_webdav_entry_kind kind,
+                          size_t size, vectis_string_builder *xml,
+                          vectis_error *error) {
+  if (vectis_string_builder_append(xml, "<D:response><D:href>", error) !=
+          VECTIS_OK ||
+      vectis_webdav_href_for_resource(data, resource, xml, error) !=
+          VECTIS_OK ||
+      vectis_string_builder_append(
+          xml, "</D:href><D:propstat><D:prop><D:resourcetype>", error) !=
+          VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  if (kind == VECTIS_WEBDAV_ENTRY_COLLECTION &&
+      vectis_string_builder_append(xml, "<D:collection/>", error) !=
+          VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  if (vectis_string_builder_append(xml, "</D:resourcetype>", error) !=
+      VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  if (kind == VECTIS_WEBDAV_ENTRY_FILE &&
+      vectis_string_builder_appendf(xml, error,
+                                    "<D:getcontentlength>%lu"
+                                    "</D:getcontentlength>",
+                                    (unsigned long)size) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  return vectis_string_builder_append(
+      xml,
+      "</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>"
+      "</D:response>",
+      error);
+}
+
+static int vectis_webdav_propfind_entry(const char *path,
+                                        vectis_webdav_entry_kind kind,
+                                        size_t size, void *userdata) {
+  vectis_webdav_propfind_state *state;
+
+  state = (vectis_webdav_propfind_state *)userdata;
+  if (state == NULL || state->status != VECTIS_OK) {
+    return 0;
+  }
+  state->status = vectis_webdav_append_prop(state->data, path, kind, size,
+                                            state->xml, state->error);
+  return state->status == VECTIS_OK;
+}
+
+static vectis_status
+vectis_webdav_propfind(const vectis_webdav_route_data *data,
+                       const char *resource, vectis_request *request,
+                       vectis_response *response, vectis_error *error) {
+  vectis_webdav_entry entry;
+  vectis_webdav_propfind_state state;
+  vectis_string_builder xml;
+  vectis_status response_status;
+  vectis_bytes bytes;
+  vectis_webdav_status status;
+  const char *depth;
+
+  memset(&xml, 0, sizeof(xml));
+  status = vectis_webdav_lookup(&data->storage, resource, &entry);
+  if (status != VECTIS_WEBDAV_OK ||
+      entry.kind == VECTIS_WEBDAV_ENTRY_TOMBSTONE) {
+    return vectis_webdav_status_response(
+        entry.kind == VECTIS_WEBDAV_ENTRY_TOMBSTONE ? VECTIS_WEBDAV_NOT_FOUND
+                                                    : status,
+        response, error);
+  }
+  if (vectis_string_builder_append(&xml,
+                                   "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+                                   "<D:multistatus xmlns:D=\"DAV:\">",
+                                   error) != VECTIS_OK ||
+      vectis_webdav_append_prop(data, resource, entry.kind, entry.size, &xml,
+                                error) != VECTIS_OK) {
+    vectis_string_builder_cleanup(&xml);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  depth = vectis_request_header(request, "depth");
+  if ((depth == NULL || strcmp(depth, "0") != 0) &&
+      entry.kind == VECTIS_WEBDAV_ENTRY_COLLECTION) {
+    state.data = data;
+    state.xml = &xml;
+    state.error = error;
+    state.status = VECTIS_OK;
+    status = vectis_webdav_list(&data->storage, resource,
+                                vectis_webdav_propfind_entry, &state);
+    if (status != VECTIS_WEBDAV_OK || state.status != VECTIS_OK) {
+      vectis_string_builder_cleanup(&xml);
+      return status != VECTIS_WEBDAV_OK
+                 ? vectis_webdav_status_response(status, response, error)
+                 : state.status;
+    }
+  }
+  if (vectis_string_builder_append(&xml, "</D:multistatus>", error) !=
+      VECTIS_OK) {
+    vectis_string_builder_cleanup(&xml);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  bytes.data = xml.data;
+  bytes.size = xml.size;
+  response_status = vectis_response_bytes(
+      response, 207, "application/xml; charset=utf-8", bytes, error);
+  vectis_string_builder_cleanup(&xml);
+  return response_status;
+}
+
+static int
+vectis_webdav_destination_path(const vectis_webdav_route_data *data,
+                               const char *destination,
+                               char out[VECTIS_WEBDAV_PATH_MAX + 1u]) {
+  const char *path;
+  const char *scheme;
+  const char *end;
+  char request_path[VECTIS_WEBDAV_PATH_MAX + 1u];
+  size_t length;
+
+  if (destination == NULL) {
+    return 0;
+  }
+  path = destination;
+  scheme = strstr(destination, "://");
+  if (scheme != NULL) {
+    path = strchr(scheme + 3u, '/');
+    if (path == NULL) {
+      return 0;
+    }
+  }
+  end = strpbrk(path, "?#");
+  length = end != NULL ? (size_t)(end - path) : strlen(path);
+  if (length == 0u || length > VECTIS_WEBDAV_PATH_MAX) {
+    return 0;
+  }
+  memcpy(request_path, path, length);
+  request_path[length] = '\0';
+  return vectis_webdav_request_resource_path(data, request_path, out);
+}
+
+static vectis_status vectis_webdav_dispatch(vectis_app *app,
+                                            vectis_request *request,
+                                            vectis_response *response,
+                                            void *userdata,
+                                            vectis_error *error) {
+  vectis_webdav_route_data *data;
+  vectis_http_method method;
+  vectis_webdav_status webdav_status;
+  vectis_webdav_entry entry;
+  vectis_mutable_bytes body;
+  vectis_bytes response_body;
+  const char *path;
+  const char *destination;
+  const char *overwrite_header;
+  char resource[VECTIS_WEBDAV_PATH_MAX + 1u];
+  char target[VECTIS_WEBDAV_PATH_MAX + 1u];
+  int authorized;
+  int overwrite;
+
+  (void)app;
+  data = (vectis_webdav_route_data *)userdata;
+  path = vectis_request_path(request);
+  if (!vectis_webdav_request_resource_path(data, path, resource)) {
+    return vectis_response_status(response, 404, error);
+  }
+  method = vectis_request_method(request);
+  if (vectis_webdav_authenticate_request(data, request, method, resource,
+                                         response, &authorized,
+                                         error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (!authorized) {
+    return VECTIS_OK;
+  }
+  if (method == VECTIS_HTTP_OPTIONS) {
+    if (vectis_response_header(response, "dav", "1", error) != VECTIS_OK ||
+        vectis_response_header(
+            response, "allow",
+            "OPTIONS, PROPFIND, GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE",
+            error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    }
+    return vectis_response_status(response, 204, error);
+  }
+  if (method == VECTIS_HTTP_PROPFIND) {
+    return vectis_webdav_propfind(data, resource, request, response, error);
+  }
+  if (method == VECTIS_HTTP_GET || method == VECTIS_HTTP_HEAD) {
+    webdav_status = vectis_webdav_lookup(&data->storage, resource, &entry);
+    if (webdav_status != VECTIS_WEBDAV_OK ||
+        entry.kind != VECTIS_WEBDAV_ENTRY_FILE) {
+      return vectis_response_status(response, 404, error);
+    }
+    if (vectis_response_header(response, "etag", entry.etag, error) !=
+        VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    }
+    if (method == VECTIS_HTTP_HEAD) {
+      return vectis_response_status(response, 200, error);
+    }
+    return vectis_response_file(response, 200, "application/octet-stream",
+                                entry.storage_path, error);
+  }
+  if (method == VECTIS_HTTP_PUT) {
+    memset(&body, 0, sizeof(body));
+    if (vectis_request_body_read_all(request, &body, error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    }
+    response_body.data = body.data;
+    response_body.size = body.size;
+    webdav_status = vectis_webdav_put(&data->storage, resource,
+                                      (const unsigned char *)response_body.data,
+                                      response_body.size);
+    vectis_mutable_bytes_cleanup(&body);
+    return webdav_status == VECTIS_WEBDAV_OK
+               ? vectis_response_status(response, 201, error)
+               : vectis_webdav_status_response(webdav_status, response, error);
+  }
+  if (method == VECTIS_HTTP_DELETE) {
+    webdav_status = vectis_webdav_delete(&data->storage, resource);
+    return webdav_status == VECTIS_WEBDAV_OK
+               ? vectis_response_status(response, 204, error)
+               : vectis_webdav_status_response(webdav_status, response, error);
+  }
+  if (method == VECTIS_HTTP_MKCOL) {
+    webdav_status = vectis_webdav_mkcol(&data->storage, resource);
+    return webdav_status == VECTIS_WEBDAV_OK
+               ? vectis_response_status(response, 201, error)
+               : vectis_webdav_status_response(webdav_status, response, error);
+  }
+  if (method == VECTIS_HTTP_COPY || method == VECTIS_HTTP_MOVE) {
+    destination = vectis_request_header(request, "destination");
+    if (!vectis_webdav_destination_path(data, destination, target)) {
+      return vectis_response_status(response, 400, error);
+    }
+    overwrite_header = vectis_request_header(request, "overwrite");
+    overwrite =
+        overwrite_header == NULL || strcasecmp(overwrite_header, "F") != 0;
+    webdav_status =
+        method == VECTIS_HTTP_COPY
+            ? vectis_webdav_copy(&data->storage, resource, target, overwrite)
+            : vectis_webdav_move(&data->storage, resource, target, overwrite);
+    return webdav_status == VECTIS_WEBDAV_OK
+               ? vectis_response_status(response, 201, error)
+               : vectis_webdav_status_response(webdav_status, response, error);
+  }
+  return vectis_response_status(response, 405, error);
+}
+
+vectis_status vectis_register_webdav(vectis_app *app,
+                                     const vectis_webdav_mount_config *config,
+                                     vectis_error *error) {
+  vectis_route_config route;
+  vectis_webdav_route_data *data;
+  vectis_status status;
+  char *regex;
+  char *path_prefix;
+
+  path_prefix = NULL;
+  if (app == NULL || config == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "WebDAV app and config are required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!vectis_webdav_storage_config_present(&config->storage)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "WebDAV storage cache_dir and site_id are required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!vectis_webdav_prefix_valid(config->path_prefix)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "WebDAV path_prefix is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->auth_required && config->auth == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "WebDAV auth callback is required");
+    return VECTIS_ERR_INVALID;
+  }
+  path_prefix =
+      vectis_normalize_static_directory_prefix(config->path_prefix, error);
+  if (path_prefix == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  if (vectis_validate_route_path(path_prefix, VECTIS_ROUTE_PATH_LITERAL,
+                                 error) != VECTIS_OK) {
+    free(path_prefix);
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  regex = vectis_static_directory_regex(path_prefix, error);
+  if (regex == NULL) {
+    free(path_prefix);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  data = vectis_webdav_route_data_new(config, path_prefix, error);
+  free(path_prefix);
+  if (data == NULL) {
+    free(regex);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  vectis_route_config_init(&route);
+  route.method = VECTIS_HTTP_OPTIONS;
+  route.methods = VECTIS_HTTP_METHODS_OPTIONS | VECTIS_HTTP_METHODS_PROPFIND |
+                  VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD |
+                  VECTIS_HTTP_METHODS_PUT | VECTIS_HTTP_METHODS_DELETE |
+                  VECTIS_HTTP_METHODS_MKCOL | VECTIS_HTTP_METHODS_COPY |
+                  VECTIS_HTTP_METHODS_MOVE;
+  route.path = regex;
+  route.path_kind = VECTIS_ROUTE_PATH_REGEX;
+  route.body = vectis_body_buffered_max(config->storage.max_file_bytes);
+  route.handler = vectis_webdav_dispatch;
+  route.userdata = data;
+  status = vectis_app_register_route_owned_userdata(app, &route, 1, error);
+  free(regex);
+  if (status != VECTIS_OK) {
+    free(data);
+  }
+  return status;
+}
+
+vectis_status vectis_register_webdav_site(vectis_app *app,
+                                          const char *path_prefix,
+                                          const vectis_webdav_config *storage,
+                                          vectis_error *error) {
+  vectis_webdav_mount_config config;
+
+  if (storage == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "WebDAV storage config is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_webdav_mount_config_init(&config);
+  config.path_prefix = path_prefix;
+  config.storage = *storage;
+  return vectis_register_webdav(app, &config, error);
+}
+
 static vectis_status vectis_upload_file_open(vectis_app *app,
                                              vectis_request *request,
                                              void *userdata, void **state,
@@ -5233,6 +5882,14 @@ static const char *vectis_openapi_method_name(vectis_http_method method) {
     return "head";
   case VECTIS_HTTP_OPTIONS:
     return "options";
+  case VECTIS_HTTP_PROPFIND:
+    return "propfind";
+  case VECTIS_HTTP_MKCOL:
+    return "mkcol";
+  case VECTIS_HTTP_COPY:
+    return "copy";
+  case VECTIS_HTTP_MOVE:
+    return "move";
   default:
     return "get";
   }
@@ -5681,7 +6338,7 @@ static vectis_status vectis_generate_openapi_json(
         continue;
       }
       doc = &impl->openapi_docs[k].doc;
-      for (method = VECTIS_HTTP_GET; method <= VECTIS_HTTP_OPTIONS; ++method) {
+      for (method = VECTIS_HTTP_GET; method <= VECTIS_HTTP_MOVE; ++method) {
         if ((impl->openapi_docs[k].methods & VECTIS_HTTP_METHOD_MASK(method)) !=
             0u) {
           if (lonejson_writer_key(&writer, vectis_openapi_method_name(method),
@@ -5947,7 +6604,7 @@ static vectis_status vectis_generate_openapi_yaml(
         continue;
       }
       doc = &impl->openapi_docs[k].doc;
-      for (method = VECTIS_HTTP_GET; method <= VECTIS_HTTP_OPTIONS; ++method) {
+      for (method = VECTIS_HTTP_GET; method <= VECTIS_HTTP_MOVE; ++method) {
         if ((impl->openapi_docs[k].methods & VECTIS_HTTP_METHOD_MASK(method)) !=
             0u) {
           if (vectis_string_builder_appendf(
@@ -13500,8 +14157,7 @@ vectis_http_execute_once(const vectis_http_client_config *client,
   response_content_type = NULL;
   download_file = NULL;
 
-  if (request->method < VECTIS_HTTP_GET ||
-      request->method > VECTIS_HTTP_OPTIONS) {
+  if (request->method < VECTIS_HTTP_GET || request->method > VECTIS_HTTP_MOVE) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "HTTP request method is invalid");
     return VECTIS_ERR_INVALID;

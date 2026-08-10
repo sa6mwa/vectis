@@ -1,0 +1,59 @@
+diff --git a/src/kore.c b/src/kore.c
+index 9bf7f63..b4edac3 100644
+--- a/src/kore.c
++++ b/src/kore.c
+@@ -825,7 +825,7 @@ kore_server_start(int argc, char *argv[])
+ 		kore_log(LOG_INFO, "memory pool protections: %s",
+ 		    kore_mem_guard ? "enabled" : "disabled");
+ 		kore_log(LOG_INFO, "built-ins:"
+-#if defined(__linux__)
++#if defined(__linux__) && !defined(KORE_VECTIS_NO_SECCOMP)
+ 		    " seccomp"
+ #endif
+ #if defined(KORE_USE_PGSQL)
+diff --git a/src/seccomp.c b/src/seccomp.c
+index c3b355e..fae64b3 100644
+--- a/src/seccomp.c
++++ b/src/seccomp.c
+@@ -45,6 +45,7 @@
+ #define SECCOMP_KILL_POLICY		SECCOMP_RET_KILL
+ #endif
+ 
++#if !defined(KORE_VECTIS_NO_SECCOMP)
+ /*
+  * The bare minimum to be able to run kore. These are added last and can
+  * be overwritten by a filter program that is added before hand.
+@@ -205,12 +206,15 @@ static struct sock_filter filter_epilogue[] = {
+ 	/* Return hit if no system calls matched our list. */
+ 	BPF_STMT(BPF_RET+BPF_K, SECCOMP_KILL_POLICY)
+ };
++#endif
+ 
+ static struct sock_filter	*seccomp_filter_update(struct sock_filter *,
+ 				    const char *, size_t);
+ 
++#if !defined(KORE_VECTIS_NO_SECCOMP)
+ #define filter_prologue_len	KORE_FILTER_LEN(filter_prologue)
+ #define filter_epilogue_len	KORE_FILTER_LEN(filter_epilogue)
++#endif
+ 
+ static void	seccomp_register_violation(pid_t);
+ 
+@@ -257,6 +261,9 @@ kore_seccomp_drop(void)
+ void
+ kore_seccomp_enable(void)
+ {
++#if defined(KORE_VECTIS_NO_SECCOMP)
++	return;
++#else
+ 	struct sock_filter		*sf;
+ 	struct sock_fprog		prog;
+ 	struct kore_runtime_call	*rcall;
+@@ -331,6 +338,7 @@ kore_seccomp_enable(void)
+ #if defined(KORE_USE_PYTHON)
+ 	kore_python_seccomp_cleanup();
+ #endif
++#endif
+ }
+ 
+ int

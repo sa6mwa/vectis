@@ -205,7 +205,8 @@ int main(void) {
   assert(status == VECTIS_OK);
 
   vectis_cert_bundle_config_init(&certs);
-  certs.subject.common_name = "127.0.0.1";
+  certs.subject.common_name = "localhost";
+  certs.dns_names = "localhost";
   certs.ip_addresses = "127.0.0.1";
   certs.output_cert_path = server_cert_path;
   certs.output_key_path = server_key_path;
@@ -240,6 +241,7 @@ int main(void) {
   config.tls.mode = VECTIS_TLS_MODE_MANUAL;
   config.tls.bind = "127.0.0.1";
   config.tls.port = 28444u;
+  config.tls.domain = "localhost";
   config.tls.certificate_path = server_cert_path;
   config.tls.private_key_path = server_key_path;
   config.tls.client_ca_bundle_path = root_cert_path;
@@ -252,21 +254,23 @@ int main(void) {
   status = app->start(app, &error);
   assert(status == VECTIS_OK);
 
-  assert_https_fails("https://127.0.0.1:28444/secure", root_cert_path, NULL);
-  assert_https_fails("https://127.0.0.1:28444/secure", root_cert_path,
+  assert_https_fails("https://localhost:28444/secure", root_cert_path, NULL);
+  assert_https_fails("https://localhost:28444/secure", root_cert_path,
                      wrong_client_bundle_path);
-  assert_https_ok("https://127.0.0.1:28444/secure", root_cert_path,
+  assert_https_fails("https://127.0.0.1:28444/secure", root_cert_path,
+                     client_bundle_path);
+  assert_https_ok("https://localhost:28444/secure", root_cert_path,
                   client_bundle_path);
   assert(read_file(client_bundle_path, &client_bundle_pem,
                    &client_bundle_pem_size));
   assert_https_client_source_ok(
-      "https://127.0.0.1:28444/secure", root_cert_path,
+      "https://localhost:28444/secure", root_cert_path,
       vectis_source_from_memory(client_bundle_pem, client_bundle_pem_size),
       "memory");
   assert(lc_source_from_memory(client_bundle_pem, client_bundle_pem_size,
                                &client_bundle_source, NULL) == LC_OK);
   assert_https_client_source_ok(
-      "https://127.0.0.1:28444/secure", root_cert_path,
+      "https://localhost:28444/secure", root_cert_path,
       vectis_source_from_lc(client_bundle_source), "lc_source");
   lc_source_close(client_bundle_source);
   client_bundle_source = NULL;

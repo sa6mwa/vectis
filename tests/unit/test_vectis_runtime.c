@@ -9,9 +9,11 @@
 #include <string.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <vectis/vectis.h>
+#include <vectis/webdav.h>
 
 #ifndef __has_feature
 #define __has_feature(x) 0
@@ -529,6 +531,80 @@ static int count_token(const char *haystack, const char *needle) {
   return count;
 }
 
+static int bytes_contain(const void *haystack, size_t haystack_size,
+                         const char *needle) {
+  const unsigned char *bytes;
+  size_t needle_size;
+  size_t i;
+
+  if (haystack == NULL || needle == NULL) {
+    return 0;
+  }
+  needle_size = strlen(needle);
+  if (needle_size == 0u || needle_size > haystack_size) {
+    return 0;
+  }
+  bytes = (const unsigned char *)haystack;
+  for (i = 0u; i + needle_size <= haystack_size; ++i) {
+    if (memcmp(bytes + i, needle, needle_size) == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static vectis_status
+runtime_webdav_auth(const vectis_webdav_auth_request *request,
+                    vectis_webdav_auth_response *response, void *userdata,
+                    vectis_error *error) {
+  const char *token;
+
+  (void)userdata;
+  vectis_error_clear(error);
+  vectis_webdav_auth_response_init(response);
+  token = vectis_request_header(request->request, "x-vectis-webdav-auth");
+  if (token != NULL && strcmp(token, "ok") == 0) {
+    response->action = VECTIS_WEBDAV_AUTH_ALLOW;
+    (void)snprintf(response->principal, sizeof(response->principal),
+                   "runtime-user");
+    return VECTIS_OK;
+  }
+  response->action = VECTIS_WEBDAV_AUTH_REDIRECT;
+  response->status_code = 302;
+  response->location = "/auth/webdav";
+  return VECTIS_OK;
+}
+
+static void remove_tree(const char *path) {
+  DIR *directory;
+  struct dirent *item;
+  struct stat st;
+  char child[4096];
+  int written;
+
+  directory = opendir(path);
+  if (directory == NULL) {
+    return;
+  }
+  while ((item = readdir(directory)) != NULL) {
+    if (strcmp(item->d_name, ".") == 0 || strcmp(item->d_name, "..") == 0) {
+      continue;
+    }
+    written = snprintf(child, sizeof(child), "%s/%s", path, item->d_name);
+    if (written < 0 || (size_t)written >= sizeof(child) ||
+        lstat(child, &st) == -1) {
+      continue;
+    }
+    if (S_ISDIR(st.st_mode)) {
+      remove_tree(child);
+    } else {
+      (void)unlink(child);
+    }
+  }
+  (void)closedir(directory);
+  (void)rmdir(path);
+}
+
 static int count_fd_dir(const char *path) {
   DIR *dir;
   struct dirent *entry;
@@ -963,6 +1039,9 @@ static void assert_kore_smoke(void) {
   vectis_http_response stream_file_response;
   vectis_http_response xml_route_response;
   vectis_http_response dsv_route_response;
+  vectis_http_response webdav_response;
+  vectis_http_response webdav_get_response;
+  vectis_http_response webdav_propfind_response;
   source_json_doc json_source_doc;
   stream_probe_context stream_context;
   runtime_dsv_summary dsv_summary;
@@ -977,6 +1056,8 @@ static void assert_kore_smoke(void) {
   vectis_upload_file_route_config stream_file_route;
   vectis_xml_route_config xml_route;
   vectis_dsv_route_config dsv_route;
+  vectis_webdav_config webdav_storage;
+  vectis_webdav_mount_config webdav_mount;
   vectis_xml_config xml_config;
   vectis_dsv_config dsv_config;
   vectis_app_config second_config;
@@ -990,6 +1071,8 @@ static void assert_kore_smoke(void) {
   const char json_source_path[] = "/tmp/vectis-runtime-json-source.txt";
   const char response_file_path[] = "/tmp/vectis-runtime-response.txt";
   const char response_file_body[] = "file-response";
+  char webdav_cache_dir[] = "/tmp/vectis-runtime-webdav.XXXXXX";
+  const char *webdav_headers[] = {"x-vectis-webdav-auth: ok"};
   vectis_error error;
   vectis_error second_error;
   vectis_status status;
@@ -1028,6 +1111,9 @@ static void assert_kore_smoke(void) {
   memset(&stream_file_response, 0, sizeof(stream_file_response));
   memset(&xml_route_response, 0, sizeof(xml_route_response));
   memset(&dsv_route_response, 0, sizeof(dsv_route_response));
+  memset(&webdav_response, 0, sizeof(webdav_response));
+  memset(&webdav_get_response, 0, sizeof(webdav_get_response));
+  memset(&webdav_propfind_response, 0, sizeof(webdav_propfind_response));
   memset(&stream_context, 0, sizeof(stream_context));
   memset(&dsv_summary, 0, sizeof(dsv_summary));
   memset(&json_source_request, 0, sizeof(json_source_request));
@@ -1049,6 +1135,12 @@ static void assert_kore_smoke(void) {
   assert(fwrite(response_file_body, 1u, sizeof(response_file_body) - 1u, fp) ==
          sizeof(response_file_body) - 1u);
   assert(fclose(fp) == 0);
+  assert(mkdtemp(webdav_cache_dir) != NULL);
+  vectis_webdav_config_init(&webdav_storage);
+  webdav_storage.cache_dir = webdav_cache_dir;
+  webdav_storage.site_id = "runtime";
+  webdav_storage.max_file_bytes = 4096u;
+  webdav_storage.max_total_bytes = 65536u;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/health", sample_handler, NULL);
@@ -1150,6 +1242,12 @@ static void assert_kore_smoke(void) {
                             (void *)response_file_path);
   status = vectis_register_route(app, &file_route, &error);
   assert(status == VECTIS_OK);
+  vectis_webdav_mount_config_init(&webdav_mount);
+  webdav_mount.path_prefix = "/dav";
+  webdav_mount.storage = webdav_storage;
+  webdav_mount.auth = runtime_webdav_auth;
+  status = vectis_register_webdav(app, &webdav_mount, &error);
+  assert(status == VECTIS_OK);
   status = app->start(app, &error);
   assert(status == VECTIS_OK);
 
@@ -1172,6 +1270,7 @@ static void assert_kore_smoke(void) {
   vectis_http_client_config_init(&http);
   http.timeout_ms = 60000L;
   http.connect_timeout_ms = 200L;
+  http.follow_redirects_disabled = 1;
   status = VECTIS_ERR_STATE;
   for (attempt = 0; attempt < 100 && status != VECTIS_OK; ++attempt) {
     vectis_http_response_cleanup(&response);
@@ -1209,6 +1308,52 @@ static void assert_kore_smoke(void) {
   assert_repeated_file_responses_do_not_leak_fds(
       &http, "http://127.0.0.1:28080/file", response_file_body,
       sizeof(response_file_body) - 1u, &error);
+
+  status = vectis_http_get(&http, "http://127.0.0.1:28080/dav/runtime.txt",
+                           &webdav_get_response, &error);
+  assert(status == VECTIS_OK);
+  assert(webdav_get_response.status_code == 302L);
+  vectis_http_response_cleanup(&webdav_get_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_PUT;
+  request.url = "http://127.0.0.1:28080/dav/runtime.txt";
+  request.headers = webdav_headers;
+  request.header_count = 1u;
+  request.body = "webdav-body";
+  request.body_size = 11u;
+  status = vectis_http_execute(&http, &request, &webdav_response, &error);
+  assert(status == VECTIS_OK);
+  assert(webdav_response.status_code == 201L);
+  vectis_http_response_cleanup(&webdav_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = "http://127.0.0.1:28080/dav/runtime.txt";
+  request.headers = webdav_headers;
+  request.header_count = 1u;
+  status = vectis_http_execute(&http, &request, &webdav_get_response, &error);
+  assert(status == VECTIS_OK);
+  assert(webdav_get_response.status_code == 200L);
+  assert(webdav_get_response.body_size == 11u);
+  assert(memcmp(webdav_get_response.body, "webdav-body", 11u) == 0);
+  vectis_http_response_cleanup(&webdav_get_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_PROPFIND;
+  request.url = "http://127.0.0.1:28080/dav";
+  request.headers = webdav_headers;
+  request.header_count = 1u;
+  status =
+      vectis_http_execute(&http, &request, &webdav_propfind_response, &error);
+  assert(status == VECTIS_OK);
+  assert(webdav_propfind_response.status_code == 207L);
+  assert(webdav_propfind_response.body_size > 0u);
+  assert(bytes_contain(webdav_propfind_response.body,
+                       webdav_propfind_response.body_size, "<D:multistatus"));
+  assert(bytes_contain(webdav_propfind_response.body,
+                       webdav_propfind_response.body_size, "/dav/runtime.txt"));
+  vectis_http_response_cleanup(&webdav_propfind_response);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
@@ -1492,6 +1637,7 @@ static void assert_kore_smoke(void) {
   remove(xml_upload_path);
   remove(dsv_upload_path);
   remove(response_file_path);
+  remove_tree(webdav_cache_dir);
 
   status = vectis_stop(app, &error);
   assert(status == VECTIS_OK);

@@ -479,11 +479,13 @@ set(vectis_shared_dependency_links
 
 set(vectis_public_headers
   include/vectis/vectis.h
+  include/vectis/webdav.h
   "${CMAKE_BINARY_DIR}/generated/include/vectis/vectis_version.h"
 )
 
 set(vectis_sources
   src/vectis.c
+  src/vectis_webdav.c
 )
 
 set(vectis_kore_objects)
@@ -563,6 +565,7 @@ if(VECTIS_WITH_KORE_RUNTIME)
   target_include_directories(vectis_kore_runtime PRIVATE
     "${vectis_kore_root}/include/kore"
     "${vectis_kore_generated_dir}"
+    "${CMAKE_SOURCE_DIR}/src"
     "${vectis_external_include_dir}"
   )
   target_compile_definitions(vectis_kore_runtime PRIVATE
@@ -571,7 +574,9 @@ if(VECTIS_WITH_KORE_RUNTIME)
     KORE_USE_CURL
     KORE_USE_LONEJSON
     KORE_USE_PSLOG
+    KORE_VECTIS_AUTOBLOCK_HOOKS
     KORE_VECTIS_DIRECT_TLS
+    KORE_VECTIS_NO_SECCOMP
     KORE_TMPDIR="/tmp"
     TLS_BACKEND_OPENSSL
     main=vectis_kore_main
@@ -597,7 +602,7 @@ if(VECTIS_WITH_KORE_RUNTIME)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     set_source_files_properties(src/vectis_kore_bridge.c PROPERTIES
       COMPILE_OPTIONS "-std=gnu99;-Wno-pedantic;-Wno-long-long;-Wno-cast-qual;-Wno-missing-prototypes"
-      COMPILE_DEFINITIONS "KORE_USE_ACME;KORE_USE_CURL;KORE_USE_LONEJSON;KORE_USE_PSLOG;KORE_VECTIS_DIRECT_TLS;TLS_BACKEND_OPENSSL"
+      COMPILE_DEFINITIONS "KORE_USE_ACME;KORE_USE_CURL;KORE_USE_LONEJSON;KORE_USE_PSLOG;KORE_VECTIS_DIRECT_TLS;KORE_VECTIS_NO_SECCOMP;TLS_BACKEND_OPENSSL"
     )
   endif()
 else()

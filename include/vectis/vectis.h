@@ -22,6 +22,9 @@
 #define VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS 30000L
 #define VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS 5000L
 #define VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS 100u
+#define VECTIS_AUTOBLOCK_MAX_STATUS_RULES 16u
+#define VECTIS_AUTOBLOCK_MAX_EVENT_RULES 16u
+#define VECTIS_AUTOBLOCK_MAX_TRUSTED_PROXIES 16u
 #define VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES ((size_t)3221225472UL)
 #define VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES 262144u
 #define VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES                          \
@@ -73,7 +76,11 @@ typedef enum vectis_http_method {
   VECTIS_HTTP_PATCH,
   VECTIS_HTTP_DELETE,
   VECTIS_HTTP_HEAD,
-  VECTIS_HTTP_OPTIONS
+  VECTIS_HTTP_OPTIONS,
+  VECTIS_HTTP_PROPFIND,
+  VECTIS_HTTP_MKCOL,
+  VECTIS_HTTP_COPY,
+  VECTIS_HTTP_MOVE
 } vectis_http_method;
 
 typedef unsigned int vectis_http_methods;
@@ -88,11 +95,18 @@ typedef unsigned int vectis_http_retry_conditions;
 #define VECTIS_HTTP_METHODS_DELETE VECTIS_HTTP_METHOD_MASK(VECTIS_HTTP_DELETE)
 #define VECTIS_HTTP_METHODS_HEAD VECTIS_HTTP_METHOD_MASK(VECTIS_HTTP_HEAD)
 #define VECTIS_HTTP_METHODS_OPTIONS VECTIS_HTTP_METHOD_MASK(VECTIS_HTTP_OPTIONS)
+#define VECTIS_HTTP_METHODS_PROPFIND                                           \
+  VECTIS_HTTP_METHOD_MASK(VECTIS_HTTP_PROPFIND)
+#define VECTIS_HTTP_METHODS_MKCOL VECTIS_HTTP_METHOD_MASK(VECTIS_HTTP_MKCOL)
+#define VECTIS_HTTP_METHODS_COPY VECTIS_HTTP_METHOD_MASK(VECTIS_HTTP_COPY)
+#define VECTIS_HTTP_METHODS_MOVE VECTIS_HTTP_METHOD_MASK(VECTIS_HTTP_MOVE)
 #define VECTIS_HTTP_METHODS_ALL                                                \
   (VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_POST |                        \
    VECTIS_HTTP_METHODS_PUT | VECTIS_HTTP_METHODS_PATCH |                       \
    VECTIS_HTTP_METHODS_DELETE | VECTIS_HTTP_METHODS_HEAD |                     \
-   VECTIS_HTTP_METHODS_OPTIONS)
+   VECTIS_HTTP_METHODS_OPTIONS | VECTIS_HTTP_METHODS_PROPFIND |                \
+   VECTIS_HTTP_METHODS_MKCOL | VECTIS_HTTP_METHODS_COPY |                      \
+   VECTIS_HTTP_METHODS_MOVE)
 
 #define VECTIS_HTTP_RETRY_NONE 0u
 #define VECTIS_HTTP_RETRY_TRANSPORT 1u
@@ -508,6 +522,32 @@ typedef struct vectis_openapi_document {
   const char *version;
 } vectis_openapi_document;
 
+typedef struct vectis_autoblock_status_rule {
+  unsigned int status;
+  unsigned int threshold;
+} vectis_autoblock_status_rule;
+
+typedef struct vectis_autoblock_event_rule {
+  const char *name;
+  unsigned int threshold;
+} vectis_autoblock_event_rule;
+
+typedef struct vectis_autoblock_config {
+  int enabled;
+  unsigned int window_seconds;
+  unsigned int block_seconds;
+  unsigned int max_entries;
+  unsigned int tcp_stall_threshold;
+  unsigned int tls_failure_threshold;
+  vectis_autoblock_status_rule status_rules[VECTIS_AUTOBLOCK_MAX_STATUS_RULES];
+  size_t status_rule_count;
+  vectis_autoblock_event_rule event_rules[VECTIS_AUTOBLOCK_MAX_EVENT_RULES];
+  size_t event_rule_count;
+  int proxy_enabled;
+  const char *const *trusted_proxies;
+  size_t trusted_proxy_count;
+} vectis_autoblock_config;
+
 typedef struct vectis_server_config {
   size_t max_connections;
   size_t max_request_header_bytes;
@@ -521,6 +561,7 @@ typedef struct vectis_server_config {
   int keepalive_disabled;
   long keepalive_timeout_ms;
   unsigned keepalive_max_requests;
+  vectis_autoblock_config autoblock;
 } vectis_server_config;
 
 typedef struct vectis_app_config {
@@ -898,6 +939,7 @@ vectis_source vectis_source_from_memory(const void *memory, size_t memory_size);
 vectis_source vectis_source_from_lc(struct lc_source *source);
 void vectis_app_config_init(vectis_app_config *config);
 void vectis_server_config_init(vectis_server_config *config);
+void vectis_autoblock_config_init(vectis_autoblock_config *config);
 void vectis_tls_config_init(vectis_tls_config *config);
 void vectis_lockd_config_init(vectis_lockd_config *config);
 void vectis_body_policy_init(vectis_body_policy *policy);

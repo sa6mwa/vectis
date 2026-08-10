@@ -89,8 +89,17 @@ int main(void) {
          0);
   assert(strcmp(vectis_http_method_string(VECTIS_HTTP_OPTIONS), "OPTIONS") ==
          0);
+  assert(strcmp(vectis_http_method_string(VECTIS_HTTP_PROPFIND), "PROPFIND") ==
+         0);
+  assert(strcmp(vectis_http_method_string(VECTIS_HTTP_MKCOL), "MKCOL") == 0);
+  assert(strcmp(vectis_http_method_string(VECTIS_HTTP_COPY), "COPY") == 0);
+  assert(strcmp(vectis_http_method_string(VECTIS_HTTP_MOVE), "MOVE") == 0);
   assert(strcmp(vectis_body_mode_string(VECTIS_BODY_STREAMING_UPLOAD),
                 "streaming_upload") == 0);
+  assert(config.server.autoblock.enabled == 0);
+  assert(config.server.autoblock.window_seconds == 1800u);
+  assert(config.server.autoblock.block_seconds == 3600u);
+  assert(config.server.autoblock.max_entries == 8192u);
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
@@ -192,13 +201,23 @@ int main(void) {
   assert(status == VECTIS_OK);
   assert(vectis_route_count(app) == 2u);
 
+  route = vectis_route_methods(
+      VECTIS_HTTP_METHODS_PROPFIND | VECTIS_HTTP_METHODS_MKCOL |
+          VECTIS_HTTP_METHODS_COPY | VECTIS_HTTP_METHODS_MOVE,
+      "/dav", sample_handler, NULL);
+  assert(route.method == VECTIS_HTTP_PROPFIND);
+  assert((route.methods & VECTIS_HTTP_METHODS_MOVE) != 0u);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_route_count(app) == 3u);
+
   json_route =
       vectis_json_route_methods(VECTIS_HTTP_METHODS_NONE, "/json-empty-methods",
                                 NULL, 0u, NULL, 0u, sample_json_handler, NULL);
   status = vectis_register_json_route(app, &json_route, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "at least one HTTP method") != NULL);
-  assert(vectis_route_count(app) == 2u);
+  assert(vectis_route_count(app) == 3u);
 
   typed_json_route = vectis_json_typed_route_methods(
       VECTIS_HTTP_METHODS_NONE, "/typed-json-empty-methods", NULL, 0u,
@@ -206,25 +225,25 @@ int main(void) {
   status = vectis_register_json_typed_route(app, &typed_json_route, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "at least one HTTP method") != NULL);
-  assert(vectis_route_count(app) == 2u);
+  assert(vectis_route_count(app) == 3u);
 
   param_route = vectis_route(VECTIS_HTTP_HEAD, "/orders", sample_handler, NULL);
   status = vectis_register_route(app, &param_route, &error);
   assert(status == VECTIS_OK);
-  assert(vectis_route_count(app) == 3u);
+  assert(vectis_route_count(app) == 4u);
 
   param_route = vectis_route(VECTIS_HTTP_GET, "/orders/:id/items/:item_id",
                              sample_handler, NULL);
   assert(param_route.path_kind == VECTIS_ROUTE_PATH_PARAMS);
   status = vectis_register_route(app, &param_route, &error);
   assert(status == VECTIS_OK);
-  assert(vectis_route_count(app) == 4u);
+  assert(vectis_route_count(app) == 5u);
 
   param_route = vectis_route(VECTIS_HTTP_GET, "/orders/:id?/items/:item_id?",
                              sample_handler, NULL);
   status = vectis_register_route(app, &param_route, &error);
   assert(status == VECTIS_OK);
-  assert(vectis_route_count(app) == 5u);
+  assert(vectis_route_count(app) == 6u);
 
   app->close(app);
 

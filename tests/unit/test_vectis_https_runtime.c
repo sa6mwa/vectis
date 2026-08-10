@@ -211,7 +211,8 @@ int main(void) {
   assert(status == VECTIS_OK);
 
   vectis_cert_bundle_config_init(&certs);
-  certs.subject.common_name = "127.0.0.1";
+  certs.subject.common_name = "localhost";
+  certs.dns_names = "localhost";
   certs.ip_addresses = "127.0.0.1";
   certs.output_cert_path = server_cert_path;
   certs.output_key_path = server_key_path;
@@ -226,6 +227,7 @@ int main(void) {
   config.tls.mode = VECTIS_TLS_MODE_MANUAL;
   config.tls.bind = "127.0.0.1";
   config.tls.port = 28443u;
+  config.tls.domain = "localhost";
   config.tls.certificate_path = server_cert_path;
   config.tls.private_key_path = server_key_path;
   config.tls.ca_bundle_path = intermediate_cert_path;
@@ -237,14 +239,14 @@ int main(void) {
   status = app->start(app, &error);
   assert(status == VECTIS_OK);
 
-  assert_https_ok("https://127.0.0.1:28443/secure", root_cert_path, NULL);
+  assert_https_ok("https://localhost:28443/secure", root_cert_path, NULL);
   assert(read_file(root_cert_path, &root_cert_pem, &root_cert_pem_size));
   assert_https_ca_source_ok(
-      "https://127.0.0.1:28443/secure",
+      "https://localhost:28443/secure",
       vectis_source_from_memory(root_cert_pem, root_cert_pem_size), "memory");
   assert(lc_source_from_memory(root_cert_pem, root_cert_pem_size,
                                &root_cert_source, NULL) == LC_OK);
-  assert_https_ca_source_ok("https://127.0.0.1:28443/secure",
+  assert_https_ca_source_ok("https://localhost:28443/secure",
                             vectis_source_from_lc(root_cert_source),
                             "lc_source");
   lc_source_close(root_cert_source);
@@ -252,9 +254,9 @@ int main(void) {
   free(root_cert_pem);
   root_cert_pem = NULL;
   assert_https_fails("https://127.0.0.1:28443/secure", NULL, NULL);
-  assert_https_fails("https://127.0.0.1:28443/secure", wrong_root_cert_path,
+  assert_https_fails("https://localhost:28443/secure", wrong_root_cert_path,
                      NULL);
-  assert_https_fails("https://localhost:28443/secure", root_cert_path, NULL);
+  assert_https_fails("https://127.0.0.1:28443/secure", root_cert_path, NULL);
 
   status = vectis_stop(app, &error);
   assert(status == VECTIS_OK);

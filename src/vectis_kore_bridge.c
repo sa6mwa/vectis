@@ -17,8 +17,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <unistd.h>
+
+#include "vectis_kore_hooks.h"
+
+#if !defined(MAP_ANONYMOUS) && defined(MAP_ANON)
+#define MAP_ANONYMOUS MAP_ANON
+#endif
 
 extern char **environ;
 
@@ -40,6 +48,27 @@ static pthread_t vectis_kore_thread;
 static int vectis_kore_thread_active = 0;
 static int vectis_kore_dh_loaded = 0;
 static vectis_kore_runtime_config vectis_kore_current;
+
+typedef struct vectis_kore_autoblock_entry {
+  int used;
+  char ip[64];
+  unsigned long long window_start_ms;
+  unsigned int tcp_stalls;
+  unsigned int tls_failures;
+  unsigned int status_counts[VECTIS_AUTOBLOCK_MAX_STATUS_RULES];
+  unsigned int event_counts[VECTIS_AUTOBLOCK_MAX_EVENT_RULES];
+  unsigned long long blocked_until_ms;
+} vectis_kore_autoblock_entry;
+
+typedef struct vectis_kore_autoblock_shared_state {
+  pthread_mutex_t mutex;
+  vectis_kore_autoblock_entry entries[1];
+} vectis_kore_autoblock_shared_state;
+
+static vectis_kore_autoblock_shared_state *vectis_kore_autoblock_shared = NULL;
+static size_t vectis_kore_autoblock_shared_size = 0u;
+static vectis_kore_autoblock_entry *vectis_kore_autoblock_entries = NULL;
+static unsigned int vectis_kore_autoblock_capacity = 0u;
 
 static const char vectis_kore_default_dhparams[] =
     "-----BEGIN DH PARAMETERS-----\n"
@@ -133,7 +162,7 @@ static char *vectis_kore_argv_arena(char **argv, const char **args, int argc) {
   return arena;
 }
 
-static vectis_http_method vectis_kore_method(u_int8_t method) {
+static vectis_http_method vectis_kore_method(int method) {
   switch (method) {
   case HTTP_METHOD_GET:
     return VECTIS_HTTP_GET;
@@ -149,6 +178,14 @@ static vectis_http_method vectis_kore_method(u_int8_t method) {
     return VECTIS_HTTP_HEAD;
   case HTTP_METHOD_OPTIONS:
     return VECTIS_HTTP_OPTIONS;
+  case HTTP_METHOD_PROPFIND:
+    return VECTIS_HTTP_PROPFIND;
+  case HTTP_METHOD_MKCOL:
+    return VECTIS_HTTP_MKCOL;
+  case HTTP_METHOD_COPY:
+    return VECTIS_HTTP_COPY;
+  case HTTP_METHOD_MOVE:
+    return VECTIS_HTTP_MOVE;
   default:
     return VECTIS_HTTP_ANY;
   }
@@ -191,6 +228,446 @@ static char *vectis_kore_strdup(const char *value) {
   }
   memcpy(copy, value, len + 1u);
   return copy;
+}
+
+static unsigned long long vectis_kore_autoblock_now(void) {
+  struct timeval tv;
+
+  if (gettimeofday(&tv, NULL) != 0) {
+    return 0ULL;
+  }
+  return (unsigned long long)tv.tv_sec * 1000ULL +
+         (unsigned long long)(tv.tv_usec / 1000L);
+}
+
+static int vectis_kore_autoblock_enabled(void) {
+  return vectis_kore_current.server.autoblock.enabled &&
+         vectis_kore_current.server.autoblock.window_seconds > 0u &&
+         vectis_kore_current.server.autoblock.block_seconds > 0u &&
+         vectis_kore_current.server.autoblock.max_entries > 0u &&
+         vectis_kore_autoblock_shared != NULL &&
+         vectis_kore_autoblock_entries != NULL;
+}
+
+static void vectis_kore_autoblock_unmap(void) {
+  if (vectis_kore_autoblock_shared != NULL &&
+      vectis_kore_autoblock_shared_size > 0u) {
+    (void)munmap(vectis_kore_autoblock_shared,
+                 vectis_kore_autoblock_shared_size);
+  }
+  vectis_kore_autoblock_shared = NULL;
+  vectis_kore_autoblock_shared_size = 0u;
+  vectis_kore_autoblock_entries = NULL;
+  vectis_kore_autoblock_capacity = 0u;
+}
+
+static int vectis_kore_autoblock_map(unsigned int capacity) {
+  pthread_mutexattr_t attr;
+  size_t size;
+  int ok;
+
+  if (capacity == 0u) {
+    return 0;
+  }
+  size = sizeof(*vectis_kore_autoblock_shared) +
+         ((size_t)capacity - 1u) * sizeof(vectis_kore_autoblock_entry);
+  vectis_kore_autoblock_shared = (vectis_kore_autoblock_shared_state *)mmap(
+      NULL, size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+  if (vectis_kore_autoblock_shared == MAP_FAILED) {
+    vectis_kore_autoblock_shared = NULL;
+    return 0;
+  }
+  memset(vectis_kore_autoblock_shared, 0, size);
+  vectis_kore_autoblock_shared_size = size;
+  ok = pthread_mutexattr_init(&attr) == 0;
+  if (ok) {
+    ok = pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED) == 0;
+  }
+  if (ok) {
+    ok = pthread_mutex_init(&vectis_kore_autoblock_shared->mutex, &attr) == 0;
+  }
+  (void)pthread_mutexattr_destroy(&attr);
+  if (!ok) {
+    vectis_kore_autoblock_unmap();
+    return 0;
+  }
+  vectis_kore_autoblock_entries = vectis_kore_autoblock_shared->entries;
+  vectis_kore_autoblock_capacity = capacity;
+  return 1;
+}
+
+static int vectis_kore_autoblock_lock(void) {
+  if (vectis_kore_autoblock_shared == NULL) {
+    return 0;
+  }
+  return pthread_mutex_lock(&vectis_kore_autoblock_shared->mutex) == 0;
+}
+
+static void vectis_kore_autoblock_unlock(void) {
+  if (vectis_kore_autoblock_shared != NULL) {
+    (void)pthread_mutex_unlock(&vectis_kore_autoblock_shared->mutex);
+  }
+}
+
+static void
+vectis_kore_autoblock_reset_entry(vectis_kore_autoblock_entry *entry,
+                                  const char *ip, unsigned long long now) {
+  memset(entry, 0, sizeof(*entry));
+  entry->used = 1;
+  (void)snprintf(entry->ip, sizeof(entry->ip), "%s", ip);
+  entry->window_start_ms = now;
+}
+
+static int vectis_kore_autoblock_ip_safe(const char *ip) {
+  size_t i;
+
+  if (ip == NULL || ip[0] == '\0' || strlen(ip) >= 64u) {
+    return 0;
+  }
+  for (i = 0u; ip[i] != '\0'; ++i) {
+    if (!((ip[i] >= '0' && ip[i] <= '9') || (ip[i] >= 'a' && ip[i] <= 'f') ||
+          (ip[i] >= 'A' && ip[i] <= 'F') || ip[i] == '.' || ip[i] == ':' ||
+          ip[i] == '[' || ip[i] == ']')) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static int vectis_kore_autoblock_copy_ip(const char *value, char *out,
+                                         size_t out_size) {
+  size_t len;
+
+  if (!vectis_kore_autoblock_ip_safe(value) || out == NULL || out_size == 0u) {
+    return 0;
+  }
+  len = strlen(value);
+  if (len >= out_size) {
+    return 0;
+  }
+  memcpy(out, value, len + 1u);
+  return 1;
+}
+
+static int vectis_kore_autoblock_peer_ip(struct connection *connection,
+                                         char *out, size_t out_size) {
+  const char *ip;
+
+  if (connection == NULL) {
+    return 0;
+  }
+  ip = kore_connection_ip(connection);
+  return vectis_kore_autoblock_copy_ip(ip, out, out_size);
+}
+
+static int vectis_kore_autoblock_trusted_proxy(const char *ip) {
+  const char *trusted;
+  size_t i;
+
+  if (ip == NULL || !vectis_kore_current.server.autoblock.proxy_enabled) {
+    return 0;
+  }
+  for (i = 0u; i < vectis_kore_current.server.autoblock.trusted_proxy_count;
+       ++i) {
+    trusted = vectis_kore_current.server.autoblock.trusted_proxies[i];
+    if (trusted != NULL && strcmp(trusted, ip) == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int vectis_kore_autoblock_header_first_ip(const char *value, char *out,
+                                                 size_t out_size) {
+  char ip[64];
+  size_t i;
+
+  if (value == NULL) {
+    return 0;
+  }
+  while (*value == ' ' || *value == '\t') {
+    value++;
+  }
+  for (i = 0u; value[i] != '\0' && value[i] != ','; ++i) {
+    if (i + 1u >= sizeof(ip)) {
+      return 0;
+    }
+    ip[i] = value[i];
+  }
+  while (i > 0u && (ip[i - 1u] == ' ' || ip[i - 1u] == '\t')) {
+    i--;
+  }
+  ip[i] = '\0';
+  return vectis_kore_autoblock_copy_ip(ip, out, out_size);
+}
+
+static int vectis_kore_autoblock_request_ip(struct http_request *request,
+                                            char *out, size_t out_size) {
+  const char *header;
+  char peer[64];
+
+  if (request == NULL ||
+      !vectis_kore_autoblock_peer_ip(request->owner, peer, sizeof(peer))) {
+    return 0;
+  }
+  if (vectis_kore_autoblock_trusted_proxy(peer)) {
+    if (http_request_header(request, "x-forwarded-for", &header) &&
+        vectis_kore_autoblock_header_first_ip(header, out, out_size)) {
+      return 1;
+    }
+    if (http_request_header(request, "x-real-ip", &header) &&
+        vectis_kore_autoblock_header_first_ip(header, out, out_size)) {
+      return 1;
+    }
+  }
+  return vectis_kore_autoblock_copy_ip(peer, out, out_size);
+}
+
+static vectis_kore_autoblock_entry *
+vectis_kore_autoblock_find_entry(const char *ip, unsigned long long now,
+                                 int create) {
+  vectis_kore_autoblock_entry *entry;
+  vectis_kore_autoblock_entry *candidate;
+  unsigned long long oldest;
+  unsigned int i;
+
+  if (ip == NULL || vectis_kore_autoblock_entries == NULL ||
+      vectis_kore_autoblock_capacity == 0u) {
+    return NULL;
+  }
+  candidate = NULL;
+  oldest = (unsigned long long)-1;
+  for (i = 0u; i < vectis_kore_autoblock_capacity; ++i) {
+    entry = &vectis_kore_autoblock_entries[i];
+    if (entry->used && strcmp(entry->ip, ip) == 0) {
+      return entry;
+    }
+    if (!entry->used) {
+      candidate = entry;
+      break;
+    }
+    if (entry->blocked_until_ms <= now && entry->window_start_ms < oldest) {
+      oldest = entry->window_start_ms;
+      candidate = entry;
+    }
+  }
+  if (!create || candidate == NULL) {
+    return NULL;
+  }
+  vectis_kore_autoblock_reset_entry(candidate, ip, now);
+  return candidate;
+}
+
+static void
+vectis_kore_autoblock_note_counter(vectis_kore_autoblock_entry *entry,
+                                   const char *ip, unsigned int *counter,
+                                   unsigned int threshold, const char *reason) {
+  unsigned long long now;
+  unsigned long long window_ms;
+  unsigned long long block_ms;
+
+  if (!vectis_kore_autoblock_enabled() || entry == NULL || ip == NULL ||
+      counter == NULL || threshold == 0u) {
+    return;
+  }
+  now = vectis_kore_autoblock_now();
+  window_ms =
+      (unsigned long long)vectis_kore_current.server.autoblock.window_seconds *
+      1000ULL;
+  block_ms =
+      (unsigned long long)vectis_kore_current.server.autoblock.block_seconds *
+      1000ULL;
+  if (now == 0ULL) {
+    return;
+  }
+  if (now - entry->window_start_ms > window_ms) {
+    vectis_kore_autoblock_reset_entry(entry, ip, now);
+  }
+  (*counter)++;
+  if (*counter >= threshold) {
+    entry->blocked_until_ms = now + block_ms;
+    kore_log(LOG_NOTICE, "vectis autoblock ip=%s reason=%s threshold=%u", ip,
+             reason != NULL ? reason : "rule", threshold);
+  }
+}
+
+static int vectis_kore_autoblock_is_blocked_ip(const char *ip) {
+  vectis_kore_autoblock_entry *entry;
+  unsigned long long now;
+
+  if (!vectis_kore_autoblock_enabled()) {
+    return 0;
+  }
+  now = vectis_kore_autoblock_now();
+  entry = vectis_kore_autoblock_find_entry(ip, now, 0);
+  return entry != NULL && entry->blocked_until_ms > now;
+}
+
+int vectis_kore_autoblock_accept(struct connection *connection) {
+  char ip[64];
+  int blocked;
+
+  if (!vectis_kore_autoblock_enabled()) {
+    return 1;
+  }
+  if (!vectis_kore_autoblock_peer_ip(connection, ip, sizeof(ip))) {
+    return 1;
+  }
+  if (!vectis_kore_autoblock_lock()) {
+    return 1;
+  }
+  blocked = vectis_kore_autoblock_is_blocked_ip(ip);
+  vectis_kore_autoblock_unlock();
+  if (blocked) {
+    kore_log(LOG_NOTICE, "vectis autoblock dropping accepted peer ip=%s", ip);
+  }
+  return !blocked;
+}
+
+void vectis_kore_autoblock_tcp_stall(struct connection *connection) {
+  vectis_kore_autoblock_entry *entry;
+  char ip[64];
+
+  if (!vectis_kore_autoblock_enabled() ||
+      !vectis_kore_autoblock_peer_ip(connection, ip, sizeof(ip)) ||
+      !vectis_kore_autoblock_lock()) {
+    return;
+  }
+  entry = vectis_kore_autoblock_find_entry(ip, vectis_kore_autoblock_now(), 1);
+  if (entry != NULL) {
+    vectis_kore_autoblock_note_counter(
+        entry, ip, &entry->tcp_stalls,
+        vectis_kore_current.server.autoblock.tcp_stall_threshold, "tcp_stall");
+  }
+  vectis_kore_autoblock_unlock();
+}
+
+void vectis_kore_autoblock_tls_failure(struct connection *connection) {
+  vectis_kore_autoblock_entry *entry;
+  char ip[64];
+
+  if (!vectis_kore_autoblock_enabled() ||
+      !vectis_kore_autoblock_peer_ip(connection, ip, sizeof(ip)) ||
+      !vectis_kore_autoblock_lock()) {
+    return;
+  }
+  entry = vectis_kore_autoblock_find_entry(ip, vectis_kore_autoblock_now(), 1);
+  if (entry != NULL) {
+    vectis_kore_autoblock_note_counter(
+        entry, ip, &entry->tls_failures,
+        vectis_kore_current.server.autoblock.tls_failure_threshold,
+        "tls_failure");
+  }
+  vectis_kore_autoblock_unlock();
+}
+
+int vectis_kore_autoblock_request_allowed(struct http_request *request) {
+  char ip[64];
+  int blocked;
+
+  if (!vectis_kore_autoblock_enabled()) {
+    return 1;
+  }
+  if (!vectis_kore_autoblock_request_ip(request, ip, sizeof(ip))) {
+    return 1;
+  }
+  if (!vectis_kore_autoblock_lock()) {
+    return 1;
+  }
+  blocked = vectis_kore_autoblock_is_blocked_ip(ip);
+  vectis_kore_autoblock_unlock();
+  if (blocked) {
+    kore_log(LOG_NOTICE, "vectis autoblock dropping request ip=%s", ip);
+  }
+  return !blocked;
+}
+
+void vectis_kore_autoblock_http_status(struct http_request *request,
+                                       int status) {
+  vectis_kore_autoblock_entry *entry;
+  char ip[64];
+  char reason[32];
+  size_t i;
+
+  if (!vectis_kore_autoblock_enabled() ||
+      !vectis_kore_autoblock_request_ip(request, ip, sizeof(ip)) ||
+      !vectis_kore_autoblock_lock()) {
+    return;
+  }
+  for (i = 0u; i < vectis_kore_current.server.autoblock.status_rule_count;
+       ++i) {
+    if ((int)vectis_kore_current.server.autoblock.status_rules[i].status ==
+        status) {
+      entry =
+          vectis_kore_autoblock_find_entry(ip, vectis_kore_autoblock_now(), 1);
+      if (entry != NULL) {
+        (void)snprintf(reason, sizeof(reason), "status_%d", status);
+        vectis_kore_autoblock_note_counter(
+            entry, ip, &entry->status_counts[i],
+            vectis_kore_current.server.autoblock.status_rules[i].threshold,
+            reason);
+      }
+    }
+  }
+  vectis_kore_autoblock_unlock();
+}
+
+void vectis_kore_autoblock_connection_status(struct connection *connection,
+                                             int status) {
+  vectis_kore_autoblock_entry *entry;
+  char ip[64];
+  char reason[32];
+  size_t i;
+
+  if (!vectis_kore_autoblock_enabled() ||
+      !vectis_kore_autoblock_peer_ip(connection, ip, sizeof(ip)) ||
+      !vectis_kore_autoblock_lock()) {
+    return;
+  }
+  for (i = 0u; i < vectis_kore_current.server.autoblock.status_rule_count;
+       ++i) {
+    if ((int)vectis_kore_current.server.autoblock.status_rules[i].status ==
+        status) {
+      entry =
+          vectis_kore_autoblock_find_entry(ip, vectis_kore_autoblock_now(), 1);
+      if (entry != NULL) {
+        (void)snprintf(reason, sizeof(reason), "status_%d", status);
+        vectis_kore_autoblock_note_counter(
+            entry, ip, &entry->status_counts[i],
+            vectis_kore_current.server.autoblock.status_rules[i].threshold,
+            reason);
+      }
+    }
+  }
+  vectis_kore_autoblock_unlock();
+}
+
+void vectis_kore_autoblock_request_event(struct http_request *request,
+                                         const char *name) {
+  vectis_kore_autoblock_entry *entry;
+  char ip[64];
+  size_t i;
+
+  if (!vectis_kore_autoblock_enabled() || name == NULL ||
+      !vectis_kore_autoblock_request_ip(request, ip, sizeof(ip)) ||
+      !vectis_kore_autoblock_lock()) {
+    return;
+  }
+  for (i = 0u; i < vectis_kore_current.server.autoblock.event_rule_count; ++i) {
+    if (vectis_kore_current.server.autoblock.event_rules[i].name != NULL &&
+        strcmp(vectis_kore_current.server.autoblock.event_rules[i].name,
+               name) == 0) {
+      entry =
+          vectis_kore_autoblock_find_entry(ip, vectis_kore_autoblock_now(), 1);
+      if (entry != NULL) {
+        vectis_kore_autoblock_note_counter(
+            entry, ip, &entry->event_counts[i],
+            vectis_kore_current.server.autoblock.event_rules[i].threshold,
+            name);
+      }
+    }
+  }
+  vectis_kore_autoblock_unlock();
 }
 
 #if defined(VECTIS_BUILD_FUZZERS)
@@ -1644,6 +2121,7 @@ void kore_parent_configure(int argc, char **argv) {
 
 void kore_parent_teardown(void) {
   (void)pthread_mutex_lock(&vectis_kore_mutex);
+  vectis_kore_autoblock_unmap();
   vectis_kore_cleanup_config(&vectis_kore_current);
   memset(&vectis_kore_current, 0, sizeof(vectis_kore_current));
   (void)pthread_mutex_unlock(&vectis_kore_mutex);
@@ -1684,10 +2162,18 @@ vectis_internal_kore_start(const vectis_kore_runtime_config *config,
       return status;
     }
   }
+  if (prepared.server.autoblock.enabled &&
+      !vectis_kore_autoblock_map(prepared.server.autoblock.max_entries)) {
+    vectis_kore_cleanup_local_config(&prepared);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to create Kore autoblock state");
+    return VECTIS_ERR_STATE;
+  }
 
   (void)pthread_mutex_lock(&vectis_kore_mutex);
   if (vectis_kore_thread_active) {
     (void)pthread_mutex_unlock(&vectis_kore_mutex);
+    vectis_kore_autoblock_unmap();
     vectis_kore_cleanup_local_config(&prepared);
     vectis_set_error(error, VECTIS_ERR_STATE,
                      "Kore runtime is already running");
@@ -1696,6 +2182,7 @@ vectis_internal_kore_start(const vectis_kore_runtime_config *config,
   vectis_kore_current = prepared;
   rc = pthread_create(&vectis_kore_thread, NULL, vectis_kore_thread_main, NULL);
   if (rc != 0) {
+    vectis_kore_autoblock_unmap();
     vectis_kore_cleanup_config(&vectis_kore_current);
     memset(&vectis_kore_current, 0, sizeof(vectis_kore_current));
     (void)pthread_mutex_unlock(&vectis_kore_mutex);
@@ -1728,6 +2215,7 @@ vectis_status vectis_internal_kore_stop(vectis_app *app, vectis_error *error) {
   (void)pthread_join(vectis_kore_thread, NULL);
   (void)pthread_mutex_lock(&vectis_kore_mutex);
   vectis_kore_thread_active = 0;
+  vectis_kore_autoblock_unmap();
   vectis_kore_cleanup_config(&vectis_kore_current);
   memset(&vectis_kore_current, 0, sizeof(vectis_kore_current));
   (void)pthread_mutex_unlock(&vectis_kore_mutex);
