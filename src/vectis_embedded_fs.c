@@ -12,6 +12,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#define VECTIS_EMBEDDED_FS_DEFAULT_CHUNK_SIZE (64u * 1024u)
+
 typedef struct vectis_embedded_fs_impl_entry {
   char *path;
   char *content_type;
@@ -419,6 +421,43 @@ vectis_embedded_list_impl(const vectis_embedded_fs *self, const char *prefix,
   return VECTIS_OK;
 }
 
+static vectis_status
+vectis_embedded_stream_impl(const vectis_embedded_fs *self, const char *path,
+                            size_t chunk_size, int *found,
+                            vectis_embedded_fs_chunk_fn callback,
+                            void *userdata, vectis_error *error) {
+  vectis_embedded_fs_entry entry;
+  size_t offset;
+  size_t remaining;
+  size_t amount;
+  vectis_status status;
+
+  if (callback == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "embedded fs stream callback is required");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_embedded_lookup_impl(self, path, found, &entry, error);
+  if (status != VECTIS_OK || (found != NULL && !*found)) {
+    return status;
+  }
+  if (chunk_size == 0u) {
+    chunk_size = VECTIS_EMBEDDED_FS_DEFAULT_CHUNK_SIZE;
+  }
+  offset = 0u;
+  while (offset < entry.size) {
+    remaining = entry.size - offset;
+    amount = remaining < chunk_size ? remaining : chunk_size;
+    status = callback((const unsigned char *)entry.data + offset, amount,
+                      userdata, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    offset += amount;
+  }
+  return VECTIS_OK;
+}
+
 static int vectis_embedded_mkdir_p(const char *path) {
   char *copy;
   char *p;
@@ -657,6 +696,7 @@ vectis_embedded_fs_from_pack(const vectis_embedded_fs_config *config,
   impl->api.lookup = vectis_embedded_lookup_impl;
   impl->api.read = vectis_embedded_read_impl;
   impl->api.list = vectis_embedded_list_impl;
+  impl->api.stream = vectis_embedded_stream_impl;
   impl->api.extract = vectis_embedded_extract_impl;
   impl->api.close = vectis_embedded_close_impl;
   impl->api.impl = impl;
@@ -783,6 +823,19 @@ vectis_status vectis_embedded_fs_list(const vectis_embedded_fs *fs,
     return VECTIS_ERR_INVALID;
   }
   return fs->list(fs, prefix, callback, userdata, error);
+}
+
+vectis_status vectis_embedded_fs_stream(const vectis_embedded_fs *fs,
+                                        const char *path, size_t chunk_size,
+                                        int *found,
+                                        vectis_embedded_fs_chunk_fn callback,
+                                        void *userdata, vectis_error *error) {
+  if (fs == NULL || fs->stream == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "embedded fs stream handle is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return fs->stream(fs, path, chunk_size, found, callback, userdata, error);
 }
 
 vectis_status

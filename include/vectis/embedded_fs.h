@@ -48,6 +48,10 @@ typedef struct vectis_embedded_fs_extract_config {
 
 typedef vectis_status (*vectis_embedded_fs_list_fn)(
     const vectis_embedded_fs_entry *entry, void *userdata, vectis_error *error);
+typedef vectis_status (*vectis_embedded_fs_chunk_fn)(const void *data,
+                                                     size_t size,
+                                                     void *userdata,
+                                                     vectis_error *error);
 
 struct vectis_embedded_fs {
   /* Lookup a file by absolute embedded path. "/" resolves to index_path. */
@@ -61,6 +65,12 @@ struct vectis_embedded_fs {
   vectis_status (*list)(const vectis_embedded_fs *self, const char *prefix,
                         vectis_embedded_fs_list_fn callback, void *userdata,
                         vectis_error *error);
+  /* Visit one embedded file in bounded chunks. chunk_size=0 selects a default.
+   */
+  vectis_status (*stream)(const vectis_embedded_fs *self, const char *path,
+                          size_t chunk_size, int *found,
+                          vectis_embedded_fs_chunk_fn callback, void *userdata,
+                          vectis_error *error);
   /* Extract every embedded file under config->output_dir. */
   vectis_status (*extract)(const vectis_embedded_fs *self,
                            const vectis_embedded_fs_extract_config *config,
@@ -94,6 +104,12 @@ vectis_status vectis_embedded_fs_list(const vectis_embedded_fs *fs,
                                       const char *prefix,
                                       vectis_embedded_fs_list_fn callback,
                                       void *userdata, vectis_error *error);
+/* Free-function wrapper for fs->stream. */
+vectis_status vectis_embedded_fs_stream(const vectis_embedded_fs *fs,
+                                        const char *path, size_t chunk_size,
+                                        int *found,
+                                        vectis_embedded_fs_chunk_fn callback,
+                                        void *userdata, vectis_error *error);
 /* Free-function wrapper for fs->extract. */
 vectis_status
 vectis_embedded_fs_extract(const vectis_embedded_fs *fs,

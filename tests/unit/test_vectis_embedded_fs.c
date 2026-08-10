@@ -56,6 +56,12 @@ typedef struct list_state {
   int saw_app;
 } list_state;
 
+typedef struct chunk_state {
+  char bytes[16];
+  size_t size;
+  unsigned count;
+} chunk_state;
+
 static vectis_status list_entry(const vectis_embedded_fs_entry *entry,
                                 void *userdata, vectis_error *error) {
   list_state *state;
@@ -69,6 +75,21 @@ static vectis_status list_entry(const vectis_embedded_fs_entry *entry,
   if (strcmp(entry->path, "/assets/app.txt") == 0) {
     state->saw_app = 1;
   }
+  return VECTIS_OK;
+}
+
+static vectis_status chunk_entry(const void *data, size_t size, void *userdata,
+                                 vectis_error *error) {
+  chunk_state *state;
+
+  (void)error;
+  state = (chunk_state *)userdata;
+  if (state->size + size >= sizeof(state->bytes)) {
+    return VECTIS_ERR_INVALID;
+  }
+  memcpy(state->bytes + state->size, data, size);
+  state->size += size;
+  state->count++;
   return VECTIS_OK;
 }
 
@@ -117,6 +138,7 @@ int main(void) {
   vectis_embedded_fs_extract_config extract;
   vectis_bytes body;
   list_state listed;
+  chunk_state chunked;
   char temp[] = "/tmp/vectis-embedded-fs.XXXXXX";
   char extracted[512];
   char buffer[32];
@@ -167,6 +189,14 @@ int main(void) {
   expect(status == VECTIS_OK && listed.count == 2u && listed.saw_index &&
              listed.saw_app,
          "lists embedded entries under prefix");
+
+  found = 0;
+  memset(&chunked, 0, sizeof(chunked));
+  status = vectis_embedded_fs_stream(fs, "/assets/app.txt", 2u, &found,
+                                     chunk_entry, &chunked, &error);
+  expect(status == VECTIS_OK && found && chunked.count == 2u &&
+             chunked.size == 4u && memcmp(chunked.bytes, "app\n", 4u) == 0,
+         "streams embedded entry in bounded chunks");
 
   found = 1;
   status =
