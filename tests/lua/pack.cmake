@@ -4,8 +4,13 @@ set(bundle_script "${WORK_DIR}/vectis-pack-bundle.lua")
 set(bundle "${WORK_DIR}/lockd-client.pem")
 set(bundle_output "${WORK_DIR}/vectis-pack-bundle")
 set(corrupt_output "${WORK_DIR}/vectis-pack-bundle-corrupt")
+set(asset_dir "${WORK_DIR}/site")
+set(asset_script "${WORK_DIR}/vectis-pack-assets.lua")
+set(asset_output "${WORK_DIR}/vectis-pack-assets")
+set(asset_corrupt_output "${WORK_DIR}/vectis-pack-assets-corrupt")
+set(asset_duplicate_output "${WORK_DIR}/vectis-pack-assets-duplicate")
 
-file(WRITE "${script}" "local vectis = require(\"vectis\")\nassert(vectis.status_string(vectis.OK) == \"ok\")\nassert(vectis.has_embedded_lockd_bundle() == false)\nassert(vectis.embedded_lockd_bundle_size() == 0)\nassert(arg[0]:match(\"vectis%-pack%-smoke$\"))\nassert(arg[1] == \"first\")\nassert(arg[2] == \"second\")\n")
+file(WRITE "${script}" "local vectis = require(\"vectis\")\nassert(vectis.status_string(vectis.OK) == \"ok\")\nassert(vectis.has_embedded_lockd_bundle() == false)\nassert(vectis.embedded_lockd_bundle_size() == 0)\nassert(vectis.embedded.has_assets() == false)\nassert(#vectis.embedded.list(\"/\") == 0)\nassert(arg[0]:match(\"vectis%-pack%-smoke$\"))\nassert(arg[1] == \"first\")\nassert(arg[2] == \"second\")\n")
 
 execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${script}" --output "${output}"
                 RESULT_VARIABLE pack_result
@@ -45,7 +50,7 @@ endif()
 
 file(COPY_FILE "${bundle_output}" "${corrupt_output}")
 file(SIZE "${corrupt_output}" corrupt_size)
-math(EXPR bundle_offset "${corrupt_size} - 128 - ${bundle_size}")
+math(EXPR bundle_offset "${corrupt_size} - 256 - ${bundle_size}")
 execute_process(COMMAND /bin/sh -c "printf X | dd of=\"$1\" bs=1 seek=\"$2\" conv=notrunc status=none"
                 "_" "${corrupt_output}" "${bundle_offset}"
                 RESULT_VARIABLE corrupt_patch_result
@@ -64,4 +69,59 @@ if(corrupt_run_result EQUAL 0)
 endif()
 if(NOT corrupt_run_stderr MATCHES "embedded lockd bundle hash mismatch")
   message(FATAL_ERROR "corrupted packed bundle failed with unexpected error: ${corrupt_run_stdout}${corrupt_run_stderr}")
+endif()
+
+file(MAKE_DIRECTORY "${asset_dir}/assets")
+file(WRITE "${asset_dir}/index.html" "<!doctype html><title>Acme Test</title>\n")
+file(WRITE "${asset_dir}/assets/app.txt" "generic embedded asset\n")
+file(WRITE "${asset_script}" "local vectis = require(\"vectis\")\nassert(vectis.embedded.has_assets() == true)\nassert(vectis.embedded.read(\"/index.html\"):match(\"Acme Test\"))\nassert(vectis.embedded.read(\"/assets/app.txt\") == \"generic embedded asset\\n\")\nlocal listed = table.concat(vectis.embedded.list(\"/\"), \"\\n\")\nassert(listed:match(\"/index%.html\"))\nassert(listed:match(\"/assets/app%.txt\"))\nlocal missing, err = vectis.embedded.read(\"/missing.txt\")\nassert(missing == nil)\nassert(err == \"embedded asset not found\")\n")
+
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${asset_script}" --output "${asset_output}" --asset-dir "/:${asset_dir}"
+                RESULT_VARIABLE asset_pack_result
+                OUTPUT_VARIABLE asset_pack_stdout
+                ERROR_VARIABLE asset_pack_stderr)
+if(NOT asset_pack_result EQUAL 0)
+  message(FATAL_ERROR "vectis -a pack with assets failed: ${asset_pack_stdout}${asset_pack_stderr}")
+endif()
+
+execute_process(COMMAND "${asset_output}"
+                RESULT_VARIABLE asset_run_result
+                OUTPUT_VARIABLE asset_run_stdout
+                ERROR_VARIABLE asset_run_stderr)
+if(NOT asset_run_result EQUAL 0)
+  message(FATAL_ERROR "packed vectis with assets failed: ${asset_run_stdout}${asset_run_stderr}")
+endif()
+
+file(COPY_FILE "${asset_output}" "${asset_corrupt_output}")
+file(SIZE "${asset_corrupt_output}" asset_corrupt_size)
+math(EXPR asset_sha_offset "${asset_corrupt_size} - 256 + 144")
+execute_process(COMMAND /bin/sh -c "printf X | dd of=\"$1\" bs=1 seek=\"$2\" conv=notrunc status=none"
+                "_" "${asset_corrupt_output}" "${asset_sha_offset}"
+                RESULT_VARIABLE asset_corrupt_patch_result
+                OUTPUT_VARIABLE asset_corrupt_patch_stdout
+                ERROR_VARIABLE asset_corrupt_patch_stderr)
+if(NOT asset_corrupt_patch_result EQUAL 0)
+  message(FATAL_ERROR "failed to corrupt packed asset hash: ${asset_corrupt_patch_stdout}${asset_corrupt_patch_stderr}")
+endif()
+
+execute_process(COMMAND "${asset_corrupt_output}"
+                RESULT_VARIABLE asset_corrupt_run_result
+                OUTPUT_VARIABLE asset_corrupt_run_stdout
+                ERROR_VARIABLE asset_corrupt_run_stderr)
+if(asset_corrupt_run_result EQUAL 0)
+  message(FATAL_ERROR "corrupted packed assets unexpectedly executed")
+endif()
+if(NOT asset_corrupt_run_stderr MATCHES "embedded asset payload hash mismatch")
+  message(FATAL_ERROR "corrupted packed assets failed with unexpected error: ${asset_corrupt_run_stdout}${asset_corrupt_run_stderr}")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${asset_script}" --output "${asset_duplicate_output}" --asset "${asset_dir}/index.html=/dup.txt" --asset "${asset_dir}/assets/app.txt=/dup.txt"
+                RESULT_VARIABLE asset_duplicate_result
+                OUTPUT_VARIABLE asset_duplicate_stdout
+                ERROR_VARIABLE asset_duplicate_stderr)
+if(asset_duplicate_result EQUAL 0)
+  message(FATAL_ERROR "duplicate embedded asset path unexpectedly packed")
+endif()
+if(NOT asset_duplicate_stderr MATCHES "duplicate embedded asset path")
+  message(FATAL_ERROR "duplicate embedded asset path failed with unexpected error: ${asset_duplicate_stdout}${asset_duplicate_stderr}")
 endif()

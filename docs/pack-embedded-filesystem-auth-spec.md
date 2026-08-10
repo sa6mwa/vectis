@@ -33,9 +33,8 @@ ships the generic machinery. Tests generate a generic fixture site.
 
 ## Pack Format
 
-Use a clean `VECTIS_PACK_V2` format for the next implementation slice. Vectis
-has not shipped, so there is no requirement to preserve the current trailer
-format.
+Use a clean current `VECTIS_PACK` format. Vectis has not shipped, so the packed
+executable format can be finalized without compatibility branches.
 
 The packed executable layout is:
 
@@ -50,7 +49,7 @@ fixed footer
 
 The fixed footer records:
 
-- magic and pack format version,
+- magic and fixed footer layout,
 - script offset, size, and SHA-256,
 - lockd bundle offset, size, and SHA-256 when present,
 - asset payload offset and size,
@@ -59,7 +58,7 @@ The fixed footer records:
 
 The manifest JSON is parsed by LoneJSON and contains:
 
-- format version,
+- format identifier,
 - creation metadata needed for diagnostics,
 - script metadata,
 - lockd bundle metadata when present,
@@ -134,8 +133,8 @@ normalize under `/`. Collisions are errors.
 ## Runtime Embedded Filesystem
 
 Vectis exposes a read-only embedded filesystem handle over the packed assets.
-The handle is available to C and Lua only when the executable contains a V2
-asset manifest.
+The handle is available to C and Lua only when the executable contains an asset
+manifest.
 
 Required C concepts:
 
@@ -352,7 +351,7 @@ Email-token e2e coverage:
 
 ## Implementation Slices
 
-1. Pack V2 manifest and asset writer.
+1. Pack manifest and asset writer.
    Add asset CLI flags, manifest generation, hash validation, and tests for
    path normalization and corrupt payload detection.
 
