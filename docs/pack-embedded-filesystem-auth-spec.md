@@ -363,6 +363,9 @@ Template rules:
 - defaults are compiled C strings, not embedded Vectis site files,
 - custom templates are loaded from configured paths or the packed asset fs,
 - templates must support escaped substitutions only,
+- browser forms should post to `{{continue_action}}`; `{{webdav_key_action}}`
+  remains available for explicit lower-level WebDAV-key finalization links or
+  diagnostics,
 - no bespoke JSON or HTML parser is introduced,
 - responses include cache-control headers preventing credential caching.
 
@@ -380,9 +383,12 @@ routes against the same C auth/session APIs.
 
 Current native route behavior includes a C-owned `/email-token` issue endpoint
 and `/continue` plus `/webdav-key` credential finalization endpoints using the
-same factor policy. Routes default to the password factor, which also enforces
-enrolled-user TOTP. `required_factors={"email_token"}` allows an
-email-token-only WebDAV-key flow, while `require_email_token=true` remains a
+same factor policy. Native login templates render `continue_action` as the
+default browser form action, while `webdav_key_action` remains a supported alias
+placeholder for explicit lower-level flows. Routes default to the password
+factor, which also enforces enrolled-user TOTP.
+`required_factors={"email_token"}` allows an email-token-only WebDAV-key flow,
+while `require_email_token=true` remains a
 compatibility shorthand that adds the email-token factor to the default password
 flow. C-owned SMTP delivery is available through the route config's
 `email_smtp` settings; Lua only passes configuration into the native route

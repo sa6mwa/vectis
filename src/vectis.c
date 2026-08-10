@@ -5497,6 +5497,9 @@ static vectis_status vectis_auth_template_placeholder(
                                               "email_token_action")) {
     return vectis_auth_template_action(builder, data, "/email-token", error);
   } else if (vectis_auth_template_name_equals(name, name_len,
+                                              "continue_action")) {
+    return vectis_auth_template_action(builder, data, "/continue", error);
+  } else if (vectis_auth_template_name_equals(name, name_len,
                                               "webdav_key_action")) {
     return vectis_auth_template_action(builder, data, "/webdav-key", error);
   } else {
@@ -5606,7 +5609,7 @@ vectis_auth_login_form_response(const vectis_auth_route_data *data,
   if (status == VECTIS_OK) {
     status = vectis_string_builder_append(
         &html,
-        "/webdav-key\"><label>Username <input name=\"username\" "
+        "/continue\"><label>Username <input name=\"username\" "
         "autocomplete=\"username\"></label><label>Password <input "
         "type=\"password\" name=\"password\" autocomplete=\"current-password\">"
         "</label><label>TOTP <input name=\"totp_code\" "

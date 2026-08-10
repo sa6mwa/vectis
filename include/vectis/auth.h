@@ -162,7 +162,8 @@ struct vectis_auth_routes_config {
    * during registration; login_template_embedded_path is read from
    * login_template_fs during registration. Custom login templates support
    * HTML-escaped substitutions for {{login_title}}, {{realm}},
-   * {{path_prefix}}, {{email_token_action}}, and {{webdav_key_action}}.
+   * {{path_prefix}}, {{email_token_action}}, {{continue_action}}, and
+   * {{webdav_key_action}}.
    */
   const char *login_template_html;
   const char *login_template_path;

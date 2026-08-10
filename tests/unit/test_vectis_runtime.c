@@ -1734,12 +1734,12 @@ static void assert_kore_smoke(void) {
   assert(strcmp(auth_login_response.content_type, "text/html; charset=utf-8") ==
          0);
   assert(bytes_contain(auth_login_response.body, auth_login_response.body_size,
-                       "action=\"/auth/webdav-key\""));
+                       "action=\"/auth/continue\""));
   vectis_http_response_cleanup(&auth_login_response);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = "http://127.0.0.1:28080/auth/webdav-key";
+  request.url = "http://127.0.0.1:28080/auth/continue";
   request.content_type = "application/x-www-form-urlencoded";
   request.body = "username=runtime-user&password=wrong";
   request.body_size = strlen("username=runtime-user&password=wrong");
@@ -1752,7 +1752,7 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = "http://127.0.0.1:28080/auth/webdav-key";
+  request.url = "http://127.0.0.1:28080/auth/continue";
   request.content_type = "application/x-www-form-urlencoded";
   request.body = "username=runtime-user&password=runtime-password";
   request.body_size = strlen("username=runtime-user&password=runtime-password");
@@ -1773,7 +1773,7 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = "http://127.0.0.1:28080/auth/webdav-key";
+  request.url = "http://127.0.0.1:28080/auth/continue";
   request.content_type = "application/x-www-form-urlencoded";
   request.body = "username=runtime-totp&password=runtime-totp-password";
   request.body_size =
@@ -1792,7 +1792,7 @@ static void assert_kore_smoke(void) {
   assert(written > 0 && (size_t)written < sizeof(auth_totp_form));
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = "http://127.0.0.1:28080/auth/webdav-key";
+  request.url = "http://127.0.0.1:28080/auth/continue";
   request.content_type = "application/x-www-form-urlencoded";
   request.body = auth_totp_form;
   request.body_size = strlen(auth_totp_form);
