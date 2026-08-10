@@ -443,14 +443,14 @@ Current generated packed-service coverage in `make test-e2e` packages a Lua
 webserver script plus generated HTML/CSS/JavaScript assets, runs the packed
 executable, serves the embedded read-only docroot, verifies content types,
 ETag and cache metadata, rejects traversal attempts, rejects writes through the
-read-only mount, exposes native auth routes, issues a WebDAV key after
-deterministic password+TOTP login, protects the WebDAV mount, serves embedded
-content through authenticated WebDAV, accepts mutable WebDAV writes, exercises
-WebDAV PROPFIND/MKCOL/COPY/MOVE/DELETE, and proves WebDAV mutations do not
-change embedded read-only assets. The remaining full-contract checks are
-auth-guarded API/page coverage, SMTP email-token coverage in the same generated
-packed-service path, and same-process lockd `startconsumer` coverage in a
-packed executable.
+read-only mount, exposes native auth routes, protects a JSON API route through
+the same native provider, issues a WebDAV key after deterministic
+password+TOTP login, protects the WebDAV mount, serves embedded content through
+authenticated WebDAV, accepts mutable WebDAV writes, exercises WebDAV
+PROPFIND/MKCOL/COPY/MOVE/DELETE, and proves WebDAV mutations do not change
+embedded read-only assets. The remaining full-contract checks are SMTP
+email-token coverage in the same generated packed-service path and same-process
+lockd `startconsumer` coverage in a packed executable.
 
 Email-token e2e coverage:
 

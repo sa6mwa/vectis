@@ -278,7 +278,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Add verification commands/tests for packed Darwin binaries using `codesign --verify --strict --verbose=4` and, when available, `spctl --assess --type execute`.
 - [ ] Document operational limits around signing, notarization, stripping, hardening tools, and platform-specific executable formats.
 - [x] Add first smoke test that packages and executes a Lua script artifact.
-- [x] Add deterministic e2e coverage for a packed Lua webserver with generated embedded assets, native auth routes, WebDAV key issuance, authenticated embedded WebDAV reads, mutable WebDAV writes, WebDAV list/copy/move/delete, traversal denial, and embedded-versus-WebDAV mutation isolation.
+- [x] Add deterministic e2e coverage for a packed Lua webserver with generated embedded assets, native auth routes, auth-guarded JSON API route, WebDAV key issuance, authenticated embedded WebDAV reads, mutable WebDAV writes, WebDAV list/copy/move/delete, traversal denial, and embedded-versus-WebDAV mutation isolation.
 - [ ] Add tests that package a Lua API service and a Lua consumer service, then execute both artifacts.
 - [ ] Add a packed-service scenario that runs the embedded site/WebDAV server and lockd `startconsumer` service in the same self-contained Vectis binary and process.
 

@@ -275,6 +275,7 @@ run_lua_examples() {
   propfind_body=
   propfind_status=
   method_status=
+  guarded_status=
 
   printf '[e2e] lua runner\n'
   printf '%s\n' \
@@ -365,6 +366,15 @@ run_lua_examples() {
     '  realm = "packed-e2e",' \
     '  login_title = "Packed E2E Login",' \
     '  time = 59,' \
+    '}))' \
+    'assert(server:auth_json({' \
+    '  path = "/api/private",' \
+    '  auth = {' \
+    '    kind = "native",' \
+    '    credentials_path = credentials_path,' \
+    '    realm = "packed-e2e",' \
+    '  },' \
+    '  body = [[{"ok":true,"surface":"packed-api"}]],' \
     '}))' \
     'assert(server:start())' \
     'while true do' \
@@ -468,6 +478,18 @@ run_lua_examples() {
     "http://127.0.0.1:$kore_packed_port/dav/index.html")
   if [ "$unauth_dav_status" = "200" ]; then
     printf '%s\n' "Packed WebDAV unexpectedly allowed unauthenticated GET" >&2
+    return 1
+  fi
+  guarded_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:$kore_packed_port/api/private")
+  if [ "$guarded_status" = "200" ]; then
+    printf '%s\n' "Packed guarded API unexpectedly allowed anonymous GET" >&2
+    return 1
+  fi
+  body=$(curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/api/private")
+  if [ "$body" != '{"ok":true,"surface":"packed-api"}' ]; then
+    printf '%s\n' "Unexpected packed guarded API response: $body" >&2
     return 1
   fi
   body=$(curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
