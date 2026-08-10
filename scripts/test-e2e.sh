@@ -108,6 +108,27 @@ curl_or_log() {
   }
 }
 
+assert_no_store_headers() {
+  header_file=$1
+  label=$2
+
+  grep -qi '^cache-control: no-store' "$header_file" || {
+    printf '%s\n' "$label response did not include cache-control: no-store" >&2
+    cat "$header_file" >&2
+    return 1
+  }
+  grep -qi '^pragma: no-cache' "$header_file" || {
+    printf '%s\n' "$label response did not include pragma: no-cache" >&2
+    cat "$header_file" >&2
+    return 1
+  }
+  grep -qi '^expires: 0' "$header_file" || {
+    printf '%s\n' "$label response did not include expires: 0" >&2
+    cat "$header_file" >&2
+    return 1
+  }
+}
+
 run_lockd_examples() {
   endpoint=$1
   label=$2
@@ -309,6 +330,7 @@ run_lua_examples() {
   packed_service_queue="vectis-e2e-packed-$$"
   packed_service_namespace="examples"
   webdav_key_response=
+  webdav_key_headers=
   webdav_client_id=
   webdav_client_secret=
   static_put_status=
@@ -372,6 +394,7 @@ run_lua_examples() {
   mail_body=
   packed_consumer_body=
   logout_body=
+  logout_headers=
   logout_status=
   logged_out_api_status=
   logged_out_dav_status=
@@ -1184,11 +1207,13 @@ run_lua_examples() {
     printf '%s\n' "Packed auth wrong TOTP returned unexpected status: $wrong_totp_status" >&2
     return 1
   fi
+  webdav_key_headers="$work_dir/packed-webdav-key.headers"
   webdav_key_response=$(curl_or_log "$packed_service_log" \
-    "packed webdav key" --max-time 3 -fsS -X POST \
+    "packed webdav key" --max-time 3 -fsS -D "$webdav_key_headers" -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$email_transaction_id&email_token=$email_token" \
     "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
+  assert_no_store_headers "$webdav_key_headers" "packed webdav key"
   replay_token_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
@@ -1519,8 +1544,10 @@ run_lua_examples() {
     printf '%s\n' "Packed WebDAV DELETE left file readable: $method_status" >&2
     return 1
   fi
-  logout_status=$(curl --max-time 3 -sS -o "$work_dir/packed-logout.txt" \
-    -w '%{http_code}' -u "$webdav_client_id:$webdav_client_secret" \
+  logout_headers="$work_dir/packed-logout.headers"
+  logout_status=$(curl --max-time 3 -sS -D "$logout_headers" \
+    -o "$work_dir/packed-logout.txt" -w '%{http_code}' \
+    -u "$webdav_client_id:$webdav_client_secret" \
     -X POST -H 'Content-Type: application/x-www-form-urlencoded' \
     "http://127.0.0.1:$kore_packed_port/auth/logout")
   logout_body=$(cat "$work_dir/packed-logout.txt")
@@ -1529,6 +1556,7 @@ run_lua_examples() {
     printf '%s\n' "$logout_body" >&2
     return 1
   fi
+  assert_no_store_headers "$logout_headers" "packed logout"
   if [ "$logout_body" != "logged_out=1" ]; then
     printf '%s\n' "Packed auth logout returned unexpected body: $logout_body" >&2
     return 1
