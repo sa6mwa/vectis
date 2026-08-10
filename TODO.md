@@ -121,7 +121,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Support lockd client certificate bundle configuration from C.
 - [x] Support server certificate bundle configuration from C.
 - [x] Support lockd client certificate bundle configuration from Lua.
-- [ ] Support server certificate bundle configuration from Lua.
+- [x] Support server certificate bundle configuration from Lua.
 - [x] Add Vectis-owned OpenSSL-backed helpers for generating self-signed certificates, CA material, and CA-signed client/server PEM bundles.
 - [x] Add Vectis-owned OpenSSL-backed helpers for generating standalone private keys and CSRs.
 - [ ] Expose lower-level OpenSSL access for advanced users while keeping certificate workflows as the primary C and Lua DX.

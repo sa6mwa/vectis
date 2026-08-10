@@ -49,6 +49,49 @@ assert(consumer_service_error.status_string == "invalid")
 assert(consumer_service_error.message:match("direct Lua callbacks"))
 server:close()
 
+local acme_auth_path = os.tmpname()
+os.remove(acme_auth_path)
+assert(vectis.auth.store_init({ credentials_path = acme_auth_path }))
+
+local acme_missing_domain = assert(vectis.server.new({
+  app_name = "lua-acme-missing-domain",
+  port = 18180,
+  tls = {
+    mode = "acme",
+    acme_email = "ops@example.com",
+  },
+}))
+assert(acme_missing_domain:auth_json({
+  path = "/probe",
+  auth = { kind = "native", credentials_path = acme_auth_path },
+}) == true)
+local acme_started, acme_error = acme_missing_domain:start()
+assert(acme_started == nil)
+assert(type(acme_error) == "table")
+assert(acme_error.status == vectis.ERR_INVALID)
+assert(acme_error.message:match("tls%.domain"))
+acme_missing_domain:close()
+
+local acme_missing_email = assert(vectis.server.new({
+  app_name = "lua-acme-missing-email",
+  port = 18181,
+  tls = {
+    mode = "acme",
+    domain = "api.example.com",
+    acme_directory_url = "https://acme.example.test/directory",
+  },
+}))
+assert(acme_missing_email:auth_json({
+  path = "/probe",
+  auth = { kind = "native", credentials_path = acme_auth_path },
+}) == true)
+acme_started, acme_error = acme_missing_email:start()
+assert(acme_started == nil)
+assert(type(acme_error) == "table")
+assert(acme_error.status == vectis.ERR_INVALID)
+assert(acme_error.message:match("acme_email"))
+acme_missing_email:close()
+
 assert(type(vectis.auth) == "table")
 local function oauth_transport(mode)
   return function(request)

@@ -457,7 +457,12 @@ embedded read-only assets. It also embeds the lockd client bundle, starts a
 C-owned lockd consumer service from the packed Lua server config, enqueues a
 lockd message through the Lua `lockdc` facade, proves the packed consumer writes
 WebDAV-visible markers, and proves WebDAV remains responsive while the packed
-consumer service is processing.
+consumer service is processing. Focused packed Lua smoke coverage in
+`vectis_lua_pack` also generates a private self-signed certificate bundle,
+starts an HTTPS packed asset server with `tls.mode = "manual"`, and fetches the
+embedded site over HTTPS. Lua smoke coverage validates ACME-mode server config
+parsing and native startup diagnostics for missing domain or email without
+contacting a live ACME provider.
 
 Email-token e2e coverage:
 
