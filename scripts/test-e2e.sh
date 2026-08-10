@@ -371,6 +371,10 @@ run_lua_examples() {
   expired_token_replay_status=
   mail_body=
   packed_consumer_body=
+  logout_body=
+  logout_status=
+  logged_out_api_status=
+  logged_out_dav_status=
 
   printf '[e2e] lua runner\n'
   printf '%s\n' \
@@ -1513,6 +1517,34 @@ run_lua_examples() {
     "http://127.0.0.1:$kore_packed_port/dav/docs/a-moved.txt")
   if [ "$method_status" != "404" ]; then
     printf '%s\n' "Packed WebDAV DELETE left file readable: $method_status" >&2
+    return 1
+  fi
+  logout_status=$(curl --max-time 3 -sS -o "$work_dir/packed-logout.txt" \
+    -w '%{http_code}' -u "$webdav_client_id:$webdav_client_secret" \
+    -X POST -H 'Content-Type: application/x-www-form-urlencoded' \
+    "http://127.0.0.1:$kore_packed_port/auth/logout")
+  logout_body=$(cat "$work_dir/packed-logout.txt")
+  if [ "$logout_status" != "200" ]; then
+    printf '%s\n' "Packed auth logout returned unexpected status: $logout_status" >&2
+    printf '%s\n' "$logout_body" >&2
+    return 1
+  fi
+  if [ "$logout_body" != "logged_out=1" ]; then
+    printf '%s\n' "Packed auth logout returned unexpected body: $logout_body" >&2
+    return 1
+  fi
+  logged_out_api_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/api/private")
+  if [ "$logged_out_api_status" != "401" ]; then
+    printf '%s\n' "Packed auth logout left guarded API credential active: $logged_out_api_status" >&2
+    return 1
+  fi
+  logged_out_dav_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/index.html")
+  if [ "$logged_out_dav_status" != "401" ]; then
+    printf '%s\n' "Packed auth logout left WebDAV credential active: $logged_out_dav_status" >&2
     return 1
   fi
 
