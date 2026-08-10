@@ -457,14 +457,15 @@ missing or wrong TOTP code with an otherwise valid email-token transaction,
 issues a WebDAV key after deterministic password+email-token login for a
 non-TOTP user, issues a WebDAV key after deterministic
 password+TOTP+email-token login for a TOTP user, protects the WebDAV mount,
-serves embedded content through authenticated WebDAV, accepts mutable WebDAV
-writes, verifies those writes land in the extracted docroot, exercises WebDAV
-PROPFIND/MKCOL/COPY/MOVE/DELETE, and proves WebDAV mutations do not change
-embedded read-only assets. It also embeds the lockd client bundle, starts a
-C-owned lockd consumer service from the packed Lua server config, enqueues a
-lockd message through the Lua `lockdc` facade, proves the packed consumer writes
-WebDAV-visible markers, and proves WebDAV remains responsive while the packed
-consumer service is processing. Focused packed Lua smoke coverage in
+rejects anonymous WebDAV reads and writes, serves embedded content through
+authenticated WebDAV, accepts mutable WebDAV writes, verifies those writes land
+in the extracted docroot, exercises WebDAV PROPFIND/MKCOL/COPY/MOVE/DELETE, and
+proves WebDAV mutations do not change embedded read-only assets. It also embeds
+the lockd client bundle, starts a C-owned lockd consumer service from the packed
+Lua server config, enqueues a lockd message through the Lua `lockdc` facade,
+proves the packed consumer writes WebDAV-visible markers, and proves WebDAV
+remains responsive while the packed consumer service is processing. Focused
+packed Lua smoke coverage in
 `vectis_lua_pack` also packages and executes a native-auth API service artifact,
 packages and executes a lockd consumer-service registration artifact with an
 embedded client bundle, proves the raw statically registered `lockdc` Lua

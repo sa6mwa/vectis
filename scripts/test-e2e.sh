@@ -288,6 +288,7 @@ run_lua_examples() {
   wrong_totp_status=
   replay_token_status=
   blocked_email_status=
+  unauth_dav_put_status=
   email_token_response=
   email_transaction_id=
   email_token=
@@ -801,6 +802,15 @@ run_lua_examples() {
     "http://127.0.0.1:$kore_packed_port/dav/index.html")
   if [ "$unauth_dav_status" = "200" ]; then
     printf '%s\n' "Packed WebDAV unexpectedly allowed unauthenticated GET" >&2
+    return 1
+  fi
+  unauth_dav_put_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -X PUT --data 'anonymous write' \
+    "http://127.0.0.1:$kore_packed_port/dav/index.html")
+  if [ "$unauth_dav_put_status" = "200" ] ||
+      [ "$unauth_dav_put_status" = "201" ] ||
+      [ "$unauth_dav_put_status" = "204" ]; then
+    printf '%s\n' "Packed WebDAV unexpectedly allowed unauthenticated PUT: $unauth_dav_put_status" >&2
     return 1
   fi
   guarded_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
