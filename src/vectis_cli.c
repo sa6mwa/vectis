@@ -63,6 +63,30 @@ typedef struct vectis_pack_asset_list {
   size_t capacity;
 } vectis_pack_asset_list;
 
+typedef struct vectis_pack_content_type_map_entry {
+  char *extension;
+  char *content_type;
+} vectis_pack_content_type_map_entry;
+
+typedef struct vectis_pack_content_type_map {
+  vectis_pack_content_type_map_entry *items;
+  size_t count;
+  size_t capacity;
+} vectis_pack_content_type_map;
+
+typedef struct vectis_pack_content_type_map_doc_item {
+  char *extension;
+  char *content_type;
+} vectis_pack_content_type_map_doc_item;
+
+typedef struct vectis_pack_content_type_map_doc {
+  lonejson_mapped_array_stream types;
+} vectis_pack_content_type_map_doc;
+
+typedef struct vectis_pack_content_type_map_state {
+  vectis_pack_content_type_map *map;
+} vectis_pack_content_type_map_state;
+
 typedef struct vectis_pack_asset_manifest_item {
   char *source;
   char *path;
@@ -75,7 +99,26 @@ typedef struct vectis_pack_asset_manifest {
 
 typedef struct vectis_pack_asset_manifest_state {
   vectis_pack_asset_list *assets;
+  const vectis_pack_content_type_map *content_types;
 } vectis_pack_asset_manifest_state;
+
+static const lonejson_field vectis_pack_content_type_map_doc_item_fields[] = {
+    LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_pack_content_type_map_doc_item,
+                                    extension, "extension"),
+    LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_pack_content_type_map_doc_item,
+                                    content_type, "content_type")};
+
+LONEJSON_MAP_DEFINE(vectis_pack_content_type_map_doc_item_map,
+                    vectis_pack_content_type_map_doc_item,
+                    vectis_pack_content_type_map_doc_item_fields);
+
+static const lonejson_field vectis_pack_content_type_map_doc_fields[] = {
+    LONEJSON_FIELD_MAPPED_ARRAY_STREAM_REQ(vectis_pack_content_type_map_doc,
+                                           types, "types")};
+
+LONEJSON_MAP_DEFINE(vectis_pack_content_type_map_doc_map,
+                    vectis_pack_content_type_map_doc,
+                    vectis_pack_content_type_map_doc_fields);
 
 static const lonejson_field vectis_pack_asset_manifest_item_fields[] = {
     LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_pack_asset_manifest_item, source,
@@ -234,7 +277,8 @@ static void vectis_cli_usage(FILE *stream) {
         "       -x traces Lua line execution to stderr\n"
         "       vectis -a|--action pack --script script.lua --output output "
         "[--lockd-bundle bundle.pem] [--asset source=/path] "
-        "[--asset-dir /mount:dir] [--asset-manifest assets.json]\n"
+        "[--asset-dir /mount:dir] [--asset-manifest assets.json] "
+        "[--content-type-map types.json]\n"
         "       vectis -a|--action credentials [--store credentials.json] "
         "(--init | --issue --subject user [--purpose name] "
         "[--basic] [--bearer] | --verify authorization | "
@@ -467,6 +511,143 @@ static int vectis_pack_content_type_valid(const char *content_type) {
   return 1;
 }
 
+static int vectis_pack_extension_valid(const char *extension) {
+  const unsigned char *cursor;
+
+  if (extension == NULL || extension[0] == '\0') {
+    return 0;
+  }
+  cursor = (const unsigned char *)extension;
+  if (*cursor == '.') {
+    cursor++;
+  }
+  if (*cursor == '\0') {
+    return 0;
+  }
+  while (*cursor != '\0') {
+    if (*cursor <= 0x20u || *cursor == 0x7fu || *cursor == '/' ||
+        *cursor == '\\') {
+      return 0;
+    }
+    cursor++;
+  }
+  return 1;
+}
+
+static int
+vectis_pack_content_type_map_reserve(vectis_pack_content_type_map *map,
+                                     size_t capacity) {
+  vectis_pack_content_type_map_entry *grown;
+  size_t next_capacity;
+
+  if (capacity <= map->capacity) {
+    return 0;
+  }
+  next_capacity = map->capacity == 0u ? 8u : map->capacity;
+  while (next_capacity < capacity) {
+    if (next_capacity > ((size_t)-1) / 2u) {
+      return -1;
+    }
+    next_capacity *= 2u;
+  }
+  grown = (vectis_pack_content_type_map_entry *)realloc(
+      map->items, next_capacity * sizeof(map->items[0]));
+  if (grown == NULL) {
+    return -1;
+  }
+  map->items = grown;
+  map->capacity = next_capacity;
+  return 0;
+}
+
+static void
+vectis_pack_content_type_map_cleanup(vectis_pack_content_type_map *map) {
+  size_t i;
+
+  if (map == NULL) {
+    return;
+  }
+  for (i = 0u; i < map->count; ++i) {
+    free(map->items[i].extension);
+    free(map->items[i].content_type);
+  }
+  free(map->items);
+  memset(map, 0, sizeof(*map));
+}
+
+static int vectis_pack_content_type_map_add(vectis_pack_content_type_map *map,
+                                            const char *extension,
+                                            const char *content_type) {
+  vectis_pack_content_type_map_entry *entry;
+  char *normalized_extension;
+  char *content_type_copy;
+  size_t extension_size;
+
+  if (!vectis_pack_extension_valid(extension)) {
+    fprintf(stderr, "vectis: invalid content-type map extension: %s\n",
+            extension != NULL ? extension : "(null)");
+    return -1;
+  }
+  if (!vectis_pack_content_type_valid(content_type)) {
+    fprintf(stderr, "vectis: invalid content-type map content type: %s\n",
+            content_type != NULL ? content_type : "(null)");
+    return -1;
+  }
+  extension_size = strlen(extension);
+  if (extension[0] == '.') {
+    normalized_extension = vectis_cli_strdup(extension);
+  } else {
+    normalized_extension = (char *)malloc(extension_size + 2u);
+    if (normalized_extension != NULL) {
+      normalized_extension[0] = '.';
+      memcpy(normalized_extension + 1, extension, extension_size + 1u);
+    }
+  }
+  content_type_copy = vectis_cli_strdup(content_type);
+  if (normalized_extension == NULL || content_type_copy == NULL ||
+      vectis_pack_content_type_map_reserve(map, map->count + 1u) != 0) {
+    free(normalized_extension);
+    free(content_type_copy);
+    return -1;
+  }
+  entry = map->items + map->count;
+  entry->extension = normalized_extension;
+  entry->content_type = content_type_copy;
+  map->count++;
+  return 0;
+}
+
+static int vectis_pack_has_suffix_ci(const char *value, const char *suffix) {
+  size_t value_len;
+  size_t suffix_len;
+
+  if (value == NULL || suffix == NULL) {
+    return 0;
+  }
+  value_len = strlen(value);
+  suffix_len = strlen(suffix);
+  if (suffix_len > value_len) {
+    return 0;
+  }
+  return vectis_ascii_equal_ci(value + value_len - suffix_len, suffix);
+}
+
+static const char *
+vectis_pack_content_type_map_lookup(const vectis_pack_content_type_map *map,
+                                    const char *path) {
+  size_t i;
+
+  if (map == NULL || path == NULL) {
+    return NULL;
+  }
+  for (i = map->count; i > 0u; --i) {
+    if (vectis_pack_has_suffix_ci(path, map->items[i - 1u].extension)) {
+      return map->items[i - 1u].content_type;
+    }
+  }
+  return NULL;
+}
+
 static char *vectis_pack_join_path(const char *left, const char *right,
                                    char separator) {
   size_t left_size;
@@ -537,7 +718,8 @@ static void vectis_pack_asset_list_cleanup(vectis_pack_asset_list *list) {
 static int vectis_pack_asset_add(vectis_pack_asset_list *list,
                                  const char *source_path,
                                  const char *logical_path,
-                                 const char *content_type_override) {
+                                 const char *content_type_override,
+                                 const vectis_pack_content_type_map *map) {
   vectis_pack_asset *asset;
   unsigned char *data;
   const char *content_type;
@@ -567,9 +749,11 @@ static int vectis_pack_asset_add(vectis_pack_asset_list *list,
   memset(asset, 0, sizeof(*asset));
   asset->source_path = vectis_cli_strdup(source_path);
   asset->logical_path = vectis_cli_strdup(logical_path);
-  content_type = content_type_override != NULL
-                     ? content_type_override
-                     : vectis_pack_content_type_for_path(logical_path);
+  content_type =
+      content_type_override != NULL ? content_type_override
+      : vectis_pack_content_type_map_lookup(map, logical_path) != NULL
+          ? vectis_pack_content_type_map_lookup(map, logical_path)
+          : vectis_pack_content_type_for_path(logical_path);
   if (content_type != NULL) {
     asset->content_type = vectis_cli_strdup(content_type);
   }
@@ -590,6 +774,84 @@ static int vectis_pack_asset_add(vectis_pack_asset_list *list,
 }
 
 static lonejson_status
+vectis_pack_content_type_map_item_cb(void *user, void *item,
+                                     lonejson_error *json_error) {
+  vectis_pack_content_type_map_state *state;
+  const vectis_pack_content_type_map_doc_item *entry;
+
+  (void)json_error;
+  state = (vectis_pack_content_type_map_state *)user;
+  entry = (const vectis_pack_content_type_map_doc_item *)item;
+  if (vectis_pack_content_type_map_add(state->map, entry->extension,
+                                       entry->content_type) != 0) {
+    return LONEJSON_STATUS_INVALID_JSON;
+  }
+  return LONEJSON_STATUS_OK;
+}
+
+static int vectis_pack_read_content_type_map(vectis_pack_content_type_map *map,
+                                             const char *path) {
+  unsigned char *json;
+  size_t json_size;
+  lonejson *runtime;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  lonejson_mapped_array_stream_handler handler;
+  vectis_pack_content_type_map_doc doc;
+  vectis_pack_content_type_map_doc_item item;
+  vectis_pack_content_type_map_state state;
+
+  json = NULL;
+  json_size = 0u;
+  if (vectis_read_all(path, &json, &json_size) != 0) {
+    fprintf(stderr, "vectis: failed to read content-type map: %s\n",
+            path != NULL ? path : "(null)");
+    return -1;
+  }
+  lonejson_error_init(&json_error);
+  runtime = lonejson_new(NULL, &json_error);
+  if (runtime == NULL) {
+    free(json);
+    fprintf(stderr,
+            "vectis: failed to initialize content-type map parser: %s\n",
+            json_error.message[0] != '\0'
+                ? json_error.message
+                : lonejson_status_string(LONEJSON_STATUS_ALLOCATION_FAILED));
+    return -1;
+  }
+  memset(&doc, 0, sizeof(doc));
+  memset(&item, 0, sizeof(item));
+  memset(&handler, 0, sizeof(handler));
+  doc.types = (lonejson_mapped_array_stream)LONEJSON_MAPPED_ARRAY_STREAM_INIT;
+  state.map = map;
+  handler.item_map = &vectis_pack_content_type_map_doc_item_map;
+  handler.item_dst = &item;
+  handler.item = vectis_pack_content_type_map_item_cb;
+  handler.user = &state;
+  lonejson_error_init(&json_error);
+  json_status = lonejson_mapped_array_stream_set_handler(&doc.types, &handler,
+                                                         &json_error);
+  if (json_status == LONEJSON_STATUS_OK) {
+    json_status =
+        lonejson_parse_buffer(runtime, &vectis_pack_content_type_map_doc_map,
+                              &doc, json, json_size, &json_error);
+  }
+  lonejson_cleanup(&vectis_pack_content_type_map_doc_map, &doc);
+  lonejson_cleanup(&vectis_pack_content_type_map_doc_item_map, &item);
+  lonejson_free(runtime);
+  free(json);
+  if (json_status != LONEJSON_STATUS_OK) {
+    fprintf(stderr, "vectis: failed to parse content-type map %s: %s\n",
+            path != NULL ? path : "(null)",
+            json_error.message[0] != '\0'
+                ? json_error.message
+                : lonejson_status_string(json_status));
+    return -1;
+  }
+  return 0;
+}
+
+static lonejson_status
 vectis_pack_asset_manifest_item_cb(void *user, void *item,
                                    lonejson_error *json_error) {
   vectis_pack_asset_manifest_state *state;
@@ -599,14 +861,15 @@ vectis_pack_asset_manifest_item_cb(void *user, void *item,
   state = (vectis_pack_asset_manifest_state *)user;
   asset = (const vectis_pack_asset_manifest_item *)item;
   if (vectis_pack_asset_add(state->assets, asset->source, asset->path,
-                            asset->content_type) != 0) {
+                            asset->content_type, state->content_types) != 0) {
     return LONEJSON_STATUS_INVALID_JSON;
   }
   return LONEJSON_STATUS_OK;
 }
 
-static int vectis_pack_read_asset_manifest(vectis_pack_asset_list *assets,
-                                           const char *path) {
+static int vectis_pack_read_asset_manifest(
+    vectis_pack_asset_list *assets, const char *path,
+    const vectis_pack_content_type_map *content_types) {
   unsigned char *json;
   size_t json_size;
   lonejson *runtime;
@@ -641,6 +904,7 @@ static int vectis_pack_read_asset_manifest(vectis_pack_asset_list *assets,
   memset(&handler, 0, sizeof(handler));
   doc.assets = (lonejson_mapped_array_stream)LONEJSON_MAPPED_ARRAY_STREAM_INIT;
   state.assets = assets;
+  state.content_types = content_types;
   handler.item_map = &vectis_pack_asset_manifest_item_map;
   handler.item_dst = &item;
   handler.item = vectis_pack_asset_manifest_item_cb;
@@ -679,7 +943,8 @@ static int vectis_pack_asset_compare(const void *a, const void *b) {
 
 static int vectis_pack_collect_dir(vectis_pack_asset_list *list,
                                    const char *source_dir,
-                                   const char *logical_root) {
+                                   const char *logical_root,
+                                   const vectis_pack_content_type_map *map) {
   DIR *dir;
   struct dirent *entry;
   struct stat st;
@@ -715,9 +980,9 @@ static int vectis_pack_collect_dir(vectis_pack_asset_list *list,
       break;
     }
     if (S_ISDIR(st.st_mode)) {
-      rc = vectis_pack_collect_dir(list, source_child, logical_child);
+      rc = vectis_pack_collect_dir(list, source_child, logical_child, map);
     } else if (S_ISREG(st.st_mode)) {
-      rc = vectis_pack_asset_add(list, source_child, logical_child, NULL);
+      rc = vectis_pack_asset_add(list, source_child, logical_child, NULL, map);
     } else {
       fprintf(stderr, "vectis: unsupported embedded asset type: %s\n",
               source_child);
@@ -2062,6 +2327,13 @@ static int vectis_self_path(const char *argv0, char *path, size_t path_size) {
   return 0;
 }
 
+static void
+vectis_pack_command_cleanup(vectis_pack_asset_list *assets,
+                            vectis_pack_content_type_map *content_types) {
+  vectis_pack_asset_list_cleanup(assets);
+  vectis_pack_content_type_map_cleanup(content_types);
+}
+
 static int vectis_pack_command(int argc, char **argv, int index) {
   const char *script_path;
   const char *output_path;
@@ -2086,6 +2358,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   unsigned char manifest_sha[SHA256_DIGEST_LENGTH];
   unsigned char footer[VECTIS_PACK_FOOTER_SIZE];
   vectis_pack_asset_list assets;
+  vectis_pack_content_type_map content_types;
   char self_path[4096];
   FILE *out;
   int i;
@@ -2094,6 +2367,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   output_path = NULL;
   bundle_path = NULL;
   memset(&assets, 0, sizeof(assets));
+  memset(&content_types, 0, sizeof(content_types));
   for (i = index; i < argc; ++i) {
     if (strcmp(argv[i], "--script") == 0 && i + 1 < argc) {
       script_path = argv[++i];
@@ -2101,12 +2375,30 @@ static int vectis_pack_command(int argc, char **argv, int index) {
       output_path = argv[++i];
     } else if (strcmp(argv[i], "--lockd-bundle") == 0 && i + 1 < argc) {
       bundle_path = argv[++i];
+    } else if (strcmp(argv[i], "--content-type-map") == 0 && i + 1 < argc) {
+      if (vectis_pack_read_content_type_map(&content_types, argv[++i]) != 0) {
+        vectis_pack_command_cleanup(&assets, &content_types);
+        return 1;
+      }
+    } else if ((strcmp(argv[i], "--asset") == 0 ||
+                strcmp(argv[i], "--asset-dir") == 0 ||
+                strcmp(argv[i], "--asset-manifest") == 0) &&
+               i + 1 < argc) {
+      i++;
+    }
+  }
+  for (i = index; i < argc; ++i) {
+    if ((strcmp(argv[i], "--script") == 0 || strcmp(argv[i], "--output") == 0 ||
+         strcmp(argv[i], "--lockd-bundle") == 0 ||
+         strcmp(argv[i], "--content-type-map") == 0) &&
+        i + 1 < argc) {
+      i++;
     } else if (strcmp(argv[i], "--asset") == 0 && i + 1 < argc) {
       asset_arg = argv[++i];
       separator = strchr(asset_arg, '=');
       if (separator == NULL || separator == asset_arg || separator[1] == '\0') {
         fputs("vectis: --asset requires source=logical-path\n", stderr);
-        vectis_pack_asset_list_cleanup(&assets);
+        vectis_pack_command_cleanup(&assets, &content_types);
         return 64;
       }
       asset_source =
@@ -2115,15 +2407,15 @@ static int vectis_pack_command(int argc, char **argv, int index) {
       if (asset_source == NULL || asset_logical == NULL) {
         free(asset_source);
         free(asset_logical);
-        vectis_pack_asset_list_cleanup(&assets);
+        vectis_pack_command_cleanup(&assets, &content_types);
         return 70;
       }
       asset_source[separator - asset_arg] = '\0';
-      if (vectis_pack_asset_add(&assets, asset_source, asset_logical, NULL) !=
-          0) {
+      if (vectis_pack_asset_add(&assets, asset_source, asset_logical, NULL,
+                                &content_types) != 0) {
         free(asset_source);
         free(asset_logical);
-        vectis_pack_asset_list_cleanup(&assets);
+        vectis_pack_command_cleanup(&assets, &content_types);
         return 1;
       }
       free(asset_source);
@@ -2133,7 +2425,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
       separator = strchr(asset_arg, ':');
       if (separator == NULL || separator == asset_arg || separator[1] == '\0') {
         fputs("vectis: --asset-dir requires logical-root:source-dir\n", stderr);
-        vectis_pack_asset_list_cleanup(&assets);
+        vectis_pack_command_cleanup(&assets, &content_types);
         return 64;
       }
       asset_logical =
@@ -2142,37 +2434,39 @@ static int vectis_pack_command(int argc, char **argv, int index) {
       if (asset_source == NULL || asset_logical == NULL) {
         free(asset_source);
         free(asset_logical);
-        vectis_pack_asset_list_cleanup(&assets);
+        vectis_pack_command_cleanup(&assets, &content_types);
         return 70;
       }
       asset_logical[separator - asset_arg] = '\0';
-      if (vectis_pack_collect_dir(&assets, asset_source, asset_logical) != 0) {
+      if (vectis_pack_collect_dir(&assets, asset_source, asset_logical,
+                                  &content_types) != 0) {
         free(asset_source);
         free(asset_logical);
-        vectis_pack_asset_list_cleanup(&assets);
+        vectis_pack_command_cleanup(&assets, &content_types);
         return 1;
       }
       free(asset_source);
       free(asset_logical);
     } else if (strcmp(argv[i], "--asset-manifest") == 0 && i + 1 < argc) {
-      if (vectis_pack_read_asset_manifest(&assets, argv[++i]) != 0) {
-        vectis_pack_asset_list_cleanup(&assets);
+      if (vectis_pack_read_asset_manifest(&assets, argv[++i], &content_types) !=
+          0) {
+        vectis_pack_command_cleanup(&assets, &content_types);
         return 1;
       }
     } else {
       fprintf(stderr, "vectis: unknown pack argument: %s\n", argv[i]);
-      vectis_pack_asset_list_cleanup(&assets);
+      vectis_pack_command_cleanup(&assets, &content_types);
       return 64;
     }
   }
   if (script_path == NULL || output_path == NULL) {
     fputs("vectis: pack requires --script and --output\n", stderr);
-    vectis_pack_asset_list_cleanup(&assets);
+    vectis_pack_command_cleanup(&assets, &content_types);
     return 64;
   }
   if (vectis_self_path(argv[0], self_path, sizeof(self_path)) != 0) {
     fputs("vectis: failed to resolve current executable path\n", stderr);
-    vectis_pack_asset_list_cleanup(&assets);
+    vectis_pack_command_cleanup(&assets, &content_types);
     return 1;
   }
   self = NULL;
@@ -2185,7 +2479,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     fprintf(stderr, "vectis: failed to read pack input: %s\n", strerror(errno));
     free(self);
     free(script);
-    vectis_pack_asset_list_cleanup(&assets);
+    vectis_pack_command_cleanup(&assets, &content_types);
     return 1;
   }
   if (bundle_path != NULL &&
@@ -2194,7 +2488,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
             strerror(errno));
     free(self);
     free(script);
-    vectis_pack_asset_list_cleanup(&assets);
+    vectis_pack_command_cleanup(&assets, &content_types);
     return 1;
   }
   if (assets.count > 1u) {
@@ -2208,7 +2502,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
         free(bundle);
         free(script);
         free(self);
-        vectis_pack_asset_list_cleanup(&assets);
+        vectis_pack_command_cleanup(&assets, &content_types);
         return 1;
       }
     }
@@ -2221,7 +2515,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
       free(bundle);
       free(script);
       free(self);
-      vectis_pack_asset_list_cleanup(&assets);
+      vectis_pack_command_cleanup(&assets, &content_types);
       return 1;
     }
     asset_size += assets.items[i].size;
@@ -2231,7 +2525,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     free(bundle);
     free(script);
     free(self);
-    vectis_pack_asset_list_cleanup(&assets);
+    vectis_pack_command_cleanup(&assets, &content_types);
     return 1;
   }
   if (vectis_pack_build_manifest(&assets, &manifest, &manifest_size) != 0) {
@@ -2239,7 +2533,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     free(bundle);
     free(script);
     free(self);
-    vectis_pack_asset_list_cleanup(&assets);
+    vectis_pack_command_cleanup(&assets, &content_types);
     return 1;
   }
   SHA256(script, script_size, script_sha);
@@ -2269,7 +2563,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     free(bundle);
     free(script);
     free(self);
-    vectis_pack_asset_list_cleanup(&assets);
+    vectis_pack_command_cleanup(&assets, &content_types);
     return 1;
   }
   if (vectis_write_all(out, self, self_size) != 0 ||
@@ -2281,7 +2575,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     free(bundle);
     free(script);
     free(self);
-    vectis_pack_asset_list_cleanup(&assets);
+    vectis_pack_command_cleanup(&assets, &content_types);
     return 1;
   }
   for (i = 0; i < (int)assets.count; ++i) {
@@ -2294,7 +2588,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
       free(bundle);
       free(script);
       free(self);
-      vectis_pack_asset_list_cleanup(&assets);
+      vectis_pack_command_cleanup(&assets, &content_types);
       return 1;
     }
   }
@@ -2305,7 +2599,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     free(bundle);
     free(script);
     free(self);
-    vectis_pack_asset_list_cleanup(&assets);
+    vectis_pack_command_cleanup(&assets, &content_types);
     return 1;
   }
   if (chmod(output_path, 0755) != 0) {
@@ -2314,14 +2608,14 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     free(bundle);
     free(script);
     free(self);
-    vectis_pack_asset_list_cleanup(&assets);
+    vectis_pack_command_cleanup(&assets, &content_types);
     return 1;
   }
   free(manifest);
   free(bundle);
   free(script);
   free(self);
-  vectis_pack_asset_list_cleanup(&assets);
+  vectis_pack_command_cleanup(&assets, &content_types);
   return 0;
 }
 

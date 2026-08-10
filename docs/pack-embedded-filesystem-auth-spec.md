@@ -136,6 +136,22 @@ Optional:
   `source` and `path` are required. `content_type` is optional; when omitted,
   Vectis infers the content type from the logical `path` extension when it can.
 - `--content-type-map <path>` supplies extension to content-type mappings.
+  The map is LoneJSON and may be repeated:
+
+  ```json
+  {
+    "types": [
+      {
+        "extension": ".avif",
+        "content_type": "image/avif"
+      }
+    ]
+  }
+  ```
+
+  `extension` may include or omit the leading dot. Later mappings for the same
+  extension take precedence. Explicit per-asset `content_type` values still
+  take precedence over the map.
 - `--follow-symlinks` enables symlink traversal during packaging. Default is
   refuse.
 - `--extract-mode <skip-existing|overwrite|verify|repair>` records the default
