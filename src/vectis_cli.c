@@ -3350,6 +3350,62 @@ static int vectis_lua_server_webdav_embedded_site(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_server_auth_routes(lua_State *lua) {
+  vectis_app *app;
+  vectis_auth_routes_config config;
+  vectis_error error;
+  vectis_status status;
+  const char *path_prefix;
+  const char *credentials_path;
+  const char *realm;
+  const char *login_title;
+  const char *login_template_html;
+
+  app = vectis_lua_server_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  path_prefix = vectis_lua_table_string(lua, 2, "path_prefix");
+  if (path_prefix == NULL) {
+    path_prefix = vectis_lua_table_string(lua, 2, "prefix");
+  }
+  credentials_path = vectis_lua_table_string(lua, 2, "credentials_path");
+  if (credentials_path == NULL) {
+    credentials_path = vectis_lua_table_string(lua, 2, "path");
+  }
+
+  vectis_auth_routes_config_init(&config);
+  if (path_prefix != NULL) {
+    config.path_prefix = path_prefix;
+  }
+  config.store.credentials_path = credentials_path;
+  config.store.max_store_bytes = vectis_lua_table_size(
+      lua, 2, "max_store_bytes", config.store.max_store_bytes);
+  realm = vectis_lua_table_string(lua, 2, "realm");
+  if (realm != NULL) {
+    config.realm = realm;
+  }
+  login_title = vectis_lua_table_string(lua, 2, "login_title");
+  if (login_title != NULL) {
+    config.login_title = login_title;
+  }
+  login_template_html = vectis_lua_table_string(lua, 2, "login_template_html");
+  if (login_template_html != NULL) {
+    config.login_template_html = login_template_html;
+  }
+  config.max_body_bytes =
+      vectis_lua_table_size(lua, 2, "max_body_bytes", config.max_body_bytes);
+  config.unix_seconds = (uint64_t)vectis_lua_table_size(lua, 2, "time", 0u);
+  config.totp_window =
+      (unsigned int)vectis_lua_table_size(lua, 2, "window", 0u);
+
+  vectis_error_clear(&error);
+  status = app->auth_routes(app, &config, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
 static int vectis_lua_server_new(lua_State *lua) {
   vectis_lua_server *server;
   vectis_app_config config;
@@ -5723,6 +5779,8 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "static_embedded");
     lua_pushcfunction(lua, vectis_lua_server_webdav_embedded_site);
     lua_setfield(lua, -2, "webdav_embedded_site");
+    lua_pushcfunction(lua, vectis_lua_server_auth_routes);
+    lua_setfield(lua, -2, "auth_routes");
     lua_pushcfunction(lua, vectis_lua_server_start);
     lua_setfield(lua, -2, "start");
     lua_pushcfunction(lua, vectis_lua_server_stop);

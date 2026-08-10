@@ -206,6 +206,7 @@ Required Lua concepts:
 - `server:static_embedded({path_prefix=..., cache_control=...})`
 - `server:webdav_embedded_site({path_prefix=..., cache_dir=..., site_id=...,
   extract_policy=..., auth={kind="native", credentials_path=...}})`
+- `server:auth_routes({path_prefix=..., credentials_path=..., realm=...})`
 - `server:start()`, `server:stop()`, and `server:close()`
 
 Streaming semantics:
