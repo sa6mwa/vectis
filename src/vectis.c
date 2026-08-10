@@ -6127,6 +6127,11 @@ vectis_register_auth_routes(vectis_app *app,
   }
   if (status == VECTIS_OK) {
     status = vectis_register_auth_route_one(
+        app, &resolved, path_prefix, "/continue", VECTIS_HTTP_POST,
+        vectis_auth_webdav_key_dispatch, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_register_auth_route_one(
         app, &resolved, path_prefix, "/webdav-key", VECTIS_HTTP_POST,
         vectis_auth_webdav_key_dispatch, error);
   }

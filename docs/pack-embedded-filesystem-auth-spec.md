@@ -379,8 +379,9 @@ Applications may mount the handlers elsewhere or implement equivalent Lua
 routes against the same C auth/session APIs.
 
 Current native route behavior includes a C-owned `/email-token` issue endpoint
-and `/webdav-key` factor policy. Routes default to the password factor, which
-also enforces enrolled-user TOTP. `required_factors={"email_token"}` allows an
+and `/continue` plus `/webdav-key` credential finalization endpoints using the
+same factor policy. Routes default to the password factor, which also enforces
+enrolled-user TOTP. `required_factors={"email_token"}` allows an
 email-token-only WebDAV-key flow, while `require_email_token=true` remains a
 compatibility shorthand that adds the email-token factor to the default password
 flow. C-owned SMTP delivery is available through the route config's
@@ -561,6 +562,8 @@ keys. Broader packed auth matrix coverage remains future hardening work.
   embedded manifest. The safer default is no pruning.
 - Whether pending auth state lives inside the main credentials JSON or a
   separate state file/directory. A separate state path is likely cleaner for
-  locking and TTL cleanup.
+  locking and TTL cleanup. `/continue` is currently a C-owned finalization
+  endpoint; true multi-request password-first pending sessions still require a
+  pending-auth state store.
 - Whether the native login route set belongs in the core C API, the Kore
   integration layer, or both with a shared auth service underneath.
