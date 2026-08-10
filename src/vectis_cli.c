@@ -3142,6 +3142,71 @@ static int vectis_lua_tls_mode(const char *mode, vectis_tls_mode *out) {
   return 0;
 }
 
+static void vectis_lua_parse_lockd_config(lua_State *lua, int index,
+                                          vectis_lockd_config *lockd,
+                                          const char ***endpoints_alloc_out) {
+  vectis_lua_runtime_context *context;
+  const char **endpoints;
+  const char *bundle_mode;
+
+  if (endpoints_alloc_out != NULL) {
+    *endpoints_alloc_out = NULL;
+  }
+  index = lua_absindex(lua, index);
+  lua_getfield(lua, index, "lockd");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return;
+  }
+  if (!lua_istable(lua, -1)) {
+    luaL_error(lua, "server lockd must be a table");
+    return;
+  }
+  index = lua_absindex(lua, -1);
+  bundle_mode = vectis_lua_table_string(lua, index, "client_bundle");
+  if (bundle_mode == NULL) {
+    bundle_mode = vectis_lua_table_string(lua, index, "bundle");
+  }
+  if (bundle_mode != NULL) {
+    if (strcmp(bundle_mode, "embedded") != 0) {
+      luaL_error(lua, "server lockd.client_bundle must be embedded");
+      return;
+    }
+    context =
+        (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(lua);
+    if (context == NULL || context->embedded_lockd_bundle == NULL ||
+        context->embedded_lockd_bundle_size == 0u) {
+      luaL_error(lua, "server lockd.client_bundle requested embedded bundle, "
+                      "but no embedded lockd bundle is available");
+      return;
+    }
+    lockd->client_bundle = vectis_source_from_memory(
+        context->embedded_lockd_bundle, context->embedded_lockd_bundle_size);
+  }
+  endpoints = vectis_lua_string_array_field(lua, index, "endpoints",
+                                            &lockd->endpoint_count);
+  lockd->endpoints = endpoints;
+  if (endpoints_alloc_out != NULL) {
+    *endpoints_alloc_out = endpoints;
+  }
+  lockd->unix_socket_path =
+      vectis_lua_table_string(lua, index, "unix_socket_path");
+  lockd->client_bundle_path =
+      vectis_lua_table_string(lua, index, "client_bundle_path");
+  if (lockd->client_bundle_path == NULL) {
+    lockd->client_bundle_path =
+        vectis_lua_table_string(lua, index, "bundle_path");
+  }
+  lockd->default_namespace =
+      vectis_lua_table_string(lua, index, "default_namespace");
+  if (lockd->default_namespace == NULL) {
+    lockd->default_namespace = vectis_lua_table_string(lua, index, "namespace");
+  }
+  lockd->timeout_ms =
+      vectis_lua_table_long(lua, index, "timeout_ms", lockd->timeout_ms);
+  lua_pop(lua, 1);
+}
+
 static vectis_lua_server *vectis_lua_check_server(lua_State *lua, int index) {
   return (vectis_lua_server *)luaL_checkudata(lua, index, VECTIS_LUA_SERVER);
 }
@@ -3758,10 +3823,12 @@ static int vectis_lua_server_new(lua_State *lua) {
   const char *app_name;
   const char *bind;
   const char *mode;
+  const char **lockd_endpoints;
   size_t port;
   int tls_index;
 
   luaL_checktype(lua, 1, LUA_TTABLE);
+  lockd_endpoints = NULL;
   port = vectis_lua_table_size(lua, 1, "port", 8080u);
   if (port == 0u || port > 65535u) {
     return luaL_error(lua, "server port must be between 1 and 65535");
@@ -3816,12 +3883,14 @@ static int vectis_lua_server_new(lua_State *lua) {
         vectis_lua_table_string(lua, tls_index, "acme_directory_url");
   }
   lua_pop(lua, 1);
+  vectis_lua_parse_lockd_config(lua, 1, &config.lockd, &lockd_endpoints);
   server = (vectis_lua_server *)lua_newuserdata(lua, sizeof(*server));
   server->app = NULL;
   server->native_auths = NULL;
   server->auth_json_routes = NULL;
   vectis_error_clear(&error);
   server->app = vectis_app_new(&config, &error);
+  free(lockd_endpoints);
   if (server->app == NULL) {
     return vectis_lua_push_error(
         lua, error.code != VECTIS_OK ? error.code : VECTIS_ERR_NOMEM, &error);

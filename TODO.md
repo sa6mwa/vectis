@@ -120,7 +120,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Translate Vectis ACME TLS config into Kore runtime behavior.
 - [x] Support lockd client certificate bundle configuration from C.
 - [x] Support server certificate bundle configuration from C.
-- [ ] Support lockd client certificate bundle configuration from Lua.
+- [x] Support lockd client certificate bundle configuration from Lua.
 - [ ] Support server certificate bundle configuration from Lua.
 - [x] Add Vectis-owned OpenSSL-backed helpers for generating self-signed certificates, CA material, and CA-signed client/server PEM bundles.
 - [x] Add Vectis-owned OpenSSL-backed helpers for generating standalone private keys and CSRs.

@@ -20,7 +20,7 @@ set(asset_webdav_credentials "${WORK_DIR}/webdav-credentials.json")
 set(asset_https_cert_bundle "${WORK_DIR}/pack-self-signed.pem")
 set(asset_smtp_mailbox "${WORK_DIR}/pack-smtp-mailbox.txt")
 
-file(WRITE "${script}" "local vectis = require(\"vectis\")\nassert(vectis.status_string(vectis.OK) == \"ok\")\nassert(vectis.has_embedded_lockd_bundle() == false)\nassert(vectis.embedded_lockd_bundle_size() == 0)\nassert(vectis.embedded.has_assets() == false)\nassert(vectis.embedded.default_extract_policy() == \"fail_exists\")\nassert(#vectis.embedded.list(\"/\") == 0)\nlocal extracted, extract_err = vectis.embedded.extract({to = [[${no_asset_extract_dir}]]})\nassert(extracted == nil)\nassert(extract_err == \"no embedded assets\")\nlocal chunks, chunks_err = vectis.embedded.chunks(\"/missing.txt\", 4)\nassert(chunks == nil)\nassert(chunks_err == \"no embedded assets\")\nassert(arg[0]:match(\"vectis%-pack%-smoke$\"))\nassert(arg[1] == \"first\")\nassert(arg[2] == \"second\")\n")
+file(WRITE "${script}" "local vectis = require(\"vectis\")\nassert(vectis.status_string(vectis.OK) == \"ok\")\nassert(vectis.has_embedded_lockd_bundle() == false)\nassert(vectis.embedded_lockd_bundle_size() == 0)\nlocal missing_embedded_bundle_ok, missing_embedded_bundle_err = pcall(function()\n  vectis.server.new({lockd = {endpoints = {\"https://127.0.0.1:1\"}, client_bundle = \"embedded\"}})\nend)\nassert(missing_embedded_bundle_ok == false)\nassert(tostring(missing_embedded_bundle_err):match(\"no embedded lockd bundle\"))\nassert(vectis.embedded.has_assets() == false)\nassert(vectis.embedded.default_extract_policy() == \"fail_exists\")\nassert(#vectis.embedded.list(\"/\") == 0)\nlocal extracted, extract_err = vectis.embedded.extract({to = [[${no_asset_extract_dir}]]})\nassert(extracted == nil)\nassert(extract_err == \"no embedded assets\")\nlocal chunks, chunks_err = vectis.embedded.chunks(\"/missing.txt\", 4)\nassert(chunks == nil)\nassert(chunks_err == \"no embedded assets\")\nassert(arg[0]:match(\"vectis%-pack%-smoke$\"))\nassert(arg[1] == \"first\")\nassert(arg[2] == \"second\")\n")
 
 execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${script}" --output "${output}"
                 RESULT_VARIABLE pack_result
@@ -52,7 +52,7 @@ endif()
 
 file(WRITE "${bundle}" "embedded lockd client bundle bytes\n")
 file(SIZE "${bundle}" bundle_size)
-file(WRITE "${bundle_script}" "local vectis = require(\"vectis\")\nassert(vectis.has_embedded_lockd_bundle() == true)\nassert(vectis.embedded_lockd_bundle_size() == ${bundle_size})\nassert(arg[1] == \"bundle-arg\")\n")
+file(WRITE "${bundle_script}" "local vectis = require(\"vectis\")\nassert(vectis.has_embedded_lockd_bundle() == true)\nassert(vectis.embedded_lockd_bundle_size() == ${bundle_size})\nlocal server = assert(vectis.server.new({lockd = {endpoints = {\"https://127.0.0.1:1\"}, client_bundle = \"embedded\", namespace = \"pack\"}}))\nserver:close()\nassert(arg[1] == \"bundle-arg\")\n")
 
 execute_process(COMMAND "${VECTIS_BIN}" --action pack --script "${bundle_script}" --output "${bundle_output}" --lockd-bundle "${bundle}"
                 RESULT_VARIABLE bundle_pack_result
