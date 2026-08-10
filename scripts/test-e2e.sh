@@ -16,6 +16,7 @@ kore_workflow_port=${VECTIS_E2E_KORE_WORKFLOW_PORT:-$((kore_basic_port + 2))}
 kore_downstream_port=${VECTIS_E2E_KORE_DOWNSTREAM_PORT:-$((kore_basic_port + 3))}
 kore_static_port=${VECTIS_E2E_KORE_STATIC_PORT:-$((kore_basic_port + 4))}
 kore_combined_port=${VECTIS_E2E_KORE_COMBINED_PORT:-$((kore_basic_port + 5))}
+kore_packed_port=${VECTIS_E2E_KORE_PACKED_PORT:-$((kore_basic_port + 6))}
 work_dir=$(mktemp -d)
 ssh_memory_key="$work_dir/vectis-e2e-ssh-key"
 ssh_bad_host_key="$work_dir/vectis-e2e-bad-host-key"
@@ -256,8 +257,20 @@ run_static_asset_examples() {
 run_lua_examples() {
   script="$work_dir/vectis-e2e.lua"
   pack_script="$work_dir/vectis-e2e-pack.lua"
+  packed_service_script="$work_dir/vectis-e2e-packed-service.lua"
+  packed_service_site="$work_dir/vectis-e2e-packed-site"
+  packed_service_cache="$work_dir/vectis-e2e-packed-cache"
+  packed_service_credentials="$work_dir/vectis-e2e-packed-credentials.json"
+  packed_content_types="$work_dir/vectis-e2e-packed-content-types.json"
   shebang_script="$work_dir/vectis-e2e-shebang.lua"
   packed="$work_dir/vectis-e2e-packed"
+  packed_service="$work_dir/vectis-e2e-packed-service"
+  webdav_key_response=
+  webdav_client_id=
+  webdav_client_secret=
+  static_put_status=
+  unauth_dav_status=
+  dav_write_body=
 
   printf '[e2e] lua runner\n'
   printf '%s\n' \
@@ -281,6 +294,156 @@ run_lua_examples() {
     'assert(vectis.status_string(vectis.OK) == "ok")' >"$pack_script"
   "$repo_root/build/debug/vectis" -a pack --script "$pack_script" --output "$packed"
   "$packed"
+
+  printf '[e2e] lua packed webserver\n'
+  mkdir -p "$packed_service_site"
+  printf '%s\n' \
+    '<!doctype html>' \
+    '<html><head><title>Vectis packed e2e</title></head>' \
+    '<body><main id="app">packed service asset</main></body></html>' \
+    >"$packed_service_site/index.html"
+  printf '%s\n' \
+    'window.vectisPackedService = true;' \
+    >"$packed_service_site/app.js"
+  printf '%s\n' \
+    '{"types":[' \
+    '{"extension":".html","content_type":"text/html; charset=utf-8"},' \
+    '{"extension":".js","content_type":"application/javascript"}' \
+    ']}' >"$packed_content_types"
+  printf '%s\n' \
+    'local vectis = require("vectis")' \
+    'local port = tonumber(assert(os.getenv("VECTIS_PACKED_SERVICE_PORT")))' \
+    'local credentials_path = assert(os.getenv("VECTIS_PACKED_SERVICE_CREDENTIALS"))' \
+    'local cache_dir = assert(os.getenv("VECTIS_PACKED_SERVICE_CACHE"))' \
+    'assert(vectis.embedded.has_assets())' \
+    'local index = assert(vectis.embedded.read("/index.html"))' \
+    'assert(index:match("packed service asset"))' \
+    'local stat = assert(vectis.embedded.stat("/app.js"))' \
+    'assert(stat.content_type == "application/javascript")' \
+    'assert(vectis.auth.store_init({ credentials_path = credentials_path }))' \
+    'assert(vectis.auth.user_add({' \
+    '  credentials_path = credentials_path,' \
+    '  username = "packed-user@example.com",' \
+    '  password = "packed-password",' \
+    '  totp_secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",' \
+    '  totp_label = "Vectis:packed-user@example.com",' \
+    '  issuer = "Vectis",' \
+    '}))' \
+    'local server = assert(vectis.server.new({' \
+    '  app_name = "vectis-packed-service-e2e",' \
+    '  bind = "127.0.0.1",' \
+    '  port = port,' \
+    '  tls = { mode = "disabled" },' \
+    '}))' \
+    'assert(server:static_embedded({' \
+    '  path_prefix = "/site",' \
+    '  cache_control = "no-store",' \
+    '}))' \
+    'assert(server:webdav_embedded_site({' \
+    '  path_prefix = "/dav",' \
+    '  cache_dir = cache_dir,' \
+    '  site_id = "packed-service-e2e",' \
+    '  extract_policy = "repair",' \
+    '  auth = {' \
+    '    kind = "native",' \
+    '    credentials_path = credentials_path,' \
+    '    realm = "packed-e2e",' \
+    '  },' \
+    '}))' \
+    'assert(server:auth_routes({' \
+    '  path_prefix = "/auth",' \
+    '  credentials_path = credentials_path,' \
+    '  realm = "packed-e2e",' \
+    '  login_title = "Packed E2E Login",' \
+    '  time = 59,' \
+    '}))' \
+    'assert(server:start())' \
+    'while true do' \
+    '  os.execute("sleep 3600")' \
+    'end' >"$packed_service_script"
+  "$repo_root/build/debug/vectis" -a pack \
+    --script "$packed_service_script" \
+    --asset-dir "/:$packed_service_site" \
+    --content-type-map "$packed_content_types" \
+    --extract-mode repair \
+    --output "$packed_service"
+  start_server "lua packed webserver" "$work_dir/lua-packed-webserver.log" \
+    env VECTIS_PACKED_SERVICE_PORT="$kore_packed_port" \
+      VECTIS_PACKED_SERVICE_CREDENTIALS="$packed_service_credentials" \
+      VECTIS_PACKED_SERVICE_CACHE="$packed_service_cache" \
+      "$packed_service"
+  wait_for_http "http://127.0.0.1:$kore_packed_port/site/index.html" \
+    "lua packed webserver"
+  body=$(curl --max-time 3 -fsS \
+    "http://127.0.0.1:$kore_packed_port/site/index.html")
+  case "$body" in
+    *'packed service asset'*) ;;
+    *)
+      printf '%s\n' "Unexpected packed static response: $body" >&2
+      return 1
+      ;;
+  esac
+  curl --max-time 3 -fsSI \
+    "http://127.0.0.1:$kore_packed_port/site/app.js" |
+    grep -qi '^content-type: application/javascript' || {
+      printf '%s\n' "Packed static content type was not application/javascript" >&2
+      return 1
+    }
+  static_put_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -X PUT --data 'blocked' \
+    "http://127.0.0.1:$kore_packed_port/site/index.html")
+  if [ "$static_put_status" = "200" ] ||
+      [ "$static_put_status" = "201" ] ||
+      [ "$static_put_status" = "204" ]; then
+    printf '%s\n' "Unexpected packed static PUT status: $static_put_status" >&2
+    return 1
+  fi
+  body=$(curl --max-time 3 -fsS "http://127.0.0.1:$kore_packed_port/auth/login")
+  case "$body" in
+    *'Packed E2E Login'*'action="/auth/webdav-key"'*) ;;
+    *)
+      printf '%s\n' "Unexpected packed auth login response: $body" >&2
+      return 1
+      ;;
+  esac
+  webdav_key_response=$(curl --max-time 3 -fsS -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-user%40example.com&password=packed-password&totp_code=287082' \
+    "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
+  webdav_client_id=$(printf '%s\n' "$webdav_key_response" |
+    sed -n 's/^client_id=//p')
+  webdav_client_secret=$(printf '%s\n' "$webdav_key_response" |
+    sed -n 's/^client_secret=//p')
+  if [ -z "$webdav_client_id" ] || [ -z "$webdav_client_secret" ]; then
+    printf '%s\n' "Packed auth did not issue WebDAV credentials" >&2
+    printf '%s\n' "$webdav_key_response" >&2
+    return 1
+  fi
+  unauth_dav_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:$kore_packed_port/dav/index.html")
+  if [ "$unauth_dav_status" = "200" ]; then
+    printf '%s\n' "Packed WebDAV unexpectedly allowed unauthenticated GET" >&2
+    return 1
+  fi
+  body=$(curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/index.html")
+  case "$body" in
+    *'packed service asset'*) ;;
+    *)
+      printf '%s\n' "Unexpected packed WebDAV embedded response: $body" >&2
+      return 1
+      ;;
+  esac
+  curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+    -X PUT --data 'mutable packed note' \
+    "http://127.0.0.1:$kore_packed_port/dav/note.txt" >/dev/null
+  dav_write_body=$(curl --max-time 3 -fsS \
+    -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/note.txt")
+  if [ "$dav_write_body" != "mutable packed note" ]; then
+    printf '%s\n' "Unexpected packed WebDAV write response: $dav_write_body" >&2
+    return 1
+  fi
 
   printf '[e2e] lua libmdf example\n'
   "$repo_root/build/debug/vectis" "$repo_root/examples/lua/mdf_render.lua"
@@ -501,10 +664,15 @@ install_ssh_public_key() {
 }
 
 provision_ssh_known_hosts() {
-  if ! ssh-keyscan -p "$ssh_port" -T 10 127.0.0.1 >"$ssh_known_hosts" 2>/dev/null; then
-    printf '%s\n' "failed to scan SSH/SFTP host key" >&2
-    return 1
-  fi
+  count=0
+  while ! ssh-keyscan -p "$ssh_port" -T 5 127.0.0.1 >"$ssh_known_hosts" 2>/dev/null; do
+    count=$((count + 1))
+    if [ "$count" -ge 30 ]; then
+      printf '%s\n' "failed to scan SSH/SFTP host key" >&2
+      return 1
+    fi
+    sleep 1
+  done
   if [ ! -s "$ssh_known_hosts" ]; then
     printf '%s\n' "ssh-keyscan returned an empty known_hosts file" >&2
     return 1

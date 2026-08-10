@@ -439,6 +439,17 @@ Required deterministic e2e coverage:
 - exercise ACME configuration parsing and state path behavior with a local mock
   ACME service or fixture. Live Let's Encrypt checks must be explicit opt-in.
 
+Current generated packed-service coverage in `make test-e2e` packages a Lua
+webserver script plus generated HTML/JavaScript assets, runs the packed
+executable, serves the embedded read-only docroot, rejects writes through that
+read-only mount, exposes native auth routes, issues a WebDAV key after
+deterministic password+TOTP login, protects the WebDAV mount, serves embedded
+content through authenticated WebDAV, and accepts mutable WebDAV writes. The
+remaining full-contract checks are traversal, CSS/additional asset coverage,
+WebDAV list/copy/move/delete, mutation isolation proof, auth-guarded API/page
+coverage, SMTP email-token coverage in the same generated packed-service path,
+and same-process lockd `startconsumer` coverage in a packed executable.
+
 Email-token e2e coverage:
 
 - start a local mock SMTP server,
