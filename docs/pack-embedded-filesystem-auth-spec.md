@@ -20,6 +20,12 @@ modify the extracted files through WebDAV.
 This feature must not bake Landed-specific site content into Vectis. Vectis
 ships the generic machinery. Tests generate a generic fixture site.
 
+The packed service topology must also support a Kore-backed API or web server,
+authenticated WebDAV, and an app-owned liblockdc `startconsumer` service running
+simultaneously in one Vectis process. This is a required Landed migration shape:
+HTTP/WebDAV must remain responsive while the lockd consumer receives and handles
+messages, and scenario coverage must keep proving that behavior.
+
 ## Non-Goals
 
 - Vectis will not embed HTML/CSS/site assets at build time as first-party
