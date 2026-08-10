@@ -188,6 +188,10 @@ API ownership:
 - Developer-provided Lua auth or route callbacks cross the C/Lua boundary
   through explicit callback contracts; the native implementation remains usable
   from C without Lua translation.
+- Lua server helpers return C-owned app receiver wrappers. For example,
+  `vectis.server.new()` creates a native `vectis_app`, and
+  `server:static_embedded()` registers a read-only embedded docroot through
+  `app->static_embedded`; Lua does not implement the server dispatch path.
 
 Required Lua concepts:
 
@@ -198,6 +202,9 @@ Required Lua concepts:
 - `vectis.embedded.chunks(path, chunk_size)`
 - `vectis.embedded.default_extract_policy()`
 - `vectis.embedded.extract({to=..., policy=...})`
+- `vectis.server.new({bind=..., port=...})`
+- `server:static_embedded({path_prefix=..., cache_control=...})`
+- `server:start()`, `server:stop()`, and `server:close()`
 
 Streaming semantics:
 

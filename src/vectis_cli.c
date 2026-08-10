@@ -36,6 +36,7 @@
 #define VECTIS_PACK_MAGIC_SIZE 11u
 #define VECTIS_LUA_CURL_RESPONSE_BODY_LIMIT (8u * 1024u * 1024u)
 #define VECTIS_LUA_CURL_RESPONSE_HEADER_LIMIT (64u * 1024u)
+#define VECTIS_LUA_SERVER "vectis.server"
 
 typedef struct vectis_lua_runtime_context {
   const unsigned char *embedded_lockd_bundle;
@@ -46,6 +47,10 @@ typedef struct vectis_lua_runtime_context {
   size_t embedded_manifest_size;
   vectis_embedded_fs *embedded_fs;
 } vectis_lua_runtime_context;
+
+typedef struct vectis_lua_server {
+  vectis_app *app;
+} vectis_lua_server;
 
 typedef struct vectis_pack_asset {
   char *source_path;
@@ -3041,6 +3046,132 @@ static long vectis_lua_table_long(lua_State *lua, int index, const char *field,
   return value;
 }
 
+static vectis_lua_server *vectis_lua_check_server(lua_State *lua, int index) {
+  return (vectis_lua_server *)luaL_checkudata(lua, index, VECTIS_LUA_SERVER);
+}
+
+static vectis_app *vectis_lua_server_app(lua_State *lua, int index) {
+  vectis_lua_server *server;
+
+  server = vectis_lua_check_server(lua, index);
+  if (server->app == NULL) {
+    (void)luaL_error(lua, "vectis server is closed");
+  }
+  return server->app;
+}
+
+static int vectis_lua_server_close(lua_State *lua) {
+  vectis_lua_server *server;
+
+  server = vectis_lua_check_server(lua, 1);
+  if (server->app != NULL) {
+    server->app->close(server->app);
+    server->app = NULL;
+  }
+  return 0;
+}
+
+static int vectis_lua_server_start(lua_State *lua) {
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+
+  app = vectis_lua_server_app(lua, 1);
+  vectis_error_clear(&error);
+  status = app->start(app, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_server_stop(lua_State *lua) {
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+
+  app = vectis_lua_server_app(lua, 1);
+  vectis_error_clear(&error);
+  status = app->stop(app, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_server_static_embedded(lua_State *lua) {
+  vectis_lua_runtime_context *context;
+  vectis_app *app;
+  vectis_static_embedded_config config;
+  vectis_error error;
+  vectis_status status;
+  const char *path_prefix;
+
+  app = vectis_lua_server_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  context = (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(
+      (void *)lua);
+  if (context == NULL || context->embedded_fs == NULL) {
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID,
+        "embedded static mount requires packed assets");
+  }
+  path_prefix = vectis_lua_table_string(lua, 2, "path_prefix");
+  if (path_prefix == NULL) {
+    path_prefix = vectis_lua_table_string(lua, 2, "prefix");
+  }
+  vectis_static_embedded_config_init(&config);
+  config.path_prefix = path_prefix != NULL ? path_prefix : "/";
+  config.fs = context->embedded_fs;
+  config.content_type = vectis_lua_table_string(lua, 2, "content_type");
+  config.cache_control = vectis_lua_table_string(lua, 2, "cache_control");
+  config.not_found_body = vectis_lua_table_string(lua, 2, "not_found_body");
+  config.not_found_content_type =
+      vectis_lua_table_string(lua, 2, "not_found_content_type");
+  vectis_error_clear(&error);
+  status = app->static_embedded(app, &config, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_server_new(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_app_config config;
+  vectis_error error;
+  const char *app_name;
+  const char *bind;
+  size_t port;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  port = vectis_lua_table_size(lua, 1, "port", 8080u);
+  if (port == 0u || port > 65535u) {
+    return luaL_error(lua, "server port must be between 1 and 65535");
+  }
+  app_name = vectis_lua_table_string(lua, 1, "app_name");
+  bind = vectis_lua_table_string(lua, 1, "bind");
+  vectis_app_config_init(&config);
+  config.app_name = app_name != NULL ? app_name : "vectis-lua";
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = bind != NULL ? bind : "127.0.0.1";
+  config.tls.port = (unsigned short)port;
+  server = (vectis_lua_server *)lua_newuserdata(lua, sizeof(*server));
+  server->app = NULL;
+  vectis_error_clear(&error);
+  server->app = vectis_app_new(&config, &error);
+  if (server->app == NULL) {
+    return vectis_lua_push_error(
+        lua, error.code != VECTIS_OK ? error.code : VECTIS_ERR_NOMEM, &error);
+  }
+  luaL_getmetatable(lua, VECTIS_LUA_SERVER);
+  lua_setmetatable(lua, -2);
+  return 1;
+}
+
 static void vectis_lua_lonejson_schema_view_init(lonejson_schema_view *view) {
   memset(view, 0, sizeof(*view));
   view->size = sizeof(*view);
@@ -5373,8 +5504,33 @@ static void vectis_lua_push_auth_table(lua_State *lua) {
   lua_setfield(lua, -2, "qr");
 }
 
+static void vectis_lua_register_server(lua_State *lua) {
+  if (luaL_newmetatable(lua, VECTIS_LUA_SERVER)) {
+    lua_newtable(lua);
+    lua_pushcfunction(lua, vectis_lua_server_static_embedded);
+    lua_setfield(lua, -2, "static_embedded");
+    lua_pushcfunction(lua, vectis_lua_server_start);
+    lua_setfield(lua, -2, "start");
+    lua_pushcfunction(lua, vectis_lua_server_stop);
+    lua_setfield(lua, -2, "stop");
+    lua_pushcfunction(lua, vectis_lua_server_close);
+    lua_setfield(lua, -2, "close");
+    lua_setfield(lua, -2, "__index");
+    lua_pushcfunction(lua, vectis_lua_server_close);
+    lua_setfield(lua, -2, "__gc");
+  }
+  lua_pop(lua, 1);
+}
+
+static void vectis_lua_push_server_table(lua_State *lua) {
+  lua_newtable(lua);
+  lua_pushcfunction(lua, vectis_lua_server_new);
+  lua_setfield(lua, -2, "new");
+}
+
 static int luaopen_vectis(lua_State *lua) {
   vectis_lua_register_totp_qr(lua);
+  vectis_lua_register_server(lua);
   lua_newtable(lua);
   lua_pushliteral(lua, VECTIS_VERSION);
   lua_setfield(lua, -2, "version");
@@ -5408,6 +5564,8 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "embedded");
   vectis_lua_push_auth_table(lua);
   lua_setfield(lua, -2, "auth");
+  vectis_lua_push_server_table(lua);
+  lua_setfield(lua, -2, "server");
   return 1;
 }
 
