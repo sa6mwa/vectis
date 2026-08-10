@@ -9,7 +9,7 @@ s3_endpoint=${VECTIS_E2E_LOCKD_S3_ENDPOINT:-https://127.0.0.1:${VECTIS_LOCKD_S3_
 client_bundle=${VECTIS_E2E_LOCKD_CLIENT_BUNDLE:-$repo_root/devenv/volumes/lockd-config/client.pem}
 ssh_port=${VECTIS_SSH_PORT:-29222}
 mqtt_port=${VECTIS_MQTT_PORT:-21883}
-default_kore_basic_port=$((28080 + ($$ % 1000) * 2))
+default_kore_basic_port=$((31080 + ($$ % 1000) * 8))
 kore_basic_port=${VECTIS_E2E_KORE_BASIC_PORT:-$default_kore_basic_port}
 kore_lockd_port=${VECTIS_E2E_KORE_LOCKD_PORT:-$((kore_basic_port + 1))}
 kore_workflow_port=${VECTIS_E2E_KORE_WORKFLOW_PORT:-$((kore_basic_port + 2))}
@@ -572,6 +572,15 @@ run_lua_examples() {
     "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
   if [ "$wrong_token_status" = "200" ]; then
     printf '%s\n' "Packed auth accepted a wrong email token" >&2
+    return 1
+  fi
+  wrong_totp_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-user%40example.com&password=packed-password&totp_code=000000&email_transaction_id=$email_transaction_id&email_token=$email_token" \
+    "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
+  if [ "$wrong_totp_status" != "401" ]; then
+    printf '%s\n' "Packed auth wrong TOTP returned unexpected status: $wrong_totp_status" >&2
     return 1
   fi
   webdav_key_response=$(curl --max-time 3 -fsS -X POST \

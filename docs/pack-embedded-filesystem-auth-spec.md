@@ -450,12 +450,13 @@ read-only mount, exposes native auth routes, protects a JSON API route through
 the same native provider, delivers an email token through a local mock SMTP
 server, rejects password-only, wrong-token, and replayed-token WebDAV key
 requests, rejects expired email-token transactions, rejects SMTP delivery to
-non-allowlisted recipients, issues a WebDAV key after deterministic
+non-allowlisted recipients, rejects a wrong TOTP code with an otherwise valid
+email-token transaction, issues a WebDAV key after deterministic
 password+TOTP+email-token login, protects the WebDAV mount, serves embedded
 content through authenticated WebDAV, accepts mutable WebDAV writes, exercises
-WebDAV PROPFIND/MKCOL/COPY/MOVE/DELETE, and proves WebDAV mutations do not change
-embedded read-only assets. It also embeds the lockd client bundle, starts a
-C-owned lockd consumer service from the packed Lua server config, enqueues a
+WebDAV PROPFIND/MKCOL/COPY/MOVE/DELETE, and proves WebDAV mutations do not
+change embedded read-only assets. It also embeds the lockd client bundle, starts
+a C-owned lockd consumer service from the packed Lua server config, enqueues a
 lockd message through the Lua `lockdc` facade, proves the packed consumer writes
 WebDAV-visible markers, and proves WebDAV remains responsive while the packed
 consumer service is processing. Focused packed Lua smoke coverage in
