@@ -134,7 +134,7 @@ int main(void) {
     mount.path_prefix = "/dav";
     mount.storage = config;
     mount.auth = allow_webdav_auth;
-    expect(vectis_register_webdav(app, &mount, &error) == VECTIS_OK &&
+    expect(app->webdav(app, &mount, &error) == VECTIS_OK &&
                vectis_route_count(app) == 1u,
            "registers mounted WebDAV route with auth adapter");
     app->close(app);
@@ -148,13 +148,13 @@ int main(void) {
   if (app != NULL) {
     vectis_webdav_mount_config_init(&mount);
     mount.path_prefix = "/dav";
-    expect(vectis_register_webdav(app, &mount, &error) == VECTIS_ERR_INVALID,
+    expect(app->webdav(app, &mount, &error) == VECTIS_ERR_INVALID,
            "rejects WebDAV mount without storage");
     mount.storage = config;
-    expect(vectis_register_webdav(app, &mount, &error) == VECTIS_ERR_INVALID,
+    expect(app->webdav(app, &mount, &error) == VECTIS_ERR_INVALID,
            "rejects protected WebDAV mount without auth adapter");
     mount.auth_required = 0;
-    expect(vectis_register_webdav(app, &mount, &error) == VECTIS_OK,
+    expect(app->webdav(app, &mount, &error) == VECTIS_OK,
            "registers explicitly public WebDAV mount without auth adapter");
     app->close(app);
   }

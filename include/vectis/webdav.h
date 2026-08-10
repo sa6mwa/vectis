@@ -97,7 +97,7 @@ typedef vectis_status (*vectis_webdav_auth_fn)(
     const vectis_webdav_auth_request *request,
     vectis_webdav_auth_response *response, void *userdata, vectis_error *error);
 
-typedef struct vectis_webdav_mount_config {
+struct vectis_webdav_mount_config {
   const char *path_prefix;
   vectis_webdav_config storage;
   /* Protected mounts fail registration unless auth is set. */
@@ -105,7 +105,7 @@ typedef struct vectis_webdav_mount_config {
   int conceal_unauthorized;
   vectis_webdav_auth_fn auth;
   void *auth_userdata;
-} vectis_webdav_mount_config;
+};
 
 /*
  * Extract an embedded filesystem into the WebDAV mutable content tree, then
@@ -113,7 +113,7 @@ typedef struct vectis_webdav_mount_config {
  * VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING so user-edited files survive
  * restart; set extract_policy to OVERWRITE for repair/restore behavior.
  */
-typedef struct vectis_webdav_embedded_site_config {
+struct vectis_webdav_embedded_site_config {
   const char *path_prefix;
   vectis_webdav_config storage;
   const vectis_embedded_fs *fs;
@@ -122,7 +122,7 @@ typedef struct vectis_webdav_embedded_site_config {
   int conceal_unauthorized;
   vectis_webdav_auth_fn auth;
   void *auth_userdata;
-} vectis_webdav_embedded_site_config;
+};
 
 typedef struct vectis_webdav_auth_provider_config {
   const vectis_auth_provider *provider;

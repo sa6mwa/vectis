@@ -1239,6 +1239,10 @@ static void assert_json_route_surface(void) {
   assert(app->prefixed_dsv_route != NULL);
   assert(app->static_file != NULL);
   assert(app->static_directory != NULL);
+  assert(app->static_embedded != NULL);
+  assert(app->webdav != NULL);
+  assert(app->webdav_embedded_site != NULL);
+  assert(app->auth_routes != NULL);
   assert(app->openapi_doc != NULL);
   assert(app->openapi != NULL);
   assert(app->route_count != NULL);

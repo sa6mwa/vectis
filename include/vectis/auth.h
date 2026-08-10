@@ -113,14 +113,14 @@ typedef struct vectis_auth_native_provider_config {
  * username, password, and optional totp_code, then issues a WebDAV Basic app
  * key through the native credentials store.
  */
-typedef struct vectis_auth_routes_config {
+struct vectis_auth_routes_config {
   const char *path_prefix;
   vectis_auth_store_config store;
   const char *realm;
   const char *login_title;
   const char *login_template_html;
   size_t max_body_bytes;
-} vectis_auth_routes_config;
+};
 
 typedef struct vectis_auth_user_config {
   /* Stable local username/principal. */

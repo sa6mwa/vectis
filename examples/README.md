@@ -111,8 +111,8 @@ mechanically valid. New stateful examples should prefer handle methods such as
 `app->route(app, ...)`, `app->start(app, ...)`, `client->get(client, ...)`,
 `client->del(client, ...)`, `ssh->exec(ssh, ...)`, and
 `service->run(service, ...)`. App-owned accessors such as
-`app->logger(app)`, `app->lockd_client(app)`, and
-`app->openapi(app, ...)` should use the same facade style. Constructors and
-stateless helpers such as `vectis_source_from_path()`, `vectis_route()`,
-`vectis_route_regex()`, and `vectis_json_route()` remain normal free
-functions.
+`app->logger(app)`, `app->lockd_client(app)`, `app->openapi(app, ...)`,
+`app->webdav(app, ...)`, and `app->auth_routes(app, ...)` should use the same
+facade style. Constructors and stateless helpers such as
+`vectis_source_from_path()`, `vectis_route()`, `vectis_route_regex()`, and
+`vectis_json_route()` remain normal free functions.

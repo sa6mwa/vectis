@@ -1422,20 +1422,19 @@ static void assert_kore_smoke(void) {
   embedded_webdav_mount.storage.site_id = "runtime-embedded";
   embedded_webdav_mount.fs = embedded_fs;
   embedded_webdav_mount.auth = runtime_webdav_auth;
-  status =
-      vectis_register_webdav_embedded_site(app, &embedded_webdav_mount, &error);
+  status = app->webdav_embedded_site(app, &embedded_webdav_mount, &error);
   assert(status == VECTIS_OK);
   vectis_webdav_mount_config_init(&webdav_mount);
   webdav_mount.path_prefix = "/dav";
   webdav_mount.storage = webdav_storage;
   webdav_mount.auth = runtime_webdav_auth;
-  status = vectis_register_webdav(app, &webdav_mount, &error);
+  status = app->webdav(app, &webdav_mount, &error);
   assert(status == VECTIS_OK);
   vectis_auth_routes_config_init(&auth_routes);
   auth_routes.path_prefix = "/auth";
   auth_routes.store = auth_store;
   auth_routes.login_title = "Runtime Login";
-  status = vectis_register_auth_routes(app, &auth_routes, &error);
+  status = app->auth_routes(app, &auth_routes, &error);
   assert(status == VECTIS_OK);
   vectis_auth_native_provider_config_init(&native_auth);
   native_auth.store = auth_store;
@@ -1454,7 +1453,7 @@ static void assert_kore_smoke(void) {
   native_webdav_mount.storage.site_id = "runtime-native";
   native_webdav_mount.auth = vectis_webdav_auth_provider;
   native_webdav_mount.auth_userdata = &native_webdav_auth;
-  status = vectis_register_webdav(app, &native_webdav_mount, &error);
+  status = app->webdav(app, &native_webdav_mount, &error);
   assert(status == VECTIS_OK);
   status = app->start(app, &error);
   assert(status == VECTIS_OK);

@@ -3056,6 +3056,9 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   app->static_file = vectis_register_static_file;
   app->static_directory = vectis_register_static_directory;
   app->static_embedded = vectis_register_static_embedded;
+  app->webdav = vectis_register_webdav;
+  app->webdav_embedded_site = vectis_register_webdav_embedded_site;
+  app->auth_routes = vectis_register_auth_routes;
   app->openapi_doc = vectis_attach_openapi_doc;
   app->openapi = vectis_generate_openapi;
   app->route_count = vectis_route_count;
