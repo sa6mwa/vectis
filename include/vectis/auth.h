@@ -14,6 +14,7 @@ extern "C" {
 #define VECTIS_AUTH_CHALLENGE_MAX 255u
 #define VECTIS_AUTH_GENERATED_PASSWORD_MAX 64u
 #define VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS 300u
+#define VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS 5u
 #define VECTIS_AUTH_PENDING_LOGIN_DEFAULT_TTL_SECONDS 300u
 
 typedef enum vectis_auth_mode {
@@ -193,6 +194,8 @@ struct vectis_auth_routes_config {
   int require_email_token;
   /* Zero uses VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS. */
   uint64_t email_token_ttl_seconds;
+  /* Zero uses VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS. */
+  unsigned int email_token_max_attempts;
   /* Zero uses VECTIS_AUTH_PENDING_LOGIN_DEFAULT_TTL_SECONDS. */
   uint64_t pending_login_ttl_seconds;
   /*
@@ -295,6 +298,8 @@ typedef struct vectis_auth_email_token_issue_config {
   const char *email;
   /* Optional pending auth transaction this email token is bound to. */
   const char *pending_transaction_id;
+  /* Zero uses VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS. */
+  unsigned int max_attempts;
   /* Optional deterministic values for tests or externally created flows. */
   const char *transaction_id;
   const char *token;
@@ -329,6 +334,8 @@ typedef struct vectis_auth_email_token_result {
   char *realm;
   char *email;
   char *pending_transaction_id;
+  unsigned int failed_attempts;
+  unsigned int max_attempts;
 } vectis_auth_email_token_result;
 
 typedef struct vectis_auth_oauth2_http_request {

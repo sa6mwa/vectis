@@ -560,6 +560,11 @@ int main(void) {
   expect_ok(status, &error, "checks wrong email token");
   expect(!email_result.verified && !email_result.expired,
          "wrong email token is rejected without consuming transaction");
+  expect(email_result.failed_attempts == 1u,
+         "wrong email token increments failed attempts");
+  expect(email_result.max_attempts ==
+             VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS,
+         "email token reports default max attempts");
   vectis_auth_email_token_result_cleanup(&email_result);
 
   email_verify.token = "123456";
@@ -581,6 +586,51 @@ int main(void) {
   expect_ok(status, &error, "checks replayed email token");
   expect(!email_result.verified && !email_result.expired,
          "verified email token is consumed");
+  vectis_auth_email_token_result_cleanup(&email_result);
+  vectis_auth_email_token_cleanup(&email_token);
+
+  vectis_auth_email_token_issue_config_init(&email_issue);
+  email_issue.store = store;
+  email_issue.username = "email-user@example.com";
+  email_issue.realm = "unit";
+  email_issue.email = "email-user@example.com";
+  email_issue.transaction_id = "email-tx-limited";
+  email_issue.token = "limited";
+  email_issue.now_seconds = 1300;
+  email_issue.ttl_seconds = 300;
+  email_issue.max_attempts = 2u;
+  status = vectis_auth_email_token_issue(&email_issue, &email_token, &error);
+  expect_ok(status, &error, "issues limited-attempt email auth token");
+
+  vectis_auth_email_token_verify_config_init(&email_verify);
+  email_verify.store = store;
+  email_verify.transaction_id = "email-tx-limited";
+  email_verify.username = "email-user@example.com";
+  email_verify.realm = "unit";
+  email_verify.token = "wrong-one";
+  email_verify.now_seconds = 1310;
+  status = vectis_auth_email_token_verify(&email_verify, &email_result, &error);
+  expect_ok(status, &error, "checks first limited-attempt wrong token");
+  expect(!email_result.verified && !email_result.expired,
+         "first limited wrong token is rejected");
+  expect(email_result.failed_attempts == 1u && email_result.max_attempts == 2u,
+         "first limited wrong token records attempt budget");
+  vectis_auth_email_token_result_cleanup(&email_result);
+
+  email_verify.token = "wrong-two";
+  status = vectis_auth_email_token_verify(&email_verify, &email_result, &error);
+  expect_ok(status, &error, "checks second limited-attempt wrong token");
+  expect(!email_result.verified && !email_result.expired,
+         "second limited wrong token is rejected");
+  expect(email_result.failed_attempts == 2u && email_result.max_attempts == 2u,
+         "second limited wrong token reaches attempt budget");
+  vectis_auth_email_token_result_cleanup(&email_result);
+
+  email_verify.token = "limited";
+  status = vectis_auth_email_token_verify(&email_verify, &email_result, &error);
+  expect_ok(status, &error, "checks limited-attempt token after budget");
+  expect(!email_result.verified && !email_result.expired,
+         "limited-attempt token is consumed after failed budget");
   vectis_auth_email_token_result_cleanup(&email_result);
   vectis_auth_email_token_cleanup(&email_token);
 

@@ -7,6 +7,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <lonejson.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -124,6 +125,8 @@ typedef struct vectis_auth_email_token_record {
   char pending_transaction_id[256];
   char token_hash[2u * VECTIS_AUTH_PASSWORD_HASH_BYTES + 1u];
   int64_t expires_at;
+  unsigned int failed_attempts;
+  unsigned int max_attempts;
   int found;
 } vectis_auth_email_token_record;
 
@@ -1050,6 +1053,8 @@ vectis_auth_email_token_record_from_json(lonejson *runtime, const char *json,
                                          vectis_auth_email_token_record *out) {
   char *buffer;
   int64_t expires_at;
+  int64_t failed_attempts;
+  int64_t max_attempts;
   int ok;
 
   if (runtime == NULL || json == NULL || out == NULL) {
@@ -1063,6 +1068,8 @@ vectis_auth_email_token_record_from_json(lonejson *runtime, const char *json,
   buffer[len] = '\0';
   memset(out, 0, sizeof(*out));
   expires_at = 0;
+  failed_attempts = 0;
+  max_attempts = VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS;
   ok = vectis_auth_claim_string(runtime, buffer, "transaction_id",
                                 out->transaction_id,
                                 sizeof(out->transaction_id)) &&
@@ -1079,7 +1086,22 @@ vectis_auth_email_token_record_from_json(lonejson *runtime, const char *json,
     (void)vectis_auth_claim_string(runtime, buffer, "pending_transaction_id",
                                    out->pending_transaction_id,
                                    sizeof(out->pending_transaction_id));
+    (void)vectis_auth_claim_i64(runtime, buffer, "failed_attempts",
+                                &failed_attempts);
+    (void)vectis_auth_claim_i64(runtime, buffer, "max_attempts", &max_attempts);
+    if (failed_attempts < 0) {
+      failed_attempts = 0;
+    }
+    if (max_attempts <= 0) {
+      max_attempts = VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS;
+    }
     out->expires_at = expires_at;
+    out->failed_attempts = failed_attempts > (int64_t)UINT_MAX
+                               ? UINT_MAX
+                               : (unsigned int)failed_attempts;
+    out->max_attempts = max_attempts > (int64_t)UINT_MAX
+                            ? UINT_MAX
+                            : (unsigned int)max_attempts;
     out->found = 1;
   }
   free(buffer);
@@ -1835,6 +1857,8 @@ void vectis_auth_routes_config_init(vectis_auth_routes_config *config) {
   config->max_body_bytes = 8192u;
   config->required_factors = VECTIS_AUTH_ROUTE_FACTOR_PASSWORD;
   config->email_token_ttl_seconds = VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS;
+  config->email_token_max_attempts =
+      VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS;
   config->pending_login_ttl_seconds =
       VECTIS_AUTH_PENDING_LOGIN_DEFAULT_TTL_SECONDS;
   vectis_auth_smtp_config_init(&config->email_smtp);
@@ -1957,6 +1981,7 @@ void vectis_auth_email_token_issue_config_init(
   vectis_auth_store_config_init(&config->store);
   config->realm = "vectis";
   config->ttl_seconds = VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS;
+  config->max_attempts = VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS;
 }
 
 void vectis_auth_email_token_init(vectis_auth_email_token *token) {
@@ -3293,7 +3318,8 @@ static vectis_status vectis_auth_build_oauth2_flow_record_json(
 static vectis_status vectis_auth_build_email_token_record_json(
     lonejson *runtime, const char *transaction_id, const char *username,
     const char *realm, const char *email, const char *pending_transaction_id,
-    const char *token_hash, int64_t expires_at, lonejson_owned_buffer *out,
+    const char *token_hash, int64_t expires_at, unsigned int failed_attempts,
+    unsigned int max_attempts, lonejson_owned_buffer *out,
     vectis_error *error) {
   lonejson_writer writer;
   lonejson_error json_error;
@@ -3362,6 +3388,19 @@ static vectis_status vectis_auth_build_email_token_record_json(
   }
   if (status == LONEJSON_STATUS_OK) {
     status = lonejson_writer_i64(&writer, expires_at, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_key(&writer, "failed_attempts", 15u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status =
+        lonejson_writer_i64(&writer, (int64_t)failed_attempts, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_key(&writer, "max_attempts", 12u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_i64(&writer, (int64_t)max_attempts, &json_error);
   }
   if (status == LONEJSON_STATUS_OK) {
     status = lonejson_writer_end_object(&writer, &json_error);
@@ -3962,6 +4001,7 @@ vectis_status vectis_auth_email_token_issue(
   uint64_t ttl;
   uint64_t expires_at;
   size_t store_len;
+  unsigned int max_attempts;
 
   if (out == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
@@ -4011,6 +4051,9 @@ vectis_status vectis_auth_email_token_issue(
   now = config->now_seconds != 0u ? config->now_seconds : (uint64_t)time(NULL);
   ttl = config->ttl_seconds != 0u ? config->ttl_seconds
                                   : VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS;
+  max_attempts = config->max_attempts != 0u
+                     ? config->max_attempts
+                     : VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS;
   if (ttl > (uint64_t)INT64_MAX || now > (uint64_t)INT64_MAX - ttl) {
     OPENSSL_cleanse(token, sizeof(token));
     OPENSSL_cleanse(token_hash, sizeof(token_hash));
@@ -4029,8 +4072,8 @@ vectis_status vectis_auth_email_token_issue(
   lonejson_owned_buffer_init(&token_json);
   status = vectis_auth_build_email_token_record_json(
       runtime, transaction_id, config->username, effective_realm, config->email,
-      config->pending_transaction_id, token_hash, (int64_t)expires_at,
-      &token_json, error);
+      config->pending_transaction_id, token_hash, (int64_t)expires_at, 0u,
+      max_attempts, &token_json, error);
   if (status != VECTIS_OK) {
     lonejson_owned_buffer_free(&token_json);
     lonejson_free(runtime);
@@ -4096,15 +4139,22 @@ vectis_status vectis_auth_email_token_verify(
     const vectis_auth_email_token_verify_config *config,
     vectis_auth_email_token_result *out, vectis_error *error) {
   vectis_auth_store_lock lock;
+  vectis_auth_store_config temp_config;
   vectis_auth_email_token_record record;
   lonejson *runtime;
+  lonejson_owned_buffer token_json;
   vectis_status status;
   char token_hash[2u * VECTIS_AUTH_PASSWORD_HASH_BYTES + 1u];
   char temp_path[4096];
+  char *store_json;
   const char *effective_realm;
   const char *required_pending_transaction_id;
   uint64_t now;
+  size_t store_len;
+  unsigned int next_failed_attempts;
   int drop_record;
+  int replace_record;
+  int token_matches;
 
   if (out == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
@@ -4112,8 +4162,11 @@ vectis_status vectis_auth_email_token_verify(
     return VECTIS_ERR_INVALID;
   }
   vectis_auth_email_token_result_init(out);
+  lonejson_owned_buffer_init(&token_json);
   memset(&lock, 0, sizeof(lock));
   lock.fd = -1;
+  temp_path[0] = '\0';
+  store_json = NULL;
   if (config == NULL || config->transaction_id == NULL ||
       config->transaction_id[0] == '\0' || config->username == NULL ||
       config->username[0] == '\0' || config->token == NULL ||
@@ -4148,6 +4201,8 @@ vectis_status vectis_auth_email_token_verify(
         &config->store, runtime, config->transaction_id, &record, error);
   }
   drop_record = 0;
+  replace_record = 0;
+  next_failed_attempts = 0u;
   if (status == VECTIS_OK && record.found &&
       strcmp(record.username, config->username) == 0 &&
       strcmp(record.realm, effective_realm) == 0 &&
@@ -4155,12 +4210,25 @@ vectis_status vectis_auth_email_token_verify(
           0) {
     now =
         config->now_seconds != 0u ? config->now_seconds : (uint64_t)time(NULL);
+    token_matches = strcmp(record.token_hash, token_hash) == 0;
+    out->failed_attempts = record.failed_attempts;
+    out->max_attempts = record.max_attempts;
     if (now > (uint64_t)record.expires_at) {
       out->expired = 1;
       drop_record = 1;
-    } else if (strcmp(record.token_hash, token_hash) == 0) {
+    } else if (token_matches) {
       out->verified = 1;
       drop_record = 1;
+    } else {
+      next_failed_attempts = record.failed_attempts == UINT_MAX
+                                 ? UINT_MAX
+                                 : record.failed_attempts + 1u;
+      out->failed_attempts = next_failed_attempts;
+      if (next_failed_attempts >= record.max_attempts) {
+        drop_record = 1;
+      } else {
+        replace_record = 1;
+      }
     }
     out->username = vectis_auth_strdup(record.username);
     out->realm = vectis_auth_strdup(record.realm);
@@ -4178,6 +4246,34 @@ vectis_status vectis_auth_email_token_verify(
       status = VECTIS_ERR_NOMEM;
     }
   }
+  if (status == VECTIS_OK && replace_record) {
+    status = vectis_auth_build_email_token_record_json(
+        runtime, record.transaction_id, record.username, record.realm,
+        record.email, record.pending_transaction_id, record.token_hash,
+        record.expires_at, next_failed_attempts, record.max_attempts,
+        &token_json, error);
+    if (status == VECTIS_OK) {
+      status = vectis_auth_drop_email_token_to_temp_locked(
+          &config->store, runtime, config->transaction_id, temp_path,
+          sizeof(temp_path), error);
+    }
+    if (status == VECTIS_OK) {
+      temp_config = config->store;
+      temp_config.credentials_path = temp_path;
+      store_len = 0u;
+      status = vectis_auth_read_store_locked(&temp_config, &store_json,
+                                             &store_len, error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_auth_write_store_with_email_token_locked(
+          &config->store, store_json, store_len, token_json.data,
+          token_json.len, error);
+    }
+    if (temp_path[0] != '\0') {
+      (void)unlink(temp_path);
+      temp_path[0] = '\0';
+    }
+  }
   if (status == VECTIS_OK && drop_record) {
     status = vectis_auth_drop_email_token_to_temp_locked(
         &config->store, runtime, config->transaction_id, temp_path,
@@ -4193,7 +4289,9 @@ vectis_status vectis_auth_email_token_verify(
   if (lock.fd >= 0) {
     vectis_auth_lock_close(&lock);
   }
+  lonejson_owned_buffer_free(&token_json);
   lonejson_free(runtime);
+  free(store_json);
   OPENSSL_cleanse(token_hash, sizeof(token_hash));
   return status;
 }

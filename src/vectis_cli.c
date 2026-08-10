@@ -4273,6 +4273,7 @@ static int vectis_lua_server_auth_routes(lua_State *lua) {
   const char **smtp_allowed_recipients;
   vectis_lua_runtime_context *context;
   size_t smtp_allowed_recipient_count;
+  int email_token_index;
   int smtp_index;
 
   app = vectis_lua_server_app(lua, 1);
@@ -4342,6 +4343,19 @@ static int vectis_lua_server_auth_routes(lua_State *lua) {
                                          &config.required_factors);
   config.email_token_ttl_seconds = (uint64_t)vectis_lua_table_size(
       lua, 2, "email_token_ttl_seconds", config.email_token_ttl_seconds);
+  config.email_token_max_attempts = (unsigned int)vectis_lua_table_size(
+      lua, 2, "email_token_max_attempts", config.email_token_max_attempts);
+  lua_getfield(lua, 2, "email_token");
+  if (!lua_isnil(lua, -1)) {
+    luaL_checktype(lua, -1, LUA_TTABLE);
+    email_token_index = lua_gettop(lua);
+    config.email_token_ttl_seconds = (uint64_t)vectis_lua_table_size(
+        lua, email_token_index, "ttl_seconds", config.email_token_ttl_seconds);
+    config.email_token_max_attempts = (unsigned int)vectis_lua_table_size(
+        lua, email_token_index, "max_attempts",
+        config.email_token_max_attempts);
+  }
+  lua_pop(lua, 1);
   lua_getfield(lua, 2, "email_smtp");
   if (lua_isnil(lua, -1)) {
     lua_pop(lua, 1);

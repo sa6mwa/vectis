@@ -407,7 +407,10 @@ smoke now exercises SMTP delivery through a local mock SMTP harness and reads
 the delivered token from a mock mailbox before issuing a WebDAV app key. Email
 token issue accepts `pending_transaction_id` when a browser flow has already
 created one, stores that scope with the hashed token record, and rejects
-verification attempts whose pending transaction id does not match.
+verification attempts whose pending transaction id does not match. Email-token
+records also carry a failed-attempt counter and max-attempt budget, defaulting
+to five attempts; wrong token submissions increment the counter and consume the
+token once the budget is reached.
 
 ## Configuration Model
 

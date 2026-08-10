@@ -4256,6 +4256,7 @@ typedef struct vectis_auth_route_data {
   unsigned int required_factors;
   int require_email_token;
   uint64_t email_token_ttl_seconds;
+  unsigned int email_token_max_attempts;
   uint64_t pending_login_ttl_seconds;
   vectis_auth_smtp_config email_smtp;
 } vectis_auth_route_data;
@@ -5074,6 +5075,7 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   data->required_factors = config->required_factors;
   data->require_email_token = config->require_email_token;
   data->email_token_ttl_seconds = config->email_token_ttl_seconds;
+  data->email_token_max_attempts = config->email_token_max_attempts;
   data->pending_login_ttl_seconds = config->pending_login_ttl_seconds;
   data->email_smtp = config->email_smtp;
   cursor = (char *)(data + 1);
@@ -5895,6 +5897,7 @@ static vectis_status vectis_auth_email_token_dispatch(vectis_app *app,
   issue.pending_transaction_id = fields.pending_transaction_id;
   issue.now_seconds = data->unix_seconds;
   issue.ttl_seconds = data->email_token_ttl_seconds;
+  issue.max_attempts = data->email_token_max_attempts;
   vectis_auth_email_token_init(&token);
   status = vectis_auth_email_token_issue(&issue, &token, error);
   if (status != VECTIS_OK) {
