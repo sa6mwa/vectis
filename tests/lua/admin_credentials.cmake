@@ -15,6 +15,94 @@ if(NOT init_output MATCHES "initialized=")
 endif()
 
 execute_process(
+  COMMAND "${VECTIS_BIN}" -a oauth2 --authorize
+          --authorization-endpoint "https://idp.example.test/authorize"
+          --client-id "admin-client"
+          --redirect-uri "http://127.0.0.1/callback"
+          --scope "openid dav"
+          --state "admin-state"
+          --nonce "admin-nonce"
+          --code-verifier "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~admin"
+  RESULT_VARIABLE oauth_authorize_result
+  OUTPUT_VARIABLE oauth_authorize_output
+  ERROR_VARIABLE oauth_authorize_error)
+if(NOT oauth_authorize_result EQUAL 0)
+  message(FATAL_ERROR "oauth2 authorize failed: ${oauth_authorize_error}")
+endif()
+if(NOT oauth_authorize_output MATCHES "authorization_url=https://idp.example.test/authorize\\?")
+  message(FATAL_ERROR "oauth2 authorize did not print authorization URL")
+endif()
+if(NOT oauth_authorize_output MATCHES "code_challenge=")
+  message(FATAL_ERROR "oauth2 authorize did not print PKCE challenge")
+endif()
+if(NOT oauth_authorize_output MATCHES "state=admin-state")
+  message(FATAL_ERROR "oauth2 authorize did not preserve state")
+endif()
+if(NOT oauth_authorize_output MATCHES "nonce=admin-nonce")
+  message(FATAL_ERROR "oauth2 authorize did not preserve nonce")
+endif()
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a oauth2 --store "${store}" --upsert-flow
+          "admin-flow" --subject "admin-oidc@example.com"
+          --access-token "admin-access-token" --token-type "Bearer"
+          --refresh-token "admin-refresh-token" --scope "openid dav"
+          --id-token "admin-id-token" --expires-at "5200"
+  RESULT_VARIABLE oauth_upsert_result
+  OUTPUT_VARIABLE oauth_upsert_output
+  ERROR_VARIABLE oauth_upsert_error)
+if(NOT oauth_upsert_result EQUAL 0)
+  message(FATAL_ERROR "oauth2 upsert-flow failed: ${oauth_upsert_error}")
+endif()
+if(NOT oauth_upsert_output MATCHES "stored_flow=admin-flow")
+  message(FATAL_ERROR "oauth2 upsert-flow did not report stored flow")
+endif()
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a oauth2 --store "${store}" --load-flow
+          "admin-flow"
+  RESULT_VARIABLE oauth_load_result
+  OUTPUT_VARIABLE oauth_load_output
+  ERROR_VARIABLE oauth_load_error)
+if(NOT oauth_load_result EQUAL 0)
+  message(FATAL_ERROR "oauth2 load-flow failed: ${oauth_load_error}")
+endif()
+if(NOT oauth_load_output MATCHES "found=true")
+  message(FATAL_ERROR "oauth2 load-flow did not find stored flow")
+endif()
+if(NOT oauth_load_output MATCHES "subject=admin-oidc@example.com")
+  message(FATAL_ERROR "oauth2 load-flow did not print subject")
+endif()
+if(NOT oauth_load_output MATCHES "access_token=admin-access-token")
+  message(FATAL_ERROR "oauth2 load-flow did not print access token")
+endif()
+if(NOT oauth_load_output MATCHES "refresh_token=admin-refresh-token")
+  message(FATAL_ERROR "oauth2 load-flow did not print refresh token")
+endif()
+if(NOT oauth_load_output MATCHES "expires_at=5200")
+  message(FATAL_ERROR "oauth2 load-flow did not print expiration")
+endif()
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a oauth2 --store "${store}" --webdav-key
+          "admin-flow" --subject "admin-oidc@example.com"
+  RESULT_VARIABLE oauth_webdav_key_result
+  OUTPUT_VARIABLE oauth_webdav_key_output
+  ERROR_VARIABLE oauth_webdav_key_error)
+if(NOT oauth_webdav_key_result EQUAL 0)
+  message(FATAL_ERROR "oauth2 webdav-key failed: ${oauth_webdav_key_error}")
+endif()
+if(NOT oauth_webdav_key_output MATCHES "client_id=")
+  message(FATAL_ERROR "oauth2 webdav-key did not print client_id")
+endif()
+if(NOT oauth_webdav_key_output MATCHES "client_secret=")
+  message(FATAL_ERROR "oauth2 webdav-key did not print client_secret")
+endif()
+if(NOT oauth_webdav_key_output MATCHES "\"oauth2_flow_id\":\"admin-flow\"")
+  message(FATAL_ERROR "oauth2 webdav-key did not carry OAuth flow id")
+endif()
+
+execute_process(
   COMMAND "${VECTIS_BIN}" -a credentials --store "${store}" --issue
           --subject "admin@example.com" --purpose "webdav" --bearer
   RESULT_VARIABLE issue_result
