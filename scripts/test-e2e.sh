@@ -270,7 +270,11 @@ run_lua_examples() {
   webdav_client_secret=
   static_put_status=
   unauth_dav_status=
+  traversal_status=
   dav_write_body=
+  propfind_body=
+  propfind_status=
+  method_status=
 
   printf '[e2e] lua runner\n'
   printf '%s\n' \
@@ -306,8 +310,12 @@ run_lua_examples() {
     'window.vectisPackedService = true;' \
     >"$packed_service_site/app.js"
   printf '%s\n' \
+    'body { color: #123456; }' \
+    >"$packed_service_site/app.css"
+  printf '%s\n' \
     '{"types":[' \
     '{"extension":".html","content_type":"text/html; charset=utf-8"},' \
+    '{"extension":".css","content_type":"text/css"},' \
     '{"extension":".js","content_type":"application/javascript"}' \
     ']}' >"$packed_content_types"
   printf '%s\n' \
@@ -320,6 +328,7 @@ run_lua_examples() {
     'assert(index:match("packed service asset"))' \
     'local stat = assert(vectis.embedded.stat("/app.js"))' \
     'assert(stat.content_type == "application/javascript")' \
+    'assert(assert(vectis.embedded.stat("/app.css")).content_type == "text/css")' \
     'assert(vectis.auth.store_init({ credentials_path = credentials_path }))' \
     'assert(vectis.auth.user_add({' \
     '  credentials_path = credentials_path,' \
@@ -389,6 +398,42 @@ run_lua_examples() {
       printf '%s\n' "Packed static content type was not application/javascript" >&2
       return 1
     }
+  curl --max-time 3 -fsSI \
+    "http://127.0.0.1:$kore_packed_port/site/app.css" |
+    grep -qi '^content-type: text/css' || {
+      printf '%s\n' "Packed static CSS content type was not text/css" >&2
+      return 1
+    }
+  curl --max-time 3 -fsSI \
+    "http://127.0.0.1:$kore_packed_port/site/app.css" |
+    grep -qi '^etag:' || {
+      printf '%s\n' "Packed static CSS response did not include an ETag" >&2
+      return 1
+    }
+  curl --max-time 3 -fsSI \
+    "http://127.0.0.1:$kore_packed_port/site/app.css" |
+    grep -qi '^cache-control: no-store' || {
+      printf '%s\n' "Packed static CSS response did not include cache-control" >&2
+      return 1
+    }
+  body=$(curl --max-time 3 -fsS \
+    "http://127.0.0.1:$kore_packed_port/site/app.css")
+  if [ "$body" != "body { color: #123456; }" ]; then
+    printf '%s\n' "Unexpected packed CSS response: $body" >&2
+    return 1
+  fi
+  for traversal_path in \
+    "/site/../secret" \
+    "/site/%2e%2e/secret" \
+    "/site/%2E%2E/secret" \
+    "/site/..%2fsecret"; do
+    traversal_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+      "http://127.0.0.1:$kore_packed_port$traversal_path" || true)
+    if [ "$traversal_status" != "400" ] && [ "$traversal_status" != "404" ]; then
+      printf '%s\n' "Unexpected packed traversal status for $traversal_path: $traversal_status" >&2
+      return 1
+    fi
+  done
   static_put_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
     -X PUT --data 'blocked' \
     "http://127.0.0.1:$kore_packed_port/site/index.html")
@@ -434,6 +479,56 @@ run_lua_examples() {
       return 1
       ;;
   esac
+  propfind_status=$(curl --max-time 3 -sS -o "$work_dir/packed-propfind-root.xml" \
+    -w '%{http_code}' \
+    -u "$webdav_client_id:$webdav_client_secret" \
+    -X PROPFIND -H 'Depth: 1' \
+    "http://127.0.0.1:$kore_packed_port/dav")
+  propfind_body=$(cat "$work_dir/packed-propfind-root.xml")
+  if [ "$propfind_status" != "207" ]; then
+    printf '%s\n' "Unexpected packed WebDAV PROPFIND status: $propfind_status" >&2
+    printf '%s\n' "$propfind_body" >&2
+    return 1
+  fi
+  case "$propfind_body" in
+    *'<D:href>/dav/index.html</D:href>'*) ;;
+    *)
+      printf '%s\n' "Packed WebDAV PROPFIND did not list index.html: $propfind_body" >&2
+      return 1
+      ;;
+  esac
+  case "$propfind_body" in
+    *'<D:href>/dav/app.css</D:href>'*) ;;
+    *)
+      printf '%s\n' "Packed WebDAV PROPFIND did not list app.css: $propfind_body" >&2
+      return 1
+      ;;
+  esac
+  case "$propfind_body" in
+    *'<D:href>/dav/app.js</D:href>'*) ;;
+    *)
+      printf '%s\n' "Packed WebDAV PROPFIND did not list app.js: $propfind_body" >&2
+      return 1
+      ;;
+  esac
+  curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+    -X PUT --data 'webdav index override' \
+    "http://127.0.0.1:$kore_packed_port/dav/index.html" >/dev/null
+  body=$(curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/index.html")
+  if [ "$body" != "webdav index override" ]; then
+    printf '%s\n' "Unexpected packed WebDAV index override: $body" >&2
+    return 1
+  fi
+  body=$(curl --max-time 3 -fsS \
+    "http://127.0.0.1:$kore_packed_port/site/index.html")
+  case "$body" in
+    *'packed service asset'*) ;;
+    *)
+      printf '%s\n' "Packed static asset changed after WebDAV override: $body" >&2
+      return 1
+      ;;
+  esac
   curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
     -X PUT --data 'mutable packed note' \
     "http://127.0.0.1:$kore_packed_port/dav/note.txt" >/dev/null
@@ -442,6 +537,85 @@ run_lua_examples() {
     "http://127.0.0.1:$kore_packed_port/dav/note.txt")
   if [ "$dav_write_body" != "mutable packed note" ]; then
     printf '%s\n' "Unexpected packed WebDAV write response: $dav_write_body" >&2
+    return 1
+  fi
+  method_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$webdav_client_id:$webdav_client_secret" \
+    -X MKCOL "http://127.0.0.1:$kore_packed_port/dav/docs")
+  if [ "$method_status" != "201" ]; then
+    printf '%s\n' "Unexpected packed WebDAV MKCOL status: $method_status" >&2
+    return 1
+  fi
+  curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+    -X PUT --data 'copied then moved' \
+    "http://127.0.0.1:$kore_packed_port/dav/docs/a.txt" >/dev/null
+  propfind_status=$(curl --max-time 3 -sS -o "$work_dir/packed-propfind-docs.xml" \
+    -w '%{http_code}' \
+    -u "$webdav_client_id:$webdav_client_secret" \
+    -X PROPFIND -H 'Depth: 1' \
+    "http://127.0.0.1:$kore_packed_port/dav/docs")
+  propfind_body=$(cat "$work_dir/packed-propfind-docs.xml")
+  if [ "$propfind_status" != "207" ]; then
+    printf '%s\n' "Unexpected packed WebDAV collection PROPFIND status: $propfind_status" >&2
+    printf '%s\n' "$propfind_body" >&2
+    return 1
+  fi
+  case "$propfind_body" in
+    *'<D:href>/dav/docs/a.txt</D:href>'*) ;;
+    *)
+      printf '%s\n' "Packed WebDAV collection did not list a.txt: $propfind_body" >&2
+      return 1
+      ;;
+  esac
+  method_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$webdav_client_id:$webdav_client_secret" \
+    -X COPY \
+    -H "Destination: http://127.0.0.1:$kore_packed_port/dav/docs/a-copy.txt" \
+    "http://127.0.0.1:$kore_packed_port/dav/docs/a.txt")
+  if [ "$method_status" != "201" ]; then
+    printf '%s\n' "Unexpected packed WebDAV COPY status: $method_status" >&2
+    return 1
+  fi
+  body=$(curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/docs/a-copy.txt")
+  if [ "$body" != "copied then moved" ]; then
+    printf '%s\n' "Unexpected packed WebDAV copied body: $body" >&2
+    return 1
+  fi
+  method_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$webdav_client_id:$webdav_client_secret" \
+    -X MOVE \
+    -H "Destination: http://127.0.0.1:$kore_packed_port/dav/docs/a-moved.txt" \
+    "http://127.0.0.1:$kore_packed_port/dav/docs/a-copy.txt")
+  if [ "$method_status" != "201" ]; then
+    printf '%s\n' "Unexpected packed WebDAV MOVE status: $method_status" >&2
+    return 1
+  fi
+  method_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/docs/a-copy.txt")
+  if [ "$method_status" != "404" ]; then
+    printf '%s\n' "Packed WebDAV MOVE left source readable: $method_status" >&2
+    return 1
+  fi
+  body=$(curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/docs/a-moved.txt")
+  if [ "$body" != "copied then moved" ]; then
+    printf '%s\n' "Unexpected packed WebDAV moved body: $body" >&2
+    return 1
+  fi
+  method_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$webdav_client_id:$webdav_client_secret" \
+    -X DELETE "http://127.0.0.1:$kore_packed_port/dav/docs/a-moved.txt")
+  if [ "$method_status" != "204" ]; then
+    printf '%s\n' "Unexpected packed WebDAV DELETE status: $method_status" >&2
+    return 1
+  fi
+  method_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/docs/a-moved.txt")
+  if [ "$method_status" != "404" ]; then
+    printf '%s\n' "Packed WebDAV DELETE left file readable: $method_status" >&2
     return 1
   fi
 
