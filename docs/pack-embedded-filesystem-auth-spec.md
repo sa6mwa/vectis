@@ -404,7 +404,10 @@ flow. C-owned SMTP delivery is available through the route config's
 `email_smtp` settings; Lua only passes configuration into the native route
 registration and does not own auth or delivery semantics. The packed service
 smoke now exercises SMTP delivery through a local mock SMTP harness and reads
-the delivered token from a mock mailbox before issuing a WebDAV app key.
+the delivered token from a mock mailbox before issuing a WebDAV app key. Email
+token issue accepts `pending_transaction_id` when a browser flow has already
+created one, stores that scope with the hashed token record, and rejects
+verification attempts whose pending transaction id does not match.
 
 ## Configuration Model
 

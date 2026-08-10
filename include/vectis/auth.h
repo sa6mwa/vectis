@@ -293,6 +293,8 @@ typedef struct vectis_auth_email_token_issue_config {
   const char *username;
   const char *realm;
   const char *email;
+  /* Optional pending auth transaction this email token is bound to. */
+  const char *pending_transaction_id;
   /* Optional deterministic values for tests or externally created flows. */
   const char *transaction_id;
   const char *token;
@@ -312,6 +314,8 @@ typedef struct vectis_auth_email_token_verify_config {
   const char *transaction_id;
   const char *username;
   const char *realm;
+  /* When set, the token must be bound to this pending auth transaction. */
+  const char *pending_transaction_id;
   const char *token;
   uint64_t now_seconds;
 } vectis_auth_email_token_verify_config;
@@ -324,6 +328,7 @@ typedef struct vectis_auth_email_token_result {
   char *username;
   char *realm;
   char *email;
+  char *pending_transaction_id;
 } vectis_auth_email_token_result;
 
 typedef struct vectis_auth_oauth2_http_request {

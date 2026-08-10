@@ -346,11 +346,15 @@ string(REPLACE
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(password_only_login.status == 202)\nlocal pending_transaction_id"
-       "assert(password_only_login.status == 202)\nassert_no_store(password_only_login)\nlocal password_only_login_alias = request_http(\"POST\", \"/_vectis/auth/login\", \"username=pack-user&password=pack-password\", {[\"Content-Type\"] = \"application/x-www-form-urlencoded\"})\nassert(password_only_login_alias.status == 202)\nassert_no_store(password_only_login_alias)\nassert(password_only_login_alias.body:match(\"pending_transaction_id=([^\\n]+)\"))\nassert(password_only_login_alias.body:match(\"totp_required=1\"))\nlocal pending_transaction_id"
+       "assert(password_only_login.status == 202)\nassert_no_store(password_only_login)\nlocal password_only_login_alias = request_http(\"POST\", \"/_vectis/auth/login\", \"username=pack-user&password=pack-password\", {[\"Content-Type\"] = \"application/x-www-form-urlencoded\"})\nassert(password_only_login_alias.status == 202)\nassert_no_store(password_only_login_alias)\nlocal alias_pending_transaction_id = assert(password_only_login_alias.body:match(\"pending_transaction_id=([^\\n]+)\"))\nassert(password_only_login_alias.body:match(\"totp_required=1\"))\nlocal pending_transaction_id"
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(token_issue.status == 200)\nlocal email_transaction_id"
        "assert(token_issue.status == 200)\nassert_no_store(token_issue)\nlocal email_transaction_id"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "local token_issue = request_http(\"POST\", \"/_vectis/auth/email-token\", \"username=pack-user&email=pack-user%40example.test\","
+       "local token_issue = request_http(\"POST\", \"/_vectis/auth/email-token\", \"username=pack-user&email=pack-user%40example.test&pending_transaction_id=\" .. pending_transaction_id,"
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(login_response.status == 200)\nlocal replay_login"
@@ -363,6 +367,10 @@ string(REPLACE
 string(REPLACE
        "assert(wrong_email_login.status == 401)\nassert(wrong_email_login.body"
        "assert(wrong_email_login.status == 401)\nassert_no_store(wrong_email_login)\nassert(wrong_email_login.body"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "local wrong_email_login = request_http(\"POST\", \"/_vectis/auth/continue\","
+       "local wrong_pending_login = request_http(\"POST\", \"/_vectis/auth/continue\", \"username=pack-user&pending_transaction_id=\" .. alias_pending_transaction_id .. \"&totp_code=\" .. totp_59 .. \"&email_transaction_id=\" .. email_transaction_id .. \"&email_token=\" .. email_token, {[\"Content-Type\"] = \"application/x-www-form-urlencoded\"})\nassert(wrong_pending_login.status == 401)\nassert_no_store(wrong_pending_login)\nassert(wrong_pending_login.body == \"login failed\\n\")\nlocal wrong_email_login = request_http(\"POST\", \"/_vectis/auth/continue\","
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(replay_login.status == 401)\nassert(replay_login.body"

@@ -589,6 +589,46 @@ int main(void) {
   email_issue.username = "email-user@example.com";
   email_issue.realm = "unit";
   email_issue.email = "email-user@example.com";
+  email_issue.pending_transaction_id = "pending-email-1";
+  email_issue.transaction_id = "email-tx-scoped";
+  email_issue.token = "abcdef";
+  email_issue.now_seconds = 1200;
+  email_issue.ttl_seconds = 300;
+  status = vectis_auth_email_token_issue(&email_issue, &email_token, &error);
+  expect_ok(status, &error, "issues pending-scoped email auth token");
+
+  vectis_auth_email_token_verify_config_init(&email_verify);
+  email_verify.store = store;
+  email_verify.transaction_id = "email-tx-scoped";
+  email_verify.username = "email-user@example.com";
+  email_verify.realm = "unit";
+  email_verify.pending_transaction_id = "pending-email-other";
+  email_verify.token = "abcdef";
+  email_verify.now_seconds = 1210;
+  status = vectis_auth_email_token_verify(&email_verify, &email_result, &error);
+  expect_ok(status, &error,
+            "rejects wrong pending transaction for email token");
+  expect(!email_result.verified && !email_result.expired,
+         "wrong pending transaction does not verify scoped email token");
+  vectis_auth_email_token_result_cleanup(&email_result);
+
+  email_verify.pending_transaction_id = "pending-email-1";
+  status = vectis_auth_email_token_verify(&email_verify, &email_result, &error);
+  expect_ok(status, &error, "verifies pending-scoped email auth token");
+  expect(email_result.verified && !email_result.expired,
+         "pending-scoped email token verifies");
+  expect(email_result.pending_transaction_id != NULL &&
+             strcmp(email_result.pending_transaction_id, "pending-email-1") ==
+                 0,
+         "email token result carries pending transaction id");
+  vectis_auth_email_token_result_cleanup(&email_result);
+  vectis_auth_email_token_cleanup(&email_token);
+
+  vectis_auth_email_token_issue_config_init(&email_issue);
+  email_issue.store = store;
+  email_issue.username = "email-user@example.com";
+  email_issue.realm = "unit";
+  email_issue.email = "email-user@example.com";
   email_issue.transaction_id = "email-tx-expired";
   email_issue.token = "654321";
   email_issue.now_seconds = 2000;

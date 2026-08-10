@@ -121,6 +121,7 @@ typedef struct vectis_auth_email_token_record {
   char username[VECTIS_AUTH_PRINCIPAL_MAX + 1u];
   char realm[128];
   char email[320];
+  char pending_transaction_id[256];
   char token_hash[2u * VECTIS_AUTH_PASSWORD_HASH_BYTES + 1u];
   int64_t expires_at;
   int found;
@@ -1075,6 +1076,9 @@ vectis_auth_email_token_record_from_json(lonejson *runtime, const char *json,
                                 sizeof(out->token_hash)) &&
        vectis_auth_claim_i64(runtime, buffer, "expires_at", &expires_at);
   if (ok) {
+    (void)vectis_auth_claim_string(runtime, buffer, "pending_transaction_id",
+                                   out->pending_transaction_id,
+                                   sizeof(out->pending_transaction_id));
     out->expires_at = expires_at;
     out->found = 1;
   }
@@ -1997,6 +2001,7 @@ void vectis_auth_email_token_result_cleanup(
   free(result->username);
   free(result->realm);
   free(result->email);
+  free(result->pending_transaction_id);
   vectis_auth_email_token_result_init(result);
 }
 
@@ -3287,8 +3292,9 @@ static vectis_status vectis_auth_build_oauth2_flow_record_json(
 
 static vectis_status vectis_auth_build_email_token_record_json(
     lonejson *runtime, const char *transaction_id, const char *username,
-    const char *realm, const char *email, const char *token_hash,
-    int64_t expires_at, lonejson_owned_buffer *out, vectis_error *error) {
+    const char *realm, const char *email, const char *pending_transaction_id,
+    const char *token_hash, int64_t expires_at, lonejson_owned_buffer *out,
+    vectis_error *error) {
   lonejson_writer writer;
   lonejson_error json_error;
   lonejson_status status;
@@ -3332,6 +3338,17 @@ static vectis_status vectis_auth_build_email_token_record_json(
   }
   if (status == LONEJSON_STATUS_OK) {
     status = lonejson_writer_string(&writer, email, strlen(email), &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && pending_transaction_id != NULL &&
+      pending_transaction_id[0] != '\0') {
+    status = lonejson_writer_key(&writer, "pending_transaction_id", 22u,
+                                 &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && pending_transaction_id != NULL &&
+      pending_transaction_id[0] != '\0') {
+    status =
+        lonejson_writer_string(&writer, pending_transaction_id,
+                               strlen(pending_transaction_id), &json_error);
   }
   if (status == LONEJSON_STATUS_OK) {
     status = lonejson_writer_key(&writer, "token_hash", 10u, &json_error);
@@ -4012,7 +4029,8 @@ vectis_status vectis_auth_email_token_issue(
   lonejson_owned_buffer_init(&token_json);
   status = vectis_auth_build_email_token_record_json(
       runtime, transaction_id, config->username, effective_realm, config->email,
-      token_hash, (int64_t)expires_at, &token_json, error);
+      config->pending_transaction_id, token_hash, (int64_t)expires_at,
+      &token_json, error);
   if (status != VECTIS_OK) {
     lonejson_owned_buffer_free(&token_json);
     lonejson_free(runtime);
@@ -4084,6 +4102,7 @@ vectis_status vectis_auth_email_token_verify(
   char token_hash[2u * VECTIS_AUTH_PASSWORD_HASH_BYTES + 1u];
   char temp_path[4096];
   const char *effective_realm;
+  const char *required_pending_transaction_id;
   uint64_t now;
   int drop_record;
 
@@ -4107,6 +4126,11 @@ vectis_status vectis_auth_email_token_verify(
   effective_realm = config->realm != NULL && config->realm[0] != '\0'
                         ? config->realm
                         : "vectis";
+  required_pending_transaction_id =
+      config->pending_transaction_id != NULL &&
+              config->pending_transaction_id[0] != '\0'
+          ? config->pending_transaction_id
+          : "";
   status = vectis_auth_token_sha256_hex(config->token, token_hash,
                                         sizeof(token_hash), error);
   if (status != VECTIS_OK) {
@@ -4126,7 +4150,9 @@ vectis_status vectis_auth_email_token_verify(
   drop_record = 0;
   if (status == VECTIS_OK && record.found &&
       strcmp(record.username, config->username) == 0 &&
-      strcmp(record.realm, effective_realm) == 0) {
+      strcmp(record.realm, effective_realm) == 0 &&
+      strcmp(record.pending_transaction_id, required_pending_transaction_id) ==
+          0) {
     now =
         config->now_seconds != 0u ? config->now_seconds : (uint64_t)time(NULL);
     if (now > (uint64_t)record.expires_at) {
@@ -4139,7 +4165,13 @@ vectis_status vectis_auth_email_token_verify(
     out->username = vectis_auth_strdup(record.username);
     out->realm = vectis_auth_strdup(record.realm);
     out->email = vectis_auth_strdup(record.email);
-    if (out->username == NULL || out->realm == NULL || out->email == NULL) {
+    out->pending_transaction_id =
+        record.pending_transaction_id[0] != '\0'
+            ? vectis_auth_strdup(record.pending_transaction_id)
+            : NULL;
+    if (out->username == NULL || out->realm == NULL || out->email == NULL ||
+        (record.pending_transaction_id[0] != '\0' &&
+         out->pending_transaction_id == NULL)) {
       vectis_auth_email_token_result_cleanup(out);
       vectis_set_error(error, VECTIS_ERR_NOMEM,
                        "failed to copy auth email token result");

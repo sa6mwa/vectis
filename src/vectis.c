@@ -5892,6 +5892,7 @@ static vectis_status vectis_auth_email_token_dispatch(vectis_app *app,
   issue.username = fields.username;
   issue.realm = data->realm;
   issue.email = fields.email;
+  issue.pending_transaction_id = fields.pending_transaction_id;
   issue.now_seconds = data->unix_seconds;
   issue.ttl_seconds = data->email_token_ttl_seconds;
   vectis_auth_email_token_init(&token);
@@ -5923,6 +5924,7 @@ static vectis_status vectis_auth_email_token_dispatch(vectis_app *app,
       consume.transaction_id = token.transaction_id;
       consume.username = fields.username;
       consume.realm = data->realm;
+      consume.pending_transaction_id = fields.pending_transaction_id;
       consume.token = token.token;
       consume.now_seconds = data->unix_seconds;
       vectis_auth_email_token_result_init(&consume_result);
@@ -6179,6 +6181,7 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
     email_token.transaction_id = fields.email_transaction_id;
     email_token.username = fields.username;
     email_token.realm = data->realm;
+    email_token.pending_transaction_id = fields.pending_transaction_id;
     email_token.token = fields.email_token;
     email_token.now_seconds = data->unix_seconds;
     vectis_auth_email_token_result_init(&email_result);
