@@ -238,7 +238,46 @@ local callback_provider = assert(vectis.auth.provider_callback(function(request)
 end))
 local callback_allowed = assert(callback_provider:authenticate({ resource = "/lua" }))
 assert(callback_allowed.action == "allow")
+assert(callback_allowed.status_code == 0)
 assert(callback_allowed.principal == "/lua")
+local callback_required_provider = assert(vectis.auth.provider_callback(function(request)
+  return {
+    action = "required",
+    status_code = 401,
+    www_authenticate = 'Basic realm="' .. request.resource .. '"',
+  }
+end))
+local callback_required = assert(callback_required_provider:authenticate({ resource = "lua" }))
+assert(callback_required.action == "required")
+assert(callback_required.status_code == 401)
+assert(callback_required.www_authenticate == 'Basic realm="lua"')
+local callback_redirect_provider = assert(vectis.auth.provider_callback(function()
+  return {
+    action = "redirect",
+    status_code = 303,
+    location = "/auth/login?next=/dav",
+    content_type = "text/plain",
+    body = "login required",
+  }
+end))
+local callback_redirect = assert(callback_redirect_provider:authenticate({}))
+assert(callback_redirect.action == "redirect")
+assert(callback_redirect.status_code == 303)
+assert(callback_redirect.location == "/auth/login?next=/dav")
+assert(callback_redirect.content_type == "text/plain")
+assert(callback_redirect.body == "login required")
+local callback_deny_provider = assert(vectis.auth.provider_callback(function()
+  return {}
+end))
+local callback_deny = assert(callback_deny_provider:authenticate({}))
+assert(callback_deny.action == "deny")
+local callback_invalid_provider = assert(vectis.auth.provider_callback(function()
+  return { action = "maybe" }
+end))
+local callback_invalid, callback_invalid_error = callback_invalid_provider:authenticate({})
+assert(callback_invalid == nil)
+assert(callback_invalid_error.status_string == "invalid")
+assert(callback_invalid_error.message:match("action"))
 local user = assert(vectis.auth.user_add({
   credentials_path = auth_path,
   username = "lua-user@example.com",

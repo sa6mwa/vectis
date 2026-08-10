@@ -1229,6 +1229,19 @@ static int vectis_lua_push_error(lua_State *lua, vectis_status status,
   return 2;
 }
 
+static int vectis_lua_push_error_text(lua_State *lua, vectis_status status,
+                                      const char *message) {
+  lua_pushnil(lua);
+  lua_newtable(lua);
+  lua_pushinteger(lua, (lua_Integer)status);
+  lua_setfield(lua, -2, "status");
+  lua_pushstring(lua, vectis_status_string(status));
+  lua_setfield(lua, -2, "status_string");
+  lua_pushstring(lua, message != NULL ? message : vectis_status_string(status));
+  lua_setfield(lua, -2, "message");
+  return 2;
+}
+
 static const char *vectis_lua_table_string(lua_State *lua, int index,
                                            const char *field) {
   const char *value;
@@ -1342,6 +1355,40 @@ static const char *vectis_lua_auth_mode_name(unsigned mode) {
     return "bearer";
   }
   return "default";
+}
+
+static int vectis_lua_auth_action_name_valid(const char *action) {
+  return action != NULL &&
+         (strcmp(action, "allow") == 0 || strcmp(action, "deny") == 0 ||
+          strcmp(action, "required") == 0 || strcmp(action, "redirect") == 0);
+}
+
+static int vectis_lua_copy_optional_string_field(lua_State *lua, int source,
+                                                 int destination,
+                                                 const char *field,
+                                                 const char **message) {
+  size_t len;
+  const char *value;
+
+  source = lua_absindex(lua, source);
+  destination = lua_absindex(lua, destination);
+  lua_getfield(lua, source, field);
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return 1;
+  }
+  value = lua_tolstring(lua, -1, &len);
+  if (value == NULL) {
+    if (message != NULL) {
+      *message = "auth callback response string field is invalid";
+    }
+    lua_pop(lua, 1);
+    return 0;
+  }
+  lua_pushlstring(lua, value, len);
+  lua_setfield(lua, destination, field);
+  lua_pop(lua, 1);
+  return 1;
 }
 
 static void vectis_lua_auth_store_config(lua_State *lua, int index,
@@ -1717,6 +1764,14 @@ static void vectis_lua_auth_push_provider_response(
   if (response != NULL && response->www_authenticate[0] != '\0') {
     lua_pushstring(lua, response->www_authenticate);
     lua_setfield(lua, -2, "www_authenticate");
+  }
+  if (response != NULL && response->content_type != NULL) {
+    lua_pushstring(lua, response->content_type);
+    lua_setfield(lua, -2, "content_type");
+  }
+  if (response != NULL && response->body != NULL && response->body_size > 0u) {
+    lua_pushlstring(lua, (const char *)response->body, response->body_size);
+    lua_setfield(lua, -2, "body");
   }
   if (response != NULL && response->principal[0] != '\0') {
     lua_pushstring(lua, response->principal);
@@ -2379,6 +2434,12 @@ static int vectis_lua_auth_provider_native(lua_State *lua) {
 
 static int vectis_lua_auth_callback_provider_authenticate(lua_State *lua) {
   int base;
+  int output_index;
+  int response_index;
+  lua_Integer status_code;
+  const char *action;
+  const char *message;
+  char error_message[256];
 
   luaL_checktype(lua, 1, LUA_TTABLE);
   if (lua_gettop(lua) < 2) {
@@ -2390,8 +2451,67 @@ static int vectis_lua_auth_callback_provider_authenticate(lua_State *lua) {
   lua_getfield(lua, 1, "callback");
   luaL_checktype(lua, -1, LUA_TFUNCTION);
   lua_pushvalue(lua, 2);
-  lua_call(lua, 1, LUA_MULTRET);
-  return lua_gettop(lua) - base;
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    message = lua_tostring(lua, -1);
+    (void)snprintf(error_message, sizeof(error_message),
+                   "auth callback failed: %s",
+                   message != NULL ? message : "unknown Lua error");
+    lua_settop(lua, base);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_STATE, error_message);
+  }
+  if (!lua_istable(lua, -1)) {
+    lua_settop(lua, base);
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID,
+        "auth callback must return a provider response table");
+  }
+  response_index = lua_absindex(lua, -1);
+  lua_getfield(lua, response_index, "action");
+  action = lua_isnil(lua, -1) ? "deny" : lua_tostring(lua, -1);
+  if (!vectis_lua_auth_action_name_valid(action)) {
+    lua_pop(lua, 1);
+    lua_settop(lua, base);
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID,
+        "auth callback response action must be allow, deny, required, or "
+        "redirect");
+  }
+  lua_pop(lua, 1);
+  lua_newtable(lua);
+  output_index = lua_absindex(lua, -1);
+  lua_pushstring(lua, action);
+  lua_setfield(lua, output_index, "action");
+  lua_getfield(lua, response_index, "status_code");
+  if (lua_isnil(lua, -1)) {
+    status_code = 0;
+  } else if (lua_isnumber(lua, -1)) {
+    status_code = lua_tointeger(lua, -1);
+  } else {
+    lua_pop(lua, 1);
+    lua_settop(lua, base);
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID,
+        "auth callback response status_code must be a number");
+  }
+  lua_pop(lua, 1);
+  lua_pushinteger(lua, status_code);
+  lua_setfield(lua, output_index, "status_code");
+  message = NULL;
+  if (!vectis_lua_copy_optional_string_field(lua, response_index, output_index,
+                                             "location", &message) ||
+      !vectis_lua_copy_optional_string_field(lua, response_index, output_index,
+                                             "www_authenticate", &message) ||
+      !vectis_lua_copy_optional_string_field(lua, response_index, output_index,
+                                             "content_type", &message) ||
+      !vectis_lua_copy_optional_string_field(lua, response_index, output_index,
+                                             "body", &message) ||
+      !vectis_lua_copy_optional_string_field(lua, response_index, output_index,
+                                             "principal", &message)) {
+    lua_settop(lua, base);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID, message);
+  }
+  lua_remove(lua, response_index);
+  return 1;
 }
 
 static int vectis_lua_auth_provider_callback(lua_State *lua) {
