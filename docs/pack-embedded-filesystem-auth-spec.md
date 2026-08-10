@@ -344,12 +344,20 @@ Suggested route contract:
 
 - `GET /_vectis/auth/login`
 - `POST /_vectis/auth/login`
+- `POST /_vectis/auth/email-token`
 - `POST /_vectis/auth/continue`
 - `POST /_vectis/auth/webdav-key`
 - `POST /_vectis/auth/logout`
 
 Applications may mount the handlers elsewhere or implement equivalent Lua
 routes against the same C auth/session APIs.
+
+Current native route behavior includes a C-owned `/email-token` issue endpoint
+and optional `require_email_token` enforcement on `/webdav-key`: when enabled,
+WebDAV key issuance requires password, any configured TOTP, and a verified
+single-use email token transaction. SMTP delivery is a separate pending C helper
+slice; the route/state contract is already native and does not depend on Lua
+owning auth semantics.
 
 ## Configuration Model
 

@@ -3650,6 +3650,10 @@ static int vectis_lua_server_auth_routes(lua_State *lua) {
   config.unix_seconds = (uint64_t)vectis_lua_table_size(lua, 2, "time", 0u);
   config.totp_window =
       (unsigned int)vectis_lua_table_size(lua, 2, "window", 0u);
+  config.require_email_token =
+      vectis_lua_table_bool(lua, 2, "require_email_token", 0);
+  config.email_token_ttl_seconds = (uint64_t)vectis_lua_table_size(
+      lua, 2, "email_token_ttl_seconds", config.email_token_ttl_seconds);
 
   vectis_error_clear(&error);
   status = app->auth_routes(app, &config, &error);

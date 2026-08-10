@@ -109,10 +109,14 @@ typedef struct vectis_auth_native_provider_config {
 /*
  * Native browser/login route set. Registers:
  *   GET  <path_prefix>/login
+ *   POST <path_prefix>/email-token
  *   POST <path_prefix>/webdav-key
- * The POST endpoint accepts application/x-www-form-urlencoded fields
- * username, password, and optional totp_code, then issues a WebDAV Basic app
- * key through the native credentials store.
+ * The email-token endpoint accepts application/x-www-form-urlencoded fields
+ * username and email, creates a single-use token transaction, and returns the
+ * transaction data. SMTP delivery is intentionally separate from this route.
+ * The webdav-key endpoint accepts username, password, optional totp_code, and
+ * when require_email_token is set, email_transaction_id plus email_token. It
+ * then issues a WebDAV Basic app key through the native credentials store.
  */
 struct vectis_auth_routes_config {
   const char *path_prefix;
@@ -125,6 +129,10 @@ struct vectis_auth_routes_config {
   uint64_t unix_seconds;
   /* Zero uses the login default. */
   unsigned int totp_window;
+  /* Require email_transaction_id and email_token before issuing WebDAV keys. */
+  int require_email_token;
+  /* Zero uses VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS. */
+  uint64_t email_token_ttl_seconds;
 };
 
 typedef struct vectis_auth_user_config {

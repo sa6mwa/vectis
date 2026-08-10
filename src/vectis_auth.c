@@ -1693,6 +1693,7 @@ void vectis_auth_routes_config_init(vectis_auth_routes_config *config) {
   config->realm = "vectis";
   config->login_title = "Vectis Login";
   config->max_body_bytes = 8192u;
+  config->email_token_ttl_seconds = VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS;
 }
 
 void vectis_auth_user_config_init(vectis_auth_user_config *config) {

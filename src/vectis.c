@@ -4253,12 +4253,17 @@ typedef struct vectis_auth_route_data {
   size_t max_body_bytes;
   uint64_t unix_seconds;
   unsigned int totp_window;
+  int require_email_token;
+  uint64_t email_token_ttl_seconds;
 } vectis_auth_route_data;
 
 typedef struct vectis_auth_form_fields {
   char *username;
   char *password;
   char *totp_code;
+  char *email;
+  char *email_transaction_id;
+  char *email_token;
 } vectis_auth_form_fields;
 
 typedef struct vectis_webdav_propfind_state {
@@ -5030,6 +5035,8 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   data->max_body_bytes = config->max_body_bytes;
   data->unix_seconds = config->unix_seconds;
   data->totp_window = config->totp_window;
+  data->require_email_token = config->require_email_token;
+  data->email_token_ttl_seconds = config->email_token_ttl_seconds;
   cursor = (char *)(data + 1);
 #define VECTIS_COPY_AUTH_ROUTE_FIELD(field, value)                             \
   do {                                                                         \
@@ -5117,6 +5124,9 @@ static void vectis_auth_form_cleanup(vectis_auth_form_fields *fields) {
   free(fields->username);
   free(fields->password);
   free(fields->totp_code);
+  free(fields->email);
+  free(fields->email_transaction_id);
+  free(fields->email_token);
   memset(fields, 0, sizeof(*fields));
 }
 
@@ -5131,6 +5141,13 @@ static vectis_status vectis_auth_form_set(vectis_auth_form_fields *fields,
     target = &fields->password;
   } else if (strcmp(key, "totp_code") == 0 || strcmp(key, "totp") == 0) {
     target = &fields->totp_code;
+  } else if (strcmp(key, "email") == 0) {
+    target = &fields->email;
+  } else if (strcmp(key, "email_transaction_id") == 0 ||
+             strcmp(key, "transaction_id") == 0) {
+    target = &fields->email_transaction_id;
+  } else if (strcmp(key, "email_token") == 0 || strcmp(key, "token") == 0) {
+    target = &fields->email_token;
   }
   if (target == NULL) {
     free(value);
@@ -5325,6 +5342,32 @@ vectis_auth_webdav_key_response(vectis_auth_issued_credential *credential,
   return status;
 }
 
+static vectis_status
+vectis_auth_email_token_route_response(vectis_auth_email_token *token,
+                                       vectis_response *response,
+                                       vectis_error *error) {
+  vectis_string_builder text;
+  vectis_bytes body;
+  vectis_status status;
+
+  memset(&text, 0, sizeof(text));
+  status = vectis_string_builder_appendf(
+      &text, error, "transaction_id=%s\ntoken=%s\nexpires_at=%llu\n",
+      token->transaction_id != NULL ? token->transaction_id : "",
+      token->token != NULL ? token->token : "",
+      (unsigned long long)token->expires_at);
+  if (status != VECTIS_OK) {
+    vectis_string_builder_cleanup(&text);
+    return status;
+  }
+  body.data = text.data;
+  body.size = text.size;
+  status = vectis_response_bytes(response, 200, "text/plain; charset=utf-8",
+                                 body, error);
+  vectis_string_builder_cleanup(&text);
+  return status;
+}
+
 static vectis_status vectis_auth_login_dispatch(vectis_app *app,
                                                 vectis_request *request,
                                                 vectis_response *response,
@@ -5342,6 +5385,67 @@ static vectis_status vectis_auth_login_dispatch(vectis_app *app,
   return vectis_auth_login_form_response(data, response, error);
 }
 
+static vectis_status vectis_auth_email_token_dispatch(vectis_app *app,
+                                                      vectis_request *request,
+                                                      vectis_response *response,
+                                                      void *userdata,
+                                                      vectis_error *error) {
+  vectis_auth_route_data *data;
+  vectis_mutable_bytes body;
+  vectis_auth_form_fields fields;
+  vectis_auth_email_token_issue_config issue;
+  vectis_auth_email_token token;
+  const char *content_type;
+  vectis_status status;
+
+  (void)app;
+  data = (vectis_auth_route_data *)userdata;
+  if (data == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth route is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  content_type = vectis_request_header(request, "content-type");
+  if (content_type != NULL &&
+      strncasecmp(content_type, "application/x-www-form-urlencoded",
+                  strlen("application/x-www-form-urlencoded")) != 0) {
+    return vectis_response_status(response, 415, error);
+  }
+  memset(&body, 0, sizeof(body));
+  status = vectis_request_body_read_all(request, &body, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_auth_parse_form((const char *)body.data, body.size, &fields,
+                                  error);
+  vectis_mutable_bytes_cleanup(&body);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (fields.username == NULL || fields.username[0] == '\0' ||
+      fields.email == NULL || fields.email[0] == '\0') {
+    vectis_auth_form_cleanup(&fields);
+    return vectis_response_text(response, 400, "text/plain; charset=utf-8",
+                                "username and email are required\n", error);
+  }
+  vectis_auth_email_token_issue_config_init(&issue);
+  issue.store = data->store;
+  issue.username = fields.username;
+  issue.realm = data->realm;
+  issue.email = fields.email;
+  issue.now_seconds = data->unix_seconds;
+  issue.ttl_seconds = data->email_token_ttl_seconds;
+  vectis_auth_email_token_init(&token);
+  status = vectis_auth_email_token_issue(&issue, &token, error);
+  vectis_auth_form_cleanup(&fields);
+  if (status != VECTIS_OK) {
+    vectis_auth_email_token_cleanup(&token);
+    return status;
+  }
+  status = vectis_auth_email_token_route_response(&token, response, error);
+  vectis_auth_email_token_cleanup(&token);
+  return status;
+}
+
 static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
                                                      vectis_request *request,
                                                      vectis_response *response,
@@ -5351,6 +5455,10 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
   vectis_mutable_bytes body;
   vectis_auth_form_fields fields;
   vectis_auth_login_config login;
+  vectis_auth_result login_result;
+  vectis_auth_email_token_verify_config email_token;
+  vectis_auth_email_token_result email_result;
+  vectis_auth_issue_config issue;
   vectis_auth_issued_credential credential;
   const char *content_type;
   vectis_status status;
@@ -5392,8 +5500,69 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
     login.totp_window = data->totp_window;
   }
   vectis_auth_issued_credential_init(&credential);
-  status = vectis_auth_issue_webdav_key_for_login(&data->store, &login,
-                                                  &credential, error);
+  if (data->require_email_token) {
+    if (fields.email_transaction_id == NULL ||
+        fields.email_transaction_id[0] == '\0' || fields.email_token == NULL ||
+        fields.email_token[0] == '\0') {
+      vectis_auth_form_cleanup(&fields);
+      vectis_auth_issued_credential_cleanup(&credential);
+      return vectis_response_text(
+          response, 400, "text/plain; charset=utf-8",
+          "email_transaction_id and email_token are required\n", error);
+    }
+    vectis_auth_result_init(&login_result);
+    status = vectis_auth_user_login(&data->store, &login, &login_result, error);
+    if (status != VECTIS_OK) {
+      vectis_auth_form_cleanup(&fields);
+      vectis_auth_result_cleanup(&login_result);
+      vectis_auth_issued_credential_cleanup(&credential);
+      return status;
+    }
+    if (!login_result.authenticated) {
+      vectis_auth_form_cleanup(&fields);
+      vectis_auth_result_cleanup(&login_result);
+      vectis_auth_issued_credential_cleanup(&credential);
+      vectis_error_clear(error);
+      return vectis_response_text(response, 401, "text/plain; charset=utf-8",
+                                  "login failed\n", error);
+    }
+    vectis_auth_email_token_verify_config_init(&email_token);
+    email_token.store = data->store;
+    email_token.transaction_id = fields.email_transaction_id;
+    email_token.username = fields.username;
+    email_token.realm = data->realm;
+    email_token.token = fields.email_token;
+    email_token.now_seconds = data->unix_seconds;
+    vectis_auth_email_token_result_init(&email_result);
+    status = vectis_auth_email_token_verify(&email_token, &email_result, error);
+    if (status != VECTIS_OK) {
+      vectis_auth_form_cleanup(&fields);
+      vectis_auth_result_cleanup(&login_result);
+      vectis_auth_email_token_result_cleanup(&email_result);
+      vectis_auth_issued_credential_cleanup(&credential);
+      return status;
+    }
+    if (!email_result.verified) {
+      vectis_auth_form_cleanup(&fields);
+      vectis_auth_result_cleanup(&login_result);
+      vectis_auth_email_token_result_cleanup(&email_result);
+      vectis_auth_issued_credential_cleanup(&credential);
+      vectis_error_clear(error);
+      return vectis_response_text(response, 401, "text/plain; charset=utf-8",
+                                  "login failed\n", error);
+    }
+    vectis_auth_issue_config_init(&issue);
+    issue.subject = fields.username;
+    issue.purpose = "webdav";
+    issue.auth_modes = VECTIS_AUTH_MODE_BASIC;
+    status =
+        vectis_auth_issue_credential(&data->store, &issue, &credential, error);
+    vectis_auth_result_cleanup(&login_result);
+    vectis_auth_email_token_result_cleanup(&email_result);
+  } else {
+    status = vectis_auth_issue_webdav_key_for_login(&data->store, &login,
+                                                    &credential, error);
+  }
   vectis_auth_form_cleanup(&fields);
   if (status != VECTIS_OK) {
     vectis_auth_issued_credential_cleanup(&credential);
@@ -5507,6 +5676,11 @@ vectis_register_auth_routes(vectis_app *app,
   status = vectis_register_auth_route_one(app, effective, path_prefix, "/login",
                                           VECTIS_HTTP_GET,
                                           vectis_auth_login_dispatch, error);
+  if (status == VECTIS_OK) {
+    status = vectis_register_auth_route_one(
+        app, effective, path_prefix, "/email-token", VECTIS_HTTP_POST,
+        vectis_auth_email_token_dispatch, error);
+  }
   if (status == VECTIS_OK) {
     status = vectis_register_auth_route_one(
         app, effective, path_prefix, "/webdav-key", VECTIS_HTTP_POST,
