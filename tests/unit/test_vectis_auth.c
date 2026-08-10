@@ -14,6 +14,22 @@
 
 static int failures = 0;
 
+static char *test_strdup(const char *value) {
+  char *copy;
+  size_t len;
+
+  if (value == NULL) {
+    return NULL;
+  }
+  len = strlen(value) + 1u;
+  copy = (char *)malloc(len);
+  if (copy == NULL) {
+    return NULL;
+  }
+  memcpy(copy, value, len);
+  return copy;
+}
+
 static void expect(int condition, const char *message) {
   if (!condition) {
     fprintf(stderr, "failure: %s\n", message);
@@ -126,6 +142,62 @@ sample_auth_provider(const vectis_auth_provider_request *request,
       VECTIS_AUTH_MODE_BASIC, error);
 }
 
+static vectis_status
+oauth2_mock_transport(const vectis_auth_oauth2_http_request *request,
+                      vectis_auth_oauth2_http_response *response,
+                      void *userdata, vectis_error *error) {
+  const char *mode;
+  const char *body;
+  const char *json;
+
+  mode = (const char *)userdata;
+  if (request == NULL || response == NULL || request->body == NULL ||
+      mode == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 mock transport input is required");
+    return VECTIS_ERR_INVALID;
+  }
+  body = (const char *)request->body;
+  expect(strcmp(request->method, "POST") == 0,
+         "OAuth2 transport receives POST");
+  expect(strcmp(request->url, "https://idp.example.test/token") == 0,
+         "OAuth2 transport receives token endpoint");
+  expect(request->content_type != NULL &&
+             strcmp(request->content_type,
+                    "application/x-www-form-urlencoded") == 0,
+         "OAuth2 transport receives form content type");
+  if (strcmp(mode, "client") == 0) {
+    expect(strstr(body, "grant_type=client_credentials") != NULL,
+           "OAuth2 client credentials body carries grant type");
+    expect(strstr(body, "client_id=vectis-client") != NULL,
+           "OAuth2 client credentials body carries client id");
+    expect(strstr(body, "client_secret=vectis-secret") != NULL,
+           "OAuth2 client credentials body carries client secret");
+    json = "{\"access_token\":\"m2m-token\",\"token_type\":\"Bearer\","
+           "\"refresh_token\":\"m2m-refresh\",\"scope\":\"dav\","
+           "\"expires_in\":3600}";
+  } else {
+    expect(strstr(body, "grant_type=refresh_token") != NULL,
+           "OAuth2 refresh body carries grant type");
+    expect(strstr(body, "refresh_token=old-refresh") != NULL,
+           "OAuth2 refresh body carries refresh token");
+    json = "{\"access_token\":\"refreshed-token\",\"token_type\":\"Bearer\","
+           "\"refresh_token\":\"new-refresh\",\"scope\":\"dav\","
+           "\"expires_in\":7200}";
+  }
+  response->status_code = 200;
+  response->content_type = test_strdup("application/json");
+  response->body = test_strdup(json);
+  response->body_size = strlen(json);
+  if (response->content_type == NULL || response->body == NULL) {
+    vectis_auth_oauth2_http_response_cleanup(response);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate OAuth2 mock response");
+    return VECTIS_ERR_NOMEM;
+  }
+  return VECTIS_OK;
+}
+
 int main(void) {
   char temp[] = "/tmp/vectis-auth-unit.XXXXXX";
   char credentials_path[4096];
@@ -142,6 +214,11 @@ int main(void) {
   vectis_auth_user_config user;
   vectis_auth_user_enrollment enrollment;
   vectis_auth_login_config login;
+  vectis_auth_oauth2_client_credentials_config oauth2_client;
+  vectis_auth_oauth2_token_response token_response;
+  vectis_auth_oauth2_token_flow token_flow;
+  vectis_auth_oauth2_token_flow_policy token_policy;
+  vectis_auth_oauth2_token_flow_result token_flow_result;
   vectis_auth_issue_config issue;
   vectis_auth_issued_credential bearer;
   vectis_auth_issued_credential basic;
@@ -163,6 +240,11 @@ int main(void) {
   vectis_auth_user_config_init(&user);
   vectis_auth_user_enrollment_init(&enrollment);
   vectis_auth_login_config_init(&login);
+  vectis_auth_oauth2_client_credentials_config_init(&oauth2_client);
+  vectis_auth_oauth2_token_response_init(&token_response);
+  vectis_auth_oauth2_token_flow_init(&token_flow);
+  vectis_auth_oauth2_token_flow_policy_init(&token_policy);
+  vectis_auth_oauth2_token_flow_result_init(&token_flow_result);
   vectis_auth_issued_credential_init(&bearer);
   vectis_auth_issued_credential_init(&basic);
   vectis_auth_issued_credential_init(&webdav_key);
@@ -191,6 +273,62 @@ int main(void) {
   store.credentials_path = credentials_path;
   status = vectis_auth_store_init(&store, &error);
   expect_ok(status, &error, "initializes credentials store");
+
+  vectis_auth_oauth2_client_credentials_config_init(&oauth2_client);
+  oauth2_client.transport.request = oauth2_mock_transport;
+  oauth2_client.transport.request_userdata = (void *)"client";
+  oauth2_client.transport.user_agent = "vectis-unit";
+  oauth2_client.token_endpoint = "https://idp.example.test/token";
+  oauth2_client.client_id = "vectis-client";
+  oauth2_client.client_secret = "vectis-secret";
+  oauth2_client.scope = "dav";
+  status = vectis_auth_oauth2_client_credentials_request(
+      &oauth2_client, &token_response, &error);
+  expect_ok(status, &error, "executes OAuth2 client credentials flow");
+  expect(token_response.access_token != NULL &&
+             strcmp(token_response.access_token, "m2m-token") == 0,
+         "OAuth2 client credentials returns access token");
+  expect(token_response.refresh_token != NULL &&
+             strcmp(token_response.refresh_token, "m2m-refresh") == 0,
+         "OAuth2 client credentials returns refresh token");
+  expect(token_response.has_expires_in && token_response.expires_in == 3600,
+         "OAuth2 client credentials returns expiry");
+  vectis_auth_oauth2_token_response_cleanup(&token_response);
+
+  token_flow.access_token = test_strdup("expired-token");
+  token_flow.token_type = test_strdup("Bearer");
+  token_flow.refresh_token = test_strdup("old-refresh");
+  token_flow.scope = test_strdup("dav");
+  token_flow.expires_at = 10;
+  token_flow.has_expires_at = 1;
+  expect(token_flow.access_token != NULL && token_flow.token_type != NULL &&
+             token_flow.refresh_token != NULL && token_flow.scope != NULL,
+         "allocates OAuth2 token flow fixture");
+  vectis_auth_oauth2_token_flow_policy_init(&token_policy);
+  token_policy.transport.request = oauth2_mock_transport;
+  token_policy.transport.request_userdata = (void *)"refresh";
+  token_policy.transport.user_agent = "vectis-unit";
+  token_policy.token_endpoint = "https://idp.example.test/token";
+  token_policy.client_id = "vectis-client";
+  token_policy.client_secret = "vectis-secret";
+  token_policy.scope = "dav";
+  token_policy.now = 1000;
+  token_policy.disable_retry = 1;
+  status = vectis_auth_oauth2_token_flow_ensure(&token_flow, &token_policy,
+                                                &token_flow_result, &error);
+  expect_ok(status, &error, "refreshes OAuth2 token flow");
+  expect(token_flow_result.state == VECTIS_AUTH_OAUTH2_TOKEN_FLOW_REFRESHED,
+         "OAuth2 token flow reports refreshed state");
+  expect(token_flow_result.refreshed, "OAuth2 token flow reports update");
+  expect(token_flow.access_token != NULL &&
+             strcmp(token_flow.access_token, "refreshed-token") == 0,
+         "OAuth2 token flow updates access token");
+  expect(token_flow.refresh_token != NULL &&
+             strcmp(token_flow.refresh_token, "new-refresh") == 0,
+         "OAuth2 token flow updates refresh token");
+  expect(token_flow.has_expires_at && token_flow.expires_at == 8200,
+         "OAuth2 token flow updates absolute expiry");
+  vectis_auth_oauth2_token_flow_cleanup(&token_flow);
 
   vectis_auth_user_config_init(&user);
   user.username = "dav-user@example.com";

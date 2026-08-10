@@ -98,6 +98,19 @@ typedef struct vectis_auth_user_drop_state {
   int matched;
 } vectis_auth_user_drop_state;
 
+typedef struct vectis_auth_oauth2_http_adapter {
+  const vectis_auth_oauth2_transport_config *config;
+  vectis_error error;
+} vectis_auth_oauth2_http_adapter;
+
+typedef struct vectis_auth_oauth2_response_buffer {
+  unsigned char *data;
+  size_t size;
+  size_t capacity;
+  size_t max_size;
+  int failed;
+} vectis_auth_oauth2_response_buffer;
+
 static char *vectis_auth_strdup(const char *value) {
   size_t len;
   char *copy;
@@ -1081,6 +1094,102 @@ void vectis_auth_login_config_init(vectis_auth_login_config *config) {
   config->totp_window = 1u;
 }
 
+void vectis_auth_oauth2_http_response_init(
+    vectis_auth_oauth2_http_response *response) {
+  if (response == NULL) {
+    return;
+  }
+  memset(response, 0, sizeof(*response));
+}
+
+void vectis_auth_oauth2_http_response_cleanup(
+    vectis_auth_oauth2_http_response *response) {
+  if (response == NULL) {
+    return;
+  }
+  free(response->content_type);
+  free(response->body);
+  vectis_auth_oauth2_http_response_init(response);
+}
+
+void vectis_auth_oauth2_transport_config_init(
+    vectis_auth_oauth2_transport_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->user_agent = "vectis";
+}
+
+void vectis_auth_oauth2_client_credentials_config_init(
+    vectis_auth_oauth2_client_credentials_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  vectis_auth_oauth2_transport_config_init(&config->transport);
+}
+
+void vectis_auth_oauth2_token_response_init(
+    vectis_auth_oauth2_token_response *response) {
+  if (response == NULL) {
+    return;
+  }
+  memset(response, 0, sizeof(*response));
+}
+
+void vectis_auth_oauth2_token_response_cleanup(
+    vectis_auth_oauth2_token_response *response) {
+  if (response == NULL) {
+    return;
+  }
+  free(response->access_token);
+  free(response->token_type);
+  free(response->refresh_token);
+  free(response->scope);
+  free(response->id_token);
+  vectis_auth_oauth2_token_response_init(response);
+}
+
+void vectis_auth_oauth2_token_flow_init(vectis_auth_oauth2_token_flow *flow) {
+  if (flow == NULL) {
+    return;
+  }
+  memset(flow, 0, sizeof(*flow));
+}
+
+void vectis_auth_oauth2_token_flow_cleanup(
+    vectis_auth_oauth2_token_flow *flow) {
+  if (flow == NULL) {
+    return;
+  }
+  free(flow->access_token);
+  free(flow->token_type);
+  free(flow->refresh_token);
+  free(flow->scope);
+  free(flow->id_token);
+  vectis_auth_oauth2_token_flow_init(flow);
+}
+
+void vectis_auth_oauth2_token_flow_policy_init(
+    vectis_auth_oauth2_token_flow_policy *policy) {
+  if (policy == NULL) {
+    return;
+  }
+  memset(policy, 0, sizeof(*policy));
+  vectis_auth_oauth2_transport_config_init(&policy->transport);
+  policy->refresh_skew_seconds = 60;
+  policy->max_retries = 2u;
+}
+
+void vectis_auth_oauth2_token_flow_result_init(
+    vectis_auth_oauth2_token_flow_result *result) {
+  if (result == NULL) {
+    return;
+  }
+  memset(result, 0, sizeof(*result));
+}
+
 static void vectis_auth_hex_encode(const unsigned char *data, size_t len,
                                    char *out) {
   static const char digits[] = "0123456789abcdef";
@@ -1250,6 +1359,400 @@ static int vectis_auth_verify_password(const vectis_auth_user_record *record,
   OPENSSL_cleanse(expected, sizeof(expected));
   OPENSSL_cleanse(actual, sizeof(actual));
   return ok;
+}
+
+static void vectis_auth_oauth2_lonejson_error(lonejson_error *error,
+                                              lonejson_status status,
+                                              const char *message) {
+  if (error == NULL) {
+    return;
+  }
+  lonejson_error_init(error);
+  error->code = status;
+  if (message != NULL) {
+    (void)snprintf(error->message, sizeof(error->message), "%s", message);
+  }
+}
+
+static int vectis_auth_oauth2_http_method(const char *method,
+                                          vectis_http_method *out) {
+  if (out == NULL) {
+    return 0;
+  }
+  if (method == NULL || strcmp(method, "GET") == 0) {
+    *out = VECTIS_HTTP_GET;
+    return 1;
+  }
+  if (strcmp(method, "POST") == 0) {
+    *out = VECTIS_HTTP_POST;
+    return 1;
+  }
+  if (strcmp(method, "DELETE") == 0) {
+    *out = VECTIS_HTTP_DELETE;
+    return 1;
+  }
+  if (strcmp(method, "HEAD") == 0) {
+    *out = VECTIS_HTTP_HEAD;
+    return 1;
+  }
+  if (strcmp(method, "OPTIONS") == 0) {
+    *out = VECTIS_HTTP_OPTIONS;
+    return 1;
+  }
+  if (strcmp(method, "PUT") == 0) {
+    *out = VECTIS_HTTP_PUT;
+    return 1;
+  }
+  if (strcmp(method, "PATCH") == 0) {
+    *out = VECTIS_HTTP_PATCH;
+    return 1;
+  }
+  return 0;
+}
+
+static vectis_status vectis_auth_oauth2_response_append(const void *data,
+                                                        size_t size,
+                                                        void *userdata,
+                                                        vectis_error *error) {
+  vectis_auth_oauth2_response_buffer *buffer;
+  unsigned char *grown;
+  size_t new_size;
+  size_t new_capacity;
+
+  buffer = (vectis_auth_oauth2_response_buffer *)userdata;
+  if (buffer == NULL || (data == NULL && size > 0u)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 HTTP response buffer is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (size == 0u) {
+    return VECTIS_OK;
+  }
+  if (buffer->max_size != 0u && size > buffer->max_size - buffer->size) {
+    buffer->failed = 1;
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 HTTP response exceeds configured limit");
+    return VECTIS_ERR_INVALID;
+  }
+  new_size = buffer->size + size;
+  if (new_size + 1u < new_size) {
+    buffer->failed = 1;
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "OAuth2 HTTP response size overflow");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (new_size + 1u > buffer->capacity) {
+    new_capacity = buffer->capacity != 0u ? buffer->capacity : 256u;
+    while (new_capacity < new_size + 1u) {
+      if (new_capacity > ((size_t)-1) / 2u) {
+        buffer->failed = 1;
+        vectis_set_error(error, VECTIS_ERR_NOMEM,
+                         "OAuth2 HTTP response capacity overflow");
+        return VECTIS_ERR_NOMEM;
+      }
+      new_capacity *= 2u;
+    }
+    grown = (unsigned char *)realloc(buffer->data, new_capacity);
+    if (grown == NULL) {
+      buffer->failed = 1;
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to allocate OAuth2 HTTP response buffer");
+      return VECTIS_ERR_NOMEM;
+    }
+    buffer->data = grown;
+    buffer->capacity = new_capacity;
+  }
+  memcpy(buffer->data + buffer->size, data, size);
+  buffer->size = new_size;
+  buffer->data[buffer->size] = '\0';
+  return VECTIS_OK;
+}
+
+static char *vectis_auth_oauth2_header(const char *name, const char *value) {
+  char *out;
+  size_t name_len;
+  size_t value_len;
+  size_t len;
+
+  if (name == NULL || value == NULL || value[0] == '\0') {
+    return NULL;
+  }
+  name_len = strlen(name);
+  value_len = strlen(value);
+  len = name_len + 2u + value_len + 1u;
+  out = (char *)malloc(len);
+  if (out == NULL) {
+    return NULL;
+  }
+  memcpy(out, name, name_len);
+  memcpy(out + name_len, ": ", 2u);
+  memcpy(out + name_len + 2u, value, value_len + 1u);
+  return out;
+}
+
+static vectis_status vectis_auth_oauth2_http_execute(
+    const vectis_auth_oauth2_transport_config *config,
+    const lonejson_http_request *request, vectis_auth_oauth2_http_response *out,
+    vectis_error *error) {
+  vectis_http_request http_request;
+  vectis_http_response http_response;
+  vectis_auth_oauth2_response_buffer body;
+  const char *headers[2];
+  char *authorization_header;
+  char *user_agent_header;
+  vectis_status status;
+  size_t header_count;
+
+  vectis_http_request_init(&http_request);
+  memset(&http_response, 0, sizeof(http_response));
+  memset(&body, 0, sizeof(body));
+  headers[0] = NULL;
+  headers[1] = NULL;
+  authorization_header = NULL;
+  user_agent_header = NULL;
+  if (request->authorization != NULL) {
+    authorization_header =
+        vectis_auth_oauth2_header("Authorization", request->authorization);
+    if (authorization_header == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to allocate OAuth2 authorization header");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  if (request->user_agent != NULL) {
+    user_agent_header =
+        vectis_auth_oauth2_header("User-Agent", request->user_agent);
+    if (user_agent_header == NULL) {
+      free(authorization_header);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to allocate OAuth2 user-agent header");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  header_count = 0u;
+  if (authorization_header != NULL) {
+    headers[header_count++] = authorization_header;
+  }
+  if (user_agent_header != NULL) {
+    headers[header_count++] = user_agent_header;
+  }
+  body.max_size = request->max_response_bytes;
+  if (!vectis_auth_oauth2_http_method(request->method, &http_request.method)) {
+    free(authorization_header);
+    free(user_agent_header);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 HTTP request method is unsupported");
+    return VECTIS_ERR_INVALID;
+  }
+  http_request.url = request->url;
+  http_request.headers = headers;
+  http_request.header_count = header_count;
+  http_request.body = request->body;
+  http_request.body_size = request->body_len;
+  http_request.content_type = request->content_type;
+  http_request.response_body = vectis_auth_oauth2_response_append;
+  http_request.response_body_userdata = &body;
+  status = vectis_http_execute(config != NULL ? config->http_client : NULL,
+                               &http_request, &http_response, error);
+  free(authorization_header);
+  free(user_agent_header);
+  if (status != VECTIS_OK) {
+    free(body.data);
+    vectis_http_response_cleanup(&http_response);
+    return status;
+  }
+  out->status_code = http_response.status_code;
+  out->content_type = vectis_auth_strdup(http_response.content_type);
+  out->body = body.data;
+  out->body_size = body.size;
+  body.data = NULL;
+  if (http_response.content_type != NULL && out->content_type == NULL) {
+    vectis_http_response_cleanup(&http_response);
+    vectis_auth_oauth2_http_response_cleanup(out);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy OAuth2 response content type");
+    return VECTIS_ERR_NOMEM;
+  }
+  vectis_http_response_cleanup(&http_response);
+  return VECTIS_OK;
+}
+
+static lonejson_status vectis_auth_oauth2_lonejson_http_request(
+    void *user_data, const lonejson_http_request *request,
+    lonejson_http_response *response, lonejson_error *error) {
+  vectis_auth_oauth2_http_adapter *adapter;
+  vectis_auth_oauth2_http_request public_request;
+  vectis_auth_oauth2_http_response public_response;
+  vectis_status status;
+  lonejson_status json_status;
+
+  adapter = (vectis_auth_oauth2_http_adapter *)user_data;
+  if (adapter == NULL || request == NULL || response == NULL) {
+    vectis_auth_oauth2_lonejson_error(error, LONEJSON_STATUS_INVALID_ARGUMENT,
+                                      "OAuth2 HTTP adapter input is required");
+    return LONEJSON_STATUS_INVALID_ARGUMENT;
+  }
+  vectis_auth_oauth2_http_response_init(&public_response);
+  if (adapter->config != NULL && adapter->config->request != NULL) {
+    memset(&public_request, 0, sizeof(public_request));
+    public_request.method = request->method;
+    public_request.url = request->url;
+    public_request.content_type = request->content_type;
+    public_request.authorization = request->authorization;
+    public_request.user_agent = request->user_agent;
+    public_request.body = request->body;
+    public_request.body_size = request->body_len;
+    public_request.max_response_bytes = request->max_response_bytes;
+    status = adapter->config->request(&public_request, &public_response,
+                                      adapter->config->request_userdata,
+                                      &adapter->error);
+  } else {
+    status = vectis_auth_oauth2_http_execute(adapter->config, request,
+                                             &public_response, &adapter->error);
+  }
+  if (status != VECTIS_OK) {
+    vectis_auth_oauth2_lonejson_error(error, LONEJSON_STATUS_CALLBACK_FAILED,
+                                      adapter->error.message[0] != '\0'
+                                          ? adapter->error.message
+                                          : "OAuth2 HTTP request failed");
+    vectis_auth_oauth2_http_response_cleanup(&public_response);
+    return LONEJSON_STATUS_CALLBACK_FAILED;
+  }
+  if (request->max_response_bytes != 0u &&
+      public_response.body_size > request->max_response_bytes) {
+    vectis_auth_oauth2_lonejson_error(
+        error, LONEJSON_STATUS_OVERFLOW,
+        "OAuth2 HTTP response exceeds configured limit");
+    vectis_auth_oauth2_http_response_cleanup(&public_response);
+    return LONEJSON_STATUS_OVERFLOW;
+  }
+  lonejson_http_response_init(response);
+  response->status_code = public_response.status_code;
+  json_status = lonejson_owned_buffer_sink(
+      &response->body, public_response.body, public_response.body_size, error);
+  vectis_auth_oauth2_http_response_cleanup(&public_response);
+  return json_status;
+}
+
+static vectis_status vectis_auth_oauth2_install_http_provider(
+    lonejson *runtime, const vectis_auth_oauth2_transport_config *config,
+    vectis_auth_oauth2_http_adapter *adapter, lonejson_http_provider *provider,
+    vectis_error *error) {
+  lonejson_error json_error;
+  lonejson_status json_status;
+
+  if (runtime == NULL || adapter == NULL || provider == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 HTTP provider input is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(adapter, 0, sizeof(*adapter));
+  adapter->config = config;
+  vectis_error_clear(&adapter->error);
+  lonejson_error_init(&json_error);
+  json_status = lonejson_http_provider_init_simple(
+      provider, adapter,
+      config != NULL && config->user_agent != NULL ? config->user_agent
+                                                   : "vectis",
+      vectis_auth_oauth2_lonejson_http_request, &json_error);
+  if (json_status == LONEJSON_STATUS_OK) {
+    json_status = lonejson_set_http_provider(runtime, provider, &json_error);
+  }
+  if (json_status != LONEJSON_STATUS_OK) {
+    return vectis_auth_lonejson_error(error, json_status, &json_error,
+                                      "failed to install OAuth2 HTTP provider");
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_oauth2_copy_token_response(
+    const lonejson_oauth2_token_response *source,
+    vectis_auth_oauth2_token_response *out, vectis_error *error) {
+  if (source == NULL || out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 token response output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_oauth2_token_response_cleanup(out);
+  out->access_token = vectis_auth_strdup(source->access_token);
+  out->token_type = vectis_auth_strdup(source->token_type);
+  out->refresh_token = vectis_auth_strdup(source->refresh_token);
+  out->scope = vectis_auth_strdup(source->scope);
+  out->id_token = vectis_auth_strdup(source->id_token);
+  out->expires_in = (int64_t)source->expires_in;
+  out->has_expires_in = source->has_expires_in;
+  if ((source->access_token != NULL && out->access_token == NULL) ||
+      (source->token_type != NULL && out->token_type == NULL) ||
+      (source->refresh_token != NULL && out->refresh_token == NULL) ||
+      (source->scope != NULL && out->scope == NULL) ||
+      (source->id_token != NULL && out->id_token == NULL)) {
+    vectis_auth_oauth2_token_response_cleanup(out);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy OAuth2 token response");
+    return VECTIS_ERR_NOMEM;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_oauth2_copy_token_flow_from_lonejson(
+    const lonejson_oauth2_token_flow *source,
+    vectis_auth_oauth2_token_flow *out, vectis_error *error) {
+  if (source == NULL || out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 token flow output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_oauth2_token_flow_cleanup(out);
+  out->access_token = vectis_auth_strdup(source->access_token);
+  out->token_type = vectis_auth_strdup(source->token_type);
+  out->refresh_token = vectis_auth_strdup(source->refresh_token);
+  out->scope = vectis_auth_strdup(source->scope);
+  out->id_token = vectis_auth_strdup(source->id_token);
+  out->expires_at = (int64_t)source->expires_at;
+  out->has_expires_at = source->has_expires_at;
+  if ((source->access_token != NULL && out->access_token == NULL) ||
+      (source->token_type != NULL && out->token_type == NULL) ||
+      (source->refresh_token != NULL && out->refresh_token == NULL) ||
+      (source->scope != NULL && out->scope == NULL) ||
+      (source->id_token != NULL && out->id_token == NULL)) {
+    vectis_auth_oauth2_token_flow_cleanup(out);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy OAuth2 token flow");
+    return VECTIS_ERR_NOMEM;
+  }
+  return VECTIS_OK;
+}
+
+static void vectis_auth_oauth2_lonejson_flow_from_public(
+    const vectis_auth_oauth2_token_flow *source,
+    lonejson_oauth2_token_flow *out) {
+  lonejson_oauth2_token_flow_init(out);
+  if (source == NULL) {
+    return;
+  }
+  out->access_token = source->access_token;
+  out->token_type = source->token_type;
+  out->refresh_token = source->refresh_token;
+  out->scope = source->scope;
+  out->id_token = source->id_token;
+  out->expires_at = (lonejson_int64)source->expires_at;
+  out->has_expires_at = source->has_expires_at;
+}
+
+static vectis_auth_oauth2_token_flow_state
+vectis_auth_oauth2_flow_state_from_lonejson(
+    lonejson_oauth2_token_flow_state state) {
+  switch (state) {
+  case LONEJSON_OAUTH2_TOKEN_FLOW_REFRESHED:
+    return VECTIS_AUTH_OAUTH2_TOKEN_FLOW_REFRESHED;
+  case LONEJSON_OAUTH2_TOKEN_FLOW_NEEDS_INTERACTION:
+    return VECTIS_AUTH_OAUTH2_TOKEN_FLOW_NEEDS_INTERACTION;
+  case LONEJSON_OAUTH2_TOKEN_FLOW_FAILED:
+    return VECTIS_AUTH_OAUTH2_TOKEN_FLOW_FAILED;
+  case LONEJSON_OAUTH2_TOKEN_FLOW_READY:
+  default:
+    return VECTIS_AUTH_OAUTH2_TOKEN_FLOW_READY;
+  }
 }
 
 vectis_status vectis_auth_store_init(const vectis_auth_store_config *config,
@@ -1897,6 +2400,134 @@ vectis_status vectis_auth_issue_webdav_key_for_login(
   issue.auth_modes = VECTIS_AUTH_MODE_BASIC;
   status = vectis_auth_issue_credential(store_config, &issue, out, error);
   vectis_auth_result_cleanup(&login);
+  return status;
+}
+
+vectis_status vectis_auth_oauth2_client_credentials_request(
+    const vectis_auth_oauth2_client_credentials_config *config,
+    vectis_auth_oauth2_token_response *out, vectis_error *error) {
+  lonejson *runtime;
+  lonejson_http_provider provider;
+  vectis_auth_oauth2_http_adapter adapter;
+  lonejson_oauth2_client_credentials request;
+  lonejson_oauth2_token_response response;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  vectis_status status;
+
+  if (config == NULL || out == NULL || config->token_endpoint == NULL ||
+      config->token_endpoint[0] == '\0' || config->client_id == NULL ||
+      config->client_id[0] == '\0' || config->client_secret == NULL ||
+      config->client_secret[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 client credentials require token endpoint, "
+                     "client_id, and client_secret");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_oauth2_token_response_init(out);
+  runtime = NULL;
+  status = vectis_auth_lonejson_runtime(&runtime, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_auth_oauth2_install_http_provider(runtime, &config->transport,
+                                                    &adapter, &provider, error);
+  if (status != VECTIS_OK) {
+    lonejson_free(runtime);
+    return status;
+  }
+  memset(&request, 0, sizeof(request));
+  request.client_id = config->client_id;
+  request.client_secret = config->client_secret;
+  request.scope = config->scope;
+  request.audience = config->audience;
+  request.resource = config->resource;
+  request.max_body_bytes = config->max_body_bytes;
+  lonejson_oauth2_token_response_init(&response);
+  lonejson_error_init(&json_error);
+  json_status = lonejson_oauth2_client_credentials_request(
+      runtime, config->token_endpoint, &request, config->max_response_bytes,
+      &response, &json_error);
+  if (json_status == LONEJSON_STATUS_OK) {
+    status = vectis_auth_oauth2_copy_token_response(&response, out, error);
+  } else {
+    status =
+        vectis_auth_lonejson_error(error, json_status, &json_error,
+                                   "OAuth2 client credentials request failed");
+  }
+  lonejson_oauth2_token_response_cleanup(&response);
+  lonejson_free(runtime);
+  return status;
+}
+
+vectis_status vectis_auth_oauth2_token_flow_ensure(
+    vectis_auth_oauth2_token_flow *flow,
+    const vectis_auth_oauth2_token_flow_policy *policy,
+    vectis_auth_oauth2_token_flow_result *result, vectis_error *error) {
+  lonejson *runtime;
+  lonejson_http_provider provider;
+  vectis_auth_oauth2_http_adapter adapter;
+  lonejson_oauth2_token_flow source_flow;
+  lonejson_oauth2_token_flow working_flow;
+  lonejson_oauth2_token_flow_policy lonejson_policy;
+  lonejson_oauth2_token_flow_result lonejson_result;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  vectis_status status;
+
+  if (flow == NULL || policy == NULL || result == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 token flow, policy, and result are required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_oauth2_token_flow_result_init(result);
+  runtime = NULL;
+  status = vectis_auth_lonejson_runtime(&runtime, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_auth_oauth2_install_http_provider(runtime, &policy->transport,
+                                                    &adapter, &provider, error);
+  if (status != VECTIS_OK) {
+    lonejson_free(runtime);
+    return status;
+  }
+  vectis_auth_oauth2_lonejson_flow_from_public(flow, &source_flow);
+  lonejson_oauth2_token_flow_init(&working_flow);
+  lonejson_error_init(&json_error);
+  json_status = lonejson_oauth2_token_flow_assign(&working_flow, &source_flow,
+                                                  &json_error);
+  if (json_status == LONEJSON_STATUS_OK) {
+    memset(&lonejson_policy, 0, sizeof(lonejson_policy));
+    lonejson_policy.token_endpoint = policy->token_endpoint;
+    lonejson_policy.client_id = policy->client_id;
+    lonejson_policy.client_secret = policy->client_secret;
+    lonejson_policy.scope = policy->scope;
+    lonejson_policy.now = (lonejson_int64)policy->now;
+    lonejson_policy.refresh_skew_seconds =
+        (lonejson_int64)policy->refresh_skew_seconds;
+    lonejson_policy.max_response_bytes = policy->max_response_bytes;
+    lonejson_policy.max_retries = policy->max_retries;
+    lonejson_policy.disable_refresh = policy->disable_refresh;
+    lonejson_policy.disable_retry = policy->disable_retry;
+    memset(&lonejson_result, 0, sizeof(lonejson_result));
+    json_status = lonejson_oauth2_token_flow_ensure(
+        runtime, &working_flow, &lonejson_policy, &lonejson_result,
+        &json_error);
+  }
+  if (json_status == LONEJSON_STATUS_OK) {
+    result->state =
+        vectis_auth_oauth2_flow_state_from_lonejson(lonejson_result.state);
+    result->attempts = lonejson_result.attempts;
+    result->refreshed = lonejson_result.refreshed;
+    status = vectis_auth_oauth2_copy_token_flow_from_lonejson(&working_flow,
+                                                              flow, error);
+  } else {
+    status = vectis_auth_lonejson_error(error, json_status, &json_error,
+                                        "OAuth2 token flow ensure failed");
+  }
+  lonejson_oauth2_token_flow_cleanup(&working_flow);
+  lonejson_free(runtime);
   return status;
 }
 
