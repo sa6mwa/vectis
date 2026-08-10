@@ -336,6 +336,12 @@ run_lua_examples() {
   no_totp_email_token_response=
   no_totp_email_transaction_id=
   no_totp_email_token=
+  email_only_key_response=
+  email_only_client_id=
+  email_only_client_secret=
+  email_only_token_response=
+  email_only_transaction_id=
+  email_only_token=
   expired_token_response=
   expired_transaction_id=
   expired_token=
@@ -478,6 +484,15 @@ run_lua_examples() {
     '  login_title = "Packed E2E Local Token Login",' \
     '  time = 59,' \
     '  require_email_token = true,' \
+    '  email_token_ttl_seconds = 300,' \
+    '}))' \
+    'assert(server:auth_routes({' \
+    '  path_prefix = "/auth-email-only",' \
+    '  credentials_path = credentials_path,' \
+    '  realm = "packed-e2e",' \
+    '  login_title = "Packed E2E Email Only Login",' \
+    '  time = 59,' \
+    '  required_factors = { "email_token" },' \
     '  email_token_ttl_seconds = 300,' \
     '}))' \
     'assert(server:auth_routes({' \
@@ -799,6 +814,41 @@ run_lua_examples() {
     "http://127.0.0.1:$kore_packed_port/api/private")
   if [ "$body" != '{"ok":true,"surface":"packed-api"}' ]; then
     printf '%s\n' "Unexpected packed no-TOTP guarded API response: $body" >&2
+    return 1
+  fi
+  email_only_token_response=$(curl_or_log "$packed_service_log" \
+    "packed email-only token" --max-time 3 -fsS -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-email-only%40example.com&email=packed-email-only%40example.test' \
+    "http://127.0.0.1:$kore_packed_port/auth-email-only/email-token")
+  email_only_transaction_id=$(printf '%s\n' "$email_only_token_response" |
+    sed -n 's/^transaction_id=//p')
+  email_only_token=$(printf '%s\n' "$email_only_token_response" |
+    sed -n 's/^token=//p')
+  if [ -z "$email_only_transaction_id" ] || [ -z "$email_only_token" ]; then
+    printf '%s\n' "Packed email-only auth did not expose an email token" >&2
+    printf '%s\n' "$email_only_token_response" >&2
+    return 1
+  fi
+  email_only_key_response=$(curl_or_log "$packed_service_log" \
+    "packed email-only webdav key" --max-time 3 -fsS -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-email-only%40example.com&email_transaction_id=$email_only_transaction_id&email_token=$email_only_token" \
+    "http://127.0.0.1:$kore_packed_port/auth-email-only/webdav-key")
+  email_only_client_id=$(printf '%s\n' "$email_only_key_response" |
+    sed -n 's/^client_id=//p')
+  email_only_client_secret=$(printf '%s\n' "$email_only_key_response" |
+    sed -n 's/^client_secret=//p')
+  if [ -z "$email_only_client_id" ] || [ -z "$email_only_client_secret" ]; then
+    printf '%s\n' "Packed email-only auth did not issue WebDAV credentials" >&2
+    printf '%s\n' "$email_only_key_response" >&2
+    return 1
+  fi
+  body=$(curl_or_log "$packed_service_log" "packed email-only guarded api" \
+    --max-time 3 -fsS -u "$email_only_client_id:$email_only_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/api/private")
+  if [ "$body" != '{"ok":true,"surface":"packed-api"}' ]; then
+    printf '%s\n' "Unexpected packed email-only guarded API response: $body" >&2
     return 1
   fi
   expired_token_response=$(curl_or_log "$packed_service_log" \
