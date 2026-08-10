@@ -283,10 +283,17 @@ run_lua_examples() {
   guarded_status=
   password_only_status=
   wrong_token_status=
+  wrong_totp_status=
   replay_token_status=
+  blocked_email_status=
   email_token_response=
   email_transaction_id=
   email_token=
+  expired_token_response=
+  expired_transaction_id=
+  expired_token=
+  expired_token_status=
+  expired_token_replay_status=
   mail_body=
   packed_consumer_body=
 
@@ -360,6 +367,11 @@ run_lua_examples() {
     '  totp_label = "Vectis:packed-user@example.com",' \
     '  issuer = "Vectis",' \
     '}))' \
+    'assert(vectis.auth.user_add({' \
+    '  credentials_path = credentials_path,' \
+    '  username = "packed-email-only@example.com",' \
+    '  password = "packed-password",' \
+    '}))' \
     'local server = assert(vectis.server.new({' \
     '  app_name = "vectis-packed-service-e2e",' \
     '  bind = "127.0.0.1",' \
@@ -401,6 +413,24 @@ run_lua_examples() {
     '    timeout_ms = 5000,' \
     '    connect_timeout_ms = 2000,' \
     '  },' \
+    '}))' \
+    'assert(server:auth_routes({' \
+    '  path_prefix = "/auth-local",' \
+    '  credentials_path = credentials_path,' \
+    '  realm = "packed-e2e",' \
+    '  login_title = "Packed E2E Local Token Login",' \
+    '  time = 59,' \
+    '  require_email_token = true,' \
+    '  email_token_ttl_seconds = 300,' \
+    '}))' \
+    'assert(server:auth_routes({' \
+    '  path_prefix = "/auth-expired",' \
+    '  credentials_path = credentials_path,' \
+    '  realm = "packed-e2e",' \
+    '  login_title = "Packed E2E Expired Login",' \
+    '  time = 360,' \
+    '  require_email_token = true,' \
+    '  email_token_ttl_seconds = 300,' \
     '}))' \
     'assert(server:auth_json({' \
     '  path = "/api/private",' \
@@ -527,6 +557,58 @@ run_lua_examples() {
     printf '%s\n' "Packed auth issued WebDAV key without email token" >&2
     return 1
   fi
+  expired_token_response=$(curl --max-time 3 -fsS -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-email-only%40example.com&email=packed-email-only%40example.test' \
+    "http://127.0.0.1:$kore_packed_port/auth-local/email-token")
+  expired_transaction_id=$(printf '%s\n' "$expired_token_response" |
+    sed -n 's/^transaction_id=//p')
+  expired_token=$(printf '%s\n' "$expired_token_response" |
+    sed -n 's/^token=//p')
+  case "$expired_token_response" in
+    *'expires_at=359'*) ;;
+    *)
+      printf '%s\n' "Packed local email token did not use expected expiry" >&2
+      printf '%s\n' "$expired_token_response" >&2
+      return 1
+      ;;
+  esac
+  if [ -z "$expired_transaction_id" ] || [ -z "$expired_token" ]; then
+    printf '%s\n' "Packed local auth did not expose a test email token" >&2
+    printf '%s\n' "$expired_token_response" >&2
+    return 1
+  fi
+  expired_token_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-email-only%40example.com&password=packed-password&email_transaction_id=$expired_transaction_id&email_token=$expired_token" \
+    "http://127.0.0.1:$kore_packed_port/auth-expired/webdav-key")
+  if [ "$expired_token_status" != "401" ]; then
+    printf '%s\n' "Packed auth expired email token returned unexpected status: $expired_token_status" >&2
+    return 1
+  fi
+  expired_token_replay_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-email-only%40example.com&password=packed-password&email_transaction_id=$expired_transaction_id&email_token=$expired_token" \
+    "http://127.0.0.1:$kore_packed_port/auth-expired/webdav-key")
+  if [ "$expired_token_replay_status" != "401" ]; then
+    printf '%s\n' "Packed auth expired email token replay returned unexpected status: $expired_token_replay_status" >&2
+    return 1
+  fi
+  blocked_email_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-user%40example.com&email=packed-user%40blocked.test' \
+    "http://127.0.0.1:$kore_packed_port/auth/email-token")
+  if [ "$blocked_email_status" != "400" ]; then
+    printf '%s\n' "Packed auth allowlisted SMTP route returned unexpected blocked-email status: $blocked_email_status" >&2
+    return 1
+  fi
+  if [ -e "$packed_service_mailbox" ]; then
+    printf '%s\n' "Packed SMTP harness mailbox was written for blocked recipient" >&2
+    return 1
+  fi
   email_token_response=$(curl --max-time 3 -fsS -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data 'username=packed-user%40example.com&email=packed-user%40example.test' \
@@ -570,8 +652,8 @@ run_lua_examples() {
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$email_transaction_id&email_token=wrong" \
     "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
-  if [ "$wrong_token_status" = "200" ]; then
-    printf '%s\n' "Packed auth accepted a wrong email token" >&2
+  if [ "$wrong_token_status" != "401" ]; then
+    printf '%s\n' "Packed auth wrong email token returned unexpected status: $wrong_token_status" >&2
     return 1
   fi
   wrong_totp_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
@@ -592,8 +674,8 @@ run_lua_examples() {
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$email_transaction_id&email_token=$email_token" \
     "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
-  if [ "$replay_token_status" = "200" ]; then
-    printf '%s\n' "Packed auth accepted a replayed email token" >&2
+  if [ "$replay_token_status" != "401" ]; then
+    printf '%s\n' "Packed auth replayed email token returned unexpected status: $replay_token_status" >&2
     return 1
   fi
   webdav_client_id=$(printf '%s\n' "$webdav_key_response" |
