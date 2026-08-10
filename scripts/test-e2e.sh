@@ -1034,6 +1034,13 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed WebDAV body during consumer work: $body" >&2
     return 1
   fi
+  body=$(curl_or_log "$packed_service_log" "packed guarded api during consumer" \
+    --max-time 5 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/api/private")
+  if [ "$body" != '{"ok":true,"surface":"packed-api"}' ]; then
+    printf '%s\n' "Unexpected packed guarded API body during consumer work: $body" >&2
+    return 1
+  fi
   count=0
   while :; do
     packed_consumer_body=$(curl --max-time 3 -fsS \

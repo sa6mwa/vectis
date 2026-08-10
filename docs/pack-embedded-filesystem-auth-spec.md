@@ -511,7 +511,8 @@ assets. It also embeds
 the lockd client bundle, starts a C-owned lockd consumer service from the packed
 Lua server config, enqueues a lockd message through the Lua `lockdc` facade,
 proves the packed consumer writes WebDAV-visible markers, and proves WebDAV
-remains responsive while the packed consumer service is processing. Focused
+and guarded API routes remain responsive while the packed consumer service is
+processing. Focused
 packed Lua smoke coverage in
 `vectis_lua_pack` also packages and executes a native-auth API service artifact,
 packages and executes a lockd consumer-service registration artifact with an
