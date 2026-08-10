@@ -648,9 +648,20 @@ typedef struct vectis_http_request {
   void *configure_curl_userdata;
 } vectis_http_request;
 
+typedef struct vectis_http_header {
+  /* Lower/upper-case preserved response header name. Owned by response. */
+  char *name;
+  /* Header value with surrounding linear whitespace trimmed. Owned by response.
+   */
+  char *value;
+} vectis_http_header;
+
 typedef struct vectis_http_response {
   long status_code;
   char *content_type;
+  /* Owned response headers from the final HTTP response. */
+  vectis_http_header *headers;
+  size_t header_count;
   void *body;
   size_t body_size;
 } vectis_http_response;
@@ -1429,6 +1440,11 @@ void vectis_http_client_destroy(vectis_http_client *client);
 void vectis_http_client_close(vectis_http_client *client);
 void vectis_http_request_init(vectis_http_request *request);
 void vectis_http_response_cleanup(vectis_http_response *response);
+/* Return a borrowed header value from response, matched case-insensitively.
+ * When a header appears more than once, the last captured value is returned.
+ */
+const char *vectis_http_response_header(const vectis_http_response *response,
+                                        const char *name);
 vectis_status
 vectis_http_response_json_into(const vectis_http_response *response,
                                const lonejson_map *map, void *out,

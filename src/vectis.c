@@ -371,6 +371,11 @@ typedef struct vectis_curl_response_stream {
   int failed;
 } vectis_curl_response_stream;
 
+typedef struct vectis_curl_header_capture {
+  vectis_http_response *response;
+  int failed;
+} vectis_curl_header_capture;
+
 typedef struct vectis_curl_request_body {
   const void *data;
   size_t size;
@@ -1825,6 +1830,104 @@ static char *vectis_strndup(const char *value, size_t len) {
   memcpy(copy, value, len);
   copy[len] = '\0';
   return copy;
+}
+
+static void
+vectis_http_response_headers_cleanup(vectis_http_response *response) {
+  size_t i;
+
+  if (response == NULL) {
+    return;
+  }
+  for (i = 0u; i < response->header_count; ++i) {
+    free(response->headers[i].name);
+    free(response->headers[i].value);
+  }
+  free(response->headers);
+  response->headers = NULL;
+  response->header_count = 0u;
+}
+
+static int vectis_http_response_add_header(vectis_http_response *response,
+                                           const char *name, size_t name_len,
+                                           const char *value,
+                                           size_t value_len) {
+  vectis_http_header *headers;
+  char *name_copy;
+  char *value_copy;
+
+  if (response == NULL || name == NULL || name_len == 0u || value == NULL) {
+    return -1;
+  }
+  headers = (vectis_http_header *)realloc(
+      response->headers, (response->header_count + 1u) * sizeof(headers[0]));
+  if (headers == NULL) {
+    return -1;
+  }
+  response->headers = headers;
+  name_copy = vectis_strndup(name, name_len);
+  value_copy = vectis_strndup(value, value_len);
+  if (name_copy == NULL || value_copy == NULL) {
+    free(name_copy);
+    free(value_copy);
+    return -1;
+  }
+  response->headers[response->header_count].name = name_copy;
+  response->headers[response->header_count].value = value_copy;
+  response->header_count++;
+  return 0;
+}
+
+static size_t vectis_curl_header_callback(char *buffer, size_t size,
+                                          size_t nitems, void *userdata) {
+  vectis_curl_header_capture *capture;
+  const char *line;
+  const char *colon;
+  const char *value;
+  size_t len;
+  size_t line_len;
+  size_t name_len;
+  size_t value_len;
+
+  len = size * nitems;
+  capture = (vectis_curl_header_capture *)userdata;
+  if (capture == NULL || capture->response == NULL) {
+    return len;
+  }
+  line = buffer;
+  line_len = len;
+  while (line_len > 0u &&
+         (line[line_len - 1u] == '\r' || line[line_len - 1u] == '\n')) {
+    line_len--;
+  }
+  if (line_len == 0u) {
+    return len;
+  }
+  if (line_len >= 5u && strncmp(line, "HTTP/", 5u) == 0) {
+    vectis_http_response_headers_cleanup(capture->response);
+    return len;
+  }
+  colon = memchr(line, ':', line_len);
+  if (colon == NULL || colon == line) {
+    return len;
+  }
+  name_len = (size_t)(colon - line);
+  value = colon + 1;
+  value_len = line_len - name_len - 1u;
+  while (value_len > 0u && (*value == ' ' || *value == '\t')) {
+    value++;
+    value_len--;
+  }
+  while (value_len > 0u &&
+         (value[value_len - 1u] == ' ' || value[value_len - 1u] == '\t')) {
+    value_len--;
+  }
+  if (vectis_http_response_add_header(capture->response, line, name_len, value,
+                                      value_len) != 0) {
+    capture->failed = 1;
+    return 0u;
+  }
+  return len;
 }
 
 static void vectis_kv_free_all(vectis_kv *items, size_t count) {
@@ -14330,8 +14433,25 @@ void vectis_http_response_cleanup(vectis_http_response *response) {
     return;
   }
   free(response->content_type);
+  vectis_http_response_headers_cleanup(response);
   free(response->body);
   memset(response, 0, sizeof(*response));
+}
+
+const char *vectis_http_response_header(const vectis_http_response *response,
+                                        const char *name) {
+  size_t i;
+
+  if (response == NULL || name == NULL || name[0] == '\0') {
+    return NULL;
+  }
+  for (i = response->header_count; i > 0u; --i) {
+    if (response->headers[i - 1u].name != NULL &&
+        strcasecmp(response->headers[i - 1u].name, name) == 0) {
+      return response->headers[i - 1u].value;
+    }
+  }
+  return NULL;
 }
 
 vectis_status
@@ -15017,6 +15137,7 @@ vectis_http_execute_once(const vectis_http_client_config *client,
   struct curl_slist *headers;
   vectis_curl_buffer response_buffer;
   vectis_curl_response_stream response_stream;
+  vectis_curl_header_capture header_capture;
   vectis_curl_request_body request_body;
   char curl_error[CURL_ERROR_SIZE];
   char *url;
@@ -15074,6 +15195,7 @@ vectis_http_execute_once(const vectis_http_client_config *client,
   memset(response, 0, sizeof(*response));
   memset(&response_buffer, 0, sizeof(response_buffer));
   memset(&response_stream, 0, sizeof(response_stream));
+  memset(&header_capture, 0, sizeof(header_capture));
   memset(&request_body, 0, sizeof(request_body));
   memset(curl_error, 0, sizeof(curl_error));
   headers = NULL;
@@ -15118,6 +15240,10 @@ vectis_http_execute_once(const vectis_http_client_config *client,
                        : client->low_speed_time_seconds;
   (void)curl_easy_setopt(curl, CURLOPT_URL, url);
   (void)curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error);
+  header_capture.response = response;
+  (void)curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION,
+                         vectis_curl_header_callback);
+  (void)curl_easy_setopt(curl, CURLOPT_HEADERDATA, &header_capture);
   if (timeout_ms > 0L) {
     (void)curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout_ms);
   }
@@ -15342,6 +15468,20 @@ vectis_http_execute_once(const vectis_http_client_config *client,
   }
 
   curl_code = curl_easy_perform(curl);
+  if (header_capture.failed) {
+    if (download_file != NULL) {
+      (void)fclose(download_file);
+    }
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    vectis_curl_request_body_cleanup(&request_body);
+    free(response_buffer.data);
+    free(url);
+    vectis_http_response_headers_cleanup(response);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to buffer curl response headers");
+    return VECTIS_ERR_NOMEM;
+  }
   if (download_file != NULL && fclose(download_file) != 0) {
     download_file = NULL;
     curl_slist_free_all(headers);
@@ -15349,6 +15489,7 @@ vectis_http_execute_once(const vectis_http_client_config *client,
     vectis_curl_request_body_cleanup(&request_body);
     free(response_buffer.data);
     free(url);
+    vectis_http_response_headers_cleanup(response);
     vectis_set_errorf(error, VECTIS_ERR_STATE,
                       "failed to flush download path: %s",
                       request->download_path);
@@ -15361,6 +15502,7 @@ vectis_http_execute_once(const vectis_http_client_config *client,
     vectis_curl_request_body_cleanup(&request_body);
     free(response_buffer.data);
     free(url);
+    vectis_http_response_headers_cleanup(response);
     if (error != NULL && error->code != VECTIS_OK) {
       return error->code;
     }
@@ -15374,6 +15516,7 @@ vectis_http_execute_once(const vectis_http_client_config *client,
     vectis_curl_request_body_cleanup(&request_body);
     free(response_buffer.data);
     free(url);
+    vectis_http_response_headers_cleanup(response);
     return vectis_curl_set_error(error, curl_code, "curl request failed",
                                  curl_error);
   }
@@ -15383,6 +15526,7 @@ vectis_http_execute_once(const vectis_http_client_config *client,
     vectis_curl_request_body_cleanup(&request_body);
     free(response_buffer.data);
     free(url);
+    vectis_http_response_headers_cleanup(response);
     vectis_set_error(error, VECTIS_ERR_NOMEM,
                      "failed to buffer curl response body");
     return VECTIS_ERR_NOMEM;
@@ -15397,6 +15541,7 @@ vectis_http_execute_once(const vectis_http_client_config *client,
     vectis_curl_request_body_cleanup(&request_body);
     free(response_buffer.data);
     free(url);
+    vectis_http_response_headers_cleanup(response);
     vectis_set_error(error, VECTIS_ERR_NOMEM,
                      "failed to copy response content type");
     return VECTIS_ERR_NOMEM;

@@ -1541,6 +1541,12 @@ static void assert_kore_smoke(void) {
   assert(embedded_response.status_code == 200L);
   assert(embedded_response.content_type != NULL);
   assert(strcmp(embedded_response.content_type, "text/html") == 0);
+  assert(strcmp(vectis_http_response_header(&embedded_response, "ETag"),
+                "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6"
+                "be03\"") == 0);
+  assert(
+      strcmp(vectis_http_response_header(&embedded_response, "cache-control"),
+             "no-cache") == 0);
   assert(embedded_response.body_size == 6u);
   assert(memcmp(embedded_response.body, "hello\n", 6u) == 0);
   vectis_http_response_cleanup(&embedded_response);
@@ -1552,6 +1558,9 @@ static void assert_kore_smoke(void) {
   assert(embedded_response.status_code == 200L);
   assert(embedded_response.content_type != NULL);
   assert(strcmp(embedded_response.content_type, "text/plain") == 0);
+  assert(strcmp(vectis_http_response_header(&embedded_response, "etag"),
+                "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d07887"
+                "5901\"") == 0);
   assert(embedded_response.body_size == 4u);
   assert(memcmp(embedded_response.body, "app\n", 4u) == 0);
   vectis_http_response_cleanup(&embedded_response);
@@ -1563,6 +1572,9 @@ static void assert_kore_smoke(void) {
   assert(embedded_head_response.status_code == 200L);
   assert(embedded_head_response.content_type != NULL);
   assert(strcmp(embedded_head_response.content_type, "text/plain") == 0);
+  assert(strcmp(vectis_http_response_header(&embedded_head_response, "etag"),
+                "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d07887"
+                "5901\"") == 0);
   assert(embedded_head_response.body_size == 0u);
   vectis_http_response_cleanup(&embedded_head_response);
 
@@ -1573,6 +1585,9 @@ static void assert_kore_smoke(void) {
   assert(embedded_missing_response.content_type != NULL);
   assert(strcmp(embedded_missing_response.content_type,
                 "text/plain; charset=utf-8") == 0);
+  assert(strcmp(vectis_http_response_header(&embedded_missing_response,
+                                            "cache-control"),
+                "no-store") == 0);
   assert(embedded_missing_response.body_size == strlen("not found\n"));
   assert(memcmp(embedded_missing_response.body, "not found\n",
                 strlen("not found\n")) == 0);
@@ -1585,6 +1600,8 @@ static void assert_kore_smoke(void) {
       vectis_http_execute(&http, &request, &embedded_method_response, &error);
   assert(status == VECTIS_OK);
   assert(embedded_method_response.status_code == 405L);
+  assert(strcmp(vectis_http_response_header(&embedded_method_response, "allow"),
+                "GET, HEAD") == 0);
   assert(embedded_method_response.body_size == 0u);
   vectis_http_response_cleanup(&embedded_method_response);
 
