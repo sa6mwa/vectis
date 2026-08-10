@@ -6065,6 +6065,8 @@ static int vectis_lua_auth_email_token_issue(lua_State *lua) {
   config.username = vectis_lua_table_string(lua, 1, "username");
   config.realm = vectis_lua_table_string(lua, 1, "realm");
   config.email = vectis_lua_table_string(lua, 1, "email");
+  config.pending_transaction_id =
+      vectis_lua_table_string(lua, 1, "pending_transaction_id");
   config.transaction_id = vectis_lua_table_string(lua, 1, "transaction_id");
   config.token = vectis_lua_table_string(lua, 1, "token");
   config.now_seconds = (uint64_t)vectis_lua_table_size(lua, 1, "now", 0u);
@@ -6073,6 +6075,8 @@ static int vectis_lua_auth_email_token_issue(lua_State *lua) {
   }
   config.ttl_seconds =
       (uint64_t)vectis_lua_table_size(lua, 1, "ttl_seconds", 0u);
+  config.max_attempts =
+      (unsigned int)vectis_lua_table_size(lua, 1, "max_attempts", 0u);
   vectis_auth_email_token_init(&token);
   status = vectis_auth_email_token_issue(&config, &token, &error);
   if (status != VECTIS_OK) {
@@ -6107,6 +6111,8 @@ static int vectis_lua_auth_email_token_verify(lua_State *lua) {
   config.transaction_id = vectis_lua_table_string(lua, 1, "transaction_id");
   config.username = vectis_lua_table_string(lua, 1, "username");
   config.realm = vectis_lua_table_string(lua, 1, "realm");
+  config.pending_transaction_id =
+      vectis_lua_table_string(lua, 1, "pending_transaction_id");
   config.token = vectis_lua_table_string(lua, 1, "token");
   config.now_seconds = (uint64_t)vectis_lua_table_size(lua, 1, "now", 0u);
   if (config.now_seconds == 0u) {
@@ -6135,6 +6141,14 @@ static int vectis_lua_auth_email_token_verify(lua_State *lua) {
     lua_pushstring(lua, result.email);
     lua_setfield(lua, -2, "email");
   }
+  if (result.pending_transaction_id != NULL) {
+    lua_pushstring(lua, result.pending_transaction_id);
+    lua_setfield(lua, -2, "pending_transaction_id");
+  }
+  lua_pushinteger(lua, (lua_Integer)result.failed_attempts);
+  lua_setfield(lua, -2, "failed_attempts");
+  lua_pushinteger(lua, (lua_Integer)result.max_attempts);
+  lua_setfield(lua, -2, "max_attempts");
   vectis_auth_email_token_result_cleanup(&result);
   return 1;
 }

@@ -413,7 +413,9 @@ created one, stores that scope with the hashed token record, and rejects
 verification attempts whose pending transaction id does not match. Email-token
 records also carry a failed-attempt counter and max-attempt budget, defaulting
 to five attempts; wrong token submissions increment the counter and consume the
-token once the budget is reached.
+token once the budget is reached. The Lua auth facade accepts the same pending
+transaction and max-attempt fields and returns pending transaction and attempt
+state from token verification.
 
 ## Configuration Model
 

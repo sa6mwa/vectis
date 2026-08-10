@@ -367,29 +367,49 @@ local email_token = assert(vectis.auth.email_token_issue({
   username = "lua-user@example.com",
   realm = "lua",
   email = "lua-user@example.com",
+  pending_transaction_id = "lua-pending-1",
   transaction_id = "lua-email-tx-1",
   token = "123456",
   now = 1000,
   ttl_seconds = 300,
+  max_attempts = 2,
 }))
 assert(email_token.transaction_id == "lua-email-tx-1")
 assert(email_token.token == "123456")
 assert(email_token.expires_at == 1300)
+local wrong_pending_email_token = assert(vectis.auth.email_token_verify({
+  credentials_path = auth_path,
+  transaction_id = "lua-email-tx-1",
+  username = "lua-user@example.com",
+  realm = "lua",
+  pending_transaction_id = "lua-pending-other",
+  token = "123456",
+  now = 1100,
+}))
+assert(wrong_pending_email_token.verified == false)
+assert(wrong_pending_email_token.expired == false)
+assert(wrong_pending_email_token.failed_attempts == 0)
+assert(wrong_pending_email_token.max_attempts == 0)
 local wrong_email_token = assert(vectis.auth.email_token_verify({
   credentials_path = auth_path,
   transaction_id = "lua-email-tx-1",
   username = "lua-user@example.com",
   realm = "lua",
+  pending_transaction_id = "lua-pending-1",
   token = "000000",
   now = 1100,
 }))
 assert(wrong_email_token.verified == false)
 assert(wrong_email_token.expired == false)
+assert(wrong_email_token.pending_transaction_id == "lua-pending-1")
+assert(wrong_email_token.failed_attempts == 1)
+assert(wrong_email_token.max_attempts == 2)
 local verified_email_token = assert(vectis.auth.email_token_verify({
   credentials_path = auth_path,
   transaction_id = "lua-email-tx-1",
   username = "lua-user@example.com",
   realm = "lua",
+  pending_transaction_id = "lua-pending-1",
   token = "123456",
   now = 1100,
 }))
@@ -398,6 +418,9 @@ assert(verified_email_token.expired == false)
 assert(verified_email_token.username == "lua-user@example.com")
 assert(verified_email_token.realm == "lua")
 assert(verified_email_token.email == "lua-user@example.com")
+assert(verified_email_token.pending_transaction_id == "lua-pending-1")
+assert(verified_email_token.failed_attempts == 1)
+assert(verified_email_token.max_attempts == 2)
 local replayed_email_token = assert(vectis.auth.email_token_verify({
   credentials_path = auth_path,
   transaction_id = "lua-email-tx-1",
