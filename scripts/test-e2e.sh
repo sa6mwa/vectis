@@ -1536,6 +1536,31 @@ run_lua_examples() {
       return 1
       ;;
   esac
+  method_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$webdav_client_id:$webdav_client_secret" \
+    -X DELETE "http://127.0.0.1:$kore_packed_port/dav/assets/logo.txt")
+  if [ "$method_status" != "204" ]; then
+    printf '%s\n' "Unexpected packed WebDAV embedded asset DELETE status: $method_status" >&2
+    return 1
+  fi
+  method_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/assets/logo.txt")
+  if [ "$method_status" != "404" ]; then
+    printf '%s\n' "Packed WebDAV embedded asset DELETE left logo readable: $method_status" >&2
+    return 1
+  fi
+  if [ -e "$packed_service_docroot/assets/logo.txt" ]; then
+    printf '%s\n' "Packed WebDAV embedded asset DELETE left extracted logo on disk" >&2
+    return 1
+  fi
+  body=$(curl_or_log "$packed_service_log" "packed static logo after webdav delete" \
+    --max-time 3 -fsS \
+    "http://127.0.0.1:$kore_packed_port/site/assets/logo.txt")
+  if [ "$body" != "VX packed logo" ]; then
+    printf '%s\n' "Packed static embedded logo changed after WebDAV DELETE: $body" >&2
+    return 1
+  fi
   curl_or_log "$packed_service_log" "packed webdav index put" \
     --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
     -X PUT --data 'webdav index override' \
