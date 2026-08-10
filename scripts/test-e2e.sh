@@ -76,6 +76,23 @@ start_server() {
   fi
 }
 
+curl_or_log() {
+  logfile=$1
+  label=$2
+  shift 2
+
+  curl "$@" || {
+    status=$?
+    printf '%s\n' "curl failed for $label" >&2
+    if [ -f "$logfile" ]; then
+      sed "s/^/[$label] /" "$logfile" >&2
+    else
+      printf '%s\n' "missing server log for $label at $logfile" >&2
+    fi
+    return "$status"
+  }
+}
+
 run_lockd_examples() {
   endpoint=$1
   label=$2
@@ -269,6 +286,7 @@ run_lua_examples() {
   shebang_script="$work_dir/vectis-e2e-shebang.lua"
   packed="$work_dir/vectis-e2e-packed"
   packed_service="$work_dir/vectis-e2e-packed-service"
+  packed_service_log="$work_dir/lua-packed-webserver.log"
   packed_service_queue="vectis-e2e-packed-$$"
   packed_service_namespace="examples"
   webdav_key_response=
@@ -489,7 +507,7 @@ run_lua_examples() {
     --extract-mode repair \
     --lockd-bundle "$client_bundle" \
     --output "$packed_service"
-  start_server "lua packed webserver" "$work_dir/lua-packed-webserver.log" \
+  start_server "lua packed webserver" "$packed_service_log" \
     env VECTIS_PACKED_SERVICE_PORT="$kore_packed_port" \
       VECTIS_PACKED_SERVICE_CREDENTIALS="$packed_service_credentials" \
       VECTIS_PACKED_SERVICE_CACHE="$packed_service_cache" \
@@ -529,7 +547,7 @@ run_lua_examples() {
       return 1
       ;;
   esac
-  body=$(curl --max-time 3 -fsS \
+  body=$(curl_or_log "$packed_service_log" "packed static index" --max-time 3 -fsS \
     "http://127.0.0.1:$kore_packed_port/site/index.html")
   case "$body" in
     *'packed service asset'*) ;;
@@ -538,49 +556,49 @@ run_lua_examples() {
       return 1
       ;;
   esac
-  curl --max-time 3 -fsSI \
+  curl_or_log "$packed_service_log" "packed static app.js headers" --max-time 3 -fsSI \
     "http://127.0.0.1:$kore_packed_port/site/app.js" |
     grep -qi '^content-type: application/javascript' || {
       printf '%s\n' "Packed static content type was not application/javascript" >&2
       return 1
     }
-  curl --max-time 3 -fsSI \
+  curl_or_log "$packed_service_log" "packed static app.css content type" --max-time 3 -fsSI \
     "http://127.0.0.1:$kore_packed_port/site/app.css" |
     grep -qi '^content-type: text/css' || {
       printf '%s\n' "Packed static CSS content type was not text/css" >&2
       return 1
     }
-  curl --max-time 3 -fsSI \
+  curl_or_log "$packed_service_log" "packed static app.css etag" --max-time 3 -fsSI \
     "http://127.0.0.1:$kore_packed_port/site/app.css" |
     grep -qi '^etag:' || {
       printf '%s\n' "Packed static CSS response did not include an ETag" >&2
       return 1
     }
-  curl --max-time 3 -fsSI \
+  curl_or_log "$packed_service_log" "packed static app.css cache-control" --max-time 3 -fsSI \
     "http://127.0.0.1:$kore_packed_port/site/app.css" |
     grep -qi '^cache-control: no-store' || {
       printf '%s\n' "Packed static CSS response did not include cache-control" >&2
       return 1
     }
-  body=$(curl --max-time 3 -fsS \
+  body=$(curl_or_log "$packed_service_log" "packed static css body" --max-time 3 -fsS \
     "http://127.0.0.1:$kore_packed_port/site/app.css")
   if [ "$body" != "body { color: #123456; }" ]; then
     printf '%s\n' "Unexpected packed CSS response: $body" >&2
     return 1
   fi
-  body=$(curl --max-time 3 -fsS \
+  body=$(curl_or_log "$packed_service_log" "packed static logo" --max-time 3 -fsS \
     "http://127.0.0.1:$kore_packed_port/site/assets/logo.txt")
   if [ "$body" != "VX packed logo" ]; then
     printf '%s\n' "Unexpected packed logo response: $body" >&2
     return 1
   fi
-  curl --max-time 3 -fsSI \
+  curl_or_log "$packed_service_log" "packed static template headers" --max-time 3 -fsSI \
     "http://127.0.0.1:$kore_packed_port/site/templates/login.html" |
     grep -qi '^content-type: text/html; charset=utf-8' || {
       printf '%s\n' "Packed template content type was not text/html; charset=utf-8" >&2
       return 1
     }
-  body=$(curl --max-time 3 -fsS \
+  body=$(curl_or_log "$packed_service_log" "packed static template" --max-time 3 -fsS \
     "http://127.0.0.1:$kore_packed_port/site/templates/login.html")
   case "$body" in
     *'packed-login'*'username'*) ;;
@@ -610,7 +628,8 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed static PUT status: $static_put_status" >&2
     return 1
   fi
-  body=$(curl --max-time 3 -fsS "http://127.0.0.1:$kore_packed_port/auth/login")
+  body=$(curl_or_log "$packed_service_log" "packed auth login" --max-time 3 -fsS \
+    "http://127.0.0.1:$kore_packed_port/auth/login")
   case "$body" in
     *'Packed E2E Login'*'action="/auth/webdav-key"'*) ;;
     *)
@@ -627,7 +646,8 @@ run_lua_examples() {
     printf '%s\n' "Packed auth issued WebDAV key without email token" >&2
     return 1
   fi
-  no_totp_email_token_response=$(curl --max-time 3 -fsS -X POST \
+  no_totp_email_token_response=$(curl_or_log "$packed_service_log" \
+    "packed no-totp email token" --max-time 3 -fsS -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data 'username=packed-email-only%40example.com&email=packed-email-only%40example.test' \
     "http://127.0.0.1:$kore_packed_port/auth-local/email-token")
@@ -640,7 +660,8 @@ run_lua_examples() {
     printf '%s\n' "$no_totp_email_token_response" >&2
     return 1
   fi
-  no_totp_key_response=$(curl --max-time 3 -fsS -X POST \
+  no_totp_key_response=$(curl_or_log "$packed_service_log" \
+    "packed no-totp webdav key" --max-time 3 -fsS -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-email-only%40example.com&password=packed-password&email_transaction_id=$no_totp_email_transaction_id&email_token=$no_totp_email_token" \
     "http://127.0.0.1:$kore_packed_port/auth-local/webdav-key")
@@ -653,13 +674,15 @@ run_lua_examples() {
     printf '%s\n' "$no_totp_key_response" >&2
     return 1
   fi
-  body=$(curl --max-time 3 -fsS -u "$no_totp_client_id:$no_totp_client_secret" \
+  body=$(curl_or_log "$packed_service_log" "packed no-totp guarded api" \
+    --max-time 3 -fsS -u "$no_totp_client_id:$no_totp_client_secret" \
     "http://127.0.0.1:$kore_packed_port/api/private")
   if [ "$body" != '{"ok":true,"surface":"packed-api"}' ]; then
     printf '%s\n' "Unexpected packed no-TOTP guarded API response: $body" >&2
     return 1
   fi
-  expired_token_response=$(curl --max-time 3 -fsS -X POST \
+  expired_token_response=$(curl_or_log "$packed_service_log" \
+    "packed expired email token" --max-time 3 -fsS -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data 'username=packed-email-only%40example.com&email=packed-email-only%40example.test' \
     "http://127.0.0.1:$kore_packed_port/auth-local/email-token")
@@ -711,7 +734,8 @@ run_lua_examples() {
     printf '%s\n' "Packed SMTP harness mailbox was written for blocked recipient" >&2
     return 1
   fi
-  email_token_response=$(curl --max-time 3 -fsS -X POST \
+  email_token_response=$(curl_or_log "$packed_service_log" \
+    "packed smtp email token" --max-time 3 -fsS -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data 'username=packed-user%40example.com&email=packed-user%40example.test' \
     "http://127.0.0.1:$kore_packed_port/auth/email-token")
@@ -776,7 +800,8 @@ run_lua_examples() {
     printf '%s\n' "Packed auth wrong TOTP returned unexpected status: $wrong_totp_status" >&2
     return 1
   fi
-  webdav_key_response=$(curl --max-time 3 -fsS -X POST \
+  webdav_key_response=$(curl_or_log "$packed_service_log" \
+    "packed webdav key" --max-time 3 -fsS -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$email_transaction_id&email_token=$email_token" \
     "http://127.0.0.1:$kore_packed_port/auth/webdav-key")
@@ -827,7 +852,8 @@ run_lua_examples() {
     printf '%s\n' "Packed guarded API unexpectedly allowed anonymous GET" >&2
     return 1
   fi
-  body=$(curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+  body=$(curl_or_log "$packed_service_log" "packed guarded api" \
+    --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
     "http://127.0.0.1:$kore_packed_port/api/private")
   if [ "$body" != '{"ok":true,"surface":"packed-api"}' ]; then
     printf '%s\n' "Unexpected packed guarded API response: $body" >&2
@@ -867,7 +893,7 @@ run_lua_examples() {
     fi
     count=$((count + 1))
     if [ "$count" -ge 30 ]; then
-      sed 's/^/[lua-packed-webserver] /' "$work_dir/lua-packed-webserver.log" >&2
+      sed 's/^/[lua-packed-webserver] /' "$packed_service_log" >&2
       printf '%s\n' "Packed consumer did not enter processing state: $packed_consumer_body" >&2
       return 1
     fi
@@ -881,7 +907,8 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed WebDAV PUT status during consumer work: $method_status" >&2
     return 1
   fi
-  body=$(curl --max-time 5 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+  body=$(curl_or_log "$packed_service_log" "packed webdav live during consumer" \
+    --max-time 5 -fsS -u "$webdav_client_id:$webdav_client_secret" \
     "http://127.0.0.1:$kore_packed_port/dav/live-during-consumer.txt")
   if [ "$body" != "webdav during packed consumer" ]; then
     printf '%s\n' "Unexpected packed WebDAV body during consumer work: $body" >&2
@@ -897,13 +924,14 @@ run_lua_examples() {
     fi
     count=$((count + 1))
     if [ "$count" -ge 30 ]; then
-      sed 's/^/[lua-packed-webserver] /' "$work_dir/lua-packed-webserver.log" >&2
+      sed 's/^/[lua-packed-webserver] /' "$packed_service_log" >&2
       printf '%s\n' "Packed consumer did not finish: $packed_consumer_body" >&2
       return 1
     fi
     sleep 1
   done
-  body=$(curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+  body=$(curl_or_log "$packed_service_log" "packed webdav index" \
+    --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
     "http://127.0.0.1:$kore_packed_port/dav/index.html")
   case "$body" in
     *'packed service asset'*) ;;
@@ -958,13 +986,15 @@ run_lua_examples() {
       return 1
       ;;
   esac
-  body=$(curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+  body=$(curl_or_log "$packed_service_log" "packed webdav logo" \
+    --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
     "http://127.0.0.1:$kore_packed_port/dav/assets/logo.txt")
   if [ "$body" != "VX packed logo" ]; then
     printf '%s\n' "Unexpected packed WebDAV logo response: $body" >&2
     return 1
   fi
-  body=$(curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+  body=$(curl_or_log "$packed_service_log" "packed webdav template" \
+    --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
     "http://127.0.0.1:$kore_packed_port/dav/templates/login.html")
   case "$body" in
     *'packed-login'*'username'*) ;;
@@ -973,10 +1003,12 @@ run_lua_examples() {
       return 1
       ;;
   esac
-  curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+  curl_or_log "$packed_service_log" "packed webdav index put" \
+    --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
     -X PUT --data 'webdav index override' \
     "http://127.0.0.1:$kore_packed_port/dav/index.html" >/dev/null
-  body=$(curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+  body=$(curl_or_log "$packed_service_log" "packed webdav index override" \
+    --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
     "http://127.0.0.1:$kore_packed_port/dav/index.html")
   if [ "$body" != "webdav index override" ]; then
     printf '%s\n' "Unexpected packed WebDAV index override: $body" >&2
@@ -987,7 +1019,8 @@ run_lua_examples() {
     printf '%s\n' "Packed WebDAV index override did not mutate extracted docroot: $body" >&2
     return 1
   fi
-  body=$(curl --max-time 3 -fsS \
+  body=$(curl_or_log "$packed_service_log" "packed static index after webdav override" \
+    --max-time 3 -fsS \
     "http://127.0.0.1:$kore_packed_port/site/index.html")
   case "$body" in
     *'packed service asset'*) ;;
@@ -996,10 +1029,12 @@ run_lua_examples() {
       return 1
       ;;
   esac
-  curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+  curl_or_log "$packed_service_log" "packed webdav note put" \
+    --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
     -X PUT --data 'mutable packed note' \
     "http://127.0.0.1:$kore_packed_port/dav/note.txt" >/dev/null
-  dav_write_body=$(curl --max-time 3 -fsS \
+  dav_write_body=$(curl_or_log "$packed_service_log" "packed webdav note" \
+    --max-time 3 -fsS \
     -u "$webdav_client_id:$webdav_client_secret" \
     "http://127.0.0.1:$kore_packed_port/dav/note.txt")
   if [ "$dav_write_body" != "mutable packed note" ]; then
@@ -1018,7 +1053,8 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed WebDAV MKCOL status: $method_status" >&2
     return 1
   fi
-  curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+  curl_or_log "$packed_service_log" "packed webdav docs a.txt put" \
+    --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
     -X PUT --data 'copied then moved' \
     "http://127.0.0.1:$kore_packed_port/dav/docs/a.txt" >/dev/null
   propfind_status=$(curl --max-time 3 -sS -o "$work_dir/packed-propfind-docs.xml" \
@@ -1048,7 +1084,8 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed WebDAV COPY status: $method_status" >&2
     return 1
   fi
-  body=$(curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+  body=$(curl_or_log "$packed_service_log" "packed webdav copied body" \
+    --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
     "http://127.0.0.1:$kore_packed_port/dav/docs/a-copy.txt")
   if [ "$body" != "copied then moved" ]; then
     printf '%s\n' "Unexpected packed WebDAV copied body: $body" >&2
@@ -1070,7 +1107,8 @@ run_lua_examples() {
     printf '%s\n' "Packed WebDAV MOVE left source readable: $method_status" >&2
     return 1
   fi
-  body=$(curl --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+  body=$(curl_or_log "$packed_service_log" "packed webdav moved body" \
+    --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
     "http://127.0.0.1:$kore_packed_port/dav/docs/a-moved.txt")
   if [ "$body" != "copied then moved" ]; then
     printf '%s\n' "Unexpected packed WebDAV moved body: $body" >&2
