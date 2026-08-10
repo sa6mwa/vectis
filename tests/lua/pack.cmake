@@ -329,8 +329,56 @@ string(REPLACE
        "assert(login_page.body:find(\"id=\\\"embedded-login-template\\\"\", 1, true))\nassert(login_page.body:find(\"action=\\\"/_vectis/auth/webdav-key\\\"\", 1, true))\nlocal file_login_page = fetch_http(\"/_vectis/auth-file/login\")\nassert(file_login_page.ok == true, file_login_page.error)\nassert(file_login_page.status == 200)\nassert(file_login_page.body:find(\"id=\\\"file-login-template\\\"\", 1, true))\nassert(file_login_page.body:find(\"action=\\\"/_vectis/auth-file/webdav-key\\\"\", 1, true))\nlocal password_only_login"
        asset_script_body "${asset_script_body}")
 string(REPLACE
+       "end\nlocal login_page = fetch_http"
+       "end\nlocal function assert_no_store(response)\n  local headers = response.headers:lower()\n  local detail = headers .. \"\\nBODY:\\n\" .. (response.body or \"\")\n  assert(headers:find(\"cache-control: no-store\", 1, true), detail)\n  assert(headers:find(\"pragma: no-cache\", 1, true), detail)\n  assert(headers:find(\"expires: 0\", 1, true), detail)\nend\nlocal login_page = fetch_http"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "assert(login_page.status == 200)\nassert(login_page.body"
+       "assert(login_page.status == 200)\nassert_no_store(login_page)\nassert(login_page.body"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "assert(file_login_page.status == 200)\nassert(file_login_page.body"
+       "assert(file_login_page.status == 200)\nassert_no_store(file_login_page)\nassert(file_login_page.body"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "assert(password_only_login.status == 400)\nassert(password_only_login.body"
+       "assert(password_only_login.status == 400)\nassert_no_store(password_only_login)\nassert(password_only_login.body"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "assert(token_issue.status == 200)\nlocal email_transaction_id"
+       "assert(token_issue.status == 200)\nassert_no_store(token_issue)\nlocal email_transaction_id"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "assert(login_response.status == 200)\nlocal replay_login"
+       "assert(login_response.status == 200)\nassert_no_store(login_response)\nlocal replay_login"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
        "local email_token = assert(mailbox:match(\"Your Vectis login token is:%s*([^%s]+)\"))"
        "local function token_for_transaction(mailbox_body, transaction_id)\n  for token, id in mailbox_body:gmatch(\"Your Vectis login token is:%s*([^%s]+).-Transaction:%s*([^%s]+)\") do\n    if id == transaction_id then\n      return token\n    end\n  end\n  error(\"mailbox token transaction not found: \" .. transaction_id)\nend\nlocal email_token = token_for_transaction(mailbox, email_transaction_id)\nlocal blocked_mailbox = mailbox\nlocal blocked_issue = request_http(\"POST\", \"/_vectis/auth/email-token\", \"username=pack-user&email=pack-user%40blocked.test\", {[\"Content-Type\"] = \"application/x-www-form-urlencoded\"})\nassert(blocked_issue.status == 400)\nassert(blocked_issue.body:find(\"SMTP recipient is not allowed\", 1, true))\nassert(read_file(smtp_mailbox) == blocked_mailbox)\nlocal expired_issue = request_http(\"POST\", \"/_vectis/auth-local/email-token\", \"username=pack-user&email=pack-user%40example.test\", {[\"Content-Type\"] = \"application/x-www-form-urlencoded\"})\nassert(expired_issue.ok == true, expired_issue.error)\nassert(expired_issue.status == 200)\nlocal expired_transaction_id = assert(expired_issue.body:match(\"transaction_id=([^\\n]+)\"))\nlocal expired_token = assert(expired_issue.body:match(\"token=([^\\n]+)\"))\nassert(expired_issue.body:match(\"expires_at=359\"))\nlocal expired_login = request_http(\"POST\", \"/_vectis/auth-expired/webdav-key\", \"username=pack-user&password=pack-password&totp_code=\" .. totp_360 .. \"&email_transaction_id=\" .. expired_transaction_id .. \"&email_token=\" .. expired_token, {[\"Content-Type\"] = \"application/x-www-form-urlencoded\"})\nassert(expired_login.status == 401)\nassert(expired_login.body == \"login failed\\n\")\nlocal expired_replay = request_http(\"POST\", \"/_vectis/auth-expired/webdav-key\", \"username=pack-user&password=pack-password&totp_code=\" .. totp_360 .. \"&email_transaction_id=\" .. expired_transaction_id .. \"&email_token=\" .. expired_token, {[\"Content-Type\"] = \"application/x-www-form-urlencoded\"})\nassert(expired_replay.status == 401)\nassert(expired_replay.body == \"login failed\\n\")"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "assert(wrong_email_login.status == 401)\nassert(wrong_email_login.body"
+       "assert(wrong_email_login.status == 401)\nassert_no_store(wrong_email_login)\nassert(wrong_email_login.body"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "assert(replay_login.status == 401)\nassert(replay_login.body"
+       "assert(replay_login.status == 401)\nassert_no_store(replay_login)\nassert(replay_login.body"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "assert(blocked_issue.status == 400)\nassert(blocked_issue.body"
+       "assert(blocked_issue.status == 400)\nassert_no_store(blocked_issue)\nassert(blocked_issue.body"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "assert(expired_issue.status == 200)\nlocal expired_transaction_id"
+       "assert(expired_issue.status == 200)\nassert_no_store(expired_issue)\nlocal expired_transaction_id"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "assert(expired_login.status == 401)\nassert(expired_login.body"
+       "assert(expired_login.status == 401)\nassert_no_store(expired_login)\nassert(expired_login.body"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "assert(expired_replay.status == 401)\nassert(expired_replay.body"
+       "assert(expired_replay.status == 401)\nassert_no_store(expired_replay)\nassert(expired_replay.body"
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "totp_code=287082"

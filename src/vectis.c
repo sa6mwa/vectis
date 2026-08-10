@@ -5503,6 +5503,21 @@ vectis_auth_login_form_response(const vectis_auth_route_data *data,
   return status;
 }
 
+static vectis_status vectis_auth_no_store(vectis_response *response,
+                                          vectis_error *error) {
+  vectis_status status;
+
+  status = vectis_response_header(response, "cache-control", "no-store", error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_response_header(response, "pragma", "no-cache", error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  return vectis_response_header(response, "expires", "0", error);
+}
+
 static vectis_status
 vectis_auth_webdav_key_response(vectis_auth_issued_credential *credential,
                                 vectis_response *response,
@@ -5576,6 +5591,7 @@ static vectis_status vectis_auth_login_dispatch(vectis_app *app,
                                                 void *userdata,
                                                 vectis_error *error) {
   vectis_auth_route_data *data;
+  vectis_status status;
 
   (void)app;
   (void)request;
@@ -5583,6 +5599,10 @@ static vectis_status vectis_auth_login_dispatch(vectis_app *app,
   if (data == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "auth route is invalid");
     return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_no_store(response, error);
+  if (status != VECTIS_OK) {
+    return status;
   }
   return vectis_auth_login_form_response(data, response, error);
 }
@@ -5607,6 +5627,10 @@ static vectis_status vectis_auth_email_token_dispatch(vectis_app *app,
   if (data == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "auth route is invalid");
     return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_no_store(response, error);
+  if (status != VECTIS_OK) {
+    return status;
   }
   content_type = vectis_request_header(request, "content-type");
   if (content_type != NULL &&
@@ -5660,6 +5684,7 @@ static vectis_status vectis_auth_email_token_dispatch(vectis_app *app,
     if (status != VECTIS_OK) {
       vectis_auth_email_token_verify_config consume;
       vectis_auth_email_token_result consume_result;
+      const char *message_body;
 
       vectis_auth_email_token_verify_config_init(&consume);
       consume.store = data->store;
@@ -5673,6 +5698,13 @@ static vectis_status vectis_auth_email_token_dispatch(vectis_app *app,
       vectis_auth_email_token_result_cleanup(&consume_result);
       vectis_auth_form_cleanup(&fields);
       vectis_auth_email_token_cleanup(&token);
+      if (status == VECTIS_ERR_INVALID) {
+        message_body = error != NULL && error->message[0] != '\0'
+                           ? error->message
+                           : "email token delivery failed";
+        return vectis_response_text(response, 400, "text/plain; charset=utf-8",
+                                    message_body, error);
+      }
       return status;
     }
   }
@@ -5705,6 +5737,10 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
   if (data == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "auth route is invalid");
     return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_no_store(response, error);
+  if (status != VECTIS_OK) {
+    return status;
   }
   content_type = vectis_request_header(request, "content-type");
   if (content_type != NULL &&
