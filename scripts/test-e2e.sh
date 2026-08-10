@@ -312,6 +312,7 @@ run_lua_examples() {
   webdav_client_id=
   webdav_client_secret=
   static_put_status=
+  root_static_put_status=
   unauth_dav_status=
   traversal_status=
   dav_write_body=
@@ -585,6 +586,24 @@ run_lua_examples() {
     *'packed service asset'*) ;;
     *)
       printf '%s\n' "Unexpected packed root static response: $body" >&2
+      return 1
+      ;;
+  esac
+  root_static_put_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -X PUT --data 'blocked root write' \
+    "http://127.0.0.1:$kore_packed_port/")
+  if [ "$root_static_put_status" = "200" ] ||
+      [ "$root_static_put_status" = "201" ] ||
+      [ "$root_static_put_status" = "204" ]; then
+    printf '%s\n' "Unexpected packed root static PUT status: $root_static_put_status" >&2
+    return 1
+  fi
+  body=$(curl_or_log "$packed_service_log" "packed root static index after put" \
+    --max-time 3 -fsS "http://127.0.0.1:$kore_packed_port/")
+  case "$body" in
+    *'packed service asset'*) ;;
+    *)
+      printf '%s\n' "Packed root static asset changed after rejected PUT: $body" >&2
       return 1
       ;;
   esac
