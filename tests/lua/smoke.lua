@@ -63,6 +63,11 @@ local function oauth_transport(mode)
         body = '{"access_token":"m2m-token","token_type":"Bearer","refresh_token":"m2m-refresh","scope":"dav","expires_in":3600}',
       }
     end
+    if mode == "fail" then
+      assert(request.body:find("grant_type=refresh_token", 1, true))
+      assert(request.body:find("refresh_token=lua-refresh-token", 1, true))
+      error("mock OAuth2 refresh failed")
+    end
     assert(request.body:find("grant_type=refresh_token", 1, true))
     assert(request.body:find("refresh_token=old-refresh", 1, true))
     return {
@@ -179,6 +184,24 @@ local oauth_webdav_verified = assert(vectis.auth.verify({
 }))
 assert(oauth_webdav_verified.authenticated == true)
 assert(oauth_webdav_verified.claim_json:match('"oauth2_flow_id":"lua%-flow"'))
+local stored_ensure, stored_ensure_error = vectis.auth.oauth2_stored_flow_ensure({
+  credentials_path = auth_path,
+  flow_id = "lua-flow",
+  transport = oauth_transport("fail"),
+  token_endpoint = "https://idp.example.test/token",
+  client_id = "vectis-client",
+  client_secret = "vectis-secret",
+  now = 6000,
+})
+assert(stored_ensure == nil)
+assert(type(stored_ensure_error) == "table")
+local oauth_webdav_revoked = assert(vectis.auth.verify({
+  credentials_path = auth_path,
+  authorization = "Basic " .. base64_encode(
+    oauth_webdav_key.client_id .. ":" .. oauth_webdav_key.client_secret),
+  allowed_modes = { "basic" },
+}))
+assert(oauth_webdav_revoked.authenticated == false)
 local issued = assert(vectis.auth.issue({
   credentials_path = auth_path,
   subject = "lua@example.com",
