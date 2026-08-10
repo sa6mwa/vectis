@@ -33,6 +33,8 @@ typedef struct vectis_auth_issue_config {
   const char *subject;
   /* Credential purpose embedded into the claim JSON, for example "webdav". */
   const char *purpose;
+  /* Optional OAuth2/OIDC token-flow id embedded into the claim JSON. */
+  const char *oauth2_flow_id;
   /* VECTIS_AUTH_MODE_* flags to issue. Defaults to Bearer. */
   unsigned auth_modes;
   /* Optional lonejson record-size cap. Zero uses the lonejson default. */
@@ -234,6 +236,39 @@ typedef struct vectis_auth_oauth2_token_flow_result {
   int refreshed;
 } vectis_auth_oauth2_token_flow_result;
 
+typedef struct vectis_auth_oauth2_stored_token_flow {
+  /* Owned strings and nested token flow. Release with
+   * vectis_auth_oauth2_stored_token_flow_cleanup().
+   */
+  char *flow_id;
+  char *subject;
+  char *webdav_client_id;
+  vectis_auth_oauth2_token_flow flow;
+  int found;
+} vectis_auth_oauth2_stored_token_flow;
+
+typedef struct vectis_auth_oauth2_token_flow_store_config {
+  vectis_auth_store_config store;
+  const char *flow_id;
+  const char *subject;
+  const char *webdav_client_id;
+  vectis_auth_oauth2_token_flow flow;
+} vectis_auth_oauth2_token_flow_store_config;
+
+typedef struct vectis_auth_oauth2_stored_token_flow_policy {
+  vectis_auth_store_config store;
+  const char *flow_id;
+  vectis_auth_oauth2_token_flow_policy flow_policy;
+  int revoke_webdav_keys_on_failure;
+} vectis_auth_oauth2_stored_token_flow_policy;
+
+typedef struct vectis_auth_oauth2_webdav_key_config {
+  vectis_auth_store_config store;
+  const char *flow_id;
+  const char *subject;
+  size_t max_record_bytes;
+} vectis_auth_oauth2_webdav_key_config;
+
 void vectis_auth_store_config_init(vectis_auth_store_config *config);
 void vectis_auth_issue_config_init(vectis_auth_issue_config *config);
 void vectis_auth_issued_credential_init(
@@ -273,6 +308,16 @@ void vectis_auth_oauth2_token_flow_policy_init(
     vectis_auth_oauth2_token_flow_policy *policy);
 void vectis_auth_oauth2_token_flow_result_init(
     vectis_auth_oauth2_token_flow_result *result);
+void vectis_auth_oauth2_stored_token_flow_init(
+    vectis_auth_oauth2_stored_token_flow *flow);
+void vectis_auth_oauth2_stored_token_flow_cleanup(
+    vectis_auth_oauth2_stored_token_flow *flow);
+void vectis_auth_oauth2_token_flow_store_config_init(
+    vectis_auth_oauth2_token_flow_store_config *config);
+void vectis_auth_oauth2_stored_token_flow_policy_init(
+    vectis_auth_oauth2_stored_token_flow_policy *policy);
+void vectis_auth_oauth2_webdav_key_config_init(
+    vectis_auth_oauth2_webdav_key_config *config);
 
 vectis_status vectis_auth_store_init(const vectis_auth_store_config *config,
                                      vectis_error *error);
@@ -315,6 +360,19 @@ vectis_status vectis_auth_oauth2_token_flow_ensure(
     vectis_auth_oauth2_token_flow *flow,
     const vectis_auth_oauth2_token_flow_policy *policy,
     vectis_auth_oauth2_token_flow_result *result, vectis_error *error);
+vectis_status vectis_auth_oauth2_token_flow_upsert(
+    const vectis_auth_oauth2_token_flow_store_config *config,
+    vectis_error *error);
+vectis_status vectis_auth_oauth2_token_flow_load(
+    const vectis_auth_store_config *store_config, const char *flow_id,
+    vectis_auth_oauth2_stored_token_flow *out, vectis_error *error);
+vectis_status vectis_auth_oauth2_stored_token_flow_ensure(
+    const vectis_auth_oauth2_stored_token_flow_policy *policy,
+    vectis_auth_oauth2_stored_token_flow *out,
+    vectis_auth_oauth2_token_flow_result *result, vectis_error *error);
+vectis_status vectis_auth_issue_webdav_key_for_oauth2_flow(
+    const vectis_auth_oauth2_webdav_key_config *config,
+    vectis_auth_issued_credential *out, vectis_error *error);
 
 vectis_status
 vectis_auth_provider_from_callback(vectis_auth_provider *provider,

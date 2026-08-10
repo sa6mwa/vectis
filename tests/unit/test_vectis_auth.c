@@ -166,6 +166,12 @@ oauth2_mock_transport(const vectis_auth_oauth2_http_request *request,
              strcmp(request->content_type,
                     "application/x-www-form-urlencoded") == 0,
          "OAuth2 transport receives form content type");
+  if (strcmp(mode, "fail") == 0) {
+    expect(strstr(body, "grant_type=refresh_token") != NULL,
+           "OAuth2 failed refresh body carries grant type");
+    vectis_set_error(error, VECTIS_ERR_INVALID, "mock OAuth2 refresh failed");
+    return VECTIS_ERR_INVALID;
+  }
   if (strcmp(mode, "client") == 0) {
     expect(strstr(body, "grant_type=client_credentials") != NULL,
            "OAuth2 client credentials body carries grant type");
@@ -208,6 +214,9 @@ int main(void) {
   char login_basic_clear[1024];
   char login_basic_token[1400];
   char login_basic_header[1500];
+  char oauth_basic_clear[1024];
+  char oauth_basic_token[1400];
+  char oauth_basic_header[1500];
   char totp_code[VECTIS_TOTP_CODE_LENGTH + 1u];
   int written;
   vectis_auth_store_config store;
@@ -219,10 +228,15 @@ int main(void) {
   vectis_auth_oauth2_token_flow token_flow;
   vectis_auth_oauth2_token_flow_policy token_policy;
   vectis_auth_oauth2_token_flow_result token_flow_result;
+  vectis_auth_oauth2_token_flow_store_config token_store;
+  vectis_auth_oauth2_stored_token_flow stored_flow;
+  vectis_auth_oauth2_stored_token_flow_policy stored_policy;
+  vectis_auth_oauth2_webdav_key_config oauth_webdav_config;
   vectis_auth_issue_config issue;
   vectis_auth_issued_credential bearer;
   vectis_auth_issued_credential basic;
   vectis_auth_issued_credential webdav_key;
+  vectis_auth_issued_credential oauth_webdav_key;
   vectis_auth_result result;
   vectis_auth_native_provider_config native_provider_config;
   vectis_auth_provider provider;
@@ -245,9 +259,14 @@ int main(void) {
   vectis_auth_oauth2_token_flow_init(&token_flow);
   vectis_auth_oauth2_token_flow_policy_init(&token_policy);
   vectis_auth_oauth2_token_flow_result_init(&token_flow_result);
+  vectis_auth_oauth2_token_flow_store_config_init(&token_store);
+  vectis_auth_oauth2_stored_token_flow_init(&stored_flow);
+  vectis_auth_oauth2_stored_token_flow_policy_init(&stored_policy);
+  vectis_auth_oauth2_webdav_key_config_init(&oauth_webdav_config);
   vectis_auth_issued_credential_init(&bearer);
   vectis_auth_issued_credential_init(&basic);
   vectis_auth_issued_credential_init(&webdav_key);
+  vectis_auth_issued_credential_init(&oauth_webdav_key);
   vectis_auth_result_init(&result);
   vectis_auth_provider_init(&provider);
   vectis_auth_provider_init(&custom_provider);
@@ -329,6 +348,99 @@ int main(void) {
   expect(token_flow.has_expires_at && token_flow.expires_at == 8200,
          "OAuth2 token flow updates absolute expiry");
   vectis_auth_oauth2_token_flow_cleanup(&token_flow);
+
+  token_flow.access_token = test_strdup("expired-token");
+  token_flow.token_type = test_strdup("Bearer");
+  token_flow.refresh_token = test_strdup("old-refresh");
+  token_flow.scope = test_strdup("dav");
+  token_flow.expires_at = 10;
+  token_flow.has_expires_at = 1;
+  expect(token_flow.access_token != NULL && token_flow.token_type != NULL &&
+             token_flow.refresh_token != NULL && token_flow.scope != NULL,
+         "allocates stored OAuth2 token flow fixture");
+  vectis_auth_oauth2_token_flow_store_config_init(&token_store);
+  token_store.store = store;
+  token_store.flow_id = "oidc-flow-1";
+  token_store.subject = "oidc-user@example.com";
+  token_store.flow = token_flow;
+  status = vectis_auth_oauth2_token_flow_upsert(&token_store, &error);
+  expect_ok(status, &error, "stores OAuth2 token flow");
+  vectis_auth_oauth2_token_flow_cleanup(&token_flow);
+
+  status = vectis_auth_oauth2_token_flow_load(&store, "oidc-flow-1",
+                                              &stored_flow, &error);
+  expect_ok(status, &error, "loads OAuth2 token flow");
+  expect(stored_flow.found, "stored OAuth2 token flow is found");
+  expect(stored_flow.subject != NULL &&
+             strcmp(stored_flow.subject, "oidc-user@example.com") == 0,
+         "stored OAuth2 token flow carries subject");
+  expect(stored_flow.flow.refresh_token != NULL &&
+             strcmp(stored_flow.flow.refresh_token, "old-refresh") == 0,
+         "stored OAuth2 token flow carries refresh token");
+  vectis_auth_oauth2_stored_token_flow_cleanup(&stored_flow);
+
+  vectis_auth_oauth2_webdav_key_config_init(&oauth_webdav_config);
+  oauth_webdav_config.store = store;
+  oauth_webdav_config.flow_id = "oidc-flow-1";
+  oauth_webdav_config.subject = "oidc-user@example.com";
+  status = vectis_auth_issue_webdav_key_for_oauth2_flow(
+      &oauth_webdav_config, &oauth_webdav_key, &error);
+  expect_ok(status, &error, "issues OAuth2-linked WebDAV key");
+  expect(oauth_webdav_key.client_id != NULL,
+         "OAuth2 WebDAV key includes client_id");
+  expect(oauth_webdav_key.client_secret != NULL,
+         "OAuth2 WebDAV key includes client_secret");
+  expect(oauth_webdav_key.claim_json != NULL &&
+             strstr(oauth_webdav_key.claim_json,
+                    "\"oauth2_flow_id\":\"oidc-flow-1\"") != NULL,
+         "OAuth2 WebDAV key claim carries flow id");
+  written = snprintf(
+      oauth_basic_clear, sizeof(oauth_basic_clear), "%s:%s",
+      oauth_webdav_key.client_id != NULL ? oauth_webdav_key.client_id : "",
+      oauth_webdav_key.client_secret != NULL ? oauth_webdav_key.client_secret
+                                             : "");
+  expect(written > 0 && (size_t)written < sizeof(oauth_basic_clear),
+         "formats OAuth2 WebDAV key cleartext");
+  expect(base64_encode(oauth_basic_clear, oauth_basic_token,
+                       sizeof(oauth_basic_token)),
+         "encodes OAuth2 WebDAV key");
+  written = snprintf(oauth_basic_header, sizeof(oauth_basic_header), "Basic %s",
+                     oauth_basic_token);
+  expect(written > 0 && (size_t)written < sizeof(oauth_basic_header),
+         "formats OAuth2 WebDAV Basic header");
+  status = vectis_auth_verify_authorization(
+      &store, oauth_basic_header, VECTIS_AUTH_MODE_BASIC, &result, &error);
+  expect_ok(status, &error, "verifies OAuth2-linked WebDAV key");
+  expect(result.authenticated, "authenticates OAuth2-linked WebDAV key");
+  expect(result.claim_json != NULL &&
+             strstr(result.claim_json, "\"oauth2_flow_id\":\"oidc-flow-1\"") !=
+                 NULL,
+         "verified OAuth2 WebDAV key carries flow id");
+  vectis_auth_result_cleanup(&result);
+
+  vectis_auth_oauth2_stored_token_flow_policy_init(&stored_policy);
+  stored_policy.store = store;
+  stored_policy.flow_id = "oidc-flow-1";
+  stored_policy.flow_policy.transport.request = oauth2_mock_transport;
+  stored_policy.flow_policy.transport.request_userdata = (void *)"fail";
+  stored_policy.flow_policy.transport.user_agent = "vectis-unit";
+  stored_policy.flow_policy.token_endpoint = "https://idp.example.test/token";
+  stored_policy.flow_policy.client_id = "vectis-client";
+  stored_policy.flow_policy.client_secret = "vectis-secret";
+  stored_policy.flow_policy.scope = "dav";
+  stored_policy.flow_policy.now = 1000;
+  stored_policy.flow_policy.disable_retry = 1;
+  status = vectis_auth_oauth2_stored_token_flow_ensure(
+      &stored_policy, &stored_flow, &token_flow_result, &error);
+  expect(status != VECTIS_OK,
+         "failed stored OAuth2 refresh reports hard failure");
+  vectis_auth_oauth2_stored_token_flow_cleanup(&stored_flow);
+  status = vectis_auth_verify_authorization(
+      &store, oauth_basic_header, VECTIS_AUTH_MODE_BASIC, &result, &error);
+  expect_ok(status, &error, "checks OAuth2 WebDAV key after failed refresh");
+  expect(!result.authenticated,
+         "failed OAuth2 refresh revokes linked WebDAV key");
+  vectis_auth_result_cleanup(&result);
 
   vectis_auth_user_config_init(&user);
   user.username = "dav-user@example.com";
@@ -604,6 +716,7 @@ int main(void) {
   expect(result.authenticated, "retains unrelated bearer credential");
 
   vectis_auth_result_cleanup(&result);
+  vectis_auth_issued_credential_cleanup(&oauth_webdav_key);
   vectis_auth_issued_credential_cleanup(&webdav_key);
   vectis_auth_issued_credential_cleanup(&basic);
   vectis_auth_issued_credential_cleanup(&bearer);

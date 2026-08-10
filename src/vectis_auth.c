@@ -58,6 +58,16 @@ typedef struct vectis_auth_claim_string_probe {
   int overflow;
 } vectis_auth_claim_string_probe;
 
+typedef struct vectis_auth_claim_string_alloc_probe {
+  const char *key;
+  size_t key_len;
+  char *data;
+  size_t size;
+  size_t capacity;
+  int matched;
+  int failed;
+} vectis_auth_claim_string_alloc_probe;
+
 typedef struct vectis_auth_claim_uint_probe {
   const char *key;
   size_t key_len;
@@ -67,6 +77,16 @@ typedef struct vectis_auth_claim_uint_probe {
   int matched;
   int overflow;
 } vectis_auth_claim_uint_probe;
+
+typedef struct vectis_auth_claim_i64_probe {
+  const char *key;
+  size_t key_len;
+  char value[32];
+  size_t size;
+  int64_t out;
+  int matched;
+  int overflow;
+} vectis_auth_claim_i64_probe;
 
 typedef struct vectis_auth_claim_bool_probe {
   const char *key;
@@ -86,6 +106,14 @@ typedef struct vectis_auth_user_record {
   int found;
 } vectis_auth_user_record;
 
+typedef struct vectis_auth_oauth2_flow_record {
+  char flow_id[256];
+  char subject[VECTIS_AUTH_PRINCIPAL_MAX + 1u];
+  char webdav_client_id[256];
+  vectis_auth_oauth2_token_flow flow;
+  int found;
+} vectis_auth_oauth2_flow_record;
+
 typedef struct vectis_auth_user_find_state {
   lonejson *runtime;
   const char *username;
@@ -97,6 +125,24 @@ typedef struct vectis_auth_user_drop_state {
   const char *username;
   int matched;
 } vectis_auth_user_drop_state;
+
+typedef struct vectis_auth_oauth2_flow_find_state {
+  lonejson *runtime;
+  const char *flow_id;
+  vectis_auth_oauth2_flow_record record;
+} vectis_auth_oauth2_flow_find_state;
+
+typedef struct vectis_auth_oauth2_flow_drop_state {
+  lonejson *runtime;
+  const char *flow_id;
+  int matched;
+} vectis_auth_oauth2_flow_drop_state;
+
+typedef struct vectis_auth_oauth2_webdav_revoke_state {
+  lonejson *runtime;
+  const char *flow_id;
+  int matched;
+} vectis_auth_oauth2_webdav_revoke_state;
 
 typedef struct vectis_auth_oauth2_http_adapter {
   const vectis_auth_oauth2_transport_config *config;
@@ -144,6 +190,24 @@ static void vectis_auth_copy_fixed(char *out, size_t out_size,
   }
   memcpy(out, value, len);
   out[len] = '\0';
+}
+
+static void
+vectis_auth_oauth2_flow_record_init(vectis_auth_oauth2_flow_record *record) {
+  if (record == NULL) {
+    return;
+  }
+  memset(record, 0, sizeof(*record));
+  vectis_auth_oauth2_token_flow_init(&record->flow);
+}
+
+static void
+vectis_auth_oauth2_flow_record_cleanup(vectis_auth_oauth2_flow_record *record) {
+  if (record == NULL) {
+    return;
+  }
+  vectis_auth_oauth2_token_flow_cleanup(&record->flow);
+  vectis_auth_oauth2_flow_record_init(record);
 }
 
 static void vectis_auth_set_errorf(vectis_error *error, vectis_status code,
@@ -451,6 +515,16 @@ static int vectis_auth_path_matches_key(const lonejson_value_path *path,
          memcmp(path->segments[0].data, key, key_len) == 0;
 }
 
+static int vectis_auth_path_matches_key2(const lonejson_value_path *path,
+                                         const char *key1, size_t key1_len,
+                                         const char *key2, size_t key2_len) {
+  return path != NULL && key1 != NULL && key2 != NULL &&
+         path->segment_count == 2u && path->segments[0].len == key1_len &&
+         memcmp(path->segments[0].data, key1, key1_len) == 0 &&
+         path->segments[1].len == key2_len &&
+         memcmp(path->segments[1].data, key2, key2_len) == 0;
+}
+
 static lonejson_status
 vectis_auth_claim_string_chunk(void *user, const lonejson_value_path *path,
                                const char *data, size_t len,
@@ -513,6 +587,114 @@ static int vectis_auth_claim_string(lonejson *runtime, const char *claim_json,
   status = lonejson_visit_path_value_buffer(
       runtime, claim_json, strlen(claim_json), &visitor, &probe, &json_error);
   return status == LONEJSON_STATUS_OK && probe.matched && !probe.overflow;
+}
+
+static lonejson_status vectis_auth_claim_string_alloc_chunk(
+    void *user, const lonejson_value_path *path, const char *data, size_t len,
+    lonejson_error *error) {
+  vectis_auth_claim_string_alloc_probe *probe;
+  char *grown;
+  size_t new_size;
+  size_t new_capacity;
+
+  (void)error;
+  probe = (vectis_auth_claim_string_alloc_probe *)user;
+  if (probe == NULL || probe->matched || probe->failed ||
+      !vectis_auth_path_matches_key(path, probe->key, probe->key_len)) {
+    return LONEJSON_STATUS_OK;
+  }
+  if (len == 0u) {
+    return LONEJSON_STATUS_OK;
+  }
+  if (probe->size + len < probe->size) {
+    probe->failed = 1;
+    return LONEJSON_STATUS_ALLOCATION_FAILED;
+  }
+  new_size = probe->size + len;
+  if (new_size + 1u < new_size) {
+    probe->failed = 1;
+    return LONEJSON_STATUS_ALLOCATION_FAILED;
+  }
+  if (new_size + 1u > probe->capacity) {
+    new_capacity = probe->capacity != 0u ? probe->capacity : 128u;
+    while (new_capacity < new_size + 1u) {
+      if (new_capacity > ((size_t)-1) / 2u) {
+        probe->failed = 1;
+        return LONEJSON_STATUS_ALLOCATION_FAILED;
+      }
+      new_capacity *= 2u;
+    }
+    grown = (char *)realloc(probe->data, new_capacity);
+    if (grown == NULL) {
+      probe->failed = 1;
+      return LONEJSON_STATUS_ALLOCATION_FAILED;
+    }
+    probe->data = grown;
+    probe->capacity = new_capacity;
+  }
+  memcpy(probe->data + probe->size, data, len);
+  probe->size = new_size;
+  probe->data[probe->size] = '\0';
+  return LONEJSON_STATUS_OK;
+}
+
+static lonejson_status
+vectis_auth_claim_string_alloc_end(void *user, const lonejson_value_path *path,
+                                   lonejson_error *error) {
+  vectis_auth_claim_string_alloc_probe *probe;
+
+  (void)error;
+  probe = (vectis_auth_claim_string_alloc_probe *)user;
+  if (probe != NULL &&
+      vectis_auth_path_matches_key(path, probe->key, probe->key_len) &&
+      !probe->failed) {
+    if (probe->data == NULL) {
+      probe->data = vectis_auth_strdup("");
+      if (probe->data == NULL) {
+        probe->failed = 1;
+        return LONEJSON_STATUS_ALLOCATION_FAILED;
+      }
+    }
+    probe->matched = 1;
+  }
+  return LONEJSON_STATUS_OK;
+}
+
+static char *vectis_auth_claim_string_alloc(lonejson *runtime,
+                                            const char *claim_json,
+                                            const char *key, int *failed) {
+  vectis_auth_claim_string_alloc_probe probe;
+  lonejson_path_value_visitor visitor;
+  lonejson_error json_error;
+  lonejson_status status;
+
+  if (failed != NULL) {
+    *failed = 0;
+  }
+  if (runtime == NULL || claim_json == NULL || key == NULL) {
+    return NULL;
+  }
+  memset(&probe, 0, sizeof(probe));
+  probe.key = key;
+  probe.key_len = strlen(key);
+  visitor = lonejson_default_path_value_visitor();
+  visitor.string_chunk = vectis_auth_claim_string_alloc_chunk;
+  visitor.string_end = vectis_auth_claim_string_alloc_end;
+  lonejson_error_init(&json_error);
+  status = lonejson_visit_path_value_buffer(
+      runtime, claim_json, strlen(claim_json), &visitor, &probe, &json_error);
+  if (status != LONEJSON_STATUS_OK || probe.failed) {
+    free(probe.data);
+    if (failed != NULL) {
+      *failed = 1;
+    }
+    return NULL;
+  }
+  if (!probe.matched) {
+    free(probe.data);
+    return NULL;
+  }
+  return probe.data;
 }
 
 static lonejson_status
@@ -578,6 +760,78 @@ static int vectis_auth_claim_uint(lonejson *runtime, const char *claim_json,
   visitor = lonejson_default_path_value_visitor();
   visitor.number_chunk = vectis_auth_claim_uint_chunk;
   visitor.number_end = vectis_auth_claim_uint_end;
+  lonejson_error_init(&json_error);
+  status = lonejson_visit_path_value_buffer(
+      runtime, claim_json, strlen(claim_json), &visitor, &probe, &json_error);
+  if (status == LONEJSON_STATUS_OK && probe.matched && !probe.overflow) {
+    *out = probe.out;
+    return 1;
+  }
+  return 0;
+}
+
+static lonejson_status
+vectis_auth_claim_i64_chunk(void *user, const lonejson_value_path *path,
+                            const char *data, size_t len,
+                            lonejson_error *error) {
+  vectis_auth_claim_i64_probe *probe;
+
+  (void)error;
+  probe = (vectis_auth_claim_i64_probe *)user;
+  if (probe == NULL || probe->matched || probe->overflow ||
+      !vectis_auth_path_matches_key(path, probe->key, probe->key_len)) {
+    return LONEJSON_STATUS_OK;
+  }
+  if (probe->size + len >= sizeof(probe->value)) {
+    probe->overflow = 1;
+    return LONEJSON_STATUS_OK;
+  }
+  memcpy(probe->value + probe->size, data, len);
+  probe->size += len;
+  probe->value[probe->size] = '\0';
+  return LONEJSON_STATUS_OK;
+}
+
+static lonejson_status
+vectis_auth_claim_i64_end(void *user, const lonejson_value_path *path,
+                          lonejson_error *error) {
+  vectis_auth_claim_i64_probe *probe;
+  char *end;
+  long long value;
+
+  (void)error;
+  probe = (vectis_auth_claim_i64_probe *)user;
+  if (probe == NULL ||
+      !vectis_auth_path_matches_key(path, probe->key, probe->key_len) ||
+      probe->overflow || probe->value[0] == '\0') {
+    return LONEJSON_STATUS_OK;
+  }
+  errno = 0;
+  end = NULL;
+  value = strtoll(probe->value, &end, 10);
+  if (errno == 0 && end != probe->value && end != NULL && *end == '\0') {
+    probe->out = (int64_t)value;
+    probe->matched = 1;
+  }
+  return LONEJSON_STATUS_OK;
+}
+
+static int vectis_auth_claim_i64(lonejson *runtime, const char *claim_json,
+                                 const char *key, int64_t *out) {
+  vectis_auth_claim_i64_probe probe;
+  lonejson_path_value_visitor visitor;
+  lonejson_error json_error;
+  lonejson_status status;
+
+  if (runtime == NULL || claim_json == NULL || key == NULL || out == NULL) {
+    return 0;
+  }
+  memset(&probe, 0, sizeof(probe));
+  probe.key = key;
+  probe.key_len = strlen(key);
+  visitor = lonejson_default_path_value_visitor();
+  visitor.number_chunk = vectis_auth_claim_i64_chunk;
+  visitor.number_end = vectis_auth_claim_i64_end;
   lonejson_error_init(&json_error);
   status = lonejson_visit_path_value_buffer(
       runtime, claim_json, strlen(claim_json), &visitor, &probe, &json_error);
@@ -666,6 +920,79 @@ static int vectis_auth_user_record_from_json(lonejson *runtime,
                                     out->totp_secret, sizeof(out->totp_secret));
     }
     out->found = ok;
+  }
+  free(buffer);
+  return ok;
+}
+
+static int
+vectis_auth_oauth2_flow_record_from_json(lonejson *runtime, const char *json,
+                                         size_t len,
+                                         vectis_auth_oauth2_flow_record *out) {
+  char *buffer;
+  int64_t expires_at;
+  int has_expires_at;
+  int failed;
+  int ok;
+
+  if (runtime == NULL || json == NULL || out == NULL) {
+    return 0;
+  }
+  buffer = (char *)malloc(len + 1u);
+  if (buffer == NULL) {
+    return 0;
+  }
+  memcpy(buffer, json, len);
+  buffer[len] = '\0';
+  vectis_auth_oauth2_flow_record_init(out);
+  ok = vectis_auth_claim_string(runtime, buffer, "flow_id", out->flow_id,
+                                sizeof(out->flow_id));
+  if (ok) {
+    (void)vectis_auth_claim_string(runtime, buffer, "subject", out->subject,
+                                   sizeof(out->subject));
+    (void)vectis_auth_claim_string(runtime, buffer, "webdav_client_id",
+                                   out->webdav_client_id,
+                                   sizeof(out->webdav_client_id));
+    failed = 0;
+    out->flow.access_token = vectis_auth_claim_string_alloc(
+        runtime, buffer, "access_token", &failed);
+    ok = !failed;
+    if (ok) {
+      out->flow.token_type = vectis_auth_claim_string_alloc(
+          runtime, buffer, "token_type", &failed);
+      ok = !failed;
+    }
+    if (ok) {
+      out->flow.refresh_token = vectis_auth_claim_string_alloc(
+          runtime, buffer, "refresh_token", &failed);
+      ok = !failed;
+    }
+    if (ok) {
+      out->flow.scope =
+          vectis_auth_claim_string_alloc(runtime, buffer, "scope", &failed);
+      ok = !failed;
+    }
+    if (ok) {
+      out->flow.id_token =
+          vectis_auth_claim_string_alloc(runtime, buffer, "id_token", &failed);
+      ok = !failed;
+    }
+  }
+  if (ok) {
+    has_expires_at = vectis_auth_claim_bool(runtime, buffer, "has_expires_at",
+                                            &has_expires_at)
+                         ? has_expires_at
+                         : 0;
+    if (has_expires_at) {
+      expires_at = 0;
+      ok = vectis_auth_claim_i64(runtime, buffer, "expires_at", &expires_at);
+      out->flow.expires_at = expires_at;
+      out->flow.has_expires_at = ok;
+    }
+  }
+  out->found = ok;
+  if (!ok) {
+    vectis_auth_oauth2_flow_record_cleanup(out);
   }
   free(buffer);
   return ok;
@@ -800,6 +1127,145 @@ static lonejson_status vectis_auth_user_drop_item(
   return status;
 }
 
+static lonejson_status vectis_auth_oauth2_flow_find_item(
+    void *user, const lonejson_array_rewrite_context *context, void *item,
+    lonejson_array_rewrite_result *result, lonejson_error *error) {
+  vectis_auth_oauth2_flow_find_state *state;
+  lonejson_json_value *value;
+  lonejson_owned_buffer json;
+  vectis_auth_oauth2_flow_record record;
+  lonejson_status status;
+
+  (void)context;
+  (void)result;
+  state = (vectis_auth_oauth2_flow_find_state *)user;
+  value = (lonejson_json_value *)item;
+  if (state == NULL || state->record.found || state->flow_id == NULL) {
+    return LONEJSON_STATUS_OK;
+  }
+  lonejson_owned_buffer_init(&json);
+  vectis_auth_oauth2_flow_record_init(&record);
+  status = value->methods->write_to_sink(value, lonejson_owned_buffer_sink,
+                                         &json, error);
+  if (status == LONEJSON_STATUS_OK &&
+      vectis_auth_oauth2_flow_record_from_json(state->runtime, json.data,
+                                               json.len, &record) &&
+      strcmp(record.flow_id, state->flow_id) == 0) {
+    state->record = record;
+    state->record.found = 1;
+  } else {
+    vectis_auth_oauth2_flow_record_cleanup(&record);
+  }
+  lonejson_owned_buffer_free(&json);
+  return status;
+}
+
+static lonejson_status vectis_auth_oauth2_flow_drop_item(
+    void *user, const lonejson_array_rewrite_context *context, void *item,
+    lonejson_array_rewrite_result *result, lonejson_error *error) {
+  vectis_auth_oauth2_flow_drop_state *state;
+  lonejson_json_value *value;
+  lonejson_owned_buffer json;
+  vectis_auth_oauth2_flow_record record;
+  lonejson_status status;
+
+  (void)context;
+  state = (vectis_auth_oauth2_flow_drop_state *)user;
+  value = (lonejson_json_value *)item;
+  if (state == NULL || state->flow_id == NULL) {
+    return LONEJSON_STATUS_OK;
+  }
+  lonejson_owned_buffer_init(&json);
+  vectis_auth_oauth2_flow_record_init(&record);
+  status = value->methods->write_to_sink(value, lonejson_owned_buffer_sink,
+                                         &json, error);
+  if (status == LONEJSON_STATUS_OK &&
+      vectis_auth_oauth2_flow_record_from_json(state->runtime, json.data,
+                                               json.len, &record) &&
+      strcmp(record.flow_id, state->flow_id) == 0) {
+    result->action = LONEJSON_ARRAY_REWRITE_DROP;
+    state->matched = 1;
+  }
+  vectis_auth_oauth2_flow_record_cleanup(&record);
+  lonejson_owned_buffer_free(&json);
+  return status;
+}
+
+static lonejson_status
+vectis_auth_oauth2_flow_claim_chunk(void *user, const lonejson_value_path *path,
+                                    const char *data, size_t len,
+                                    lonejson_error *error) {
+  vectis_auth_client_id_probe *probe;
+
+  (void)error;
+  probe = (vectis_auth_client_id_probe *)user;
+  if (probe == NULL || probe->matched || probe->overflow ||
+      !vectis_auth_path_matches_key2(path, "claim", 5u, "oauth2_flow_id",
+                                     14u)) {
+    return LONEJSON_STATUS_OK;
+  }
+  if (probe->size + len >= sizeof(probe->value)) {
+    probe->overflow = 1;
+    return LONEJSON_STATUS_OK;
+  }
+  memcpy(probe->value + probe->size, data, len);
+  probe->size += len;
+  probe->value[probe->size] = '\0';
+  return LONEJSON_STATUS_OK;
+}
+
+static lonejson_status
+vectis_auth_oauth2_flow_claim_end(void *user, const lonejson_value_path *path,
+                                  lonejson_error *error) {
+  vectis_auth_client_id_probe *probe;
+
+  (void)error;
+  probe = (vectis_auth_client_id_probe *)user;
+  if (probe != NULL &&
+      vectis_auth_path_matches_key2(path, "claim", 5u, "oauth2_flow_id", 14u) &&
+      !probe->overflow && probe->expected != NULL &&
+      strcmp(probe->value, probe->expected) == 0) {
+    probe->matched = 1;
+  }
+  return LONEJSON_STATUS_OK;
+}
+
+static lonejson_status vectis_auth_oauth2_webdav_revoke_item(
+    void *user, const lonejson_array_rewrite_context *context, void *item,
+    lonejson_array_rewrite_result *result, lonejson_error *error) {
+  vectis_auth_oauth2_webdav_revoke_state *state;
+  lonejson_json_value *value;
+  lonejson_owned_buffer json;
+  lonejson_path_value_visitor visitor;
+  vectis_auth_client_id_probe probe;
+  lonejson_status status;
+
+  (void)context;
+  state = (vectis_auth_oauth2_webdav_revoke_state *)user;
+  value = (lonejson_json_value *)item;
+  if (state == NULL || state->flow_id == NULL) {
+    return LONEJSON_STATUS_OK;
+  }
+  memset(&probe, 0, sizeof(probe));
+  probe.expected = state->flow_id;
+  lonejson_owned_buffer_init(&json);
+  status = value->methods->write_to_sink(value, lonejson_owned_buffer_sink,
+                                         &json, error);
+  if (status == LONEJSON_STATUS_OK) {
+    visitor = lonejson_default_path_value_visitor();
+    visitor.string_chunk = vectis_auth_oauth2_flow_claim_chunk;
+    visitor.string_end = vectis_auth_oauth2_flow_claim_end;
+    status = lonejson_visit_path_value_buffer(
+        state->runtime, json.data, json.len, &visitor, &probe, error);
+  }
+  if (status == LONEJSON_STATUS_OK && probe.matched) {
+    result->action = LONEJSON_ARRAY_REWRITE_DROP;
+    state->matched = 1;
+  }
+  lonejson_owned_buffer_free(&json);
+  return status;
+}
+
 static vectis_status vectis_auth_lonejson_runtime(lonejson **out,
                                                   vectis_error *error) {
   lonejson_auth_provider provider;
@@ -837,7 +1303,7 @@ static vectis_status
 vectis_auth_write_empty_store_locked(const vectis_auth_store_config *config,
                                      vectis_error *error) {
   static const char empty_store[] =
-      "{\"credentials\":[],\"signups\":[],\"users\":[]}\n";
+      "{\"credentials\":[],\"signups\":[],\"users\":[],\"oauth2_flows\":[]}\n";
 
   return vectis_auth_write_store_locked(config, empty_store,
                                         sizeof(empty_store) - 1u, error);
@@ -847,6 +1313,7 @@ static vectis_status vectis_auth_writer_copy_store_arrays(
     lonejson_writer *writer, const char *store_json, size_t store_len,
     const char *extra_record_json, size_t extra_record_len,
     const char *extra_user_json, size_t extra_user_len,
+    const char *extra_flow_json, size_t extra_flow_len,
     lonejson_error *json_error) {
   lonejson_status status;
 
@@ -900,6 +1367,23 @@ static vectis_status vectis_auth_writer_copy_store_arrays(
     status = lonejson_writer_end_array(writer, json_error);
   }
   if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_key(writer, "oauth2_flows", 12u, json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_begin_array(writer, json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && store_json != NULL && store_len > 0u) {
+    status = lonejson_writer_array_items_buffer(
+        writer, "oauth2_flows", store_json, store_len, json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && extra_flow_json != NULL) {
+    status = lonejson_writer_json_value_buffer(writer, extra_flow_json,
+                                               extra_flow_len, json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_end_array(writer, json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
     status = lonejson_writer_end_object(writer, json_error);
   }
   if (status == LONEJSON_STATUS_OK) {
@@ -940,8 +1424,8 @@ vectis_auth_append_record_locked(const vectis_auth_store_config *config,
       runtime, &writer, lonejson_owned_buffer_sink, &out, &json_error);
   if (json_status == LONEJSON_STATUS_OK) {
     status = vectis_auth_writer_copy_store_arrays(
-        &writer, store_json, store_len, record_json, record_len, NULL, 0u,
-        &json_error);
+        &writer, store_json, store_len, record_json, record_len, NULL, 0u, NULL,
+        0u, &json_error);
     lonejson_writer_cleanup(&writer);
   } else {
     status = vectis_auth_lonejson_error(error, json_status, &json_error,
@@ -1188,6 +1672,57 @@ void vectis_auth_oauth2_token_flow_result_init(
     return;
   }
   memset(result, 0, sizeof(*result));
+}
+
+void vectis_auth_oauth2_stored_token_flow_init(
+    vectis_auth_oauth2_stored_token_flow *flow) {
+  if (flow == NULL) {
+    return;
+  }
+  memset(flow, 0, sizeof(*flow));
+  vectis_auth_oauth2_token_flow_init(&flow->flow);
+}
+
+void vectis_auth_oauth2_stored_token_flow_cleanup(
+    vectis_auth_oauth2_stored_token_flow *flow) {
+  if (flow == NULL) {
+    return;
+  }
+  free(flow->flow_id);
+  free(flow->subject);
+  free(flow->webdav_client_id);
+  vectis_auth_oauth2_token_flow_cleanup(&flow->flow);
+  vectis_auth_oauth2_stored_token_flow_init(flow);
+}
+
+void vectis_auth_oauth2_token_flow_store_config_init(
+    vectis_auth_oauth2_token_flow_store_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  vectis_auth_store_config_init(&config->store);
+  vectis_auth_oauth2_token_flow_init(&config->flow);
+}
+
+void vectis_auth_oauth2_stored_token_flow_policy_init(
+    vectis_auth_oauth2_stored_token_flow_policy *policy) {
+  if (policy == NULL) {
+    return;
+  }
+  memset(policy, 0, sizeof(*policy));
+  vectis_auth_store_config_init(&policy->store);
+  vectis_auth_oauth2_token_flow_policy_init(&policy->flow_policy);
+  policy->revoke_webdav_keys_on_failure = 1;
+}
+
+void vectis_auth_oauth2_webdav_key_config_init(
+    vectis_auth_oauth2_webdav_key_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  vectis_auth_store_config_init(&config->store);
 }
 
 static void vectis_auth_hex_encode(const unsigned char *data, size_t len,
@@ -1723,6 +2258,111 @@ static vectis_status vectis_auth_oauth2_copy_token_flow_from_lonejson(
   return VECTIS_OK;
 }
 
+static vectis_status vectis_auth_oauth2_copy_token_flow_public(
+    const vectis_auth_oauth2_token_flow *source,
+    vectis_auth_oauth2_token_flow *out, vectis_error *error) {
+  if (source == NULL || out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 token flow output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_oauth2_token_flow_cleanup(out);
+  out->access_token = vectis_auth_strdup(source->access_token);
+  out->token_type = vectis_auth_strdup(source->token_type);
+  out->refresh_token = vectis_auth_strdup(source->refresh_token);
+  out->scope = vectis_auth_strdup(source->scope);
+  out->id_token = vectis_auth_strdup(source->id_token);
+  out->expires_at = source->expires_at;
+  out->has_expires_at = source->has_expires_at;
+  if ((source->access_token != NULL && out->access_token == NULL) ||
+      (source->token_type != NULL && out->token_type == NULL) ||
+      (source->refresh_token != NULL && out->refresh_token == NULL) ||
+      (source->scope != NULL && out->scope == NULL) ||
+      (source->id_token != NULL && out->id_token == NULL)) {
+    vectis_auth_oauth2_token_flow_cleanup(out);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy OAuth2 token flow");
+    return VECTIS_ERR_NOMEM;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_oauth2_copy_stored_flow(
+    const vectis_auth_oauth2_flow_record *source,
+    vectis_auth_oauth2_stored_token_flow *out, vectis_error *error) {
+  vectis_status status;
+
+  if (source == NULL || out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 stored token flow output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_oauth2_stored_token_flow_cleanup(out);
+  out->found = source->found;
+  if (!source->found) {
+    return VECTIS_OK;
+  }
+  out->flow_id = vectis_auth_strdup(source->flow_id);
+  if (source->subject[0] != '\0') {
+    out->subject = vectis_auth_strdup(source->subject);
+  }
+  if (source->webdav_client_id[0] != '\0') {
+    out->webdav_client_id = vectis_auth_strdup(source->webdav_client_id);
+  }
+  status = vectis_auth_oauth2_copy_token_flow_public(&source->flow, &out->flow,
+                                                     error);
+  if (out->flow_id == NULL ||
+      (source->subject[0] != '\0' && out->subject == NULL) ||
+      (source->webdav_client_id[0] != '\0' && out->webdav_client_id == NULL) ||
+      status != VECTIS_OK) {
+    vectis_auth_oauth2_stored_token_flow_cleanup(out);
+    if (status == VECTIS_OK) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy OAuth2 stored token flow");
+      status = VECTIS_ERR_NOMEM;
+    }
+  }
+  return status;
+}
+
+static vectis_status vectis_auth_oauth2_copy_stored_flow_public(
+    const vectis_auth_oauth2_stored_token_flow *source,
+    vectis_auth_oauth2_stored_token_flow *out, vectis_error *error) {
+  vectis_status status;
+
+  if (source == NULL || out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 stored token flow output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_oauth2_stored_token_flow_cleanup(out);
+  out->found = source->found;
+  if (!source->found) {
+    return VECTIS_OK;
+  }
+  out->flow_id = vectis_auth_strdup(source->flow_id);
+  if (source->subject != NULL) {
+    out->subject = vectis_auth_strdup(source->subject);
+  }
+  if (source->webdav_client_id != NULL) {
+    out->webdav_client_id = vectis_auth_strdup(source->webdav_client_id);
+  }
+  status = vectis_auth_oauth2_copy_token_flow_public(&source->flow, &out->flow,
+                                                     error);
+  if (out->flow_id == NULL ||
+      (source->subject != NULL && out->subject == NULL) ||
+      (source->webdav_client_id != NULL && out->webdav_client_id == NULL) ||
+      status != VECTIS_OK) {
+    vectis_auth_oauth2_stored_token_flow_cleanup(out);
+    if (status == VECTIS_OK) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy OAuth2 stored token flow");
+      status = VECTIS_ERR_NOMEM;
+    }
+  }
+  return status;
+}
+
 static void vectis_auth_oauth2_lonejson_flow_from_public(
     const vectis_auth_oauth2_token_flow *source,
     lonejson_oauth2_token_flow *out) {
@@ -1804,6 +2444,15 @@ vectis_auth_build_claim(lonejson *runtime, const vectis_auth_issue_config *cfg,
   if (status == LONEJSON_STATUS_OK) {
     status = lonejson_writer_string(&writer, cfg->purpose, strlen(cfg->purpose),
                                     &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && cfg->oauth2_flow_id != NULL &&
+      cfg->oauth2_flow_id[0] != '\0') {
+    status = lonejson_writer_key(&writer, "oauth2_flow_id", 14u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && cfg->oauth2_flow_id != NULL &&
+      cfg->oauth2_flow_id[0] != '\0') {
+    status = lonejson_writer_string(&writer, cfg->oauth2_flow_id,
+                                    strlen(cfg->oauth2_flow_id), &json_error);
   }
   if (status == LONEJSON_STATUS_OK) {
     status = lonejson_writer_end_object(&writer, &json_error);
@@ -1970,6 +2619,116 @@ static vectis_status vectis_auth_build_user_record_json(
   return VECTIS_OK;
 }
 
+static vectis_status vectis_auth_build_oauth2_flow_record_json(
+    lonejson *runtime, const vectis_auth_oauth2_token_flow_store_config *config,
+    lonejson_owned_buffer *out, vectis_error *error) {
+  lonejson_writer writer;
+  lonejson_error json_error;
+  lonejson_status status;
+
+  if (runtime == NULL || config == NULL || out == NULL ||
+      config->flow_id == NULL || config->flow_id[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 token flow_id is required");
+    return VECTIS_ERR_INVALID;
+  }
+  lonejson_error_init(&json_error);
+  status = lonejson_writer_init_sink(
+      runtime, &writer, lonejson_owned_buffer_sink, out, &json_error);
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_begin_object(&writer, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_key(&writer, "flow_id", 7u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_string(&writer, config->flow_id,
+                                    strlen(config->flow_id), &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && config->subject != NULL &&
+      config->subject[0] != '\0') {
+    status = lonejson_writer_key(&writer, "subject", 7u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && config->subject != NULL &&
+      config->subject[0] != '\0') {
+    status = lonejson_writer_string(&writer, config->subject,
+                                    strlen(config->subject), &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && config->webdav_client_id != NULL &&
+      config->webdav_client_id[0] != '\0') {
+    status = lonejson_writer_key(&writer, "webdav_client_id", 16u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && config->webdav_client_id != NULL &&
+      config->webdav_client_id[0] != '\0') {
+    status =
+        lonejson_writer_string(&writer, config->webdav_client_id,
+                               strlen(config->webdav_client_id), &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && config->flow.access_token != NULL) {
+    status = lonejson_writer_key(&writer, "access_token", 12u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && config->flow.access_token != NULL) {
+    status =
+        lonejson_writer_string(&writer, config->flow.access_token,
+                               strlen(config->flow.access_token), &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && config->flow.token_type != NULL) {
+    status = lonejson_writer_key(&writer, "token_type", 10u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && config->flow.token_type != NULL) {
+    status =
+        lonejson_writer_string(&writer, config->flow.token_type,
+                               strlen(config->flow.token_type), &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && config->flow.refresh_token != NULL) {
+    status = lonejson_writer_key(&writer, "refresh_token", 13u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && config->flow.refresh_token != NULL) {
+    status =
+        lonejson_writer_string(&writer, config->flow.refresh_token,
+                               strlen(config->flow.refresh_token), &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && config->flow.scope != NULL) {
+    status = lonejson_writer_key(&writer, "scope", 5u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && config->flow.scope != NULL) {
+    status = lonejson_writer_string(&writer, config->flow.scope,
+                                    strlen(config->flow.scope), &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && config->flow.id_token != NULL) {
+    status = lonejson_writer_key(&writer, "id_token", 8u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && config->flow.id_token != NULL) {
+    status = lonejson_writer_string(&writer, config->flow.id_token,
+                                    strlen(config->flow.id_token), &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_key(&writer, "has_expires_at", 14u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status =
+        lonejson_writer_bool(&writer, config->flow.has_expires_at, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && config->flow.has_expires_at) {
+    status = lonejson_writer_key(&writer, "expires_at", 10u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && config->flow.has_expires_at) {
+    status = lonejson_writer_i64(&writer, config->flow.expires_at, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_end_object(&writer, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_finish(&writer, &json_error);
+  }
+  lonejson_writer_cleanup(&writer);
+  if (status != LONEJSON_STATUS_OK) {
+    return vectis_auth_lonejson_error(error, status, &json_error,
+                                      "failed to build OAuth2 token flow");
+  }
+  return VECTIS_OK;
+}
+
 static vectis_status vectis_auth_write_store_with_user_locked(
     const vectis_auth_store_config *config, const char *store_json,
     size_t store_len, const char *user_json, size_t user_len,
@@ -1992,7 +2751,7 @@ static vectis_status vectis_auth_write_store_with_user_locked(
       runtime, &writer, lonejson_owned_buffer_sink, &out, &json_error);
   if (json_status == LONEJSON_STATUS_OK) {
     status = vectis_auth_writer_copy_store_arrays(
-        &writer, store_json, store_len, NULL, 0u, user_json, user_len,
+        &writer, store_json, store_len, NULL, 0u, user_json, user_len, NULL, 0u,
         &json_error);
     lonejson_writer_cleanup(&writer);
   } else {
@@ -2009,6 +2768,195 @@ static vectis_status vectis_auth_write_store_with_user_locked(
   lonejson_owned_buffer_free(&out);
   lonejson_free(runtime);
   return status;
+}
+
+static vectis_status vectis_auth_write_store_with_flow_locked(
+    const vectis_auth_store_config *config, const char *store_json,
+    size_t store_len, const char *flow_json, size_t flow_len,
+    vectis_error *error) {
+  lonejson *runtime;
+  lonejson_writer writer;
+  lonejson_owned_buffer out;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  vectis_status status;
+
+  runtime = NULL;
+  status = vectis_auth_lonejson_runtime(&runtime, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  lonejson_owned_buffer_init(&out);
+  lonejson_error_init(&json_error);
+  json_status = lonejson_writer_init_sink(
+      runtime, &writer, lonejson_owned_buffer_sink, &out, &json_error);
+  if (json_status == LONEJSON_STATUS_OK) {
+    status = vectis_auth_writer_copy_store_arrays(
+        &writer, store_json, store_len, NULL, 0u, NULL, 0u, flow_json, flow_len,
+        &json_error);
+    lonejson_writer_cleanup(&writer);
+  } else {
+    status = vectis_auth_lonejson_error(error, json_status, &json_error,
+                                        "failed to initialize auth writer");
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_write_store_locked(config, out.data, out.len, error);
+  } else if (error != NULL && error->code == VECTIS_OK) {
+    (void)vectis_auth_lonejson_error(error, LONEJSON_STATUS_INVALID_JSON,
+                                     &json_error,
+                                     "failed to rewrite auth store");
+  }
+  lonejson_owned_buffer_free(&out);
+  lonejson_free(runtime);
+  return status;
+}
+
+static vectis_status vectis_auth_drop_oauth2_flow_to_temp_locked(
+    const vectis_auth_store_config *store_config, lonejson *runtime,
+    const char *flow_id, char *temp_path, size_t temp_path_size,
+    vectis_error *error) {
+  lonejson_json_value item_value;
+  lonejson_array_rewrite_options options;
+  vectis_auth_oauth2_flow_drop_state state;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  int written;
+
+  written = snprintf(temp_path, temp_path_size, "%s.oauth2.%ld",
+                     store_config->credentials_path, (long)getpid());
+  if (written < 0 || (size_t)written >= temp_path_size) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 token flow temp path is too long");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&state, 0, sizeof(state));
+  state.runtime = runtime;
+  state.flow_id = flow_id;
+  memset(&options, 0, sizeof(options));
+  lonejson_json_value_init(runtime, &item_value);
+  lonejson_error_init(&json_error);
+  json_status =
+      lonejson_json_value_enable_parse_capture(&item_value, &json_error);
+  if (json_status == LONEJSON_STATUS_OK) {
+    options.item_value = &item_value;
+    options.item = vectis_auth_oauth2_flow_drop_item;
+    options.user = &state;
+    json_status = lonejson_array_rewrite_path(runtime, "oauth2_flows",
+                                              store_config->credentials_path,
+                                              temp_path, &options, &json_error);
+  }
+  lonejson_json_value_cleanup(&item_value);
+  if (json_status != LONEJSON_STATUS_OK) {
+    (void)unlink(temp_path);
+    return vectis_auth_lonejson_error(error, json_status, &json_error,
+                                      "failed to rewrite OAuth2 token flows");
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_find_oauth2_flow_locked(
+    const vectis_auth_store_config *store_config, lonejson *runtime,
+    const char *flow_id, vectis_auth_oauth2_flow_record *out,
+    vectis_error *error) {
+  lonejson_json_value item_value;
+  lonejson_array_rewrite_options options;
+  vectis_auth_oauth2_flow_find_state state;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  char temp_path[4096];
+  int written;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 token flow output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_oauth2_flow_record_init(out);
+  written = snprintf(temp_path, sizeof(temp_path), "%s.oauth2.find.%ld",
+                     store_config->credentials_path, (long)getpid());
+  if (written < 0 || (size_t)written >= sizeof(temp_path)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 token flow lookup temp path is too long");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&state, 0, sizeof(state));
+  state.runtime = runtime;
+  state.flow_id = flow_id;
+  vectis_auth_oauth2_flow_record_init(&state.record);
+  memset(&options, 0, sizeof(options));
+  lonejson_json_value_init(runtime, &item_value);
+  lonejson_error_init(&json_error);
+  json_status =
+      lonejson_json_value_enable_parse_capture(&item_value, &json_error);
+  if (json_status == LONEJSON_STATUS_OK) {
+    options.item_value = &item_value;
+    options.item = vectis_auth_oauth2_flow_find_item;
+    options.user = &state;
+    json_status = lonejson_array_rewrite_path(runtime, "oauth2_flows",
+                                              store_config->credentials_path,
+                                              temp_path, &options, &json_error);
+  }
+  lonejson_json_value_cleanup(&item_value);
+  (void)unlink(temp_path);
+  if (json_status != LONEJSON_STATUS_OK) {
+    vectis_auth_oauth2_flow_record_cleanup(&state.record);
+    return vectis_auth_lonejson_error(error, json_status, &json_error,
+                                      "failed to read OAuth2 token flows");
+  }
+  *out = state.record;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_revoke_oauth2_flow_credentials_locked(
+    const vectis_auth_store_config *store_config, lonejson *runtime,
+    const char *flow_id, vectis_error *error) {
+  lonejson_json_value item_value;
+  lonejson_array_rewrite_options options;
+  vectis_auth_oauth2_webdav_revoke_state state;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  char temp_path[4096];
+  int written;
+
+  written = snprintf(temp_path, sizeof(temp_path), "%s.oauth2.revoke.%ld",
+                     store_config->credentials_path, (long)getpid());
+  if (written < 0 || (size_t)written >= sizeof(temp_path)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 credential revoke temp path is too long");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&state, 0, sizeof(state));
+  state.runtime = runtime;
+  state.flow_id = flow_id;
+  memset(&options, 0, sizeof(options));
+  lonejson_json_value_init(runtime, &item_value);
+  lonejson_error_init(&json_error);
+  json_status =
+      lonejson_json_value_enable_parse_capture(&item_value, &json_error);
+  if (json_status == LONEJSON_STATUS_OK) {
+    options.item_value = &item_value;
+    options.item = vectis_auth_oauth2_webdav_revoke_item;
+    options.user = &state;
+    json_status = lonejson_array_rewrite_path(runtime, "credentials",
+                                              store_config->credentials_path,
+                                              temp_path, &options, &json_error);
+  }
+  lonejson_json_value_cleanup(&item_value);
+  if (json_status != LONEJSON_STATUS_OK) {
+    (void)unlink(temp_path);
+    return vectis_auth_lonejson_error(error, json_status, &json_error,
+                                      "failed to revoke OAuth2 credentials");
+  }
+  if (!state.matched) {
+    (void)unlink(temp_path);
+    return VECTIS_OK;
+  }
+  if (rename(temp_path, store_config->credentials_path) != 0) {
+    (void)unlink(temp_path);
+    return vectis_auth_set_errno(error, "failed to replace auth store",
+                                 store_config->credentials_path);
+  }
+  return VECTIS_OK;
 }
 
 static vectis_status vectis_auth_drop_user_to_temp_locked(
@@ -2528,6 +3476,209 @@ vectis_status vectis_auth_oauth2_token_flow_ensure(
   }
   lonejson_oauth2_token_flow_cleanup(&working_flow);
   lonejson_free(runtime);
+  return status;
+}
+
+vectis_status vectis_auth_oauth2_token_flow_upsert(
+    const vectis_auth_oauth2_token_flow_store_config *config,
+    vectis_error *error) {
+  vectis_auth_store_lock lock;
+  vectis_auth_store_config temp_config;
+  lonejson *runtime;
+  lonejson_owned_buffer flow_json;
+  vectis_status status;
+  char temp_path[4096];
+  char *store_json;
+  size_t store_len;
+
+  if (config == NULL || config->flow_id == NULL || config->flow_id[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 token flow_id is required");
+    return VECTIS_ERR_INVALID;
+  }
+  lock.fd = -1;
+  lock.path = NULL;
+  runtime = NULL;
+  status = vectis_auth_lonejson_runtime(&runtime, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  lonejson_owned_buffer_init(&flow_json);
+  status = vectis_auth_build_oauth2_flow_record_json(runtime, config,
+                                                     &flow_json, error);
+  if (status != VECTIS_OK) {
+    lonejson_owned_buffer_free(&flow_json);
+    lonejson_free(runtime);
+    return status;
+  }
+  status = vectis_auth_lock_open(&config->store, &lock, error);
+  if (status == VECTIS_OK) {
+    store_json = NULL;
+    store_len = 0u;
+    status = vectis_auth_read_store_locked(&config->store, &store_json,
+                                           &store_len, error);
+    if (status == VECTIS_OK && store_json == NULL) {
+      status = vectis_auth_write_empty_store_locked(&config->store, error);
+    }
+    free(store_json);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_drop_oauth2_flow_to_temp_locked(
+        &config->store, runtime, config->flow_id, temp_path, sizeof(temp_path),
+        error);
+  }
+  if (status == VECTIS_OK) {
+    temp_config = config->store;
+    temp_config.credentials_path = temp_path;
+    store_json = NULL;
+    store_len = 0u;
+    status = vectis_auth_read_store_locked(&temp_config, &store_json,
+                                           &store_len, error);
+    if (status == VECTIS_OK) {
+      status = vectis_auth_write_store_with_flow_locked(
+          &config->store, store_json, store_len, flow_json.data, flow_json.len,
+          error);
+    }
+    free(store_json);
+    (void)unlink(temp_path);
+  }
+  if (lock.fd >= 0) {
+    vectis_auth_lock_close(&lock);
+  }
+  lonejson_owned_buffer_free(&flow_json);
+  lonejson_free(runtime);
+  return status;
+}
+
+vectis_status vectis_auth_oauth2_token_flow_load(
+    const vectis_auth_store_config *store_config, const char *flow_id,
+    vectis_auth_oauth2_stored_token_flow *out, vectis_error *error) {
+  vectis_auth_store_lock lock;
+  vectis_auth_oauth2_flow_record record;
+  lonejson *runtime;
+  vectis_status status;
+
+  if (flow_id == NULL || flow_id[0] == '\0' || out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 token flow_id and output are required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_oauth2_stored_token_flow_init(out);
+  status = vectis_auth_lock_open(store_config, &lock, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  runtime = NULL;
+  status = vectis_auth_lonejson_runtime(&runtime, error);
+  if (status == VECTIS_OK) {
+    vectis_auth_oauth2_flow_record_init(&record);
+    status = vectis_auth_find_oauth2_flow_locked(store_config, runtime, flow_id,
+                                                 &record, error);
+    if (status == VECTIS_OK) {
+      status = vectis_auth_oauth2_copy_stored_flow(&record, out, error);
+    }
+    vectis_auth_oauth2_flow_record_cleanup(&record);
+  }
+  if (runtime != NULL) {
+    lonejson_free(runtime);
+  }
+  vectis_auth_lock_close(&lock);
+  return status;
+}
+
+vectis_status vectis_auth_oauth2_stored_token_flow_ensure(
+    const vectis_auth_oauth2_stored_token_flow_policy *policy,
+    vectis_auth_oauth2_stored_token_flow *out,
+    vectis_auth_oauth2_token_flow_result *result, vectis_error *error) {
+  vectis_auth_oauth2_stored_token_flow loaded;
+  vectis_auth_oauth2_token_flow_store_config store_update;
+  vectis_auth_store_lock lock;
+  lonejson *runtime;
+  vectis_status status;
+  vectis_status revoke_status;
+  int revoke;
+
+  if (policy == NULL || policy->flow_id == NULL || policy->flow_id[0] == '\0' ||
+      out == NULL || result == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 stored token flow policy, id, and outputs are "
+                     "required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_oauth2_stored_token_flow_init(out);
+  vectis_auth_oauth2_token_flow_result_init(result);
+  vectis_auth_oauth2_stored_token_flow_init(&loaded);
+  status = vectis_auth_oauth2_token_flow_load(&policy->store, policy->flow_id,
+                                              &loaded, error);
+  if (status != VECTIS_OK) {
+    vectis_auth_oauth2_stored_token_flow_cleanup(&loaded);
+    return status;
+  }
+  if (!loaded.found) {
+    vectis_auth_oauth2_stored_token_flow_cleanup(&loaded);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 token flow was not found");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_oauth2_token_flow_ensure(
+      &loaded.flow, &policy->flow_policy, result, error);
+  revoke = status != VECTIS_OK ||
+           (result->state != VECTIS_AUTH_OAUTH2_TOKEN_FLOW_READY &&
+            result->state != VECTIS_AUTH_OAUTH2_TOKEN_FLOW_REFRESHED);
+  if (!revoke) {
+    vectis_auth_oauth2_token_flow_store_config_init(&store_update);
+    store_update.store = policy->store;
+    store_update.flow_id = loaded.flow_id;
+    store_update.subject = loaded.subject;
+    store_update.webdav_client_id = loaded.webdav_client_id;
+    store_update.flow = loaded.flow;
+    status = vectis_auth_oauth2_token_flow_upsert(&store_update, error);
+    if (status == VECTIS_OK) {
+      status = vectis_auth_oauth2_copy_stored_flow_public(&loaded, out, error);
+    }
+    vectis_auth_oauth2_stored_token_flow_cleanup(&loaded);
+    return status;
+  }
+  if (policy->revoke_webdav_keys_on_failure) {
+    revoke_status = vectis_auth_lock_open(&policy->store, &lock, error);
+    if (revoke_status == VECTIS_OK) {
+      runtime = NULL;
+      revoke_status = vectis_auth_lonejson_runtime(&runtime, error);
+      if (revoke_status == VECTIS_OK) {
+        revoke_status = vectis_auth_revoke_oauth2_flow_credentials_locked(
+            &policy->store, runtime, policy->flow_id, error);
+        lonejson_free(runtime);
+      }
+      vectis_auth_lock_close(&lock);
+    }
+    if (revoke_status != VECTIS_OK) {
+      vectis_auth_oauth2_stored_token_flow_cleanup(&loaded);
+      return revoke_status;
+    }
+  }
+  vectis_auth_oauth2_stored_token_flow_cleanup(&loaded);
+  return status;
+}
+
+vectis_status vectis_auth_issue_webdav_key_for_oauth2_flow(
+    const vectis_auth_oauth2_webdav_key_config *config,
+    vectis_auth_issued_credential *out, vectis_error *error) {
+  vectis_auth_issue_config issue;
+  vectis_status status;
+
+  if (config == NULL || config->flow_id == NULL || config->flow_id[0] == '\0' ||
+      config->subject == NULL || config->subject[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OAuth2 WebDAV key flow_id and subject are required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_issue_config_init(&issue);
+  issue.subject = config->subject;
+  issue.purpose = "webdav";
+  issue.oauth2_flow_id = config->flow_id;
+  issue.auth_modes = VECTIS_AUTH_MODE_BASIC;
+  issue.max_record_bytes = config->max_record_bytes;
+  status = vectis_auth_issue_credential(&config->store, &issue, out, error);
   return status;
 }
 
