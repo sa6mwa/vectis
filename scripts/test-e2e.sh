@@ -15,6 +15,7 @@ kore_lockd_port=${VECTIS_E2E_KORE_LOCKD_PORT:-$((kore_basic_port + 1))}
 kore_workflow_port=${VECTIS_E2E_KORE_WORKFLOW_PORT:-$((kore_basic_port + 2))}
 kore_downstream_port=${VECTIS_E2E_KORE_DOWNSTREAM_PORT:-$((kore_basic_port + 3))}
 kore_static_port=${VECTIS_E2E_KORE_STATIC_PORT:-$((kore_basic_port + 4))}
+kore_combined_port=${VECTIS_E2E_KORE_COMBINED_PORT:-$((kore_basic_port + 5))}
 work_dir=$(mktemp -d)
 ssh_memory_key="$work_dir/vectis-e2e-ssh-key"
 ssh_bad_host_key="$work_dir/vectis-e2e-bad-host-key"
@@ -418,6 +419,70 @@ run_kore_examples() {
     VECTIS_E2E_WORKFLOW_NAMESPACE="$workflow_namespace" \
     VECTIS_E2E_WORKFLOW_CONTENT="$workflow_content" \
     "$repo_root/build/debug/examples/vectis_example_kore_workflow_e2e" verify
+
+  printf '[e2e] kore webdav and lockd consumer in one process\n'
+  combined_queue=${VECTIS_E2E_COMBINED_QUEUE:-"vectis-e2e-combined-$$"}
+  combined_namespace=${VECTIS_E2E_COMBINED_NAMESPACE:-"examples"}
+  combined_cache="$work_dir/combined-webdav"
+  start_server "kore webdav lockd consumer" "$work_dir/kore-combined.log" \
+    env VECTIS_KORE_TLS=disabled \
+      VECTIS_KORE_PORT="$kore_combined_port" \
+      LOCKD_ENDPOINT="$disk_endpoint" \
+      LOCKD_CLIENT_BUNDLE="$client_bundle" \
+      VECTIS_E2E_COMBINED_QUEUE="$combined_queue" \
+      VECTIS_E2E_COMBINED_NAMESPACE="$combined_namespace" \
+      VECTIS_E2E_COMBINED_WEBDAV_CACHE="$combined_cache" \
+      "$repo_root/build/debug/examples/vectis_example_kore_webdav_lockd_consumer_e2e"
+  wait_for_http "http://127.0.0.1:$kore_combined_port/health" "kore webdav lockd consumer"
+  body=$(curl --max-time 5 -fsS -X POST --data '' \
+    "http://127.0.0.1:$kore_combined_port/enqueue/e2e-combined-$$")
+  if [ "$body" != "queued" ]; then
+    printf '%s\n' "Unexpected combined enqueue response: $body" >&2
+    return 1
+  fi
+  count=0
+  while :; do
+    body=$(curl --max-time 3 -fsS \
+      "http://127.0.0.1:$kore_combined_port/dav/consumer-processing.txt" || true)
+    if [ "$body" = "processing" ]; then
+      break
+    fi
+    count=$((count + 1))
+    if [ "$count" -ge 30 ]; then
+      sed 's/^/[kore-combined] /' "$work_dir/kore-combined.log" >&2
+      printf '%s\n' "combined consumer did not enter processing state: $body" >&2
+      return 1
+    fi
+    sleep 1
+  done
+  status=$(printf 'during consumer\n' | curl --max-time 5 -fsS \
+    -o /dev/null -w '%{http_code}' -X PUT --data-binary @- \
+    "http://127.0.0.1:$kore_combined_port/dav/live.txt")
+  if [ "$status" != "201" ] && [ "$status" != "204" ]; then
+    printf '%s\n' "Unexpected combined WebDAV PUT status during consumer work: $status" >&2
+    return 1
+  fi
+  body=$(curl --max-time 5 -fsS \
+    "http://127.0.0.1:$kore_combined_port/dav/live.txt")
+  if [ "$body" != "during consumer" ]; then
+    printf '%s\n' "Unexpected combined WebDAV body during consumer work: $body" >&2
+    return 1
+  fi
+  count=0
+  while :; do
+    body=$(curl --max-time 3 -fsS \
+      "http://127.0.0.1:$kore_combined_port/dav/consumer-done.txt" || true)
+    if [ "$body" = "handled" ]; then
+      break
+    fi
+    count=$((count + 1))
+    if [ "$count" -ge 30 ]; then
+      sed 's/^/[kore-combined] /' "$work_dir/kore-combined.log" >&2
+      printf '%s\n' "combined consumer did not finish: $body" >&2
+      return 1
+    fi
+    sleep 1
+  done
 }
 
 provision_ssh_public_key() {

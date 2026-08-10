@@ -178,7 +178,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Define consumer registration and lifecycle APIs for C.
 - [x] Expose lockd consumer service startup/configuration directly, then layer Vectis-owned worker DX on top.
 - [ ] Allow one Vectis process to run a Kore-backed API/WebDAV server and an app-owned liblockdc `startconsumer` service simultaneously, with receiver-shell C APIs and Lua registration hooks.
-- [ ] Add a same-process scenario test that serves an API/WebDAV mount while receiving lockd messages through `startconsumer`, proving HTTP/WebDAV responsiveness during active consumer work.
+- [x] Add a same-process scenario test that serves an API/WebDAV mount while receiving lockd messages through `startconsumer`, proving HTTP/WebDAV responsiveness during active consumer work.
 - [ ] Define Lua consumer-service runner behavior for the combined server-plus-consumer process model.
 - [ ] Make API errors explicit when a Lua script attempts to run genuinely incompatible runtime loops in one process.
 - [x] Add integration tests covering enqueue/dequeue/ack workflows.
