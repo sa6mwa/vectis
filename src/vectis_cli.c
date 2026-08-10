@@ -3400,6 +3400,16 @@ static int vectis_lua_server_stop(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_server_consumer_service(lua_State *lua) {
+  (void)vectis_lua_server_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  return vectis_lua_push_error_text(
+      lua, VECTIS_ERR_NOT_IMPLEMENTED,
+      "server:consumer_service requires a C-side lockd consumer adapter; "
+      "direct Lua callbacks from liblockdc consumer worker threads are not "
+      "supported");
+}
+
 static int vectis_lua_server_static_embedded(lua_State *lua) {
   vectis_lua_runtime_context *context;
   vectis_app *app;
@@ -6395,6 +6405,8 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "auth_routes");
     lua_pushcfunction(lua, vectis_lua_server_auth_json);
     lua_setfield(lua, -2, "auth_json");
+    lua_pushcfunction(lua, vectis_lua_server_consumer_service);
+    lua_setfield(lua, -2, "consumer_service");
     lua_pushcfunction(lua, vectis_lua_server_start);
     lua_setfield(lua, -2, "start");
     lua_pushcfunction(lua, vectis_lua_server_stop);
@@ -6424,6 +6436,8 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "OK");
   lua_pushinteger(lua, VECTIS_ERR_INVALID);
   lua_setfield(lua, -2, "ERR_INVALID");
+  lua_pushinteger(lua, VECTIS_ERR_NOT_IMPLEMENTED);
+  lua_setfield(lua, -2, "ERR_NOT_IMPLEMENTED");
   lua_pushinteger(lua, VECTIS_ERR_TIMEOUT);
   lua_setfield(lua, -2, "ERR_TIMEOUT");
   lua_pushcfunction(lua, vectis_lua_status_string);

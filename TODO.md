@@ -168,7 +168,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 
 ## Area 8: lockd / Workflow Runtime
 
-- [ ] Extend Vectis service-friendly lockd helpers only where they reduce real C workflow friction without obscuring the public `liblockdc` 0.9.0 API.
+- [ ] Extend Vectis service-friendly lockd helpers only where they reduce real C workflow friction without obscuring the public `liblockdc` 0.13.0 API.
 - [ ] Integrate the `lockdc` Lua binding into the Vectis Lua runtime.
 - [x] Provide first-pass C helpers for lockd-backed typed state load/save/update workflows.
 - [ ] Provide additional C helpers for retry-oriented queue workflow patterns only where raw `liblockdc` remains too noisy in real examples.
@@ -179,8 +179,8 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Expose lockd consumer service startup/configuration directly, then layer Vectis-owned worker DX on top.
 - [ ] Allow one Vectis process to run a Kore-backed API/WebDAV server and an app-owned liblockdc `startconsumer` service simultaneously, with receiver-shell C APIs and Lua registration hooks.
 - [x] Add a same-process scenario test that serves an API/WebDAV mount while receiving lockd messages through `startconsumer`, proving HTTP/WebDAV responsiveness during active consumer work.
-- [ ] Define Lua consumer-service runner behavior for the combined server-plus-consumer process model.
-- [ ] Make API errors explicit when a Lua script attempts to run genuinely incompatible runtime loops in one process.
+- [x] Define Lua consumer-service runner behavior for the combined server-plus-consumer process model.
+- [x] Make API errors explicit when a Lua script attempts to run genuinely incompatible runtime loops in one process.
 - [x] Add integration tests covering enqueue/dequeue/ack workflows.
 - [x] Add raw liblockdc C examples for open client, lease save/load, query, attachments, enqueue, manual dequeue, and managed consumer services.
 

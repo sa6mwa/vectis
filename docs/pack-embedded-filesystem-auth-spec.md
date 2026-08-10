@@ -211,6 +211,10 @@ Required Lua concepts:
 - `server:auth_routes({path_prefix=..., credentials_path=..., realm=...})`
 - `server:auth_json({path=..., auth={kind="native", credentials_path=...},
   body=...})` for small C-owned guarded JSON endpoints in service scenarios.
+- `server:consumer_service({ ... })` is the reserved Lua registration point for
+  same-process lockd consumer service wiring. Until Vectis provides a C-owned
+  adapter or worker-owned Lua bridge, it must fail with `ERR_NOT_IMPLEMENTED`
+  instead of invoking script callbacks from liblockdc worker threads.
 - `server:start()`, `server:stop()`, and `server:close()`
 
 Streaming semantics:
@@ -244,6 +248,16 @@ services must be composable in one Vectis process. Starting the web server must
 not preclude an application-owned lockd consumer service from running, and
 starting the lockd consumer must not monopolize the process such that Kore
 routes or WebDAV requests stop making progress.
+
+The implementation boundary for this model is C-first. Consumer-service
+receivers are C-owned shells around liblockdc lifecycle objects. Lua may
+configure the Vectis server and reserved consumer registration surface, but a
+Lua script-owned state must not be called directly from liblockdc consumer
+worker threads. A future Lua callback implementation needs an explicit
+C adapter or worker-owned Lua state/queue bridge that serializes callback
+execution and preserves the Kore worker lifecycle. Until then,
+`server:consumer_service()` returns a structured `ERR_NOT_IMPLEMENTED` error so
+mixed runtime-loop attempts fail predictably.
 
 The WebDAV overlay model must support:
 

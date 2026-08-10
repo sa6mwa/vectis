@@ -32,9 +32,23 @@ assert(type(vectis) == "table")
 assert(vectis.version == (os.getenv("VECTIS_EXPECTED_VERSION") or "0.0.0"))
 assert(vectis.status_string(vectis.OK) == "ok")
 assert(vectis.status_string(vectis.ERR_INVALID) == "invalid")
+assert(vectis.status_string(vectis.ERR_NOT_IMPLEMENTED) == "not_implemented")
 assert(arg[0]:match("smoke%.lua$"))
 assert(arg[1] == "first")
 assert(arg[2] == "second")
+
+local server = assert(vectis.server.new({ app_name = "lua-smoke", port = 18080 }))
+local consumer_service, consumer_service_error = server:consumer_service({
+  queue = "lua-smoke",
+  on_message = function() end,
+})
+assert(consumer_service == nil)
+assert(type(consumer_service_error) == "table")
+assert(consumer_service_error.status == vectis.ERR_NOT_IMPLEMENTED)
+assert(consumer_service_error.status_string == "not_implemented")
+assert(consumer_service_error.message:match("C%-side lockd consumer adapter"))
+assert(consumer_service_error.message:match("direct Lua callbacks"))
+server:close()
 
 assert(type(vectis.auth) == "table")
 local function oauth_transport(mode)
