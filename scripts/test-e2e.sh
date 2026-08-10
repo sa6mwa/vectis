@@ -607,6 +607,20 @@ run_lua_examples() {
       return 1
       ;;
   esac
+  for traversal_path in \
+    "/../secret" \
+    "/%2e%2e/secret" \
+    "/%2E%2E/secret" \
+    "/..%2fsecret"; do
+    traversal_status=$(curl --path-as-is --max-time 3 -sS -o /dev/null \
+      -w '%{http_code}' \
+      "http://127.0.0.1:$kore_packed_port$traversal_path" || true)
+    if [ "$traversal_status" != "400" ] &&
+        [ "$traversal_status" != "404" ]; then
+      printf '%s\n' "Unexpected packed root traversal status for $traversal_path: $traversal_status" >&2
+      return 1
+    fi
+  done
   printf '%s\n' \
     'local vectis = require("vectis")' \
     'local port = tonumber(assert(os.getenv("VECTIS_PACKED_HTTPS_PORT")))' \

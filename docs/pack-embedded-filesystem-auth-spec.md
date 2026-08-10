@@ -446,10 +446,11 @@ Current generated packed-service coverage in `make test-e2e` packages a Lua
 webserver script plus generated HTML/CSS/JavaScript files, asset files, and
 template files, runs the packed executable, serves the embedded read-only
 docroot both at `/` and under `/site`, rejects writes through the root
-read-only mount without changing the embedded index, starts a second packed
-HTTPS asset server with a generated private self-signed certificate, verifies
-content types, ETag and cache metadata, rejects traversal attempts, rejects
-writes through the read-only mount, extracts the embedded
+read-only mount without changing the embedded index, rejects traversal attempts
+against the root read-only mount, starts a second packed HTTPS asset server
+with a generated private self-signed certificate, verifies content types, ETag
+and cache metadata, rejects traversal attempts, rejects writes through the
+read-only mount, extracts the embedded
 assets into the disk WebDAV content tree before accepting WebDAV operations,
 verifies generated files are present in that extracted docroot, exposes native
 auth routes, protects a JSON API route through the same native provider,
@@ -525,13 +526,13 @@ keys. Broader packed auth matrix coverage remains future hardening work.
    extract docroot, and run WebDAV operations.
 
 8. Kore plus lockd `startconsumer` e2e.
-   Run one Vectis process with Kore HTTP/API routes, WebDAV routes, and an
-   app-owned liblockdc `startconsumer` client service wired through the C
+   Run one Vectis process with Kore as an API or web server, WebDAV routes, and
+   an app-owned liblockdc `startconsumer` client service wired through the C
    receiver-style service handles, enqueue lockd messages, prove the consumer
    receives them, and prove HTTP/WebDAV requests still succeed during consumer
-   service activity. Lua may provide route or callback glue in the scenario,
-   but must not own the built-in server, WebDAV, auth, pack, or consumer
-   service lifecycle semantics.
+   service activity. Lua may provide route or callback glue in the scenario, but
+   must not own the built-in server, WebDAV, auth, pack, or consumer service
+   lifecycle semantics.
 
    Current coverage includes both a direct C example and a packed Lua
    executable that configures the C-owned consumer adapter with an embedded
