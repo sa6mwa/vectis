@@ -119,7 +119,22 @@ Optional:
   mount or root path.
 - `--asset <source>=<logical-path>` embeds one file.
 - `--asset-manifest <path>` reads a LoneJSON manifest describing multiple
-  assets.
+  assets:
+
+  ```json
+  {
+    "assets": [
+      {
+        "source": "/absolute/or/relative/file",
+        "path": "/templates/login.html",
+        "content_type": "text/html; charset=utf-8"
+      }
+    ]
+  }
+  ```
+
+  `source` and `path` are required. `content_type` is optional; when omitted,
+  Vectis infers the content type from the logical `path` extension when it can.
 - `--content-type-map <path>` supplies extension to content-type mappings.
 - `--follow-symlinks` enables symlink traversal during packaging. Default is
   refuse.

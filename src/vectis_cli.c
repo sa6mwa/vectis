@@ -8,6 +8,7 @@
 #ifndef LONEJSON_WITH_CURL
 #define LONEJSON_WITH_CURL 1
 #endif
+#include <lonejson.h>
 #include <lonejson_lua.h>
 #include <lua.h>
 #include <openssl/evp.h>
@@ -61,6 +62,39 @@ typedef struct vectis_pack_asset_list {
   size_t count;
   size_t capacity;
 } vectis_pack_asset_list;
+
+typedef struct vectis_pack_asset_manifest_item {
+  char *source;
+  char *path;
+  char *content_type;
+} vectis_pack_asset_manifest_item;
+
+typedef struct vectis_pack_asset_manifest {
+  lonejson_mapped_array_stream assets;
+} vectis_pack_asset_manifest;
+
+typedef struct vectis_pack_asset_manifest_state {
+  vectis_pack_asset_list *assets;
+} vectis_pack_asset_manifest_state;
+
+static const lonejson_field vectis_pack_asset_manifest_item_fields[] = {
+    LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_pack_asset_manifest_item, source,
+                                    "source"),
+    LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_pack_asset_manifest_item, path,
+                                    "path"),
+    LONEJSON_FIELD_STRING_ALLOC(vectis_pack_asset_manifest_item, content_type,
+                                "content_type")};
+
+LONEJSON_MAP_DEFINE(vectis_pack_asset_manifest_item_map,
+                    vectis_pack_asset_manifest_item,
+                    vectis_pack_asset_manifest_item_fields);
+
+static const lonejson_field vectis_pack_asset_manifest_fields[] = {
+    LONEJSON_FIELD_MAPPED_ARRAY_STREAM_REQ(vectis_pack_asset_manifest, assets,
+                                           "assets")};
+
+LONEJSON_MAP_DEFINE(vectis_pack_asset_manifest_map, vectis_pack_asset_manifest,
+                    vectis_pack_asset_manifest_fields);
 
 typedef struct vectis_lua_totp {
   vectis_totp value;
@@ -200,7 +234,7 @@ static void vectis_cli_usage(FILE *stream) {
         "       -x traces Lua line execution to stderr\n"
         "       vectis -a|--action pack --script script.lua --output output "
         "[--lockd-bundle bundle.pem] [--asset source=/path] "
-        "[--asset-dir /mount:dir]\n"
+        "[--asset-dir /mount:dir] [--asset-manifest assets.json]\n"
         "       vectis -a|--action credentials [--store credentials.json] "
         "(--init | --issue --subject user [--purpose name] "
         "[--basic] [--bearer] | --verify authorization | "
@@ -417,6 +451,22 @@ static const char *vectis_pack_content_type_for_path(const char *path) {
   return NULL;
 }
 
+static int vectis_pack_content_type_valid(const char *content_type) {
+  const unsigned char *cursor;
+
+  if (content_type == NULL || content_type[0] == '\0') {
+    return 0;
+  }
+  cursor = (const unsigned char *)content_type;
+  while (*cursor != '\0') {
+    if (*cursor < 0x20u || *cursor == 0x7fu) {
+      return 0;
+    }
+    cursor++;
+  }
+  return 1;
+}
+
 static char *vectis_pack_join_path(const char *left, const char *right,
                                    char separator) {
   size_t left_size;
@@ -486,7 +536,8 @@ static void vectis_pack_asset_list_cleanup(vectis_pack_asset_list *list) {
 
 static int vectis_pack_asset_add(vectis_pack_asset_list *list,
                                  const char *source_path,
-                                 const char *logical_path) {
+                                 const char *logical_path,
+                                 const char *content_type_override) {
   vectis_pack_asset *asset;
   unsigned char *data;
   const char *content_type;
@@ -495,6 +546,12 @@ static int vectis_pack_asset_add(vectis_pack_asset_list *list,
   if (!vectis_pack_logical_path_valid(logical_path)) {
     fprintf(stderr, "vectis: invalid embedded asset path: %s\n",
             logical_path != NULL ? logical_path : "(null)");
+    return -1;
+  }
+  if (content_type_override != NULL &&
+      !vectis_pack_content_type_valid(content_type_override)) {
+    fprintf(stderr, "vectis: invalid embedded asset content type: %s\n",
+            content_type_override);
     return -1;
   }
   if (vectis_read_all(source_path, &data, &size) != 0) {
@@ -510,7 +567,9 @@ static int vectis_pack_asset_add(vectis_pack_asset_list *list,
   memset(asset, 0, sizeof(*asset));
   asset->source_path = vectis_cli_strdup(source_path);
   asset->logical_path = vectis_cli_strdup(logical_path);
-  content_type = vectis_pack_content_type_for_path(logical_path);
+  content_type = content_type_override != NULL
+                     ? content_type_override
+                     : vectis_pack_content_type_for_path(logical_path);
   if (content_type != NULL) {
     asset->content_type = vectis_cli_strdup(content_type);
   }
@@ -527,6 +586,85 @@ static int vectis_pack_asset_add(vectis_pack_asset_list *list,
   asset->size = size;
   SHA256(data, size, asset->sha);
   list->count++;
+  return 0;
+}
+
+static lonejson_status
+vectis_pack_asset_manifest_item_cb(void *user, void *item,
+                                   lonejson_error *json_error) {
+  vectis_pack_asset_manifest_state *state;
+  const vectis_pack_asset_manifest_item *asset;
+
+  (void)json_error;
+  state = (vectis_pack_asset_manifest_state *)user;
+  asset = (const vectis_pack_asset_manifest_item *)item;
+  if (vectis_pack_asset_add(state->assets, asset->source, asset->path,
+                            asset->content_type) != 0) {
+    return LONEJSON_STATUS_INVALID_JSON;
+  }
+  return LONEJSON_STATUS_OK;
+}
+
+static int vectis_pack_read_asset_manifest(vectis_pack_asset_list *assets,
+                                           const char *path) {
+  unsigned char *json;
+  size_t json_size;
+  lonejson *runtime;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  lonejson_mapped_array_stream_handler handler;
+  vectis_pack_asset_manifest doc;
+  vectis_pack_asset_manifest_item item;
+  vectis_pack_asset_manifest_state state;
+
+  json = NULL;
+  json_size = 0u;
+  if (vectis_read_all(path, &json, &json_size) != 0) {
+    fprintf(stderr, "vectis: failed to read embedded asset manifest: %s\n",
+            path != NULL ? path : "(null)");
+    return -1;
+  }
+  lonejson_error_init(&json_error);
+  runtime = lonejson_new(NULL, &json_error);
+  if (runtime == NULL) {
+    free(json);
+    fprintf(stderr,
+            "vectis: failed to initialize embedded asset manifest "
+            "parser: %s\n",
+            json_error.message[0] != '\0'
+                ? json_error.message
+                : lonejson_status_string(LONEJSON_STATUS_ALLOCATION_FAILED));
+    return -1;
+  }
+  memset(&doc, 0, sizeof(doc));
+  memset(&item, 0, sizeof(item));
+  memset(&handler, 0, sizeof(handler));
+  doc.assets = (lonejson_mapped_array_stream)LONEJSON_MAPPED_ARRAY_STREAM_INIT;
+  state.assets = assets;
+  handler.item_map = &vectis_pack_asset_manifest_item_map;
+  handler.item_dst = &item;
+  handler.item = vectis_pack_asset_manifest_item_cb;
+  handler.user = &state;
+  lonejson_error_init(&json_error);
+  json_status = lonejson_mapped_array_stream_set_handler(&doc.assets, &handler,
+                                                         &json_error);
+  if (json_status == LONEJSON_STATUS_OK) {
+    json_status =
+        lonejson_parse_buffer(runtime, &vectis_pack_asset_manifest_map, &doc,
+                              json, json_size, &json_error);
+  }
+  lonejson_cleanup(&vectis_pack_asset_manifest_map, &doc);
+  lonejson_cleanup(&vectis_pack_asset_manifest_item_map, &item);
+  lonejson_free(runtime);
+  free(json);
+  if (json_status != LONEJSON_STATUS_OK) {
+    fprintf(stderr, "vectis: failed to parse embedded asset manifest %s: %s\n",
+            path != NULL ? path : "(null)",
+            json_error.message[0] != '\0'
+                ? json_error.message
+                : lonejson_status_string(json_status));
+    return -1;
+  }
   return 0;
 }
 
@@ -579,7 +717,7 @@ static int vectis_pack_collect_dir(vectis_pack_asset_list *list,
     if (S_ISDIR(st.st_mode)) {
       rc = vectis_pack_collect_dir(list, source_child, logical_child);
     } else if (S_ISREG(st.st_mode)) {
-      rc = vectis_pack_asset_add(list, source_child, logical_child);
+      rc = vectis_pack_asset_add(list, source_child, logical_child, NULL);
     } else {
       fprintf(stderr, "vectis: unsupported embedded asset type: %s\n",
               source_child);
@@ -1981,7 +2119,8 @@ static int vectis_pack_command(int argc, char **argv, int index) {
         return 70;
       }
       asset_source[separator - asset_arg] = '\0';
-      if (vectis_pack_asset_add(&assets, asset_source, asset_logical) != 0) {
+      if (vectis_pack_asset_add(&assets, asset_source, asset_logical, NULL) !=
+          0) {
         free(asset_source);
         free(asset_logical);
         vectis_pack_asset_list_cleanup(&assets);
@@ -2015,6 +2154,11 @@ static int vectis_pack_command(int argc, char **argv, int index) {
       }
       free(asset_source);
       free(asset_logical);
+    } else if (strcmp(argv[i], "--asset-manifest") == 0 && i + 1 < argc) {
+      if (vectis_pack_read_asset_manifest(&assets, argv[++i]) != 0) {
+        vectis_pack_asset_list_cleanup(&assets);
+        return 1;
+      }
     } else {
       fprintf(stderr, "vectis: unknown pack argument: %s\n", argv[i]);
       vectis_pack_asset_list_cleanup(&assets);
