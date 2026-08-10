@@ -344,6 +344,14 @@ run_lua_examples() {
   email_only_token=
   email_only_unknown_body=
   email_only_unknown_status=
+  password_email_key_response=
+  password_email_client_id=
+  password_email_client_secret=
+  password_email_start_response=
+  password_email_pending_id=
+  password_email_token_response=
+  password_email_transaction_id=
+  password_email_token=
   expired_token_response=
   expired_transaction_id=
   expired_token=
@@ -495,6 +503,15 @@ run_lua_examples() {
     '  login_title = "Packed E2E Email Only Login",' \
     '  time = 59,' \
     '  required_factors = { "email_token" },' \
+    '  email_token_ttl_seconds = 300,' \
+    '}))' \
+    'assert(server:auth_routes({' \
+    '  path_prefix = "/auth-password-email",' \
+    '  credentials_path = credentials_path,' \
+    '  realm = "packed-e2e",' \
+    '  login_title = "Packed E2E Password Email Login",' \
+    '  time = 59,' \
+    '  required_factors = { "password", "email_token" },' \
     '  email_token_ttl_seconds = 300,' \
     '}))' \
     'assert(server:auth_routes({' \
@@ -873,6 +890,61 @@ run_lua_examples() {
     "http://127.0.0.1:$kore_packed_port/api/private")
   if [ "$body" != '{"ok":true,"surface":"packed-api"}' ]; then
     printf '%s\n' "Unexpected packed email-only guarded API response: $body" >&2
+    return 1
+  fi
+  password_email_start_response=$(curl_or_log "$packed_service_log" \
+    "packed password-email start" --max-time 3 -fsS -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-email-only%40example.com&password=packed-password' \
+    "http://127.0.0.1:$kore_packed_port/auth-password-email/webdav-key")
+  password_email_pending_id=$(printf '%s\n' "$password_email_start_response" |
+    sed -n 's/^pending_transaction_id=//p')
+  if [ -z "$password_email_pending_id" ]; then
+    printf '%s\n' "Packed password-email auth did not return a pending transaction" >&2
+    printf '%s\n' "$password_email_start_response" >&2
+    return 1
+  fi
+  case "$password_email_start_response" in
+    *'totp_required=0'*) ;;
+    *)
+      printf '%s\n' "Packed password-email auth unexpectedly required TOTP" >&2
+      printf '%s\n' "$password_email_start_response" >&2
+      return 1
+      ;;
+  esac
+  password_email_token_response=$(curl_or_log "$packed_service_log" \
+    "packed password-email token" --max-time 3 -fsS -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-email-only%40example.com&email=packed-email-only%40example.test&pending_transaction_id=$password_email_pending_id" \
+    "http://127.0.0.1:$kore_packed_port/auth-password-email/email-token")
+  password_email_transaction_id=$(printf '%s\n' "$password_email_token_response" |
+    sed -n 's/^transaction_id=//p')
+  password_email_token=$(printf '%s\n' "$password_email_token_response" |
+    sed -n 's/^token=//p')
+  if [ -z "$password_email_transaction_id" ] || [ -z "$password_email_token" ]; then
+    printf '%s\n' "Packed password-email auth did not expose an email token" >&2
+    printf '%s\n' "$password_email_token_response" >&2
+    return 1
+  fi
+  password_email_key_response=$(curl_or_log "$packed_service_log" \
+    "packed password-email webdav key" --max-time 3 -fsS -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-email-only%40example.com&pending_transaction_id=$password_email_pending_id&email_transaction_id=$password_email_transaction_id&email_token=$password_email_token" \
+    "http://127.0.0.1:$kore_packed_port/auth-password-email/webdav-key")
+  password_email_client_id=$(printf '%s\n' "$password_email_key_response" |
+    sed -n 's/^client_id=//p')
+  password_email_client_secret=$(printf '%s\n' "$password_email_key_response" |
+    sed -n 's/^client_secret=//p')
+  if [ -z "$password_email_client_id" ] || [ -z "$password_email_client_secret" ]; then
+    printf '%s\n' "Packed password-email auth did not issue WebDAV credentials" >&2
+    printf '%s\n' "$password_email_key_response" >&2
+    return 1
+  fi
+  body=$(curl_or_log "$packed_service_log" "packed password-email guarded api" \
+    --max-time 3 -fsS -u "$password_email_client_id:$password_email_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/api/private")
+  if [ "$body" != '{"ok":true,"surface":"packed-api"}' ]; then
+    printf '%s\n' "Unexpected packed password-email guarded API response: $body" >&2
     return 1
   fi
   expired_token_response=$(curl_or_log "$packed_service_log" \
