@@ -742,6 +742,11 @@ if(VECTIS_BUILD_BINARY)
     "vectis_pslog_lua_init"
     "${CMAKE_BINARY_DIR}/generated/include/vectis_pslog_lua_init.h"
   )
+  vectis_generate_lua_init_header(
+    "${CMAKE_SOURCE_DIR}/lua/curl/init.lua"
+    "vectis_curl_lua_init"
+    "${CMAKE_BINARY_DIR}/generated/include/vectis_curl_lua_init.h"
+  )
   set(vectis_lockdc_lua_source
     "${vectis_lockdc_lua_source_dir}/src/lua/lockdc_lua.c")
   set(vectis_lonejson_lua_source
@@ -808,12 +813,17 @@ if(VECTIS_BUILD_BINARY)
   endif()
   set(vectis_lonejson_lua_private_object
     "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/vectis_lonejson_lua_private.dir/lonejson_lua.c${CMAKE_C_OUTPUT_EXTENSION}")
+  set(vectis_lonejson_lua_localized_object
+    "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/vectis_lonejson_lua_private.dir/lonejson_lua.localized${CMAKE_C_OUTPUT_EXTENSION}")
   add_custom_command(
     OUTPUT "${vectis_lonejson_lua_private_object}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory
             "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/vectis_lonejson_lua_private.dir"
     COMMAND "${vectis_objcopy}" --wildcard --localize-symbol=lonejson_*
             $<TARGET_OBJECTS:vectis_lonejson_lua>
+            "${vectis_lonejson_lua_localized_object}"
+    COMMAND "${vectis_objcopy}" --wildcard --globalize-symbol=lonejson_lua_*
+            "${vectis_lonejson_lua_localized_object}"
             "${vectis_lonejson_lua_private_object}"
     DEPENDS vectis_lonejson_lua $<TARGET_OBJECTS:vectis_lonejson_lua>
             "${vectis_dependency_manifest}"
@@ -901,6 +911,7 @@ if(VECTIS_BUILD_BINARY)
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_BINARY_DIR}/generated/include"
     "${vectis_external_include_dir}"
+    "${vectis_lonejson_lua_source_dir}/src/lua"
   )
   if(VECTIS_BUILD_STATIC)
     target_link_libraries(vectis_bin PRIVATE vectis_static)

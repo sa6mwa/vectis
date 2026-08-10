@@ -5,6 +5,7 @@ local cai = require("cai")
 local pslog = require("pslog")
 local libmdf = require("libmdf")
 local softline = require("softline")
+local curl = require("curl")
 
 local function base64_encode(input)
   local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -349,6 +350,12 @@ assert(type(cai.open) == "function")
 assert(type(cai.mcp_handler) == "function")
 assert(type(cai.MODEL_DEFAULT_RESPONSES) == "string")
 assert(type(cai.MCP_PROTOCOL_VERSION) == "string")
+
+assert(type(curl) == "table")
+assert(type(curl.perform) == "function")
+assert(type(curl.json) == "function")
+assert(type(curl.stream_json) == "function")
+assert(type(curl.version()) == "string")
 
 assert(type(pslog) == "table")
 assert(type(pslog.new_json) == "function")

@@ -211,8 +211,10 @@ local vectis = require("vectis")
 
 Bundled modules are registered statically through `package.preload`. The
 runtime currently registers Vectis-owned Lua support plus dependency bindings
-such as lockdc, lonejson, cai, libmdf, and softline where available from the
-provisioned sources.
+such as lockdc, lonejson, cai, curl, libmdf, and softline where available from
+the provisioned sources. The embedded curl Lua facade exposes `curl.perform()`,
+`curl.json()`, and `curl.stream_json()` for libcurl-supported URL schemes,
+including SMTP usage through the same option-table model.
 
 `vectis -a pack` can append a Lua script, and optionally a lockd client bundle, to
 the Linux executable with hashes and trailer metadata. Embedded private material

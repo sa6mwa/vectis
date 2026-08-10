@@ -17,6 +17,21 @@ if(TARGET vectis_bin)
     ENVIRONMENT "VECTIS_EXPECTED_VERSION=${PROJECT_VERSION}"
     LABELS "lua;smoke;local"
     TIMEOUT 30)
+  add_test(NAME vectis_lua_curl
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/curl.cmake")
+  set_tests_properties(vectis_lua_curl PROPERTIES
+    LABELS "lua;smoke;local"
+    TIMEOUT 30)
+  add_test(NAME vectis_lua_curl_contract
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/curl_contract.cmake")
+  set_tests_properties(vectis_lua_curl_contract PROPERTIES
+    LABELS "lua;local"
+    TIMEOUT 30)
   add_test(NAME vectis_lua_shebang
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"

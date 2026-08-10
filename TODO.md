@@ -189,7 +189,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add an opaque C HTTP client handle so repeated downstream calls do not have to pass raw config everywhere.
 - [x] Add handle-level C helpers for GET, DELETE, POST JSON, PUT JSON, and PATCH JSON.
 - [x] Add dependency-backed C MQTT publish helpers through libcurl.
-- [ ] Add Lua curl bindings that support all libcurl URL schemes made available by the bundled libcurl build.
+- [x] Add Lua curl bindings that support all libcurl URL schemes made available by the bundled libcurl build.
 - [ ] Provide JSON-aware Lua helpers for common API calls using `lonejson`.
 - [x] Provide C Vectis helpers for JSON API requests, downloads, uploads, SFTP upload/download, and structured errors.
 - [x] Add C proxy, low-speed, and streaming-response helpers where the current curl configuration callback is not enough.
@@ -251,7 +251,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Register bundled Lua modules statically through `package.preload` in the `vectis` binary.
 - [ ] Publish a separate `vectis` Lua rock for users who want to run the Vectis facade inside their own Lua 5.5 environment.
 - [ ] Keep LuaRocks out of the `vectis` binary runtime and release artifacts.
-- [ ] Add Vectis-owned Lua modules for Kore, curl, OpenSSL certificate workflows, and libssh2.
+- [ ] Add Vectis-owned Lua modules for Kore, OpenSSL certificate workflows, and libssh2.
 - [ ] Keep the Lua framework model aligned with the C SDK model: raw dependency access plus a Vectis-owned DX layer with matching concepts and behavior.
 - [x] Support shebang execution through `#!/usr/local/bin/vectis`.
 - [ ] Provide a friendly REST API DX for defining routes, handlers, middleware-like hooks, JSON responses, lockd operations, and downstream calls.
