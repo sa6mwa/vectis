@@ -1554,6 +1554,24 @@ run_lua_examples() {
     printf '%s\n' "Packed WebDAV embedded asset DELETE left extracted logo on disk" >&2
     return 1
   fi
+  propfind_status=$(curl --max-time 3 -sS \
+    -o "$work_dir/packed-propfind-assets-after-delete.xml" \
+    -w '%{http_code}' \
+    -u "$webdav_client_id:$webdav_client_secret" \
+    -X PROPFIND -H 'Depth: 1' \
+    "http://127.0.0.1:$kore_packed_port/dav/assets")
+  propfind_body=$(cat "$work_dir/packed-propfind-assets-after-delete.xml")
+  if [ "$propfind_status" != "207" ]; then
+    printf '%s\n' "Unexpected packed WebDAV assets PROPFIND status after DELETE: $propfind_status" >&2
+    printf '%s\n' "$propfind_body" >&2
+    return 1
+  fi
+  case "$propfind_body" in
+    *'<D:href>/dav/assets/logo.txt</D:href>'*)
+      printf '%s\n' "Packed WebDAV PROPFIND listed deleted embedded asset: $propfind_body" >&2
+      return 1
+      ;;
+  esac
   body=$(curl_or_log "$packed_service_log" "packed static logo after webdav delete" \
     --max-time 3 -fsS \
     "http://127.0.0.1:$kore_packed_port/site/assets/logo.txt")

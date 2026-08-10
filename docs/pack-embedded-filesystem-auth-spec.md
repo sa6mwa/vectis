@@ -507,7 +507,8 @@ rejects anonymous WebDAV reads and writes without mutating the extracted
 docroot, serves embedded content through authenticated WebDAV, accepts mutable
 WebDAV writes, verifies those writes land in the extracted docroot, deletes an
 extracted embedded asset through WebDAV while leaving the packed read-only mount
-unchanged, exercises
+unchanged and suppressing the deleted asset from WebDAV collection listings,
+exercises
 WebDAV PROPFIND/MKCOL/COPY/MOVE/DELETE, revokes the issued WebDAV key through
 the native logout route, proves the revoked key is rejected by both guarded API
 routes and WebDAV, and proves WebDAV mutations do not change embedded read-only
