@@ -3083,6 +3083,26 @@ static unsigned vectis_lua_auth_modes_field(lua_State *lua, int index,
                                             const char *field,
                                             unsigned fallback);
 
+static int vectis_lua_tls_mode(const char *mode, vectis_tls_mode *out) {
+  if (out == NULL) {
+    return 0;
+  }
+  if (mode == NULL || mode[0] == '\0' || strcmp(mode, "disabled") == 0 ||
+      strcmp(mode, "off") == 0) {
+    *out = VECTIS_TLS_MODE_DISABLED;
+    return 1;
+  }
+  if (strcmp(mode, "manual") == 0) {
+    *out = VECTIS_TLS_MODE_MANUAL;
+    return 1;
+  }
+  if (strcmp(mode, "acme") == 0) {
+    *out = VECTIS_TLS_MODE_ACME;
+    return 1;
+  }
+  return 0;
+}
+
 static vectis_lua_server *vectis_lua_check_server(lua_State *lua, int index) {
   return (vectis_lua_server *)luaL_checkudata(lua, index, VECTIS_LUA_SERVER);
 }
@@ -3646,7 +3666,9 @@ static int vectis_lua_server_new(lua_State *lua) {
   vectis_error error;
   const char *app_name;
   const char *bind;
+  const char *mode;
   size_t port;
+  int tls_index;
 
   luaL_checktype(lua, 1, LUA_TTABLE);
   port = vectis_lua_table_size(lua, 1, "port", 8080u);
@@ -3660,6 +3682,49 @@ static int vectis_lua_server_new(lua_State *lua) {
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = bind != NULL ? bind : "127.0.0.1";
   config.tls.port = (unsigned short)port;
+  lua_getfield(lua, 1, "tls");
+  tls_index = lua_absindex(lua, -1);
+  if (!lua_isnil(lua, tls_index)) {
+    if (!lua_istable(lua, tls_index)) {
+      return luaL_error(lua, "server tls must be a table");
+    }
+    mode = vectis_lua_table_string(lua, tls_index, "mode");
+    if (!vectis_lua_tls_mode(mode, &config.tls.mode)) {
+      return luaL_error(lua,
+                        "server tls.mode must be disabled, manual, or acme");
+    }
+    bind = vectis_lua_table_string(lua, tls_index, "bind");
+    if (bind != NULL) {
+      config.tls.bind = bind;
+    }
+    port = vectis_lua_table_size(lua, tls_index, "port", config.tls.port);
+    if (port == 0u || port > 65535u) {
+      return luaL_error(lua, "server tls.port must be between 1 and 65535");
+    }
+    config.tls.port = (unsigned short)port;
+    config.tls.domain = vectis_lua_table_string(lua, tls_index, "domain");
+    config.tls.cert_key_bundle_path =
+        vectis_lua_table_string(lua, tls_index, "cert_key_bundle_path");
+    if (config.tls.cert_key_bundle_path == NULL) {
+      config.tls.cert_key_bundle_path =
+          vectis_lua_table_string(lua, tls_index, "bundle_path");
+    }
+    config.tls.certificate_path =
+        vectis_lua_table_string(lua, tls_index, "certificate_path");
+    config.tls.private_key_path =
+        vectis_lua_table_string(lua, tls_index, "private_key_path");
+    config.tls.ca_bundle_path =
+        vectis_lua_table_string(lua, tls_index, "ca_bundle_path");
+    config.tls.client_ca_bundle_path =
+        vectis_lua_table_string(lua, tls_index, "client_ca_bundle_path");
+    config.tls.require_client_certificate =
+        vectis_lua_table_bool(lua, tls_index, "require_client_certificate", 0);
+    config.tls.acme_email =
+        vectis_lua_table_string(lua, tls_index, "acme_email");
+    config.tls.acme_directory_url =
+        vectis_lua_table_string(lua, tls_index, "acme_directory_url");
+  }
+  lua_pop(lua, 1);
   server = (vectis_lua_server *)lua_newuserdata(lua, sizeof(*server));
   server->app = NULL;
   server->native_auths = NULL;
@@ -5763,6 +5828,65 @@ static int vectis_lua_auth_provider_callback(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_cert_generate_bundle(lua_State *lua) {
+  vectis_cert_bundle_config config;
+  vectis_error error;
+  vectis_status status;
+  int subject_index;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_cert_bundle_config_init(&config);
+  lua_getfield(lua, 1, "subject");
+  subject_index = lua_absindex(lua, -1);
+  if (lua_istable(lua, subject_index)) {
+    config.subject.common_name =
+        vectis_lua_table_string(lua, subject_index, "common_name");
+    config.subject.organization =
+        vectis_lua_table_string(lua, subject_index, "organization");
+    config.subject.organizational_unit =
+        vectis_lua_table_string(lua, subject_index, "organizational_unit");
+    config.subject.country =
+        vectis_lua_table_string(lua, subject_index, "country");
+    config.subject.state = vectis_lua_table_string(lua, subject_index, "state");
+    config.subject.locality =
+        vectis_lua_table_string(lua, subject_index, "locality");
+  }
+  lua_pop(lua, 1);
+  if (config.subject.common_name == NULL) {
+    config.subject.common_name = vectis_lua_table_string(lua, 1, "common_name");
+  }
+  config.dns_names = vectis_lua_table_string(lua, 1, "dns_names");
+  config.ip_addresses = vectis_lua_table_string(lua, 1, "ip_addresses");
+  config.ca_cert_path = vectis_lua_table_string(lua, 1, "ca_cert_path");
+  config.ca_key_path = vectis_lua_table_string(lua, 1, "ca_key_path");
+  config.is_ca = vectis_lua_table_bool(lua, 1, "is_ca", 0);
+  config.output_bundle_path =
+      vectis_lua_table_string(lua, 1, "output_bundle_path");
+  if (config.output_bundle_path == NULL) {
+    config.output_bundle_path = vectis_lua_table_string(lua, 1, "bundle_path");
+  }
+  config.output_cert_path = vectis_lua_table_string(lua, 1, "output_cert_path");
+  config.output_key_path = vectis_lua_table_string(lua, 1, "output_key_path");
+  config.key_bits =
+      (unsigned)vectis_lua_table_size(lua, 1, "key_bits", config.key_bits);
+  config.valid_days =
+      vectis_lua_table_long(lua, 1, "valid_days", config.valid_days);
+
+  vectis_error_clear(&error);
+  status = vectis_cert_generate_bundle(&config, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static void vectis_lua_push_cert_table(lua_State *lua) {
+  lua_newtable(lua);
+  lua_pushcfunction(lua, vectis_lua_cert_generate_bundle);
+  lua_setfield(lua, -2, "generate_bundle");
+}
+
 static vectis_lua_totp *vectis_lua_check_totp(lua_State *lua, int index) {
   return (vectis_lua_totp *)luaL_checkudata(lua, index, VECTIS_LUA_TOTP);
 }
@@ -6077,6 +6201,8 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "auth");
   vectis_lua_push_server_table(lua);
   lua_setfield(lua, -2, "server");
+  vectis_lua_push_cert_table(lua);
+  lua_setfield(lua, -2, "cert");
   return 1;
 }
 

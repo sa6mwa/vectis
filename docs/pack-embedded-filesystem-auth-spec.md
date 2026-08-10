@@ -202,7 +202,9 @@ Required Lua concepts:
 - `vectis.embedded.chunks(path, chunk_size)`
 - `vectis.embedded.default_extract_policy()`
 - `vectis.embedded.extract({to=..., policy=...})`
-- `vectis.server.new({bind=..., port=...})`
+- `vectis.cert.generate_bundle({common_name=..., output_bundle_path=...})`
+- `vectis.server.new({bind=..., port=..., tls={mode="manual",
+  cert_key_bundle_path=..., domain=...}})`
 - `server:static_embedded({path_prefix=..., cache_control=...})`
 - `server:webdav_embedded_site({path_prefix=..., cache_dir=..., site_id=...,
   extract_policy=..., auth={kind="native", credentials_path=...}})`
