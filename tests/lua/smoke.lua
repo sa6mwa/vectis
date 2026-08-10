@@ -14,6 +14,57 @@ assert(arg[0]:match("smoke%.lua$"))
 assert(arg[1] == "first")
 assert(arg[2] == "second")
 
+assert(type(vectis.auth) == "table")
+local auth_path = os.tmpname()
+os.remove(auth_path)
+assert(vectis.auth.store_init({ credentials_path = auth_path }))
+local issued = assert(vectis.auth.issue({
+  credentials_path = auth_path,
+  subject = "lua@example.com",
+  purpose = "webdav",
+  modes = { "bearer" },
+}))
+assert(type(issued.client_id) == "string")
+assert(type(issued.api_key) == "string")
+assert(issued.client_secret == nil)
+local verified = assert(vectis.auth.verify({
+  credentials_path = auth_path,
+  authorization = "Bearer " .. issued.api_key,
+  allowed_modes = { "bearer" },
+}))
+assert(verified.authenticated == true)
+assert(verified.auth_mode == "bearer")
+assert(verified.claim_json:match('"purpose":"webdav"'))
+local native_provider = assert(vectis.auth.provider_native({
+  credentials_path = auth_path,
+  purpose = "webdav",
+  realm = "lua",
+  allowed_modes = { "bearer" },
+}))
+local native_allowed = assert(native_provider:authenticate({
+  authorization = "Bearer " .. issued.api_key,
+}))
+assert(native_allowed.action == "allow")
+assert(native_allowed.principal == "lua@example.com")
+local native_required = assert(native_provider:authenticate({}))
+assert(native_required.action == "required")
+assert(native_required.www_authenticate == "Bearer")
+local callback_provider = assert(vectis.auth.provider_callback(function(request)
+  return { action = "allow", principal = request.resource }
+end))
+local callback_allowed = assert(callback_provider:authenticate({ resource = "/lua" }))
+assert(callback_allowed.action == "allow")
+assert(callback_allowed.principal == "/lua")
+assert(vectis.auth.revoke({ credentials_path = auth_path, client_id = issued.client_id }))
+local revoked = assert(vectis.auth.verify({
+  credentials_path = auth_path,
+  authorization = "Bearer " .. issued.api_key,
+  allowed_modes = { "bearer" },
+}))
+assert(revoked.authenticated == false)
+os.remove(auth_path)
+os.remove(auth_path .. ".lock")
+
 assert(type(lonejson) == "table")
 assert(lonejson.encode_json(lonejson.json_null) == "null")
 

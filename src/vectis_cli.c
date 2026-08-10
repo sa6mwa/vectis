@@ -10,6 +10,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vectis/auth.h>
 #include <vectis/vectis.h>
 #include <vectis/vectis_version.h>
 
@@ -341,6 +342,412 @@ static int vectis_lua_embedded_lockd_bundle_size(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_push_error(lua_State *lua, vectis_status status,
+                                 const vectis_error *error) {
+  const char *message;
+
+  message = error != NULL && error->message[0] != '\0'
+                ? error->message
+                : vectis_status_string(status);
+  lua_pushnil(lua);
+  lua_newtable(lua);
+  lua_pushinteger(lua, (lua_Integer)status);
+  lua_setfield(lua, -2, "status");
+  lua_pushstring(lua, vectis_status_string(status));
+  lua_setfield(lua, -2, "status_string");
+  lua_pushstring(lua, message != NULL ? message : "vectis error");
+  lua_setfield(lua, -2, "message");
+  return 2;
+}
+
+static const char *vectis_lua_table_string(lua_State *lua, int index,
+                                           const char *field) {
+  const char *value;
+
+  lua_getfield(lua, index, field);
+  value = lua_isnil(lua, -1) ? NULL : luaL_checkstring(lua, -1);
+  lua_pop(lua, 1);
+  return value;
+}
+
+static size_t vectis_lua_table_size(lua_State *lua, int index,
+                                    const char *field, size_t fallback) {
+  size_t value;
+
+  lua_getfield(lua, index, field);
+  if (lua_isnil(lua, -1)) {
+    value = fallback;
+  } else {
+    value = (size_t)luaL_checkinteger(lua, -1);
+  }
+  lua_pop(lua, 1);
+  return value;
+}
+
+static unsigned vectis_lua_auth_mode_value(const char *mode) {
+  if (mode == NULL || strcmp(mode, "default") == 0) {
+    return VECTIS_AUTH_MODE_DEFAULT;
+  }
+  if (strcmp(mode, "basic") == 0) {
+    return VECTIS_AUTH_MODE_BASIC;
+  }
+  if (strcmp(mode, "bearer") == 0) {
+    return VECTIS_AUTH_MODE_BEARER;
+  }
+  return VECTIS_AUTH_MODE_DEFAULT;
+}
+
+static unsigned vectis_lua_auth_modes_at(lua_State *lua, int index,
+                                         unsigned fallback) {
+  unsigned modes;
+  size_t count;
+  size_t i;
+
+  if (lua_isnil(lua, index)) {
+    return fallback;
+  }
+  if (lua_istable(lua, index)) {
+    modes = 0u;
+    count = lua_rawlen(lua, index);
+    for (i = 1u; i <= count; ++i) {
+      lua_rawgeti(lua, index, (lua_Integer)i);
+      if (lua_isnumber(lua, -1)) {
+        modes |= (unsigned)lua_tointeger(lua, -1);
+      } else {
+        modes |= vectis_lua_auth_mode_value(luaL_checkstring(lua, -1));
+      }
+      lua_pop(lua, 1);
+    }
+    return modes != 0u ? modes : fallback;
+  }
+  if (lua_isnumber(lua, index)) {
+    return (unsigned)lua_tointeger(lua, index);
+  }
+  return vectis_lua_auth_mode_value(luaL_checkstring(lua, index));
+}
+
+static unsigned vectis_lua_auth_modes_field(lua_State *lua, int index,
+                                            const char *field,
+                                            unsigned fallback) {
+  unsigned modes;
+
+  lua_getfield(lua, index, field);
+  modes = vectis_lua_auth_modes_at(lua, -1, fallback);
+  lua_pop(lua, 1);
+  return modes;
+}
+
+static const char *vectis_lua_auth_mode_name(unsigned mode) {
+  if ((mode & VECTIS_AUTH_MODE_BASIC) != 0u) {
+    return "basic";
+  }
+  if ((mode & VECTIS_AUTH_MODE_BEARER) != 0u) {
+    return "bearer";
+  }
+  return "default";
+}
+
+static void vectis_lua_auth_store_config(lua_State *lua, int index,
+                                         vectis_auth_store_config *config) {
+  const char *path;
+
+  vectis_auth_store_config_init(config);
+  index = lua_absindex(lua, index);
+  path = vectis_lua_table_string(lua, index, "credentials_path");
+  if (path == NULL) {
+    path = vectis_lua_table_string(lua, index, "path");
+  }
+  config->credentials_path = path;
+  config->max_store_bytes = vectis_lua_table_size(
+      lua, index, "max_store_bytes", VECTIS_AUTH_DEFAULT_MAX_STORE_BYTES);
+}
+
+static void vectis_lua_auth_push_result(lua_State *lua,
+                                        const vectis_auth_result *result) {
+  lua_newtable(lua);
+  lua_pushboolean(lua, result != NULL && result->authenticated);
+  lua_setfield(lua, -2, "authenticated");
+  lua_pushstring(lua, result != NULL
+                          ? vectis_lua_auth_mode_name(result->auth_mode)
+                          : "default");
+  lua_setfield(lua, -2, "auth_mode");
+  if (result != NULL && result->client_id != NULL) {
+    lua_pushstring(lua, result->client_id);
+    lua_setfield(lua, -2, "client_id");
+  }
+  if (result != NULL && result->claim_json != NULL) {
+    lua_pushstring(lua, result->claim_json);
+    lua_setfield(lua, -2, "claim_json");
+  }
+}
+
+static void vectis_lua_auth_push_provider_response(
+    lua_State *lua, const vectis_auth_provider_response *response) {
+  lua_newtable(lua);
+  switch (response != NULL ? response->action : VECTIS_AUTH_DENY) {
+  case VECTIS_AUTH_ALLOW:
+    lua_pushliteral(lua, "allow");
+    break;
+  case VECTIS_AUTH_REQUIRED:
+    lua_pushliteral(lua, "required");
+    break;
+  case VECTIS_AUTH_REDIRECT:
+    lua_pushliteral(lua, "redirect");
+    break;
+  case VECTIS_AUTH_DENY:
+  default:
+    lua_pushliteral(lua, "deny");
+    break;
+  }
+  lua_setfield(lua, -2, "action");
+  lua_pushinteger(lua, response != NULL ? (lua_Integer)response->status_code
+                                        : (lua_Integer)0);
+  lua_setfield(lua, -2, "status_code");
+  if (response != NULL && response->location != NULL) {
+    lua_pushstring(lua, response->location);
+    lua_setfield(lua, -2, "location");
+  }
+  if (response != NULL && response->www_authenticate[0] != '\0') {
+    lua_pushstring(lua, response->www_authenticate);
+    lua_setfield(lua, -2, "www_authenticate");
+  }
+  if (response != NULL && response->principal[0] != '\0') {
+    lua_pushstring(lua, response->principal);
+    lua_setfield(lua, -2, "principal");
+  }
+  if (response != NULL) {
+    vectis_lua_auth_push_result(lua, &response->result);
+    lua_setfield(lua, -2, "result");
+  }
+}
+
+static int vectis_lua_auth_store_init(lua_State *lua) {
+  vectis_auth_store_config config;
+  vectis_error error;
+  vectis_status status;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_error_clear(&error);
+  vectis_lua_auth_store_config(lua, 1, &config);
+  status = vectis_auth_store_init(&config, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_auth_issue(lua_State *lua) {
+  vectis_auth_store_config store;
+  vectis_auth_issue_config issue;
+  vectis_auth_issued_credential credential;
+  vectis_error error;
+  vectis_status status;
+  const char *purpose;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_error_clear(&error);
+  vectis_lua_auth_store_config(lua, 1, &store);
+  vectis_auth_issue_config_init(&issue);
+  issue.subject = vectis_lua_table_string(lua, 1, "subject");
+  purpose = vectis_lua_table_string(lua, 1, "purpose");
+  if (purpose != NULL) {
+    issue.purpose = purpose;
+  }
+  issue.auth_modes =
+      vectis_lua_auth_modes_field(lua, 1, "modes", VECTIS_AUTH_MODE_BEARER);
+  issue.max_record_bytes =
+      vectis_lua_table_size(lua, 1, "max_record_bytes", 0u);
+  vectis_auth_issued_credential_init(&credential);
+  status = vectis_auth_issue_credential(&store, &issue, &credential, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_newtable(lua);
+  if (credential.client_id != NULL) {
+    lua_pushstring(lua, credential.client_id);
+    lua_setfield(lua, -2, "client_id");
+  }
+  if (credential.client_secret != NULL) {
+    lua_pushstring(lua, credential.client_secret);
+    lua_setfield(lua, -2, "client_secret");
+  }
+  if (credential.api_key != NULL) {
+    lua_pushstring(lua, credential.api_key);
+    lua_setfield(lua, -2, "api_key");
+  }
+  if (credential.claim_json != NULL) {
+    lua_pushstring(lua, credential.claim_json);
+    lua_setfield(lua, -2, "claim_json");
+  }
+  vectis_auth_issued_credential_cleanup(&credential);
+  return 1;
+}
+
+static int vectis_lua_auth_verify(lua_State *lua) {
+  vectis_auth_store_config store;
+  vectis_auth_result result;
+  vectis_error error;
+  vectis_status status;
+  const char *authorization;
+  unsigned modes;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_error_clear(&error);
+  vectis_lua_auth_store_config(lua, 1, &store);
+  authorization = vectis_lua_table_string(lua, 1, "authorization");
+  modes = vectis_lua_auth_modes_field(lua, 1, "allowed_modes",
+                                      VECTIS_AUTH_MODE_DEFAULT);
+  vectis_auth_result_init(&result);
+  status = vectis_auth_verify_authorization(&store, authorization, modes,
+                                            &result, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  vectis_lua_auth_push_result(lua, &result);
+  vectis_auth_result_cleanup(&result);
+  return 1;
+}
+
+static int vectis_lua_auth_revoke(lua_State *lua) {
+  vectis_auth_store_config store;
+  vectis_error error;
+  vectis_status status;
+  const char *client_id;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_error_clear(&error);
+  vectis_lua_auth_store_config(lua, 1, &store);
+  client_id = vectis_lua_table_string(lua, 1, "client_id");
+  status = vectis_auth_revoke_client(&store, client_id, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_auth_native_provider_authenticate(lua_State *lua) {
+  vectis_auth_native_provider_config config;
+  vectis_auth_provider provider;
+  vectis_auth_provider_request request;
+  vectis_auth_provider_response response;
+  vectis_error error;
+  vectis_status status;
+  int request_index;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  request_index = lua_gettop(lua) >= 2 && !lua_isnil(lua, 2) ? 2 : 0;
+  vectis_error_clear(&error);
+  vectis_auth_native_provider_config_init(&config);
+  vectis_lua_auth_store_config(lua, 1, &config.store);
+  config.purpose = vectis_lua_table_string(lua, 1, "purpose");
+  config.realm = vectis_lua_table_string(lua, 1, "realm");
+  config.allowed_auth_modes = vectis_lua_auth_modes_field(
+      lua, 1, "allowed_modes", VECTIS_AUTH_MODE_DEFAULT);
+  if (config.realm == NULL) {
+    config.realm = "vectis";
+  }
+  vectis_auth_provider_init(&provider);
+  status = vectis_auth_provider_from_native_store(&provider, &config, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  vectis_auth_provider_request_init(&request);
+  if (request_index != 0) {
+    luaL_checktype(lua, request_index, LUA_TTABLE);
+    request.authorization =
+        vectis_lua_table_string(lua, request_index, "authorization");
+    request.purpose = vectis_lua_table_string(lua, request_index, "purpose");
+    request.resource = vectis_lua_table_string(lua, request_index, "resource");
+    request.allowed_auth_modes = vectis_lua_auth_modes_field(
+        lua, request_index, "allowed_modes", VECTIS_AUTH_MODE_DEFAULT);
+  }
+  vectis_auth_provider_response_init(&response);
+  status =
+      vectis_auth_provider_authenticate(&provider, &request, &response, &error);
+  if (status != VECTIS_OK) {
+    vectis_auth_provider_response_cleanup(&response);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  vectis_lua_auth_push_provider_response(lua, &response);
+  vectis_auth_provider_response_cleanup(&response);
+  return 1;
+}
+
+static int vectis_lua_auth_provider_native(lua_State *lua) {
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  lua_newtable(lua);
+  lua_pushliteral(lua, "native");
+  lua_setfield(lua, -2, "kind");
+  lua_pushvalue(lua, 1);
+  lua_setfield(lua, -2, "config");
+  lua_getfield(lua, 1, "credentials_path");
+  lua_setfield(lua, -2, "credentials_path");
+  lua_getfield(lua, 1, "path");
+  lua_setfield(lua, -2, "path");
+  lua_getfield(lua, 1, "max_store_bytes");
+  lua_setfield(lua, -2, "max_store_bytes");
+  lua_getfield(lua, 1, "purpose");
+  lua_setfield(lua, -2, "purpose");
+  lua_getfield(lua, 1, "realm");
+  lua_setfield(lua, -2, "realm");
+  lua_getfield(lua, 1, "allowed_modes");
+  lua_setfield(lua, -2, "allowed_modes");
+  lua_pushcfunction(lua, vectis_lua_auth_native_provider_authenticate);
+  lua_setfield(lua, -2, "authenticate");
+  return 1;
+}
+
+static int vectis_lua_auth_callback_provider_authenticate(lua_State *lua) {
+  int base;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  if (lua_gettop(lua) < 2) {
+    lua_newtable(lua);
+  } else {
+    luaL_checktype(lua, 2, LUA_TTABLE);
+  }
+  base = lua_gettop(lua);
+  lua_getfield(lua, 1, "callback");
+  luaL_checktype(lua, -1, LUA_TFUNCTION);
+  lua_pushvalue(lua, 2);
+  lua_call(lua, 1, LUA_MULTRET);
+  return lua_gettop(lua) - base;
+}
+
+static int vectis_lua_auth_provider_callback(lua_State *lua) {
+  luaL_checktype(lua, 1, LUA_TFUNCTION);
+  lua_newtable(lua);
+  lua_pushliteral(lua, "callback");
+  lua_setfield(lua, -2, "kind");
+  lua_pushvalue(lua, 1);
+  lua_setfield(lua, -2, "callback");
+  lua_pushcfunction(lua, vectis_lua_auth_callback_provider_authenticate);
+  lua_setfield(lua, -2, "authenticate");
+  return 1;
+}
+
+static void vectis_lua_push_auth_table(lua_State *lua) {
+  lua_newtable(lua);
+  lua_pushinteger(lua, VECTIS_AUTH_MODE_BASIC);
+  lua_setfield(lua, -2, "BASIC");
+  lua_pushinteger(lua, VECTIS_AUTH_MODE_BEARER);
+  lua_setfield(lua, -2, "BEARER");
+  lua_pushcfunction(lua, vectis_lua_auth_store_init);
+  lua_setfield(lua, -2, "store_init");
+  lua_pushcfunction(lua, vectis_lua_auth_issue);
+  lua_setfield(lua, -2, "issue");
+  lua_pushcfunction(lua, vectis_lua_auth_verify);
+  lua_setfield(lua, -2, "verify");
+  lua_pushcfunction(lua, vectis_lua_auth_revoke);
+  lua_setfield(lua, -2, "revoke");
+  lua_pushcfunction(lua, vectis_lua_auth_provider_native);
+  lua_setfield(lua, -2, "provider_native");
+  lua_pushcfunction(lua, vectis_lua_auth_provider_callback);
+  lua_setfield(lua, -2, "provider_callback");
+}
+
 static int luaopen_vectis(lua_State *lua) {
   lua_newtable(lua);
   lua_pushliteral(lua, VECTIS_VERSION);
@@ -357,6 +764,8 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "has_embedded_lockd_bundle");
   lua_pushcfunction(lua, vectis_lua_embedded_lockd_bundle_size);
   lua_setfield(lua, -2, "embedded_lockd_bundle_size");
+  vectis_lua_push_auth_table(lua);
+  lua_setfield(lua, -2, "auth");
   return 1;
 }
 
