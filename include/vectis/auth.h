@@ -134,6 +134,9 @@ typedef struct vectis_auth_smtp_config {
   void *configure_curl_userdata;
 } vectis_auth_smtp_config;
 
+#define VECTIS_AUTH_ROUTE_FACTOR_PASSWORD 0x01u
+#define VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN 0x02u
+
 /*
  * Native browser/login route set. Registers:
  *   GET  <path_prefix>/login
@@ -168,6 +171,12 @@ struct vectis_auth_routes_config {
   uint64_t unix_seconds;
   /* Zero uses the login default. */
   unsigned int totp_window;
+  /*
+   * WebDAV-key factor policy. Zero preserves the default password factor.
+   * The password factor validates the password and any enrolled TOTP for the
+   * user. The email-token factor requires a verified email token transaction.
+   */
+  unsigned int required_factors;
   /* Require email_transaction_id and email_token before issuing WebDAV keys. */
   int require_email_token;
   /* Zero uses VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS. */
@@ -533,6 +542,11 @@ vectis_auth_user_add_or_update(const vectis_auth_store_config *store_config,
                                const vectis_auth_user_config *user_config,
                                vectis_auth_user_enrollment *out,
                                vectis_error *error);
+/* Checks whether a username is present in the credentials store. */
+vectis_status
+vectis_auth_user_exists(const vectis_auth_store_config *store_config,
+                        const char *username, int *out_exists,
+                        vectis_error *error);
 vectis_status
 vectis_auth_user_login(const vectis_auth_store_config *store_config,
                        const vectis_auth_login_config *login_config,

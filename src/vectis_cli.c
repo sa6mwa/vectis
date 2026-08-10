@@ -3298,6 +3298,86 @@ static int vectis_lua_table_bool(lua_State *lua, int index, const char *field,
   return value;
 }
 
+static int vectis_lua_auth_factor_bit(const char *name, unsigned int *out) {
+  if (out == NULL) {
+    return 0;
+  }
+  if (name == NULL || name[0] == '\0') {
+    return 0;
+  }
+  if (strcmp(name, "password") == 0) {
+    *out = VECTIS_AUTH_ROUTE_FACTOR_PASSWORD;
+    return 1;
+  }
+  if (strcmp(name, "email_token") == 0 || strcmp(name, "email-token") == 0 ||
+      strcmp(name, "email") == 0) {
+    *out = VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN;
+    return 1;
+  }
+  return 0;
+}
+
+static int vectis_lua_auth_required_factors(lua_State *lua, int index,
+                                            const char *field,
+                                            unsigned int *out) {
+  unsigned int bits;
+  unsigned int bit;
+  const char *name;
+  size_t count;
+  size_t i;
+  int type;
+
+  if (out == NULL) {
+    return 0;
+  }
+  index = lua_absindex(lua, index);
+  lua_getfield(lua, index, field);
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return 0;
+  }
+  type = lua_type(lua, -1);
+  if (type == LUA_TSTRING) {
+    name = lua_tostring(lua, -1);
+    if (!vectis_lua_auth_factor_bit(name, &bit)) {
+      lua_pop(lua, 1);
+      luaL_error(lua,
+                 "auth route required_factors contains unsupported factor");
+      return 0;
+    }
+    *out = bit;
+    lua_pop(lua, 1);
+    return 1;
+  }
+  if (type != LUA_TTABLE) {
+    lua_pop(lua, 1);
+    luaL_error(lua, "auth route required_factors must be a string or table");
+    return 0;
+  }
+  bits = 0u;
+  count = lua_rawlen(lua, -1);
+  if (count == 0u) {
+    lua_pop(lua, 1);
+    luaL_error(lua, "auth route required_factors must not be empty");
+    return 0;
+  }
+  for (i = 0u; i < count; ++i) {
+    lua_rawgeti(lua, -1, (lua_Integer)i + 1);
+    name = luaL_checkstring(lua, -1);
+    if (!vectis_lua_auth_factor_bit(name, &bit)) {
+      lua_pop(lua, 2);
+      luaL_error(lua,
+                 "auth route required_factors contains unsupported factor");
+      return 0;
+    }
+    bits |= bit;
+    lua_pop(lua, 1);
+  }
+  lua_pop(lua, 1);
+  *out = bits;
+  return 1;
+}
+
 static long vectis_lua_table_long(lua_State *lua, int index, const char *field,
                                   long fallback) {
   long value;
@@ -4258,6 +4338,8 @@ static int vectis_lua_server_auth_routes(lua_State *lua) {
       (unsigned int)vectis_lua_table_size(lua, 2, "window", 0u);
   config.require_email_token =
       vectis_lua_table_bool(lua, 2, "require_email_token", 0);
+  (void)vectis_lua_auth_required_factors(lua, 2, "required_factors",
+                                         &config.required_factors);
   config.email_token_ttl_seconds = (uint64_t)vectis_lua_table_size(
       lua, 2, "email_token_ttl_seconds", config.email_token_ttl_seconds);
   lua_getfield(lua, 2, "email_smtp");

@@ -416,6 +416,7 @@ int main(void) {
   char smtp_url[128];
   char totp_code[VECTIS_TOTP_CODE_LENGTH + 1u];
   int written;
+  int user_exists;
   vectis_auth_store_config store;
   vectis_auth_user_config user;
   vectis_auth_user_enrollment enrollment;
@@ -512,6 +513,11 @@ int main(void) {
   store.credentials_path = credentials_path;
   status = vectis_auth_store_init(&store, &error);
   expect_ok(status, &error, "initializes credentials store");
+  user_exists = 1;
+  status = vectis_auth_user_exists(&store, "dav-user@example.com", &user_exists,
+                                   &error);
+  expect_ok(status, &error, "checks absent auth user");
+  expect(!user_exists, "absent auth user is reported missing");
 
   vectis_auth_email_token_issue_config_init(&email_issue);
   email_issue.store = store;
@@ -871,6 +877,11 @@ int main(void) {
   user.totp_issuer = "Vectis";
   status = vectis_auth_user_add_or_update(&store, &user, &enrollment, &error);
   expect_ok(status, &error, "adds TOTP user");
+  user_exists = 0;
+  status = vectis_auth_user_exists(&store, "dav-user@example.com", &user_exists,
+                                   &error);
+  expect_ok(status, &error, "checks present auth user");
+  expect(user_exists, "present auth user is reported present");
   expect(enrollment.username != NULL &&
              strcmp(enrollment.username, "dav-user@example.com") == 0,
          "user enrollment returns username");

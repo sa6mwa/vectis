@@ -1693,6 +1693,7 @@ void vectis_auth_routes_config_init(vectis_auth_routes_config *config) {
   config->realm = "vectis";
   config->login_title = "Vectis Login";
   config->max_body_bytes = 8192u;
+  config->required_factors = VECTIS_AUTH_ROUTE_FACTOR_PASSWORD;
   config->email_token_ttl_seconds = VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS;
   vectis_auth_smtp_config_init(&config->email_smtp);
 }
@@ -4035,6 +4036,60 @@ vectis_auth_user_add_or_update(const vectis_auth_store_config *store_config,
   OPENSSL_cleanse(password, sizeof(password));
   OPENSSL_cleanse(salt_hex, sizeof(salt_hex));
   OPENSSL_cleanse(hash_hex, sizeof(hash_hex));
+  return status;
+}
+
+vectis_status
+vectis_auth_user_exists(const vectis_auth_store_config *store_config,
+                        const char *username, int *out_exists,
+                        vectis_error *error) {
+  vectis_auth_store_lock lock;
+  vectis_auth_user_record record;
+  lonejson *runtime;
+  vectis_status status;
+  char *store_json;
+  size_t store_len;
+
+  if (out_exists == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth user exists output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out_exists = 0;
+  if (username == NULL || username[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth username is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&lock, 0, sizeof(lock));
+  lock.fd = -1;
+  status = vectis_auth_lock_open(store_config, &lock, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  store_json = NULL;
+  store_len = 0u;
+  status = vectis_auth_read_store_locked(store_config, &store_json, &store_len,
+                                         error);
+  free(store_json);
+  if (status == VECTIS_OK && store_len == 0u) {
+    vectis_auth_lock_close(&lock);
+    return VECTIS_OK;
+  }
+  runtime = NULL;
+  if (status == VECTIS_OK) {
+    status = vectis_auth_lonejson_runtime(&runtime, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_find_user_locked(store_config, runtime, username,
+                                          &record, error);
+  }
+  vectis_auth_lock_close(&lock);
+  if (runtime != NULL) {
+    lonejson_free(runtime);
+  }
+  if (status == VECTIS_OK) {
+    *out_exists = record.found ? 1 : 0;
+  }
   return status;
 }
 

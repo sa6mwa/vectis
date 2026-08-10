@@ -215,7 +215,7 @@ Required Lua concepts:
 - `server:webdav_embedded_site({path_prefix=..., cache_dir=..., site_id=...,
   extract_policy=..., auth={kind="native", credentials_path=...}})`
 - `server:auth_routes({path_prefix=..., credentials_path=..., realm=...,
-  login_template_path=...})`
+  login_template_path=..., required_factors={"email_token"}})`
 - `server:auth_routes({path_prefix=..., credentials_path=..., realm=...,
   login_template_embedded_path="/templates/login.html"})`
 - `server:auth_json({path=..., auth={kind="native", credentials_path=...},
@@ -379,14 +379,15 @@ Applications may mount the handlers elsewhere or implement equivalent Lua
 routes against the same C auth/session APIs.
 
 Current native route behavior includes a C-owned `/email-token` issue endpoint
-and optional `require_email_token` enforcement on `/webdav-key`: when enabled,
-WebDAV key issuance requires password, any configured TOTP, and a verified
-single-use email token transaction. C-owned SMTP delivery is available through
-the route config's `email_smtp` settings; Lua only passes configuration into the
-native route registration and does not own auth or delivery semantics. The
-packed service smoke now exercises SMTP delivery through a local mock SMTP
-harness and reads the delivered token from a mock mailbox before issuing a
-WebDAV app key.
+and `/webdav-key` factor policy. Routes default to the password factor, which
+also enforces enrolled-user TOTP. `required_factors={"email_token"}` allows an
+email-token-only WebDAV-key flow, while `require_email_token=true` remains a
+compatibility shorthand that adds the email-token factor to the default password
+flow. C-owned SMTP delivery is available through the route config's
+`email_smtp` settings; Lua only passes configuration into the native route
+registration and does not own auth or delivery semantics. The packed service
+smoke now exercises SMTP delivery through a local mock SMTP harness and reads
+the delivered token from a mock mailbox before issuing a WebDAV app key.
 
 ## Configuration Model
 
@@ -509,8 +510,9 @@ Email-token e2e coverage:
 Current coverage: the packed webserver smokes cover mock SMTP startup,
 configured delivery, mailbox capture, continued login, wrong token rejection,
 expired token rejection and consumption, replay rejection, recipient allowlist
-rejection, password+email-token success without TOTP, and WebDAV use of issued
-keys. Broader packed auth matrix coverage remains future hardening work.
+rejection, password+TOTP+email-token success, email-token-only WebDAV-key
+issuance, and WebDAV use of issued keys. Broader packed auth matrix coverage
+remains future hardening work.
 
 ## Implementation Slices
 
