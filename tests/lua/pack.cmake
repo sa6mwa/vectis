@@ -9,8 +9,10 @@ set(asset_script "${WORK_DIR}/vectis-pack-assets.lua")
 set(asset_output "${WORK_DIR}/vectis-pack-assets")
 set(asset_corrupt_output "${WORK_DIR}/vectis-pack-assets-corrupt")
 set(asset_duplicate_output "${WORK_DIR}/vectis-pack-assets-duplicate")
+set(no_asset_extract_dir "${WORK_DIR}/no-assets-extract")
+set(asset_extract_dir "${WORK_DIR}/extracted-site")
 
-file(WRITE "${script}" "local vectis = require(\"vectis\")\nassert(vectis.status_string(vectis.OK) == \"ok\")\nassert(vectis.has_embedded_lockd_bundle() == false)\nassert(vectis.embedded_lockd_bundle_size() == 0)\nassert(vectis.embedded.has_assets() == false)\nassert(#vectis.embedded.list(\"/\") == 0)\nassert(arg[0]:match(\"vectis%-pack%-smoke$\"))\nassert(arg[1] == \"first\")\nassert(arg[2] == \"second\")\n")
+file(WRITE "${script}" "local vectis = require(\"vectis\")\nassert(vectis.status_string(vectis.OK) == \"ok\")\nassert(vectis.has_embedded_lockd_bundle() == false)\nassert(vectis.embedded_lockd_bundle_size() == 0)\nassert(vectis.embedded.has_assets() == false)\nassert(#vectis.embedded.list(\"/\") == 0)\nlocal extracted, extract_err = vectis.embedded.extract({to = [[${no_asset_extract_dir}]]})\nassert(extracted == nil)\nassert(extract_err == \"no embedded assets\")\nassert(arg[0]:match(\"vectis%-pack%-smoke$\"))\nassert(arg[1] == \"first\")\nassert(arg[2] == \"second\")\n")
 
 execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${script}" --output "${output}"
                 RESULT_VARIABLE pack_result
@@ -20,6 +22,7 @@ if(NOT pack_result EQUAL 0)
   message(FATAL_ERROR "vectis -a pack failed: ${pack_stdout}${pack_stderr}")
 endif()
 
+file(REMOVE_RECURSE "${no_asset_extract_dir}")
 execute_process(COMMAND "${output}" first second
                 RESULT_VARIABLE run_result
                 OUTPUT_VARIABLE run_stdout
@@ -74,7 +77,7 @@ endif()
 file(MAKE_DIRECTORY "${asset_dir}/assets")
 file(WRITE "${asset_dir}/index.html" "<!doctype html><title>Acme Test</title>\n")
 file(WRITE "${asset_dir}/assets/app.txt" "generic embedded asset\n")
-file(WRITE "${asset_script}" "local vectis = require(\"vectis\")\nassert(vectis.embedded.has_assets() == true)\nassert(vectis.embedded.read(\"/index.html\"):match(\"Acme Test\"))\nassert(vectis.embedded.read(\"/assets/app.txt\") == \"generic embedded asset\\n\")\nlocal listed = table.concat(vectis.embedded.list(\"/\"), \"\\n\")\nassert(listed:match(\"/index%.html\"))\nassert(listed:match(\"/assets/app%.txt\"))\nlocal missing, err = vectis.embedded.read(\"/missing.txt\")\nassert(missing == nil)\nassert(err == \"embedded asset not found\")\n")
+file(WRITE "${asset_script}" "local vectis = require(\"vectis\")\nlocal extract_to = [[${asset_extract_dir}]]\nlocal function read_file(path)\n  local fp = assert(io.open(path, \"rb\"))\n  local body = fp:read(\"*a\")\n  fp:close()\n  return body\nend\nassert(vectis.embedded.has_assets() == true)\nassert(vectis.embedded.read(\"/index.html\"):match(\"Acme Test\"))\nassert(vectis.embedded.read(\"/assets/app.txt\") == \"generic embedded asset\\n\")\nlocal listed = table.concat(vectis.embedded.list(\"/\"), \"\\n\")\nassert(listed:match(\"/index%.html\"))\nassert(listed:match(\"/assets/app%.txt\"))\nlocal missing, err = vectis.embedded.read(\"/missing.txt\")\nassert(missing == nil)\nassert(err == \"embedded asset not found\")\nassert(vectis.embedded.extract({to = extract_to}) == true)\nassert(read_file(extract_to .. \"/index.html\"):match(\"Acme Test\"))\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\nlocal extracted, extract_err = vectis.embedded.extract({to = extract_to})\nassert(extracted == nil)\nassert(extract_err:match(\"embedded asset already exists\"))\nassert(vectis.embedded.extract({to = extract_to, policy = \"skip_existing\"}) == true)\nlocal fp = assert(io.open(extract_to .. \"/assets/app.txt\", \"wb\"))\nfp:write(\"mutated\\n\")\nfp:close()\nassert(vectis.embedded.extract({to = extract_to, policy = \"skip_existing\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"mutated\\n\")\nassert(vectis.embedded.extract({to = extract_to, policy = \"overwrite\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\n")
 
 execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${asset_script}" --output "${asset_output}" --asset-dir "/:${asset_dir}"
                 RESULT_VARIABLE asset_pack_result
@@ -84,6 +87,7 @@ if(NOT asset_pack_result EQUAL 0)
   message(FATAL_ERROR "vectis -a pack with assets failed: ${asset_pack_stdout}${asset_pack_stderr}")
 endif()
 
+file(REMOVE_RECURSE "${asset_extract_dir}")
 execute_process(COMMAND "${asset_output}"
                 RESULT_VARIABLE asset_run_result
                 OUTPUT_VARIABLE asset_run_stdout

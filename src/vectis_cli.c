@@ -2162,6 +2162,9 @@ typedef struct vectis_lua_embedded_list_state {
   int next_index;
 } vectis_lua_embedded_list_state;
 
+static const char *vectis_lua_table_string(lua_State *lua, int index,
+                                           const char *field);
+
 static vectis_status
 vectis_lua_embedded_list_item(const vectis_embedded_fs_entry *entry,
                               void *userdata, vectis_error *error) {
@@ -2200,6 +2203,60 @@ static int vectis_lua_embedded_list(lua_State *lua) {
                       error.message[0] != '\0' ? error.message
                                                : vectis_status_string(status));
   }
+  return 1;
+}
+
+static vectis_embedded_fs_extract_policy
+vectis_lua_embedded_extract_policy(lua_State *lua, const char *policy) {
+  if (policy == NULL || strcmp(policy, "fail_exists") == 0 ||
+      strcmp(policy, "fail") == 0) {
+    return VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS;
+  }
+  if (strcmp(policy, "skip_existing") == 0 || strcmp(policy, "skip") == 0) {
+    return VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING;
+  }
+  if (strcmp(policy, "overwrite") == 0) {
+    return VECTIS_EMBEDDED_FS_EXTRACT_OVERWRITE;
+  }
+  (void)luaL_error(lua, "embedded extract policy must be fail_exists, "
+                        "skip_existing, or overwrite");
+  return VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS;
+}
+
+static int vectis_lua_embedded_extract(lua_State *lua) {
+  vectis_lua_runtime_context *context;
+  vectis_embedded_fs_extract_config config;
+  const char *output_dir;
+  const char *policy;
+  vectis_error error;
+  vectis_status status;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  output_dir = vectis_lua_table_string(lua, 1, "to");
+  if (output_dir == NULL || output_dir[0] == '\0') {
+    return luaL_error(lua, "embedded extract requires to");
+  }
+  policy = vectis_lua_table_string(lua, 1, "policy");
+  context = (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(
+      (void *)lua);
+  if (context == NULL || context->embedded_fs == NULL) {
+    lua_pushnil(lua);
+    lua_pushliteral(lua, "no embedded assets");
+    return 2;
+  }
+  vectis_embedded_fs_extract_config_init(&config);
+  config.output_dir = output_dir;
+  config.policy = vectis_lua_embedded_extract_policy(lua, policy);
+  vectis_error_clear(&error);
+  status = vectis_embedded_fs_extract(context->embedded_fs, &config, &error);
+  if (status != VECTIS_OK) {
+    lua_pushnil(lua);
+    lua_pushstring(lua, error.message[0] != '\0'
+                            ? error.message
+                            : vectis_status_string(status));
+    return 2;
+  }
+  lua_pushboolean(lua, 1);
   return 1;
 }
 
@@ -4638,6 +4695,8 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "read");
   lua_pushcfunction(lua, vectis_lua_embedded_list);
   lua_setfield(lua, -2, "list");
+  lua_pushcfunction(lua, vectis_lua_embedded_extract);
+  lua_setfield(lua, -2, "extract");
   lua_setfield(lua, -2, "embedded");
   vectis_lua_push_auth_table(lua);
   lua_setfield(lua, -2, "auth");
