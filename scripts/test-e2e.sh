@@ -358,6 +358,12 @@ run_lua_examples() {
   password_email_wrong_pending_id=
   password_email_wrong_pending_response=
   password_email_wrong_pending_status=
+  limited_token_response=
+  limited_transaction_id=
+  limited_token=
+  limited_wrong_one_status=
+  limited_wrong_two_status=
+  limited_after_budget_status=
   expired_token_response=
   expired_transaction_id=
   expired_token=
@@ -501,6 +507,16 @@ run_lua_examples() {
     '  time = 59,' \
     '  require_email_token = true,' \
     '  email_token_ttl_seconds = 300,' \
+    '}))' \
+    'assert(server:auth_routes({' \
+    '  path_prefix = "/auth-limited",' \
+    '  credentials_path = credentials_path,' \
+    '  realm = "packed-e2e",' \
+    '  login_title = "Packed E2E Limited Token Login",' \
+    '  time = 59,' \
+    '  require_email_token = true,' \
+    '  email_token_ttl_seconds = 300,' \
+    '  email_token_max_attempts = 2,' \
     '}))' \
     'assert(server:auth_routes({' \
     '  path_prefix = "/auth-email-only",' \
@@ -1002,6 +1018,47 @@ run_lua_examples() {
     "http://127.0.0.1:$kore_packed_port/api/private")
   if [ "$body" != '{"ok":true,"surface":"packed-api"}' ]; then
     printf '%s\n' "Unexpected packed password-email guarded API response: $body" >&2
+    return 1
+  fi
+  limited_token_response=$(curl_or_log "$packed_service_log" \
+    "packed limited email token" --max-time 3 -fsS -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-user%40example.com&email=packed-user%40example.test' \
+    "http://127.0.0.1:$kore_packed_port/auth-limited/email-token")
+  limited_transaction_id=$(printf '%s\n' "$limited_token_response" |
+    sed -n 's/^transaction_id=//p')
+  limited_token=$(printf '%s\n' "$limited_token_response" |
+    sed -n 's/^token=//p')
+  if [ -z "$limited_transaction_id" ] || [ -z "$limited_token" ]; then
+    printf '%s\n' "Packed limited auth did not expose an email token" >&2
+    printf '%s\n' "$limited_token_response" >&2
+    return 1
+  fi
+  limited_wrong_one_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$limited_transaction_id&email_token=wrong-one" \
+    "http://127.0.0.1:$kore_packed_port/auth-limited/webdav-key")
+  if [ "$limited_wrong_one_status" != "401" ]; then
+    printf '%s\n' "Packed limited auth first wrong token returned unexpected status: $limited_wrong_one_status" >&2
+    return 1
+  fi
+  limited_wrong_two_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$limited_transaction_id&email_token=wrong-two" \
+    "http://127.0.0.1:$kore_packed_port/auth-limited/webdav-key")
+  if [ "$limited_wrong_two_status" != "401" ]; then
+    printf '%s\n' "Packed limited auth second wrong token returned unexpected status: $limited_wrong_two_status" >&2
+    return 1
+  fi
+  limited_after_budget_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$limited_transaction_id&email_token=$limited_token" \
+    "http://127.0.0.1:$kore_packed_port/auth-limited/webdav-key")
+  if [ "$limited_after_budget_status" != "401" ]; then
+    printf '%s\n' "Packed limited auth accepted token after attempt budget: $limited_after_budget_status" >&2
     return 1
   fi
   expired_token_response=$(curl_or_log "$packed_service_log" \
