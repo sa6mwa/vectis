@@ -346,7 +346,7 @@ string(REPLACE
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(password_only_login.status == 400)\nassert(password_only_login.body"
-       "assert(password_only_login.status == 400)\nassert_no_store(password_only_login)\nassert(password_only_login.body"
+       "assert(password_only_login.status == 400)\nassert_no_store(password_only_login)\nlocal password_only_login_alias = request_http(\"POST\", \"/_vectis/auth/login\", \"username=pack-user&password=pack-password\", {[\"Content-Type\"] = \"application/x-www-form-urlencoded\"})\nassert(password_only_login_alias.status == 400)\nassert_no_store(password_only_login_alias)\nassert(password_only_login_alias.body == \"email_transaction_id and email_token are required\\n\")\nassert(password_only_login.body"
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(token_issue.status == 200)\nlocal email_transaction_id"

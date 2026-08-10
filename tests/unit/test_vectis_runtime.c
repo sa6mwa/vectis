@@ -1754,7 +1754,7 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = "http://127.0.0.1:28080/auth/continue";
+  request.url = "http://127.0.0.1:28080/auth/login";
   request.content_type = "application/x-www-form-urlencoded";
   request.body = "username=runtime-user&password=runtime-password";
   request.body_size = strlen("username=runtime-user&password=runtime-password");

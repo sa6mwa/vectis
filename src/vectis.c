@@ -6170,6 +6170,11 @@ vectis_register_auth_routes(vectis_app *app,
                                           vectis_auth_login_dispatch, error);
   if (status == VECTIS_OK) {
     status = vectis_register_auth_route_one(
+        app, &resolved, path_prefix, "/login", VECTIS_HTTP_POST,
+        vectis_auth_webdav_key_dispatch, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_register_auth_route_one(
         app, &resolved, path_prefix, "/email-token", VECTIS_HTTP_POST,
         vectis_auth_email_token_dispatch, error);
   }
