@@ -154,6 +154,7 @@ static void vectis_cli_usage(FILE *stream) {
         "(--authorize --authorization-endpoint url --client-id id "
         "--redirect-uri uri | --upsert-flow flow_id --subject user "
         "--access-token token | --load-flow flow_id | "
+        "--ensure-flow flow_id [--now seconds] | "
         "--webdav-key flow_id --subject user)\n",
         stream);
 }
@@ -500,6 +501,21 @@ vectis_cli_print_token_flow(const vectis_auth_oauth2_token_flow *flow) {
   printf("has_expires_at=%s\n", flow->has_expires_at ? "true" : "false");
 }
 
+static const char *
+vectis_cli_oauth2_flow_state_name(vectis_auth_oauth2_token_flow_state state) {
+  switch (state) {
+  case VECTIS_AUTH_OAUTH2_TOKEN_FLOW_REFRESHED:
+    return "refreshed";
+  case VECTIS_AUTH_OAUTH2_TOKEN_FLOW_NEEDS_INTERACTION:
+    return "needs_interaction";
+  case VECTIS_AUTH_OAUTH2_TOKEN_FLOW_FAILED:
+    return "failed";
+  case VECTIS_AUTH_OAUTH2_TOKEN_FLOW_READY:
+  default:
+    return "ready";
+  }
+}
+
 static int vectis_cli_token_flow_copy_arg(const char *value, char **out) {
   if (value == NULL) {
     *out = NULL;
@@ -685,6 +701,8 @@ static int vectis_cli_oauth2_command(int argc, char **argv, int index) {
   vectis_auth_oidc_authorization authorization;
   vectis_auth_oauth2_token_flow_store_config flow_config;
   vectis_auth_oauth2_stored_token_flow loaded_flow;
+  vectis_auth_oauth2_stored_token_flow_policy stored_policy;
+  vectis_auth_oauth2_token_flow_result flow_result;
   vectis_auth_oauth2_webdav_key_config webdav_config;
   vectis_auth_issued_credential credential;
   vectis_error error;
@@ -695,14 +713,24 @@ static int vectis_cli_oauth2_command(int argc, char **argv, int index) {
   const char *subject;
   const char *webdav_client_id;
   const char *access_token;
+  const char *token_endpoint;
+  const char *client_secret;
   const char *token_type;
   const char *refresh_token;
   const char *scope;
   const char *id_token;
   uint64_t parsed_size;
+  int64_t now;
+  int now_set;
+  int64_t refresh_skew_seconds;
+  unsigned max_retries;
+  int disable_refresh;
+  int disable_retry;
+  int revoke_webdav_keys_on_failure;
   int expires_at_set;
   int64_t expires_at;
   size_t max_record_bytes;
+  size_t max_response_bytes;
 
   if (vectis_cli_credentials_default_path(default_path, sizeof(default_path)) !=
       0) {
@@ -717,13 +745,23 @@ static int vectis_cli_oauth2_command(int argc, char **argv, int index) {
   subject = NULL;
   webdav_client_id = NULL;
   access_token = NULL;
+  token_endpoint = NULL;
+  client_secret = NULL;
   token_type = NULL;
   refresh_token = NULL;
   scope = NULL;
   id_token = NULL;
+  now = 0;
+  now_set = 0;
+  refresh_skew_seconds = 0;
+  max_retries = 0u;
+  disable_refresh = 0;
+  disable_retry = 0;
+  revoke_webdav_keys_on_failure = 1;
   expires_at_set = 0;
   expires_at = 0;
   max_record_bytes = 0u;
+  max_response_bytes = 0u;
   while (index < argc) {
     if (strcmp(argv[index], "--store") == 0) {
       if (index + 1 >= argc) {
@@ -749,6 +787,14 @@ static int vectis_cli_oauth2_command(int argc, char **argv, int index) {
         return 64;
       }
       action = "load-flow";
+      flow_id = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--ensure-flow") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --ensure-flow requires a flow id\n", stderr);
+        return 64;
+      }
+      action = "ensure-flow";
       flow_id = argv[index + 1];
       index += 2;
     } else if (strcmp(argv[index], "--webdav-key") == 0) {
@@ -793,6 +839,20 @@ static int vectis_cli_oauth2_command(int argc, char **argv, int index) {
         return 64;
       }
       authorization_config.client_id = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--client-secret") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --client-secret requires a value\n", stderr);
+        return 64;
+      }
+      client_secret = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--token-endpoint") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --token-endpoint requires a URL\n", stderr);
+        return 64;
+      }
+      token_endpoint = argv[index + 1];
       index += 2;
     } else if (strcmp(argv[index], "--redirect-uri") == 0) {
       if (index + 1 >= argc) {
@@ -905,6 +965,47 @@ static int vectis_cli_oauth2_command(int argc, char **argv, int index) {
       }
       expires_at_set = 1;
       index += 2;
+    } else if (strcmp(argv[index], "--now") == 0) {
+      if (index + 1 >= argc || vectis_cli_i64_arg(argv[index + 1], &now) != 0) {
+        fputs("vectis: --now requires an integer\n", stderr);
+        return 64;
+      }
+      now_set = 1;
+      index += 2;
+    } else if (strcmp(argv[index], "--refresh-skew-seconds") == 0) {
+      if (index + 1 >= argc ||
+          vectis_cli_i64_arg(argv[index + 1], &refresh_skew_seconds) != 0) {
+        fputs("vectis: --refresh-skew-seconds requires an integer\n", stderr);
+        return 64;
+      }
+      index += 2;
+    } else if (strcmp(argv[index], "--max-response-bytes") == 0) {
+      if (index + 1 >= argc ||
+          vectis_cli_users_time_arg(argv[index + 1], &parsed_size) != 0) {
+        fputs("vectis: --max-response-bytes requires a non-negative integer\n",
+              stderr);
+        return 64;
+      }
+      max_response_bytes = (size_t)parsed_size;
+      index += 2;
+    } else if (strcmp(argv[index], "--max-retries") == 0) {
+      if (index + 1 >= argc ||
+          vectis_cli_users_time_arg(argv[index + 1], &parsed_size) != 0) {
+        fputs("vectis: --max-retries requires a non-negative integer\n",
+              stderr);
+        return 64;
+      }
+      max_retries = (unsigned)parsed_size;
+      index += 2;
+    } else if (strcmp(argv[index], "--disable-refresh") == 0) {
+      disable_refresh = 1;
+      index++;
+    } else if (strcmp(argv[index], "--disable-retry") == 0) {
+      disable_retry = 1;
+      index++;
+    } else if (strcmp(argv[index], "--keep-webdav-keys-on-failure") == 0) {
+      revoke_webdav_keys_on_failure = 0;
+      index++;
     } else if (strcmp(argv[index], "--max-record-bytes") == 0) {
       if (index + 1 >= argc ||
           vectis_cli_users_time_arg(argv[index + 1], &parsed_size) != 0) {
@@ -921,8 +1022,8 @@ static int vectis_cli_oauth2_command(int argc, char **argv, int index) {
   }
   vectis_error_clear(&error);
   if (action == NULL) {
-    fputs("vectis: oauth2 requires --authorize, --upsert-flow, --load-flow, or "
-          "--webdav-key\n",
+    fputs("vectis: oauth2 requires --authorize, --upsert-flow, --load-flow, "
+          "--ensure-flow, or --webdav-key\n",
           stderr);
     return 64;
   }
@@ -988,6 +1089,47 @@ static int vectis_cli_oauth2_command(int argc, char **argv, int index) {
       vectis_auth_oauth2_stored_token_flow_cleanup(&loaded_flow);
       return vectis_cli_auth_status(status, &error);
     }
+    printf("found=%s\n", loaded_flow.found ? "true" : "false");
+    if (loaded_flow.flow_id != NULL) {
+      printf("flow_id=%s\n", loaded_flow.flow_id);
+    }
+    if (loaded_flow.subject != NULL) {
+      printf("subject=%s\n", loaded_flow.subject);
+    }
+    if (loaded_flow.webdav_client_id != NULL) {
+      printf("webdav_client_id=%s\n", loaded_flow.webdav_client_id);
+    }
+    vectis_cli_print_token_flow(&loaded_flow.flow);
+    vectis_auth_oauth2_stored_token_flow_cleanup(&loaded_flow);
+    return 0;
+  }
+  if (strcmp(action, "ensure-flow") == 0) {
+    vectis_auth_oauth2_stored_token_flow_policy_init(&stored_policy);
+    stored_policy.store = store;
+    stored_policy.flow_id = flow_id;
+    stored_policy.flow_policy.token_endpoint = token_endpoint;
+    stored_policy.flow_policy.client_id = authorization_config.client_id;
+    stored_policy.flow_policy.client_secret = client_secret;
+    stored_policy.flow_policy.scope = scope;
+    stored_policy.flow_policy.now = now_set ? now : 0;
+    stored_policy.flow_policy.refresh_skew_seconds = refresh_skew_seconds;
+    stored_policy.flow_policy.max_response_bytes = max_response_bytes;
+    stored_policy.flow_policy.max_retries = max_retries;
+    stored_policy.flow_policy.disable_refresh = disable_refresh;
+    stored_policy.flow_policy.disable_retry = disable_retry;
+    stored_policy.revoke_webdav_keys_on_failure = revoke_webdav_keys_on_failure;
+    vectis_auth_oauth2_stored_token_flow_init(&loaded_flow);
+    vectis_auth_oauth2_token_flow_result_init(&flow_result);
+    status = vectis_auth_oauth2_stored_token_flow_ensure(
+        &stored_policy, &loaded_flow, &flow_result, &error);
+    if (status != VECTIS_OK) {
+      vectis_auth_oauth2_stored_token_flow_cleanup(&loaded_flow);
+      return vectis_cli_auth_status(status, &error);
+    }
+    printf("flow_state=%s\n",
+           vectis_cli_oauth2_flow_state_name(flow_result.state));
+    printf("attempts=%u\n", flow_result.attempts);
+    printf("refreshed=%s\n", flow_result.refreshed ? "true" : "false");
     printf("found=%s\n", loaded_flow.found ? "true" : "false");
     if (loaded_flow.flow_id != NULL) {
       printf("flow_id=%s\n", loaded_flow.flow_id);

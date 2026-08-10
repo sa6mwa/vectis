@@ -94,6 +94,28 @@ if(NOT oauth_load_output MATCHES "expires_at=5200")
 endif()
 
 execute_process(
+  COMMAND "${VECTIS_BIN}" -a oauth2 --store "${store}" --ensure-flow
+          "admin-flow" --now "1000"
+  RESULT_VARIABLE oauth_ensure_result
+  OUTPUT_VARIABLE oauth_ensure_output
+  ERROR_VARIABLE oauth_ensure_error)
+if(NOT oauth_ensure_result EQUAL 0)
+  message(FATAL_ERROR "oauth2 ensure-flow failed: ${oauth_ensure_error}")
+endif()
+if(NOT oauth_ensure_output MATCHES "flow_state=ready")
+  message(FATAL_ERROR "oauth2 ensure-flow did not report ready state")
+endif()
+if(NOT oauth_ensure_output MATCHES "refreshed=false")
+  message(FATAL_ERROR "oauth2 ensure-flow unexpectedly refreshed")
+endif()
+if(NOT oauth_ensure_output MATCHES "flow_id=admin-flow")
+  message(FATAL_ERROR "oauth2 ensure-flow did not print flow id")
+endif()
+if(NOT oauth_ensure_output MATCHES "access_token=admin-access-token")
+  message(FATAL_ERROR "oauth2 ensure-flow did not print access token")
+endif()
+
+execute_process(
   COMMAND "${VECTIS_BIN}" -a oauth2 --store "${store}" --webdav-key
           "admin-flow" --subject "admin-oidc@example.com"
   RESULT_VARIABLE oauth_webdav_key_result
