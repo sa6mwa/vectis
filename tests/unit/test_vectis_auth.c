@@ -421,6 +421,12 @@ int main(void) {
   vectis_auth_user_config user;
   vectis_auth_user_enrollment enrollment;
   vectis_auth_login_config login;
+  vectis_auth_password_check_config password_check;
+  vectis_auth_password_check_result password_result;
+  vectis_auth_pending_login_issue_config pending_issue;
+  vectis_auth_pending_login pending_login;
+  vectis_auth_pending_login_consume_config pending_consume;
+  vectis_auth_pending_login_result pending_result;
   vectis_auth_oauth2_client_credentials_config oauth2_client;
   vectis_auth_oauth2_token_response token_response;
   vectis_auth_oauth2_token_flow token_flow;
@@ -463,6 +469,12 @@ int main(void) {
   vectis_auth_user_config_init(&user);
   vectis_auth_user_enrollment_init(&enrollment);
   vectis_auth_login_config_init(&login);
+  vectis_auth_password_check_config_init(&password_check);
+  vectis_auth_password_check_result_init(&password_result);
+  vectis_auth_pending_login_issue_config_init(&pending_issue);
+  vectis_auth_pending_login_init(&pending_login);
+  vectis_auth_pending_login_consume_config_init(&pending_consume);
+  vectis_auth_pending_login_result_init(&pending_result);
   vectis_auth_oauth2_client_credentials_config_init(&oauth2_client);
   vectis_auth_oauth2_token_response_init(&token_response);
   vectis_auth_oauth2_token_flow_init(&token_flow);
@@ -983,6 +995,120 @@ int main(void) {
          "initializes test TOTP");
   expect(vectis_totp_generate(&totp, 59u, totp_code) == VECTIS_TOTP_QR_OK,
          "generates deterministic TOTP code");
+
+  vectis_auth_password_check_config_init(&password_check);
+  password_check.store = store;
+  password_check.username = "dav-user@example.com";
+  password_check.password = "wrong";
+  status = vectis_auth_user_password_check(&password_check, &password_result,
+                                           &error);
+  expect_ok(status, &error, "checks wrong password before pending login");
+  expect(!password_result.authenticated,
+         "wrong password does not pass password check");
+
+  password_check.password = "correct horse battery staple";
+  status = vectis_auth_user_password_check(&password_check, &password_result,
+                                           &error);
+  expect_ok(status, &error, "checks correct password before pending login");
+  expect(password_result.authenticated, "correct password passes check");
+  expect(password_result.totp_required, "password check reports TOTP required");
+
+  vectis_auth_pending_login_issue_config_init(&pending_issue);
+  pending_issue.store = store;
+  pending_issue.username = "dav-user@example.com";
+  pending_issue.password = "wrong";
+  pending_issue.realm = "unit";
+  pending_issue.transaction_id = "pending-login-wrong";
+  pending_issue.now_seconds = 59u;
+  status =
+      vectis_auth_pending_login_issue(&pending_issue, &pending_login, &error);
+  expect_ok(status, &error, "rejects pending login issue with wrong password");
+  expect(!pending_login.authenticated,
+         "wrong password does not create pending login");
+  vectis_auth_pending_login_cleanup(&pending_login);
+
+  pending_issue.password = "correct horse battery staple";
+  pending_issue.transaction_id = "pending-login-wrong-totp";
+  pending_issue.ttl_seconds = 300u;
+  status =
+      vectis_auth_pending_login_issue(&pending_issue, &pending_login, &error);
+  expect_ok(status, &error, "issues pending login for TOTP user");
+  expect(pending_login.authenticated, "pending login is authenticated");
+  expect(pending_login.totp_required, "pending login reports TOTP required");
+  expect(pending_login.transaction_id != NULL &&
+             strcmp(pending_login.transaction_id, "pending-login-wrong-totp") ==
+                 0,
+         "pending login carries transaction id");
+  expect(pending_login.expires_at == 359u, "pending login carries expiry");
+  vectis_auth_pending_login_cleanup(&pending_login);
+
+  vectis_auth_pending_login_consume_config_init(&pending_consume);
+  pending_consume.store = store;
+  pending_consume.transaction_id = "pending-login-wrong-totp";
+  pending_consume.username = "dav-user@example.com";
+  pending_consume.realm = "unit";
+  pending_consume.totp_code = "000000";
+  pending_consume.now_seconds = 59u;
+  pending_consume.totp_window = 0u;
+  status = vectis_auth_pending_login_consume(&pending_consume, &pending_result,
+                                             &error);
+  expect_ok(status, &error, "rejects wrong pending-login TOTP");
+  expect(!pending_result.authenticated, "wrong TOTP does not consume as login");
+  expect(pending_result.totp_required, "wrong TOTP reports TOTP requirement");
+  vectis_auth_pending_login_result_cleanup(&pending_result);
+
+  pending_consume.totp_code = totp_code;
+  status = vectis_auth_pending_login_consume(&pending_consume, &pending_result,
+                                             &error);
+  expect_ok(status, &error, "wrong TOTP consumes pending transaction");
+  expect(!pending_result.authenticated,
+         "wrong-TOTP pending transaction cannot be replayed");
+  vectis_auth_pending_login_result_cleanup(&pending_result);
+
+  pending_issue.transaction_id = "pending-login-ok";
+  status =
+      vectis_auth_pending_login_issue(&pending_issue, &pending_login, &error);
+  expect_ok(status, &error, "issues second pending login for success");
+  expect(pending_login.authenticated, "second pending login is authenticated");
+  vectis_auth_pending_login_cleanup(&pending_login);
+
+  pending_consume.transaction_id = "pending-login-ok";
+  pending_consume.totp_code = totp_code;
+  status = vectis_auth_pending_login_consume(&pending_consume, &pending_result,
+                                             &error);
+  expect_ok(status, &error, "consumes pending login with TOTP");
+  expect(pending_result.authenticated, "pending login accepts correct TOTP");
+  expect(pending_result.username != NULL &&
+             strcmp(pending_result.username, "dav-user@example.com") == 0,
+         "pending result carries username");
+  vectis_auth_pending_login_result_cleanup(&pending_result);
+
+  status = vectis_auth_pending_login_consume(&pending_consume, &pending_result,
+                                             &error);
+  expect_ok(status, &error, "checks pending login replay");
+  expect(!pending_result.authenticated, "pending login is single-use");
+  vectis_auth_pending_login_result_cleanup(&pending_result);
+
+  pending_issue.transaction_id = "pending-login-expired";
+  pending_issue.now_seconds = 59u;
+  pending_issue.ttl_seconds = 1u;
+  status =
+      vectis_auth_pending_login_issue(&pending_issue, &pending_login, &error);
+  expect_ok(status, &error, "issues expiring pending login");
+  expect(pending_login.authenticated, "expiring pending login is created");
+  vectis_auth_pending_login_cleanup(&pending_login);
+
+  pending_consume.transaction_id = "pending-login-expired";
+  pending_consume.totp_code = totp_code;
+  pending_consume.now_seconds = 61u;
+  status = vectis_auth_pending_login_consume(&pending_consume, &pending_result,
+                                             &error);
+  expect_ok(status, &error, "rejects expired pending login");
+  expect(!pending_result.authenticated,
+         "expired pending login is not accepted");
+  expect(pending_result.expired, "expired pending login reports expiry");
+  vectis_auth_pending_login_result_cleanup(&pending_result);
+
   vectis_auth_login_config_init(&login);
   login.username = "dav-user@example.com";
   login.password = "correct horse battery staple";
@@ -1190,6 +1316,8 @@ int main(void) {
   expect(result.authenticated, "retains unrelated bearer credential");
 
   vectis_auth_result_cleanup(&result);
+  vectis_auth_pending_login_result_cleanup(&pending_result);
+  vectis_auth_pending_login_cleanup(&pending_login);
   vectis_auth_email_token_result_cleanup(&email_result);
   vectis_auth_email_token_cleanup(&email_token);
   vectis_auth_issued_credential_cleanup(&oauth_webdav_key);

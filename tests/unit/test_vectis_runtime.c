@@ -1219,6 +1219,7 @@ static void assert_kore_smoke(void) {
   char auth_clear[320];
   char auth_token[448];
   char auth_header[480];
+  char auth_pending_transaction_id[128];
   char auth_totp_code[VECTIS_TOTP_CODE_LENGTH + 1u];
   char auth_totp_form[256];
   size_t default_spooled_body_size;
@@ -1784,15 +1785,19 @@ static void assert_kore_smoke(void) {
       strlen("username=runtime-totp&password=runtime-totp-password");
   status = vectis_http_execute(&http, &request, &auth_bad_response, &error);
   assert(status == VECTIS_OK);
-  assert(auth_bad_response.status_code == 401L);
+  assert(auth_bad_response.status_code == 202L);
   assert(bytes_contain(auth_bad_response.body, auth_bad_response.body_size,
-                       "login failed"));
+                       "totp_required=1"));
+  assert(runtime_response_line_value(
+      auth_bad_response.body, auth_bad_response.body_size,
+      "pending_transaction_id", auth_pending_transaction_id,
+      sizeof(auth_pending_transaction_id)));
   vectis_http_response_cleanup(&auth_bad_response);
 
   written = snprintf(auth_totp_form, sizeof(auth_totp_form),
-                     "username=runtime-totp&password=runtime-totp-password&"
+                     "username=runtime-totp&pending_transaction_id=%s&"
                      "totp_code=%s",
-                     auth_totp_code);
+                     auth_pending_transaction_id, auth_totp_code);
   assert(written > 0 && (size_t)written < sizeof(auth_totp_form));
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;

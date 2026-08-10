@@ -391,6 +391,12 @@ in the Authorization header. Native login templates render `continue_action` as
 the default browser form action, while `webdav_key_action` remains a supported
 alias placeholder for explicit lower-level flows. Routes default to the password
 factor, which also enforces enrolled-user TOTP.
+Password-first browser continuation is backed by locked credentials JSON
+`pending_logins` records: when the password is valid but TOTP or email-token
+factors are still missing, the native route returns a short-lived
+`pending_transaction_id`; a later `/continue` or `/webdav-key` POST can supply
+that transaction id plus the remaining factor fields without resending the
+password.
 `required_factors={"email_token"}` allows an email-token-only WebDAV-key flow,
 while `require_email_token=true` remains a
 compatibility shorthand that adds the email-token factor to the default password
@@ -475,13 +481,15 @@ read-only mount, extracts the embedded
 assets into the disk WebDAV content tree before accepting WebDAV operations,
 verifies generated files are present in that extracted docroot, exposes native
 auth routes, protects a JSON API route through the same native provider,
-delivers an email token through a local mock SMTP server, rejects password-only,
-wrong-token, and replayed-token WebDAV key requests, rejects expired email-token
+delivers an email token through a local mock SMTP server, turns password-only
+login for a TOTP/email-token route into a pending transaction, rejects
+wrong-token and replayed-token WebDAV key requests, rejects expired email-token
 transactions, rejects SMTP delivery to non-allowlisted recipients, rejects a
 missing or wrong TOTP code with an otherwise valid email-token transaction,
 issues a WebDAV key after deterministic password+email-token login for a
 non-TOTP user, issues a WebDAV key after deterministic
-password+TOTP+email-token login for a TOTP user, protects the WebDAV mount,
+password-first pending continuation with TOTP+email-token login for a TOTP user,
+protects the WebDAV mount,
 rejects anonymous WebDAV reads and writes without mutating the extracted
 docroot, serves embedded content through authenticated WebDAV, accepts mutable
 WebDAV writes, verifies those writes land in the extracted docroot, exercises
@@ -572,10 +580,8 @@ keys. Broader packed auth matrix coverage remains future hardening work.
 
 - Whether extraction repair mode should remove files not present in the
   embedded manifest. The safer default is no pruning.
-- Whether pending auth state lives inside the main credentials JSON or a
-  separate state file/directory. A separate state path is likely cleaner for
-  locking and TTL cleanup. `/continue` is currently a C-owned finalization
-  endpoint; true multi-request password-first pending sessions still require a
-  pending-auth state store.
+- Whether pending auth state should later move from the main locked credentials
+  JSON to a separate state file/directory for high-churn deployments. Current
+  native behavior uses the main credentials JSON `pending_logins` array.
 - Whether the native login route set belongs in the core C API, the Kore
   integration layer, or both with a shared auth service underneath.

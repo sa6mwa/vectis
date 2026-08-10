@@ -126,6 +126,15 @@ typedef struct vectis_auth_email_token_record {
   int found;
 } vectis_auth_email_token_record;
 
+typedef struct vectis_auth_pending_login_record {
+  char transaction_id[256];
+  char username[VECTIS_AUTH_PRINCIPAL_MAX + 1u];
+  char realm[128];
+  int64_t expires_at;
+  int totp_required;
+  int found;
+} vectis_auth_pending_login_record;
+
 typedef struct vectis_auth_user_find_state {
   lonejson *runtime;
   const char *username;
@@ -150,6 +159,12 @@ typedef struct vectis_auth_email_token_find_state {
   vectis_auth_email_token_record record;
 } vectis_auth_email_token_find_state;
 
+typedef struct vectis_auth_pending_login_find_state {
+  lonejson *runtime;
+  const char *transaction_id;
+  vectis_auth_pending_login_record record;
+} vectis_auth_pending_login_find_state;
+
 typedef struct vectis_auth_oauth2_flow_drop_state {
   lonejson *runtime;
   const char *flow_id;
@@ -161,6 +176,12 @@ typedef struct vectis_auth_email_token_drop_state {
   const char *transaction_id;
   int matched;
 } vectis_auth_email_token_drop_state;
+
+typedef struct vectis_auth_pending_login_drop_state {
+  lonejson *runtime;
+  const char *transaction_id;
+  int matched;
+} vectis_auth_pending_login_drop_state;
 
 typedef struct vectis_auth_oauth2_webdav_revoke_state {
   lonejson *runtime;
@@ -1061,6 +1082,44 @@ vectis_auth_email_token_record_from_json(lonejson *runtime, const char *json,
   return ok;
 }
 
+static int vectis_auth_pending_login_record_from_json(
+    lonejson *runtime, const char *json, size_t len,
+    vectis_auth_pending_login_record *out) {
+  char *buffer;
+  int ok;
+  int64_t expires_at;
+  int totp_required;
+
+  if (runtime == NULL || json == NULL || out == NULL || len == 0u) {
+    return 0;
+  }
+  buffer = (char *)malloc(len + 1u);
+  if (buffer == NULL) {
+    return 0;
+  }
+  memcpy(buffer, json, len);
+  buffer[len] = '\0';
+  memset(out, 0, sizeof(*out));
+  expires_at = 0;
+  totp_required = 0;
+  ok = vectis_auth_claim_string(runtime, buffer, "transaction_id",
+                                out->transaction_id,
+                                sizeof(out->transaction_id)) &&
+       vectis_auth_claim_string(runtime, buffer, "username", out->username,
+                                sizeof(out->username)) &&
+       vectis_auth_claim_string(runtime, buffer, "realm", out->realm,
+                                sizeof(out->realm)) &&
+       vectis_auth_claim_i64(runtime, buffer, "expires_at", &expires_at);
+  if (ok) {
+    (void)vectis_auth_claim_bool(runtime, buffer, "totp_required",
+                                 &totp_required);
+    out->expires_at = expires_at;
+    out->totp_required = totp_required ? 1 : 0;
+  }
+  free(buffer);
+  return ok;
+}
+
 static lonejson_status
 vectis_auth_probe_client_id_chunk(void *user, const lonejson_value_path *path,
                                   const char *data, size_t len,
@@ -1313,6 +1372,65 @@ static lonejson_status vectis_auth_email_token_drop_item(
   return status;
 }
 
+static lonejson_status vectis_auth_pending_login_find_item(
+    void *user, const lonejson_array_rewrite_context *context, void *item,
+    lonejson_array_rewrite_result *result, lonejson_error *error) {
+  vectis_auth_pending_login_find_state *state;
+  lonejson_json_value *value;
+  lonejson_owned_buffer json;
+  vectis_auth_pending_login_record record;
+  lonejson_status status;
+
+  (void)context;
+  (void)result;
+  state = (vectis_auth_pending_login_find_state *)user;
+  value = (lonejson_json_value *)item;
+  if (state == NULL || state->record.found || state->transaction_id == NULL) {
+    return LONEJSON_STATUS_OK;
+  }
+  lonejson_owned_buffer_init(&json);
+  status = value->methods->write_to_sink(value, lonejson_owned_buffer_sink,
+                                         &json, error);
+  if (status == LONEJSON_STATUS_OK &&
+      vectis_auth_pending_login_record_from_json(state->runtime, json.data,
+                                                 json.len, &record) &&
+      strcmp(record.transaction_id, state->transaction_id) == 0) {
+    state->record = record;
+    state->record.found = 1;
+  }
+  lonejson_owned_buffer_free(&json);
+  return status;
+}
+
+static lonejson_status vectis_auth_pending_login_drop_item(
+    void *user, const lonejson_array_rewrite_context *context, void *item,
+    lonejson_array_rewrite_result *result, lonejson_error *error) {
+  vectis_auth_pending_login_drop_state *state;
+  lonejson_json_value *value;
+  lonejson_owned_buffer json;
+  vectis_auth_pending_login_record record;
+  lonejson_status status;
+
+  (void)context;
+  state = (vectis_auth_pending_login_drop_state *)user;
+  value = (lonejson_json_value *)item;
+  if (state == NULL || state->transaction_id == NULL) {
+    return LONEJSON_STATUS_OK;
+  }
+  lonejson_owned_buffer_init(&json);
+  status = value->methods->write_to_sink(value, lonejson_owned_buffer_sink,
+                                         &json, error);
+  if (status == LONEJSON_STATUS_OK &&
+      vectis_auth_pending_login_record_from_json(state->runtime, json.data,
+                                                 json.len, &record) &&
+      strcmp(record.transaction_id, state->transaction_id) == 0) {
+    result->action = LONEJSON_ARRAY_REWRITE_DROP;
+    state->matched = 1;
+  }
+  lonejson_owned_buffer_free(&json);
+  return status;
+}
+
 static lonejson_status
 vectis_auth_oauth2_flow_claim_chunk(void *user, const lonejson_value_path *path,
                                     const char *data, size_t len,
@@ -1426,7 +1544,7 @@ vectis_auth_write_empty_store_locked(const vectis_auth_store_config *config,
                                      vectis_error *error) {
   static const char empty_store[] =
       "{\"credentials\":[],\"signups\":[],\"users\":[],\"oauth2_flows\":[],"
-      "\"email_tokens\":[]}\n";
+      "\"email_tokens\":[],\"pending_logins\":[]}\n";
 
   return vectis_auth_write_store_locked(config, empty_store,
                                         sizeof(empty_store) - 1u, error);
@@ -1438,6 +1556,7 @@ static vectis_status vectis_auth_writer_copy_store_arrays(
     const char *extra_user_json, size_t extra_user_len,
     const char *extra_flow_json, size_t extra_flow_len,
     const char *extra_email_token_json, size_t extra_email_token_len,
+    const char *extra_pending_login_json, size_t extra_pending_login_len,
     lonejson_error *json_error) {
   lonejson_status status;
 
@@ -1525,6 +1644,23 @@ static vectis_status vectis_auth_writer_copy_store_arrays(
     status = lonejson_writer_end_array(writer, json_error);
   }
   if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_key(writer, "pending_logins", 14u, json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_begin_array(writer, json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && store_json != NULL && store_len > 0u) {
+    status = lonejson_writer_array_items_buffer(
+        writer, "pending_logins", store_json, store_len, json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && extra_pending_login_json != NULL) {
+    status = lonejson_writer_json_value_buffer(
+        writer, extra_pending_login_json, extra_pending_login_len, json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_end_array(writer, json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
     status = lonejson_writer_end_object(writer, json_error);
   }
   if (status == LONEJSON_STATUS_OK) {
@@ -1566,7 +1702,7 @@ vectis_auth_append_record_locked(const vectis_auth_store_config *config,
   if (json_status == LONEJSON_STATUS_OK) {
     status = vectis_auth_writer_copy_store_arrays(
         &writer, store_json, store_len, record_json, record_len, NULL, 0u, NULL,
-        0u, NULL, 0u, &json_error);
+        0u, NULL, 0u, NULL, 0u, &json_error);
     lonejson_writer_cleanup(&writer);
   } else {
     status = vectis_auth_lonejson_error(error, json_status, &json_error,
@@ -1695,6 +1831,8 @@ void vectis_auth_routes_config_init(vectis_auth_routes_config *config) {
   config->max_body_bytes = 8192u;
   config->required_factors = VECTIS_AUTH_ROUTE_FACTOR_PASSWORD;
   config->email_token_ttl_seconds = VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS;
+  config->pending_login_ttl_seconds =
+      VECTIS_AUTH_PENDING_LOGIN_DEFAULT_TTL_SECONDS;
   vectis_auth_smtp_config_init(&config->email_smtp);
 }
 
@@ -1732,6 +1870,78 @@ void vectis_auth_login_config_init(vectis_auth_login_config *config) {
   }
   memset(config, 0, sizeof(*config));
   config->totp_window = 1u;
+}
+
+void vectis_auth_password_check_config_init(
+    vectis_auth_password_check_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  vectis_auth_store_config_init(&config->store);
+}
+
+void vectis_auth_password_check_result_init(
+    vectis_auth_password_check_result *result) {
+  if (result == NULL) {
+    return;
+  }
+  memset(result, 0, sizeof(*result));
+}
+
+void vectis_auth_pending_login_issue_config_init(
+    vectis_auth_pending_login_issue_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  vectis_auth_store_config_init(&config->store);
+  config->ttl_seconds = VECTIS_AUTH_PENDING_LOGIN_DEFAULT_TTL_SECONDS;
+}
+
+void vectis_auth_pending_login_init(vectis_auth_pending_login *pending) {
+  if (pending == NULL) {
+    return;
+  }
+  memset(pending, 0, sizeof(*pending));
+}
+
+void vectis_auth_pending_login_cleanup(vectis_auth_pending_login *pending) {
+  if (pending == NULL) {
+    return;
+  }
+  free(pending->transaction_id);
+  free(pending->username);
+  free(pending->realm);
+  vectis_auth_pending_login_init(pending);
+}
+
+void vectis_auth_pending_login_consume_config_init(
+    vectis_auth_pending_login_consume_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  vectis_auth_store_config_init(&config->store);
+  config->totp_window = 1u;
+}
+
+void vectis_auth_pending_login_result_init(
+    vectis_auth_pending_login_result *result) {
+  if (result == NULL) {
+    return;
+  }
+  memset(result, 0, sizeof(*result));
+}
+
+void vectis_auth_pending_login_result_cleanup(
+    vectis_auth_pending_login_result *result) {
+  if (result == NULL) {
+    return;
+  }
+  free(result->username);
+  free(result->realm);
+  vectis_auth_pending_login_result_init(result);
 }
 
 void vectis_auth_email_token_issue_config_init(
@@ -3150,6 +3360,73 @@ static vectis_status vectis_auth_build_email_token_record_json(
   return VECTIS_OK;
 }
 
+static vectis_status vectis_auth_build_pending_login_record_json(
+    lonejson *runtime, const char *transaction_id, const char *username,
+    const char *realm, int totp_required, int64_t expires_at,
+    lonejson_owned_buffer *out, vectis_error *error) {
+  lonejson_writer writer;
+  lonejson_error json_error;
+  lonejson_status status;
+
+  if (runtime == NULL || transaction_id == NULL || transaction_id[0] == '\0' ||
+      username == NULL || username[0] == '\0' || realm == NULL ||
+      realm[0] == '\0' || out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth pending login record fields are required");
+    return VECTIS_ERR_INVALID;
+  }
+  lonejson_error_init(&json_error);
+  status = lonejson_writer_init_sink(
+      runtime, &writer, lonejson_owned_buffer_sink, out, &json_error);
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_begin_object(&writer, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_key(&writer, "transaction_id", 14u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_string(&writer, transaction_id,
+                                    strlen(transaction_id), &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_key(&writer, "username", 8u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_string(&writer, username, strlen(username),
+                                    &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_key(&writer, "realm", 5u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_string(&writer, realm, strlen(realm), &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_key(&writer, "totp_required", 13u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_bool(&writer, totp_required ? 1 : 0, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_key(&writer, "expires_at", 10u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_i64(&writer, expires_at, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_end_object(&writer, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_finish(&writer, &json_error);
+  }
+  lonejson_writer_cleanup(&writer);
+  if (status != LONEJSON_STATUS_OK) {
+    return vectis_auth_lonejson_error(error, status, &json_error,
+                                      "failed to build auth pending login");
+  }
+  return VECTIS_OK;
+}
+
 static vectis_status vectis_auth_write_store_with_user_locked(
     const vectis_auth_store_config *config, const char *store_json,
     size_t store_len, const char *user_json, size_t user_len,
@@ -3173,7 +3450,7 @@ static vectis_status vectis_auth_write_store_with_user_locked(
   if (json_status == LONEJSON_STATUS_OK) {
     status = vectis_auth_writer_copy_store_arrays(
         &writer, store_json, store_len, NULL, 0u, user_json, user_len, NULL, 0u,
-        NULL, 0u, &json_error);
+        NULL, 0u, NULL, 0u, &json_error);
     lonejson_writer_cleanup(&writer);
   } else {
     status = vectis_auth_lonejson_error(error, json_status, &json_error,
@@ -3214,7 +3491,7 @@ static vectis_status vectis_auth_write_store_with_flow_locked(
   if (json_status == LONEJSON_STATUS_OK) {
     status = vectis_auth_writer_copy_store_arrays(
         &writer, store_json, store_len, NULL, 0u, NULL, 0u, flow_json, flow_len,
-        NULL, 0u, &json_error);
+        NULL, 0u, NULL, 0u, &json_error);
     lonejson_writer_cleanup(&writer);
   } else {
     status = vectis_auth_lonejson_error(error, json_status, &json_error,
@@ -3255,7 +3532,48 @@ static vectis_status vectis_auth_write_store_with_email_token_locked(
   if (json_status == LONEJSON_STATUS_OK) {
     status = vectis_auth_writer_copy_store_arrays(
         &writer, store_json, store_len, NULL, 0u, NULL, 0u, NULL, 0u,
-        token_json, token_len, &json_error);
+        token_json, token_len, NULL, 0u, &json_error);
+    lonejson_writer_cleanup(&writer);
+  } else {
+    status = vectis_auth_lonejson_error(error, json_status, &json_error,
+                                        "failed to initialize auth writer");
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_write_store_locked(config, out.data, out.len, error);
+  } else if (error != NULL && error->code == VECTIS_OK) {
+    (void)vectis_auth_lonejson_error(error, LONEJSON_STATUS_INVALID_JSON,
+                                     &json_error,
+                                     "failed to rewrite auth store");
+  }
+  lonejson_owned_buffer_free(&out);
+  lonejson_free(runtime);
+  return status;
+}
+
+static vectis_status vectis_auth_write_store_with_pending_login_locked(
+    const vectis_auth_store_config *config, const char *store_json,
+    size_t store_len, const char *pending_json, size_t pending_len,
+    vectis_error *error) {
+  lonejson *runtime;
+  lonejson_writer writer;
+  lonejson_owned_buffer out;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  vectis_status status;
+
+  runtime = NULL;
+  status = vectis_auth_lonejson_runtime(&runtime, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  lonejson_owned_buffer_init(&out);
+  lonejson_error_init(&json_error);
+  json_status = lonejson_writer_init_sink(
+      runtime, &writer, lonejson_owned_buffer_sink, &out, &json_error);
+  if (json_status == LONEJSON_STATUS_OK) {
+    status = vectis_auth_writer_copy_store_arrays(
+        &writer, store_json, store_len, NULL, 0u, NULL, 0u, NULL, 0u, NULL, 0u,
+        pending_json, pending_len, &json_error);
     lonejson_writer_cleanup(&writer);
   } else {
     status = vectis_auth_lonejson_error(error, json_status, &json_error,
@@ -3510,6 +3828,100 @@ static vectis_status vectis_auth_find_email_token_locked(
   if (json_status != LONEJSON_STATUS_OK) {
     return vectis_auth_lonejson_error(error, json_status, &json_error,
                                       "failed to read auth email tokens");
+  }
+  *out = state.record;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_drop_pending_login_to_temp_locked(
+    const vectis_auth_store_config *store_config, lonejson *runtime,
+    const char *transaction_id, char *temp_path, size_t temp_path_size,
+    vectis_error *error) {
+  lonejson_json_value item_value;
+  lonejson_array_rewrite_options options;
+  vectis_auth_pending_login_drop_state state;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  int written;
+
+  written = snprintf(temp_path, temp_path_size, "%s.pending_logins.%ld",
+                     store_config->credentials_path, (long)getpid());
+  if (written < 0 || (size_t)written >= temp_path_size) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth pending-login temp path is too long");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&state, 0, sizeof(state));
+  state.runtime = runtime;
+  state.transaction_id = transaction_id;
+  memset(&options, 0, sizeof(options));
+  lonejson_json_value_init(runtime, &item_value);
+  lonejson_error_init(&json_error);
+  json_status =
+      lonejson_json_value_enable_parse_capture(&item_value, &json_error);
+  if (json_status == LONEJSON_STATUS_OK) {
+    options.item_value = &item_value;
+    options.item = vectis_auth_pending_login_drop_item;
+    options.user = &state;
+    json_status = lonejson_array_rewrite_path(runtime, "pending_logins",
+                                              store_config->credentials_path,
+                                              temp_path, &options, &json_error);
+  }
+  lonejson_json_value_cleanup(&item_value);
+  if (json_status != LONEJSON_STATUS_OK) {
+    (void)unlink(temp_path);
+    return vectis_auth_lonejson_error(error, json_status, &json_error,
+                                      "failed to rewrite auth pending logins");
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_find_pending_login_locked(
+    const vectis_auth_store_config *store_config, lonejson *runtime,
+    const char *transaction_id, vectis_auth_pending_login_record *out,
+    vectis_error *error) {
+  lonejson_json_value item_value;
+  lonejson_array_rewrite_options options;
+  vectis_auth_pending_login_find_state state;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  char temp_path[4096];
+  int written;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth pending-login output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(out, 0, sizeof(*out));
+  written = snprintf(temp_path, sizeof(temp_path), "%s.pending_logins.find.%ld",
+                     store_config->credentials_path, (long)getpid());
+  if (written < 0 || (size_t)written >= sizeof(temp_path)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth pending-login lookup temp path is too long");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&state, 0, sizeof(state));
+  state.runtime = runtime;
+  state.transaction_id = transaction_id;
+  memset(&options, 0, sizeof(options));
+  lonejson_json_value_init(runtime, &item_value);
+  lonejson_error_init(&json_error);
+  json_status =
+      lonejson_json_value_enable_parse_capture(&item_value, &json_error);
+  if (json_status == LONEJSON_STATUS_OK) {
+    options.item_value = &item_value;
+    options.item = vectis_auth_pending_login_find_item;
+    options.user = &state;
+    json_status = lonejson_array_rewrite_path(runtime, "pending_logins",
+                                              store_config->credentials_path,
+                                              temp_path, &options, &json_error);
+  }
+  lonejson_json_value_cleanup(&item_value);
+  (void)unlink(temp_path);
+  if (json_status != LONEJSON_STATUS_OK) {
+    return vectis_auth_lonejson_error(error, json_status, &json_error,
+                                      "failed to read auth pending logins");
   }
   *out = state.record;
   return VECTIS_OK;
@@ -4169,6 +4581,294 @@ vectis_auth_user_login(const vectis_auth_store_config *store_config,
     }
   }
   lonejson_owned_buffer_free(&claim);
+  lonejson_free(runtime);
+  return status;
+}
+
+vectis_status
+vectis_auth_user_password_check(const vectis_auth_password_check_config *config,
+                                vectis_auth_password_check_result *out,
+                                vectis_error *error) {
+  vectis_auth_store_lock lock;
+  vectis_auth_user_record record;
+  lonejson *runtime;
+  vectis_status status;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth password-check result is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_password_check_result_init(out);
+  if (config == NULL || config->username == NULL ||
+      config->username[0] == '\0' || config->password == NULL ||
+      config->password[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth password-check username and password are required");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_lock_open(&config->store, &lock, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  runtime = NULL;
+  status = vectis_auth_lonejson_runtime(&runtime, error);
+  if (status == VECTIS_OK) {
+    status = vectis_auth_find_user_locked(&config->store, runtime,
+                                          config->username, &record, error);
+  }
+  vectis_auth_lock_close(&lock);
+  if (runtime != NULL) {
+    lonejson_free(runtime);
+  }
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (record.found && vectis_auth_verify_password(&record, config->password)) {
+    out->authenticated = 1;
+    out->totp_required = record.totp_enabled ? 1 : 0;
+  }
+  return VECTIS_OK;
+}
+
+vectis_status vectis_auth_pending_login_issue(
+    const vectis_auth_pending_login_issue_config *config,
+    vectis_auth_pending_login *out, vectis_error *error) {
+  vectis_auth_store_lock lock;
+  vectis_auth_store_config temp_config;
+  vectis_auth_user_record record;
+  lonejson *runtime;
+  lonejson_owned_buffer pending_json;
+  vectis_status status;
+  char *store_json;
+  char transaction_id[2u * VECTIS_AUTH_RANDOM_OIDC_BYTES + 1u];
+  char temp_path[4096];
+  const char *effective_realm;
+  uint64_t now;
+  uint64_t ttl;
+  uint64_t expires_at;
+  size_t store_len;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth pending login output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_pending_login_init(out);
+  memset(&lock, 0, sizeof(lock));
+  lock.fd = -1;
+  if (config == NULL || config->username == NULL ||
+      config->username[0] == '\0' || config->password == NULL ||
+      config->password[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth pending login username and password are required");
+    return VECTIS_ERR_INVALID;
+  }
+  effective_realm = config->realm != NULL && config->realm[0] != '\0'
+                        ? config->realm
+                        : "vectis";
+  transaction_id[0] = '\0';
+  if (config->transaction_id != NULL && config->transaction_id[0] != '\0') {
+    vectis_auth_copy_fixed(transaction_id, sizeof(transaction_id),
+                           config->transaction_id);
+  } else {
+    status = vectis_auth_generate_oidc_value(transaction_id,
+                                             sizeof(transaction_id), error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
+  now = config->now_seconds != 0u ? config->now_seconds : (uint64_t)time(NULL);
+  ttl = config->ttl_seconds != 0u
+            ? config->ttl_seconds
+            : VECTIS_AUTH_PENDING_LOGIN_DEFAULT_TTL_SECONDS;
+  if (ttl > (uint64_t)INT64_MAX || now > (uint64_t)INT64_MAX - ttl) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth pending login expiry overflows");
+    return VECTIS_ERR_INVALID;
+  }
+  expires_at = now + ttl;
+  runtime = NULL;
+  status = vectis_auth_lonejson_runtime(&runtime, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  store_json = NULL;
+  store_len = 0u;
+  lonejson_owned_buffer_init(&pending_json);
+  status = vectis_auth_lock_open(&config->store, &lock, error);
+  if (status == VECTIS_OK) {
+    status = vectis_auth_read_store_locked(&config->store, &store_json,
+                                           &store_len, error);
+  }
+  if (status == VECTIS_OK && store_json == NULL) {
+    status = vectis_auth_write_empty_store_locked(&config->store, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_find_user_locked(&config->store, runtime,
+                                          config->username, &record, error);
+  }
+  if (status == VECTIS_OK &&
+      (!record.found ||
+       !vectis_auth_verify_password(&record, config->password))) {
+    vectis_auth_lock_close(&lock);
+    lock.fd = -1;
+    lonejson_owned_buffer_free(&pending_json);
+    lonejson_free(runtime);
+    free(store_json);
+    return VECTIS_OK;
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_build_pending_login_record_json(
+        runtime, transaction_id, config->username, effective_realm,
+        record.totp_enabled, (int64_t)expires_at, &pending_json, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_drop_pending_login_to_temp_locked(
+        &config->store, runtime, transaction_id, temp_path, sizeof(temp_path),
+        error);
+  }
+  if (status == VECTIS_OK) {
+    temp_config = config->store;
+    temp_config.credentials_path = temp_path;
+    free(store_json);
+    store_json = NULL;
+    store_len = 0u;
+    status = vectis_auth_read_store_locked(&temp_config, &store_json,
+                                           &store_len, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_write_store_with_pending_login_locked(
+        &config->store, store_json, store_len, pending_json.data,
+        pending_json.len, error);
+  }
+  if (status == VECTIS_OK) {
+    out->transaction_id = vectis_auth_strdup(transaction_id);
+    out->username = vectis_auth_strdup(config->username);
+    out->realm = vectis_auth_strdup(effective_realm);
+    out->expires_at = expires_at;
+    out->totp_required = record.totp_enabled ? 1 : 0;
+    out->authenticated = out->transaction_id != NULL && out->username != NULL &&
+                         out->realm != NULL;
+    if (!out->authenticated) {
+      vectis_auth_pending_login_cleanup(out);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy auth pending login");
+      status = VECTIS_ERR_NOMEM;
+    }
+  }
+  if (lock.fd >= 0) {
+    vectis_auth_lock_close(&lock);
+  }
+  lonejson_owned_buffer_free(&pending_json);
+  lonejson_free(runtime);
+  free(store_json);
+  return status;
+}
+
+vectis_status vectis_auth_pending_login_consume(
+    const vectis_auth_pending_login_consume_config *config,
+    vectis_auth_pending_login_result *out, vectis_error *error) {
+  vectis_auth_store_lock lock;
+  vectis_auth_pending_login_record record;
+  vectis_auth_user_record user;
+  lonejson *runtime;
+  vectis_totp totp;
+  vectis_status status;
+  char temp_path[4096];
+  const char *effective_realm;
+  uint64_t now;
+  int drop_record;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth pending login result is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_pending_login_result_init(out);
+  memset(&lock, 0, sizeof(lock));
+  lock.fd = -1;
+  if (config == NULL || config->transaction_id == NULL ||
+      config->transaction_id[0] == '\0' || config->username == NULL ||
+      config->username[0] == '\0') {
+    vectis_set_error(
+        error, VECTIS_ERR_INVALID,
+        "auth pending login transaction and username are required");
+    return VECTIS_ERR_INVALID;
+  }
+  effective_realm = config->realm != NULL && config->realm[0] != '\0'
+                        ? config->realm
+                        : "vectis";
+  runtime = NULL;
+  status = vectis_auth_lonejson_runtime(&runtime, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_auth_lock_open(&config->store, &lock, error);
+  if (status == VECTIS_OK) {
+    status = vectis_auth_find_pending_login_locked(
+        &config->store, runtime, config->transaction_id, &record, error);
+  }
+  drop_record = 0;
+  if (status == VECTIS_OK && record.found &&
+      strcmp(record.username, config->username) == 0 &&
+      strcmp(record.realm, effective_realm) == 0) {
+    now =
+        config->now_seconds != 0u ? config->now_seconds : (uint64_t)time(NULL);
+    out->totp_required = record.totp_required ? 1 : 0;
+    out->username = vectis_auth_strdup(record.username);
+    out->realm = vectis_auth_strdup(record.realm);
+    if (out->username == NULL || out->realm == NULL) {
+      vectis_auth_pending_login_result_cleanup(out);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy auth pending login result");
+      status = VECTIS_ERR_NOMEM;
+    } else if (now > (uint64_t)record.expires_at) {
+      out->expired = 1;
+      drop_record = 1;
+    } else if (!record.totp_required) {
+      out->authenticated = 1;
+      drop_record = 1;
+    }
+  }
+  if (status == VECTIS_OK && record.found && !out->authenticated &&
+      !out->expired && record.totp_required &&
+      strcmp(record.username, config->username) == 0 &&
+      strcmp(record.realm, effective_realm) == 0 && config->totp_code != NULL &&
+      config->totp_code[0] != '\0') {
+    status = vectis_auth_find_user_locked(&config->store, runtime,
+                                          config->username, &user, error);
+    if (status == VECTIS_OK && user.found && user.totp_enabled &&
+        vectis_totp_init(&totp, user.totp_secret) == VECTIS_TOTP_QR_OK &&
+        vectis_totp_validate(&totp, config->totp_code,
+                             config->now_seconds != 0u ? config->now_seconds
+                                                       : (uint64_t)time(NULL),
+                             config->totp_window != 0u ? config->totp_window
+                                                       : 1u)) {
+      out->authenticated = 1;
+      drop_record = 1;
+    }
+  }
+  if (status == VECTIS_OK && record.found && record.totp_required &&
+      !out->authenticated && !out->expired && config->totp_code != NULL &&
+      config->totp_code[0] != '\0') {
+    drop_record = 1;
+  }
+  if (status == VECTIS_OK && drop_record) {
+    status = vectis_auth_drop_pending_login_to_temp_locked(
+        &config->store, runtime, config->transaction_id, temp_path,
+        sizeof(temp_path), error);
+    if (status == VECTIS_OK &&
+        rename(temp_path, config->store.credentials_path) != 0) {
+      (void)unlink(temp_path);
+      status =
+          vectis_auth_set_errno(error, "failed to consume auth pending login",
+                                config->store.credentials_path);
+    }
+  }
+  if (lock.fd >= 0) {
+    vectis_auth_lock_close(&lock);
+  }
   lonejson_free(runtime);
   return status;
 }

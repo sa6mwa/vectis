@@ -4256,6 +4256,7 @@ typedef struct vectis_auth_route_data {
   unsigned int required_factors;
   int require_email_token;
   uint64_t email_token_ttl_seconds;
+  uint64_t pending_login_ttl_seconds;
   vectis_auth_smtp_config email_smtp;
 } vectis_auth_route_data;
 
@@ -4266,6 +4267,7 @@ typedef struct vectis_auth_form_fields {
   char *email;
   char *email_transaction_id;
   char *email_token;
+  char *pending_transaction_id;
 } vectis_auth_form_fields;
 
 typedef struct vectis_webdav_propfind_state {
@@ -5072,6 +5074,7 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   data->required_factors = config->required_factors;
   data->require_email_token = config->require_email_token;
   data->email_token_ttl_seconds = config->email_token_ttl_seconds;
+  data->pending_login_ttl_seconds = config->pending_login_ttl_seconds;
   data->email_smtp = config->email_smtp;
   cursor = (char *)(data + 1);
   if (config->email_smtp.allowed_recipients != NULL &&
@@ -5325,6 +5328,7 @@ static void vectis_auth_form_cleanup(vectis_auth_form_fields *fields) {
   free(fields->email);
   free(fields->email_transaction_id);
   free(fields->email_token);
+  free(fields->pending_transaction_id);
   memset(fields, 0, sizeof(*fields));
 }
 
@@ -5346,6 +5350,10 @@ static vectis_status vectis_auth_form_set(vectis_auth_form_fields *fields,
     target = &fields->email_transaction_id;
   } else if (strcmp(key, "email_token") == 0 || strcmp(key, "token") == 0) {
     target = &fields->email_token;
+  } else if (strcmp(key, "pending_transaction_id") == 0 ||
+             strcmp(key, "pending_login_transaction_id") == 0 ||
+             strcmp(key, "auth_transaction_id") == 0) {
+    target = &fields->pending_transaction_id;
   }
   if (target == NULL) {
     free(value);
@@ -5762,6 +5770,39 @@ static vectis_status vectis_auth_email_token_route_response(
   return status;
 }
 
+static vectis_status
+vectis_auth_pending_login_response(const vectis_auth_pending_login *pending,
+                                   vectis_response *response,
+                                   vectis_error *error) {
+  vectis_string_builder text;
+  vectis_bytes body;
+  vectis_status status;
+
+  memset(&text, 0, sizeof(text));
+  status = vectis_string_builder_appendf(
+      &text, error, "pending_transaction_id=%s\n",
+      pending->transaction_id != NULL ? pending->transaction_id : "");
+  if (status == VECTIS_OK) {
+    status =
+        vectis_string_builder_appendf(&text, error, "expires_at=%llu\n",
+                                      (unsigned long long)pending->expires_at);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_appendf(&text, error, "totp_required=%d\n",
+                                           pending->totp_required ? 1 : 0);
+  }
+  if (status != VECTIS_OK) {
+    vectis_string_builder_cleanup(&text);
+    return status;
+  }
+  body.data = text.data;
+  body.size = text.size;
+  status = vectis_response_bytes(response, 202, "text/plain; charset=utf-8",
+                                 body, error);
+  vectis_string_builder_cleanup(&text);
+  return status;
+}
+
 static vectis_status vectis_auth_login_dispatch(vectis_app *app,
                                                 vectis_request *request,
                                                 vectis_response *response,
@@ -5916,6 +5957,12 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
   vectis_auth_form_fields fields;
   vectis_auth_login_config login;
   vectis_auth_result login_result;
+  vectis_auth_password_check_config password_check;
+  vectis_auth_password_check_result password_result;
+  vectis_auth_pending_login_issue_config pending_issue;
+  vectis_auth_pending_login pending_login;
+  vectis_auth_pending_login_consume_config pending_consume;
+  vectis_auth_pending_login_result pending_result;
   vectis_auth_email_token_verify_config email_token;
   vectis_auth_email_token_result email_result;
   vectis_auth_issue_config issue;
@@ -5923,6 +5970,9 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
   const char *content_type;
   vectis_status status;
   unsigned int required_factors;
+  int has_pending;
+  int missing_email_token;
+  int needs_pending;
 
   (void)app;
   data = (vectis_auth_route_data *)userdata;
@@ -5964,20 +6014,26 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
     return vectis_response_text(response, 400, "text/plain; charset=utf-8",
                                 "username is required\n", error);
   }
-  if ((required_factors & VECTIS_AUTH_ROUTE_FACTOR_PASSWORD) != 0u &&
-      (fields.password == NULL || fields.password[0] == '\0')) {
-    vectis_auth_form_cleanup(&fields);
-    return vectis_response_text(response, 400, "text/plain; charset=utf-8",
-                                "password is required\n", error);
-  }
-  if ((required_factors & VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN) != 0u &&
+  has_pending = fields.pending_transaction_id != NULL &&
+                fields.pending_transaction_id[0] != '\0';
+  missing_email_token =
+      (required_factors & VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN) != 0u &&
       (fields.email_transaction_id == NULL ||
        fields.email_transaction_id[0] == '\0' || fields.email_token == NULL ||
-       fields.email_token[0] == '\0')) {
+       fields.email_token[0] == '\0');
+  if (has_pending && missing_email_token) {
     vectis_auth_form_cleanup(&fields);
     return vectis_response_text(
         response, 400, "text/plain; charset=utf-8",
         "email_transaction_id and email_token are required\n", error);
+  }
+  if ((required_factors & VECTIS_AUTH_ROUTE_FACTOR_PASSWORD) != 0u &&
+      !has_pending && (fields.password == NULL || fields.password[0] == '\0')) {
+    vectis_auth_form_cleanup(&fields);
+    return vectis_response_text(response, 400, "text/plain; charset=utf-8",
+                                "password or pending_transaction_id is "
+                                "required\n",
+                                error);
   }
   vectis_auth_login_config_init(&login);
   login.username = fields.username;
@@ -5989,25 +6045,120 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
   }
   vectis_auth_issued_credential_init(&credential);
   if ((required_factors & VECTIS_AUTH_ROUTE_FACTOR_PASSWORD) != 0u) {
-    vectis_auth_result_init(&login_result);
-    status = vectis_auth_user_login(&data->store, &login, &login_result, error);
-    if (status != VECTIS_OK) {
-      vectis_auth_form_cleanup(&fields);
+    if (has_pending) {
+      vectis_auth_pending_login_consume_config_init(&pending_consume);
+      pending_consume.store = data->store;
+      pending_consume.transaction_id = fields.pending_transaction_id;
+      pending_consume.username = fields.username;
+      pending_consume.realm = data->realm;
+      pending_consume.totp_code = fields.totp_code;
+      pending_consume.now_seconds = data->unix_seconds;
+      if (data->totp_window != 0u) {
+        pending_consume.totp_window = data->totp_window;
+      }
+      vectis_auth_pending_login_result_init(&pending_result);
+      status = vectis_auth_pending_login_consume(&pending_consume,
+                                                 &pending_result, error);
+      if (status != VECTIS_OK) {
+        vectis_auth_form_cleanup(&fields);
+        vectis_auth_pending_login_result_cleanup(&pending_result);
+        vectis_auth_issued_credential_cleanup(&credential);
+        return status;
+      }
+      if (!pending_result.authenticated) {
+        vectis_auth_form_cleanup(&fields);
+        vectis_auth_pending_login_result_cleanup(&pending_result);
+        vectis_auth_issued_credential_cleanup(&credential);
+        vectis_error_clear(error);
+        return vectis_response_text(response, 401, "text/plain; charset=utf-8",
+                                    "login failed\n", error);
+      }
+      vectis_auth_pending_login_result_cleanup(&pending_result);
+    } else {
+      vectis_auth_password_check_config_init(&password_check);
+      password_check.store = data->store;
+      password_check.username = fields.username;
+      password_check.password = fields.password;
+      vectis_auth_password_check_result_init(&password_result);
+      status = vectis_auth_user_password_check(&password_check,
+                                               &password_result, error);
+      if (status != VECTIS_OK) {
+        vectis_auth_form_cleanup(&fields);
+        vectis_auth_issued_credential_cleanup(&credential);
+        return status;
+      }
+      if (!password_result.authenticated) {
+        vectis_auth_form_cleanup(&fields);
+        vectis_auth_issued_credential_cleanup(&credential);
+        vectis_error_clear(error);
+        return vectis_response_text(response, 401, "text/plain; charset=utf-8",
+                                    "login failed\n", error);
+      }
+      needs_pending =
+          missing_email_token ||
+          (password_result.totp_required &&
+           (fields.totp_code == NULL || fields.totp_code[0] == '\0'));
+      if (needs_pending) {
+        vectis_auth_pending_login_issue_config_init(&pending_issue);
+        pending_issue.store = data->store;
+        pending_issue.username = fields.username;
+        pending_issue.password = fields.password;
+        pending_issue.realm = data->realm;
+        pending_issue.now_seconds = data->unix_seconds;
+        pending_issue.ttl_seconds = data->pending_login_ttl_seconds;
+        vectis_auth_pending_login_init(&pending_login);
+        status = vectis_auth_pending_login_issue(&pending_issue, &pending_login,
+                                                 error);
+        if (status != VECTIS_OK) {
+          vectis_auth_form_cleanup(&fields);
+          vectis_auth_pending_login_cleanup(&pending_login);
+          vectis_auth_issued_credential_cleanup(&credential);
+          return status;
+        }
+        if (!pending_login.authenticated) {
+          vectis_auth_form_cleanup(&fields);
+          vectis_auth_pending_login_cleanup(&pending_login);
+          vectis_auth_issued_credential_cleanup(&credential);
+          vectis_error_clear(error);
+          return vectis_response_text(response, 401,
+                                      "text/plain; charset=utf-8",
+                                      "login failed\n", error);
+        }
+        status =
+            vectis_auth_pending_login_response(&pending_login, response, error);
+        vectis_auth_form_cleanup(&fields);
+        vectis_auth_pending_login_cleanup(&pending_login);
+        vectis_auth_issued_credential_cleanup(&credential);
+        return status;
+      }
+      vectis_auth_result_init(&login_result);
+      status =
+          vectis_auth_user_login(&data->store, &login, &login_result, error);
+      if (status != VECTIS_OK) {
+        vectis_auth_form_cleanup(&fields);
+        vectis_auth_result_cleanup(&login_result);
+        vectis_auth_issued_credential_cleanup(&credential);
+        return status;
+      }
+      if (!login_result.authenticated) {
+        vectis_auth_form_cleanup(&fields);
+        vectis_auth_result_cleanup(&login_result);
+        vectis_auth_issued_credential_cleanup(&credential);
+        vectis_error_clear(error);
+        return vectis_response_text(response, 401, "text/plain; charset=utf-8",
+                                    "login failed\n", error);
+      }
       vectis_auth_result_cleanup(&login_result);
-      vectis_auth_issued_credential_cleanup(&credential);
-      return status;
     }
-    if (!login_result.authenticated) {
-      vectis_auth_form_cleanup(&fields);
-      vectis_auth_result_cleanup(&login_result);
-      vectis_auth_issued_credential_cleanup(&credential);
-      vectis_error_clear(error);
-      return vectis_response_text(response, 401, "text/plain; charset=utf-8",
-                                  "login failed\n", error);
-    }
-    vectis_auth_result_cleanup(&login_result);
   }
   if ((required_factors & VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN) != 0u) {
+    if (missing_email_token) {
+      vectis_auth_form_cleanup(&fields);
+      vectis_auth_issued_credential_cleanup(&credential);
+      return vectis_response_text(
+          response, 400, "text/plain; charset=utf-8",
+          "email_transaction_id and email_token are required\n", error);
+    }
     vectis_auth_email_token_verify_config_init(&email_token);
     email_token.store = data->store;
     email_token.transaction_id = fields.email_transaction_id;
