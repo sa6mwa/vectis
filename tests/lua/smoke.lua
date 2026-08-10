@@ -36,6 +36,42 @@ assert(arg[1] == "first")
 assert(arg[2] == "second")
 
 assert(type(vectis.auth) == "table")
+local function oauth_transport(mode)
+  return function(request)
+    assert(request.method == "POST")
+    assert(request.url == "https://idp.example.test/token")
+    assert(request.content_type == "application/x-www-form-urlencoded")
+    assert(type(request.body) == "string")
+    if mode == "code" then
+      assert(request.body:find("grant_type=authorization_code", 1, true))
+      assert(request.body:find("code=auth-code", 1, true))
+      assert(request.body:find("client_id=vectis-client", 1, true))
+      assert(request.body:find("code_verifier=", 1, true))
+      return {
+        status_code = 200,
+        content_type = "application/json",
+        body = '{"access_token":"browser-token","token_type":"Bearer","refresh_token":"browser-refresh","scope":"openid dav","id_token":"id-token","expires_in":4200}',
+      }
+    end
+    if mode == "client" then
+      assert(request.body:find("grant_type=client_credentials", 1, true))
+      assert(request.body:find("client_id=vectis-client", 1, true))
+      assert(request.body:find("client_secret=vectis-secret", 1, true))
+      return {
+        status_code = 200,
+        content_type = "application/json",
+        body = '{"access_token":"m2m-token","token_type":"Bearer","refresh_token":"m2m-refresh","scope":"dav","expires_in":3600}',
+      }
+    end
+    assert(request.body:find("grant_type=refresh_token", 1, true))
+    assert(request.body:find("refresh_token=old-refresh", 1, true))
+    return {
+      status_code = 200,
+      content_type = "application/json",
+      body = '{"access_token":"refreshed-token","token_type":"Bearer","refresh_token":"new-refresh","scope":"dav","expires_in":7200}',
+    }
+  end
+end
 local oidc = assert(vectis.auth.oidc_authorization({
   authorization_endpoint = "https://idp.example.test/authorize",
   client_id = "vectis-client",
@@ -52,6 +88,53 @@ assert(oidc.code_verifier == "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWX
 assert(type(oidc.code_challenge) == "string" and #oidc.code_challenge > 0)
 assert(oidc.state == "lua-state")
 assert(oidc.nonce == "lua-nonce")
+local exchanged = assert(vectis.auth.oidc_exchange_callback({
+  transport = oauth_transport("code"),
+  token_endpoint = "https://idp.example.test/token",
+  client_id = "vectis-client",
+  client_secret = "vectis-secret",
+  redirect_uri = "http://127.0.0.1/callback",
+  code_verifier = oidc.code_verifier,
+  callback_query = "?code=auth-code&state=lua-state",
+  expected_state = "lua-state",
+  now = 1000,
+}))
+assert(exchanged.code == "auth-code")
+assert(exchanged.state == "lua-state")
+assert(exchanged.token.access_token == "browser-token")
+assert(exchanged.token.id_token == "id-token")
+assert(exchanged.flow.access_token == "browser-token")
+assert(exchanged.flow.expires_at == 5200)
+local m2m = assert(vectis.auth.oauth2_client_credentials({
+  transport = oauth_transport("client"),
+  token_endpoint = "https://idp.example.test/token",
+  client_id = "vectis-client",
+  client_secret = "vectis-secret",
+  scope = "dav",
+}))
+assert(m2m.access_token == "m2m-token")
+assert(m2m.refresh_token == "m2m-refresh")
+assert(m2m.expires_in == 3600)
+local ensured = assert(vectis.auth.oauth2_flow_ensure({
+  transport = oauth_transport("refresh"),
+  token_endpoint = "https://idp.example.test/token",
+  client_id = "vectis-client",
+  client_secret = "vectis-secret",
+  now = 1000,
+  flow = {
+    access_token = "old-token",
+    token_type = "Bearer",
+    refresh_token = "old-refresh",
+    scope = "dav",
+    expires_at = 900,
+    has_expires_at = true,
+  },
+}))
+assert(ensured.result.state == "refreshed")
+assert(ensured.result.refreshed == true)
+assert(ensured.flow.access_token == "refreshed-token")
+assert(ensured.flow.refresh_token == "new-refresh")
+assert(ensured.flow.expires_at == 8200)
 local auth_path = os.tmpname()
 os.remove(auth_path)
 assert(vectis.auth.store_init({ credentials_path = auth_path }))
