@@ -877,6 +877,23 @@ int main(void) {
          "OAuth2 token flow updates absolute expiry");
   vectis_auth_oauth2_token_flow_cleanup(&token_flow);
 
+  vectis_auth_oauth2_webdav_key_config_init(&oauth_webdav_config);
+  oauth_webdav_config.store = store;
+  oauth_webdav_config.flow_id = "missing-oidc-flow";
+  oauth_webdav_config.subject = "oidc-user@example.com";
+  status = vectis_auth_issue_webdav_key_for_oauth2_flow(
+      &oauth_webdav_config, &oauth_webdav_key, &error);
+  expect(status == VECTIS_ERR_STATE,
+         "OAuth2 WebDAV key rejects missing stored flow");
+  expect(error.message != NULL &&
+             strcmp(error.message, "OAuth2 token flow was not found") == 0,
+         "OAuth2 WebDAV key missing-flow error is diagnostic");
+  expect(oauth_webdav_key.client_id == NULL &&
+             oauth_webdav_key.client_secret == NULL,
+         "OAuth2 WebDAV key missing-flow rejection issues no credential");
+  vectis_error_clear(&error);
+  vectis_auth_issued_credential_cleanup(&oauth_webdav_key);
+
   token_flow.access_token = test_strdup("expired-token");
   token_flow.token_type = test_strdup("Bearer");
   token_flow.refresh_token = test_strdup("old-refresh");
