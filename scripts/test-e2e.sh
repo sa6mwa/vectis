@@ -958,6 +958,47 @@ run_lua_examples() {
     sed 's/^/[packed-etag-header] /' "$range_headers" >&2
     return 1
   fi
+  if_range_status=$(curl --max-time 3 -sS -D "$range_headers" \
+    -o "$range_body" -w '%{http_code}' -H 'Range: bytes=0-5' \
+    -H "If-Range: $etag" \
+    "http://127.0.0.1:$kore_packed_port/site/app.js")
+  if [ "$if_range_status" != "206" ]; then
+    printf '%s\n' "Unexpected packed static If-Range status: $if_range_status" >&2
+    sed 's/^/[packed-if-range-header] /' "$range_headers" >&2
+    cat "$range_body" >&2
+    return 1
+  fi
+  body=$(cat "$range_body")
+  if [ "$body" != "window" ]; then
+    printf '%s\n' "Unexpected packed static If-Range body: $body" >&2
+    return 1
+  fi
+  grep -qi '^content-range: bytes 0-5/' "$range_headers" || {
+    printf '%s\n' "Packed static If-Range response did not include Content-Range" >&2
+    sed 's/^/[packed-if-range-header] /' "$range_headers" >&2
+    return 1
+  }
+  if_range_status=$(curl --max-time 3 -sS -D "$range_headers" \
+    -o "$range_body" -w '%{http_code}' -H 'Range: bytes=0-5' \
+    -H 'If-Range: "different"' \
+    "http://127.0.0.1:$kore_packed_port/site/app.js")
+  if [ "$if_range_status" != "200" ]; then
+    printf '%s\n' "Unexpected packed static stale If-Range status: $if_range_status" >&2
+    sed 's/^/[packed-if-range-header] /' "$range_headers" >&2
+    cat "$range_body" >&2
+    return 1
+  fi
+  body=$(cat "$range_body")
+  if [ "$body" != "window.vectisPackedService = true;" ]; then
+    printf '%s\n' "Unexpected packed static stale If-Range body: $body" >&2
+    return 1
+  fi
+  if grep -qi '^content-range:' "$range_headers"; then
+    printf '%s\n' "Packed static stale If-Range response included Content-Range" >&2
+    sed 's/^/[packed-if-range-header] /' "$range_headers" >&2
+    return 1
+  fi
+  : >"$range_body"
   not_modified_status=$(curl --max-time 3 -sS -D "$range_headers" \
     -o "$range_body" -w '%{http_code}' -H "If-None-Match: $etag" \
     "http://127.0.0.1:$kore_packed_port/site/app.js")

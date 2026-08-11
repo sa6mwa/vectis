@@ -1134,6 +1134,8 @@ static void assert_kore_smoke(void) {
   vectis_http_response embedded_not_modified_response;
   vectis_http_response embedded_if_none_match_miss_response;
   vectis_http_response embedded_range_response;
+  vectis_http_response embedded_if_range_response;
+  vectis_http_response embedded_if_range_miss_response;
   vectis_http_response embedded_suffix_range_response;
   vectis_http_response embedded_invalid_range_response;
   vectis_http_response embedded_head_response;
@@ -1188,6 +1190,12 @@ static void assert_kore_smoke(void) {
   const char *embedded_if_none_match_miss_headers[] = {
       "If-None-Match: \"different\"", "Range: bytes=1-2"};
   const char *embedded_range_headers[] = {"Range: bytes=1-2"};
+  const char *embedded_if_range_headers[] = {
+      "Range: bytes=1-2",
+      "If-Range: "
+      "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\""};
+  const char *embedded_if_range_miss_headers[] = {"Range: bytes=1-2",
+                                                  "If-Range: \"different\""};
   const char *embedded_suffix_range_headers[] = {"range: bytes=-2"};
   const char *embedded_invalid_range_headers[] = {"range: bytes=4-10"};
   const char upload_path[] = "/tmp/vectis-runtime-upload.bin";
@@ -1269,6 +1277,9 @@ static void assert_kore_smoke(void) {
          sizeof(embedded_not_modified_response));
   memset(&embedded_if_none_match_miss_response, 0,
          sizeof(embedded_if_none_match_miss_response));
+  memset(&embedded_if_range_response, 0, sizeof(embedded_if_range_response));
+  memset(&embedded_if_range_miss_response, 0,
+         sizeof(embedded_if_range_miss_response));
   memset(&embedded_head_response, 0, sizeof(embedded_head_response));
   memset(&embedded_missing_response, 0, sizeof(embedded_missing_response));
   memset(&embedded_method_response, 0, sizeof(embedded_method_response));
@@ -1660,6 +1671,37 @@ static void assert_kore_smoke(void) {
   assert(embedded_range_response.body_size == 2u);
   assert(memcmp(embedded_range_response.body, "pp", 2u) == 0);
   vectis_http_response_cleanup(&embedded_range_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = "http://127.0.0.1:28080/embedded/assets/app.txt";
+  request.headers = embedded_if_range_headers;
+  request.header_count = 2u;
+  status =
+      vectis_http_execute(&http, &request, &embedded_if_range_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_if_range_response.status_code == 206L);
+  assert(strcmp(vectis_http_response_header(&embedded_if_range_response,
+                                            "content-range"),
+                "bytes 1-2/4") == 0);
+  assert(embedded_if_range_response.body_size == 2u);
+  assert(memcmp(embedded_if_range_response.body, "pp", 2u) == 0);
+  vectis_http_response_cleanup(&embedded_if_range_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = "http://127.0.0.1:28080/embedded/assets/app.txt";
+  request.headers = embedded_if_range_miss_headers;
+  request.header_count = 2u;
+  status = vectis_http_execute(&http, &request,
+                               &embedded_if_range_miss_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_if_range_miss_response.status_code == 200L);
+  assert(vectis_http_response_header(&embedded_if_range_miss_response,
+                                     "content-range") == NULL);
+  assert(embedded_if_range_miss_response.body_size == 4u);
+  assert(memcmp(embedded_if_range_miss_response.body, "app\n", 4u) == 0);
+  vectis_http_response_cleanup(&embedded_if_range_miss_response);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;

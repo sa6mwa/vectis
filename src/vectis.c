@@ -4139,6 +4139,26 @@ static int vectis_static_embedded_if_none_match(const char *header_value,
   }
 }
 
+static int vectis_static_embedded_if_range_matches(const char *header_value,
+                                                   const char *etag) {
+  const char *start;
+  size_t len;
+
+  if (header_value == NULL || header_value[0] == '\0' || etag == NULL ||
+      etag[0] == '\0') {
+    return 0;
+  }
+  start = header_value;
+  while (*start == ' ' || *start == '\t') {
+    start++;
+  }
+  len = strlen(start);
+  while (len > 0u && (start[len - 1u] == ' ' || start[len - 1u] == '\t')) {
+    len--;
+  }
+  return strlen(etag) == len && memcmp(start, etag, len) == 0;
+}
+
 static vectis_status vectis_static_embedded_not_found(
     const vectis_static_route_data *data, vectis_request *request,
     vectis_response *response, vectis_error *error) {
@@ -4173,6 +4193,7 @@ static vectis_status vectis_static_embedded_response(
   vectis_bytes body;
   const char *content_type;
   const char *range_header;
+  const char *if_range_header;
   vectis_static_embedded_range range;
   char etag[80];
   char content_range[96];
@@ -4206,6 +4227,14 @@ static vectis_status vectis_static_embedded_response(
     return vectis_response_status(response, 304, error);
   }
   range_header = vectis_request_header(request, "range");
+  if (range_header != NULL && range_header[0] != '\0') {
+    if_range_header = vectis_request_header(request, "if-range");
+    if (if_range_header != NULL && if_range_header[0] != '\0' &&
+        (!has_etag ||
+         !vectis_static_embedded_if_range_matches(if_range_header, etag))) {
+      range_header = NULL;
+    }
+  }
   if (!vectis_static_embedded_parse_range(range_header, entry->size, &range)) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "failed to parse embedded static byte range");
