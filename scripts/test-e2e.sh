@@ -20,6 +20,8 @@ kore_packed_port=${VECTIS_E2E_KORE_PACKED_PORT:-$((kore_basic_port + 6))}
 kore_packed_https_port=${VECTIS_E2E_KORE_PACKED_HTTPS_PORT:-$((kore_basic_port + 7))}
 kore_acme_port=${VECTIS_E2E_KORE_ACME_PORT:-$((kore_basic_port + 8))}
 lua_consumer_port=${VECTIS_E2E_LUA_CONSUMER_PORT:-$((kore_basic_port + 9))}
+https_runtime_port=${VECTIS_E2E_HTTPS_RUNTIME_PORT:-$((kore_basic_port + 10))}
+https_mtls_runtime_port=${VECTIS_E2E_HTTPS_MTLS_RUNTIME_PORT:-$((kore_basic_port + 11))}
 pack_smtp_harness=${VECTIS_E2E_PACK_SMTP_HARNESS:-$repo_root/build/debug/tests/vectis_pack_smtp_harness}
 work_dir=$(mktemp -d)
 ssh_memory_key="$work_dir/vectis-e2e-ssh-key"
@@ -2836,10 +2838,12 @@ run_tls_cert_examples() {
   "$repo_root/build/debug/tests/unit/vectis_unit_certs"
 
   printf '[e2e] https runtime with CA chain validation\n'
-  "$repo_root/build/debug/tests/unit/vectis_unit_https_runtime"
+  env VECTIS_TEST_HTTPS_PORT="$https_runtime_port" \
+    "$repo_root/build/debug/tests/unit/vectis_unit_https_runtime"
 
   printf '[e2e] https runtime with required client certificate\n'
-  "$repo_root/build/debug/tests/unit/vectis_unit_https_mtls_runtime"
+  env VECTIS_TEST_HTTPS_MTLS_PORT="$https_mtls_runtime_port" \
+    "$repo_root/build/debug/tests/unit/vectis_unit_https_mtls_runtime"
 }
 
 run_kore_examples() {
