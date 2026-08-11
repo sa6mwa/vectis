@@ -82,7 +82,8 @@ Each asset entry contains:
 - SHA-256 for files,
 - mode bits limited to portable read/execute intent,
 - content type when known or supplied,
-- optional cache metadata such as ETag seed and cache-control.
+- strong ETag as the quoted SHA-256 file validator,
+- optional cache metadata such as cache-control.
 
 Path rules:
 

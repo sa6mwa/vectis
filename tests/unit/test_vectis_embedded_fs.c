@@ -104,10 +104,14 @@ static vectis_embedded_fs *new_fixture_fs(vectis_error *error) {
       "{\"path\":\"/index.html\",\"offset\":0,\"size\":6,"
       "\"sha256\":"
       "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\","
+      "\"etag\":"
+      "\"\\\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\\\"\","
       "\"content_type\":\"text/html\"},"
       "{\"path\":\"/assets/app.txt\",\"offset\":6,\"size\":4,"
       "\"sha256\":"
       "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\","
+      "\"etag\":"
+      "\"\\\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\\\"\","
       "\"content_type\":\"text/plain\"}]}";
   vectis_embedded_fs_config config;
   vectis_embedded_fs *fs;
@@ -190,6 +194,13 @@ int main(void) {
       "{\"path\":\"/index.html\",\"offset\":0,\"size\":6,"
       "\"sha256\":"
       "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"}]}";
+  static const char invalid_etag_manifest[] =
+      "{\"format\":\"vectis-pack\",\"assets\":["
+      "{\"path\":\"/index.html\",\"offset\":0,\"size\":6,"
+      "\"sha256\":"
+      "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\","
+      "\"etag\":"
+      "\"\\\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\\\"\"}]}";
   vectis_embedded_fs_config config;
 
   vectis_error_clear(&error);
@@ -393,6 +404,16 @@ int main(void) {
   status = vectis_embedded_fs_from_pack(&config, &fs, &error);
   expect(status == VECTIS_ERR_INVALID && fs == NULL,
          "rejects invalid manifest asset tree hash");
+
+  vectis_embedded_fs_config_init(&config);
+  config.payload = "hello\n";
+  config.payload_size = 6u;
+  config.manifest_json = invalid_etag_manifest;
+  config.manifest_json_size = sizeof(invalid_etag_manifest) - 1u;
+  fs = NULL;
+  status = vectis_embedded_fs_from_pack(&config, &fs, &error);
+  expect(status == VECTIS_ERR_INVALID && fs == NULL,
+         "rejects invalid manifest asset etag");
 
   vectis_embedded_fs_config_init(&config);
   config.payload = bad_payload;

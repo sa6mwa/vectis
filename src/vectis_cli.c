@@ -1244,6 +1244,7 @@ static int vectis_pack_build_manifest(vectis_pack_asset_list *assets,
   unsigned char *copy;
   size_t i;
   char sha_hex[SHA256_DIGEST_LENGTH * 2u + 1u];
+  char etag[SHA256_DIGEST_LENGTH * 2u + 3u];
   unsigned char tree_sha[SHA256_DIGEST_LENGTH];
   char tree_sha_hex[SHA256_DIGEST_LENGTH * 2u + 1u];
 
@@ -1297,6 +1298,7 @@ static int vectis_pack_build_manifest(vectis_pack_asset_list *assets,
   }
   for (i = 0u; i < assets->count; ++i) {
     vectis_sha256_hex(assets->items[i].sha, sha_hex);
+    (void)snprintf(etag, sizeof(etag), "\"%s\"", sha_hex);
     if (status == LONEJSON_STATUS_OK) {
       status = lonejson_writer_begin_object(&writer, &error);
     }
@@ -1328,6 +1330,12 @@ static int vectis_pack_build_manifest(vectis_pack_asset_list *assets,
     if (status == LONEJSON_STATUS_OK) {
       status =
           lonejson_writer_string(&writer, sha_hex, strlen(sha_hex), &error);
+    }
+    if (status == LONEJSON_STATUS_OK) {
+      status = lonejson_writer_key(&writer, "etag", 4u, &error);
+    }
+    if (status == LONEJSON_STATUS_OK) {
+      status = lonejson_writer_string(&writer, etag, strlen(etag), &error);
     }
     if (status == LONEJSON_STATUS_OK && assets->items[i].content_type != NULL) {
       status = lonejson_writer_key(&writer, "content_type", 12u, &error);

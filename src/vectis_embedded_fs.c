@@ -40,6 +40,7 @@ typedef struct vectis_embedded_manifest_asset {
   char *path;
   char *content_type;
   char *sha256;
+  char *etag;
   lonejson_uint64 offset;
   lonejson_uint64 size;
 } vectis_embedded_manifest_asset;
@@ -65,6 +66,7 @@ static const lonejson_field vectis_embedded_manifest_asset_fields[] = {
     LONEJSON_FIELD_U64_REQ(vectis_embedded_manifest_asset, size, "size"),
     LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_embedded_manifest_asset, sha256,
                                     "sha256"),
+    LONEJSON_FIELD_STRING_ALLOC(vectis_embedded_manifest_asset, etag, "etag"),
     LONEJSON_FIELD_STRING_ALLOC(vectis_embedded_manifest_asset, content_type,
                                 "content_type")};
 
@@ -148,6 +150,22 @@ static char *vectis_embedded_etag_from_sha256(const char *sha256) {
     (void)snprintf(etag, size, "\"%s\"", sha256);
   }
   return etag;
+}
+
+static int vectis_embedded_etag_matches_sha256(const char *etag,
+                                               const char *sha256) {
+  size_t sha_size;
+
+  if (etag == NULL || sha256 == NULL) {
+    return 0;
+  }
+  sha_size = strlen(sha256);
+  if (sha_size != SHA256_DIGEST_LENGTH * 2u ||
+      strlen(etag) != sha_size + 2u || etag[0] != '"' ||
+      etag[sha_size + 1u] != '"') {
+    return 0;
+  }
+  return memcmp(etag + 1u, sha256, sha_size) == 0;
 }
 
 static int vectis_embedded_path_valid(const char *path) {
@@ -343,6 +361,13 @@ static vectis_status vectis_embedded_add(
                                "embedded asset hash mismatch: %s", asset->path);
     return VECTIS_ERR_INVALID;
   }
+  if (asset->etag != NULL &&
+      !vectis_embedded_etag_matches_sha256(asset->etag, asset->sha256)) {
+    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                               "embedded asset etag is invalid: %s",
+                               asset->path);
+    return VECTIS_ERR_INVALID;
+  }
   if (!vectis_embedded_reserve(impl, impl->count + 1u)) {
     vectis_set_error(error, VECTIS_ERR_NOMEM,
                      "failed to grow embedded asset index");
@@ -352,7 +377,9 @@ static vectis_status vectis_embedded_add(
   memset(entry, 0, sizeof(*entry));
   entry->path = vectis_embedded_strdup(asset->path);
   entry->sha256 = vectis_embedded_strdup(asset->sha256);
-  entry->etag = vectis_embedded_etag_from_sha256(asset->sha256);
+  entry->etag = asset->etag != NULL
+                    ? vectis_embedded_strdup(asset->etag)
+                    : vectis_embedded_etag_from_sha256(asset->sha256);
   if (asset->content_type != NULL) {
     entry->content_type = vectis_embedded_strdup(asset->content_type);
   }
