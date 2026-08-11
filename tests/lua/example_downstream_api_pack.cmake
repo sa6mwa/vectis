@@ -1,5 +1,7 @@
 set(output "${WORK_DIR}/vectis-example-lua-downstream-api-pack")
 
+include("${VECTIS_SOURCE_DIR}/tests/lua/port_retry.cmake")
+
 file(REMOVE "${output}")
 
 execute_process(COMMAND "${VECTIS_BIN}" -a pack
@@ -12,15 +14,8 @@ if(NOT pack_result EQUAL 0)
   message(FATAL_ERROR "packing Lua downstream API example failed: ${pack_stdout}${pack_stderr}")
 endif()
 
-execute_process(COMMAND "${CMAKE_COMMAND}" -E env
-                        "VECTIS_LUA_DOWNSTREAM_EXAMPLE_PORT=28589"
-                        "${output}"
-                RESULT_VARIABLE run_result
-                OUTPUT_VARIABLE run_stdout
-                ERROR_VARIABLE run_stderr)
-if(NOT run_result EQUAL 0)
-  message(FATAL_ERROR "packed Lua downstream API example failed: ${run_stdout}${run_stderr}")
-endif()
-if(NOT run_stdout MATCHES "lua downstream API example ok")
-  message(FATAL_ERROR "packed Lua downstream API example missed success marker: ${run_stdout}${run_stderr}")
-endif()
+vectis_run_command_with_port(
+  LABEL "packed Lua downstream API example"
+  PORT_ENV "VECTIS_LUA_DOWNSTREAM_EXAMPLE_PORT"
+  SUCCESS_MARKER "lua downstream API example ok"
+  COMMAND "${output}")

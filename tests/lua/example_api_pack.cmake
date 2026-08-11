@@ -1,6 +1,8 @@
 set(output "${WORK_DIR}/vectis-example-lua-api-server-pack")
 set(auth_path "${WORK_DIR}/vectis-example-lua-api-server-pack-auth.json")
 
+include("${VECTIS_SOURCE_DIR}/tests/lua/port_retry.cmake")
+
 file(REMOVE "${output}" "${auth_path}" "${auth_path}.lock")
 
 execute_process(COMMAND "${VECTIS_BIN}" -a pack
@@ -13,16 +15,9 @@ if(NOT pack_result EQUAL 0)
   message(FATAL_ERROR "packing Lua API server example failed: ${pack_stdout}${pack_stderr}")
 endif()
 
-execute_process(COMMAND "${CMAKE_COMMAND}" -E env
-                        "VECTIS_LUA_API_EXAMPLE_PORT=28587"
-                        "VECTIS_LUA_API_EXAMPLE_AUTH_PATH=${auth_path}"
-                        "${output}"
-                RESULT_VARIABLE run_result
-                OUTPUT_VARIABLE run_stdout
-                ERROR_VARIABLE run_stderr)
-if(NOT run_result EQUAL 0)
-  message(FATAL_ERROR "packed Lua API server example failed: ${run_stdout}${run_stderr}")
-endif()
-if(NOT run_stdout MATCHES "lua api server example ok")
-  message(FATAL_ERROR "packed Lua API server example missed success marker: ${run_stdout}${run_stderr}")
-endif()
+vectis_run_command_with_port(
+  LABEL "packed Lua API server example"
+  PORT_ENV "VECTIS_LUA_API_EXAMPLE_PORT"
+  SUCCESS_MARKER "lua api server example ok"
+  EXTRA_ENV "VECTIS_LUA_API_EXAMPLE_AUTH_PATH=${auth_path}"
+  COMMAND "${output}")

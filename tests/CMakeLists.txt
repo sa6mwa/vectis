@@ -18,6 +18,14 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(vectis_pack_smtp_harness PRIVATE -UNDEBUG)
 endif()
 
+add_executable(vectis_pick_port
+  helpers/vectis_pick_port.c)
+set_target_properties(vectis_pick_port PROPERTIES
+  C_STANDARD 90
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF
+)
+
 if(TARGET vectis_bin)
   add_test(NAME vectis_cli_version COMMAND vectis_bin --version)
   set_tests_properties(vectis_cli_version PROPERTIES
@@ -92,14 +100,23 @@ if(TARGET vectis_bin)
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
   add_test(NAME vectis_example_lua_api_server
-           COMMAND vectis_bin "${CMAKE_SOURCE_DIR}/examples/lua/api_server.lua")
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
+                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                   "-DVECTIS_SCRIPT=${CMAKE_SOURCE_DIR}/examples/lua/api_server.lua"
+                   "-DVECTIS_PORT_ENV=VECTIS_LUA_API_EXAMPLE_PORT"
+                   "-DVECTIS_SUCCESS_MARKER=lua api server example ok"
+                   "-DVECTIS_LABEL=Lua API server example"
+                   "-DVECTIS_EXTRA_ENV=VECTIS_LUA_API_EXAMPLE_AUTH_PATH=${CMAKE_CURRENT_BINARY_DIR}/vectis-lua-api-example-auth.json"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/run_example_with_port.cmake")
   set_tests_properties(vectis_example_lua_api_server PROPERTIES
-    ENVIRONMENT "VECTIS_LUA_API_EXAMPLE_PORT=28586;VECTIS_LUA_API_EXAMPLE_AUTH_PATH=${CMAKE_CURRENT_BINARY_DIR}/vectis-lua-api-example-auth.json"
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
   add_test(NAME vectis_example_lua_api_server_pack
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
                    "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
                    -P "${CMAKE_SOURCE_DIR}/tests/lua/example_api_pack.cmake")
@@ -107,14 +124,22 @@ if(TARGET vectis_bin)
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
   add_test(NAME vectis_example_lua_downstream_api
-           COMMAND vectis_bin "${CMAKE_SOURCE_DIR}/examples/lua/downstream_api.lua")
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
+                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                   "-DVECTIS_SCRIPT=${CMAKE_SOURCE_DIR}/examples/lua/downstream_api.lua"
+                   "-DVECTIS_PORT_ENV=VECTIS_LUA_DOWNSTREAM_EXAMPLE_PORT"
+                   "-DVECTIS_SUCCESS_MARKER=lua downstream API example ok"
+                   "-DVECTIS_LABEL=Lua downstream API example"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/run_example_with_port.cmake")
   set_tests_properties(vectis_example_lua_downstream_api PROPERTIES
-    ENVIRONMENT "VECTIS_LUA_DOWNSTREAM_EXAMPLE_PORT=28588"
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
   add_test(NAME vectis_example_lua_downstream_api_pack
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
                    "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
                    -P "${CMAKE_SOURCE_DIR}/tests/lua/example_downstream_api_pack.cmake")
