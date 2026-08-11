@@ -531,6 +531,11 @@ run_lua_examples() {
   totp_key_response=
   totp_client_id=
   totp_client_secret=
+  totp_continue_start_response=
+  totp_continue_pending_id=
+  totp_continue_response=
+  totp_continue_client_id=
+  totp_continue_client_secret=
   totp_no_enrollment_body=
   totp_no_enrollment_status=
   limited_token_response=
@@ -2045,6 +2050,47 @@ run_lua_examples() {
   fi
   assert_packed_key_webdav_logout "packed-totp" "/auth-totp" \
     "$totp_client_id" "$totp_client_secret"
+  auth_headers="$work_dir/packed-totp-continue-start.headers"
+  totp_continue_start_response=$(curl_or_log "$packed_service_log" \
+    "packed totp continue start" --max-time 3 -fsS -D "$auth_headers" -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-totp%40example.com&password=packed-password' \
+    "http://127.0.0.1:$kore_packed_port/auth-totp/continue")
+  assert_no_store_headers "$auth_headers" "packed totp continue start"
+  totp_continue_pending_id=$(printf '%s\n' "$totp_continue_start_response" |
+    sed -n 's/^pending_transaction_id=//p')
+  if [ -z "$totp_continue_pending_id" ]; then
+    printf '%s\n' "Packed TOTP continue auth did not return a pending transaction" >&2
+    printf '%s\n' "$totp_continue_start_response" >&2
+    return 1
+  fi
+  case "$totp_continue_start_response" in
+    *'totp_required=1'*) ;;
+    *)
+      printf '%s\n' "Packed TOTP continue auth did not require TOTP" >&2
+      printf '%s\n' "$totp_continue_start_response" >&2
+      return 1
+      ;;
+  esac
+  auth_headers="$work_dir/packed-totp-continue-key.headers"
+  totp_continue_response=$(curl_or_log "$packed_service_log" \
+    "packed totp continue key" --max-time 3 -fsS -D "$auth_headers" -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-totp%40example.com&pending_transaction_id=$totp_continue_pending_id&totp_code=287082" \
+    "http://127.0.0.1:$kore_packed_port/auth-totp/continue")
+  assert_no_store_headers "$auth_headers" "packed totp continue key"
+  totp_continue_client_id=$(printf '%s\n' "$totp_continue_response" |
+    sed -n 's/^client_id=//p')
+  totp_continue_client_secret=$(printf '%s\n' "$totp_continue_response" |
+    sed -n 's/^client_secret=//p')
+  if [ -z "$totp_continue_client_id" ] ||
+      [ -z "$totp_continue_client_secret" ]; then
+    printf '%s\n' "Packed TOTP continue auth did not issue WebDAV credentials" >&2
+    printf '%s\n' "$totp_continue_response" >&2
+    return 1
+  fi
+  assert_packed_key_webdav_logout "packed-totp-continue" "/auth-totp" \
+    "$totp_continue_client_id" "$totp_continue_client_secret"
   auth_headers="$work_dir/packed-limited-email-token.headers"
   limited_token_response=$(curl_or_log "$packed_service_log" \
     "packed limited email token" --max-time 3 -fsS -D "$auth_headers" -X POST \

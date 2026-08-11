@@ -634,7 +634,7 @@ requires the email-token factor,
 email-token-only WebDAV-key issuance through both `/continue` and
 `/webdav-key`, rejects mismatched usernames for valid email-token transactions
 on both endpoint styles, password-only WebDAV-key issuance for a non-TOTP user,
-password-only TOTP continuation for an enrolled user,
+password+TOTP WebDAV-key issuance through both `/continue` and `/webdav-key`,
 password+email-token WebDAV-key issuance for a non-TOTP user through both
 `/continue` and `/webdav-key`, WebDAV access and logout revocation for keys
 issued by both endpoint styles and by a `require_email_token` auth mount, and
@@ -650,7 +650,9 @@ default and are preserved when
 admin coverage proves OAuth2 WebDAV-key issuance requires an existing stored
 flow and that the issued Basic credentials authenticate through the public
 credentials verification path while preserving the linked OAuth2 flow claim.
-Broader packed auth matrix coverage remains future hardening work.
+The remaining coverage boundary is external OIDC/OAuth2 provider interoperability,
+which belongs in opt-in live integration because it depends on provider-specific
+runtime configuration.
 
 ## Implementation Slices
 
