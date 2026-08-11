@@ -5381,6 +5381,9 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   total += config->store.credentials_path != NULL
                ? strlen(config->store.credentials_path) + 1u
                : 0u;
+  total += config->store.state_path != NULL
+               ? strlen(config->store.state_path) + 1u
+               : 0u;
   total += path_prefix != NULL ? strlen(path_prefix) + 1u : 0u;
   total += config->realm != NULL ? strlen(config->realm) + 1u : 0u;
   total += config->login_title != NULL ? strlen(config->login_title) + 1u : 0u;
@@ -5457,6 +5460,7 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   } while (0)
   VECTIS_COPY_AUTH_ROUTE_FIELD(store.credentials_path,
                                config->store.credentials_path);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(store.state_path, config->store.state_path);
   VECTIS_COPY_AUTH_ROUTE_FIELD(path_prefix, path_prefix);
   VECTIS_COPY_AUTH_ROUTE_FIELD(realm, config->realm);
   VECTIS_COPY_AUTH_ROUTE_FIELD(login_title, config->login_title);

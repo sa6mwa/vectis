@@ -236,6 +236,34 @@ static void remove_tree(const char *path) {
   (void)rmdir(path);
 }
 
+static int file_contains(const char *path, const char *needle) {
+  struct stat st;
+  FILE *fp;
+  char *buffer;
+  size_t nread;
+  int found;
+
+  if (path == NULL || needle == NULL || stat(path, &st) != 0 ||
+      st.st_size < 0) {
+    return 0;
+  }
+  fp = fopen(path, "rb");
+  if (fp == NULL) {
+    return 0;
+  }
+  buffer = (char *)malloc((size_t)st.st_size + 1u);
+  if (buffer == NULL) {
+    (void)fclose(fp);
+    return 0;
+  }
+  nread = fread(buffer, 1u, (size_t)st.st_size, fp);
+  (void)fclose(fp);
+  buffer[nread] = '\0';
+  found = nread == (size_t)st.st_size && strstr(buffer, needle) != NULL;
+  free(buffer);
+  return found;
+}
+
 static char base64_digit(unsigned value) {
   static const char table[] =
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -403,6 +431,7 @@ oauth2_mock_transport(const vectis_auth_oauth2_http_request *request,
 int main(void) {
   char temp[] = "/tmp/vectis-auth-unit.XXXXXX";
   char credentials_path[4096];
+  char state_path[4096];
   char bearer_header[1024];
   char basic_clear[1024];
   char basic_token[1400];
@@ -520,9 +549,16 @@ int main(void) {
     remove_tree(temp);
     return 1;
   }
+  written =
+      snprintf(state_path, sizeof(state_path), "%s/auth-state.json", temp);
+  if (written < 0 || (size_t)written >= sizeof(state_path)) {
+    remove_tree(temp);
+    return 1;
+  }
 
   vectis_auth_store_config_init(&store);
   store.credentials_path = credentials_path;
+  store.state_path = state_path;
   status = vectis_auth_store_init(&store, &error);
   expect_ok(status, &error, "initializes credentials store");
   user_exists = 1;
@@ -542,6 +578,10 @@ int main(void) {
   email_issue.ttl_seconds = 300;
   status = vectis_auth_email_token_issue(&email_issue, &email_token, &error);
   expect_ok(status, &error, "issues email auth token");
+  expect(file_contains(state_path, "email-tx-1"),
+         "email token is stored in auth state file");
+  expect(!file_contains(credentials_path, "email-tx-1"),
+         "email token is not stored in credentials file");
   expect(email_token.transaction_id != NULL &&
              strcmp(email_token.transaction_id, "email-tx-1") == 0,
          "email token carries transaction id");
@@ -1091,6 +1131,10 @@ int main(void) {
   user.totp_issuer = "Vectis";
   status = vectis_auth_user_add_or_update(&store, &user, &enrollment, &error);
   expect_ok(status, &error, "adds TOTP user");
+  expect(file_contains(credentials_path, "dav-user@example.com"),
+         "user is stored in credentials file");
+  expect(!file_contains(state_path, "dav-user@example.com"),
+         "user is not stored in auth state file");
   user_exists = 0;
   status = vectis_auth_user_exists(&store, "dav-user@example.com", &user_exists,
                                    &error);
@@ -1235,6 +1279,10 @@ int main(void) {
   status =
       vectis_auth_pending_login_issue(&pending_issue, &pending_login, &error);
   expect_ok(status, &error, "issues pending login for TOTP user");
+  expect(file_contains(state_path, "pending-login-wrong-totp"),
+         "pending login is stored in auth state file");
+  expect(!file_contains(credentials_path, "pending-login-wrong-totp"),
+         "pending login is not stored in credentials file");
   expect(pending_login.authenticated, "pending login is authenticated");
   expect(pending_login.totp_required, "pending login reports TOTP required");
   expect(pending_login.transaction_id != NULL &&

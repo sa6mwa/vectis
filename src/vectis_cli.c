@@ -5095,6 +5095,7 @@ static int vectis_lua_server_auth_routes(lua_State *lua) {
   vectis_status status;
   const char *path_prefix;
   const char *credentials_path;
+  const char *state_path;
   const char *realm;
   const char *login_title;
   const char *login_template_html;
@@ -5118,12 +5119,17 @@ static int vectis_lua_server_auth_routes(lua_State *lua) {
   if (credentials_path == NULL) {
     credentials_path = vectis_lua_table_string(lua, 2, "path");
   }
+  state_path = vectis_lua_table_string(lua, 2, "state_path");
+  if (state_path == NULL) {
+    state_path = vectis_lua_table_string(lua, 2, "auth_state_path");
+  }
 
   vectis_auth_routes_config_init(&config);
   if (path_prefix != NULL) {
     config.path_prefix = path_prefix;
   }
   config.store.credentials_path = credentials_path;
+  config.store.state_path = state_path;
   config.store.max_store_bytes = vectis_lua_table_size(
       lua, 2, "max_store_bytes", config.store.max_store_bytes);
   realm = vectis_lua_table_string(lua, 2, "realm");
@@ -6774,6 +6780,7 @@ static int vectis_lua_copy_optional_string_field(lua_State *lua, int source,
 static void vectis_lua_auth_store_config(lua_State *lua, int index,
                                          vectis_auth_store_config *config) {
   const char *path;
+  const char *state_path;
 
   vectis_auth_store_config_init(config);
   index = lua_absindex(lua, index);
@@ -6782,6 +6789,11 @@ static void vectis_lua_auth_store_config(lua_State *lua, int index,
     path = vectis_lua_table_string(lua, index, "path");
   }
   config->credentials_path = path;
+  state_path = vectis_lua_table_string(lua, index, "state_path");
+  if (state_path == NULL) {
+    state_path = vectis_lua_table_string(lua, index, "auth_state_path");
+  }
+  config->state_path = state_path;
   config->max_store_bytes = vectis_lua_table_size(
       lua, index, "max_store_bytes", VECTIS_AUTH_DEFAULT_MAX_STORE_BYTES);
 }

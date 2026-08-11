@@ -43,6 +43,20 @@ local server = assert(vectis.server.new({ app_name = "lua-smoke", port = 18080 }
 assert(type(server.static_directory) == "function")
 assert(type(server.json) == "function")
 assert(type(server.auth_json) == "function")
+local route_auth_path = os.tmpname()
+os.remove(route_auth_path)
+local route_auth_state_path = os.tmpname()
+os.remove(route_auth_state_path)
+assert(vectis.auth.store_init({
+  credentials_path = route_auth_path,
+  auth_state_path = route_auth_state_path,
+}))
+assert(server:auth_routes({
+  path_prefix = "/_auth-state",
+  credentials_path = route_auth_path,
+  auth_state_path = route_auth_state_path,
+  realm = "lua-route-state",
+}) == true)
 local consumer_service, consumer_service_error = server:consumer_service({
   queue = "lua-smoke",
   on_message = function() end,
@@ -262,7 +276,21 @@ assert(ensured.flow.refresh_token == "new-refresh")
 assert(ensured.flow.expires_at == 8200)
 local auth_path = os.tmpname()
 os.remove(auth_path)
-assert(vectis.auth.store_init({ credentials_path = auth_path }))
+local auth_state_path = os.tmpname()
+os.remove(auth_state_path)
+local function file_contains(path, text)
+  local file = io.open(path, "rb")
+  if not file then
+    return false
+  end
+  local body = file:read("*a")
+  file:close()
+  return body:find(text, 1, true) ~= nil
+end
+assert(vectis.auth.store_init({
+  credentials_path = auth_path,
+  state_path = auth_state_path,
+}))
 assert(vectis.auth.oauth2_flow_upsert({
   credentials_path = auth_path,
   flow_id = "lua-browser-flow",
@@ -475,6 +503,7 @@ local logged_in = assert(vectis.auth.user_login({
 assert(logged_in.authenticated == true)
 local email_token = assert(vectis.auth.email_token_issue({
   credentials_path = auth_path,
+  state_path = auth_state_path,
   username = "lua-user@example.com",
   realm = "lua",
   email = "lua-user@example.com",
@@ -485,11 +514,14 @@ local email_token = assert(vectis.auth.email_token_issue({
   ttl_seconds = 300,
   max_attempts = 2,
 }))
+assert(file_contains(auth_state_path, "lua-email-tx-1"))
+assert(not file_contains(auth_path, "lua-email-tx-1"))
 assert(email_token.transaction_id == "lua-email-tx-1")
 assert(email_token.token == "123456")
 assert(email_token.expires_at == 1300)
 local wrong_pending_email_token = assert(vectis.auth.email_token_verify({
   credentials_path = auth_path,
+  state_path = auth_state_path,
   transaction_id = "lua-email-tx-1",
   username = "lua-user@example.com",
   realm = "lua",
@@ -503,6 +535,7 @@ assert(wrong_pending_email_token.failed_attempts == 0)
 assert(wrong_pending_email_token.max_attempts == 0)
 local wrong_email_token = assert(vectis.auth.email_token_verify({
   credentials_path = auth_path,
+  state_path = auth_state_path,
   transaction_id = "lua-email-tx-1",
   username = "lua-user@example.com",
   realm = "lua",
@@ -517,6 +550,7 @@ assert(wrong_email_token.failed_attempts == 1)
 assert(wrong_email_token.max_attempts == 2)
 local verified_email_token = assert(vectis.auth.email_token_verify({
   credentials_path = auth_path,
+  state_path = auth_state_path,
   transaction_id = "lua-email-tx-1",
   username = "lua-user@example.com",
   realm = "lua",
@@ -534,6 +568,7 @@ assert(verified_email_token.failed_attempts == 1)
 assert(verified_email_token.max_attempts == 2)
 local replayed_email_token = assert(vectis.auth.email_token_verify({
   credentials_path = auth_path,
+  state_path = auth_state_path,
   transaction_id = "lua-email-tx-1",
   username = "lua-user@example.com",
   realm = "lua",
@@ -544,6 +579,7 @@ assert(replayed_email_token.verified == false)
 assert(replayed_email_token.expired == false)
 local expiring_email_token = assert(vectis.auth.email_token_issue({
   credentials_path = auth_path,
+  state_path = auth_state_path,
   username = "lua-user@example.com",
   realm = "lua",
   email = "lua-user@example.com",
@@ -555,6 +591,7 @@ local expiring_email_token = assert(vectis.auth.email_token_issue({
 assert(expiring_email_token.expires_at == 1300)
 local expired_email_token = assert(vectis.auth.email_token_verify({
   credentials_path = auth_path,
+  state_path = auth_state_path,
   transaction_id = "lua-email-tx-2",
   username = "lua-user@example.com",
   realm = "lua",
@@ -565,6 +602,7 @@ assert(expired_email_token.verified == false)
 assert(expired_email_token.expired == true)
 local expired_replay_email_token = assert(vectis.auth.email_token_verify({
   credentials_path = auth_path,
+  state_path = auth_state_path,
   transaction_id = "lua-email-tx-2",
   username = "lua-user@example.com",
   realm = "lua",

@@ -234,9 +234,11 @@ Required Lua concepts:
 - `server:webdav_embedded_site({path_prefix=..., auth=provider})` where
   `provider` is a `vectis.auth.provider_native(...)` or
   `vectis.auth.provider_callback(...)` result.
-- `server:auth_routes({path_prefix=..., credentials_path=..., realm=...,
-  login_template_path=..., required_factors={"email_token"}})`
-- `server:auth_routes({path_prefix=..., credentials_path=..., realm=...,
+- `server:auth_routes({path_prefix=..., credentials_path=...,
+  auth_state_path=..., realm=..., login_template_path=...,
+  required_factors={"email_token"}})`
+- `server:auth_routes({path_prefix=..., credentials_path=...,
+  auth_state_path=..., realm=...,
   login_template_embedded_path="/templates/login.html"})`
 - `server:json({path=..., method=..., status=..., body=...,
   cache_control=...})` for small C-owned unguarded JSON endpoints in service
@@ -425,12 +427,15 @@ factor, which also enforces enrolled-user TOTP. `required_factors` can also
 name an explicit `totp` factor together with `password`; that policy fails
 closed for users without TOTP enrollment instead of silently accepting password
 only.
-Password-first browser continuation is backed by locked credentials JSON
-`pending_logins` records: when the password is valid but TOTP or email-token
-factors are still missing, the native route returns a short-lived
-`pending_transaction_id`; a later `/continue` or `/webdav-key` POST can supply
-that transaction id plus the remaining factor fields without resending the
-password.
+Password-first browser continuation is backed by locked `pending_logins`
+records in the configured auth state store: when the password is valid but TOTP
+or email-token factors are still missing, the native route returns a
+short-lived `pending_transaction_id`; a later `/continue` or `/webdav-key` POST
+can supply that transaction id plus the remaining factor fields without
+resending the password. `state_path`/`auth_state_path` stores high-churn
+pending-login and email-token records separately from durable credentials when
+configured, while deployments that want one JSON file can omit it and use the
+credentials JSON fallback.
 `required_factors={"email_token"}` allows an email-token-only WebDAV-key flow,
 while `require_email_token=true` is a convenience alias that adds the
 email-token factor to the default password flow. C-owned SMTP delivery is
@@ -714,9 +719,9 @@ runtime configuration and credentials.
   `server:auth_routes(...)`. Lua may provide application routing glue, but it
   does not own the built-in auth route lifecycle or WebDAV key issuance
   semantics.
-
-## Open Decisions
-
-- Whether pending auth state should later move from the main locked credentials
-  JSON to a separate state file/directory for high-churn deployments. Current
-  native behavior uses the main credentials JSON `pending_logins` array.
+- Pending auth state uses the same LoneJSON-backed store format as credentials,
+  but may be split into an application-selected `state_path`/`auth_state_path`.
+  The split state store owns `pending_logins` and `email_tokens`; durable users,
+  issued WebDAV/API credentials, and OAuth2/OIDC token flows remain in the
+  credentials store. Omitting the state path preserves the single-file JSON
+  deployment shape.

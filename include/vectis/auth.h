@@ -27,6 +27,12 @@ typedef struct vectis_auth_store_config {
   /* JSON credential store path. Callers choose the config directory and file.
    */
   const char *credentials_path;
+  /*
+   * Optional JSON auth state path for high-churn pending_login and email_token
+   * records. When NULL or empty, transient auth state is stored in
+   * credentials_path for single-file deployments.
+   */
+  const char *state_path;
   /* Maximum store bytes accepted when reading. Zero uses the default. */
   size_t max_store_bytes;
 } vectis_auth_store_config;
