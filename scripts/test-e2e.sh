@@ -891,6 +891,65 @@ run_lua_examples() {
       printf '%s\n' "Packed static content type was not application/javascript" >&2
       return 1
     }
+  range_headers="$work_dir/packed-static-range.headers"
+  range_body="$work_dir/packed-static-range.body"
+  range_status=$(curl --max-time 3 -sS -D "$range_headers" -o "$range_body" \
+    -w '%{http_code}' -H 'Range: bytes=0-5' \
+    "http://127.0.0.1:$kore_packed_port/site/app.js")
+  if [ "$range_status" != "206" ]; then
+    printf '%s\n' "Unexpected packed static range status: $range_status" >&2
+    sed 's/^/[packed-range-header] /' "$range_headers" >&2
+    cat "$range_body" >&2
+    return 1
+  fi
+  body=$(cat "$range_body")
+  if [ "$body" != "window" ]; then
+    printf '%s\n' "Unexpected packed static range body: $body" >&2
+    return 1
+  fi
+  grep -qi '^content-range: bytes 0-5/' "$range_headers" || {
+    printf '%s\n' "Packed static range response did not include Content-Range" >&2
+    sed 's/^/[packed-range-header] /' "$range_headers" >&2
+    return 1
+  }
+  grep -qi '^accept-ranges: bytes' "$range_headers" || {
+    printf '%s\n' "Packed static range response did not include Accept-Ranges" >&2
+    sed 's/^/[packed-range-header] /' "$range_headers" >&2
+    return 1
+  }
+  range_status=$(curl --max-time 3 -sS -D "$range_headers" -o "$range_body" \
+    -w '%{http_code}' -H 'Range: bytes=-6' \
+    "http://127.0.0.1:$kore_packed_port/site/app.js")
+  if [ "$range_status" != "206" ]; then
+    printf '%s\n' "Unexpected packed static suffix range status: $range_status" >&2
+    sed 's/^/[packed-range-header] /' "$range_headers" >&2
+    cat "$range_body" >&2
+    return 1
+  fi
+  body=$(cat "$range_body")
+  if [ "$body" != "true;" ]; then
+    printf '%s\n' "Unexpected packed static suffix range body: $body" >&2
+    return 1
+  fi
+  range_status=$(curl --max-time 3 -sS -D "$range_headers" -o "$range_body" \
+    -w '%{http_code}' -H 'Range: bytes=999-1000' \
+    "http://127.0.0.1:$kore_packed_port/site/app.js")
+  if [ "$range_status" != "416" ]; then
+    printf '%s\n' "Unexpected packed static unsatisfiable range status: $range_status" >&2
+    sed 's/^/[packed-range-header] /' "$range_headers" >&2
+    cat "$range_body" >&2
+    return 1
+  fi
+  if [ -s "$range_body" ]; then
+    printf '%s\n' "Packed static unsatisfiable range returned a body" >&2
+    cat "$range_body" >&2
+    return 1
+  fi
+  grep -qi '^content-range: bytes \*/' "$range_headers" || {
+    printf '%s\n' "Packed static unsatisfiable range did not include Content-Range" >&2
+    sed 's/^/[packed-range-header] /' "$range_headers" >&2
+    return 1
+  }
   curl_or_log "$packed_service_log" "packed static app.css content type" --max-time 3 -fsSI \
     "http://127.0.0.1:$kore_packed_port/site/app.css" |
     grep -qi '^content-type: text/css' || {
