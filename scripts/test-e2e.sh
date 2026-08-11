@@ -19,6 +19,7 @@ kore_combined_port=${VECTIS_E2E_KORE_COMBINED_PORT:-$((kore_basic_port + 5))}
 kore_packed_port=${VECTIS_E2E_KORE_PACKED_PORT:-$((kore_basic_port + 6))}
 kore_packed_https_port=${VECTIS_E2E_KORE_PACKED_HTTPS_PORT:-$((kore_basic_port + 7))}
 kore_acme_port=${VECTIS_E2E_KORE_ACME_PORT:-$((kore_basic_port + 8))}
+lua_consumer_port=${VECTIS_E2E_LUA_CONSUMER_PORT:-$((kore_basic_port + 9))}
 pack_smtp_harness=${VECTIS_E2E_PACK_SMTP_HARNESS:-$repo_root/build/debug/tests/vectis_pack_smtp_harness}
 work_dir=$(mktemp -d)
 ssh_memory_key="$work_dir/vectis-e2e-ssh-key"
@@ -240,6 +241,20 @@ run_lockd_lua_examples() {
     LOCKD_NAMESPACE="examples" \
     LOCKD_QUEUE="lua-e2e-$label-$$" \
     "$repo_root/build/debug/vectis" "$repo_root/examples/lua/lockd_queue.lua"
+}
+
+run_lockd_lua_consumer_example() {
+  endpoint=$1
+  label=$2
+
+  printf '[e2e] lockd lua %s consumer service\n' "$label"
+  env LOCKD_ENDPOINT="$endpoint" \
+    LOCKD_CLIENT_BUNDLE="$client_bundle" \
+    LOCKD_NAMESPACE="examples" \
+    LOCKD_QUEUE="lua-e2e-consumer-$label-$$" \
+    VECTIS_LUA_CONSUMER_EXAMPLE_PORT="$lua_consumer_port" \
+    VECTIS_LUA_CONSUMER_EXAMPLE_CACHE="$work_dir/lua-consumer-cache-$label" \
+    "$repo_root/build/debug/vectis" "$repo_root/examples/lua/consumer_service.lua"
 }
 
 run_service_examples() {
@@ -2777,6 +2792,7 @@ run_lockd_examples "$disk_endpoint" disk
 run_lockd_examples "$s3_endpoint" s3
 run_lockd_lua_examples "$disk_endpoint" disk
 run_lockd_lua_examples "$s3_endpoint" s3
+run_lockd_lua_consumer_example "$disk_endpoint" disk
 run_lockd_failure_examples
 run_service_examples
 run_downstream_http_examples

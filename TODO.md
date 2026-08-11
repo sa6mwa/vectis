@@ -267,7 +267,8 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add Lua examples for API server, including packed execution coverage, lockd document workflow, and queue producer/dequeue workflows.
 - [x] Add Lua examples for downstream API calls with normal and packed execution coverage.
 - [x] Add a Lua example for SFTP transfer with deterministic local e2e coverage.
-- [ ] Add Lua examples for SSH command execution and long-running consumer service workflows.
+- [x] Add a Lua example for long-running consumer service workflows with deterministic local e2e coverage.
+- [ ] Add a Lua example for SSH command execution once the libssh2 Lua facade exists.
 - [ ] Add Lua unit and end-to-end tests.
 
 ## Area 13: Single Binary Packaging

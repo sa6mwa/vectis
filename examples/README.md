@@ -101,6 +101,10 @@ surface directly, without local helper layers that would hide awkward API shape.
   and lease release against `LOCKD_ENDPOINT`.
 - `lua/lockd_queue.lua`: lockdc Lua queue enqueue, dequeue, JSON payload read,
   and ack against `LOCKD_ENDPOINT`.
+- `lua/consumer_service.lua`: long-running Lua service shape using
+  `server:consumer_service()` with the C-owned `webdav_marker` handler. In
+  self-test mode it enqueues a lockd message and observes marker files through a
+  static route; set `VECTIS_LUA_CONSUMER_EXAMPLE_SERVE=1` to keep it running.
 
 ## `ssh/`
 
