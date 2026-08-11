@@ -322,6 +322,10 @@ string(REPLACE
        "assert(app_txt_sha:match(\"^[0-9a-f]+$\"))\nassert(vectis.embedded.stat(\"/assets/app.txt\").etag == \"\\\"\" .. app_txt_sha .. \"\\\"\")"
        asset_script_body "${asset_script_body}")
 string(REPLACE
+       "assert(vectis.embedded.stat(\"/assets/app.txt\").size == 23)"
+       "assert(vectis.embedded.stat(\"/assets/app.txt\").size == 23)\nassert(vectis.embedded.stat(\"/assets/app.txt\").kind == \"file\")\nassert(vectis.embedded.stat(\"/assets/app.txt\").mode == 292)"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
        "assert(listed:match(\"/assets/app%.txt\"))"
        "assert(listed:match(\"/assets/app%.txt\"))\nassert(listed:match(\"/assets/app%-link%.txt\"))\nassert(listed:match(\"/assets/manifest%-link%.txt\"))"
        asset_script_body "${asset_script_body}")

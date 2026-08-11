@@ -129,6 +129,7 @@ typedef struct vectis_pack_asset {
   unsigned char *data;
   size_t size;
   size_t offset;
+  unsigned mode;
   unsigned char sha[SHA256_DIGEST_LENGTH];
 } vectis_pack_asset;
 
@@ -939,6 +940,8 @@ static int vectis_pack_asset_add(vectis_pack_asset_list *list,
   }
   asset->data = data;
   asset->size = size;
+  asset->mode =
+      (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) != 0 ? 0555u : 0444u;
   SHA256(data, size, asset->sha);
   list->count++;
   return 0;
@@ -1194,6 +1197,7 @@ static int vectis_pack_hash_asset_tree(
   unsigned int digest_size;
   size_t i;
   char size_buf[32];
+  char mode_buf[16];
   char nul;
 
   ctx = EVP_MD_CTX_new();
@@ -1208,12 +1212,17 @@ static int vectis_pack_hash_asset_tree(
   for (i = 0u; i < assets->count; ++i) {
     (void)snprintf(size_buf, sizeof(size_buf), "%lu",
                    (unsigned long)assets->items[i].size);
+    (void)snprintf(mode_buf, sizeof(mode_buf), "%u", assets->items[i].mode);
     if (EVP_DigestUpdate(ctx, assets->items[i].logical_path,
                          strlen(assets->items[i].logical_path)) != 1 ||
+        EVP_DigestUpdate(ctx, &nul, 1u) != 1 ||
+        EVP_DigestUpdate(ctx, "file", 4u) != 1 ||
         EVP_DigestUpdate(ctx, &nul, 1u) != 1 ||
         EVP_DigestUpdate(ctx, assets->items[i].sha, SHA256_DIGEST_LENGTH) != 1 ||
         EVP_DigestUpdate(ctx, &nul, 1u) != 1 ||
         EVP_DigestUpdate(ctx, size_buf, strlen(size_buf)) != 1 ||
+        EVP_DigestUpdate(ctx, &nul, 1u) != 1 ||
+        EVP_DigestUpdate(ctx, mode_buf, strlen(mode_buf)) != 1 ||
         EVP_DigestUpdate(ctx, &nul, 1u) != 1 ||
         (assets->items[i].content_type != NULL &&
          EVP_DigestUpdate(ctx, assets->items[i].content_type,
@@ -1309,6 +1318,20 @@ static int vectis_pack_build_manifest(vectis_pack_asset_list *assets,
       status =
           lonejson_writer_string(&writer, assets->items[i].logical_path,
                                  strlen(assets->items[i].logical_path), &error);
+    }
+    if (status == LONEJSON_STATUS_OK) {
+      status = lonejson_writer_key(&writer, "kind", 4u, &error);
+    }
+    if (status == LONEJSON_STATUS_OK) {
+      status = lonejson_writer_string(&writer, "file", 4u, &error);
+    }
+    if (status == LONEJSON_STATUS_OK) {
+      status = lonejson_writer_key(&writer, "mode", 4u, &error);
+    }
+    if (status == LONEJSON_STATUS_OK) {
+      status = lonejson_writer_u64(&writer,
+                                   (lonejson_uint64)assets->items[i].mode,
+                                   &error);
     }
     if (status == LONEJSON_STATUS_OK) {
       status = lonejson_writer_key(&writer, "offset", 6u, &error);
@@ -3161,6 +3184,12 @@ static int vectis_lua_embedded_stat(lua_State *lua) {
   lua_setfield(lua, -2, "path");
   lua_pushinteger(lua, (lua_Integer)entry.size);
   lua_setfield(lua, -2, "size");
+  lua_pushstring(lua, entry.kind == VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY
+                          ? "directory"
+                          : "file");
+  lua_setfield(lua, -2, "kind");
+  lua_pushinteger(lua, (lua_Integer)entry.mode);
+  lua_setfield(lua, -2, "mode");
   if (entry.content_type != NULL) {
     lua_pushstring(lua, entry.content_type);
     lua_setfield(lua, -2, "content_type");

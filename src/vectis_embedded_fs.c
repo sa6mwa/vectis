@@ -17,12 +17,14 @@
 #define VECTIS_EMBEDDED_FS_DEFAULT_CHUNK_SIZE (64u * 1024u)
 
 typedef struct vectis_embedded_fs_impl_entry {
+  vectis_embedded_fs_entry_kind kind;
   char *path;
   char *content_type;
   char *sha256;
   char *etag;
   const unsigned char *data;
   size_t size;
+  unsigned mode;
 } vectis_embedded_fs_impl_entry;
 
 typedef struct vectis_embedded_fs_impl {
@@ -38,9 +40,12 @@ typedef struct vectis_embedded_fs_impl {
 
 typedef struct vectis_embedded_manifest_asset {
   char *path;
+  char *kind;
   char *content_type;
   char *sha256;
   char *etag;
+  lonejson_uint64 mode;
+  int mode_present;
   lonejson_uint64 offset;
   lonejson_uint64 size;
 } vectis_embedded_manifest_asset;
@@ -62,6 +67,9 @@ typedef struct vectis_embedded_parse_state {
 static const lonejson_field vectis_embedded_manifest_asset_fields[] = {
     LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_embedded_manifest_asset, path,
                                     "path"),
+    LONEJSON_FIELD_STRING_ALLOC(vectis_embedded_manifest_asset, kind, "kind"),
+    LONEJSON_FIELD_U64_PRESENT(vectis_embedded_manifest_asset, mode,
+                               mode_present, "mode"),
     LONEJSON_FIELD_U64_REQ(vectis_embedded_manifest_asset, offset, "offset"),
     LONEJSON_FIELD_U64_REQ(vectis_embedded_manifest_asset, size, "size"),
     LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_embedded_manifest_asset, sha256,
@@ -166,6 +174,26 @@ static int vectis_embedded_etag_matches_sha256(const char *etag,
     return 0;
   }
   return memcmp(etag + 1u, sha256, sha_size) == 0;
+}
+
+static int vectis_embedded_manifest_kind_parse(
+    const char *kind, vectis_embedded_fs_entry_kind *out) {
+  if (out == NULL) {
+    return 0;
+  }
+  if (kind == NULL || strcmp(kind, "file") == 0) {
+    *out = VECTIS_EMBEDDED_FS_ENTRY_FILE;
+    return 1;
+  }
+  if (strcmp(kind, "directory") == 0) {
+    *out = VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY;
+    return 1;
+  }
+  return 0;
+}
+
+static int vectis_embedded_mode_valid(unsigned mode) {
+  return mode == 0444u || mode == 0555u;
 }
 
 static int vectis_embedded_path_valid(const char *path) {
@@ -338,8 +366,10 @@ static vectis_status vectis_embedded_add(
     vectis_embedded_fs_impl *impl, const vectis_embedded_manifest_asset *asset,
     const unsigned char *payload, size_t payload_size, vectis_error *error) {
   vectis_embedded_fs_impl_entry *entry;
+  vectis_embedded_fs_entry_kind kind;
   size_t offset;
   size_t size;
+  unsigned mode;
 
   if (!vectis_embedded_path_valid(asset->path)) {
     vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
@@ -353,6 +383,25 @@ static vectis_status vectis_embedded_add(
                                "embedded asset exceeds payload bounds: %s",
                                asset->path);
     return VECTIS_ERR_INVALID;
+  }
+  if (!vectis_embedded_manifest_kind_parse(asset->kind, &kind) ||
+      kind != VECTIS_EMBEDDED_FS_ENTRY_FILE) {
+    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                               "embedded asset kind is unsupported: %s",
+                               asset->path);
+    return VECTIS_ERR_INVALID;
+  }
+  if (asset->mode_present) {
+    if (asset->mode > 0777u ||
+        !vectis_embedded_mode_valid((unsigned)asset->mode)) {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                                 "embedded asset mode is invalid: %s",
+                                 asset->path);
+      return VECTIS_ERR_INVALID;
+    }
+    mode = (unsigned)asset->mode;
+  } else {
+    mode = 0444u;
   }
   offset = (size_t)asset->offset;
   size = (size_t)asset->size;
@@ -375,6 +424,7 @@ static vectis_status vectis_embedded_add(
   }
   entry = impl->entries + impl->count;
   memset(entry, 0, sizeof(*entry));
+  entry->kind = kind;
   entry->path = vectis_embedded_strdup(asset->path);
   entry->sha256 = vectis_embedded_strdup(asset->sha256);
   entry->etag = asset->etag != NULL
@@ -396,6 +446,7 @@ static vectis_status vectis_embedded_add(
   }
   entry->data = payload + offset;
   entry->size = size;
+  entry->mode = mode;
   impl->count++;
   return VECTIS_OK;
 }
@@ -490,12 +541,14 @@ static vectis_status vectis_embedded_lookup_impl(const vectis_embedded_fs *self,
   for (i = 0u; i < impl->count; ++i) {
     if (strcmp(impl->entries[i].path, lookup_path) == 0) {
       *found = 1;
+      out->kind = impl->entries[i].kind;
       out->path = impl->entries[i].path;
       out->content_type = impl->entries[i].content_type;
       out->sha256 = impl->entries[i].sha256;
       out->etag = impl->entries[i].etag;
       out->data = impl->entries[i].data;
       out->size = impl->entries[i].size;
+      out->mode = impl->entries[i].mode;
       return VECTIS_OK;
     }
   }

@@ -102,12 +102,14 @@ static vectis_embedded_fs *new_fixture_fs(vectis_error *error) {
       "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\","
       "\"assets\":["
       "{\"path\":\"/index.html\",\"offset\":0,\"size\":6,"
+      "\"kind\":\"file\",\"mode\":292,"
       "\"sha256\":"
       "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\","
       "\"etag\":"
       "\"\\\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\\\"\","
       "\"content_type\":\"text/html\"},"
       "{\"path\":\"/assets/app.txt\",\"offset\":6,\"size\":4,"
+      "\"kind\":\"file\",\"mode\":292,"
       "\"sha256\":"
       "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\","
       "\"etag\":"
@@ -201,6 +203,16 @@ int main(void) {
       "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\","
       "\"etag\":"
       "\"\\\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\\\"\"}]}";
+  static const char invalid_kind_manifest[] =
+      "{\"format\":\"vectis-pack\",\"assets\":["
+      "{\"path\":\"/index.html\",\"kind\":\"symlink\",\"offset\":0,"
+      "\"size\":6,\"sha256\":"
+      "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"}]}";
+  static const char invalid_mode_manifest[] =
+      "{\"format\":\"vectis-pack\",\"assets\":["
+      "{\"path\":\"/index.html\",\"kind\":\"file\",\"mode\":420,"
+      "\"offset\":0,\"size\":6,\"sha256\":"
+      "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"}]}";
   vectis_embedded_fs_config config;
 
   vectis_error_clear(&error);
@@ -239,6 +251,8 @@ int main(void) {
   expect(entry.content_type != NULL &&
              strcmp(entry.content_type, "text/html") == 0,
          "lookup exposes content type");
+  expect(entry.kind == VECTIS_EMBEDDED_FS_ENTRY_FILE && entry.mode == 0444u,
+         "lookup exposes file kind and portable mode metadata");
   expect(entry.etag != NULL &&
              strcmp(entry.etag,
                     "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"") ==
@@ -414,6 +428,26 @@ int main(void) {
   status = vectis_embedded_fs_from_pack(&config, &fs, &error);
   expect(status == VECTIS_ERR_INVALID && fs == NULL,
          "rejects invalid manifest asset etag");
+
+  vectis_embedded_fs_config_init(&config);
+  config.payload = "hello\n";
+  config.payload_size = 6u;
+  config.manifest_json = invalid_kind_manifest;
+  config.manifest_json_size = sizeof(invalid_kind_manifest) - 1u;
+  fs = NULL;
+  status = vectis_embedded_fs_from_pack(&config, &fs, &error);
+  expect(status == VECTIS_ERR_INVALID && fs == NULL,
+         "rejects unsupported manifest asset kind");
+
+  vectis_embedded_fs_config_init(&config);
+  config.payload = "hello\n";
+  config.payload_size = 6u;
+  config.manifest_json = invalid_mode_manifest;
+  config.manifest_json_size = sizeof(invalid_mode_manifest) - 1u;
+  fs = NULL;
+  status = vectis_embedded_fs_from_pack(&config, &fs, &error);
+  expect(status == VECTIS_ERR_INVALID && fs == NULL,
+         "rejects writable manifest asset mode");
 
   vectis_embedded_fs_config_init(&config);
   config.payload = bad_payload;
