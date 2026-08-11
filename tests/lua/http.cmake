@@ -88,6 +88,35 @@ do
   assert(body == "uploaded through curl file source\n")
 end
 
+local api_server = assert(vectis.server.new({
+  bind = "127.0.0.1",
+  port = 28484,
+}))
+assert(api_server:json({
+  path = "/status",
+  body = '{"ok":true,"surface":"json"}\n',
+  cache_control = "no-store",
+}) == true)
+assert(api_server:start() == true)
+local api_response
+for _ = 1, 20 do
+  api_response = vectis.http.request({
+    url = "http://127.0.0.1:28484/status",
+    protocols = "http",
+    timeout_ms = 2000,
+    connect_timeout_ms = 1000,
+    no_signal = true,
+  })
+  if api_response.ok then break end
+  os.execute("sleep 0.1")
+end
+assert(api_response.ok == true, api_response.error and api_response.error.message)
+assert(api_response.status == 200)
+assert(api_response.body == '{"ok":true,"surface":"json"}\n')
+assert(api_response.headers:lower():find("cache-control: no-store", 1, true))
+assert(api_server:stop() == true)
+api_server:close()
+
 local response_schema = lonejson.schema("vectis-http-response", {
   lonejson.field("ok", lonejson.boolean()),
   lonejson.field("message", lonejson.string()),

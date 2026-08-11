@@ -227,6 +227,8 @@ Required Lua concepts:
   login_template_path=..., required_factors={"email_token"}})`
 - `server:auth_routes({path_prefix=..., credentials_path=..., realm=...,
   login_template_embedded_path="/templates/login.html"})`
+- `server:json({path=..., body=..., cache_control=...})` for small C-owned
+  unguarded JSON endpoints in service scenarios.
 - `server:auth_json({path=..., auth={kind="native", credentials_path=...},
   body=...})` for small C-owned guarded JSON endpoints in service scenarios.
 - `server:consumer_service({ ... })` is the Lua registration point for

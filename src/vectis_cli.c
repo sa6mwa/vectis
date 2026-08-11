@@ -79,6 +79,13 @@ typedef struct vectis_lua_server_auth_json_route {
   struct vectis_lua_server_auth_json_route *next;
 } vectis_lua_server_auth_json_route;
 
+typedef struct vectis_lua_server_json_route {
+  char *body;
+  char *content_type;
+  char *cache_control;
+  struct vectis_lua_server_json_route *next;
+} vectis_lua_server_json_route;
+
 typedef struct vectis_lua_consumer_registration {
   vectis_consumer_service *service;
   vectis_webdav_config storage;
@@ -100,6 +107,7 @@ typedef struct vectis_lua_consumer_registration {
 
 typedef struct vectis_lua_server {
   vectis_app *app;
+  vectis_lua_server_json_route *json_routes;
   vectis_lua_server_native_auth *native_auths;
   vectis_lua_server_auth_json_route *auth_json_routes;
   vectis_lua_consumer_registration *consumer_services;
@@ -3590,6 +3598,33 @@ static void vectis_lua_server_auth_json_route_free(
 }
 
 static void
+vectis_lua_server_json_route_free(vectis_lua_server_json_route *route) {
+  if (route == NULL) {
+    return;
+  }
+  free(route->body);
+  free(route->content_type);
+  free(route->cache_control);
+  free(route);
+}
+
+static void vectis_lua_server_json_route_free_all(vectis_lua_server *server) {
+  vectis_lua_server_json_route *route;
+  vectis_lua_server_json_route *next;
+
+  if (server == NULL) {
+    return;
+  }
+  route = server->json_routes;
+  server->json_routes = NULL;
+  while (route != NULL) {
+    next = route->next;
+    vectis_lua_server_json_route_free(route);
+    route = next;
+  }
+}
+
+static void
 vectis_lua_server_auth_json_route_free_all(vectis_lua_server *server) {
   vectis_lua_server_auth_json_route *route;
   vectis_lua_server_auth_json_route *next;
@@ -3791,6 +3826,7 @@ static int vectis_lua_server_close(lua_State *lua) {
     server->app->close(server->app);
     server->app = NULL;
   }
+  vectis_lua_server_json_route_free_all(server);
   vectis_lua_server_auth_json_route_free_all(server);
   vectis_lua_server_native_auth_free_all(server);
   return 0;
@@ -4110,6 +4146,33 @@ vectis_lua_auth_json_response(vectis_response *response, int status_code,
                               fallback_body, error);
 }
 
+static vectis_status vectis_lua_server_json_dispatch(vectis_app *app,
+                                                     vectis_request *request,
+                                                     vectis_response *response,
+                                                     void *userdata,
+                                                     vectis_error *error) {
+  vectis_lua_server_json_route *route;
+  vectis_status status;
+
+  (void)app;
+  (void)request;
+  route = (vectis_lua_server_json_route *)userdata;
+  if (route == NULL) {
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "JSON route configuration is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (route->cache_control != NULL && route->cache_control[0] != '\0') {
+    status = vectis_response_header(response, "cache-control",
+                                    route->cache_control, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
+  return vectis_response_text(response, 200, route->content_type, route->body,
+                              error);
+}
+
 static vectis_status
 vectis_lua_server_auth_json_dispatch(vectis_app *app, vectis_request *request,
                                      vectis_response *response, void *userdata,
@@ -4198,6 +4261,68 @@ vectis_lua_server_auth_json_dispatch(vectis_app *app, vectis_request *request,
 
   vectis_auth_provider_response_cleanup(&auth_response);
   return status;
+}
+
+static int vectis_lua_server_json(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_app *app;
+  vectis_lua_server_json_route *route_data;
+  vectis_route_config route;
+  vectis_error error;
+  vectis_status status;
+  const char *path;
+  const char *body;
+  const char *content_type;
+  const char *cache_control;
+
+  server = vectis_lua_check_server(lua, 1);
+  app = vectis_lua_server_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  path = vectis_lua_table_string(lua, 2, "path");
+  if (path == NULL || path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "JSON route path is required");
+  }
+  body = vectis_lua_table_string(lua, 2, "body");
+  if (body == NULL) {
+    body = "{\"ok\":true}\n";
+  }
+  content_type = vectis_lua_table_string(lua, 2, "content_type");
+  if (content_type == NULL) {
+    content_type = "application/json";
+  }
+  cache_control = vectis_lua_table_string(lua, 2, "cache_control");
+
+  route_data = (vectis_lua_server_json_route *)calloc(1u, sizeof(*route_data));
+  if (route_data == NULL) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to allocate JSON route");
+  }
+  route_data->body = vectis_cli_strdup(body);
+  route_data->content_type = vectis_cli_strdup(content_type);
+  if (cache_control != NULL) {
+    route_data->cache_control = vectis_cli_strdup(cache_control);
+  }
+  if (route_data->body == NULL || route_data->content_type == NULL ||
+      (cache_control != NULL && route_data->cache_control == NULL)) {
+    vectis_lua_server_json_route_free(route_data);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to copy JSON route config");
+  }
+
+  route = vectis_route(VECTIS_HTTP_GET, path, vectis_lua_server_json_dispatch,
+                       route_data);
+  vectis_error_clear(&error);
+  status = app->route(app, &route, &error);
+  if (status != VECTIS_OK) {
+    vectis_lua_server_json_route_free(route_data);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+
+  route_data->next = server->json_routes;
+  server->json_routes = route_data;
+  lua_pushboolean(lua, 1);
+  return 1;
 }
 
 static int vectis_lua_server_auth_json(lua_State *lua) {
@@ -4534,6 +4659,7 @@ static int vectis_lua_server_new(lua_State *lua) {
   vectis_lua_parse_lockd_config(lua, 1, &config.lockd, &lockd_endpoints);
   server = (vectis_lua_server *)lua_newuserdata(lua, sizeof(*server));
   server->app = NULL;
+  server->json_routes = NULL;
   server->native_auths = NULL;
   server->auth_json_routes = NULL;
   server->consumer_services = NULL;
@@ -7590,6 +7716,8 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "webdav_embedded_site");
     lua_pushcfunction(lua, vectis_lua_server_auth_routes);
     lua_setfield(lua, -2, "auth_routes");
+    lua_pushcfunction(lua, vectis_lua_server_json);
+    lua_setfield(lua, -2, "json");
     lua_pushcfunction(lua, vectis_lua_server_auth_json);
     lua_setfield(lua, -2, "auth_json");
     lua_pushcfunction(lua, vectis_lua_server_consumer_service);
