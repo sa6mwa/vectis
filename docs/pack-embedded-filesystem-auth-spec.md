@@ -488,8 +488,9 @@ Required deterministic e2e coverage:
 Current generated packed-service coverage in `make test-e2e` packages a Lua
 webserver script plus generated HTML/CSS/JavaScript files, asset files, and
 template files, runs the packed executable, serves the embedded read-only
-docroot both at `/` and under `/site`, rejects writes through the root
-read-only mount without changing the embedded index, lists packed assets,
+docroot both at `/` and under `/site` including non-index assets from the root
+mount, rejects writes through the root read-only mount without changing the
+embedded index, lists packed assets,
 serves generated CSS, JavaScript, asset, and template files through ordinary GET
 requests, reads them through both full-read and chunk-iterator Lua embedded
 filesystem APIs, verifies bodyless HEAD metadata for the embedded static

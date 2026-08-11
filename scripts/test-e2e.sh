@@ -816,6 +816,12 @@ run_lua_examples() {
       return 1
       ;;
   esac
+  body=$(curl_or_log "$packed_service_log" "packed root static css body" --max-time 3 -fsS \
+    "http://127.0.0.1:$kore_packed_port/app.css")
+  if [ "$body" != "body { color: #123456; }" ]; then
+    printf '%s\n' "Unexpected packed root CSS response: $body" >&2
+    return 1
+  fi
   static_head_headers="$work_dir/packed-static-head.headers"
   static_head_body="$work_dir/packed-static-head.body"
   static_head_status=$(curl --max-time 3 -sS -D "$static_head_headers" \
