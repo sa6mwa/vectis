@@ -509,8 +509,10 @@ password+TOTP auth for a non-TOTP user, issues a WebDAV key after deterministic
 password-first pending continuation with TOTP+email-token login for a TOTP
 user, protects the WebDAV mount,
 rejects anonymous WebDAV reads and writes without mutating the extracted
-docroot, serves embedded content through authenticated WebDAV, accepts mutable
-WebDAV writes, verifies those writes land in the extracted docroot, deletes an
+docroot, rejects authenticated WebDAV traversal reads and writes without
+creating escaped files, serves embedded content through authenticated WebDAV,
+accepts mutable WebDAV writes, verifies those writes land in the extracted
+docroot, deletes an
 extracted embedded asset through WebDAV while leaving the packed read-only mount
 unchanged and suppressing the deleted asset from WebDAV collection listings,
 exercises

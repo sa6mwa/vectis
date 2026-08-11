@@ -1628,6 +1628,29 @@ run_lua_examples() {
       return 1
       ;;
   esac
+  traversal_status=$(curl --path-as-is --max-time 3 -sS -o /dev/null \
+    -w '%{http_code}' -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/../index.html" || true)
+  if [ "$traversal_status" != "400" ] &&
+      [ "$traversal_status" != "404" ]; then
+    printf '%s\n' "Unexpected packed WebDAV traversal GET status: $traversal_status" >&2
+    return 1
+  fi
+  traversal_status=$(curl --path-as-is --max-time 3 -sS -o /dev/null \
+    -w '%{http_code}' -u "$webdav_client_id:$webdav_client_secret" \
+    -X PUT --data 'escaped write' \
+    "http://127.0.0.1:$kore_packed_port/dav/../webdav-escape.txt" || true)
+  if [ "$traversal_status" != "400" ] &&
+      [ "$traversal_status" != "404" ]; then
+    printf '%s\n' "Unexpected packed WebDAV traversal PUT status: $traversal_status" >&2
+    return 1
+  fi
+  packed_service_docroot_parent=$(dirname "$packed_service_docroot")
+  if [ -e "$packed_service_docroot_parent/webdav-escape.txt" ] ||
+      [ -e "$packed_service_docroot/webdav-escape.txt" ]; then
+    printf '%s\n' "Packed WebDAV traversal PUT created escaped file" >&2
+    return 1
+  fi
   guarded_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
     "http://127.0.0.1:$kore_packed_port/api/private")
   if [ "$guarded_status" = "200" ]; then
