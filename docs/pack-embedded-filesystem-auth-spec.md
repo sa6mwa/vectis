@@ -630,7 +630,8 @@ default C-side login form rendering of password/TOTP controls only for
 password-backed routes and email-token controls only on routes whose policy
 requires the email-token factor,
 email-token-only WebDAV-key issuance through both `/continue` and
-`/webdav-key`, password-only WebDAV-key issuance for a non-TOTP user,
+`/webdav-key`, rejects mismatched usernames for valid email-token transactions
+on both endpoint styles, password-only WebDAV-key issuance for a non-TOTP user,
 password-only TOTP continuation for an enrolled user,
 password+email-token WebDAV-key issuance for a non-TOTP user through both
 `/continue` and `/webdav-key`, WebDAV access and logout revocation for keys
