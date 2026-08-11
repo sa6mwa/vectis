@@ -1420,6 +1420,56 @@ run_lua_examples() {
       return 1
       ;;
   esac
+  auth_headers="$work_dir/packed-default-email-login.headers"
+  default_email_login_body=$(curl_or_log "$packed_service_log" \
+    "packed default email-token login" \
+    --max-time 3 -fsS -D "$auth_headers" \
+    "http://127.0.0.1:$kore_packed_port/auth-local/login")
+  assert_no_store_headers "$auth_headers" "packed default email-token login"
+  for login_fragment in \
+    'action="/auth-local/continue"' \
+    'name="email_transaction_id"' \
+    'name="email_token"' \
+    'action="/auth-local/email-token"' \
+    'name="email"'; do
+    case "$default_email_login_body" in
+      *"$login_fragment"*) ;;
+      *)
+        printf '%s\n' \
+          "Packed default email-token login missing fragment: $login_fragment" >&2
+        printf '%s\n' "$default_email_login_body" >&2
+        return 1
+        ;;
+    esac
+  done
+  auth_headers="$work_dir/packed-default-password-login.headers"
+  default_password_login_body=$(curl_or_log "$packed_service_log" \
+    "packed default password login" \
+    --max-time 3 -fsS -D "$auth_headers" \
+    "http://127.0.0.1:$kore_packed_port/auth-password/login")
+  assert_no_store_headers "$auth_headers" "packed default password login"
+  case "$default_password_login_body" in
+    *'action="/auth-password/continue"'*) ;;
+    *)
+      printf '%s\n' \
+        "Packed default password login missing continue form action" >&2
+      printf '%s\n' "$default_password_login_body" >&2
+      return 1
+      ;;
+  esac
+  for forbidden_fragment in \
+    'name="email_transaction_id"' \
+    'name="email_token"' \
+    'action="/auth-password/email-token"'; do
+    case "$default_password_login_body" in
+      *"$forbidden_fragment"*)
+        printf '%s\n' \
+          "Packed default password login unexpectedly rendered: $forbidden_fragment" >&2
+        printf '%s\n' "$default_password_login_body" >&2
+        return 1
+        ;;
+    esac
+  done
   assert_packed_logout_requires_authorization "packed-auth" "/auth"
   assert_packed_logout_requires_authorization "packed-auth-password" \
     "/auth-password"
