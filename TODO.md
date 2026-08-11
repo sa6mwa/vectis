@@ -171,6 +171,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Extend Vectis service-friendly lockd helpers only where they reduce real C workflow friction without obscuring the public `liblockdc` 0.13.0 API.
 - [x] Integrate the `lockdc` Lua binding into the Vectis Lua runtime.
 - [x] Provide first-pass C helpers for lockd-backed typed state load/save/update workflows.
+- [x] Add first Vectis-owned Lua `vectis.lockd` helper for config normalization, embedded bundle source wiring, and client cleanup.
 - [ ] Provide additional C helpers for retry-oriented queue workflow patterns only where raw `liblockdc` remains too noisy in real examples.
 - [ ] Provide Lua helpers for document store, retrieval, query, leases, enqueue, dequeue, ack/nack, and retry-oriented workflow patterns.
 - [ ] Expose raw `liblockdc`/`lockdc` access for complete API coverage while making Vectis helpers the preferred workflow API.

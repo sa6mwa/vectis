@@ -38,6 +38,7 @@
 #include "vectis_curl_lua_init.h"
 #include "vectis_http_lua_init.h"
 #include "vectis_libmdf_lua_init.h"
+#include "vectis_lockd_lua_init.h"
 #include "vectis_lockdc_lua_init.h"
 #include "vectis_pslog_lua_init.h"
 
@@ -8965,6 +8966,12 @@ static int luaopen_vectis(lua_State *lua) {
     return lua_error(lua);
   }
   lua_setfield(lua, -2, "http");
+  lua_getglobal(lua, "require");
+  lua_pushliteral(lua, "vectis.lockd");
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    return lua_error(lua);
+  }
+  lua_setfield(lua, -2, "lockd");
   return 1;
 }
 
@@ -9196,6 +9203,12 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   status = cpkt_lua_runtime_register_lua_module(
       runtime, "vectis.http", vectis_http_lua_init,
       sizeof(vectis_http_lua_init), "vectis.http");
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_lua_module(
+      runtime, "vectis.lockd", vectis_lockd_lua_init,
+      sizeof(vectis_lockd_lua_init), "vectis.lockd");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }

@@ -103,15 +103,22 @@ assert_kore_lonejson_contract() {
 }
 
 assert_lockdc_lua_runtime_contract() {
+  assert_contains "$repo_root/CMakeLists.txt" 'lua/vectis/lockd\.lua'
   assert_contains "$repo_root/CMakeLists.txt" 'share/lockdc-source/src/lua/lockdc_lua\.c'
   assert_contains "$repo_root/CMakeLists.txt" 'share/lockdc-source/lua/lockdc/init\.lua'
   assert_contains "$repo_root/CMakeLists.txt" 'add_library\(vectis_lockdc_lua OBJECT'
   assert_contains "$repo_root/CMakeLists.txt" '\$<TARGET_OBJECTS:vectis_lockdc_lua>'
   assert_contains "$repo_root/src/vectis_cli.c" 'cpkt_lua_runtime_register_c_module\(runtime, "lockdc\.core"'
   assert_contains "$repo_root/src/vectis_cli.c" 'runtime, "lockdc", vectis_lockdc_lua_init'
+  assert_contains "$repo_root/src/vectis_cli.c" 'runtime, "vectis\.lockd", vectis_lockd_lua_init'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'require\("lockdc"\)'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'require\("vectis\.lockd"\)'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'lockdc\.version_string'
+  assert_contains "$repo_root/lua/vectis/lockd.lua" 'client_bundle == "embedded"'
+  assert_contains "$repo_root/lua/vectis/lockd.lua" 'embedded_lockd_bundle_source'
+  assert_contains "$repo_root/lua/vectis/lockd.lua" 'function M.with_client'
   assert_contains "$repo_root/tests/lua/pack.cmake" 'lockdc\.open'
+  assert_contains "$repo_root/tests/lua/pack.cmake" 'vectis\.lockd\.open'
   assert_contains "$repo_root/tests/lua/pack.cmake" 'client_bundle_source = assert\(vectis\.embedded_lockd_bundle_source\(\)\)'
   assert_contains "$repo_root/tests/lua/pack.cmake" 'server:consumer_service'
 }

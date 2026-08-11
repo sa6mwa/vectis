@@ -677,6 +677,27 @@ assert(type(vectis.http) == "table")
 assert(type(vectis.http.request_json) == "function")
 assert(type(vectis.http.download) == "function")
 
+assert(type(vectis.lockd) == "table")
+assert(type(vectis.lockd.config) == "function")
+assert(type(vectis.lockd.open) == "function")
+assert(type(vectis.lockd.with_client) == "function")
+local vectis_lockd_required = require("vectis.lockd")
+assert(vectis_lockd_required == vectis.lockd)
+local normalized_lockd = assert(vectis.lockd.config({
+  endpoints = { "https://127.0.0.1:1" },
+  namespace = "lua-lockd",
+  client_bundle = "/tmp/vectis-lockd-client.pem",
+}))
+assert(normalized_lockd.default_namespace == "lua-lockd")
+assert(normalized_lockd.namespace == nil)
+assert(normalized_lockd.client_bundle == nil)
+assert(normalized_lockd.client_bundle_path == "/tmp/vectis-lockd-client.pem")
+local embedded_lockd_config, embedded_lockd_err =
+    vectis.lockd.config({ client_bundle = "embedded" })
+assert(embedded_lockd_config == nil)
+assert(type(embedded_lockd_err) == "table")
+assert(embedded_lockd_err.message == "no embedded lockd bundle")
+
 assert(type(vectis.cert) == "table")
 assert(type(vectis.cert.generate_bundle) == "function")
 assert(type(vectis.cert.inspect_bundle) == "function")
