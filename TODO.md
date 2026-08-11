@@ -272,7 +272,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add a `vectis -a pack` action that creates a new runnable binary from the Vectis runner plus a Lua script on Linux.
 - [x] On Linux/ELF, use a self-describing appended trailer with magic, version, lengths, hashes, and metadata.
 - [ ] On Darwin/Mach-O, embed Lua and certificate payloads through a generated object/section layout rather than relying on arbitrary appended EOF data.
-- [ ] Define one shared payload manifest format across ELF and Mach-O so runtime validation and Lua startup behavior stay platform-independent.
+- [x] Define one shared payload manifest format across ELF and Mach-O so runtime validation and Lua startup behavior stay platform-independent.
 - [x] Support optional embedding of the liblockdc client certificate bundle payload in the Linux pack format.
 - [x] Validate embedded lockd client bundle hashes before executing a packed Lua script.
 - [x] Wire embedded lockd client bundles into the statically registered lockdc Lua module through flexible bundle sources (`lc_source` memory/callback sources) without writing private runtime files.
@@ -281,7 +281,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Add Darwin packing flags for automatic codesigning after the final Mach-O artifact is produced, including `--codesign <identity>`, `--ad-hoc-codesign`, `--hardened-runtime`, `--timestamp`, and `--entitlements <path>`.
 - [ ] Ensure Darwin packing never mutates the executable after codesigning.
 - [ ] Add verification commands/tests for packed Darwin binaries using `codesign --verify --strict --verbose=4` and, when available, `spctl --assess --type execute`.
-- [ ] Document operational limits around signing, notarization, stripping, hardening tools, and platform-specific executable formats.
+- [x] Document operational limits around signing, notarization, stripping, hardening tools, and platform-specific executable formats.
 - [x] Add first smoke test that packages and executes a Lua script artifact.
 - [x] Add deterministic e2e coverage for a packed Lua webserver with generated embedded assets, native auth routes, SMTP-delivered email-token login, auth-guarded JSON API route, WebDAV key issuance, authenticated embedded WebDAV reads, mutable WebDAV writes, WebDAV list/copy/move/delete, traversal denial, and embedded-versus-WebDAV mutation isolation.
 - [x] Add packed smoke coverage that extracts embedded assets and serves the extracted docroot through the Lua `server:static_directory()` C-owned route.

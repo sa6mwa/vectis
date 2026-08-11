@@ -169,6 +169,9 @@ Optional:
 `--asset-dir` and `--asset` may be repeated. Logical asset destinations must
 normalize under `/`. Collisions are errors.
 
+Platform-specific pack limits, signing order, and Darwin/Mach-O requirements
+are defined in [pack-platform-operability.md](pack-platform-operability.md).
+
 ## Runtime Embedded Filesystem
 
 Vectis exposes a read-only embedded filesystem handle over the packed assets.

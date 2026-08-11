@@ -388,7 +388,9 @@ Still active or planned:
 - Deeper CAI/Vectis/libmdf/softline facade integration beyond bundled
   dependency/runtime registration.
 - MTConnect protocol support.
-- Darwin-specific packed-service signing/runtime polish.
+- Darwin-specific packed-service signing/runtime polish; current operational
+  limits are documented in
+  [docs/pack-platform-operability.md](docs/pack-platform-operability.md).
 - Additional protocol examples and long-running hardening gates.
 
 Track detailed engineering work in [TODO.md](TODO.md).
