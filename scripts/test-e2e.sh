@@ -18,6 +18,7 @@ kore_static_port=${VECTIS_E2E_KORE_STATIC_PORT:-$((kore_basic_port + 4))}
 kore_combined_port=${VECTIS_E2E_KORE_COMBINED_PORT:-$((kore_basic_port + 5))}
 kore_packed_port=${VECTIS_E2E_KORE_PACKED_PORT:-$((kore_basic_port + 6))}
 kore_packed_https_port=${VECTIS_E2E_KORE_PACKED_HTTPS_PORT:-$((kore_basic_port + 7))}
+kore_acme_port=${VECTIS_E2E_KORE_ACME_PORT:-$((kore_basic_port + 8))}
 pack_smtp_harness=${VECTIS_E2E_PACK_SMTP_HARNESS:-$repo_root/build/debug/tests/vectis_pack_smtp_harness}
 work_dir=$(mktemp -d)
 ssh_memory_key="$work_dir/vectis-e2e-ssh-key"
@@ -313,6 +314,10 @@ run_lua_examples() {
   pack_script="$work_dir/vectis-e2e-pack.lua"
   packed_service_script="$work_dir/vectis-e2e-packed-service.lua"
   packed_https_script="$work_dir/vectis-e2e-packed-https.lua"
+  acme_state_script="$work_dir/vectis-e2e-acme-state.lua"
+  acme_state_cache="$work_dir/vectis-e2e-acme-cache"
+  acme_state_credentials="$work_dir/vectis-e2e-acme-credentials.json"
+  acme_state_log="$work_dir/lua-acme-state.log"
   packed_service_site="$work_dir/vectis-e2e-packed-site"
   packed_service_cache="$work_dir/vectis-e2e-packed-cache"
   packed_service_docroot="$packed_service_cache/webdav/packed-service-e2e/content"
@@ -835,6 +840,51 @@ run_lua_examples() {
       printf '%s\n' "Packed HTTPS root response did not include cache-control" >&2
       return 1
     }
+  printf '[e2e] lua acme state dir\n'
+  printf '%s\n' \
+    'local vectis = require("vectis")' \
+    'local port = tonumber(assert(os.getenv("VECTIS_ACME_STATE_PORT")))' \
+    'local cache_dir = assert(os.getenv("VECTIS_ACME_STATE_CACHE"))' \
+    'local credentials_path = assert(os.getenv("VECTIS_ACME_STATE_CREDENTIALS"))' \
+    'assert(vectis.auth.store_init({ credentials_path = credentials_path }))' \
+    'local server = assert(vectis.server.new({' \
+    '  app_name = "vectis-acme-state-e2e",' \
+    '  bind = "127.0.0.1",' \
+    '  port = port,' \
+    '  tls = {' \
+    '    mode = "acme",' \
+    '    domains = { "acme.localhost.test", "www.acme.localhost.test" },' \
+    '    email = "ops@example.test",' \
+    '    provider = "http://127.0.0.1:1/directory",' \
+    '    cache_dir = cache_dir,' \
+    '  },' \
+    '}))' \
+    'assert(server:auth_json({' \
+    '  path = "/probe",' \
+    '  auth = { kind = "native", credentials_path = credentials_path, realm = "acme-e2e" },' \
+    '  body = [[{"ok":true,"surface":"acme-state"}]],' \
+    '}))' \
+    'assert(server:start())' \
+    'while true do' \
+    '  os.execute("sleep 3600")' \
+    'end' >"$acme_state_script"
+  start_server "lua acme state" "$acme_state_log" \
+    env VECTIS_ACME_STATE_PORT="$kore_acme_port" \
+      VECTIS_ACME_STATE_CACHE="$acme_state_cache" \
+      VECTIS_ACME_STATE_CREDENTIALS="$acme_state_credentials" \
+      "$repo_root/build/debug/vectis" "$acme_state_script"
+  count=0
+  while [ ! -f "$acme_state_cache/account-key.pem" ] ||
+      [ ! -d "$acme_state_cache/certificates" ]; do
+    count=$((count + 1))
+    if [ "$count" -ge 30 ]; then
+      printf '%s\n' "ACME state was not created under configured cache dir: $acme_state_cache" >&2
+      find "$acme_state_cache" -maxdepth 4 -print 2>/dev/null >&2 || true
+      sed 's/^/[lua-acme-state] /' "$acme_state_log" >&2
+      return 1
+    fi
+    sleep 1
+  done
   curl_or_log "$packed_service_log" "packed static app.js headers" --max-time 3 -fsSI \
     "http://127.0.0.1:$kore_packed_port/site/app.js" |
     grep -qi '^content-type: application/javascript' || {

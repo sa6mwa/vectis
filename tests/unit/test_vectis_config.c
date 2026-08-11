@@ -319,6 +319,22 @@ int main(void) {
   config.tls.domains = acme_domains;
   config.tls.domain_count = 3u;
   config.tls.acme_email = "ops@example.com";
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/acme-state-missing", sample_handler,
+                       NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "acme_state_dir") != NULL);
+  app->close(app);
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_ACME;
+  config.tls.domains = acme_domains;
+  config.tls.domain_count = 3u;
+  config.tls.acme_email = "ops@example.com";
   config.tls.acme_state_dir = "";
   app = vectis_app_new(&config, &error);
   assert(app != NULL);

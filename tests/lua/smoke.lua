@@ -129,6 +129,27 @@ assert(acme_error.status == vectis.ERR_INVALID)
 assert(acme_error.message:match("acme_state_dir"))
 acme_empty_cache:close()
 
+local acme_missing_cache = assert(vectis.server.new({
+  app_name = "lua-acme-missing-cache",
+  port = 18184,
+  tls = {
+    mode = "acme",
+    domains = { "api.example.com" },
+    email = "ops@example.com",
+    provider = "https://acme.example.test/directory",
+  },
+}))
+assert(acme_missing_cache:auth_json({
+  path = "/probe",
+  auth = { kind = "native", credentials_path = acme_auth_path },
+}) == true)
+acme_started, acme_error = acme_missing_cache:start()
+assert(acme_started == nil)
+assert(type(acme_error) == "table")
+assert(acme_error.status == vectis.ERR_INVALID)
+assert(acme_error.message:match("acme_state_dir"))
+acme_missing_cache:close()
+
 assert(type(vectis.auth) == "table")
 local function oauth_transport(mode)
   return function(request)

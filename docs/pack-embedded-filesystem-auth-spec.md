@@ -549,9 +549,12 @@ Lua smoke coverage validates ACME-mode server config parsing, Landed-style
 duplicate and invalid DNS-domain rejection, non-empty state-dir validation, and
 native startup diagnostics for missing domains or email without contacting a
 live ACME provider. ACME `cache_dir` is accepted into Vectis runtime config as
-`acme_state_dir`; relocating Kore's internal ACME certificate/account storage
-remains a separate Kore vendoring task before full mock-provider ACME issuance
-can be claimed.
+`acme_state_dir`, is required for ACME startup, and is wired into Kore's keymgr
+and ACME process roots so account keys and certificate state are created under
+the configured directory. The deterministic e2e starts ACME mode against a dead
+local provider endpoint and verifies state creation without requiring live
+Let's Encrypt access. Full mock-provider issuance remains future hardening
+work.
 
 Email-token e2e coverage:
 
@@ -619,9 +622,11 @@ remains future hardening work.
    lifecycle semantics. Treat Kore and the lockd consumer as simultaneous
    C-hosted receiver shells, not mutually exclusive process modes.
 
-   Current coverage includes both a direct C example and a packed Lua
-   executable that configures the C-owned consumer adapter with an embedded
-   lockd client bundle.
+   Keep this as a required scenario family: one variant covers Kore API/web
+   serving plus the consumer service, and another covers Kore WebDAV/fileserver
+   serving plus the consumer service. Current coverage includes both a direct C
+   example and a packed Lua executable that configures the C-owned consumer
+   adapter with an embedded lockd client bundle.
 
 ## Open Decisions
 

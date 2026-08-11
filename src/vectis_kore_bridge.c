@@ -48,6 +48,8 @@ static pthread_t vectis_kore_thread;
 static int vectis_kore_thread_active = 0;
 static int vectis_kore_dh_loaded = 0;
 static vectis_kore_runtime_config vectis_kore_current;
+static char *vectis_kore_keymgr_root = NULL;
+static char *vectis_kore_acme_root = NULL;
 
 typedef struct vectis_kore_autoblock_entry {
   int used;
@@ -721,6 +723,43 @@ static void vectis_kore_cleanup_config(vectis_kore_runtime_config *config) {
   config->runtime_client_ca_temporary = 0;
 }
 
+static int vectis_kore_mkdir_p(const char *path) {
+  char *copy;
+  char *cursor;
+  int ok;
+
+  if (path == NULL || path[0] == '\0') {
+    return 0;
+  }
+  copy = (char *)malloc(strlen(path) + 1u);
+  if (copy == NULL) {
+    return 0;
+  }
+  (void)strcpy(copy, path);
+  ok = 1;
+  cursor = copy;
+  if (cursor[0] == '/') {
+    cursor++;
+  }
+  for (; *cursor != '\0'; ++cursor) {
+    if (*cursor != '/') {
+      continue;
+    }
+    *cursor = '\0';
+    if (copy[0] != '\0' && mkdir(copy, 0700) != 0 && errno != EEXIST) {
+      ok = 0;
+      *cursor = '/';
+      break;
+    }
+    *cursor = '/';
+  }
+  if (ok && mkdir(copy, 0700) != 0 && errno != EEXIST) {
+    ok = 0;
+  }
+  free(copy);
+  return ok;
+}
+
 static vectis_status
 vectis_kore_prepare_acme(vectis_kore_runtime_config *config,
                          vectis_error *error) {
@@ -737,12 +776,32 @@ vectis_kore_prepare_acme(vectis_kore_runtime_config *config,
                      "ACME mode requires acme_email");
     return VECTIS_ERR_INVALID;
   }
-  if (config->acme_state_dir != NULL && config->acme_state_dir[0] == '\0') {
+  if (config->acme_state_dir == NULL || config->acme_state_dir[0] == '\0') {
     vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "ACME mode requires a non-empty acme_state_dir");
+                     "ACME mode requires acme_state_dir");
     return VECTIS_ERR_INVALID;
   }
+  if (!vectis_kore_mkdir_p(config->acme_state_dir)) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to create ACME state directory");
+    return VECTIS_ERR_STATE;
+  }
   return VECTIS_OK;
+}
+
+static void vectis_kore_clear_installed_acme_roots(void) {
+  if (vectis_kore_keymgr_root != NULL &&
+      keymgr_privsep.root == vectis_kore_keymgr_root) {
+    kore_free(keymgr_privsep.root);
+    keymgr_privsep.root = NULL;
+  }
+  if (vectis_kore_acme_root != NULL &&
+      acme_privsep.root == vectis_kore_acme_root) {
+    kore_free(acme_privsep.root);
+    acme_privsep.root = NULL;
+  }
+  vectis_kore_keymgr_root = NULL;
+  vectis_kore_acme_root = NULL;
 }
 
 static void
@@ -2063,6 +2122,14 @@ void kore_parent_configure(int argc, char **argv) {
   vectis_kore_apply_server_config(
       &vectis_kore_current.server, vectis_kore_current.body_disk_offload_bytes,
       vectis_kore_current.body_disk_offload_configured);
+  vectis_kore_clear_installed_acme_roots();
+  if (vectis_kore_current.tls_mode == VECTIS_TLS_MODE_ACME &&
+      vectis_kore_current.acme_state_dir != NULL) {
+    keymgr_privsep.root = kore_strdup(vectis_kore_current.acme_state_dir);
+    acme_privsep.root = kore_strdup(vectis_kore_current.acme_state_dir);
+    vectis_kore_keymgr_root = keymgr_privsep.root;
+    vectis_kore_acme_root = acme_privsep.root;
+  }
   server = kore_server_create(vectis_kore_current.app_name != NULL
                                   ? vectis_kore_current.app_name
                                   : "vectis");
@@ -2143,6 +2210,7 @@ void kore_parent_configure(int argc, char **argv) {
 void kore_parent_teardown(void) {
   (void)pthread_mutex_lock(&vectis_kore_mutex);
   vectis_kore_autoblock_unmap();
+  vectis_kore_clear_installed_acme_roots();
   vectis_kore_cleanup_config(&vectis_kore_current);
   memset(&vectis_kore_current, 0, sizeof(vectis_kore_current));
   (void)pthread_mutex_unlock(&vectis_kore_mutex);
