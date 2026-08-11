@@ -265,6 +265,28 @@ os.remove(auth_path)
 assert(vectis.auth.store_init({ credentials_path = auth_path }))
 assert(vectis.auth.oauth2_flow_upsert({
   credentials_path = auth_path,
+  flow_id = "lua-browser-flow",
+  subject = "lua-browser-oidc@example.com",
+  flow = exchanged.flow,
+}))
+local browser_flow_key = assert(vectis.auth.oauth2_webdav_key({
+  credentials_path = auth_path,
+  flow_id = "lua-browser-flow",
+  subject = "lua-browser-oidc@example.com",
+}))
+assert(type(browser_flow_key.client_id) == "string")
+assert(type(browser_flow_key.client_secret) == "string")
+assert(browser_flow_key.claim_json:match('"oauth2_flow_id":"lua%-browser%-flow"'))
+local browser_flow_verified = assert(vectis.auth.verify({
+  credentials_path = auth_path,
+  authorization = "Basic " .. base64_encode(
+    browser_flow_key.client_id .. ":" .. browser_flow_key.client_secret),
+  allowed_modes = { "basic" },
+}))
+assert(browser_flow_verified.authenticated == true)
+assert(browser_flow_verified.claim_json:match('"oauth2_flow_id":"lua%-browser%-flow"'))
+assert(vectis.auth.oauth2_flow_upsert({
+  credentials_path = auth_path,
   flow_id = "lua-flow",
   subject = "lua-oidc@example.com",
   flow = {
