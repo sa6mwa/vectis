@@ -315,7 +315,7 @@ string(REPLACE
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(served_asset.headers:lower():find(\"cache-control: max-age=60\", 1, true))"
-       "assert(served_asset.headers:lower():find(\"cache-control: max-age=60\", 1, true))\nlocal served_dir = fetch_http(\"/assets\")\nassert(served_dir.ok == true, served_dir.error)\nassert(served_dir.status == 404)\nlocal served_empty_dir = fetch_http(\"/assets/empty\")\nassert(served_empty_dir.ok == true, served_empty_dir.error)\nassert(served_empty_dir.status == 404)"
+       "assert(served_asset.headers:lower():find(\"cache-control: max-age=60\", 1, true))\nlocal served_dir = fetch_http(\"/assets\")\nassert(served_dir.ok == true, served_dir.error)\nassert(served_dir.status == 404, tostring(served_dir.status))\nlocal served_dir_slash = fetch_http(\"/assets/\")\nassert(served_dir_slash.ok == true, served_dir_slash.error)\nassert(served_dir_slash.status == 400, tostring(served_dir_slash.status))\nlocal served_empty_dir = fetch_http(\"/assets/empty\")\nassert(served_empty_dir.ok == true, served_empty_dir.error)\nassert(served_empty_dir.status == 404, tostring(served_empty_dir.status))"
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(vectis.embedded.stat(\"/assets/app.txt\").content_type == \"text/plain\")"

@@ -4333,6 +4333,9 @@ static vectis_status vectis_static_embedded_dispatch(vectis_app *app,
   found = 0;
   status = data->embedded_fs->lookup(data->embedded_fs, embedded_path, &found,
                                      &entry, error);
+  if (status == VECTIS_ERR_INVALID) {
+    return vectis_static_embedded_not_found(data, request, response, error);
+  }
   if (status != VECTIS_OK) {
     return status;
   }
