@@ -205,11 +205,15 @@ int main(void) {
   char temp[] = "/tmp/vectis-embedded-fs.XXXXXX";
   char symlink_temp[] = "/tmp/vectis-embedded-fs-link.XXXXXX";
   char outside_temp[] = "/tmp/vectis-embedded-fs-outside.XXXXXX";
+  char tmp_symlink_temp[] = "/tmp/vectis-embedded-fs-tmp-link.XXXXXX";
+  char tmp_outside_temp[] = "/tmp/vectis-embedded-fs-tmp-outside.XXXXXX";
   char extracted[512];
   char extracted_app[512];
   char user_file[512];
   char symlink_dir[512];
   char outside_app[512];
+  char tmp_symlink[512];
+  char tmp_outside_app[512];
   char buffer[32];
   int found;
   vectis_status status;
@@ -433,6 +437,35 @@ int main(void) {
          "symlink-denied extraction does not write outside docroot");
   remove_tree(symlink_temp);
   remove_tree(outside_temp);
+
+  expect(mkdtemp(tmp_symlink_temp) != NULL,
+         "creates temp-symlink extraction directory");
+  expect(mkdtemp(tmp_outside_temp) != NULL,
+         "creates temp-symlink outside directory");
+  (void)snprintf(symlink_dir, sizeof(symlink_dir), "%s/assets",
+                 tmp_symlink_temp);
+  expect(mkdir(symlink_dir, 0755) == 0,
+         "creates parent directory for temp symlink fixture");
+  (void)snprintf(extracted_app, sizeof(extracted_app), "%s/assets/app.txt",
+                 tmp_symlink_temp);
+  (void)snprintf(tmp_symlink, sizeof(tmp_symlink), "%s.tmp.%ld", extracted_app,
+                 (long)getpid());
+  (void)snprintf(tmp_outside_app, sizeof(tmp_outside_app), "%s/app.txt",
+                 tmp_outside_temp);
+  write_file(tmp_outside_app, "outside\n");
+  expect(symlink(tmp_outside_app, tmp_symlink) == 0,
+         "creates extraction temp symlink fixture");
+  vectis_embedded_fs_extract_config_init(&extract);
+  extract.output_dir = tmp_symlink_temp;
+  extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_REPAIR;
+  status = vectis_embedded_fs_extract(fs, &extract, &error);
+  expect(status == VECTIS_ERR_CONFLICT,
+         "extract refuses preexisting temp publish symlink");
+  read_file(tmp_outside_app, buffer, sizeof(buffer));
+  expect(strcmp(buffer, "outside\n") == 0,
+         "temp-symlink extraction does not write outside docroot");
+  remove_tree(tmp_symlink_temp);
+  remove_tree(tmp_outside_temp);
 
   vectis_embedded_fs_close(fs);
 

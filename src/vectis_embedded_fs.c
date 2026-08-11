@@ -3,6 +3,7 @@
 #include "vectis_internal.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <lc/lc.h>
 #include <lonejson.h>
 #include <openssl/evp.h>
@@ -852,6 +853,8 @@ vectis_embedded_write_file(const char *path,
                            vectis_error *error) {
   char *tmp_path;
   FILE *fp;
+  int fd;
+  int open_errno;
   int written;
   vectis_status status;
 
@@ -873,8 +876,24 @@ vectis_embedded_write_file(const char *path,
                      "embedded asset temp path is too long");
     return VECTIS_ERR_INVALID;
   }
-  fp = fopen(tmp_path, "wb");
+  fd = open(tmp_path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  if (fd < 0) {
+    open_errno = errno;
+    if (open_errno == EEXIST) {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                 "embedded asset temp path already exists: %s",
+                                 tmp_path);
+    } else {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                                 "failed to create embedded asset: %s", path);
+    }
+    free(tmp_path);
+    return open_errno == EEXIST ? VECTIS_ERR_CONFLICT : VECTIS_ERR_INVALID;
+  }
+  fp = fdopen(fd, "wb");
   if (fp == NULL) {
+    (void)close(fd);
+    (void)remove(tmp_path);
     vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
                                "failed to create embedded asset: %s", path);
     free(tmp_path);
