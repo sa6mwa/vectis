@@ -620,7 +620,8 @@ Email-token e2e coverage:
 - prove an allowlist blocks delivery to unauthorized recipients.
 
 Current coverage: the packed webserver smokes cover mock SMTP startup,
-configured delivery, mailbox capture, continued login, wrong token rejection,
+direct Lua curl-facade SMTP delivery against the mock server, configured native
+auth delivery, mailbox capture, continued login, wrong token rejection,
 email-token attempt-budget exhaustion, expired token rejection and consumption,
 replay rejection, recipient allowlist rejection, password+TOTP+email-token
 success through the browser `/continue` flow, login-template use of

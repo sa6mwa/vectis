@@ -337,6 +337,10 @@ string(REPLACE
        "assert(pack_user.totp_secret == \"GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ\")\nlocal pack_totp = assert(vectis.auth.totp.new(\"GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ\"))\nlocal totp_59 = pack_totp:generate(59)\nlocal totp_360 = pack_totp:generate(360)\nassert(totp_59 == \"287082\")\nassert(#totp_360 == 6)"
        asset_script_body "${asset_script_body}")
 string(REPLACE
+       "assert(vectis.auth.store_init({credentials_path = webdav_credentials}) == true)"
+       "local direct_smtp = curl.perform({url = smtp_url, protocols = \"smtp\", body = \"Subject: Vectis curl SMTP facade\\r\\n\\r\\ncurl smtp facade body\\r\\n\", smtp = {mail_from = \"curl@example.test\", rcpt = {\"facade@example.test\"}}, timeout_ms = 5000, connect_timeout_ms = 2000, no_signal = true})\nassert(direct_smtp.ok == true, direct_smtp.error)\nlocal direct_mailbox = read_file(smtp_mailbox)\nassert(direct_mailbox:find(\"Subject: Vectis curl SMTP facade\", 1, true))\nassert(direct_mailbox:find(\"curl smtp facade body\", 1, true))\nassert(vectis.auth.store_init({credentials_path = webdav_credentials}) == true)"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
        "local webdav_key = assert(vectis.auth.webdav_key({credentials_path = webdav_credentials, username = \"pack-user\", password = \"pack-password\"}))\nassert(type(webdav_key.client_id) == \"string\")\nassert(type(webdav_key.client_secret) == \"string\")\nlocal basic_auth = \"Basic \" .. base64(webdav_key.client_id .. \":\" .. webdav_key.client_secret)\nlocal server = assert(vectis.server.new({bind = \"127.0.0.1\", port = 28181}))"
        "local server = assert(vectis.server.new({bind = \"127.0.0.1\", port = 28181}))"
        asset_script_body "${asset_script_body}")

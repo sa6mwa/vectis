@@ -18,6 +18,7 @@ typedef struct smtp_server {
   const char *mailbox_path;
   pthread_t thread;
   int started;
+  volatile int stop;
   int failed;
   char data[8192];
   size_t data_size;
@@ -92,41 +93,15 @@ static int write_mailbox(smtp_server *server) {
   return fclose(file) == 0;
 }
 
-static void *smtp_thread(void *userdata) {
-  smtp_server *server;
-  struct sockaddr_in peer;
-  socklen_t peer_len;
-  fd_set read_set;
-  struct timeval timeout;
+static void smtp_handle_client(smtp_server *server, int client_fd) {
   char line[1024];
-  int client_fd;
   int in_data;
-  int select_result;
-
-  server = (smtp_server *)userdata;
-  FD_ZERO(&read_set);
-  FD_SET(server->listen_fd, &read_set);
-  timeout.tv_sec = 15;
-  timeout.tv_usec = 0;
-  select_result =
-      select(server->listen_fd + 1, &read_set, NULL, NULL, &timeout);
-  if (select_result <= 0) {
-    server->failed = 1;
-    return NULL;
-  }
-
-  peer_len = (socklen_t)sizeof(peer);
-  client_fd = accept(server->listen_fd, (struct sockaddr *)&peer, &peer_len);
-  if (client_fd < 0) {
-    server->failed = 1;
-    return NULL;
-  }
 
   in_data = 0;
   if (!send_all(client_fd, "220 vectis smtp mock\r\n")) {
     server->failed = 1;
     (void)close(client_fd);
-    return NULL;
+    return;
   }
   while (read_line(client_fd, line, sizeof(line))) {
     if (in_data) {
@@ -166,6 +141,47 @@ static void *smtp_thread(void *userdata) {
     }
   }
   (void)close(client_fd);
+}
+
+static void *smtp_thread(void *userdata) {
+  smtp_server *server;
+  struct sockaddr_in peer;
+  socklen_t peer_len;
+  fd_set read_set;
+  struct timeval timeout;
+  int client_fd;
+  int select_result;
+
+  server = (smtp_server *)userdata;
+  while (!server->stop && !server->failed) {
+    FD_ZERO(&read_set);
+    FD_SET(server->listen_fd, &read_set);
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
+    select_result =
+        select(server->listen_fd + 1, &read_set, NULL, NULL, &timeout);
+    if (select_result < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      server->failed = 1;
+      break;
+    }
+    if (select_result == 0) {
+      continue;
+    }
+
+    peer_len = (socklen_t)sizeof(peer);
+    client_fd = accept(server->listen_fd, (struct sockaddr *)&peer, &peer_len);
+    if (client_fd < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      server->failed = 1;
+      break;
+    }
+    smtp_handle_client(server, client_fd);
+  }
   return NULL;
 }
 
@@ -221,6 +237,7 @@ static int smtp_start(smtp_server *server, const char *mailbox_path) {
 
 static void smtp_stop(smtp_server *server) {
   if (server->started) {
+    server->stop = 1;
     (void)pthread_join(server->thread, NULL);
     server->started = 0;
   }
