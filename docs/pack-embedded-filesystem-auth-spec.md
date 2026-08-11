@@ -509,7 +509,9 @@ requests, reads them through both full-read and chunk-iterator Lua embedded
 filesystem APIs, verifies bodyless HEAD metadata for the embedded static
 docroot, rejects raw literal and encoded traversal attempts against both
 read-only mounts, verifies single byte-range and
-unsatisfiable byte-range behavior for the C-owned static embedded responder, verifies
+unsatisfiable byte-range behavior for the C-owned static embedded responder,
+rejects multi-range requests so the implementation remains a single-range
+responder, verifies
 `If-None-Match` returns 304 for unchanged embedded assets, verifies matching
 and stale `If-Range` validators for embedded range requests, starts a second
 packed HTTPS asset server with a generated private self-signed certificate,

@@ -1093,6 +1093,25 @@ run_lua_examples() {
     sed 's/^/[packed-range-header] /' "$range_headers" >&2
     return 1
   }
+  range_status=$(curl --max-time 3 -sS -D "$range_headers" -o "$range_body" \
+    -w '%{http_code}' -H 'Range: bytes=0-1,4-5' \
+    "http://127.0.0.1:$kore_packed_port/site/app.js")
+  if [ "$range_status" != "416" ]; then
+    printf '%s\n' "Unexpected packed static multi-range status: $range_status" >&2
+    sed 's/^/[packed-range-header] /' "$range_headers" >&2
+    cat "$range_body" >&2
+    return 1
+  fi
+  if [ -s "$range_body" ]; then
+    printf '%s\n' "Packed static multi-range returned a body" >&2
+    cat "$range_body" >&2
+    return 1
+  fi
+  grep -qi '^content-range: bytes \*/' "$range_headers" || {
+    printf '%s\n' "Packed static multi-range did not include Content-Range" >&2
+    sed 's/^/[packed-range-header] /' "$range_headers" >&2
+    return 1
+  }
   curl --max-time 3 -sS -D "$range_headers" -o /dev/null \
     "http://127.0.0.1:$kore_packed_port/site/app.js"
   etag=$(awk 'BEGIN{IGNORECASE=1} /^etag:/ {sub(/^[^:]*:[ \t]*/, ""); sub(/\r$/, ""); print; exit}' "$range_headers")
