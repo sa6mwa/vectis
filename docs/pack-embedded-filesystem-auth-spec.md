@@ -69,7 +69,8 @@ The manifest JSON is parsed by LoneJSON and contains:
 - script metadata,
 - lockd bundle metadata when present,
 - asset entries,
-- aggregate asset tree hash,
+- aggregate asset tree SHA-256 over logical paths, file SHA-256 values, sizes,
+  and content-type metadata, excluding all source/build/home/cache paths,
 - pack options that affect runtime behavior.
 
 Each asset entry contains:

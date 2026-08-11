@@ -32,6 +32,7 @@ typedef struct vectis_embedded_fs_impl {
   vectis_embedded_fs_extract_policy default_extract_policy;
   char *index_path;
   char *not_found_path;
+  char *tree_sha256;
 } vectis_embedded_fs_impl;
 
 typedef struct vectis_embedded_manifest_asset {
@@ -45,6 +46,7 @@ typedef struct vectis_embedded_manifest_asset {
 typedef struct vectis_embedded_manifest {
   char *format;
   char *extract_mode;
+  char *tree_sha256;
   lonejson_mapped_array_stream assets;
 } vectis_embedded_manifest;
 
@@ -73,6 +75,8 @@ static const lonejson_field vectis_embedded_manifest_fields[] = {
     LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_embedded_manifest, format, "format"),
     LONEJSON_FIELD_STRING_ALLOC(vectis_embedded_manifest, extract_mode,
                                 "extract_mode"),
+    LONEJSON_FIELD_STRING_ALLOC(vectis_embedded_manifest, tree_sha256,
+                                "tree_sha256"),
     LONEJSON_FIELD_MAPPED_ARRAY_STREAM_REQ(vectis_embedded_manifest, assets,
                                            "assets")};
 
@@ -189,6 +193,20 @@ static int vectis_embedded_sha256_matches(const unsigned char *data,
   }
   SHA256(data, size, actual);
   return memcmp(actual, expected, SHA256_DIGEST_LENGTH) == 0;
+}
+
+static int vectis_embedded_sha256_hex_valid(const char *hex) {
+  size_t i;
+
+  if (hex == NULL || strlen(hex) != SHA256_DIGEST_LENGTH * 2u) {
+    return 0;
+  }
+  for (i = 0u; i < SHA256_DIGEST_LENGTH * 2u; ++i) {
+    if (vectis_embedded_hex_value(hex[i]) < 0) {
+      return 0;
+    }
+  }
+  return 1;
 }
 
 static void
@@ -371,6 +389,7 @@ static void vectis_embedded_impl_destroy(vectis_embedded_fs_impl *impl) {
   free(impl->entries);
   free(impl->index_path);
   free(impl->not_found_path);
+  free(impl->tree_sha256);
   free(impl);
 }
 
@@ -383,6 +402,17 @@ vectis_embedded_default_extract_policy_impl(const vectis_embedded_fs *self) {
   }
   impl = (const vectis_embedded_fs_impl *)self->impl;
   return impl->default_extract_policy;
+}
+
+static const char *
+vectis_embedded_tree_sha256_impl(const vectis_embedded_fs *self) {
+  const vectis_embedded_fs_impl *impl;
+
+  if (self == NULL || self->impl == NULL) {
+    return NULL;
+  }
+  impl = (const vectis_embedded_fs_impl *)self->impl;
+  return impl->tree_sha256;
 }
 
 static vectis_status vectis_embedded_lookup_impl(const vectis_embedded_fs *self,
@@ -907,6 +937,7 @@ vectis_embedded_fs_from_pack(const vectis_embedded_fs_config *config,
   impl->api.lookup = vectis_embedded_lookup_impl;
   impl->api.default_extract_policy =
       vectis_embedded_default_extract_policy_impl;
+  impl->api.tree_sha256 = vectis_embedded_tree_sha256_impl;
   impl->api.read = vectis_embedded_read_impl;
   impl->api.open_source = vectis_embedded_open_source_impl;
   impl->api.list = vectis_embedded_list_impl;
@@ -993,6 +1024,28 @@ vectis_embedded_fs_from_pack(const vectis_embedded_fs_config *config,
                      "embedded fs manifest extract_mode is invalid");
     return VECTIS_ERR_INVALID;
   }
+  if (doc.tree_sha256 != NULL &&
+      !vectis_embedded_sha256_hex_valid(doc.tree_sha256)) {
+    lonejson_cleanup(&vectis_embedded_manifest_map, &doc);
+    lonejson_cleanup(&vectis_embedded_manifest_asset_map, &item);
+    lonejson_free(runtime);
+    vectis_embedded_impl_destroy(impl);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "embedded fs manifest tree_sha256 is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (doc.tree_sha256 != NULL) {
+    impl->tree_sha256 = vectis_embedded_strdup(doc.tree_sha256);
+    if (impl->tree_sha256 == NULL) {
+      lonejson_cleanup(&vectis_embedded_manifest_map, &doc);
+      lonejson_cleanup(&vectis_embedded_manifest_asset_map, &item);
+      lonejson_free(runtime);
+      vectis_embedded_impl_destroy(impl);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy embedded fs tree hash");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
   if (impl->count > 1u) {
     qsort(impl->entries, impl->count, sizeof(impl->entries[0]),
           vectis_embedded_entry_compare);
@@ -1022,6 +1075,13 @@ vectis_embedded_fs_default_extract_policy(const vectis_embedded_fs *fs) {
     return VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS;
   }
   return fs->default_extract_policy(fs);
+}
+
+const char *vectis_embedded_fs_tree_sha256(const vectis_embedded_fs *fs) {
+  if (fs == NULL || fs->tree_sha256 == NULL) {
+    return NULL;
+  }
+  return fs->tree_sha256(fs);
 }
 
 vectis_status vectis_embedded_fs_lookup(const vectis_embedded_fs *fs,

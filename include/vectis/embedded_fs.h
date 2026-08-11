@@ -66,6 +66,10 @@ struct vectis_embedded_fs {
   /* Return the manifest-recorded default extraction policy. */
   vectis_embedded_fs_extract_policy (*default_extract_policy)(
       const vectis_embedded_fs *self);
+  /* Return the manifest-recorded aggregate asset tree SHA-256 hex digest, or
+   * NULL when the manifest does not provide one.
+   */
+  const char *(*tree_sha256)(const vectis_embedded_fs *self);
   /* Lookup a file by absolute embedded path. "/" resolves to index_path. */
   vectis_status (*lookup)(const vectis_embedded_fs *self, const char *path,
                           int *found, vectis_embedded_fs_entry *out,
@@ -124,6 +128,8 @@ vectis_embedded_fs_from_pack(const vectis_embedded_fs_config *config,
  */
 vectis_embedded_fs_extract_policy
 vectis_embedded_fs_default_extract_policy(const vectis_embedded_fs *fs);
+/* Free-function wrapper for fs->tree_sha256. NULL fs returns NULL. */
+const char *vectis_embedded_fs_tree_sha256(const vectis_embedded_fs *fs);
 /* Free-function wrapper for fs->lookup. */
 vectis_status vectis_embedded_fs_lookup(const vectis_embedded_fs *fs,
                                         const char *path, int *found,

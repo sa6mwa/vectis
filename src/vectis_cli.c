@@ -1188,6 +1188,51 @@ static int vectis_pack_collect_dir(vectis_pack_asset_list *list,
   return rc;
 }
 
+static int vectis_pack_hash_asset_tree(
+    vectis_pack_asset_list *assets, unsigned char out[SHA256_DIGEST_LENGTH]) {
+  EVP_MD_CTX *ctx;
+  unsigned int digest_size;
+  size_t i;
+  char size_buf[32];
+  char nul;
+
+  ctx = EVP_MD_CTX_new();
+  if (ctx == NULL) {
+    return -1;
+  }
+  if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1) {
+    EVP_MD_CTX_free(ctx);
+    return -1;
+  }
+  nul = '\0';
+  for (i = 0u; i < assets->count; ++i) {
+    (void)snprintf(size_buf, sizeof(size_buf), "%lu",
+                   (unsigned long)assets->items[i].size);
+    if (EVP_DigestUpdate(ctx, assets->items[i].logical_path,
+                         strlen(assets->items[i].logical_path)) != 1 ||
+        EVP_DigestUpdate(ctx, &nul, 1u) != 1 ||
+        EVP_DigestUpdate(ctx, assets->items[i].sha, SHA256_DIGEST_LENGTH) != 1 ||
+        EVP_DigestUpdate(ctx, &nul, 1u) != 1 ||
+        EVP_DigestUpdate(ctx, size_buf, strlen(size_buf)) != 1 ||
+        EVP_DigestUpdate(ctx, &nul, 1u) != 1 ||
+        (assets->items[i].content_type != NULL &&
+         EVP_DigestUpdate(ctx, assets->items[i].content_type,
+                          strlen(assets->items[i].content_type)) != 1) ||
+        EVP_DigestUpdate(ctx, &nul, 1u) != 1) {
+      EVP_MD_CTX_free(ctx);
+      return -1;
+    }
+  }
+  digest_size = 0u;
+  if (EVP_DigestFinal_ex(ctx, out, &digest_size) != 1 ||
+      digest_size != SHA256_DIGEST_LENGTH) {
+    EVP_MD_CTX_free(ctx);
+    return -1;
+  }
+  EVP_MD_CTX_free(ctx);
+  return 0;
+}
+
 static int vectis_pack_build_manifest(vectis_pack_asset_list *assets,
                                       const char *extract_mode,
                                       unsigned char **out, size_t *out_size) {
@@ -1199,12 +1244,18 @@ static int vectis_pack_build_manifest(vectis_pack_asset_list *assets,
   unsigned char *copy;
   size_t i;
   char sha_hex[SHA256_DIGEST_LENGTH * 2u + 1u];
+  unsigned char tree_sha[SHA256_DIGEST_LENGTH];
+  char tree_sha_hex[SHA256_DIGEST_LENGTH * 2u + 1u];
 
   *out = NULL;
   *out_size = 0u;
   if (assets->count == 0u) {
     return 0;
   }
+  if (vectis_pack_hash_asset_tree(assets, tree_sha) != 0) {
+    return -1;
+  }
+  vectis_sha256_hex(tree_sha, tree_sha_hex);
   lonejson_error_init(&error);
   runtime = lonejson_new(NULL, &error);
   if (runtime == NULL) {
@@ -1223,6 +1274,13 @@ static int vectis_pack_build_manifest(vectis_pack_asset_list *assets,
   }
   if (status == LONEJSON_STATUS_OK) {
     status = lonejson_writer_string(&writer, "vectis-pack", 11u, &error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_key(&writer, "tree_sha256", 11u, &error);
+  }
+  if (status == LONEJSON_STATUS_OK) {
+    status = lonejson_writer_string(&writer, tree_sha_hex,
+                                    strlen(tree_sha_hex), &error);
   }
   if (status == LONEJSON_STATUS_OK && extract_mode != NULL) {
     status = lonejson_writer_key(&writer, "extract_mode", 12u, &error);
@@ -2995,6 +3053,27 @@ static int vectis_lua_embedded_default_extract_policy(lua_State *lua) {
                ? vectis_embedded_fs_default_extract_policy(context->embedded_fs)
                : VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS;
   lua_pushstring(lua, vectis_embedded_fs_extract_policy_string(policy));
+  return 1;
+}
+
+static int vectis_lua_embedded_tree_sha256(lua_State *lua) {
+  vectis_lua_runtime_context *context;
+  const char *tree_sha256;
+
+  context = (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(
+      (void *)lua);
+  if (context == NULL || context->embedded_fs == NULL) {
+    lua_pushnil(lua);
+    lua_pushliteral(lua, "no embedded assets");
+    return 2;
+  }
+  tree_sha256 = vectis_embedded_fs_tree_sha256(context->embedded_fs);
+  if (tree_sha256 == NULL) {
+    lua_pushnil(lua);
+    lua_pushliteral(lua, "embedded asset tree hash is unavailable");
+    return 2;
+  }
+  lua_pushstring(lua, tree_sha256);
   return 1;
 }
 
@@ -8481,6 +8560,8 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "has_assets");
   lua_pushcfunction(lua, vectis_lua_embedded_default_extract_policy);
   lua_setfield(lua, -2, "default_extract_policy");
+  lua_pushcfunction(lua, vectis_lua_embedded_tree_sha256);
+  lua_setfield(lua, -2, "tree_sha256");
   lua_pushcfunction(lua, vectis_lua_embedded_read);
   lua_setfield(lua, -2, "read");
   lua_pushcfunction(lua, vectis_lua_embedded_stat);

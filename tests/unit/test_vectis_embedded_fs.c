@@ -97,7 +97,10 @@ static vectis_status chunk_entry(const void *data, size_t size, void *userdata,
 static vectis_embedded_fs *new_fixture_fs(vectis_error *error) {
   static const unsigned char payload[] = "hello\napp\n";
   static const char manifest[] =
-      "{\"format\":\"vectis-pack\",\"assets\":["
+      "{\"format\":\"vectis-pack\","
+      "\"tree_sha256\":"
+      "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\","
+      "\"assets\":["
       "{\"path\":\"/index.html\",\"offset\":0,\"size\":6,"
       "\"sha256\":"
       "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\","
@@ -182,6 +185,11 @@ int main(void) {
       "{\"path\":\"/index.html\",\"offset\":0,\"size\":6,"
       "\"sha256\":"
       "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"}]}";
+  static const char invalid_tree_hash_manifest[] =
+      "{\"format\":\"vectis-pack\",\"tree_sha256\":\"bad\",\"assets\":["
+      "{\"path\":\"/index.html\",\"offset\":0,\"size\":6,"
+      "\"sha256\":"
+      "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"}]}";
   vectis_embedded_fs_config config;
 
   vectis_error_clear(&error);
@@ -192,6 +200,17 @@ int main(void) {
   expect(vectis_embedded_fs_default_extract_policy(fs) ==
              VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS,
          "manifest without extract_mode defaults to fail_exists");
+  expect(fs->tree_sha256 != NULL &&
+             strcmp(fs->tree_sha256(fs),
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") ==
+                 0,
+         "receiver exposes manifest asset tree hash");
+  expect(strcmp(vectis_embedded_fs_tree_sha256(fs),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") ==
+             0,
+         "wrapper exposes manifest asset tree hash");
+  expect(vectis_embedded_fs_tree_sha256(NULL) == NULL,
+         "null embedded fs has no tree hash");
   expect(strcmp(vectis_embedded_fs_extract_policy_string(
                     VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING),
                 "skip_existing") == 0,
@@ -359,6 +378,16 @@ int main(void) {
   status = vectis_embedded_fs_from_pack(&config, &fs, &error);
   expect(status == VECTIS_ERR_INVALID && fs == NULL,
          "rejects invalid manifest default extract policy");
+
+  vectis_embedded_fs_config_init(&config);
+  config.payload = "hello\n";
+  config.payload_size = 6u;
+  config.manifest_json = invalid_tree_hash_manifest;
+  config.manifest_json_size = sizeof(invalid_tree_hash_manifest) - 1u;
+  fs = NULL;
+  status = vectis_embedded_fs_from_pack(&config, &fs, &error);
+  expect(status == VECTIS_ERR_INVALID && fs == NULL,
+         "rejects invalid manifest asset tree hash");
 
   vectis_embedded_fs_config_init(&config);
   config.payload = bad_payload;
