@@ -217,6 +217,8 @@ Required Lua concepts:
 - `vectis.embedded.default_extract_policy()`
 - `vectis.embedded.extract({to=..., policy=...})`
 - `vectis.cert.generate_bundle({common_name=..., output_bundle_path=...})`
+- `vectis.cert.inspect_bundle(path_or_table)`, returning subject, issuer,
+  validity, serial, public-key metadata, CA flag, and SAN entries.
 - `vectis.cert.validate_bundle(path_or_table)`
 - `vectis.cert.validate_pair({certificate_path=..., private_key_path=...,
   ca_bundle_path=...})`

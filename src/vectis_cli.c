@@ -1,5 +1,6 @@
 #include "vectis_cli.h"
 
+#include <arpa/inet.h>
 #include <cpkt/lua_runtime.h>
 #include <curl/curl.h>
 #include <dirent.h>
@@ -13,8 +14,12 @@
 #include <lonejson.h>
 #include <lonejson_lua.h>
 #include <lua.h>
+#include <openssl/bn.h>
 #include <openssl/evp.h>
+#include <openssl/pem.h>
 #include <openssl/sha.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8342,6 +8347,223 @@ static int vectis_lua_cert_validate_bundle(lua_State *lua) {
   return 1;
 }
 
+static X509 *vectis_lua_cert_read_x509_file(lua_State *lua, const char *path) {
+  unsigned char *pem;
+  size_t pem_size;
+  BIO *bio;
+  X509 *cert;
+
+  pem = NULL;
+  pem_size = 0u;
+  if (vectis_read_all(path, &pem, &pem_size) != 0 || pem_size == 0u) {
+    free(pem);
+    (void)vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                     "failed to read certificate bundle");
+    return NULL;
+  }
+  bio = BIO_new_mem_buf(pem, (int)pem_size);
+  if (bio == NULL) {
+    free(pem);
+    (void)vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                     "failed to allocate certificate reader");
+    return NULL;
+  }
+  cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+  BIO_free(bio);
+  free(pem);
+  if (cert == NULL) {
+    (void)vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                     "failed to parse certificate from bundle");
+    return NULL;
+  }
+  return cert;
+}
+
+static void vectis_lua_cert_name_field(lua_State *lua, X509_NAME *name,
+                                       int nid, const char *field) {
+  char value[512];
+  int len;
+
+  if (name == NULL) {
+    return;
+  }
+  len = X509_NAME_get_text_by_NID(name, nid, value, (int)sizeof(value));
+  if (len < 0) {
+    return;
+  }
+  lua_pushlstring(lua, value, (size_t)len);
+  lua_setfield(lua, -2, field);
+}
+
+static void vectis_lua_cert_push_name(lua_State *lua, X509_NAME *name) {
+  lua_newtable(lua);
+  vectis_lua_cert_name_field(lua, name, NID_commonName, "common_name");
+  vectis_lua_cert_name_field(lua, name, NID_organizationName, "organization");
+  vectis_lua_cert_name_field(lua, name, NID_organizationalUnitName,
+                             "organizational_unit");
+  vectis_lua_cert_name_field(lua, name, NID_countryName, "country");
+  vectis_lua_cert_name_field(lua, name, NID_stateOrProvinceName, "state");
+  vectis_lua_cert_name_field(lua, name, NID_localityName, "locality");
+}
+
+static void vectis_lua_cert_time_field(lua_State *lua, const ASN1_TIME *time,
+                                       const char *field) {
+  BIO *bio;
+  char *data;
+  long len;
+
+  if (time == NULL) {
+    return;
+  }
+  bio = BIO_new(BIO_s_mem());
+  if (bio == NULL) {
+    return;
+  }
+  if (ASN1_TIME_print(bio, time) != 1) {
+    BIO_free(bio);
+    return;
+  }
+  len = BIO_get_mem_data(bio, &data);
+  if (len > 0 && data != NULL) {
+    lua_pushlstring(lua, data, (size_t)len);
+    lua_setfield(lua, -2, field);
+  }
+  BIO_free(bio);
+}
+
+static const char *vectis_lua_cert_public_key_type(EVP_PKEY *key) {
+  if (key == NULL) {
+    return "unknown";
+  }
+  switch (EVP_PKEY_base_id(key)) {
+  case EVP_PKEY_RSA:
+    return "rsa";
+  case EVP_PKEY_EC:
+    return "ec";
+#ifdef EVP_PKEY_ED25519
+  case EVP_PKEY_ED25519:
+    return "ed25519";
+#endif
+#ifdef EVP_PKEY_ED448
+  case EVP_PKEY_ED448:
+    return "ed448";
+#endif
+  default:
+    return "unknown";
+  }
+}
+
+static void vectis_lua_cert_push_san(lua_State *lua, X509 *cert) {
+  GENERAL_NAMES *names;
+  GENERAL_NAME *name;
+  const ASN1_STRING *string;
+  const unsigned char *data;
+  char ip[INET6_ADDRSTRLEN];
+  int dns_count;
+  int ip_count;
+  int i;
+  int count;
+  int len;
+
+  lua_newtable(lua);
+  lua_newtable(lua);
+  lua_setfield(lua, -2, "dns_names");
+  lua_newtable(lua);
+  lua_setfield(lua, -2, "ip_addresses");
+
+  names = X509_get_ext_d2i(cert, NID_subject_alt_name, NULL, NULL);
+  if (names == NULL) {
+    return;
+  }
+  count = sk_GENERAL_NAME_num(names);
+  dns_count = 0;
+  ip_count = 0;
+  for (i = 0; i < count; ++i) {
+    name = sk_GENERAL_NAME_value(names, i);
+    if (name == NULL) {
+      continue;
+    }
+    if (name->type == GEN_DNS) {
+      string = name->d.dNSName;
+      data = ASN1_STRING_get0_data(string);
+      len = ASN1_STRING_length(string);
+      if (data == NULL || len < 0) {
+        continue;
+      }
+      lua_getfield(lua, -1, "dns_names");
+      lua_pushlstring(lua, (const char *)data, (size_t)len);
+      lua_rawseti(lua, -2, ++dns_count);
+      lua_pop(lua, 1);
+    } else if (name->type == GEN_IPADD) {
+      string = name->d.iPAddress;
+      data = ASN1_STRING_get0_data(string);
+      len = ASN1_STRING_length(string);
+      if (data == NULL ||
+          ((len != 4 || inet_ntop(AF_INET, data, ip, sizeof(ip)) == NULL) &&
+           (len != 16 || inet_ntop(AF_INET6, data, ip, sizeof(ip)) == NULL))) {
+        continue;
+      }
+      lua_getfield(lua, -1, "ip_addresses");
+      lua_pushstring(lua, ip);
+      lua_rawseti(lua, -2, ++ip_count);
+      lua_pop(lua, 1);
+    }
+  }
+  GENERAL_NAMES_free(names);
+}
+
+static int vectis_lua_cert_inspect_bundle(lua_State *lua) {
+  X509 *cert;
+  EVP_PKEY *key;
+  BASIC_CONSTRAINTS *constraints;
+  BIGNUM *serial_bn;
+  char *serial_hex;
+  const char *path;
+
+  path = vectis_lua_cert_path_arg(lua, 1, "bundle_path", "path", "bundle");
+  cert = vectis_lua_cert_read_x509_file(lua, path);
+  if (cert == NULL) {
+    return 2;
+  }
+  key = X509_get_pubkey(cert);
+  constraints = X509_get_ext_d2i(cert, NID_basic_constraints, NULL, NULL);
+  serial_bn = ASN1_INTEGER_to_BN(X509_get_serialNumber(cert), NULL);
+  serial_hex = serial_bn != NULL ? BN_bn2hex(serial_bn) : NULL;
+
+  lua_newtable(lua);
+  lua_pushstring(lua, path);
+  lua_setfield(lua, -2, "path");
+  lua_pushinteger(lua, (lua_Integer)(X509_get_version(cert) + 1L));
+  lua_setfield(lua, -2, "version");
+  if (serial_hex != NULL) {
+    lua_pushstring(lua, serial_hex);
+    lua_setfield(lua, -2, "serial_hex");
+  }
+  vectis_lua_cert_time_field(lua, X509_get0_notBefore(cert), "not_before");
+  vectis_lua_cert_time_field(lua, X509_get0_notAfter(cert), "not_after");
+  lua_pushboolean(lua, constraints != NULL && constraints->ca);
+  lua_setfield(lua, -2, "is_ca");
+  lua_pushstring(lua, vectis_lua_cert_public_key_type(key));
+  lua_setfield(lua, -2, "public_key_type");
+  if (key != NULL) {
+    lua_pushinteger(lua, (lua_Integer)EVP_PKEY_bits(key));
+    lua_setfield(lua, -2, "public_key_bits");
+  }
+  vectis_lua_cert_push_name(lua, X509_get_subject_name(cert));
+  lua_setfield(lua, -2, "subject");
+  vectis_lua_cert_push_name(lua, X509_get_issuer_name(cert));
+  lua_setfield(lua, -2, "issuer");
+  vectis_lua_cert_push_san(lua, cert);
+  lua_setfield(lua, -2, "subject_alt_names");
+
+  OPENSSL_free(serial_hex);
+  BN_free(serial_bn);
+  BASIC_CONSTRAINTS_free(constraints);
+  EVP_PKEY_free(key);
+  X509_free(cert);
+  return 1;
+}
+
 static int vectis_lua_cert_validate_pair(lua_State *lua) {
   vectis_source certificate;
   vectis_source private_key;
@@ -8380,6 +8602,8 @@ static void vectis_lua_push_cert_table(lua_State *lua) {
   lua_newtable(lua);
   lua_pushcfunction(lua, vectis_lua_cert_generate_bundle);
   lua_setfield(lua, -2, "generate_bundle");
+  lua_pushcfunction(lua, vectis_lua_cert_inspect_bundle);
+  lua_setfield(lua, -2, "inspect_bundle");
   lua_pushcfunction(lua, vectis_lua_cert_validate_bundle);
   lua_setfield(lua, -2, "validate_bundle");
   lua_pushcfunction(lua, vectis_lua_cert_validate_pair);

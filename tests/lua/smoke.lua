@@ -679,6 +679,7 @@ assert(type(vectis.http.download) == "function")
 
 assert(type(vectis.cert) == "table")
 assert(type(vectis.cert.generate_bundle) == "function")
+assert(type(vectis.cert.inspect_bundle) == "function")
 assert(type(vectis.cert.validate_bundle) == "function")
 assert(type(vectis.cert.validate_pair) == "function")
 

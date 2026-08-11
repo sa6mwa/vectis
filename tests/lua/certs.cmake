@@ -37,6 +37,7 @@ local function base64(data)
 end
 
 assert(type(vectis.cert.generate_bundle) == "function")
+assert(type(vectis.cert.inspect_bundle) == "function")
 assert(type(vectis.cert.validate_bundle) == "function")
 assert(type(vectis.cert.validate_pair) == "function")
 
@@ -53,6 +54,22 @@ assert(vectis.cert.generate_bundle({
 
 assert(vectis.cert.validate_bundle(bundle_path) == true)
 assert(vectis.cert.validate_bundle({bundle_path = bundle_path}) == true)
+local inspected = assert(vectis.cert.inspect_bundle(bundle_path))
+assert(inspected.path == bundle_path)
+assert(inspected.version == 3)
+assert(type(inspected.serial_hex) == "string")
+assert(#inspected.serial_hex > 0)
+assert(type(inspected.not_before) == "string")
+assert(type(inspected.not_after) == "string")
+assert(inspected.is_ca == false)
+assert(inspected.public_key_type == "rsa")
+assert(inspected.public_key_bits == 2048)
+assert(inspected.subject.common_name == "localhost")
+assert(inspected.issuer.common_name == "localhost")
+assert(inspected.subject_alt_names.dns_names[1] == "localhost")
+assert(inspected.subject_alt_names.ip_addresses[1] == "127.0.0.1")
+local inspected_table = assert(vectis.cert.inspect_bundle({bundle_path = bundle_path}))
+assert(inspected_table.subject.common_name == "localhost")
 assert(vectis.cert.validate_pair({
   certificate_path = cert_path,
   private_key_path = key_path,
@@ -121,6 +138,12 @@ assert(type(malformed_error) == "table")
 assert(malformed_error.status == vectis.ERR_INVALID)
 assert(malformed_error.status_string == vectis.status_string(vectis.ERR_INVALID))
 assert(malformed_error.message:find("parse certificate", 1, true))
+local malformed_inspect, malformed_inspect_error =
+    vectis.cert.inspect_bundle({path = malformed_path})
+assert(malformed_inspect == nil)
+assert(type(malformed_inspect_error) == "table")
+assert(malformed_inspect_error.status == vectis.ERR_INVALID)
+assert(malformed_inspect_error.message:find("parse certificate", 1, true))
 ]])
 
 execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${bundle_path}"
