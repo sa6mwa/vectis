@@ -152,6 +152,28 @@ assert(api_server:auth_json({
   },
   body = '{"ok":true,"guarded":true}\n',
 }) == true)
+local callback_provider = assert(vectis.auth.provider_callback(function(request)
+  if request.authorization == "Bearer callback-ok" and
+      request.resource == "/callback-guarded" then
+    return {action = "allow", principal = "callback-user"}
+  end
+  return {
+    action = "required",
+    status_code = 401,
+    www_authenticate = 'Bearer realm="callback"',
+    content_type = "text/plain; charset=utf-8",
+    body = "callback login required\n",
+  }
+end))
+assert(api_server:auth_json({
+  path = "/callback-guarded",
+  auth = {
+    provider = callback_provider,
+    purpose = "callback",
+    allowed_modes = {"bearer"},
+  },
+  body = '{"ok":true,"provider":"callback"}\n',
+}) == true)
 assert(api_server:static_directory({
   path_prefix = "/files",
   root_dir = static_dir,
@@ -211,6 +233,29 @@ assert(guarded_created.ok == true,
 assert(guarded_created.status == 202)
 assert(guarded_created.body == '{"ok":true,"guarded":true}\n')
 assert(guarded_created.headers:lower():find("cache-control: no-store", 1, true))
+local callback_required = vectis.http.request({
+  url = "http://127.0.0.1:28484/callback-guarded",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(callback_required.status == 401)
+assert(callback_required.body == "callback login required\n")
+assert(callback_required.headers:lower():find('www-authenticate: bearer realm="callback"', 1, true))
+local callback_allowed = vectis.http.request({
+  url = "http://127.0.0.1:28484/callback-guarded",
+  headers = {Authorization = "Bearer callback-ok"},
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(callback_allowed.ok == true,
+       callback_allowed.error and callback_allowed.error.message)
+assert(callback_allowed.status == 200)
+assert(callback_allowed.body == '{"ok":true,"provider":"callback"}\n')
+assert(callback_allowed.headers:lower():find("cache-control: no-store", 1, true))
 local static_index = vectis.http.request({
   url = "http://127.0.0.1:28484/files",
   protocols = "http",

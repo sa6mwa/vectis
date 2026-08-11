@@ -227,6 +227,9 @@ Required Lua concepts:
 - `server:static_embedded({path_prefix=..., cache_control=...})`
 - `server:webdav_embedded_site({path_prefix=..., cache_dir=..., site_id=...,
   extract_policy=..., auth={kind="native", credentials_path=...}})`
+- `server:webdav_embedded_site({path_prefix=..., cache_dir=..., site_id=...,
+  auth={provider=vectis.auth.provider_callback(fn), purpose=...}})` for
+  developer-provided auth adapters wired into the C-owned WebDAV receiver.
 - `server:auth_routes({path_prefix=..., credentials_path=..., realm=...,
   login_template_path=..., required_factors={"email_token"}})`
 - `server:auth_routes({path_prefix=..., credentials_path=..., realm=...,
@@ -237,6 +240,8 @@ Required Lua concepts:
 - `server:auth_json({path=..., method=..., status=...,
   auth={kind="native", credentials_path=...}, body=...})` for small C-owned
   guarded JSON endpoints in service scenarios.
+- `server:auth_json({path=..., auth={provider=...}, body=...})` for guarded
+  service endpoints backed by a native or developer-provided auth provider.
 - `server:consumer_service({ ... })` is the Lua registration point for
   same-process lockd consumer service wiring. It creates a C-owned
   `vectis_consumer_service` receiver around liblockdc and starts it by default.
@@ -293,6 +298,8 @@ The WebDAV overlay model must support:
 
 - protected WebDAV mounts backed by `vectis_webdav_auth_fn`,
 - native auth provider or developer-provided auth provider,
+- Lua developer auth providers crossing the C/Lua boundary through explicit
+  provider request/response tables, while WebDAV remains C-owned,
 - extracted docroot initialization before the server starts accepting writes,
 - optional repair mode that restores embedded files that are missing or fail
   hash verification,
@@ -522,8 +529,9 @@ rejects writes through the read-only mount, extracts the embedded
 assets into the disk WebDAV content tree before accepting WebDAV operations,
 verifies generated files are present in that extracted docroot, verifies repair
 restores stale embedded files while preserving pre-existing mutable files,
-exposes native auth routes, protects a JSON API route through the same native
-provider, delivers an email token through a local mock SMTP server, turns
+exposes native auth routes, protects JSON API routes through native and
+Lua callback auth providers, protects a WebDAV mount through a Lua callback
+auth provider, delivers an email token through a local mock SMTP server, turns
 password-only login for a TOTP/email-token route into a pending transaction,
 loads a native auth login template from the packed embedded asset filesystem
 and expands its placeholders through the running packed service, rejects

@@ -62,9 +62,16 @@ typedef struct vectis_lua_memory_source {
 } vectis_lua_memory_source;
 
 typedef struct vectis_lua_server_native_auth {
+  lua_State *lua;
   char *credentials_path;
   char *purpose;
   char *realm;
+  char *callback_location;
+  char *callback_content_type;
+  char *callback_body;
+  size_t callback_body_size;
+  int callback_ref;
+  unsigned allowed_auth_modes;
   vectis_auth_native_provider_config native_config;
   vectis_auth_provider provider;
   vectis_webdav_auth_provider_config webdav_config;
@@ -3807,11 +3814,30 @@ static vectis_app *vectis_lua_server_app(lua_State *lua, int index) {
   return server->app;
 }
 
+static void vectis_lua_server_native_auth_clear_callback(
+    vectis_lua_server_native_auth *auth) {
+  if (auth == NULL) {
+    return;
+  }
+  free(auth->callback_location);
+  free(auth->callback_content_type);
+  free(auth->callback_body);
+  auth->callback_location = NULL;
+  auth->callback_content_type = NULL;
+  auth->callback_body = NULL;
+  auth->callback_body_size = 0u;
+}
+
 static void
 vectis_lua_server_native_auth_free(vectis_lua_server_native_auth *auth) {
   if (auth == NULL) {
     return;
   }
+  if (auth->lua != NULL && auth->callback_ref != LUA_NOREF) {
+    luaL_unref(auth->lua, LUA_REGISTRYINDEX, auth->callback_ref);
+    auth->callback_ref = LUA_NOREF;
+  }
+  vectis_lua_server_native_auth_clear_callback(auth);
   free(auth->credentials_path);
   free(auth->purpose);
   free(auth->realm);
@@ -3984,6 +4010,201 @@ static int vectis_lua_copy_string_field(lua_State *lua, int index,
   return value == NULL || *out != NULL;
 }
 
+static int vectis_lua_server_auth_copy_response_field(lua_State *lua, int index,
+                                                      const char *field,
+                                                      char **out,
+                                                      size_t *out_size,
+                                                      vectis_error *error) {
+  size_t len;
+  const char *value;
+
+  *out = NULL;
+  if (out_size != NULL) {
+    *out_size = 0u;
+  }
+  lua_getfield(lua, index, field);
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return 1;
+  }
+  value = lua_tolstring(lua, -1, &len);
+  if (value == NULL) {
+    lua_pop(lua, 1);
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "auth callback response string field is invalid");
+    return 0;
+  }
+  *out = (char *)malloc(len + 1u);
+  if (*out == NULL) {
+    lua_pop(lua, 1);
+    vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
+                         "failed to copy auth callback response field");
+    return 0;
+  }
+  memcpy(*out, value, len);
+  (*out)[len] = '\0';
+  if (out_size != NULL) {
+    *out_size = len;
+  }
+  lua_pop(lua, 1);
+  return 1;
+}
+
+static vectis_auth_action
+vectis_lua_server_auth_action_from_name(const char *action) {
+  if (action != NULL && strcmp(action, "allow") == 0) {
+    return VECTIS_AUTH_ALLOW;
+  }
+  if (action != NULL && strcmp(action, "required") == 0) {
+    return VECTIS_AUTH_REQUIRED;
+  }
+  if (action != NULL && strcmp(action, "redirect") == 0) {
+    return VECTIS_AUTH_REDIRECT;
+  }
+  return VECTIS_AUTH_DENY;
+}
+
+static vectis_status vectis_lua_server_callback_authenticate(
+    const vectis_auth_provider_request *request,
+    vectis_auth_provider_response *response, void *userdata,
+    vectis_error *error) {
+  vectis_lua_server_native_auth *auth;
+  lua_State *lua;
+  int base;
+  int response_index;
+  const char *authorization;
+  const char *action;
+  const char *principal;
+  lua_Integer status_code;
+
+  auth = (vectis_lua_server_native_auth *)userdata;
+  if (auth == NULL || auth->lua == NULL || auth->callback_ref == LUA_NOREF) {
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "Lua auth callback provider is not configured");
+    return VECTIS_ERR_INVALID;
+  }
+  lua = auth->lua;
+  authorization = request != NULL ? request->authorization : NULL;
+  if (authorization == NULL && request != NULL && request->request != NULL) {
+    authorization = vectis_request_header(request->request, "authorization");
+  }
+  base = lua_gettop(lua);
+  vectis_lua_server_native_auth_clear_callback(auth);
+  vectis_auth_provider_response_init(response);
+
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, auth->callback_ref);
+  if (!lua_isfunction(lua, -1)) {
+    lua_settop(lua, base);
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "Lua auth callback reference is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  lua_newtable(lua);
+  if (authorization != NULL) {
+    lua_pushstring(lua, authorization);
+    lua_setfield(lua, -2, "authorization");
+  }
+  if (request != NULL && request->purpose != NULL) {
+    lua_pushstring(lua, request->purpose);
+    lua_setfield(lua, -2, "purpose");
+  }
+  if (request != NULL && request->resource != NULL) {
+    lua_pushstring(lua, request->resource);
+    lua_setfield(lua, -2, "resource");
+  }
+  lua_pushinteger(
+      lua, request != NULL ? (lua_Integer)request->allowed_auth_modes : 0);
+  lua_setfield(lua, -2, "allowed_modes");
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    action = lua_tostring(lua, -1);
+    vectis_cli_error_set(error, VECTIS_ERR_STATE,
+                         action != NULL ? action : "Lua auth callback failed");
+    lua_settop(lua, base);
+    return VECTIS_ERR_STATE;
+  }
+  if (!lua_istable(lua, -1)) {
+    lua_settop(lua, base);
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "Lua auth callback must return a response table");
+    return VECTIS_ERR_INVALID;
+  }
+  response_index = lua_absindex(lua, -1);
+  lua_getfield(lua, response_index, "action");
+  action = lua_isnil(lua, -1) ? "deny" : lua_tostring(lua, -1);
+  if (action == NULL ||
+      !(strcmp(action, "allow") == 0 || strcmp(action, "deny") == 0 ||
+        strcmp(action, "required") == 0 || strcmp(action, "redirect") == 0)) {
+    lua_settop(lua, base);
+    vectis_cli_error_set(
+        error, VECTIS_ERR_INVALID,
+        "Lua auth callback action must be allow, deny, required, or redirect");
+    return VECTIS_ERR_INVALID;
+  }
+  response->action = vectis_lua_server_auth_action_from_name(action);
+  lua_pop(lua, 1);
+
+  lua_getfield(lua, response_index, "status_code");
+  if (lua_isnil(lua, -1)) {
+    status_code = 0;
+  } else if (lua_isnumber(lua, -1)) {
+    status_code = lua_tointeger(lua, -1);
+  } else {
+    lua_settop(lua, base);
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "Lua auth callback status_code must be a number");
+    return VECTIS_ERR_INVALID;
+  }
+  lua_pop(lua, 1);
+  response->status_code = (int)status_code;
+
+  if (!vectis_lua_server_auth_copy_response_field(
+          lua, response_index, "location", &auth->callback_location, NULL,
+          error) ||
+      !vectis_lua_server_auth_copy_response_field(
+          lua, response_index, "content_type", &auth->callback_content_type,
+          NULL, error) ||
+      !vectis_lua_server_auth_copy_response_field(
+          lua, response_index, "body", &auth->callback_body,
+          &auth->callback_body_size, error)) {
+    lua_settop(lua, base);
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  response->location = auth->callback_location;
+  response->content_type = auth->callback_content_type;
+  response->body = auth->callback_body;
+  response->body_size = auth->callback_body_size;
+
+  lua_getfield(lua, response_index, "www_authenticate");
+  if (!lua_isnil(lua, -1)) {
+    action = lua_tostring(lua, -1);
+    if (action == NULL) {
+      lua_settop(lua, base);
+      vectis_cli_error_set(
+          error, VECTIS_ERR_INVALID,
+          "Lua auth callback www_authenticate must be a string");
+      return VECTIS_ERR_INVALID;
+    }
+    snprintf(response->www_authenticate, sizeof(response->www_authenticate),
+             "%s", action);
+  }
+  lua_pop(lua, 1);
+
+  lua_getfield(lua, response_index, "principal");
+  if (!lua_isnil(lua, -1)) {
+    principal = lua_tostring(lua, -1);
+    if (principal == NULL) {
+      lua_settop(lua, base);
+      vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                           "Lua auth callback principal must be a string");
+      return VECTIS_ERR_INVALID;
+    }
+    snprintf(response->principal, sizeof(response->principal), "%s", principal);
+  }
+  lua_pop(lua, 1);
+  lua_settop(lua, base);
+  return VECTIS_OK;
+}
+
 static vectis_lua_server_native_auth *
 vectis_lua_server_native_auth_new(lua_State *lua, int index,
                                   const char *context, vectis_error *error) {
@@ -3993,43 +4214,130 @@ vectis_lua_server_native_auth_new(lua_State *lua, int index,
   const char *purpose;
   const char *realm;
   unsigned modes;
+  int provider_index;
 
   index = lua_absindex(lua, index);
   (void)context;
+  provider_index = index;
+  lua_getfield(lua, index, "provider");
+  if (lua_istable(lua, -1)) {
+    provider_index = lua_absindex(lua, -1);
+  } else {
+    lua_pop(lua, 1);
+  }
   kind = vectis_lua_table_string(lua, index, "kind");
+  if (kind == NULL && provider_index != index) {
+    kind = vectis_lua_table_string(lua, provider_index, "kind");
+  }
+  purpose = vectis_lua_table_string(lua, index, "purpose");
+  if (purpose == NULL && provider_index != index) {
+    purpose = vectis_lua_table_string(lua, provider_index, "purpose");
+  }
+  realm = vectis_lua_table_string(lua, index, "realm");
+  if (realm == NULL && provider_index != index) {
+    realm = vectis_lua_table_string(lua, provider_index, "realm");
+  }
+  modes = vectis_lua_auth_modes_field(lua, index, "allowed_modes", 0u);
+  if (modes == 0u && provider_index != index) {
+    modes =
+        vectis_lua_auth_modes_field(lua, provider_index, "allowed_modes", 0u);
+  }
+  if (modes == 0u) {
+    modes = vectis_lua_auth_modes_field(lua, index, "modes", 0u);
+  }
+  if (modes == 0u && provider_index != index) {
+    modes = vectis_lua_auth_modes_field(lua, provider_index, "modes", 0u);
+  }
+  if (modes == 0u) {
+    modes = VECTIS_AUTH_MODE_BASIC;
+  }
+  if (kind != NULL && strcmp(kind, "callback") == 0) {
+    auth = (vectis_lua_server_native_auth *)calloc(1u, sizeof(*auth));
+    if (auth == NULL) {
+      if (provider_index != index) {
+        lua_pop(lua, 1);
+      }
+      vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
+                           "failed to allocate callback auth adapter");
+      return NULL;
+    }
+    auth->lua = lua;
+    auth->callback_ref = LUA_NOREF;
+    auth->purpose = vectis_cli_strdup(purpose != NULL ? purpose : "webdav");
+    auth->realm = vectis_cli_strdup(realm != NULL ? realm : "vectis");
+    if (auth->purpose == NULL || auth->realm == NULL) {
+      if (provider_index != index) {
+        lua_pop(lua, 1);
+      }
+      vectis_lua_server_native_auth_free(auth);
+      vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
+                           "failed to copy callback auth adapter config");
+      return NULL;
+    }
+    lua_getfield(lua, provider_index, "callback");
+    if (!lua_isfunction(lua, -1)) {
+      lua_pop(lua, 1);
+      if (provider_index != index) {
+        lua_pop(lua, 1);
+      }
+      vectis_lua_server_native_auth_free(auth);
+      vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                           "callback auth provider callback is required");
+      return NULL;
+    }
+    auth->callback_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+    auth->allowed_auth_modes = modes;
+    vectis_webdav_auth_provider_config_init(&auth->webdav_config);
+    auth->webdav_config.provider = &auth->provider;
+    auth->webdav_config.purpose = auth->purpose;
+    auth->webdav_config.allowed_auth_modes = modes;
+    auth->provider.authenticate = vectis_lua_server_callback_authenticate;
+    auth->provider.userdata = auth;
+    if (provider_index != index) {
+      lua_pop(lua, 1);
+    }
+    return auth;
+  }
   if (kind != NULL && strcmp(kind, "native") != 0) {
+    if (provider_index != index) {
+      lua_pop(lua, 1);
+    }
     vectis_cli_error_set(error, VECTIS_ERR_INVALID,
-                         "native auth kind must be native");
+                         "server auth kind must be native or callback");
     return NULL;
   }
-  credentials_path = vectis_lua_table_string(lua, index, "credentials_path");
+  credentials_path =
+      vectis_lua_table_string(lua, provider_index, "credentials_path");
   if (credentials_path == NULL) {
-    credentials_path = vectis_lua_table_string(lua, index, "path");
+    credentials_path = vectis_lua_table_string(lua, provider_index, "path");
   }
   if (credentials_path == NULL || credentials_path[0] == '\0') {
+    if (provider_index != index) {
+      lua_pop(lua, 1);
+    }
     vectis_cli_error_set(error, VECTIS_ERR_INVALID,
                          "native auth credentials_path is required");
     return NULL;
   }
-  purpose = vectis_lua_table_string(lua, index, "purpose");
-  realm = vectis_lua_table_string(lua, index, "realm");
-  modes = vectis_lua_auth_modes_field(lua, index, "allowed_modes", 0u);
-  if (modes == 0u) {
-    modes = vectis_lua_auth_modes_field(lua, index, "modes",
-                                        VECTIS_AUTH_MODE_BASIC);
-  }
 
   auth = (vectis_lua_server_native_auth *)calloc(1u, sizeof(*auth));
   if (auth == NULL) {
+    if (provider_index != index) {
+      lua_pop(lua, 1);
+    }
     vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
                          "failed to allocate native auth adapter");
     return NULL;
   }
+  auth->callback_ref = LUA_NOREF;
   auth->credentials_path = vectis_cli_strdup(credentials_path);
   auth->purpose = vectis_cli_strdup(purpose != NULL ? purpose : "webdav");
   auth->realm = vectis_cli_strdup(realm != NULL ? realm : "vectis");
   if (auth->credentials_path == NULL || auth->purpose == NULL ||
       auth->realm == NULL) {
+    if (provider_index != index) {
+      lua_pop(lua, 1);
+    }
     vectis_lua_server_native_auth_free(auth);
     vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
                          "failed to copy native auth adapter config");
@@ -4043,14 +4351,21 @@ vectis_lua_server_native_auth_new(lua_State *lua, int index,
   auth->native_config.purpose = auth->purpose;
   auth->native_config.realm = auth->realm;
   auth->native_config.allowed_auth_modes = modes;
+  auth->allowed_auth_modes = modes;
   vectis_webdav_auth_provider_config_init(&auth->webdav_config);
   auth->webdav_config.provider = &auth->provider;
   auth->webdav_config.purpose = auth->purpose;
   auth->webdav_config.allowed_auth_modes = modes;
   if (vectis_auth_provider_from_native_store(
           &auth->provider, &auth->native_config, error) != VECTIS_OK) {
+    if (provider_index != index) {
+      lua_pop(lua, 1);
+    }
     vectis_lua_server_native_auth_free(auth);
     return NULL;
+  }
+  if (provider_index != index) {
+    lua_pop(lua, 1);
   }
   return auth;
 }
@@ -4492,8 +4807,8 @@ vectis_lua_server_auth_json_dispatch(vectis_app *app, vectis_request *request,
   vectis_auth_provider_request_init(&auth_request);
   auth_request.request = request;
   auth_request.purpose = route->purpose;
-  auth_request.allowed_auth_modes =
-      route->auth->native_config.allowed_auth_modes;
+  auth_request.resource = vectis_request_path(request);
+  auth_request.allowed_auth_modes = route->auth->allowed_auth_modes;
   vectis_auth_provider_response_init(&auth_response);
   status = vectis_auth_provider_authenticate(
       &route->auth->provider, &auth_request, &auth_response, error);
