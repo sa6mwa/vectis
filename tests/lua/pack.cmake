@@ -41,6 +41,7 @@ set(no_asset_extract_dir "${WORK_DIR}/no-assets-extract")
 set(asset_extract_dir "${WORK_DIR}/extracted-site")
 set(asset_webdav_cache_dir "${WORK_DIR}/webdav-cache")
 set(asset_webdav_credentials "${WORK_DIR}/webdav-credentials.json")
+set(asset_webdav_state "${WORK_DIR}/webdav-auth-state.json")
 set(asset_https_cert_bundle "${WORK_DIR}/pack-self-signed.pem")
 set(asset_smtp_mailbox "${WORK_DIR}/pack-smtp-mailbox.txt")
 vectis_pick_test_port(asset_http_port)
@@ -301,6 +302,10 @@ file(WRITE "${invalid_content_type_map}" "{\"types\":[{\"extension\":\"bad/exten
 file(WRITE "${asset_script}" "local vectis = require(\"vectis\")\nlocal curl = require(\"curl\")\nlocal extract_to = [[${asset_extract_dir}]]\nlocal webdav_cache = [[${asset_webdav_cache_dir}]]\nlocal webdav_credentials = [[${asset_webdav_credentials}]]\nlocal function read_file(path)\n  local fp = assert(io.open(path, \"rb\"))\n  local body = fp:read(\"*a\")\n  fp:close()\n  return body\nend\nlocal function write_file(path, body)\n  local fp = assert(io.open(path, \"wb\"))\n  fp:write(body)\n  fp:close()\nend\nlocal b64chars = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\"\nlocal function base64(data)\n  local out = {}\n  for i = 1, #data, 3 do\n    local a = data:byte(i) or 0\n    local b = data:byte(i + 1) or 0\n    local c = data:byte(i + 2) or 0\n    local n = a * 65536 + b * 256 + c\n    local pad = (#data - i == 0) and 2 or ((#data - i == 1) and 1 or 0)\n    out[#out + 1] = b64chars:sub(math.floor(n / 262144) % 64 + 1, math.floor(n / 262144) % 64 + 1)\n    out[#out + 1] = b64chars:sub(math.floor(n / 4096) % 64 + 1, math.floor(n / 4096) % 64 + 1)\n    out[#out + 1] = pad >= 2 and \"=\" or b64chars:sub(math.floor(n / 64) % 64 + 1, math.floor(n / 64) % 64 + 1)\n    out[#out + 1] = pad >= 1 and \"=\" or b64chars:sub(n % 64 + 1, n % 64 + 1)\n  end\n  return table.concat(out)\nend\nassert(vectis.embedded.has_assets() == true)\nassert(vectis.embedded.default_extract_policy() == \"repair\")\nassert(vectis.embedded.stat(\"/index.html\").content_type == \"text/html\")\nassert(vectis.embedded.stat(\"/assets/app.css\").content_type == \"text/css\")\nassert(vectis.embedded.stat(\"/assets/app.js\").content_type == \"application/javascript\")\nassert(vectis.embedded.stat(\"/assets/app.txt\").content_type == \"text/plain\")\nassert(vectis.embedded.stat(\"/assets/logo.vxsite\").content_type == \"application/x-vectis-site\")\nassert(vectis.embedded.stat(\"/templates/login.html\").content_type == \"text/html; charset=utf-8\")\nassert(vectis.embedded.stat(\"/assets/app.txt\").size == 23)\nlocal app_txt_sha = vectis.embedded.stat(\"/assets/app.txt\").sha256\nassert(#app_txt_sha == 64)\nassert(app_txt_sha:match(\"^[0-9a-f]+$\"))\nassert(vectis.embedded.read(\"/index.html\"):match(\"Acme Test\"))\nassert(vectis.embedded.read(\"/assets/app.txt\") == \"generic embedded asset\\n\")\nassert(vectis.embedded.read(\"/assets/logo.vxsite\") == \"VX\\n\")\nassert(vectis.embedded.read(\"/templates/login.html\"):match(\"username\"))\nlocal chunks = {}\nfor chunk in vectis.embedded.chunks(\"/assets/app.txt\", 8) do\n  chunks[#chunks + 1] = chunk\nend\nassert(#chunks == 3)\nassert(table.concat(chunks) == \"generic embedded asset\\n\")\nlocal listed = table.concat(vectis.embedded.list(\"/\"), \"\\n\")\nassert(listed:match(\"/index%.html\"))\nassert(listed:match(\"/assets/app%.txt\"))\nassert(listed:match(\"/assets/app%.css\"))\nassert(listed:match(\"/assets/app%.js\"))\nassert(listed:match(\"/assets/logo%.vxsite\"))\nassert(listed:match(\"/templates/login%.html\"))\nlocal missing, err = vectis.embedded.read(\"/missing.txt\")\nassert(missing == nil)\nassert(err == \"embedded asset not found\")\nlocal missing_stat, missing_stat_err = vectis.embedded.stat(\"/missing.txt\")\nassert(missing_stat == nil)\nassert(missing_stat_err == \"embedded asset not found\")\nlocal missing_chunks, missing_chunks_err = vectis.embedded.chunks(\"/missing.txt\", 4)\nassert(missing_chunks == nil)\nassert(missing_chunks_err == \"embedded asset not found\")\nassert(vectis.auth.store_init({credentials_path = webdav_credentials}) == true)\nassert(vectis.auth.user_add({credentials_path = webdav_credentials, username = \"pack-user\", password = \"pack-password\"}).username == \"pack-user\")\nlocal webdav_key = assert(vectis.auth.webdav_key({credentials_path = webdav_credentials, username = \"pack-user\", password = \"pack-password\"}))\nassert(type(webdav_key.client_id) == \"string\")\nassert(type(webdav_key.client_secret) == \"string\")\nlocal basic_auth = \"Basic \" .. base64(webdav_key.client_id .. \":\" .. webdav_key.client_secret)\nlocal server = assert(vectis.server.new({bind = \"127.0.0.1\", port = 28181}))\nassert(server:webdav_embedded_site({path_prefix = \"/dav\", cache_dir = webdav_cache, site_id = \"pack\", extract_policy = \"repair\", auth = {kind = \"native\", credentials_path = webdav_credentials, realm = \"pack\", purpose = \"webdav\"}}) == true)\nassert(server:static_embedded({path_prefix = \"/\", cache_control = \"max-age=60\"}) == true)\nassert(server:start() == true)\nlocal function fetch_http(path)\n  local response\n  for _ = 1, 20 do\n    response = curl.perform({url = \"http://127.0.0.1:28181\" .. path, protocols = \"http\", timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true})\n    if response.ok then return response end\n    os.execute(\"sleep 0.1\")\n  end\n  return response\nend\nlocal function request_http(method, path, body, authorization)\n  return curl.perform({url = \"http://127.0.0.1:28181\" .. path, method = method, body = body, headers = authorization and {Authorization = authorization} or nil, protocols = \"http\", timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true})\nend\nlocal served_root = fetch_http(\"/\")\nassert(served_root.ok == true, served_root.error)\nassert(served_root.status == 200)\nassert(served_root.body:match(\"Acme Test\"))\nlocal served_asset = fetch_http(\"/assets/app.txt\")\nassert(served_asset.ok == true, served_asset.error)\nassert(served_asset.status == 200)\nassert(served_asset.body == \"generic embedded asset\\n\")\nassert(served_asset.headers:lower():find(\"etag:\", 1, true))\nassert(served_asset.headers:lower():find(\"cache-control: max-age=60\", 1, true))\nlocal anonymous_put = request_http(\"PUT\", \"/dav/assets/app.txt\", \"blocked\\n\")\nassert(anonymous_put.status == 401)\nlocal webdav_read = request_http(\"GET\", \"/dav/assets/app.txt\", nil, basic_auth)\nassert(webdav_read.ok == true, webdav_read.error)\nassert(webdav_read.status == 200)\nassert(webdav_read.body == \"generic embedded asset\\n\")\nlocal webdav_put = request_http(\"PUT\", \"/dav/assets/app.txt\", \"webdav mutated\\n\", basic_auth)\nassert(webdav_put.ok == true, webdav_put.error)\nassert(webdav_put.status == 201 or webdav_put.status == 204)\nlocal webdav_mutated = request_http(\"GET\", \"/dav/assets/app.txt\", nil, basic_auth)\nassert(webdav_mutated.ok == true, webdav_mutated.error)\nassert(webdav_mutated.status == 200)\nassert(webdav_mutated.body == \"webdav mutated\\n\")\nlocal embedded_after_webdav = fetch_http(\"/assets/app.txt\")\nassert(embedded_after_webdav.body == \"generic embedded asset\\n\")\nassert(server:stop() == true)\nserver:close()\nassert(vectis.embedded.extract({to = extract_to}) == true)\nassert(read_file(extract_to .. \"/index.html\"):match(\"Acme Test\"))\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\nassert(read_file(extract_to .. \"/assets/app.css\"):match(\"#123456\"))\nassert(read_file(extract_to .. \"/assets/app.js\"):match(\"vectisPackAsset\"))\nassert(read_file(extract_to .. \"/assets/logo.vxsite\") == \"VX\\n\")\nassert(read_file(extract_to .. \"/templates/login.html\"):match(\"username\"))\nassert(vectis.embedded.extract({to = extract_to, policy = \"verify\"}) == true)\nlocal extracted, extract_err = vectis.embedded.extract({to = extract_to, policy = \"fail_exists\"})\nassert(extracted == nil)\nassert(extract_err:match(\"embedded asset already exists\"))\nwrite_file(extract_to .. \"/assets/app.txt\", \"mutated\\n\")\nassert(vectis.embedded.extract({to = extract_to}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\nwrite_file(extract_to .. \"/assets/app.txt\", \"mutated\\n\")\nlocal verified, verify_err = vectis.embedded.extract({to = extract_to, policy = \"verify\"})\nassert(verified == nil)\nassert(verify_err:match(\"embedded asset verification failed\"))\nassert(vectis.embedded.extract({to = extract_to, policy = \"skip-existing\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"mutated\\n\")\nassert(vectis.embedded.extract({to = extract_to, policy = \"repair\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\nwrite_file(extract_to .. \"/user-created.txt\", \"user\\n\")\nos.remove(extract_to .. \"/assets/app.txt\")\nlocal missing_verify, missing_verify_err = vectis.embedded.extract({to = extract_to, policy = \"verify\"})\nassert(missing_verify == nil)\nassert(missing_verify_err:match(\"embedded asset is missing\"))\nassert(vectis.embedded.extract({to = extract_to, policy = \"repair\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\nassert(read_file(extract_to .. \"/user-created.txt\") == \"user\\n\")\nassert(vectis.embedded.extract({to = extract_to, policy = \"overwrite\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\n")
 file(READ "${asset_script}" asset_script_body)
 string(REPLACE
+       "end\nlocal function write_file(path, body)"
+       "end\nlocal function file_contains(path, text)\n  local fp = io.open(path, \"rb\")\n  if fp == nil then return false end\n  local body = fp:read(\"*a\")\n  fp:close()\n  return body:find(text, 1, true) ~= nil\nend\nlocal function write_file(path, body)"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
        "assert(vectis.embedded.stat(\"/assets/app.txt\").content_type == \"text/plain\")"
        "assert(vectis.embedded.stat(\"/assets/app.txt\").content_type == \"text/plain\")\nassert(vectis.embedded.stat(\"/assets/app-link.txt\").content_type == \"text/plain\")\nassert(vectis.embedded.stat(\"/assets/manifest-link.txt\").content_type == \"text/plain\")"
        asset_script_body "${asset_script_body}")
@@ -326,7 +331,7 @@ string(REPLACE
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "local webdav_credentials = [[${asset_webdav_credentials}]]"
-       "local webdav_credentials = [[${asset_webdav_credentials}]]\nlocal file_login_template = [[${asset_file_login_template}]]\nlocal https_cert_bundle = [[${asset_https_cert_bundle}]]\nlocal smtp_url = assert(os.getenv(\"VECTIS_PACK_SMTP_URL\"))\nlocal smtp_mailbox = assert(os.getenv(\"VECTIS_PACK_SMTP_MAILBOX\"))"
+       "local webdav_credentials = [[${asset_webdav_credentials}]]\nlocal webdav_state = [[${asset_webdav_state}]]\nlocal file_login_template = [[${asset_file_login_template}]]\nlocal https_cert_bundle = [[${asset_https_cert_bundle}]]\nlocal smtp_url = assert(os.getenv(\"VECTIS_PACK_SMTP_URL\"))\nlocal smtp_mailbox = assert(os.getenv(\"VECTIS_PACK_SMTP_MAILBOX\"))"
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(vectis.auth.user_add({credentials_path = webdav_credentials, username = \"pack-user\", password = \"pack-password\"}).username == \"pack-user\")"
@@ -338,7 +343,7 @@ string(REPLACE
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(vectis.auth.store_init({credentials_path = webdav_credentials}) == true)"
-       "local direct_smtp = curl.perform({url = smtp_url, protocols = \"smtp\", body = \"Subject: Vectis curl SMTP facade\\r\\n\\r\\ncurl smtp facade body\\r\\n\", smtp = {mail_from = \"curl@example.test\", rcpt = {\"facade@example.test\"}}, timeout_ms = 5000, connect_timeout_ms = 2000, no_signal = true})\nassert(direct_smtp.ok == true, direct_smtp.error)\nlocal direct_mailbox = read_file(smtp_mailbox)\nassert(direct_mailbox:find(\"Subject: Vectis curl SMTP facade\", 1, true))\nassert(direct_mailbox:find(\"curl smtp facade body\", 1, true))\nassert(vectis.auth.store_init({credentials_path = webdav_credentials}) == true)"
+       "local direct_smtp = curl.perform({url = smtp_url, protocols = \"smtp\", body = \"Subject: Vectis curl SMTP facade\\r\\n\\r\\ncurl smtp facade body\\r\\n\", smtp = {mail_from = \"curl@example.test\", rcpt = {\"facade@example.test\"}}, timeout_ms = 5000, connect_timeout_ms = 2000, no_signal = true})\nassert(direct_smtp.ok == true, direct_smtp.error)\nlocal direct_mailbox = read_file(smtp_mailbox)\nassert(direct_mailbox:find(\"Subject: Vectis curl SMTP facade\", 1, true))\nassert(direct_mailbox:find(\"curl smtp facade body\", 1, true))\nassert(vectis.auth.store_init({credentials_path = webdav_credentials, auth_state_path = webdav_state}) == true)\nassert(file_contains(webdav_credentials, '\"users\"'))\nassert(file_contains(webdav_state, '\"pending_logins\"'))"
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "local webdav_key = assert(vectis.auth.webdav_key({credentials_path = webdav_credentials, username = \"pack-user\", password = \"pack-password\"}))\nassert(type(webdav_key.client_id) == \"string\")\nassert(type(webdav_key.client_secret) == \"string\")\nlocal basic_auth = \"Basic \" .. base64(webdav_key.client_id .. \":\" .. webdav_key.client_secret)\nlocal server = assert(vectis.server.new({bind = \"127.0.0.1\", port = 28181}))"
@@ -390,7 +395,7 @@ string(REPLACE
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(password_only_login.status == 202)\nlocal pending_transaction_id"
-       "assert(password_only_login.status == 202)\nassert_no_store(password_only_login)\nlocal password_only_login_alias = request_http(\"POST\", \"/_vectis/auth/login\", \"username=pack-user&password=pack-password\", {[\"Content-Type\"] = \"application/x-www-form-urlencoded\"})\nassert(password_only_login_alias.status == 202)\nassert_no_store(password_only_login_alias)\nlocal alias_pending_transaction_id = assert(password_only_login_alias.body:match(\"pending_transaction_id=([^\\n]+)\"))\nassert(password_only_login_alias.body:match(\"totp_required=1\"))\nlocal pending_transaction_id"
+       "assert(password_only_login.status == 202)\nassert_no_store(password_only_login)\nlocal password_only_login_alias = request_http(\"POST\", \"/_vectis/auth/login\", \"username=pack-user&password=pack-password\", {[\"Content-Type\"] = \"application/x-www-form-urlencoded\"})\nassert(password_only_login_alias.status == 202)\nassert_no_store(password_only_login_alias)\nlocal alias_pending_transaction_id = assert(password_only_login_alias.body:match(\"pending_transaction_id=([^\\n]+)\"))\nassert(password_only_login_alias.body:match(\"totp_required=1\"))\nassert(file_contains(webdav_state, alias_pending_transaction_id))\nassert(file_contains(webdav_credentials, alias_pending_transaction_id) == false)\nlocal pending_transaction_id"
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(token_issue.status == 200)\nlocal email_transaction_id"
@@ -399,6 +404,10 @@ string(REPLACE
 string(REPLACE
        "local token_issue = request_http(\"POST\", \"/_vectis/auth/email-token\", \"username=pack-user&email=pack-user%40example.test\","
        "local token_issue = request_http(\"POST\", \"/_vectis/auth/email-token\", \"username=pack-user&email=pack-user%40example.test&pending_transaction_id=\" .. pending_transaction_id,"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "local email_transaction_id = assert(token_issue.body:match(\"transaction_id=([^\\n]+)\"))"
+       "local email_transaction_id = assert(token_issue.body:match(\"transaction_id=([^\\n]+)\"))\nassert(file_contains(webdav_state, email_transaction_id))\nassert(file_contains(webdav_credentials, email_transaction_id) == false)"
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(login_response.status == 200)\nlocal replay_login"
@@ -475,6 +484,42 @@ string(REPLACE
 string(REPLACE
        "assert(vectis.embedded.extract({to = extract_to, policy = \"overwrite\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")"
        "assert(vectis.embedded.extract({to = extract_to, policy = \"overwrite\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\nassert(read_file(extract_to .. \"/user-created.txt\") == \"user\\n\")"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "local expired_transaction_id = assert(expired_issue.body:match(\"transaction_id=([^\\n]+)\"))"
+       "local expired_transaction_id = assert(expired_issue.body:match(\"transaction_id=([^\\n]+)\"))\nassert(file_contains(webdav_state, expired_transaction_id))\nassert(file_contains(webdav_credentials, expired_transaction_id) == false)"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "local limited_transaction_id = assert(limited_issue.body:match(\"transaction_id=([^\\n]+)\"))"
+       "local limited_transaction_id = assert(limited_issue.body:match(\"transaction_id=([^\\n]+)\"))\nassert(file_contains(webdav_state, limited_transaction_id))\nassert(file_contains(webdav_credentials, limited_transaction_id) == false)"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "local email_only_transaction_id = assert(email_only_issue.body:match(\"transaction_id=([^\\n]+)\"))"
+       "local email_only_transaction_id = assert(email_only_issue.body:match(\"transaction_id=([^\\n]+)\"))\nassert(file_contains(webdav_state, email_only_transaction_id))\nassert(file_contains(webdav_credentials, email_only_transaction_id) == false)"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "local email_only_webdav_key_transaction_id = assert(email_only_webdav_key_issue.body:match(\"transaction_id=([^\\n]+)\"))"
+       "local email_only_webdav_key_transaction_id = assert(email_only_webdav_key_issue.body:match(\"transaction_id=([^\\n]+)\"))\nassert(file_contains(webdav_state, email_only_webdav_key_transaction_id))\nassert(file_contains(webdav_credentials, email_only_webdav_key_transaction_id) == false)"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "local password_email_pending = assert(password_email_start.body:match(\"pending_transaction_id=([^\\n]+)\"))"
+       "local password_email_pending = assert(password_email_start.body:match(\"pending_transaction_id=([^\\n]+)\"))\nassert(file_contains(webdav_state, password_email_pending))\nassert(file_contains(webdav_credentials, password_email_pending) == false)"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "local password_email_transaction_id = assert(password_email_issue.body:match(\"transaction_id=([^\\n]+)\"))"
+       "local password_email_transaction_id = assert(password_email_issue.body:match(\"transaction_id=([^\\n]+)\"))\nassert(file_contains(webdav_state, password_email_transaction_id))\nassert(file_contains(webdav_credentials, password_email_transaction_id) == false)"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "local password_email_webdav_pending = assert(password_email_webdav_start.body:match(\"pending_transaction_id=([^\\n]+)\"))"
+       "local password_email_webdav_pending = assert(password_email_webdav_start.body:match(\"pending_transaction_id=([^\\n]+)\"))\nassert(file_contains(webdav_state, password_email_webdav_pending))\nassert(file_contains(webdav_credentials, password_email_webdav_pending) == false)"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "local password_email_webdav_transaction_id = assert(password_email_webdav_issue.body:match(\"transaction_id=([^\\n]+)\"))"
+       "local password_email_webdav_transaction_id = assert(password_email_webdav_issue.body:match(\"transaction_id=([^\\n]+)\"))\nassert(file_contains(webdav_state, password_email_webdav_transaction_id))\nassert(file_contains(webdav_credentials, password_email_webdav_transaction_id) == false)"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "server:auth_routes({path_prefix = "
+       "server:auth_routes({auth_state_path = webdav_state, path_prefix = "
        asset_script_body "${asset_script_body}")
 string(REPLACE "28181" "${asset_http_port}" asset_script_body
        "${asset_script_body}")
@@ -559,7 +604,7 @@ if(NOT asset_pack_result EQUAL 0)
 endif()
 
 file(REMOVE_RECURSE "${asset_extract_dir}" "${asset_webdav_cache_dir}")
-file(REMOVE "${asset_webdav_credentials}" "${asset_https_cert_bundle}" "${asset_smtp_mailbox}")
+file(REMOVE "${asset_webdav_credentials}" "${asset_webdav_state}" "${asset_https_cert_bundle}" "${asset_smtp_mailbox}")
 execute_process(COMMAND "${VECTIS_PACK_SMTP_HARNESS}" "${asset_output}" "${asset_smtp_mailbox}"
                 RESULT_VARIABLE asset_run_result
                 OUTPUT_VARIABLE asset_run_stdout

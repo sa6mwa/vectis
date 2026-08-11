@@ -648,8 +648,10 @@ pending-transaction mismatch rejection, unknown-user and missing-username
 email-token issuance/finalization rejection in the full packed webserver path,
 raw username/password Basic auth rejection for guarded API and WebDAV routes,
 no-store headers across native login, email-token, WebDAV-key, and logout auth
-responses, anonymous logout challenges on native auth routes, and WebDAV use of
-issued keys. Focused C auth and Lua smoke coverage prove OIDC browser callback
+responses, split durable credentials versus transient auth-state files for
+pending login and email-token records, anonymous logout challenges on native
+auth routes, and WebDAV use of issued keys. Focused C auth and Lua smoke
+coverage prove OIDC browser callback
 token exchanges can be stored and converted into OAuth2-linked WebDAV app keys
 through both native C and Lua facade paths, and OAuth2/OIDC-linked WebDAV app
 keys are revoked on stored token flow failure by default and are preserved when
