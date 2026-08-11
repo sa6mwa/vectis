@@ -538,6 +538,12 @@ run_lua_examples() {
     'assert(vectis.embedded.has_assets())' \
     'local index = assert(vectis.embedded.read("/index.html"))' \
     'assert(index:match("packed service asset"))' \
+    'local root_listing = table.concat(assert(vectis.embedded.list("/")), "\n")' \
+    'assert(root_listing:match("/index%.html"))' \
+    'assert(root_listing:match("/app%.css"))' \
+    'assert(root_listing:match("/app%.js"))' \
+    'assert(root_listing:match("/assets/logo%.txt"))' \
+    'assert(root_listing:match("/templates/login%.html"))' \
     'local stat = assert(vectis.embedded.stat("/app.js"))' \
     'assert(stat.content_type == "application/javascript")' \
     'assert(assert(vectis.embedded.stat("/app.css")).content_type == "text/css")' \
