@@ -122,7 +122,13 @@ typedef struct vectis_lua_server {
   vectis_lua_consumer_registration *consumer_services;
 } vectis_lua_server;
 
+typedef enum vectis_pack_asset_kind {
+  VECTIS_PACK_ASSET_FILE = 1,
+  VECTIS_PACK_ASSET_DIRECTORY = 2
+} vectis_pack_asset_kind;
+
 typedef struct vectis_pack_asset {
+  vectis_pack_asset_kind kind;
   char *source_path;
   char *logical_path;
   char *content_type;
@@ -919,6 +925,7 @@ static int vectis_pack_asset_add(vectis_pack_asset_list *list,
   }
   asset = list->items + list->count;
   memset(asset, 0, sizeof(*asset));
+  asset->kind = VECTIS_PACK_ASSET_FILE;
   asset->source_path = vectis_cli_strdup(source_path);
   asset->logical_path = vectis_cli_strdup(logical_path);
   content_type =
@@ -943,6 +950,35 @@ static int vectis_pack_asset_add(vectis_pack_asset_list *list,
   asset->mode =
       (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) != 0 ? 0555u : 0444u;
   SHA256(data, size, asset->sha);
+  list->count++;
+  return 0;
+}
+
+static int vectis_pack_asset_add_directory(vectis_pack_asset_list *list,
+                                           const char *source_path,
+                                           const char *logical_path) {
+  vectis_pack_asset *asset;
+
+  if (!vectis_pack_logical_path_valid(logical_path)) {
+    fprintf(stderr, "vectis: invalid embedded asset directory path: %s\n",
+            logical_path != NULL ? logical_path : "(null)");
+    return -1;
+  }
+  if (vectis_pack_asset_list_reserve(list, list->count + 1u) != 0) {
+    return -1;
+  }
+  asset = list->items + list->count;
+  memset(asset, 0, sizeof(*asset));
+  asset->kind = VECTIS_PACK_ASSET_DIRECTORY;
+  asset->source_path = vectis_cli_strdup(source_path);
+  asset->logical_path = vectis_cli_strdup(logical_path);
+  if (asset->source_path == NULL || asset->logical_path == NULL) {
+    free(asset->source_path);
+    free(asset->logical_path);
+    memset(asset, 0, sizeof(*asset));
+    return -1;
+  }
+  asset->mode = 0555u;
   list->count++;
   return 0;
 }
@@ -1141,6 +1177,11 @@ static int vectis_pack_collect_dir(vectis_pack_asset_list *list,
   if (vectis_pack_dir_stack_push(dir_stack, &st, source_dir) != 0) {
     return -1;
   }
+  if (strcmp(logical_root, "/") != 0 &&
+      vectis_pack_asset_add_directory(list, source_dir, logical_root) != 0) {
+    vectis_pack_dir_stack_pop(dir_stack);
+    return -1;
+  }
   dir = opendir(source_dir);
   if (dir == NULL) {
     fprintf(stderr, "vectis: failed to open embedded asset directory: %s\n",
@@ -1198,6 +1239,7 @@ static int vectis_pack_hash_asset_tree(
   size_t i;
   char size_buf[32];
   char mode_buf[16];
+  const char *kind;
   char nul;
 
   ctx = EVP_MD_CTX_new();
@@ -1213,12 +1255,16 @@ static int vectis_pack_hash_asset_tree(
     (void)snprintf(size_buf, sizeof(size_buf), "%lu",
                    (unsigned long)assets->items[i].size);
     (void)snprintf(mode_buf, sizeof(mode_buf), "%u", assets->items[i].mode);
+    kind = assets->items[i].kind == VECTIS_PACK_ASSET_DIRECTORY ? "directory"
+                                                                : "file";
     if (EVP_DigestUpdate(ctx, assets->items[i].logical_path,
                          strlen(assets->items[i].logical_path)) != 1 ||
         EVP_DigestUpdate(ctx, &nul, 1u) != 1 ||
-        EVP_DigestUpdate(ctx, "file", 4u) != 1 ||
+        EVP_DigestUpdate(ctx, kind, strlen(kind)) != 1 ||
         EVP_DigestUpdate(ctx, &nul, 1u) != 1 ||
-        EVP_DigestUpdate(ctx, assets->items[i].sha, SHA256_DIGEST_LENGTH) != 1 ||
+        (assets->items[i].kind == VECTIS_PACK_ASSET_FILE &&
+         EVP_DigestUpdate(ctx, assets->items[i].sha, SHA256_DIGEST_LENGTH) !=
+             1) ||
         EVP_DigestUpdate(ctx, &nul, 1u) != 1 ||
         EVP_DigestUpdate(ctx, size_buf, strlen(size_buf)) != 1 ||
         EVP_DigestUpdate(ctx, &nul, 1u) != 1 ||
@@ -1254,6 +1300,7 @@ static int vectis_pack_build_manifest(vectis_pack_asset_list *assets,
   size_t i;
   char sha_hex[SHA256_DIGEST_LENGTH * 2u + 1u];
   char etag[SHA256_DIGEST_LENGTH * 2u + 3u];
+  const char *kind;
   unsigned char tree_sha[SHA256_DIGEST_LENGTH];
   char tree_sha_hex[SHA256_DIGEST_LENGTH * 2u + 1u];
 
@@ -1306,8 +1353,12 @@ static int vectis_pack_build_manifest(vectis_pack_asset_list *assets,
     status = lonejson_writer_begin_array(&writer, &error);
   }
   for (i = 0u; i < assets->count; ++i) {
-    vectis_sha256_hex(assets->items[i].sha, sha_hex);
-    (void)snprintf(etag, sizeof(etag), "\"%s\"", sha_hex);
+    kind = assets->items[i].kind == VECTIS_PACK_ASSET_DIRECTORY ? "directory"
+                                                                : "file";
+    if (assets->items[i].kind == VECTIS_PACK_ASSET_FILE) {
+      vectis_sha256_hex(assets->items[i].sha, sha_hex);
+      (void)snprintf(etag, sizeof(etag), "\"%s\"", sha_hex);
+    }
     if (status == LONEJSON_STATUS_OK) {
       status = lonejson_writer_begin_object(&writer, &error);
     }
@@ -1323,7 +1374,7 @@ static int vectis_pack_build_manifest(vectis_pack_asset_list *assets,
       status = lonejson_writer_key(&writer, "kind", 4u, &error);
     }
     if (status == LONEJSON_STATUS_OK) {
-      status = lonejson_writer_string(&writer, "file", 4u, &error);
+      status = lonejson_writer_string(&writer, kind, strlen(kind), &error);
     }
     if (status == LONEJSON_STATUS_OK) {
       status = lonejson_writer_key(&writer, "mode", 4u, &error);
@@ -1333,37 +1384,49 @@ static int vectis_pack_build_manifest(vectis_pack_asset_list *assets,
                                    (lonejson_uint64)assets->items[i].mode,
                                    &error);
     }
-    if (status == LONEJSON_STATUS_OK) {
+    if (status == LONEJSON_STATUS_OK &&
+        assets->items[i].kind == VECTIS_PACK_ASSET_FILE) {
       status = lonejson_writer_key(&writer, "offset", 6u, &error);
     }
-    if (status == LONEJSON_STATUS_OK) {
+    if (status == LONEJSON_STATUS_OK &&
+        assets->items[i].kind == VECTIS_PACK_ASSET_FILE) {
       status = lonejson_writer_u64(
           &writer, (lonejson_uint64)assets->items[i].offset, &error);
     }
-    if (status == LONEJSON_STATUS_OK) {
+    if (status == LONEJSON_STATUS_OK &&
+        assets->items[i].kind == VECTIS_PACK_ASSET_FILE) {
       status = lonejson_writer_key(&writer, "size", 4u, &error);
     }
-    if (status == LONEJSON_STATUS_OK) {
+    if (status == LONEJSON_STATUS_OK &&
+        assets->items[i].kind == VECTIS_PACK_ASSET_FILE) {
       status = lonejson_writer_u64(
           &writer, (lonejson_uint64)assets->items[i].size, &error);
     }
-    if (status == LONEJSON_STATUS_OK) {
+    if (status == LONEJSON_STATUS_OK &&
+        assets->items[i].kind == VECTIS_PACK_ASSET_FILE) {
       status = lonejson_writer_key(&writer, "sha256", 6u, &error);
     }
-    if (status == LONEJSON_STATUS_OK) {
+    if (status == LONEJSON_STATUS_OK &&
+        assets->items[i].kind == VECTIS_PACK_ASSET_FILE) {
       status =
           lonejson_writer_string(&writer, sha_hex, strlen(sha_hex), &error);
     }
-    if (status == LONEJSON_STATUS_OK) {
+    if (status == LONEJSON_STATUS_OK &&
+        assets->items[i].kind == VECTIS_PACK_ASSET_FILE) {
       status = lonejson_writer_key(&writer, "etag", 4u, &error);
     }
-    if (status == LONEJSON_STATUS_OK) {
+    if (status == LONEJSON_STATUS_OK &&
+        assets->items[i].kind == VECTIS_PACK_ASSET_FILE) {
       status = lonejson_writer_string(&writer, etag, strlen(etag), &error);
     }
-    if (status == LONEJSON_STATUS_OK && assets->items[i].content_type != NULL) {
+    if (status == LONEJSON_STATUS_OK &&
+        assets->items[i].kind == VECTIS_PACK_ASSET_FILE &&
+        assets->items[i].content_type != NULL) {
       status = lonejson_writer_key(&writer, "content_type", 12u, &error);
     }
-    if (status == LONEJSON_STATUS_OK && assets->items[i].content_type != NULL) {
+    if (status == LONEJSON_STATUS_OK &&
+        assets->items[i].kind == VECTIS_PACK_ASSET_FILE &&
+        assets->items[i].content_type != NULL) {
       status =
           lonejson_writer_string(&writer, assets->items[i].content_type,
                                  strlen(assets->items[i].content_type), &error);
@@ -1419,6 +1482,9 @@ static int vectis_pack_hash_assets(vectis_pack_asset_list *assets,
     return -1;
   }
   for (i = 0u; i < assets->count; ++i) {
+    if (assets->items[i].kind != VECTIS_PACK_ASSET_FILE) {
+      continue;
+    }
     if (EVP_DigestUpdate(ctx, assets->items[i].data, assets->items[i].size) !=
         1) {
       EVP_MD_CTX_free(ctx);
@@ -2900,6 +2966,9 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     return 1;
   }
   for (i = 0; i < (int)assets.count; ++i) {
+    if (assets.items[i].kind != VECTIS_PACK_ASSET_FILE) {
+      continue;
+    }
     if (vectis_write_all(out, assets.items[i].data, assets.items[i].size) !=
         0) {
       fprintf(stderr, "vectis: failed to write packed output: %s\n",
@@ -8945,8 +9014,7 @@ static int vectis_lua_run_buffer(
   context.embedded_asset_payload_size = asset_payload_size;
   context.embedded_manifest = manifest;
   context.embedded_manifest_size = manifest_size;
-  if (asset_payload != NULL && asset_payload_size > 0u && manifest != NULL &&
-      manifest_size > 0u) {
+  if (asset_payload != NULL && manifest != NULL && manifest_size > 0u) {
     vectis_embedded_fs_config_init(&fs_config);
     fs_config.payload = asset_payload;
     fs_config.payload_size = asset_payload_size;

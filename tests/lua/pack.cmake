@@ -279,7 +279,7 @@ if(NOT consumer_service_run_result EQUAL 0)
   message(FATAL_ERROR "packed consumer service failed: ${consumer_service_run_stdout}${consumer_service_run_stderr}")
 endif()
 
-file(MAKE_DIRECTORY "${asset_dir}/assets")
+file(MAKE_DIRECTORY "${asset_dir}/assets/empty")
 file(WRITE "${asset_dir}/index.html" "<!doctype html><title>Acme Test</title>\n")
 file(WRITE "${asset_dir}/assets/app.txt" "generic embedded asset\n")
 file(WRITE "${asset_dir}/assets/app.css" "body { color: #123456; }\n")
@@ -310,6 +310,10 @@ string(REPLACE
        "end\nlocal function file_contains(path, text)\n  local fp = io.open(path, \"rb\")\n  if fp == nil then return false end\n  local body = fp:read(\"*a\")\n  fp:close()\n  return body:find(text, 1, true) ~= nil\nend\nlocal function write_file(path, body)"
        asset_script_body "${asset_script_body}")
 string(REPLACE
+       "end\nlocal b64chars ="
+       "end\nlocal function path_exists(path)\n  local ok = os.rename(path, path)\n  return ok == true\nend\nlocal b64chars ="
+       asset_script_body "${asset_script_body}")
+string(REPLACE
        "assert(vectis.embedded.stat(\"/assets/app.txt\").content_type == \"text/plain\")"
        "assert(vectis.embedded.stat(\"/assets/app.txt\").content_type == \"text/plain\")\nassert(vectis.embedded.stat(\"/assets/app-link.txt\").content_type == \"text/plain\")\nassert(vectis.embedded.stat(\"/assets/manifest-link.txt\").content_type == \"text/plain\")"
        asset_script_body "${asset_script_body}")
@@ -323,11 +327,11 @@ string(REPLACE
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(vectis.embedded.stat(\"/assets/app.txt\").size == 23)"
-       "assert(vectis.embedded.stat(\"/assets/app.txt\").size == 23)\nassert(vectis.embedded.stat(\"/assets/app.txt\").kind == \"file\")\nassert(vectis.embedded.stat(\"/assets/app.txt\").mode == 292)"
+       "assert(vectis.embedded.stat(\"/assets/app.txt\").size == 23)\nassert(vectis.embedded.stat(\"/assets/app.txt\").kind == \"file\")\nassert(vectis.embedded.stat(\"/assets/app.txt\").mode == 292)\nassert(vectis.embedded.stat(\"/assets\").kind == \"directory\")\nassert(vectis.embedded.stat(\"/assets\").mode == 365)\nassert(vectis.embedded.stat(\"/assets/empty\").kind == \"directory\")\nassert(vectis.embedded.stat(\"/assets/empty\").mode == 365)"
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(listed:match(\"/assets/app%.txt\"))"
-       "assert(listed:match(\"/assets/app%.txt\"))\nassert(listed:match(\"/assets/app%-link%.txt\"))\nassert(listed:match(\"/assets/manifest%-link%.txt\"))"
+       "assert(listed:match(\"/assets$\") or listed:match(\"/assets\\n\"))\nassert(listed:match(\"/assets/empty\"))\nassert(listed:match(\"/assets/app%.txt\"))\nassert(listed:match(\"/assets/app%-link%.txt\"))\nassert(listed:match(\"/assets/manifest%-link%.txt\"))"
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")"
@@ -335,7 +339,7 @@ string(REPLACE
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(read_file(extract_to .. \"/templates/login.html\"):match(\"username\"))\nassert(vectis.embedded.extract({to = extract_to, policy = \"verify\"}) == true)"
-       "assert(read_file(extract_to .. \"/templates/login.html\"):match(\"username\"))\nlocal disk_server = assert(vectis.server.new({bind = \"127.0.0.1\", port = 28183}))\nassert(disk_server:static_directory({path_prefix = \"/disk\", root_dir = extract_to, content_type = \"text/plain\", index_file = \"index.html\"}) == true)\nassert(disk_server:start() == true)\nlocal disk_index\nfor _ = 1, 20 do\n  disk_index = curl.perform({url = \"http://127.0.0.1:28183/disk\", protocols = \"http\", timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true})\n  if disk_index.ok then break end\n  os.execute(\"sleep 0.1\")\nend\nassert(disk_index.ok == true, disk_index.error)\nassert(disk_index.status == 200)\nassert(disk_index.body:match(\"Acme Test\"))\nlocal disk_asset = curl.perform({url = \"http://127.0.0.1:28183/disk/assets/app.txt\", protocols = \"http\", timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true})\nassert(disk_asset.ok == true, disk_asset.error)\nassert(disk_asset.status == 200)\nassert(disk_asset.body == \"generic embedded asset\\n\")\nassert(disk_server:stop() == true)\ndisk_server:close()\nassert(vectis.embedded.extract({to = extract_to, policy = \"verify\"}) == true)"
+       "assert(read_file(extract_to .. \"/templates/login.html\"):match(\"username\"))\nassert(path_exists(extract_to .. \"/assets\"))\nassert(path_exists(extract_to .. \"/assets/empty\"))\nlocal disk_server = assert(vectis.server.new({bind = \"127.0.0.1\", port = 28183}))\nassert(disk_server:static_directory({path_prefix = \"/disk\", root_dir = extract_to, content_type = \"text/plain\", index_file = \"index.html\"}) == true)\nassert(disk_server:start() == true)\nlocal disk_index\nfor _ = 1, 20 do\n  disk_index = curl.perform({url = \"http://127.0.0.1:28183/disk\", protocols = \"http\", timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true})\n  if disk_index.ok then break end\n  os.execute(\"sleep 0.1\")\nend\nassert(disk_index.ok == true, disk_index.error)\nassert(disk_index.status == 200)\nassert(disk_index.body:match(\"Acme Test\"))\nlocal disk_asset = curl.perform({url = \"http://127.0.0.1:28183/disk/assets/app.txt\", protocols = \"http\", timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true})\nassert(disk_asset.ok == true, disk_asset.error)\nassert(disk_asset.status == 200)\nassert(disk_asset.body == \"generic embedded asset\\n\")\nassert(disk_server:stop() == true)\ndisk_server:close()\nassert(vectis.embedded.extract({to = extract_to, policy = \"verify\"}) == true)"
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "local webdav_credentials = [[${asset_webdav_credentials}]]"
