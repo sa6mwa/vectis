@@ -3,6 +3,7 @@
 #include "vectis_internal.h"
 
 #include <errno.h>
+#include <lc/lc.h>
 #include <lonejson.h>
 #include <openssl/evp.h>
 #include <openssl/sha.h>
@@ -453,6 +454,41 @@ static vectis_status vectis_embedded_read_impl(const vectis_embedded_fs *self,
 }
 
 static vectis_status
+vectis_embedded_open_source_impl(const vectis_embedded_fs *self,
+                                 const char *path, int *found, lc_source **out,
+                                 vectis_error *error) {
+  vectis_embedded_fs_entry entry;
+  lc_error lcerr;
+  vectis_status status;
+  int rc;
+
+  if (found == NULL || out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "embedded fs source output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *found = 0;
+  *out = NULL;
+  memset(&entry, 0, sizeof(entry));
+  status = vectis_embedded_lookup_impl(self, path, found, &entry, error);
+  if (status != VECTIS_OK || !*found) {
+    return status;
+  }
+  lc_error_init(&lcerr);
+  rc = lc_source_from_memory(entry.data, entry.size, out, &lcerr);
+  if (rc != LC_OK) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     lcerr.message != NULL
+                         ? lcerr.message
+                         : "failed to open embedded fs memory source");
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  return VECTIS_OK;
+}
+
+static vectis_status
 vectis_embedded_list_impl(const vectis_embedded_fs *self, const char *prefix,
                           vectis_embedded_fs_list_fn callback, void *userdata,
                           vectis_error *error) {
@@ -872,6 +908,7 @@ vectis_embedded_fs_from_pack(const vectis_embedded_fs_config *config,
   impl->api.default_extract_policy =
       vectis_embedded_default_extract_policy_impl;
   impl->api.read = vectis_embedded_read_impl;
+  impl->api.open_source = vectis_embedded_open_source_impl;
   impl->api.list = vectis_embedded_list_impl;
   impl->api.stream = vectis_embedded_stream_impl;
   impl->api.extract = vectis_embedded_extract_impl;
@@ -1008,6 +1045,18 @@ vectis_status vectis_embedded_fs_read(const vectis_embedded_fs *fs,
     return VECTIS_ERR_INVALID;
   }
   return fs->read(fs, path, found, out, error);
+}
+
+vectis_status vectis_embedded_fs_open_source(const vectis_embedded_fs *fs,
+                                             const char *path, int *found,
+                                             lc_source **out,
+                                             vectis_error *error) {
+  if (fs == NULL || fs->open_source == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "embedded fs source handle is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return fs->open_source(fs, path, found, out, error);
 }
 
 vectis_status vectis_embedded_fs_list(const vectis_embedded_fs *fs,

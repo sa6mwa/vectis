@@ -73,6 +73,13 @@ struct vectis_embedded_fs {
   /* Return borrowed bytes for one embedded file. Missing files set found=0. */
   vectis_status (*read)(const vectis_embedded_fs *self, const char *path,
                         int *found, vectis_bytes *out, vectis_error *error);
+  /* Open an owned rewindable source for one embedded file. Missing files set
+   * found=0 and leave *out NULL. The caller closes the returned source with
+   * lc_source_close().
+   */
+  vectis_status (*open_source)(const vectis_embedded_fs *self, const char *path,
+                               int *found, struct lc_source **out,
+                               vectis_error *error);
   /* Visit files whose absolute embedded path starts with prefix. */
   vectis_status (*list)(const vectis_embedded_fs *self, const char *prefix,
                         vectis_embedded_fs_list_fn callback, void *userdata,
@@ -126,6 +133,11 @@ vectis_status vectis_embedded_fs_lookup(const vectis_embedded_fs *fs,
 vectis_status vectis_embedded_fs_read(const vectis_embedded_fs *fs,
                                       const char *path, int *found,
                                       vectis_bytes *out, vectis_error *error);
+/* Free-function wrapper for fs->open_source. */
+vectis_status vectis_embedded_fs_open_source(const vectis_embedded_fs *fs,
+                                             const char *path, int *found,
+                                             struct lc_source **out,
+                                             vectis_error *error);
 /* Free-function wrapper for fs->list. */
 vectis_status vectis_embedded_fs_list(const vectis_embedded_fs *fs,
                                       const char *prefix,

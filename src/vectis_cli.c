@@ -262,9 +262,8 @@ typedef struct vectis_lua_curl_retry_config {
 } vectis_lua_curl_retry_config;
 
 typedef struct vectis_lua_embedded_chunks_state {
-  const char *data;
-  size_t size;
-  size_t offset;
+  lc_source *source;
+  unsigned char *buffer;
   size_t chunk_size;
 } vectis_lua_embedded_chunks_state;
 
@@ -275,6 +274,7 @@ typedef struct vectis_lua_auth_oauth2_transport {
 
 #define VECTIS_LUA_TOTP "vectis.totp"
 #define VECTIS_LUA_QR "vectis.qr"
+#define VECTIS_LUA_EMBEDDED_CHUNKS "vectis.embedded.chunks"
 
 extern int luaopen_lonejson_core(lua_State *lua);
 extern int luaopen_lockdc_core(lua_State *lua);
@@ -3089,19 +3089,58 @@ static int vectis_lua_embedded_stat(lua_State *lua) {
 
 static int vectis_lua_embedded_chunks_next(lua_State *lua) {
   vectis_lua_embedded_chunks_state *state;
-  size_t remaining;
-  size_t amount;
+  lc_error error;
+  size_t nread;
 
   state = (vectis_lua_embedded_chunks_state *)lua_touserdata(
       lua, lua_upvalueindex(1));
-  if (state == NULL || state->offset >= state->size) {
+  if (state == NULL || state->source == NULL || state->buffer == NULL) {
     return 0;
   }
-  remaining = state->size - state->offset;
-  amount = remaining < state->chunk_size ? remaining : state->chunk_size;
-  lua_pushlstring(lua, state->data + state->offset, amount);
-  state->offset += amount;
+  lc_error_init(&error);
+  nread = state->source->read(state->source, state->buffer, state->chunk_size,
+                              &error);
+  if (nread == 0u) {
+    if (error.code != LC_OK) {
+      const char *message;
+
+      message = error.message != NULL ? error.message
+                                      : "embedded chunks source read failed";
+      lua_pushstring(lua, message);
+      lc_error_cleanup(&error);
+      if (state->source != NULL) {
+        lc_source_close(state->source);
+        state->source = NULL;
+      }
+      free(state->buffer);
+      state->buffer = NULL;
+      return lua_error(lua);
+    }
+    lc_error_cleanup(&error);
+    lc_source_close(state->source);
+    state->source = NULL;
+    free(state->buffer);
+    state->buffer = NULL;
+    return 0;
+  }
+  lc_error_cleanup(&error);
+  lua_pushlstring(lua, (const char *)state->buffer, nread);
   return 1;
+}
+
+static int vectis_lua_embedded_chunks_gc(lua_State *lua) {
+  vectis_lua_embedded_chunks_state *state;
+
+  state = (vectis_lua_embedded_chunks_state *)lua_touserdata(lua, 1);
+  if (state != NULL) {
+    if (state->source != NULL) {
+      lc_source_close(state->source);
+      state->source = NULL;
+    }
+    free(state->buffer);
+    state->buffer = NULL;
+  }
+  return 0;
 }
 
 static int vectis_lua_embedded_chunks(lua_State *lua) {
@@ -3109,9 +3148,10 @@ static int vectis_lua_embedded_chunks(lua_State *lua) {
   vectis_lua_embedded_chunks_state *state;
   const char *path;
   lua_Integer requested_chunk_size;
-  vectis_bytes body;
   vectis_error error;
   vectis_status status;
+  lc_source *source;
+  unsigned char *buffer;
   int found;
 
   path = luaL_checkstring(lua, 1);
@@ -3131,10 +3171,9 @@ static int vectis_lua_embedded_chunks(lua_State *lua) {
   }
   vectis_error_clear(&error);
   found = 0;
-  body.data = NULL;
-  body.size = 0u;
-  status = vectis_embedded_fs_read(context->embedded_fs, path, &found, &body,
-                                   &error);
+  source = NULL;
+  status = vectis_embedded_fs_open_source(context->embedded_fs, path, &found,
+                                          &source, &error);
   if (status != VECTIS_OK) {
     lua_pushnil(lua);
     lua_pushstring(lua, error.message[0] != '\0'
@@ -3147,12 +3186,19 @@ static int vectis_lua_embedded_chunks(lua_State *lua) {
     lua_pushliteral(lua, "embedded asset not found");
     return 2;
   }
+  buffer = (unsigned char *)malloc((size_t)requested_chunk_size);
+  if (buffer == NULL) {
+    lc_source_close(source);
+    return luaL_error(lua, "failed to allocate embedded chunks buffer");
+  }
   state = (vectis_lua_embedded_chunks_state *)lua_newuserdatauv(
       lua, sizeof(*state), 0);
-  state->data = (const char *)body.data;
-  state->size = body.size;
-  state->offset = 0u;
+  memset(state, 0, sizeof(*state));
+  state->source = source;
+  state->buffer = buffer;
   state->chunk_size = (size_t)requested_chunk_size;
+  luaL_getmetatable(lua, VECTIS_LUA_EMBEDDED_CHUNKS);
+  lua_setmetatable(lua, -2);
   lua_pushcclosure(lua, vectis_lua_embedded_chunks_next, 1);
   return 1;
 }
@@ -8291,6 +8337,14 @@ static void vectis_lua_register_totp_qr(lua_State *lua) {
   lua_pop(lua, 1);
 }
 
+static void vectis_lua_register_embedded_chunks(lua_State *lua) {
+  if (luaL_newmetatable(lua, VECTIS_LUA_EMBEDDED_CHUNKS)) {
+    lua_pushcfunction(lua, vectis_lua_embedded_chunks_gc);
+    lua_setfield(lua, -2, "__gc");
+  }
+  lua_pop(lua, 1);
+}
+
 static void vectis_lua_push_auth_table(lua_State *lua) {
   lua_newtable(lua);
   lua_pushinteger(lua, VECTIS_AUTH_MODE_BASIC);
@@ -8389,6 +8443,7 @@ static void vectis_lua_push_ssh_table(lua_State *lua) {
 
 static int luaopen_vectis(lua_State *lua) {
   vectis_lua_register_totp_qr(lua);
+  vectis_lua_register_embedded_chunks(lua);
   vectis_lua_register_server(lua);
   lua_newtable(lua);
   lua_pushliteral(lua, VECTIS_VERSION);

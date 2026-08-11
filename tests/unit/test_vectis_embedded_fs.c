@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <dirent.h>
+#include <lc/lc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -146,6 +147,8 @@ int main(void) {
   vectis_embedded_fs_entry entry;
   vectis_embedded_fs_extract_config extract;
   vectis_bytes body;
+  lc_source *source;
+  lc_error lcerr;
   list_state listed;
   chunk_state chunked;
   char temp[] = "/tmp/vectis-embedded-fs.XXXXXX";
@@ -215,6 +218,34 @@ int main(void) {
   expect(status == VECTIS_OK && found && body.size == 4u &&
              memcmp(body.data, "app\n", 4u) == 0,
          "reads borrowed embedded bytes");
+
+  found = 0;
+  source = NULL;
+  status = vectis_embedded_fs_open_source(fs, "/assets/app.txt", &found,
+                                          &source, &error);
+  expect(status == VECTIS_OK && found && source != NULL,
+         "opens embedded entry as source");
+  if (source != NULL) {
+    lc_error_init(&lcerr);
+    memset(buffer, 0, sizeof(buffer));
+    expect(source->read(source, buffer, 2u, &lcerr) == 2u &&
+               memcmp(buffer, "ap", 2u) == 0,
+           "embedded source reads first bounded chunk");
+    expect(source->read(source, buffer, sizeof(buffer), &lcerr) == 2u &&
+               memcmp(buffer, "p\n", 2u) == 0,
+           "embedded source reads remaining bytes");
+    expect(source->read(source, buffer, sizeof(buffer), &lcerr) == 0u &&
+               lcerr.code == LC_OK,
+           "embedded source reports EOF");
+    lc_error_cleanup(&lcerr);
+    lc_source_close(source);
+  }
+  found = 1;
+  source = NULL;
+  status = vectis_embedded_fs_open_source(fs, "/missing.txt", &found, &source,
+                                          &error);
+  expect(status == VECTIS_OK && !found && source == NULL,
+         "missing embedded source is not an error");
 
   memset(&listed, 0, sizeof(listed));
   status = fs->list(fs, "/", list_entry, &listed, &error);
