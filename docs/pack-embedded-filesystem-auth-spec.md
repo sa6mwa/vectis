@@ -660,12 +660,22 @@ remains future hardening work.
    example and a packed Lua executable that configures the C-owned consumer
    adapter with an embedded lockd client bundle.
 
+## Decisions
+
+- Extraction repair mode does not remove files that are not present in the
+  embedded manifest. Repair restores missing or stale embedded files, but
+  unrelated user-created files in the extracted docroot are preserved. This is
+  the required default for the Landed migration path, where WebDAV edits may
+  create operational content beside generated site assets.
+- The native login route set belongs in the C-owned Vectis app/server surface,
+  with shared auth-service logic underneath. The public C receiver surface is
+  `app->auth_routes(app, ...)`; Lua configures that C-owned route set through
+  `server:auth_routes(...)`. Lua may provide application routing glue, but it
+  does not own the built-in auth route lifecycle or WebDAV key issuance
+  semantics.
+
 ## Open Decisions
 
-- Whether extraction repair mode should remove files not present in the
-  embedded manifest. The safer default is no pruning.
 - Whether pending auth state should later move from the main locked credentials
   JSON to a separate state file/directory for high-churn deployments. Current
   native behavior uses the main credentials JSON `pending_logins` array.
-- Whether the native login route set belongs in the core C API, the Kore
-  integration layer, or both with a shared auth service underneath.
