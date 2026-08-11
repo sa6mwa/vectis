@@ -55,8 +55,10 @@ typedef struct list_state {
   unsigned count;
   int saw_index;
   int saw_app;
+  int saw_assets_dir;
   int saw_skip;
   int app_metadata;
+  int dir_metadata;
 } list_state;
 
 typedef struct chunk_state {
@@ -85,6 +87,13 @@ static vectis_status list_entry(const vectis_embedded_fs_entry *entry,
             0 &&
         entry->data != NULL && entry->size == 4u &&
         memcmp(entry->data, "app\n", 4u) == 0;
+  }
+  if (strcmp(entry->path, "/assets") == 0) {
+    state->saw_assets_dir = 1;
+    state->dir_metadata =
+        entry->kind == VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY &&
+        entry->mode == 0555u && entry->etag == NULL &&
+        entry->sha256 == NULL && entry->data == NULL && entry->size == 0u;
   }
   if (strcmp(entry->path, "/assets2/skip.txt") == 0) {
     state->saw_skip = 1;
@@ -170,6 +179,30 @@ static vectis_embedded_fs *new_adjacent_prefix_fs(vectis_error *error) {
   return fs;
 }
 
+static vectis_embedded_fs *new_directory_fs(vectis_error *error) {
+  static const unsigned char payload[] = "app\n";
+  static const char manifest[] =
+      "{\"format\":\"vectis-pack\",\"assets\":["
+      "{\"path\":\"/assets\",\"kind\":\"directory\",\"mode\":365},"
+      "{\"path\":\"/assets/app.txt\",\"kind\":\"file\",\"mode\":292,"
+      "\"offset\":0,\"size\":4,"
+      "\"sha256\":"
+      "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\"}]}";
+  vectis_embedded_fs_config config;
+  vectis_embedded_fs *fs;
+
+  vectis_embedded_fs_config_init(&config);
+  config.manifest_json = manifest;
+  config.manifest_json_size = sizeof(manifest) - 1u;
+  config.payload = payload;
+  config.payload_size = sizeof(payload) - 1u;
+  fs = NULL;
+  expect(vectis_embedded_fs_from_pack(&config, &fs, error) == VECTIS_OK &&
+             fs != NULL,
+         "creates directory-entry embedded fs fixture");
+  return fs;
+}
+
 static void read_file(const char *path, char *buffer, size_t buffer_size) {
   FILE *fp;
   size_t nread;
@@ -194,6 +227,7 @@ int main(void) {
   vectis_error error;
   vectis_embedded_fs *fs;
   vectis_embedded_fs *prefix_fs;
+  vectis_embedded_fs *directory_fs;
   vectis_embedded_fs_entry entry;
   vectis_embedded_fs_extract_config extract;
   vectis_bytes body;
@@ -207,6 +241,7 @@ int main(void) {
   char outside_temp[] = "/tmp/vectis-embedded-fs-outside.XXXXXX";
   char tmp_symlink_temp[] = "/tmp/vectis-embedded-fs-tmp-link.XXXXXX";
   char tmp_outside_temp[] = "/tmp/vectis-embedded-fs-tmp-outside.XXXXXX";
+  char directory_temp[] = "/tmp/vectis-embedded-fs-dir.XXXXXX";
   char extracted[512];
   char extracted_app[512];
   char user_file[512];
@@ -214,6 +249,7 @@ int main(void) {
   char outside_app[512];
   char tmp_symlink[512];
   char tmp_outside_app[512];
+  char directory_path[512];
   char buffer[32];
   int found;
   vectis_status status;
@@ -258,6 +294,14 @@ int main(void) {
       "{\"path\":\"/index.html\",\"kind\":\"symlink\",\"offset\":0,"
       "\"size\":6,\"sha256\":"
       "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"}]}";
+  static const char missing_file_metadata_manifest[] =
+      "{\"format\":\"vectis-pack\",\"assets\":["
+      "{\"path\":\"/index.html\",\"kind\":\"file\",\"offset\":0,"
+      "\"size\":6}]}";
+  static const char invalid_directory_metadata_manifest[] =
+      "{\"format\":\"vectis-pack\",\"assets\":["
+      "{\"path\":\"/assets\",\"kind\":\"directory\",\"mode\":365,"
+      "\"content_type\":\"text/plain\"}]}";
   static const char invalid_mode_manifest[] =
       "{\"format\":\"vectis-pack\",\"assets\":["
       "{\"path\":\"/index.html\",\"kind\":\"file\",\"mode\":420,"
@@ -481,6 +525,63 @@ int main(void) {
          "embedded list prefix respects path segment boundaries");
   vectis_embedded_fs_close(prefix_fs);
 
+  directory_fs = new_directory_fs(&error);
+  if (directory_fs == NULL) {
+    return 1;
+  }
+  found = 0;
+  memset(&entry, 0, sizeof(entry));
+  status = vectis_embedded_fs_lookup(directory_fs, "/assets", &found, &entry,
+                                     &error);
+  expect(status == VECTIS_OK && found &&
+             entry.kind == VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY &&
+             entry.mode == 0555u && entry.size == 0u && entry.data == NULL &&
+             entry.sha256 == NULL && entry.etag == NULL,
+         "lookup exposes embedded directory metadata");
+  found = 0;
+  body.data = NULL;
+  body.size = 0u;
+  status = vectis_embedded_fs_read(directory_fs, "/assets", &found, &body,
+                                   &error);
+  expect(status == VECTIS_ERR_INVALID && found,
+         "embedded directory cannot be read as file bytes");
+  found = 0;
+  source = NULL;
+  status = vectis_embedded_fs_open_source(directory_fs, "/assets", &found,
+                                          &source, &error);
+  expect(status == VECTIS_ERR_INVALID && found && source == NULL,
+         "embedded directory cannot be opened as a source");
+  found = 0;
+  memset(&chunked, 0, sizeof(chunked));
+  status = vectis_embedded_fs_stream(directory_fs, "/assets", 2u, &found,
+                                     chunk_entry, &chunked, &error);
+  expect(status == VECTIS_ERR_INVALID && found && chunked.count == 0u,
+         "embedded directory cannot be streamed as file chunks");
+  memset(&listed, 0, sizeof(listed));
+  status = vectis_embedded_fs_list(directory_fs, "/assets", list_entry,
+                                   &listed, &error);
+  expect(status == VECTIS_OK && listed.count == 2u && listed.saw_assets_dir &&
+             listed.saw_app && listed.dir_metadata,
+         "lists embedded directory entries under prefix");
+  expect(mkdtemp(directory_temp) != NULL,
+         "creates directory-entry extraction temp directory");
+  vectis_embedded_fs_extract_config_init(&extract);
+  extract.output_dir = directory_temp;
+  status = vectis_embedded_fs_extract(directory_fs, &extract, &error);
+  expect(status == VECTIS_OK, "extracts explicit embedded directories");
+  (void)snprintf(directory_path, sizeof(directory_path), "%s/assets",
+                 directory_temp);
+  expect(stat(directory_path, &st) == 0 && S_ISDIR(st.st_mode) &&
+             (st.st_mode & 0777u) == 0755u,
+         "extract applies directory mode with owner write");
+  (void)snprintf(extracted_app, sizeof(extracted_app), "%s/assets/app.txt",
+                 directory_temp);
+  read_file(extracted_app, buffer, sizeof(buffer));
+  expect(strcmp(buffer, "app\n") == 0,
+         "extracts file inside explicit embedded directory");
+  remove_tree(directory_temp);
+  vectis_embedded_fs_close(directory_fs);
+
   vectis_embedded_fs_config_init(&config);
   config.payload = "hello\napp\n";
   config.payload_size = 10u;
@@ -553,6 +654,26 @@ int main(void) {
   status = vectis_embedded_fs_from_pack(&config, &fs, &error);
   expect(status == VECTIS_ERR_INVALID && fs == NULL,
          "rejects unsupported manifest asset kind");
+
+  vectis_embedded_fs_config_init(&config);
+  config.payload = "hello\n";
+  config.payload_size = 6u;
+  config.manifest_json = missing_file_metadata_manifest;
+  config.manifest_json_size = sizeof(missing_file_metadata_manifest) - 1u;
+  fs = NULL;
+  status = vectis_embedded_fs_from_pack(&config, &fs, &error);
+  expect(status == VECTIS_ERR_INVALID && fs == NULL,
+         "rejects incomplete embedded file metadata");
+
+  vectis_embedded_fs_config_init(&config);
+  config.payload = "hello\n";
+  config.payload_size = 6u;
+  config.manifest_json = invalid_directory_metadata_manifest;
+  config.manifest_json_size = sizeof(invalid_directory_metadata_manifest) - 1u;
+  fs = NULL;
+  status = vectis_embedded_fs_from_pack(&config, &fs, &error);
+  expect(status == VECTIS_ERR_INVALID && fs == NULL,
+         "rejects file-only metadata on embedded directories");
 
   vectis_embedded_fs_config_init(&config);
   config.payload = "hello\n";

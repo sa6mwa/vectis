@@ -49,7 +49,9 @@ typedef struct vectis_embedded_manifest_asset {
   lonejson_uint64 mode;
   int mode_present;
   lonejson_uint64 offset;
+  int offset_present;
   lonejson_uint64 size;
+  int size_present;
 } vectis_embedded_manifest_asset;
 
 typedef struct vectis_embedded_manifest {
@@ -72,10 +74,12 @@ static const lonejson_field vectis_embedded_manifest_asset_fields[] = {
     LONEJSON_FIELD_STRING_ALLOC(vectis_embedded_manifest_asset, kind, "kind"),
     LONEJSON_FIELD_U64_PRESENT(vectis_embedded_manifest_asset, mode,
                                mode_present, "mode"),
-    LONEJSON_FIELD_U64_REQ(vectis_embedded_manifest_asset, offset, "offset"),
-    LONEJSON_FIELD_U64_REQ(vectis_embedded_manifest_asset, size, "size"),
-    LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_embedded_manifest_asset, sha256,
-                                    "sha256"),
+    LONEJSON_FIELD_U64_PRESENT(vectis_embedded_manifest_asset, offset,
+                               offset_present, "offset"),
+    LONEJSON_FIELD_U64_PRESENT(vectis_embedded_manifest_asset, size,
+                               size_present, "size"),
+    LONEJSON_FIELD_STRING_ALLOC(vectis_embedded_manifest_asset, sha256,
+                                "sha256"),
     LONEJSON_FIELD_STRING_ALLOC(vectis_embedded_manifest_asset, etag, "etag"),
     LONEJSON_FIELD_STRING_ALLOC(vectis_embedded_manifest_asset, content_type,
                                 "content_type")};
@@ -194,7 +198,11 @@ static int vectis_embedded_manifest_kind_parse(
   return 0;
 }
 
-static int vectis_embedded_mode_valid(unsigned mode) {
+static int vectis_embedded_mode_valid(vectis_embedded_fs_entry_kind kind,
+                                      unsigned mode) {
+  if (kind == VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY) {
+    return mode == 0555u;
+  }
   return mode == 0444u || mode == 0555u;
 }
 
@@ -391,7 +399,8 @@ static vectis_status vectis_embedded_add(
     return VECTIS_ERR_INVALID;
   }
   if (!vectis_embedded_manifest_kind_parse(asset->kind, &kind) ||
-      kind != VECTIS_EMBEDDED_FS_ENTRY_FILE) {
+      (kind != VECTIS_EMBEDDED_FS_ENTRY_FILE &&
+       kind != VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY)) {
     vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
                                "embedded asset kind is unsupported: %s",
                                asset->path);
@@ -399,29 +408,52 @@ static vectis_status vectis_embedded_add(
   }
   if (asset->mode_present) {
     if (asset->mode > 0777u ||
-        !vectis_embedded_mode_valid((unsigned)asset->mode)) {
+        !vectis_embedded_mode_valid(kind, (unsigned)asset->mode)) {
       vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
                                  "embedded asset mode is invalid: %s",
                                  asset->path);
       return VECTIS_ERR_INVALID;
     }
     mode = (unsigned)asset->mode;
+  } else if (kind == VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY) {
+    mode = 0555u;
   } else {
     mode = 0444u;
   }
-  offset = (size_t)asset->offset;
-  size = (size_t)asset->size;
-  if (!vectis_embedded_sha256_matches(payload + offset, size, asset->sha256)) {
-    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
-                               "embedded asset hash mismatch: %s", asset->path);
-    return VECTIS_ERR_INVALID;
-  }
-  if (asset->etag != NULL &&
-      !vectis_embedded_etag_matches_sha256(asset->etag, asset->sha256)) {
-    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
-                               "embedded asset etag is invalid: %s",
-                               asset->path);
-    return VECTIS_ERR_INVALID;
+  offset = 0u;
+  size = 0u;
+  if (kind == VECTIS_EMBEDDED_FS_ENTRY_FILE) {
+    if (!asset->offset_present || !asset->size_present ||
+        asset->sha256 == NULL) {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                                 "embedded file metadata is incomplete: %s",
+                                 asset->path);
+      return VECTIS_ERR_INVALID;
+    }
+    offset = (size_t)asset->offset;
+    size = (size_t)asset->size;
+    if (!vectis_embedded_sha256_matches(payload + offset, size,
+                                        asset->sha256)) {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                                 "embedded asset hash mismatch: %s",
+                                 asset->path);
+      return VECTIS_ERR_INVALID;
+    }
+    if (asset->etag != NULL &&
+        !vectis_embedded_etag_matches_sha256(asset->etag, asset->sha256)) {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                                 "embedded asset etag is invalid: %s",
+                                 asset->path);
+      return VECTIS_ERR_INVALID;
+    }
+  } else {
+    if (asset->offset_present || asset->size_present || asset->sha256 != NULL ||
+        asset->etag != NULL || asset->content_type != NULL) {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                                 "embedded directory metadata is invalid: %s",
+                                 asset->path);
+      return VECTIS_ERR_INVALID;
+    }
   }
   if (!vectis_embedded_reserve(impl, impl->count + 1u)) {
     vectis_set_error(error, VECTIS_ERR_NOMEM,
@@ -432,14 +464,20 @@ static vectis_status vectis_embedded_add(
   memset(entry, 0, sizeof(*entry));
   entry->kind = kind;
   entry->path = vectis_embedded_strdup(asset->path);
-  entry->sha256 = vectis_embedded_strdup(asset->sha256);
-  entry->etag = asset->etag != NULL
-                    ? vectis_embedded_strdup(asset->etag)
-                    : vectis_embedded_etag_from_sha256(asset->sha256);
+  if (asset->sha256 != NULL) {
+    entry->sha256 = vectis_embedded_strdup(asset->sha256);
+  }
+  if (kind == VECTIS_EMBEDDED_FS_ENTRY_FILE) {
+    entry->etag = asset->etag != NULL
+                      ? vectis_embedded_strdup(asset->etag)
+                      : vectis_embedded_etag_from_sha256(asset->sha256);
+  }
   if (asset->content_type != NULL) {
     entry->content_type = vectis_embedded_strdup(asset->content_type);
   }
-  if (entry->path == NULL || entry->sha256 == NULL || entry->etag == NULL ||
+  if (entry->path == NULL ||
+      (asset->sha256 != NULL && entry->sha256 == NULL) ||
+      (kind == VECTIS_EMBEDDED_FS_ENTRY_FILE && entry->etag == NULL) ||
       (asset->content_type != NULL && entry->content_type == NULL)) {
     free(entry->path);
     free(entry->content_type);
@@ -450,7 +488,9 @@ static vectis_status vectis_embedded_add(
                      "failed to copy embedded asset metadata");
     return VECTIS_ERR_NOMEM;
   }
-  entry->data = payload + offset;
+  if (kind == VECTIS_EMBEDDED_FS_ENTRY_FILE) {
+    entry->data = payload + offset;
+  }
   entry->size = size;
   entry->mode = mode;
   impl->count++;
@@ -584,6 +624,11 @@ static vectis_status vectis_embedded_read_impl(const vectis_embedded_fs *self,
   if (status != VECTIS_OK || (found != NULL && !*found)) {
     return status;
   }
+  if (entry.kind != VECTIS_EMBEDDED_FS_ENTRY_FILE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "embedded fs read path is not a file");
+    return VECTIS_ERR_INVALID;
+  }
   out->data = entry.data;
   out->size = entry.size;
   return VECTIS_OK;
@@ -609,6 +654,11 @@ vectis_embedded_open_source_impl(const vectis_embedded_fs *self,
   status = vectis_embedded_lookup_impl(self, path, found, &entry, error);
   if (status != VECTIS_OK || !*found) {
     return status;
+  }
+  if (entry.kind != VECTIS_EMBEDDED_FS_ENTRY_FILE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "embedded fs source path is not a file");
+    return VECTIS_ERR_INVALID;
   }
   lc_error_init(&lcerr);
   rc = lc_source_from_memory(entry.data, entry.size, out, &lcerr);
@@ -702,6 +752,11 @@ vectis_embedded_stream_impl(const vectis_embedded_fs *self, const char *path,
   status = vectis_embedded_lookup_impl(self, path, found, &entry, error);
   if (status != VECTIS_OK || (found != NULL && !*found)) {
     return status;
+  }
+  if (entry.kind != VECTIS_EMBEDDED_FS_ENTRY_FILE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "embedded fs stream path is not a file");
+    return VECTIS_ERR_INVALID;
   }
   if (chunk_size == 0u) {
     chunk_size = VECTIS_EMBEDDED_FS_DEFAULT_CHUNK_SIZE;
@@ -1024,6 +1079,22 @@ vectis_embedded_extract_impl(const vectis_embedded_fs *self,
       vectis_set_error(error, VECTIS_ERR_NOMEM,
                        "failed to allocate embedded asset output path");
       return VECTIS_ERR_NOMEM;
+    }
+    if (impl->entries[i].kind == VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY) {
+      status = vectis_embedded_ensure_dir(path, error);
+      if (status == VECTIS_OK &&
+          chmod(path, vectis_embedded_extract_mode(impl->entries[i].mode)) !=
+              0) {
+        vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                                   "failed to set embedded directory mode: %s",
+                                   path);
+        status = VECTIS_ERR_INVALID;
+      }
+      free(path);
+      if (status != VECTIS_OK) {
+        return status;
+      }
+      continue;
     }
     if (lstat(path, &st) == 0) {
       if (S_ISLNK(st.st_mode)) {

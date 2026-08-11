@@ -38,8 +38,8 @@ typedef struct vectis_embedded_fs_config {
   const char *not_found_path;
 } vectis_embedded_fs_config;
 
-/* Embedded entry kind. Current packed assets are files; directory metadata is
- * reserved for explicit directory entries in a future manifest extension.
+/* Embedded entry kind. Files expose borrowed bytes; directories are metadata
+ * entries that can be looked up, listed, and extracted.
  */
 typedef enum vectis_embedded_fs_entry_kind {
   VECTIS_EMBEDDED_FS_ENTRY_FILE = 1,
