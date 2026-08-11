@@ -261,7 +261,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Keep the Lua framework model aligned with the C SDK model: raw dependency access plus a Vectis-owned DX layer with matching concepts and behavior.
 - [x] Support shebang execution through `#!/usr/local/bin/vectis`.
 - [ ] Provide a friendly REST API DX for defining routes, handlers, middleware-like hooks, JSON responses, lockd operations, and downstream calls.
-- [x] Add a C-owned Lua `server:json()` helper for fixed unguarded JSON endpoints in packed API service scenarios.
+- [x] Add a C-owned Lua `server:json()` helper for fixed unguarded JSON endpoints in packed API service scenarios, including explicit method and status configuration.
 - [ ] Add Lua examples for API server, lockd document workflow, queue producer, queue consumer, downstream API call, SFTP transfer, and SSH command execution.
 - [ ] Add Lua unit and end-to-end tests.
 

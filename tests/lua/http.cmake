@@ -97,6 +97,12 @@ assert(api_server:json({
   body = '{"ok":true,"surface":"json"}\n',
   cache_control = "no-store",
 }) == true)
+assert(api_server:json({
+  path = "/created",
+  method = "POST",
+  status = 201,
+  body = '{"ok":true,"created":true}\n',
+}) == true)
 assert(api_server:start() == true)
 local api_response
 for _ = 1, 20 do
@@ -114,6 +120,18 @@ assert(api_response.ok == true, api_response.error and api_response.error.messag
 assert(api_response.status == 200)
 assert(api_response.body == '{"ok":true,"surface":"json"}\n')
 assert(api_response.headers:lower():find("cache-control: no-store", 1, true))
+local created_response = vectis.http.request({
+  url = "http://127.0.0.1:28484/created",
+  method = "POST",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(created_response.ok == true,
+       created_response.error and created_response.error.message)
+assert(created_response.status == 201)
+assert(created_response.body == '{"ok":true,"created":true}\n')
 assert(api_server:stop() == true)
 api_server:close()
 

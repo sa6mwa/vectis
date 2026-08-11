@@ -83,6 +83,7 @@ typedef struct vectis_lua_server_json_route {
   char *body;
   char *content_type;
   char *cache_control;
+  int status_code;
   struct vectis_lua_server_json_route *next;
 } vectis_lua_server_json_route;
 
@@ -3346,6 +3347,147 @@ static int vectis_lua_auth_factor_bit(const char *name, unsigned int *out) {
   return 0;
 }
 
+static int vectis_lua_ascii_equal_ci(const char *left, const char *right) {
+  unsigned char lc;
+  unsigned char rc;
+
+  if (left == NULL || right == NULL) {
+    return 0;
+  }
+  while (*left != '\0' && *right != '\0') {
+    lc = (unsigned char)*left;
+    rc = (unsigned char)*right;
+    if (lc >= (unsigned char)'A' && lc <= (unsigned char)'Z') {
+      lc = (unsigned char)(lc - (unsigned char)'A' + (unsigned char)'a');
+    }
+    if (rc >= (unsigned char)'A' && rc <= (unsigned char)'Z') {
+      rc = (unsigned char)(rc - (unsigned char)'A' + (unsigned char)'a');
+    }
+    if (lc != rc) {
+      return 0;
+    }
+    left++;
+    right++;
+  }
+  return *left == '\0' && *right == '\0';
+}
+
+static int vectis_lua_http_method_bit(const char *name,
+                                      vectis_http_methods *out) {
+  if (out == NULL || name == NULL || name[0] == '\0') {
+    return 0;
+  }
+  if (vectis_lua_ascii_equal_ci(name, "GET")) {
+    *out = VECTIS_HTTP_METHODS_GET;
+    return 1;
+  }
+  if (vectis_lua_ascii_equal_ci(name, "POST")) {
+    *out = VECTIS_HTTP_METHODS_POST;
+    return 1;
+  }
+  if (vectis_lua_ascii_equal_ci(name, "PUT")) {
+    *out = VECTIS_HTTP_METHODS_PUT;
+    return 1;
+  }
+  if (vectis_lua_ascii_equal_ci(name, "PATCH")) {
+    *out = VECTIS_HTTP_METHODS_PATCH;
+    return 1;
+  }
+  if (vectis_lua_ascii_equal_ci(name, "DELETE")) {
+    *out = VECTIS_HTTP_METHODS_DELETE;
+    return 1;
+  }
+  if (vectis_lua_ascii_equal_ci(name, "HEAD")) {
+    *out = VECTIS_HTTP_METHODS_HEAD;
+    return 1;
+  }
+  if (vectis_lua_ascii_equal_ci(name, "OPTIONS")) {
+    *out = VECTIS_HTTP_METHODS_OPTIONS;
+    return 1;
+  }
+  if (vectis_lua_ascii_equal_ci(name, "PROPFIND")) {
+    *out = VECTIS_HTTP_METHODS_PROPFIND;
+    return 1;
+  }
+  if (vectis_lua_ascii_equal_ci(name, "MKCOL")) {
+    *out = VECTIS_HTTP_METHODS_MKCOL;
+    return 1;
+  }
+  if (vectis_lua_ascii_equal_ci(name, "COPY")) {
+    *out = VECTIS_HTTP_METHODS_COPY;
+    return 1;
+  }
+  if (vectis_lua_ascii_equal_ci(name, "MOVE")) {
+    *out = VECTIS_HTTP_METHODS_MOVE;
+    return 1;
+  }
+  return 0;
+}
+
+static vectis_http_methods
+vectis_lua_route_methods(lua_State *lua, int index,
+                         vectis_http_methods fallback, const char *label) {
+  vectis_http_methods methods;
+  vectis_http_methods bit;
+  const char *name;
+  size_t count;
+  size_t i;
+  int type;
+
+  index = lua_absindex(lua, index);
+  lua_getfield(lua, index, "methods");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    name = vectis_lua_table_string(lua, index, "method");
+    if (name == NULL) {
+      return fallback;
+    }
+    if (!vectis_lua_http_method_bit(name, &bit)) {
+      luaL_error(lua, "%s method is unsupported", label);
+      return fallback;
+    }
+    return bit;
+  }
+
+  type = lua_type(lua, -1);
+  if (type == LUA_TSTRING) {
+    name = lua_tostring(lua, -1);
+    if (!vectis_lua_http_method_bit(name, &bit)) {
+      lua_pop(lua, 1);
+      luaL_error(lua, "%s methods contains unsupported method", label);
+      return fallback;
+    }
+    lua_pop(lua, 1);
+    return bit;
+  }
+  if (type != LUA_TTABLE) {
+    lua_pop(lua, 1);
+    luaL_error(lua, "%s methods must be a string or table", label);
+    return fallback;
+  }
+
+  count = lua_rawlen(lua, -1);
+  if (count == 0u) {
+    lua_pop(lua, 1);
+    luaL_error(lua, "%s methods must not be empty", label);
+    return fallback;
+  }
+  methods = VECTIS_HTTP_METHODS_NONE;
+  for (i = 0u; i < count; ++i) {
+    lua_rawgeti(lua, -1, (lua_Integer)i + 1);
+    name = luaL_checkstring(lua, -1);
+    if (!vectis_lua_http_method_bit(name, &bit)) {
+      lua_pop(lua, 2);
+      luaL_error(lua, "%s methods contains unsupported method", label);
+      return fallback;
+    }
+    methods |= bit;
+    lua_pop(lua, 1);
+  }
+  lua_pop(lua, 1);
+  return methods;
+}
+
 static int vectis_lua_auth_required_factors(lua_State *lua, int index,
                                             const char *field,
                                             unsigned int *out) {
@@ -4169,8 +4311,8 @@ static vectis_status vectis_lua_server_json_dispatch(vectis_app *app,
       return status;
     }
   }
-  return vectis_response_text(response, 200, route->content_type, route->body,
-                              error);
+  return vectis_response_text(response, route->status_code, route->content_type,
+                              route->body, error);
 }
 
 static vectis_status
@@ -4274,6 +4416,8 @@ static int vectis_lua_server_json(lua_State *lua) {
   const char *body;
   const char *content_type;
   const char *cache_control;
+  vectis_http_methods methods;
+  size_t status_code;
 
   server = vectis_lua_check_server(lua, 1);
   app = vectis_lua_server_app(lua, 1);
@@ -4292,6 +4436,15 @@ static int vectis_lua_server_json(lua_State *lua) {
     content_type = "application/json";
   }
   cache_control = vectis_lua_table_string(lua, 2, "cache_control");
+  methods =
+      vectis_lua_route_methods(lua, 2, VECTIS_HTTP_METHODS_GET, "JSON route");
+  status_code = vectis_lua_table_size(lua, 2, "status_code", 0u);
+  if (status_code == 0u) {
+    status_code = vectis_lua_table_size(lua, 2, "status", 200u);
+  }
+  if (status_code < 100u || status_code > 599u) {
+    return luaL_error(lua, "JSON route status must be between 100 and 599");
+  }
 
   route_data = (vectis_lua_server_json_route *)calloc(1u, sizeof(*route_data));
   if (route_data == NULL) {
@@ -4303,6 +4456,7 @@ static int vectis_lua_server_json(lua_State *lua) {
   if (cache_control != NULL) {
     route_data->cache_control = vectis_cli_strdup(cache_control);
   }
+  route_data->status_code = (int)status_code;
   if (route_data->body == NULL || route_data->content_type == NULL ||
       (cache_control != NULL && route_data->cache_control == NULL)) {
     vectis_lua_server_json_route_free(route_data);
@@ -4310,8 +4464,8 @@ static int vectis_lua_server_json(lua_State *lua) {
                                       "failed to copy JSON route config");
   }
 
-  route = vectis_route(VECTIS_HTTP_GET, path, vectis_lua_server_json_dispatch,
-                       route_data);
+  route = vectis_route_methods(methods, path, vectis_lua_server_json_dispatch,
+                               route_data);
   vectis_error_clear(&error);
   status = app->route(app, &route, &error);
   if (status != VECTIS_OK) {
