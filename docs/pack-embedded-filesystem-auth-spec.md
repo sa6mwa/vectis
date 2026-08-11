@@ -535,8 +535,9 @@ assets into the disk WebDAV content tree before accepting WebDAV operations,
 verifies generated files are present in that extracted docroot, verifies repair
 restores stale embedded files while preserving pre-existing mutable files,
 exposes native auth routes, protects JSON API routes through native and
-Lua callback auth providers, protects a WebDAV mount through a Lua callback
-auth provider, delivers an email token through a local mock SMTP server, turns
+Lua callback auth providers, protects WebDAV mounts through nested and direct
+Lua callback auth providers, delivers an email token through a local mock SMTP
+server, turns
 password-only login for a TOTP/email-token route into a pending transaction,
 loads a native auth login template from the packed embedded asset filesystem
 and expands its placeholders through the running packed service, rejects
