@@ -258,7 +258,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Build lockdc, pslog, and Vectis-owned Lua modules against the provisioned Lua 5.5 ABI.
 - [x] Register bundled Lua modules statically through `package.preload` in the `vectis` binary.
 - [ ] Publish a separate `vectis` Lua rock for users who want to run the Vectis facade inside their own Lua 5.5 environment.
-- [ ] Keep LuaRocks out of the `vectis` binary runtime and release artifacts.
+- [x] Keep LuaRocks out of the `vectis` binary runtime and release artifacts.
 - [ ] Add Vectis-owned Lua modules for Kore, OpenSSL certificate workflows, and broader libssh2 coverage.
 - [x] Add a Vectis-owned Lua SSH command execution helper backed by libssh2.
 - [ ] Keep the Lua framework model aligned with the C SDK model: raw dependency access plus a Vectis-owned DX layer with matching concepts and behavior.

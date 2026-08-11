@@ -6,6 +6,7 @@ repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 version_path="$repo_root/VERSION"
 version_work="$repo_root/build/test-release-version"
 source_stage_dist="$version_work/source-dist"
+luarocks_dist="$version_work/luarocks-dist"
 untracked_source_probe="$repo_root/vectis-untracked-source-probe.txt"
 saved_version=
 had_version=0
@@ -87,6 +88,43 @@ assert_action_surface_contract() {
   assert_contains "$repo_root/src/vectis_cli.c" 'traces Lua line execution to stderr'
 }
 
+assert_luarocks_artifact_rejected() {
+  dist=$luarocks_dist
+  version=0.0.0
+  root_name=vectis-$version-x86_64-linux-musl
+  artifact=vectis-$version-x86_64-linux-musl.tar.gz
+  root="$dist/$root_name"
+
+  rm -rf "$dist"
+  mkdir -p \
+    "$root/include/vectis" \
+    "$root/lib/cmake/vectis" \
+    "$root/lib/pkgconfig" \
+    "$root/share/doc/vectis" \
+    "$root/.luarocks"
+  printf '#define VECTIS_VERSION "%s"\n' "$version" >"$root/include/vectis/vectis_version.h"
+  printf '%s\n' '# test config' >"$root/lib/cmake/vectis/vectisConfig.cmake"
+  printf '%s\n' '# test config version' >"$root/lib/cmake/vectis/vectisConfigVersion.cmake"
+  printf '%s\n' 'Name: vectis' >"$root/lib/pkgconfig/vectis.pc"
+  printf '%s\n' 'license' >"$root/share/doc/vectis/LICENSE"
+  printf '%s\n' 'readme' >"$root/share/doc/vectis/README.md"
+  printf '%s\n' 'must not ship' >"$root/.luarocks/bad.rock"
+  tar -C "$dist" -czf "$dist/$artifact" "$root_name"
+  (cd "$dist" && sha256sum "$artifact" >"vectis-$version-CHECKSUMS")
+
+  if VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist \
+       "$repo_root/scripts/verify_release_artifacts.sh" \
+       >"$dist/verify.out" 2>"$dist/verify.err"; then
+    echo "release artifact verifier accepted LuaRocks artifacts" >&2
+    exit 1
+  fi
+  if ! grep -Fq "binary SDK contains LuaRocks artifacts" "$dist/verify.err"; then
+    echo "release artifact verifier rejected LuaRocks fixture for the wrong reason" >&2
+    cat "$dist/verify.err" >&2
+    exit 1
+  fi
+}
+
 if [ -f "$version_path" ]; then
   had_version=1
   saved_version=$(cat "$version_path")
@@ -104,6 +142,7 @@ assert_contains "$repo_root/cmake/package_darwin_smoke_bundle.cmake" '@executabl
 assert_contains "$repo_root/scripts/verify_installed_sdk.sh" 'pkg-config --static --cflags --libs vectis'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK missing pkg-config metadata'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK contains dependency source tree'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK contains LuaRocks artifacts'
 assert_contains "$repo_root/tests/CMakeLists.txt" 'LABELS "lua;smoke;local"'
 assert_contains "$repo_root/CMakeLists.txt" 'target_compile_options\(\$\{target\} PRIVATE'
 assert_contains "$repo_root/CMakeLists.txt" 'Werror'
@@ -114,6 +153,7 @@ assert_contains "$repo_root/examples/CMakeLists.txt" 'target_compile_options\(\$
 assert_contains "$repo_root/examples/CMakeLists.txt" 'Werror'
 assert_no_landed_test_assets
 assert_action_surface_contract
+assert_luarocks_artifact_rejected
 
 if ! "$repo_root/scripts/target_toolchain_available.sh" x86_64-linux-gnu >/dev/null 2>&1; then
   echo "host x86_64-linux-gnu toolchain availability check failed" >&2

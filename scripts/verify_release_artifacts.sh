@@ -85,6 +85,12 @@ while IFS= read -r artifact_name; do
              \( -name '*.rockspec' -o -name '*.rockspec.in' -o -name '*_lua.c' \) | grep . >/dev/null; then
             fail "binary SDK contains Lua package or binding source" "$artifact_name"
           fi
+          if find "$root" \( \
+               -type d \( -name '.luarocks' -o -name 'luarocks' \) -o \
+               -type f \( -name '*.rock' -o -name '*.rockspec' -o -name '*.rockspec.in' \) \
+             \) | grep . >/dev/null; then
+            fail "binary SDK contains LuaRocks artifacts" "$artifact_name"
+          fi
           if [ "$(uname -s)" = "Linux" ] && [ "$(uname -m)" = "x86_64" ] &&
              [ "$root_name" = "vectis-$version-x86_64-linux-gnu" ]; then
             if [ -f "$root/lib/libvectis.a" ]; then
