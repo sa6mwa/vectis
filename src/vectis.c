@@ -4339,6 +4339,9 @@ static vectis_status vectis_static_embedded_dispatch(vectis_app *app,
   if (!found) {
     return vectis_static_embedded_not_found(data, request, response, error);
   }
+  if (entry.kind == VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY) {
+    return vectis_static_embedded_not_found(data, request, response, error);
+  }
   return vectis_static_embedded_response(data, request, response, &entry,
                                          error);
 }

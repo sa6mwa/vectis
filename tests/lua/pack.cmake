@@ -314,6 +314,10 @@ string(REPLACE
        "end\nlocal function path_exists(path)\n  local ok = os.rename(path, path)\n  return ok == true\nend\nlocal b64chars ="
        asset_script_body "${asset_script_body}")
 string(REPLACE
+       "assert(served_asset.headers:lower():find(\"cache-control: max-age=60\", 1, true))"
+       "assert(served_asset.headers:lower():find(\"cache-control: max-age=60\", 1, true))\nlocal served_dir = fetch_http(\"/assets\")\nassert(served_dir.ok == true, served_dir.error)\nassert(served_dir.status == 404)\nlocal served_empty_dir = fetch_http(\"/assets/empty\")\nassert(served_empty_dir.ok == true, served_empty_dir.error)\nassert(served_empty_dir.status == 404)"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
        "assert(vectis.embedded.stat(\"/assets/app.txt\").content_type == \"text/plain\")"
        "assert(vectis.embedded.stat(\"/assets/app.txt\").content_type == \"text/plain\")\nassert(vectis.embedded.stat(\"/assets/app-link.txt\").content_type == \"text/plain\")\nassert(vectis.embedded.stat(\"/assets/manifest-link.txt\").content_type == \"text/plain\")"
        asset_script_body "${asset_script_body}")
