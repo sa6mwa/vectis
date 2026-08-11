@@ -489,9 +489,11 @@ Current generated packed-service coverage in `make test-e2e` packages a Lua
 webserver script plus generated HTML/CSS/JavaScript files, asset files, and
 template files, runs the packed executable, serves the embedded read-only
 docroot both at `/` and under `/site`, rejects writes through the root
-read-only mount without changing the embedded index, lists packed assets and
-reads them through both full-read and chunk-iterator Lua embedded filesystem
-APIs, verifies HEAD metadata for the embedded static docroot, rejects traversal
+read-only mount without changing the embedded index, lists packed assets,
+serves generated CSS, JavaScript, asset, and template files through ordinary GET
+requests, reads them through both full-read and chunk-iterator Lua embedded
+filesystem APIs, verifies HEAD metadata for the embedded static docroot, rejects
+traversal
 attempts against the root read-only mount, verifies single byte-range and
 unsatisfiable byte-range behavior for the C-owned static embedded responder, verifies
 `If-None-Match` returns 304 for unchanged embedded assets, verifies matching

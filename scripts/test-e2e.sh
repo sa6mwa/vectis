@@ -1128,6 +1128,12 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed CSS response: $body" >&2
     return 1
   fi
+  body=$(curl_or_log "$packed_service_log" "packed static javascript body" --max-time 3 -fsS \
+    "http://127.0.0.1:$kore_packed_port/site/app.js")
+  if [ "$body" != "window.vectisPackedService = true;" ]; then
+    printf '%s\n' "Unexpected packed JavaScript response: $body" >&2
+    return 1
+  fi
   body=$(curl_or_log "$packed_service_log" "packed static logo" --max-time 3 -fsS \
     "http://127.0.0.1:$kore_packed_port/site/assets/logo.txt")
   if [ "$body" != "VX packed logo" ]; then
