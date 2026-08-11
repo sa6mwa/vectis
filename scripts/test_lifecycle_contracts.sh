@@ -55,6 +55,20 @@ assert_host_debug_target() {
   fi
 }
 
+assert_no_landed_test_assets() {
+  if grep -RInE --exclude='test_lifecycle_contracts.sh' \
+    '(\.\./landed|\blanded\b|\bLanded\b)' \
+    "$repo_root/scripts" \
+    "$repo_root/tests" \
+    "$repo_root/examples" \
+    "$repo_root/src" \
+    "$repo_root/include" \
+    "$repo_root/CMakeLists.txt"; then
+    echo "runtime code and executable fixtures must not depend on Landed assets" >&2
+    exit 1
+  fi
+}
+
 if [ -f "$version_path" ]; then
   had_version=1
   saved_version=$(cat "$version_path")
@@ -80,6 +94,7 @@ assert_contains "$repo_root/CMakeLists.txt" 'libpid0_enabled "0"'
 assert_contains "$repo_root/scripts/deps.sh" 'libpid0_enabled=\$pid0_enabled'
 assert_contains "$repo_root/examples/CMakeLists.txt" 'target_compile_options\(\$\{target_name\} PRIVATE'
 assert_contains "$repo_root/examples/CMakeLists.txt" 'Werror'
+assert_no_landed_test_assets
 
 if ! "$repo_root/scripts/target_toolchain_available.sh" x86_64-linux-gnu >/dev/null 2>&1; then
   echo "host x86_64-linux-gnu toolchain availability check failed" >&2
