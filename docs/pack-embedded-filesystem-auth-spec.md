@@ -494,8 +494,8 @@ embedded index, lists packed assets,
 serves generated CSS, JavaScript, asset, and template files through ordinary GET
 requests, reads them through both full-read and chunk-iterator Lua embedded
 filesystem APIs, verifies bodyless HEAD metadata for the embedded static
-docroot, rejects traversal
-attempts against the root read-only mount, verifies single byte-range and
+docroot, rejects raw literal and encoded traversal attempts against both
+read-only mounts, verifies single byte-range and
 unsatisfiable byte-range behavior for the C-owned static embedded responder, verifies
 `If-None-Match` returns 304 for unchanged embedded assets, verifies matching
 and stale `If-Range` validators for embedded range requests, starts a second

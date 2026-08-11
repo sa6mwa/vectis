@@ -1173,7 +1173,7 @@ run_lua_examples() {
     "/site/%2e%2e/secret" \
     "/site/%2E%2E/secret" \
     "/site/..%2fsecret"; do
-    traversal_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    traversal_status=$(curl --path-as-is --max-time 3 -sS -o /dev/null -w '%{http_code}' \
       "http://127.0.0.1:$kore_packed_port$traversal_path" || true)
     if [ "$traversal_status" != "400" ] && [ "$traversal_status" != "404" ]; then
       printf '%s\n' "Unexpected packed traversal status for $traversal_path: $traversal_status" >&2
