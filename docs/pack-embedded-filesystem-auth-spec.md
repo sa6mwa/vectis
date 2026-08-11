@@ -643,9 +643,10 @@ email-token issuance/finalization rejection in the full packed webserver path,
 raw username/password Basic auth rejection for guarded API and WebDAV routes,
 no-store headers across native login, email-token, WebDAV-key, and logout auth
 responses, anonymous logout challenges on native auth routes, and WebDAV use of
-issued keys. Focused C auth and Lua smoke coverage proves
-OAuth2/OIDC-linked WebDAV app keys are revoked on stored token flow failure by
-default and are preserved when
+issued keys. Focused C auth and Lua smoke coverage proves OIDC browser callback
+token exchanges can be stored and converted into OAuth2-linked WebDAV app keys,
+and OAuth2/OIDC-linked WebDAV app keys are revoked on stored token flow failure
+by default and are preserved when
 `revoke_webdav_keys_on_failure=false` is explicitly configured. Focused CLI
 admin coverage proves OAuth2 WebDAV-key issuance requires an existing stored
 flow and that the issued Basic credentials authenticate through the public

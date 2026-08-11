@@ -818,6 +818,48 @@ int main(void) {
   expect(oidc_exchange.flow.has_expires_at &&
              oidc_exchange.flow.expires_at == 5200,
          "OIDC exchange initializes absolute expiry");
+  vectis_auth_oauth2_token_flow_store_config_init(&token_store);
+  token_store.store = store;
+  token_store.flow_id = "oidc-browser-flow-1";
+  token_store.subject = "oidc-browser-user@example.com";
+  token_store.flow = oidc_exchange.flow;
+  status = vectis_auth_oauth2_token_flow_upsert(&token_store, &error);
+  expect_ok(status, &error, "stores OIDC browser token exchange flow");
+  vectis_auth_oauth2_webdav_key_config_init(&oauth_webdav_config);
+  oauth_webdav_config.store = store;
+  oauth_webdav_config.flow_id = "oidc-browser-flow-1";
+  oauth_webdav_config.subject = "oidc-browser-user@example.com";
+  status = vectis_auth_issue_webdav_key_for_oauth2_flow(
+      &oauth_webdav_config, &oauth_webdav_key, &error);
+  expect_ok(status, &error, "issues WebDAV key from OIDC browser flow");
+  expect(oauth_webdav_key.claim_json != NULL &&
+             strstr(oauth_webdav_key.claim_json,
+                    "\"oauth2_flow_id\":\"oidc-browser-flow-1\"") != NULL,
+         "OIDC browser WebDAV key claim carries flow id");
+  written = snprintf(
+      oauth_basic_clear, sizeof(oauth_basic_clear), "%s:%s",
+      oauth_webdav_key.client_id != NULL ? oauth_webdav_key.client_id : "",
+      oauth_webdav_key.client_secret != NULL ? oauth_webdav_key.client_secret
+                                             : "");
+  expect(written > 0 && (size_t)written < sizeof(oauth_basic_clear),
+         "formats OIDC browser WebDAV key cleartext");
+  expect(base64_encode(oauth_basic_clear, oauth_basic_token,
+                       sizeof(oauth_basic_token)),
+         "encodes OIDC browser WebDAV key");
+  written = snprintf(oauth_basic_header, sizeof(oauth_basic_header), "Basic %s",
+                     oauth_basic_token);
+  expect(written > 0 && (size_t)written < sizeof(oauth_basic_header),
+         "formats OIDC browser WebDAV Basic header");
+  status = vectis_auth_verify_authorization(
+      &store, oauth_basic_header, VECTIS_AUTH_MODE_BASIC, &result, &error);
+  expect_ok(status, &error, "verifies OIDC browser WebDAV key");
+  expect(result.authenticated, "authenticates OIDC browser WebDAV key");
+  expect(result.claim_json != NULL &&
+             strstr(result.claim_json,
+                    "\"oauth2_flow_id\":\"oidc-browser-flow-1\"") != NULL,
+         "verified OIDC browser WebDAV key carries flow id");
+  vectis_auth_result_cleanup(&result);
+  vectis_auth_issued_credential_cleanup(&oauth_webdav_key);
   vectis_auth_oidc_token_exchange_cleanup(&oidc_exchange);
   vectis_auth_oidc_authorization_cleanup(&oidc_authorization);
 
