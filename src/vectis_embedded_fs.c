@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #define VECTIS_EMBEDDED_FS_DEFAULT_CHUNK_SIZE (64u * 1024u)
@@ -714,50 +715,109 @@ vectis_embedded_stream_impl(const vectis_embedded_fs *self, const char *path,
   return VECTIS_OK;
 }
 
-static int vectis_embedded_mkdir_p(const char *path) {
+static vectis_status vectis_embedded_ensure_dir(const char *path,
+                                                vectis_error *error) {
+  struct stat st;
+
+  if (lstat(path, &st) == 0) {
+    if (S_ISLNK(st.st_mode)) {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                 "embedded asset directory is a symlink: %s",
+                                 path);
+      return VECTIS_ERR_CONFLICT;
+    }
+    if (!S_ISDIR(st.st_mode)) {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                 "embedded asset directory is not a directory: "
+                                 "%s",
+                                 path);
+      return VECTIS_ERR_CONFLICT;
+    }
+    return VECTIS_OK;
+  }
+  if (errno != ENOENT) {
+    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                               "failed to inspect embedded asset directory: %s",
+                               path);
+    return VECTIS_ERR_INVALID;
+  }
+  if (mkdir(path, 0755) != 0 && errno != EEXIST) {
+    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                               "failed to create embedded asset directory: %s",
+                               path);
+    return VECTIS_ERR_INVALID;
+  }
+  if (lstat(path, &st) != 0) {
+    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                               "failed to inspect embedded asset directory: %s",
+                               path);
+    return VECTIS_ERR_INVALID;
+  }
+  if (S_ISLNK(st.st_mode)) {
+    vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                               "embedded asset directory is a symlink: %s",
+                               path);
+    return VECTIS_ERR_CONFLICT;
+  }
+  if (!S_ISDIR(st.st_mode)) {
+    vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                               "embedded asset directory is not a directory: "
+                               "%s",
+                               path);
+    return VECTIS_ERR_CONFLICT;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_embedded_mkdir_p(const char *path,
+                                             vectis_error *error) {
   char *copy;
   char *p;
+  vectis_status status;
 
   copy = vectis_embedded_strdup(path);
   if (copy == NULL) {
-    return 0;
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate embedded asset directory path");
+    return VECTIS_ERR_NOMEM;
   }
   for (p = copy + 1; *p != '\0'; ++p) {
     if (*p == '/') {
       *p = '\0';
-      if (mkdir(copy, 0755) != 0 && errno != EEXIST) {
+      status = vectis_embedded_ensure_dir(copy, error);
+      if (status != VECTIS_OK) {
         free(copy);
-        return 0;
+        return status;
       }
       *p = '/';
     }
   }
-  if (mkdir(copy, 0755) != 0 && errno != EEXIST) {
-    free(copy);
-    return 0;
-  }
+  status = vectis_embedded_ensure_dir(copy, error);
   free(copy);
-  return 1;
+  return status;
 }
 
-static int vectis_embedded_parent_dirs(const char *path) {
+static vectis_status vectis_embedded_parent_dirs(const char *path,
+                                                 vectis_error *error) {
   char *copy;
   char *slash;
-  int ok;
+  vectis_status status;
 
   copy = vectis_embedded_strdup(path);
   if (copy == NULL) {
-    return 0;
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate embedded asset parent path");
+    return VECTIS_ERR_NOMEM;
   }
   slash = strrchr(copy, '/');
   if (slash == NULL || slash == copy) {
     free(copy);
-    return 1;
+    return VECTIS_OK;
   }
   *slash = '\0';
-  ok = vectis_embedded_mkdir_p(copy);
+  status = vectis_embedded_mkdir_p(copy, error);
   free(copy);
-  return ok;
+  return status;
 }
 
 static char *vectis_embedded_output_path(const char *root,
@@ -789,12 +849,11 @@ vectis_embedded_write_file(const char *path,
   char *tmp_path;
   FILE *fp;
   int written;
+  vectis_status status;
 
-  if (!vectis_embedded_parent_dirs(path)) {
-    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
-                               "failed to create embedded asset directory: %s",
-                               path);
-    return VECTIS_ERR_INVALID;
+  status = vectis_embedded_parent_dirs(path, error);
+  if (status != VECTIS_OK) {
+    return status;
   }
   tmp_path = (char *)malloc(strlen(path) + 64u);
   if (tmp_path == NULL) {
@@ -922,11 +981,9 @@ vectis_embedded_extract_impl(const vectis_embedded_fs *self,
                      "embedded fs extract output_dir is required");
     return VECTIS_ERR_INVALID;
   }
-  if (!vectis_embedded_mkdir_p(config->output_dir)) {
-    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
-                               "failed to create embedded fs output dir: %s",
-                               config->output_dir);
-    return VECTIS_ERR_INVALID;
+  status = vectis_embedded_mkdir_p(config->output_dir, error);
+  if (status != VECTIS_OK) {
+    return status;
   }
   impl = (const vectis_embedded_fs_impl *)self->impl;
   for (i = 0u; i < impl->count; ++i) {
@@ -937,7 +994,14 @@ vectis_embedded_extract_impl(const vectis_embedded_fs *self,
                        "failed to allocate embedded asset output path");
       return VECTIS_ERR_NOMEM;
     }
-    if (stat(path, &st) == 0) {
+    if (lstat(path, &st) == 0) {
+      if (S_ISLNK(st.st_mode)) {
+        vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                   "embedded asset output is a symlink: %s",
+                                   path);
+        free(path);
+        return VECTIS_ERR_CONFLICT;
+      }
       if (!S_ISREG(st.st_mode)) {
         vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
                                    "embedded asset output is not a file: %s",

@@ -95,7 +95,7 @@ struct vectis_embedded_fs {
   vectis_status (*open_source)(const vectis_embedded_fs *self, const char *path,
                                int *found, struct lc_source **out,
                                vectis_error *error);
-  /* Visit files whose absolute embedded path starts with prefix. */
+  /* Visit files at prefix or under prefix as a path segment boundary. */
   vectis_status (*list)(const vectis_embedded_fs *self, const char *prefix,
                         vectis_embedded_fs_list_fn callback, void *userdata,
                         vectis_error *error);

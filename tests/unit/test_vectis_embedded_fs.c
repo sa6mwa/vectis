@@ -41,7 +41,7 @@ static void remove_tree(const char *path) {
     if (written <= 0 || (size_t)written >= sizeof(child)) {
       continue;
     }
-    if (stat(child, &st) == 0 && S_ISDIR(st.st_mode)) {
+    if (lstat(child, &st) == 0 && S_ISDIR(st.st_mode)) {
       remove_tree(child);
     } else {
       (void)remove(child);
@@ -201,10 +201,15 @@ int main(void) {
   lc_error lcerr;
   list_state listed;
   chunk_state chunked;
+  struct stat st;
   char temp[] = "/tmp/vectis-embedded-fs.XXXXXX";
+  char symlink_temp[] = "/tmp/vectis-embedded-fs-link.XXXXXX";
+  char outside_temp[] = "/tmp/vectis-embedded-fs-outside.XXXXXX";
   char extracted[512];
   char extracted_app[512];
   char user_file[512];
+  char symlink_dir[512];
+  char outside_app[512];
   char buffer[32];
   int found;
   vectis_status status;
@@ -406,6 +411,24 @@ int main(void) {
   read_file(user_file, buffer, sizeof(buffer));
   expect(strcmp(buffer, "user\n") == 0, "repair keeps user-created files");
   remove_tree(temp);
+
+  expect(mkdtemp(symlink_temp) != NULL,
+         "creates symlink extraction temp directory");
+  expect(mkdtemp(outside_temp) != NULL, "creates outside temp directory");
+  (void)snprintf(symlink_dir, sizeof(symlink_dir), "%s/assets", symlink_temp);
+  (void)snprintf(outside_app, sizeof(outside_app), "%s/app.txt", outside_temp);
+  expect(symlink(outside_temp, symlink_dir) == 0,
+         "creates extraction parent symlink fixture");
+  vectis_embedded_fs_extract_config_init(&extract);
+  extract.output_dir = symlink_temp;
+  extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_REPAIR;
+  status = vectis_embedded_fs_extract(fs, &extract, &error);
+  expect(status == VECTIS_ERR_CONFLICT,
+         "extract refuses to follow symlink parent directories");
+  expect(stat(outside_app, &st) != 0,
+         "symlink-denied extraction does not write outside docroot");
+  remove_tree(symlink_temp);
+  remove_tree(outside_temp);
 
   vectis_embedded_fs_close(fs);
 
