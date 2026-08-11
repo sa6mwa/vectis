@@ -351,6 +351,7 @@ run_lua_examples() {
   password_client_secret=
   password_totp_body=
   password_totp_status=
+  embedded_template_body=
   wrong_token_status=
   missing_totp_body=
   missing_totp_status=
@@ -459,7 +460,11 @@ run_lua_examples() {
     'VX packed logo' \
     >"$packed_service_site/assets/logo.txt"
   printf '%s\n' \
-    '<form id="packed-login"><input name="username"></form>' \
+    '<form id="packed-login" data-realm="{{ realm }}" action="{{ continue_action }}" method="post">' \
+    '<h1>{{ login_title }}</h1>' \
+    '<input name="username">' \
+    '<a href="{{ webdav_key_action }}">webdav key</a>' \
+    '</form>' \
     >"$packed_service_site/templates/login.html"
   printf '%s\n' \
     '{"types":[' \
@@ -602,6 +607,15 @@ run_lua_examples() {
     '  login_title = "Packed E2E Password Login",' \
     '  time = 59,' \
     '  required_factors = { "password" },' \
+    '}))' \
+    'assert(server:auth_routes({' \
+    '  path_prefix = "/auth-template",' \
+    '  credentials_path = credentials_path,' \
+    '  realm = "packed-e2e",' \
+    '  login_title = "Packed Embedded Template Login",' \
+    '  time = 59,' \
+    '  required_factors = { "password" },' \
+    '  login_template_embedded_path = "/templates/login.html",' \
     '}))' \
     'assert(server:auth_routes({' \
     '  path_prefix = "/auth-totp",' \
@@ -909,6 +923,34 @@ run_lua_examples() {
     *'action="/auth/webdav-key"'*)
       printf '%s\n' "Packed auth login form should use the continue action" >&2
       printf '%s\n' "$body" >&2
+      return 1
+      ;;
+  esac
+  auth_headers="$work_dir/packed-auth-template-login.headers"
+  embedded_template_body=$(curl_or_log "$packed_service_log" \
+    "packed embedded-template auth login" \
+    --max-time 3 -fsS -D "$auth_headers" \
+    "http://127.0.0.1:$kore_packed_port/auth-template/login")
+  assert_no_store_headers "$auth_headers" "packed embedded-template auth login"
+  for template_fragment in \
+    'id="packed-login"' \
+    'Packed Embedded Template Login' \
+    'data-realm="packed-e2e"' \
+    'action="/auth-template/continue"' \
+    'href="/auth-template/webdav-key"'; do
+    case "$embedded_template_body" in
+      *"$template_fragment"*) ;;
+      *)
+        printf '%s\n' "Packed embedded-template auth login missing fragment: $template_fragment" >&2
+        printf '%s\n' "$embedded_template_body" >&2
+        return 1
+        ;;
+    esac
+  done
+  case "$embedded_template_body" in
+    *'{{'*|*'}}'*)
+      printf '%s\n' "Packed embedded-template auth login left placeholders unexpanded" >&2
+      printf '%s\n' "$embedded_template_body" >&2
       return 1
       ;;
   esac

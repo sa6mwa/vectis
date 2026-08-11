@@ -495,7 +495,8 @@ restores stale embedded files while preserving pre-existing mutable files,
 exposes native auth routes, protects a JSON API route through the same native
 provider, delivers an email token through a local mock SMTP server, turns
 password-only login for a TOTP/email-token route into a pending transaction,
-rejects
+loads a native auth login template from the packed embedded asset filesystem
+and expands its placeholders through the running packed service, rejects
 wrong-token and replayed-token WebDAV key requests, rejects expired email-token
 transactions, rejects SMTP delivery to non-allowlisted recipients, requires
 TOTP continuation for a missing TOTP code with an otherwise valid email-token
@@ -554,10 +555,11 @@ configured delivery, mailbox capture, continued login, wrong token rejection,
 email-token attempt-budget exhaustion, expired token rejection and consumption,
 replay rejection, recipient allowlist rejection, password+TOTP+email-token
 success through the browser `/continue` flow, login-template use of
-`continue_action`, email-token-only WebDAV-key issuance, password-only
-WebDAV-key issuance for a non-TOTP user, password-only TOTP continuation for an
-enrolled user, password+email-token WebDAV-key issuance for a non-TOTP user,
-and pending-transaction mismatch rejection, unknown-user and missing-username
+`continue_action`, packed embedded login-template placeholder expansion,
+email-token-only WebDAV-key issuance, password-only WebDAV-key issuance for a
+non-TOTP user, password-only TOTP continuation for an enrolled user,
+password+email-token WebDAV-key issuance for a non-TOTP user, and
+pending-transaction mismatch rejection, unknown-user and missing-username
 email-token issuance/finalization rejection in the full packed webserver path,
 no-store headers across native login, email-token, WebDAV-key, and logout auth
 responses, and WebDAV use of issued keys. Broader packed auth matrix coverage
