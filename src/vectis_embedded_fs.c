@@ -908,18 +908,19 @@ vectis_embedded_write_file(const char *path,
                                "failed to write embedded asset: %s", path);
     return VECTIS_ERR_INVALID;
   }
+  if (fchmod(fd, vectis_embedded_extract_mode(entry->mode)) != 0) {
+    (void)fclose(fp);
+    (void)remove(tmp_path);
+    free(tmp_path);
+    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                               "failed to set embedded asset mode: %s", path);
+    return VECTIS_ERR_INVALID;
+  }
   if (fclose(fp) != 0) {
     (void)remove(tmp_path);
     free(tmp_path);
     vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
                                "failed to write embedded asset: %s", path);
-    return VECTIS_ERR_INVALID;
-  }
-  if (chmod(tmp_path, vectis_embedded_extract_mode(entry->mode)) != 0) {
-    (void)remove(tmp_path);
-    free(tmp_path);
-    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
-                               "failed to set embedded asset mode: %s", path);
     return VECTIS_ERR_INVALID;
   }
   if (rename(tmp_path, path) != 0) {
