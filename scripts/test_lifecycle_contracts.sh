@@ -88,6 +88,20 @@ assert_action_surface_contract() {
   assert_contains "$repo_root/src/vectis_cli.c" 'traces Lua line execution to stderr'
 }
 
+assert_kore_lonejson_contract() {
+  assert_contains "$repo_root/CMakeLists.txt" 'src/ljson\.c'
+  assert_contains "$repo_root/CMakeLists.txt" 'KORE_USE_LONEJSON'
+  assert_contains "$repo_root/vendor/kore/upstream/src/ljson.c" 'lonejson_validate_reader'
+  assert_contains "$repo_root/vendor/kore/upstream/src/ljson.c" 'lonejson_parse_reader'
+  assert_contains "$repo_root/vendor/kore/upstream/src/acme.c" 'acme_ljson_parse\(&acme_directory_map'
+  assert_contains "$repo_root/vendor/kore/upstream/src/acme.c" 'acme_ljson_parse\(&acme_order_map'
+  assert_contains "$repo_root/vendor/kore/upstream/src/acme.c" 'acme_ljson_parse\(&acme_auth_map'
+  assert_contains "$repo_root/vendor/kore/upstream/src/acme.c" 'acme_ljson_parse\(&acme_badreq_map'
+  assert_contains "$repo_root/scripts/verify-kore-patches.sh" 'S_SRC\+=src/ljson\.c'
+  assert_contains "$repo_root/scripts/verify-kore-patches.sh" 'CFLAGS\+=-DKORE_USE_LONEJSON'
+  assert_contains "$repo_root/scripts/verify-kore-patches.sh" 'LDFLAGS\+=-L\$\(LONEJSON_PATH\)/lib -llonejson'
+}
+
 assert_luarocks_artifact_rejected() {
   dist=$luarocks_dist
   version=0.0.0
@@ -153,6 +167,7 @@ assert_contains "$repo_root/examples/CMakeLists.txt" 'target_compile_options\(\$
 assert_contains "$repo_root/examples/CMakeLists.txt" 'Werror'
 assert_no_landed_test_assets
 assert_action_surface_contract
+assert_kore_lonejson_contract
 assert_luarocks_artifact_rejected
 
 if ! "$repo_root/scripts/target_toolchain_available.sh" x86_64-linux-gnu >/dev/null 2>&1; then

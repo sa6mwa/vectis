@@ -135,7 +135,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Integrate `lonejson` into the Vectis build and expose validation helpers.
 - [x] Keep Kore JSON-RPC unsupported in Vectis phase 1.
 - [x] Patch Kore ACME JSON handling and request-body helpers to use `lonejson`.
-- [ ] Replace the remaining Kore JSON parsing surface with `lonejson`.
+- [x] Replace the remaining Kore JSON parsing surface with `lonejson`.
 - [x] Make C request JSON parsing stream from the request reader into lonejson instead of requiring buffered bodies.
 - [x] Expose additional C request-body helpers that support explicit reader and transparent memory-or-file materialization.
 - [x] Expose C request-body streaming parse helpers where this is practical above Kore's body callback model.
