@@ -101,6 +101,8 @@ foreach(required_text IN ITEMS
     "`smtp`"
     "`ssh_private_key`, `ssh_public_key`, `ssh_known_hosts`"
     "`upload`"
+    "`upload_path`, `body_path`"
+    "`download_path`"
     "`retry`"
     "`retry_max_attempts`, `retry_initial_delay_ms`, `retry_max_delay_ms`"
     "lonejson_curl_read_callback()"
@@ -114,7 +116,10 @@ endforeach()
 foreach(required_text IN ITEMS
     "curl.perform()"
     "curl.json()"
-    "curl.stream_json()")
+    "curl.stream_json()"
+    "require(\"vectis\").http"
+    "structured transport/status errors"
+    "file-backed downloads/uploads")
   string(FIND "${readme_text}" "${required_text}" required_text_index)
   if(required_text_index EQUAL -1)
     message(FATAL_ERROR "README is missing Lua curl summary ${required_text}")

@@ -571,6 +571,10 @@ assert(type(curl.json) == "function")
 assert(type(curl.stream_json) == "function")
 assert(type(curl.version()) == "string")
 
+assert(type(vectis.http) == "table")
+assert(type(vectis.http.request_json) == "function")
+assert(type(vectis.http.download) == "function")
+
 assert(type(pslog) == "table")
 assert(type(pslog.new_json) == "function")
 assert(type(pslog.version()) == "string")

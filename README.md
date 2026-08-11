@@ -216,7 +216,10 @@ runtime currently registers Vectis-owned Lua support plus dependency bindings
 such as lockdc, lonejson, cai, curl, libmdf, and softline where available from
 the provisioned sources. The embedded curl Lua facade exposes `curl.perform()`,
 `curl.json()`, and `curl.stream_json()` for libcurl-supported URL schemes,
-including SMTP usage through the same option-table model.
+including SMTP usage through the same option-table model. `require("vectis").http`
+adds Vectis-owned JSON API helpers, structured transport/status errors, retry
+passthrough, file-backed downloads/uploads, and SFTP transfer helpers on top of
+that raw curl surface.
 
 `vectis -a pack` can append a Lua script, optional site/template assets, and
 optionally a lockd client bundle to the Linux executable with hashes and trailer

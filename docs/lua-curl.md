@@ -42,6 +42,10 @@ libcurl into `lonejson_curl_write_callback()`.
 - `body`: request, upload, SMTP, or publish payload string.
 - `upload`: boolean enabling libcurl upload mode with `body`, useful for
   FTP/file and SFTP/SCP style transfers.
+- `upload_path`, `body_path`: file-backed upload source streamed through
+  libcurl's read callback.
+- `download_path`: file-backed response sink streamed through libcurl's write
+  callback. The result `body` is empty when this is used.
 - `timeout_ms`, `connect_timeout_ms`: total and connect timeout controls.
 - `low_speed_limit`, `low_speed_time`: low-speed abort controls.
 - `follow_redirects`: enables HTTP redirect following.

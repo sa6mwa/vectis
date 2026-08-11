@@ -31,6 +31,7 @@
 #include <vectis/webdav.h>
 
 #include "vectis_curl_lua_init.h"
+#include "vectis_http_lua_init.h"
 #include "vectis_libmdf_lua_init.h"
 #include "vectis_lockdc_lua_init.h"
 #include "vectis_pslog_lua_init.h"
@@ -230,6 +231,11 @@ typedef struct vectis_lua_curl_stream_response {
   size_t limit;
   int limit_exceeded;
 } vectis_lua_curl_stream_response;
+
+typedef struct vectis_lua_curl_file_upload {
+  FILE *file;
+  curl_off_t size;
+} vectis_lua_curl_file_upload;
 
 typedef struct vectis_lua_curl_retry_config {
   unsigned max_attempts;
@@ -4686,6 +4692,49 @@ static size_t vectis_lua_curl_read(char *ptr, size_t size, size_t nmemb,
   return chunk;
 }
 
+static size_t vectis_lua_curl_read_file(char *ptr, size_t size, size_t nmemb,
+                                        void *userdata) {
+  vectis_lua_curl_file_upload *upload;
+  size_t capacity;
+  size_t bytes;
+
+  upload = (vectis_lua_curl_file_upload *)userdata;
+  if (upload == NULL || upload->file == NULL) {
+    return CURL_READFUNC_ABORT;
+  }
+  capacity = size * nmemb;
+  if (size != 0u && capacity / size != nmemb) {
+    return CURL_READFUNC_ABORT;
+  }
+  if (capacity == 0u) {
+    return 0u;
+  }
+  bytes = fread(ptr, 1u, capacity, upload->file);
+  if (bytes == 0u && ferror(upload->file)) {
+    return CURL_READFUNC_ABORT;
+  }
+  return bytes;
+}
+
+static size_t vectis_lua_curl_write_file(char *ptr, size_t size, size_t nmemb,
+                                         void *userdata) {
+  FILE *file;
+  size_t bytes;
+
+  file = (FILE *)userdata;
+  bytes = size * nmemb;
+  if (size != 0u && bytes / size != nmemb) {
+    return 0u;
+  }
+  if (bytes == 0u) {
+    return 0u;
+  }
+  if (file == NULL) {
+    return 0u;
+  }
+  return fwrite(ptr, 1u, bytes, file) == bytes ? bytes : 0u;
+}
+
 static size_t vectis_lua_curl_abort_read(char *ptr, size_t size, size_t nmemb,
                                          void *userdata) {
   (void)ptr;
@@ -4888,12 +4937,25 @@ static int vectis_lua_curl_apply_smtp(lua_State *lua, CURL *curl,
 static int vectis_lua_curl_apply_upload(lua_State *lua, CURL *curl,
                                         int option_index,
                                         vectis_lua_curl_buffer *upload,
-                                        int is_smtp, int has_streaming_upload) {
+                                        int is_smtp, int has_streaming_upload,
+                                        vectis_lua_curl_file_upload *file) {
   const char *body;
   size_t body_size;
 
-  if (is_smtp || has_streaming_upload ||
-      !vectis_lua_table_bool(lua, option_index, "upload", 0)) {
+  if (is_smtp || has_streaming_upload) {
+    return 0;
+  }
+  if (file != NULL && file->file != NULL) {
+    (void)curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+    (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION,
+                           vectis_lua_curl_read_file);
+    (void)curl_easy_setopt(curl, CURLOPT_READDATA, file);
+    if (file->size >= (curl_off_t)0) {
+      (void)curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, file->size);
+    }
+    return 1;
+  }
+  if (!vectis_lua_table_bool(lua, option_index, "upload", 0)) {
     return 0;
   }
   lua_getfield(lua, option_index, "body");
@@ -5340,6 +5402,7 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   vectis_lua_curl_buffer response;
   vectis_lua_curl_buffer response_headers;
   vectis_lua_curl_stream_response stream_response;
+  vectis_lua_curl_file_upload file_upload;
   vectis_lua_curl_retry_config retry_config;
   lonejson_curl_parse json_response;
   lonejson_curl_upload json_upload;
@@ -5350,6 +5413,8 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   const char *url;
   const char *username;
   const char *password;
+  const char *upload_path;
+  const char *download_path;
   char error_buffer[CURL_ERROR_SIZE];
   lonejson_error json_error;
   lonejson_status json_status;
@@ -5366,6 +5431,8 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   int response_record_index;
   int has_streaming_upload;
   int has_streaming_response;
+  FILE *download_file;
+  struct stat upload_stat;
 
   luaL_checktype(lua, 1, LUA_TTABLE);
   url = vectis_lua_table_string(lua, 1, "url");
@@ -5379,6 +5446,8 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   response.limit = VECTIS_LUA_CURL_RESPONSE_BODY_LIMIT;
   response_headers.limit = VECTIS_LUA_CURL_RESPONSE_HEADER_LIMIT;
   memset(&stream_response, 0, sizeof(stream_response));
+  memset(&file_upload, 0, sizeof(file_upload));
+  file_upload.size = (curl_off_t)-1;
   memset(&json_response, 0, sizeof(json_response));
   memset(&json_upload, 0, sizeof(json_upload));
   vectis_lua_lonejson_schema_view_init(&request_schema);
@@ -5389,6 +5458,7 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   memset(&json_error, 0, sizeof(json_error));
   headers = NULL;
   recipients = NULL;
+  download_file = NULL;
   request_schema_index = 0;
   request_value_index = 0;
   request_record_index = 0;
@@ -5400,9 +5470,36 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   if (vectis_lua_curl_parse_retry_config(lua, 1, &retry_config) != 0) {
     return 1;
   }
+  upload_path = vectis_lua_table_string(lua, 1, "upload_path");
+  if (upload_path == NULL) {
+    upload_path = vectis_lua_table_string(lua, 1, "body_path");
+  }
+  if (upload_path != NULL) {
+    if (upload_path[0] == '\0') {
+      return luaL_error(lua, "curl upload_path must not be empty");
+    }
+    file_upload.file = fopen(upload_path, "rb");
+    if (file_upload.file == NULL) {
+      return luaL_error(lua, "curl failed to open upload_path: %s",
+                        upload_path);
+    }
+    if (stat(upload_path, &upload_stat) == 0 && S_ISREG(upload_stat.st_mode)) {
+      file_upload.size = (curl_off_t)upload_stat.st_size;
+    }
+  }
+  download_path = vectis_lua_table_string(lua, 1, "download_path");
+  if (download_path != NULL && download_path[0] == '\0') {
+    if (file_upload.file != NULL) {
+      (void)fclose(file_upload.file);
+    }
+    return luaL_error(lua, "curl download_path must not be empty");
+  }
   (void)pthread_once(&vectis_lua_curl_once, vectis_lua_curl_global_init_once);
   curl = curl_easy_init();
   if (curl == NULL) {
+    if (file_upload.file != NULL) {
+      (void)fclose(file_upload.file);
+    }
     return luaL_error(lua, "curl_easy_init failed");
   }
 
@@ -5410,6 +5507,12 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   (void)curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
   lua_getfield(lua, 1, "request_schema");
   if (!lua_isnil(lua, -1)) {
+    if (file_upload.file != NULL) {
+      curl_easy_cleanup(curl);
+      (void)fclose(file_upload.file);
+      return luaL_error(lua, "curl request_schema cannot be used with "
+                             "upload_path");
+    }
     request_schema_index = lua_gettop(lua);
     (void)vectis_lua_lonejson_check_schema(
         lua, request_schema_index, &request_schema, "curl request_schema");
@@ -5453,6 +5556,17 @@ static int vectis_lua_curl_perform(lua_State *lua) {
 
   lua_getfield(lua, 1, "response_schema");
   if (!lua_isnil(lua, -1)) {
+    if (download_path != NULL) {
+      curl_easy_cleanup(curl);
+      if (has_streaming_upload) {
+        lonejson_curl_upload_cleanup(&json_upload);
+      }
+      if (file_upload.file != NULL) {
+        (void)fclose(file_upload.file);
+      }
+      return luaL_error(lua, "curl response_schema cannot be used with "
+                             "download_path");
+    }
     response_schema_index = lua_gettop(lua);
     (void)vectis_lua_lonejson_check_schema(
         lua, response_schema_index, &response_schema, "curl response_schema");
@@ -5486,8 +5600,27 @@ static int vectis_lua_curl_perform(lua_State *lua) {
     (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, &stream_response);
   } else {
     lua_pop(lua, 1);
-    (void)curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, vectis_lua_curl_write);
-    (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    if (download_path != NULL) {
+      download_file = fopen(download_path, "wb");
+      if (download_file == NULL) {
+        curl_easy_cleanup(curl);
+        if (has_streaming_upload) {
+          lonejson_curl_upload_cleanup(&json_upload);
+        }
+        if (file_upload.file != NULL) {
+          (void)fclose(file_upload.file);
+        }
+        return luaL_error(lua, "curl failed to open download_path: %s",
+                          download_path);
+      }
+      (void)curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,
+                             vectis_lua_curl_write_file);
+      (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, download_file);
+    } else {
+      (void)curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,
+                             vectis_lua_curl_write);
+      (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    }
   }
   if (retry_config.max_attempts > 1u && has_streaming_response) {
     curl_easy_cleanup(curl);
@@ -5539,7 +5672,7 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   is_smtp = vectis_lua_curl_apply_smtp(lua, curl, 1, &body, &recipients);
   is_upload = is_smtp;
   if (vectis_lua_curl_apply_upload(lua, curl, 1, &body, is_smtp,
-                                   has_streaming_upload) != 0) {
+                                   has_streaming_upload, &file_upload) != 0) {
     is_upload = 1;
   }
   if (has_streaming_upload) {
@@ -5578,6 +5711,50 @@ static int vectis_lua_curl_perform(lua_State *lua) {
       break;
     }
     body.offset = 0u;
+    if (file_upload.file != NULL &&
+        fseek(file_upload.file, 0L, SEEK_SET) != 0) {
+      curl_slist_free_all(headers);
+      curl_slist_free_all(recipients);
+      curl_easy_cleanup(curl);
+      if (download_file != NULL) {
+        (void)fclose(download_file);
+      }
+      (void)fclose(file_upload.file);
+      vectis_lua_curl_buffer_free(&body);
+      vectis_lua_curl_buffer_free(&response);
+      vectis_lua_curl_buffer_free(&response_headers);
+      return luaL_error(lua, "curl failed to rewind upload_path");
+    }
+    if (download_file != NULL) {
+      if (fclose(download_file) != 0) {
+        download_file = NULL;
+        curl_slist_free_all(headers);
+        curl_slist_free_all(recipients);
+        curl_easy_cleanup(curl);
+        if (file_upload.file != NULL) {
+          (void)fclose(file_upload.file);
+        }
+        vectis_lua_curl_buffer_free(&body);
+        vectis_lua_curl_buffer_free(&response);
+        vectis_lua_curl_buffer_free(&response_headers);
+        return luaL_error(lua, "curl failed to close download_path");
+      }
+      download_file = fopen(download_path, "wb");
+      if (download_file == NULL) {
+        curl_slist_free_all(headers);
+        curl_slist_free_all(recipients);
+        curl_easy_cleanup(curl);
+        if (file_upload.file != NULL) {
+          (void)fclose(file_upload.file);
+        }
+        vectis_lua_curl_buffer_free(&body);
+        vectis_lua_curl_buffer_free(&response);
+        vectis_lua_curl_buffer_free(&response_headers);
+        return luaL_error(lua, "curl failed to reopen download_path: %s",
+                          download_path);
+      }
+      (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, download_file);
+    }
     if (has_streaming_upload) {
       lonejson_curl_upload_cleanup(&json_upload);
       memset(&json_upload, 0, sizeof(json_upload));
@@ -5600,6 +5777,14 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   }
   if (stream_response.limit_exceeded) {
     response.limit_exceeded = 1;
+  }
+  if (download_file != NULL) {
+    if (fclose(download_file) != 0 && code == CURLE_OK) {
+      code = CURLE_WRITE_ERROR;
+      (void)snprintf(error_buffer, sizeof(error_buffer),
+                     "failed to close download_path");
+    }
+    download_file = NULL;
   }
   if (has_streaming_response && code == CURLE_OK) {
     json_status = lonejson_curl_parse_finish(&json_response);
@@ -5639,6 +5824,9 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   }
   if (has_streaming_upload) {
     lonejson_curl_upload_cleanup(&json_upload);
+  }
+  if (file_upload.file != NULL) {
+    (void)fclose(file_upload.file);
   }
   vectis_lua_curl_buffer_free(&body);
   vectis_lua_curl_buffer_free(&response);
@@ -7378,6 +7566,12 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "server");
   vectis_lua_push_cert_table(lua);
   lua_setfield(lua, -2, "cert");
+  lua_getglobal(lua, "require");
+  lua_pushliteral(lua, "vectis.http");
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    return lua_error(lua);
+  }
+  lua_setfield(lua, -2, "http");
   return 1;
 }
 
@@ -7504,6 +7698,12 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   status = cpkt_lua_runtime_register_lua_module(
       runtime, "curl", vectis_curl_lua_init, sizeof(vectis_curl_lua_init),
       "curl.init");
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_lua_module(
+      runtime, "vectis.http", vectis_http_lua_init,
+      sizeof(vectis_http_lua_init), "vectis.http");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }

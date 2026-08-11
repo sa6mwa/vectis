@@ -1,0 +1,41 @@
+# Lua HTTP Helpers
+
+`require("vectis").http` is a Vectis-owned helper layer over the preloaded
+`curl` module. It keeps protocol coverage in libcurl while giving service Lua
+code a consistent result shape for API calls and file transfers.
+
+## Entry Points
+
+- `vectis.http.request(opts)` calls `curl.perform(opts)`.
+- `vectis.http.request_json(opts)` calls `curl.json(opts)`.
+- `vectis.http.get_json(opts_or_url[, opts])`, `post_json`, `put_json`,
+  `patch_json`, and `delete_json` set the HTTP method and decode JSON bodies.
+- `vectis.http.stream_json(opts)` calls `curl.stream_json(opts)`.
+- `vectis.http.download(opts)` requires `download_path` and streams the response
+  body to that file through libcurl's write callback.
+- `vectis.http.upload(opts)` accepts `upload_path`, `body_path`, or `body`.
+  File paths stream from disk through libcurl's read callback.
+- `vectis.http.sftp_download(opts)` and `vectis.http.sftp_upload(opts)` set the
+  default protocol allowlist to `sftp` and use the same file-backed transfer
+  paths.
+
+## Results
+
+Helpers return the underlying curl result with normalized fields:
+
+- `ok`: true only when the transfer succeeded and HTTP status is below 400.
+- `transport_ok`: true when libcurl completed the transfer.
+- `attempts`: number of curl attempts, including retries.
+- `error`: structured table on failure.
+- `error_message`: original curl error string when a transport failure occurred.
+
+Structured errors use:
+
+- `kind = "transport"` for libcurl failures.
+- `kind = "http_status"` for HTTP status 400 and above.
+- `message`, plus `code`, `code_name`, `status`, `body`, `json`, and `attempts`
+  when those fields apply.
+
+Retry options are passed through to `curl.perform`, `curl.json`, and
+`curl.stream_json`. Streaming JSON responses still reject retry because the
+response parser is consumed by the first attempt.

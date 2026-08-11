@@ -749,6 +749,11 @@ if(VECTIS_BUILD_BINARY)
     "vectis_curl_lua_init"
     "${CMAKE_BINARY_DIR}/generated/include/vectis_curl_lua_init.h"
   )
+  vectis_generate_lua_init_header(
+    "${CMAKE_SOURCE_DIR}/lua/vectis/http.lua"
+    "vectis_http_lua_init"
+    "${CMAKE_BINARY_DIR}/generated/include/vectis_http_lua_init.h"
+  )
   set(vectis_lockdc_lua_source
     "${vectis_lockdc_lua_source_dir}/src/lua/lockdc_lua.c")
   set(vectis_lonejson_lua_source
