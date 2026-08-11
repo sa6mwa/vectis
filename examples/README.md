@@ -91,6 +91,9 @@ surface directly, without local helper layers that would hide awkward API shape.
   credentials. By default it self-tests and exits; set
   `VECTIS_LUA_API_EXAMPLE_SERVE=1` to keep it listening. CTest also packs and
   executes this script as `vectis_example_lua_api_server_pack`.
+- `lua/downstream_api.lua`: packable Lua downstream API client example using
+  `vectis.http.get_json()` and `post_json()` against a deterministic local
+  API. CTest runs both normal and packed forms.
 - `lua/lockd_state.lua`: lockdc Lua client acquire, JSON state update/load,
   and lease release against `LOCKD_ENDPOINT`.
 - `lua/lockd_queue.lua`: lockdc Lua queue enqueue, dequeue, JSON payload read,

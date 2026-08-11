@@ -106,4 +106,19 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_example_lua_api_server_pack PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
+  add_test(NAME vectis_example_lua_downstream_api
+           COMMAND vectis_bin "${CMAKE_SOURCE_DIR}/examples/lua/downstream_api.lua")
+  set_tests_properties(vectis_example_lua_downstream_api PROPERTIES
+    ENVIRONMENT "VECTIS_LUA_DOWNSTREAM_EXAMPLE_PORT=28588"
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
+  add_test(NAME vectis_example_lua_downstream_api_pack
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/example_downstream_api_pack.cmake")
+  set_tests_properties(vectis_example_lua_downstream_api_pack PROPERTIES
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
 endif()

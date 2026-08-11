@@ -177,8 +177,8 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Make lockd optional for Kore-only C services while preserving validation for configured lockd transports.
 - [x] Define consumer registration and lifecycle APIs for C.
 - [x] Expose lockd consumer service startup/configuration directly, then layer Vectis-owned worker DX on top.
-- [x] Allow one Vectis process to run a Kore-backed API/WebDAV server and an app-owned liblockdc `startconsumer` service simultaneously, with receiver-shell C APIs and Lua registration hooks; Kore serving and consumer service startup are concurrent capabilities, not mutually exclusive runtime modes.
-- [x] Add a same-process scenario test that serves an API/WebDAV mount while receiving lockd messages through `startconsumer`, proving HTTP/WebDAV responsiveness during active consumer work and covering the production shape of a web/API fileserver plus lockd consumer in one Vectis process.
+- [ ] Complete support for one Vectis process to run a Kore-backed API/WebDAV server and an app-owned liblockdc `startconsumer` service simultaneously, with receiver-shell C APIs and Lua registration hooks; Kore serving and consumer service startup are concurrent capabilities, not mutually exclusive runtime modes.
+- [ ] Add a same-process scenario test that serves an API/WebDAV mount while receiving lockd messages through `startconsumer`, proving HTTP/WebDAV responsiveness during active consumer work and covering the production shape of a web/API fileserver plus lockd consumer in one Vectis process.
 - [x] Define Lua consumer-service runner behavior for the combined server-plus-consumer process model.
 - [x] Make API errors explicit when a Lua script attempts to run genuinely incompatible runtime loops in one process.
 - [x] Add integration tests covering enqueue/dequeue/ack workflows.
@@ -265,7 +265,8 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add a C-owned Lua `server:json()` helper for fixed unguarded JSON endpoints in packed API service scenarios, including explicit method and status configuration.
 - [x] Add matching method and status configuration to the C-owned Lua `server:auth_json()` helper for fixed guarded API endpoints.
 - [x] Add Lua examples for API server, including packed execution coverage, lockd document workflow, and queue producer/dequeue workflows.
-- [ ] Add Lua examples for downstream API call, SFTP transfer, SSH command execution, and long-running consumer service workflows.
+- [x] Add Lua examples for downstream API calls with normal and packed execution coverage.
+- [ ] Add Lua examples for SFTP transfer, SSH command execution, and long-running consumer service workflows.
 - [ ] Add Lua unit and end-to-end tests.
 
 ## Area 13: Single Binary Packaging
@@ -287,7 +288,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add deterministic e2e coverage for a packed Lua webserver with generated embedded assets, native auth routes, SMTP-delivered email-token login, auth-guarded JSON API route, WebDAV key issuance, authenticated embedded WebDAV reads, mutable WebDAV writes, WebDAV list/copy/move/delete, traversal denial, and embedded-versus-WebDAV mutation isolation.
 - [x] Add packed smoke coverage that extracts embedded assets and serves the extracted docroot through the Lua `server:static_directory()` C-owned route.
 - [x] Add tests that package a Lua API service and a Lua consumer service, then execute both artifacts.
-- [x] Add a packed-service scenario that runs the embedded site/WebDAV server and lockd `startconsumer` service in the same self-contained Vectis binary and process, with HTTP/WebDAV requests still succeeding while the consumer receives and handles lockd messages.
+- [ ] Add a packed-service scenario that runs the embedded site/WebDAV server and lockd `startconsumer` service in the same self-contained Vectis binary and process, with HTTP/WebDAV requests still succeeding while the consumer receives and handles lockd messages.
 
 ## Area 14: Verification and Release
 
