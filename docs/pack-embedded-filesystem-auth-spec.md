@@ -230,6 +230,9 @@ Required Lua concepts:
 - `server:webdav_embedded_site({path_prefix=..., cache_dir=..., site_id=...,
   auth={provider=vectis.auth.provider_callback(fn), purpose=...}})` for
   developer-provided auth adapters wired into the C-owned WebDAV receiver.
+- `server:webdav_embedded_site({path_prefix=..., auth=provider})` where
+  `provider` is a `vectis.auth.provider_native(...)` or
+  `vectis.auth.provider_callback(...)` result.
 - `server:auth_routes({path_prefix=..., credentials_path=..., realm=...,
   login_template_path=..., required_factors={"email_token"}})`
 - `server:auth_routes({path_prefix=..., credentials_path=..., realm=...,
@@ -242,6 +245,8 @@ Required Lua concepts:
   guarded JSON endpoints in service scenarios.
 - `server:auth_json({path=..., auth={provider=...}, body=...})` for guarded
   service endpoints backed by a native or developer-provided auth provider.
+- `server:auth_json({path=..., auth=provider, body=...})` for the same
+  provider-object shorthand accepted by WebDAV mounts.
 - `server:consumer_service({ ... })` is the Lua registration point for
   same-process lockd consumer service wiring. It creates a C-owned
   `vectis_consumer_service` receiver around liblockdc and starts it by default.

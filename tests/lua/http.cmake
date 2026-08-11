@@ -152,10 +152,24 @@ assert(api_server:auth_json({
   },
   body = '{"ok":true,"guarded":true}\n',
 }) == true)
+local native_provider = assert(vectis.auth.provider_native({
+  credentials_path = auth_path,
+  realm = "http-provider",
+  purpose = "webdav",
+}))
+assert(api_server:auth_json({
+  path = "/provider-native-guarded",
+  auth = native_provider,
+  body = '{"ok":true,"provider":"native"}\n',
+}) == true)
 local callback_provider = assert(vectis.auth.provider_callback(function(request)
   if request.authorization == "Bearer callback-ok" and
       request.resource == "/callback-guarded" then
     return {action = "allow", principal = "callback-user"}
+  end
+  if request.authorization == "Bearer callback-direct" and
+      request.resource == "/callback-direct" then
+    return {action = "allow", principal = "callback-direct-user"}
   end
   return {
     action = "required",
@@ -173,6 +187,11 @@ assert(api_server:auth_json({
     allowed_modes = {"bearer"},
   },
   body = '{"ok":true,"provider":"callback"}\n',
+}) == true)
+assert(api_server:auth_json({
+  path = "/callback-direct",
+  auth = callback_provider,
+  body = '{"ok":true,"provider":"callback-direct"}\n',
 }) == true)
 assert(api_server:static_directory({
   path_prefix = "/files",
@@ -233,6 +252,27 @@ assert(guarded_created.ok == true,
 assert(guarded_created.status == 202)
 assert(guarded_created.body == '{"ok":true,"guarded":true}\n')
 assert(guarded_created.headers:lower():find("cache-control: no-store", 1, true))
+local provider_native_required = vectis.http.request({
+  url = "http://127.0.0.1:28484/provider-native-guarded",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(provider_native_required.status == 401)
+assert(provider_native_required.headers:lower():find('www-authenticate: basic realm="http-provider"', 1, true))
+local provider_native_allowed = vectis.http.request({
+  url = "http://127.0.0.1:28484/provider-native-guarded",
+  headers = {Authorization = http_basic_auth},
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(provider_native_allowed.ok == true,
+       provider_native_allowed.error and provider_native_allowed.error.message)
+assert(provider_native_allowed.status == 200)
+assert(provider_native_allowed.body == '{"ok":true,"provider":"native"}\n')
 local callback_required = vectis.http.request({
   url = "http://127.0.0.1:28484/callback-guarded",
   protocols = "http",
@@ -256,6 +296,18 @@ assert(callback_allowed.ok == true,
 assert(callback_allowed.status == 200)
 assert(callback_allowed.body == '{"ok":true,"provider":"callback"}\n')
 assert(callback_allowed.headers:lower():find("cache-control: no-store", 1, true))
+local callback_direct_allowed = vectis.http.request({
+  url = "http://127.0.0.1:28484/callback-direct",
+  headers = {Authorization = "Bearer callback-direct"},
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(callback_direct_allowed.ok == true,
+       callback_direct_allowed.error and callback_direct_allowed.error.message)
+assert(callback_direct_allowed.status == 200)
+assert(callback_direct_allowed.body == '{"ok":true,"provider":"callback-direct"}\n')
 local static_index = vectis.http.request({
   url = "http://127.0.0.1:28484/files",
   protocols = "http",
