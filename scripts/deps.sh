@@ -16,6 +16,7 @@ lonejson_sha256=
 pslog_sha256=
 cai_sha256=
 lql_sha256=
+lql_lua_sha256="b440ce543586ebfc9aafd0e09a700126b9d62d85b8c34ae2ac19b0990db28438"
 mdf_sha256=
 softline_sha256=
 target_cc=
@@ -219,6 +220,7 @@ lonejson_sha256=$lonejson_sha256
 pslog_sha256=$pslog_sha256
 cai_sha256=$cai_sha256
 lql_sha256=$lql_sha256
+lql_lua_sha256=$lql_lua_sha256
 mdf_sha256=$mdf_sha256
 softline_sha256=$softline_sha256
 libpid0_enabled=$pid0_enabled
@@ -281,6 +283,10 @@ lql_version="0.2.0"
 lql_archive="liblql-${lql_version}-${target_id}.tar.gz"
 lql_url="https://github.com/sa6mwa/liblql/releases/download/v${lql_version}/${lql_archive}"
 lql_download="$archive_cache_root/$lql_sha256/$lql_archive"
+lql_lua_archive="liblql-lua-${lql_version}.tar.gz"
+lql_lua_url="https://github.com/sa6mwa/liblql/releases/download/v${lql_version}/${lql_lua_archive}"
+lql_lua_download="$archive_cache_root/$lql_lua_sha256/$lql_lua_archive"
+lql_lua_source_dir="$deps_root/share/liblql-lua-source"
 mdf_version="0.6.0"
 mdf_archive="libmdf-${mdf_version}-${target_id}.tar.gz"
 mdf_url="https://github.com/sa6mwa/libmdf/releases/download/v${mdf_version}/${mdf_archive}"
@@ -351,6 +357,7 @@ download_if_missing "$pslog_lua_url" "$pslog_lua_download" "$pslog_lua_sha256"
 download_if_missing "$cai_url" "$cai_download" "$cai_sha256"
 download_if_missing "$cai_lua_url" "$cai_lua_download" "$cai_lua_sha256"
 download_if_missing "$lql_url" "$lql_download" "$lql_sha256"
+download_if_missing "$lql_lua_url" "$lql_lua_download" "$lql_lua_sha256"
 download_if_missing "$mdf_url" "$mdf_download" "$mdf_sha256"
 download_if_missing "$mdf_lua_url" "$mdf_lua_download" "$mdf_lua_sha256"
 download_if_missing "$softline_url" "$softline_download" "$softline_sha256"
@@ -432,6 +439,13 @@ if [ "$actual_lql_sha256" != "$lql_sha256" ]; then
   echo "actual   $actual_lql_sha256" >&2
   exit 1
 fi
+actual_lql_lua_sha256=$(sha256sum "$lql_lua_download" | awk '{print $1}')
+if [ "$actual_lql_lua_sha256" != "$lql_lua_sha256" ]; then
+  echo "checksum mismatch for $lql_lua_archive" >&2
+  echo "expected $lql_lua_sha256" >&2
+  echo "actual   $actual_lql_lua_sha256" >&2
+  exit 1
+fi
 actual_mdf_sha256=$(sha256sum "$mdf_download" | awk '{print $1}')
 if [ "$actual_mdf_sha256" != "$mdf_sha256" ]; then
   echo "checksum mismatch for $mdf_archive" >&2
@@ -492,6 +506,8 @@ tar -xzf "$cai_download" -C "$deps_root" --strip-components 1
 mkdir -p "$cai_lua_source_dir"
 tar -xzf "$cai_lua_download" -C "$cai_lua_source_dir" --strip-components 1
 tar -xzf "$lql_download" -C "$deps_root" --strip-components 1
+mkdir -p "$lql_lua_source_dir"
+tar -xzf "$lql_lua_download" -C "$lql_lua_source_dir" --strip-components 1
 tar -xzf "$mdf_download" -C "$deps_root" --strip-components 1
 mkdir -p "$mdf_lua_source_dir"
 tar -xzf "$mdf_lua_download" -C "$mdf_lua_source_dir" --strip-components 1
@@ -539,6 +555,9 @@ liblql_archive=$lql_archive
 liblql_version=$lql_version
 liblql_sha256=$lql_sha256
 liblql_source=liblql-release
+liblql_lua_archive=$lql_lua_archive
+liblql_lua_sha256=$lql_lua_sha256
+liblql_lua_source=liblql-lua-source-archive
 libmdf_archive=$mdf_archive
 libmdf_version=$mdf_version
 libmdf_sha256=$mdf_sha256

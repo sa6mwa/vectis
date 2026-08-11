@@ -126,6 +126,20 @@ assert_lockdc_lua_runtime_contract() {
   assert_contains "$repo_root/tests/lua/pack.cmake" 'server:consumer_service'
 }
 
+assert_lql_lua_runtime_contract() {
+  assert_contains "$repo_root/scripts/deps.sh" 'lql_lua_archive="liblql-lua-\${lql_version}\.tar\.gz"'
+  assert_contains "$repo_root/scripts/deps.sh" 'lql_lua_sha256="b440ce543586ebfc9aafd0e09a700126b9d62d85b8c34ae2ac19b0990db28438"'
+  assert_contains "$repo_root/CMakeLists.txt" 'share/liblql-lua-source/lua/lql/init\.lua'
+  assert_contains "$repo_root/CMakeLists.txt" 'share/liblql-lua-source/lua/lql_core\.c'
+  assert_contains "$repo_root/CMakeLists.txt" 'add_library\(vectis_liblql_lua OBJECT'
+  assert_contains "$repo_root/CMakeLists.txt" '\$<TARGET_OBJECTS:vectis_liblql_lua>'
+  assert_contains "$repo_root/src/vectis_cli.c" 'cpkt_lua_runtime_register_c_module\(runtime, "lql\.core"'
+  assert_contains "$repo_root/src/vectis_cli.c" 'runtime, "lql", vectis_liblql_lua_init'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'require\("lql"\)'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'require\("lql\.core"\)'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'lql\.version'
+}
+
 assert_luarocks_artifact_rejected() {
   dist=$luarocks_dist
   version=0.0.0
@@ -198,6 +212,7 @@ assert_no_landed_test_assets
 assert_action_surface_contract
 assert_kore_lonejson_contract
 assert_lockdc_lua_runtime_contract
+assert_lql_lua_runtime_contract
 assert_luarocks_artifact_rejected
 
 if ! "$repo_root/scripts/target_toolchain_available.sh" x86_64-linux-gnu >/dev/null 2>&1; then
@@ -228,6 +243,7 @@ for expected in \
   '^pslog_sha256=7981ce7e60f6f1e144042e7a9192bb661472756ae34336fb0c2ed8316b31945f$' \
   '^cai_sha256=e344102fa5b46e8c05d67a5120ea0c74bf9ee8ad9ec0bc01e08ea5ccc1f1bdc9$' \
   '^lql_sha256=a32b3ecc33b0634df23c630843b1c2c16a8a2caa947109a33bad20965e47a399$' \
+  '^lql_lua_sha256=b440ce543586ebfc9aafd0e09a700126b9d62d85b8c34ae2ac19b0990db28438$' \
   '^softline_sha256=5d5e662269cf5bae9276f1ba7216dfb7e63127ea89c7c9b5f23cb33dbc970012$'
 do
   if ! printf '%s\n' "$linux_deps_output" | grep -Eq "$expected"; then

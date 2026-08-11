@@ -38,6 +38,7 @@
 #include "vectis_curl_lua_init.h"
 #include "vectis_http_lua_init.h"
 #include "vectis_libmdf_lua_init.h"
+#include "vectis_liblql_lua_init.h"
 #include "vectis_lockd_lua_init.h"
 #include "vectis_lockdc_lua_init.h"
 #include "vectis_pslog_lua_init.h"
@@ -292,6 +293,7 @@ typedef struct vectis_lua_auth_oauth2_transport {
 extern int luaopen_lonejson_core(lua_State *lua);
 extern int luaopen_lockdc_core(lua_State *lua);
 extern int luaopen_cai(lua_State *lua);
+extern int luaopen_lql_core(lua_State *lua);
 extern int luaopen_libmdf_core(lua_State *lua);
 extern int luaopen_pslog_core(lua_State *lua);
 extern int luaopen_softline(lua_State *lua);
@@ -9004,6 +9006,10 @@ static int vectis_luaopen_cai(void *lua_state) {
   return luaopen_cai((lua_State *)lua_state);
 }
 
+static int vectis_luaopen_lql_core(void *lua_state) {
+  return luaopen_lql_core((lua_State *)lua_state);
+}
+
 static int vectis_luaopen_libmdf_core(void *lua_state) {
   return luaopen_libmdf_core((lua_State *)lua_state);
 }
@@ -9214,6 +9220,17 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   }
   status =
       cpkt_lua_runtime_register_c_module(runtime, "cai", vectis_luaopen_cai);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_c_module(runtime, "lql.core",
+                                              vectis_luaopen_lql_core);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_lua_module(
+      runtime, "lql", vectis_liblql_lua_init, sizeof(vectis_liblql_lua_init),
+      "lql.init");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
