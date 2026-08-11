@@ -392,6 +392,8 @@ run_lua_examples() {
   webdav_client_secret=
   static_put_status=
   root_static_put_status=
+  static_head_headers=
+  static_head_status=
   unauth_dav_status=
   traversal_status=
   dav_write_body=
@@ -813,6 +815,30 @@ run_lua_examples() {
       return 1
       ;;
   esac
+  static_head_headers="$work_dir/packed-static-head.headers"
+  static_head_status=$(curl --max-time 3 -sS -D "$static_head_headers" \
+    -o /dev/null -w '%{http_code}' -I \
+    "http://127.0.0.1:$kore_packed_port/site/index.html")
+  if [ "$static_head_status" != "200" ]; then
+    printf '%s\n' "Unexpected packed static HEAD status: $static_head_status" >&2
+    sed 's/^/[packed-static-head] /' "$static_head_headers" >&2
+    return 1
+  fi
+  grep -qi '^content-type: text/html; charset=utf-8' "$static_head_headers" || {
+    printf '%s\n' "Packed static HEAD did not include HTML content type" >&2
+    sed 's/^/[packed-static-head] /' "$static_head_headers" >&2
+    return 1
+  }
+  grep -qi '^etag:' "$static_head_headers" || {
+    printf '%s\n' "Packed static HEAD did not include ETag" >&2
+    sed 's/^/[packed-static-head] /' "$static_head_headers" >&2
+    return 1
+  }
+  grep -qi '^cache-control: no-store' "$static_head_headers" || {
+    printf '%s\n' "Packed static HEAD did not include cache-control" >&2
+    sed 's/^/[packed-static-head] /' "$static_head_headers" >&2
+    return 1
+  }
   root_static_put_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
     -X PUT --data 'blocked root write' \
     "http://127.0.0.1:$kore_packed_port/")
