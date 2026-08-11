@@ -1385,6 +1385,47 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed password-email guarded API response: $body" >&2
     return 1
   fi
+  body=$(curl_or_log "$packed_service_log" "packed password-email webdav read" \
+    --max-time 3 -fsS -u "$password_email_client_id:$password_email_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/index.html")
+  case "$body" in
+    *'packed service asset'*) ;;
+    *)
+      printf '%s\n' "Unexpected packed password-email WebDAV body: $body" >&2
+      return 1
+      ;;
+  esac
+  logout_headers="$work_dir/packed-password-email-logout.headers"
+  logout_status=$(curl --max-time 3 -sS -D "$logout_headers" \
+    -o "$work_dir/packed-password-email-logout.txt" -w '%{http_code}' \
+    -u "$password_email_client_id:$password_email_client_secret" \
+    -X POST -H 'Content-Type: application/x-www-form-urlencoded' --data '' \
+    "http://127.0.0.1:$kore_packed_port/auth-password-email/logout")
+  logout_body=$(cat "$work_dir/packed-password-email-logout.txt")
+  if [ "$logout_status" != "200" ]; then
+    printf '%s\n' "Packed password-email logout returned unexpected status: $logout_status" >&2
+    printf '%s\n' "$logout_body" >&2
+    return 1
+  fi
+  assert_no_store_headers "$logout_headers" "packed password-email logout"
+  if [ "$logout_body" != "logged_out=1" ]; then
+    printf '%s\n' "Packed password-email logout returned unexpected body: $logout_body" >&2
+    return 1
+  fi
+  logged_out_api_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$password_email_client_id:$password_email_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/api/private")
+  if [ "$logged_out_api_status" != "401" ]; then
+    printf '%s\n' "Packed password-email logout left guarded API credential active: $logged_out_api_status" >&2
+    return 1
+  fi
+  logged_out_dav_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$password_email_client_id:$password_email_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/index.html")
+  if [ "$logged_out_dav_status" != "401" ]; then
+    printf '%s\n' "Packed password-email logout left WebDAV credential active: $logged_out_dav_status" >&2
+    return 1
+  fi
   auth_headers="$work_dir/packed-password-webdav-key.headers"
   password_key_response=$(curl_or_log "$packed_service_log" \
     "packed password webdav key" --max-time 3 -fsS -D "$auth_headers" -X POST \
