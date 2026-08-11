@@ -1940,6 +1940,32 @@ run_lua_examples() {
   method_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
     -u "$webdav_client_id:$webdav_client_secret" \
     -X COPY \
+    -H "Destination: http://127.0.0.1:$kore_packed_port/dav/../copy-escape.txt" \
+    "http://127.0.0.1:$kore_packed_port/dav/docs/a.txt")
+  if [ "$method_status" != "400" ]; then
+    printf '%s\n' "Unexpected packed WebDAV traversal COPY status: $method_status" >&2
+    return 1
+  fi
+  method_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$webdav_client_id:$webdav_client_secret" \
+    -X MOVE \
+    -H "Destination: http://127.0.0.1:$kore_packed_port/dav/../move-escape.txt" \
+    "http://127.0.0.1:$kore_packed_port/dav/docs/a.txt")
+  if [ "$method_status" != "400" ]; then
+    printf '%s\n' "Unexpected packed WebDAV traversal MOVE status: $method_status" >&2
+    return 1
+  fi
+  packed_service_docroot_parent=$(dirname "$packed_service_docroot")
+  if [ -e "$packed_service_docroot_parent/copy-escape.txt" ] ||
+      [ -e "$packed_service_docroot_parent/move-escape.txt" ] ||
+      [ -e "$packed_service_docroot/copy-escape.txt" ] ||
+      [ -e "$packed_service_docroot/move-escape.txt" ]; then
+    printf '%s\n' "Packed WebDAV Destination traversal created escaped file" >&2
+    return 1
+  fi
+  method_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$webdav_client_id:$webdav_client_secret" \
+    -X COPY \
     -H "Destination: http://127.0.0.1:$kore_packed_port/dav/docs/a-copy.txt" \
     "http://127.0.0.1:$kore_packed_port/dav/docs/a.txt")
   if [ "$method_status" != "201" ]; then
