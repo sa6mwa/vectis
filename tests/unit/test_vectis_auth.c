@@ -969,6 +969,59 @@ int main(void) {
   expect(!result.authenticated,
          "failed OAuth2 refresh revokes linked WebDAV key");
   vectis_auth_result_cleanup(&result);
+  vectis_error_clear(&error);
+
+  vectis_auth_issued_credential_cleanup(&oauth_webdav_key);
+  vectis_auth_oauth2_webdav_key_config_init(&oauth_webdav_config);
+  oauth_webdav_config.store = store;
+  oauth_webdav_config.flow_id = "oidc-flow-1";
+  oauth_webdav_config.subject = "oidc-user@example.com";
+  status = vectis_auth_issue_webdav_key_for_oauth2_flow(
+      &oauth_webdav_config, &oauth_webdav_key, &error);
+  expect_ok(status, &error, "issues OAuth2 WebDAV key for revoke opt-out");
+  written = snprintf(
+      oauth_basic_clear, sizeof(oauth_basic_clear), "%s:%s",
+      oauth_webdav_key.client_id != NULL ? oauth_webdav_key.client_id : "",
+      oauth_webdav_key.client_secret != NULL ? oauth_webdav_key.client_secret
+                                             : "");
+  expect(written > 0 && (size_t)written < sizeof(oauth_basic_clear),
+         "formats OAuth2 opt-out WebDAV key cleartext");
+  expect(base64_encode(oauth_basic_clear, oauth_basic_token,
+                       sizeof(oauth_basic_token)),
+         "encodes OAuth2 opt-out WebDAV key");
+  written = snprintf(oauth_basic_header, sizeof(oauth_basic_header), "Basic %s",
+                     oauth_basic_token);
+  expect(written > 0 && (size_t)written < sizeof(oauth_basic_header),
+         "formats OAuth2 opt-out WebDAV Basic header");
+
+  vectis_auth_oauth2_stored_token_flow_policy_init(&stored_policy);
+  stored_policy.store = store;
+  stored_policy.flow_id = "oidc-flow-1";
+  stored_policy.flow_policy.transport.request = oauth2_mock_transport;
+  stored_policy.flow_policy.transport.request_userdata = (void *)"fail";
+  stored_policy.flow_policy.transport.user_agent = "vectis-unit";
+  stored_policy.flow_policy.token_endpoint = "https://idp.example.test/token";
+  stored_policy.flow_policy.client_id = "vectis-client";
+  stored_policy.flow_policy.client_secret = "vectis-secret";
+  stored_policy.flow_policy.scope = "dav";
+  stored_policy.flow_policy.now = 1000;
+  stored_policy.flow_policy.disable_retry = 1;
+  stored_policy.revoke_webdav_keys_on_failure = 0;
+  status = vectis_auth_oauth2_stored_token_flow_ensure(
+      &stored_policy, &stored_flow, &token_flow_result, &error);
+  expect(status != VECTIS_OK,
+         "failed stored OAuth2 refresh still reports failure when revoke "
+         "opt-out is set");
+  vectis_auth_oauth2_stored_token_flow_cleanup(&stored_flow);
+  vectis_error_clear(&error);
+  status = vectis_auth_verify_authorization(
+      &store, oauth_basic_header, VECTIS_AUTH_MODE_BASIC, &result, &error);
+  expect_ok(status, &error,
+            "checks OAuth2 WebDAV key after opt-out failed refresh");
+  expect(result.authenticated,
+         "failed OAuth2 refresh preserves linked WebDAV key when revoke "
+         "opt-out is set");
+  vectis_auth_result_cleanup(&result);
 
   vectis_auth_user_config_init(&user);
   user.username = "dav-user@example.com";

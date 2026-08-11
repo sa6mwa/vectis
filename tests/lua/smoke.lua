@@ -322,6 +322,32 @@ local oauth_webdav_revoked = assert(vectis.auth.verify({
   allowed_modes = { "basic" },
 }))
 assert(oauth_webdav_revoked.authenticated == false)
+local oauth_webdav_retained_key = assert(vectis.auth.oauth2_webdav_key({
+  credentials_path = auth_path,
+  flow_id = "lua-flow",
+  subject = "lua-oidc@example.com",
+}))
+local retained_ensure, retained_ensure_error =
+  vectis.auth.oauth2_stored_flow_ensure({
+    credentials_path = auth_path,
+    flow_id = "lua-flow",
+    transport = oauth_transport("fail"),
+    token_endpoint = "https://idp.example.test/token",
+    client_id = "vectis-client",
+    client_secret = "vectis-secret",
+    now = 6000,
+    revoke_webdav_keys_on_failure = false,
+  })
+assert(retained_ensure == nil)
+assert(type(retained_ensure_error) == "table")
+local oauth_webdav_retained = assert(vectis.auth.verify({
+  credentials_path = auth_path,
+  authorization = "Basic " .. base64_encode(
+    oauth_webdav_retained_key.client_id .. ":" ..
+      oauth_webdav_retained_key.client_secret),
+  allowed_modes = { "basic" },
+}))
+assert(oauth_webdav_retained.authenticated == true)
 local issued = assert(vectis.auth.issue({
   credentials_path = auth_path,
   subject = "lua@example.com",

@@ -633,8 +633,11 @@ pending-transaction mismatch rejection, unknown-user and missing-username
 email-token issuance/finalization rejection in the full packed webserver path,
 raw username/password Basic auth rejection for guarded API and WebDAV routes,
 no-store headers across native login, email-token, WebDAV-key, and logout auth
-responses, and WebDAV use of issued keys. Broader packed auth matrix coverage
-remains future hardening work.
+responses, and WebDAV use of issued keys. Focused C auth and Lua smoke
+coverage proves OAuth2/OIDC-linked WebDAV app keys are revoked on stored token
+flow failure by default and are preserved when
+`revoke_webdav_keys_on_failure=false` is explicitly configured. Broader packed
+auth matrix coverage remains future hardening work.
 
 ## Implementation Slices
 
