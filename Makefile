@@ -19,7 +19,7 @@ FUZZ_PRESET := fuzz
 	test test-debug test-lifecycle test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
 	lua-env lua-test \
 	dev-up dev-down dev-reset dev-ps dev-logs \
-	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy release-darwin-smoke-bundle release-matrix prerelease-hardening lifecycle-version-contract release print-release-version clean-dist finalize-slice prerelease \
+	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy release-darwin-smoke-bundle release-matrix prerelease-live prerelease-hardening lifecycle-version-contract release print-release-version clean-dist finalize-slice prerelease \
 	build-kore verify-kore-patches \
 	format clean \
 	vendor-kore vendor-kore-apply vendor-kore-status vendor-kore-upgrade
@@ -68,6 +68,7 @@ help:
 		'make verify-release-privacy Verify release artifacts contain no local paths.' \
 		'make release-darwin-smoke-bundle Build the Darwin SDK and smoke bundle when osxcross is available.' \
 		'make release-matrix     Build, checksum, and verify release artifacts for supported targets.' \
+		'make prerelease-live    Run opt-in live OAuth2/OIDC checks with VECTIS_LIVE_OAUTH2_ENABLE=1.' \
 		'make prerelease-hardening Run expensive deterministic hardening gates plus release matrix.' \
 		'make lifecycle-version-contract Verify exact lightweight tag version behavior for release.' \
 		'make release            Clean final tagged release artifact pipeline; refuses untagged 0.0.0.' \
@@ -170,7 +171,10 @@ release-darwin-smoke-bundle:
 
 release-matrix: package package-source package-checksums package-verify
 
-prerelease-hardening: prerelease release-matrix
+prerelease-live:
+	$(TIMED) prerelease-live bash ./scripts/test-live-oauth2.sh
+
+prerelease-hardening: prerelease prerelease-live release-matrix
 
 lifecycle-version-contract:
 	$(TIMED) lifecycle-version-contract bash ./scripts/test-release-tag-contract.sh

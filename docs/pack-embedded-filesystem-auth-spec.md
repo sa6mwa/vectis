@@ -652,9 +652,10 @@ keys are revoked on stored token flow failure by default and are preserved when
 admin coverage proves OAuth2 WebDAV-key issuance requires an existing stored
 flow and that the issued Basic credentials authenticate through the public
 credentials verification path while preserving the linked OAuth2 flow claim.
-The remaining coverage boundary is external OIDC/OAuth2 provider interoperability,
-which belongs in opt-in live integration because it depends on provider-specific
-runtime configuration.
+External OIDC/OAuth2 provider interoperability is covered by `make
+prerelease-live` when `VECTIS_LIVE_OAUTH2_ENABLE=1` and provider environment is
+configured; it is skipped by default because it depends on provider-specific
+runtime configuration and credentials.
 
 ## Implementation Slices
 

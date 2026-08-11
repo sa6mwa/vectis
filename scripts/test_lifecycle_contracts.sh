@@ -236,6 +236,7 @@ for target in \
   verify-release-privacy \
   release-darwin-smoke-bundle \
   release-matrix \
+  prerelease-live \
   prerelease-hardening \
   release \
   finalize-slice \
@@ -249,6 +250,9 @@ for target in \
 do
   assert_contains "$repo_root/Makefile" "^$target:"
 done
+assert_contains "$repo_root/Makefile" 'VECTIS_LIVE_OAUTH2_ENABLE=1'
+assert_contains "$repo_root/scripts/test-live-oauth2.sh" 'VECTIS_LIVE_OAUTH2_ENABLE'
+assert_contains "$repo_root/scripts/test-live-oauth2.sh" 'SKIP: set VECTIS_LIVE_OAUTH2_ENABLE=1'
 
 assert_contains "$repo_root/cmake/toolchains/x86_64-linux-gnu.cmake" 'cpkt_configure_bootlin_toolchain\(x86_64-linux-gnu\)'
 assert_contains "$repo_root/cmake/toolchains/x86_64-linux-musl.cmake" 'cpkt_configure_bootlin_toolchain\(x86_64-linux-musl\)'
