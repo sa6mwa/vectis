@@ -497,14 +497,16 @@ provider, delivers an email token through a local mock SMTP server, turns
 password-only login for a TOTP/email-token route into a pending transaction,
 rejects
 wrong-token and replayed-token WebDAV key requests, rejects expired email-token
-transactions, rejects SMTP delivery to non-allowlisted recipients, rejects a
-requires TOTP continuation for a missing TOTP code with an otherwise valid
-email-token transaction, rejects a wrong TOTP code,
-issues a WebDAV key after deterministic password+email-token login for a
-non-TOTP user, issues a WebDAV key after deterministic password+TOTP login for
-a TOTP user, rejects explicit password+TOTP auth for a non-TOTP user, issues a
-WebDAV key after deterministic password-first pending continuation with
-TOTP+email-token login for a TOTP user, protects the WebDAV mount,
+transactions, rejects SMTP delivery to non-allowlisted recipients, requires
+TOTP continuation for a missing TOTP code with an otherwise valid email-token
+transaction, rejects a wrong TOTP code, issues a WebDAV key after deterministic
+password-only login for a non-TOTP user, requires TOTP continuation for a
+password-only route when the user has TOTP enrollment, issues a WebDAV key after
+deterministic password+email-token login for a non-TOTP user, issues a WebDAV
+key after deterministic password+TOTP login for a TOTP user, rejects explicit
+password+TOTP auth for a non-TOTP user, issues a WebDAV key after deterministic
+password-first pending continuation with TOTP+email-token login for a TOTP
+user, protects the WebDAV mount,
 rejects anonymous WebDAV reads and writes without mutating the extracted
 docroot, serves embedded content through authenticated WebDAV, accepts mutable
 WebDAV writes, verifies those writes land in the extracted docroot, deletes an
@@ -552,12 +554,14 @@ configured delivery, mailbox capture, continued login, wrong token rejection,
 email-token attempt-budget exhaustion, expired token rejection and consumption,
 replay rejection, recipient allowlist rejection, password+TOTP+email-token
 success through the browser `/continue` flow, login-template use of
-`continue_action`, email-token-only WebDAV-key issuance, password+email-token
-WebDAV-key issuance for a non-TOTP user, and pending-transaction mismatch
-rejection, unknown-user and missing-username email-token issuance/finalization
-rejection in the full packed webserver path, no-store headers across native
-login, email-token, WebDAV-key, and logout auth responses, and WebDAV use of
-issued keys. Broader packed auth matrix coverage remains future hardening work.
+`continue_action`, email-token-only WebDAV-key issuance, password-only
+WebDAV-key issuance for a non-TOTP user, password-only TOTP continuation for an
+enrolled user, password+email-token WebDAV-key issuance for a non-TOTP user,
+and pending-transaction mismatch rejection, unknown-user and missing-username
+email-token issuance/finalization rejection in the full packed webserver path,
+no-store headers across native login, email-token, WebDAV-key, and logout auth
+responses, and WebDAV use of issued keys. Broader packed auth matrix coverage
+remains future hardening work.
 
 ## Implementation Slices
 

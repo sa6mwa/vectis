@@ -346,6 +346,11 @@ run_lua_examples() {
   method_status=
   guarded_status=
   password_only_status=
+  password_key_response=
+  password_client_id=
+  password_client_secret=
+  password_totp_body=
+  password_totp_status=
   wrong_token_status=
   missing_totp_body=
   missing_totp_status=
@@ -500,6 +505,14 @@ run_lua_examples() {
     '}))' \
     'assert(vectis.auth.user_add({' \
     '  credentials_path = credentials_path,' \
+    '  username = "packed-password-totp@example.com",' \
+    '  password = "packed-password",' \
+    '  totp_secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",' \
+    '  totp_label = "Vectis:packed-password-totp@example.com",' \
+    '  issuer = "Vectis",' \
+    '}))' \
+    'assert(vectis.auth.user_add({' \
+    '  credentials_path = credentials_path,' \
     '  username = "packed-email-only@example.com",' \
     '  password = "packed-password",' \
     '}))' \
@@ -581,6 +594,14 @@ run_lua_examples() {
     '  time = 59,' \
     '  required_factors = { "password", "email_token" },' \
     '  email_token_ttl_seconds = 300,' \
+    '}))' \
+    'assert(server:auth_routes({' \
+    '  path_prefix = "/auth-password",' \
+    '  credentials_path = credentials_path,' \
+    '  realm = "packed-e2e",' \
+    '  login_title = "Packed E2E Password Login",' \
+    '  time = 59,' \
+    '  required_factors = { "password" },' \
     '}))' \
     'assert(server:auth_routes({' \
     '  path_prefix = "/auth-totp",' \
@@ -1145,6 +1166,57 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed password-email guarded API response: $body" >&2
     return 1
   fi
+  auth_headers="$work_dir/packed-password-webdav-key.headers"
+  password_key_response=$(curl_or_log "$packed_service_log" \
+    "packed password webdav key" --max-time 3 -fsS -D "$auth_headers" -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-email-only%40example.com&password=packed-password' \
+    "http://127.0.0.1:$kore_packed_port/auth-password/webdav-key")
+  assert_no_store_headers "$auth_headers" "packed password webdav key"
+  password_client_id=$(printf '%s\n' "$password_key_response" |
+    sed -n 's/^client_id=//p')
+  password_client_secret=$(printf '%s\n' "$password_key_response" |
+    sed -n 's/^client_secret=//p')
+  if [ -z "$password_client_id" ] || [ -z "$password_client_secret" ]; then
+    printf '%s\n' "Packed password auth did not issue WebDAV credentials" >&2
+    printf '%s\n' "$password_key_response" >&2
+    return 1
+  fi
+  body=$(curl_or_log "$packed_service_log" "packed password guarded api" \
+    --max-time 3 -fsS -u "$password_client_id:$password_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/api/private")
+  if [ "$body" != '{"ok":true,"surface":"packed-api"}' ]; then
+    printf '%s\n' "Unexpected packed password guarded API response: $body" >&2
+    return 1
+  fi
+  auth_headers="$work_dir/packed-password-totp-pending.headers"
+  password_totp_status=$(curl --max-time 3 -sS -D "$auth_headers" \
+    -o "$work_dir/packed-password-totp-pending.txt" -w '%{http_code}' \
+    -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-password-totp%40example.com&password=packed-password' \
+    "http://127.0.0.1:$kore_packed_port/auth-password/webdav-key")
+  password_totp_body=$(cat "$work_dir/packed-password-totp-pending.txt")
+  if [ "$password_totp_status" != "202" ]; then
+    printf '%s\n' "Packed password auth returned unexpected TOTP-pending status: $password_totp_status" >&2
+    printf '%s\n' "$password_totp_body" >&2
+    return 1
+  fi
+  assert_no_store_headers "$auth_headers" "packed password TOTP pending"
+  case "$password_totp_body" in
+    *'totp_required=1'*) ;;
+    *)
+      printf '%s\n' "Packed password auth did not request TOTP continuation" >&2
+      printf '%s\n' "$password_totp_body" >&2
+      return 1
+      ;;
+  esac
+  case "$password_totp_body" in
+    *client_id=*|*client_secret=*)
+      printf '%s\n' "Packed password auth exposed credentials before TOTP" >&2
+      return 1
+      ;;
+  esac
   auth_headers="$work_dir/packed-totp-start.headers"
   totp_start_response=$(curl_or_log "$packed_service_log" \
     "packed totp start" --max-time 3 -fsS -D "$auth_headers" -X POST \
