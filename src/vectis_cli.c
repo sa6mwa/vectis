@@ -104,9 +104,8 @@ typedef struct vectis_lua_server_json_route {
 
 typedef struct vectis_lua_consumer_registration {
   vectis_consumer_service *service;
-  vectis_webdav_config storage;
-  lc_consumer_config consumer;
-  lc_consumer_service_config service_config;
+  vectis_consumer_service_receiver_config config;
+  vectis_webdav_marker_receiver_config webdav_marker;
   char *name;
   char *queue;
   char *owner;
@@ -4202,41 +4201,6 @@ vectis_lua_server_auth_json_route_free_all(vectis_lua_server *server) {
   }
 }
 
-static int
-vectis_lua_consumer_write_marker(vectis_lua_consumer_registration *service,
-                                 const char *path, const char *body) {
-  vectis_webdav_status status;
-
-  if (service == NULL || path == NULL || body == NULL) {
-    return LC_ERR_PROTOCOL;
-  }
-  status = vectis_webdav_put(&service->storage, path,
-                             (const unsigned char *)body, strlen(body));
-  return status == VECTIS_WEBDAV_OK ? LC_OK : LC_ERR_PROTOCOL;
-}
-
-static int vectis_lua_consumer_marker_handle(void *userdata,
-                                             lc_consumer_message *delivery,
-                                             lc_error *error) {
-  vectis_lua_consumer_registration *service;
-  int rc;
-
-  service = (vectis_lua_consumer_registration *)userdata;
-  rc = vectis_lua_consumer_write_marker(service, service->processing_path,
-                                        service->processing_body);
-  if (rc == LC_OK && service->processing_delay_seconds > 0L) {
-    (void)sleep((unsigned int)service->processing_delay_seconds);
-  }
-  if (rc == LC_OK && delivery != NULL && delivery->message != NULL) {
-    rc = delivery->message->ack(delivery->message, error);
-  }
-  if (rc == LC_OK) {
-    rc = vectis_lua_consumer_write_marker(service, service->done_path,
-                                          service->done_body);
-  }
-  return rc;
-}
-
 static void vectis_lua_server_consumer_service_free(
     vectis_lua_consumer_registration *service) {
   vectis_error error;
@@ -4761,11 +4725,10 @@ static int vectis_lua_server_consumer_service(lua_State *lua) {
   }
   handler_index = lua_absindex(lua, -1);
   kind = vectis_lua_table_string(lua, handler_index, "kind");
-  if (kind == NULL || strcmp(kind, "webdav_marker") != 0) {
+  if (kind == NULL || kind[0] == '\0') {
     lua_pop(lua, 1);
     return vectis_lua_push_error_text(
-        lua, VECTIS_ERR_INVALID,
-        "consumer service handler.kind must be webdav_marker");
+        lua, VECTIS_ERR_INVALID, "consumer service handler.kind is required");
   }
 
   service = (vectis_lua_consumer_registration *)calloc(1u, sizeof(*service));
@@ -4799,44 +4762,49 @@ static int vectis_lua_server_consumer_service(lua_State *lua) {
   }
   lua_pop(lua, 1);
 
-  if (service->cache_dir == NULL || service->cache_dir[0] == '\0') {
+  if (strcmp(kind, "webdav_marker") == 0 &&
+      (service->cache_dir == NULL || service->cache_dir[0] == '\0')) {
     vectis_lua_server_consumer_service_free(service);
     return vectis_lua_push_error_text(
         lua, VECTIS_ERR_INVALID,
         "webdav_marker consumer handler cache_dir is required");
   }
 
-  vectis_webdav_config_init(&service->storage);
-  service->storage.cache_dir = service->cache_dir;
-  service->storage.site_id = service->site_id;
-  service->storage.max_file_bytes = vectis_lua_table_size(
-      lua, 2, "max_file_bytes", service->storage.max_file_bytes);
-  service->storage.max_total_bytes = vectis_lua_table_size(
-      lua, 2, "max_total_bytes", service->storage.max_total_bytes);
-  service->storage.max_resources = vectis_lua_table_size(
-      lua, 2, "max_resources", service->storage.max_resources);
+  vectis_consumer_service_receiver_config_init(&service->config);
+  service->config.name = service->name;
+  service->config.queue = service->queue;
+  service->config.owner = service->owner;
+  service->config.receiver_kind = kind;
+  service->config.visibility_timeout_seconds =
+      (long)vectis_lua_table_size(lua, 2, "visibility_timeout_seconds", 30u);
+  service->config.wait_seconds =
+      (long)vectis_lua_table_size(lua, 2, "wait_seconds", 1u);
+  service->config.worker_count = vectis_lua_table_size(
+      lua, 2, "worker_count", service->config.worker_count);
+  if (strcmp(kind, "webdav_marker") == 0) {
+    vectis_webdav_marker_receiver_config_init(&service->webdav_marker);
+    service->webdav_marker.cache_dir = service->cache_dir;
+    service->webdav_marker.site_id = service->site_id;
+    service->webdav_marker.processing_path = service->processing_path;
+    service->webdav_marker.done_path = service->done_path;
+    service->webdav_marker.processing_body = service->processing_body;
+    service->webdav_marker.done_body = service->done_body;
+    service->webdav_marker.max_file_bytes = vectis_lua_table_size(
+        lua, 2, "max_file_bytes", service->webdav_marker.max_file_bytes);
+    service->webdav_marker.max_total_bytes = vectis_lua_table_size(
+        lua, 2, "max_total_bytes", service->webdav_marker.max_total_bytes);
+    service->webdav_marker.max_resources = vectis_lua_table_size(
+        lua, 2, "max_resources", service->webdav_marker.max_resources);
+    service->config.receiver_config = &service->webdav_marker;
+  }
   service->processing_delay_seconds =
       (long)vectis_lua_table_size(lua, 2, "processing_delay_seconds", 0u);
-
-  lc_consumer_config_init(&service->consumer);
-  service->consumer.name = service->name;
-  service->consumer.request.queue = service->queue;
-  service->consumer.request.owner = service->owner;
-  service->consumer.request.visibility_timeout_seconds =
-      (long)vectis_lua_table_size(lua, 2, "visibility_timeout_seconds", 30u);
-  service->consumer.request.wait_seconds =
-      (long)vectis_lua_table_size(lua, 2, "wait_seconds", 1u);
-  service->consumer.worker_count =
-      (unsigned int)vectis_lua_table_size(lua, 2, "worker_count", 1u);
-  service->consumer.handle = vectis_lua_consumer_marker_handle;
-  service->consumer.context = service;
-  lc_consumer_service_config_init(&service->service_config);
-  service->service_config.consumers = &service->consumer;
-  service->service_config.consumer_count = 1u;
+  service->webdav_marker.processing_delay_seconds =
+      service->processing_delay_seconds;
 
   vectis_error_clear(&error);
-  status = app->consumer_service(app, &service->service_config,
-                                 &service->service, &error);
+  status = app->consumer_service_receiver(app, &service->config,
+                                          &service->service, &error);
   if (status != VECTIS_OK) {
     vectis_lua_server_consumer_service_free(service);
     return vectis_lua_push_error(lua, status, &error);

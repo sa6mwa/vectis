@@ -80,6 +80,16 @@ assert(type(consumer_service_error) == "table")
 assert(consumer_service_error.status == vectis.ERR_INVALID)
 assert(consumer_service_error.status_string == "invalid")
 assert(consumer_service_error.message:match("direct Lua callbacks"))
+consumer_service, consumer_service_error = server:consumer_service({
+  queue = "lua-smoke",
+  handler = {
+    kind = "missing_receiver",
+  },
+})
+assert(consumer_service == nil)
+assert(type(consumer_service_error) == "table")
+assert(consumer_service_error.status == vectis.ERR_INVALID)
+assert(consumer_service_error.message:match("receiver_kind"))
 server:close()
 
 local acme_auth_path = os.tmpname()

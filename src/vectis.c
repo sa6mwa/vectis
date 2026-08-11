@@ -294,6 +294,7 @@ typedef struct vectis_app_impl {
   size_t openapi_doc_capacity;
   struct lc_client *lockd_client;
   pid_t lockd_client_pid;
+  struct vectis_consumer_receiver_entry *consumer_receivers;
 } vectis_app_impl;
 
 struct vectis_request {
@@ -359,7 +360,30 @@ LONEJSON_MAP_DEFINE(vectis_error_response_map, vectis_error_response_body,
 
 typedef struct vectis_consumer_service_impl {
   lc_consumer_service *service;
+  struct vectis_consumer_receiver_runtime *receivers;
 } vectis_consumer_service_impl;
+
+typedef struct vectis_consumer_receiver_entry {
+  char *kind;
+  vectis_consumer_receiver_adapter adapter;
+  struct vectis_consumer_receiver_entry *next;
+} vectis_consumer_receiver_entry;
+
+typedef struct vectis_consumer_receiver_runtime {
+  vectis_consumer_receiver receiver;
+  struct vectis_consumer_receiver_runtime *next;
+} vectis_consumer_receiver_runtime;
+
+typedef struct vectis_webdav_marker_receiver {
+  vectis_webdav_config storage;
+  char *cache_dir;
+  char *site_id;
+  char *processing_path;
+  char *done_path;
+  char *processing_body;
+  char *done_body;
+  long processing_delay_seconds;
+} vectis_webdav_marker_receiver;
 
 typedef struct vectis_curl_buffer {
   char *data;
@@ -409,6 +433,9 @@ static vectis_status vectis_set_lonejson_error(vectis_error *error,
                                                lonejson_status status,
                                                const lonejson_error *json_error,
                                                const char *message);
+static vectis_status vectis_register_consumer_receiver_impl(
+    vectis_app_impl *impl, const vectis_consumer_receiver_adapter *adapter,
+    vectis_error *error);
 static vectis_status vectis_upload_file_write(vectis_app *app,
                                               vectis_request *request,
                                               const void *data, size_t size,
@@ -1836,6 +1863,177 @@ static char *vectis_strndup(const char *value, size_t len) {
 }
 
 static void
+vectis_consumer_receiver_runtime_cleanup(vectis_consumer_receiver_runtime *rt) {
+  vectis_consumer_receiver_runtime *next;
+
+  while (rt != NULL) {
+    next = rt->next;
+    if (rt->receiver.cleanup != NULL) {
+      rt->receiver.cleanup(rt->receiver.context);
+    }
+    free(rt);
+    rt = next;
+  }
+}
+
+static void
+vectis_consumer_receiver_entries_cleanup(vectis_consumer_receiver_entry *entry) {
+  vectis_consumer_receiver_entry *next;
+
+  while (entry != NULL) {
+    next = entry->next;
+    free(entry->kind);
+    free(entry);
+    entry = next;
+  }
+}
+
+static vectis_consumer_receiver_entry *
+vectis_find_consumer_receiver(vectis_app_impl *impl, const char *kind) {
+  vectis_consumer_receiver_entry *entry;
+
+  if (impl == NULL || kind == NULL || kind[0] == '\0') {
+    return NULL;
+  }
+  entry = impl->consumer_receivers;
+  while (entry != NULL) {
+    if (strcmp(entry->kind, kind) == 0) {
+      return entry;
+    }
+    entry = entry->next;
+  }
+  return NULL;
+}
+
+static int
+vectis_webdav_marker_receiver_put(vectis_webdav_marker_receiver *receiver,
+                                  const char *path, const char *body) {
+  vectis_webdav_status status;
+
+  if (receiver == NULL || path == NULL || body == NULL) {
+    return LC_ERR_PROTOCOL;
+  }
+  status = vectis_webdav_put(&receiver->storage, path,
+                             (const unsigned char *)body, strlen(body));
+  return status == VECTIS_WEBDAV_OK ? LC_OK : LC_ERR_PROTOCOL;
+}
+
+static int vectis_webdav_marker_receiver_handle(void *context,
+                                                lc_consumer_message *message,
+                                                lc_error *error) {
+  vectis_webdav_marker_receiver *receiver;
+  int rc;
+
+  receiver = (vectis_webdav_marker_receiver *)context;
+  rc = vectis_webdav_marker_receiver_put(receiver, receiver->processing_path,
+                                         receiver->processing_body);
+  if (rc == LC_OK && receiver->processing_delay_seconds > 0L) {
+    (void)sleep((unsigned int)receiver->processing_delay_seconds);
+  }
+  if (rc == LC_OK && message != NULL && message->message != NULL) {
+    rc = message->message->ack(message->message, error);
+  }
+  if (rc == LC_OK) {
+    rc = vectis_webdav_marker_receiver_put(receiver, receiver->done_path,
+                                           receiver->done_body);
+  }
+  return rc;
+}
+
+static void vectis_webdav_marker_receiver_cleanup(void *context) {
+  vectis_webdav_marker_receiver *receiver;
+
+  receiver = (vectis_webdav_marker_receiver *)context;
+  if (receiver == NULL) {
+    return;
+  }
+  free(receiver->cache_dir);
+  free(receiver->site_id);
+  free(receiver->processing_path);
+  free(receiver->done_path);
+  free(receiver->processing_body);
+  free(receiver->done_body);
+  free(receiver);
+}
+
+static vectis_status vectis_webdav_marker_receiver_create(
+    void *adapter_context, const void *receiver_config,
+    vectis_consumer_receiver *out, vectis_error *error) {
+  const vectis_webdav_marker_receiver_config *config;
+  vectis_webdav_marker_receiver *receiver;
+
+  (void)adapter_context;
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "receiver output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(out, 0, sizeof(*out));
+  if (receiver_config == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "webdav_marker receiver config is required");
+    return VECTIS_ERR_INVALID;
+  }
+  config = (const vectis_webdav_marker_receiver_config *)receiver_config;
+  if (config->cache_dir == NULL || config->cache_dir[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "webdav_marker receiver cache_dir is required");
+    return VECTIS_ERR_INVALID;
+  }
+  receiver = (vectis_webdav_marker_receiver *)calloc(1u, sizeof(*receiver));
+  if (receiver == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate webdav_marker receiver");
+    return VECTIS_ERR_NOMEM;
+  }
+  receiver->cache_dir = vectis_strdup(config->cache_dir);
+  receiver->site_id = vectis_strdup(config->site_id != NULL ? config->site_id
+                                                            : "consumer");
+  receiver->processing_path =
+      vectis_strdup(config->processing_path != NULL ? config->processing_path
+                                                    : "/consumer-processing.txt");
+  receiver->done_path = vectis_strdup(config->done_path != NULL
+                                          ? config->done_path
+                                          : "/consumer-done.txt");
+  receiver->processing_body =
+      vectis_strdup(config->processing_body != NULL ? config->processing_body
+                                                    : "processing\n");
+  receiver->done_body =
+      vectis_strdup(config->done_body != NULL ? config->done_body : "handled\n");
+  if (receiver->cache_dir == NULL || receiver->site_id == NULL ||
+      receiver->processing_path == NULL || receiver->done_path == NULL ||
+      receiver->processing_body == NULL || receiver->done_body == NULL) {
+    vectis_webdav_marker_receiver_cleanup(receiver);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy webdav_marker receiver config");
+    return VECTIS_ERR_NOMEM;
+  }
+  vectis_webdav_config_init(&receiver->storage);
+  receiver->storage.cache_dir = receiver->cache_dir;
+  receiver->storage.site_id = receiver->site_id;
+  receiver->storage.max_file_bytes = config->max_file_bytes;
+  receiver->storage.max_total_bytes = config->max_total_bytes;
+  receiver->storage.max_resources = config->max_resources;
+  receiver->processing_delay_seconds = config->processing_delay_seconds;
+  out->handle = vectis_webdav_marker_receiver_handle;
+  out->context = receiver;
+  out->cleanup = vectis_webdav_marker_receiver_cleanup;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static int vectis_consumer_receiver_bridge(void *context,
+                                           lc_consumer_message *message,
+                                           lc_error *error) {
+  vectis_consumer_receiver_runtime *rt;
+
+  rt = (vectis_consumer_receiver_runtime *)context;
+  if (rt == NULL || rt->receiver.handle == NULL) {
+    return LC_ERR_PROTOCOL;
+  }
+  return rt->receiver.handle(rt->receiver.context, message, error);
+}
+
+static void
 vectis_http_response_headers_cleanup(vectis_http_response *response) {
   size_t i;
 
@@ -2764,6 +2962,7 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
   vectis_free_openapi_docs(impl);
   vectis_free_endpoints(impl);
   vectis_free_domains(impl);
+  vectis_consumer_receiver_entries_cleanup(impl->consumer_receivers);
 
   free(impl->app_name);
   free(impl->bind);
@@ -3257,6 +3456,20 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
     impl->owns_logger = 1;
   }
 
+  {
+    vectis_consumer_receiver_adapter adapter;
+
+    adapter.kind = "webdav_marker";
+    adapter.create = vectis_webdav_marker_receiver_create;
+    adapter.context = NULL;
+    status = vectis_register_consumer_receiver_impl(impl, &adapter, error);
+    if (status != VECTIS_OK) {
+      vectis_destroy_impl(impl);
+      free(app);
+      return NULL;
+    }
+  }
+
   app->start = vectis_start;
   app->stop = vectis_stop;
   app->route = vectis_register_route;
@@ -3284,6 +3497,8 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   app->logger = vectis_logger;
   app->lockd_client = vectis_lockd_client;
   app->consumer_service = vectis_consumer_service_new;
+  app->register_consumer_receiver = vectis_register_consumer_receiver;
+  app->consumer_service_receiver = vectis_consumer_service_new_receiver;
   app->close = vectis_destroy;
   app->impl = impl;
   return app;
@@ -9912,6 +10127,182 @@ vectis_status vectis_consumer_service_new(
   return VECTIS_OK;
 }
 
+void vectis_consumer_service_receiver_config_init(
+    vectis_consumer_service_receiver_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->visibility_timeout_seconds = 30L;
+  config->wait_seconds = 1L;
+  config->worker_count = 1u;
+}
+
+void vectis_webdav_marker_receiver_config_init(
+    vectis_webdav_marker_receiver_config *config) {
+  vectis_webdav_config storage;
+
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  vectis_webdav_config_init(&storage);
+  config->site_id = "consumer";
+  config->processing_path = "/consumer-processing.txt";
+  config->done_path = "/consumer-done.txt";
+  config->processing_body = "processing\n";
+  config->done_body = "handled\n";
+  config->max_file_bytes = storage.max_file_bytes;
+  config->max_total_bytes = storage.max_total_bytes;
+  config->max_resources = storage.max_resources;
+}
+
+static vectis_status vectis_register_consumer_receiver_impl(
+    vectis_app_impl *impl, const vectis_consumer_receiver_adapter *adapter,
+    vectis_error *error) {
+  vectis_consumer_receiver_entry *entry;
+
+  if (impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (adapter == NULL || adapter->kind == NULL || adapter->kind[0] == '\0' ||
+      adapter->create == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "consumer receiver adapter requires kind and create");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_find_consumer_receiver(impl, adapter->kind) != NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "consumer receiver adapter is already registered");
+    return VECTIS_ERR_INVALID;
+  }
+  entry = (vectis_consumer_receiver_entry *)calloc(1u, sizeof(*entry));
+  if (entry == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate consumer receiver adapter");
+    return VECTIS_ERR_NOMEM;
+  }
+  entry->kind = vectis_strdup(adapter->kind);
+  if (entry->kind == NULL) {
+    free(entry);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy consumer receiver adapter kind");
+    return VECTIS_ERR_NOMEM;
+  }
+  entry->adapter = *adapter;
+  entry->adapter.kind = entry->kind;
+  entry->next = impl->consumer_receivers;
+  impl->consumer_receivers = entry;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_register_consumer_receiver(
+    vectis_app *app, const vectis_consumer_receiver_adapter *adapter,
+    vectis_error *error) {
+  vectis_app_impl *impl;
+
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  return vectis_register_consumer_receiver_impl(impl, adapter, error);
+}
+
+vectis_status vectis_consumer_service_new_receiver(
+    vectis_app *app, const vectis_consumer_service_receiver_config *config,
+    vectis_consumer_service **out, vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_consumer_receiver_entry *entry;
+  vectis_consumer_receiver_runtime *runtime;
+  lc_consumer_config consumer;
+  lc_consumer_service_config service_config;
+  vectis_consumer_service_impl *service_impl;
+  vectis_status status;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "consumer service output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "consumer service receiver config is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->queue == NULL || config->queue[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "consumer service queue is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->receiver_kind == NULL || config->receiver_kind[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "consumer service receiver_kind is required");
+    return VECTIS_ERR_INVALID;
+  }
+
+  impl = (vectis_app_impl *)app->impl;
+  entry = vectis_find_consumer_receiver(impl, config->receiver_kind);
+  if (entry == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "consumer service receiver_kind is not registered");
+    return VECTIS_ERR_INVALID;
+  }
+
+  runtime = (vectis_consumer_receiver_runtime *)calloc(1u, sizeof(*runtime));
+  if (runtime == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate consumer receiver runtime");
+    return VECTIS_ERR_NOMEM;
+  }
+  status = entry->adapter.create(entry->adapter.context, config->receiver_config,
+                                 &runtime->receiver, error);
+  if (status != VECTIS_OK) {
+    free(runtime);
+    return status;
+  }
+  if (runtime->receiver.handle == NULL) {
+    vectis_consumer_receiver_runtime_cleanup(runtime);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "consumer receiver adapter returned no handler");
+    return VECTIS_ERR_INVALID;
+  }
+
+  lc_consumer_config_init(&consumer);
+  consumer.name = config->name;
+  consumer.request.namespace_name = config->namespace_name;
+  consumer.request.queue = config->queue;
+  consumer.request.owner = config->owner;
+  consumer.request.visibility_timeout_seconds =
+      config->visibility_timeout_seconds;
+  consumer.request.wait_seconds = config->wait_seconds;
+  consumer.worker_count = config->worker_count;
+  consumer.with_state = config->with_state;
+  consumer.handle = vectis_consumer_receiver_bridge;
+  consumer.context = runtime;
+  lc_consumer_service_config_init(&service_config);
+  service_config.consumers = &consumer;
+  service_config.consumer_count = 1u;
+
+  status = vectis_consumer_service_new(app, &service_config, out, error);
+  if (status != VECTIS_OK) {
+    vectis_consumer_receiver_runtime_cleanup(runtime);
+    return status;
+  }
+  service_impl = (vectis_consumer_service_impl *)(*out)->impl;
+  runtime->next = service_impl->receivers;
+  service_impl->receivers = runtime;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 struct lc_consumer_service *
 vectis_consumer_service_raw(vectis_consumer_service *service) {
   vectis_consumer_service_impl *impl;
@@ -10085,6 +10476,9 @@ void vectis_consumer_service_destroy(vectis_consumer_service *service) {
   impl = (vectis_consumer_service_impl *)service->impl;
   if (impl != NULL && impl->service != NULL) {
     impl->service->close(impl->service);
+  }
+  if (impl != NULL) {
+    vectis_consumer_receiver_runtime_cleanup(impl->receivers);
   }
   free(impl);
   free(service);

@@ -31,6 +31,15 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  file=$1
+  pattern=$2
+  if grep -Eq "$pattern" "$file"; then
+    echo "forbidden lifecycle contract pattern in $file: $pattern" >&2
+    exit 1
+  fi
+}
+
 assert_host_debug_target() {
   host_system=$1
   host_machine=$2
@@ -124,6 +133,12 @@ assert_lockdc_lua_runtime_contract() {
   assert_contains "$repo_root/tests/lua/pack.cmake" 'vectis\.lockd\.open'
   assert_contains "$repo_root/tests/lua/pack.cmake" 'client_bundle_source = assert\(vectis\.embedded_lockd_bundle_source\(\)\)'
   assert_contains "$repo_root/tests/lua/pack.cmake" 'server:consumer_service'
+  assert_contains "$repo_root/include/vectis/vectis.h" 'vectis_consumer_receiver_adapter'
+  assert_contains "$repo_root/include/vectis/vectis.h" 'consumer_service_receiver'
+  assert_contains "$repo_root/src/vectis.c" 'adapter.kind = "webdav_marker"'
+  assert_contains "$repo_root/src/vectis.c" 'vectis_webdav_marker_receiver_create'
+  assert_contains "$repo_root/src/vectis_cli.c" 'app->consumer_service_receiver'
+  assert_not_contains "$repo_root/src/vectis_cli.c" 'consumer service handler.kind must be webdav_marker'
 }
 
 assert_lql_lua_runtime_contract() {

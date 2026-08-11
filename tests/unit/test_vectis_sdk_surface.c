@@ -215,6 +215,22 @@ static int sample_consumer_handler(void *context, lc_consumer_message *message,
   return LC_OK;
 }
 
+static vectis_status
+sample_consumer_receiver_create(void *adapter_context,
+                                const void *receiver_config,
+                                vectis_consumer_receiver *out,
+                                vectis_error *error) {
+  (void)adapter_context;
+  (void)receiver_config;
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "receiver output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(out, 0, sizeof(*out));
+  out->handle = sample_consumer_handler;
+  return VECTIS_OK;
+}
+
 static vectis_status sample_dsv_row(void *userdata, size_t row_number,
                                     void *row, vectis_error *error) {
   sample_dsv_rows *rows;
@@ -1831,6 +1847,9 @@ static void assert_consumer_service_surface(void) {
   lc_consumer_config consumer;
   lc_consumer_service_config service_config;
   vectis_consumer_service *service;
+  vectis_consumer_receiver_adapter adapter;
+  vectis_consumer_service_receiver_config receiver_config;
+  vectis_webdav_marker_receiver_config marker_config;
 
   service = NULL;
   status = vectis_consumer_service_new(NULL, NULL, &service, &error);
@@ -1845,6 +1864,16 @@ static void assert_consumer_service_surface(void) {
   status = vectis_consumer_service_wait(NULL, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(vectis_consumer_service_raw(NULL) == NULL);
+  vectis_consumer_service_receiver_config_init(&receiver_config);
+  assert(receiver_config.visibility_timeout_seconds == 30L);
+  assert(receiver_config.wait_seconds == 1L);
+  assert(receiver_config.worker_count == 1u);
+  vectis_webdav_marker_receiver_config_init(&marker_config);
+  assert(strcmp(marker_config.site_id, "consumer") == 0);
+  assert(strcmp(marker_config.processing_path, "/consumer-processing.txt") ==
+         0);
+  assert(strcmp(marker_config.done_path, "/consumer-done.txt") == 0);
+  assert(marker_config.max_file_bytes > 0u);
 
   lc_consumer_config_init(&consumer);
   lc_consumer_service_config_init(&service_config);
@@ -1857,6 +1886,43 @@ static void assert_consumer_service_surface(void) {
   vectis_app_config_init(&config);
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
+  assert(app->register_consumer_receiver != NULL);
+  assert(app->consumer_service_receiver != NULL);
+  memset(&adapter, 0, sizeof(adapter));
+  adapter.kind = "test_receiver";
+  adapter.create = sample_consumer_receiver_create;
+  status = app->register_consumer_receiver(app, &adapter, &error);
+  assert(status == VECTIS_OK);
+  status = app->register_consumer_receiver(app, &adapter, &error);
+  assert(status == VECTIS_ERR_INVALID);
+
+  vectis_consumer_service_receiver_config_init(&receiver_config);
+  receiver_config.queue = "orders";
+  receiver_config.receiver_kind = "missing_receiver";
+  status =
+      app->consumer_service_receiver(app, &receiver_config, &service, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "receiver_kind") != NULL);
+  assert(service == NULL);
+
+  vectis_consumer_service_receiver_config_init(&receiver_config);
+  receiver_config.queue = "orders";
+  receiver_config.receiver_kind = "webdav_marker";
+  status =
+      app->consumer_service_receiver(app, &receiver_config, &service, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "webdav_marker") != NULL);
+  assert(service == NULL);
+
+  vectis_consumer_service_receiver_config_init(&receiver_config);
+  receiver_config.queue = "orders";
+  receiver_config.receiver_kind = "test_receiver";
+  status =
+      app->consumer_service_receiver(app, &receiver_config, &service, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "lockd") != NULL);
+  assert(service == NULL);
+
   status = app->consumer_service(app, &service_config, &service, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "lockd") != NULL);

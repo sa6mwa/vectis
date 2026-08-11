@@ -40,6 +40,8 @@ struct lc_sink;
 struct lc_source;
 struct lc_consumer_service;
 struct lc_consumer_service_config;
+struct lc_consumer_message;
+struct lc_error;
 
 typedef struct vectis_app vectis_app;
 typedef struct vectis_consumer_service vectis_consumer_service;
@@ -457,6 +459,53 @@ typedef vectis_status (*vectis_lockd_state_update_fn)(struct lc_lease *lease,
                                                       void *userdata,
                                                       vectis_error *error);
 
+typedef int (*vectis_consumer_receiver_handle_fn)(
+    void *context, struct lc_consumer_message *message,
+    struct lc_error *error);
+typedef void (*vectis_consumer_receiver_cleanup_fn)(void *context);
+
+typedef struct vectis_consumer_receiver {
+  vectis_consumer_receiver_handle_fn handle;
+  void *context;
+  vectis_consumer_receiver_cleanup_fn cleanup;
+} vectis_consumer_receiver;
+
+typedef vectis_status (*vectis_consumer_receiver_create_fn)(
+    void *adapter_context, const void *receiver_config,
+    vectis_consumer_receiver *out, vectis_error *error);
+
+typedef struct vectis_consumer_receiver_adapter {
+  const char *kind;
+  vectis_consumer_receiver_create_fn create;
+  void *context;
+} vectis_consumer_receiver_adapter;
+
+typedef struct vectis_consumer_service_receiver_config {
+  const char *name;
+  const char *queue;
+  const char *owner;
+  const char *namespace_name;
+  long visibility_timeout_seconds;
+  long wait_seconds;
+  size_t worker_count;
+  int with_state;
+  const char *receiver_kind;
+  const void *receiver_config;
+} vectis_consumer_service_receiver_config;
+
+typedef struct vectis_webdav_marker_receiver_config {
+  const char *cache_dir;
+  const char *site_id;
+  const char *processing_path;
+  const char *done_path;
+  const char *processing_body;
+  const char *done_body;
+  size_t max_file_bytes;
+  size_t max_total_bytes;
+  size_t max_resources;
+  long processing_delay_seconds;
+} vectis_webdav_marker_receiver_config;
+
 typedef vectis_status (*vectis_dsv_lonejson_row_fn)(void *userdata,
                                                     size_t row_number,
                                                     void *row,
@@ -862,6 +911,12 @@ struct vectis_app {
   vectis_status (*consumer_service)(
       vectis_app *self, const struct lc_consumer_service_config *config,
       vectis_consumer_service **out, vectis_error *error);
+  vectis_status (*register_consumer_receiver)(
+      vectis_app *self, const vectis_consumer_receiver_adapter *adapter,
+      vectis_error *error);
+  vectis_status (*consumer_service_receiver)(
+      vectis_app *self, const vectis_consumer_service_receiver_config *config,
+      vectis_consumer_service **out, vectis_error *error);
   void (*close)(vectis_app *self);
   void *impl;
 };
@@ -1207,6 +1262,16 @@ vectis_status
 vectis_consumer_service_new(vectis_app *app,
                             const struct lc_consumer_service_config *config,
                             vectis_consumer_service **out, vectis_error *error);
+void vectis_consumer_service_receiver_config_init(
+    vectis_consumer_service_receiver_config *config);
+void vectis_webdav_marker_receiver_config_init(
+    vectis_webdav_marker_receiver_config *config);
+vectis_status vectis_register_consumer_receiver(
+    vectis_app *app, const vectis_consumer_receiver_adapter *adapter,
+    vectis_error *error);
+vectis_status vectis_consumer_service_new_receiver(
+    vectis_app *app, const vectis_consumer_service_receiver_config *config,
+    vectis_consumer_service **out, vectis_error *error);
 struct lc_consumer_service *
 vectis_consumer_service_raw(vectis_consumer_service *service);
 vectis_status vectis_consumer_service_run(vectis_consumer_service *service,
