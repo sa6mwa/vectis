@@ -37,6 +37,9 @@ set(asset_symlink_manifest_reject_output "${WORK_DIR}/vectis-pack-assets-symlink
 set(asset_corrupt_output "${WORK_DIR}/vectis-pack-assets-corrupt")
 set(asset_duplicate_output "${WORK_DIR}/vectis-pack-assets-duplicate")
 set(asset_invalid_extract_mode_output "${WORK_DIR}/vectis-pack-invalid-extract-mode")
+set(asset_codesign_conflict_output "${WORK_DIR}/vectis-pack-codesign-conflict")
+set(asset_codesign_unsupported_output "${WORK_DIR}/vectis-pack-codesign-unsupported")
+set(pack_entitlements "${WORK_DIR}/pack-entitlements.plist")
 set(no_asset_extract_dir "${WORK_DIR}/no-assets-extract")
 set(asset_extract_dir "${WORK_DIR}/extracted-site")
 set(asset_webdav_cache_dir "${WORK_DIR}/webdav-cache")
@@ -77,6 +80,37 @@ if(invalid_extract_mode_result EQUAL 0)
 endif()
 if(NOT invalid_extract_mode_stderr MATCHES "--extract-mode must be")
   message(FATAL_ERROR "invalid pack extract mode failed with unexpected error: ${invalid_extract_mode_stdout}${invalid_extract_mode_stderr}")
+endif()
+
+file(WRITE "${pack_entitlements}" "<plist version=\"1.0\"><dict></dict></plist>\n")
+file(REMOVE "${asset_codesign_conflict_output}")
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${script}" --output "${asset_codesign_conflict_output}" --codesign "Developer ID Application: Vectis Test" --ad-hoc-codesign
+                RESULT_VARIABLE codesign_conflict_result
+                OUTPUT_VARIABLE codesign_conflict_stdout
+                ERROR_VARIABLE codesign_conflict_stderr)
+if(codesign_conflict_result EQUAL 0)
+  message(FATAL_ERROR "pack codesign conflict unexpectedly succeeded")
+endif()
+if(EXISTS "${asset_codesign_conflict_output}")
+  message(FATAL_ERROR "pack codesign conflict created an output artifact")
+endif()
+if(NOT codesign_conflict_stderr MATCHES "--codesign and --ad-hoc-codesign are mutually exclusive")
+  message(FATAL_ERROR "pack codesign conflict failed with unexpected error: ${codesign_conflict_stdout}${codesign_conflict_stderr}")
+endif()
+
+file(REMOVE "${asset_codesign_unsupported_output}")
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${script}" --output "${asset_codesign_unsupported_output}" --ad-hoc-codesign --hardened-runtime --timestamp --entitlements "${pack_entitlements}"
+                RESULT_VARIABLE codesign_unsupported_result
+                OUTPUT_VARIABLE codesign_unsupported_stdout
+                ERROR_VARIABLE codesign_unsupported_stderr)
+if(codesign_unsupported_result EQUAL 0)
+  message(FATAL_ERROR "pack unsupported codesign options unexpectedly succeeded")
+endif()
+if(EXISTS "${asset_codesign_unsupported_output}")
+  message(FATAL_ERROR "pack unsupported codesign options created an output artifact")
+endif()
+if(NOT codesign_unsupported_stderr MATCHES "Darwin pack signing")
+  message(FATAL_ERROR "pack unsupported codesign options failed with unexpected error: ${codesign_unsupported_stdout}${codesign_unsupported_stderr}")
 endif()
 
 file(WRITE "${bundle_generator_script}" "local vectis = require(\"vectis\")\nlocal function read_file(path)\n  local fp = assert(io.open(path, \"rb\"))\n  local body = fp:read(\"*a\")\n  fp:close()\n  return body\nend\nassert(vectis.cert.generate_bundle({common_name = \"Vectis Pack Lockd CA\", is_ca = true, output_cert_path = [[${bundle_ca_cert}]], output_key_path = [[${bundle_ca_key}]], key_bits = 2048, valid_days = 1}) == true)\nassert(vectis.cert.generate_bundle({common_name = \"lockd-client.local\", output_bundle_path = [[${bundle}]], ca_cert_path = [[${bundle_ca_cert}]], ca_key_path = [[${bundle_ca_key}]], key_bits = 2048, valid_days = 1}) == true)\nlocal fp = assert(io.open([[${bundle}]], \"ab\"))\nfp:write(read_file([[${bundle_ca_cert}]]))\nfp:close()\n")

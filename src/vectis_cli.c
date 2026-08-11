@@ -384,7 +384,8 @@ static void vectis_cli_usage(FILE *stream) {
         "[--lockd-bundle bundle.pem] [--asset source=/path] "
         "[--asset-dir /mount:dir] [--asset-manifest assets.json] "
         "[--content-type-map types.json] [--extract-mode mode] "
-        "[--follow-symlinks]\n"
+        "[--follow-symlinks] [--codesign identity | --ad-hoc-codesign] "
+        "[--hardened-runtime] [--timestamp] [--entitlements plist]\n"
         "       vectis -a|--action credentials [--store credentials.json] "
         "(--init | --issue --subject user [--purpose name] "
         "[--basic] [--bearer] | --verify authorization | "
@@ -2702,6 +2703,8 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   const char *output_path;
   const char *bundle_path;
   const char *extract_mode;
+  const char *codesign_identity;
+  const char *entitlements_path;
   const char *asset_arg;
   const char *separator;
   char *asset_source;
@@ -2729,12 +2732,20 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   FILE *out;
   int i;
   int follow_symlinks;
+  int ad_hoc_codesign;
+  int hardened_runtime;
+  int timestamp;
 
   script_path = NULL;
   output_path = NULL;
   bundle_path = NULL;
   extract_mode = NULL;
+  codesign_identity = NULL;
+  entitlements_path = NULL;
   follow_symlinks = 0;
+  ad_hoc_codesign = 0;
+  hardened_runtime = 0;
+  timestamp = 0;
   memset(&assets, 0, sizeof(assets));
   memset(&content_types, 0, sizeof(content_types));
   memset(&dir_stack, 0, sizeof(dir_stack));
@@ -2762,6 +2773,16 @@ static int vectis_pack_command(int argc, char **argv, int index) {
       }
     } else if (strcmp(argv[i], "--follow-symlinks") == 0) {
       follow_symlinks = 1;
+    } else if (strcmp(argv[i], "--codesign") == 0 && i + 1 < argc) {
+      codesign_identity = argv[++i];
+    } else if (strcmp(argv[i], "--ad-hoc-codesign") == 0) {
+      ad_hoc_codesign = 1;
+    } else if (strcmp(argv[i], "--hardened-runtime") == 0) {
+      hardened_runtime = 1;
+    } else if (strcmp(argv[i], "--timestamp") == 0) {
+      timestamp = 1;
+    } else if (strcmp(argv[i], "--entitlements") == 0 && i + 1 < argc) {
+      entitlements_path = argv[++i];
     } else if ((strcmp(argv[i], "--asset") == 0 ||
                 strcmp(argv[i], "--asset-dir") == 0 ||
                 strcmp(argv[i], "--asset-manifest") == 0) &&
@@ -2773,10 +2794,15 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     if ((strcmp(argv[i], "--script") == 0 || strcmp(argv[i], "--output") == 0 ||
          strcmp(argv[i], "--lockd-bundle") == 0 ||
          strcmp(argv[i], "--extract-mode") == 0 ||
-         strcmp(argv[i], "--content-type-map") == 0) &&
+         strcmp(argv[i], "--content-type-map") == 0 ||
+         strcmp(argv[i], "--codesign") == 0 ||
+         strcmp(argv[i], "--entitlements") == 0) &&
         i + 1 < argc) {
       i++;
-    } else if (strcmp(argv[i], "--follow-symlinks") == 0) {
+    } else if (strcmp(argv[i], "--follow-symlinks") == 0 ||
+               strcmp(argv[i], "--ad-hoc-codesign") == 0 ||
+               strcmp(argv[i], "--hardened-runtime") == 0 ||
+               strcmp(argv[i], "--timestamp") == 0) {
       continue;
     } else if (strcmp(argv[i], "--asset") == 0 && i + 1 < argc) {
       asset_arg = argv[++i];
@@ -2847,6 +2873,26 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   }
   if (script_path == NULL || output_path == NULL) {
     fputs("vectis: pack requires --script and --output\n", stderr);
+    vectis_pack_command_cleanup(&assets, &content_types);
+    return 64;
+  }
+  if (codesign_identity != NULL && ad_hoc_codesign) {
+    fputs("vectis: --codesign and --ad-hoc-codesign are mutually exclusive\n",
+          stderr);
+    vectis_pack_command_cleanup(&assets, &content_types);
+    return 64;
+  }
+  if (codesign_identity != NULL || ad_hoc_codesign || hardened_runtime ||
+      timestamp || entitlements_path != NULL) {
+#ifdef __APPLE__
+    fputs("vectis: Darwin pack signing requires Mach-O pack support, which is "
+          "not implemented\n",
+          stderr);
+#else
+    fputs("vectis: Darwin pack signing options require a Darwin/Mach-O pack "
+          "output\n",
+          stderr);
+#endif
     vectis_pack_command_cleanup(&assets, &content_types);
     return 64;
   }
