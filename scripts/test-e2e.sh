@@ -1336,6 +1336,43 @@ run_lua_examples() {
   fi
   assert_packed_key_webdav_logout "packed-email-only" "/auth-email-only" \
     "$email_only_client_id" "$email_only_client_secret"
+  auth_headers="$work_dir/packed-email-only-continue-token.headers"
+  email_only_continue_token_response=$(curl_or_log "$packed_service_log" \
+    "packed email-only continue token" --max-time 3 -fsS -D "$auth_headers" -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-email-only%40example.com&email=packed-email-only%40example.test' \
+    "http://127.0.0.1:$kore_packed_port/auth-email-only/email-token")
+  assert_no_store_headers "$auth_headers" "packed email-only continue token"
+  email_only_continue_transaction_id=$(printf '%s\n' "$email_only_continue_token_response" |
+    sed -n 's/^transaction_id=//p')
+  email_only_continue_token=$(printf '%s\n' "$email_only_continue_token_response" |
+    sed -n 's/^token=//p')
+  if [ -z "$email_only_continue_transaction_id" ] ||
+      [ -z "$email_only_continue_token" ]; then
+    printf '%s\n' "Packed email-only continue auth did not expose an email token" >&2
+    printf '%s\n' "$email_only_continue_token_response" >&2
+    return 1
+  fi
+  auth_headers="$work_dir/packed-email-only-continue-key.headers"
+  email_only_continue_response=$(curl_or_log "$packed_service_log" \
+    "packed email-only continue key" --max-time 3 -fsS -D "$auth_headers" -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-email-only%40example.com&email_transaction_id=$email_only_continue_transaction_id&email_token=$email_only_continue_token" \
+    "http://127.0.0.1:$kore_packed_port/auth-email-only/continue")
+  assert_no_store_headers "$auth_headers" "packed email-only continue key"
+  email_only_continue_client_id=$(printf '%s\n' "$email_only_continue_response" |
+    sed -n 's/^client_id=//p')
+  email_only_continue_client_secret=$(printf '%s\n' "$email_only_continue_response" |
+    sed -n 's/^client_secret=//p')
+  if [ -z "$email_only_continue_client_id" ] ||
+      [ -z "$email_only_continue_client_secret" ]; then
+    printf '%s\n' "Packed email-only continue auth did not issue credentials" >&2
+    printf '%s\n' "$email_only_continue_response" >&2
+    return 1
+  fi
+  assert_packed_key_webdav_logout "packed-email-only-continue" \
+    "/auth-email-only" "$email_only_continue_client_id" \
+    "$email_only_continue_client_secret"
   auth_headers="$work_dir/packed-password-email-start.headers"
   password_email_start_response=$(curl_or_log "$packed_service_log" \
     "packed password-email start" --max-time 3 -fsS -D "$auth_headers" -X POST \
@@ -1439,6 +1476,57 @@ run_lua_examples() {
   assert_packed_key_webdav_logout "packed-password-email" \
     "/auth-password-email" "$password_email_client_id" \
     "$password_email_client_secret"
+  auth_headers="$work_dir/packed-password-email-continue-start.headers"
+  password_email_continue_start_response=$(curl_or_log "$packed_service_log" \
+    "packed password-email continue start" --max-time 3 -fsS -D "$auth_headers" -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-email-only%40example.com&password=packed-password' \
+    "http://127.0.0.1:$kore_packed_port/auth-password-email/continue")
+  assert_no_store_headers "$auth_headers" "packed password-email continue start"
+  password_email_continue_pending_id=$(printf '%s\n' "$password_email_continue_start_response" |
+    sed -n 's/^pending_transaction_id=//p')
+  if [ -z "$password_email_continue_pending_id" ]; then
+    printf '%s\n' "Packed password-email continue auth did not return pending transaction" >&2
+    printf '%s\n' "$password_email_continue_start_response" >&2
+    return 1
+  fi
+  auth_headers="$work_dir/packed-password-email-continue-token.headers"
+  password_email_continue_token_response=$(curl_or_log "$packed_service_log" \
+    "packed password-email continue token" --max-time 3 -fsS -D "$auth_headers" -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-email-only%40example.com&email=packed-email-only%40example.test&pending_transaction_id=$password_email_continue_pending_id" \
+    "http://127.0.0.1:$kore_packed_port/auth-password-email/email-token")
+  assert_no_store_headers "$auth_headers" "packed password-email continue token"
+  password_email_continue_transaction_id=$(printf '%s\n' "$password_email_continue_token_response" |
+    sed -n 's/^transaction_id=//p')
+  password_email_continue_token=$(printf '%s\n' "$password_email_continue_token_response" |
+    sed -n 's/^token=//p')
+  if [ -z "$password_email_continue_transaction_id" ] ||
+      [ -z "$password_email_continue_token" ]; then
+    printf '%s\n' "Packed password-email continue auth did not expose an email token" >&2
+    printf '%s\n' "$password_email_continue_token_response" >&2
+    return 1
+  fi
+  auth_headers="$work_dir/packed-password-email-continue-key.headers"
+  password_email_continue_response=$(curl_or_log "$packed_service_log" \
+    "packed password-email continue key" --max-time 3 -fsS -D "$auth_headers" -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-email-only%40example.com&pending_transaction_id=$password_email_continue_pending_id&email_transaction_id=$password_email_continue_transaction_id&email_token=$password_email_continue_token" \
+    "http://127.0.0.1:$kore_packed_port/auth-password-email/continue")
+  assert_no_store_headers "$auth_headers" "packed password-email continue key"
+  password_email_continue_client_id=$(printf '%s\n' "$password_email_continue_response" |
+    sed -n 's/^client_id=//p')
+  password_email_continue_client_secret=$(printf '%s\n' "$password_email_continue_response" |
+    sed -n 's/^client_secret=//p')
+  if [ -z "$password_email_continue_client_id" ] ||
+      [ -z "$password_email_continue_client_secret" ]; then
+    printf '%s\n' "Packed password-email continue auth did not issue credentials" >&2
+    printf '%s\n' "$password_email_continue_response" >&2
+    return 1
+  fi
+  assert_packed_key_webdav_logout "packed-password-email-continue" \
+    "/auth-password-email" "$password_email_continue_client_id" \
+    "$password_email_continue_client_secret"
   auth_headers="$work_dir/packed-password-webdav-key.headers"
   password_key_response=$(curl_or_log "$packed_service_log" \
     "packed password webdav key" --max-time 3 -fsS -D "$auth_headers" -X POST \

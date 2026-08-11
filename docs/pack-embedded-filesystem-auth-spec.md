@@ -584,7 +584,8 @@ email-token-only WebDAV-key issuance through both `/continue` and
 `/webdav-key`, password-only WebDAV-key issuance for a non-TOTP user,
 password-only TOTP continuation for an enrolled user,
 password+email-token WebDAV-key issuance for a non-TOTP user through both
-`/continue` and `/webdav-key`, and
+`/continue` and `/webdav-key`, WebDAV access and logout revocation for keys
+issued by both endpoint styles, and
 pending-transaction mismatch rejection, unknown-user and missing-username
 email-token issuance/finalization rejection in the full packed webserver path,
 raw username/password Basic auth rejection for guarded API and WebDAV routes,
