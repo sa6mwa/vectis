@@ -464,7 +464,7 @@ Required deterministic e2e coverage:
 - protect WebDAV with native auth,
 - deny anonymous WebDAV writes,
 - complete login with the configured factor policy, including deterministic
-  TOTP rejection and success through the native HTTP login route,
+  TOTP continuation, rejection, and success through the native HTTP login route,
 - issue a WebDAV app key after successful auth,
 - write, list, copy, move, and delete files through WebDAV with the app key,
 - verify user mutations affect only the extracted docroot, not embedded assets,
@@ -498,11 +498,13 @@ password-only login for a TOTP/email-token route into a pending transaction,
 rejects
 wrong-token and replayed-token WebDAV key requests, rejects expired email-token
 transactions, rejects SMTP delivery to non-allowlisted recipients, rejects a
-missing or wrong TOTP code with an otherwise valid email-token transaction,
+requires TOTP continuation for a missing TOTP code with an otherwise valid
+email-token transaction, rejects a wrong TOTP code,
 issues a WebDAV key after deterministic password+email-token login for a
-non-TOTP user, issues a WebDAV key after deterministic
-password-first pending continuation with TOTP+email-token login for a TOTP user,
-protects the WebDAV mount,
+non-TOTP user, issues a WebDAV key after deterministic password+TOTP login for
+a TOTP user, rejects explicit password+TOTP auth for a non-TOTP user, issues a
+WebDAV key after deterministic password-first pending continuation with
+TOTP+email-token login for a TOTP user, protects the WebDAV mount,
 rejects anonymous WebDAV reads and writes without mutating the extracted
 docroot, serves embedded content through authenticated WebDAV, accepts mutable
 WebDAV writes, verifies those writes land in the extracted docroot, deletes an
@@ -592,7 +594,8 @@ issued keys. Broader packed auth matrix coverage remains future hardening work.
    receives them, and prove HTTP/WebDAV requests still succeed during consumer
    service activity. Lua may provide route or callback glue in the scenario, but
    must not own the built-in server, WebDAV, auth, pack, or consumer service
-   lifecycle semantics.
+   lifecycle semantics. Treat Kore and the lockd consumer as simultaneous
+   C-hosted receiver shells, not mutually exclusive process modes.
 
    Current coverage includes both a direct C example and a packed Lua
    executable that configures the C-owned consumer adapter with an embedded
