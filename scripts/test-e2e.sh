@@ -1253,6 +1253,8 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed no-TOTP guarded API response: $body" >&2
     return 1
   fi
+  assert_packed_key_webdav_logout "packed-require-email-token" \
+    "/auth-local" "$no_totp_client_id" "$no_totp_client_secret"
   auth_headers="$work_dir/packed-email-only-unknown.headers"
   email_only_unknown_status=$(curl --max-time 3 -sS -D "$auth_headers" \
     -o "$work_dir/packed-email-only-unknown.txt" -w '%{http_code}' \
