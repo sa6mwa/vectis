@@ -4088,6 +4088,57 @@ static int vectis_static_embedded_content_range(char *buffer,
   return n >= 0 && (size_t)n < buffer_size;
 }
 
+static int vectis_static_embedded_if_none_match_token(const char *start,
+                                                      size_t len,
+                                                      const char *etag) {
+  while (len > 0u && (start[0] == ' ' || start[0] == '\t')) {
+    start++;
+    len--;
+  }
+  while (len > 0u && (start[len - 1u] == ' ' || start[len - 1u] == '\t')) {
+    len--;
+  }
+  if (len == 1u && start[0] == '*') {
+    return 1;
+  }
+  if (etag == NULL || etag[0] == '\0') {
+    return 0;
+  }
+  if (strlen(etag) == len && memcmp(start, etag, len) == 0) {
+    return 1;
+  }
+  if (len > 2u && start[0] == 'W' && start[1] == '/' &&
+      strlen(etag) == len - 2u && memcmp(start + 2u, etag, len - 2u) == 0) {
+    return 1;
+  }
+  return 0;
+}
+
+static int vectis_static_embedded_if_none_match(const char *header_value,
+                                                const char *etag) {
+  const char *token;
+  const char *cursor;
+
+  if (header_value == NULL || header_value[0] == '\0') {
+    return 0;
+  }
+  cursor = header_value;
+  for (;;) {
+    token = cursor;
+    while (*cursor != '\0' && *cursor != ',') {
+      cursor++;
+    }
+    if (vectis_static_embedded_if_none_match_token(
+            token, (size_t)(cursor - token), etag)) {
+      return 1;
+    }
+    if (*cursor == '\0') {
+      return 0;
+    }
+    cursor++;
+  }
+}
+
 static vectis_status vectis_static_embedded_not_found(
     const vectis_static_route_data *data, vectis_request *request,
     vectis_response *response, vectis_error *error) {
@@ -4125,6 +4176,7 @@ static vectis_status vectis_static_embedded_response(
   vectis_static_embedded_range range;
   char etag[80];
   char content_range[96];
+  int has_etag;
 
   content_type =
       entry->content_type != NULL ? entry->content_type : data->content_type;
@@ -4136,15 +4188,22 @@ static vectis_status vectis_static_embedded_response(
                              error) != VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
+  has_etag = 0;
+  etag[0] = '\0';
   if (entry->sha256 != NULL && strlen(entry->sha256) + 3u <= sizeof(etag)) {
     (void)snprintf(etag, sizeof(etag), "\"%s\"", entry->sha256);
     if (vectis_response_header(response, "etag", etag, error) != VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_INVALID;
     }
+    has_etag = 1;
   }
   if (vectis_response_header(response, "accept-ranges", "bytes", error) !=
       VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (has_etag && vectis_static_embedded_if_none_match(
+                      vectis_request_header(request, "if-none-match"), etag)) {
+    return vectis_response_status(response, 304, error);
   }
   range_header = vectis_request_header(request, "range");
   if (!vectis_static_embedded_parse_range(range_header, entry->size, &range)) {
