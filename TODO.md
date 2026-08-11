@@ -257,7 +257,8 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Register bundled Lua modules statically through `package.preload` in the `vectis` binary.
 - [ ] Publish a separate `vectis` Lua rock for users who want to run the Vectis facade inside their own Lua 5.5 environment.
 - [ ] Keep LuaRocks out of the `vectis` binary runtime and release artifacts.
-- [ ] Add Vectis-owned Lua modules for Kore, OpenSSL certificate workflows, and libssh2.
+- [ ] Add Vectis-owned Lua modules for Kore, OpenSSL certificate workflows, and broader libssh2 coverage.
+- [x] Add a Vectis-owned Lua SSH command execution helper backed by libssh2.
 - [ ] Keep the Lua framework model aligned with the C SDK model: raw dependency access plus a Vectis-owned DX layer with matching concepts and behavior.
 - [x] Support shebang execution through `#!/usr/local/bin/vectis`.
 - [ ] Provide a friendly REST API DX for defining routes, handlers, middleware-like hooks, JSON responses, lockd operations, and downstream calls.
@@ -268,7 +269,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add Lua examples for downstream API calls with normal and packed execution coverage.
 - [x] Add a Lua example for SFTP transfer with deterministic local e2e coverage.
 - [x] Add a Lua example for long-running consumer service workflows with deterministic local e2e coverage.
-- [ ] Add a Lua example for SSH command execution once the libssh2 Lua facade exists.
+- [x] Add a Lua example for SSH command execution with deterministic local e2e coverage.
 - [ ] Add Lua unit and end-to-end tests.
 
 ## Area 13: Single Binary Packaging

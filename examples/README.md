@@ -97,6 +97,9 @@ surface directly, without local helper layers that would hide awkward API shape.
 - `lua/sftp_transfer.lua`: curl-backed Lua SFTP upload/download through
   `vectis.http.sftp_upload()` and `sftp_download()`. The local e2e harness runs
   it against the compose SSH/SFTP service.
+- `lua/ssh_command.lua`: libssh2-backed Lua SSH command execution through
+  `vectis.ssh.exec()`. The local e2e harness runs it against the compose
+  SSH/SFTP service with known_hosts pinning.
 - `lua/lockd_state.lua`: lockdc Lua client acquire, JSON state update/load,
   and lease release against `LOCKD_ENDPOINT`.
 - `lua/lockd_queue.lua`: lockdc Lua queue enqueue, dequeue, JSON payload read,

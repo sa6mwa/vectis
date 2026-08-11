@@ -289,6 +289,14 @@ run_service_examples() {
     VECTIS_SSH_KNOWN_HOSTS="$ssh_known_hosts" \
     "$repo_root/build/debug/examples/vectis_example_ssh"
 
+  printf '[e2e] lua ssh command\n'
+  env VECTIS_LUA_SSH_HOST="127.0.0.1" \
+    VECTIS_LUA_SSH_PORT="$ssh_port" \
+    VECTIS_LUA_SSH_USERNAME="vectis" \
+    VECTIS_LUA_SSH_PASSWORD="vectispass" \
+    VECTIS_LUA_SSH_KNOWN_HOSTS="$ssh_known_hosts" \
+    "$repo_root/build/debug/vectis" "$repo_root/examples/lua/ssh_command.lua"
+
   printf '[e2e] libssh2 sftp upload/download\n'
   env VECTIS_SSH_HOST="127.0.0.1" \
     VECTIS_SSH_PORT="$ssh_port" \
