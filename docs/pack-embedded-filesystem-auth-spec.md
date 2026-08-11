@@ -526,16 +526,16 @@ those writes land in the extracted docroot, deletes an
 extracted embedded asset through WebDAV while leaving the packed read-only mount
 unchanged and suppressing the deleted asset from WebDAV collection listings,
 exercises
-WebDAV PROPFIND/MKCOL/COPY/MOVE/DELETE, revokes both the browser-flow WebDAV
-key and the direct all-factor WebDAV key through their native logout routes,
-proves each revoked key is rejected by both guarded API routes and WebDAV,
-exercises and revokes the password+email-token WebDAV key through its own auth
-mount, and proves WebDAV mutations do not change embedded read-only assets. It
-also embeds the lockd client bundle, starts a C-owned lockd consumer service
-from the packed Lua server config, enqueues a lockd message through the Lua
-`lockdc` facade, proves the packed consumer writes WebDAV-visible markers, and
-proves WebDAV and guarded API routes remain responsive while the packed
-consumer service is processing. Focused
+WebDAV PROPFIND/MKCOL/COPY/MOVE/DELETE, exercises WebDAV reads with issued
+email-only, password-only, password+email-token, password+TOTP, browser-flow,
+and direct all-factor WebDAV keys, revokes those keys through their native
+logout routes where they are no longer needed, proves revoked keys are rejected
+by both guarded API routes and WebDAV, and proves WebDAV mutations do not change
+embedded read-only assets. It also embeds the lockd client bundle, starts a
+C-owned lockd consumer service from the packed Lua server config, enqueues a
+lockd message through the Lua `lockdc` facade, proves the packed consumer writes
+WebDAV-visible markers, and proves WebDAV and guarded API routes remain
+responsive while the packed consumer service is processing. Focused
 packed Lua smoke coverage in
 `vectis_lua_pack` also packages and executes a native-auth API service artifact,
 packages and executes a lockd consumer-service registration artifact with an

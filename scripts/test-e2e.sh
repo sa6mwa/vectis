@@ -130,6 +130,55 @@ assert_no_store_headers() {
   }
 }
 
+assert_packed_key_webdav_logout() {
+  label=$1
+  auth_path=$2
+  client_id=$3
+  client_secret=$4
+
+  body=$(curl_or_log "$packed_service_log" "$label webdav read" \
+    --max-time 3 -fsS -u "$client_id:$client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/index.html")
+  case "$body" in
+    *'packed service asset'*) ;;
+    *)
+      printf '%s\n' "Unexpected $label WebDAV body: $body" >&2
+      return 1
+      ;;
+  esac
+  logout_headers="$work_dir/$label-logout.headers"
+  logout_status=$(curl --max-time 3 -sS -D "$logout_headers" \
+    -o "$work_dir/$label-logout.txt" -w '%{http_code}' \
+    -u "$client_id:$client_secret" \
+    -X POST -H 'Content-Type: application/x-www-form-urlencoded' --data '' \
+    "http://127.0.0.1:$kore_packed_port$auth_path/logout")
+  logout_body=$(cat "$work_dir/$label-logout.txt")
+  if [ "$logout_status" != "200" ]; then
+    printf '%s\n' "$label logout returned unexpected status: $logout_status" >&2
+    printf '%s\n' "$logout_body" >&2
+    return 1
+  fi
+  assert_no_store_headers "$logout_headers" "$label logout"
+  if [ "$logout_body" != "logged_out=1" ]; then
+    printf '%s\n' "$label logout returned unexpected body: $logout_body" >&2
+    return 1
+  fi
+  logged_out_api_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$client_id:$client_secret" \
+    "http://127.0.0.1:$kore_packed_port/api/private")
+  if [ "$logged_out_api_status" != "401" ]; then
+    printf '%s\n' "$label logout left guarded API credential active: $logged_out_api_status" >&2
+    return 1
+  fi
+  logged_out_dav_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$client_id:$client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/index.html")
+  if [ "$logged_out_dav_status" != "401" ]; then
+    printf '%s\n' "$label logout left WebDAV credential active: $logged_out_dav_status" >&2
+    return 1
+  fi
+}
+
 run_lockd_examples() {
   endpoint=$1
   label=$2
@@ -1285,6 +1334,8 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed email-only guarded API response: $body" >&2
     return 1
   fi
+  assert_packed_key_webdav_logout "packed-email-only" "/auth-email-only" \
+    "$email_only_client_id" "$email_only_client_secret"
   auth_headers="$work_dir/packed-password-email-start.headers"
   password_email_start_response=$(curl_or_log "$packed_service_log" \
     "packed password-email start" --max-time 3 -fsS -D "$auth_headers" -X POST \
@@ -1385,47 +1436,9 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed password-email guarded API response: $body" >&2
     return 1
   fi
-  body=$(curl_or_log "$packed_service_log" "packed password-email webdav read" \
-    --max-time 3 -fsS -u "$password_email_client_id:$password_email_client_secret" \
-    "http://127.0.0.1:$kore_packed_port/dav/index.html")
-  case "$body" in
-    *'packed service asset'*) ;;
-    *)
-      printf '%s\n' "Unexpected packed password-email WebDAV body: $body" >&2
-      return 1
-      ;;
-  esac
-  logout_headers="$work_dir/packed-password-email-logout.headers"
-  logout_status=$(curl --max-time 3 -sS -D "$logout_headers" \
-    -o "$work_dir/packed-password-email-logout.txt" -w '%{http_code}' \
-    -u "$password_email_client_id:$password_email_client_secret" \
-    -X POST -H 'Content-Type: application/x-www-form-urlencoded' --data '' \
-    "http://127.0.0.1:$kore_packed_port/auth-password-email/logout")
-  logout_body=$(cat "$work_dir/packed-password-email-logout.txt")
-  if [ "$logout_status" != "200" ]; then
-    printf '%s\n' "Packed password-email logout returned unexpected status: $logout_status" >&2
-    printf '%s\n' "$logout_body" >&2
-    return 1
-  fi
-  assert_no_store_headers "$logout_headers" "packed password-email logout"
-  if [ "$logout_body" != "logged_out=1" ]; then
-    printf '%s\n' "Packed password-email logout returned unexpected body: $logout_body" >&2
-    return 1
-  fi
-  logged_out_api_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
-    -u "$password_email_client_id:$password_email_client_secret" \
-    "http://127.0.0.1:$kore_packed_port/api/private")
-  if [ "$logged_out_api_status" != "401" ]; then
-    printf '%s\n' "Packed password-email logout left guarded API credential active: $logged_out_api_status" >&2
-    return 1
-  fi
-  logged_out_dav_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
-    -u "$password_email_client_id:$password_email_client_secret" \
-    "http://127.0.0.1:$kore_packed_port/dav/index.html")
-  if [ "$logged_out_dav_status" != "401" ]; then
-    printf '%s\n' "Packed password-email logout left WebDAV credential active: $logged_out_dav_status" >&2
-    return 1
-  fi
+  assert_packed_key_webdav_logout "packed-password-email" \
+    "/auth-password-email" "$password_email_client_id" \
+    "$password_email_client_secret"
   auth_headers="$work_dir/packed-password-webdav-key.headers"
   password_key_response=$(curl_or_log "$packed_service_log" \
     "packed password webdav key" --max-time 3 -fsS -D "$auth_headers" -X POST \
@@ -1449,6 +1462,8 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed password guarded API response: $body" >&2
     return 1
   fi
+  assert_packed_key_webdav_logout "packed-password" "/auth-password" \
+    "$password_client_id" "$password_client_secret"
   auth_headers="$work_dir/packed-password-totp-pending.headers"
   password_totp_status=$(curl --max-time 3 -sS -D "$auth_headers" \
     -o "$work_dir/packed-password-totp-pending.txt" -w '%{http_code}' \
@@ -1540,6 +1555,8 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed TOTP guarded API response: $body" >&2
     return 1
   fi
+  assert_packed_key_webdav_logout "packed-totp" "/auth-totp" \
+    "$totp_client_id" "$totp_client_secret"
   auth_headers="$work_dir/packed-limited-email-token.headers"
   limited_token_response=$(curl_or_log "$packed_service_log" \
     "packed limited email token" --max-time 3 -fsS -D "$auth_headers" -X POST \
