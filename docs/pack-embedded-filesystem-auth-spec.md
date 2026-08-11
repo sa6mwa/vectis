@@ -535,7 +535,9 @@ password+TOTP auth for a non-TOTP user, issues a WebDAV key after deterministic
 password-first pending continuation with TOTP+email-token login for a TOTP
 user, protects the WebDAV mount,
 rejects anonymous WebDAV reads and writes without mutating the extracted
-docroot, issues a second WebDAV key through the direct all-factor
+docroot, exercises the native `POST /login` route for a password-only realm,
+uses the issued key against an auth-guarded API route, revokes it through
+logout, issues a second WebDAV key through the direct all-factor
 password+TOTP+email-token `/webdav-key` path and proves it works for both the
 guarded API and WebDAV, rejects authenticated WebDAV request-path and
 Destination-header traversal without creating escaped files, serves embedded

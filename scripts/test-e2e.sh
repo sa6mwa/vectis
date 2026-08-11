@@ -1280,6 +1280,35 @@ run_lua_examples() {
       return 1
       ;;
   esac
+  auth_headers="$work_dir/packed-password-login-post.headers"
+  password_login_post_response=$(curl_or_log "$packed_service_log" \
+    "packed password POST login" --max-time 3 -fsS -D "$auth_headers" -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-email-only%40example.com&password=packed-password' \
+    "http://127.0.0.1:$kore_packed_port/auth-password/login")
+  assert_no_store_headers "$auth_headers" "packed password POST login"
+  password_login_post_client_id=$(printf '%s\n' "$password_login_post_response" |
+    sed -n 's/^client_id=//p')
+  password_login_post_client_secret=$(printf '%s\n' "$password_login_post_response" |
+    sed -n 's/^client_secret=//p')
+  if [ -z "$password_login_post_client_id" ] ||
+      [ -z "$password_login_post_client_secret" ]; then
+    printf '%s\n' "Packed password POST login did not issue credentials" >&2
+    printf '%s\n' "$password_login_post_response" >&2
+    return 1
+  fi
+  body=$(curl_or_log "$packed_service_log" \
+    "packed password POST login guarded api" \
+    --max-time 3 -fsS \
+    -u "$password_login_post_client_id:$password_login_post_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/api/private")
+  if [ "$body" != '{"ok":true,"surface":"packed-api"}' ]; then
+    printf '%s\n' "Unexpected packed password POST login guarded API response: $body" >&2
+    return 1
+  fi
+  assert_packed_key_webdav_logout "packed-password-post-login" \
+    "/auth-password" "$password_login_post_client_id" \
+    "$password_login_post_client_secret"
   auth_headers="$work_dir/packed-browser-continue-start.headers"
   browser_continue_start_response=$(curl_or_log "$packed_service_log" \
     "packed browser continue start" --max-time 3 -fsS -D "$auth_headers" -X POST \
