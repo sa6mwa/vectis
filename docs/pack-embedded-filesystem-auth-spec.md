@@ -558,8 +558,9 @@ email-token attempt-budget exhaustion, expired token rejection and consumption,
 replay rejection, recipient allowlist rejection, password+TOTP+email-token
 success through the browser `/continue` flow, login-template use of
 `continue_action`, packed embedded login-template placeholder expansion,
-email-token-only WebDAV-key issuance, password-only WebDAV-key issuance for a
-non-TOTP user, password-only TOTP continuation for an enrolled user,
+email-token-only WebDAV-key issuance through both `/continue` and
+`/webdav-key`, password-only WebDAV-key issuance for a non-TOTP user,
+password-only TOTP continuation for an enrolled user,
 password+email-token WebDAV-key issuance for a non-TOTP user, and
 pending-transaction mismatch rejection, unknown-user and missing-username
 email-token issuance/finalization rejection in the full packed webserver path,
