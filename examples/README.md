@@ -94,6 +94,9 @@ surface directly, without local helper layers that would hide awkward API shape.
 - `lua/downstream_api.lua`: packable Lua downstream API client example using
   `vectis.http.get_json()` and `post_json()` against a deterministic local
   API. CTest runs both normal and packed forms.
+- `lua/sftp_transfer.lua`: curl-backed Lua SFTP upload/download through
+  `vectis.http.sftp_upload()` and `sftp_download()`. The local e2e harness runs
+  it against the compose SSH/SFTP service.
 - `lua/lockd_state.lua`: lockdc Lua client acquire, JSON state update/load,
   and lease release against `LOCKD_ENDPOINT`.
 - `lua/lockd_queue.lua`: lockdc Lua queue enqueue, dequeue, JSON payload read,

@@ -266,7 +266,8 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add matching method and status configuration to the C-owned Lua `server:auth_json()` helper for fixed guarded API endpoints.
 - [x] Add Lua examples for API server, including packed execution coverage, lockd document workflow, and queue producer/dequeue workflows.
 - [x] Add Lua examples for downstream API calls with normal and packed execution coverage.
-- [ ] Add Lua examples for SFTP transfer, SSH command execution, and long-running consumer service workflows.
+- [x] Add a Lua example for SFTP transfer with deterministic local e2e coverage.
+- [ ] Add Lua examples for SSH command execution and long-running consumer service workflows.
 - [ ] Add Lua unit and end-to-end tests.
 
 ## Area 13: Single Binary Packaging

@@ -298,6 +298,16 @@ run_service_examples() {
     VECTIS_SFTP_USERNAME="vectis" \
     VECTIS_SFTP_PASSWORD="vectispass" \
     "$repo_root/build/debug/examples/vectis_example_sftp"
+
+  printf '[e2e] lua sftp upload/download\n'
+  env VECTIS_LUA_SFTP_URL="sftp://127.0.0.1:$ssh_port" \
+    VECTIS_LUA_SFTP_USERNAME="vectis" \
+    VECTIS_LUA_SFTP_PASSWORD="vectispass" \
+    VECTIS_LUA_SFTP_KNOWN_HOSTS="$ssh_known_hosts" \
+    VECTIS_LUA_SFTP_UPLOAD_FILE="$work_dir/lua-sftp-upload.txt" \
+    VECTIS_LUA_SFTP_DOWNLOAD_FILE="$work_dir/lua-sftp-download.txt" \
+    VECTIS_LUA_SFTP_REMOTE_FILE="/config/lua-sftp-upload-$$.txt" \
+    "$repo_root/build/debug/vectis" "$repo_root/examples/lua/sftp_transfer.lua"
 }
 
 run_downstream_http_examples() {
