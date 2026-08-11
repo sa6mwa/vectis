@@ -1428,6 +1428,8 @@ run_lua_examples() {
   assert_no_store_headers "$auth_headers" "packed default email-token login"
   for login_fragment in \
     'action="/auth-local/continue"' \
+    'name="password"' \
+    'name="totp_code"' \
     'name="email_transaction_id"' \
     'name="email_token"' \
     'action="/auth-local/email-token"' \
@@ -1438,6 +1440,40 @@ run_lua_examples() {
         printf '%s\n' \
           "Packed default email-token login missing fragment: $login_fragment" >&2
         printf '%s\n' "$default_email_login_body" >&2
+        return 1
+        ;;
+    esac
+  done
+  auth_headers="$work_dir/packed-default-email-only-login.headers"
+  default_email_only_login_body=$(curl_or_log "$packed_service_log" \
+    "packed default email-only login" \
+    --max-time 3 -fsS -D "$auth_headers" \
+    "http://127.0.0.1:$kore_packed_port/auth-email-only/login")
+  assert_no_store_headers "$auth_headers" "packed default email-only login"
+  for login_fragment in \
+    'action="/auth-email-only/continue"' \
+    'name="email_transaction_id"' \
+    'name="email_token"' \
+    'action="/auth-email-only/email-token"' \
+    'name="email"'; do
+    case "$default_email_only_login_body" in
+      *"$login_fragment"*) ;;
+      *)
+        printf '%s\n' \
+          "Packed default email-only login missing fragment: $login_fragment" >&2
+        printf '%s\n' "$default_email_only_login_body" >&2
+        return 1
+        ;;
+    esac
+  done
+  for forbidden_fragment in \
+    'name="password"' \
+    'name="totp_code"'; do
+    case "$default_email_only_login_body" in
+      *"$forbidden_fragment"*)
+        printf '%s\n' \
+          "Packed default email-only login unexpectedly rendered: $forbidden_fragment" >&2
+        printf '%s\n' "$default_email_only_login_body" >&2
         return 1
         ;;
     esac
@@ -1457,6 +1493,19 @@ run_lua_examples() {
       return 1
       ;;
   esac
+  for login_fragment in \
+    'name="password"' \
+    'name="totp_code"'; do
+    case "$default_password_login_body" in
+      *"$login_fragment"*) ;;
+      *)
+        printf '%s\n' \
+          "Packed default password login missing fragment: $login_fragment" >&2
+        printf '%s\n' "$default_password_login_body" >&2
+        return 1
+        ;;
+    esac
+  done
   for forbidden_fragment in \
     'name="email_transaction_id"' \
     'name="email_token"' \

@@ -623,8 +623,9 @@ email-token attempt-budget exhaustion, expired token rejection and consumption,
 replay rejection, recipient allowlist rejection, password+TOTP+email-token
 success through the browser `/continue` flow, login-template use of
 `continue_action`, packed embedded login-template placeholder expansion,
-default C-side login form rendering of email-token controls only on routes
-whose policy requires the email-token factor,
+default C-side login form rendering of password/TOTP controls only for
+password-backed routes and email-token controls only on routes whose policy
+requires the email-token factor,
 email-token-only WebDAV-key issuance through both `/continue` and
 `/webdav-key`, password-only WebDAV-key issuance for a non-TOTP user,
 password-only TOTP continuation for an enrolled user,

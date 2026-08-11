@@ -6003,10 +6003,17 @@ vectis_auth_login_form_response(const vectis_auth_route_data *data,
     status = vectis_string_builder_append(
         &html,
         "\"><label>Username <input name=\"username\" "
-        "autocomplete=\"username\"></label><label>Password <input "
-        "type=\"password\" name=\"password\" autocomplete=\"current-password\">"
-        "</label><label>TOTP <input name=\"totp_code\" "
-        "inputmode=\"numeric\" autocomplete=\"one-time-code\"></label>",
+        "autocomplete=\"username\"></label>",
+        error);
+  }
+  if (status == VECTIS_OK &&
+      (required_factors & VECTIS_AUTH_ROUTE_FACTOR_PASSWORD) != 0u) {
+    status = vectis_string_builder_append(
+        &html,
+        "<label>Password <input type=\"password\" name=\"password\" "
+        "autocomplete=\"current-password\"></label><label>TOTP <input "
+        "name=\"totp_code\" inputmode=\"numeric\" "
+        "autocomplete=\"one-time-code\"></label>",
         error);
   }
   if (status == VECTIS_OK &&
