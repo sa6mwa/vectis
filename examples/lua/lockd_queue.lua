@@ -1,10 +1,10 @@
-local lockdc = require("lockdc")
+local vectis = require("vectis")
 
 local endpoint = os.getenv("LOCKD_ENDPOINT") or "https://127.0.0.1:8443"
 local bundle = os.getenv("LOCKD_CLIENT_BUNDLE")
 local queue = os.getenv("LOCKD_QUEUE") or "lua-orders"
 
-local client, err = lockdc.open({
+local client, err = vectis.lockd.open({
   endpoints = { endpoint },
   client_bundle_path = bundle,
   default_namespace = os.getenv("LOCKD_NAMESPACE") or "examples",
@@ -19,7 +19,7 @@ local enqueued, enqueue_err = client:enqueue({
   ttl_seconds = 3600,
   max_attempts = 5,
   content_type = "application/json",
-}, lockdc.encode_json({
+}, vectis.lockd.raw.encode_json({
   type = "order.created",
   id = "1001",
 }))
