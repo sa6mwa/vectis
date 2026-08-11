@@ -102,6 +102,20 @@ assert_kore_lonejson_contract() {
   assert_contains "$repo_root/scripts/verify-kore-patches.sh" 'LDFLAGS\+=-L\$\(LONEJSON_PATH\)/lib -llonejson'
 }
 
+assert_lockdc_lua_runtime_contract() {
+  assert_contains "$repo_root/CMakeLists.txt" 'share/lockdc-source/src/lua/lockdc_lua\.c'
+  assert_contains "$repo_root/CMakeLists.txt" 'share/lockdc-source/lua/lockdc/init\.lua'
+  assert_contains "$repo_root/CMakeLists.txt" 'add_library\(vectis_lockdc_lua OBJECT'
+  assert_contains "$repo_root/CMakeLists.txt" '\$<TARGET_OBJECTS:vectis_lockdc_lua>'
+  assert_contains "$repo_root/src/vectis_cli.c" 'cpkt_lua_runtime_register_c_module\(runtime, "lockdc\.core"'
+  assert_contains "$repo_root/src/vectis_cli.c" 'runtime, "lockdc", vectis_lockdc_lua_init'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'require\("lockdc"\)'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'lockdc\.version_string'
+  assert_contains "$repo_root/tests/lua/pack.cmake" 'lockdc\.open'
+  assert_contains "$repo_root/tests/lua/pack.cmake" 'client_bundle_source = assert\(vectis\.embedded_lockd_bundle_source\(\)\)'
+  assert_contains "$repo_root/tests/lua/pack.cmake" 'server:consumer_service'
+}
+
 assert_luarocks_artifact_rejected() {
   dist=$luarocks_dist
   version=0.0.0
@@ -168,6 +182,7 @@ assert_contains "$repo_root/examples/CMakeLists.txt" 'Werror'
 assert_no_landed_test_assets
 assert_action_surface_contract
 assert_kore_lonejson_contract
+assert_lockdc_lua_runtime_contract
 assert_luarocks_artifact_rejected
 
 if ! "$repo_root/scripts/target_toolchain_available.sh" x86_64-linux-gnu >/dev/null 2>&1; then

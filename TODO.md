@@ -169,7 +169,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 ## Area 8: lockd / Workflow Runtime
 
 - [ ] Extend Vectis service-friendly lockd helpers only where they reduce real C workflow friction without obscuring the public `liblockdc` 0.13.0 API.
-- [ ] Integrate the `lockdc` Lua binding into the Vectis Lua runtime.
+- [x] Integrate the `lockdc` Lua binding into the Vectis Lua runtime.
 - [x] Provide first-pass C helpers for lockd-backed typed state load/save/update workflows.
 - [ ] Provide additional C helpers for retry-oriented queue workflow patterns only where raw `liblockdc` remains too noisy in real examples.
 - [ ] Provide Lua helpers for document store, retrieval, query, leases, enqueue, dequeue, ack/nack, and retry-oriented workflow patterns.
