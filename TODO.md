@@ -209,9 +209,10 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 
 ## Area 10: SSH / libssh2
 
-- [ ] Add Lua bindings for libssh2 session setup, authentication, command execution, stdout/stderr capture, exit status, and timeout handling.
+- [x] Add a Lua Vectis facade for libssh2-backed command execution with authentication, stdout/stderr capture, exit status, timeout handling, and structured error handling.
+- [ ] Add lower-level Lua bindings for raw libssh2 session/channel control if real service workflows require them.
 - [x] Add C Vectis helpers for connecting to SSH servers and running commands with captured stdout, stderr, exit status, timeout, and structured error handling.
-- [ ] Add Lua Vectis helpers for connecting to SSH servers and running commands with captured stdout, stderr, exit status, timeout, and structured error handling.
+- [x] Add Lua Vectis helpers for connecting to SSH servers and running commands with captured stdout, stderr, exit status, timeout, and structured error handling.
 - [x] Draft the C helper API for libssh2 command execution with captured stdout/stderr, exit status, and SFTP upload/download.
 - [x] Implement libssh2-backed C SSH command execution with captured stdout/stderr and exit status.
 - [x] Implement libssh2-backed C SFTP upload/download helpers for cases where curl-backed SFTP is not enough.
@@ -219,6 +220,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Decide which lower-level SFTP operations need libssh2 bindings beyond curl-backed file transfer.
 - [ ] Add C helpers only where they support the Vectis service model rather than exposing libssh2 wholesale.
 - [x] Add integration tests for remote command execution against a controlled test SSH server.
+- [x] Add integration tests proving Lua SSH command execution honors known_hosts pinning.
 
 ## Area 11: OpenSSL / Certificate Binding
 
