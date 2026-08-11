@@ -55,6 +55,7 @@ typedef struct list_state {
   unsigned count;
   int saw_index;
   int saw_app;
+  int app_metadata;
 } list_state;
 
 typedef struct chunk_state {
@@ -75,6 +76,14 @@ static vectis_status list_entry(const vectis_embedded_fs_entry *entry,
   }
   if (strcmp(entry->path, "/assets/app.txt") == 0) {
     state->saw_app = 1;
+    state->app_metadata =
+        entry->kind == VECTIS_EMBEDDED_FS_ENTRY_FILE && entry->mode == 0444u &&
+        entry->etag != NULL &&
+        strcmp(entry->etag,
+               "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\"") ==
+            0 &&
+        entry->data != NULL && entry->size == 4u &&
+        memcmp(entry->data, "app\n", 4u) == 0;
   }
   return VECTIS_OK;
 }
@@ -301,6 +310,8 @@ int main(void) {
   expect(status == VECTIS_OK && listed.count == 2u && listed.saw_index &&
              listed.saw_app,
          "lists embedded entries under prefix");
+  expect(listed.app_metadata,
+         "list callback exposes full embedded entry metadata");
 
   found = 0;
   memset(&chunked, 0, sizeof(chunked));

@@ -647,11 +647,15 @@ vectis_embedded_list_impl(const vectis_embedded_fs *self, const char *prefix,
     if (strncmp(impl->entries[i].path, prefix, prefix_size) != 0) {
       continue;
     }
+    memset(&entry, 0, sizeof(entry));
+    entry.kind = impl->entries[i].kind;
     entry.path = impl->entries[i].path;
     entry.content_type = impl->entries[i].content_type;
     entry.sha256 = impl->entries[i].sha256;
+    entry.etag = impl->entries[i].etag;
     entry.data = impl->entries[i].data;
     entry.size = impl->entries[i].size;
+    entry.mode = impl->entries[i].mode;
     status = callback(&entry, userdata, error);
     if (status != VECTIS_OK) {
       return status;
