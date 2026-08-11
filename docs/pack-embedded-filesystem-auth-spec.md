@@ -526,10 +526,10 @@ those writes land in the extracted docroot, deletes an
 extracted embedded asset through WebDAV while leaving the packed read-only mount
 unchanged and suppressing the deleted asset from WebDAV collection listings,
 exercises
-WebDAV PROPFIND/MKCOL/COPY/MOVE/DELETE, revokes the issued WebDAV key through
-the native logout route, proves the revoked key is rejected by both guarded API
-routes and WebDAV, and proves WebDAV mutations do not change embedded read-only
-assets. It also embeds
+WebDAV PROPFIND/MKCOL/COPY/MOVE/DELETE, revokes both the browser-flow WebDAV
+key and the direct all-factor WebDAV key through their native logout routes,
+proves each revoked key is rejected by both guarded API routes and WebDAV, and
+proves WebDAV mutations do not change embedded read-only assets. It also embeds
 the lockd client bundle, starts a C-owned lockd consumer service from the packed
 Lua server config, enqueues a lockd message through the Lua `lockdc` facade,
 proves the packed consumer writes WebDAV-visible markers, and proves WebDAV

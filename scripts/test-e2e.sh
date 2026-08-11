@@ -2276,6 +2276,37 @@ run_lua_examples() {
     printf '%s\n' "Packed auth logout left WebDAV credential active: $logged_out_dav_status" >&2
     return 1
   fi
+  logout_headers="$work_dir/packed-all-factor-logout.headers"
+  logout_status=$(curl --max-time 3 -sS -D "$logout_headers" \
+    -o "$work_dir/packed-all-factor-logout.txt" -w '%{http_code}' \
+    -u "$local_all_factor_client_id:$local_all_factor_client_secret" \
+    -X POST -H 'Content-Type: application/x-www-form-urlencoded' --data '' \
+    "http://127.0.0.1:$kore_packed_port/auth-local/logout")
+  logout_body=$(cat "$work_dir/packed-all-factor-logout.txt")
+  if [ "$logout_status" != "200" ]; then
+    printf '%s\n' "Packed all-factor logout returned unexpected status: $logout_status" >&2
+    printf '%s\n' "$logout_body" >&2
+    return 1
+  fi
+  assert_no_store_headers "$logout_headers" "packed all-factor logout"
+  if [ "$logout_body" != "logged_out=1" ]; then
+    printf '%s\n' "Packed all-factor logout returned unexpected body: $logout_body" >&2
+    return 1
+  fi
+  logged_out_api_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$local_all_factor_client_id:$local_all_factor_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/api/private")
+  if [ "$logged_out_api_status" != "401" ]; then
+    printf '%s\n' "Packed all-factor logout left guarded API credential active: $logged_out_api_status" >&2
+    return 1
+  fi
+  logged_out_dav_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
+    -u "$local_all_factor_client_id:$local_all_factor_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/index.html")
+  if [ "$logged_out_dav_status" != "401" ]; then
+    printf '%s\n' "Packed all-factor logout left WebDAV credential active: $logged_out_dav_status" >&2
+    return 1
+  fi
 
   printf '[e2e] lua libmdf example\n'
   "$repo_root/build/debug/vectis" "$repo_root/examples/lua/mdf_render.lua"
