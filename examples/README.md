@@ -86,6 +86,10 @@ surface directly, without local helper layers that would hide awkward API shape.
 
 - `lua/mdf_render.lua`: libmdf Lua Markdown rendering through both
   `render()` and `render_stream()`.
+- `lua/api_server.lua`: packable Lua API server script using C-owned
+  `server:json()` and `server:auth_json()` routes plus native issued
+  credentials. By default it self-tests and exits; set
+  `VECTIS_LUA_API_EXAMPLE_SERVE=1` to keep it listening.
 - `lua/lockd_state.lua`: lockdc Lua client acquire, JSON state update/load,
   and lease release against `LOCKD_ENDPOINT`.
 - `lua/lockd_queue.lua`: lockdc Lua queue enqueue, dequeue, JSON payload read,

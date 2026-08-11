@@ -91,4 +91,10 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_example_lua_mdf_render PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
+  add_test(NAME vectis_example_lua_api_server
+           COMMAND vectis_bin "${CMAKE_SOURCE_DIR}/examples/lua/api_server.lua")
+  set_tests_properties(vectis_example_lua_api_server PROPERTIES
+    ENVIRONMENT "VECTIS_LUA_API_EXAMPLE_PORT=28586;VECTIS_LUA_API_EXAMPLE_AUTH_PATH=${CMAKE_CURRENT_BINARY_DIR}/vectis-lua-api-example-auth.json"
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
 endif()

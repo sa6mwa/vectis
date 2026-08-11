@@ -264,7 +264,8 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add a C-owned Lua `server:static_directory()` helper for serving disk docroots such as extracted packed asset trees.
 - [x] Add a C-owned Lua `server:json()` helper for fixed unguarded JSON endpoints in packed API service scenarios, including explicit method and status configuration.
 - [x] Add matching method and status configuration to the C-owned Lua `server:auth_json()` helper for fixed guarded API endpoints.
-- [ ] Add Lua examples for API server, lockd document workflow, queue producer, queue consumer, downstream API call, SFTP transfer, and SSH command execution.
+- [x] Add Lua examples for API server, lockd document workflow, and queue producer/dequeue workflows.
+- [ ] Add Lua examples for downstream API call, SFTP transfer, SSH command execution, and long-running consumer service workflows.
 - [ ] Add Lua unit and end-to-end tests.
 
 ## Area 13: Single Binary Packaging
