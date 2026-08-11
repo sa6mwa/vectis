@@ -2698,6 +2698,12 @@ run_kore_examples() {
     printf '%s\n' "Unexpected combined WebDAV body during consumer work: $body" >&2
     return 1
   fi
+  body=$(curl --max-time 5 -fsS \
+    "http://127.0.0.1:$kore_combined_port/health")
+  if [ "$body" != "ok" ]; then
+    printf '%s\n' "Unexpected combined API health body during consumer work: $body" >&2
+    return 1
+  fi
   count=0
   while :; do
     body=$(curl --max-time 3 -fsS \
