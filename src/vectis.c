@@ -4195,7 +4195,6 @@ static vectis_status vectis_static_embedded_response(
   const char *range_header;
   const char *if_range_header;
   vectis_static_embedded_range range;
-  char etag[80];
   char content_range[96];
   int has_etag;
 
@@ -4210,10 +4209,9 @@ static vectis_status vectis_static_embedded_response(
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
   has_etag = 0;
-  etag[0] = '\0';
-  if (entry->sha256 != NULL && strlen(entry->sha256) + 3u <= sizeof(etag)) {
-    (void)snprintf(etag, sizeof(etag), "\"%s\"", entry->sha256);
-    if (vectis_response_header(response, "etag", etag, error) != VECTIS_OK) {
+  if (entry->etag != NULL && entry->etag[0] != '\0') {
+    if (vectis_response_header(response, "etag", entry->etag, error) !=
+        VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_INVALID;
     }
     has_etag = 1;
@@ -4223,7 +4221,8 @@ static vectis_status vectis_static_embedded_response(
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
   if (has_etag && vectis_static_embedded_if_none_match(
-                      vectis_request_header(request, "if-none-match"), etag)) {
+                      vectis_request_header(request, "if-none-match"),
+                      entry->etag)) {
     return vectis_response_status(response, 304, error);
   }
   range_header = vectis_request_header(request, "range");
@@ -4231,7 +4230,8 @@ static vectis_status vectis_static_embedded_response(
     if_range_header = vectis_request_header(request, "if-range");
     if (if_range_header != NULL && if_range_header[0] != '\0' &&
         (!has_etag ||
-         !vectis_static_embedded_if_range_matches(if_range_header, etag))) {
+         !vectis_static_embedded_if_range_matches(if_range_header,
+                                                  entry->etag))) {
       range_header = NULL;
     }
   }

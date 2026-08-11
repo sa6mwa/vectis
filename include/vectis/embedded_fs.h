@@ -45,6 +45,7 @@ typedef struct vectis_embedded_fs_entry {
   const char *path;
   const char *content_type;
   const char *sha256;
+  const char *etag;
   const void *data;
   size_t size;
 } vectis_embedded_fs_entry;

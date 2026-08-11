@@ -20,6 +20,7 @@ typedef struct vectis_embedded_fs_impl_entry {
   char *path;
   char *content_type;
   char *sha256;
+  char *etag;
   const unsigned char *data;
   size_t size;
 } vectis_embedded_fs_impl_entry;
@@ -132,6 +133,21 @@ static char *vectis_embedded_strdup(const char *value) {
     memcpy(copy, value, size);
   }
   return copy;
+}
+
+static char *vectis_embedded_etag_from_sha256(const char *sha256) {
+  char *etag;
+  size_t size;
+
+  if (sha256 == NULL) {
+    return NULL;
+  }
+  size = strlen(sha256) + 3u;
+  etag = (char *)malloc(size);
+  if (etag != NULL) {
+    (void)snprintf(etag, size, "\"%s\"", sha256);
+  }
+  return etag;
 }
 
 static int vectis_embedded_path_valid(const char *path) {
@@ -336,14 +352,16 @@ static vectis_status vectis_embedded_add(
   memset(entry, 0, sizeof(*entry));
   entry->path = vectis_embedded_strdup(asset->path);
   entry->sha256 = vectis_embedded_strdup(asset->sha256);
+  entry->etag = vectis_embedded_etag_from_sha256(asset->sha256);
   if (asset->content_type != NULL) {
     entry->content_type = vectis_embedded_strdup(asset->content_type);
   }
-  if (entry->path == NULL || entry->sha256 == NULL ||
+  if (entry->path == NULL || entry->sha256 == NULL || entry->etag == NULL ||
       (asset->content_type != NULL && entry->content_type == NULL)) {
     free(entry->path);
     free(entry->content_type);
     free(entry->sha256);
+    free(entry->etag);
     memset(entry, 0, sizeof(*entry));
     vectis_set_error(error, VECTIS_ERR_NOMEM,
                      "failed to copy embedded asset metadata");
@@ -385,6 +403,7 @@ static void vectis_embedded_impl_destroy(vectis_embedded_fs_impl *impl) {
     free(impl->entries[i].path);
     free(impl->entries[i].content_type);
     free(impl->entries[i].sha256);
+    free(impl->entries[i].etag);
   }
   free(impl->entries);
   free(impl->index_path);
@@ -447,6 +466,7 @@ static vectis_status vectis_embedded_lookup_impl(const vectis_embedded_fs *self,
       out->path = impl->entries[i].path;
       out->content_type = impl->entries[i].content_type;
       out->sha256 = impl->entries[i].sha256;
+      out->etag = impl->entries[i].etag;
       out->data = impl->entries[i].data;
       out->size = impl->entries[i].size;
       return VECTIS_OK;

@@ -183,7 +183,8 @@ Required C concepts:
 
 - `vectis_embedded_fs`: read-only handle borrowed from the running executable.
 - `vectis_embedded_fs_entry`: file, directory, size, SHA-256, content type,
-  mtime equivalent, and ETag-ready metadata.
+  mtime equivalent, and a strong ETag borrowed from the embedded filesystem
+  entry metadata.
 - lookup, list, borrowed read, owned source open, and stream-to-sink
   operations.
 - extraction operations from embedded fs to disk with explicit policy.

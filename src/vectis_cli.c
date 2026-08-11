@@ -3160,7 +3160,9 @@ static int vectis_lua_embedded_stat(lua_State *lua) {
   if (entry.sha256 != NULL) {
     lua_pushstring(lua, entry.sha256);
     lua_setfield(lua, -2, "sha256");
-    lua_pushfstring(lua, "\"%s\"", entry.sha256);
+  }
+  if (entry.etag != NULL) {
+    lua_pushstring(lua, entry.etag);
     lua_setfield(lua, -2, "etag");
   }
   return 1;

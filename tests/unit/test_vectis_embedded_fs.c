@@ -228,6 +228,11 @@ int main(void) {
   expect(entry.content_type != NULL &&
              strcmp(entry.content_type, "text/html") == 0,
          "lookup exposes content type");
+  expect(entry.etag != NULL &&
+             strcmp(entry.etag,
+                    "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"") ==
+                 0,
+         "lookup exposes strong ETag metadata");
 
   found = 0;
   body.data = NULL;
