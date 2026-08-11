@@ -18,6 +18,18 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(vectis_pack_smtp_harness PRIVATE -UNDEBUG)
 endif()
 
+add_executable(vectis_acme_mock_provider
+  helpers/vectis_acme_mock_provider.c)
+target_link_libraries(vectis_acme_mock_provider PRIVATE OpenSSL::Crypto)
+set_target_properties(vectis_acme_mock_provider PROPERTIES
+  C_STANDARD 90
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF
+)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(vectis_acme_mock_provider PRIVATE -UNDEBUG)
+endif()
+
 add_executable(vectis_pick_port
   helpers/vectis_pick_port.c)
 set_target_properties(vectis_pick_port PROPERTIES

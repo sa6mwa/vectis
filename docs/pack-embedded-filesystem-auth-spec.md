@@ -604,10 +604,12 @@ native startup diagnostics for missing domains or email without contacting a
 live ACME provider. ACME `cache_dir` is accepted into Vectis runtime config as
 `acme_state_dir`, is required for ACME startup, and is wired into Kore's keymgr
 and ACME process roots so account keys and certificate state are created under
-the configured directory. The deterministic e2e starts ACME mode against a dead
-local provider endpoint and verifies state creation without requiring live
-Let's Encrypt access. Full mock-provider issuance remains future hardening
-work.
+the configured directory. The deterministic e2e starts ACME mode against a
+local mock ACMEv2 provider, drives directory, nonce, account, order,
+authorization, tls-alpn-01 challenge, finalize, and certificate endpoints,
+signs Kore's generated CSR with a test CA, verifies the issued PEM fullchain is
+stored under the configured `cache_dir`, and reaches an HTTPS probe through the
+ACME-issued certificate without requiring live Let's Encrypt access.
 
 Email-token e2e coverage:
 

@@ -22,7 +22,9 @@ kore_acme_port=${VECTIS_E2E_KORE_ACME_PORT:-$((kore_basic_port + 8))}
 lua_consumer_port=${VECTIS_E2E_LUA_CONSUMER_PORT:-$((kore_basic_port + 9))}
 https_runtime_port=${VECTIS_E2E_HTTPS_RUNTIME_PORT:-$((kore_basic_port + 10))}
 https_mtls_runtime_port=${VECTIS_E2E_HTTPS_MTLS_RUNTIME_PORT:-$((kore_basic_port + 11))}
+acme_mock_port=${VECTIS_E2E_ACME_MOCK_PORT:-$((kore_basic_port + 12))}
 pack_smtp_harness=${VECTIS_E2E_PACK_SMTP_HARNESS:-$repo_root/build/debug/tests/vectis_pack_smtp_harness}
+acme_mock_provider=${VECTIS_E2E_ACME_MOCK_PROVIDER:-$repo_root/build/debug/tests/vectis_acme_mock_provider}
 work_dir=$(mktemp -d)
 ssh_memory_key="$work_dir/vectis-e2e-ssh-key"
 ssh_bad_host_key="$work_dir/vectis-e2e-bad-host-key"
@@ -443,6 +445,7 @@ run_lua_examples() {
   acme_state_cache="$work_dir/vectis-e2e-acme-cache"
   acme_state_credentials="$work_dir/vectis-e2e-acme-credentials.json"
   acme_state_log="$work_dir/lua-acme-state.log"
+  acme_mock_log="$work_dir/acme-mock.log"
   packed_service_site="$work_dir/vectis-e2e-packed-site"
   packed_service_cache="$work_dir/vectis-e2e-packed-cache"
   packed_service_docroot="$packed_service_cache/webdav/packed-service-e2e/content"
@@ -1015,12 +1018,17 @@ run_lua_examples() {
       printf '%s\n' "Packed HTTPS root response did not include cache-control" >&2
       return 1
     }
-  printf '[e2e] lua acme state dir\n'
+  printf '[e2e] lua acme mock issuance\n'
+  start_server "mock acme provider" "$acme_mock_log" \
+    "$acme_mock_provider" "$acme_mock_port"
+  wait_for_http "http://127.0.0.1:$acme_mock_port/directory" \
+    "mock acme provider"
   printf '%s\n' \
     'local vectis = require("vectis")' \
     'local port = tonumber(assert(os.getenv("VECTIS_ACME_STATE_PORT")))' \
     'local cache_dir = assert(os.getenv("VECTIS_ACME_STATE_CACHE"))' \
     'local credentials_path = assert(os.getenv("VECTIS_ACME_STATE_CREDENTIALS"))' \
+    'local provider = assert(os.getenv("VECTIS_ACME_STATE_PROVIDER"))' \
     'assert(vectis.auth.store_init({ credentials_path = credentials_path }))' \
     'local server = assert(vectis.server.new({' \
     '  app_name = "vectis-acme-state-e2e",' \
@@ -1028,15 +1036,14 @@ run_lua_examples() {
     '  port = port,' \
     '  tls = {' \
     '    mode = "acme",' \
-    '    domains = { "acme.localhost.test", "www.acme.localhost.test" },' \
+    '    domains = { "acme.localhost.test" },' \
     '    email = "ops@example.test",' \
-    '    provider = "http://127.0.0.1:1/directory",' \
+    '    provider = provider,' \
     '    cache_dir = cache_dir,' \
     '  },' \
     '}))' \
-    'assert(server:auth_json({' \
+    'assert(server:json({' \
     '  path = "/probe",' \
-    '  auth = { kind = "native", credentials_path = credentials_path, realm = "acme-e2e" },' \
     '  body = [[{"ok":true,"surface":"acme-state"}]],' \
     '}))' \
     'assert(server:start())' \
@@ -1047,19 +1054,37 @@ run_lua_examples() {
     env VECTIS_ACME_STATE_PORT="$kore_acme_port" \
       VECTIS_ACME_STATE_CACHE="$acme_state_cache" \
       VECTIS_ACME_STATE_CREDENTIALS="$acme_state_credentials" \
+      VECTIS_ACME_STATE_PROVIDER="http://127.0.0.1:$acme_mock_port/directory" \
       "$repo_root/build/debug/vectis" "$acme_state_script"
   count=0
   while [ ! -f "$acme_state_cache/account-key.pem" ] ||
-      [ ! -d "$acme_state_cache/certificates" ]; do
+      [ ! -f "$acme_state_cache/certificates/acme.localhost.test/fullchain.pem" ]; do
     count=$((count + 1))
-    if [ "$count" -ge 30 ]; then
-      printf '%s\n' "ACME state was not created under configured cache dir: $acme_state_cache" >&2
+    if [ "$count" -ge 60 ]; then
+      printf '%s\n' "ACME mock issuance did not complete under configured cache dir: $acme_state_cache" >&2
       find "$acme_state_cache" -maxdepth 4 -print 2>/dev/null >&2 || true
       sed 's/^/[lua-acme-state] /' "$acme_state_log" >&2
+      sed 's/^/[acme-mock] /' "$acme_mock_log" >&2
       return 1
     fi
     sleep 1
   done
+  grep -q 'BEGIN CERTIFICATE' \
+    "$acme_state_cache/certificates/acme.localhost.test/fullchain.pem" || {
+      printf '%s\n' "ACME mock fullchain did not contain a PEM certificate" >&2
+      return 1
+    }
+  acme_probe=$(curl_or_log "$acme_state_log" "mock acme https probe" \
+    --resolve "acme.localhost.test:$kore_acme_port:127.0.0.1" \
+    --max-time 3 -k -fsS \
+    "https://acme.localhost.test:$kore_acme_port/probe")
+  case "$acme_probe" in
+    *'"surface":"acme-state"'*) ;;
+    *)
+      printf '%s\n' "Unexpected ACME HTTPS probe response: $acme_probe" >&2
+      return 1
+      ;;
+  esac
   curl_or_log "$packed_service_log" "packed static app.js headers" --max-time 3 -fsSI \
     "http://127.0.0.1:$kore_packed_port/site/app.js" |
     grep -qi '^content-type: application/javascript' || {
