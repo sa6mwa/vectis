@@ -367,6 +367,12 @@ done
 assert_contains "$repo_root/Makefile" 'VECTIS_LIVE_OAUTH2_ENABLE=1'
 assert_contains "$repo_root/scripts/test-live-oauth2.sh" 'VECTIS_LIVE_OAUTH2_ENABLE'
 assert_contains "$repo_root/scripts/test-live-oauth2.sh" 'SKIP: set VECTIS_LIVE_OAUTH2_ENABLE=1'
+assert_contains "$repo_root/docs/pack-embedded-filesystem-auth-audit.md" 'server:static_embedded'
+assert_contains "$repo_root/docs/pack-embedded-filesystem-auth-audit.md" 'server:webdav_embedded_site'
+assert_contains "$repo_root/docs/pack-embedded-filesystem-auth-audit.md" 'vectis_auth_provider'
+assert_contains "$repo_root/docs/pack-embedded-filesystem-auth-audit.md" 'OAuth2/OIDC'
+assert_contains "$repo_root/docs/pack-embedded-filesystem-auth-audit.md" 'startconsumer'
+assert_contains "$repo_root/docs/pack-embedded-filesystem-auth-audit.md" 'does not copy Landed site assets'
 
 assert_contains "$repo_root/cmake/toolchains/x86_64-linux-gnu.cmake" 'cpkt_configure_bootlin_toolchain\(x86_64-linux-gnu\)'
 assert_contains "$repo_root/cmake/toolchains/x86_64-linux-musl.cmake" 'cpkt_configure_bootlin_toolchain\(x86_64-linux-musl\)'
