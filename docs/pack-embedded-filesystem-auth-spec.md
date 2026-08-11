@@ -517,10 +517,12 @@ password+TOTP auth for a non-TOTP user, issues a WebDAV key after deterministic
 password-first pending continuation with TOTP+email-token login for a TOTP
 user, protects the WebDAV mount,
 rejects anonymous WebDAV reads and writes without mutating the extracted
-docroot, rejects authenticated WebDAV request-path and Destination-header
-traversal without creating escaped files, serves embedded content through
-authenticated WebDAV, accepts mutable WebDAV writes, verifies those writes land
-in the extracted docroot, deletes an
+docroot, issues a second WebDAV key through the direct all-factor
+password+TOTP+email-token `/webdav-key` path and proves it works for both the
+guarded API and WebDAV, rejects authenticated WebDAV request-path and
+Destination-header traversal without creating escaped files, serves embedded
+content through authenticated WebDAV, accepts mutable WebDAV writes, verifies
+those writes land in the extracted docroot, deletes an
 extracted embedded asset through WebDAV while leaving the packed read-only mount
 unchanged and suppressing the deleted asset from WebDAV collection listings,
 exercises

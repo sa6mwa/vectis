@@ -1782,6 +1782,58 @@ run_lua_examples() {
     return 1
   fi
   assert_no_store_headers "$auth_headers" "packed wrong TOTP"
+  auth_headers="$work_dir/packed-local-all-factor-token.headers"
+  email_token_response=$(curl_or_log "$packed_service_log" \
+    "packed local all-factor token" --max-time 3 -fsS -D "$auth_headers" -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-user%40example.com&email=packed-user%40example.test' \
+    "http://127.0.0.1:$kore_packed_port/auth-local/email-token")
+  assert_no_store_headers "$auth_headers" "packed local all-factor token"
+  email_transaction_id=$(printf '%s\n' "$email_token_response" |
+    sed -n 's/^transaction_id=//p')
+  email_token=$(printf '%s\n' "$email_token_response" |
+    sed -n 's/^token=//p')
+  if [ -z "$email_transaction_id" ] || [ -z "$email_token" ]; then
+    printf '%s\n' "Packed local auth did not expose an all-factor token" >&2
+    printf '%s\n' "$email_token_response" >&2
+    return 1
+  fi
+  auth_headers="$work_dir/packed-local-all-factor-webdav-key.headers"
+  local_all_factor_key_response=$(curl_or_log "$packed_service_log" \
+    "packed local all-factor webdav key" --max-time 3 -fsS -D "$auth_headers" -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "username=packed-user%40example.com&password=packed-password&totp_code=287082&email_transaction_id=$email_transaction_id&email_token=$email_token" \
+    "http://127.0.0.1:$kore_packed_port/auth-local/webdav-key")
+  assert_no_store_headers "$auth_headers" "packed local all-factor webdav key"
+  local_all_factor_client_id=$(printf '%s\n' "$local_all_factor_key_response" |
+    sed -n 's/^client_id=//p')
+  local_all_factor_client_secret=$(printf '%s\n' "$local_all_factor_key_response" |
+    sed -n 's/^client_secret=//p')
+  if [ -z "$local_all_factor_client_id" ] ||
+      [ -z "$local_all_factor_client_secret" ]; then
+    printf '%s\n' "Packed all-factor auth did not issue WebDAV credentials" >&2
+    printf '%s\n' "$local_all_factor_key_response" >&2
+    return 1
+  fi
+  body=$(curl_or_log "$packed_service_log" "packed all-factor guarded api" \
+    --max-time 3 -fsS \
+    -u "$local_all_factor_client_id:$local_all_factor_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/api/private")
+  if [ "$body" != '{"ok":true,"surface":"packed-api"}' ]; then
+    printf '%s\n' "Unexpected packed all-factor guarded API response: $body" >&2
+    return 1
+  fi
+  body=$(curl_or_log "$packed_service_log" "packed all-factor webdav read" \
+    --max-time 3 -fsS \
+    -u "$local_all_factor_client_id:$local_all_factor_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/dav/index.html")
+  case "$body" in
+    *'packed service asset'*) ;;
+    *)
+      printf '%s\n' "Unexpected packed all-factor WebDAV body: $body" >&2
+      return 1
+      ;;
+  esac
   unauth_dav_status=$(curl --max-time 3 -sS -o /dev/null -w '%{http_code}' \
     "http://127.0.0.1:$kore_packed_port/dav/index.html")
   if [ "$unauth_dav_status" = "200" ]; then
