@@ -392,6 +392,7 @@ run_lua_examples() {
   webdav_client_secret=
   static_put_status=
   root_static_put_status=
+  static_head_body=
   static_head_headers=
   static_head_status=
   unauth_dav_status=
@@ -816,12 +817,18 @@ run_lua_examples() {
       ;;
   esac
   static_head_headers="$work_dir/packed-static-head.headers"
+  static_head_body="$work_dir/packed-static-head.body"
   static_head_status=$(curl --max-time 3 -sS -D "$static_head_headers" \
-    -o /dev/null -w '%{http_code}' -I \
+    -o "$static_head_body" -w '%{http_code}' -X HEAD \
     "http://127.0.0.1:$kore_packed_port/site/index.html")
   if [ "$static_head_status" != "200" ]; then
     printf '%s\n' "Unexpected packed static HEAD status: $static_head_status" >&2
     sed 's/^/[packed-static-head] /' "$static_head_headers" >&2
+    return 1
+  fi
+  if [ -s "$static_head_body" ]; then
+    printf '%s\n' "Packed static HEAD returned a body" >&2
+    cat "$static_head_body" >&2
     return 1
   fi
   grep -qi '^content-type: text/html; charset=utf-8' "$static_head_headers" || {

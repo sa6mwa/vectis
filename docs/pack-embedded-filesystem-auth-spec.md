@@ -492,8 +492,8 @@ docroot both at `/` and under `/site`, rejects writes through the root
 read-only mount without changing the embedded index, lists packed assets,
 serves generated CSS, JavaScript, asset, and template files through ordinary GET
 requests, reads them through both full-read and chunk-iterator Lua embedded
-filesystem APIs, verifies HEAD metadata for the embedded static docroot, rejects
-traversal
+filesystem APIs, verifies bodyless HEAD metadata for the embedded static
+docroot, rejects traversal
 attempts against the root read-only mount, verifies single byte-range and
 unsatisfiable byte-range behavior for the C-owned static embedded responder, verifies
 `If-None-Match` returns 304 for unchanged embedded assets, verifies matching
