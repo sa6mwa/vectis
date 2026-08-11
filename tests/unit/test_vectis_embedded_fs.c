@@ -55,6 +55,7 @@ typedef struct list_state {
   unsigned count;
   int saw_index;
   int saw_app;
+  int saw_skip;
   int app_metadata;
 } list_state;
 
@@ -84,6 +85,9 @@ static vectis_status list_entry(const vectis_embedded_fs_entry *entry,
             0 &&
         entry->data != NULL && entry->size == 4u &&
         memcmp(entry->data, "app\n", 4u) == 0;
+  }
+  if (strcmp(entry->path, "/assets2/skip.txt") == 0) {
+    state->saw_skip = 1;
   }
   return VECTIS_OK;
 }
@@ -139,6 +143,33 @@ static vectis_embedded_fs *new_fixture_fs(vectis_error *error) {
   return fs;
 }
 
+static vectis_embedded_fs *new_adjacent_prefix_fs(vectis_error *error) {
+  static const unsigned char payload[] = "a\nb\n";
+  static const char manifest[] =
+      "{\"format\":\"vectis-pack\",\"assets\":["
+      "{\"path\":\"/assets/app.txt\",\"kind\":\"file\",\"mode\":292,"
+      "\"offset\":0,\"size\":2,"
+      "\"sha256\":"
+      "\"87428fc522803d31065e7bce3cf03fe475096631e5e07bbd7a0fde60c4cf25c7\"},"
+      "{\"path\":\"/assets2/skip.txt\",\"kind\":\"file\",\"mode\":292,"
+      "\"offset\":2,\"size\":2,"
+      "\"sha256\":"
+      "\"0263829989b6fd954f72baaf2fc64bc2e2f01d692d4de72986ea808f6e99813f\"}]}";
+  vectis_embedded_fs_config config;
+  vectis_embedded_fs *fs;
+
+  vectis_embedded_fs_config_init(&config);
+  config.manifest_json = manifest;
+  config.manifest_json_size = sizeof(manifest) - 1u;
+  config.payload = payload;
+  config.payload_size = sizeof(payload) - 1u;
+  fs = NULL;
+  expect(vectis_embedded_fs_from_pack(&config, &fs, error) == VECTIS_OK &&
+             fs != NULL,
+         "creates adjacent-prefix embedded fs fixture");
+  return fs;
+}
+
 static void read_file(const char *path, char *buffer, size_t buffer_size) {
   FILE *fp;
   size_t nread;
@@ -162,6 +193,7 @@ static void write_file(const char *path, const char *body) {
 int main(void) {
   vectis_error error;
   vectis_embedded_fs *fs;
+  vectis_embedded_fs *prefix_fs;
   vectis_embedded_fs_entry entry;
   vectis_embedded_fs_extract_config extract;
   vectis_bytes body;
@@ -376,6 +408,18 @@ int main(void) {
   remove_tree(temp);
 
   vectis_embedded_fs_close(fs);
+
+  prefix_fs = new_adjacent_prefix_fs(&error);
+  if (prefix_fs == NULL) {
+    return 1;
+  }
+  memset(&listed, 0, sizeof(listed));
+  status = vectis_embedded_fs_list(prefix_fs, "/assets", list_entry, &listed,
+                                   &error);
+  expect(status == VECTIS_OK && listed.count == 1u && listed.saw_app &&
+             !listed.saw_skip,
+         "embedded list prefix respects path segment boundaries");
+  vectis_embedded_fs_close(prefix_fs);
 
   vectis_embedded_fs_config_init(&config);
   config.payload = "hello\napp\n";

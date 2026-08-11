@@ -618,13 +618,27 @@ vectis_embedded_open_source_impl(const vectis_embedded_fs *self,
   return VECTIS_OK;
 }
 
+static int vectis_embedded_path_prefixed_by(const char *path,
+                                            const char *prefix) {
+  size_t prefix_size;
+
+  if (path == NULL || prefix == NULL) {
+    return 0;
+  }
+  if (strcmp(prefix, "/") == 0) {
+    return 1;
+  }
+  prefix_size = strlen(prefix);
+  return strncmp(path, prefix, prefix_size) == 0 &&
+         (path[prefix_size] == '\0' || path[prefix_size] == '/');
+}
+
 static vectis_status
 vectis_embedded_list_impl(const vectis_embedded_fs *self, const char *prefix,
                           vectis_embedded_fs_list_fn callback, void *userdata,
                           vectis_error *error) {
   const vectis_embedded_fs_impl *impl;
   vectis_embedded_fs_entry entry;
-  size_t prefix_size;
   size_t i;
   vectis_status status;
 
@@ -642,9 +656,8 @@ vectis_embedded_list_impl(const vectis_embedded_fs *self, const char *prefix,
     return VECTIS_ERR_INVALID;
   }
   impl = (const vectis_embedded_fs_impl *)self->impl;
-  prefix_size = strlen(prefix);
   for (i = 0u; i < impl->count; ++i) {
-    if (strncmp(impl->entries[i].path, prefix, prefix_size) != 0) {
+    if (!vectis_embedded_path_prefixed_by(impl->entries[i].path, prefix)) {
       continue;
     }
     memset(&entry, 0, sizeof(entry));
