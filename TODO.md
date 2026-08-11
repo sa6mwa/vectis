@@ -247,7 +247,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Make the `vectis` executable build depend on the Vectis-provisioned Lua 5.5 static library rather than a host Lua installation.
 - [x] Add the Linux `vectis` executable entrypoint wrapped in single-header `libpid0` for PID 1 behavior in `FROM scratch` containers.
 - [x] Replace the placeholder executable submain with the real Lua runner.
-- [ ] Configure Lua package paths so bundled/native Vectis modules load without user setup.
+- [x] Configure Lua package paths so bundled/native Vectis modules load without user setup.
 - [x] Provide the first statically preloaded `require("vectis")` facade for the embedded Lua runner.
 - [ ] Expand `require("vectis")` into the full high-level framework facade.
 - [x] Integrate existing Lua rocks/source archives for lockdc, pslog, and dependency Lua modules from pinned dependency sources.

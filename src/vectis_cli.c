@@ -7659,6 +7659,105 @@ static int vectis_lua_report_status(cpkt_lua_runtime *runtime,
   return 1;
 }
 
+static char *vectis_lua_script_dir(const char *script_name) {
+  const char *slash;
+  size_t size;
+  char *dir;
+
+  if (script_name == NULL || script_name[0] == '\0') {
+    return vectis_cli_strdup(".");
+  }
+  slash = strrchr(script_name, '/');
+  if (slash == NULL) {
+    return vectis_cli_strdup(".");
+  }
+  if (slash == script_name) {
+    return vectis_cli_strdup("/");
+  }
+  size = (size_t)(slash - script_name);
+  dir = (char *)malloc(size + 1u);
+  if (dir == NULL) {
+    return NULL;
+  }
+  memcpy(dir, script_name, size);
+  dir[size] = '\0';
+  return dir;
+}
+
+static char *vectis_lua_join_package_pattern(const char *dir,
+                                             const char *pattern) {
+  const char *separator;
+  size_t dir_size;
+  size_t pattern_size;
+  size_t separator_size;
+  char *joined;
+
+  if (dir == NULL || pattern == NULL) {
+    return NULL;
+  }
+  separator = strcmp(dir, "/") == 0 ? "" : "/";
+  dir_size = strlen(dir);
+  pattern_size = strlen(pattern);
+  separator_size = strlen(separator);
+  if (dir_size > ((size_t)-1) - separator_size ||
+      dir_size + separator_size > ((size_t)-1) - pattern_size - 1u) {
+    return NULL;
+  }
+  joined = (char *)malloc(dir_size + separator_size + pattern_size + 1u);
+  if (joined == NULL) {
+    return NULL;
+  }
+  memcpy(joined, dir, dir_size);
+  memcpy(joined + dir_size, separator, separator_size);
+  memcpy(joined + dir_size + separator_size, pattern, pattern_size);
+  joined[dir_size + separator_size + pattern_size] = '\0';
+  return joined;
+}
+
+static cpkt_lua_runtime_status
+vectis_lua_prepend_script_package_path(cpkt_lua_runtime *runtime,
+                                       const char *dir, const char *pattern,
+                                       int native_module) {
+  cpkt_lua_runtime_status status;
+  char *path;
+
+  path = vectis_lua_join_package_pattern(dir, pattern);
+  if (path == NULL) {
+    return CPKT_LUA_RUNTIME_ERR_ALLOC;
+  }
+  status = native_module ? cpkt_lua_runtime_prepend_package_cpath(runtime, path)
+                         : cpkt_lua_runtime_prepend_package_path(runtime, path);
+  free(path);
+  return status;
+}
+
+static cpkt_lua_runtime_status
+vectis_lua_configure_script_package_paths(cpkt_lua_runtime *runtime,
+                                          const char *script_name) {
+  cpkt_lua_runtime_status status;
+  char *dir;
+
+  dir = vectis_lua_script_dir(script_name);
+  if (dir == NULL) {
+    return CPKT_LUA_RUNTIME_ERR_ALLOC;
+  }
+
+  status =
+      vectis_lua_prepend_script_package_path(runtime, dir, "?/init.lua", 0);
+  if (status == CPKT_LUA_RUNTIME_OK) {
+    status = vectis_lua_prepend_script_package_path(runtime, dir, "?.lua", 0);
+  }
+  if (status == CPKT_LUA_RUNTIME_OK) {
+    status =
+        vectis_lua_prepend_script_package_path(runtime, dir, "?/init.so", 1);
+  }
+  if (status == CPKT_LUA_RUNTIME_OK) {
+    status = vectis_lua_prepend_script_package_path(runtime, dir, "?.so", 1);
+  }
+  free(dir);
+  return status;
+}
+
 static cpkt_lua_runtime_status
 vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   cpkt_lua_runtime_status status;
@@ -7813,6 +7912,13 @@ static int vectis_lua_run_buffer(
     vectis_embedded_fs_close(context.embedded_fs);
     return rc;
   }
+  status = vectis_lua_configure_script_package_paths(runtime, script_name);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    rc = vectis_lua_report_status(runtime, status);
+    cpkt_lua_runtime_free(runtime);
+    vectis_embedded_fs_close(context.embedded_fs);
+    return rc;
+  }
 
   load_script = script;
   load_size = script_size;
@@ -7845,6 +7951,14 @@ static int vectis_lua_run_script(int argc, char **argv, int script_index,
   memset(&context, 0, sizeof(context));
   rc = vectis_lua_prepare_runtime(&runtime, &context, trace_enabled);
   if (rc != 0) {
+    return rc;
+  }
+
+  status =
+      vectis_lua_configure_script_package_paths(runtime, argv[script_index]);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    rc = vectis_lua_report_status(runtime, status);
+    cpkt_lua_runtime_free(runtime);
     return rc;
   }
 

@@ -220,6 +220,9 @@ including SMTP usage through the same option-table model. `require("vectis").htt
 adds Vectis-owned JSON API helpers, structured transport/status errors, retry
 passthrough, file-backed downloads/uploads, and SFTP transfer helpers on top of
 that raw curl surface.
+For normal scripts and packed binaries, Vectis prepends the script or packed
+executable directory to `package.path` and `package.cpath` so app-local Lua and
+native helper modules load without manual setup.
 
 `vectis -a pack` can append a Lua script, optional site/template assets, and
 optionally a lockd client bundle to the Linux executable with hashes and trailer
