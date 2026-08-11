@@ -210,6 +210,9 @@ Required Lua concepts:
 - `vectis.embedded.default_extract_policy()`
 - `vectis.embedded.extract({to=..., policy=...})`
 - `vectis.cert.generate_bundle({common_name=..., output_bundle_path=...})`
+- `vectis.cert.validate_bundle(path_or_table)`
+- `vectis.cert.validate_pair({certificate_path=..., private_key_path=...,
+  ca_bundle_path=...})`
 - `vectis.server.new({bind=..., port=..., tls={mode="manual",
   cert_key_bundle_path=..., domain=...}})`
 - `vectis.server.new({bind=..., port=..., tls={mode="acme",

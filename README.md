@@ -367,6 +367,8 @@ Implemented and covered by local tests:
 - curl-backed HTTP, transfer, SFTP, and MQTT helpers.
 - libssh2-backed SSH and SFTP helpers.
 - OpenSSL-backed certificate/key/bundle helpers.
+- Lua certificate workflow helpers for bundle generation plus bundle and
+  cert/key pair validation.
 - Optional lockd app integration and managed consumer-service helpers.
 - Lua runner, shebang/script execution, and Linux packed-script support.
 - Bundled CAI, libmdf, and softline Lua modules for AI/tool workflows,

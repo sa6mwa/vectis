@@ -223,6 +223,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 ## Area 11: OpenSSL / Certificate Binding
 
 - [ ] Add Lua bindings or facades for certificate loading, parsing, validation, and bundle assembly.
+- [x] Add Lua certificate bundle and cert/key pair validation helpers backed by the C certificate workflow API.
 - [ ] Keep raw OpenSSL exposure narrow; prefer Vectis certificate workflows over dumping OpenSSL APIs into Lua.
 - [x] Support client and server certificate management in the C shared Vectis config model.
 - [ ] Support client and server certificate management in the Lua shared Vectis config model.

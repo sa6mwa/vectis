@@ -7234,10 +7234,85 @@ static int vectis_lua_cert_generate_bundle(lua_State *lua) {
   return 1;
 }
 
+static const char *vectis_lua_cert_path_arg(lua_State *lua, int index,
+                                            const char *primary,
+                                            const char *fallback,
+                                            const char *label) {
+  const char *path;
+
+  if (lua_isstring(lua, index)) {
+    return lua_tostring(lua, index);
+  }
+  luaL_checktype(lua, index, LUA_TTABLE);
+  path = vectis_lua_table_string(lua, index, primary);
+  if (path == NULL && fallback != NULL) {
+    path = vectis_lua_table_string(lua, index, fallback);
+  }
+  if (path == NULL || path[0] == '\0') {
+    luaL_error(lua, "cert %s path is required", label);
+  }
+  return path;
+}
+
+static int vectis_lua_cert_validate_bundle(lua_State *lua) {
+  vectis_source bundle;
+  vectis_error error;
+  vectis_status status;
+  const char *path;
+
+  path = vectis_lua_cert_path_arg(lua, 1, "bundle_path", "path", "bundle");
+  bundle = vectis_source_from_path(path);
+  vectis_error_clear(&error);
+  status = vectis_cert_validate_bundle(&bundle, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_cert_validate_pair(lua_State *lua) {
+  vectis_source certificate;
+  vectis_source private_key;
+  vectis_source ca_bundle;
+  vectis_source *ca_bundle_ptr;
+  vectis_error error;
+  vectis_status status;
+  const char *certificate_path;
+  const char *private_key_path;
+  const char *ca_bundle_path;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  certificate_path = vectis_lua_cert_path_arg(lua, 1, "certificate_path",
+                                              "cert_path", "certificate");
+  private_key_path = vectis_lua_cert_path_arg(lua, 1, "private_key_path",
+                                              "key_path", "private key");
+  ca_bundle_path = vectis_lua_table_string(lua, 1, "ca_bundle_path");
+  certificate = vectis_source_from_path(certificate_path);
+  private_key = vectis_source_from_path(private_key_path);
+  ca_bundle_ptr = NULL;
+  if (ca_bundle_path != NULL && ca_bundle_path[0] != '\0') {
+    ca_bundle = vectis_source_from_path(ca_bundle_path);
+    ca_bundle_ptr = &ca_bundle;
+  }
+  vectis_error_clear(&error);
+  status = vectis_cert_validate_pair(&certificate, &private_key, ca_bundle_ptr,
+                                     &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
 static void vectis_lua_push_cert_table(lua_State *lua) {
   lua_newtable(lua);
   lua_pushcfunction(lua, vectis_lua_cert_generate_bundle);
   lua_setfield(lua, -2, "generate_bundle");
+  lua_pushcfunction(lua, vectis_lua_cert_validate_bundle);
+  lua_setfield(lua, -2, "validate_bundle");
+  lua_pushcfunction(lua, vectis_lua_cert_validate_pair);
+  lua_setfield(lua, -2, "validate_pair");
 }
 
 static vectis_lua_totp *vectis_lua_check_totp(lua_State *lua, int index) {

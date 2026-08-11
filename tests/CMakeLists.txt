@@ -52,6 +52,14 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_http PROPERTIES
     LABELS "lua;smoke;local"
     TIMEOUT 30)
+  add_test(NAME vectis_lua_certs
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/certs.cmake")
+  set_tests_properties(vectis_lua_certs PROPERTIES
+    LABELS "lua;smoke;local"
+    TIMEOUT 30)
   add_test(NAME vectis_lua_shebang
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
