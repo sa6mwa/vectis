@@ -69,6 +69,24 @@ assert_no_landed_test_assets() {
   fi
 }
 
+assert_action_surface_contract() {
+  if grep -RInE --exclude='test_lifecycle_contracts.sh' \
+    '(admin-operation|--admin-operation|--subcommand|pack[ _-]v2|pack[ _-]V2|Pack V2|VECTIS_PACK_V2|VECTIS_PACK2|PACK_V2)' \
+    "$repo_root/docs" \
+    "$repo_root/scripts" \
+    "$repo_root/tests" \
+    "$repo_root/examples" \
+    "$repo_root/src" \
+    "$repo_root/include" \
+    "$repo_root/CMakeLists.txt" \
+    "$repo_root/Makefile"; then
+    echo "vectis command surface must stay on -a/--action with no pack V2 or admin-operation aliases" >&2
+    exit 1
+  fi
+  assert_contains "$repo_root/src/vectis_cli.c" 'vectis -a\|--action pack'
+  assert_contains "$repo_root/src/vectis_cli.c" 'traces Lua line execution to stderr'
+}
+
 if [ -f "$version_path" ]; then
   had_version=1
   saved_version=$(cat "$version_path")
@@ -95,6 +113,7 @@ assert_contains "$repo_root/scripts/deps.sh" 'libpid0_enabled=\$pid0_enabled'
 assert_contains "$repo_root/examples/CMakeLists.txt" 'target_compile_options\(\$\{target_name\} PRIVATE'
 assert_contains "$repo_root/examples/CMakeLists.txt" 'Werror'
 assert_no_landed_test_assets
+assert_action_surface_contract
 
 if ! "$repo_root/scripts/target_toolchain_available.sh" x86_64-linux-gnu >/dev/null 2>&1; then
   echo "host x86_64-linux-gnu toolchain availability check failed" >&2
