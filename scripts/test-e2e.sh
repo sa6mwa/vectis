@@ -1061,6 +1061,35 @@ run_lua_examples() {
     return 1
   }
   range_status=$(curl --max-time 3 -sS -D "$range_headers" -o "$range_body" \
+    -w '%{http_code}' -X HEAD -H 'Range: bytes=0-5' \
+    "http://127.0.0.1:$kore_packed_port/site/app.js")
+  if [ "$range_status" != "206" ]; then
+    printf '%s\n' "Unexpected packed static HEAD range status: $range_status" >&2
+    sed 's/^/[packed-range-header] /' "$range_headers" >&2
+    cat "$range_body" >&2
+    return 1
+  fi
+  if [ -s "$range_body" ]; then
+    printf '%s\n' "Packed static HEAD range returned a body" >&2
+    cat "$range_body" >&2
+    return 1
+  fi
+  grep -qi '^content-range: bytes 0-5/' "$range_headers" || {
+    printf '%s\n' "Packed static HEAD range did not include Content-Range" >&2
+    sed 's/^/[packed-range-header] /' "$range_headers" >&2
+    return 1
+  }
+  grep -qi '^accept-ranges: bytes' "$range_headers" || {
+    printf '%s\n' "Packed static HEAD range did not include Accept-Ranges" >&2
+    sed 's/^/[packed-range-header] /' "$range_headers" >&2
+    return 1
+  }
+  grep -qi '^etag:' "$range_headers" || {
+    printf '%s\n' "Packed static HEAD range did not include ETag" >&2
+    sed 's/^/[packed-range-header] /' "$range_headers" >&2
+    return 1
+  }
+  range_status=$(curl --max-time 3 -sS -D "$range_headers" -o "$range_body" \
     -w '%{http_code}' -H 'Range: bytes=-6' \
     "http://127.0.0.1:$kore_packed_port/site/app.js")
   if [ "$range_status" != "206" ]; then

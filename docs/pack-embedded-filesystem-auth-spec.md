@@ -506,9 +506,9 @@ mount, rejects writes through the root read-only mount without changing the
 embedded index, lists packed assets,
 serves generated CSS, JavaScript, asset, and template files through ordinary GET
 requests, reads them through both full-read and chunk-iterator Lua embedded
-filesystem APIs, verifies bodyless HEAD metadata for the embedded static
-docroot, rejects raw literal and encoded traversal attempts against both
-read-only mounts, verifies single byte-range and
+filesystem APIs, verifies bodyless HEAD metadata and HEAD byte-range metadata
+for the embedded static docroot, rejects raw literal and encoded traversal
+attempts against both read-only mounts, verifies single byte-range and
 unsatisfiable byte-range behavior for the C-owned static embedded responder,
 rejects multi-range requests so the implementation remains a single-range
 responder, verifies
