@@ -538,8 +538,9 @@ verifies generated files are present in that extracted docroot, verifies repair
 restores stale embedded files while preserving pre-existing mutable files,
 exposes native auth routes, protects JSON API routes through native and
 Lua callback auth providers, protects WebDAV mounts through nested and direct
-Lua callback auth providers, delivers an email token through a local mock SMTP
-server, turns
+Lua callback auth providers, including required, redirect, and allow adapter
+responses through the packed WebDAV receiver, delivers an email token through a
+local mock SMTP server, turns
 password-only login for a TOTP/email-token route into a pending transaction,
 loads a native auth login template from the packed embedded asset filesystem
 and expands its placeholders through the running packed service, rejects
