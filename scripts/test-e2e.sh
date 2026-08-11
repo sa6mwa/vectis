@@ -131,6 +131,36 @@ assert_no_store_headers() {
   }
 }
 
+assert_packed_logout_requires_authorization() {
+  label=$1
+  auth_path=$2
+
+  logout_headers="$work_dir/$label-logout-anonymous.headers"
+  logout_status=$(curl --max-time 3 -sS -D "$logout_headers" \
+    -o "$work_dir/$label-logout-anonymous.txt" -w '%{http_code}' \
+    -X POST -H 'Content-Type: application/x-www-form-urlencoded' --data '' \
+    "http://127.0.0.1:$kore_packed_port$auth_path/logout")
+  logout_body=$(cat "$work_dir/$label-logout-anonymous.txt")
+  if [ "$logout_status" != "401" ]; then
+    printf '%s\n' \
+      "$label anonymous logout returned unexpected status: $logout_status" >&2
+    printf '%s\n' "$logout_body" >&2
+    return 1
+  fi
+  assert_no_store_headers "$logout_headers" "$label anonymous logout"
+  grep -qi '^www-authenticate: Basic' "$logout_headers" || {
+    printf '%s\n' \
+      "$label anonymous logout did not request Basic authorization" >&2
+    cat "$logout_headers" >&2
+    return 1
+  }
+  if [ "$logout_body" != "authorization is required" ]; then
+    printf '%s\n' \
+      "$label anonymous logout returned unexpected body: $logout_body" >&2
+    return 1
+  fi
+}
+
 assert_packed_key_webdav_logout() {
   label=$1
   auth_path=$2
@@ -1390,6 +1420,9 @@ run_lua_examples() {
       return 1
       ;;
   esac
+  assert_packed_logout_requires_authorization "packed-auth" "/auth"
+  assert_packed_logout_requires_authorization "packed-auth-password" \
+    "/auth-password"
   auth_headers="$work_dir/packed-password-login-post.headers"
   password_login_post_response=$(curl_or_log "$packed_service_log" \
     "packed password POST login" --max-time 3 -fsS -D "$auth_headers" -X POST \
