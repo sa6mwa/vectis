@@ -369,6 +369,8 @@ Implemented and covered by local tests:
 - OpenSSL-backed certificate/key/bundle helpers.
 - Lua certificate workflow helpers for bundle generation plus bundle and
   cert/key pair validation.
+- Lua manual TLS server configuration supports both combined certificate/key
+  bundles and split certificate/key paths.
 - Optional lockd app integration and managed consumer-service helpers.
 - Lua runner, shebang/script execution, and Linux packed-script support.
 - Bundled CAI, libmdf, and softline Lua modules for AI/tool workflows,

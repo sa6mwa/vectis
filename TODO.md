@@ -227,6 +227,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Keep raw OpenSSL exposure narrow; prefer Vectis certificate workflows over dumping OpenSSL APIs into Lua.
 - [x] Support client and server certificate management in the C shared Vectis config model.
 - [ ] Support client and server certificate management in the Lua shared Vectis config model.
+- [x] Add runtime Lua HTTPS coverage for manual split cert/key server configuration through the shared Vectis TLS model.
 - [x] Draft the C helper API for OpenSSL-backed certificate bundle generation.
 - [x] Implement OpenSSL-backed self-signed certificate/key PEM bundle generation for the C SDK.
 - [x] Implement OpenSSL-backed CA certificate/key PEM bundle generation for the C SDK.

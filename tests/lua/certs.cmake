@@ -2,25 +2,47 @@ set(bundle_path "${WORK_DIR}/lua-cert-bundle.pem")
 set(cert_path "${WORK_DIR}/lua-cert.pem")
 set(key_path "${WORK_DIR}/lua-key.pem")
 set(malformed_path "${WORK_DIR}/lua-malformed-cert.pem")
+set(auth_path "${WORK_DIR}/lua-cert-auth.json")
 set(script "${WORK_DIR}/lua-certs-smoke.lua")
 
-file(REMOVE "${bundle_path}" "${cert_path}" "${key_path}" "${malformed_path}")
+file(REMOVE "${bundle_path}" "${cert_path}" "${key_path}" "${malformed_path}"
+            "${auth_path}" "${auth_path}.lock")
 file(WRITE "${malformed_path}" "not a certificate\n")
 
 file(WRITE "${script}" [[
 local vectis = require("vectis")
+local curl = require("curl")
 
 local bundle_path = assert(arg[1])
 local cert_path = assert(arg[2])
 local key_path = assert(arg[3])
 local malformed_path = assert(arg[4])
+local auth_path = assert(arg[5])
+
+local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local function base64(data)
+  local out = {}
+  for i = 1, #data, 3 do
+    local a = data:byte(i) or 0
+    local b = data:byte(i + 1) or 0
+    local c = data:byte(i + 2) or 0
+    local n = a * 65536 + b * 256 + c
+    local pad = (#data - i == 0) and 2 or ((#data - i == 1) and 1 or 0)
+    out[#out + 1] = b64chars:sub(math.floor(n / 262144) % 64 + 1, math.floor(n / 262144) % 64 + 1)
+    out[#out + 1] = b64chars:sub(math.floor(n / 4096) % 64 + 1, math.floor(n / 4096) % 64 + 1)
+    out[#out + 1] = pad >= 2 and "=" or b64chars:sub(math.floor(n / 64) % 64 + 1, math.floor(n / 64) % 64 + 1)
+    out[#out + 1] = pad >= 1 and "=" or b64chars:sub(n % 64 + 1, n % 64 + 1)
+  end
+  return table.concat(out)
+end
 
 assert(type(vectis.cert.generate_bundle) == "function")
 assert(type(vectis.cert.validate_bundle) == "function")
 assert(type(vectis.cert.validate_pair) == "function")
 
 assert(vectis.cert.generate_bundle({
-  common_name = "lua-cert.local",
+  common_name = "localhost",
+  dns_names = "localhost",
   ip_addresses = "127.0.0.1",
   output_bundle_path = bundle_path,
   output_cert_path = cert_path,
@@ -37,6 +59,61 @@ assert(vectis.cert.validate_pair({
   ca_bundle_path = bundle_path,
 }) == true)
 
+assert(vectis.auth.store_init({credentials_path = auth_path}) == true)
+assert(vectis.auth.user_add({
+  credentials_path = auth_path,
+  username = "cert-user",
+  password = "cert-password",
+}).username == "cert-user")
+local webdav_key = assert(vectis.auth.webdav_key({
+  credentials_path = auth_path,
+  username = "cert-user",
+  password = "cert-password",
+}))
+local basic_auth = "Basic " .. base64(webdav_key.client_id .. ":" .. webdav_key.client_secret)
+local server = assert(vectis.server.new({
+  bind = "127.0.0.1",
+  port = 28383,
+  tls = {
+    mode = "manual",
+    domain = "localhost",
+    cert_path = cert_path,
+    key_path = key_path,
+    ca_path = bundle_path,
+  },
+}))
+assert(server:auth_json({
+  path = "/probe",
+  auth = {
+    kind = "native",
+    credentials_path = auth_path,
+    realm = "certs",
+    purpose = "webdav",
+  },
+  body = '{"ok":true,"tls":"split"}\n',
+}) == true)
+assert(server:start() == true)
+local response
+for _ = 1, 20 do
+  response = curl.perform({
+    url = "https://localhost:28383/probe",
+    headers = {Authorization = basic_auth},
+    protocols = "https",
+    timeout_ms = 2000,
+    connect_timeout_ms = 1000,
+    verify_peer = false,
+    verify_host = false,
+    no_signal = true,
+  })
+  if response.ok then break end
+  os.execute("sleep 0.1")
+end
+assert(response.ok == true, response.error)
+assert(response.status == 200)
+assert(response.body == '{"ok":true,"tls":"split"}\n')
+assert(server:stop() == true)
+server:close()
+
 local malformed, malformed_error =
     vectis.cert.validate_bundle({path = malformed_path})
 assert(malformed == nil)
@@ -48,6 +125,7 @@ assert(malformed_error.message:find("parse certificate", 1, true))
 
 execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${bundle_path}"
                         "${cert_path}" "${key_path}" "${malformed_path}"
+                        "${auth_path}"
                 RESULT_VARIABLE certs_result
                 OUTPUT_VARIABLE certs_stdout
                 ERROR_VARIABLE certs_stderr)

@@ -4488,12 +4488,28 @@ static int vectis_lua_server_new(lua_State *lua) {
     }
     config.tls.certificate_path =
         vectis_lua_table_string(lua, tls_index, "certificate_path");
+    if (config.tls.certificate_path == NULL) {
+      config.tls.certificate_path =
+          vectis_lua_table_string(lua, tls_index, "cert_path");
+    }
     config.tls.private_key_path =
         vectis_lua_table_string(lua, tls_index, "private_key_path");
+    if (config.tls.private_key_path == NULL) {
+      config.tls.private_key_path =
+          vectis_lua_table_string(lua, tls_index, "key_path");
+    }
     config.tls.ca_bundle_path =
         vectis_lua_table_string(lua, tls_index, "ca_bundle_path");
+    if (config.tls.ca_bundle_path == NULL) {
+      config.tls.ca_bundle_path =
+          vectis_lua_table_string(lua, tls_index, "ca_path");
+    }
     config.tls.client_ca_bundle_path =
         vectis_lua_table_string(lua, tls_index, "client_ca_bundle_path");
+    if (config.tls.client_ca_bundle_path == NULL) {
+      config.tls.client_ca_bundle_path =
+          vectis_lua_table_string(lua, tls_index, "client_ca_path");
+    }
     config.tls.require_client_certificate =
         vectis_lua_table_bool(lua, tls_index, "require_client_certificate", 0);
     config.tls.acme_email =

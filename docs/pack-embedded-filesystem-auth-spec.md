@@ -215,6 +215,8 @@ Required Lua concepts:
   ca_bundle_path=...})`
 - `vectis.server.new({bind=..., port=..., tls={mode="manual",
   cert_key_bundle_path=..., domain=...}})`
+- `vectis.server.new({bind=..., port=..., tls={mode="manual",
+  cert_path=..., key_path=..., ca_path=..., domain=...}})`
 - `vectis.server.new({bind=..., port=..., tls={mode="acme",
   domains={"example.com", "www.example.com"}, email=...,
   provider=..., cache_dir=...}})`
