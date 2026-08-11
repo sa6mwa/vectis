@@ -303,6 +303,36 @@ if(TARGET cai::cai_static AND TARGET lonejson::lonejson_static)
     INTERFACE_LINK_LIBRARIES "CURL::libcurl;Threads::Threads;OpenSSL::Crypto;lonejson::lonejson_static")
 endif()
 
+if(TARGET lockdc::static
+   AND TARGET CURL::libcurl
+   AND TARGET pslog::pslog_static
+   AND TARGET nghttp2::nghttp2
+   AND TARGET Libssh2::libssh2
+   AND TARGET OpenSSL::SSL
+   AND TARGET OpenSSL::Crypto
+   AND TARGET ZLIB::ZLIB
+   AND TARGET lonejson::lonejson_static
+   AND TARGET liblql::lql_static)
+  set(vectis_lockdc_static_links
+    CURL::libcurl
+    pslog::pslog_static
+    nghttp2::nghttp2
+    Libssh2::libssh2
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    ZLIB::ZLIB
+    lonejson::lonejson_static
+    liblql::lql_static
+    Threads::Threads)
+  if(APPLE)
+    list(APPEND vectis_lockdc_static_links
+      "-framework CoreFoundation"
+      "-framework SystemConfiguration")
+  endif()
+  set_property(TARGET lockdc::static PROPERTY
+    INTERFACE_LINK_LIBRARIES "${vectis_lockdc_static_links}")
+endif()
+
 if(NOT VECTIS_BUILD_STATIC AND NOT VECTIS_BUILD_SHARED)
   message(FATAL_ERROR "Enable at least one of VECTIS_BUILD_STATIC or VECTIS_BUILD_SHARED.")
 endif()
@@ -940,6 +970,9 @@ if(VECTIS_BUILD_BINARY)
   if(UNIX AND NOT APPLE)
     target_link_libraries(vectis_bin PRIVATE m)
   endif()
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_BUILD_TYPE STREQUAL "Release")
+    target_link_options(vectis_bin PRIVATE -static -no-pie)
+  endif()
   set_target_properties(vectis_bin PROPERTIES
     OUTPUT_NAME vectis
     C_STANDARD 99
@@ -948,8 +981,7 @@ if(VECTIS_BUILD_BINARY)
   )
   if(APPLE)
     set_target_properties(vectis_bin PROPERTIES
-      BUILD_WITH_INSTALL_RPATH TRUE
-      INSTALL_RPATH "@executable_path/../lib"
+      SKIP_BUILD_RPATH TRUE
     )
   endif()
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")

@@ -80,6 +80,39 @@ grep -F "non-relocatable ELF runtime path" "$work/rpath.err" >/dev/null || {
   exit 1
 }
 
+rm -rf "$dist" "$payload"
+mkdir -p "$dist" "$payload/vectis-$version-x86_64-linux-gnu/bin" "$work/fakebin"
+printf 'not really an elf\n' >"$payload/vectis-$version-x86_64-linux-gnu/bin/vectis"
+tar -C "$payload" -czf "$dist/vectis-$version-x86_64-linux-gnu.tar.gz" \
+  "vectis-$version-x86_64-linux-gnu"
+(cd "$dist" && sha256sum "vectis-$version-x86_64-linux-gnu.tar.gz" >"vectis-$version-CHECKSUMS")
+cat >"$work/fakebin/readelf" <<'EOF'
+#!/bin/sh
+case "$1" in
+  -h) exit 0 ;;
+  -d)
+    printf '%s\n' ' 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]'
+    exit 0
+    ;;
+  -l)
+    printf '%s\n' '  INTERP         0x0000000000000318 0x0000000000400318 0x0000000000400318'
+    exit 0
+    ;;
+esac
+exit 1
+EOF
+chmod +x "$work/fakebin/readelf"
+if PATH="$work/fakebin:$PATH" VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist \
+   "$repo_root/scripts/verify_release_privacy.sh" >"$work/static-linkage.out" 2>"$work/static-linkage.err"; then
+  echo "privacy verifier accepted dynamically linked Linux vectis binary" >&2
+  exit 1
+fi
+grep -F "Linux vectis binary is dynamically linked" "$work/static-linkage.err" >/dev/null || {
+  echo "privacy verifier did not report dynamic Linux vectis binary" >&2
+  cat "$work/static-linkage.err" >&2
+  exit 1
+}
+
 write_darwin_artifact() {
   rm -rf "$dist" "$payload"
   mkdir -p "$dist" "$payload/vectis-$version-arm64-apple-darwin/lib" "$work/fakebin"
@@ -106,6 +139,16 @@ case "$option" in
   -L)
     printf '%s:\n' "$file"
     case "$mode" in
+      bad_executable_dependency)
+        case "$file" in
+          */bin/vectis)
+            printf '\t%s\n' '@rpath/liblonejson.25.dylib (compatibility version 25.0.0, current version 0.42.0)'
+            ;;
+          *)
+            printf '\t%s\n' '/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1.0.0)'
+            ;;
+        esac
+        ;;
       bad_dependency)
         printf '\t%s\n' '/lib/libbad.dylib (compatibility version 1.0.0, current version 1.0.0)'
         ;;
@@ -159,6 +202,24 @@ expect_darwin_failure() {
 expect_darwin_failure "Darwin project dylib install name is not @rpath-relative" bad_install_name
 expect_darwin_failure "non-system absolute Darwin dependency path" bad_dependency
 expect_darwin_failure "non-relocatable Darwin rpath" bad_rpath
+
+rm -rf "$dist" "$payload"
+mkdir -p "$dist" "$payload/vectis-$version-arm64-apple-darwin/bin" "$work/fakebin"
+printf 'not really a mach-o\n' >"$payload/vectis-$version-arm64-apple-darwin/bin/vectis"
+tar -C "$payload" -czf "$dist/vectis-$version-arm64-apple-darwin.tar.gz" \
+  "vectis-$version-arm64-apple-darwin"
+(cd "$dist" && sha256sum "vectis-$version-arm64-apple-darwin.tar.gz" >"vectis-$version-CHECKSUMS")
+if VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist VECTIS_OTOOL="$work/fakebin/otool" \
+   VECTIS_FAKE_OTOOL_CASE=bad_executable_dependency \
+   "$repo_root/scripts/verify_release_privacy.sh" >"$work/darwin-bin-static.out" 2>"$work/darwin-bin-static.err"; then
+  echo "privacy verifier accepted Darwin vectis binary with packaged dylib dependency" >&2
+  exit 1
+fi
+grep -F "Darwin vectis binary depends on a non-system dylib" "$work/darwin-bin-static.err" >/dev/null || {
+  echo "privacy verifier did not report Darwin vectis binary dylib dependency" >&2
+  cat "$work/darwin-bin-static.err" >&2
+  exit 1
+}
 
 rm -rf "$dist" "$payload"
 mkdir -p "$dist" "$payload/vectis-$version-arm64-apple-darwin/lib" "$work/fakebin"

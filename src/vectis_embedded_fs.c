@@ -1258,7 +1258,7 @@ vectis_embedded_fs_from_pack(const vectis_embedded_fs_config *config,
   }
   memset(&doc, 0, sizeof(doc));
   memset(&item, 0, sizeof(item));
-  doc.assets = (lonejson_mapped_array_stream)LONEJSON_MAPPED_ARRAY_STREAM_INIT;
+  lonejson_mapped_array_stream_init(&doc.assets);
   state.impl = impl;
   state.payload = (const unsigned char *)config->payload;
   state.payload_size = config->payload_size;

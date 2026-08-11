@@ -841,12 +841,58 @@ vectis_auth_claim_i64_chunk(void *user, const lonejson_value_path *path,
   return LONEJSON_STATUS_OK;
 }
 
+static int vectis_auth_parse_i64(const char *text, int64_t *out) {
+  const unsigned char *cursor;
+  uint64_t limit;
+  uint64_t value;
+  int negative;
+
+  if (text == NULL || out == NULL || text[0] == '\0') {
+    return 0;
+  }
+  cursor = (const unsigned char *)text;
+  negative = 0;
+  if (*cursor == '-') {
+    negative = 1;
+    cursor++;
+  }
+  if (*cursor == '\0') {
+    return 0;
+  }
+  limit = (uint64_t)INT64_MAX;
+  if (negative) {
+    limit += 1u;
+  }
+  value = 0u;
+  while (*cursor != '\0') {
+    if (*cursor < (unsigned char)'0' || *cursor > (unsigned char)'9') {
+      return 0;
+    }
+    if (value > (limit / 10u) ||
+        (value == (limit / 10u) &&
+         (uint64_t)(*cursor - (unsigned char)'0') > (limit % 10u))) {
+      return 0;
+    }
+    value = (value * 10u) + (uint64_t)(*cursor - (unsigned char)'0');
+    cursor++;
+  }
+  if (negative) {
+    if (value == limit) {
+      *out = INT64_MIN;
+    } else {
+      *out = -(int64_t)value;
+    }
+  } else {
+    *out = (int64_t)value;
+  }
+  return 1;
+}
+
 static lonejson_status
 vectis_auth_claim_i64_end(void *user, const lonejson_value_path *path,
                           lonejson_error *error) {
   vectis_auth_claim_i64_probe *probe;
-  char *end;
-  long long value;
+  int64_t value;
 
   (void)error;
   probe = (vectis_auth_claim_i64_probe *)user;
@@ -855,11 +901,8 @@ vectis_auth_claim_i64_end(void *user, const lonejson_value_path *path,
       probe->overflow || probe->value[0] == '\0') {
     return LONEJSON_STATUS_OK;
   }
-  errno = 0;
-  end = NULL;
-  value = strtoll(probe->value, &end, 10);
-  if (errno == 0 && end != probe->value && end != NULL && *end == '\0') {
-    probe->out = (int64_t)value;
+  if (vectis_auth_parse_i64(probe->value, &value)) {
+    probe->out = value;
     probe->matched = 1;
   }
   return LONEJSON_STATUS_OK;

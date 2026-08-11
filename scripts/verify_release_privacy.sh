@@ -12,6 +12,10 @@ fail() {
   reason=$1
   artifact=${2:-}
   class=${3:-relocatability}
+  next="remove local paths or non-relocatable runtime metadata before release"
+  if [ "$class" = "static-linkage" ]; then
+    next="link bin/vectis without non-system dynamic dependencies before release"
+  fi
   echo "$reason${artifact:+: $artifact}" >&2
   cat >&2 <<EOF
 PKT_DIAGNOSTIC_BEGIN
@@ -21,7 +25,7 @@ status=failed
 class=$class
 reason=$reason
 artifact=$artifact
-next=remove local paths or non-relocatable runtime metadata before release
+next=$next
 PKT_DIAGNOSTIC_END
 EOF
   exit 1
@@ -180,6 +184,28 @@ verify_darwin_dependencies() {
   done
 }
 
+is_darwin_vectis_binary() {
+  file=$1
+  case "$file" in
+    */vectis-"$version"-*-apple-darwin/bin/vectis) return 0 ;;
+  esac
+  return 1
+}
+
+verify_darwin_vectis_binary_dependencies() {
+  file=$1
+  loads=$2
+
+  printf '%s\n' "$loads" | sed '1d' |
+  while IFS= read -r line; do
+    path=$(printf '%s\n' "$line" | awk '{print $1}')
+    [ -n "$path" ] || continue
+    if ! allowed_darwin_absolute_path "$path"; then
+      fail "Darwin vectis binary depends on a non-system dylib" "$file: $path" "static-linkage"
+    fi
+  done
+}
+
 verify_darwin_rpaths_and_signature() {
   file=$1
   load_commands=$2
@@ -218,6 +244,9 @@ verify_darwin_root() {
     if loads=$("$otool" -L "$file" 2>/dev/null); then
       verify_darwin_install_name "$otool" "$file"
       verify_darwin_dependencies "$otool" "$file" "$loads"
+      if is_darwin_vectis_binary "$file"; then
+        verify_darwin_vectis_binary_dependencies "$file" "$loads"
+      fi
       load_commands=$("$otool" -l "$file" 2>/dev/null || true)
       verify_darwin_rpaths_and_signature "$file" "$load_commands"
     fi
@@ -247,12 +276,35 @@ verify_elf_runtime_paths() {
   done < <(printf '%s\n' "$dynamic" | grep -E 'RPATH|RUNPATH' || true)
 }
 
+is_linux_vectis_binary() {
+  file=$1
+  case "$file" in
+    */vectis-"$version"-*-linux-*/bin/vectis) return 0 ;;
+  esac
+  return 1
+}
+
+verify_linux_vectis_static() {
+  file=$1
+  dynamic=$2
+
+  if printf '%s\n' "$dynamic" | grep -E '\(NEEDED\)' >/dev/null 2>&1; then
+    fail "Linux vectis binary is dynamically linked" "$file" "static-linkage"
+  fi
+  if readelf -l "$file" 2>/dev/null | grep -E '^[[:space:]]*INTERP[[:space:]]' >/dev/null 2>&1; then
+    fail "Linux vectis binary has an ELF interpreter" "$file" "static-linkage"
+  fi
+}
+
 if command -v readelf >/dev/null 2>&1; then
   find "$work_root/extract" -type f -print |
   while IFS= read -r file; do
     if readelf -h "$file" >/dev/null 2>&1; then
       dynamic=$(readelf -d "$file" 2>/dev/null || true)
       verify_elf_runtime_paths "$file" "$dynamic"
+      if is_linux_vectis_binary "$file"; then
+        verify_linux_vectis_static "$file" "$dynamic"
+      fi
     fi
   done
 fi
