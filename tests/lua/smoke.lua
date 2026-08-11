@@ -38,6 +38,7 @@ assert(arg[1] == "first")
 assert(arg[2] == "second")
 
 local server = assert(vectis.server.new({ app_name = "lua-smoke", port = 18080 }))
+assert(type(server.static_directory) == "function")
 assert(type(server.json) == "function")
 assert(type(server.auth_json) == "function")
 local consumer_service, consumer_service_error = server:consumer_service({

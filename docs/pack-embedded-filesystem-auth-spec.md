@@ -220,6 +220,7 @@ Required Lua concepts:
 - `vectis.server.new({bind=..., port=..., tls={mode="acme",
   domains={"example.com", "www.example.com"}, email=...,
   provider=..., cache_dir=...}})`
+- `server:static_directory({path_prefix=..., root_dir=..., index_file=...})`
 - `server:static_embedded({path_prefix=..., cache_control=...})`
 - `server:webdav_embedded_site({path_prefix=..., cache_dir=..., site_id=...,
   extract_policy=..., auth={kind="native", credentials_path=...}})`

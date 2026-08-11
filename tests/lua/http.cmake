@@ -4,11 +4,15 @@ set(download_target "${WORK_DIR}/vectis-http-download-target.txt")
 set(upload_source "${WORK_DIR}/vectis-http-upload-source.txt")
 set(upload_target "${WORK_DIR}/vectis-http-upload-target.txt")
 set(auth_path "${WORK_DIR}/vectis-http-auth.json")
+set(static_dir "${WORK_DIR}/vectis-http-static")
 set(script "${WORK_DIR}/vectis-http-smoke.lua")
 
 file(WRITE "${json_file}" "{\"ok\":true,\"message\":\"vectis-http\"}\n")
 file(WRITE "${download_source}" "downloaded through curl file sink\n")
 file(WRITE "${upload_source}" "uploaded through curl file source\n")
+file(MAKE_DIRECTORY "${static_dir}/assets")
+file(WRITE "${static_dir}/index.html" "static directory index\n")
+file(WRITE "${static_dir}/assets/app.txt" "static directory asset\n")
 file(REMOVE "${download_target}" "${upload_target}" "${auth_path}"
             "${auth_path}.lock")
 
@@ -22,6 +26,7 @@ local download_path = assert(arg[3])
 local upload_path = assert(arg[4])
 local upload_url = "file://" .. assert(arg[5])
 local auth_path = assert(arg[6])
+local static_dir = assert(arg[7])
 
 local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local function base64(data)
@@ -147,6 +152,12 @@ assert(api_server:auth_json({
   },
   body = '{"ok":true,"guarded":true}\n',
 }) == true)
+assert(api_server:static_directory({
+  path_prefix = "/files",
+  root_dir = static_dir,
+  content_type = "text/plain",
+  index_file = "index.html",
+}) == true)
 assert(api_server:start() == true)
 local api_response
 for _ = 1, 20 do
@@ -200,6 +211,36 @@ assert(guarded_created.ok == true,
 assert(guarded_created.status == 202)
 assert(guarded_created.body == '{"ok":true,"guarded":true}\n')
 assert(guarded_created.headers:lower():find("cache-control: no-store", 1, true))
+local static_index = vectis.http.request({
+  url = "http://127.0.0.1:28484/files",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(static_index.ok == true,
+       static_index.error and static_index.error.message)
+assert(static_index.status == 200)
+assert(static_index.body == "static directory index\n")
+local static_asset = vectis.http.request({
+  url = "http://127.0.0.1:28484/files/assets/app.txt",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(static_asset.ok == true,
+       static_asset.error and static_asset.error.message)
+assert(static_asset.status == 200)
+assert(static_asset.body == "static directory asset\n")
+local static_traversal = vectis.http.request({
+  url = "http://127.0.0.1:28484/files/../vectis-http-response.json",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(static_traversal.status == 404)
 assert(api_server:stop() == true)
 api_server:close()
 
@@ -220,6 +261,7 @@ assert(streamed.response_json.message == "vectis-http")
 execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${json_file}"
                         "${download_source}" "${download_target}"
                         "${upload_source}" "${upload_target}" "${auth_path}"
+                        "${static_dir}"
                 RESULT_VARIABLE http_result
                 OUTPUT_VARIABLE http_stdout
                 ERROR_VARIABLE http_stderr)

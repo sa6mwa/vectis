@@ -4188,6 +4188,56 @@ static int vectis_lua_server_static_embedded(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_server_static_directory(lua_State *lua) {
+  vectis_app *app;
+  vectis_static_directory_config config;
+  vectis_error error;
+  vectis_status status;
+  const char *path_prefix;
+  const char *root_dir;
+  vectis_http_methods methods;
+
+  app = vectis_lua_server_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  path_prefix = vectis_lua_table_string(lua, 2, "path_prefix");
+  if (path_prefix == NULL) {
+    path_prefix = vectis_lua_table_string(lua, 2, "prefix");
+  }
+  root_dir = vectis_lua_table_string(lua, 2, "root_dir");
+  if (root_dir == NULL) {
+    root_dir = vectis_lua_table_string(lua, 2, "root");
+  }
+  if (root_dir == NULL) {
+    root_dir = vectis_lua_table_string(lua, 2, "dir");
+  }
+  if (root_dir == NULL || root_dir[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "static directory root_dir is required");
+  }
+
+  vectis_static_directory_config_init(&config);
+  config.path_prefix = path_prefix != NULL ? path_prefix : "/";
+  config.root_dir = root_dir;
+  config.content_type = vectis_lua_table_string(lua, 2, "content_type");
+  config.index_file = vectis_lua_table_string(lua, 2, "index_file");
+  methods = vectis_lua_route_methods(
+      lua, 2, VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD,
+      "static directory");
+  if (methods == VECTIS_HTTP_METHODS_NONE ||
+      (methods & ~(VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD)) != 0u) {
+    return luaL_error(lua, "static directory methods must be GET and/or HEAD");
+  }
+  config.methods = methods;
+
+  vectis_error_clear(&error);
+  status = app->static_directory(app, &config, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
 static int vectis_lua_server_webdav_embedded_site(lua_State *lua) {
   vectis_lua_runtime_context *context;
   vectis_lua_server *server;
@@ -7880,6 +7930,8 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_newtable(lua);
     lua_pushcfunction(lua, vectis_lua_server_static_embedded);
     lua_setfield(lua, -2, "static_embedded");
+    lua_pushcfunction(lua, vectis_lua_server_static_directory);
+    lua_setfield(lua, -2, "static_directory");
     lua_pushcfunction(lua, vectis_lua_server_webdav_embedded_site);
     lua_setfield(lua, -2, "webdav_embedded_site");
     lua_pushcfunction(lua, vectis_lua_server_auth_routes);

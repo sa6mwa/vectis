@@ -373,6 +373,8 @@ Implemented and covered by local tests:
   bundles and split certificate/key paths.
 - Lua server helpers include C-owned fixed guarded and unguarded JSON endpoints
   with explicit method and status configuration for small API/status routes.
+- Lua server helpers expose C-owned static directory mounts for serving disk
+  docroots such as extracted packed assets.
 - Optional lockd app integration and managed consumer-service helpers.
 - Lua runner, shebang/script execution, and Linux packed-script support.
 - Bundled CAI, libmdf, and softline Lua modules for AI/tool workflows,
