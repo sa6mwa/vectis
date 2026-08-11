@@ -406,9 +406,9 @@ factors are still missing, the native route returns a short-lived
 that transaction id plus the remaining factor fields without resending the
 password.
 `required_factors={"email_token"}` allows an email-token-only WebDAV-key flow,
-while `require_email_token=true` remains a
-compatibility shorthand that adds the email-token factor to the default password
-flow. C-owned SMTP delivery is available through the route config's
+while `require_email_token=true` is a convenience alias that adds the
+email-token factor to the default password flow. C-owned SMTP delivery is
+available through the route config's
 `email_smtp` settings; Lua only passes configuration into the native route
 registration and does not own auth or delivery semantics. The packed service
 smoke now exercises SMTP delivery through a local mock SMTP harness and reads
