@@ -1209,6 +1209,26 @@ run_lua_examples() {
     sed 's/^/[packed-not-modified-header] /' "$range_headers" >&2
     return 1
   }
+  : >"$range_body"
+  not_modified_status=$(curl --max-time 3 -sS -D "$range_headers" \
+    -o "$range_body" -w '%{http_code}' -X HEAD -H "If-None-Match: $etag" \
+    "http://127.0.0.1:$kore_packed_port/site/app.js")
+  if [ "$not_modified_status" != "304" ]; then
+    printf '%s\n' "Unexpected packed static HEAD If-None-Match status: $not_modified_status" >&2
+    sed 's/^/[packed-not-modified-header] /' "$range_headers" >&2
+    cat "$range_body" >&2
+    return 1
+  fi
+  if [ -s "$range_body" ]; then
+    printf '%s\n' "Packed static HEAD If-None-Match response returned a body" >&2
+    cat "$range_body" >&2
+    return 1
+  fi
+  grep -qi '^etag:' "$range_headers" || {
+    printf '%s\n' "Packed static HEAD If-None-Match response did not keep ETag" >&2
+    sed 's/^/[packed-not-modified-header] /' "$range_headers" >&2
+    return 1
+  }
   curl_or_log "$packed_service_log" "packed static app.css content type" --max-time 3 -fsSI \
     "http://127.0.0.1:$kore_packed_port/site/app.css" |
     grep -qi '^content-type: text/css' || {

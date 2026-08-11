@@ -511,9 +511,9 @@ for the embedded static docroot, rejects raw literal and encoded traversal
 attempts against both read-only mounts, verifies single byte-range and
 unsatisfiable byte-range behavior for the C-owned static embedded responder,
 rejects multi-range requests so the implementation remains a single-range
-responder, verifies
-`If-None-Match` returns 304 for unchanged embedded assets, verifies matching
-and stale `If-Range` validators for embedded range requests, starts a second
+responder, verifies `If-None-Match` returns bodyless 304 responses for GET and
+HEAD requests against unchanged embedded assets, verifies matching and stale
+`If-Range` validators for embedded range requests, starts a second
 packed HTTPS asset server with a generated private self-signed certificate,
 verifies content types, ETag and cache metadata, rejects traversal attempts,
 rejects writes through the read-only mount, extracts the embedded
