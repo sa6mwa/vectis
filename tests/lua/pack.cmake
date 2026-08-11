@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/port_retry.cmake")
+
 set(script "${WORK_DIR}/vectis-pack-smoke.lua")
 set(output "${WORK_DIR}/vectis-pack-smoke")
 set(sibling_module "${WORK_DIR}/vectis_pack_sibling.lua")
@@ -11,10 +13,11 @@ set(corrupt_output "${WORK_DIR}/vectis-pack-bundle-corrupt")
 set(api_service_script "${WORK_DIR}/vectis-pack-api-service.lua")
 set(api_service_output "${WORK_DIR}/vectis-pack-api-service")
 set(api_service_credentials "${WORK_DIR}/api-service-credentials.json")
-set(api_service_port 28210)
+vectis_pick_test_port(api_service_port)
 set(consumer_service_script "${WORK_DIR}/vectis-pack-consumer-service.lua")
 set(consumer_service_output "${WORK_DIR}/vectis-pack-consumer-service")
 set(consumer_service_cache_dir "${WORK_DIR}/consumer-service-cache")
+vectis_pick_test_port(consumer_service_port)
 set(asset_dir "${WORK_DIR}/site")
 set(asset_manifest "${WORK_DIR}/assets.json")
 set(asset_invalid_path_manifest "${WORK_DIR}/assets-invalid-path.json")
@@ -40,6 +43,9 @@ set(asset_webdav_cache_dir "${WORK_DIR}/webdav-cache")
 set(asset_webdav_credentials "${WORK_DIR}/webdav-credentials.json")
 set(asset_https_cert_bundle "${WORK_DIR}/pack-self-signed.pem")
 set(asset_smtp_mailbox "${WORK_DIR}/pack-smtp-mailbox.txt")
+vectis_pick_test_port(asset_http_port)
+vectis_pick_test_port(asset_https_port)
+vectis_pick_test_port(asset_disk_port)
 
 file(WRITE "${sibling_module}" "return { value = 'packed-sibling-loaded' }\n")
 file(WRITE "${script}" "local vectis = require(\"vectis\")\nlocal sibling = require(\"vectis_pack_sibling\")\nassert(vectis.status_string(vectis.OK) == \"ok\")\nassert(sibling.value == \"packed-sibling-loaded\")\nassert(vectis.has_embedded_lockd_bundle() == false)\nassert(vectis.embedded_lockd_bundle_size() == 0)\nlocal missing_source, missing_source_err = vectis.embedded_lockd_bundle_source()\nassert(missing_source == nil)\nassert(missing_source_err == \"no embedded lockd bundle\")\nlocal missing_embedded_bundle_ok, missing_embedded_bundle_err = pcall(function()\n  vectis.server.new({lockd = {endpoints = {\"https://127.0.0.1:1\"}, client_bundle = \"embedded\"}})\nend)\nassert(missing_embedded_bundle_ok == false)\nassert(tostring(missing_embedded_bundle_err):match(\"no embedded lockd bundle\"))\nassert(vectis.embedded.has_assets() == false)\nassert(vectis.embedded.default_extract_policy() == \"fail_exists\")\nassert(#vectis.embedded.list(\"/\") == 0)\nlocal extracted, extract_err = vectis.embedded.extract({to = [[${no_asset_extract_dir}]]})\nassert(extracted == nil)\nassert(extract_err == \"no embedded assets\")\nlocal chunks, chunks_err = vectis.embedded.chunks(\"/missing.txt\", 4)\nassert(chunks == nil)\nassert(chunks_err == \"no embedded assets\")\nassert(arg[0]:match(\"vectis%-pack%-smoke$\"))\nassert(arg[1] == \"first\")\nassert(arg[2] == \"second\")\n")
@@ -222,7 +228,7 @@ assert(vectis.embedded_lockd_bundle_size() > 0)
 local server = assert(vectis.server.new({
   app_name = "packed-consumer-service",
   bind = "127.0.0.1",
-  port = 28211,
+  port = @consumer_service_port@,
   lockd = {
     endpoints = { "https://127.0.0.1:1" },
     client_bundle = "embedded",
@@ -462,6 +468,12 @@ string(REPLACE
        "assert(vectis.embedded.extract({to = extract_to, policy = \"overwrite\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")"
        "assert(vectis.embedded.extract({to = extract_to, policy = \"overwrite\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\nassert(read_file(extract_to .. \"/user-created.txt\") == \"user\\n\")"
        asset_script_body "${asset_script_body}")
+string(REPLACE "28181" "${asset_http_port}" asset_script_body
+       "${asset_script_body}")
+string(REPLACE "28182" "${asset_https_port}" asset_script_body
+       "${asset_script_body}")
+string(REPLACE "28183" "${asset_disk_port}" asset_script_body
+       "${asset_script_body}")
 file(WRITE "${asset_script}" "${asset_script_body}")
 
 execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${asset_script}" --output "${asset_invalid_path_output}" --asset "${asset_dir}/index.html=/../index.html"

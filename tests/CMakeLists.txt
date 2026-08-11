@@ -80,6 +80,7 @@ if(TARGET vectis_bin)
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
                    "-DVECTIS_PACK_SMTP_HARNESS=$<TARGET_FILE:vectis_pack_smtp_harness>"
+                   "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
                    -P "${CMAKE_SOURCE_DIR}/tests/lua/pack.cmake")
   set_tests_properties(vectis_lua_pack PROPERTIES
