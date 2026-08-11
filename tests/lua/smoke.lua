@@ -69,16 +69,31 @@ local acme_started, acme_error = acme_missing_domain:start()
 assert(acme_started == nil)
 assert(type(acme_error) == "table")
 assert(acme_error.status == vectis.ERR_INVALID)
-assert(acme_error.message:match("tls%.domain"))
+assert(acme_error.message:match("tls%.domains"))
 acme_missing_domain:close()
 
-local acme_missing_email = assert(vectis.server.new({
-  app_name = "lua-acme-missing-email",
+local acme_duplicate, acme_duplicate_error = vectis.server.new({
+  app_name = "lua-acme-duplicate-domain",
   port = 18181,
   tls = {
     mode = "acme",
-    domain = "api.example.com",
-    acme_directory_url = "https://acme.example.test/directory",
+    domains = { "api.example.com", "api.example.com" },
+    email = "ops@example.com",
+  },
+})
+assert(acme_duplicate == nil)
+assert(type(acme_duplicate_error) == "table")
+assert(acme_duplicate_error.status == vectis.ERR_INVALID)
+assert(acme_duplicate_error.message:match("duplicate"))
+
+local acme_missing_email = assert(vectis.server.new({
+  app_name = "lua-acme-missing-email",
+  port = 18182,
+  tls = {
+    mode = "acme",
+    domains = { "api.example.com", "www.example.com" },
+    provider = "https://acme.example.test/directory",
+    cache_dir = "/tmp/vectis-lua-acme-cache",
   },
 }))
 assert(acme_missing_email:auth_json({
@@ -91,6 +106,28 @@ assert(type(acme_error) == "table")
 assert(acme_error.status == vectis.ERR_INVALID)
 assert(acme_error.message:match("acme_email"))
 acme_missing_email:close()
+
+local acme_empty_cache = assert(vectis.server.new({
+  app_name = "lua-acme-empty-cache",
+  port = 18183,
+  tls = {
+    mode = "acme",
+    domains = { "api.example.com" },
+    email = "ops@example.com",
+    provider = "https://acme.example.test/directory",
+    cache_dir = "",
+  },
+}))
+assert(acme_empty_cache:auth_json({
+  path = "/probe",
+  auth = { kind = "native", credentials_path = acme_auth_path },
+}) == true)
+acme_started, acme_error = acme_empty_cache:start()
+assert(acme_started == nil)
+assert(type(acme_error) == "table")
+assert(acme_error.status == vectis.ERR_INVALID)
+assert(acme_error.message:match("acme_state_dir"))
+acme_empty_cache:close()
 
 assert(type(vectis.auth) == "table")
 local function oauth_transport(mode)

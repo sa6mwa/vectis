@@ -245,6 +245,8 @@ typedef struct vectis_app_impl {
   char *app_name;
   char *bind;
   char *domain;
+  char **domains;
+  size_t domain_count;
   char *cert_key_bundle_path;
   void *cert_key_bundle_pem;
   size_t cert_key_bundle_pem_size;
@@ -267,6 +269,7 @@ typedef struct vectis_app_impl {
   struct lc_source *client_ca_bundle_source;
   char *acme_email;
   char *acme_directory_url;
+  char *acme_state_dir;
   char *unix_socket_path;
   void *client_bundle_pem;
   size_t client_bundle_pem_size;
@@ -2381,6 +2384,111 @@ static void vectis_free_endpoints(vectis_app_impl *impl) {
   impl->endpoint_count = 0u;
 }
 
+static void vectis_free_domains(vectis_app_impl *impl) {
+  size_t i;
+
+  if (impl->domains == NULL) {
+    return;
+  }
+  for (i = 0u; i < impl->domain_count; ++i) {
+    free(impl->domains[i]);
+  }
+  free(impl->domains);
+  impl->domains = NULL;
+  impl->domain_count = 0u;
+}
+
+static int vectis_is_dns_hostname(const char *name) {
+  size_t label_len;
+  size_t total_len;
+  int label_has_char;
+  char c;
+  char previous;
+
+  if (name == NULL || name[0] == '\0') {
+    return 0;
+  }
+  label_len = 0u;
+  total_len = 0u;
+  label_has_char = 0;
+  previous = '\0';
+  while (*name != '\0') {
+    c = *name++;
+    total_len++;
+    if (total_len > 253u) {
+      return 0;
+    }
+    if (c == '.') {
+      if (!label_has_char || label_len == 0u || label_len > 63u ||
+          previous == '-') {
+        return 0;
+      }
+      label_len = 0u;
+      label_has_char = 0;
+      previous = c;
+      continue;
+    }
+    if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+          (c >= '0' && c <= '9') || c == '-')) {
+      return 0;
+    }
+    if (label_len == 0u && c == '-') {
+      return 0;
+    }
+    label_len++;
+    label_has_char = 1;
+    if (label_len > 63u) {
+      return 0;
+    }
+    previous = c;
+  }
+  return label_has_char && label_len > 0u && label_len <= 63u &&
+         previous != '-';
+}
+
+static vectis_status vectis_copy_domains(vectis_app_impl *impl,
+                                         const vectis_tls_config *tls,
+                                         vectis_error *error) {
+  size_t i;
+  size_t j;
+
+  if (tls->domain_count == 0u) {
+    return VECTIS_OK;
+  }
+  if (tls->domains == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "tls.domains is required");
+    return VECTIS_ERR_INVALID;
+  }
+  for (i = 0u; i < tls->domain_count; ++i) {
+    if (!vectis_is_dns_hostname(tls->domains[i])) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "tls.domains entries must be DNS hostnames");
+      return VECTIS_ERR_INVALID;
+    }
+    for (j = 0u; j < i; ++j) {
+      if (strcmp(tls->domains[i], tls->domains[j]) == 0) {
+        vectis_set_error(error, VECTIS_ERR_INVALID,
+                         "tls.domains contains a duplicate name");
+        return VECTIS_ERR_INVALID;
+      }
+    }
+  }
+  impl->domains = (char **)calloc(tls->domain_count, sizeof(*impl->domains));
+  if (impl->domains == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate tls.domains");
+    return VECTIS_ERR_NOMEM;
+  }
+  impl->domain_count = tls->domain_count;
+  for (i = 0u; i < tls->domain_count; ++i) {
+    impl->domains[i] = vectis_strdup(tls->domains[i]);
+    if (impl->domains[i] == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy tls.domain");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  return VECTIS_OK;
+}
+
 static vectis_status vectis_copy_endpoints(vectis_app_impl *impl,
                                            const vectis_lockd_config *lockd,
                                            vectis_error *error) {
@@ -2655,6 +2763,7 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
   vectis_free_routes(impl);
   vectis_free_openapi_docs(impl);
   vectis_free_endpoints(impl);
+  vectis_free_domains(impl);
 
   free(impl->app_name);
   free(impl->bind);
@@ -2671,6 +2780,7 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
   free(impl->client_ca_bundle_pem);
   free(impl->acme_email);
   free(impl->acme_directory_url);
+  free(impl->acme_state_dir);
   free(impl->unix_socket_path);
   free(impl->client_bundle_pem);
   free(impl->client_bundle_path);
@@ -2843,10 +2953,9 @@ static vectis_status vectis_validate_startable(const vectis_app_impl *impl,
                        "ACME mode requires acme_email");
       return VECTIS_ERR_INVALID;
     }
-    if (impl->domain == NULL || impl->domain[0] == '\0' ||
-        strcmp(impl->domain, "*") == 0 || strchr(impl->domain, '*') != NULL) {
+    if (impl->domain_count == 0u) {
       vectis_set_error(error, VECTIS_ERR_INVALID,
-                       "ACME mode requires a non-wildcard tls.domain");
+                       "ACME mode requires tls.domains");
       return VECTIS_ERR_INVALID;
     }
   }
@@ -3049,6 +3158,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
       &effective->tls.client_ca_bundle, effective->tls.client_ca_bundle_source);
   impl->acme_email = vectis_strdup(effective->tls.acme_email);
   impl->acme_directory_url = vectis_strdup(effective->tls.acme_directory_url);
+  impl->acme_state_dir = vectis_strdup(effective->tls.acme_state_dir);
   impl->unix_socket_path = vectis_strdup(effective->lockd.unix_socket_path);
   impl->client_bundle_path = vectis_strdup(vectis_source_path_or_old(
       &effective->lockd.client_bundle, effective->lockd.client_bundle_path));
@@ -3122,6 +3232,12 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   }
 
   status = vectis_copy_endpoints(impl, &effective->lockd, error);
+  if (status != VECTIS_OK) {
+    vectis_destroy_impl(impl);
+    free(app);
+    return NULL;
+  }
+  status = vectis_copy_domains(impl, &effective->tls, error);
   if (status != VECTIS_OK) {
     vectis_destroy_impl(impl);
     free(app);
@@ -3245,9 +3361,12 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
     kore_config.bind = impl->bind;
     kore_config.port = impl->port;
     kore_config.domain = impl->domain;
+    kore_config.domains = (const char *const *)impl->domains;
+    kore_config.domain_count = impl->domain_count;
     kore_config.tls_mode = impl->tls_mode;
     kore_config.acme_email = impl->acme_email;
     kore_config.acme_directory_url = impl->acme_directory_url;
+    kore_config.acme_state_dir = impl->acme_state_dir;
     kore_config.cert_key_bundle_path = impl->cert_key_bundle_path;
     kore_config.cert_key_bundle_pem = impl->cert_key_bundle_pem;
     kore_config.cert_key_bundle_pem_size = impl->cert_key_bundle_pem_size;

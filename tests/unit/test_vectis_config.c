@@ -50,14 +50,19 @@ int main(void) {
   vectis_route_config param_route;
   vectis_status status;
   const char *bad_endpoints[1];
+  const char *acme_domains[3];
+  const char *bad_acme_domains[2];
 
   vectis_app_config_init(&config);
   assert(strcmp(config.app_name, "vectis") == 0);
   assert(config.tls.mode == VECTIS_TLS_MODE_MANUAL);
   assert(config.tls.port == 8443u);
   assert(strcmp(config.tls.domain, "*") == 0);
+  assert(config.tls.domains == NULL);
+  assert(config.tls.domain_count == 0u);
   assert(strcmp(config.tls.acme_directory_url,
                 VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION) == 0);
+  assert(config.tls.acme_state_dir == NULL);
   assert(config.server.max_connections ==
          VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS);
   assert(config.server.max_request_header_bytes ==
@@ -257,12 +262,48 @@ int main(void) {
   assert(status == VECTIS_OK);
   status = app->start(app, &error);
   assert(status == VECTIS_ERR_INVALID);
-  assert(strstr(error.message, "tls.domain") != NULL);
+  assert(strstr(error.message, "tls.domains") != NULL);
   app->close(app);
 
+  bad_acme_domains[0] = "api.example.com";
+  bad_acme_domains[1] = "api.example.com";
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_ACME;
-  config.tls.domain = "api.example.com";
+  config.tls.domains = bad_acme_domains;
+  config.tls.domain_count = 2u;
+  config.tls.acme_email = "ops@example.com";
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "duplicate") != NULL);
+
+  bad_acme_domains[0] = "*.example.com";
+  bad_acme_domains[1] = "api.example.com";
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_ACME;
+  config.tls.domains = bad_acme_domains;
+  config.tls.domain_count = 2u;
+  config.tls.acme_email = "ops@example.com";
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "DNS hostnames") != NULL);
+
+  bad_acme_domains[0] = "../example.com";
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_ACME;
+  config.tls.domains = bad_acme_domains;
+  config.tls.domain_count = 1u;
+  config.tls.acme_email = "ops@example.com";
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "DNS hostnames") != NULL);
+
+  acme_domains[0] = "api.example.com";
+  acme_domains[1] = "www.example.com";
+  acme_domains[2] = "preview.example.com";
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_ACME;
+  config.tls.domains = acme_domains;
+  config.tls.domain_count = 3u;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/acme-email", sample_handler, NULL);
@@ -271,6 +312,22 @@ int main(void) {
   status = app->start(app, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "acme_email") != NULL);
+  app->close(app);
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_ACME;
+  config.tls.domains = acme_domains;
+  config.tls.domain_count = 3u;
+  config.tls.acme_email = "ops@example.com";
+  config.tls.acme_state_dir = "";
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/acme-state", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "acme_state_dir") != NULL);
   app->close(app);
 
   return 0;

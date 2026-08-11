@@ -8,6 +8,7 @@ int main(void) {
   vectis_app_config acme;
   pslog_config log_config;
   pslog_logger *logger;
+  const char *acme_domains[2];
 
   pslog_default_config(&log_config);
   log_config.mode = PSLOG_MODE_JSON;
@@ -33,15 +34,18 @@ int main(void) {
   acme.tls.mode = VECTIS_TLS_MODE_ACME;
   acme.tls.bind = "0.0.0.0";
   acme.tls.port = 443u;
-  acme.tls.domain = "api.example.com";
+  acme_domains[0] = "api.example.com";
+  acme_domains[1] = "www.example.com";
+  acme.tls.domains = acme_domains;
+  acme.tls.domain_count = 2u;
   acme.tls.acme_email = "ops@example.com";
 
   logger->infof(logger, "example.kore_tls.manual", "app=%s cert=%s key=%s",
                 manual.app_name, manual.tls.certificate_path,
                 manual.tls.private_key_path);
   logger->infof(logger, "example.kore_tls.acme",
-                "app=%s domain=%s email=%s directory=%s", acme.app_name,
-                acme.tls.domain, acme.tls.acme_email,
+                "app=%s domains=%lu email=%s directory=%s", acme.app_name,
+                (unsigned long)acme.tls.domain_count, acme.tls.acme_email,
                 acme.tls.acme_directory_url);
   logger->destroy(logger);
   return 0;

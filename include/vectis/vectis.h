@@ -268,6 +268,8 @@ typedef struct vectis_tls_config {
   vectis_tls_mode mode;
   const char *bind;
   unsigned short port;
+  const char *const *domains;
+  size_t domain_count;
   const char *domain;
   const char *cert_key_bundle_path;
   vectis_source cert_key_bundle;
@@ -297,6 +299,7 @@ typedef struct vectis_tls_config {
   int require_client_certificate;
   const char *acme_email;
   const char *acme_directory_url;
+  const char *acme_state_dir;
 } vectis_tls_config;
 
 typedef vectis_status (*vectis_route_handler_fn)(vectis_app *app,

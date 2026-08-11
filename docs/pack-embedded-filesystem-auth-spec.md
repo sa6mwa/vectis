@@ -211,6 +211,9 @@ Required Lua concepts:
 - `vectis.cert.generate_bundle({common_name=..., output_bundle_path=...})`
 - `vectis.server.new({bind=..., port=..., tls={mode="manual",
   cert_key_bundle_path=..., domain=...}})`
+- `vectis.server.new({bind=..., port=..., tls={mode="acme",
+  domains={"example.com", "www.example.com"}, email=...,
+  provider=..., cache_dir=...}})`
 - `server:static_embedded({path_prefix=..., cache_control=...})`
 - `server:webdav_embedded_site({path_prefix=..., cache_dir=..., site_id=...,
   extract_policy=..., auth={kind="native", credentials_path=...}})`
@@ -541,8 +544,14 @@ packaging. Native auth route smoke coverage proves custom login
 templates can be loaded from the filesystem and from packed embedded assets, and
 that supported login-template placeholders are expanded through escaped
 substitution before serving.
-Lua smoke coverage validates ACME-mode server config parsing and native startup
-diagnostics for missing domain or email without contacting a live ACME provider.
+Lua smoke coverage validates ACME-mode server config parsing, Landed-style
+`tls.domains`, `tls.email`, `tls.provider`, and `tls.cache_dir` spellings,
+duplicate and invalid DNS-domain rejection, non-empty state-dir validation, and
+native startup diagnostics for missing domains or email without contacting a
+live ACME provider. ACME `cache_dir` is accepted into Vectis runtime config as
+`acme_state_dir`; relocating Kore's internal ACME certificate/account storage
+remains a separate Kore vendoring task before full mock-provider ACME issuance
+can be claimed.
 
 Email-token e2e coverage:
 

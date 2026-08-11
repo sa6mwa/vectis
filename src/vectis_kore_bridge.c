@@ -727,15 +727,19 @@ vectis_kore_prepare_acme(vectis_kore_runtime_config *config,
   if (config->tls_mode != VECTIS_TLS_MODE_ACME) {
     return VECTIS_OK;
   }
-  if (config->domain == NULL || config->domain[0] == '\0' ||
-      strchr(config->domain, '*') != NULL) {
+  if (config->domain_count == 0u || config->domains == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "ACME mode requires a concrete TLS domain");
+                     "ACME mode requires tls.domains");
     return VECTIS_ERR_INVALID;
   }
   if (config->acme_email == NULL || config->acme_email[0] == '\0') {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "ACME mode requires acme_email");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->acme_state_dir != NULL && config->acme_state_dir[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "ACME mode requires a non-empty acme_state_dir");
     return VECTIS_ERR_INVALID;
   }
   return VECTIS_OK;
@@ -2045,6 +2049,9 @@ void kore_parent_configure(int argc, char **argv) {
   struct kore_domain *domain;
   struct kore_route *route;
   char port[16];
+  size_t domain_count;
+  size_t i;
+  const char *domain_name;
 
   (void)argc;
   (void)argv;
@@ -2071,49 +2078,63 @@ void kore_parent_configure(int argc, char **argv) {
     fatal("failed to bind Vectis Kore listener");
   }
   acme_domains = 0;
-  domain = kore_domain_new(
-      vectis_kore_current.domain != NULL ? vectis_kore_current.domain : "*");
-  if (server->tls) {
-    if (vectis_kore_current.tls_mode == VECTIS_TLS_MODE_ACME) {
-      domain->acme = 1;
-      kore_free(domain->certfile);
-      kore_free(domain->certkey);
-      kore_acme_get_paths(domain->domain, &domain->certkey, &domain->certfile);
-      acme_domains++;
-      kore_free(acme_email);
-      acme_email = kore_strdup(vectis_kore_current.acme_email);
-      kore_free(acme_provider);
-      acme_provider =
-          kore_strdup(vectis_kore_current.acme_directory_url != NULL
-                          ? vectis_kore_current.acme_directory_url
-                          : VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION);
-    } else {
-      domain->certfile = kore_strdup(vectis_kore_current.runtime_certfile);
-      domain->certkey = kore_strdup(vectis_kore_current.runtime_certkey);
+  if (server->tls && vectis_kore_current.tls_mode == VECTIS_TLS_MODE_ACME) {
+    kore_free(acme_email);
+    acme_email = kore_strdup(vectis_kore_current.acme_email);
+    kore_free(acme_provider);
+    acme_provider =
+        kore_strdup(vectis_kore_current.acme_directory_url != NULL
+                        ? vectis_kore_current.acme_directory_url
+                        : VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION);
+  }
+  domain_count =
+      server->tls && vectis_kore_current.tls_mode == VECTIS_TLS_MODE_ACME
+          ? vectis_kore_current.domain_count
+          : 1u;
+  for (i = 0u; i < domain_count; ++i) {
+    domain_name =
+        server->tls && vectis_kore_current.tls_mode == VECTIS_TLS_MODE_ACME
+            ? vectis_kore_current.domains[i]
+            : (vectis_kore_current.domain != NULL ? vectis_kore_current.domain
+                                                  : "*");
+    domain = kore_domain_new(domain_name);
+    if (server->tls) {
+      if (vectis_kore_current.tls_mode == VECTIS_TLS_MODE_ACME) {
+        domain->acme = 1;
+        kore_free(domain->certfile);
+        kore_free(domain->certkey);
+        kore_acme_get_paths(domain->domain, &domain->certkey,
+                            &domain->certfile);
+        acme_domains++;
+      } else {
+        domain->certfile = kore_strdup(vectis_kore_current.runtime_certfile);
+        domain->certkey = kore_strdup(vectis_kore_current.runtime_certkey);
+      }
+      if (vectis_kore_current.require_client_certificate &&
+          vectis_kore_current.runtime_client_ca_file != NULL) {
+        domain->cafile =
+            kore_strdup(vectis_kore_current.runtime_client_ca_file);
+      }
+      if (vectis_kore_current.tls_mode != VECTIS_TLS_MODE_ACME) {
+        vectis_kore_setup_domain_tls(domain);
+      }
     }
-    if (vectis_kore_current.require_client_certificate &&
-        vectis_kore_current.runtime_client_ca_file != NULL) {
-      domain->cafile = kore_strdup(vectis_kore_current.runtime_client_ca_file);
+    if (!kore_domain_attach(domain, server)) {
+      fatal("failed to attach Vectis Kore domain");
     }
-    if (vectis_kore_current.tls_mode != VECTIS_TLS_MODE_ACME) {
-      vectis_kore_setup_domain_tls(domain);
+    route = kore_route_create(domain, "^/.*$", HANDLER_TYPE_DYNAMIC);
+    if (route == NULL) {
+      fatal("failed to create Vectis Kore route");
     }
-  }
-  if (!kore_domain_attach(domain, server)) {
-    fatal("failed to attach Vectis Kore domain");
-  }
-  route = kore_route_create(domain, "^/.*$", HANDLER_TYPE_DYNAMIC);
-  if (route == NULL) {
-    fatal("failed to create Vectis Kore route");
-  }
-  kore_route_callback(route, "vectis_kore_route");
-  route->on_body_chunk = kore_runtime_getcall("vectis_kore_body_chunk");
-  if (route->on_body_chunk == NULL) {
-    fatal("failed to resolve Vectis Kore body chunk callback");
-  }
-  route->on_free = kore_runtime_getcall("vectis_kore_request_free");
-  if (route->on_free == NULL) {
-    fatal("failed to resolve Vectis Kore request cleanup callback");
+    kore_route_callback(route, "vectis_kore_route");
+    route->on_body_chunk = kore_runtime_getcall("vectis_kore_body_chunk");
+    if (route->on_body_chunk == NULL) {
+      fatal("failed to resolve Vectis Kore body chunk callback");
+    }
+    route->on_free = kore_runtime_getcall("vectis_kore_request_free");
+    if (route->on_free == NULL) {
+      fatal("failed to resolve Vectis Kore request cleanup callback");
+    }
   }
   kore_server_finalize(server);
   (void)pthread_mutex_unlock(&vectis_kore_mutex);

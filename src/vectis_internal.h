@@ -11,9 +11,12 @@ typedef struct vectis_kore_runtime_config {
   const char *bind;
   unsigned short port;
   const char *domain;
+  const char *const *domains;
+  size_t domain_count;
   vectis_tls_mode tls_mode;
   const char *acme_email;
   const char *acme_directory_url;
+  const char *acme_state_dir;
   const char *cert_key_bundle_path;
   const void *cert_key_bundle_pem;
   size_t cert_key_bundle_pem_size;

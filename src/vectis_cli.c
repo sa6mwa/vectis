@@ -4422,11 +4422,13 @@ static int vectis_lua_server_new(lua_State *lua) {
   const char *bind;
   const char *mode;
   const char **lockd_endpoints;
+  const char **tls_domains;
   size_t port;
   int tls_index;
 
   luaL_checktype(lua, 1, LUA_TTABLE);
   lockd_endpoints = NULL;
+  tls_domains = NULL;
   port = vectis_lua_table_size(lua, 1, "port", 8080u);
   if (port == 0u || port > 65535u) {
     return luaL_error(lua, "server port must be between 1 and 65535");
@@ -4458,6 +4460,9 @@ static int vectis_lua_server_new(lua_State *lua) {
       return luaL_error(lua, "server tls.port must be between 1 and 65535");
     }
     config.tls.port = (unsigned short)port;
+    tls_domains = vectis_lua_string_array_field(lua, tls_index, "domains",
+                                                &config.tls.domain_count);
+    config.tls.domains = tls_domains;
     config.tls.domain = vectis_lua_table_string(lua, tls_index, "domain");
     config.tls.cert_key_bundle_path =
         vectis_lua_table_string(lua, tls_index, "cert_key_bundle_path");
@@ -4477,8 +4482,21 @@ static int vectis_lua_server_new(lua_State *lua) {
         vectis_lua_table_bool(lua, tls_index, "require_client_certificate", 0);
     config.tls.acme_email =
         vectis_lua_table_string(lua, tls_index, "acme_email");
+    if (config.tls.acme_email == NULL) {
+      config.tls.acme_email = vectis_lua_table_string(lua, tls_index, "email");
+    }
     config.tls.acme_directory_url =
         vectis_lua_table_string(lua, tls_index, "acme_directory_url");
+    if (config.tls.acme_directory_url == NULL) {
+      config.tls.acme_directory_url =
+          vectis_lua_table_string(lua, tls_index, "provider");
+    }
+    config.tls.acme_state_dir =
+        vectis_lua_table_string(lua, tls_index, "acme_state_dir");
+    if (config.tls.acme_state_dir == NULL) {
+      config.tls.acme_state_dir =
+          vectis_lua_table_string(lua, tls_index, "cache_dir");
+    }
   }
   lua_pop(lua, 1);
   vectis_lua_parse_lockd_config(lua, 1, &config.lockd, &lockd_endpoints);
@@ -4489,6 +4507,7 @@ static int vectis_lua_server_new(lua_State *lua) {
   server->consumer_services = NULL;
   vectis_error_clear(&error);
   server->app = vectis_app_new(&config, &error);
+  free(tls_domains);
   free(lockd_endpoints);
   if (server->app == NULL) {
     return vectis_lua_push_error(
