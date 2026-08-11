@@ -548,7 +548,9 @@ embedded client bundle, proves the raw statically registered `lockdc` Lua
 module can open a client from the packed in-memory lockd bundle source without
 writing a runtime PEM file, generates a private self-signed certificate bundle,
 starts an HTTPS packed asset server with `tls.mode = "manual"`, and fetches the
-embedded site over HTTPS. Pack smoke coverage also proves symlink asset sources
+embedded site over HTTPS. It also proves extraction verify, skip-existing,
+repair, and overwrite policies do not prune unrelated user-created files. Pack
+smoke coverage also proves symlink asset sources
 are rejected by default for directory, single-file, and manifest inputs, then
 opt-in `--follow-symlinks` packages followed file content as ordinary embedded
 read-only assets. It rejects invalid embedded logical paths from both `--asset`

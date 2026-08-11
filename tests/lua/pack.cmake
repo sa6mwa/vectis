@@ -452,6 +452,10 @@ string(REPLACE
        "assert(server:stop() == true)\nserver:close()\nassert(vectis.embedded.extract({to = extract_to}) == true)"
        "assert(server:stop() == true)\nserver:close()\nassert(vectis.cert.generate_bundle({common_name = \"localhost\", ip_addresses = \"127.0.0.1\", output_bundle_path = https_cert_bundle, key_bits = 2048, valid_days = 1}) == true)\nlocal https_server = assert(vectis.server.new({bind = \"127.0.0.1\", port = 28182, tls = {mode = \"manual\", cert_key_bundle_path = https_cert_bundle, domain = \"localhost\"}}))\nassert(https_server:static_embedded({path_prefix = \"/\", cache_control = \"max-age=30\"}) == true)\nassert(https_server:start() == true)\nlocal https_response\nfor _ = 1, 20 do\n  https_response = curl.perform({url = \"https://localhost:28182/\", protocols = \"https\", timeout_ms = 2000, connect_timeout_ms = 1000, verify_peer = false, verify_host = false, no_signal = true})\n  if https_response.ok then break end\n  os.execute(\"sleep 0.1\")\nend\nassert(https_response.ok == true, https_response.error)\nassert(https_response.status == 200)\nassert(https_response.body:match(\"Acme Test\"))\nassert(https_response.headers:lower():find(\"cache-control: max-age=30\", 1, true))\nassert(https_server:stop() == true)\nhttps_server:close()\nassert(vectis.embedded.extract({to = extract_to}) == true)"
        asset_script_body "${asset_script_body}")
+string(REPLACE
+       "assert(vectis.embedded.extract({to = extract_to, policy = \"overwrite\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")"
+       "assert(vectis.embedded.extract({to = extract_to, policy = \"overwrite\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\nassert(read_file(extract_to .. \"/user-created.txt\") == \"user\\n\")"
+       asset_script_body "${asset_script_body}")
 file(WRITE "${asset_script}" "${asset_script_body}")
 
 execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${asset_script}" --output "${asset_invalid_path_output}" --asset "${asset_dir}/index.html=/../index.html"
