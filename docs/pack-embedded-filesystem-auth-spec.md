@@ -533,7 +533,9 @@ starts an HTTPS packed asset server with `tls.mode = "manual"`, and fetches the
 embedded site over HTTPS. Pack smoke coverage also proves symlink asset sources
 are rejected by default for directory, single-file, and manifest inputs, then
 opt-in `--follow-symlinks` packages followed file content as ordinary embedded
-read-only assets. Native auth route smoke coverage proves custom login
+read-only assets. It rejects invalid embedded logical paths from both `--asset`
+and asset-manifest inputs and rejects invalid content-type map entries before
+packaging. Native auth route smoke coverage proves custom login
 templates can be loaded from the filesystem and from packed embedded assets, and
 that supported login-template placeholders are expanded through escaped
 substitution before serving.
