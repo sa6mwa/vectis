@@ -544,6 +544,11 @@ run_lua_examples() {
     'assert(assert(vectis.embedded.stat("/assets/logo.txt")).content_type == "text/plain")' \
     'assert(assert(vectis.embedded.stat("/templates/login.html")).content_type == "text/html; charset=utf-8")' \
     'assert(assert(vectis.embedded.read("/assets/logo.txt")):match("VX packed logo"))' \
+    'local logo_chunks = {}' \
+    'for chunk in vectis.embedded.chunks("/assets/logo.txt", 4) do' \
+    '  logo_chunks[#logo_chunks + 1] = chunk' \
+    'end' \
+    'assert(table.concat(logo_chunks) == "VX packed logo\n")' \
     'assert(assert(vectis.embedded.read("/templates/login.html")):match("packed%-login"))' \
     'assert(vectis.auth.store_init({ credentials_path = credentials_path }))' \
     'assert(vectis.auth.user_add({' \
