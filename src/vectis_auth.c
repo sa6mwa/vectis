@@ -5356,6 +5356,7 @@ vectis_status vectis_auth_issue_webdav_key_for_oauth2_flow(
     const vectis_auth_oauth2_webdav_key_config *config,
     vectis_auth_issued_credential *out, vectis_error *error) {
   vectis_auth_issue_config issue;
+  vectis_auth_oauth2_stored_token_flow flow;
   vectis_status status;
 
   if (config == NULL || config->flow_id == NULL || config->flow_id[0] == '\0' ||
@@ -5364,6 +5365,20 @@ vectis_status vectis_auth_issue_webdav_key_for_oauth2_flow(
                      "OAuth2 WebDAV key flow_id and subject are required");
     return VECTIS_ERR_INVALID;
   }
+  vectis_auth_oauth2_stored_token_flow_init(&flow);
+  status = vectis_auth_oauth2_token_flow_load(&config->store, config->flow_id,
+                                              &flow, error);
+  if (status != VECTIS_OK) {
+    vectis_auth_oauth2_stored_token_flow_cleanup(&flow);
+    return status;
+  }
+  if (!flow.found) {
+    vectis_auth_oauth2_stored_token_flow_cleanup(&flow);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "OAuth2 token flow was not found");
+    return VECTIS_ERR_STATE;
+  }
+  vectis_auth_oauth2_stored_token_flow_cleanup(&flow);
   vectis_auth_issue_config_init(&issue);
   issue.subject = config->subject;
   issue.purpose = "webdav";

@@ -172,6 +172,85 @@ endif()
 if(NOT oauth_webdav_key_output MATCHES "\"oauth2_flow_id\":\"admin-flow\"")
   message(FATAL_ERROR "oauth2 webdav-key did not carry OAuth flow id")
 endif()
+string(REGEX MATCH "client_id=([^\n]+)" oauth_client_id_match
+       "${oauth_webdav_key_output}")
+if(NOT oauth_client_id_match)
+  message(FATAL_ERROR "oauth2 webdav-key did not expose client_id")
+endif()
+set(oauth_client_id "${CMAKE_MATCH_1}")
+string(REGEX MATCH "client_secret=([^\n]+)" oauth_client_secret_match
+       "${oauth_webdav_key_output}")
+if(NOT oauth_client_secret_match)
+  message(FATAL_ERROR "oauth2 webdav-key did not expose client_secret")
+endif()
+set(oauth_client_secret "${CMAKE_MATCH_1}")
+set(oauth_basic_script "${WORK_DIR}/admin/oauth-basic.lua")
+file(WRITE "${oauth_basic_script}" [=[
+local input = assert(arg[1])
+local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local out = {}
+for i = 1, #input, 3 do
+  local a = input:byte(i) or 0
+  local b = input:byte(i + 1) or 0
+  local c = input:byte(i + 2) or 0
+  local n = a * 65536 + b * 256 + c
+  local pad = (#input - i == 0) and 2 or ((#input - i == 1) and 1 or 0)
+  out[#out + 1] = b64chars:sub(math.floor(n / 262144) % 64 + 1,
+                                math.floor(n / 262144) % 64 + 1)
+  out[#out + 1] = b64chars:sub(math.floor(n / 4096) % 64 + 1,
+                                math.floor(n / 4096) % 64 + 1)
+  out[#out + 1] = pad >= 2 and "=" or
+                  b64chars:sub(math.floor(n / 64) % 64 + 1,
+                               math.floor(n / 64) % 64 + 1)
+  out[#out + 1] = pad >= 1 and "=" or b64chars:sub(n % 64 + 1, n % 64 + 1)
+end
+print(table.concat(out))
+]=])
+execute_process(
+  COMMAND "${VECTIS_BIN}" "${oauth_basic_script}"
+          "${oauth_client_id}:${oauth_client_secret}"
+  RESULT_VARIABLE oauth_basic_result
+  OUTPUT_VARIABLE oauth_basic_secret
+  ERROR_VARIABLE oauth_basic_error)
+if(NOT oauth_basic_result EQUAL 0)
+  message(FATAL_ERROR "oauth2 webdav-key Basic encoding failed: ${oauth_basic_error}")
+endif()
+string(STRIP "${oauth_basic_secret}" oauth_basic_secret)
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a credentials --store "${store}" --verify
+          "Basic ${oauth_basic_secret}" --basic
+  RESULT_VARIABLE oauth_verify_result
+  OUTPUT_VARIABLE oauth_verify_output
+  ERROR_VARIABLE oauth_verify_error)
+if(NOT oauth_verify_result EQUAL 0)
+  message(FATAL_ERROR "oauth2 webdav-key Basic verify failed: ${oauth_verify_error}")
+endif()
+if(NOT oauth_verify_output MATCHES "authenticated=true")
+  message(FATAL_ERROR "oauth2 webdav-key Basic verify did not authenticate")
+endif()
+if(NOT oauth_verify_output MATCHES "auth_mode=basic")
+  message(FATAL_ERROR "oauth2 webdav-key Basic verify did not report basic mode")
+endif()
+if(NOT oauth_verify_output MATCHES "\"oauth2_flow_id\":\"admin-flow\"")
+  message(FATAL_ERROR "oauth2 webdav-key Basic verify did not preserve OAuth flow claim")
+endif()
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a oauth2 --store "${store}" --webdav-key
+          "missing-admin-flow" --subject "admin-oidc@example.com"
+  RESULT_VARIABLE oauth_missing_webdav_key_result
+  OUTPUT_VARIABLE oauth_missing_webdav_key_output
+  ERROR_VARIABLE oauth_missing_webdav_key_error)
+if(oauth_missing_webdav_key_result EQUAL 0)
+  message(FATAL_ERROR "oauth2 webdav-key issued a key for a missing flow")
+endif()
+if(NOT oauth_missing_webdav_key_error MATCHES "OAuth2 token flow was not found")
+  message(FATAL_ERROR "oauth2 webdav-key missing-flow error was not diagnostic")
+endif()
+if(oauth_missing_webdav_key_output MATCHES "client_secret=")
+  message(FATAL_ERROR "oauth2 webdav-key printed a secret for a missing flow")
+endif()
 
 execute_process(
   COMMAND "${VECTIS_BIN}" -a credentials --store "${store}" --issue
