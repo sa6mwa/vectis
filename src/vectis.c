@@ -3984,6 +3984,110 @@ static vectis_status vectis_static_embedded_header(vectis_response *response,
   return vectis_response_header(response, name, value, error);
 }
 
+typedef struct vectis_static_embedded_range {
+  int requested;
+  int satisfiable;
+  size_t start;
+  size_t end;
+} vectis_static_embedded_range;
+
+static int vectis_static_embedded_parse_size(const char **cursor, size_t *out) {
+  const char *p;
+  size_t value;
+  unsigned int digit;
+
+  if (cursor == NULL || *cursor == NULL || out == NULL ||
+      !isdigit((unsigned char)**cursor)) {
+    return 0;
+  }
+  p = *cursor;
+  value = 0u;
+  while (isdigit((unsigned char)*p)) {
+    digit = (unsigned int)(*p - '0');
+    if (value > (((size_t)-1) - (size_t)digit) / 10u) {
+      return 0;
+    }
+    value = value * 10u + (size_t)digit;
+    p++;
+  }
+  *cursor = p;
+  *out = value;
+  return 1;
+}
+
+static int
+vectis_static_embedded_parse_range(const char *header_value, size_t size,
+                                   vectis_static_embedded_range *out) {
+  const char *cursor;
+  size_t start;
+  size_t end;
+  size_t suffix;
+
+  if (out == NULL) {
+    return 0;
+  }
+  memset(out, 0, sizeof(*out));
+  if (header_value == NULL || header_value[0] == '\0') {
+    return 1;
+  }
+  out->requested = 1;
+  if (strncmp(header_value, "bytes=", 6u) != 0 ||
+      strchr(header_value, ',') != NULL) {
+    return 1;
+  }
+  cursor = header_value + 6u;
+  if (*cursor == '-') {
+    cursor++;
+    if (!vectis_static_embedded_parse_size(&cursor, &suffix) ||
+        *cursor != '\0' || suffix == 0u || size == 0u) {
+      return 1;
+    }
+    out->satisfiable = 1;
+    out->start = suffix >= size ? 0u : size - suffix;
+    out->end = size - 1u;
+    return 1;
+  }
+  if (!vectis_static_embedded_parse_size(&cursor, &start) || *cursor != '-') {
+    return 1;
+  }
+  cursor++;
+  if (*cursor == '\0') {
+    if (start >= size || size == 0u) {
+      return 1;
+    }
+    out->satisfiable = 1;
+    out->start = start;
+    out->end = size - 1u;
+    return 1;
+  }
+  if (!vectis_static_embedded_parse_size(&cursor, &end) || *cursor != '\0' ||
+      end < start || start >= size || size == 0u) {
+    return 1;
+  }
+  out->satisfiable = 1;
+  out->start = start;
+  out->end = end >= size ? size - 1u : end;
+  return 1;
+}
+
+static int vectis_static_embedded_content_range(char *buffer,
+                                                size_t buffer_size,
+                                                const char *prefix,
+                                                size_t start, size_t end,
+                                                size_t size) {
+  int n;
+
+  if (prefix != NULL) {
+    n = snprintf(buffer, buffer_size, "%s%llu", prefix,
+                 (unsigned long long)size);
+  } else {
+    n = snprintf(buffer, buffer_size, "bytes %llu-%llu/%llu",
+                 (unsigned long long)start, (unsigned long long)end,
+                 (unsigned long long)size);
+  }
+  return n >= 0 && (size_t)n < buffer_size;
+}
+
 static vectis_status vectis_static_embedded_not_found(
     const vectis_static_route_data *data, vectis_request *request,
     vectis_response *response, vectis_error *error) {
@@ -4017,7 +4121,10 @@ static vectis_status vectis_static_embedded_response(
     vectis_error *error) {
   vectis_bytes body;
   const char *content_type;
+  const char *range_header;
+  vectis_static_embedded_range range;
   char etag[80];
+  char content_range[96];
 
   content_type =
       entry->content_type != NULL ? entry->content_type : data->content_type;
@@ -4034,6 +4141,47 @@ static vectis_status vectis_static_embedded_response(
     if (vectis_response_header(response, "etag", etag, error) != VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_INVALID;
     }
+  }
+  if (vectis_response_header(response, "accept-ranges", "bytes", error) !=
+      VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  range_header = vectis_request_header(request, "range");
+  if (!vectis_static_embedded_parse_range(range_header, entry->size, &range)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "failed to parse embedded static byte range");
+    return VECTIS_ERR_INVALID;
+  }
+  if (range.requested && !range.satisfiable) {
+    if (!vectis_static_embedded_content_range(content_range,
+                                              sizeof(content_range), "bytes */",
+                                              0u, 0u, entry->size) ||
+        vectis_response_header(response, "content-range", content_range,
+                               error) != VECTIS_OK ||
+        vectis_static_embedded_header(response, "content-type", content_type,
+                                      error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    }
+    return vectis_response_status(response, 416, error);
+  }
+  if (range.requested) {
+    if (!vectis_static_embedded_content_range(
+            content_range, sizeof(content_range), NULL, range.start, range.end,
+            entry->size) ||
+        vectis_response_header(response, "content-range", content_range,
+                               error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    }
+    body.data = (const unsigned char *)entry->data + range.start;
+    body.size = range.end - range.start + 1u;
+    if (vectis_request_method(request) == VECTIS_HTTP_HEAD) {
+      if (vectis_static_embedded_header(response, "content-type", content_type,
+                                        error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_INVALID;
+      }
+      return vectis_response_status(response, 206, error);
+    }
+    return vectis_response_bytes(response, 206, content_type, body, error);
   }
   if (vectis_request_method(request) == VECTIS_HTTP_HEAD) {
     if (vectis_static_embedded_header(response, "content-type", content_type,
@@ -14333,10 +14481,21 @@ const char *vectis_request_query(vectis_request *request, const char *name) {
 }
 
 const char *vectis_request_header(vectis_request *request, const char *name) {
+  size_t i;
+
   if (request == NULL) {
     return NULL;
   }
-  return vectis_kv_find(request->headers, request->header_count, name);
+  if (name == NULL) {
+    return NULL;
+  }
+  for (i = 0u; i < request->header_count; ++i) {
+    if (request->headers[i].name != NULL &&
+        strcasecmp(request->headers[i].name, name) == 0) {
+      return request->headers[i].value;
+    }
+  }
+  return NULL;
 }
 
 struct http_request *vectis_request_kore(vectis_request *request) {

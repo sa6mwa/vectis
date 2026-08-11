@@ -1131,6 +1131,9 @@ static void assert_kore_smoke(void) {
   vectis_http_response xml_route_response;
   vectis_http_response dsv_route_response;
   vectis_http_response embedded_response;
+  vectis_http_response embedded_range_response;
+  vectis_http_response embedded_suffix_range_response;
+  vectis_http_response embedded_invalid_range_response;
   vectis_http_response embedded_head_response;
   vectis_http_response embedded_missing_response;
   vectis_http_response embedded_method_response;
@@ -1177,6 +1180,9 @@ static void assert_kore_smoke(void) {
   vectis_app_config second_config;
   vectis_route_config second_route;
   const char *headers[] = {"x-vectis-trace: runtime-smoke"};
+  const char *embedded_range_headers[] = {"Range: bytes=1-2"};
+  const char *embedded_suffix_range_headers[] = {"range: bytes=-2"};
+  const char *embedded_invalid_range_headers[] = {"range: bytes=4-10"};
   const char upload_path[] = "/tmp/vectis-runtime-upload.bin";
   const char stream_upload_path[] = "/tmp/vectis-runtime-stream-source.bin";
   const char stream_file_path[] = "/tmp/vectis-runtime-stream-upload.bin";
@@ -1581,9 +1587,67 @@ static void assert_kore_smoke(void) {
   assert(strcmp(vectis_http_response_header(&embedded_response, "etag"),
                 "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d07887"
                 "5901\"") == 0);
+  assert(
+      strcmp(vectis_http_response_header(&embedded_response, "accept-ranges"),
+             "bytes") == 0);
   assert(embedded_response.body_size == 4u);
   assert(memcmp(embedded_response.body, "app\n", 4u) == 0);
   vectis_http_response_cleanup(&embedded_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = "http://127.0.0.1:28080/embedded/assets/app.txt";
+  request.headers = embedded_range_headers;
+  request.header_count = 1u;
+  status =
+      vectis_http_execute(&http, &request, &embedded_range_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_range_response.status_code == 206L);
+  assert(embedded_range_response.content_type != NULL);
+  assert(strcmp(embedded_range_response.content_type, "text/plain") == 0);
+  assert(strcmp(vectis_http_response_header(&embedded_range_response,
+                                            "content-range"),
+                "bytes 1-2/4") == 0);
+  assert(strcmp(vectis_http_response_header(&embedded_range_response,
+                                            "accept-ranges"),
+                "bytes") == 0);
+  assert(embedded_range_response.body_size == 2u);
+  assert(memcmp(embedded_range_response.body, "pp", 2u) == 0);
+  vectis_http_response_cleanup(&embedded_range_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = "http://127.0.0.1:28080/embedded/assets/app.txt";
+  request.headers = embedded_suffix_range_headers;
+  request.header_count = 1u;
+  status = vectis_http_execute(&http, &request, &embedded_suffix_range_response,
+                               &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_suffix_range_response.status_code == 206L);
+  assert(strcmp(vectis_http_response_header(&embedded_suffix_range_response,
+                                            "content-range"),
+                "bytes 2-3/4") == 0);
+  assert(embedded_suffix_range_response.body_size == 2u);
+  assert(memcmp(embedded_suffix_range_response.body, "p\n", 2u) == 0);
+  vectis_http_response_cleanup(&embedded_suffix_range_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = "http://127.0.0.1:28080/embedded/assets/app.txt";
+  request.headers = embedded_invalid_range_headers;
+  request.header_count = 1u;
+  status = vectis_http_execute(&http, &request,
+                               &embedded_invalid_range_response, &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_invalid_range_response.status_code == 416L);
+  assert(strcmp(vectis_http_response_header(&embedded_invalid_range_response,
+                                            "content-range"),
+                "bytes */4") == 0);
+  assert(strcmp(vectis_http_response_header(&embedded_invalid_range_response,
+                                            "accept-ranges"),
+                "bytes") == 0);
+  assert(embedded_invalid_range_response.body_size == 0u);
+  vectis_http_response_cleanup(&embedded_invalid_range_response);
 
   status =
       vectis_http_head(&http, "http://127.0.0.1:28080/embedded/assets/app.txt",

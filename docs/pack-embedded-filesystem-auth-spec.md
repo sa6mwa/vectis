@@ -251,8 +251,8 @@ There are two supported serving modes:
 
 1. Embedded read-only docroot.
    The site is served directly from the packed asset filesystem. It supports
-   GET, HEAD, content type, ETag, cache-control, range support when implemented,
-   and traversal denial. It does not support WebDAV writes.
+   GET, HEAD, content type, ETag, cache-control, single `bytes=` range
+   requests, and traversal denial. It does not support WebDAV writes.
 
 2. Extracted mutable docroot.
    The application calls an extraction helper to create or verify a filesystem
@@ -488,10 +488,11 @@ webserver script plus generated HTML/CSS/JavaScript files, asset files, and
 template files, runs the packed executable, serves the embedded read-only
 docroot both at `/` and under `/site`, rejects writes through the root
 read-only mount without changing the embedded index, rejects traversal attempts
-against the root read-only mount, starts a second packed HTTPS asset server
-with a generated private self-signed certificate, verifies content types, ETag
-and cache metadata, rejects traversal attempts, rejects writes through the
-read-only mount, extracts the embedded
+against the root read-only mount, verifies single byte-range and unsatisfiable
+byte-range behavior for the C-owned static embedded responder, starts a second
+packed HTTPS asset server with a generated private self-signed certificate,
+verifies content types, ETag and cache metadata, rejects traversal attempts,
+rejects writes through the read-only mount, extracts the embedded
 assets into the disk WebDAV content tree before accepting WebDAV operations,
 verifies generated files are present in that extracted docroot, verifies repair
 restores stale embedded files while preserving pre-existing mutable files,
