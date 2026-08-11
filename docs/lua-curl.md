@@ -45,6 +45,10 @@ libcurl into `lonejson_curl_write_callback()`.
 - `timeout_ms`, `connect_timeout_ms`: total and connect timeout controls.
 - `low_speed_limit`, `low_speed_time`: low-speed abort controls.
 - `follow_redirects`: enables HTTP redirect following.
+- `retry`: false disables retry. A table accepts `max_attempts`,
+  `initial_delay_ms`, `max_delay_ms`, and `conditions`.
+- `retry_max_attempts`, `retry_initial_delay_ms`, `retry_max_delay_ms`,
+  `retry_conditions`: top-level aliases for the same retry controls.
 - `http2`: asks libcurl for HTTP/2 over TLS where possible.
 - `username`, `password`: protocol credentials.
 - `proxy`, `proxy_type`, `proxy_username`, `proxy_password`: proxy controls.
@@ -67,6 +71,11 @@ The option families above cover the main protocol classes expected from the
 bundled libcurl build: HTTP/HTTPS, WebDAV, SMTP/SMTPS, SFTP/SCP, FTP/file
 transfer, and MQTT-style publish payloads. Unsupported URL schemes remain
 libcurl runtime errors and are reported in the result table.
+
+Retry conditions may be `"transport"`, `"429"`, `"status_429"`, `"5xx"`,
+`"status_5xx"`, `"default"`, or `"none"`, or a table combining condition
+names. Streaming JSON responses cannot be retried because the response parser is
+consumed by the first transfer attempt.
 
 ## JSON
 

@@ -5,6 +5,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <lauxlib.h>
+#include <limits.h>
 #ifndef LONEJSON_WITH_CURL
 #define LONEJSON_WITH_CURL 1
 #endif
@@ -229,6 +230,13 @@ typedef struct vectis_lua_curl_stream_response {
   size_t limit;
   int limit_exceeded;
 } vectis_lua_curl_stream_response;
+
+typedef struct vectis_lua_curl_retry_config {
+  unsigned max_attempts;
+  long initial_delay_ms;
+  long max_delay_ms;
+  vectis_http_retry_conditions conditions;
+} vectis_lua_curl_retry_config;
 
 typedef struct vectis_lua_embedded_chunks_state {
   const char *data;
@@ -5070,11 +5078,218 @@ static int vectis_lua_curl_apply_protocol_options(lua_State *lua, CURL *curl,
   return 0;
 }
 
+static void
+vectis_lua_curl_retry_config_init(vectis_lua_curl_retry_config *config) {
+  config->max_attempts = 1u;
+  config->initial_delay_ms = 250L;
+  config->max_delay_ms = 2000L;
+  config->conditions = VECTIS_HTTP_RETRY_DEFAULT;
+}
+
+static void vectis_lua_curl_sleep_ms(long delay_ms) {
+  struct timespec ts;
+
+  if (delay_ms <= 0L) {
+    return;
+  }
+  ts.tv_sec = delay_ms / 1000L;
+  ts.tv_nsec = (delay_ms % 1000L) * 1000000L;
+  while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
+  }
+}
+
+static int
+vectis_lua_curl_retry_condition_name(lua_State *lua, const char *value,
+                                     vectis_http_retry_conditions *out) {
+  if (strcmp(value, "none") == 0) {
+    *out = VECTIS_HTTP_RETRY_NONE;
+  } else if (strcmp(value, "default") == 0) {
+    *out = VECTIS_HTTP_RETRY_DEFAULT;
+  } else if (strcmp(value, "transport") == 0) {
+    *out = VECTIS_HTTP_RETRY_TRANSPORT;
+  } else if (strcmp(value, "429") == 0 || strcmp(value, "status_429") == 0) {
+    *out = VECTIS_HTTP_RETRY_429;
+  } else if (strcmp(value, "5xx") == 0 || strcmp(value, "status_5xx") == 0) {
+    *out = VECTIS_HTTP_RETRY_5XX;
+  } else {
+    return luaL_error(lua, "unsupported curl retry condition: %s", value);
+  }
+  return 0;
+}
+
+static int
+vectis_lua_curl_retry_conditions_at(lua_State *lua, int index,
+                                    vectis_http_retry_conditions fallback,
+                                    vectis_http_retry_conditions *out) {
+  vectis_http_retry_conditions conditions;
+  vectis_http_retry_conditions current;
+  size_t count;
+  size_t i;
+
+  index = lua_absindex(lua, index);
+  if (lua_isnil(lua, index)) {
+    *out = fallback;
+    return 0;
+  }
+  if (lua_isnumber(lua, index)) {
+    *out = (vectis_http_retry_conditions)lua_tointeger(lua, index);
+    return 0;
+  }
+  if (lua_isstring(lua, index)) {
+    return vectis_lua_curl_retry_condition_name(lua, lua_tostring(lua, index),
+                                                out);
+  }
+  if (!lua_istable(lua, index)) {
+    return luaL_error(lua, "curl retry conditions must be a string or table");
+  }
+
+  conditions = VECTIS_HTTP_RETRY_NONE;
+  count = lua_rawlen(lua, index);
+  for (i = 1u; i <= count; ++i) {
+    lua_rawgeti(lua, index, (lua_Integer)i);
+    if (lua_isnumber(lua, -1)) {
+      current = (vectis_http_retry_conditions)lua_tointeger(lua, -1);
+    } else {
+      if (vectis_lua_curl_retry_condition_name(lua, luaL_checkstring(lua, -1),
+                                               &current) != 0) {
+        lua_pop(lua, 1);
+        return 1;
+      }
+    }
+    conditions |= current;
+    lua_pop(lua, 1);
+  }
+  *out = conditions;
+  return 0;
+}
+
+static int
+vectis_lua_curl_retry_config_field(lua_State *lua, int index, const char *field,
+                                   vectis_http_retry_conditions fallback,
+                                   vectis_http_retry_conditions *out) {
+  int status;
+
+  lua_getfield(lua, index, field);
+  status = vectis_lua_curl_retry_conditions_at(lua, -1, fallback, out);
+  lua_pop(lua, 1);
+  return status;
+}
+
+static int
+vectis_lua_curl_parse_retry_config(lua_State *lua, int option_index,
+                                   vectis_lua_curl_retry_config *config) {
+  long value;
+  int retry_index;
+
+  vectis_lua_curl_retry_config_init(config);
+  value = vectis_lua_table_long(lua, option_index, "retry_max_attempts", 0L);
+  if (value > 0L) {
+    config->max_attempts = (unsigned)value;
+  }
+  value =
+      vectis_lua_table_long(lua, option_index, "retry_initial_delay_ms", -1L);
+  if (value >= 0L) {
+    config->initial_delay_ms = value;
+  }
+  value = vectis_lua_table_long(lua, option_index, "retry_max_delay_ms", -1L);
+  if (value >= 0L) {
+    config->max_delay_ms = value;
+  }
+  if (vectis_lua_curl_retry_config_field(lua, option_index, "retry_conditions",
+                                         config->conditions,
+                                         &config->conditions) != 0) {
+    return 1;
+  }
+
+  lua_getfield(lua, option_index, "retry");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+  } else if (lua_isboolean(lua, -1)) {
+    if (!lua_toboolean(lua, -1)) {
+      config->max_attempts = 1u;
+      config->conditions = VECTIS_HTTP_RETRY_NONE;
+    }
+    lua_pop(lua, 1);
+  } else if (lua_istable(lua, -1)) {
+    retry_index = lua_gettop(lua);
+    value = vectis_lua_table_long(lua, retry_index, "max_attempts", 0L);
+    if (value > 0L) {
+      config->max_attempts = (unsigned)value;
+    }
+    value = vectis_lua_table_long(lua, retry_index, "initial_delay_ms", -1L);
+    if (value >= 0L) {
+      config->initial_delay_ms = value;
+    }
+    value = vectis_lua_table_long(lua, retry_index, "max_delay_ms", -1L);
+    if (value >= 0L) {
+      config->max_delay_ms = value;
+    }
+    if (vectis_lua_curl_retry_config_field(lua, retry_index, "conditions",
+                                           config->conditions,
+                                           &config->conditions) != 0) {
+      lua_pop(lua, 1);
+      return 1;
+    }
+    lua_pop(lua, 1);
+  } else {
+    return luaL_error(lua, "curl retry must be a table or false");
+  }
+
+  if (config->initial_delay_ms < 0L || config->max_delay_ms < 0L) {
+    return luaL_error(lua, "curl retry delays must be non-negative");
+  }
+  if (config->conditions == VECTIS_HTTP_RETRY_NONE) {
+    config->max_attempts = 1u;
+  }
+  return 0;
+}
+
+static int
+vectis_lua_curl_retry_status(long status_code,
+                             vectis_http_retry_conditions conditions) {
+  if ((conditions & VECTIS_HTTP_RETRY_429) != 0u && status_code == 429L) {
+    return 1;
+  }
+  return (conditions & VECTIS_HTTP_RETRY_5XX) != 0u && status_code >= 500L &&
+         status_code <= 599L;
+}
+
+static int vectis_lua_curl_retry_code(CURLcode code,
+                                      vectis_http_retry_conditions conditions) {
+  return code != CURLE_OK && (conditions & VECTIS_HTTP_RETRY_TRANSPORT) != 0u;
+}
+
+static void
+vectis_lua_curl_retry_delay_next(const vectis_lua_curl_retry_config *config,
+                                 long *delay_ms) {
+  if (*delay_ms <= 0L) {
+    return;
+  }
+  if (*delay_ms > LONG_MAX / 2L) {
+    if (config->max_delay_ms > 0L) {
+      *delay_ms = config->max_delay_ms;
+    }
+    return;
+  }
+  *delay_ms *= 2L;
+  if (config->max_delay_ms > 0L && *delay_ms > config->max_delay_ms) {
+    *delay_ms = config->max_delay_ms;
+  }
+}
+
+static void vectis_lua_curl_buffer_reset(vectis_lua_curl_buffer *buffer,
+                                         size_t limit) {
+  vectis_lua_curl_buffer_free(buffer);
+  memset(buffer, 0, sizeof(*buffer));
+  buffer->limit = limit;
+}
+
 static void vectis_lua_curl_push_result(lua_State *lua, CURLcode code,
                                         CURL *curl,
                                         const vectis_lua_curl_buffer *body,
                                         const vectis_lua_curl_buffer *headers,
-                                        const char *error_buffer) {
+                                        const char *error_buffer,
+                                        unsigned attempts) {
   long response_code;
   char *effective_url;
 
@@ -5092,6 +5307,8 @@ static void vectis_lua_curl_push_result(lua_State *lua, CURLcode code,
   lua_setfield(lua, -2, "code_name");
   lua_pushinteger(lua, (lua_Integer)response_code);
   lua_setfield(lua, -2, "status");
+  lua_pushinteger(lua, (lua_Integer)attempts);
+  lua_setfield(lua, -2, "attempts");
   lua_pushlstring(lua, body->data != NULL ? body->data : "", body->size);
   lua_setfield(lua, -2, "body");
   lua_pushlstring(lua, headers->data != NULL ? headers->data : "",
@@ -5123,6 +5340,7 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   vectis_lua_curl_buffer response;
   vectis_lua_curl_buffer response_headers;
   vectis_lua_curl_stream_response stream_response;
+  vectis_lua_curl_retry_config retry_config;
   lonejson_curl_parse json_response;
   lonejson_curl_upload json_upload;
   lonejson_schema_view request_schema;
@@ -5136,6 +5354,9 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   lonejson_error json_error;
   lonejson_status json_status;
   long timeout_ms;
+  long retry_delay_ms;
+  long response_code;
+  unsigned attempt;
   int is_smtp;
   int is_upload;
   int request_schema_index;
@@ -5175,6 +5396,10 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   response_record_index = 0;
   has_streaming_upload = 0;
   has_streaming_response = 0;
+  vectis_lua_curl_retry_config_init(&retry_config);
+  if (vectis_lua_curl_parse_retry_config(lua, 1, &retry_config) != 0) {
+    return 1;
+  }
   (void)pthread_once(&vectis_lua_curl_once, vectis_lua_curl_global_init_once);
   curl = curl_easy_init();
   if (curl == NULL) {
@@ -5264,6 +5489,17 @@ static int vectis_lua_curl_perform(lua_State *lua) {
     (void)curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, vectis_lua_curl_write);
     (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
   }
+  if (retry_config.max_attempts > 1u && has_streaming_response) {
+    curl_easy_cleanup(curl);
+    lonejson_curl_parse_cleanup(&json_response);
+    if (has_streaming_upload) {
+      lonejson_curl_upload_cleanup(&json_upload);
+    }
+    vectis_lua_curl_buffer_free(&body);
+    vectis_lua_curl_buffer_free(&response);
+    vectis_lua_curl_buffer_free(&response_headers);
+    return luaL_error(lua, "curl streaming responses cannot be retried safely");
+  }
   (void)curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, vectis_lua_curl_write);
   (void)curl_easy_setopt(curl, CURLOPT_HEADERDATA, &response_headers);
   (void)curl_easy_setopt(
@@ -5313,7 +5549,55 @@ static int vectis_lua_curl_perform(lua_State *lua) {
                                is_smtp || (is_upload && !has_streaming_upload),
                                has_streaming_upload, &json_upload);
 
-  code = curl_easy_perform(curl);
+  retry_delay_ms = retry_config.initial_delay_ms;
+  if (retry_config.max_delay_ms > 0L &&
+      retry_delay_ms > retry_config.max_delay_ms) {
+    retry_delay_ms = retry_config.max_delay_ms;
+  }
+  attempt = 1u;
+  for (;;) {
+    code = curl_easy_perform(curl);
+    (void)curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+    if (attempt >= retry_config.max_attempts) {
+      break;
+    }
+    if (!response.limit_exceeded && !response_headers.limit_exceeded &&
+        vectis_lua_curl_retry_code(code, retry_config.conditions)) {
+      vectis_lua_curl_buffer_reset(&response,
+                                   VECTIS_LUA_CURL_RESPONSE_BODY_LIMIT);
+      vectis_lua_curl_buffer_reset(&response_headers,
+                                   VECTIS_LUA_CURL_RESPONSE_HEADER_LIMIT);
+    } else if (code == CURLE_OK &&
+               vectis_lua_curl_retry_status(response_code,
+                                            retry_config.conditions)) {
+      vectis_lua_curl_buffer_reset(&response,
+                                   VECTIS_LUA_CURL_RESPONSE_BODY_LIMIT);
+      vectis_lua_curl_buffer_reset(&response_headers,
+                                   VECTIS_LUA_CURL_RESPONSE_HEADER_LIMIT);
+    } else {
+      break;
+    }
+    body.offset = 0u;
+    if (has_streaming_upload) {
+      lonejson_curl_upload_cleanup(&json_upload);
+      memset(&json_upload, 0, sizeof(json_upload));
+      json_status =
+          lonejson_curl_upload_init(&json_upload, request_schema.runtime,
+                                    request_schema.map, request_record.record);
+      if (json_status != LONEJSON_STATUS_OK) {
+        curl_slist_free_all(headers);
+        curl_slist_free_all(recipients);
+        curl_easy_cleanup(curl);
+        vectis_lua_curl_buffer_free(&body);
+        vectis_lua_curl_buffer_free(&response);
+        vectis_lua_curl_buffer_free(&response_headers);
+        return luaL_error(lua, "lonejson curl upload retry init failed");
+      }
+    }
+    vectis_lua_curl_sleep_ms(retry_delay_ms);
+    vectis_lua_curl_retry_delay_next(&retry_config, &retry_delay_ms);
+    ++attempt;
+  }
   if (stream_response.limit_exceeded) {
     response.limit_exceeded = 1;
   }
@@ -5323,7 +5607,7 @@ static int vectis_lua_curl_perform(lua_State *lua) {
     json_status = LONEJSON_STATUS_OK;
   }
   vectis_lua_curl_push_result(lua, code, curl, &response, &response_headers,
-                              error_buffer);
+                              error_buffer, attempt);
   if (has_streaming_response) {
     if (code == CURLE_OK && json_status == LONEJSON_STATUS_OK) {
       if (lonejson_lua_record_to_table(lua, response_record_index) == 0) {

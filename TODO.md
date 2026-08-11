@@ -203,7 +203,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Support SFTP file retrieval and storage through curl where it is sufficient.
 - [x] Expose timeout, header, TLS, client certificate, proxy, redirect, and streaming-response configuration in C.
 - [x] Expose retry configuration in C.
-- [ ] Expose timeout, retry, header, TLS, client certificate, proxy, redirect, and streaming configuration in Lua.
+- [x] Expose timeout, retry, header, TLS, client certificate, proxy, redirect, and streaming configuration in Lua.
 - [x] Add integration tests for SFTP operations.
 - [x] Add integration tests for HTTP(S) downstream calls against a controlled local downstream server.
 

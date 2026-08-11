@@ -54,6 +54,12 @@ foreach(required_text IN ITEMS
     "CURLOPT_SSL_VERIFYHOST"
     "VECTIS_LUA_CURL_RESPONSE_BODY_LIMIT"
     "VECTIS_LUA_CURL_RESPONSE_HEADER_LIMIT"
+    "vectis_lua_curl_parse_retry_config"
+    "vectis_lua_curl_retry_status"
+    "vectis_lua_curl_retry_code"
+    "VECTIS_HTTP_RETRY_TRANSPORT"
+    "VECTIS_HTTP_RETRY_429"
+    "VECTIS_HTTP_RETRY_5XX"
     "vectis_lua_curl_stream_response_write"
     "lonejson_curl_read_callback"
     "lonejson_curl_write_callback"
@@ -95,6 +101,8 @@ foreach(required_text IN ITEMS
     "`smtp`"
     "`ssh_private_key`, `ssh_public_key`, `ssh_known_hosts`"
     "`upload`"
+    "`retry`"
+    "`retry_max_attempts`, `retry_initial_delay_ms`, `retry_max_delay_ms`"
     "lonejson_curl_read_callback()"
     "lonejson_curl_write_callback()")
   string(FIND "${curl_doc_text}" "${required_text}" required_text_index)

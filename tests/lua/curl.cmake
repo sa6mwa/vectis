@@ -48,6 +48,44 @@ assert(streamed.ok == true, streamed.error)
 assert(streamed.json.ok == true)
 assert(streamed.response_json.message == "streamed")
 
+local retry_transport = curl.perform({
+  url = "http://127.0.0.1:1/",
+  protocols = "http",
+  timeout_ms = 200,
+  connect_timeout_ms = 50,
+  no_signal = true,
+  retry = {
+    max_attempts = 2,
+    initial_delay_ms = 0,
+    max_delay_ms = 0,
+    conditions = {"transport"},
+  },
+})
+assert(retry_transport.ok == false)
+assert(retry_transport.attempts == 2)
+assert(type(retry_transport.error) == "string")
+
+local no_retry_transport = curl.perform({
+  url = "http://127.0.0.1:1/",
+  protocols = "http",
+  timeout_ms = 200,
+  connect_timeout_ms = 50,
+  no_signal = true,
+  retry = false,
+})
+assert(no_retry_transport.ok == false)
+assert(no_retry_transport.attempts == 1)
+
+local stream_retry_ok, stream_retry_err = pcall(curl.stream_json, {
+  url = json_url,
+  protocols = "file",
+  response = {schema = response_schema},
+  retry = {max_attempts = 2},
+})
+assert(stream_retry_ok == false)
+assert(tostring(stream_retry_err):find(
+    "curl streaming responses cannot be retried safely", 1, true))
+
 local smtp_ok, smtp_err = pcall(curl.perform, {
   url = "smtp://127.0.0.1:9",
   smtp = {mail_from = "from@example.test", rcpt = {"to@example.test"}},
