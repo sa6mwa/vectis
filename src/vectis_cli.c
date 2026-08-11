@@ -75,6 +75,7 @@ typedef struct vectis_lua_server_auth_json_route {
   char *body;
   char *content_type;
   char *purpose;
+  int status_code;
   vectis_lua_server_native_auth *auth;
   struct vectis_lua_server_auth_json_route *next;
 } vectis_lua_server_auth_json_route;
@@ -4351,8 +4352,8 @@ vectis_lua_server_auth_json_dispatch(vectis_app *app, vectis_request *request,
     status =
         vectis_response_header(response, "cache-control", "no-store", error);
     if (status == VECTIS_OK) {
-      status = vectis_response_text(response, 200, route->content_type,
-                                    route->body, error);
+      status = vectis_response_text(response, route->status_code,
+                                    route->content_type, route->body, error);
     }
     break;
   case VECTIS_AUTH_REQUIRED:
@@ -4490,6 +4491,8 @@ static int vectis_lua_server_auth_json(lua_State *lua) {
   const char *path;
   const char *body;
   const char *content_type;
+  vectis_http_methods methods;
+  size_t status_code;
 
   server = vectis_lua_check_server(lua, 1);
   app = vectis_lua_server_app(lua, 1);
@@ -4506,6 +4509,16 @@ static int vectis_lua_server_auth_json(lua_State *lua) {
   content_type = vectis_lua_table_string(lua, 2, "content_type");
   if (content_type == NULL) {
     content_type = "application/json";
+  }
+  methods = vectis_lua_route_methods(lua, 2, VECTIS_HTTP_METHODS_GET,
+                                     "auth JSON route");
+  status_code = vectis_lua_table_size(lua, 2, "status_code", 0u);
+  if (status_code == 0u) {
+    status_code = vectis_lua_table_size(lua, 2, "status", 200u);
+  }
+  if (status_code < 100u || status_code > 599u) {
+    return luaL_error(lua,
+                      "auth JSON route status must be between 100 and 599");
   }
 
   lua_getfield(lua, 2, "auth");
@@ -4532,6 +4545,7 @@ static int vectis_lua_server_auth_json(lua_State *lua) {
   route_data->body = vectis_cli_strdup(body);
   route_data->content_type = vectis_cli_strdup(content_type);
   route_data->purpose = vectis_cli_strdup(auth->purpose);
+  route_data->status_code = (int)status_code;
   route_data->auth = auth;
   if (route_data->body == NULL || route_data->content_type == NULL ||
       route_data->purpose == NULL) {
@@ -4541,8 +4555,8 @@ static int vectis_lua_server_auth_json(lua_State *lua) {
                                       "failed to copy auth JSON route config");
   }
 
-  route = vectis_route(VECTIS_HTTP_GET, path,
-                       vectis_lua_server_auth_json_dispatch, route_data);
+  route = vectis_route_methods(
+      methods, path, vectis_lua_server_auth_json_dispatch, route_data);
   vectis_error_clear(&error);
   status = app->route(app, &route, &error);
   if (status != VECTIS_OK) {

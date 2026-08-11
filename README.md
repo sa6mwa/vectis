@@ -371,8 +371,8 @@ Implemented and covered by local tests:
   cert/key pair validation.
 - Lua manual TLS server configuration supports both combined certificate/key
   bundles and split certificate/key paths.
-- Lua server helpers include C-owned fixed JSON endpoints with explicit method
-  and status configuration for small API/status routes.
+- Lua server helpers include C-owned fixed guarded and unguarded JSON endpoints
+  with explicit method and status configuration for small API/status routes.
 - Optional lockd app integration and managed consumer-service helpers.
 - Lua runner, shebang/script execution, and Linux packed-script support.
 - Bundled CAI, libmdf, and softline Lua modules for AI/tool workflows,

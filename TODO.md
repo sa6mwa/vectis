@@ -262,6 +262,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Support shebang execution through `#!/usr/local/bin/vectis`.
 - [ ] Provide a friendly REST API DX for defining routes, handlers, middleware-like hooks, JSON responses, lockd operations, and downstream calls.
 - [x] Add a C-owned Lua `server:json()` helper for fixed unguarded JSON endpoints in packed API service scenarios, including explicit method and status configuration.
+- [x] Add matching method and status configuration to the C-owned Lua `server:auth_json()` helper for fixed guarded API endpoints.
 - [ ] Add Lua examples for API server, lockd document workflow, queue producer, queue consumer, downstream API call, SFTP transfer, and SSH command execution.
 - [ ] Add Lua unit and end-to-end tests.
 

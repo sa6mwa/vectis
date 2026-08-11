@@ -230,8 +230,9 @@ Required Lua concepts:
 - `server:json({path=..., method=..., status=..., body=...,
   cache_control=...})` for small C-owned unguarded JSON endpoints in service
   scenarios.
-- `server:auth_json({path=..., auth={kind="native", credentials_path=...},
-  body=...})` for small C-owned guarded JSON endpoints in service scenarios.
+- `server:auth_json({path=..., method=..., status=...,
+  auth={kind="native", credentials_path=...}, body=...})` for small C-owned
+  guarded JSON endpoints in service scenarios.
 - `server:consumer_service({ ... })` is the Lua registration point for
   same-process lockd consumer service wiring. It creates a C-owned
   `vectis_consumer_service` receiver around liblockdc and starts it by default.

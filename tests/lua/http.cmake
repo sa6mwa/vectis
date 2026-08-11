@@ -3,12 +3,14 @@ set(download_source "${WORK_DIR}/vectis-http-download-source.txt")
 set(download_target "${WORK_DIR}/vectis-http-download-target.txt")
 set(upload_source "${WORK_DIR}/vectis-http-upload-source.txt")
 set(upload_target "${WORK_DIR}/vectis-http-upload-target.txt")
+set(auth_path "${WORK_DIR}/vectis-http-auth.json")
 set(script "${WORK_DIR}/vectis-http-smoke.lua")
 
 file(WRITE "${json_file}" "{\"ok\":true,\"message\":\"vectis-http\"}\n")
 file(WRITE "${download_source}" "downloaded through curl file sink\n")
 file(WRITE "${upload_source}" "uploaded through curl file source\n")
-file(REMOVE "${download_target}" "${upload_target}")
+file(REMOVE "${download_target}" "${upload_target}" "${auth_path}"
+            "${auth_path}.lock")
 
 file(WRITE "${script}" [[
 local vectis = require("vectis")
@@ -19,6 +21,24 @@ local download_url = "file://" .. assert(arg[2])
 local download_path = assert(arg[3])
 local upload_path = assert(arg[4])
 local upload_url = "file://" .. assert(arg[5])
+local auth_path = assert(arg[6])
+
+local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local function base64(data)
+  local out = {}
+  for i = 1, #data, 3 do
+    local a = data:byte(i) or 0
+    local b = data:byte(i + 1) or 0
+    local c = data:byte(i + 2) or 0
+    local n = a * 65536 + b * 256 + c
+    local pad = (#data - i == 0) and 2 or ((#data - i == 1) and 1 or 0)
+    out[#out + 1] = b64chars:sub(math.floor(n / 262144) % 64 + 1, math.floor(n / 262144) % 64 + 1)
+    out[#out + 1] = b64chars:sub(math.floor(n / 4096) % 64 + 1, math.floor(n / 4096) % 64 + 1)
+    out[#out + 1] = pad >= 2 and "=" or b64chars:sub(math.floor(n / 64) % 64 + 1, math.floor(n / 64) % 64 + 1)
+    out[#out + 1] = pad >= 1 and "=" or b64chars:sub(n % 64 + 1, n % 64 + 1)
+  end
+  return table.concat(out)
+end
 
 assert(type(vectis.http) == "table")
 assert(type(vectis.http.request) == "function")
@@ -92,6 +112,18 @@ local api_server = assert(vectis.server.new({
   bind = "127.0.0.1",
   port = 28484,
 }))
+assert(vectis.auth.store_init({credentials_path = auth_path}) == true)
+assert(vectis.auth.user_add({
+  credentials_path = auth_path,
+  username = "http-user",
+  password = "http-password",
+}).username == "http-user")
+local http_key = assert(vectis.auth.webdav_key({
+  credentials_path = auth_path,
+  username = "http-user",
+  password = "http-password",
+}))
+local http_basic_auth = "Basic " .. base64(http_key.client_id .. ":" .. http_key.client_secret)
 assert(api_server:json({
   path = "/status",
   body = '{"ok":true,"surface":"json"}\n',
@@ -102,6 +134,18 @@ assert(api_server:json({
   method = "POST",
   status = 201,
   body = '{"ok":true,"created":true}\n',
+}) == true)
+assert(api_server:auth_json({
+  path = "/guarded-created",
+  method = "POST",
+  status_code = 202,
+  auth = {
+    kind = "native",
+    credentials_path = auth_path,
+    realm = "http",
+    purpose = "webdav",
+  },
+  body = '{"ok":true,"guarded":true}\n',
 }) == true)
 assert(api_server:start() == true)
 local api_response
@@ -132,6 +176,30 @@ assert(created_response.ok == true,
        created_response.error and created_response.error.message)
 assert(created_response.status == 201)
 assert(created_response.body == '{"ok":true,"created":true}\n')
+local anonymous_guarded = vectis.http.request({
+  url = "http://127.0.0.1:28484/guarded-created",
+  method = "POST",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(anonymous_guarded.status == 401)
+assert(anonymous_guarded.headers:lower():find('www-authenticate: basic realm="http"', 1, true))
+local guarded_created = vectis.http.request({
+  url = "http://127.0.0.1:28484/guarded-created",
+  method = "POST",
+  headers = {Authorization = http_basic_auth},
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(guarded_created.ok == true,
+       guarded_created.error and guarded_created.error.message)
+assert(guarded_created.status == 202)
+assert(guarded_created.body == '{"ok":true,"guarded":true}\n')
+assert(guarded_created.headers:lower():find("cache-control: no-store", 1, true))
 assert(api_server:stop() == true)
 api_server:close()
 
@@ -151,7 +219,7 @@ assert(streamed.response_json.message == "vectis-http")
 
 execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${json_file}"
                         "${download_source}" "${download_target}"
-                        "${upload_source}" "${upload_target}"
+                        "${upload_source}" "${upload_target}" "${auth_path}"
                 RESULT_VARIABLE http_result
                 OUTPUT_VARIABLE http_stdout
                 ERROR_VARIABLE http_stderr)
