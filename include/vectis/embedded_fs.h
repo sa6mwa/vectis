@@ -60,7 +60,10 @@ typedef struct vectis_embedded_fs_entry {
   unsigned mode;
 } vectis_embedded_fs_entry;
 
-/* Extraction target. The output directory is created when needed. */
+/* Extraction target. The output directory is created when needed. Extracted
+ * files preserve embedded read/execute intent and remain owner-writable for
+ * mutable docroot workflows.
+ */
 typedef struct vectis_embedded_fs_extract_config {
   const char *output_dir;
   vectis_embedded_fs_extract_policy policy;

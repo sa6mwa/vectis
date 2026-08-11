@@ -371,6 +371,10 @@ int main(void) {
   (void)snprintf(extracted, sizeof(extracted), "%s/index.html", temp);
   read_file(extracted, buffer, sizeof(buffer));
   expect(strcmp(buffer, "hello\n") == 0, "extracted index content matches");
+  (void)snprintf(extracted_app, sizeof(extracted_app), "%s/assets/app.txt",
+                 temp);
+  expect(stat(extracted_app, &st) == 0 && (st.st_mode & 0777u) == 0644u,
+         "extract applies manifest file mode with owner write");
 
   status = vectis_embedded_fs_extract(fs, &extract, &error);
   expect(status == VECTIS_ERR_CONFLICT,
@@ -384,8 +388,6 @@ int main(void) {
   extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_VERIFY;
   status = vectis_embedded_fs_extract(fs, &extract, &error);
   expect(status == VECTIS_OK, "verify extract policy accepts matching files");
-  (void)snprintf(extracted_app, sizeof(extracted_app), "%s/assets/app.txt",
-                 temp);
   write_file(extracted_app, "mutated\n");
   status = vectis_embedded_fs_extract(fs, &extract, &error);
   expect(status == VECTIS_ERR_CONFLICT,
@@ -396,6 +398,8 @@ int main(void) {
          "repair extract policy restores mismatched files");
   read_file(extracted_app, buffer, sizeof(buffer));
   expect(strcmp(buffer, "app\n") == 0, "repair restored app content");
+  expect(stat(extracted_app, &st) == 0 && (st.st_mode & 0777u) == 0644u,
+         "repair reapplies manifest file mode with owner write");
   (void)snprintf(user_file, sizeof(user_file), "%s/user-created.txt", temp);
   write_file(user_file, "user\n");
   (void)remove(extracted_app);

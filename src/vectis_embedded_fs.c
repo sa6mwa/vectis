@@ -197,6 +197,10 @@ static int vectis_embedded_mode_valid(unsigned mode) {
   return mode == 0444u || mode == 0555u;
 }
 
+static mode_t vectis_embedded_extract_mode(unsigned mode) {
+  return (mode_t)(mode | 0200u);
+}
+
 static int vectis_embedded_path_valid(const char *path) {
   const char *segment;
   size_t segment_size;
@@ -890,6 +894,13 @@ vectis_embedded_write_file(const char *path,
     free(tmp_path);
     vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
                                "failed to write embedded asset: %s", path);
+    return VECTIS_ERR_INVALID;
+  }
+  if (chmod(tmp_path, vectis_embedded_extract_mode(entry->mode)) != 0) {
+    (void)remove(tmp_path);
+    free(tmp_path);
+    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                               "failed to set embedded asset mode: %s", path);
     return VECTIS_ERR_INVALID;
   }
   if (rename(tmp_path, path) != 0) {

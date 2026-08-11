@@ -272,6 +272,8 @@ Streaming semantics:
 - `verify` extraction policy checks existing files without writing.
 - `repair` extraction policy restores missing or hash-mismatched embedded files
   without pruning unrelated files.
+- Disk extraction preserves embedded read/execute intent but adds owner write
+  permission so the extracted docroot remains mutable through WebDAV.
 - A failed extraction must leave actionable diagnostics and must not silently
   publish partial files as complete.
 
