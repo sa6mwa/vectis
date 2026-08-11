@@ -231,6 +231,15 @@ local registered, err = server:consumer_service({
   queue = "packed-consumer",
   owner = "packed-consumer",
   start = false,
+  on_message = function() end,
+})
+assert(registered == nil)
+assert(err.status == vectis.ERR_INVALID)
+assert(err.message:match("direct Lua callbacks are not supported"))
+registered, err = server:consumer_service({
+  queue = "packed-consumer",
+  owner = "packed-consumer",
+  start = false,
   handler = {
     kind = "webdav_marker",
     cache_dir = cache_dir,
@@ -290,6 +299,10 @@ string(REPLACE
 string(REPLACE
        "assert(vectis.embedded.read(\"/assets/app.txt\") == \"generic embedded asset\\n\")"
        "assert(vectis.embedded.read(\"/assets/app.txt\") == \"generic embedded asset\\n\")\nassert(vectis.embedded.read(\"/assets/app-link.txt\") == \"generic embedded asset\\n\")\nassert(vectis.embedded.read(\"/assets/manifest-link.txt\") == \"generic embedded asset\\n\")"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "assert(app_txt_sha:match(\"^[0-9a-f]+$\"))"
+       "assert(app_txt_sha:match(\"^[0-9a-f]+$\"))\nassert(vectis.embedded.stat(\"/assets/app.txt\").etag == \"\\\"\" .. app_txt_sha .. \"\\\"\")"
        asset_script_body "${asset_script_body}")
 string(REPLACE
        "assert(listed:match(\"/assets/app%.txt\"))"

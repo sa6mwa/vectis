@@ -202,7 +202,8 @@ API ownership:
 Required Lua concepts:
 
 - `vectis.embedded.has_assets()`
-- `vectis.embedded.stat(path)`
+- `vectis.embedded.stat(path)`, returning path, size, content type, SHA-256,
+  and the strong ETag used by the C static embedded responder when available.
 - `vectis.embedded.list(path)`
 - `vectis.embedded.read(path)`
 - `vectis.embedded.chunks(path, chunk_size)`
