@@ -38,6 +38,17 @@ void vectis_kore_request_free(struct http_request *req);
 void kore_parent_configure(int argc, char **argv);
 void kore_parent_teardown(void);
 
+#if defined(KORE_VECTIS_STATIC_RUNTIME)
+const struct kore_vectis_runtime_symbol kore_vectis_runtime_symbols[] = {
+    {"kore_parent_configure", (void *)kore_parent_configure},
+    {"kore_parent_teardown", (void *)kore_parent_teardown},
+    {"vectis_kore_route", (void *)vectis_kore_route},
+    {"vectis_kore_body_chunk", (void *)vectis_kore_body_chunk},
+    {"vectis_kore_request_free", (void *)vectis_kore_request_free}};
+const size_t kore_vectis_runtime_symbol_count =
+    sizeof(kore_vectis_runtime_symbols) / sizeof(kore_vectis_runtime_symbols[0]);
+#endif
+
 extern int skip_chroot;
 extern int skip_runas;
 extern u_int64_t worker_idle_timeout;

@@ -111,6 +111,24 @@ assert_kore_lonejson_contract() {
   assert_contains "$repo_root/scripts/verify-kore-patches.sh" 'LDFLAGS\+=-L\$\(LONEJSON_PATH\)/lib -llonejson'
 }
 
+assert_kore_static_runtime_contract() {
+  assert_contains "$repo_root/CMakeLists.txt" 'KORE_VECTIS_STATIC_RUNTIME'
+  assert_contains "$repo_root/src/vectis_kore_bridge.c" \
+    'kore_vectis_runtime_symbols'
+  assert_contains "$repo_root/src/vectis_kore_bridge.c" \
+    '"kore_parent_configure"'
+  assert_contains "$repo_root/src/vectis_kore_bridge.c" '"vectis_kore_route"'
+  assert_contains "$repo_root/vendor/kore/upstream/src/module.c" \
+    'kore_vectis_runtime_symbols'
+  if grep -RInE 'kore_landed|Landed static runtime|landed_runtime' \
+    "$repo_root/CMakeLists.txt" \
+    "$repo_root/src" \
+    "$repo_root/vendor/kore"; then
+    echo "Vectis Kore static runtime must not retain Landed symbol names" >&2
+    exit 1
+  fi
+}
+
 assert_lockdc_lua_runtime_contract() {
   assert_contains "$repo_root/CMakeLists.txt" 'lua/vectis/lockd\.lua'
   assert_contains "$repo_root/CMakeLists.txt" 'share/lockdc-source/src/lua/lockdc_lua\.c'
@@ -226,6 +244,7 @@ assert_contains "$repo_root/examples/CMakeLists.txt" 'Werror'
 assert_no_landed_test_assets
 assert_action_surface_contract
 assert_kore_lonejson_contract
+assert_kore_static_runtime_contract
 assert_lockdc_lua_runtime_contract
 assert_lql_lua_runtime_contract
 assert_luarocks_artifact_rejected
