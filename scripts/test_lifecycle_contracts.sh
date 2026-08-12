@@ -211,7 +211,7 @@ assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK mis
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK contains dependency source tree'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK contains LuaRocks artifacts'
 assert_contains "$repo_root/CMakeLists.txt" 'target_link_options\(vectis_bin PRIVATE -static -no-pie\)'
-assert_contains "$repo_root/CMakeLists.txt" 'set_property\(TARGET lockdc::static PROPERTY'
+assert_not_contains "$repo_root/CMakeLists.txt" 'set_property\(TARGET lockdc::static PROPERTY'
 assert_contains "$repo_root/scripts/verify_release_privacy.sh" 'Linux vectis binary is dynamically linked'
 assert_contains "$repo_root/scripts/verify_release_privacy.sh" 'Linux vectis binary has an ELF interpreter'
 assert_contains "$repo_root/scripts/verify_release_privacy.sh" 'Darwin vectis binary depends on a non-system dylib'
@@ -253,7 +253,7 @@ if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^libpid0_version=0\.4\.2$'; 
 fi
 for expected in \
   '^system_sha256=0bbb1cbaf60b0a94fb5a6b3756123088b45e2bef9e38079038f22e3c07febb2e$' \
-  '^liblockdc_sha256=ef73caef7f06e629d90495304ed263541e01ed5d8785410b45af8424cc2d90fb$' \
+  '^liblockdc_sha256=fcce40120a8e6c6990efdb4d54c427011619abb280a8ecbd4644b720eda7cbb8$' \
   '^lonejson_sha256=e04f80b907d92f7e38f825fbd339297e85372fc1ce110abb9a93715ee450ece3$' \
   '^pslog_sha256=7981ce7e60f6f1e144042e7a9192bb661472756ae34336fb0c2ed8316b31945f$' \
   '^cai_sha256=e344102fa5b46e8c05d67a5120ea0c74bf9ee8ad9ec0bc01e08ea5ccc1f1bdc9$' \

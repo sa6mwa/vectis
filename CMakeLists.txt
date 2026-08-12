@@ -52,7 +52,7 @@ set(VECTIS_TARGET_ID ""
     CACHE STRING "Release target identifier.")
 
 set(VECTIS_EXPECTED_SYSTEM_VERSION "0.9.0")
-set(VECTIS_EXPECTED_LOCKDC_VERSION "0.13.0")
+set(VECTIS_EXPECTED_LOCKDC_VERSION "0.13.1")
 set(VECTIS_EXPECTED_LONEJSON_VERSION "0.42.0")
 set(VECTIS_EXPECTED_PSLOG_VERSION "0.9.0")
 set(VECTIS_EXPECTED_CAI_VERSION "0.3.0")
@@ -303,36 +303,6 @@ find_package(softline CONFIG REQUIRED PATHS "${softline_DIR}" NO_DEFAULT_PATH)
 if(TARGET cai::cai_static AND TARGET lonejson::lonejson_static)
   set_property(TARGET cai::cai_static PROPERTY
     INTERFACE_LINK_LIBRARIES "CURL::libcurl;Threads::Threads;OpenSSL::Crypto;lonejson::lonejson_static")
-endif()
-
-if(TARGET lockdc::static
-   AND TARGET CURL::libcurl
-   AND TARGET pslog::pslog_static
-   AND TARGET nghttp2::nghttp2
-   AND TARGET Libssh2::libssh2
-   AND TARGET OpenSSL::SSL
-   AND TARGET OpenSSL::Crypto
-   AND TARGET ZLIB::ZLIB
-   AND TARGET lonejson::lonejson_static
-   AND TARGET liblql::lql_static)
-  set(vectis_lockdc_static_links
-    CURL::libcurl
-    pslog::pslog_static
-    nghttp2::nghttp2
-    Libssh2::libssh2
-    OpenSSL::SSL
-    OpenSSL::Crypto
-    ZLIB::ZLIB
-    lonejson::lonejson_static
-    liblql::lql_static
-    Threads::Threads)
-  if(APPLE)
-    list(APPEND vectis_lockdc_static_links
-      "-framework CoreFoundation"
-      "-framework SystemConfiguration")
-  endif()
-  set_property(TARGET lockdc::static PROPERTY
-    INTERFACE_LINK_LIBRARIES "${vectis_lockdc_static_links}")
 endif()
 
 if(NOT VECTIS_BUILD_STATIC AND NOT VECTIS_BUILD_SHARED)
