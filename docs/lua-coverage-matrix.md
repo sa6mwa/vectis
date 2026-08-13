@@ -30,7 +30,7 @@ Columns:
 | dep:cai | CAI Lua module | yes | planned | yes | no | planned | Raw module is preloaded; Vectis service integration waits on CAI SDK stabilization. |
 | dep:libmdf | libmdf Lua module | yes | planned | yes | no | n/a | Raw module is preloaded; Agent Smith / terminal DX helpers are future work. |
 | dep:softline | softline Lua module | yes | planned | yes | no | n/a | Raw module is preloaded; higher-level prompt/terminal helpers are future work. |
-| dep:curl | libcurl Lua facade | yes | partial | yes | yes | planned | `curl` plus `vectis.http`; generic protocols are available through option tables. |
+| dep:curl | libcurl Lua facade | yes | partial | yes | yes | planned | `curl`, `vectis.http`, and `vectis.webdav`; generic protocols are available through option tables. |
 | dep:openssl | OpenSSL | planned | partial | yes | yes | n/a | `vectis.cert` exists; raw-but-narrow OpenSSL Lua facade is missing. |
 | dep:libssh2 | libssh2 | planned | partial | yes | no | n/a | `vectis.ssh.exec` exists; raw sessions, channels, SCP, and deeper SFTP are missing. |
 | dep:libxml2 | libxml2/XML | partial | partial | yes | no | n/a | `vectis.xml` exposes XML-to-LoneJSON parsing; raw DOM/libxml2 and XML serialization remain missing. |
@@ -51,7 +51,7 @@ Columns:
 | workflow:routes-streaming | Request/response streaming route helpers | n/a | planned | no | no | n/a | Must preserve real streaming, spooling, and file-backed naming. |
 | workflow:static-assets | Static files and embedded assets | n/a | yes | yes | yes | n/a | Disk, embedded read-only, extract, and packed scenarios exist. |
 | workflow:webdav-server | WebDAV server mounts | n/a | partial | yes | yes | n/a | Packed embedded-site flow exists; ordinary mutable/read-only Lua app mounts need fuller DX. |
-| workflow:webdav-client | WebDAV client helpers | planned | planned | no | no | n/a | Use curl manually today; explicit PROPFIND/MKCOL/COPY/MOVE helpers are missing. |
+| workflow:webdav-client | WebDAV client helpers | yes | yes | yes | yes | n/a | `vectis.webdav` wraps curl for PROPFIND, MKCOL, GET, PUT, COPY, MOVE, DELETE, auth/depth/destination headers, structured errors, and file-backed transfer. |
 | workflow:auth | Native auth, OAuth2/OIDC, WebDAV keys | n/a | partial | yes | yes | planned | Core functions/routes exist; high-level Lua admin/login flow needs polish. |
 | workflow:certs | Certificate/key/CSR/CA workflows | n/a | partial | yes | yes | n/a | Bundle validation/generation exists; CSR/private key/full CA workflow coverage should be completed. |
 | workflow:http-client | Downstream HTTP client | yes | partial | yes | yes | planned | JSON helpers exist; simple non-JSON verbs, form/multipart, richer file helpers remain. |
