@@ -247,6 +247,14 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 
 ## Area 12: Lua Runtime and Framework
 
+The `vectis` binary is a primary product surface, not a demo runner for
+`libvectis`. Lua coverage must therefore be first-class: every major Vectis C
+SDK workflow and every bundled dependency that is useful from application code
+must be reachable from Lua either as a thin raw dependency facade, a
+Vectis-owned workflow/DX helper, or both. Any intentionally C-only surface must
+be documented with a concrete reason such as unsafe callback lifetime,
+allocator/`FILE *` ownership, or an embedding-only concern.
+
 - [x] Reserve Lua-facing runtime concerns in the TODO contract and API design.
 - [x] Add a `vectis` executable that embeds Lua.
 - [x] Make the `vectis` executable build depend on the Vectis-provisioned Lua 5.5 static library rather than a host Lua installation.
@@ -255,12 +263,32 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Configure Lua package paths so bundled/native Vectis modules load without user setup.
 - [x] Provide the first statically preloaded `require("vectis")` facade for the embedded Lua runner.
 - [ ] Expand `require("vectis")` into the full high-level framework facade.
+- [ ] Add a Lua coverage matrix under `docs/` that tracks every Vectis C SDK workflow and bundled dependency facade as `raw`, `vectis DX`, `tested`, `packed-tested`, `live-tested`, or `intentionally C-only`.
+- [ ] Add a lifecycle contract that fails when a bundled dependency or Vectis-owned C workflow is added without an explicit Lua coverage-matrix entry.
+- [ ] Ensure the `vectis` Lua facade exposes structured status/error objects consistently across all Vectis-owned Lua helpers, mirroring C status, source, timeout, ownership, and cleanup conventions.
 - [x] Integrate existing Lua rocks/source archives for lockdc, pslog, liblql, and dependency Lua modules from pinned dependency sources.
 - [x] Build lockdc, pslog, and Vectis-owned Lua modules against the provisioned Lua 5.5 ABI.
 - [x] Register bundled Lua modules statically through `package.preload` in the `vectis` binary.
+- [ ] Statically preload every bundled raw Lua dependency facade that exists or is Vectis-owned: lockdc, lonejson, pslog, lql, cai, libmdf, softline, curl, opcua, XML/libxml2, DSV/CSV/TSV, OpenSSL, libssh2/SFTP/SCP, WebDAV client helpers, sus/whisper, audio/miniaudio, and future protocol facades.
+- [ ] For each raw Lua dependency facade, add a Vectis-owned helper only where it reduces real service workflow friction; do not replace or hide the upstream/raw module when complete API coverage matters.
 - [x] Add an OPC UA Lua client/foundation facade over the `cpkt-opcua` C89 facade and statically preload it in the `vectis` binary as `require("opcua")`.
 - [ ] Extend the OPC UA Lua facade to cover server-side APIs once Lua callback ownership and method/access-control contracts are defined.
 - [ ] Extend the OPC UA Lua facade to cover subscriptions, async client calls, browse callbacks, and PubSub with explicit Lua callback lifetime/error semantics.
+- [ ] Add Lua facades for XML parsing and serialization backed by the existing libxml2/lonejson C helpers, including streaming reader-backed XML-to-lonejson mapped-struct workflows and deterministic large-input tests.
+- [ ] Add Lua facades for DSV/CSV/TSV parsing and serialization backed by the existing C helpers, including row-iterator, typed-map, custom delimiter, strict/permissive width, comments, streaming, and spill-to-disk behavior.
+- [ ] Add Lua WebDAV client helpers for PROPFIND, MKCOL, GET, PUT, COPY, MOVE, DELETE, auth headers, depth handling, destination handling, structured errors, and file-backed transfer; keep server-side WebDAV helpers on `vectis.server`.
+- [ ] Expand Lua server-side WebDAV helpers beyond packed embedded-site scenarios so ordinary Lua apps can mount mutable disk docroots, read-only embedded docroots, callback auth providers, native auth providers, and WebDAV-key issuance flows without C glue.
+- [ ] Add a raw-but-narrow OpenSSL Lua facade for advanced certificate/key/CSR/signing/verification operations that are not covered by `vectis.cert`, while keeping Vectis certificate workflows as the default DX.
+- [ ] Expand `vectis.cert` Lua helpers to cover private key generation, CSR generation, self-signed bundles, CA bundles, CA-signed cert/key pairs, cert/key pair validation, CA validation, inspection, and reload/update hooks where Kore can support them.
+- [ ] Add broader Lua libssh2 facades for sessions, channels, SCP upload/download, SFTP open/read/write/list/stat/mkdir/remove/rename/chmod, host-key verification, known-hosts handling, and timeout/error contracts where curl-backed SFTP is insufficient.
+- [ ] Add Vectis-owned Lua SSH/SFTP/SCP workflow helpers on top of the raw libssh2 facade for common service operations, while preserving `vectis.http.sftp_*` for curl-backed transfers.
+- [ ] Add Lua MQTT publish and other libcurl protocol examples/tests where the generic `curl.perform()` facade is sufficient but workflow defaults improve DX.
+- [ ] Add Lua helpers for HTTP form bodies, multipart upload/download, file-backed responses, retry policies, proxy/TLS/client-cert defaults, and non-JSON simple `get`, `post`, `put`, `patch`, and `delete` helpers in addition to the current JSON helpers.
+- [ ] Add Lua route APIs for request handlers, middleware-like before/after hooks, path/query/header/body access, JSON/body streaming policies, file responses, redirects, SSE/streaming responses, static assets, WebDAV mounts, and auth-guarded route groups.
+- [ ] Add Lua facades for Vectis auth administration and login flows that cover user DB configuration, credential storage location, password/TOTP/email-token factor policy, OAuth2/OIDC flows, WebDAV key issuance/revocation, and callback/native provider registration.
+- [ ] Add Lua CAI integration helpers once the CAI C SDK surface stabilizes: borrow/create clients, inherit logging, stream request bodies into `cai_source`, stream CAI output to HTTP/lockd/file sinks, expose tool callbacks, and preserve CAI as the primary OpenAI SDK.
+- [ ] Add Lua facades or explicit TODO contracts for cpkt `sus`/whisper and cpkt audio/miniaudio, including streaming audio source/sink ownership, transcription/voice workflow shape, and deterministic smoke tests without requiring live external services.
+- [ ] Add Lua helpers for libmdf/softline where Vectis-owned terminal/agent workflows need higher-level DX; otherwise keep their raw modules available without wrapping.
 - [ ] Publish a separate `vectis` Lua rock for users who want to run the Vectis facade inside their own Lua 5.5 environment.
 - [x] Keep LuaRocks out of the `vectis` binary runtime and release artifacts.
 - [ ] Add Vectis-owned Lua modules for Kore, OpenSSL certificate workflows, and broader libssh2 coverage.
@@ -276,7 +304,9 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add a Lua example for SFTP transfer with deterministic local e2e coverage.
 - [x] Add a Lua example for long-running consumer service workflows with deterministic local e2e coverage.
 - [x] Add a Lua example for SSH command execution with deterministic local e2e coverage.
-- [ ] Add Lua unit and end-to-end tests.
+- [ ] Add Lua examples for XML, DSV/CSV/TSV, WebDAV client, mutable WebDAV server, raw OpenSSL, certificate management, SCP, raw SFTP, MQTT, OPC UA client, CAI, sus/whisper, and audio/miniaudio workflows as those facades land.
+- [ ] Add Lua unit and end-to-end tests for every Lua facade, including preload smoke, method-call DX, ownership/finalizer cleanup, structured error objects, packed execution, large-value streaming/spooling, and local deterministic protocol scenarios.
+- [ ] Add release/package verification that the `vectis` binary includes all statically preloaded Lua modules while C binary SDK artifacts do not accidentally ship Lua source/runtime/package-manager state.
 
 ## Area 13: Single Binary Packaging
 
