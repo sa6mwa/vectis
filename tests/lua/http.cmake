@@ -152,6 +152,18 @@ assert(api_server:json({
   status = 201,
   body = '{"ok":true,"created":true}\n',
 }) == true)
+assert(api_server:text({
+  path = "/plain",
+  body = "plain text route\n",
+  cache_control = "max-age=7",
+}) == true)
+assert(api_server:redirect({
+  path = "/go",
+  location = "/status",
+  status = 303,
+  body = "see status\n",
+  cache_control = "no-store",
+}) == true)
 assert(api_server:auth_json({
   path = "/guarded-created",
   method = "POST",
@@ -228,6 +240,27 @@ assert(api_response.ok == true, api_response.error and api_response.error.messag
 assert(api_response.status == 200)
 assert(api_response.body == '{"ok":true,"surface":"json"}\n')
 assert(api_response.headers:lower():find("cache-control: no-store", 1, true))
+local text_response = vectis.http.get("http://127.0.0.1:28484/plain", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(text_response.ok == true, text_response.error and text_response.error.message)
+assert(text_response.status == 200)
+assert(text_response.body == "plain text route\n")
+assert(text_response.headers:lower():find("content-type: text/plain; charset=utf-8", 1, true))
+assert(text_response.headers:lower():find("cache-control: max-age=7", 1, true))
+local redirect_response = vectis.http.get("http://127.0.0.1:28484/go", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(redirect_response.ok == true,
+       redirect_response.error and redirect_response.error.message)
+assert(redirect_response.status == 303)
+assert(redirect_response.body == "see status\n")
+assert(redirect_response.headers:lower():find("location: /status", 1, true))
+assert(redirect_response.headers:lower():find("cache-control: no-store", 1, true))
 local simple_get = vectis.http.get("http://127.0.0.1:28484/status", {
   timeout_ms = 2000,
   connect_timeout_ms = 1000,

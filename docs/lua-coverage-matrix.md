@@ -47,7 +47,7 @@ Columns:
 | ID | Surface | Raw | DX | Local | Packed | Live | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | workflow:server-runtime | Kore-backed Lua server lifecycle | n/a | partial | yes | yes | n/a | `vectis.server.new/start/stop/close`; handler routes and middleware-like DX remain. |
-| workflow:routes-json | JSON/API route helpers | n/a | partial | yes | yes | n/a | Fixed `server:json` and `server:auth_json`; dynamic handler DX is missing. |
+| workflow:routes-json | JSON/API route helpers | n/a | partial | yes | yes | n/a | Fixed `server:json`, `server:auth_json`, `server:text`, and `server:redirect`; dynamic handler DX is missing. |
 | workflow:routes-streaming | Request/response streaming route helpers | n/a | planned | no | no | n/a | Must preserve real streaming, spooling, and file-backed naming. |
 | workflow:static-assets | Static files and embedded assets | n/a | yes | yes | yes | n/a | Disk, embedded read-only, extract, and packed scenarios exist. |
 | workflow:webdav-server | WebDAV server mounts | n/a | partial | yes | yes | n/a | `server:webdav` covers Vectis-managed mutable storage with native/callback auth; packed embedded-site flow exists; direct disk-root and read-only embedded WebDAV mounts still need fuller DX. |

@@ -248,6 +248,12 @@ Required Lua concepts:
 - `server:json({path=..., method=..., status=..., body=...,
   cache_control=...})` for small C-owned unguarded JSON endpoints in service
   scenarios.
+- `server:text({path=..., method=..., status=..., body=...,
+  cache_control=...})` for small C-owned unguarded text endpoints in service
+  scenarios.
+- `server:redirect({path=..., location=..., status=..., body=...,
+  cache_control=...})` for small C-owned redirect endpoints in service
+  scenarios.
 - `server:auth_json({path=..., method=..., status=...,
   auth={kind="native", credentials_path=...}, body=...})` for small C-owned
   guarded JSON endpoints in service scenarios.

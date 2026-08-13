@@ -117,6 +117,7 @@ typedef struct vectis_lua_server_json_route {
   char *body;
   char *content_type;
   char *cache_control;
+  char *location;
   int status_code;
   struct vectis_lua_server_json_route *next;
 } vectis_lua_server_json_route;
@@ -4266,6 +4267,7 @@ vectis_lua_server_json_route_free(vectis_lua_server_json_route *route) {
   free(route->body);
   free(route->content_type);
   free(route->cache_control);
+  free(route->location);
   free(route);
 }
 
@@ -5205,6 +5207,13 @@ static vectis_status vectis_lua_server_json_dispatch(vectis_app *app,
       return status;
     }
   }
+  if (route->location != NULL && route->location[0] != '\0') {
+    status = vectis_response_header(response, "location", route->location,
+                                    error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
   return vectis_response_text(response, route->status_code, route->content_type,
                               route->body, error);
 }
@@ -5356,6 +5365,162 @@ static int vectis_lua_server_json(lua_State *lua) {
     vectis_lua_server_json_route_free(route_data);
     return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
                                       "failed to copy JSON route config");
+  }
+
+  route = vectis_route_methods(methods, path, vectis_lua_server_json_dispatch,
+                               route_data);
+  vectis_error_clear(&error);
+  status = app->route(app, &route, &error);
+  if (status != VECTIS_OK) {
+    vectis_lua_server_json_route_free(route_data);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+
+  route_data->next = server->json_routes;
+  server->json_routes = route_data;
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_server_text(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_app *app;
+  vectis_lua_server_json_route *route_data;
+  vectis_route_config route;
+  vectis_error error;
+  vectis_status status;
+  const char *path;
+  const char *body;
+  const char *content_type;
+  const char *cache_control;
+  vectis_http_methods methods;
+  size_t status_code;
+
+  server = vectis_lua_check_server(lua, 1);
+  app = vectis_lua_server_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  path = vectis_lua_table_string(lua, 2, "path");
+  if (path == NULL || path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "text route path is required");
+  }
+  body = vectis_lua_table_string(lua, 2, "body");
+  if (body == NULL) {
+    body = "ok\n";
+  }
+  content_type = vectis_lua_table_string(lua, 2, "content_type");
+  if (content_type == NULL) {
+    content_type = "text/plain; charset=utf-8";
+  }
+  cache_control = vectis_lua_table_string(lua, 2, "cache_control");
+  methods =
+      vectis_lua_route_methods(lua, 2, VECTIS_HTTP_METHODS_GET, "text route");
+  status_code = vectis_lua_table_size(lua, 2, "status_code", 0u);
+  if (status_code == 0u) {
+    status_code = vectis_lua_table_size(lua, 2, "status", 200u);
+  }
+  if (status_code < 100u || status_code > 599u) {
+    return luaL_error(lua, "text route status must be between 100 and 599");
+  }
+
+  route_data = (vectis_lua_server_json_route *)calloc(1u, sizeof(*route_data));
+  if (route_data == NULL) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to allocate text route");
+  }
+  route_data->body = vectis_cli_strdup(body);
+  route_data->content_type = vectis_cli_strdup(content_type);
+  if (cache_control != NULL) {
+    route_data->cache_control = vectis_cli_strdup(cache_control);
+  }
+  route_data->status_code = (int)status_code;
+  if (route_data->body == NULL || route_data->content_type == NULL ||
+      (cache_control != NULL && route_data->cache_control == NULL)) {
+    vectis_lua_server_json_route_free(route_data);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to copy text route config");
+  }
+
+  route = vectis_route_methods(methods, path, vectis_lua_server_json_dispatch,
+                               route_data);
+  vectis_error_clear(&error);
+  status = app->route(app, &route, &error);
+  if (status != VECTIS_OK) {
+    vectis_lua_server_json_route_free(route_data);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+
+  route_data->next = server->json_routes;
+  server->json_routes = route_data;
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_server_redirect(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_app *app;
+  vectis_lua_server_json_route *route_data;
+  vectis_route_config route;
+  vectis_error error;
+  vectis_status status;
+  const char *path;
+  const char *location;
+  const char *body;
+  const char *content_type;
+  const char *cache_control;
+  vectis_http_methods methods;
+  size_t status_code;
+
+  server = vectis_lua_check_server(lua, 1);
+  app = vectis_lua_server_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  path = vectis_lua_table_string(lua, 2, "path");
+  if (path == NULL || path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "redirect route path is required");
+  }
+  location = vectis_lua_table_string(lua, 2, "location");
+  if (location == NULL || location[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "redirect route location is required");
+  }
+  body = vectis_lua_table_string(lua, 2, "body");
+  if (body == NULL) {
+    body = "";
+  }
+  content_type = vectis_lua_table_string(lua, 2, "content_type");
+  if (content_type == NULL) {
+    content_type = "text/plain; charset=utf-8";
+  }
+  cache_control = vectis_lua_table_string(lua, 2, "cache_control");
+  methods = vectis_lua_route_methods(lua, 2, VECTIS_HTTP_METHODS_GET,
+                                     "redirect route");
+  status_code = vectis_lua_table_size(lua, 2, "status_code", 0u);
+  if (status_code == 0u) {
+    status_code = vectis_lua_table_size(lua, 2, "status", 302u);
+  }
+  if (status_code < 300u || status_code > 399u) {
+    return luaL_error(lua, "redirect route status must be between 300 and 399");
+  }
+
+  route_data = (vectis_lua_server_json_route *)calloc(1u, sizeof(*route_data));
+  if (route_data == NULL) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to allocate redirect route");
+  }
+  route_data->body = vectis_cli_strdup(body);
+  route_data->content_type = vectis_cli_strdup(content_type);
+  route_data->location = vectis_cli_strdup(location);
+  if (cache_control != NULL) {
+    route_data->cache_control = vectis_cli_strdup(cache_control);
+  }
+  route_data->status_code = (int)status_code;
+  if (route_data->body == NULL || route_data->content_type == NULL ||
+      route_data->location == NULL ||
+      (cache_control != NULL && route_data->cache_control == NULL)) {
+    vectis_lua_server_json_route_free(route_data);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to copy redirect route config");
   }
 
   route = vectis_route_methods(methods, path, vectis_lua_server_json_dispatch,
@@ -9787,6 +9952,10 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "auth_routes");
     lua_pushcfunction(lua, vectis_lua_server_json);
     lua_setfield(lua, -2, "json");
+    lua_pushcfunction(lua, vectis_lua_server_text);
+    lua_setfield(lua, -2, "text");
+    lua_pushcfunction(lua, vectis_lua_server_redirect);
+    lua_setfield(lua, -2, "redirect");
     lua_pushcfunction(lua, vectis_lua_server_auth_json);
     lua_setfield(lua, -2, "auth_json");
     lua_pushcfunction(lua, vectis_lua_server_consumer_service);

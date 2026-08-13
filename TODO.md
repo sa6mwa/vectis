@@ -294,7 +294,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [ ] Add other libcurl protocol examples/tests where the generic `curl.perform()` facade is sufficient but workflow defaults improve DX.
 - [x] Add Lua helpers for HTTP form bodies and non-JSON simple `get`, `post`, `put`, `patch`, and `delete` helpers in addition to JSON helpers.
 - [ ] Add Lua helpers for multipart upload/download, richer file-backed response presets, retry policies, and proxy/TLS/client-cert defaults.
-- [ ] Add Lua route APIs for request handlers, middleware-like before/after hooks, path/query/header/body access, JSON/body streaming policies, file responses, redirects, SSE/streaming responses, static assets, WebDAV mounts, and auth-guarded route groups.
+- [x] Add C-owned Lua fixed route helpers for text responses and redirects alongside JSON/auth JSON routes.
+- [ ] Add Lua route APIs for request handlers, middleware-like before/after hooks, path/query/header/body access, JSON/body streaming policies, file responses, SSE/streaming responses, and auth-guarded route groups.
 - [ ] Add Lua facades for Vectis auth administration and login flows that cover user DB configuration, credential storage location, password/TOTP/email-token factor policy, OAuth2/OIDC flows, WebDAV key issuance/revocation, and callback/native provider registration.
 - [ ] Add Lua CAI integration helpers once the CAI C SDK surface stabilizes: borrow/create clients, inherit logging, stream request bodies into `cai_source`, stream CAI output to HTTP/lockd/file sinks, expose tool callbacks, and preserve CAI as the primary OpenAI SDK.
 - [ ] Add Lua facades or explicit TODO contracts for cpkt `sus`/whisper and cpkt audio/miniaudio, including streaming audio source/sink ownership, transcription/voice workflow shape, and deterministic smoke tests without requiring live external services.
