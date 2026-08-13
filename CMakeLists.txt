@@ -948,6 +948,21 @@ if(VECTIS_BUILD_BINARY)
     C_EXTENSIONS OFF
     POSITION_INDEPENDENT_CODE ON
   )
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(vectis_opcua_lua PRIVATE
+      -std=c99
+      -Wall
+      -Wextra
+      -Werror
+      -Wpedantic
+      -Wstrict-prototypes
+      -Wmissing-prototypes
+      -Wshadow
+      -Wpointer-arith
+      -Wcast-qual
+      -Wwrite-strings
+    )
+  endif()
   vectis_apply_relocatable_paths(vectis_opcua_lua)
 
   add_executable(vectis_bin

@@ -39,6 +39,45 @@ set_target_properties(vectis_pick_port PROPERTIES
 )
 
 if(TARGET vectis_bin)
+  add_executable(vectis_opcua_lua_e2e
+    opcua_lua_e2e.c
+    $<TARGET_OBJECTS:vectis_opcua_lua>)
+  target_include_directories(vectis_opcua_lua_e2e PRIVATE
+    "${VECTIS_EXTERNAL_ROOT}/include")
+  target_compile_definitions(vectis_opcua_lua_e2e PRIVATE
+    _POSIX_C_SOURCE=200809L)
+  target_link_libraries(vectis_opcua_lua_e2e PRIVATE
+    cpkt::lua_runtime
+    cpkt::opcua
+    Threads::Threads)
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(vectis_opcua_lua_e2e PRIVATE m)
+  endif()
+  set_target_properties(vectis_opcua_lua_e2e PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+  )
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(vectis_opcua_lua_e2e PRIVATE
+      -std=c99
+      -Wall
+      -Wextra
+      -Werror
+      -Wpedantic
+      -Wstrict-prototypes
+      -Wmissing-prototypes
+      -Wshadow
+      -Wpointer-arith
+      -Wcast-qual
+      -Wwrite-strings
+    )
+  endif()
+  add_test(NAME vectis_lua_opcua_e2e COMMAND vectis_opcua_lua_e2e)
+  set_tests_properties(vectis_lua_opcua_e2e PROPERTIES
+    LABELS "lua;smoke;local;integration"
+    TIMEOUT 30)
+
   add_test(NAME vectis_cli_version COMMAND vectis_bin --version)
   set_tests_properties(vectis_cli_version PROPERTIES
     LABELS "smoke;local"

@@ -1,0 +1,242 @@
+#include <cpkt/lua_runtime.h>
+#include <cpkt/opcua.h>
+#include <lua.h>
+#include <pthread.h>
+
+#include <arpa/inet.h>
+#include <errno.h>
+#include <netinet/in.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <time.h>
+#include <unistd.h>
+
+typedef struct opcua_server_loop {
+  cpkt_opcua_server *server;
+  volatile int stop;
+  cpkt_opcua_result result;
+} opcua_server_loop;
+
+extern int luaopen_opcua(lua_State *lua);
+
+static int open_opcua(void *lua_state) {
+  return luaopen_opcua((lua_State *)lua_state);
+}
+
+static int fail_result(cpkt_opcua_result result, cpkt_opcua_status status,
+                       const char *operation) {
+  fprintf(stderr, "%s failed: %s", operation, cpkt_opcua_result_string(result));
+  if (status != 0u) {
+    fprintf(stderr, " / %s", cpkt_opcua_status_name(status));
+  }
+  fputc('\n', stderr);
+  return 1;
+}
+
+static int expect_ok(cpkt_opcua_result result, cpkt_opcua_status status,
+                     const char *operation) {
+  if (result != CPKT_OPCUA_OK) {
+    return fail_result(result, status, operation);
+  }
+  return 0;
+}
+
+static int pick_loopback_port(unsigned short *port_out) {
+  struct sockaddr_in addr;
+  socklen_t addr_len;
+  int fd;
+  int saved_errno;
+
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) {
+    perror("socket");
+    return 1;
+  }
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+  if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+    saved_errno = errno;
+    close(fd);
+    errno = saved_errno;
+    perror("bind");
+    return 1;
+  }
+  addr_len = (socklen_t)sizeof(addr);
+  if (getsockname(fd, (struct sockaddr *)&addr, &addr_len) != 0) {
+    saved_errno = errno;
+    close(fd);
+    errno = saved_errno;
+    perror("getsockname");
+    return 1;
+  }
+  *port_out = ntohs(addr.sin_port);
+  close(fd);
+  return 0;
+}
+
+static void sleep_ms(unsigned long ms) {
+  struct timespec ts;
+
+  ts.tv_sec = (time_t)(ms / 1000u);
+  ts.tv_nsec = (long)((ms % 1000u) * 1000000u);
+  while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
+  }
+}
+
+static void *server_loop_main(void *user) {
+  opcua_server_loop *loop;
+  unsigned short wait_ms;
+
+  loop = (opcua_server_loop *)user;
+  loop->result = CPKT_OPCUA_OK;
+  while (!loop->stop) {
+    wait_ms = 0u;
+    loop->result = cpkt_opcua_server_iterate(loop->server, 0, &wait_ms);
+    if (loop->result != CPKT_OPCUA_OK) {
+      return NULL;
+    }
+    if (wait_ms > 20u) {
+      wait_ms = 20u;
+    }
+    sleep_ms(wait_ms == 0u ? 1u : wait_ms);
+  }
+  return NULL;
+}
+
+static int run_lua_contract(const char *endpoint_url) {
+  static const unsigned char script[] =
+      "local opcua = require(\"opcua\")\n"
+      "local node = opcua.node_id_numeric(1, 7101)\n"
+      "local client = assert(opcua.connect(OPCUA_ENDPOINT))\n"
+      "local value = assert(client:read(node))\n"
+      "assert(value:type() == opcua.VALUE_INTEGER)\n"
+      "assert(value:get() == 42)\n"
+      "assert(client:write(node, opcua.value_integer(77)) == true)\n"
+      "local updated = assert(client:read(node))\n"
+      "assert(updated:get() == 77)\n"
+      "assert(client:disconnect() == true)\n"
+      "assert(client:close() == true)\n"
+      "local manual = assert(opcua.client())\n"
+      "assert(manual:connect(OPCUA_ENDPOINT) == true)\n"
+      "assert(manual:disconnect() == true)\n"
+      "assert(manual:close() == true)\n";
+  cpkt_lua_runtime *runtime;
+  cpkt_lua_runtime_status lua_status;
+  int failed;
+
+  runtime = NULL;
+  failed = 0;
+  lua_status = cpkt_lua_runtime_new(&runtime);
+  if (lua_status != CPKT_LUA_RUNTIME_OK) {
+    fprintf(stderr, "lua runtime new failed: %s\n",
+            cpkt_lua_runtime_status_string(lua_status));
+    return 1;
+  }
+  lua_status = cpkt_lua_runtime_openlibs(runtime);
+  if (lua_status == CPKT_LUA_RUNTIME_OK) {
+    lua_status =
+        cpkt_lua_runtime_register_c_module(runtime, "opcua", open_opcua);
+  }
+  if (lua_status == CPKT_LUA_RUNTIME_OK) {
+    lua_status =
+        cpkt_lua_runtime_set_global_string(runtime, "OPCUA_ENDPOINT",
+                                           endpoint_url);
+  }
+  if (lua_status == CPKT_LUA_RUNTIME_OK) {
+    lua_status = cpkt_lua_runtime_run_buffer(
+        runtime, script, sizeof(script) - 1u, "opcua_lua_e2e.lua", 0, NULL, 0);
+  }
+  if (lua_status != CPKT_LUA_RUNTIME_OK) {
+    fprintf(stderr, "lua contract failed: %s: %s\n",
+            cpkt_lua_runtime_status_string(lua_status),
+            cpkt_lua_runtime_error(runtime));
+    failed = 1;
+  }
+  cpkt_lua_runtime_free(runtime);
+  return failed;
+}
+
+int main(void) {
+  cpkt_opcua_server *server;
+  cpkt_opcua_node_id value_node;
+  cpkt_opcua_value value;
+  cpkt_opcua_status status;
+  opcua_server_loop loop;
+  pthread_t thread;
+  char endpoint_url[128];
+  size_t endpoint_required;
+  unsigned short port;
+  int thread_started;
+  int failed;
+
+  server = NULL;
+  thread_started = 0;
+  failed = 0;
+  status = 0u;
+  endpoint_required = 0u;
+
+  if (pick_loopback_port(&port) != 0) {
+    return 1;
+  }
+  if (expect_ok(cpkt_opcua_server_new(&server, port), status, "server new")) {
+    return 1;
+  }
+
+  value_node = cpkt_opcua_node_id_numeric(1u, 7101u);
+  cpkt_opcua_value_integer(&value, 42);
+  failed = expect_ok(cpkt_opcua_server_add_variable(
+                         server, value_node, "luaValue", "Lua Value", &value,
+                         &status),
+                     status, "server add variable");
+  if (!failed) {
+    failed = expect_ok(cpkt_opcua_server_endpoint_url(
+                           server, endpoint_url, sizeof(endpoint_url),
+                           &endpoint_required),
+                       status, "server endpoint url");
+  }
+  if (!failed && endpoint_required >= sizeof(endpoint_url)) {
+    fprintf(stderr, "server endpoint url exceeded test buffer\n");
+    failed = 1;
+  }
+  if (!failed) {
+    failed = expect_ok(cpkt_opcua_server_startup(server, &status), status,
+                       "server startup");
+  }
+  if (!failed) {
+    loop.server = server;
+    loop.stop = 0;
+    loop.result = CPKT_OPCUA_OK;
+    if (pthread_create(&thread, NULL, server_loop_main, &loop) != 0) {
+      perror("pthread_create");
+      failed = 1;
+    } else {
+      thread_started = 1;
+    }
+  }
+  if (!failed) {
+    sleep_ms(50u);
+    failed = run_lua_contract(endpoint_url);
+  }
+  if (thread_started) {
+    loop.stop = 1;
+    pthread_join(thread, NULL);
+    if (!failed && loop.result != CPKT_OPCUA_OK) {
+      failed = fail_result(loop.result, 0u, "server iterate");
+    }
+  }
+  if (server != NULL) {
+    if (!failed) {
+      failed =
+          expect_ok(cpkt_opcua_server_shutdown(server, &status), status,
+                    "server shutdown");
+    } else {
+      (void)cpkt_opcua_server_shutdown(server, &status);
+    }
+    cpkt_opcua_server_free(server);
+  }
+  return failed ? 1 : 0;
+}
