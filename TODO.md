@@ -287,8 +287,9 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [ ] Expand the raw OpenSSL Lua facade for advanced signing, verification, digest, encoding, and key/certificate inspection operations that are not covered by `vectis.cert`.
 - [x] Expand `vectis.cert` Lua helpers to cover private key generation, CSR generation, self-signed bundles, CA bundles, CA-signed cert/key pairs, cert/key pair validation, CA validation, and inspection.
 - [ ] Add certificate reload/update hooks where Kore can support them.
-- [ ] Add broader Lua libssh2 facades for sessions, channels, SCP upload/download, SFTP open/read/write/list/stat/mkdir/remove/rename/chmod, host-key verification, known-hosts handling, and timeout/error contracts where curl-backed SFTP is insufficient.
-- [ ] Add Vectis-owned Lua SSH/SFTP/SCP workflow helpers on top of the raw libssh2 facade for common service operations, while preserving `vectis.http.sftp_*` for curl-backed transfers.
+- [x] Add Vectis-owned Lua libssh2-backed SFTP file upload/download helpers with host-key, known-hosts, timeout, and structured error contracts where curl-backed SFTP is insufficient.
+- [ ] Add broader Lua libssh2 facades for sessions, channels, SCP upload/download, SFTP open/read/write/list/stat/mkdir/remove/rename/chmod, and advanced host-key verification workflows where curl-backed SFTP is insufficient.
+- [ ] Add Vectis-owned Lua SSH/SCP workflow helpers on top of the raw libssh2 facade for common service operations, while preserving `vectis.http.sftp_*` for curl-backed transfers.
 - [ ] Add Lua MQTT publish and other libcurl protocol examples/tests where the generic `curl.perform()` facade is sufficient but workflow defaults improve DX.
 - [ ] Add Lua helpers for HTTP form bodies, multipart upload/download, file-backed responses, retry policies, proxy/TLS/client-cert defaults, and non-JSON simple `get`, `post`, `put`, `patch`, and `delete` helpers in addition to the current JSON helpers.
 - [ ] Add Lua route APIs for request handlers, middleware-like before/after hooks, path/query/header/body access, JSON/body streaming policies, file responses, redirects, SSE/streaming responses, static assets, WebDAV mounts, and auth-guarded route groups.

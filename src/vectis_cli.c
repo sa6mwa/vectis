@@ -3894,6 +3894,43 @@ static const char *vectis_lua_table_lstring(lua_State *lua, int index,
   return value;
 }
 
+static const char *vectis_lua_ssh_config_from_table(lua_State *lua, int index,
+                                                    vectis_ssh_config *config) {
+  const char *private_key;
+  long port;
+  size_t private_key_size;
+
+  config->host = vectis_lua_table_string(lua, index, "host");
+  config->username = vectis_lua_table_string(lua, index, "username");
+  config->password = vectis_lua_table_string(lua, index, "password");
+  config->private_key_path =
+      vectis_lua_table_string(lua, index, "private_key_path");
+  if (config->private_key_path == NULL) {
+    config->private_key_path = vectis_lua_table_string(lua, index, "key_path");
+  }
+  private_key =
+      vectis_lua_table_lstring(lua, index, "private_key", &private_key_size);
+  if (private_key != NULL) {
+    config->private_key =
+        vectis_source_from_memory(private_key, private_key_size);
+    config->private_key_path = NULL;
+  }
+  config->known_hosts_path =
+      vectis_lua_table_string(lua, index, "known_hosts_path");
+  if (config->known_hosts_path == NULL) {
+    config->known_hosts_path =
+        vectis_lua_table_string(lua, index, "known_hosts");
+  }
+  config->timeout_ms =
+      vectis_lua_table_long(lua, index, "timeout_ms", config->timeout_ms);
+  port = vectis_lua_table_long(lua, index, "port", (long)config->port);
+  if (port <= 0L || port > 65535L) {
+    return "SSH port must be between 1 and 65535";
+  }
+  config->port = (unsigned short)port;
+  return NULL;
+}
+
 static int vectis_lua_ssh_exec(lua_State *lua) {
   vectis_ssh_config config;
   vectis_ssh *ssh;
@@ -3901,9 +3938,7 @@ static int vectis_lua_ssh_exec(lua_State *lua) {
   vectis_error error;
   vectis_status status;
   const char *command;
-  const char *private_key;
-  long port;
-  size_t private_key_size;
+  const char *config_error;
 
   luaL_checktype(lua, 1, LUA_TTABLE);
   command = vectis_lua_table_string(lua, 1, "command");
@@ -3913,32 +3948,11 @@ static int vectis_lua_ssh_exec(lua_State *lua) {
   }
 
   vectis_ssh_config_init(&config);
-  config.host = vectis_lua_table_string(lua, 1, "host");
-  config.username = vectis_lua_table_string(lua, 1, "username");
-  config.password = vectis_lua_table_string(lua, 1, "password");
-  config.private_key_path = vectis_lua_table_string(lua, 1, "private_key_path");
-  if (config.private_key_path == NULL) {
-    config.private_key_path = vectis_lua_table_string(lua, 1, "key_path");
-  }
-  private_key =
-      vectis_lua_table_lstring(lua, 1, "private_key", &private_key_size);
-  if (private_key != NULL) {
-    config.private_key =
-        vectis_source_from_memory(private_key, private_key_size);
-    config.private_key_path = NULL;
-  }
-  config.known_hosts_path = vectis_lua_table_string(lua, 1, "known_hosts_path");
-  if (config.known_hosts_path == NULL) {
-    config.known_hosts_path = vectis_lua_table_string(lua, 1, "known_hosts");
-  }
-  config.timeout_ms =
-      vectis_lua_table_long(lua, 1, "timeout_ms", config.timeout_ms);
-  port = vectis_lua_table_long(lua, 1, "port", (long)config.port);
-  if (port <= 0L || port > 65535L) {
+  config_error = vectis_lua_ssh_config_from_table(lua, 1, &config);
+  if (config_error != NULL) {
     return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
-                                      "SSH port must be between 1 and 65535");
+                                      config_error);
   }
-  config.port = (unsigned short)port;
 
   ssh = NULL;
   memset(&result, 0, sizeof(result));
@@ -3974,6 +3988,73 @@ static int vectis_lua_ssh_exec(lua_State *lua) {
   if (ssh != NULL) {
     ssh->close(ssh);
   }
+  return 1;
+}
+
+static int vectis_lua_ssh_sftp_upload_file(lua_State *lua) {
+  vectis_ssh_config config;
+  vectis_error error;
+  vectis_status status;
+  const char *local_path;
+  const char *remote_path;
+  const char *config_error;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  local_path = vectis_lua_table_string(lua, 1, "local_path");
+  remote_path = vectis_lua_table_string(lua, 1, "remote_path");
+  if (local_path == NULL || local_path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "SFTP local_path is required");
+  }
+  if (remote_path == NULL || remote_path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "SFTP remote_path is required");
+  }
+  vectis_ssh_config_init(&config);
+  config_error = vectis_lua_ssh_config_from_table(lua, 1, &config);
+  if (config_error != NULL) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID, config_error);
+  }
+  vectis_error_clear(&error);
+  status = vectis_ssh_sftp_upload_file(&config, local_path, remote_path, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_ssh_sftp_download_file(lua_State *lua) {
+  vectis_ssh_config config;
+  vectis_error error;
+  vectis_status status;
+  const char *local_path;
+  const char *remote_path;
+  const char *config_error;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  remote_path = vectis_lua_table_string(lua, 1, "remote_path");
+  local_path = vectis_lua_table_string(lua, 1, "local_path");
+  if (remote_path == NULL || remote_path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "SFTP remote_path is required");
+  }
+  if (local_path == NULL || local_path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "SFTP local_path is required");
+  }
+  vectis_ssh_config_init(&config);
+  config_error = vectis_lua_ssh_config_from_table(lua, 1, &config);
+  if (config_error != NULL) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID, config_error);
+  }
+  vectis_error_clear(&error);
+  status =
+      vectis_ssh_sftp_download_file(&config, remote_path, local_path, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
   return 1;
 }
 
@@ -9732,6 +9813,10 @@ static void vectis_lua_push_ssh_table(lua_State *lua) {
   lua_newtable(lua);
   lua_pushcfunction(lua, vectis_lua_ssh_exec);
   lua_setfield(lua, -2, "exec");
+  lua_pushcfunction(lua, vectis_lua_ssh_sftp_upload_file);
+  lua_setfield(lua, -2, "sftp_upload_file");
+  lua_pushcfunction(lua, vectis_lua_ssh_sftp_download_file);
+  lua_setfield(lua, -2, "sftp_download_file");
 }
 
 static int luaopen_vectis(lua_State *lua) {
