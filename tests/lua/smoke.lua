@@ -8,6 +8,7 @@ local libmdf = require("libmdf")
 local softline = require("softline")
 local curl = require("curl")
 local opcua = require("opcua")
+local xml = require("vectis.xml")
 
 local function base64_encode(input)
   local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -54,6 +55,74 @@ assert(package.loaded.libmdf == libmdf)
 assert(package.loaded.softline == softline)
 assert(package.loaded.curl == curl)
 assert(package.loaded.opcua == opcua)
+assert(package.loaded["vectis.xml"] == xml)
+assert(vectis.xml == xml)
+
+assert(type(xml.parse) == "function")
+assert(type(xml.parse_record) == "function")
+local xml_schema = lonejson.schema("invoice", {
+  lonejson.field("id", lonejson.string({required = true})),
+  lonejson.field("amount", lonejson.object({
+    required = true,
+    fields = {
+      lonejson.field("currency", lonejson.string({required = true})),
+      lonejson.field("text", lonejson.f64({required = true})),
+    },
+  })),
+  lonejson.field("line", lonejson.object_array({
+    fields = {
+      lonejson.field("sku", lonejson.string({required = true})),
+      lonejson.field("quantity", lonejson.i64({required = true})),
+    },
+  })),
+  lonejson.field("tag", lonejson.string_array()),
+  lonejson.field("active", lonejson.boolean({required = true})),
+})
+local xml_payload = table.concat({
+  "<invoice id=\"inv-1\">",
+  "<amount currency=\"EUR\">12.50</amount>",
+  "<line><sku>A-1</sku><quantity>2</quantity></line>",
+  "<line><sku>B-2</sku><quantity>5</quantity></line>",
+  "<tag>paid</tag><tag>priority</tag>",
+  "<active>true</active>",
+  "</invoice>",
+})
+local xml_doc, xml_err = xml.parse({
+  schema = xml_schema,
+  xml = xml_payload,
+  root_element = "invoice",
+  trim_text = true,
+})
+assert(xml_doc, xml_err and xml_err.message)
+assert(xml_doc.id == "inv-1")
+assert(xml_doc.amount.currency == "EUR")
+assert(xml_doc.amount.text == 12.5)
+assert(#xml_doc.line == 2)
+assert(xml_doc.line[1].sku == "A-1")
+assert(xml_doc.line[2].quantity == 5)
+assert(xml_doc.tag[2] == "priority")
+assert(xml_doc.active == true)
+local xml_path = os.tmpname()
+local xml_file = assert(io.open(xml_path, "wb"))
+xml_file:write(xml_payload)
+xml_file:close()
+local xml_record = assert(xml.parse_record({
+  schema = xml_schema,
+  path = xml_path,
+  root_element = "invoice",
+  trim_text = true,
+}))
+os.remove(xml_path)
+local xml_record_table = xml_record:to_table()
+assert(xml_record_table.line[2].sku == "B-2")
+local bad_xml_doc, bad_xml_err = xml.parse({
+  schema = xml_schema,
+  xml = "<wrong/>",
+  root_element = "invoice",
+})
+assert(bad_xml_doc == nil)
+assert(type(bad_xml_err) == "table")
+assert(bad_xml_err.message:match("root"))
 
 assert(type(opcua.open62541_version()) == "string")
 assert(#opcua.open62541_version() > 0)

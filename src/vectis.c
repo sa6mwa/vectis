@@ -13061,6 +13061,7 @@ void vectis_xml_config_init(vectis_xml_config *config) {
   config->text_key = "text";
   config->attribute_prefix = "";
   config->trim_text = 0;
+  config->skip_unknown_disabled = 0;
   config->max_depth = 64u;
   config->max_text_bytes = 67108864u;
 }

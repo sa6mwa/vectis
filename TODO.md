@@ -274,7 +274,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add an OPC UA Lua client/foundation facade over the `cpkt-opcua` C89 facade and statically preload it in the `vectis` binary as `require("opcua")`.
 - [ ] Extend the OPC UA Lua facade to cover server-side APIs once Lua callback ownership and method/access-control contracts are defined.
 - [ ] Extend the OPC UA Lua facade to cover subscriptions, async client calls, browse callbacks, and PubSub with explicit Lua callback lifetime/error semantics.
-- [ ] Add Lua facades for XML parsing and serialization backed by the existing libxml2/lonejson C helpers, including streaming reader-backed XML-to-lonejson mapped-struct workflows and deterministic large-input tests.
+- [x] Add a Lua facade for XML parsing backed by the existing libxml2/lonejson C helpers, including memory/path XML-to-lonejson mapped-record workflows and deterministic tests.
+- [ ] Add XML serialization coverage once the C SDK has an XML writer contract; keep the behavior explicit as serialization, not hidden JSON/string conversion.
 - [ ] Add Lua facades for DSV/CSV/TSV parsing and serialization backed by the existing C helpers, including row-iterator, typed-map, custom delimiter, strict/permissive width, comments, streaming, and spill-to-disk behavior.
 - [ ] Add Lua WebDAV client helpers for PROPFIND, MKCOL, GET, PUT, COPY, MOVE, DELETE, auth headers, depth handling, destination handling, structured errors, and file-backed transfer; keep server-side WebDAV helpers on `vectis.server`.
 - [ ] Expand Lua server-side WebDAV helpers beyond packed embedded-site scenarios so ordinary Lua apps can mount mutable disk docroots, read-only embedded docroots, callback auth providers, native auth providers, and WebDAV-key issuance flows without C glue.

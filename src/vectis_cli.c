@@ -42,6 +42,7 @@
 #include "vectis_lockd_lua_init.h"
 #include "vectis_lockdc_lua_init.h"
 #include "vectis_pslog_lua_init.h"
+#include "vectis_xml_lua_init.h"
 
 #define VECTIS_PACK_FOOTER_SIZE 256u
 #define VECTIS_PACK_MAGIC "VECTIS_PACK"
@@ -5621,6 +5622,156 @@ static int vectis_lua_lonejson_assign_table(lua_State *lua, int schema_index,
   return 0;
 }
 
+static int vectis_lua_table_is_nil(lua_State *lua, int index,
+                                   const char *field) {
+  int is_nil;
+
+  lua_getfield(lua, index, field);
+  is_nil = lua_isnil(lua, -1);
+  lua_pop(lua, 1);
+  return is_nil;
+}
+
+static void vectis_lua_xml_parse_config(lua_State *lua, int index,
+                                        vectis_xml_config *config) {
+  const char *root_element;
+  const char *text_key;
+  const char *attribute_prefix;
+
+  *config = vectis_xml_default();
+  root_element = vectis_lua_table_string(lua, index, "root_element");
+  text_key = vectis_lua_table_string(lua, index, "text_key");
+  attribute_prefix = vectis_lua_table_string(lua, index, "attribute_prefix");
+  if (root_element != NULL) {
+    config->root_element = root_element;
+  }
+  if (text_key != NULL) {
+    config->text_key = text_key;
+  }
+  if (attribute_prefix != NULL) {
+    config->attribute_prefix = attribute_prefix;
+  }
+  config->trim_text = vectis_lua_table_bool(lua, index, "trim_text",
+                                            config->trim_text);
+  config->max_depth =
+      vectis_lua_table_size(lua, index, "max_depth", config->max_depth);
+  config->max_text_bytes = vectis_lua_table_size(
+      lua, index, "max_text_bytes", config->max_text_bytes);
+  if (!vectis_lua_table_is_nil(lua, index, "skip_unknown")) {
+    config->skip_unknown_disabled =
+        vectis_lua_table_bool(lua, index, "skip_unknown", 1) ? 0 : 1;
+  }
+  if (!vectis_lua_table_is_nil(lua, index, "strict_unknown")) {
+    config->skip_unknown_disabled =
+        vectis_lua_table_bool(lua, index, "strict_unknown", 0) ? 1 : 0;
+  }
+}
+
+static int vectis_lua_xml_source_from_options(lua_State *lua, int index,
+                                              vectis_source *source) {
+  const char *path;
+  const char *data;
+  size_t data_size;
+  int source_count;
+
+  source_count = 0;
+  data = NULL;
+  data_size = 0u;
+  lua_getfield(lua, index, "xml");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, index, "data");
+  }
+  if (!lua_isnil(lua, -1)) {
+    data = luaL_checklstring(lua, -1, &data_size);
+    *source = vectis_source_from_memory(data, data_size);
+    ++source_count;
+  } else {
+    lua_pop(lua, 1);
+  }
+  path = vectis_lua_table_string(lua, index, "path");
+  if (path != NULL) {
+    if (path[0] == '\0') {
+      return luaL_error(lua, "vectis.xml path must not be empty");
+    }
+    *source = vectis_source_from_path(path);
+    ++source_count;
+  }
+  if (source_count != 1) {
+    return luaL_error(lua, "vectis.xml requires exactly one of xml, data, or "
+                           "path");
+  }
+  return 0;
+}
+
+static int vectis_lua_xml_parse_common(lua_State *lua, int return_record) {
+  lonejson_schema_view schema;
+  lonejson_record_view record;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  vectis_xml_config config;
+  vectis_source source;
+  vectis_error error;
+  vectis_status status;
+  int original_top;
+  int schema_index;
+  int record_index;
+  int table_index;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  original_top = lua_gettop(lua);
+  lua_getfield(lua, 1, "schema");
+  if (lua_isnil(lua, -1)) {
+    return luaL_error(lua, "vectis.xml requires schema");
+  }
+  schema_index = lua_gettop(lua);
+  (void)vectis_lua_lonejson_check_schema(lua, schema_index, &schema,
+                                         "vectis.xml schema");
+  vectis_lua_xml_parse_config(lua, 1, &config);
+  if (vectis_lua_xml_source_from_options(lua, 1, &source) != 0) {
+    return 1;
+  }
+
+  memset(&json_error, 0, sizeof(json_error));
+  vectis_lua_lonejson_record_view_init(&record);
+  json_status =
+      lonejson_lua_new_record(lua, schema_index, &record_index, &record,
+                              &json_error);
+  if (json_status != LONEJSON_STATUS_OK) {
+    lua_settop(lua, original_top);
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID,
+        json_error.message[0] != '\0' ? json_error.message
+                                      : "lonejson record allocation failed");
+  }
+
+  vectis_error_clear(&error);
+  status = vectis_xml_parse_lonejson_source(&source, schema.map, &config,
+                                            record.record, &error);
+  if (status != VECTIS_OK) {
+    lua_settop(lua, original_top);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  if (return_record) {
+    return 1;
+  }
+  table_index = lonejson_lua_record_to_table(lua, record_index);
+  if (table_index == 0) {
+    lua_settop(lua, original_top);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "lonejson record conversion failed");
+  }
+  return 1;
+}
+
+static int vectis_lua_xml_parse(lua_State *lua) {
+  return vectis_lua_xml_parse_common(lua, 0);
+}
+
+static int vectis_lua_xml_parse_record(lua_State *lua) {
+  return vectis_lua_xml_parse_common(lua, 1);
+}
+
 static int vectis_lua_curl_version(lua_State *lua) {
   lua_pushstring(lua, curl_version());
   return 1;
@@ -8943,6 +9094,12 @@ static int luaopen_vectis(lua_State *lua) {
     return lua_error(lua);
   }
   lua_setfield(lua, -2, "lockd");
+  lua_getglobal(lua, "require");
+  lua_pushliteral(lua, "vectis.xml");
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    return lua_error(lua);
+  }
+  lua_setfield(lua, -2, "xml");
   return 1;
 }
 
@@ -8956,6 +9113,19 @@ static int vectis_luaopen_lockdc_core(void *lua_state) {
 
 static int vectis_luaopen_lonejson_core(void *lua_state) {
   return luaopen_lonejson_core((lua_State *)lua_state);
+}
+
+static int luaopen_vectis_xml_core(lua_State *lua) {
+  lua_newtable(lua);
+  lua_pushcfunction(lua, vectis_lua_xml_parse);
+  lua_setfield(lua, -2, "parse");
+  lua_pushcfunction(lua, vectis_lua_xml_parse_record);
+  lua_setfield(lua, -2, "parse_record");
+  return 1;
+}
+
+static int vectis_luaopen_vectis_xml_core(void *lua_state) {
+  return luaopen_vectis_xml_core((lua_State *)lua_state);
 }
 
 static int luaopen_curl_core(lua_State *lua) {
@@ -9188,6 +9358,17 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   status = cpkt_lua_runtime_register_lua_module(
       runtime, "vectis.lockd", vectis_lockd_lua_init,
       sizeof(vectis_lockd_lua_init), "vectis.lockd");
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_c_module(runtime, "vectis.xml.core",
+                                              vectis_luaopen_vectis_xml_core);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_lua_module(
+      runtime, "vectis.xml", vectis_xml_lua_init, sizeof(vectis_xml_lua_init),
+      "vectis.xml");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }

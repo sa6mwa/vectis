@@ -33,7 +33,7 @@ Columns:
 | dep:curl | libcurl Lua facade | yes | partial | yes | yes | planned | `curl` plus `vectis.http`; generic protocols are available through option tables. |
 | dep:openssl | OpenSSL | planned | partial | yes | yes | n/a | `vectis.cert` exists; raw-but-narrow OpenSSL Lua facade is missing. |
 | dep:libssh2 | libssh2 | planned | partial | yes | no | n/a | `vectis.ssh.exec` exists; raw sessions, channels, SCP, and deeper SFTP are missing. |
-| dep:libxml2 | libxml2/XML | planned | planned | no | no | n/a | C SDK XML helpers exist; Lua XML facade is missing. |
+| dep:libxml2 | libxml2/XML | partial | partial | yes | no | n/a | `vectis.xml` exposes XML-to-LoneJSON parsing; raw DOM/libxml2 and XML serialization remain missing. |
 | dep:dsv | Vectis DSV/CSV/TSV helpers | planned | planned | no | no | n/a | C SDK DSV helpers exist; Lua DSV facade is missing. |
 | dep:opcua | cpkt-opcua | partial | planned | yes | no | planned | `require("opcua")` covers client/foundation; server, async, subscriptions, PubSub remain. |
 | dep:sus | cpkt SUS / whisper | planned | planned | no | no | planned | No Lua facade yet; needs streaming source/sink contract. |
@@ -59,7 +59,7 @@ Columns:
 | workflow:ssh-exec | SSH command execution | planned | yes | yes | no | n/a | `vectis.ssh.exec` exists; raw libssh2 remains missing. |
 | workflow:scp | SCP upload/download | planned | planned | no | no | n/a | No Lua facade yet. |
 | workflow:sftp-libssh2 | libssh2-backed SFTP | planned | planned | no | no | n/a | C SDK has deeper SFTP; Lua facade is missing. |
-| workflow:xml | XML parse/serialize workflows | planned | planned | no | no | n/a | C SDK exists; Lua coverage missing. |
+| workflow:xml | XML parse/serialize workflows | partial | partial | yes | no | n/a | `vectis.xml.parse()` materializes a table and `parse_record()` returns a Lua-owned LoneJSON record; XML serialization remains missing. |
 | workflow:dsv | CSV/TSV/DSV parse/serialize workflows | planned | planned | no | no | n/a | C SDK exists; Lua coverage missing. |
 | workflow:lockd-state | lockd document/state workflows | yes | partial | yes | yes | n/a | Raw lockdc plus first `vectis.lockd`; richer document/query helper coverage remains. |
 | workflow:lockd-queue | lockd queue and consumer workflows | yes | partial | yes | yes | n/a | Queue examples exist; retry-oriented helper DX remains. |
