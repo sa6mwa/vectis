@@ -406,6 +406,8 @@ set(vectis_softline_lua_source_dir
     "${VECTIS_EXTERNAL_ROOT}/share/softline-lua-source")
 
 function(vectis_generate_lua_init_header source_path symbol output_path)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+               "${source_path}")
   file(READ "${source_path}" vectis_lua_init_hex HEX)
   string(REGEX MATCHALL ".." vectis_lua_init_bytes "${vectis_lua_init_hex}")
   set(vectis_lua_init_c "")

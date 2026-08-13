@@ -54,6 +54,7 @@ assert(type(vectis.http.patch) == "function")
 assert(type(vectis.http.delete) == "function")
 assert(type(vectis.http.form) == "function")
 assert(type(vectis.http.form_encode) == "function")
+assert(type(vectis.http.multipart) == "function")
 assert(type(vectis.http.request_json) == "function")
 assert(type(vectis.http.get_json) == "function")
 assert(type(vectis.http.post_json) == "function")
@@ -300,6 +301,36 @@ local form_post = vectis.http.form({
 })
 assert(form_post.ok == false)
 assert(form_post.error.kind == "transport")
+local invalid_multipart_ok, invalid_multipart_err = pcall(vectis.http.multipart, {
+  url = "http://127.0.0.1:28484/created",
+  parts = {
+    {name = "bad-file", path = ""},
+  },
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(invalid_multipart_ok == false)
+assert(tostring(invalid_multipart_err):find("multipart file path", 1, true))
+local multipart_post = vectis.http.multipart({
+  url = "http://127.0.0.1:28484/created",
+  parts = {
+    description = "multipart text field",
+    upload = {
+      path = upload_path,
+      filename = "upload.txt",
+      content_type = "text/plain",
+    },
+  },
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(multipart_post.transport_ok == true,
+       multipart_post.error and multipart_post.error.message)
+assert(multipart_post.ok == false)
+assert(multipart_post.status == 413)
+assert(multipart_post.error.kind == "http_status")
 local anonymous_guarded = vectis.http.request({
   url = "http://127.0.0.1:28484/guarded-created",
   method = "POST",

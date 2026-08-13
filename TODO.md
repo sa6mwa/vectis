@@ -293,7 +293,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add Lua MQTT publish helpers/tests where the generic `curl.perform()` facade is sufficient but workflow defaults improve DX.
 - [ ] Add other libcurl protocol examples/tests where the generic `curl.perform()` facade is sufficient but workflow defaults improve DX.
 - [x] Add Lua helpers for HTTP form bodies and non-JSON simple `get`, `post`, `put`, `patch`, and `delete` helpers in addition to JSON helpers.
-- [ ] Add Lua helpers for multipart upload/download, richer file-backed response presets, retry policies, and proxy/TLS/client-cert defaults.
+- [x] Add Lua multipart upload helpers backed by libcurl MIME parts, including text shorthand and file-backed parts.
+- [ ] Add richer Lua HTTP file-backed response presets, retry policies, and proxy/TLS/client-cert defaults.
 - [x] Add C-owned Lua fixed route helpers for text responses and redirects alongside JSON/auth JSON routes.
 - [ ] Add Lua route APIs for request handlers, middleware-like before/after hooks, path/query/header/body access, JSON/body streaming policies, file responses, SSE/streaming responses, and auth-guarded route groups.
 - [x] Document and expose the core Lua auth facade for user DB configuration, credential storage location, password/TOTP/email-token factor policy, OAuth2/OIDC flows, WebDAV key issuance/revocation, and callback/native provider registration.

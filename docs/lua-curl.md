@@ -46,6 +46,11 @@ libcurl into `lonejson_curl_write_callback()`.
   libcurl's read callback.
 - `download_path`: file-backed response sink streamed through libcurl's write
   callback. The result `body` is empty when this is used.
+- `multipart`: table of MIME parts for multipart transfers. Numeric entries
+  are part tables. String keys are accepted as shorthand text fields or as
+  fallback names for part tables. Part tables use `name`, `value` or `body`, or
+  `path`/`file_path` for file-backed parts, plus optional `filename` and
+  `content_type`.
 - `timeout_ms`, `connect_timeout_ms`: total and connect timeout controls.
 - `low_speed_limit`, `low_speed_time`: low-speed abort controls.
 - `follow_redirects`: enables HTTP redirect following.
@@ -72,9 +77,9 @@ libcurl into `lonejson_curl_write_callback()`.
   `use_ssl`, and optional `probe`.
 
 The option families above cover the main protocol classes expected from the
-bundled libcurl build: HTTP/HTTPS, WebDAV, SMTP/SMTPS, SFTP/SCP, FTP/file
-transfer, and MQTT-style publish payloads. Unsupported URL schemes remain
-libcurl runtime errors and are reported in the result table.
+bundled libcurl build: HTTP/HTTPS, multipart uploads, WebDAV, SMTP/SMTPS,
+SFTP/SCP, FTP/file transfer, and MQTT-style publish payloads. Unsupported URL
+schemes remain libcurl runtime errors and are reported in the result table.
 
 Retry conditions may be `"transport"`, `"429"`, `"status_429"`, `"5xx"`,
 `"status_5xx"`, `"default"`, or `"none"`, or a table combining condition

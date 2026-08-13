@@ -224,6 +224,19 @@ function M.form(opts)
   return M.request(opts)
 end
 
+function M.multipart(opts)
+  opts = opts_from(opts)
+  if opts.multipart == nil then
+    opts.multipart = opts.parts
+    opts.parts = nil
+  end
+  if opts.multipart == nil then
+    error("vectis.http.multipart requires multipart or parts", 2)
+  end
+  opts.method = opts.method or "POST"
+  return M.request(opts)
+end
+
 function M.sftp_download(opts)
   opts = opts_from(opts)
   default_protocols(opts, "sftp")

@@ -17,6 +17,8 @@ code a consistent result shape for API calls and file transfers.
   request body.
 - `vectis.http.form_encode(table)` returns a deterministic URL-encoded form
   body. Array values encode as repeated keys.
+- `vectis.http.multipart(opts)` sends `opts.multipart` or `opts.parts` through
+  libcurl's MIME API and defaults to `POST`.
 - `vectis.http.stream_json(opts)` calls `curl.stream_json(opts)`.
 - `vectis.http.download(opts)` requires `download_path` and streams the response
   body to that file through libcurl's write callback.
@@ -61,3 +63,24 @@ local response = vectis.http.form({
 
 `form` sets `Content-Type` only when no case-insensitive `content-type` header
 is already present.
+
+## Multipart
+
+```lua
+local response = vectis.http.multipart({
+  url = "https://example.test/upload",
+  parts = {
+    description = "release bundle",
+    artifact = {
+      path = "dist/vectis.tar.gz",
+      filename = "vectis.tar.gz",
+      content_type = "application/gzip",
+    },
+  },
+})
+```
+
+`multipart` accepts numeric part tables and string-key shorthand text fields.
+Part tables require `name` unless the table is stored under a string key. Text
+parts use `value` or `body`. File parts use `path` or `file_path`, plus
+optional `filename` and `content_type`.
