@@ -9049,6 +9049,82 @@ static int vectis_lua_cert_generate_bundle(lua_State *lua) {
   return 1;
 }
 
+static void vectis_lua_cert_subject_from_table(lua_State *lua, int index,
+                                               vectis_cert_subject *subject) {
+  int subject_index;
+
+  lua_getfield(lua, index, "subject");
+  subject_index = lua_absindex(lua, -1);
+  if (lua_istable(lua, subject_index)) {
+    subject->common_name =
+        vectis_lua_table_string(lua, subject_index, "common_name");
+    subject->organization =
+        vectis_lua_table_string(lua, subject_index, "organization");
+    subject->organizational_unit =
+        vectis_lua_table_string(lua, subject_index, "organizational_unit");
+    subject->country = vectis_lua_table_string(lua, subject_index, "country");
+    subject->state = vectis_lua_table_string(lua, subject_index, "state");
+    subject->locality =
+        vectis_lua_table_string(lua, subject_index, "locality");
+  }
+  lua_pop(lua, 1);
+  if (subject->common_name == NULL) {
+    subject->common_name = vectis_lua_table_string(lua, index, "common_name");
+  }
+}
+
+static int vectis_lua_cert_generate_private_key(lua_State *lua) {
+  vectis_private_key_config config;
+  vectis_error error;
+  vectis_status status;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_private_key_config_init(&config);
+  config.output_key_path = vectis_lua_table_string(lua, 1, "output_key_path");
+  if (config.output_key_path == NULL) {
+    config.output_key_path = vectis_lua_table_string(lua, 1, "key_path");
+  }
+  config.key_bits =
+      (unsigned)vectis_lua_table_size(lua, 1, "key_bits", config.key_bits);
+
+  vectis_error_clear(&error);
+  status = vectis_cert_generate_private_key(&config, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_cert_generate_csr(lua_State *lua) {
+  vectis_csr_config config;
+  vectis_error error;
+  vectis_status status;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_csr_config_init(&config);
+  vectis_lua_cert_subject_from_table(lua, 1, &config.subject);
+  config.dns_names = vectis_lua_table_string(lua, 1, "dns_names");
+  config.ip_addresses = vectis_lua_table_string(lua, 1, "ip_addresses");
+  config.private_key_path =
+      vectis_lua_table_string(lua, 1, "private_key_path");
+  if (config.private_key_path == NULL) {
+    config.private_key_path = vectis_lua_table_string(lua, 1, "key_path");
+  }
+  config.output_csr_path = vectis_lua_table_string(lua, 1, "output_csr_path");
+  if (config.output_csr_path == NULL) {
+    config.output_csr_path = vectis_lua_table_string(lua, 1, "csr_path");
+  }
+
+  vectis_error_clear(&error);
+  status = vectis_cert_generate_csr(&config, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
 static const char *vectis_lua_cert_path_arg(lua_State *lua, int index,
                                             const char *primary,
                                             const char *fallback,
@@ -9341,6 +9417,10 @@ static void vectis_lua_push_cert_table(lua_State *lua) {
   lua_newtable(lua);
   lua_pushcfunction(lua, vectis_lua_cert_generate_bundle);
   lua_setfield(lua, -2, "generate_bundle");
+  lua_pushcfunction(lua, vectis_lua_cert_generate_private_key);
+  lua_setfield(lua, -2, "generate_private_key");
+  lua_pushcfunction(lua, vectis_lua_cert_generate_csr);
+  lua_setfield(lua, -2, "generate_csr");
   lua_pushcfunction(lua, vectis_lua_cert_inspect_bundle);
   lua_setfield(lua, -2, "inspect_bundle");
   lua_pushcfunction(lua, vectis_lua_cert_validate_bundle);

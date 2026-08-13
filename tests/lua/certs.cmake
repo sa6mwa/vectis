@@ -1,12 +1,15 @@
 set(bundle_path "${WORK_DIR}/lua-cert-bundle.pem")
 set(cert_path "${WORK_DIR}/lua-cert.pem")
 set(key_path "${WORK_DIR}/lua-key.pem")
+set(csr_key_path "${WORK_DIR}/lua-csr-key.pem")
+set(csr_path "${WORK_DIR}/lua-cert.csr")
 set(malformed_path "${WORK_DIR}/lua-malformed-cert.pem")
 set(auth_path "${WORK_DIR}/lua-cert-auth.json")
 set(script "${WORK_DIR}/lua-certs-smoke.lua")
 
-file(REMOVE "${bundle_path}" "${cert_path}" "${key_path}" "${malformed_path}"
-            "${auth_path}" "${auth_path}.lock")
+file(REMOVE "${bundle_path}" "${cert_path}" "${key_path}" "${csr_key_path}"
+            "${csr_path}" "${malformed_path}" "${auth_path}"
+            "${auth_path}.lock")
 file(WRITE "${malformed_path}" "not a certificate\n")
 
 file(WRITE "${script}" [[
@@ -16,8 +19,10 @@ local curl = require("curl")
 local bundle_path = assert(arg[1])
 local cert_path = assert(arg[2])
 local key_path = assert(arg[3])
-local malformed_path = assert(arg[4])
-local auth_path = assert(arg[5])
+local csr_key_path = assert(arg[4])
+local csr_path = assert(arg[5])
+local malformed_path = assert(arg[6])
+local auth_path = assert(arg[7])
 
 local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local function base64(data)
@@ -37,9 +42,18 @@ local function base64(data)
 end
 
 assert(type(vectis.cert.generate_bundle) == "function")
+assert(type(vectis.cert.generate_private_key) == "function")
+assert(type(vectis.cert.generate_csr) == "function")
 assert(type(vectis.cert.inspect_bundle) == "function")
 assert(type(vectis.cert.validate_bundle) == "function")
 assert(type(vectis.cert.validate_pair) == "function")
+
+local function read_file(path)
+  local fp = assert(io.open(path, "rb"))
+  local body = fp:read("*a")
+  fp:close()
+  return body
+end
 
 assert(vectis.cert.generate_bundle({
   common_name = "localhost",
@@ -75,6 +89,26 @@ assert(vectis.cert.validate_pair({
   private_key_path = key_path,
   ca_bundle_path = bundle_path,
 }) == true)
+
+assert(vectis.cert.generate_private_key({
+  output_key_path = csr_key_path,
+  key_bits = 2048,
+}) == true)
+assert(read_file(csr_key_path):find("BEGIN PRIVATE KEY", 1, true))
+assert(vectis.cert.generate_csr({
+  subject = {
+    common_name = "csr.localhost",
+    organization = "Vectis",
+    country = "SE",
+  },
+  dns_names = "csr.localhost",
+  ip_addresses = "127.0.0.1",
+  private_key_path = csr_key_path,
+  output_csr_path = csr_path,
+}) == true)
+local csr_body = read_file(csr_path)
+assert(csr_body:find("BEGIN CERTIFICATE REQUEST", 1, true))
+assert(csr_body:find("END CERTIFICATE REQUEST", 1, true))
 
 assert(vectis.auth.store_init({credentials_path = auth_path}) == true)
 assert(vectis.auth.user_add({
@@ -147,8 +181,8 @@ assert(malformed_inspect_error.message:find("parse certificate", 1, true))
 ]])
 
 execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${bundle_path}"
-                        "${cert_path}" "${key_path}" "${malformed_path}"
-                        "${auth_path}"
+                        "${cert_path}" "${key_path}" "${csr_key_path}"
+                        "${csr_path}" "${malformed_path}" "${auth_path}"
                 RESULT_VARIABLE certs_result
                 OUTPUT_VARIABLE certs_stdout
                 ERROR_VARIABLE certs_stderr)

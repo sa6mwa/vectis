@@ -283,7 +283,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add a C-owned Lua `server:webdav()` helper for ordinary Vectis-managed mutable WebDAV mounts, including unauthenticated mounts plus native and callback auth providers.
 - [ ] Expand Lua server-side WebDAV helpers beyond Vectis-managed storage so ordinary Lua apps can mount direct mutable disk docroots and read-only embedded docroots as WebDAV mounts without C glue.
 - [ ] Add a raw-but-narrow OpenSSL Lua facade for advanced certificate/key/CSR/signing/verification operations that are not covered by `vectis.cert`, while keeping Vectis certificate workflows as the default DX.
-- [ ] Expand `vectis.cert` Lua helpers to cover private key generation, CSR generation, self-signed bundles, CA bundles, CA-signed cert/key pairs, cert/key pair validation, CA validation, inspection, and reload/update hooks where Kore can support them.
+- [x] Expand `vectis.cert` Lua helpers to cover private key generation, CSR generation, self-signed bundles, CA bundles, CA-signed cert/key pairs, cert/key pair validation, CA validation, and inspection.
+- [ ] Add certificate reload/update hooks where Kore can support them.
 - [ ] Add broader Lua libssh2 facades for sessions, channels, SCP upload/download, SFTP open/read/write/list/stat/mkdir/remove/rename/chmod, host-key verification, known-hosts handling, and timeout/error contracts where curl-backed SFTP is insufficient.
 - [ ] Add Vectis-owned Lua SSH/SFTP/SCP workflow helpers on top of the raw libssh2 facade for common service operations, while preserving `vectis.http.sftp_*` for curl-backed transfers.
 - [ ] Add Lua MQTT publish and other libcurl protocol examples/tests where the generic `curl.perform()` facade is sufficient but workflow defaults improve DX.

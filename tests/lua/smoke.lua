@@ -832,6 +832,8 @@ assert(embedded_lockd_err.message == "no embedded lockd bundle")
 
 assert(type(vectis.cert) == "table")
 assert(type(vectis.cert.generate_bundle) == "function")
+assert(type(vectis.cert.generate_private_key) == "function")
+assert(type(vectis.cert.generate_csr) == "function")
 assert(type(vectis.cert.inspect_bundle) == "function")
 assert(type(vectis.cert.validate_bundle) == "function")
 assert(type(vectis.cert.validate_pair) == "function")

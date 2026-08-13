@@ -53,7 +53,7 @@ Columns:
 | workflow:webdav-server | WebDAV server mounts | n/a | partial | yes | yes | n/a | `server:webdav` covers Vectis-managed mutable storage with native/callback auth; packed embedded-site flow exists; direct disk-root and read-only embedded WebDAV mounts still need fuller DX. |
 | workflow:webdav-client | WebDAV client helpers | yes | yes | yes | yes | n/a | `vectis.webdav` wraps curl for PROPFIND, MKCOL, GET, PUT, COPY, MOVE, DELETE, auth/depth/destination headers, structured errors, and file-backed transfer. |
 | workflow:auth | Native auth, OAuth2/OIDC, WebDAV keys | n/a | partial | yes | yes | planned | Core functions/routes exist; high-level Lua admin/login flow needs polish. |
-| workflow:certs | Certificate/key/CSR/CA workflows | n/a | partial | yes | yes | n/a | Bundle validation/generation exists; CSR/private key/full CA workflow coverage should be completed. |
+| workflow:certs | Certificate/key/CSR/CA workflows | n/a | partial | yes | yes | n/a | Private-key, CSR, bundle generation, bundle inspection, bundle validation, cert/key pair validation, CA bundles, and CA-signed cert/key pairs exist; reload/update hooks and broader inspection remain. |
 | workflow:http-client | Downstream HTTP client | yes | partial | yes | yes | planned | JSON helpers exist; simple non-JSON verbs, form/multipart, richer file helpers remain. |
 | workflow:sftp-curl | curl-backed SFTP | yes | yes | yes | yes | n/a | Covered through `vectis.http.sftp_download/upload`. |
 | workflow:ssh-exec | SSH command execution | planned | yes | yes | no | n/a | `vectis.ssh.exec` exists; raw libssh2 remains missing. |
