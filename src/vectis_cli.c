@@ -36,6 +36,7 @@
 #include <vectis/webdav.h>
 
 #include "vectis_curl_lua_init.h"
+#include "vectis_dsv_lua_init.h"
 #include "vectis_http_lua_init.h"
 #include "vectis_libmdf_lua_init.h"
 #include "vectis_liblql_lua_init.h"
@@ -68,6 +69,18 @@ typedef struct vectis_lua_memory_source {
   size_t offset;
   int closed;
 } vectis_lua_memory_source;
+
+typedef struct vectis_lua_dsv_rows_context {
+  lua_State *lua;
+  int schema_index;
+  int record_index;
+  int output_index;
+  int callback_ref;
+  int next_index;
+} vectis_lua_dsv_rows_context;
+
+static void vectis_cli_error_set(vectis_error *error, vectis_status status,
+                                 const char *message);
 
 typedef struct vectis_lua_server_native_auth {
   lua_State *lua;
@@ -5772,6 +5785,541 @@ static int vectis_lua_xml_parse_record(lua_State *lua) {
   return vectis_lua_xml_parse_common(lua, 1);
 }
 
+static int vectis_lua_dsv_char_option(lua_State *lua, int index,
+                                      const char *field, int fallback) {
+  const char *value;
+  size_t size;
+  int result;
+
+  lua_getfield(lua, index, field);
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return fallback;
+  }
+  if (lua_isinteger(lua, -1)) {
+    result = (int)lua_tointeger(lua, -1);
+    lua_pop(lua, 1);
+    return result;
+  }
+  value = luaL_checklstring(lua, -1, &size);
+  if (size == 0u) {
+    return luaL_error(lua, "vectis.dsv %s must not be empty", field);
+  }
+  result = (unsigned char)value[0];
+  lua_pop(lua, 1);
+  return result;
+}
+
+static int vectis_lua_dsv_columns(lua_State *lua, int index,
+                                  vectis_dsv_config *config,
+                                  const char ***owned_columns) {
+  const char **columns;
+  size_t count;
+  size_t i;
+
+  *owned_columns = NULL;
+  lua_getfield(lua, index, "columns");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return 0;
+  }
+  luaL_checktype(lua, -1, LUA_TTABLE);
+  count = (size_t)lua_rawlen(lua, -1);
+  if (count == 0u) {
+    lua_pop(lua, 1);
+    return luaL_error(lua, "vectis.dsv columns must not be empty");
+  }
+  columns = (const char **)calloc(count, sizeof(columns[0]));
+  if (columns == NULL) {
+    lua_pop(lua, 1);
+    return luaL_error(lua, "failed to allocate DSV columns");
+  }
+  for (i = 0u; i < count; ++i) {
+    lua_rawgeti(lua, -1, (lua_Integer)i + 1);
+    columns[i] = luaL_checkstring(lua, -1);
+    lua_pop(lua, 1);
+  }
+  lua_pop(lua, 1);
+  config->columns = columns;
+  config->column_count = count;
+  *owned_columns = columns;
+  return 0;
+}
+
+static int vectis_lua_dsv_parse_config(lua_State *lua, int index,
+                                       vectis_dsv_config *config,
+                                       const char ***owned_columns) {
+  const char *format;
+  const char *comment_prefix;
+
+  format = vectis_lua_table_string(lua, index, "format");
+  if (format != NULL && strcmp(format, "tsv") == 0) {
+    *config = vectis_dsv_tsv();
+  } else {
+    *config = vectis_dsv_csv();
+  }
+  if (!vectis_lua_table_is_nil(lua, index, "header")) {
+    config->header_disabled =
+        vectis_lua_table_bool(lua, index, "header", 1) ? 0 : 1;
+  }
+  if (!vectis_lua_table_is_nil(lua, index, "headerless")) {
+    config->header_disabled =
+        vectis_lua_table_bool(lua, index, "headerless", 0) ? 1 : 0;
+  }
+  if (!vectis_lua_table_is_nil(lua, index, "rows_only")) {
+    config->header_disabled =
+        vectis_lua_table_bool(lua, index, "rows_only", 0) ? 1 : 0;
+  }
+  config->delimiter =
+      vectis_lua_dsv_char_option(lua, index, "delimiter", config->delimiter);
+  config->quote = vectis_lua_dsv_char_option(lua, index, "quote",
+                                             config->quote);
+  config->escape = vectis_lua_dsv_char_option(lua, index, "escape",
+                                              config->escape);
+  config->max_field_bytes =
+      vectis_lua_table_size(lua, index, "max_field_bytes",
+                            config->max_field_bytes);
+  comment_prefix = vectis_lua_table_string(lua, index, "comment_prefix");
+  if (comment_prefix != NULL) {
+    config->comment_prefix = comment_prefix;
+  }
+  if (!vectis_lua_table_is_nil(lua, index, "strict_row_width")) {
+    config->strict_row_width_disabled =
+        vectis_lua_table_bool(lua, index, "strict_row_width", 1) ? 0 : 1;
+  }
+  if (!vectis_lua_table_is_nil(lua, index, "trim_cr")) {
+    config->trim_cr_disabled =
+        vectis_lua_table_bool(lua, index, "trim_cr", 1) ? 0 : 1;
+  }
+  if (!vectis_lua_table_is_nil(lua, index, "indented_comments")) {
+    config->indented_comments_disabled =
+        vectis_lua_table_bool(lua, index, "indented_comments", 1) ? 0 : 1;
+  }
+  return vectis_lua_dsv_columns(lua, index, config, owned_columns);
+}
+
+static int vectis_lua_dsv_source_from_options(lua_State *lua, int index,
+                                              vectis_source *source) {
+  const char *path;
+  const char *data;
+  size_t data_size;
+  int source_count;
+
+  source_count = 0;
+  data = NULL;
+  data_size = 0u;
+  lua_getfield(lua, index, "data");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, index, "dsv");
+  }
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, index, "csv");
+  }
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, index, "tsv");
+  }
+  if (!lua_isnil(lua, -1)) {
+    data = luaL_checklstring(lua, -1, &data_size);
+    *source = vectis_source_from_memory(data, data_size);
+    ++source_count;
+  } else {
+    lua_pop(lua, 1);
+  }
+  path = vectis_lua_table_string(lua, index, "path");
+  if (path != NULL) {
+    if (path[0] == '\0') {
+      return luaL_error(lua, "vectis.dsv path must not be empty");
+    }
+    *source = vectis_source_from_path(path);
+    ++source_count;
+  }
+  if (source_count != 1) {
+    return luaL_error(lua, "vectis.dsv requires exactly one of data, dsv, csv, "
+                           "tsv, or path");
+  }
+  return 0;
+}
+
+static void vectis_lua_dsv_push_spill_result(
+    lua_State *lua, const vectis_body_spill_result *result) {
+  lua_newtable(lua);
+  lua_pushinteger(lua, (lua_Integer)result->size);
+  lua_setfield(lua, -2, "size");
+  lua_pushboolean(lua, result->spooled_to_disk ? 1 : 0);
+  lua_setfield(lua, -2, "spooled_to_disk");
+  if (result->spooled_to_disk) {
+    lua_pushstring(lua, result->path);
+    lua_setfield(lua, -2, "path");
+  } else {
+    lua_pushlstring(lua, (const char *)result->memory.data,
+                    result->memory.size);
+    lua_setfield(lua, -2, "data");
+    lua_pushvalue(lua, -1);
+    lua_setfield(lua, -2, "memory");
+  }
+}
+
+static int vectis_lua_dsv_schema(lua_State *lua, int options_index,
+                                 lonejson_schema_view *schema,
+                                 int *schema_index) {
+  lua_getfield(lua, options_index, "schema");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    *schema_index = 0;
+    return 0;
+  }
+  *schema_index = lua_gettop(lua);
+  (void)vectis_lua_lonejson_check_schema(lua, *schema_index, schema,
+                                         "vectis.dsv schema");
+  return 0;
+}
+
+static int vectis_lua_dsv_parse_json(lua_State *lua) {
+  vectis_dsv_config config;
+  const char **owned_columns;
+  vectis_source source;
+  vectis_mutable_bytes out;
+  vectis_error error;
+  vectis_status status;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  if (vectis_lua_dsv_parse_config(lua, 1, &config, &owned_columns) != 0) {
+    return 1;
+  }
+  if (vectis_lua_dsv_source_from_options(lua, 1, &source) != 0) {
+    free((void *)owned_columns);
+    return 1;
+  }
+  memset(&out, 0, sizeof(out));
+  vectis_error_clear(&error);
+  status = vectis_dsv_source_to_json_array(&source, &config, &out, &error);
+  free((void *)owned_columns);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushlstring(lua, (const char *)out.data, out.size);
+  vectis_mutable_bytes_cleanup(&out);
+  return 1;
+}
+
+static int vectis_lua_dsv_parse_spill(lua_State *lua) {
+  vectis_dsv_config config;
+  vectis_body_spill_config spill;
+  vectis_body_spill_result out;
+  const char **owned_columns;
+  const char *directory;
+  const char *prefix;
+  vectis_source source;
+  vectis_error error;
+  vectis_status status;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  if (vectis_lua_dsv_parse_config(lua, 1, &config, &owned_columns) != 0) {
+    return 1;
+  }
+  if (vectis_lua_dsv_source_from_options(lua, 1, &source) != 0) {
+    free((void *)owned_columns);
+    return 1;
+  }
+  vectis_body_spill_config_init(&spill);
+  spill.memory_limit_bytes = vectis_lua_table_size(
+      lua, 1, "memory_limit_bytes", spill.memory_limit_bytes);
+  directory = vectis_lua_table_string(lua, 1, "directory");
+  prefix = vectis_lua_table_string(lua, 1, "prefix");
+  if (directory != NULL) {
+    spill.directory = directory;
+  }
+  if (prefix != NULL) {
+    spill.prefix = prefix;
+  }
+  memset(&out, 0, sizeof(out));
+  vectis_error_clear(&error);
+  status = vectis_dsv_source_to_json_array_spill(&source, &config, &spill,
+                                                 &out, &error);
+  free((void *)owned_columns);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  vectis_lua_dsv_push_spill_result(lua, &out);
+  vectis_body_spill_result_cleanup(&out);
+  return 1;
+}
+
+static vectis_status vectis_lua_dsv_new_row_storage(void *userdata,
+                                                    size_t row_number,
+                                                    void **row_storage,
+                                                    vectis_error *error) {
+  vectis_lua_dsv_rows_context *context;
+  lonejson_record_view record;
+  lonejson_error json_error;
+  lonejson_status json_status;
+
+  (void)row_number;
+  context = (vectis_lua_dsv_rows_context *)userdata;
+  vectis_lua_lonejson_record_view_init(&record);
+  memset(&json_error, 0, sizeof(json_error));
+  json_status = lonejson_lua_new_record(context->lua, context->schema_index,
+                                        &context->record_index, &record,
+                                        &json_error);
+  if (json_status != LONEJSON_STATUS_OK) {
+    vectis_cli_error_set(
+        error, VECTIS_ERR_INVALID,
+        json_error.message[0] != '\0' ? json_error.message
+                                      : "lonejson DSV row allocation failed");
+    return VECTIS_ERR_INVALID;
+  }
+  *row_storage = record.record;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_lua_dsv_push_row(void *userdata,
+                                             size_t row_number, void *row,
+                                             vectis_error *error) {
+  vectis_lua_dsv_rows_context *context;
+  int table_index;
+
+  (void)row;
+  context = (vectis_lua_dsv_rows_context *)userdata;
+  table_index = lonejson_lua_record_to_table(context->lua, context->record_index);
+  if (table_index == 0) {
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "failed to convert DSV row record to Lua table");
+    return VECTIS_ERR_INVALID;
+  }
+  if (context->callback_ref != LUA_NOREF) {
+    lua_rawgeti(context->lua, LUA_REGISTRYINDEX, context->callback_ref);
+    lua_pushinteger(context->lua, (lua_Integer)row_number);
+    lua_pushvalue(context->lua, table_index);
+    if (lua_pcall(context->lua, 2, 1, 0) != LUA_OK) {
+      char message[sizeof(error->message)];
+
+      (void)snprintf(message, sizeof(message), "DSV row callback failed: %s",
+                     lua_tostring(context->lua, -1));
+      vectis_cli_error_set(error, VECTIS_ERR_STATE, message);
+      lua_pop(context->lua, 2);
+      return VECTIS_ERR_STATE;
+    }
+    if (lua_isboolean(context->lua, -1) && !lua_toboolean(context->lua, -1)) {
+      lua_pop(context->lua, 2);
+      vectis_cli_error_set(error, VECTIS_ERR_STATE, "DSV row callback stopped");
+      return VECTIS_ERR_STATE;
+    }
+    lua_pop(context->lua, 2);
+    lua_settop(context->lua, context->record_index - 1);
+    return VECTIS_OK;
+  }
+  lua_rawseti(context->lua, context->output_index, context->next_index++);
+  lua_settop(context->lua, context->record_index - 1);
+  return VECTIS_OK;
+}
+
+static int vectis_lua_dsv_parse_typed_common(lua_State *lua, int callback) {
+  lonejson_schema_view schema;
+  vectis_dsv_config config;
+  const char **owned_columns;
+  vectis_source source;
+  vectis_error error;
+  vectis_status status;
+  vectis_lua_dsv_rows_context context;
+  int schema_index;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_lua_lonejson_schema_view_init(&schema);
+  if (vectis_lua_dsv_schema(lua, 1, &schema, &schema_index) != 0 ||
+      schema_index == 0) {
+    return luaL_error(lua, "vectis.dsv typed parsing requires schema");
+  }
+  memset(&context, 0, sizeof(context));
+  context.lua = lua;
+  context.schema_index = schema_index;
+  context.callback_ref = LUA_NOREF;
+  context.next_index = 1;
+  if (callback) {
+    lua_getfield(lua, 1, "on_row");
+    if (lua_isnil(lua, -1)) {
+      lua_pop(lua, 1);
+      lua_getfield(lua, 1, "callback");
+    }
+    if (!lua_isfunction(lua, -1)) {
+      return luaL_error(lua, "vectis.dsv.each requires on_row callback");
+    }
+    context.callback_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  } else {
+    lua_newtable(lua);
+    context.output_index = lua_absindex(lua, -1);
+  }
+  if (vectis_lua_dsv_parse_config(lua, 1, &config, &owned_columns) != 0) {
+    if (context.callback_ref != LUA_NOREF) {
+      luaL_unref(lua, LUA_REGISTRYINDEX, context.callback_ref);
+    }
+    return 1;
+  }
+  if (vectis_lua_dsv_source_from_options(lua, 1, &source) != 0) {
+    free((void *)owned_columns);
+    if (context.callback_ref != LUA_NOREF) {
+      luaL_unref(lua, LUA_REGISTRYINDEX, context.callback_ref);
+    }
+    return 1;
+  }
+  vectis_error_clear(&error);
+  status = vectis_dsv_parse_lonejson_view_source(
+      &source, &schema, &config, vectis_lua_dsv_new_row_storage,
+      vectis_lua_dsv_push_row, &context, &error);
+  free((void *)owned_columns);
+  if (context.callback_ref != LUA_NOREF) {
+    luaL_unref(lua, LUA_REGISTRYINDEX, context.callback_ref);
+  }
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  if (callback) {
+    lua_pushboolean(lua, 1);
+    return 1;
+  }
+  lua_pushvalue(lua, context.output_index);
+  return 1;
+}
+
+static int vectis_lua_dsv_parse_typed(lua_State *lua) {
+  return vectis_lua_dsv_parse_typed_common(lua, 0);
+}
+
+static int vectis_lua_dsv_each(lua_State *lua) {
+  return vectis_lua_dsv_parse_typed_common(lua, 1);
+}
+
+static int vectis_lua_dsv_to_string(lua_State *lua) {
+  lonejson_schema_view schema;
+  lonejson_record_view record;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  vectis_dsv_config config;
+  vectis_dsv_config row_config;
+  const char **owned_columns;
+  vectis_error error;
+  lc_error lc_error_value;
+  lc_sink *sink;
+  const void *bytes;
+  size_t size;
+  size_t count;
+  size_t i;
+  int schema_index;
+  int rows_index;
+  int row_index;
+  int record_index;
+  int generated_record;
+  int rc;
+  vectis_status status;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_lua_lonejson_schema_view_init(&schema);
+  if (vectis_lua_dsv_schema(lua, 1, &schema, &schema_index) != 0 ||
+      schema_index == 0) {
+    return luaL_error(lua, "vectis.dsv.to_string requires schema");
+  }
+  lua_getfield(lua, 1, "rows");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, 1, "records");
+  }
+  luaL_checktype(lua, -1, LUA_TTABLE);
+  rows_index = lua_gettop(lua);
+  if (vectis_lua_dsv_parse_config(lua, 1, &config, &owned_columns) != 0) {
+    return 1;
+  }
+  lc_error_init(&lc_error_value);
+  sink = NULL;
+  rc = lc_sink_to_memory(&sink, &lc_error_value);
+  if (rc != LC_OK) {
+    free((void *)owned_columns);
+    lc_error_cleanup(&lc_error_value);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to create DSV memory sink");
+  }
+  lc_error_cleanup(&lc_error_value);
+  row_config = config;
+  count = (size_t)lua_rawlen(lua, rows_index);
+  if (count == 0u) {
+    vectis_error_clear(&error);
+    status = vectis_dsv_write_lonejson_rows(sink, schema.map, &row_config,
+                                            NULL, 0u, 0u, &error);
+    if (status != VECTIS_OK) {
+      lc_sink_close(sink);
+      free((void *)owned_columns);
+      return vectis_lua_push_error(lua, status, &error);
+    }
+  }
+  for (i = 0u; i < count; ++i) {
+    lua_rawgeti(lua, rows_index, (lua_Integer)i + 1);
+    row_index = lua_gettop(lua);
+    record_index = row_index;
+    generated_record = 0;
+    vectis_lua_lonejson_record_view_init(&record);
+    memset(&json_error, 0, sizeof(json_error));
+    json_status =
+        lonejson_lua_check_record(lua, row_index, &schema, &record,
+                                  &json_error);
+    if (json_status != LONEJSON_STATUS_OK) {
+      json_status = lonejson_lua_new_record(lua, schema_index, &record_index,
+                                            &record, &json_error);
+      if (json_status != LONEJSON_STATUS_OK) {
+        lc_sink_close(sink);
+        free((void *)owned_columns);
+        return vectis_lua_push_error_text(
+            lua, VECTIS_ERR_INVALID,
+            json_error.message[0] != '\0'
+                ? json_error.message
+                : "lonejson DSV row record allocation failed");
+      }
+      generated_record = 1;
+      (void)vectis_lua_lonejson_assign_table(lua, schema_index, record_index,
+                                             row_index);
+      vectis_lua_lonejson_record_view_init(&record);
+      memset(&json_error, 0, sizeof(json_error));
+      json_status =
+          lonejson_lua_check_record(lua, record_index, &schema, &record,
+                                    &json_error);
+      if (json_status != LONEJSON_STATUS_OK) {
+        lc_sink_close(sink);
+        free((void *)owned_columns);
+        return vectis_lua_push_error_text(
+            lua, VECTIS_ERR_INVALID,
+            json_error.message[0] != '\0' ? json_error.message
+                                          : "lonejson DSV row is invalid");
+      }
+    }
+    vectis_error_clear(&error);
+    status = vectis_dsv_write_lonejson_rows(sink, schema.map, &row_config,
+                                            record.record, 1u, 0u, &error);
+    if (generated_record) {
+      (void)lonejson_lua_clear_record(lua, record_index, NULL);
+    }
+    lua_settop(lua, rows_index);
+    if (status != VECTIS_OK) {
+      lc_sink_close(sink);
+      free((void *)owned_columns);
+      return vectis_lua_push_error(lua, status, &error);
+    }
+    row_config.header_disabled = 1;
+  }
+  free((void *)owned_columns);
+  lc_error_init(&lc_error_value);
+  rc = lc_sink_memory_bytes(sink, &bytes, &size, &lc_error_value);
+  if (rc != LC_OK) {
+    lc_sink_close(sink);
+    lc_error_cleanup(&lc_error_value);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_STATE,
+                                      "failed to read DSV memory sink");
+  }
+  lua_pushlstring(lua, (const char *)bytes, size);
+  lc_sink_close(sink);
+  lc_error_cleanup(&lc_error_value);
+  return 1;
+}
+
 static int vectis_lua_curl_version(lua_State *lua) {
   lua_pushstring(lua, curl_version());
   return 1;
@@ -9095,6 +9643,12 @@ static int luaopen_vectis(lua_State *lua) {
   }
   lua_setfield(lua, -2, "lockd");
   lua_getglobal(lua, "require");
+  lua_pushliteral(lua, "vectis.dsv");
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    return lua_error(lua);
+  }
+  lua_setfield(lua, -2, "dsv");
+  lua_getglobal(lua, "require");
   lua_pushliteral(lua, "vectis.xml");
   if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
     return lua_error(lua);
@@ -9126,6 +9680,25 @@ static int luaopen_vectis_xml_core(lua_State *lua) {
 
 static int vectis_luaopen_vectis_xml_core(void *lua_state) {
   return luaopen_vectis_xml_core((lua_State *)lua_state);
+}
+
+static int luaopen_vectis_dsv_core(lua_State *lua) {
+  lua_newtable(lua);
+  lua_pushcfunction(lua, vectis_lua_dsv_parse_json);
+  lua_setfield(lua, -2, "parse_json");
+  lua_pushcfunction(lua, vectis_lua_dsv_parse_spill);
+  lua_setfield(lua, -2, "parse_spill");
+  lua_pushcfunction(lua, vectis_lua_dsv_parse_typed);
+  lua_setfield(lua, -2, "parse_typed");
+  lua_pushcfunction(lua, vectis_lua_dsv_each);
+  lua_setfield(lua, -2, "each");
+  lua_pushcfunction(lua, vectis_lua_dsv_to_string);
+  lua_setfield(lua, -2, "to_string");
+  return 1;
+}
+
+static int vectis_luaopen_vectis_dsv_core(void *lua_state) {
+  return luaopen_vectis_dsv_core((lua_State *)lua_state);
 }
 
 static int luaopen_curl_core(lua_State *lua) {
@@ -9358,6 +9931,17 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   status = cpkt_lua_runtime_register_lua_module(
       runtime, "vectis.lockd", vectis_lockd_lua_init,
       sizeof(vectis_lockd_lua_init), "vectis.lockd");
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_c_module(runtime, "vectis.dsv.core",
+                                              vectis_luaopen_vectis_dsv_core);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_lua_module(
+      runtime, "vectis.dsv", vectis_dsv_lua_init, sizeof(vectis_dsv_lua_init),
+      "vectis.dsv");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }

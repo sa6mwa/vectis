@@ -510,6 +510,10 @@ typedef vectis_status (*vectis_dsv_lonejson_row_fn)(void *userdata,
                                                     size_t row_number,
                                                     void *row,
                                                     vectis_error *error);
+typedef vectis_status (*vectis_dsv_lonejson_storage_fn)(void *userdata,
+                                                        size_t row_number,
+                                                        void **row_storage,
+                                                        vectis_error *error);
 
 typedef struct vectis_json_route_config {
   vectis_http_method method;
@@ -1304,6 +1308,23 @@ vectis_status vectis_dsv_parse_lonejson_source(const vectis_source *source,
                                                vectis_dsv_lonejson_row_fn row,
                                                void *userdata,
                                                vectis_error *error);
+/**
+ * Parse DSV rows into caller-owned LoneJSON record storage.
+ *
+ * This variant is intended for facade/interpreter integrations that can provide
+ * correctly prepared record storage, such as Lua-owned LoneJSON records.
+ * `schema` must be an ABI-stamped LoneJSON schema view. `storage` is called for
+ * each row before fields are assigned. The returned storage is valid only for
+ * the subsequent row callback.
+ */
+vectis_status vectis_dsv_parse_lonejson_view(
+    struct lc_source *source, const lonejson_schema_view *schema,
+    const vectis_dsv_config *config, vectis_dsv_lonejson_storage_fn storage,
+    vectis_dsv_lonejson_row_fn row, void *userdata, vectis_error *error);
+vectis_status vectis_dsv_parse_lonejson_view_source(
+    const vectis_source *source, const lonejson_schema_view *schema,
+    const vectis_dsv_config *config, vectis_dsv_lonejson_storage_fn storage,
+    vectis_dsv_lonejson_row_fn row, void *userdata, vectis_error *error);
 vectis_status vectis_dsv_to_json_array(struct lc_source *source,
                                        const vectis_dsv_config *config,
                                        vectis_mutable_bytes *out,

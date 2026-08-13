@@ -11509,6 +11509,184 @@ vectis_status vectis_dsv_parse_lonejson_source(const vectis_source *source,
   return status;
 }
 
+vectis_status vectis_dsv_parse_lonejson_view(
+    struct lc_source *source, const lonejson_schema_view *schema,
+    const vectis_dsv_config *config, vectis_dsv_lonejson_storage_fn storage,
+    vectis_dsv_lonejson_row_fn row, void *userdata, vectis_error *error) {
+  vectis_dsv_parser parser;
+  vectis_dsv_config effective;
+  vectis_dsv_fields headers;
+  const char *const *columns;
+  const char **header_columns;
+  size_t column_count;
+  size_t data_row;
+  int has_record;
+  void *row_storage;
+  vectis_status status;
+
+  if (source == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "DSV source is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (schema == NULL || schema->size != sizeof(*schema) ||
+      schema->abi_version != LONEJSON_VIEW_ABI_VERSION ||
+      schema->runtime == NULL || schema->map == NULL ||
+      schema->record_size == 0u || storage == NULL || row == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "DSV schema view, storage callback, and row callback are "
+                     "required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_dsv_effective_config(config, &effective, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  for (column_count = 0u; column_count < schema->map->field_count;
+       ++column_count) {
+    const lonejson_field *field;
+
+    field = &schema->map->fields[column_count];
+    if (field->kind == LONEJSON_FIELD_KIND_STRING &&
+        field->storage == LONEJSON_STORAGE_DYNAMIC) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "DSV typed Lua parsing requires fixed_capacity string "
+                       "fields");
+      return VECTIS_ERR_INVALID;
+    }
+  }
+  memset(&parser, 0, sizeof(parser));
+  memset(&headers, 0, sizeof(headers));
+  parser.config = effective;
+  parser.source = source;
+  columns = effective.columns;
+  header_columns = NULL;
+  column_count = effective.column_count;
+  if (!effective.header_disabled) {
+    status = vectis_dsv_read_data_record(&parser, &has_record, error);
+    if (status != VECTIS_OK) {
+      vectis_dsv_fields_cleanup(&parser.fields);
+      vectis_string_builder_cleanup(&parser.field);
+      return status;
+    }
+    if (!has_record) {
+      vectis_dsv_fields_cleanup(&parser.fields);
+      vectis_string_builder_cleanup(&parser.field);
+      vectis_error_clear(error);
+      return VECTIS_OK;
+    }
+    headers = parser.fields;
+    memset(&parser.fields, 0, sizeof(parser.fields));
+    if (columns == NULL) {
+      if (headers.count == 0u) {
+        vectis_dsv_fields_cleanup(&headers);
+        vectis_dsv_fields_cleanup(&parser.fields);
+        vectis_string_builder_cleanup(&parser.field);
+        vectis_set_error(error, VECTIS_ERR_INVALID, "DSV header row is empty");
+        return VECTIS_ERR_INVALID;
+      }
+      header_columns =
+          (const char **)calloc(headers.count, sizeof(header_columns[0]));
+      if (header_columns == NULL) {
+        vectis_dsv_fields_cleanup(&headers);
+        vectis_dsv_fields_cleanup(&parser.fields);
+        vectis_string_builder_cleanup(&parser.field);
+        vectis_set_error(error, VECTIS_ERR_NOMEM,
+                         "failed to allocate DSV header columns");
+        return VECTIS_ERR_NOMEM;
+      }
+      for (column_count = 0u; column_count < headers.count; ++column_count) {
+        header_columns[column_count] = headers.items[column_count];
+      }
+      columns = header_columns;
+      column_count = headers.count;
+    }
+  } else if (columns == NULL) {
+    status = vectis_dsv_columns_from_map(schema->map, &header_columns,
+                                         &column_count, error);
+    if (status != VECTIS_OK) {
+      vectis_dsv_fields_cleanup(&headers);
+      vectis_dsv_fields_cleanup(&parser.fields);
+      vectis_string_builder_cleanup(&parser.field);
+      return status;
+    }
+    columns = header_columns;
+  }
+  if (columns == NULL || column_count == 0u) {
+    vectis_dsv_fields_cleanup(&headers);
+    vectis_dsv_fields_cleanup(&parser.fields);
+    vectis_string_builder_cleanup(&parser.field);
+    free(header_columns);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "DSV columns are required when no header row is used");
+    return VECTIS_ERR_INVALID;
+  }
+  data_row = 0u;
+  status = VECTIS_OK;
+  for (;;) {
+    status = vectis_dsv_read_data_record(&parser, &has_record, error);
+    if (status != VECTIS_OK || !has_record) {
+      break;
+    }
+    if (!effective.strict_row_width_disabled &&
+        parser.fields.count != column_count) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "DSV row width does not match columns");
+      status = VECTIS_ERR_INVALID;
+      break;
+    }
+    row_storage = NULL;
+    status = storage(userdata, data_row + 1u, &row_storage, error);
+    if (status != VECTIS_OK) {
+      break;
+    }
+    if (row_storage == NULL) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "DSV row storage callback returned NULL");
+      status = VECTIS_ERR_INVALID;
+      break;
+    }
+    status = vectis_dsv_fields_to_lonejson_value(
+        schema->map, columns, column_count, &parser.fields, row_storage, error);
+    if (status != VECTIS_OK) {
+      break;
+    }
+    status = row(userdata, data_row + 1u, row_storage, error);
+    if (status != VECTIS_OK) {
+      break;
+    }
+    data_row++;
+  }
+  vectis_dsv_fields_cleanup(&headers);
+  vectis_dsv_fields_cleanup(&parser.fields);
+  vectis_string_builder_cleanup(&parser.field);
+  free(header_columns);
+  if (status == VECTIS_OK) {
+    vectis_error_clear(error);
+  }
+  return status;
+}
+
+vectis_status vectis_dsv_parse_lonejson_view_source(
+    const vectis_source *source, const lonejson_schema_view *schema,
+    const vectis_dsv_config *config, vectis_dsv_lonejson_storage_fn storage,
+    vectis_dsv_lonejson_row_fn row, void *userdata, vectis_error *error) {
+  lc_source *reader;
+  int owned;
+  vectis_status status;
+
+  reader = NULL;
+  owned = 0;
+  status = vectis_dsv_open_source(source, &reader, &owned, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_dsv_parse_lonejson_view(reader, schema, config, storage, row,
+                                          userdata, error);
+  if (owned && reader != NULL) {
+    lc_source_close(reader);
+  }
+  return status;
+}
+
 static void vectis_dsv_rows_cleanup_value(vectis_dsv_rows *rows) {
   if (rows == NULL || rows->value == NULL) {
     return;

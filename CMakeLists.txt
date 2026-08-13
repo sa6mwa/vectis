@@ -769,6 +769,11 @@ if(VECTIS_BUILD_BINARY)
     "${CMAKE_BINARY_DIR}/generated/include/vectis_lockd_lua_init.h"
   )
   vectis_generate_lua_init_header(
+    "${CMAKE_SOURCE_DIR}/lua/vectis/dsv.lua"
+    "vectis_dsv_lua_init"
+    "${CMAKE_BINARY_DIR}/generated/include/vectis_dsv_lua_init.h"
+  )
+  vectis_generate_lua_init_header(
     "${CMAKE_SOURCE_DIR}/lua/vectis/xml.lua"
     "vectis_xml_lua_init"
     "${CMAKE_BINARY_DIR}/generated/include/vectis_xml_lua_init.h"

@@ -33,6 +33,11 @@ typedef struct sample_dsv_rows {
   char last_id[32];
 } sample_dsv_rows;
 
+typedef struct sample_dsv_view_rows {
+  sample_dsv_rows rows;
+  sample_dsv_doc item;
+} sample_dsv_view_rows;
+
 typedef struct sample_xml_line {
   char sku[32];
   lonejson_int64 quantity;
@@ -247,6 +252,27 @@ static vectis_status sample_dsv_row(void *userdata, size_t row_number,
   }
   (void)snprintf(rows->last_id, sizeof(rows->last_id), "%s", doc->id);
   return VECTIS_OK;
+}
+
+static vectis_status sample_dsv_view_storage(void *userdata, size_t row_number,
+                                             void **row_storage,
+                                             vectis_error *error) {
+  sample_dsv_view_rows *view_rows;
+
+  (void)row_number;
+  (void)error;
+  view_rows = (sample_dsv_view_rows *)userdata;
+  memset(&view_rows->item, 0, sizeof(view_rows->item));
+  *row_storage = &view_rows->item;
+  return VECTIS_OK;
+}
+
+static vectis_status sample_dsv_view_row(void *userdata, size_t row_number,
+                                         void *row, vectis_error *error) {
+  sample_dsv_view_rows *view_rows;
+
+  view_rows = (sample_dsv_view_rows *)userdata;
+  return sample_dsv_row(&view_rows->rows, row_number, row, error);
 }
 
 static vectis_status sample_json_array_item(void *userdata, size_t index,
@@ -1975,7 +2001,10 @@ static void assert_dsv_surface(void) {
   vectis_source dsv_source;
   vectis_mutable_bytes json;
   sample_dsv_rows rows;
+  sample_dsv_view_rows view_rows;
   sample_dsv_doc item;
+  lonejson_schema_view schema_view;
+  lonejson *json_runtime;
   lonejson_array_rewrite_options rewrite_options;
   vectis_request *request;
   lc_sink *sink;
@@ -2004,6 +2033,26 @@ static void assert_dsv_surface(void) {
   assert(rows.total == 5);
   assert(rows.active_count == 1);
   assert(strcmp(rows.last_id, "beta,quoted") == 0);
+
+  memset(&view_rows, 0, sizeof(view_rows));
+  memset(&schema_view, 0, sizeof(schema_view));
+  json_runtime = lonejson_new(NULL, NULL);
+  assert(json_runtime != NULL);
+  schema_view.size = sizeof(schema_view);
+  schema_view.abi_version = LONEJSON_VIEW_ABI_VERSION;
+  schema_view.runtime = json_runtime;
+  schema_view.map = &sample_dsv_doc_map;
+  schema_view.record_size = sizeof(sample_dsv_doc);
+  dsv_source = vectis_source_from_memory(csv, sizeof(csv) - 1u);
+  status = vectis_dsv_parse_lonejson_view_source(
+      &dsv_source, &schema_view, &config, sample_dsv_view_storage,
+      sample_dsv_view_row, &view_rows, &error);
+  assert(status == VECTIS_OK);
+  assert(view_rows.rows.count == 2u);
+  assert(view_rows.rows.total == 5);
+  assert(view_rows.rows.active_count == 1);
+  assert(strcmp(view_rows.rows.last_id, "beta,quoted") == 0);
+  lonejson_free(json_runtime);
 
   dsv_source =
       vectis_source_from_memory(commented_csv, sizeof(commented_csv) - 1u);
