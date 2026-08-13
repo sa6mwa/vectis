@@ -16,7 +16,9 @@
 #include <lua.h>
 #include <openssl/bn.h>
 #include <openssl/evp.h>
+#include <openssl/hmac.h>
 #include <openssl/pem.h>
+#include <openssl/rand.h>
 #include <openssl/sha.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
@@ -51,6 +53,7 @@
 #define VECTIS_PACK_MAGIC_SIZE 11u
 #define VECTIS_LUA_CURL_RESPONSE_BODY_LIMIT (8u * 1024u * 1024u)
 #define VECTIS_LUA_CURL_RESPONSE_HEADER_LIMIT (64u * 1024u)
+#define VECTIS_LUA_OPENSSL_MAX_BYTES (1024u * 1024u)
 #define VECTIS_PACK_MAX_DIR_STACK 1024u
 #define VECTIS_LUA_SERVER "vectis.server"
 
@@ -9870,6 +9873,174 @@ static int vectis_luaopen_curl_core(void *lua_state) {
   return luaopen_curl_core((lua_State *)lua_state);
 }
 
+static int vectis_lua_openssl_version(lua_State *lua) {
+  lua_pushstring(lua, OpenSSL_version(OPENSSL_VERSION));
+  return 1;
+}
+
+static void vectis_lua_openssl_push_hex(lua_State *lua,
+                                        const unsigned char *bytes,
+                                        size_t size) {
+  static const char hex[] = "0123456789abcdef";
+  char *out;
+  size_t i;
+
+  out = (char *)malloc(size * 2u + 1u);
+  if (out == NULL) {
+    luaL_error(lua, "openssl hex allocation failed");
+    return;
+  }
+  for (i = 0u; i < size; ++i) {
+    out[i * 2u] = hex[(bytes[i] >> 4u) & 0x0fu];
+    out[i * 2u + 1u] = hex[bytes[i] & 0x0fu];
+  }
+  out[size * 2u] = '\0';
+  lua_pushlstring(lua, out, size * 2u);
+  free(out);
+}
+
+static int vectis_lua_openssl_sha256(lua_State *lua) {
+  const unsigned char *data;
+  size_t data_size;
+  unsigned char digest[SHA256_DIGEST_LENGTH];
+
+  data = (const unsigned char *)luaL_checklstring(lua, 1, &data_size);
+  SHA256(data, data_size, digest);
+  lua_pushlstring(lua, (const char *)digest, sizeof(digest));
+  return 1;
+}
+
+static int vectis_lua_openssl_sha256_hex(lua_State *lua) {
+  const unsigned char *data;
+  size_t data_size;
+  unsigned char digest[SHA256_DIGEST_LENGTH];
+
+  data = (const unsigned char *)luaL_checklstring(lua, 1, &data_size);
+  SHA256(data, data_size, digest);
+  vectis_lua_openssl_push_hex(lua, digest, sizeof(digest));
+  return 1;
+}
+
+static int vectis_lua_openssl_hmac_sha256(lua_State *lua) {
+  const unsigned char *key;
+  const unsigned char *data;
+  size_t key_size;
+  size_t data_size;
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned int digest_size;
+
+  key = (const unsigned char *)luaL_checklstring(lua, 1, &key_size);
+  data = (const unsigned char *)luaL_checklstring(lua, 2, &data_size);
+  digest_size = 0u;
+  if (HMAC(EVP_sha256(), key, (int)key_size, data, data_size, digest,
+           &digest_size) == NULL) {
+    return luaL_error(lua, "openssl HMAC-SHA256 failed");
+  }
+  lua_pushlstring(lua, (const char *)digest, (size_t)digest_size);
+  return 1;
+}
+
+static int vectis_lua_openssl_hmac_sha256_hex(lua_State *lua) {
+  const unsigned char *key;
+  const unsigned char *data;
+  size_t key_size;
+  size_t data_size;
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned int digest_size;
+
+  key = (const unsigned char *)luaL_checklstring(lua, 1, &key_size);
+  data = (const unsigned char *)luaL_checklstring(lua, 2, &data_size);
+  digest_size = 0u;
+  if (HMAC(EVP_sha256(), key, (int)key_size, data, data_size, digest,
+           &digest_size) == NULL) {
+    return luaL_error(lua, "openssl HMAC-SHA256 failed");
+  }
+  vectis_lua_openssl_push_hex(lua, digest, (size_t)digest_size);
+  return 1;
+}
+
+static size_t vectis_lua_openssl_size(lua_State *lua, int index,
+                                      const char *label) {
+  lua_Integer value;
+
+  value = luaL_checkinteger(lua, index);
+  if (value < 0 || (lua_Unsigned)value > VECTIS_LUA_OPENSSL_MAX_BYTES) {
+    luaL_error(lua, "%s must be between 0 and %u bytes", label,
+               (unsigned)VECTIS_LUA_OPENSSL_MAX_BYTES);
+    return 0u;
+  }
+  return (size_t)value;
+}
+
+static int vectis_lua_openssl_random_bytes(lua_State *lua) {
+  size_t size;
+  unsigned char *bytes;
+
+  size = vectis_lua_openssl_size(lua, 1, "openssl random size");
+  if (size == 0u) {
+    lua_pushliteral(lua, "");
+    return 1;
+  }
+  bytes = (unsigned char *)malloc(size);
+  if (bytes == NULL) {
+    return luaL_error(lua, "openssl random allocation failed");
+  }
+  if (RAND_bytes(bytes, (int)size) != 1) {
+    free(bytes);
+    return luaL_error(lua, "openssl random generation failed");
+  }
+  lua_pushlstring(lua, (const char *)bytes, size);
+  OPENSSL_cleanse(bytes, size);
+  free(bytes);
+  return 1;
+}
+
+static int vectis_lua_openssl_random_hex(lua_State *lua) {
+  size_t size;
+  unsigned char *bytes;
+
+  size = vectis_lua_openssl_size(lua, 1, "openssl random size");
+  if (size == 0u) {
+    lua_pushliteral(lua, "");
+    return 1;
+  }
+  bytes = (unsigned char *)malloc(size);
+  if (bytes == NULL) {
+    return luaL_error(lua, "openssl random allocation failed");
+  }
+  if (RAND_bytes(bytes, (int)size) != 1) {
+    free(bytes);
+    return luaL_error(lua, "openssl random generation failed");
+  }
+  vectis_lua_openssl_push_hex(lua, bytes, size);
+  OPENSSL_cleanse(bytes, size);
+  free(bytes);
+  return 1;
+}
+
+static int luaopen_openssl(lua_State *lua) {
+  lua_newtable(lua);
+  lua_pushcfunction(lua, vectis_lua_openssl_version);
+  lua_setfield(lua, -2, "version");
+  lua_pushcfunction(lua, vectis_lua_openssl_sha256);
+  lua_setfield(lua, -2, "sha256");
+  lua_pushcfunction(lua, vectis_lua_openssl_sha256_hex);
+  lua_setfield(lua, -2, "sha256_hex");
+  lua_pushcfunction(lua, vectis_lua_openssl_hmac_sha256);
+  lua_setfield(lua, -2, "hmac_sha256");
+  lua_pushcfunction(lua, vectis_lua_openssl_hmac_sha256_hex);
+  lua_setfield(lua, -2, "hmac_sha256_hex");
+  lua_pushcfunction(lua, vectis_lua_openssl_random_bytes);
+  lua_setfield(lua, -2, "random_bytes");
+  lua_pushcfunction(lua, vectis_lua_openssl_random_hex);
+  lua_setfield(lua, -2, "random_hex");
+  return 1;
+}
+
+static int vectis_luaopen_openssl(void *lua_state) {
+  return luaopen_openssl((lua_State *)lua_state);
+}
+
 static int vectis_luaopen_cai(void *lua_state) {
   return luaopen_cai((lua_State *)lua_state);
 }
@@ -10075,6 +10246,11 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   status = cpkt_lua_runtime_register_lua_module(
       runtime, "curl", vectis_curl_lua_init, sizeof(vectis_curl_lua_init),
       "curl.init");
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_c_module(runtime, "openssl",
+                                              vectis_luaopen_openssl);
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }

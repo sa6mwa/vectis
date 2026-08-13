@@ -103,6 +103,14 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_curl_contract PROPERTIES
     LABELS "lua;local"
     TIMEOUT 30)
+  add_test(NAME vectis_lua_openssl
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/openssl.cmake")
+  set_tests_properties(vectis_lua_openssl PROPERTIES
+    LABELS "lua;smoke;local"
+    TIMEOUT 30)
   add_test(NAME vectis_lua_dsv
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
