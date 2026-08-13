@@ -818,6 +818,13 @@ assert(type(curl.stream_json) == "function")
 assert(type(curl.version()) == "string")
 
 assert(type(vectis.http) == "table")
+assert(type(vectis.http.get) == "function")
+assert(type(vectis.http.post) == "function")
+assert(type(vectis.http.put) == "function")
+assert(type(vectis.http.patch) == "function")
+assert(type(vectis.http.delete) == "function")
+assert(type(vectis.http.form) == "function")
+assert(type(vectis.http.form_encode) == "function")
 assert(type(vectis.http.request_json) == "function")
 assert(type(vectis.http.download) == "function")
 

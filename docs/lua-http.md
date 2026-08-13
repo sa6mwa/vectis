@@ -7,9 +7,16 @@ code a consistent result shape for API calls and file transfers.
 ## Entry Points
 
 - `vectis.http.request(opts)` calls `curl.perform(opts)`.
+- `vectis.http.get(opts_or_url[, opts])`, `post`, `put`, `patch`, and
+  `delete` set the HTTP method and return a normalized buffered response.
 - `vectis.http.request_json(opts)` calls `curl.json(opts)`.
 - `vectis.http.get_json(opts_or_url[, opts])`, `post_json`, `put_json`,
   `patch_json`, and `delete_json` set the HTTP method and decode JSON bodies.
+- `vectis.http.form(opts)` encodes `opts.form` as
+  `application/x-www-form-urlencoded`, defaults to `POST`, and sends it as the
+  request body.
+- `vectis.http.form_encode(table)` returns a deterministic URL-encoded form
+  body. Array values encode as repeated keys.
 - `vectis.http.stream_json(opts)` calls `curl.stream_json(opts)`.
 - `vectis.http.download(opts)` requires `download_path` and streams the response
   body to that file through libcurl's write callback.
@@ -39,3 +46,18 @@ Structured errors use:
 Retry options are passed through to `curl.perform`, `curl.json`, and
 `curl.stream_json`. Streaming JSON responses still reject retry because the
 response parser is consumed by the first attempt.
+
+## Forms
+
+```lua
+local response = vectis.http.form({
+  url = "https://example.test/login",
+  form = {
+    username = "alice",
+    scope = {"read", "write"},
+  },
+})
+```
+
+`form` sets `Content-Type` only when no case-insensitive `content-type` header
+is already present.

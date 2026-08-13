@@ -47,6 +47,13 @@ end
 
 assert(type(vectis.http) == "table")
 assert(type(vectis.http.request) == "function")
+assert(type(vectis.http.get) == "function")
+assert(type(vectis.http.post) == "function")
+assert(type(vectis.http.put) == "function")
+assert(type(vectis.http.patch) == "function")
+assert(type(vectis.http.delete) == "function")
+assert(type(vectis.http.form) == "function")
+assert(type(vectis.http.form_encode) == "function")
 assert(type(vectis.http.request_json) == "function")
 assert(type(vectis.http.get_json) == "function")
 assert(type(vectis.http.post_json) == "function")
@@ -55,6 +62,11 @@ assert(type(vectis.http.upload) == "function")
 assert(type(vectis.http.sftp_download) == "function")
 assert(type(vectis.http.sftp_upload) == "function")
 assert(require("vectis.http") == vectis.http)
+assert(vectis.http.form_encode({
+  q = "hello world",
+  tag = {"a+b", "c/d"},
+  empty = "",
+}) == "empty=&q=hello%20world&tag=a%2Bb&tag=c%2Fd")
 
 local decoded = vectis.http.get_json({
   url = json_url,
@@ -216,6 +228,13 @@ assert(api_response.ok == true, api_response.error and api_response.error.messag
 assert(api_response.status == 200)
 assert(api_response.body == '{"ok":true,"surface":"json"}\n')
 assert(api_response.headers:lower():find("cache-control: no-store", 1, true))
+local simple_get = vectis.http.get("http://127.0.0.1:28484/status", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(simple_get.ok == true, simple_get.error and simple_get.error.message)
+assert(simple_get.status == 200)
 local created_response = vectis.http.request({
   url = "http://127.0.0.1:28484/created",
   method = "POST",
@@ -228,6 +247,26 @@ assert(created_response.ok == true,
        created_response.error and created_response.error.message)
 assert(created_response.status == 201)
 assert(created_response.body == '{"ok":true,"created":true}\n')
+local simple_post = vectis.http.post("http://127.0.0.1:28484/created", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(simple_post.ok == true, simple_post.error and simple_post.error.message)
+assert(simple_post.status == 201)
+local form_post = vectis.http.form({
+  url = "http://127.0.0.1:1/form",
+  form = {
+    username = "form user",
+    token = "a+b",
+  },
+  timeout_ms = 200,
+  connect_timeout_ms = 50,
+  no_signal = true,
+  retry = false,
+})
+assert(form_post.ok == false)
+assert(form_post.error.kind == "transport")
 local anonymous_guarded = vectis.http.request({
   url = "http://127.0.0.1:28484/guarded-created",
   method = "POST",

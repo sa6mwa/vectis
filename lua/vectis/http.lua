@@ -31,6 +31,36 @@ local function http_status_failed(status)
   return type(status) == "number" and status >= 400
 end
 
+local function request_with_method(method, first, second)
+  local opts = opts_from(first, second)
+  opts.method = opts.method or method
+  return M.request(opts)
+end
+
+local function percent_encode(value)
+  value = tostring(value)
+  return (value:gsub("([^A-Za-z0-9_%.%-~])", function(char)
+    return string.format("%%%02X", string.byte(char))
+  end))
+end
+
+local function append_form_pair(out, key, value)
+  out[#out + 1] = percent_encode(key) .. "=" .. percent_encode(value)
+end
+
+local function header_value(headers, name)
+  local wanted = name:lower()
+  if type(headers) ~= "table" then
+    return nil
+  end
+  for key, value in pairs(headers) do
+    if type(key) == "string" and key:lower() == wanted then
+      return value
+    end
+  end
+  return nil
+end
+
 function M.error_for(result)
   if type(result) ~= "table" then
     return {
@@ -93,6 +123,26 @@ function M.request_json(opts)
   return M.normalize(curl.json(opts))
 end
 
+function M.get(first, second)
+  return request_with_method("GET", first, second)
+end
+
+function M.post(first, second)
+  return request_with_method("POST", first, second)
+end
+
+function M.put(first, second)
+  return request_with_method("PUT", first, second)
+end
+
+function M.patch(first, second)
+  return request_with_method("PATCH", first, second)
+end
+
+function M.delete(first, second)
+  return request_with_method("DELETE", first, second)
+end
+
 function M.get_json(first, second)
   local opts = opts_from(first, second)
   opts.method = opts.method or "GET"
@@ -138,6 +188,38 @@ function M.upload(opts)
   end
   if opts.upload_path ~= nil or opts.body_path ~= nil then
     opts.upload = true
+  end
+  return M.request(opts)
+end
+
+function M.form_encode(form)
+  local out = {}
+  if type(form) ~= "table" then
+    error("vectis.http.form_encode requires a table", 2)
+  end
+  for key, value in pairs(form) do
+    if type(value) == "table" then
+      for _, item in ipairs(value) do
+        append_form_pair(out, key, item)
+      end
+    elseif value ~= nil then
+      append_form_pair(out, key, value)
+    end
+  end
+  table.sort(out)
+  return table.concat(out, "&")
+end
+
+function M.form(opts)
+  opts = opts_from(opts)
+  if opts.form == nil then
+    error("vectis.http.form requires form", 2)
+  end
+  opts.body = M.form_encode(opts.form)
+  opts.method = opts.method or "POST"
+  opts.headers = copy_table(opts.headers)
+  if header_value(opts.headers, "content-type") == nil then
+    opts.headers["Content-Type"] = "application/x-www-form-urlencoded"
   end
   return M.request(opts)
 end

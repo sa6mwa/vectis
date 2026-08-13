@@ -292,7 +292,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [ ] Add Vectis-owned Lua SSH/SCP workflow helpers on top of the raw libssh2 facade for common service operations, while preserving `vectis.http.sftp_*` for curl-backed transfers.
 - [x] Add Lua MQTT publish helpers/tests where the generic `curl.perform()` facade is sufficient but workflow defaults improve DX.
 - [ ] Add other libcurl protocol examples/tests where the generic `curl.perform()` facade is sufficient but workflow defaults improve DX.
-- [ ] Add Lua helpers for HTTP form bodies, multipart upload/download, file-backed responses, retry policies, proxy/TLS/client-cert defaults, and non-JSON simple `get`, `post`, `put`, `patch`, and `delete` helpers in addition to the current JSON helpers.
+- [x] Add Lua helpers for HTTP form bodies and non-JSON simple `get`, `post`, `put`, `patch`, and `delete` helpers in addition to JSON helpers.
+- [ ] Add Lua helpers for multipart upload/download, richer file-backed response presets, retry policies, and proxy/TLS/client-cert defaults.
 - [ ] Add Lua route APIs for request handlers, middleware-like before/after hooks, path/query/header/body access, JSON/body streaming policies, file responses, redirects, SSE/streaming responses, static assets, WebDAV mounts, and auth-guarded route groups.
 - [ ] Add Lua facades for Vectis auth administration and login flows that cover user DB configuration, credential storage location, password/TOTP/email-token factor policy, OAuth2/OIDC flows, WebDAV key issuance/revocation, and callback/native provider registration.
 - [ ] Add Lua CAI integration helpers once the CAI C SDK surface stabilizes: borrow/create clients, inherit logging, stream request bodies into `cai_source`, stream CAI output to HTTP/lockd/file sinks, expose tool callbacks, and preserve CAI as the primary OpenAI SDK.
