@@ -280,7 +280,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [ ] Extend DSV typed Lua parsing to support dynamic string fields without violating LoneJSON Lua record ownership/cleanup invariants.
 - [ ] Add packed scenario coverage and Lua route-row handler integration for DSV routes.
 - [x] Add Lua WebDAV client helpers for PROPFIND, MKCOL, GET, PUT, COPY, MOVE, DELETE, auth headers, depth handling, destination handling, structured errors, and file-backed transfer; keep server-side WebDAV helpers on `vectis.server`.
-- [ ] Expand Lua server-side WebDAV helpers beyond packed embedded-site scenarios so ordinary Lua apps can mount mutable disk docroots, read-only embedded docroots, callback auth providers, native auth providers, and WebDAV-key issuance flows without C glue.
+- [x] Add a C-owned Lua `server:webdav()` helper for ordinary Vectis-managed mutable WebDAV mounts, including unauthenticated mounts plus native and callback auth providers.
+- [ ] Expand Lua server-side WebDAV helpers beyond Vectis-managed storage so ordinary Lua apps can mount direct mutable disk docroots and read-only embedded docroots as WebDAV mounts without C glue.
 - [ ] Add a raw-but-narrow OpenSSL Lua facade for advanced certificate/key/CSR/signing/verification operations that are not covered by `vectis.cert`, while keeping Vectis certificate workflows as the default DX.
 - [ ] Expand `vectis.cert` Lua helpers to cover private key generation, CSR generation, self-signed bundles, CA bundles, CA-signed cert/key pairs, cert/key pair validation, CA validation, inspection, and reload/update hooks where Kore can support them.
 - [ ] Add broader Lua libssh2 facades for sessions, channels, SCP upload/download, SFTP open/read/write/list/stat/mkdir/remove/rename/chmod, host-key verification, known-hosts handling, and timeout/error contracts where curl-backed SFTP is insufficient.

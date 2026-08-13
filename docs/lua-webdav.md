@@ -84,3 +84,43 @@ if listed.ok then
   print(listed.body)
 end
 ```
+
+## Server Mounts
+
+Server-side WebDAV stays on `vectis.server`.
+
+- `server:webdav(opts)` registers an ordinary mutable Vectis-managed WebDAV
+  storage mount.
+- `server:webdav_embedded_site(opts)` extracts packed embedded assets into the
+  mutable WebDAV storage tree, then registers a WebDAV mount over that storage.
+
+`server:webdav` requires:
+
+- `path_prefix`, defaulting to `/`.
+- `cache_dir`, an absolute cache/storage directory.
+- `site_id`, a stable storage namespace containing letters, digits, `_`, or
+  `-`.
+
+By default WebDAV mounts require auth. Set `auth_required = false` only for
+deliberately public mounts. Auth tables accept the same native and callback
+provider shapes used by `server:auth_json` and `server:webdav_embedded_site`.
+
+```lua
+local vectis = require("vectis")
+local server = assert(vectis.server.new({bind = "127.0.0.1", port = 8080}))
+
+assert(server:webdav({
+  path_prefix = "/dav",
+  cache_dir = "/var/lib/myapp",
+  site_id = "default",
+  auth = {
+    kind = "native",
+    credentials_path = "/etc/myapp/credentials.json",
+    realm = "myapp",
+    purpose = "webdav",
+  },
+}) == true)
+```
+
+This is not a direct arbitrary `root_dir` WebDAV backend. The current mutable
+server helper uses Vectis-managed WebDAV storage under `cache_dir/site_id`.

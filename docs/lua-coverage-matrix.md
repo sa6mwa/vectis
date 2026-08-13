@@ -50,7 +50,7 @@ Columns:
 | workflow:routes-json | JSON/API route helpers | n/a | partial | yes | yes | n/a | Fixed `server:json` and `server:auth_json`; dynamic handler DX is missing. |
 | workflow:routes-streaming | Request/response streaming route helpers | n/a | planned | no | no | n/a | Must preserve real streaming, spooling, and file-backed naming. |
 | workflow:static-assets | Static files and embedded assets | n/a | yes | yes | yes | n/a | Disk, embedded read-only, extract, and packed scenarios exist. |
-| workflow:webdav-server | WebDAV server mounts | n/a | partial | yes | yes | n/a | Packed embedded-site flow exists; ordinary mutable/read-only Lua app mounts need fuller DX. |
+| workflow:webdav-server | WebDAV server mounts | n/a | partial | yes | yes | n/a | `server:webdav` covers Vectis-managed mutable storage with native/callback auth; packed embedded-site flow exists; direct disk-root and read-only embedded WebDAV mounts still need fuller DX. |
 | workflow:webdav-client | WebDAV client helpers | yes | yes | yes | yes | n/a | `vectis.webdav` wraps curl for PROPFIND, MKCOL, GET, PUT, COPY, MOVE, DELETE, auth/depth/destination headers, structured errors, and file-backed transfer. |
 | workflow:auth | Native auth, OAuth2/OIDC, WebDAV keys | n/a | partial | yes | yes | planned | Core functions/routes exist; high-level Lua admin/login flow needs polish. |
 | workflow:certs | Certificate/key/CSR/CA workflows | n/a | partial | yes | yes | n/a | Bundle validation/generation exists; CSR/private key/full CA workflow coverage should be completed. |

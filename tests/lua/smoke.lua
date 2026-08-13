@@ -167,6 +167,7 @@ assert(client:close() == true)
 
 local server = assert(vectis.server.new({ app_name = "lua-smoke", port = 18080 }))
 assert(type(server.static_directory) == "function")
+assert(type(server.webdav) == "function")
 assert(type(server.json) == "function")
 assert(type(server.auth_json) == "function")
 local route_auth_path = os.tmpname()
