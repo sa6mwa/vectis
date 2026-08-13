@@ -296,7 +296,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [ ] Add Lua helpers for multipart upload/download, richer file-backed response presets, retry policies, and proxy/TLS/client-cert defaults.
 - [x] Add C-owned Lua fixed route helpers for text responses and redirects alongside JSON/auth JSON routes.
 - [ ] Add Lua route APIs for request handlers, middleware-like before/after hooks, path/query/header/body access, JSON/body streaming policies, file responses, SSE/streaming responses, and auth-guarded route groups.
-- [ ] Add Lua facades for Vectis auth administration and login flows that cover user DB configuration, credential storage location, password/TOTP/email-token factor policy, OAuth2/OIDC flows, WebDAV key issuance/revocation, and callback/native provider registration.
+- [x] Document and expose the core Lua auth facade for user DB configuration, credential storage location, password/TOTP/email-token factor policy, OAuth2/OIDC flows, WebDAV key issuance/revocation, and callback/native provider registration.
+- [ ] Add higher-level Lua auth DX helpers for opinionated admin/browser flows on top of the existing C-owned native auth routes and provider contract.
 - [ ] Add Lua CAI integration helpers once the CAI C SDK surface stabilizes: borrow/create clients, inherit logging, stream request bodies into `cai_source`, stream CAI output to HTTP/lockd/file sinks, expose tool callbacks, and preserve CAI as the primary OpenAI SDK.
 - [ ] Add Lua facades or explicit TODO contracts for cpkt `sus`/whisper and cpkt audio/miniaudio, including streaming audio source/sink ownership, transcription/voice workflow shape, and deterministic smoke tests without requiring live external services.
 - [ ] Add Lua helpers for libmdf/softline where Vectis-owned terminal/agent workflows need higher-level DX; otherwise keep their raw modules available without wrapping.

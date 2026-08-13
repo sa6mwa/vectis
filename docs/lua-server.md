@@ -65,3 +65,6 @@ assert(server:redirect({
 
 Dynamic request callbacks, middleware-like hooks, request body access, SSE, and
 true streaming response helpers are not part of this fixed-route surface.
+
+See [lua-auth.md](lua-auth.md) for native and callback auth providers,
+OAuth2/OIDC helpers, email-token flows, and WebDAV-key issuance.
