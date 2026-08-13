@@ -779,6 +779,7 @@ if(VECTIS_BUILD_BINARY)
   set(vectis_libmdf_lua_source "${vectis_libmdf_lua_source_dir}/lua/libmdf_core.c")
   set(vectis_softline_lua_source
     "${vectis_softline_lua_source_dir}/lua/softline_lua.c")
+  set(vectis_opcua_lua_source "${CMAKE_SOURCE_DIR}/src/vectis_opcua_lua.c")
   set(vectis_embedded_lua_c_sources
     "${vectis_lockdc_lua_source}"
     "${vectis_lonejson_lua_source}"
@@ -787,6 +788,7 @@ if(VECTIS_BUILD_BINARY)
     "${vectis_liblql_lua_source}"
     "${vectis_libmdf_lua_source}"
     "${vectis_softline_lua_source}"
+    "${vectis_opcua_lua_source}"
   )
   set_source_files_properties(${vectis_embedded_lua_c_sources} PROPERTIES
     OBJECT_DEPENDS "${vectis_dependency_manifest}"
@@ -934,6 +936,20 @@ if(VECTIS_BUILD_BINARY)
   )
   vectis_apply_relocatable_paths(vectis_softline_lua)
 
+  add_library(vectis_opcua_lua OBJECT "${vectis_opcua_lua_source}")
+  target_include_directories(vectis_opcua_lua PRIVATE
+    "${vectis_external_include_dir}"
+  )
+  target_compile_definitions(vectis_opcua_lua PRIVATE
+    _POSIX_C_SOURCE=200809L)
+  set_target_properties(vectis_opcua_lua PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON
+  )
+  vectis_apply_relocatable_paths(vectis_opcua_lua)
+
   add_executable(vectis_bin
     src/vectis_cli.c
     src/vectis_main.c
@@ -943,6 +959,7 @@ if(VECTIS_BUILD_BINARY)
     $<TARGET_OBJECTS:vectis_liblql_lua>
     $<TARGET_OBJECTS:vectis_libmdf_lua>
     $<TARGET_OBJECTS:vectis_softline_lua>
+    $<TARGET_OBJECTS:vectis_opcua_lua>
   )
   target_include_directories(vectis_bin PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
@@ -957,6 +974,7 @@ if(VECTIS_BUILD_BINARY)
   endif()
   target_link_libraries(vectis_bin PRIVATE
     cpkt::lua_runtime
+    cpkt::opcua
     cai::cai_static
     libmdf::mdf_static
     pslog::pslog_static

@@ -173,6 +173,22 @@ assert_lql_lua_runtime_contract() {
   assert_contains "$repo_root/tests/lua/smoke.lua" 'lql\.version'
 }
 
+assert_opcua_lua_runtime_contract() {
+  assert_contains "$repo_root/CMakeLists.txt" 'src/vectis_opcua_lua\.c'
+  assert_contains "$repo_root/CMakeLists.txt" 'add_library\(vectis_opcua_lua OBJECT'
+  assert_contains "$repo_root/CMakeLists.txt" '\$<TARGET_OBJECTS:vectis_opcua_lua>'
+  assert_contains "$repo_root/CMakeLists.txt" 'cpkt::opcua'
+  assert_contains "$repo_root/src/vectis_cli.c" 'cpkt_lua_runtime_register_c_module\(runtime, "opcua"'
+  assert_contains "$repo_root/src/vectis_opcua_lua.c" 'luaopen_opcua'
+  assert_contains "$repo_root/src/vectis_opcua_lua.c" 'cpkt_opcua_client_connect'
+  assert_contains "$repo_root/src/vectis_opcua_lua.c" 'cpkt_opcua_client_read'
+  assert_contains "$repo_root/src/vectis_opcua_lua.c" 'cpkt_opcua_client_write'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'require\("opcua"\)'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'opcua\.node_id_numeric'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'opcua\.value_string'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'opcua\.client'
+}
+
 assert_luarocks_artifact_rejected() {
   dist=$luarocks_dist
   version=0.0.0
@@ -247,6 +263,7 @@ assert_kore_lonejson_contract
 assert_kore_static_runtime_contract
 assert_lockdc_lua_runtime_contract
 assert_lql_lua_runtime_contract
+assert_opcua_lua_runtime_contract
 assert_luarocks_artifact_rejected
 
 if ! "$repo_root/scripts/target_toolchain_available.sh" x86_64-linux-gnu >/dev/null 2>&1; then

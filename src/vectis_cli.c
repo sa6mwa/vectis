@@ -296,6 +296,7 @@ extern int luaopen_lql_core(lua_State *lua);
 extern int luaopen_libmdf_core(lua_State *lua);
 extern int luaopen_pslog_core(lua_State *lua);
 extern int luaopen_softline(lua_State *lua);
+extern int luaopen_opcua(lua_State *lua);
 
 static pthread_once_t vectis_lua_curl_once = PTHREAD_ONCE_INIT;
 
@@ -8990,6 +8991,10 @@ static int vectis_luaopen_softline(void *lua_state) {
   return luaopen_softline((lua_State *)lua_state);
 }
 
+static int vectis_luaopen_opcua(void *lua_state) {
+  return luaopen_opcua((lua_State *)lua_state);
+}
+
 static void vectis_lua_trace_hook(lua_State *lua, lua_Debug *debug) {
   const char *source;
 
@@ -9224,8 +9229,13 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  return cpkt_lua_runtime_register_c_module(runtime, "softline",
-                                            vectis_luaopen_softline);
+  status = cpkt_lua_runtime_register_c_module(runtime, "softline",
+                                              vectis_luaopen_softline);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  return cpkt_lua_runtime_register_c_module(runtime, "opcua",
+                                            vectis_luaopen_opcua);
 }
 
 static int vectis_lua_prepare_runtime(cpkt_lua_runtime **out,
