@@ -194,6 +194,65 @@ assert_opcua_lua_runtime_contract() {
   assert_contains "$repo_root/tests/lua/smoke.lua" 'opcua\.client'
 }
 
+assert_lua_coverage_matrix_contract() {
+  matrix="$repo_root/docs/lua-coverage-matrix.md"
+
+  assert_contains "$matrix" 'The `vectis` executable is a primary product surface'
+  assert_contains "$matrix" '\| dep:lua-runtime \|'
+  assert_contains "$matrix" '\| dep:lockdc \|'
+  assert_contains "$matrix" '\| dep:lonejson \|'
+  assert_contains "$matrix" '\| dep:pslog \|'
+  assert_contains "$matrix" '\| dep:lql \|'
+  assert_contains "$matrix" '\| dep:cai \|'
+  assert_contains "$matrix" '\| dep:libmdf \|'
+  assert_contains "$matrix" '\| dep:softline \|'
+  assert_contains "$matrix" '\| dep:curl \|'
+  assert_contains "$matrix" '\| dep:openssl \|'
+  assert_contains "$matrix" '\| dep:libssh2 \|'
+  assert_contains "$matrix" '\| dep:libxml2 \|'
+  assert_contains "$matrix" '\| dep:dsv \|'
+  assert_contains "$matrix" '\| dep:opcua \|'
+  assert_contains "$matrix" '\| dep:sus \|'
+  assert_contains "$matrix" '\| dep:audio \|'
+  assert_contains "$matrix" '\| dep:nghttp2 \|'
+  assert_contains "$matrix" '\| dep:zlib \|'
+  assert_contains "$matrix" '\| dep:miniaudio \|'
+
+  assert_contains "$matrix" '\| workflow:server-runtime \|'
+  assert_contains "$matrix" '\| workflow:routes-json \|'
+  assert_contains "$matrix" '\| workflow:routes-streaming \|'
+  assert_contains "$matrix" '\| workflow:static-assets \|'
+  assert_contains "$matrix" '\| workflow:webdav-server \|'
+  assert_contains "$matrix" '\| workflow:webdav-client \|'
+  assert_contains "$matrix" '\| workflow:auth \|'
+  assert_contains "$matrix" '\| workflow:certs \|'
+  assert_contains "$matrix" '\| workflow:http-client \|'
+  assert_contains "$matrix" '\| workflow:sftp-curl \|'
+  assert_contains "$matrix" '\| workflow:ssh-exec \|'
+  assert_contains "$matrix" '\| workflow:scp \|'
+  assert_contains "$matrix" '\| workflow:sftp-libssh2 \|'
+  assert_contains "$matrix" '\| workflow:xml \|'
+  assert_contains "$matrix" '\| workflow:dsv \|'
+  assert_contains "$matrix" '\| workflow:lockd-state \|'
+  assert_contains "$matrix" '\| workflow:lockd-queue \|'
+  assert_contains "$matrix" '\| workflow:server-consumer \|'
+  assert_contains "$matrix" '\| workflow:opcua-client \|'
+  assert_contains "$matrix" '\| workflow:opcua-server \|'
+  assert_contains "$matrix" '\| workflow:opcua-async \|'
+  assert_contains "$matrix" '\| workflow:cai \|'
+  assert_contains "$matrix" '\| workflow:sus \|'
+  assert_contains "$matrix" '\| workflow:audio \|'
+  assert_contains "$matrix" '\| workflow:terminal-agent \|'
+  assert_contains "$matrix" '\| workflow:pack \|'
+  assert_contains "$matrix" '\| workflow:totp-qr \|'
+  assert_contains "$matrix" '\| workflow:openapi \|'
+
+  assert_contains "$matrix" 'New bundled dependencies that are useful from app code must add a `dep:\*`'
+  assert_contains "$matrix" 'New Vectis C SDK workflows must add a `workflow:\*`'
+  assert_contains "$repo_root/TODO.md" '\[x\] Add a Lua coverage matrix under `docs/`'
+  assert_contains "$repo_root/TODO.md" '\[x\] Add a lifecycle contract that fails when a bundled dependency'
+}
+
 assert_luarocks_artifact_rejected() {
   dist=$luarocks_dist
   version=0.0.0
@@ -269,6 +328,7 @@ assert_kore_static_runtime_contract
 assert_lockdc_lua_runtime_contract
 assert_lql_lua_runtime_contract
 assert_opcua_lua_runtime_contract
+assert_lua_coverage_matrix_contract
 assert_luarocks_artifact_rejected
 
 if ! "$repo_root/scripts/target_toolchain_available.sh" x86_64-linux-gnu >/dev/null 2>&1; then

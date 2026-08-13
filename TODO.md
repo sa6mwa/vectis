@@ -263,8 +263,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Configure Lua package paths so bundled/native Vectis modules load without user setup.
 - [x] Provide the first statically preloaded `require("vectis")` facade for the embedded Lua runner.
 - [ ] Expand `require("vectis")` into the full high-level framework facade.
-- [ ] Add a Lua coverage matrix under `docs/` that tracks every Vectis C SDK workflow and bundled dependency facade as `raw`, `vectis DX`, `tested`, `packed-tested`, `live-tested`, or `intentionally C-only`.
-- [ ] Add a lifecycle contract that fails when a bundled dependency or Vectis-owned C workflow is added without an explicit Lua coverage-matrix entry.
+- [x] Add a Lua coverage matrix under `docs/` that tracks every Vectis C SDK workflow and bundled dependency facade as `raw`, `vectis DX`, `tested`, `packed-tested`, `live-tested`, or `intentionally C-only`.
+- [x] Add a lifecycle contract that fails when a bundled dependency or Vectis-owned C workflow is added without an explicit Lua coverage-matrix entry.
 - [ ] Ensure the `vectis` Lua facade exposes structured status/error objects consistently across all Vectis-owned Lua helpers, mirroring C status, source, timeout, ownership, and cleanup conventions.
 - [x] Integrate existing Lua rocks/source archives for lockdc, pslog, liblql, and dependency Lua modules from pinned dependency sources.
 - [x] Build lockdc, pslog, and Vectis-owned Lua modules against the provisioned Lua 5.5 ABI.
