@@ -127,6 +127,14 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_http PROPERTIES
     LABELS "lua;smoke;local"
     TIMEOUT 30)
+  add_test(NAME vectis_lua_mqtt
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/mqtt.cmake")
+  set_tests_properties(vectis_lua_mqtt PROPERTIES
+    LABELS "lua;smoke;local"
+    TIMEOUT 30)
   add_test(NAME vectis_lua_webdav
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"

@@ -59,6 +59,7 @@ Columns:
 | workflow:ssh-exec | SSH command execution | planned | yes | yes | no | n/a | `vectis.ssh.exec` exists; raw libssh2 remains missing. |
 | workflow:scp | SCP upload/download | planned | planned | no | no | n/a | No Lua facade yet. |
 | workflow:sftp-libssh2 | libssh2-backed SFTP | planned | partial | yes | no | n/a | `vectis.ssh.sftp_upload_file` and `sftp_download_file` expose file transfer; open/read/write/list/stat/mkdir/remove/rename/chmod remain. |
+| workflow:mqtt | MQTT publish workflows | yes | yes | yes | no | planned | `vectis.mqtt.publish` wraps curl upload mode for MQTT publish; live broker coverage remains opt-in. |
 | workflow:xml | XML parse/serialize workflows | partial | partial | yes | no | n/a | `vectis.xml.parse()` materializes a table and `parse_record()` returns a Lua-owned LoneJSON record; XML serialization remains missing. |
 | workflow:dsv | CSV/TSV/DSV parse/serialize workflows | partial | partial | yes | no | n/a | Lua covers memory/path parse, typed row callbacks for fixed string fields, custom delimiters, comments, spill, and serialization; packed coverage remains missing. |
 | workflow:lockd-state | lockd document/state workflows | yes | partial | yes | yes | n/a | Raw lockdc plus first `vectis.lockd`; richer document/query helper coverage remains. |
