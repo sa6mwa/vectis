@@ -918,6 +918,7 @@ assert_not_contains "$repo_root/CMakeLists.txt" 'set_property\(TARGET lockdc::st
 assert_contains "$repo_root/scripts/verify_release_privacy.sh" 'Linux vectis binary is dynamically linked'
 assert_contains "$repo_root/scripts/verify_release_privacy.sh" 'Linux vectis binary has an ELF interpreter'
 assert_contains "$repo_root/scripts/verify_release_privacy.sh" 'Darwin vectis binary depends on a non-system dylib'
+assert_contains "$repo_root/TODO.md" 'codex review -c model=gpt-5\.6-sol -c model_reasoning_effort=medium --base <release-branch>'
 assert_contains "$repo_root/tests/CMakeLists.txt" 'LABELS "lua;smoke;local"'
 assert_contains "$repo_root/CMakeLists.txt" 'target_compile_options\(\$\{target\} PRIVATE'
 assert_contains "$repo_root/CMakeLists.txt" 'Werror'
