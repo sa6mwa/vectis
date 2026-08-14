@@ -58,7 +58,8 @@ workflows:
 - `vectis.dsv`: CSV/TSV/DSV parsing and serialization, documented in
   [Lua DSV](lua-dsv.md).
 - `vectis.embedded`: packed embedded asset inspection, reading, chunking,
-  listing, and extraction helpers.
+  listing, and extraction helpers, documented in
+  [Lua embedded assets](lua-embedded.md).
 - `vectis.http`: generic downstream HTTP and file transfer helpers, documented
   in [Lua HTTP](lua-http.md).
 - `vectis.lockd`: Vectis lockd client/workflow helpers, documented in
