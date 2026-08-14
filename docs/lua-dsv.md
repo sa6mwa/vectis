@@ -20,9 +20,8 @@ the raw materialized parse result.
 ## Options
 
 - `schema`: LoneJSON schema userdata. Required for typed rows, `each()`, and
-  `to_string()`. Typed DSV parsing currently requires string fields to use
-  `fixed_capacity`; raw string-valued `parse()` / `parse_json()` works without
-  a schema.
+  `to_string()`. Typed DSV parsing supports LoneJSON dynamic and
+  fixed-capacity string fields.
 - `data`, `dsv`, `csv`, or `tsv`: DSV string input.
 - `path`: DSV file path input.
 - `format`: `csv` or `tsv`; default `csv`.
@@ -46,7 +45,7 @@ local dsv = require("vectis.dsv")
 local lonejson = require("lonejson")
 
 local schema = lonejson.schema("row", {
-  lonejson.field("id", lonejson.string({required = true, fixed_capacity = 64})),
+  lonejson.field("id", lonejson.string({required = true})),
   lonejson.field("count", lonejson.i64({required = true})),
 })
 

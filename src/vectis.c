@@ -433,6 +433,7 @@ static vectis_status vectis_set_lonejson_error(vectis_error *error,
                                                lonejson_status status,
                                                const lonejson_error *json_error,
                                                const char *message);
+static void *vectis_lonejson_owned_malloc(size_t size);
 static vectis_status vectis_register_consumer_receiver_impl(
     vectis_app_impl *impl, const vectis_consumer_receiver_adapter *adapter,
     vectis_error *error);
@@ -11045,7 +11046,7 @@ vectis_dsv_set_lonejson_string_field(const lonejson_field *field, void *value,
 
   if (field->storage == LONEJSON_STORAGE_DYNAMIC) {
     dyn = (char **)((unsigned char *)value + field->struct_offset);
-    *dyn = (char *)malloc(text_size + 1u);
+    *dyn = (char *)vectis_lonejson_owned_malloc(text_size + 1u);
     if (*dyn == NULL) {
       vectis_set_error(error, VECTIS_ERR_NOMEM,
                        "failed to allocate DSV lonejson string field");
@@ -11539,19 +11540,6 @@ vectis_status vectis_dsv_parse_lonejson_view(
   }
   if (vectis_dsv_effective_config(config, &effective, error) != VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
-  }
-  for (column_count = 0u; column_count < schema->map->field_count;
-       ++column_count) {
-    const lonejson_field *field;
-
-    field = &schema->map->fields[column_count];
-    if (field->kind == LONEJSON_FIELD_KIND_STRING &&
-        field->storage == LONEJSON_STORAGE_DYNAMIC) {
-      vectis_set_error(error, VECTIS_ERR_INVALID,
-                       "DSV typed Lua parsing requires fixed_capacity string "
-                       "fields");
-      return VECTIS_ERR_INVALID;
-    }
   }
   memset(&parser, 0, sizeof(parser));
   memset(&headers, 0, sizeof(headers));

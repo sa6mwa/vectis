@@ -106,14 +106,25 @@ local dynamic_schema = lonejson.schema("dynamic-dsv-row", {
   lonejson.field("id", lonejson.string({required = true})),
   lonejson.field("count", lonejson.i64({required = true})),
 })
-local dynamic_bad, dynamic_err = dsv.parse({
+local dynamic_rows = assert(dsv.parse({
   schema = dynamic_schema,
   data = "id,count\nalpha,2\n",
-})
-assert(dynamic_bad == nil)
-assert(type(dynamic_err) == "table")
-assert(dynamic_err.status == vectis.ERR_INVALID)
-assert(dynamic_err.message:find("fixed_capacity", 1, true))
+}))
+assert(#dynamic_rows == 1)
+assert(dynamic_rows[1].id == "alpha")
+assert(dynamic_rows[1].count == 2)
+
+local dynamic_seen = {}
+assert(dsv.each({
+  schema = dynamic_schema,
+  data = "id,count\nbravo,3\ncharlie,4\n",
+  on_row = function(row_number, row)
+    dynamic_seen[#dynamic_seen + 1] = row_number .. ":" .. row.id .. ":" .. tostring(row.count)
+  end,
+}) == true)
+assert(#dynamic_seen == 2)
+assert(dynamic_seen[1] == "1:bravo:3")
+assert(dynamic_seen[2] == "2:charlie:4")
 ]])
 
 execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${csv_file}"
