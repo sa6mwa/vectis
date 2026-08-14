@@ -282,7 +282,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Register bundled Lua modules statically through `package.preload` in the `vectis` binary.
 - [x] Statically preload every bundled dependency-native Lua facade that exists or is Vectis-owned: lockdc, lonejson, pslog, lql, cai, libmdf, softline, curl, opcua, XML/libxml2, DSV/CSV/TSV, OpenSSL, libssh2/SFTP/SCP, WebDAV client helpers, sus/whisper, audio/miniaudio, and future protocol facades.
 - [x] Add a top-level `vectis.libs` namespace that collects bundled dependency Lua facades (`lockdc`, `lonejson`, `pslog`, `lql`, `cai`, `libmdf`, `softline`, `curl`, `opcua`, `openssl`, `zlib`, `audio`, `sus`) without replacing direct `require(...)` access.
-- [ ] Keep `vectis.libs` coverage current whenever any bundled Lua facade is added or renamed, including direct module aliasing, Lua smoke assertions, and coverage-matrix documentation in the same change.
+- [x] Keep `vectis.libs` coverage current whenever any bundled Lua facade is added or renamed, including direct module aliasing, Lua smoke assertions, and coverage-matrix documentation in the same change.
 - [x] Add a dependency-native zlib Lua facade for buffered string deflate/inflate, gzip/gunzip, auto-decompress, file-backed bounded transforms, version, and explicit output limits.
 - [ ] For each dependency-native Lua facade, add a Vectis-owned helper only where it reduces real service workflow friction; do not replace or hide the direct dependency module when complete API coverage matters.
 - [x] Add an OPC UA Lua client/foundation facade over the `cpkt-opcua` C89 facade and statically preload it in the `vectis` binary as `require("opcua")`.

@@ -41,9 +41,13 @@ of the `vectis` executable.
 
 `require("vectis").libs` collects these bundled library facades under one
 namespace for applications that already use the top-level Vectis module:
-`vectis.libs.curl`, `vectis.libs.lockdc`, `vectis.libs.lonejson`, and so on are
-the same module tables returned by direct `require(...)`. Direct `require(...)`
-remains the canonical way to load an individual dependency facade.
+`vectis.libs.lockdc`, `vectis.libs.lonejson`, `vectis.libs.pslog`,
+`vectis.libs.lql`, `vectis.libs.cai`, `vectis.libs.libmdf`,
+`vectis.libs.softline`, `vectis.libs.curl`, `vectis.libs.opcua`,
+`vectis.libs.openssl`, `vectis.libs.zlib`, `vectis.libs.audio`, and
+`vectis.libs.sus` are the same module tables returned by direct
+`require(...)`. Direct `require(...)` remains the canonical way to load an
+individual dependency facade.
 
 ## Vectis Workflow Modules
 

@@ -619,12 +619,17 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/tests/lua/smoke.lua" 'zlib\.gzip'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'zlib\.gzip_file'
   assert_contains "$repo_root/TODO.md" '\[x\] Add a top-level `vectis\.libs` namespace'
+  assert_contains "$repo_root/TODO.md" '\[x\] Keep `vectis\.libs` coverage current'
   assert_contains "$repo_root/src/vectis_cli.c" 'vectis_lua_push_libs_table'
   assert_contains "$repo_root/src/vectis_cli.c" 'lua_setfield\(lua, -2, "libs"\)'
-  assert_contains "$repo_root/tests/lua/smoke.lua" 'vectis\.libs\.lockdc == lockdc'
-  assert_contains "$repo_root/tests/lua/smoke.lua" 'vectis\.libs\.zlib == zlib'
   assert_contains "$lua_index" '`require\("vectis"\)\.libs`'
-  assert_contains "$matrix" '`vectis\.libs` collects the bundled dependency facades'
+  assert_contains "$matrix" '`vectis\.libs` aliases `lockdc`, `lonejson`, `pslog`, `lql`, `cai`, `libmdf`, `softline`, `curl`, `opcua`, `openssl`, `zlib`, `audio`, and `sus`'
+  for vectis_lib_alias in lockdc lonejson pslog lql cai libmdf softline curl opcua openssl zlib audio sus; do
+    assert_contains "$repo_root/src/vectis_cli.c" "vectis_lua_set_required_module\\(lua, \"$vectis_lib_alias\", \"$vectis_lib_alias\"\\)"
+    assert_contains "$repo_root/tests/lua/smoke.lua" "vectis\\.libs\\.$vectis_lib_alias == $vectis_lib_alias"
+    assert_contains "$lua_index" "\`vectis\\.libs\\.$vectis_lib_alias\`"
+    assert_contains "$matrix" "\`$vectis_lib_alias\`"
+  done
   assert_contains "$repo_root/examples/lua/local_data_pipeline.lua" 'require\("zlib"\)'
   assert_contains "$repo_root/examples/lua/local_data_pipeline.lua" 'zlib\.decompress'
   assert_contains "$repo_root/examples/lua/local_data_pipeline.lua" 'zlib\.decompress_file'
