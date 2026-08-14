@@ -161,6 +161,7 @@ local api_server = assert(vectis.server.new({
   bind = "127.0.0.1",
   port = 28484,
 }))
+assert(type(api_server.group) == "function")
 assert(vectis.auth.store_init({credentials_path = auth_path}) == true)
 assert(vectis.auth.user_add({
   credentials_path = auth_path,
@@ -321,6 +322,66 @@ assert(api_server:route({
     }
   end,
 }) == true)
+local bad_route_group, bad_route_group_err = api_server:group({
+  prefix = "/bad-group",
+  routes = {
+    {
+      path = "bad",
+      before = "not-a-function",
+      handler = function()
+        return "bad\n"
+      end,
+    },
+  },
+})
+assert(bad_route_group == nil)
+assert(bad_route_group_err.status == vectis.ERR_INVALID)
+assert(bad_route_group_err.message:find("before hook", 1, true))
+assert(api_server:group({
+  prefix = "/group",
+  methods = {"GET", "POST"},
+  body = {
+    mode = "buffered",
+    max_bytes = 1024,
+  },
+  before = function(request)
+    assert(request.path:find("/group/", 1, true) == 1)
+    if request.header("x-block") == "1" then
+      return {
+        status = 418,
+        content_type = "text/plain; charset=utf-8",
+        body = "blocked by before\n",
+      }
+    end
+    return true
+  end,
+  after = function(request, response)
+    response.headers = response.headers or {}
+    response.headers["x-vectis-group"] = request.method
+    response.body = response.body .. "after=" .. request.method .. "\n"
+    return response
+  end,
+  routes = {
+    {
+      path = "hello/:name",
+      handler = function(request)
+        return {
+          status = request.method == "POST" and 201 or 200,
+          content_type = "text/plain; charset=utf-8",
+          body = request.param("name") .. ":" ..
+              (request.query("suffix") or "") .. ":" ..
+              tostring(request.body or "") .. "\n",
+        }
+      end,
+    },
+    {
+      path = "/short-circuit",
+      handler = function()
+        error("before hook should short-circuit")
+      end,
+    },
+  },
+}) == true)
 local dsv_route_schema = lonejson.schema("lua-http-dsv-route-row", {
   lonejson.field("id", lonejson.string({required = true})),
   lonejson.field("count", lonejson.i64({required = true})),
@@ -457,6 +518,37 @@ assert(dynamic_guarded_allowed.ok == true,
 assert(dynamic_guarded_allowed.status == 200)
 assert(dynamic_guarded_allowed.body == '{"ok":true,"principal":"route-user"}\n')
 assert(dynamic_guarded_allowed.headers:lower():find("cache-control: no-store", 1, true))
+local group_get = vectis.http.get("http://127.0.0.1:28484/group/hello/alice?suffix=ok", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(group_get.ok == true, group_get.error and group_get.error.message)
+assert(group_get.status == 200)
+assert(group_get.body == "alice:ok:\nafter=GET\n")
+assert(group_get.headers:lower():find("x-vectis-group: get", 1, true))
+local group_post = vectis.http.post("http://127.0.0.1:28484/group/hello/bob?suffix=ok", {
+  body = "payload=1",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(group_post.ok == true, group_post.error and group_post.error.message)
+assert(group_post.status == 201)
+assert(group_post.body == "bob:ok:payload=1\nafter=POST\n")
+assert(group_post.headers:lower():find("x-vectis-group: post", 1, true))
+local group_blocked = vectis.http.get("http://127.0.0.1:28484/group/short-circuit", {
+  headers = {
+    ["x-block"] = "1",
+  },
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(group_blocked.ok == false)
+assert(group_blocked.status == 418)
+assert(group_blocked.error.http_status == 418)
+assert(group_blocked.error.body == "blocked by before\n")
 local dynamic_dsv_required = vectis.http.post("http://127.0.0.1:28484/dynamic-dsv", {
   body = "id,count\nalpha,2\nbeta,3\n",
   headers = {

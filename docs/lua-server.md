@@ -82,6 +82,8 @@ Route fields:
   `{mode = "buffered", max_bytes = ...}`
 - `auth`: optional native or callback auth provider config, using the same
   contract as `server:auth_json`
+- `before`: optional function receiving the request before the handler
+- `after`: optional function receiving the request and handler response value
 - `handler`: function receiving a borrowed request table
 
 The request table contains copied scalar fields plus borrowed lookup helpers
@@ -103,6 +105,16 @@ Handlers return:
 - a table with `status` or `status_code`, optional `content_type`, optional
   `headers`, and either `body` or `file_path`
 
+`before` hooks run after auth and before the handler. Returning `nil` or
+`true` continues into the handler. Returning a response table short-circuits
+the route and sends that response.
+
+`after` hooks run after the handler and receive `(request, response)`, where
+`response` is the handler's raw `nil`, string, or table response value.
+Returning `nil` or `true` keeps the handler response. Returning a response
+table replaces it. Hooks are part of the buffered route surface; they do not
+make the route streaming.
+
 ```lua
 assert(server:route({
   path = "/hello/:name",
@@ -116,6 +128,30 @@ assert(server:route({
       body = request.param("name") .. "\n",
     }
   end,
+}) == true)
+```
+
+`server:group(opts)` registers a group of buffered callback routes with shared
+defaults. The group accepts `prefix` or `path_prefix`, optional default `auth`,
+`before`, `after`, `method`, `methods`, and `body`, plus a non-empty `routes`
+array. Each route in `routes` is the same table accepted by `server:route()` and
+overrides group defaults. Relative route paths are joined under the group
+prefix.
+
+```lua
+assert(server:group({
+  prefix = "/api",
+  auth = auth_provider,
+  before = audit_request,
+  after = add_common_headers,
+  routes = {
+    {
+      path = "status",
+      handler = function()
+        return {content_type = "application/json", body = '{"ok":true}\n'}
+      end,
+    },
+  },
 }) == true)
 ```
 
@@ -177,8 +213,8 @@ assert(server:dsv({
 - `server:auth_routes(opts)` registers native login/auth/WebDAV-key routes.
 - `server:consumer_service(opts)` registers a C-owned lockd consumer service.
 
-Middleware-like hooks, SSE, and true streaming response helpers are separate
-future route surfaces; `server:route()` must not be used to describe streaming
+SSE and true streaming response helpers are separate future route surfaces;
+`server:route()` and `server:group()` must not be used to describe streaming
 behavior.
 
 See [lua-auth.md](lua-auth.md) for native and callback auth providers,

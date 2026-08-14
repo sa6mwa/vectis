@@ -147,6 +147,8 @@ typedef struct vectis_lua_server_callback_route {
   char *path;
   char *purpose;
   int callback_ref;
+  int before_ref;
+  int after_ref;
   vectis_lua_server_native_auth *auth;
   struct vectis_lua_server_callback_route *next;
 } vectis_lua_server_callback_route;
@@ -5221,6 +5223,14 @@ vectis_lua_server_callback_route_free(vectis_lua_server_callback_route *route) {
     luaL_unref(route->lua, LUA_REGISTRYINDEX, route->callback_ref);
     route->callback_ref = LUA_NOREF;
   }
+  if (route->lua != NULL && route->before_ref != LUA_NOREF) {
+    luaL_unref(route->lua, LUA_REGISTRYINDEX, route->before_ref);
+    route->before_ref = LUA_NOREF;
+  }
+  if (route->lua != NULL && route->after_ref != LUA_NOREF) {
+    luaL_unref(route->lua, LUA_REGISTRYINDEX, route->after_ref);
+    route->after_ref = LUA_NOREF;
+  }
   free(route->path);
   free(route->purpose);
   free(route);
@@ -6641,6 +6651,9 @@ static vectis_status vectis_lua_server_route_dispatch(
   vectis_status status;
   int base;
   int allowed;
+  int request_index;
+  int route_response_index;
+  int after_response_index;
   char principal[128];
   const char *message;
 
@@ -6661,6 +6674,44 @@ static vectis_status vectis_lua_server_route_dispatch(
   }
   lua = route->lua;
   base = lua_gettop(lua);
+  status = vectis_lua_push_route_request(lua, request, principal, 1, error);
+  if (status != VECTIS_OK) {
+    lua_settop(lua, base);
+    return status;
+  }
+  request_index = lua_absindex(lua, -1);
+  if (route->before_ref != LUA_NOREF) {
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, route->before_ref);
+    if (!lua_isfunction(lua, -1)) {
+      lua_settop(lua, base);
+      vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                           "Lua route before hook reference is invalid");
+      return VECTIS_ERR_INVALID;
+    }
+    lua_pushvalue(lua, request_index);
+    if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+      message = lua_tostring(lua, -1);
+      vectis_cli_error_set(
+          error, VECTIS_ERR_STATE,
+          message != NULL ? message : "Lua route before hook failed");
+      lua_settop(lua, base);
+      return VECTIS_ERR_STATE;
+    }
+    if (lua_istable(lua, -1)) {
+      status = vectis_lua_apply_route_response(lua, -1, response, error);
+      lua_settop(lua, base);
+      return status;
+    }
+    if (!(lua_isnil(lua, -1) ||
+          (lua_isboolean(lua, -1) && lua_toboolean(lua, -1)))) {
+      lua_settop(lua, base);
+      vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                           "Lua route before hook must return nil, true, or "
+                           "a response table");
+      return VECTIS_ERR_INVALID;
+    }
+    lua_pop(lua, 1);
+  }
   lua_rawgeti(lua, LUA_REGISTRYINDEX, route->callback_ref);
   if (!lua_isfunction(lua, -1)) {
     lua_settop(lua, base);
@@ -6668,11 +6719,7 @@ static vectis_status vectis_lua_server_route_dispatch(
                          "Lua route callback reference is invalid");
     return VECTIS_ERR_INVALID;
   }
-  status = vectis_lua_push_route_request(lua, request, principal, 1, error);
-  if (status != VECTIS_OK) {
-    lua_settop(lua, base);
-    return status;
-  }
+  lua_pushvalue(lua, request_index);
   if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
     message = lua_tostring(lua, -1);
     vectis_cli_error_set(error, VECTIS_ERR_STATE,
@@ -6680,7 +6727,45 @@ static vectis_status vectis_lua_server_route_dispatch(
     lua_settop(lua, base);
     return VECTIS_ERR_STATE;
   }
-  status = vectis_lua_apply_route_response(lua, -1, response, error);
+  route_response_index = lua_absindex(lua, -1);
+  if (route->after_ref != LUA_NOREF) {
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, route->after_ref);
+    if (!lua_isfunction(lua, -1)) {
+      lua_settop(lua, base);
+      vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                           "Lua route after hook reference is invalid");
+      return VECTIS_ERR_INVALID;
+    }
+    lua_pushvalue(lua, request_index);
+    lua_pushvalue(lua, route_response_index);
+    if (lua_pcall(lua, 2, 1, 0) != LUA_OK) {
+      message = lua_tostring(lua, -1);
+      vectis_cli_error_set(
+          error, VECTIS_ERR_STATE,
+          message != NULL ? message : "Lua route after hook failed");
+      lua_settop(lua, base);
+      return VECTIS_ERR_STATE;
+    }
+    if (lua_istable(lua, -1)) {
+      after_response_index = lua_absindex(lua, -1);
+      status =
+          vectis_lua_apply_route_response(lua, after_response_index, response,
+                                          error);
+      lua_settop(lua, base);
+      return status;
+    }
+    if (!(lua_isnil(lua, -1) ||
+          (lua_isboolean(lua, -1) && lua_toboolean(lua, -1)))) {
+      lua_settop(lua, base);
+      vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                           "Lua route after hook must return nil, true, or a "
+                           "response table");
+      return VECTIS_ERR_INVALID;
+    }
+    lua_pop(lua, 1);
+  }
+  status = vectis_lua_apply_route_response(lua, route_response_index, response,
+                                           error);
   lua_settop(lua, base);
   return status;
 }
@@ -6744,6 +6829,8 @@ static int vectis_lua_server_route(lua_State *lua) {
   }
   route_data->lua = lua;
   route_data->callback_ref = LUA_NOREF;
+  route_data->before_ref = LUA_NOREF;
+  route_data->after_ref = LUA_NOREF;
   route_data->auth = auth;
   route_data->path = vectis_cli_strdup(path);
   if (auth != NULL) {
@@ -6756,6 +6843,32 @@ static int vectis_lua_server_route(lua_State *lua) {
     vectis_lua_server_native_auth_free(auth);
     return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
                                       "failed to copy route config");
+  }
+  lua_getfield(lua, 2, "before");
+  if (!lua_isnil(lua, -1)) {
+    if (!lua_isfunction(lua, -1)) {
+      lua_pop(lua, 2);
+      vectis_lua_server_callback_route_free(route_data);
+      vectis_lua_server_native_auth_free(auth);
+      return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                        "route before hook must be a function");
+    }
+    route_data->before_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  } else {
+    lua_pop(lua, 1);
+  }
+  lua_getfield(lua, 2, "after");
+  if (!lua_isnil(lua, -1)) {
+    if (!lua_isfunction(lua, -1)) {
+      lua_pop(lua, 2);
+      vectis_lua_server_callback_route_free(route_data);
+      vectis_lua_server_native_auth_free(auth);
+      return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                        "route after hook must be a function");
+    }
+    route_data->after_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  } else {
+    lua_pop(lua, 1);
   }
   route_data->callback_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
 
@@ -6774,6 +6887,165 @@ static int vectis_lua_server_route(lua_State *lua) {
   }
   route_data->next = server->callback_routes;
   server->callback_routes = route_data;
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static void vectis_lua_copy_table_field(lua_State *lua, int source_index,
+                                        int target_index,
+                                        const char *field) {
+  source_index = lua_absindex(lua, source_index);
+  target_index = lua_absindex(lua, target_index);
+  lua_getfield(lua, source_index, field);
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return;
+  }
+  lua_setfield(lua, target_index, field);
+}
+
+static char *vectis_lua_join_route_path(const char *prefix,
+                                        const char *path) {
+  size_t prefix_len;
+  size_t path_len;
+  size_t size;
+  int need_slash;
+  char *joined;
+
+  if (path == NULL || path[0] == '\0') {
+    return NULL;
+  }
+  if (prefix == NULL || prefix[0] == '\0' ||
+      (prefix[0] == '/' && prefix[1] == '\0')) {
+    if (path[0] == '/') {
+      return vectis_cli_strdup(path);
+    }
+    path_len = strlen(path);
+    joined = (char *)malloc(path_len + 2u);
+    if (joined == NULL) {
+      return NULL;
+    }
+    joined[0] = '/';
+    memcpy(joined + 1u, path, path_len + 1u);
+    return joined;
+  }
+  prefix_len = strlen(prefix);
+  path_len = strlen(path);
+  need_slash = prefix[prefix_len - 1u] != '/' && path[0] != '/';
+  size = prefix_len + path_len + (need_slash ? 1u : 0u) + 1u;
+  joined = (char *)malloc(size);
+  if (joined == NULL) {
+    return NULL;
+  }
+  memcpy(joined, prefix, prefix_len);
+  if (need_slash) {
+    joined[prefix_len] = '/';
+    memcpy(joined + prefix_len + 1u, path, path_len + 1u);
+  } else if (prefix[prefix_len - 1u] == '/' && path[0] == '/') {
+    memcpy(joined + prefix_len, path + 1u, path_len);
+  } else {
+    memcpy(joined + prefix_len, path, path_len + 1u);
+  }
+  return joined;
+}
+
+static void vectis_lua_copy_route_table(lua_State *lua, int source_index,
+                                        int target_index) {
+  source_index = lua_absindex(lua, source_index);
+  target_index = lua_absindex(lua, target_index);
+  lua_pushnil(lua);
+  while (lua_next(lua, source_index) != 0) {
+    lua_pushvalue(lua, -2);
+    lua_pushvalue(lua, -2);
+    lua_settable(lua, target_index);
+    lua_pop(lua, 1);
+  }
+}
+
+static int vectis_lua_server_group(lua_State *lua) {
+  int group_index;
+  int routes_index;
+  int route_index;
+  int merged_index;
+  int call_base;
+  int result_count;
+  lua_Integer count;
+  lua_Integer i;
+  const char *prefix;
+  const char *path;
+  const char *message;
+  char *joined;
+
+  (void)vectis_lua_server_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  group_index = lua_absindex(lua, 2);
+  prefix = vectis_lua_table_string(lua, group_index, "prefix");
+  if (prefix == NULL) {
+    prefix = vectis_lua_table_string(lua, group_index, "path_prefix");
+  }
+  lua_getfield(lua, group_index, "routes");
+  if (!lua_istable(lua, -1)) {
+    lua_pop(lua, 1);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "route group routes table is required");
+  }
+  routes_index = lua_absindex(lua, -1);
+  count = (lua_Integer)lua_rawlen(lua, routes_index);
+  if (count <= 0) {
+    lua_pop(lua, 1);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "route group requires at least one route");
+  }
+  for (i = 1; i <= count; ++i) {
+    lua_rawgeti(lua, routes_index, i);
+    if (!lua_istable(lua, -1)) {
+      lua_pop(lua, 2);
+      return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                        "route group route must be a table");
+    }
+    route_index = lua_absindex(lua, -1);
+    path = vectis_lua_table_string(lua, route_index, "path");
+    joined = vectis_lua_join_route_path(prefix, path);
+    if (joined == NULL) {
+      lua_pop(lua, 2);
+      return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                        "route group route path is required");
+    }
+    lua_newtable(lua);
+    merged_index = lua_absindex(lua, -1);
+    vectis_lua_copy_table_field(lua, group_index, merged_index, "auth");
+    vectis_lua_copy_table_field(lua, group_index, merged_index, "before");
+    vectis_lua_copy_table_field(lua, group_index, merged_index, "after");
+    vectis_lua_copy_table_field(lua, group_index, merged_index, "method");
+    vectis_lua_copy_table_field(lua, group_index, merged_index, "methods");
+    vectis_lua_copy_table_field(lua, group_index, merged_index, "body");
+    vectis_lua_copy_route_table(lua, route_index, merged_index);
+    lua_pushstring(lua, joined);
+    lua_setfield(lua, merged_index, "path");
+    free(joined);
+    joined = NULL;
+
+    call_base = lua_gettop(lua);
+    lua_pushcfunction(lua, vectis_lua_server_route);
+    lua_pushvalue(lua, 1);
+    lua_pushvalue(lua, merged_index);
+    if (lua_pcall(lua, 2, LUA_MULTRET, 0) != LUA_OK) {
+      message = lua_tostring(lua, -1);
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_STATE,
+          message != NULL ? message : "route group registration failed");
+    }
+    result_count = lua_gettop(lua) - call_base;
+    if (result_count <= 0 || lua_toboolean(lua, call_base + 1) == 0) {
+      return result_count > 0 ? result_count
+                              : vectis_lua_push_error_text(
+                                    lua, VECTIS_ERR_STATE,
+                                    "route group registration failed");
+    }
+    lua_pop(lua, result_count);
+    lua_pop(lua, 2);
+  }
+  lua_pop(lua, 1);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -12239,6 +12511,8 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "auth_routes");
     lua_pushcfunction(lua, vectis_lua_server_route);
     lua_setfield(lua, -2, "route");
+    lua_pushcfunction(lua, vectis_lua_server_group);
+    lua_setfield(lua, -2, "group");
     lua_pushcfunction(lua, vectis_lua_server_dsv);
     lua_setfield(lua, -2, "dsv");
     lua_pushcfunction(lua, vectis_lua_server_json);
