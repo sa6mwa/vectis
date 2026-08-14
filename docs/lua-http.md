@@ -27,6 +27,9 @@ code a consistent result shape for API calls and file transfers.
 - `vectis.http.sftp_download(opts)` and `vectis.http.sftp_upload(opts)` set the
   default protocol allowlist to `sftp` and use the same file-backed transfer
   paths.
+- `vectis.http.client(defaults)` returns a helper object with the same request
+  methods and shared defaults for retry, proxy, TLS, client certificates,
+  credentials, headers, protocol allowlists, and timeouts.
 
 ## Results
 
@@ -84,3 +87,28 @@ local response = vectis.http.multipart({
 Part tables require `name` unless the table is stored under a string key. Text
 parts use `value` or `body`. File parts use `path` or `file_path`, plus
 optional `filename` and `content_type`.
+
+## Clients
+
+```lua
+local api = vectis.http.client({
+  protocols = "https",
+  timeout_ms = 5000,
+  retry = {
+    max_attempts = 3,
+    conditions = {"transport", "5xx"},
+  },
+  headers = {
+    Authorization = "Bearer " .. token,
+  },
+  ca_file = "ca.pem",
+  client_cert = "client.pem",
+  client_key = "client.key",
+})
+
+local response = api.get_json("https://api.example.test/status")
+```
+
+Client methods shallow-merge per-request options over defaults. Headers merge
+separately, so a request can override or add individual headers without
+repeating the default header table.

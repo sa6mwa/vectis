@@ -828,6 +828,7 @@ assert(type(vectis.http.delete) == "function")
 assert(type(vectis.http.form) == "function")
 assert(type(vectis.http.form_encode) == "function")
 assert(type(vectis.http.multipart) == "function")
+assert(type(vectis.http.client) == "function")
 assert(type(vectis.http.request_json) == "function")
 assert(type(vectis.http.download) == "function")
 

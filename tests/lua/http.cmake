@@ -55,6 +55,7 @@ assert(type(vectis.http.delete) == "function")
 assert(type(vectis.http.form) == "function")
 assert(type(vectis.http.form_encode) == "function")
 assert(type(vectis.http.multipart) == "function")
+assert(type(vectis.http.client) == "function")
 assert(type(vectis.http.request_json) == "function")
 assert(type(vectis.http.get_json) == "function")
 assert(type(vectis.http.post_json) == "function")
@@ -77,6 +78,35 @@ assert(decoded.ok == true, decoded.error and decoded.error.message)
 assert(decoded.transport_ok == true)
 assert(decoded.json.message == "vectis-http")
 assert(decoded.error == nil)
+
+local file_client = vectis.http.client({
+  protocols = "file",
+  retry = false,
+})
+assert(type(file_client.get_json) == "function")
+assert(type(file_client.form) == "function")
+assert(type(file_client.multipart) == "function")
+local client_decoded = file_client.get_json(json_url)
+assert(client_decoded.ok == true,
+       client_decoded.error and client_decoded.error.message)
+assert(client_decoded.json.message == "vectis-http")
+
+local retry_client = vectis.http.client({
+  protocols = "http",
+  timeout_ms = 200,
+  connect_timeout_ms = 50,
+  no_signal = true,
+  retry = {
+    max_attempts = 2,
+    initial_delay_ms = 0,
+    max_delay_ms = 0,
+    conditions = {"transport"},
+  },
+})
+local client_failed = retry_client.get("http://127.0.0.1:1/")
+assert(client_failed.ok == false)
+assert(client_failed.error.kind == "transport")
+assert(client_failed.attempts == 2)
 
 local failed = vectis.http.request({
   url = "http://127.0.0.1:1/",
@@ -376,6 +406,25 @@ assert(provider_native_allowed.ok == true,
        provider_native_allowed.error and provider_native_allowed.error.message)
 assert(provider_native_allowed.status == 200)
 assert(provider_native_allowed.body == '{"ok":true,"provider":"native"}\n')
+local authenticated_client = vectis.http.client({
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+  headers = {Authorization = http_basic_auth},
+})
+local client_provider_native_allowed =
+    authenticated_client.get("http://127.0.0.1:28484/provider-native-guarded")
+assert(client_provider_native_allowed.ok == true,
+       client_provider_native_allowed.error and
+       client_provider_native_allowed.error.message)
+assert(client_provider_native_allowed.status == 200)
+local client_callback_allowed = authenticated_client.get(
+    "http://127.0.0.1:28484/callback-guarded",
+    {headers = {Authorization = "Bearer callback-ok"}})
+assert(client_callback_allowed.ok == true,
+       client_callback_allowed.error and client_callback_allowed.error.message)
+assert(client_callback_allowed.status == 200)
 local callback_required = vectis.http.request({
   url = "http://127.0.0.1:28484/callback-guarded",
   protocols = "http",

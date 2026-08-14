@@ -37,6 +37,33 @@ local function request_with_method(method, first, second)
   return M.request(opts)
 end
 
+local function merge_headers(default_headers, request_headers)
+  local headers = nil
+  if default_headers ~= nil then
+    headers = copy_table(default_headers)
+  end
+  if request_headers ~= nil then
+    headers = headers or {}
+    for key, value in pairs(request_headers) do
+      headers[key] = value
+    end
+  end
+  return headers
+end
+
+local function merge_defaults(defaults, first, second)
+  local request = opts_from(first, second)
+  local merged = copy_table(defaults)
+  for key, value in pairs(request) do
+    if key ~= "headers" then
+      merged[key] = value
+    end
+  end
+  merged.headers = merge_headers(defaults and defaults.headers or nil,
+                                 request.headers)
+  return merged
+end
+
 local function percent_encode(value)
   value = tostring(value)
   return (value:gsub("([^A-Za-z0-9_%.%-~])", function(char)
@@ -254,6 +281,109 @@ function M.stream_json(opts)
   opts = opts_from(opts)
   default_protocols(opts, "http,https")
   return M.normalize(curl.stream_json(opts))
+end
+
+function M.client(defaults)
+  defaults = copy_table(defaults)
+  local client = {}
+
+  function client.request(first, second)
+    return M.request(merge_defaults(defaults, first, second))
+  end
+
+  function client.request_json(first, second)
+    return M.request_json(merge_defaults(defaults, first, second))
+  end
+
+  function client.get(first, second)
+    local opts = merge_defaults(defaults, first, second)
+    opts.method = opts.method or "GET"
+    return M.request(opts)
+  end
+
+  function client.post(first, second)
+    local opts = merge_defaults(defaults, first, second)
+    opts.method = opts.method or "POST"
+    return M.request(opts)
+  end
+
+  function client.put(first, second)
+    local opts = merge_defaults(defaults, first, second)
+    opts.method = opts.method or "PUT"
+    return M.request(opts)
+  end
+
+  function client.patch(first, second)
+    local opts = merge_defaults(defaults, first, second)
+    opts.method = opts.method or "PATCH"
+    return M.request(opts)
+  end
+
+  function client.delete(first, second)
+    local opts = merge_defaults(defaults, first, second)
+    opts.method = opts.method or "DELETE"
+    return M.request(opts)
+  end
+
+  function client.get_json(first, second)
+    local opts = merge_defaults(defaults, first, second)
+    opts.method = opts.method or "GET"
+    return M.request_json(opts)
+  end
+
+  function client.post_json(first, second)
+    local opts = merge_defaults(defaults, first, second)
+    opts.method = opts.method or "POST"
+    return M.request_json(opts)
+  end
+
+  function client.put_json(first, second)
+    local opts = merge_defaults(defaults, first, second)
+    opts.method = opts.method or "PUT"
+    return M.request_json(opts)
+  end
+
+  function client.patch_json(first, second)
+    local opts = merge_defaults(defaults, first, second)
+    opts.method = opts.method or "PATCH"
+    return M.request_json(opts)
+  end
+
+  function client.delete_json(first, second)
+    local opts = merge_defaults(defaults, first, second)
+    opts.method = opts.method or "DELETE"
+    return M.request_json(opts)
+  end
+
+  function client.download(first, second)
+    return M.download(merge_defaults(defaults, first, second))
+  end
+
+  function client.upload(first, second)
+    return M.upload(merge_defaults(defaults, first, second))
+  end
+
+  function client.form(first, second)
+    return M.form(merge_defaults(defaults, first, second))
+  end
+
+  function client.multipart(first, second)
+    return M.multipart(merge_defaults(defaults, first, second))
+  end
+
+  function client.sftp_download(first, second)
+    return M.sftp_download(merge_defaults(defaults, first, second))
+  end
+
+  function client.sftp_upload(first, second)
+    return M.sftp_upload(merge_defaults(defaults, first, second))
+  end
+
+  function client.stream_json(first, second)
+    return M.stream_json(merge_defaults(defaults, first, second))
+  end
+
+  return client
 end
 
 return M
