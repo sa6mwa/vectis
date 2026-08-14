@@ -100,8 +100,28 @@ assert(loaded["vectis"].status == loaded["vectis.status"])
 assert(loaded["vectis"].log == loaded["vectis.log"])
 assert(loaded["vectis"].webdav == loaded["vectis.webdav"])
 assert(loaded["vectis"].mqtt == loaded["vectis.mqtt"])
+assert(loaded["vectis"].smtp == loaded["vectis.smtp"])
+assert(loaded["vectis"].lockd == loaded["vectis.lockd"])
 assert(loaded["vectis"].dsv == loaded["vectis.dsv"])
 assert(loaded["vectis"].xml == loaded["vectis.xml"])
+assert(type(loaded["vectis"].libs) == "table")
+for _, name in ipairs({
+  "lockdc",
+  "lonejson",
+  "pslog",
+  "lql",
+  "cai",
+  "libmdf",
+  "softline",
+  "curl",
+  "opcua",
+  "openssl",
+  "zlib",
+  "audio",
+  "sus",
+}) do
+  assert(loaded["vectis"].libs[name] == loaded[name], "vectis.libs." .. name)
+end
 assert(type(loaded["vectis"].error_source_string) == "function")
 assert(loaded["vectis"].error_source_string(loaded["vectis"].ERROR_SOURCE_VECTIS) == "vectis")
 assert(type(loaded["vectis.auth"].provider_native) == "function")
