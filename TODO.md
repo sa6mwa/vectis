@@ -265,7 +265,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Replace the placeholder executable submain with the real Lua runner.
 - [x] Configure Lua package paths so bundled/native Vectis modules load without user setup.
 - [x] Provide the first statically preloaded `require("vectis")` facade for the embedded Lua runner.
-- [ ] Expand `require("vectis")` into the full high-level framework facade.
+- [x] Expand `require("vectis")` into the full high-level framework facade for currently documented workflow modules, with direct module identity preserved for every top-level alias.
 - [x] Register C-owned workflow tables (`vectis.auth`, `vectis.cert`, `vectis.embedded`, `vectis.server`, and `vectis.ssh`) as direct preloaded modules and top-level `require("vectis")` aliases.
 - [x] Add user-facing docs and smoke coverage for the direct `vectis.embedded` packed asset workflow module.
 - [x] Add a Lua coverage matrix under `docs/` that tracks every Vectis C SDK workflow and bundled dependency facade as `native`, `vectis DX`, `tested`, `packed-tested`, `live-tested`, or `intentionally C-only`.
