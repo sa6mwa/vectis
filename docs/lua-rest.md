@@ -8,6 +8,9 @@ buffered JSON API workflows. It is not a streaming route surface.
 
 - `rest.json(value[, opts])` returns a JSON route response table.
 - `rest.error_response(err[, opts])` returns a structured JSON error response.
+  If `err` itself contains a value LoneJSON cannot encode, `error_response`
+  returns a minimal `500` JSON response describing the encode failure instead
+  of raising a Lua assertion error.
 - `rest.route(server, opts)` wraps `server:route()` with buffered JSON request
   decoding, optional validation, handler error mapping, and JSON response
   serialization.

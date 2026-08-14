@@ -674,6 +674,26 @@ assert_status_error(rest_error_body.error, vectis.ERR_INVALID,
 assert(rest_error_body.error.source == "vectis")
 assert(rest_error_body.error.source_code == vectis.ERROR_SOURCE_VECTIS)
 
+local unserializable_error_response = rest.error_response({
+  kind = "validation",
+  message = "unserializable error detail",
+  status = vectis.ERR_INVALID,
+  detail = function()
+    return true
+  end,
+})
+assert(unserializable_error_response.status == 500)
+assert(unserializable_error_response.content_type == rest.JSON_CONTENT_TYPE)
+local unserializable_error_body =
+    assert(lonejson.decode_json(unserializable_error_response.body))
+assert(unserializable_error_body.ok == false)
+assert(unserializable_error_body.error.kind == "json_encode")
+assert_status_error(unserializable_error_body.error, vectis.ERR_INVALID,
+                    "REST error response JSON encode failed")
+assert(unserializable_error_body.error.source == "lonejson")
+assert(unserializable_error_body.error.source_code ==
+       vectis.ERROR_SOURCE_LONEJSON)
+
 local order_request_schema = lonejson.schema("openapi-order-request", {
   lonejson.field("sku", lonejson.string({required = true})),
   lonejson.field("quantity", lonejson.i64({required = true})),

@@ -270,6 +270,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add a lifecycle contract that fails when a bundled dependency or Vectis-owned C workflow is added without an explicit Lua coverage-matrix entry.
 - [ ] Ensure the `vectis` Lua facade exposes structured status/error objects consistently across all Vectis-owned Lua helpers, mirroring C status, source, timeout, ownership, and cleanup conventions.
 - [x] Normalize outbound `vectis.rest.client` JSON encode failures into structured result envelopes instead of raising Lua assertion errors.
+- [x] Normalize `vectis.rest.error_response` JSON encode failures into minimal structured JSON fallback responses instead of raising Lua assertion errors.
 - [x] Add a public `cpkt` error source and structured Vectis status/source envelopes to raw cpkt-backed Lua facades (`audio`, `sus`, and `opcua`) while preserving dependency-native diagnostics.
 - [x] Convert packed embedded bundle/assets Lua helper failures to structured Vectis status/source errors and cover them in the packed scenario.
 - [x] Add a preloaded pure-Lua `vectis.status` helper and use it to enrich curl-backed HTTP/WebDAV/MQTT/SMTP normalized errors with Vectis status/source metadata, timeout mapping, dependency codes, and HTTP status diagnostics.

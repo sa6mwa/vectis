@@ -95,6 +95,17 @@ local function http_status_for_error(err)
   return 500
 end
 
+local function static_error_response(status_code)
+  return {
+    status = status_code or 500,
+    content_type = M.JSON_CONTENT_TYPE,
+    body = '{"ok":false,"error":{"kind":"json_encode",' ..
+        '"message":"REST error response JSON encode failed",' ..
+        '"status":1,"status_string":"invalid",' ..
+        '"source":"lonejson","source_code":4}}\n',
+  }
+end
+
 function M.json(value, opts)
   opts = opts or {}
   local body, err = encode_json(value)
@@ -119,13 +130,32 @@ function M.error_response(err, opts)
     source_code = opts.source_code or vstatus.ERROR_SOURCE_VECTIS,
     http_status = opts.status or opts.status_code,
   })
-  local response = assert(M.json({
+  local status_code = opts.status or opts.status_code or http_status_for_error(err)
+  local response, encode_err = M.json({
     ok = false,
     error = err,
   }, {
-    status = opts.status or opts.status_code or http_status_for_error(err),
+    status = status_code,
     headers = opts.headers,
-  }))
+  })
+  if response == nil then
+    response = M.json({
+      ok = false,
+      error = vstatus.error({
+        kind = "json_encode",
+        message = "REST error response JSON encode failed: " ..
+            tostring(encode_err and encode_err.message or encode_err),
+        status = vstatus.ERR_INVALID,
+        source_code = vstatus.ERROR_SOURCE_LONEJSON,
+      }),
+    }, {
+      status = opts.fallback_status or 500,
+      headers = opts.headers,
+    })
+    if response == nil then
+      return static_error_response(opts.fallback_status or 500)
+    end
+  end
   return response
 end
 
