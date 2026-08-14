@@ -22,9 +22,10 @@ Current deterministic coverage includes:
   process-wide backend log sink configuration, documented in
   `docs/lua-sus.md`.
 
-Remaining deterministic work includes the Lua interop boundary needed for
-segmented decoder/VOX transcription. Live model transcription remains opt-in
-until a committed model fixture/cache policy exists.
+The audio/SUS Lua interop boundary lets `sus` borrow `audio.decoder` and
+`audio.segment` handles without exposing private userdata layouts. Live model
+transcription remains opt-in until a committed model fixture/cache policy
+exists.
 
 ## Module Names
 

@@ -1,4 +1,5 @@
-#include <cpkt/audio.h>
+#include "vectis_audio_lua.h"
+
 #include <lauxlib.h>
 #include <lua.h>
 #include <stddef.h>
@@ -1063,6 +1064,40 @@ static vectis_audio_segment_lua *
 vectis_audio_lua_check_segment(lua_State *lua, int index) {
   return (vectis_audio_segment_lua *)luaL_checkudata(lua, index,
                                                      VECTIS_AUDIO_SEGMENT);
+}
+
+int vectis_audio_lua_borrow_decoder(lua_State *lua, int index,
+                                    cpkt_audio_decoder **out) {
+  vectis_audio_decoder_lua *handle;
+
+  if (out == NULL) {
+    return 0;
+  }
+  *out = NULL;
+  handle = (vectis_audio_decoder_lua *)luaL_testudata(lua, index,
+                                                      VECTIS_AUDIO_DECODER);
+  if (handle == NULL || handle->decoder == NULL) {
+    return 0;
+  }
+  *out = handle->decoder;
+  return 1;
+}
+
+int vectis_audio_lua_borrow_vox_segment(lua_State *lua, int index,
+                                        cpkt_audio_vox_segment **out) {
+  vectis_audio_segment_lua *handle;
+
+  if (out == NULL) {
+    return 0;
+  }
+  *out = NULL;
+  handle =
+      (vectis_audio_segment_lua *)luaL_testudata(lua, index, VECTIS_AUDIO_SEGMENT);
+  if (handle == NULL || handle->segment == NULL) {
+    return 0;
+  }
+  *out = handle->segment;
+  return 1;
 }
 
 static int vectis_audio_lua_segment_info(lua_State *lua) {

@@ -139,13 +139,43 @@ Transcriber methods:
   array of float samples at mono 16 kHz and returns `true`.
 - `transcriber:transcribe_f32_mono_16k_text(frames)` returns materialized text
   from a Lua array of float samples at mono 16 kHz.
+- `transcriber:transcribe_audio_decoder_segmented(decoder, opts)` reads an
+  `audio.decoder` handle through cpkt audio and performs VOX-segmented
+  transcription without retranscribing previous audio.
+- `transcriber:transcribe_audio_decoder_segmented_text(decoder, opts)` is the
+  materialized-text form of the decoder segmented workflow; audio input still
+  streams through the decoder.
+- `transcriber:transcribe_audio_vox_segment(segment, opts)` consumes an
+  `audio.segment` handle during its audio callback and updates the segmented
+  transcript session.
 - `transcriber:revised_text()` returns the latest committed segmented
   transcript text.
 - `transcriber:close()` releases the transcriber; the model remains open.
 
-Segmented decoder/VOX methods are not exposed yet because they need a stable
-Lua interop boundary for borrowing `audio.decoder` and `audio.segment` handles
-without duplicating private userdata layouts.
+Segmented `opts` accepts:
+
+- `mode`: `"simplex"`, `"continuous"`, or a raw cpkt numeric mode.
+- `read_frames`
+- `step_ms`
+- `length_ms`
+- `keep_ms`
+- `keep_context`
+- `vox_threshold` or `threshold`
+- `prebuffer_ms`
+- `memory_spool_bytes`
+- `max_spool_bytes`
+- `audio_ctx`
+- `max_tokens`
+- `segmented(event)`, `on_segmented(event)`, or `on_transcript(event)`
+
+Segmented callback events include `text`, `text_length`, `t0`, `t1`,
+`step_index`, and `is_final`. Return `true`, `0`, or `nil` to continue; return
+`false` or a non-zero number to fail with `ERR_CALLBACK`.
+
+The decoder and VOX segment arguments are borrowed through the audio Lua
+interop boundary. Vectis does not expose audio userdata internals. Borrowed
+handles remain owned by the audio facade; `audio.segment` values are valid only
+during their audio callback.
 
 ## Errors
 
