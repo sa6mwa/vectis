@@ -733,6 +733,11 @@ assert(rest_group.ok == true, rest_group.error and rest_group.error.message)
 assert(rest_group.status == 200)
 assert(rest_group.json.ok == true)
 assert(rest_group.json.grouped == true)
+local rest_head = rest_client.head("/head-status")
+assert(rest_head.ok == true, rest_head.error and rest_head.error.message)
+assert(rest_head.status == 200)
+assert(rest_head.body == "")
+assert(rest_head.headers:lower():find("cache-control: no-store", 1, true))
 local dynamic_dsv_required = vectis.http.post("http://127.0.0.1:28484/dynamic-dsv", {
   body = "id,count\nalpha,2\nbeta,3\n",
   headers = {

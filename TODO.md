@@ -349,6 +349,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [ ] Keep the Lua framework model aligned with the C SDK model: raw dependency access plus a Vectis-owned DX layer with matching concepts and behavior.
 - [x] Support shebang execution through `#!/usr/local/bin/vectis`.
 - [x] Provide a friendly REST API DX for defining buffered JSON routes, handlers, middleware-like hooks, JSON responses, and downstream JSON calls.
+- [x] Add `head` to the `vectis.rest.client` downstream JSON client for method parity with `vectis.http.head`.
 - [ ] Extend the REST DX with lockd operation presets only where examples show repeated service boilerplate.
 - [x] Add a C-owned Lua `server:static_directory()` helper for serving disk docroots such as extracted packed asset trees.
 - [x] Add a C-owned Lua `server:json()` helper for fixed unguarded JSON endpoints in packed API service scenarios, including explicit method and status configuration.
