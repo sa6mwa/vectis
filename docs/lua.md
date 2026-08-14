@@ -41,8 +41,10 @@ with minimal Vectis opinion:
   [Lua pslog](lua-pslog.md).
 - `lql`: upstream liblql Lua module, documented in [Lua lql](lua-lql.md).
 - `cai`: upstream CAI Lua module, documented in [Lua CAI](lua-cai.md).
-- `libmdf`: upstream libmdf Lua module.
-- `softline`: upstream softline Lua module.
+- `libmdf`: upstream libmdf Lua module, documented in
+  [Lua libmdf](lua-libmdf.md).
+- `softline`: upstream softline Lua module, documented in
+  [Lua softline](lua-softline.md).
 - `curl`: generic libcurl facade, documented in [Lua curl](lua-curl.md).
 - `openssl`: OpenSSL facade, documented in [Lua OpenSSL](lua-openssl.md).
 - `zlib`: zlib/gzip compression facade, documented in
