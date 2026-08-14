@@ -21,6 +21,7 @@
 #include <regex.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18494,6 +18495,15 @@ static vectis_status vectis_ssh_handle_sftp_chmod(vectis_ssh *self,
   return vectis_ssh_sftp_chmod(&self->config, remote_path, permissions, error);
 }
 
+static vectis_status vectis_ssh_handle_sftp_open(
+    vectis_ssh *self, vectis_ssh_sftp_session **out, vectis_error *error) {
+  if (self == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH handle is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_ssh_sftp_session_new(&self->config, out, error);
+}
+
 vectis_status vectis_ssh_new(const vectis_ssh_config *config, vectis_ssh **out,
                              vectis_error *error) {
   vectis_ssh_config defaults;
@@ -18536,6 +18546,7 @@ vectis_status vectis_ssh_new(const vectis_ssh_config *config, vectis_ssh **out,
   ssh->sftp_rmdir = vectis_ssh_handle_sftp_rmdir;
   ssh->sftp_rename = vectis_ssh_handle_sftp_rename;
   ssh->sftp_chmod = vectis_ssh_handle_sftp_chmod;
+  ssh->sftp_open = vectis_ssh_handle_sftp_open;
   ssh->close = vectis_ssh_close;
   ssh->config = normalized;
   *out = ssh;
@@ -19301,8 +19312,9 @@ vectis_ssh_authenticated_session(const vectis_ssh_config *config,
   return VECTIS_OK;
 }
 
-static void vectis_ssh_sftp_session_close(LIBSSH2_SFTP *sftp,
-                                           LIBSSH2_SESSION *session, int fd) {
+static void vectis_ssh_sftp_raw_session_close(LIBSSH2_SFTP *sftp,
+                                              LIBSSH2_SESSION *session,
+                                              int fd) {
   if (sftp != NULL) {
     libssh2_sftp_shutdown(sftp);
   }
@@ -19442,13 +19454,13 @@ vectis_status vectis_ssh_sftp_stat(const vectis_ssh_config *config,
   memset(&attrs, 0, sizeof(attrs));
   rc = libssh2_sftp_stat(sftp, remote_path, &attrs);
   if (rc != 0) {
-    vectis_ssh_sftp_session_close(sftp, session, fd);
+    vectis_ssh_sftp_raw_session_close(sftp, session, fd);
     vectis_set_sftp_operation_error(error, "failed to stat remote SFTP path",
                                     rc);
     return VECTIS_ERR_STATE;
   }
   vectis_ssh_sftp_stat_result_from_attrs(result, &attrs);
-  vectis_ssh_sftp_session_close(sftp, session, fd);
+  vectis_ssh_sftp_raw_session_close(sftp, session, fd);
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -19489,7 +19501,7 @@ vectis_status vectis_ssh_sftp_mkdir(const vectis_ssh_config *config,
   }
   rc = libssh2_sftp_mkdir(sftp, remote_path,
                           (long)(permissions != 0UL ? permissions : 0755UL));
-  vectis_ssh_sftp_session_close(sftp, session, fd);
+  vectis_ssh_sftp_raw_session_close(sftp, session, fd);
   if (rc != 0) {
     vectis_set_sftp_operation_error(error,
                                     "failed to create remote SFTP directory",
@@ -19529,7 +19541,7 @@ vectis_status vectis_ssh_sftp_remove(const vectis_ssh_config *config,
     return status;
   }
   rc = libssh2_sftp_unlink(sftp, remote_path);
-  vectis_ssh_sftp_session_close(sftp, session, fd);
+  vectis_ssh_sftp_raw_session_close(sftp, session, fd);
   if (rc != 0) {
     vectis_set_sftp_operation_error(error, "failed to remove remote SFTP file",
                                     rc);
@@ -19568,7 +19580,7 @@ vectis_status vectis_ssh_sftp_rmdir(const vectis_ssh_config *config,
     return status;
   }
   rc = libssh2_sftp_rmdir(sftp, remote_path);
-  vectis_ssh_sftp_session_close(sftp, session, fd);
+  vectis_ssh_sftp_raw_session_close(sftp, session, fd);
   if (rc != 0) {
     vectis_set_sftp_operation_error(error,
                                     "failed to remove remote SFTP directory",
@@ -19610,7 +19622,7 @@ vectis_status vectis_ssh_sftp_rename(const vectis_ssh_config *config,
     return status;
   }
   rc = libssh2_sftp_rename(sftp, old_path, new_path);
-  vectis_ssh_sftp_session_close(sftp, session, fd);
+  vectis_ssh_sftp_raw_session_close(sftp, session, fd);
   if (rc != 0) {
     vectis_set_sftp_operation_error(error, "failed to rename remote SFTP path",
                                     rc);
@@ -19659,7 +19671,7 @@ vectis_status vectis_ssh_sftp_chmod(const vectis_ssh_config *config,
   attrs.flags = LIBSSH2_SFTP_ATTR_PERMISSIONS;
   attrs.permissions = (unsigned long)permissions;
   rc = libssh2_sftp_setstat(sftp, remote_path, &attrs);
-  vectis_ssh_sftp_session_close(sftp, session, fd);
+  vectis_ssh_sftp_raw_session_close(sftp, session, fd);
   if (rc != 0) {
     vectis_set_sftp_operation_error(error,
                                     "failed to chmod remote SFTP path", rc);
@@ -19667,6 +19679,771 @@ vectis_status vectis_ssh_sftp_chmod(const vectis_ssh_config *config,
   }
   vectis_error_clear(error);
   return VECTIS_OK;
+}
+
+typedef struct vectis_ssh_sftp_child {
+  void *owner;
+  LIBSSH2_SFTP_HANDLE *handle;
+  int kind;
+  struct vectis_ssh_sftp_child *next;
+} vectis_ssh_sftp_child;
+
+typedef struct vectis_ssh_sftp_session_impl {
+  LIBSSH2_SESSION *session;
+  LIBSSH2_SFTP *sftp;
+  int fd;
+  vectis_ssh_sftp_child *children;
+} vectis_ssh_sftp_session_impl;
+
+typedef struct vectis_ssh_sftp_file_impl {
+  vectis_ssh_sftp_session *parent;
+  vectis_ssh_sftp_child child;
+} vectis_ssh_sftp_file_impl;
+
+typedef struct vectis_ssh_sftp_dir_impl {
+  vectis_ssh_sftp_session *parent;
+  vectis_ssh_sftp_child child;
+} vectis_ssh_sftp_dir_impl;
+
+#define VECTIS_SSH_SFTP_CHILD_FILE 1
+#define VECTIS_SSH_SFTP_CHILD_DIR 2
+
+static vectis_ssh_sftp_session_impl *
+vectis_ssh_sftp_session_impl_from(vectis_ssh_sftp_session *session,
+                                  vectis_error *error) {
+  if (session == NULL || session->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP session handle is required");
+    return NULL;
+  }
+  return (vectis_ssh_sftp_session_impl *)session->impl;
+}
+
+static vectis_ssh_sftp_file_impl *
+vectis_ssh_sftp_file_impl_from(vectis_ssh_sftp_file *file,
+                               vectis_error *error) {
+  if (file == NULL || file->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP file handle is closed");
+    return NULL;
+  }
+  return (vectis_ssh_sftp_file_impl *)file->impl;
+}
+
+static vectis_ssh_sftp_dir_impl *
+vectis_ssh_sftp_dir_impl_from(vectis_ssh_sftp_dir *dir, vectis_error *error) {
+  if (dir == NULL || dir->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP directory handle is closed");
+    return NULL;
+  }
+  return (vectis_ssh_sftp_dir_impl *)dir->impl;
+}
+
+static void
+vectis_ssh_sftp_child_link(vectis_ssh_sftp_session_impl *session,
+                           vectis_ssh_sftp_child *child) {
+  child->next = session->children;
+  session->children = child;
+}
+
+static void
+vectis_ssh_sftp_child_unlink(vectis_ssh_sftp_session_impl *session,
+                             vectis_ssh_sftp_child *child) {
+  vectis_ssh_sftp_child **cursor;
+
+  if (session == NULL || child == NULL) {
+    return;
+  }
+  cursor = &session->children;
+  while (*cursor != NULL) {
+    if (*cursor == child) {
+      *cursor = child->next;
+      child->next = NULL;
+      return;
+    }
+    cursor = &(*cursor)->next;
+  }
+}
+
+static void vectis_ssh_sftp_child_mark_closed(vectis_ssh_sftp_child *child) {
+  if (child->kind == VECTIS_SSH_SFTP_CHILD_FILE) {
+    ((vectis_ssh_sftp_file *)child->owner)->impl = NULL;
+  } else if (child->kind == VECTIS_SSH_SFTP_CHILD_DIR) {
+    ((vectis_ssh_sftp_dir *)child->owner)->impl = NULL;
+  }
+}
+
+static void vectis_ssh_sftp_child_close(vectis_ssh_sftp_child *child) {
+  if (child == NULL) {
+    return;
+  }
+  if (child->handle != NULL) {
+    if (child->kind == VECTIS_SSH_SFTP_CHILD_DIR) {
+      (void)libssh2_sftp_closedir(child->handle);
+    } else {
+      (void)libssh2_sftp_close(child->handle);
+    }
+    child->handle = NULL;
+  }
+  vectis_ssh_sftp_child_mark_closed(child);
+}
+
+static void vectis_ssh_sftp_child_free_impl(vectis_ssh_sftp_child *child) {
+  if (child == NULL) {
+    return;
+  }
+  if (child->kind == VECTIS_SSH_SFTP_CHILD_FILE) {
+    free((vectis_ssh_sftp_file_impl *)((char *)child -
+                                       offsetof(vectis_ssh_sftp_file_impl,
+                                                child)));
+  } else if (child->kind == VECTIS_SSH_SFTP_CHILD_DIR) {
+    free((vectis_ssh_sftp_dir_impl *)((char *)child -
+                                      offsetof(vectis_ssh_sftp_dir_impl,
+                                               child)));
+  }
+}
+
+static int vectis_ssh_sftp_open_flags(unsigned flags) {
+  int native_flags;
+
+  native_flags = 0;
+  if ((flags & VECTIS_SSH_SFTP_OPEN_READ) != 0u) {
+    native_flags |= LIBSSH2_FXF_READ;
+  }
+  if ((flags & VECTIS_SSH_SFTP_OPEN_WRITE) != 0u) {
+    native_flags |= LIBSSH2_FXF_WRITE;
+  }
+  if ((flags & VECTIS_SSH_SFTP_OPEN_CREATE) != 0u) {
+    native_flags |= LIBSSH2_FXF_CREAT;
+  }
+  if ((flags & VECTIS_SSH_SFTP_OPEN_TRUNCATE) != 0u) {
+    native_flags |= LIBSSH2_FXF_TRUNC;
+  }
+  if ((flags & VECTIS_SSH_SFTP_OPEN_APPEND) != 0u) {
+    native_flags |= LIBSSH2_FXF_APPEND;
+  }
+  return native_flags;
+}
+
+vectis_status vectis_ssh_sftp_session_new(const vectis_ssh_config *config,
+                                          vectis_ssh_sftp_session **out,
+                                          vectis_error *error) {
+  vectis_ssh_config effective;
+  vectis_ssh_sftp_session *session;
+  vectis_ssh_sftp_session_impl *impl;
+  LIBSSH2_SESSION *ssh_session;
+  LIBSSH2_SFTP *sftp;
+  int fd;
+  vectis_status status;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP session output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  status = vectis_ssh_validate_config(config, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  effective = vectis_effective_ssh_config(config);
+  ssh_session = NULL;
+  sftp = NULL;
+  fd = -1;
+  status = vectis_ssh_sftp_session_open(&effective, &ssh_session, &fd, &sftp,
+                                        error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  session = (vectis_ssh_sftp_session *)calloc(1u, sizeof(*session));
+  impl = (vectis_ssh_sftp_session_impl *)calloc(1u, sizeof(*impl));
+  if (session == NULL || impl == NULL) {
+    free(session);
+    free(impl);
+    vectis_ssh_sftp_raw_session_close(sftp, ssh_session, fd);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate SSH SFTP session handle");
+    return VECTIS_ERR_NOMEM;
+  }
+  impl->session = ssh_session;
+  impl->sftp = sftp;
+  impl->fd = fd;
+  session->open_file = vectis_ssh_sftp_session_open_file;
+  session->open_dir = vectis_ssh_sftp_session_open_dir;
+  session->stat = vectis_ssh_sftp_session_stat;
+  session->mkdir = vectis_ssh_sftp_session_mkdir;
+  session->remove = vectis_ssh_sftp_session_remove;
+  session->rmdir = vectis_ssh_sftp_session_rmdir;
+  session->rename = vectis_ssh_sftp_session_rename;
+  session->chmod = vectis_ssh_sftp_session_chmod;
+  session->close = vectis_ssh_sftp_session_close;
+  session->config = effective;
+  session->impl = impl;
+  *out = session;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+void vectis_ssh_sftp_session_close(vectis_ssh_sftp_session *session) {
+  vectis_ssh_sftp_session_impl *impl;
+  vectis_ssh_sftp_child *child;
+  vectis_ssh_sftp_child *next;
+
+  if (session == NULL) {
+    return;
+  }
+  impl = (vectis_ssh_sftp_session_impl *)session->impl;
+  if (impl != NULL) {
+    child = impl->children;
+    while (child != NULL) {
+      next = child->next;
+      vectis_ssh_sftp_child_close(child);
+      vectis_ssh_sftp_child_free_impl(child);
+      child = next;
+    }
+    vectis_ssh_sftp_raw_session_close(impl->sftp, impl->session, impl->fd);
+    free(impl);
+    session->impl = NULL;
+  }
+  free(session);
+}
+
+vectis_status vectis_ssh_sftp_session_open_file(
+    vectis_ssh_sftp_session *session, const char *remote_path, unsigned flags,
+    unsigned long permissions, vectis_ssh_sftp_file **out,
+    vectis_error *error) {
+  vectis_ssh_sftp_session_impl *impl;
+  vectis_ssh_sftp_file *file;
+  vectis_ssh_sftp_file_impl *file_impl;
+  LIBSSH2_SFTP_HANDLE *handle;
+  int native_flags;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP file output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  impl = vectis_ssh_sftp_session_impl_from(session, error);
+  if (impl == NULL) {
+    return VECTIS_ERR_INVALID;
+  }
+  if (remote_path == NULL || remote_path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP open_file requires remote_path");
+    return VECTIS_ERR_INVALID;
+  }
+  if (flags == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP open_file requires non-zero flags");
+    return VECTIS_ERR_INVALID;
+  }
+  if ((flags & ~(VECTIS_SSH_SFTP_OPEN_READ | VECTIS_SSH_SFTP_OPEN_WRITE |
+                 VECTIS_SSH_SFTP_OPEN_CREATE |
+                 VECTIS_SSH_SFTP_OPEN_TRUNCATE |
+                 VECTIS_SSH_SFTP_OPEN_APPEND)) != 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP open_file received unsupported flags");
+    return VECTIS_ERR_INVALID;
+  }
+  if (permissions > 07777UL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP permissions must be 0..07777");
+    return VECTIS_ERR_INVALID;
+  }
+  native_flags = vectis_ssh_sftp_open_flags(flags);
+  handle = libssh2_sftp_open(impl->sftp, remote_path, (unsigned long)native_flags,
+                             (long)(permissions != 0UL ? permissions : 0644UL));
+  if (handle == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to open remote SFTP file");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  file = (vectis_ssh_sftp_file *)calloc(1u, sizeof(*file));
+  file_impl = (vectis_ssh_sftp_file_impl *)calloc(1u, sizeof(*file_impl));
+  if (file == NULL || file_impl == NULL) {
+    (void)libssh2_sftp_close(handle);
+    free(file);
+    free(file_impl);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate SSH SFTP file handle");
+    return VECTIS_ERR_NOMEM;
+  }
+  file_impl->parent = session;
+  file_impl->child.owner = file;
+  file_impl->child.handle = handle;
+  file_impl->child.kind = VECTIS_SSH_SFTP_CHILD_FILE;
+  vectis_ssh_sftp_child_link(impl, &file_impl->child);
+  file->read = vectis_ssh_sftp_file_read;
+  file->write = vectis_ssh_sftp_file_write;
+  file->stat = vectis_ssh_sftp_file_stat;
+  file->close = vectis_ssh_sftp_file_close;
+  file->impl = file_impl;
+  *out = file;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_ssh_sftp_session_open_dir(
+    vectis_ssh_sftp_session *session, const char *remote_path,
+    vectis_ssh_sftp_dir **out, vectis_error *error) {
+  vectis_ssh_sftp_session_impl *impl;
+  vectis_ssh_sftp_dir *dir;
+  vectis_ssh_sftp_dir_impl *dir_impl;
+  LIBSSH2_SFTP_HANDLE *handle;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP directory output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  impl = vectis_ssh_sftp_session_impl_from(session, error);
+  if (impl == NULL) {
+    return VECTIS_ERR_INVALID;
+  }
+  if (remote_path == NULL || remote_path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP open_dir requires remote_path");
+    return VECTIS_ERR_INVALID;
+  }
+  handle = libssh2_sftp_opendir(impl->sftp, remote_path);
+  if (handle == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to open remote SFTP directory");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  dir = (vectis_ssh_sftp_dir *)calloc(1u, sizeof(*dir));
+  dir_impl = (vectis_ssh_sftp_dir_impl *)calloc(1u, sizeof(*dir_impl));
+  if (dir == NULL || dir_impl == NULL) {
+    (void)libssh2_sftp_closedir(handle);
+    free(dir);
+    free(dir_impl);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate SSH SFTP directory handle");
+    return VECTIS_ERR_NOMEM;
+  }
+  dir_impl->parent = session;
+  dir_impl->child.owner = dir;
+  dir_impl->child.handle = handle;
+  dir_impl->child.kind = VECTIS_SSH_SFTP_CHILD_DIR;
+  vectis_ssh_sftp_child_link(impl, &dir_impl->child);
+  dir->read = vectis_ssh_sftp_dir_read;
+  dir->close = vectis_ssh_sftp_dir_close;
+  dir->impl = dir_impl;
+  *out = dir;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_ssh_sftp_session_stat(
+    vectis_ssh_sftp_session *session, const char *remote_path,
+    vectis_ssh_sftp_stat_result *result, vectis_error *error) {
+  vectis_ssh_sftp_session_impl *impl;
+  LIBSSH2_SFTP_ATTRIBUTES attrs;
+  int rc;
+
+  if (result == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP stat result is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_ssh_sftp_stat_result_init(result);
+  impl = vectis_ssh_sftp_session_impl_from(session, error);
+  if (impl == NULL) {
+    return VECTIS_ERR_INVALID;
+  }
+  if (remote_path == NULL || remote_path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP stat requires remote_path");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&attrs, 0, sizeof(attrs));
+  rc = libssh2_sftp_stat(impl->sftp, remote_path, &attrs);
+  if (rc != 0) {
+    vectis_set_sftp_operation_error(error, "failed to stat remote SFTP path",
+                                    rc);
+    return VECTIS_ERR_STATE;
+  }
+  vectis_ssh_sftp_stat_result_from_attrs(result, &attrs);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_ssh_sftp_session_mkdir(
+    vectis_ssh_sftp_session *session, const char *remote_path,
+    unsigned long permissions, vectis_error *error) {
+  vectis_ssh_sftp_session_impl *impl;
+  int rc;
+
+  impl = vectis_ssh_sftp_session_impl_from(session, error);
+  if (impl == NULL) {
+    return VECTIS_ERR_INVALID;
+  }
+  if (remote_path == NULL || remote_path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP mkdir requires remote_path");
+    return VECTIS_ERR_INVALID;
+  }
+  if (permissions > 07777UL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP permissions must be 0..07777");
+    return VECTIS_ERR_INVALID;
+  }
+  rc = libssh2_sftp_mkdir(impl->sftp, remote_path,
+                          (long)(permissions != 0UL ? permissions : 0755UL));
+  if (rc != 0) {
+    vectis_set_sftp_operation_error(error,
+                                    "failed to create remote SFTP directory",
+                                    rc);
+    return VECTIS_ERR_STATE;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_ssh_sftp_session_remove(
+    vectis_ssh_sftp_session *session, const char *remote_path,
+    vectis_error *error) {
+  vectis_ssh_sftp_session_impl *impl;
+  int rc;
+
+  impl = vectis_ssh_sftp_session_impl_from(session, error);
+  if (impl == NULL) {
+    return VECTIS_ERR_INVALID;
+  }
+  if (remote_path == NULL || remote_path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP remove requires remote_path");
+    return VECTIS_ERR_INVALID;
+  }
+  rc = libssh2_sftp_unlink(impl->sftp, remote_path);
+  if (rc != 0) {
+    vectis_set_sftp_operation_error(error, "failed to remove remote SFTP file",
+                                    rc);
+    return VECTIS_ERR_STATE;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_ssh_sftp_session_rmdir(
+    vectis_ssh_sftp_session *session, const char *remote_path,
+    vectis_error *error) {
+  vectis_ssh_sftp_session_impl *impl;
+  int rc;
+
+  impl = vectis_ssh_sftp_session_impl_from(session, error);
+  if (impl == NULL) {
+    return VECTIS_ERR_INVALID;
+  }
+  if (remote_path == NULL || remote_path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP rmdir requires remote_path");
+    return VECTIS_ERR_INVALID;
+  }
+  rc = libssh2_sftp_rmdir(impl->sftp, remote_path);
+  if (rc != 0) {
+    vectis_set_sftp_operation_error(error,
+                                    "failed to remove remote SFTP directory",
+                                    rc);
+    return VECTIS_ERR_STATE;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_ssh_sftp_session_rename(
+    vectis_ssh_sftp_session *session, const char *old_path,
+    const char *new_path, vectis_error *error) {
+  vectis_ssh_sftp_session_impl *impl;
+  int rc;
+
+  impl = vectis_ssh_sftp_session_impl_from(session, error);
+  if (impl == NULL) {
+    return VECTIS_ERR_INVALID;
+  }
+  if (old_path == NULL || old_path[0] == '\0' || new_path == NULL ||
+      new_path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP rename requires old_path and new_path");
+    return VECTIS_ERR_INVALID;
+  }
+  rc = libssh2_sftp_rename(impl->sftp, old_path, new_path);
+  if (rc != 0) {
+    vectis_set_sftp_operation_error(error, "failed to rename remote SFTP path",
+                                    rc);
+    return VECTIS_ERR_STATE;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_ssh_sftp_session_chmod(
+    vectis_ssh_sftp_session *session, const char *remote_path,
+    unsigned long permissions, vectis_error *error) {
+  vectis_ssh_sftp_session_impl *impl;
+  LIBSSH2_SFTP_ATTRIBUTES attrs;
+  int rc;
+
+  impl = vectis_ssh_sftp_session_impl_from(session, error);
+  if (impl == NULL) {
+    return VECTIS_ERR_INVALID;
+  }
+  if (remote_path == NULL || remote_path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP chmod requires remote_path");
+    return VECTIS_ERR_INVALID;
+  }
+  if (permissions > 07777UL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP permissions must be 0..07777");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&attrs, 0, sizeof(attrs));
+  attrs.flags = LIBSSH2_SFTP_ATTR_PERMISSIONS;
+  attrs.permissions = (unsigned long)permissions;
+  rc = libssh2_sftp_setstat(impl->sftp, remote_path, &attrs);
+  if (rc != 0) {
+    vectis_set_sftp_operation_error(error,
+                                    "failed to chmod remote SFTP path", rc);
+    return VECTIS_ERR_STATE;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_ssh_sftp_file_read(vectis_ssh_sftp_file *file,
+                                        void *buffer, size_t capacity,
+                                        size_t *out_size,
+                                        vectis_error *error) {
+  vectis_ssh_sftp_file_impl *impl;
+  ssize_t nread;
+
+  if (out_size != NULL) {
+    *out_size = 0u;
+  }
+  impl = vectis_ssh_sftp_file_impl_from(file, error);
+  if (impl == NULL) {
+    return VECTIS_ERR_INVALID;
+  }
+  if (buffer == NULL && capacity > 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP read buffer is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (out_size == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP read output size is required");
+    return VECTIS_ERR_INVALID;
+  }
+  nread = libssh2_sftp_read(impl->child.handle, (char *)buffer, capacity);
+  if (nread < 0) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to read remote SFTP file");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+      error->dependency_code = (long)nread;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  *out_size = (size_t)nread;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_ssh_sftp_file_write(vectis_ssh_sftp_file *file,
+                                         const void *data, size_t size,
+                                         size_t *out_size,
+                                         vectis_error *error) {
+  vectis_ssh_sftp_file_impl *impl;
+  const char *cursor;
+  size_t remaining;
+  size_t written;
+  ssize_t n;
+
+  if (out_size != NULL) {
+    *out_size = 0u;
+  }
+  impl = vectis_ssh_sftp_file_impl_from(file, error);
+  if (impl == NULL) {
+    return VECTIS_ERR_INVALID;
+  }
+  if (data == NULL && size > 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP write data is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (out_size == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP write output size is required");
+    return VECTIS_ERR_INVALID;
+  }
+  cursor = (const char *)data;
+  remaining = size;
+  written = 0u;
+  while (remaining > 0u) {
+    n = libssh2_sftp_write(impl->child.handle, cursor, remaining);
+    if (n <= 0) {
+      *out_size = written;
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to write remote SFTP file");
+      if (error != NULL) {
+        error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+        error->dependency_code = (long)n;
+      }
+      return VECTIS_ERR_STATE;
+    }
+    cursor += n;
+    remaining -= (size_t)n;
+    written += (size_t)n;
+  }
+  *out_size = written;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_ssh_sftp_file_stat(
+    vectis_ssh_sftp_file *file, vectis_ssh_sftp_stat_result *result,
+    vectis_error *error) {
+  vectis_ssh_sftp_file_impl *impl;
+  LIBSSH2_SFTP_ATTRIBUTES attrs;
+  int rc;
+
+  if (result == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP stat result is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_ssh_sftp_stat_result_init(result);
+  impl = vectis_ssh_sftp_file_impl_from(file, error);
+  if (impl == NULL) {
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&attrs, 0, sizeof(attrs));
+  rc = libssh2_sftp_fstat(impl->child.handle, &attrs);
+  if (rc != 0) {
+    vectis_set_sftp_operation_error(error, "failed to stat remote SFTP file",
+                                    rc);
+    return VECTIS_ERR_STATE;
+  }
+  vectis_ssh_sftp_stat_result_from_attrs(result, &attrs);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+void vectis_ssh_sftp_file_close(vectis_ssh_sftp_file *file) {
+  vectis_ssh_sftp_file_impl *impl;
+  vectis_ssh_sftp_session_impl *parent_impl;
+
+  if (file == NULL) {
+    return;
+  }
+  impl = (vectis_ssh_sftp_file_impl *)file->impl;
+  if (impl != NULL) {
+    parent_impl = impl->parent != NULL
+                      ? (vectis_ssh_sftp_session_impl *)impl->parent->impl
+                      : NULL;
+    vectis_ssh_sftp_child_unlink(parent_impl, &impl->child);
+    vectis_ssh_sftp_child_close(&impl->child);
+    free(impl);
+    file->impl = NULL;
+  }
+  free(file);
+}
+
+void vectis_ssh_sftp_dir_entry_init(vectis_ssh_sftp_dir_entry *entry) {
+  if (entry == NULL) {
+    return;
+  }
+  memset(entry, 0, sizeof(*entry));
+}
+
+void vectis_ssh_sftp_dir_entry_cleanup(vectis_ssh_sftp_dir_entry *entry) {
+  if (entry == NULL) {
+    return;
+  }
+  free(entry->name);
+  free(entry->long_name);
+  vectis_ssh_sftp_dir_entry_init(entry);
+}
+
+vectis_status vectis_ssh_sftp_dir_read(vectis_ssh_sftp_dir *dir,
+                                       vectis_ssh_sftp_dir_entry *entry,
+                                       vectis_error *error) {
+  vectis_ssh_sftp_dir_impl *impl;
+  LIBSSH2_SFTP_ATTRIBUTES attrs;
+  char name[1024];
+  char long_name[2048];
+  int rc;
+
+  if (entry == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SFTP directory entry output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_ssh_sftp_dir_entry_cleanup(entry);
+  impl = vectis_ssh_sftp_dir_impl_from(dir, error);
+  if (impl == NULL) {
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&attrs, 0, sizeof(attrs));
+  memset(name, 0, sizeof(name));
+  memset(long_name, 0, sizeof(long_name));
+  rc = libssh2_sftp_readdir_ex(impl->child.handle, name, sizeof(name) - 1u,
+                               long_name, sizeof(long_name) - 1u, &attrs);
+  if (rc == 0) {
+    entry->eof = 1;
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (rc < 0) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to read remote SFTP directory");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+      error->dependency_code = (long)rc;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  entry->name = vectis_strdup(name);
+  entry->long_name = long_name[0] != '\0' ? vectis_strdup(long_name) : NULL;
+  if (entry->name == NULL || (long_name[0] != '\0' && entry->long_name == NULL)) {
+    vectis_ssh_sftp_dir_entry_cleanup(entry);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate SSH SFTP directory entry");
+    return VECTIS_ERR_NOMEM;
+  }
+  vectis_ssh_sftp_stat_result_from_attrs(&entry->stat, &attrs);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+void vectis_ssh_sftp_dir_close(vectis_ssh_sftp_dir *dir) {
+  vectis_ssh_sftp_dir_impl *impl;
+  vectis_ssh_sftp_session_impl *parent_impl;
+
+  if (dir == NULL) {
+    return;
+  }
+  impl = (vectis_ssh_sftp_dir_impl *)dir->impl;
+  if (impl != NULL) {
+    parent_impl = impl->parent != NULL
+                      ? (vectis_ssh_sftp_session_impl *)impl->parent->impl
+                      : NULL;
+    vectis_ssh_sftp_child_unlink(parent_impl, &impl->child);
+    vectis_ssh_sftp_child_close(&impl->child);
+    free(impl);
+    dir->impl = NULL;
+  }
+  free(dir);
 }
 
 vectis_status vectis_ssh_scp_upload_file(const vectis_ssh_config *config,

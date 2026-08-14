@@ -857,6 +857,10 @@ static void assert_io_surface(void) {
   vectis_ssh *ssh_handle;
   vectis_ssh_exec_result result;
   vectis_ssh_sftp_stat_result stat_result;
+  vectis_ssh_sftp_dir_entry dir_entry;
+  vectis_ssh_sftp_session *sftp_session;
+  vectis_ssh_sftp_file *sftp_file;
+  vectis_ssh_sftp_dir *sftp_dir;
   vectis_mqtt_config mqtt;
   vectis_mqtt *mqtt_handle;
   vectis_cert_bundle_config certs;
@@ -869,12 +873,18 @@ static void assert_io_surface(void) {
   const char sftp_upload_path[] = "/tmp/vectis-test-sftp-upload.txt";
   const char ssh_key_pem[] = "not a real ssh key";
   char line[128];
+  char sftp_buffer[16];
+  size_t sftp_io_size;
   FILE *fp;
 
   sftp_handle = NULL;
   sftp_key_source = NULL;
   ssh_handle = NULL;
+  sftp_session = NULL;
+  sftp_file = NULL;
+  sftp_dir = NULL;
   mqtt_handle = NULL;
+  vectis_ssh_sftp_dir_entry_init(&dir_entry);
   vectis_sftp_config_init(&sftp);
   assert(sftp.timeout_ms == 30000L);
   sftp.timeout_ms = 0L;
@@ -951,6 +961,7 @@ static void assert_io_surface(void) {
   assert(ssh_handle->sftp_rmdir != NULL);
   assert(ssh_handle->sftp_rename != NULL);
   assert(ssh_handle->sftp_chmod != NULL);
+  assert(ssh_handle->sftp_open != NULL);
   assert(ssh_handle->close != NULL);
   assert(strcmp(ssh_handle->config.host, "127.0.0.1") == 0);
   assert(ssh_handle->config.port == 22u);
@@ -959,6 +970,9 @@ static void assert_io_surface(void) {
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "SSH handle") != NULL);
   status = ssh_handle->sftp_stat(NULL, "remote", &stat_result, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "SSH handle") != NULL);
+  status = ssh_handle->sftp_open(NULL, &sftp_session, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "SSH handle") != NULL);
   ssh_handle->close(ssh_handle);
@@ -999,6 +1013,44 @@ static void assert_io_surface(void) {
   assert(status == VECTIS_ERR_INVALID);
   status = vectis_ssh_sftp_chmod(&ssh, "remote", 010000UL, &error);
   assert(status == VECTIS_ERR_INVALID);
+  status = vectis_ssh_sftp_session_new(&ssh, NULL, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  sftp_session = (vectis_ssh_sftp_session *)(uintptr_t)1u;
+  status = vectis_ssh_sftp_session_new(NULL, &sftp_session, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(sftp_session == NULL);
+  status = vectis_ssh_sftp_session_open_file(
+      NULL, "remote", VECTIS_SSH_SFTP_OPEN_READ, 0UL, &sftp_file, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  status =
+      vectis_ssh_sftp_session_open_dir(NULL, "remote", &sftp_dir, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  status = vectis_ssh_sftp_session_stat(NULL, "remote", &stat_result, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  status = vectis_ssh_sftp_session_mkdir(NULL, "remote", 0755UL, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  status = vectis_ssh_sftp_session_remove(NULL, "remote", &error);
+  assert(status == VECTIS_ERR_INVALID);
+  status = vectis_ssh_sftp_session_rmdir(NULL, "remote", &error);
+  assert(status == VECTIS_ERR_INVALID);
+  status = vectis_ssh_sftp_session_rename(NULL, "old", "new", &error);
+  assert(status == VECTIS_ERR_INVALID);
+  status = vectis_ssh_sftp_session_chmod(NULL, "remote", 0644UL, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  sftp_io_size = 1u;
+  status = vectis_ssh_sftp_file_read(NULL, sftp_buffer, sizeof(sftp_buffer),
+                                     &sftp_io_size, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(sftp_io_size == 0u);
+  sftp_io_size = 1u;
+  status = vectis_ssh_sftp_file_write(NULL, "data", 4u, &sftp_io_size, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(sftp_io_size == 0u);
+  status = vectis_ssh_sftp_file_stat(NULL, &stat_result, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  status = vectis_ssh_sftp_dir_read(NULL, &dir_entry, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  vectis_ssh_sftp_dir_entry_cleanup(&dir_entry);
   status = vectis_ssh_exec(&ssh, "true", &result, &error);
   assert(status == VECTIS_ERR_STATE);
   assert(error.source == VECTIS_ERROR_SOURCE_LIBSSH2);

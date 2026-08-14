@@ -218,8 +218,9 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Draft the C helper API for libssh2 command execution with captured stdout/stderr, exit status, and SFTP upload/download.
 - [x] Implement libssh2-backed C SSH command execution with captured stdout/stderr and exit status.
 - [x] Implement libssh2-backed C SFTP upload/download helpers for cases where curl-backed SFTP is not enough.
+- [x] Implement stateful libssh2-backed C SFTP session, file read/write/stat, and directory iteration receiver shells.
 - [ ] Expose raw libssh2 sessions/channels for advanced control.
-- [ ] Decide which lower-level SFTP operations need libssh2 bindings beyond curl-backed file transfer.
+- [x] Decide and expose lower-level SFTP operations needed beyond curl-backed file transfer: one-shot filesystem operations plus stateful session/file/directory handles.
 - [ ] Add C helpers only where they support the Vectis service model rather than exposing libssh2 wholesale.
 - [x] Add integration tests for remote command execution against a controlled test SSH server.
 - [x] Add integration tests proving Lua SSH command execution honors known_hosts pinning.
@@ -292,7 +293,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [ ] Add certificate reload/update hooks where Kore can support them.
 - [x] Add Vectis-owned Lua libssh2-backed SFTP file upload/download helpers with host-key, known-hosts, timeout, and structured error contracts where curl-backed SFTP is insufficient.
 - [x] Add one-shot Lua libssh2-backed SFTP filesystem helpers for stat, mkdir, remove, rmdir, rename, and chmod where curl-backed SFTP is insufficient.
-- [ ] Add broader Lua libssh2 facades for sessions, channels, SFTP open/read/write/list handles, directory iteration, and advanced host-key verification workflows where curl-backed SFTP is insufficient.
+- [x] Add broader Lua libssh2-backed SFTP session, file open/read/write/stat, and directory iteration handles where curl-backed SFTP is insufficient.
+- [ ] Add broader Lua libssh2 facades for raw SSH sessions/channels and advanced host-key verification workflows where Vectis service workflows require them.
 - [x] Add Vectis-owned Lua SSH/SCP workflow helpers on top of the raw libssh2 facade for common service operations, while preserving `vectis.http.sftp_*` for curl-backed transfers.
 - [x] Add Lua MQTT publish helpers/tests where the generic `curl.perform()` facade is sufficient but workflow defaults improve DX.
 - [x] Add other libcurl protocol examples/tests where the generic `curl.perform()` facade is sufficient but workflow defaults improve DX.

@@ -13,6 +13,7 @@ local download_path = assert(arg[2])
 
 assert(type(vectis.ssh.sftp_upload_file) == "function")
 assert(type(vectis.ssh.sftp_download_file) == "function")
+assert(type(vectis.ssh.sftp_open) == "function")
 assert(type(vectis.ssh.scp_upload_file) == "function")
 assert(type(vectis.ssh.scp_download_file) == "function")
 assert(type(vectis.ssh.sftp_stat) == "function")
@@ -45,6 +46,17 @@ assert(bad_port == nil)
 assert(type(bad_port_err) == "table")
 assert(bad_port_err.status == vectis.ERR_INVALID)
 assert(bad_port_err.message:find("port", 1, true))
+
+local bad_open_port, bad_open_port_err = vectis.ssh.sftp_open({
+  host = "127.0.0.1",
+  username = "vectis",
+  password = "secret",
+  port = 70000,
+})
+assert(bad_open_port == nil)
+assert(type(bad_open_port_err) == "table")
+assert(bad_open_port_err.status == vectis.ERR_INVALID)
+assert(bad_open_port_err.message:find("port", 1, true))
 
 local missing_scp_remote, missing_scp_remote_err = vectis.ssh.scp_upload_file({
   host = "127.0.0.1",
@@ -118,6 +130,19 @@ assert(type(stat_refused_err) == "table")
 assert(type(stat_refused_err.status_string) == "string")
 assert(type(stat_refused_err.message) == "string")
 assert(#stat_refused_err.message > 0)
+
+local open_refused, open_refused_err = vectis.ssh.sftp_open({
+  host = "127.0.0.1",
+  port = 1,
+  username = "vectis",
+  password = "secret",
+  timeout_ms = 200,
+})
+assert(open_refused == nil)
+assert(type(open_refused_err) == "table")
+assert(type(open_refused_err.status_string) == "string")
+assert(type(open_refused_err.message) == "string")
+assert(#open_refused_err.message > 0)
 
 local scp_refused, scp_refused_err = vectis.ssh.scp_upload_file({
   host = "127.0.0.1",

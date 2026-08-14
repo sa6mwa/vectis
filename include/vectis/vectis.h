@@ -29,6 +29,11 @@
 #define VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES 262144u
 #define VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES                          \
   VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES
+#define VECTIS_SSH_SFTP_OPEN_READ 0x01u
+#define VECTIS_SSH_SFTP_OPEN_WRITE 0x02u
+#define VECTIS_SSH_SFTP_OPEN_CREATE 0x04u
+#define VECTIS_SSH_SFTP_OPEN_TRUNCATE 0x08u
+#define VECTIS_SSH_SFTP_OPEN_APPEND 0x10u
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,6 +54,9 @@ typedef struct vectis_http_client vectis_http_client;
 typedef struct vectis_embedded_fs vectis_embedded_fs;
 typedef struct vectis_sftp vectis_sftp;
 typedef struct vectis_ssh vectis_ssh;
+typedef struct vectis_ssh_sftp_session vectis_ssh_sftp_session;
+typedef struct vectis_ssh_sftp_file vectis_ssh_sftp_file;
+typedef struct vectis_ssh_sftp_dir vectis_ssh_sftp_dir;
 typedef struct vectis_mqtt vectis_mqtt;
 typedef struct vectis_request vectis_request;
 typedef struct vectis_response vectis_response;
@@ -769,6 +777,13 @@ typedef struct vectis_ssh_sftp_stat_result {
   unsigned long mtime;
 } vectis_ssh_sftp_stat_result;
 
+typedef struct vectis_ssh_sftp_dir_entry {
+  int eof;
+  char *name;
+  char *long_name;
+  vectis_ssh_sftp_stat_result stat;
+} vectis_ssh_sftp_dir_entry;
+
 typedef struct vectis_mqtt_config {
   const char *broker_url;
   const char *username;
@@ -1050,10 +1065,67 @@ struct vectis_ssh {
                                const char *new_path, vectis_error *error);
   vectis_status (*sftp_chmod)(vectis_ssh *self, const char *remote_path,
                               unsigned long permissions, vectis_error *error);
+  vectis_status (*sftp_open)(vectis_ssh *self,
+                             vectis_ssh_sftp_session **out,
+                             vectis_error *error);
   void (*close)(vectis_ssh *self);
 
   /* Shallow effective config copy used by the methods above. */
   vectis_ssh_config config;
+  void *impl;
+};
+
+struct vectis_ssh_sftp_session {
+  vectis_status (*open_file)(vectis_ssh_sftp_session *self,
+                             const char *remote_path, unsigned flags,
+                             unsigned long permissions,
+                             vectis_ssh_sftp_file **out,
+                             vectis_error *error);
+  vectis_status (*open_dir)(vectis_ssh_sftp_session *self,
+                            const char *remote_path,
+                            vectis_ssh_sftp_dir **out, vectis_error *error);
+  vectis_status (*stat)(vectis_ssh_sftp_session *self,
+                        const char *remote_path,
+                        vectis_ssh_sftp_stat_result *result,
+                        vectis_error *error);
+  vectis_status (*mkdir)(vectis_ssh_sftp_session *self,
+                         const char *remote_path, unsigned long permissions,
+                         vectis_error *error);
+  vectis_status (*remove)(vectis_ssh_sftp_session *self,
+                          const char *remote_path, vectis_error *error);
+  vectis_status (*rmdir)(vectis_ssh_sftp_session *self,
+                         const char *remote_path, vectis_error *error);
+  vectis_status (*rename)(vectis_ssh_sftp_session *self,
+                          const char *old_path, const char *new_path,
+                          vectis_error *error);
+  vectis_status (*chmod)(vectis_ssh_sftp_session *self,
+                         const char *remote_path, unsigned long permissions,
+                         vectis_error *error);
+  void (*close)(vectis_ssh_sftp_session *self);
+
+  /* Shallow effective config copy used by the methods above. */
+  vectis_ssh_config config;
+  void *impl;
+};
+
+struct vectis_ssh_sftp_file {
+  vectis_status (*read)(vectis_ssh_sftp_file *self, void *buffer,
+                        size_t capacity, size_t *out_size,
+                        vectis_error *error);
+  vectis_status (*write)(vectis_ssh_sftp_file *self, const void *data,
+                         size_t size, size_t *out_size, vectis_error *error);
+  vectis_status (*stat)(vectis_ssh_sftp_file *self,
+                        vectis_ssh_sftp_stat_result *result,
+                        vectis_error *error);
+  void (*close)(vectis_ssh_sftp_file *self);
+  void *impl;
+};
+
+struct vectis_ssh_sftp_dir {
+  vectis_status (*read)(vectis_ssh_sftp_dir *self,
+                        vectis_ssh_sftp_dir_entry *entry,
+                        vectis_error *error);
+  void (*close)(vectis_ssh_sftp_dir *self);
   void *impl;
 };
 
@@ -1710,6 +1782,8 @@ vectis_status vectis_ssh_new(const vectis_ssh_config *config, vectis_ssh **out,
 void vectis_ssh_close(vectis_ssh *ssh);
 void vectis_ssh_exec_result_cleanup(vectis_ssh_exec_result *result);
 void vectis_ssh_sftp_stat_result_init(vectis_ssh_sftp_stat_result *result);
+void vectis_ssh_sftp_dir_entry_init(vectis_ssh_sftp_dir_entry *entry);
+void vectis_ssh_sftp_dir_entry_cleanup(vectis_ssh_sftp_dir_entry *entry);
 vectis_status vectis_ssh_exec(const vectis_ssh_config *config,
                               const char *command,
                               vectis_ssh_exec_result *result,
@@ -1752,6 +1826,51 @@ vectis_status vectis_ssh_sftp_chmod(const vectis_ssh_config *config,
                                     const char *remote_path,
                                     unsigned long permissions,
                                     vectis_error *error);
+vectis_status vectis_ssh_sftp_session_new(const vectis_ssh_config *config,
+                                          vectis_ssh_sftp_session **out,
+                                          vectis_error *error);
+void vectis_ssh_sftp_session_close(vectis_ssh_sftp_session *session);
+vectis_status vectis_ssh_sftp_session_open_file(
+    vectis_ssh_sftp_session *session, const char *remote_path, unsigned flags,
+    unsigned long permissions, vectis_ssh_sftp_file **out,
+    vectis_error *error);
+vectis_status vectis_ssh_sftp_session_open_dir(
+    vectis_ssh_sftp_session *session, const char *remote_path,
+    vectis_ssh_sftp_dir **out, vectis_error *error);
+vectis_status vectis_ssh_sftp_session_stat(
+    vectis_ssh_sftp_session *session, const char *remote_path,
+    vectis_ssh_sftp_stat_result *result, vectis_error *error);
+vectis_status vectis_ssh_sftp_session_mkdir(
+    vectis_ssh_sftp_session *session, const char *remote_path,
+    unsigned long permissions, vectis_error *error);
+vectis_status vectis_ssh_sftp_session_remove(
+    vectis_ssh_sftp_session *session, const char *remote_path,
+    vectis_error *error);
+vectis_status vectis_ssh_sftp_session_rmdir(
+    vectis_ssh_sftp_session *session, const char *remote_path,
+    vectis_error *error);
+vectis_status vectis_ssh_sftp_session_rename(
+    vectis_ssh_sftp_session *session, const char *old_path,
+    const char *new_path, vectis_error *error);
+vectis_status vectis_ssh_sftp_session_chmod(
+    vectis_ssh_sftp_session *session, const char *remote_path,
+    unsigned long permissions, vectis_error *error);
+vectis_status vectis_ssh_sftp_file_read(vectis_ssh_sftp_file *file,
+                                        void *buffer, size_t capacity,
+                                        size_t *out_size,
+                                        vectis_error *error);
+vectis_status vectis_ssh_sftp_file_write(vectis_ssh_sftp_file *file,
+                                         const void *data, size_t size,
+                                         size_t *out_size,
+                                         vectis_error *error);
+vectis_status vectis_ssh_sftp_file_stat(
+    vectis_ssh_sftp_file *file, vectis_ssh_sftp_stat_result *result,
+    vectis_error *error);
+void vectis_ssh_sftp_file_close(vectis_ssh_sftp_file *file);
+vectis_status vectis_ssh_sftp_dir_read(vectis_ssh_sftp_dir *dir,
+                                       vectis_ssh_sftp_dir_entry *entry,
+                                       vectis_error *error);
+void vectis_ssh_sftp_dir_close(vectis_ssh_sftp_dir *dir);
 
 void vectis_mqtt_config_init(vectis_mqtt_config *config);
 vectis_status vectis_mqtt_new(const vectis_mqtt_config *config,
