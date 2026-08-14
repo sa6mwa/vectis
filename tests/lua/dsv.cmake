@@ -102,6 +102,18 @@ assert(type(err) == "table")
 assert(err.status == vectis.ERR_INVALID)
 assert(err.message:find("row width", 1, true))
 
+local stopped, stop_err = dsv.each({
+  data = "id,count\none,1\ntwo,2\n",
+  on_row = function()
+    return false
+  end,
+})
+assert(stopped == nil)
+assert(type(stop_err) == "table")
+assert(stop_err.status == vectis.ERR_STATE)
+assert(stop_err.status_string == vectis.status_string(vectis.ERR_STATE))
+assert(stop_err.message == "DSV row callback stopped")
+
 local dynamic_schema = lonejson.schema("dynamic-dsv-row", {
   lonejson.field("id", lonejson.string({required = true})),
   lonejson.field("count", lonejson.i64({required = true})),

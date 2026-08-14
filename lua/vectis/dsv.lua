@@ -3,6 +3,16 @@ local lonejson = require("lonejson")
 
 local M = {}
 
+local function vectis_error(status_name, message)
+  local vectis = require("vectis")
+  local status = vectis[status_name]
+  return {
+    status = status,
+    status_string = vectis.status_string(status),
+    message = message,
+  }
+end
+
 local function copy_table(source)
   local target = {}
   if source then
@@ -73,9 +83,7 @@ function M.each(first, second)
   if rows == nil then return nil, err end
   for index, row in ipairs(rows) do
     if callback(index, row) == false then
-      return nil, {
-        message = "DSV row callback stopped",
-      }
+      return nil, vectis_error("ERR_STATE", "DSV row callback stopped")
     end
   end
   return true

@@ -17,6 +17,12 @@ behavior.
 source-to-callback path when `schema` is provided; without a schema it iterates
 the raw materialized parse result.
 
+Expected parse, serialization, spill, and row-callback stop failures return
+`nil, err`, where `err` is a structured table with at least `message`. Errors
+that map to the Vectis C SDK status set also include `status` and
+`status_string`. Programmer misuse, such as omitting the `each()` callback,
+raises a Lua error.
+
 ## Options
 
 - `schema`: LoneJSON schema userdata. Required for typed rows, `each()`, and

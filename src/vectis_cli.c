@@ -10297,6 +10297,12 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "OK");
   lua_pushinteger(lua, VECTIS_ERR_INVALID);
   lua_setfield(lua, -2, "ERR_INVALID");
+  lua_pushinteger(lua, VECTIS_ERR_NOMEM);
+  lua_setfield(lua, -2, "ERR_NOMEM");
+  lua_pushinteger(lua, VECTIS_ERR_STATE);
+  lua_setfield(lua, -2, "ERR_STATE");
+  lua_pushinteger(lua, VECTIS_ERR_CONFLICT);
+  lua_setfield(lua, -2, "ERR_CONFLICT");
   lua_pushinteger(lua, VECTIS_ERR_NOT_IMPLEMENTED);
   lua_setfield(lua, -2, "ERR_NOT_IMPLEMENTED");
   lua_pushinteger(lua, VECTIS_ERR_TIMEOUT);
