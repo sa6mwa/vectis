@@ -25,6 +25,11 @@ lockd bundle sources.
   acquires a lease, calls `handler(lease, client)`, closes the lease handle, and
   closes the client. It does not implicitly release the remote lease; call
   `lease:release()` in the handler when that is the intended workflow.
+- `vectis.lockd.with_dequeued_json(opts, req, handler)` opens a client,
+  dequeues one message, reads `message:payload_json()`, calls
+  `handler(payload, message, client, payload_bytes)`, closes the message handle,
+  and closes the client. It does not implicitly ack or nack; call
+  `message:ack()` or `message:nack()` in the handler.
 - `vectis.lockd.encode_json(value)` delegates to `lockdc.encode_json`.
 - `vectis.lockd.decode_json(json)` delegates to `lockdc.decode_json`.
 - `vectis.lockd.json_null` is the raw lockdc JSON null sentinel.
@@ -110,4 +115,21 @@ assert(vectis.lockd.enqueue_json({
   type = "order.created",
   id = "1001",
 }))
+```
+
+For one-shot JSON dequeue handling with explicit ack/nack:
+
+```lua
+assert(vectis.lockd.with_dequeued_json({
+  endpoints = {"https://127.0.0.1:8443"},
+  client_bundle = "embedded",
+  namespace = "app",
+}, {
+  queue = "orders",
+  owner = "orders-worker",
+  visibility_timeout_seconds = 30,
+}, function(payload, message)
+  assert(payload.type == "order.created")
+  return message:ack()
+end))
 ```

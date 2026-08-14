@@ -6,10 +6,14 @@ local enqueue_req
 local enqueue_body
 local closed_clients = 0
 local acquired_req
+local dequeued_req
 local closed_leases = 0
+local closed_messages = 0
 local released_leases = 0
+local acked_messages = 0
 local saved_value
 local loaded_value = { type = "account.loaded", id = "1001" }
+local dequeued_value = { type = "order.created", id = "1001" }
 
 package.loaded.vectis = {
   ERR_STATE = 3,
@@ -83,6 +87,27 @@ package.loaded.lockdc = {
       end
       return lease
     end
+    function client:dequeue(req)
+      dequeued_req = req
+      local message = {}
+      function message:payload_json()
+        if req.queue == "explode-payload" then
+          error("payload exploded")
+        end
+        if req.queue == "missing-payload" then
+          return nil, { message = "payload missing" }
+        end
+        return dequeued_value, 41
+      end
+      function message:ack()
+        acked_messages = acked_messages + 1
+        return true
+      end
+      function message:close()
+        closed_messages = closed_messages + 1
+      end
+      return message
+    end
     function client:close()
       closed_clients = closed_clients + 1
     end
@@ -95,6 +120,7 @@ local lockd = require("vectis.lockd")
 
 assert(type(lockd.enqueue_json) == "function")
 assert(type(lockd.with_acquired_lease) == "function")
+assert(type(lockd.with_dequeued_json) == "function")
 
 assert(lockd.enqueue_json({
   endpoints = {"https://127.0.0.1:1"},
@@ -180,6 +206,44 @@ assert(failed == nil)
 assert(failed_err.message == "handler failed")
 assert(closed_leases == 4)
 assert(closed_clients == 7)
+
+local dequeue_result = assert(lockd.with_dequeued_json({
+  endpoints = {"https://127.0.0.1:1"},
+}, {
+  queue = "orders",
+  owner = "vectis-lockd-dequeue-test",
+}, function(payload, message, client, payload_written)
+  assert(payload.type == "order.created")
+  assert(payload.id == "1001")
+  assert(payload_written == 41)
+  assert(type(client) == "table")
+  assert(message:ack() == true)
+  return "dequeue-ok"
+end))
+assert(dequeue_result == "dequeue-ok")
+assert(dequeued_req.queue == "orders")
+assert(acked_messages == 1)
+assert(closed_messages == 1)
+assert(closed_clients == 8)
+
+local payload_missing, payload_missing_err = lockd.with_dequeued_json({}, {
+  queue = "missing-payload",
+}, function()
+  error("missing payload handler should not run")
+end)
+assert(payload_missing == nil)
+assert(payload_missing_err.message == "payload missing")
+assert(closed_messages == 2)
+assert(closed_clients == 9)
+
+local payload_exploded = pcall(function()
+  lockd.with_dequeued_json({}, { queue = "explode-payload" }, function()
+    error("payload explosion handler should not run")
+  end)
+end)
+assert(payload_exploded == false)
+assert(closed_messages == 3)
+assert(closed_clients == 10)
 
 print("vectis-lockd-helpers-ok")
 ]])

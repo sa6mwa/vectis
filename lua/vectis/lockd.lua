@@ -233,4 +233,43 @@ function M.with_acquired_lease(config, req, handler)
   end)
 end
 
+function M.with_dequeued_json(config, req, handler)
+  if type(handler) ~= "function" then
+    error("vectis.lockd.with_dequeued_json requires a handler", 2)
+  end
+
+  return M.with_client(config, function(client)
+    local message, dequeue_err = client:dequeue(req)
+    if message == nil then
+      return nil, dequeue_err
+    end
+
+    local ok_payload, payload, payload_written_or_err = pcall(function()
+      return message:payload_json()
+    end)
+    if not ok_payload then
+      close_handle(message)
+      error(payload)
+    end
+    if payload == nil then
+      close_handle(message)
+      return nil, payload_written_or_err
+    end
+
+    local ok, result, handler_err =
+        pcall(handler, payload, message, client, payload_written_or_err)
+    close_handle(message)
+    if not ok then
+      error(result)
+    end
+    if handler_err ~= nil then
+      return nil, handler_err
+    end
+    if result == nil then
+      return true
+    end
+    return result
+  end)
+end
+
 return M
