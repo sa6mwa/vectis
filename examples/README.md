@@ -136,8 +136,9 @@ modules, but it must not require another file from `examples/lua/`.
   `vectis.http.sftp_upload()` and `sftp_download()`. The local e2e harness runs
   it against the compose SSH/SFTP service.
 - `lua/ssh_command.lua`: libssh2-backed Lua SSH command execution through
-  `vectis.ssh.exec()`. The local e2e harness runs it against the compose
-  SSH/SFTP service with known_hosts pinning.
+  `vectis.ssh.exec()` and reusable `vectis.ssh.open()` receivers. The local e2e
+  harness runs normal and packed forms against the compose SSH/SFTP service
+  with known_hosts pinning.
 - `lua/lockd_state.lua`: Vectis lockd helper state save/load workflow against
   `LOCKD_ENDPOINT`.
 - `lua/lockd_queue.lua`: Vectis lockd helper queue enqueue/dequeue workflow

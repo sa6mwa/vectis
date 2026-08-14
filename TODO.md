@@ -308,6 +308,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add broader Lua libssh2-backed SFTP session, file open/read/write/stat, and directory iteration handles where curl-backed SFTP is insufficient.
 - [x] Expose Lua SFTP open flag constants for stateful libssh2 file handles so advanced file modes do not require hard-coded numeric flags.
 - [x] Add a reusable Lua SSH receiver over the public C `vectis_ssh` receiver so command, SFTP, and SCP workflows can share a Vectis-managed SSH connection.
+- [x] Add packed e2e coverage for Lua SSH command execution and known_hosts rejection.
 - [ ] Add broader Lua libssh2 facades for dependency-native SSH sessions/channels and advanced host-key verification workflows where Vectis service workflows require them.
 - [x] Add Vectis-owned Lua SSH/SCP workflow helpers on top of the dependency-native libssh2 facade for common service operations, while preserving `vectis.http.sftp_*` for curl-backed transfers.
 - [x] Add Lua MQTT publish helpers/tests where the generic `curl.perform()` facade is sufficient but workflow defaults improve DX.

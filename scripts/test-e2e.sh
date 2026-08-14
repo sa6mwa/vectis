@@ -349,6 +349,19 @@ run_service_examples() {
     VECTIS_LUA_SSH_KNOWN_HOSTS="$ssh_known_hosts" \
     "$repo_root/build/debug/vectis" "$repo_root/examples/lua/ssh_command.lua"
 
+  lua_ssh_pack="$work_dir/vectis-lua-ssh-command-pack"
+  "$repo_root/build/debug/vectis" -a pack \
+    --script "$repo_root/examples/lua/ssh_command.lua" \
+    --output "$lua_ssh_pack"
+
+  printf '[e2e] packed lua ssh command\n'
+  env VECTIS_LUA_SSH_HOST="127.0.0.1" \
+    VECTIS_LUA_SSH_PORT="$ssh_port" \
+    VECTIS_LUA_SSH_USERNAME="vectis" \
+    VECTIS_LUA_SSH_PASSWORD="vectispass" \
+    VECTIS_LUA_SSH_KNOWN_HOSTS="$ssh_known_hosts" \
+    "$lua_ssh_pack"
+
   printf '[e2e] lua ssh command rejects wrong known_hosts pin\n'
   if env VECTIS_LUA_SSH_HOST="127.0.0.1" \
       VECTIS_LUA_SSH_PORT="$ssh_port" \
@@ -357,6 +370,18 @@ run_service_examples() {
       VECTIS_LUA_SSH_KNOWN_HOSTS="$ssh_bad_known_hosts" \
       "$repo_root/build/debug/vectis" "$repo_root/examples/lua/ssh_command.lua"; then
     printf '%s\n' "Lua libssh2 SSH unexpectedly accepted mismatched known_hosts pin" >&2
+    return 1
+  fi
+
+  printf '[e2e] packed lua ssh command rejects wrong known_hosts pin\n'
+  if env VECTIS_LUA_SSH_HOST="127.0.0.1" \
+      VECTIS_LUA_SSH_PORT="$ssh_port" \
+      VECTIS_LUA_SSH_USERNAME="vectis" \
+      VECTIS_LUA_SSH_PASSWORD="vectispass" \
+      VECTIS_LUA_SSH_KNOWN_HOSTS="$ssh_bad_known_hosts" \
+      "$lua_ssh_pack"; then
+    printf '%s\n' \
+      "Packed Lua libssh2 SSH unexpectedly accepted mismatched known_hosts pin" >&2
     return 1
   fi
 
