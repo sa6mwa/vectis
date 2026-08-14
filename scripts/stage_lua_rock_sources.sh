@@ -45,9 +45,11 @@ copy_file scripts/render_release_rockspec.sh scripts/render_release_rockspec.sh
 copy_file scripts/stage_lua_rock_sources.sh scripts/stage_lua_rock_sources.sh
 copy_file scripts/test_lua_rock.sh scripts/test_lua_rock.sh
 copy_file scripts/validate_luarocks.sh scripts/validate_luarocks.sh
-copy_file docs/lua.md docs/lua.md
-copy_file docs/lua-conventions.md docs/lua-conventions.md
-copy_file docs/lua-coverage-matrix.md docs/lua-coverage-matrix.md
+
+for lua_doc in "$repo_root"/docs/lua*.md; do
+  [ -f "$lua_doc" ] || continue
+  copy_file "docs/$(basename -- "$lua_doc")" "docs/$(basename -- "$lua_doc")"
+done
 
 mkdir -p "$stage_root/lua"
 cp -R "$repo_root/lua/." "$stage_root/lua/"

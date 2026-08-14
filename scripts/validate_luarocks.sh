@@ -88,6 +88,30 @@ check_lua_module_files() {
   done
 }
 
+check_lua_docs() {
+  root=$1
+  artifact=$2
+  index="$root/docs/lua.md"
+  manifest="$root/RELEASE_MANIFEST"
+
+  [ -f "$index" ] || fail "Lua source archive missing docs/lua.md" "$artifact"
+  [ -f "$manifest" ] || fail "Lua source archive missing RELEASE_MANIFEST" "$artifact"
+  sed -n 's/.*](\(lua[^)]*\.md\)).*/\1/p' "$index" |
+  while IFS= read -r linked_doc; do
+    [ -n "$linked_doc" ] || continue
+    case "$linked_doc" in
+      /*|*../*|../*)
+        fail "Lua documentation link is not package-relative" "$linked_doc"
+        ;;
+    esac
+    [ -f "$root/docs/$linked_doc" ] ||
+      fail "Lua source archive missing linked documentation" "docs/$linked_doc"
+    grep -Fx "docs/$linked_doc" "$manifest" >/dev/null ||
+      fail "Lua source archive manifest missing linked documentation" \
+        "docs/$linked_doc"
+  done
+}
+
 rm -rf "$work_root"
 mkdir -p "$work_root/archive" "$work_root/src-rock"
 
@@ -107,6 +131,7 @@ grep -Fx "$version" "$work_root/archive/$package_name/VERSION" >/dev/null ||
 grep -F "lua/vectis.lua" "$work_root/archive/$package_name/RELEASE_MANIFEST" >/dev/null ||
   fail "Lua source archive manifest missing vectis.lua" "$archive"
 check_lua_module_files "$work_root/archive/$package_name" "$rockspec" "$archive"
+check_lua_docs "$work_root/archive/$package_name" "$archive"
 
 (cd "$work_root/archive/$package_name" &&
   find . \( -path './.git/*' -o -path './build/*' -o -path './dist/*' -o -path './.luarocks/*' \)) |
@@ -133,6 +158,7 @@ tar -C "$work_root/src-rock" -xzf "$work_root/src-rock/$package_name.tar.gz"
   fail "source rock nested archive missing vectis.lua" "$src_rock"
 check_lua_module_files "$work_root/src-rock/$package_name" \
   "$work_root/src-rock/vectis-$version-1.rockspec" "$src_rock"
+check_lua_docs "$work_root/src-rock/$package_name" "$src_rock"
 
 command -v "$luarocks" >/dev/null 2>&1 || fail "luarocks unavailable" "$src_rock"
 "$luarocks" install --tree "$work_root/tree" "$src_rock" >/dev/null
