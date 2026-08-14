@@ -40,7 +40,7 @@ Columns:
 | dep:sus | cpkt SUS / whisper | partial | planned | yes | yes | planned | Raw metadata, catalog lookup, path/cache open error handling, model handles, and offline cache status callbacks are exposed, documented in `docs/lua-sus.md`, and packed-tested; transcriber/model-loaded workflows remain. |
 | dep:audio | cpkt audio / miniaudio | partial | planned | yes | yes | planned | Raw constants, result strings, capability checks, decoder file/URL/callback open, encoder file/callback open, callback reader/writer, VOX, PTT, and capture/playback receiver shells are exposed, documented in `docs/lua-audio.md`, and packed-tested; live devices remain opt-in. |
 | dep:nghttp2 | nghttp2 | n/a | n/a | yes | yes | n/a | Transport dependency behind curl/Kore; no direct app-facing Lua API expected unless HTTP/2 controls become product surface. |
-| dep:zlib | zlib | yes | planned | yes | yes | n/a | `require("zlib")` exposes buffered deflate/inflate, gzip/gunzip, auto-decompress, version, explicit output limits, and packed raw dependency example coverage; streaming/file-backed compression remains future workflow DX if needed. |
+| dep:zlib | zlib | yes | planned | yes | yes | n/a | `require("zlib")` exposes buffered string deflate/inflate, gzip/gunzip, auto-decompress, file-backed bounded transforms, version, explicit output limits, and packed raw dependency example coverage; higher-level archive/body compression DX remains future workflow work if needed. |
 | dep:miniaudio | miniaudio | partial | planned | yes | yes | planned | Covered with `dep:audio`; capture/playback device helpers are exposed with opt-in live-device coverage. |
 
 ## Vectis Workflow Facades

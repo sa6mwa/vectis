@@ -103,8 +103,8 @@ surface directly, without local helper layers that would hide awkward API shape.
   parsing, tool schema, response params, registry, and MCP handler lifecycle
   without live provider calls.
 - `lua/raw_dependency_tools.lua`: raw liblql filtering/projection, pslog JSON
-  logging, and softline editor state operations through their upstream Lua
-  modules.
+  logging, softline editor state operations, and zlib string/file compression
+  through their raw Lua modules.
 - `lua/webdav_fileserver.lua`: mutable WebDAV fileserver mount and
   `vectis.webdav` client operations against a deterministic local server.
 - `lua/api_server.lua`: packable Lua API server script using C-owned

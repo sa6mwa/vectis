@@ -27,7 +27,7 @@ with minimal Vectis opinion:
 - `softline`: upstream softline Lua module.
 - `curl`: generic libcurl facade, documented in [Lua curl](lua-curl.md).
 - `openssl`: OpenSSL facade, documented in [Lua OpenSSL](lua-openssl.md).
-- `zlib`: buffered zlib/gzip compression facade, documented in
+- `zlib`: zlib/gzip compression facade, documented in
   [Lua zlib](lua-zlib.md).
 - `opcua`: cpkt OPC UA client/foundation facade.
 - `audio`: cpkt audio/miniaudio facade, documented in

@@ -61,6 +61,7 @@
 #define VECTIS_LUA_CURL_RESPONSE_HEADER_LIMIT (64u * 1024u)
 #define VECTIS_LUA_OPENSSL_MAX_BYTES (1024u * 1024u)
 #define VECTIS_LUA_ZLIB_MAX_OUTPUT_BYTES (64u * 1024u * 1024u)
+#define VECTIS_LUA_ZLIB_FILE_CHUNK_BYTES 32768u
 #define VECTIS_PACK_MAX_DIR_STACK 1024u
 #define VECTIS_LUA_SERVER "vectis.server"
 
@@ -11386,6 +11387,231 @@ static int vectis_lua_zlib_decompress(lua_State *lua) {
   return vectis_lua_zlib_transform(lua, 0, MAX_WBITS + 32);
 }
 
+static const char *vectis_lua_zlib_file_option(lua_State *lua, int index,
+                                               const char *primary,
+                                               const char *fallback,
+                                               const char *label) {
+  const char *value;
+
+  value = vectis_lua_table_string(lua, index, primary);
+  if (value == NULL && fallback != NULL) {
+    value = vectis_lua_table_string(lua, index, fallback);
+  }
+  if (value == NULL || value[0] == '\0') {
+    (void)luaL_error(lua, "zlib %s is required", label);
+  }
+  return value;
+}
+
+static int vectis_lua_zlib_file_result(lua_State *lua, size_t input_bytes,
+                                       size_t output_bytes) {
+  lua_newtable(lua);
+  lua_pushboolean(lua, 1);
+  lua_setfield(lua, -2, "ok");
+  lua_pushinteger(lua, (lua_Integer)input_bytes);
+  lua_setfield(lua, -2, "input_bytes");
+  lua_pushinteger(lua, (lua_Integer)output_bytes);
+  lua_setfield(lua, -2, "output_bytes");
+  return 1;
+}
+
+static int vectis_lua_zlib_file_fail(lua_State *lua, z_stream *stream,
+                                     int initialized, int compressing,
+                                     FILE *input, FILE *output,
+                                     unsigned char *input_buffer,
+                                     unsigned char *output_buffer,
+                                     const char *output_path,
+                                     int remove_output,
+                                     vectis_status status,
+                                     const char *message) {
+  if (initialized) {
+    if (compressing) {
+      (void)deflateEnd(stream);
+    } else {
+      (void)inflateEnd(stream);
+    }
+  }
+  if (input != NULL) {
+    fclose(input);
+  }
+  if (output != NULL) {
+    fclose(output);
+    if (remove_output && output_path != NULL) {
+      (void)remove(output_path);
+    }
+  }
+  free(input_buffer);
+  free(output_buffer);
+  return vectis_lua_push_error_text(lua, status, message);
+}
+
+static int vectis_lua_zlib_transform_file(lua_State *lua, int compressing,
+                                          int window_bits) {
+  const char *input_path;
+  const char *output_path;
+  unsigned char *input_buffer;
+  unsigned char *output_buffer;
+  FILE *input;
+  FILE *output;
+  z_stream stream;
+  size_t input_bytes;
+  size_t output_bytes;
+  size_t read_size;
+  size_t produced;
+  size_t written;
+  size_t max_output;
+  int level;
+  int remove_output;
+  int flush;
+  int ret;
+  int done;
+  int input_eof;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  input_path =
+      vectis_lua_zlib_file_option(lua, 1, "input_path", "path", "input_path");
+  output_path =
+      vectis_lua_zlib_file_option(lua, 1, "output_path", "to", "output_path");
+  max_output = vectis_lua_zlib_max_output(lua, 1);
+  level = compressing ? vectis_lua_zlib_level(lua, 1) : 0;
+  remove_output = vectis_lua_table_bool(lua, 1, "remove_output_on_failure", 1);
+
+  input = fopen(input_path, "rb");
+  if (input == NULL) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "zlib input file could not be opened");
+  }
+  output = fopen(output_path, "wb");
+  if (output == NULL) {
+    fclose(input);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "zlib output file could not be opened");
+  }
+  input_buffer = (unsigned char *)malloc(VECTIS_LUA_ZLIB_FILE_CHUNK_BYTES);
+  output_buffer = (unsigned char *)malloc(VECTIS_LUA_ZLIB_FILE_CHUNK_BYTES);
+  if (input_buffer == NULL || output_buffer == NULL) {
+    return vectis_lua_zlib_file_fail(
+        lua, &stream, 0, compressing, input, output, input_buffer,
+        output_buffer, output_path, remove_output, VECTIS_ERR_NOMEM,
+        "zlib file buffer allocation failed");
+  }
+
+  memset(&stream, 0, sizeof(stream));
+  ret = compressing ? deflateInit2(&stream, level, Z_DEFLATED, window_bits, 8,
+                                   Z_DEFAULT_STRATEGY)
+                    : inflateInit2(&stream, window_bits);
+  if (ret != Z_OK) {
+    return vectis_lua_zlib_file_fail(
+        lua, &stream, 0, compressing, input, output, input_buffer,
+        output_buffer, output_path, remove_output, VECTIS_ERR_STATE,
+        compressing ? "zlib deflate initialization failed"
+                    : "zlib inflate initialization failed");
+  }
+
+  input_bytes = 0u;
+  output_bytes = 0u;
+  done = 0;
+  input_eof = 0;
+  while (!done) {
+    if (stream.avail_in == 0u && !input_eof) {
+      read_size = fread(input_buffer, 1u, VECTIS_LUA_ZLIB_FILE_CHUNK_BYTES,
+                        input);
+      if (ferror(input)) {
+        return vectis_lua_zlib_file_fail(
+            lua, &stream, 1, compressing, input, output, input_buffer,
+            output_buffer, output_path, remove_output, VECTIS_ERR_STATE,
+            "zlib input file read failed");
+      }
+      if (read_size == 0u) {
+        input_eof = 1;
+      } else {
+        stream.next_in = input_buffer;
+        stream.avail_in = (uInt)read_size;
+        input_bytes += read_size;
+      }
+    }
+
+    flush = compressing && input_eof && stream.avail_in == 0u ? Z_FINISH
+                                                              : Z_NO_FLUSH;
+    do {
+      stream.next_out = output_buffer;
+      stream.avail_out = VECTIS_LUA_ZLIB_FILE_CHUNK_BYTES;
+      ret = compressing ? deflate(&stream, flush) : inflate(&stream, Z_NO_FLUSH);
+      produced = VECTIS_LUA_ZLIB_FILE_CHUNK_BYTES - (size_t)stream.avail_out;
+      if (produced > 0u) {
+        if (output_bytes > max_output || produced > max_output - output_bytes) {
+          return vectis_lua_zlib_file_fail(
+              lua, &stream, 1, compressing, input, output, input_buffer,
+              output_buffer, output_path, remove_output, VECTIS_ERR_INVALID,
+              "zlib output exceeds max_output_bytes");
+        }
+        written = fwrite(output_buffer, 1u, produced, output);
+        if (written != produced) {
+          return vectis_lua_zlib_file_fail(
+              lua, &stream, 1, compressing, input, output, input_buffer,
+              output_buffer, output_path, remove_output, VECTIS_ERR_STATE,
+              "zlib output file write failed");
+        }
+        output_bytes += produced;
+      }
+      if (ret == Z_STREAM_END) {
+        done = 1;
+        break;
+      }
+      if (ret != Z_OK) {
+        return vectis_lua_zlib_file_fail(
+            lua, &stream, 1, compressing, input, output, input_buffer,
+            output_buffer, output_path, remove_output, VECTIS_ERR_INVALID,
+            compressing ? "zlib deflate failed" : "zlib inflate failed");
+      }
+    } while (stream.avail_out == 0u);
+
+    if (!compressing && input_eof && stream.avail_in == 0u && !done) {
+      return vectis_lua_zlib_file_fail(
+          lua, &stream, 1, compressing, input, output, input_buffer,
+          output_buffer, output_path, remove_output, VECTIS_ERR_INVALID,
+          "zlib input ended before stream finished");
+    }
+  }
+
+  if (fflush(output) != 0) {
+    return vectis_lua_zlib_file_fail(
+        lua, &stream, 1, compressing, input, output, input_buffer,
+        output_buffer, output_path, remove_output, VECTIS_ERR_STATE,
+        "zlib output file flush failed");
+  }
+  if (compressing) {
+    (void)deflateEnd(&stream);
+  } else {
+    (void)inflateEnd(&stream);
+  }
+  fclose(input);
+  fclose(output);
+  free(input_buffer);
+  free(output_buffer);
+  return vectis_lua_zlib_file_result(lua, input_bytes, output_bytes);
+}
+
+static int vectis_lua_zlib_deflate_file(lua_State *lua) {
+  return vectis_lua_zlib_transform_file(lua, 1, MAX_WBITS);
+}
+
+static int vectis_lua_zlib_gzip_file(lua_State *lua) {
+  return vectis_lua_zlib_transform_file(lua, 1, MAX_WBITS + 16);
+}
+
+static int vectis_lua_zlib_inflate_file(lua_State *lua) {
+  return vectis_lua_zlib_transform_file(lua, 0, MAX_WBITS);
+}
+
+static int vectis_lua_zlib_gunzip_file(lua_State *lua) {
+  return vectis_lua_zlib_transform_file(lua, 0, MAX_WBITS + 16);
+}
+
+static int vectis_lua_zlib_decompress_file(lua_State *lua) {
+  return vectis_lua_zlib_transform_file(lua, 0, MAX_WBITS + 32);
+}
+
 static int vectis_lua_zlib_version(lua_State *lua) {
   lua_pushstring(lua, zlibVersion());
   return 1;
@@ -11407,6 +11633,18 @@ static int luaopen_zlib(lua_State *lua) {
   lua_setfield(lua, -2, "gzip");
   lua_pushcfunction(lua, vectis_lua_zlib_gunzip);
   lua_setfield(lua, -2, "gunzip");
+  lua_pushcfunction(lua, vectis_lua_zlib_deflate_file);
+  lua_setfield(lua, -2, "deflate_file");
+  lua_pushcfunction(lua, vectis_lua_zlib_inflate_file);
+  lua_setfield(lua, -2, "inflate_file");
+  lua_pushcfunction(lua, vectis_lua_zlib_deflate_file);
+  lua_setfield(lua, -2, "compress_file");
+  lua_pushcfunction(lua, vectis_lua_zlib_decompress_file);
+  lua_setfield(lua, -2, "decompress_file");
+  lua_pushcfunction(lua, vectis_lua_zlib_gzip_file);
+  lua_setfield(lua, -2, "gzip_file");
+  lua_pushcfunction(lua, vectis_lua_zlib_gunzip_file);
+  lua_setfield(lua, -2, "gunzip_file");
   return 1;
 }
 

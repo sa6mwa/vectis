@@ -37,5 +37,25 @@ editor:close()
 
 local compressed = assert(zlib.gzip("vectis raw zlib\n"))
 assert(assert(zlib.decompress(compressed)) == "vectis raw zlib\n")
+local zlib_input_path = os.tmpname()
+local zlib_gzip_path = os.tmpname()
+local zlib_output_path = os.tmpname()
+local zlib_file = assert(io.open(zlib_input_path, "wb"))
+zlib_file:write("vectis raw zlib file\n")
+zlib_file:close()
+assert(zlib.gzip_file({
+  input_path = zlib_input_path,
+  output_path = zlib_gzip_path,
+}).ok)
+assert(zlib.decompress_file({
+  input_path = zlib_gzip_path,
+  output_path = zlib_output_path,
+}).ok)
+zlib_file = assert(io.open(zlib_output_path, "rb"))
+assert(zlib_file:read("*a") == "vectis raw zlib file\n")
+zlib_file:close()
+os.remove(zlib_input_path)
+os.remove(zlib_gzip_path)
+os.remove(zlib_output_path)
 
 print("lua raw dependency tools example ok")

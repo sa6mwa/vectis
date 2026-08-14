@@ -114,6 +114,12 @@ assert(type(zlib.compress) == "function")
 assert(type(zlib.decompress) == "function")
 assert(type(zlib.gzip) == "function")
 assert(type(zlib.gunzip) == "function")
+assert(type(zlib.deflate_file) == "function")
+assert(type(zlib.inflate_file) == "function")
+assert(type(zlib.compress_file) == "function")
+assert(type(zlib.decompress_file) == "function")
+assert(type(zlib.gzip_file) == "function")
+assert(type(zlib.gunzip_file) == "function")
 local xml_schema = lonejson.schema("invoice", {
   lonejson.field("id", lonejson.string({required = true})),
   lonejson.field("amount", lonejson.object({
@@ -881,6 +887,42 @@ assert(limited_err.message:find("max_output_bytes", 1, true))
 local invalid_zlib, invalid_zlib_err = zlib.decompress("not compressed")
 assert(invalid_zlib == nil)
 assert(invalid_zlib_err.status == vectis.ERR_INVALID)
+local zlib_file_in = os.tmpname()
+local zlib_file_gz = os.tmpname()
+local zlib_file_out = os.tmpname()
+local zlib_file_limited = os.tmpname()
+local zlib_file_fp = assert(io.open(zlib_file_in, "wb"))
+zlib_file_fp:write(zlib_payload)
+zlib_file_fp:close()
+local gzip_file_result = assert(zlib.gzip_file({
+  input_path = zlib_file_in,
+  output_path = zlib_file_gz,
+  level = 9,
+}))
+assert(gzip_file_result.ok == true)
+assert(gzip_file_result.input_bytes == #zlib_payload)
+assert(gzip_file_result.output_bytes > 0)
+local gunzip_file_result = assert(zlib.gunzip_file({
+  input_path = zlib_file_gz,
+  output_path = zlib_file_out,
+}))
+assert(gunzip_file_result.ok == true)
+assert(gunzip_file_result.output_bytes == #zlib_payload)
+zlib_file_fp = assert(io.open(zlib_file_out, "rb"))
+assert(zlib_file_fp:read("*a") == zlib_payload)
+zlib_file_fp:close()
+local limited_file, limited_file_err = zlib.decompress_file({
+  input_path = zlib_file_gz,
+  output_path = zlib_file_limited,
+  max_output_bytes = 8,
+})
+assert(limited_file == nil)
+assert(limited_file_err.status == vectis.ERR_INVALID)
+assert(limited_file_err.message:find("max_output_bytes", 1, true))
+os.remove(zlib_file_in)
+os.remove(zlib_file_gz)
+os.remove(zlib_file_out)
+os.remove(zlib_file_limited)
 
 assert(type(vectis.http) == "table")
 assert(type(vectis.http.get) == "function")
