@@ -64,8 +64,8 @@ Columns:
 | workflow:smtp | SMTP send workflows | yes | yes | yes | yes | planned | `vectis.smtp.send` wraps curl SMTP upload with memory and file-backed payloads, with packed validation coverage; live SMTP coverage remains opt-in. |
 | workflow:xml | XML parse/serialize workflows | partial | partial | yes | yes | n/a | `vectis.xml.parse()` materializes a table and `parse_record()` returns a Lua-owned LoneJSON record; XML parsing has packed example coverage and XML serialization remains missing. |
 | workflow:dsv | CSV/TSV/DSV parse/serialize workflows | partial | partial | yes | yes | n/a | Lua covers memory/path parse, typed row callbacks for dynamic and fixed-capacity string fields, custom delimiters, comments, spill, serialization, and packed embedded asset parsing; Lua route-row handler integration remains missing. |
-| workflow:lockd-state | lockd document/state workflows | yes | partial | yes | yes | n/a | Raw lockdc plus `vectis.lockd` config/JSON helpers; richer document/query helper coverage remains. |
-| workflow:lockd-queue | lockd queue and consumer workflows | yes | partial | yes | yes | n/a | Queue examples use `vectis.lockd` config/JSON helpers; retry-oriented helper DX remains. |
+| workflow:lockd-state | lockd document/state workflows | yes | partial | yes | yes | n/a | Raw lockdc plus `vectis.lockd` config/JSON helpers and `with_acquired_lease`; richer document/query helper coverage remains only where raw lockdc is too noisy. |
+| workflow:lockd-queue | lockd queue and consumer workflows | yes | partial | yes | yes | n/a | Raw lockdc plus `vectis.lockd.enqueue_json`; retry-oriented helper DX remains only where raw lockdc is too noisy. |
 | workflow:server-consumer | Same-process server plus lockd consumer | n/a | yes | yes | yes | n/a | Scenario coverage exists. |
 | workflow:opcua-client | OPC UA client workflows | yes | planned | yes | no | planned | Local server-backed e2e exists; Vectis workflow helper is not designed yet. |
 | workflow:opcua-server | OPC UA server workflows | planned | planned | no | no | planned | Needs Lua callback lifetime and method/access-control contract. |

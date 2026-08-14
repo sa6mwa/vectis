@@ -78,6 +78,14 @@ function M.open(config)
   return lockdc.open(normalized)
 end
 
+local function json_request(req)
+  local next_req = copy_table(req)
+  if next_req.content_type == nil then
+    next_req.content_type = "application/json"
+  end
+  return next_req
+end
+
 function M.with_client(config, handler)
   if type(handler) ~= "function" then
     error("vectis.lockd.with_client requires a handler", 2)
@@ -100,6 +108,40 @@ function M.with_client(config, handler)
     return true
   end
   return result
+end
+
+function M.enqueue_json(config, req, value)
+  return M.with_client(config, function(client)
+    return client:enqueue(json_request(req), M.encode_json(value))
+  end)
+end
+
+function M.with_acquired_lease(config, req, handler)
+  if type(handler) ~= "function" then
+    error("vectis.lockd.with_acquired_lease requires a handler", 2)
+  end
+
+  return M.with_client(config, function(client)
+    local lease, acquire_err = client:acquire(req)
+    if lease == nil then
+      return nil, acquire_err
+    end
+
+    local ok, result, handler_err = pcall(handler, lease, client)
+    if type(lease.close) == "function" then
+      lease:close()
+    end
+    if not ok then
+      error(result)
+    end
+    if handler_err ~= nil then
+      return nil, handler_err
+    end
+    if result == nil then
+      return true
+    end
+    return result
+  end)
 end
 
 return M

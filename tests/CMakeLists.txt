@@ -137,6 +137,14 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_facade_contracts PROPERTIES
     LABELS "lua;local"
     TIMEOUT 30)
+  add_test(NAME vectis_lua_lockd_helpers
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/lockd_helpers.cmake")
+  set_tests_properties(vectis_lua_lockd_helpers PROPERTIES
+    LABELS "lua;local"
+    TIMEOUT 30)
   add_test(NAME vectis_lua_http
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
