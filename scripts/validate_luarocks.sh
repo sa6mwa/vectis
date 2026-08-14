@@ -65,6 +65,29 @@ check_rockspec() {
   scan_no_private_paths "$file"
 }
 
+check_lua_module_files() {
+  root=$1
+  module_rockspec=$2
+  artifact=$3
+  manifest="$root/RELEASE_MANIFEST"
+
+  [ -f "$manifest" ] || fail "Lua source archive missing RELEASE_MANIFEST" "$artifact"
+  sed -n 's/^[[:space:]]*\["[^"]*"\][[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+    "$module_rockspec" |
+  while IFS= read -r module_path; do
+    [ -n "$module_path" ] || continue
+    case "$module_path" in
+      /*|*../*|../*)
+        fail "Lua rockspec module path is not package-relative" "$module_path"
+        ;;
+    esac
+    [ -f "$root/$module_path" ] ||
+      fail "Lua source archive missing rockspec module file" "$module_path"
+    grep -Fx "$module_path" "$manifest" >/dev/null ||
+      fail "Lua source archive manifest missing rockspec module file" "$module_path"
+  done
+}
+
 rm -rf "$work_root"
 mkdir -p "$work_root/archive" "$work_root/src-rock"
 
@@ -83,6 +106,7 @@ grep -Fx "$version" "$work_root/archive/$package_name/VERSION" >/dev/null ||
   fail "Lua source archive VERSION mismatch" "$archive"
 grep -F "lua/vectis.lua" "$work_root/archive/$package_name/RELEASE_MANIFEST" >/dev/null ||
   fail "Lua source archive manifest missing vectis.lua" "$archive"
+check_lua_module_files "$work_root/archive/$package_name" "$rockspec" "$archive"
 
 (cd "$work_root/archive/$package_name" &&
   find . \( -path './.git/*' -o -path './build/*' -o -path './dist/*' -o -path './.luarocks/*' \)) |
@@ -107,6 +131,8 @@ tar -C "$work_root/src-rock" -xzf "$work_root/src-rock/$package_name.tar.gz"
   fail "source rock nested archive root mismatch" "$src_rock"
 [ -f "$work_root/src-rock/$package_name/lua/vectis.lua" ] ||
   fail "source rock nested archive missing vectis.lua" "$src_rock"
+check_lua_module_files "$work_root/src-rock/$package_name" \
+  "$work_root/src-rock/vectis-$version-1.rockspec" "$src_rock"
 
 command -v "$luarocks" >/dev/null 2>&1 || fail "luarocks unavailable" "$src_rock"
 "$luarocks" install --tree "$work_root/tree" "$src_rock" >/dev/null
