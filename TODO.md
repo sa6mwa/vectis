@@ -162,7 +162,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Stream mapped JSON request bodies into curl through LoneJSON's generator, using `lonejson_generator_measure()` for replayable mapped structs when `Content-Length` is required and chunked transfer for non-rewindable values.
 - [x] Evaluate LoneJSON object-framed stream, selected-array stream/rewrite, generic JSON value, writer, SSE, and multipart APIs for Vectis-owned helpers where they improve API, workflow, or file-ingestion DX without hiding buffering semantics.
 - [x] Integrate LoneJSON selected-array streaming and selected-array rewrite helpers without materializing complete documents or selected arrays.
-- [ ] Add higher-level JSON REST helpers for request validation, response serialization, and downstream API calls.
+- [x] Add higher-level JSON REST helpers for request validation, response serialization, and downstream API calls.
 - [x] Add first-pass typed JSON route auto-wiring backed by lonejson mapped structs.
 - [x] Add multi-output typed JSON routes where handlers choose status-specific response maps at runtime.
 - [x] Add optional OpenAPI generation from route and lonejson map metadata, without requiring handlers to predeclare every possible output shape just for documentation.
@@ -338,7 +338,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add a Vectis-owned Lua SSH command execution helper backed by libssh2.
 - [ ] Keep the Lua framework model aligned with the C SDK model: raw dependency access plus a Vectis-owned DX layer with matching concepts and behavior.
 - [x] Support shebang execution through `#!/usr/local/bin/vectis`.
-- [ ] Provide a friendly REST API DX for defining routes, handlers, middleware-like hooks, JSON responses, lockd operations, and downstream calls.
+- [x] Provide a friendly REST API DX for defining buffered JSON routes, handlers, middleware-like hooks, JSON responses, and downstream JSON calls.
+- [ ] Extend the REST DX with lockd operation presets only where examples show repeated service boilerplate.
 - [x] Add a C-owned Lua `server:static_directory()` helper for serving disk docroots such as extracted packed asset trees.
 - [x] Add a C-owned Lua `server:json()` helper for fixed unguarded JSON endpoints in packed API service scenarios, including explicit method and status configuration.
 - [x] Add matching method and status configuration to the C-owned Lua `server:auth_json()` helper for fixed guarded API endpoints.

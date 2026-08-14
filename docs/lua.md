@@ -56,6 +56,8 @@ workflows:
   [Lua lockd](lua-lockd.md).
 - `vectis.mqtt`: MQTT publish helper over curl, documented in
   [Lua MQTT](lua-mqtt.md).
+- `vectis.rest`: buffered JSON REST route and client helpers, documented in
+  [Lua REST](lua-rest.md).
 - `vectis.server`: Kore-backed server helpers, documented in
   [Lua server](lua-server.md).
 - `vectis.status`: status/error-source constants and Lua error decoration,

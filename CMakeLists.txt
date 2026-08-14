@@ -771,6 +771,11 @@ if(VECTIS_BUILD_BINARY)
     "${CMAKE_BINARY_DIR}/generated/include/vectis_http_lua_init.h"
   )
   vectis_generate_lua_init_header(
+    "${CMAKE_SOURCE_DIR}/lua/vectis/rest.lua"
+    "vectis_rest_lua_init"
+    "${CMAKE_BINARY_DIR}/generated/include/vectis_rest_lua_init.h"
+  )
+  vectis_generate_lua_init_header(
     "${CMAKE_SOURCE_DIR}/lua/vectis/webdav.lua"
     "vectis_webdav_lua_init"
     "${CMAKE_BINARY_DIR}/generated/include/vectis_webdav_lua_init.h"

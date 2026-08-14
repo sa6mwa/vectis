@@ -19,6 +19,7 @@ file(REMOVE "${download_target}" "${upload_target}" "${auth_path}"
 file(WRITE "${script}" [[
 local vectis = require("vectis")
 local lonejson = require("lonejson")
+local rest = require("vectis.rest")
 
 local json_url = "file://" .. assert(arg[1])
 local download_url = "file://" .. assert(arg[2])
@@ -65,6 +66,10 @@ assert(type(vectis.http.upload) == "function")
 assert(type(vectis.http.sftp_download) == "function")
 assert(type(vectis.http.sftp_upload) == "function")
 assert(require("vectis.http") == vectis.http)
+assert(vectis.rest == rest)
+assert(type(rest.route) == "function")
+assert(type(rest.group) == "function")
+assert(type(rest.client) == "function")
 assert(vectis.http.form_encode({
   q = "hello world",
   tag = {"a+b", "c/d"},
@@ -382,6 +387,48 @@ assert(api_server:group({
     },
   },
 }) == true)
+assert(rest.route(api_server, {
+  path = "/rest/echo/:id",
+  method = "POST",
+  max_body_bytes = 1024,
+  validate = function(json)
+    if type(json) ~= "table" or type(json.name) ~= "string" then
+      return false, {
+        kind = "validation",
+        message = "name is required",
+        status = vectis.ERR_INVALID,
+      }
+    end
+    return true
+  end,
+  handler = function(request)
+    return {
+      id = request.param("id"),
+      name = request.json.name,
+      suffix = request.query("suffix"),
+    }, {
+      status = 201,
+      headers = {
+        ["x-vectis-rest"] = "echo",
+      },
+    }
+  end,
+}) == true)
+assert(rest.group(api_server, {
+  prefix = "/rest-group",
+  decode_json = false,
+  routes = {
+    {
+      path = "status",
+      handler = function()
+        return {
+          ok = true,
+          grouped = true,
+        }
+      end,
+    },
+  },
+}) == true)
 local dsv_route_schema = lonejson.schema("lua-http-dsv-route-row", {
   lonejson.field("id", lonejson.string({required = true})),
   lonejson.field("count", lonejson.i64({required = true})),
@@ -549,6 +596,42 @@ assert(group_blocked.ok == false)
 assert(group_blocked.status == 418)
 assert(group_blocked.error.http_status == 418)
 assert(group_blocked.error.body == "blocked by before\n")
+local rest_client = rest.client({
+  base_url = "http://127.0.0.1:28484",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+local rest_echo = rest_client.post("/rest/echo/42?suffix=ok", {
+  json = {name = "alice"},
+})
+assert(rest_echo.ok == true, rest_echo.error and rest_echo.error.message)
+assert(rest_echo.status == 201)
+assert(rest_echo.json.id == "42")
+assert(rest_echo.json.name == "alice")
+assert(rest_echo.json.suffix == "ok")
+assert(rest_echo.headers:lower():find("x-vectis-rest: echo", 1, true))
+local rest_validation = rest_client.post("/rest/echo/42", {
+  json = {},
+})
+assert(rest_validation.ok == false)
+assert(rest_validation.status == 400)
+assert(rest_validation.error.http_status == 400)
+assert(rest_validation.json.error.kind == "validation")
+assert(rest_validation.json.error.status == vectis.ERR_INVALID)
+local rest_invalid_json = rest_client.post("/rest/echo/42", {
+  body = "{bad",
+})
+assert(rest_invalid_json.ok == false)
+assert(rest_invalid_json.status == 400)
+assert(rest_invalid_json.json.error.kind == "json_parse")
+assert(rest_invalid_json.json.error.source == "lonejson")
+local rest_group = rest_client.get("/rest-group/status")
+assert(rest_group.ok == true, rest_group.error and rest_group.error.message)
+assert(rest_group.status == 200)
+assert(rest_group.json.ok == true)
+assert(rest_group.json.grouped == true)
 local dynamic_dsv_required = vectis.http.post("http://127.0.0.1:28484/dynamic-dsv", {
   body = "id,count\nalpha,2\nbeta,3\n",
   headers = {
