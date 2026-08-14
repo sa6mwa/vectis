@@ -94,6 +94,9 @@ surface directly, without local helper layers that would hide awkward API shape.
   validation, and inspection.
 - `lua/protocol_helpers.lua`: curl-backed MQTT and SMTP workflow helpers plus
   SCP validation/error handling without requiring live external services.
+- `lua/curl_protocols.lua`: protocol-neutral `curl.perform()` file-backed
+  transfer, upload, download, and protocol allowlist behavior for workflows
+  where adding a Vectis-specific wrapper would be redundant.
 - `lua/webdav_fileserver.lua`: mutable WebDAV fileserver mount and
   `vectis.webdav` client operations against a deterministic local server.
 - `lua/api_server.lua`: packable Lua API server script using C-owned
