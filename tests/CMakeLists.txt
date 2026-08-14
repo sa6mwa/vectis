@@ -129,6 +129,14 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_dsv PROPERTIES
     LABELS "lua;smoke;local"
     TIMEOUT 30)
+  add_test(NAME vectis_lua_facade_contracts
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/facade_contracts.cmake")
+  set_tests_properties(vectis_lua_facade_contracts PROPERTIES
+    LABELS "lua;local"
+    TIMEOUT 30)
   add_test(NAME vectis_lua_http
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"

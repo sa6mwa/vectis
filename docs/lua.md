@@ -8,6 +8,8 @@ routes, packed assets, auth, lockd consumers, certificate workflows, or
 file-backed transfers.
 
 For release tracking, see the [Lua coverage matrix](lua-coverage-matrix.md).
+For shared naming, error, ownership, and payload-shape rules, see the
+[Lua facade conventions](lua-conventions.md).
 For SUS/audio callback and ownership details, see the
 [SUS and audio contract](lua-sus-audio-contract.md).
 

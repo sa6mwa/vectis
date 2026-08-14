@@ -20,6 +20,16 @@ local function vectis_module()
   return require("vectis")
 end
 
+local function vectis_error(status_name, message)
+  local vectis = vectis_module()
+  local status = vectis[status_name]
+  return {
+    status = status,
+    status_string = vectis.status_string(status),
+    message = message,
+  }
+end
+
 function M.config(config)
   if config == nil then
     config = {}
@@ -38,9 +48,8 @@ function M.config(config)
     if normalized.client_bundle_source == nil then
       local source, err = vectis_module().embedded_lockd_bundle_source()
       if source == nil then
-        return nil, {
-          message = err or "no embedded lockd bundle",
-        }
+        return nil, vectis_error("ERR_STATE",
+                                 err or "no embedded lockd bundle")
       end
       normalized.client_bundle_source = source
     end
