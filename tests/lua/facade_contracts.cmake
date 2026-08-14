@@ -11,6 +11,11 @@ local webdav = require("vectis.webdav")
 local lockd = require("vectis.lockd")
 local xml = require("vectis.xml")
 
+local work_dir = assert(arg[1], "work directory argument is required")
+local auth_store = work_dir .. "/facade-auth-credentials.json"
+os.remove(auth_store)
+os.remove(auth_store .. ".lock")
+
 local function assert_status_error(err, status, message_fragment)
   assert(type(err) == "table")
   assert(err.status == status)
@@ -32,6 +37,125 @@ assert(vectis.error_source_string(vectis.ERROR_SOURCE_VECTIS) == "vectis")
 assert(vectis.error_source_string(vectis.ERROR_SOURCE_LOCKDC) == "lockdc")
 assert(vectis.error_source_string(vectis.ERROR_SOURCE_LONEJSON) == "lonejson")
 assert(vectis.error_source_string(vectis.ERROR_SOURCE_LIBSSH2) == "libssh2")
+
+assert(vectis.auth.store_init({
+  credentials_path = auth_store,
+}) == true)
+
+local user = assert(vectis.auth.user_add({
+  credentials_path = auth_store,
+  username = "facade-admin@example.com",
+  password = "facade-password",
+  totp_secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+  totp_label = "Vectis:facade-admin@example.com",
+  issuer = "Vectis",
+}))
+assert(user.username == "facade-admin@example.com")
+assert(user.totp_secret == "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
+assert(type(user.totp_uri) == "string")
+assert(user.totp_uri:find("otpauth://totp/", 1, true))
+assert(type(user.totp_qr) == "string")
+
+local missing_totp = assert(vectis.auth.user_login({
+  credentials_path = auth_store,
+  username = "facade-admin@example.com",
+  password = "facade-password",
+}))
+assert(missing_totp.authenticated == false)
+
+local login = assert(vectis.auth.user_login({
+  credentials_path = auth_store,
+  username = "facade-admin@example.com",
+  password = "facade-password",
+  totp_code = "287082",
+  time = 59,
+  window = 0,
+}))
+assert(login.authenticated == true)
+
+local webdav_key = assert(vectis.auth.webdav_key({
+  credentials_path = auth_store,
+  username = "facade-admin@example.com",
+  password = "facade-password",
+  totp_code = "287082",
+  time = 59,
+  window = 0,
+}))
+assert(type(webdav_key.client_id) == "string")
+assert(type(webdav_key.client_secret) == "string")
+assert(webdav_key.api_key == nil)
+assert(type(webdav_key.claim_json) == "string")
+
+local authorization = assert(vectis.auth.basic_authorization(webdav_key))
+assert(authorization:find("Basic ", 1, true) == 1)
+
+local verified = assert(vectis.auth.verify({
+  credentials_path = auth_store,
+  authorization = authorization,
+  allowed_modes = { "basic" },
+}))
+assert(verified.authenticated == true)
+assert(verified.auth_mode == "basic")
+assert(verified.client_id == webdav_key.client_id)
+
+local native_provider = assert(vectis.auth.provider_native({
+  credentials_path = auth_store,
+  purpose = "webdav",
+  realm = "facade",
+  allowed_modes = { vectis.auth.BASIC },
+}))
+assert(native_provider.kind == "native")
+local required = assert(native_provider:authenticate({
+  resource = "/dav",
+  allowed_modes = "basic",
+}))
+assert(required.action == "required")
+assert(required.status_code == 401)
+assert(type(required.www_authenticate) == "string")
+assert(required.www_authenticate:find("Basic", 1, true))
+
+local allowed = assert(native_provider:authenticate({
+  authorization = authorization,
+  resource = "/dav",
+  allowed_modes = "basic",
+}))
+assert(allowed.action == "allow")
+assert(allowed.result.authenticated == true)
+assert(allowed.result.auth_mode == "basic")
+
+local callback_seen = false
+local callback_provider = vectis.auth.provider_callback(function(request)
+  callback_seen = request.resource == "/admin" and
+                  request.authorization == "Bearer callback"
+  return {
+    action = "redirect",
+    status_code = 302,
+    location = "/_vectis/auth/login",
+    content_type = "text/plain",
+    body = "login required",
+    principal = "facade",
+  }
+end)
+assert(callback_provider.kind == "callback")
+local redirect = assert(callback_provider:authenticate({
+  authorization = "Bearer callback",
+  resource = "/admin",
+}))
+assert(callback_seen == true)
+assert(redirect.action == "redirect")
+assert(redirect.status_code == 302)
+assert(redirect.location == "/_vectis/auth/login")
+assert(redirect.content_type == "text/plain")
+assert(redirect.body == "login required")
+assert(redirect.principal == "facade")
+
+local invalid_callback = vectis.auth.provider_callback(function()
+  return { action = "challenge" }
+end)
+local invalid_response, invalid_response_err = invalid_callback:authenticate({})
+assert(invalid_response == nil)
+assert_status_error(invalid_response_err, vectis.ERR_INVALID,
+                    "auth callback response action")
 
 local stopped, stopped_err = dsv.each({
   data = "id\nalpha\n",
@@ -138,7 +262,7 @@ assert(tostring(bad_webdav_err):find("destination", 1, true))
 print("vectis-lua-facade-contracts-ok")
 ]])
 
-execute_process(COMMAND "${VECTIS_BIN}" "${script}"
+execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${WORK_DIR}"
                 RESULT_VARIABLE facade_contracts_result
                 OUTPUT_VARIABLE facade_contracts_stdout
                 ERROR_VARIABLE facade_contracts_stderr)

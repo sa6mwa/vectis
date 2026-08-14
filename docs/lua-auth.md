@@ -82,8 +82,9 @@ WebDAV clients commonly support Basic auth but not browser OAuth2 refresh flows.
 Vectis therefore issues application keys after the configured auth flow succeeds.
 
 `webdav_key(opts)` validates a native user login and returns an issued Basic
-credential table with `client_id`, `client_secret`, `api_key`, and optional
-`claim_json`.
+credential table with `client_id`, `client_secret`, and optional `claim_json`.
+Bearer credentials from `issue(opts)` expose `api_key`; Basic credentials do
+not.
 
 `basic_authorization(credential)` or
 `basic_authorization(client_id, client_secret)` formats the HTTP
