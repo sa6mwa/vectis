@@ -46,7 +46,9 @@ Major groups:
   `vectis_http_response`, client execute methods, JSON helpers, file upload,
   and file download.
 - SSH/SFTP/SCP: `vectis_ssh_config`, `vectis_sftp_config`,
-  `vectis_ssh_exec()`, SFTP file upload/download, and SCP file upload/download.
+  `vectis_ssh_exec()`, SFTP file upload/download, SFTP filesystem operations
+  (`stat`, `mkdir`, `remove`, `rmdir`, `rename`, `chmod`), and SCP file
+  upload/download.
 - MQTT: `vectis_mqtt_config`, publish, and JSON publish helpers.
 - Certificates: key, CSR, bundle, CA, validation, and inspection workflows.
 

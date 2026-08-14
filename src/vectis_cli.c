@@ -4136,6 +4136,234 @@ static int vectis_lua_ssh_scp_download_file(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_ssh_sftp_stat(lua_State *lua) {
+  vectis_ssh_config config;
+  vectis_ssh_sftp_stat_result result;
+  vectis_error error;
+  vectis_status status;
+  const char *remote_path;
+  const char *config_error;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  remote_path = vectis_lua_table_string(lua, 1, "remote_path");
+  if (remote_path == NULL || remote_path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "SFTP remote_path is required");
+  }
+  vectis_ssh_config_init(&config);
+  config_error = vectis_lua_ssh_config_from_table(lua, 1, &config);
+  if (config_error != NULL) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID, config_error);
+  }
+  vectis_error_clear(&error);
+  vectis_ssh_sftp_stat_result_init(&result);
+  status = vectis_ssh_sftp_stat(&config, remote_path, &result, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+
+  lua_newtable(lua);
+  lua_pushinteger(lua, (lua_Integer)result.flags);
+  lua_setfield(lua, -2, "flags");
+  lua_pushboolean(lua, result.has_size);
+  lua_setfield(lua, -2, "has_size");
+  lua_pushinteger(lua, (lua_Integer)result.size);
+  lua_setfield(lua, -2, "size");
+  lua_pushboolean(lua, result.size_overflow);
+  lua_setfield(lua, -2, "size_overflow");
+  lua_pushboolean(lua, result.has_uid_gid);
+  lua_setfield(lua, -2, "has_uid_gid");
+  lua_pushinteger(lua, (lua_Integer)result.uid);
+  lua_setfield(lua, -2, "uid");
+  lua_pushinteger(lua, (lua_Integer)result.gid);
+  lua_setfield(lua, -2, "gid");
+  lua_pushboolean(lua, result.has_permissions);
+  lua_setfield(lua, -2, "has_permissions");
+  lua_pushinteger(lua, (lua_Integer)result.permissions);
+  lua_setfield(lua, -2, "permissions");
+  lua_pushboolean(lua, result.has_atime);
+  lua_setfield(lua, -2, "has_atime");
+  lua_pushinteger(lua, (lua_Integer)result.atime);
+  lua_setfield(lua, -2, "atime");
+  lua_pushboolean(lua, result.has_mtime);
+  lua_setfield(lua, -2, "has_mtime");
+  lua_pushinteger(lua, (lua_Integer)result.mtime);
+  lua_setfield(lua, -2, "mtime");
+  return 1;
+}
+
+static int vectis_lua_ssh_sftp_permissions(lua_State *lua, int index,
+                                           const char *field,
+                                           unsigned long fallback,
+                                           unsigned long *out) {
+  lua_Integer value;
+
+  lua_getfield(lua, index, field);
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    *out = fallback;
+    return 1;
+  }
+  value = luaL_checkinteger(lua, -1);
+  lua_pop(lua, 1);
+  if (value < 0 || value > 07777) {
+    return 0;
+  }
+  *out = (unsigned long)value;
+  return 1;
+}
+
+static int vectis_lua_ssh_sftp_mkdir(lua_State *lua) {
+  vectis_ssh_config config;
+  vectis_error error;
+  vectis_status status;
+  const char *remote_path;
+  const char *config_error;
+  unsigned long permissions;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  remote_path = vectis_lua_table_string(lua, 1, "remote_path");
+  if (remote_path == NULL || remote_path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "SFTP remote_path is required");
+  }
+  if (!vectis_lua_ssh_sftp_permissions(lua, 1, "permissions", 0755UL,
+                                       &permissions)) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "SFTP permissions must be 0..07777");
+  }
+  vectis_ssh_config_init(&config);
+  config_error = vectis_lua_ssh_config_from_table(lua, 1, &config);
+  if (config_error != NULL) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID, config_error);
+  }
+  vectis_error_clear(&error);
+  status = vectis_ssh_sftp_mkdir(&config, remote_path, permissions, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_ssh_sftp_remove(lua_State *lua) {
+  vectis_ssh_config config;
+  vectis_error error;
+  vectis_status status;
+  const char *remote_path;
+  const char *config_error;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  remote_path = vectis_lua_table_string(lua, 1, "remote_path");
+  if (remote_path == NULL || remote_path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "SFTP remote_path is required");
+  }
+  vectis_ssh_config_init(&config);
+  config_error = vectis_lua_ssh_config_from_table(lua, 1, &config);
+  if (config_error != NULL) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID, config_error);
+  }
+  vectis_error_clear(&error);
+  status = vectis_ssh_sftp_remove(&config, remote_path, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_ssh_sftp_rmdir(lua_State *lua) {
+  vectis_ssh_config config;
+  vectis_error error;
+  vectis_status status;
+  const char *remote_path;
+  const char *config_error;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  remote_path = vectis_lua_table_string(lua, 1, "remote_path");
+  if (remote_path == NULL || remote_path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "SFTP remote_path is required");
+  }
+  vectis_ssh_config_init(&config);
+  config_error = vectis_lua_ssh_config_from_table(lua, 1, &config);
+  if (config_error != NULL) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID, config_error);
+  }
+  vectis_error_clear(&error);
+  status = vectis_ssh_sftp_rmdir(&config, remote_path, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_ssh_sftp_rename(lua_State *lua) {
+  vectis_ssh_config config;
+  vectis_error error;
+  vectis_status status;
+  const char *old_path;
+  const char *new_path;
+  const char *config_error;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  old_path = vectis_lua_table_string(lua, 1, "old_path");
+  new_path = vectis_lua_table_string(lua, 1, "new_path");
+  if (old_path == NULL || old_path[0] == '\0' || new_path == NULL ||
+      new_path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "SFTP old_path and new_path are required");
+  }
+  vectis_ssh_config_init(&config);
+  config_error = vectis_lua_ssh_config_from_table(lua, 1, &config);
+  if (config_error != NULL) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID, config_error);
+  }
+  vectis_error_clear(&error);
+  status = vectis_ssh_sftp_rename(&config, old_path, new_path, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_ssh_sftp_chmod(lua_State *lua) {
+  vectis_ssh_config config;
+  vectis_error error;
+  vectis_status status;
+  const char *remote_path;
+  const char *config_error;
+  unsigned long permissions;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  remote_path = vectis_lua_table_string(lua, 1, "remote_path");
+  if (remote_path == NULL || remote_path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "SFTP remote_path is required");
+  }
+  if (!vectis_lua_ssh_sftp_permissions(lua, 1, "permissions",
+                                       (unsigned long)-1L, &permissions) ||
+      permissions == (unsigned long)-1L) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "SFTP permissions are required");
+  }
+  vectis_ssh_config_init(&config);
+  config_error = vectis_lua_ssh_config_from_table(lua, 1, &config);
+  if (config_error != NULL) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID, config_error);
+  }
+  vectis_error_clear(&error);
+  status = vectis_ssh_sftp_chmod(&config, remote_path, permissions, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
 static const char **vectis_lua_string_array_field(lua_State *lua, int index,
                                                   const char *field,
                                                   size_t *out_count) {
@@ -10320,6 +10548,18 @@ static void vectis_lua_push_ssh_table(lua_State *lua) {
   lua_setfield(lua, -2, "scp_upload_file");
   lua_pushcfunction(lua, vectis_lua_ssh_scp_download_file);
   lua_setfield(lua, -2, "scp_download_file");
+  lua_pushcfunction(lua, vectis_lua_ssh_sftp_stat);
+  lua_setfield(lua, -2, "sftp_stat");
+  lua_pushcfunction(lua, vectis_lua_ssh_sftp_mkdir);
+  lua_setfield(lua, -2, "sftp_mkdir");
+  lua_pushcfunction(lua, vectis_lua_ssh_sftp_remove);
+  lua_setfield(lua, -2, "sftp_remove");
+  lua_pushcfunction(lua, vectis_lua_ssh_sftp_rmdir);
+  lua_setfield(lua, -2, "sftp_rmdir");
+  lua_pushcfunction(lua, vectis_lua_ssh_sftp_rename);
+  lua_setfield(lua, -2, "sftp_rename");
+  lua_pushcfunction(lua, vectis_lua_ssh_sftp_chmod);
+  lua_setfield(lua, -2, "sftp_chmod");
 }
 
 static int luaopen_vectis(lua_State *lua) {

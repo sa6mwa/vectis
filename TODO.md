@@ -291,7 +291,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Expand `vectis.cert` Lua helpers to cover private key generation, CSR generation, self-signed bundles, CA bundles, CA-signed cert/key pairs, cert/key pair validation, CA validation, and inspection.
 - [ ] Add certificate reload/update hooks where Kore can support them.
 - [x] Add Vectis-owned Lua libssh2-backed SFTP file upload/download helpers with host-key, known-hosts, timeout, and structured error contracts where curl-backed SFTP is insufficient.
-- [ ] Add broader Lua libssh2 facades for sessions, channels, SFTP open/read/write/list/stat/mkdir/remove/rename/chmod, and advanced host-key verification workflows where curl-backed SFTP is insufficient.
+- [x] Add one-shot Lua libssh2-backed SFTP filesystem helpers for stat, mkdir, remove, rmdir, rename, and chmod where curl-backed SFTP is insufficient.
+- [ ] Add broader Lua libssh2 facades for sessions, channels, SFTP open/read/write/list handles, directory iteration, and advanced host-key verification workflows where curl-backed SFTP is insufficient.
 - [x] Add Vectis-owned Lua SSH/SCP workflow helpers on top of the raw libssh2 facade for common service operations, while preserving `vectis.http.sftp_*` for curl-backed transfers.
 - [x] Add Lua MQTT publish helpers/tests where the generic `curl.perform()` facade is sufficient but workflow defaults improve DX.
 - [x] Add other libcurl protocol examples/tests where the generic `curl.perform()` facade is sufficient but workflow defaults improve DX.

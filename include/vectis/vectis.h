@@ -753,6 +753,22 @@ typedef struct vectis_ssh_exec_result {
   size_t stderr_size;
 } vectis_ssh_exec_result;
 
+typedef struct vectis_ssh_sftp_stat_result {
+  unsigned long flags;
+  int has_size;
+  size_t size;
+  int size_overflow;
+  int has_uid_gid;
+  unsigned long uid;
+  unsigned long gid;
+  int has_permissions;
+  unsigned long permissions;
+  int has_atime;
+  unsigned long atime;
+  int has_mtime;
+  unsigned long mtime;
+} vectis_ssh_sftp_stat_result;
+
 typedef struct vectis_mqtt_config {
   const char *broker_url;
   const char *username;
@@ -1021,6 +1037,19 @@ struct vectis_ssh {
   vectis_status (*scp_download_file)(vectis_ssh *self, const char *remote_path,
                                      const char *local_path,
                                      vectis_error *error);
+  vectis_status (*sftp_stat)(vectis_ssh *self, const char *remote_path,
+                             vectis_ssh_sftp_stat_result *result,
+                             vectis_error *error);
+  vectis_status (*sftp_mkdir)(vectis_ssh *self, const char *remote_path,
+                              unsigned long permissions, vectis_error *error);
+  vectis_status (*sftp_remove)(vectis_ssh *self, const char *remote_path,
+                               vectis_error *error);
+  vectis_status (*sftp_rmdir)(vectis_ssh *self, const char *remote_path,
+                              vectis_error *error);
+  vectis_status (*sftp_rename)(vectis_ssh *self, const char *old_path,
+                               const char *new_path, vectis_error *error);
+  vectis_status (*sftp_chmod)(vectis_ssh *self, const char *remote_path,
+                              unsigned long permissions, vectis_error *error);
   void (*close)(vectis_ssh *self);
 
   /* Shallow effective config copy used by the methods above. */
@@ -1680,6 +1709,7 @@ vectis_status vectis_ssh_new(const vectis_ssh_config *config, vectis_ssh **out,
                              vectis_error *error);
 void vectis_ssh_close(vectis_ssh *ssh);
 void vectis_ssh_exec_result_cleanup(vectis_ssh_exec_result *result);
+void vectis_ssh_sftp_stat_result_init(vectis_ssh_sftp_stat_result *result);
 vectis_status vectis_ssh_exec(const vectis_ssh_config *config,
                               const char *command,
                               vectis_ssh_exec_result *result,
@@ -1700,6 +1730,28 @@ vectis_status vectis_ssh_scp_download_file(const vectis_ssh_config *config,
                                            const char *remote_path,
                                            const char *local_path,
                                            vectis_error *error);
+vectis_status vectis_ssh_sftp_stat(const vectis_ssh_config *config,
+                                   const char *remote_path,
+                                   vectis_ssh_sftp_stat_result *result,
+                                   vectis_error *error);
+vectis_status vectis_ssh_sftp_mkdir(const vectis_ssh_config *config,
+                                    const char *remote_path,
+                                    unsigned long permissions,
+                                    vectis_error *error);
+vectis_status vectis_ssh_sftp_remove(const vectis_ssh_config *config,
+                                     const char *remote_path,
+                                     vectis_error *error);
+vectis_status vectis_ssh_sftp_rmdir(const vectis_ssh_config *config,
+                                    const char *remote_path,
+                                    vectis_error *error);
+vectis_status vectis_ssh_sftp_rename(const vectis_ssh_config *config,
+                                     const char *old_path,
+                                     const char *new_path,
+                                     vectis_error *error);
+vectis_status vectis_ssh_sftp_chmod(const vectis_ssh_config *config,
+                                    const char *remote_path,
+                                    unsigned long permissions,
+                                    vectis_error *error);
 
 void vectis_mqtt_config_init(vectis_mqtt_config *config);
 vectis_status vectis_mqtt_new(const vectis_mqtt_config *config,
