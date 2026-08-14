@@ -39,11 +39,12 @@ local function stub(name, module)
 end
 
 local last_curl_opts
-
-for _, name in ipairs({
+local dependency_modules = {
   "lockdc", "lonejson", "pslog", "lql", "cai", "libmdf", "softline",
   "opcua", "openssl", "zlib", "audio", "sus",
-}) do
+}
+
+for _, name in ipairs(dependency_modules) do
   stub(name)
 end
 stub("lonejson", {
@@ -194,8 +195,10 @@ local vectis = require("vectis")
 assert(type(vectis) == "table")
 assert(vectis.version ~= nil)
 assert(type(vectis.libs) == "table")
-assert(vectis.libs.lockdc == package.loaded.lockdc)
-assert(vectis.libs.sus == package.loaded.sus)
+for _, name in ipairs(dependency_modules) do
+  assert(vectis.libs[name] == package.loaded[name], "vectis.libs." .. name)
+end
+assert(vectis.libs.curl == package.loaded.curl)
 assert(vectis.status.OK == vectis.OK)
 assert(vectis.status_string(vectis.OK) == "ok")
 assert(curl.version() == "curl-stub")
