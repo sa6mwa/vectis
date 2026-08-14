@@ -128,10 +128,10 @@ surface directly, without local helper layers that would hide awkward API shape.
 - `lua/ssh_command.lua`: libssh2-backed Lua SSH command execution through
   `vectis.ssh.exec()`. The local e2e harness runs it against the compose
   SSH/SFTP service with known_hosts pinning.
-- `lua/lockd_state.lua`: lockdc Lua client acquire, JSON state update/load,
-  and lease release against `LOCKD_ENDPOINT`.
-- `lua/lockd_queue.lua`: lockdc Lua queue enqueue, dequeue, JSON payload read,
-  and ack against `LOCKD_ENDPOINT`.
+- `lua/lockd_state.lua`: Vectis lockd helper state save/load workflow against
+  `LOCKD_ENDPOINT`.
+- `lua/lockd_queue.lua`: Vectis lockd helper queue enqueue/dequeue workflow
+  with explicit ack against `LOCKD_ENDPOINT`.
 - `lua/consumer_service.lua`: long-running Lua service shape using
   `server:consumer_service()` with the C-owned `webdav_marker` handler. In
   self-test mode it enqueues a lockd message and observes marker files through a

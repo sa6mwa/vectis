@@ -54,24 +54,16 @@ Vectis Lua facade conventions.
 ```lua
 local vectis = require("vectis")
 
-local client = assert(vectis.lockd.open({
+assert(vectis.lockd.enqueue_json({
   endpoints = {"https://127.0.0.1:8443"},
   client_bundle = "embedded",
   namespace = "app",
-}))
-
-local payload = vectis.lockd.encode_json({
+}, {
+  queue = "orders",
+}, {
   type = "order.created",
   id = "1001",
-})
-
-local ok, err = client:enqueue({
-  queue = "orders",
-  content_type = "application/json",
-}, payload)
-
-client:close()
-assert(ok, err and err.message or "enqueue failed")
+}))
 ```
 
 For one-shot JSON state save/load:

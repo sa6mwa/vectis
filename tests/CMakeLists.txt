@@ -145,6 +145,15 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_lockd_helpers PROPERTIES
     LABELS "lua;local"
     TIMEOUT 30)
+  add_test(NAME vectis_lua_lockd_examples
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/lockd_examples.cmake")
+  set_tests_properties(vectis_lua_lockd_examples PROPERTIES
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
   add_test(NAME vectis_lua_http
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
