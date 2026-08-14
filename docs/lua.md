@@ -15,6 +15,7 @@ For shared naming, error, ownership, and payload-shape rules, see the
 [Lua facade conventions](lua-conventions.md).
 For SUS/audio callback and ownership details, see the
 [SUS and audio contract](lua-sus-audio-contract.md).
+For OPC UA callback and concurrency details, see [Lua OPC UA](lua-opcua.md).
 
 ## Framework Model
 
@@ -52,7 +53,7 @@ with minimal Vectis opinion:
 - `openssl`: OpenSSL facade, documented in [Lua OpenSSL](lua-openssl.md).
 - `zlib`: zlib/gzip compression facade, documented in
   [Lua zlib](lua-zlib.md).
-- `opcua`: cpkt OPC UA client/foundation facade.
+- `opcua`: cpkt OPC UA facade, documented in [Lua OPC UA](lua-opcua.md).
 - `audio`: cpkt audio/miniaudio facade, documented in
   [Lua audio](lua-audio.md).
 - `sus`: cpkt SUS/whisper facade, documented in [Lua SUS](lua-sus.md).

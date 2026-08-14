@@ -145,9 +145,11 @@ static int make_temp_output_path(char **path_out) {
 }
 
 static int run_child(const char *label, char *const argv[],
-                     const char *endpoint_url) {
+                     const char *endpoint_url,
+                     unsigned short lua_server_port) {
   pid_t pid;
   int status;
+  char port_text[16];
 
   pid = fork();
   if (pid < 0) {
@@ -159,6 +161,14 @@ static int run_child(const char *label, char *const argv[],
         setenv("OPCUA_ENDPOINT", endpoint_url, 1) != 0) {
       perror("setenv");
       _exit(127);
+    }
+    if (lua_server_port != 0u) {
+      snprintf(port_text, sizeof(port_text), "%u",
+               (unsigned int)lua_server_port);
+      if (setenv("OPCUA_LUA_SERVER_PORT", port_text, 1) != 0) {
+        perror("setenv");
+        _exit(127);
+      }
     }
     execv(argv[0], argv);
     perror(label);
@@ -251,9 +261,37 @@ static void *server_loop_main(void *user) {
   return NULL;
 }
 
-static int run_lua_contract(const char *endpoint_url, const char *script_path) {
+static int run_lua_contract(const char *endpoint_url, const char *script_path,
+                            unsigned short lua_server_port) {
   static const unsigned char script[] =
       "local opcua = require(\"opcua\")\n"
+      "assert(type(opcua.server) == \"function\")\n"
+      "local lua_server = assert(opcua.server({ port = OPCUA_LUA_SERVER_PORT "
+      "}))\n"
+      "assert(lua_server:set_endpoint({ host = \"127.0.0.1\", port = "
+      "OPCUA_LUA_SERVER_PORT }) == true)\n"
+      "assert(lua_server:set_application_identity({ application_uri = "
+      "\"urn:vectis:lua:opcua\", product_uri = \"urn:vectis\", "
+      "application_name = \"Vectis Lua OPC UA\" }) == true)\n"
+      "assert(lua_server:set_access_control({ allow_anonymous = true }) == "
+      "true)\n"
+      "local lua_ns = assert(lua_server:add_namespace(\"urn:vectis:lua:opcua\""
+      "))\n"
+      "assert(lua_ns >= 1)\n"
+      "local lua_node = opcua.node_id_numeric(lua_ns, 8101)\n"
+      "assert(lua_server:add_variable({ node_id = lua_node, browse_name = "
+      "\"luaOwned\", display_name = \"Lua Owned\", value = "
+      "opcua.value_integer(12) }) == true)\n"
+      "local lua_initial = assert(lua_server:read(lua_node))\n"
+      "assert(lua_initial:get() == 12)\n"
+      "assert(lua_server:write(lua_node, opcua.value_integer(44)) == true)\n"
+      "local lua_updated = assert(lua_server:read(lua_node))\n"
+      "assert(lua_updated:get() == 44)\n"
+      "assert(lua_server:startup() == true)\n"
+      "assert(type(lua_server:endpoint_url()) == \"string\")\n"
+      "assert(type(lua_server:iterate(false)) == \"number\")\n"
+      "assert(lua_server:shutdown() == true)\n"
+      "assert(lua_server:close() == true)\n"
       "local node = opcua.node_id_numeric(1, 7101)\n"
       "local client = assert(opcua.connect(OPCUA_ENDPOINT))\n"
       "local value = assert(client:read(node))\n"
@@ -307,6 +345,10 @@ static int run_lua_contract(const char *endpoint_url, const char *script_path) {
                                            endpoint_url);
   }
   if (lua_status == CPKT_LUA_RUNTIME_OK) {
+    lua_status = cpkt_lua_runtime_set_global_integer(
+        runtime, "OPCUA_LUA_SERVER_PORT", lua_server_port);
+  }
+  if (lua_status == CPKT_LUA_RUNTIME_OK) {
     lua_status = cpkt_lua_runtime_run_buffer(
         runtime, script_data, script_size, chunk_name, 0, NULL, 0);
   }
@@ -323,7 +365,8 @@ static int run_lua_contract(const char *endpoint_url, const char *script_path) {
 
 static int run_packed_lua_contract(const char *endpoint_url,
                                    const char *script_path,
-                                   const char *vectis_bin) {
+                                   const char *vectis_bin,
+                                   unsigned short lua_server_port) {
   char *output_path;
   char *vectis_path;
   char *script_path_copy;
@@ -359,11 +402,12 @@ static int run_packed_lua_contract(const char *endpoint_url,
   pack_argv[5] = arg_output;
   pack_argv[6] = output_path;
   pack_argv[7] = NULL;
-  failed = run_child("vectis pack opcua example", pack_argv, NULL);
+  failed = run_child("vectis pack opcua example", pack_argv, NULL, 0u);
   if (!failed) {
     run_argv[0] = output_path;
     run_argv[1] = NULL;
-    failed = run_child("packed opcua Lua example", run_argv, endpoint_url);
+    failed = run_child("packed opcua Lua example", run_argv, endpoint_url,
+                       lua_server_port);
   }
   unlink(output_path);
   free(output_path);
@@ -384,6 +428,7 @@ int main(int argc, char **argv) {
   const char *vectis_bin;
   size_t endpoint_required;
   unsigned short port;
+  unsigned short lua_server_port;
   int thread_started;
   int failed;
 
@@ -396,6 +441,9 @@ int main(int argc, char **argv) {
   endpoint_required = 0u;
 
   if (pick_loopback_port(&port) != 0) {
+    return 1;
+  }
+  if (pick_loopback_port(&lua_server_port) != 0) {
     return 1;
   }
   if (expect_ok(cpkt_opcua_server_new(&server, port), status, "server new")) {
@@ -435,10 +483,11 @@ int main(int argc, char **argv) {
   }
   if (!failed) {
     sleep_ms(50u);
-    failed = run_lua_contract(endpoint_url, script_path);
+    failed = run_lua_contract(endpoint_url, script_path, lua_server_port);
   }
   if (!failed) {
-    failed = run_packed_lua_contract(endpoint_url, script_path, vectis_bin);
+    failed = run_packed_lua_contract(endpoint_url, script_path, vectis_bin,
+                                     lua_server_port);
   }
   if (thread_started) {
     loop.stop = 1;
