@@ -27,13 +27,13 @@ Columns:
 | dep:lonejson | LoneJSON Lua module | yes | partial | yes | yes | n/a | Raw encode/decode/schema available; Vectis JSON route/downstream DX remains incomplete. |
 | dep:pslog | libpslog Lua module | yes | planned | yes | yes | n/a | Raw logging module is preloaded and packed-tested; Vectis logger inheritance in Lua needs a clear helper surface. |
 | dep:lql | liblql Lua module | yes | planned | yes | yes | n/a | Raw module is preloaded and packed-tested. |
-| dep:cai | CAI Lua module | yes | planned | yes | no | planned | Raw module is preloaded; Vectis service integration waits on CAI SDK stabilization. |
+| dep:cai | CAI Lua module | yes | planned | yes | yes | planned | Raw module is preloaded and packed-tested for local constructors/metadata; Vectis service integration waits on CAI SDK stabilization. |
 | dep:libmdf | libmdf Lua module | yes | planned | yes | no | n/a | Raw module is preloaded; Agent Smith / terminal DX helpers are future work. |
 | dep:softline | softline Lua module | yes | planned | yes | yes | n/a | Raw module is preloaded and packed-tested; higher-level prompt/terminal helpers are future work. |
 | dep:curl | libcurl Lua facade | yes | partial | yes | yes | planned | `curl`, `vectis.http`, `vectis.webdav`, `vectis.mqtt`, and `vectis.smtp`; generic protocols are available through option tables. |
 | dep:openssl | OpenSSL | yes | partial | yes | yes | n/a | `openssl` exposes version, SHA-256, general EVP digest/HMAC, hex/Base64 codecs, PEM-backed signing/verification, and CSPRNG helpers; `vectis.cert` owns certificate workflows. |
 | dep:libssh2 | libssh2 | planned | partial | yes | no | n/a | `vectis.ssh.exec` and libssh2-backed SFTP/SCP file upload/download exist; raw sessions, channels, deeper SFTP operations, and advanced host-key workflows are missing. |
-| dep:libxml2 | libxml2/XML | partial | partial | yes | no | n/a | `vectis.xml` exposes XML-to-LoneJSON parsing; raw DOM/libxml2 and XML serialization remain missing. |
+| dep:libxml2 | libxml2/XML | partial | partial | yes | yes | n/a | `vectis.xml` exposes XML-to-LoneJSON parsing with packed example coverage; raw DOM/libxml2 and XML serialization remain missing. |
 | dep:dsv | Vectis DSV/CSV/TSV helpers | partial | partial | yes | yes | n/a | `vectis.dsv` exposes materialized parse, typed source-to-callback iteration for dynamic and fixed-capacity string fields, spill, row serialization, and packed execution coverage; route-row Lua handler integration remains. |
 | dep:opcua | cpkt-opcua | partial | planned | yes | no | planned | `require("opcua")` covers client/foundation; server, async, subscriptions, PubSub remain. |
 | dep:sus | cpkt SUS / whisper | planned | planned | no | no | planned | No Lua facade yet; Lua ownership/streaming/model-cache contract is documented in `docs/lua-sus-audio-contract.md`. |
@@ -57,11 +57,11 @@ Columns:
 | workflow:http-client | Downstream HTTP client | yes | yes | yes | yes | planned | JSON helpers, simple non-JSON verbs, form bodies, multipart, file upload/download, retry/proxy/TLS pass-through, and reusable client defaults exist. |
 | workflow:sftp-curl | curl-backed SFTP | yes | yes | yes | yes | n/a | Covered through `vectis.http.sftp_download/upload`. |
 | workflow:ssh-exec | SSH command execution | planned | yes | yes | no | n/a | `vectis.ssh.exec` exists; raw libssh2 remains missing. |
-| workflow:scp | SCP upload/download | planned | yes | yes | no | n/a | `vectis.ssh.scp_upload_file` and `scp_download_file` expose libssh2-backed file transfer; raw libssh2 channel/session control remains absent. |
+| workflow:scp | SCP upload/download | planned | yes | yes | yes | n/a | `vectis.ssh.scp_upload_file` and `scp_download_file` expose libssh2-backed file transfer, with packed validation coverage; raw libssh2 channel/session control remains absent. |
 | workflow:sftp-libssh2 | libssh2-backed SFTP | planned | partial | yes | no | n/a | `vectis.ssh.sftp_upload_file` and `sftp_download_file` expose file transfer; open/read/write/list/stat/mkdir/remove/rename/chmod remain. |
-| workflow:mqtt | MQTT publish workflows | yes | yes | yes | no | planned | `vectis.mqtt.publish` wraps curl upload mode for MQTT publish; live broker coverage remains opt-in. |
-| workflow:smtp | SMTP send workflows | yes | yes | yes | no | planned | `vectis.smtp.send` wraps curl SMTP upload with memory and file-backed payloads; live SMTP coverage remains opt-in. |
-| workflow:xml | XML parse/serialize workflows | partial | partial | yes | no | n/a | `vectis.xml.parse()` materializes a table and `parse_record()` returns a Lua-owned LoneJSON record; XML serialization remains missing. |
+| workflow:mqtt | MQTT publish workflows | yes | yes | yes | yes | planned | `vectis.mqtt.publish` wraps curl upload mode for MQTT publish, with packed validation coverage; live broker coverage remains opt-in. |
+| workflow:smtp | SMTP send workflows | yes | yes | yes | yes | planned | `vectis.smtp.send` wraps curl SMTP upload with memory and file-backed payloads, with packed validation coverage; live SMTP coverage remains opt-in. |
+| workflow:xml | XML parse/serialize workflows | partial | partial | yes | yes | n/a | `vectis.xml.parse()` materializes a table and `parse_record()` returns a Lua-owned LoneJSON record; XML parsing has packed example coverage and XML serialization remains missing. |
 | workflow:dsv | CSV/TSV/DSV parse/serialize workflows | partial | partial | yes | yes | n/a | Lua covers memory/path parse, typed row callbacks for dynamic and fixed-capacity string fields, custom delimiters, comments, spill, serialization, and packed embedded asset parsing; Lua route-row handler integration remains missing. |
 | workflow:lockd-state | lockd document/state workflows | yes | partial | yes | yes | n/a | Raw lockdc plus first `vectis.lockd`; richer document/query helper coverage remains. |
 | workflow:lockd-queue | lockd queue and consumer workflows | yes | partial | yes | yes | n/a | Queue examples exist; retry-oriented helper DX remains. |
