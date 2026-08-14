@@ -24,11 +24,18 @@ code a consistent result shape for API calls and file transfers.
 - `vectis.http.stream_json(opts)` calls `curl.stream_json(opts)`.
 - `vectis.http.download(opts)` requires `download_path` and streams the response
   body to that file through libcurl's write callback.
+- `vectis.http.download_file(url, path[, opts])` is the same file-backed
+  download path with URL/path arguments for common app workflows.
 - `vectis.http.upload(opts)` accepts `upload_path`, `body_path`, or `body`.
   File paths stream from disk through libcurl's read callback.
+- `vectis.http.upload_file(url, path[, opts])` uploads one local file with
+  URL/path arguments.
 - `vectis.http.sftp_download(opts)` and `vectis.http.sftp_upload(opts)` set the
   default protocol allowlist to `sftp` and use the same file-backed transfer
   paths.
+- `vectis.http.sftp_download_file(url, path[, opts])` and
+  `vectis.http.sftp_upload_file(url, path[, opts])` are the curl-backed SFTP
+  file-transfer presets.
 - `vectis.http.client(defaults)` returns a helper object with the same request
   methods and shared defaults for retry, proxy, TLS, client certificates,
   credentials, headers, protocol allowlists, and timeouts.
@@ -118,3 +125,25 @@ local response = api.get_json("https://api.example.test/status")
 Client methods shallow-merge per-request options over defaults. Headers merge
 separately, so a request can override or add individual headers without
 repeating the default header table.
+
+## File Transfers
+
+```lua
+local http = require("vectis.http")
+
+local downloaded = assert(http.download_file(
+  "https://example.test/report.csv",
+  "report.csv",
+  {timeout_ms = 5000}
+))
+
+local uploaded = assert(http.upload_file(
+  "https://example.test/upload/report.csv",
+  "report.csv",
+  {timeout_ms = 5000}
+))
+```
+
+`download_file` sets `download_path`; `upload_file` sets `upload_path`. Table
+form also accepts `path` or `local_path` as aliases when `download_path` or
+`upload_path` is not already present.

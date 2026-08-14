@@ -64,9 +64,13 @@ assert(type(vectis.http.get_json) == "function")
 assert(type(vectis.http.post_json) == "function")
 assert(type(vectis.http.options_json) == "function")
 assert(type(vectis.http.download) == "function")
+assert(type(vectis.http.download_file) == "function")
 assert(type(vectis.http.upload) == "function")
+assert(type(vectis.http.upload_file) == "function")
 assert(type(vectis.http.sftp_download) == "function")
+assert(type(vectis.http.sftp_download_file) == "function")
 assert(type(vectis.http.sftp_upload) == "function")
+assert(type(vectis.http.sftp_upload_file) == "function")
 assert(require("vectis.http") == vectis.http)
 assert(vectis.rest == rest)
 assert(type(rest.route) == "function")
@@ -93,6 +97,8 @@ local file_client = vectis.http.client({
 })
 assert(type(file_client.get_json) == "function")
 assert(type(file_client.options_json) == "function")
+assert(type(file_client.download_file) == "function")
+assert(type(file_client.upload_file) == "function")
 assert(type(file_client.form) == "function")
 assert(type(file_client.multipart) == "function")
 local client_decoded = file_client.get_json(json_url)
@@ -151,6 +157,32 @@ do
   fp:close()
   assert(body == "downloaded through curl file sink\n")
 end
+local download_file_path = download_path .. ".file-helper"
+os.remove(download_file_path)
+local downloaded_file = vectis.http.download_file(download_url, download_file_path, {
+  protocols = "file",
+})
+assert(downloaded_file.ok == true,
+       downloaded_file.error and downloaded_file.error.message)
+assert(downloaded_file.body == "")
+do
+  local fp = assert(io.open(download_file_path, "rb"))
+  local body = fp:read("*a")
+  fp:close()
+  assert(body == "downloaded through curl file sink\n")
+end
+local client_download_path = download_path .. ".client-helper"
+os.remove(client_download_path)
+local client_downloaded_file =
+    file_client.download_file(download_url, client_download_path)
+assert(client_downloaded_file.ok == true,
+       client_downloaded_file.error and client_downloaded_file.error.message)
+do
+  local fp = assert(io.open(client_download_path, "rb"))
+  local body = fp:read("*a")
+  fp:close()
+  assert(body == "downloaded through curl file sink\n")
+end
 
 local uploaded = vectis.http.upload({
   url = upload_url,
@@ -160,6 +192,32 @@ local uploaded = vectis.http.upload({
 assert(uploaded.ok == true, uploaded.error and uploaded.error.message)
 do
   local fp = assert(io.open(arg[5], "rb"))
+  local body = fp:read("*a")
+  fp:close()
+  assert(body == "uploaded through curl file source\n")
+end
+local upload_file_target = arg[5] .. ".file-helper"
+os.remove(upload_file_target)
+local uploaded_file = vectis.http.upload_file("file://" .. upload_file_target,
+                                              upload_path, {
+  protocols = "file",
+})
+assert(uploaded_file.ok == true,
+       uploaded_file.error and uploaded_file.error.message)
+do
+  local fp = assert(io.open(upload_file_target, "rb"))
+  local body = fp:read("*a")
+  fp:close()
+  assert(body == "uploaded through curl file source\n")
+end
+local client_upload_file_target = arg[5] .. ".client-helper"
+os.remove(client_upload_file_target)
+local client_uploaded_file =
+    file_client.upload_file("file://" .. client_upload_file_target, upload_path)
+assert(client_uploaded_file.ok == true,
+       client_uploaded_file.error and client_uploaded_file.error.message)
+do
+  local fp = assert(io.open(client_upload_file_target, "rb"))
   local body = fp:read("*a")
   fp:close()
   assert(body == "uploaded through curl file source\n")

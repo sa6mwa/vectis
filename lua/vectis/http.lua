@@ -46,6 +46,20 @@ local function request_with_method(method, first, second)
   return M.request(opts)
 end
 
+local function file_transfer_opts(first, second, third, path_field)
+  if type(first) == "table" then
+    local opts = copy_table(first)
+    if opts[path_field] == nil then
+      opts[path_field] = opts.local_path or opts.path
+    end
+    return opts
+  end
+  local opts = copy_table(third)
+  opts.url = first
+  opts[path_field] = second
+  return opts
+end
+
 local function merge_headers(default_headers, request_headers)
   local headers = nil
   if default_headers ~= nil then
@@ -238,6 +252,10 @@ function M.download(opts)
   return M.request(opts)
 end
 
+function M.download_file(first, second, third)
+  return M.download(file_transfer_opts(first, second, third, "download_path"))
+end
+
 function M.upload(opts)
   opts = opts_from(opts)
   if opts.upload_path == nil and opts.body_path == nil and opts.body == nil then
@@ -247,6 +265,10 @@ function M.upload(opts)
     opts.upload = true
   end
   return M.request(opts)
+end
+
+function M.upload_file(first, second, third)
+  return M.upload(file_transfer_opts(first, second, third, "upload_path"))
 end
 
 function M.form_encode(form)
@@ -300,8 +322,21 @@ function M.sftp_download(opts)
   return M.download(opts)
 end
 
+function M.sftp_download_file(first, second, third)
+  local opts = file_transfer_opts(first, second, third, "download_path")
+  default_protocols(opts, "sftp")
+  return M.download(opts)
+end
+
 function M.sftp_upload(opts)
   opts = opts_from(opts)
+  default_protocols(opts, "sftp")
+  opts.upload = true
+  return M.upload(opts)
+end
+
+function M.sftp_upload_file(first, second, third)
+  local opts = file_transfer_opts(first, second, third, "upload_path")
   default_protocols(opts, "sftp")
   opts.upload = true
   return M.upload(opts)
@@ -407,8 +442,18 @@ function M.client(defaults)
     return M.download(merge_defaults(defaults, first, second))
   end
 
+  function client.download_file(first, second, third)
+    return M.download_file(merge_defaults(
+        defaults, file_transfer_opts(first, second, third, "download_path")))
+  end
+
   function client.upload(first, second)
     return M.upload(merge_defaults(defaults, first, second))
+  end
+
+  function client.upload_file(first, second, third)
+    return M.upload_file(merge_defaults(
+        defaults, file_transfer_opts(first, second, third, "upload_path")))
   end
 
   function client.form(first, second)
@@ -423,8 +468,18 @@ function M.client(defaults)
     return M.sftp_download(merge_defaults(defaults, first, second))
   end
 
+  function client.sftp_download_file(first, second, third)
+    return M.sftp_download_file(merge_defaults(
+        defaults, file_transfer_opts(first, second, third, "download_path")))
+  end
+
   function client.sftp_upload(first, second)
     return M.sftp_upload(merge_defaults(defaults, first, second))
+  end
+
+  function client.sftp_upload_file(first, second, third)
+    return M.sftp_upload_file(merge_defaults(
+        defaults, file_transfer_opts(first, second, third, "upload_path")))
   end
 
   function client.stream_json(first, second)
