@@ -28,6 +28,9 @@ Cache status constants include `CACHE_STATUS_LOOKUP`, `CACHE_STATUS_HIT`,
 `CACHE_STATUS_DOWNLOAD_COMPLETE`, `CACHE_STATUS_VERIFY_BEGIN`,
 `CACHE_STATUS_VERIFY_COMPLETE`, and `CACHE_STATUS_LOAD_BEGIN`.
 
+Log level constants include `LOG_NONE`, `LOG_DEBUG`, `LOG_INFO`, `LOG_WARN`,
+`LOG_ERROR`, and `LOG_CONT`.
+
 ## Model Catalog
 
 - `sus.model_catalog_count()` returns the number of curated cache entries.
@@ -86,6 +89,19 @@ Cache status callbacks receive a Lua-owned event table with:
 
 Return zero or true to continue. Return non-zero or false to abort with
 `ERR_CALLBACK`.
+
+## Backend Logging
+
+`sus.set_log_sink(callback_or_nil)` installs or clears the process-wide cpkt SUS
+backend log sink. Passing a function receives Lua-owned event tables:
+
+- `level`
+- `component`
+- `message`
+
+Passing `nil` or `false` clears the sink. The sink is process-wide because the
+underlying cpkt/whisper logging hook is process-wide; install it deliberately
+and clear it when a script no longer wants backend log events.
 
 ## Model Handles
 

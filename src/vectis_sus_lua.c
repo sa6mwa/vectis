@@ -25,7 +25,14 @@ typedef struct vectis_sus_cache_status_lua {
   int ref;
 } vectis_sus_cache_status_lua;
 
+typedef struct vectis_sus_log_lua {
+  lua_State *lua;
+  int ref;
+} vectis_sus_log_lua;
+
 int luaopen_sus(lua_State *lua);
+
+static vectis_sus_log_lua vectis_sus_lua_log = {NULL, LUA_NOREF};
 
 static void vectis_sus_lua_set_string(lua_State *lua, const char *key,
                                       const char *value) {
@@ -225,6 +232,32 @@ static int vectis_sus_lua_abort_fn(void *user) {
   abort_requested = vectis_sus_lua_abort_callback_result(lua, -1);
   lua_settop(lua, top);
   return abort_requested;
+}
+
+static void vectis_sus_lua_log_sink(const cpkt_sus_log_event *event,
+                                    void *user) {
+  vectis_sus_log_lua *sink;
+  lua_State *lua;
+  int top;
+
+  sink = (vectis_sus_log_lua *)user;
+  if (sink == NULL || sink->lua == NULL || sink->ref == LUA_NOREF ||
+      event == NULL) {
+    return;
+  }
+  lua = sink->lua;
+  top = lua_gettop(lua);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, sink->ref);
+  lua_newtable(lua);
+  lua_pushinteger(lua, (lua_Integer)event->level);
+  lua_setfield(lua, -2, "level");
+  vectis_sus_lua_set_string(lua, "component", event->component);
+  vectis_sus_lua_set_string(lua, "message", event->message);
+  if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
+    lua_settop(lua, top);
+    return;
+  }
+  lua_settop(lua, top);
 }
 
 static int vectis_sus_lua_cache_status_sink(
@@ -593,6 +626,29 @@ static int vectis_sus_lua_facade_version(lua_State *lua) {
   return 1;
 }
 
+static int vectis_sus_lua_set_log_sink(lua_State *lua) {
+  if (vectis_sus_lua_log.lua != NULL &&
+      vectis_sus_lua_log.ref != LUA_NOREF) {
+    luaL_unref(vectis_sus_lua_log.lua, LUA_REGISTRYINDEX,
+               vectis_sus_lua_log.ref);
+  }
+  vectis_sus_lua_log.lua = NULL;
+  vectis_sus_lua_log.ref = LUA_NOREF;
+  if (lua_isnoneornil(lua, 1) ||
+      (lua_type(lua, 1) == LUA_TBOOLEAN && !lua_toboolean(lua, 1))) {
+    cpkt_sus_log_set(NULL, NULL);
+    lua_pushboolean(lua, 1);
+    return 1;
+  }
+  luaL_checktype(lua, 1, LUA_TFUNCTION);
+  lua_pushvalue(lua, 1);
+  vectis_sus_lua_log.ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  vectis_sus_lua_log.lua = lua;
+  cpkt_sus_log_set(vectis_sus_lua_log_sink, &vectis_sus_lua_log);
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
 static int vectis_sus_lua_catalog_count(lua_State *lua) {
   lua_pushinteger(lua, (lua_Integer)cpkt_sus_model_catalog_count());
   return 1;
@@ -747,6 +803,18 @@ static void vectis_sus_lua_set_constants(lua_State *lua) {
   lua_setfield(lua, -2, "CACHE_STATUS_VERIFY_COMPLETE");
   lua_pushinteger(lua, CPKT_SUS_CACHE_STATUS_LOAD_BEGIN);
   lua_setfield(lua, -2, "CACHE_STATUS_LOAD_BEGIN");
+  lua_pushinteger(lua, CPKT_SUS_LOG_NONE);
+  lua_setfield(lua, -2, "LOG_NONE");
+  lua_pushinteger(lua, CPKT_SUS_LOG_DEBUG);
+  lua_setfield(lua, -2, "LOG_DEBUG");
+  lua_pushinteger(lua, CPKT_SUS_LOG_INFO);
+  lua_setfield(lua, -2, "LOG_INFO");
+  lua_pushinteger(lua, CPKT_SUS_LOG_WARN);
+  lua_setfield(lua, -2, "LOG_WARN");
+  lua_pushinteger(lua, CPKT_SUS_LOG_ERROR);
+  lua_setfield(lua, -2, "LOG_ERROR");
+  lua_pushinteger(lua, CPKT_SUS_LOG_CONT);
+  lua_setfield(lua, -2, "LOG_CONT");
 }
 
 int luaopen_sus(lua_State *lua) {
@@ -770,6 +838,7 @@ int luaopen_sus(lua_State *lua) {
       {"backend_system_info", vectis_sus_lua_backend_system_info},
       {"backend_capabilities", vectis_sus_lua_backend_capabilities},
       {"facade_version", vectis_sus_lua_facade_version},
+      {"set_log_sink", vectis_sus_lua_set_log_sink},
       {"model_catalog_count", vectis_sus_lua_catalog_count},
       {"model_catalog_entry", vectis_sus_lua_catalog_entry},
       {"model_catalog_default", vectis_sus_lua_catalog_default},

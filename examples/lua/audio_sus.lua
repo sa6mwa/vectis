@@ -56,5 +56,8 @@ assert(type(sus_registry["sus.model"].__index.create_transcriber) == "function")
 assert(type(sus_registry["sus.transcriber"].__index.transcribe_f32_mono_16k) == "function")
 assert(type(sus_registry["sus.transcriber"].__index.transcribe_f32_mono_16k_text) == "function")
 assert(type(sus_registry["sus.transcriber"].__index.revised_text) == "function")
+assert(type(sus.LOG_INFO) == "number")
+assert(sus.set_log_sink(function() end) == true)
+assert(sus.set_log_sink(nil) == true)
 
 print("lua audio sus example ok")

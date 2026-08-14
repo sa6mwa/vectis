@@ -18,8 +18,9 @@ Current deterministic coverage includes:
 - `require("sus")` constants/result strings, backend/facade metadata, model
   catalog lookup, path/cache open error handling, model handles, and offline
   cache status callback propagation, model-created transcriber handles,
-  PCM table transcription methods, and transcriber callback registration,
-  documented in `docs/lua-sus.md`.
+  PCM table transcription methods, transcriber callback registration, and
+  process-wide backend log sink configuration, documented in
+  `docs/lua-sus.md`.
 
 Remaining deterministic work includes the Lua interop boundary needed for
 segmented decoder/VOX transcription. Live model transcription remains opt-in
