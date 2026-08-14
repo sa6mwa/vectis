@@ -41,11 +41,21 @@ static int vectis_webdav_site_valid(const char *site_id) {
 static int vectis_webdav_config_valid(const vectis_webdav_config *config) {
   return config != NULL && config->cache_dir != NULL &&
          config->cache_dir[0] == '/' &&
+         (config->root_dir == NULL || config->root_dir[0] == '/') &&
          vectis_webdav_site_valid(config->site_id) &&
          config->max_file_bytes > 0u && config->max_total_bytes > 0u &&
          config->max_resources > 0u &&
          config->max_file_bytes <= config->max_total_bytes;
 }
+
+static int vectis_webdav_direct_root(const vectis_webdav_config *config) {
+  return config != NULL && config->root_dir != NULL &&
+         config->root_dir[0] == '/';
+}
+
+static int
+vectis_webdav_path_in_root(const char *root, const char *path,
+                           char out[VECTIS_WEBDAV_STORAGE_PATH_MAX]);
 
 static int vectis_webdav_path_append(char *out, size_t out_size,
                                      const char *left, const char *right) {
@@ -121,6 +131,9 @@ static int vectis_webdav_prepare(const vectis_webdav_config *config) {
       !vectis_webdav_mkdir_p(base)) {
     return 0;
   }
+  if (vectis_webdav_direct_root(config)) {
+    return vectis_webdav_mkdir_p(config->root_dir);
+  }
   for (i = 0u; i < sizeof(directories) / sizeof(directories[0]); ++i) {
     if (!vectis_webdav_path_append(path, sizeof(path), base, directories[i]) ||
         !vectis_webdav_mkdir_p(path)) {
@@ -141,6 +154,10 @@ static int vectis_webdav_disk_path(const vectis_webdav_config *config,
   if (!vectis_webdav_base(config, base, sizeof(base)) || category == NULL ||
       !vectis_webdav_path_normalize(path, normalized)) {
     return 0;
+  }
+  if (strcmp(category, "content") == 0 &&
+      vectis_webdav_direct_root(config)) {
+    return vectis_webdav_path_in_root(config->root_dir, normalized, out);
   }
   relative = normalized[1] == '\0' ? "" : normalized + 1;
   if (relative[0] == '\0') {
@@ -296,6 +313,9 @@ static int vectis_webdav_tombstone_exists(const vectis_webdav_config *config,
   if (!vectis_webdav_path_normalize(path, normalized)) {
     return 0;
   }
+  if (vectis_webdav_direct_root(config)) {
+    return 0;
+  }
   for (i = 1u; normalized[i] != '\0'; ++i) {
     if (normalized[i] != '/' && normalized[i + 1u] != '\0') {
       continue;
@@ -328,6 +348,9 @@ vectis_webdav_ancestor_tombstone_exists(const vectis_webdav_config *config,
   if (!vectis_webdav_path_normalize(path, normalized)) {
     return 0;
   }
+  if (vectis_webdav_direct_root(config)) {
+    return 0;
+  }
   for (i = 1u; normalized[i] != '\0'; ++i) {
     if (normalized[i] != '/') {
       continue;
@@ -351,8 +374,15 @@ vectis_webdav_path_in_root(const char *root, const char *path,
   if (root == NULL || !vectis_webdav_path_normalize(path, normalized)) {
     return 0;
   }
-  written =
-      snprintf(out, VECTIS_WEBDAV_STORAGE_PATH_MAX, "%s%s", root, normalized);
+  if (normalized[1] == '\0') {
+    written = snprintf(out, VECTIS_WEBDAV_STORAGE_PATH_MAX, "%s", root);
+  } else if (strcmp(root, "/") == 0) {
+    written =
+        snprintf(out, VECTIS_WEBDAV_STORAGE_PATH_MAX, "%s", normalized);
+  } else {
+    written =
+        snprintf(out, VECTIS_WEBDAV_STORAGE_PATH_MAX, "%s%s", root, normalized);
+  }
   return written >= 0 && (size_t)written < VECTIS_WEBDAV_STORAGE_PATH_MAX;
 }
 
@@ -372,6 +402,9 @@ static int vectis_webdav_clear_tombstones(const vectis_webdav_config *config,
                                           const char *path) {
   char root[VECTIS_WEBDAV_STORAGE_PATH_MAX];
 
+  if (vectis_webdav_direct_root(config)) {
+    return 1;
+  }
   return vectis_webdav_disk_path(config, "tombstones", "/", root) &&
          vectis_webdav_clear_tombstones_in_root(root, path);
 }
@@ -434,12 +467,17 @@ static int vectis_webdav_usage(const vectis_webdav_config *config,
   char tombstones[VECTIS_WEBDAV_STORAGE_PATH_MAX];
 
   if (total == NULL || resources == NULL ||
-      !vectis_webdav_disk_path(config, "content", "/", content) ||
-      !vectis_webdav_disk_path(config, "tombstones", "/", tombstones)) {
+      !vectis_webdav_disk_path(config, "content", "/", content)) {
     return 0;
   }
   *total = 0u;
   *resources = 0u;
+  if (vectis_webdav_direct_root(config)) {
+    return vectis_webdav_usage_path(content, total, resources);
+  }
+  if (!vectis_webdav_disk_path(config, "tombstones", "/", tombstones)) {
+    return 0;
+  }
   return vectis_webdav_usage_path(content, total, resources) &&
          vectis_webdav_usage_path(tombstones, total, resources);
 }
@@ -1062,9 +1100,22 @@ vectis_webdav_status vectis_webdav_delete(const vectis_webdav_config *config,
     return VECTIS_WEBDAV_CONFLICT;
   }
   if (!vectis_webdav_disk_path(config, "content", normalized, content) ||
-      !vectis_webdav_disk_path(config, "tombstones", normalized, tombstone) ||
-      !vectis_webdav_disk_path(config, "tombstones", "/", tombstone_root) ||
       !vectis_webdav_usage(config, &usage, &resources)) {
+    vectis_webdav_unlock(lock_fd);
+    return VECTIS_WEBDAV_IO;
+  }
+  if (vectis_webdav_direct_root(config)) {
+    (void)usage;
+    (void)resources;
+    if (!vectis_webdav_remove_tree(content)) {
+      vectis_webdav_unlock(lock_fd);
+      return VECTIS_WEBDAV_IO;
+    }
+    vectis_webdav_unlock(lock_fd);
+    return VECTIS_WEBDAV_OK;
+  }
+  if (!vectis_webdav_disk_path(config, "tombstones", normalized, tombstone) ||
+      !vectis_webdav_disk_path(config, "tombstones", "/", tombstone_root)) {
     vectis_webdav_unlock(lock_fd);
     return VECTIS_WEBDAV_IO;
   }
@@ -1142,6 +1193,176 @@ vectis_webdav_status vectis_webdav_mkcol(const vectis_webdav_config *config,
   return VECTIS_WEBDAV_OK;
 }
 
+static vectis_webdav_status vectis_webdav_copy_or_move_direct(
+    const vectis_webdav_config *config, const char *source,
+    const char *destination, int overwrite, int remove_source,
+    int destination_embedded_exists) {
+  vectis_webdav_entry source_entry;
+  vectis_webdav_entry destination_entry;
+  char normalized_source[VECTIS_WEBDAV_PATH_MAX + 1u];
+  char normalized_destination[VECTIS_WEBDAV_PATH_MAX + 1u];
+  char source_disk[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char destination_disk[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char content_root[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char transaction[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char staged_content[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char backup_destination[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char created_destination_parent[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  uint64_t usage;
+  uint64_t resources;
+  uint64_t source_usage;
+  uint64_t destination_usage;
+  uint64_t source_resources;
+  uint64_t destination_resources;
+  uint64_t additional_resources;
+  vectis_webdav_status status;
+  int destination_installed;
+  int destination_moved;
+  int lock_fd;
+
+  if (!vectis_webdav_config_valid(config) ||
+      !vectis_webdav_direct_root(config) ||
+      !vectis_webdav_path_normalize(source, normalized_source) ||
+      !vectis_webdav_path_normalize(destination, normalized_destination) ||
+      normalized_source[1] == '\0' || normalized_destination[1] == '\0' ||
+      strcmp(normalized_source, normalized_destination) == 0 ||
+      (strncmp(normalized_source, normalized_destination,
+               strlen(normalized_destination)) == 0 &&
+       normalized_source[strlen(normalized_destination)] == '/')) {
+    return VECTIS_WEBDAV_INVALID;
+  }
+  lock_fd = vectis_webdav_lock(config);
+  if (lock_fd < 0) {
+    return VECTIS_WEBDAV_IO;
+  }
+  status = vectis_webdav_lookup(config, normalized_source, &source_entry);
+  if (status != VECTIS_WEBDAV_OK ||
+      (source_entry.kind != VECTIS_WEBDAV_ENTRY_FILE &&
+       source_entry.kind != VECTIS_WEBDAV_ENTRY_COLLECTION)) {
+    vectis_webdav_unlock(lock_fd);
+    return status == VECTIS_WEBDAV_OK ? VECTIS_WEBDAV_TOMBSTONED : status;
+  }
+  if (source_entry.kind == VECTIS_WEBDAV_ENTRY_COLLECTION &&
+      strncmp(normalized_destination, normalized_source,
+              strlen(normalized_source)) == 0 &&
+      normalized_destination[strlen(normalized_source)] == '/') {
+    vectis_webdav_unlock(lock_fd);
+    return VECTIS_WEBDAV_INVALID;
+  }
+  status =
+      vectis_webdav_lookup(config, normalized_destination, &destination_entry);
+  if (!overwrite &&
+      ((status == VECTIS_WEBDAV_OK &&
+        destination_entry.kind != VECTIS_WEBDAV_ENTRY_TOMBSTONE) ||
+       (status == VECTIS_WEBDAV_NOT_FOUND && destination_embedded_exists))) {
+    vectis_webdav_unlock(lock_fd);
+    return VECTIS_WEBDAV_EXISTS;
+  }
+  if (status == VECTIS_WEBDAV_OK &&
+      destination_entry.kind == VECTIS_WEBDAV_ENTRY_COLLECTION &&
+      source_entry.kind == VECTIS_WEBDAV_ENTRY_FILE) {
+    vectis_webdav_unlock(lock_fd);
+    return VECTIS_WEBDAV_CONFLICT;
+  }
+  if (status != VECTIS_WEBDAV_OK && status != VECTIS_WEBDAV_NOT_FOUND) {
+    vectis_webdav_unlock(lock_fd);
+    return status;
+  }
+  if (!vectis_webdav_disk_path(config, "content", normalized_source,
+                               source_disk) ||
+      !vectis_webdav_disk_path(config, "content", normalized_destination,
+                               destination_disk) ||
+      !vectis_webdav_disk_path(config, "content", "/", content_root) ||
+      !vectis_webdav_usage(config, &usage, &resources)) {
+    vectis_webdav_unlock(lock_fd);
+    return VECTIS_WEBDAV_IO;
+  }
+  source_usage = 0u;
+  destination_usage = 0u;
+  source_resources = 0u;
+  destination_resources = 0u;
+  if (!vectis_webdav_disk_usage(source_disk, &source_usage,
+                                &source_resources) ||
+      !vectis_webdav_disk_usage(destination_disk, &destination_usage,
+                                &destination_resources) ||
+      usage < destination_usage ||
+      (!remove_source &&
+       (usage - destination_usage > config->max_total_bytes ||
+        source_usage >
+            config->max_total_bytes - (usage - destination_usage)))) {
+    vectis_webdav_unlock(lock_fd);
+    return VECTIS_WEBDAV_LIMIT;
+  }
+  if (resources < destination_resources) {
+    vectis_webdav_unlock(lock_fd);
+    return VECTIS_WEBDAV_IO;
+  }
+  resources -= destination_resources;
+  additional_resources = 0u;
+  if (!vectis_webdav_missing_path_resources(content_root, destination_disk, 0,
+                                            &additional_resources)) {
+    vectis_webdav_unlock(lock_fd);
+    return VECTIS_WEBDAV_IO;
+  }
+  if (!remove_source &&
+      !vectis_webdav_add_resources(&additional_resources, source_resources)) {
+    vectis_webdav_unlock(lock_fd);
+    return VECTIS_WEBDAV_LIMIT;
+  }
+  if (!vectis_webdav_resources_within_limit(config, resources,
+                                            additional_resources)) {
+    vectis_webdav_unlock(lock_fd);
+    return VECTIS_WEBDAV_LIMIT;
+  }
+
+  transaction[0] = '\0';
+  created_destination_parent[0] = '\0';
+  destination_installed = 0;
+  destination_moved = 0;
+  if (!vectis_webdav_transaction_dir(config, transaction) ||
+      !vectis_webdav_transaction_path(transaction, "content", staged_content) ||
+      !vectis_webdav_transaction_path(transaction, "old-destination",
+                                      backup_destination) ||
+      !vectis_webdav_copy_tree(source_disk, staged_content)) {
+    status = VECTIS_WEBDAV_IO;
+    goto cleanup;
+  }
+  if (!vectis_webdav_create_destination_parent(content_root, destination_disk,
+                                               created_destination_parent)) {
+    status = VECTIS_WEBDAV_IO;
+    goto cleanup;
+  }
+  if (!vectis_webdav_move_to_backup(destination_disk, backup_destination,
+                                    &destination_moved) ||
+      rename(staged_content, destination_disk) == -1) {
+    status = VECTIS_WEBDAV_IO;
+    goto rollback_destination;
+  }
+  destination_installed = 1;
+  if (remove_source && !vectis_webdav_remove_tree(source_disk)) {
+    status = VECTIS_WEBDAV_IO;
+    goto rollback_destination;
+  }
+  (void)vectis_webdav_remove_tree(transaction);
+  vectis_webdav_unlock(lock_fd);
+  return VECTIS_WEBDAV_OK;
+
+rollback_destination:
+  if (destination_installed || destination_moved) {
+    vectis_webdav_restore_backup(destination_disk, backup_destination,
+                                 destination_moved);
+  }
+cleanup:
+  if (created_destination_parent[0] != '\0') {
+    (void)vectis_webdav_remove_tree(created_destination_parent);
+  }
+  if (transaction[0] != '\0') {
+    (void)vectis_webdav_remove_tree(transaction);
+  }
+  vectis_webdav_unlock(lock_fd);
+  return status;
+}
+
 static vectis_webdav_status vectis_webdav_copy_or_move(
     const vectis_webdav_config *config, const char *source,
     const char *destination, int overwrite, int remove_source,
@@ -1198,6 +1419,14 @@ static vectis_webdav_status vectis_webdav_copy_or_move(
                strlen(normalized_destination)) == 0 &&
        normalized_source[strlen(normalized_destination)] == '/')) {
     return VECTIS_WEBDAV_INVALID;
+  }
+  if (vectis_webdav_direct_root(config)) {
+    if (embedded_source) {
+      return VECTIS_WEBDAV_INVALID;
+    }
+    return vectis_webdav_copy_or_move_direct(
+        config, source, destination, overwrite, remove_source,
+        destination_embedded_exists);
   }
   lock_fd = vectis_webdav_lock(config);
   if (lock_fd < 0) {

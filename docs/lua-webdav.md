@@ -92,8 +92,9 @@ end
 
 Server-side WebDAV stays on `vectis.server`.
 
-- `server:webdav(opts)` registers an ordinary mutable Vectis-managed WebDAV
-  storage mount.
+- `server:webdav(opts)` registers an ordinary mutable WebDAV storage mount. By
+  default it uses Vectis-managed storage; set `root_dir` to serve a direct
+  mutable disk docroot.
 - `server:webdav_embedded(opts)` registers a read-only WebDAV mount over packed
   embedded assets without extracting them. It supports `OPTIONS`, `PROPFIND`,
   `GET`, and `HEAD`; mutating WebDAV methods return `405`.
@@ -103,9 +104,13 @@ Server-side WebDAV stays on `vectis.server`.
 `server:webdav` requires:
 
 - `path_prefix`, defaulting to `/`.
-- `cache_dir`, an absolute cache/storage directory.
+- `cache_dir`, an absolute cache/storage directory used for managed storage or
+  direct-root metadata such as locks and transaction scratch space.
 - `site_id`, a stable storage namespace containing letters, digits, `_`, or
   `-`.
+- Optional `root_dir`, an absolute directory. When present, WebDAV content
+  reads and writes go directly to that directory instead of
+  `cache_dir/webdav/<site_id>/content`.
 
 By default WebDAV mounts require auth. Set `auth_required = false` only for
 deliberately public mounts. Auth tables accept the same native and callback
@@ -131,6 +136,16 @@ assert(server:webdav({
 }) == true)
 ```
 
-This is not a direct arbitrary mutable `root_dir` WebDAV backend. The current
-mutable server helpers use Vectis-managed WebDAV storage under `cache_dir` and
-`site_id`; `server:webdav_embedded()` is read-only over the packed asset tree.
+Direct disk-root mounts use the same WebDAV auth contract:
+
+```lua
+assert(server:webdav({
+  path_prefix = "/files",
+  cache_dir = "/var/cache/myapp",
+  site_id = "files",
+  root_dir = "/srv/myapp/files",
+  auth_required = false,
+}) == true)
+```
+
+`server:webdav_embedded()` is read-only over the packed asset tree.

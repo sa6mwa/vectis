@@ -5018,12 +5018,16 @@ vectis_webdav_route_data_new(const vectis_webdav_mount_config *config,
   size_t prefix_len;
   size_t cache_len;
   size_t site_len;
+  size_t root_len;
   size_t total;
 
   prefix_len = strlen(path_prefix) + 1u;
   cache_len = strlen(config->storage.cache_dir) + 1u;
   site_len = strlen(config->storage.site_id) + 1u;
-  total = sizeof(*data) + prefix_len + cache_len + site_len;
+  root_len = config->storage.root_dir != NULL
+                 ? strlen(config->storage.root_dir) + 1u
+                 : 0u;
+  total = sizeof(*data) + prefix_len + cache_len + site_len + root_len;
   data = (vectis_webdav_route_data *)calloc(1u, total);
   if (data == NULL) {
     vectis_set_error(error, VECTIS_ERR_NOMEM,
@@ -5040,6 +5044,11 @@ vectis_webdav_route_data_new(const vectis_webdav_mount_config *config,
   cursor += cache_len;
   data->storage.site_id = cursor;
   memcpy(cursor, config->storage.site_id, site_len);
+  cursor += site_len;
+  if (root_len != 0u) {
+    data->storage.root_dir = cursor;
+    memcpy(cursor, config->storage.root_dir, root_len);
+  }
   data->auth = config->auth;
   data->auth_userdata = config->auth_userdata;
   data->auth_required = config->auth_required ? 1 : 0;

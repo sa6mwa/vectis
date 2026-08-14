@@ -6059,6 +6059,7 @@ static int vectis_lua_server_webdav(lua_State *lua) {
   config.path_prefix = path_prefix != NULL ? path_prefix : "/";
   config.storage.cache_dir = vectis_lua_table_string(lua, 2, "cache_dir");
   config.storage.site_id = vectis_lua_table_string(lua, 2, "site_id");
+  config.storage.root_dir = vectis_lua_table_string(lua, 2, "root_dir");
   config.storage.max_file_bytes = vectis_lua_table_size(
       lua, 2, "max_file_bytes", config.storage.max_file_bytes);
   config.storage.max_total_bytes = vectis_lua_table_size(

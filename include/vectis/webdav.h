@@ -38,6 +38,10 @@ typedef enum vectis_webdav_entry_kind {
 typedef struct vectis_webdav_config {
   const char *cache_dir;
   const char *site_id;
+  /* Optional direct mutable disk docroot. When set, WebDAV content operations
+     read/write root_dir directly while cache_dir/site_id still provide
+     metadata such as locks and transaction scratch space. */
+  const char *root_dir;
   size_t max_file_bytes;
   size_t max_total_bytes;
   size_t max_resources;

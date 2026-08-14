@@ -1,10 +1,12 @@
 include("${CMAKE_CURRENT_LIST_DIR}/port_retry.cmake")
 
 set(cache_dir "${WORK_DIR}/vectis-webdav-server-cache")
+set(root_dir "${WORK_DIR}/vectis-webdav-server-root")
 set(auth_path "${WORK_DIR}/vectis-webdav-server-auth.json")
 set(script "${WORK_DIR}/vectis-webdav-server.lua")
 
 file(REMOVE_RECURSE "${cache_dir}")
+file(REMOVE_RECURSE "${root_dir}")
 file(REMOVE "${auth_path}" "${auth_path}.lock")
 
 string(CONFIGURE [=[
@@ -13,6 +15,7 @@ local webdav = require("vectis.webdav")
 
 local port = tonumber(assert(os.getenv("VECTIS_WEBDAV_SERVER_PORT")))
 local cache_dir = [[@cache_dir@]]
+local root_dir = [[@root_dir@]]
 local auth_path = [[@auth_path@]]
 local base = "http://127.0.0.1:" .. tostring(port)
 
@@ -46,6 +49,13 @@ local function request_opts(path, extra)
     end
   end
   return opts
+end
+
+local function read_file(path)
+  local file = assert(io.open(path, "rb"))
+  local body = file:read("*a")
+  file:close()
+  return body
 end
 
 assert(vectis.auth.store_init({credentials_path = auth_path}) == true)
@@ -83,6 +93,13 @@ assert(server:webdav({
   path_prefix = "/open",
   cache_dir = cache_dir,
   site_id = "open",
+  auth_required = false,
+}) == true)
+assert(server:webdav({
+  path_prefix = "/disk",
+  cache_dir = cache_dir,
+  site_id = "disk",
+  root_dir = root_dir,
   auth_required = false,
 }) == true)
 assert(server:webdav({
@@ -128,6 +145,31 @@ assert(open_put.ok == true, open_put.error and open_put.error.message)
 local open_read = webdav.get(request_opts("/open/public/readme.txt"))
 assert(open_read.ok == true, open_read.error and open_read.error.message)
 assert(open_read.body == "open webdav\n")
+
+local disk_mkcol = webdav.mkcol(request_opts("/disk/public"))
+assert(disk_mkcol.ok == true, disk_mkcol.error and disk_mkcol.error.message)
+assert(disk_mkcol.status == 201)
+local disk_put = webdav.put(request_opts("/disk/public/readme.txt", {
+  body = "direct disk webdav\n",
+}))
+assert(disk_put.ok == true, disk_put.error and disk_put.error.message)
+assert(read_file(root_dir .. "/public/readme.txt") == "direct disk webdav\n")
+local disk_read = webdav.get(request_opts("/disk/public/readme.txt"))
+assert(disk_read.ok == true, disk_read.error and disk_read.error.message)
+assert(disk_read.body == "direct disk webdav\n")
+local disk_copy = webdav.copy(request_opts("/disk/public/readme.txt", {
+  destination = base .. "/disk/public/copied.txt",
+}))
+assert(disk_copy.ok == true, disk_copy.error and disk_copy.error.message)
+assert(read_file(root_dir .. "/public/copied.txt") == "direct disk webdav\n")
+local disk_move = webdav.move(request_opts("/disk/public/copied.txt", {
+  destination = base .. "/disk/public/moved.txt",
+}))
+assert(disk_move.ok == true, disk_move.error and disk_move.error.message)
+assert(read_file(root_dir .. "/public/moved.txt") == "direct disk webdav\n")
+local disk_delete = webdav.delete(request_opts("/disk/public/moved.txt"))
+assert(disk_delete.ok == true, disk_delete.error and disk_delete.error.message)
+assert(io.open(root_dir .. "/public/moved.txt", "rb") == nil)
 
 local native_required = webdav.get(request_opts("/native/protected.txt"))
 assert(native_required.ok == false)
