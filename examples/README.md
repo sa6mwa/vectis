@@ -87,7 +87,8 @@ surface directly, without local helper layers that would hide awkward API shape.
 Lua examples follow the same rule as the C examples: they are self-contained
 scripts and keep facade calls visible at the call site. Inline callbacks are
 used where the demonstrated API requires a callback, but local helper layers are
-kept out of the examples.
+kept out of the examples. A Lua example may require Vectis or bundled product
+modules, but it must not require another file from `examples/lua/`.
 
 - `lua/mdf_render.lua`: libmdf Lua Markdown rendering through both
   `render()` and `render_stream()`.
@@ -101,7 +102,7 @@ kept out of the examples.
 - `lua/crypto_certs.lua`: raw OpenSSL digest, HMAC, encoding, random, signing,
   and verification helpers alongside Vectis certificate bundle generation,
   validation, and inspection.
-- `lua/protocol_helpers.lua`: curl-backed MQTT and SMTP workflow helpers plus
+- `lua/protocol_clients.lua`: curl-backed MQTT and SMTP workflow helpers plus
   SCP validation/error handling without requiring live external services.
 - `lua/curl_protocols.lua`: protocol-neutral `curl.perform()` file-backed
   transfer, upload, download, and protocol allowlist behavior for workflows
@@ -114,7 +115,7 @@ kept out of the examples.
 - `lua/cai_local.lua`: raw CAI Lua module constants, model metadata, dotenv
   parsing, tool schema, response params, registry, and MCP handler lifecycle
   without live provider calls.
-- `lua/raw_dependency_tools.lua`: raw liblql filtering/projection, pslog JSON
+- `lua/local_data_pipeline.lua`: raw liblql filtering/projection, pslog JSON
   logging, softline editor state operations, and zlib string/file compression
   through their raw Lua modules.
 - `lua/webdav_fileserver.lua`: mutable WebDAV fileserver mount and

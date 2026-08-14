@@ -62,4 +62,4 @@ assert(scp_err.message:find("remote_path", 1, true))
 os.remove(message_path)
 os.remove(scp_upload_path)
 
-print("lua protocol helpers example ok")
+print("lua protocol clients example ok")

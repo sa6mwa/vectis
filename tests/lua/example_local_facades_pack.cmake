@@ -81,7 +81,7 @@ vectis_pack_and_run_lua_example(
   "lua logging example ok")
 
 vectis_pack_and_run_lua_example(
-  "protocol-helpers"
-  "${VECTIS_SOURCE_DIR}/examples/lua/protocol_helpers.lua"
-  "lua protocol helpers example ok"
+  "protocol-clients"
+  "${VECTIS_SOURCE_DIR}/examples/lua/protocol_clients.lua"
+  "lua protocol clients example ok"
   "VECTIS_LUA_PROTOCOL_EXAMPLE_DIR=${WORK_DIR}")

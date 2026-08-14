@@ -267,12 +267,12 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_example_lua_crypto_certs PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
-  add_test(NAME vectis_example_lua_protocol_helpers
+  add_test(NAME vectis_example_lua_protocol_clients
            COMMAND "${CMAKE_COMMAND}" -E env
                    "VECTIS_LUA_PROTOCOL_EXAMPLE_DIR=${CMAKE_CURRENT_BINARY_DIR}"
                    "$<TARGET_FILE:vectis_bin>"
-                   "${CMAKE_SOURCE_DIR}/examples/lua/protocol_helpers.lua")
-  set_tests_properties(vectis_example_lua_protocol_helpers PROPERTIES
+                   "${CMAKE_SOURCE_DIR}/examples/lua/protocol_clients.lua")
+  set_tests_properties(vectis_example_lua_protocol_clients PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
   add_test(NAME vectis_example_lua_curl_protocols
@@ -303,19 +303,19 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_example_lua_audio_devices PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
-  add_test(NAME vectis_example_lua_raw_dependency_tools
+  add_test(NAME vectis_example_lua_local_data_pipeline
            COMMAND "$<TARGET_FILE:vectis_bin>"
-                   "${CMAKE_SOURCE_DIR}/examples/lua/raw_dependency_tools.lua")
-  set_tests_properties(vectis_example_lua_raw_dependency_tools PROPERTIES
+                   "${CMAKE_SOURCE_DIR}/examples/lua/local_data_pipeline.lua")
+  set_tests_properties(vectis_example_lua_local_data_pipeline PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
-  add_test(NAME vectis_example_lua_raw_dependency_tools_pack
+  add_test(NAME vectis_example_lua_local_data_pipeline_pack
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
                    "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
-                   -P "${CMAKE_SOURCE_DIR}/tests/lua/example_raw_dependency_tools_pack.cmake")
-  set_tests_properties(vectis_example_lua_raw_dependency_tools_pack PROPERTIES
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/example_local_data_pipeline_pack.cmake")
+  set_tests_properties(vectis_example_lua_local_data_pipeline_pack PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
   add_test(NAME vectis_example_lua_local_facades_pack

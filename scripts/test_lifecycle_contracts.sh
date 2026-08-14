@@ -79,6 +79,15 @@ assert_no_landed_test_assets() {
   fi
 }
 
+assert_lua_examples_self_contained() {
+  if grep -RInE \
+    'require\((["'\''])(\.{1,2}/|examples[./]|examples/lua/|[^"'\'']*\.lua)\1\)' \
+    "$repo_root/examples/lua"; then
+    echo "Lua examples must be self-contained and must not require local example helper modules" >&2
+    exit 1
+  fi
+}
+
 assert_action_surface_contract() {
   if grep -RInE --exclude='test_lifecycle_contracts.sh' \
     '(admin-operation|--admin-operation|--subcommand|pack[ _-]v2|pack[ _-]V2|Pack V2|VECTIS_PACK_V2|VECTIS_PACK2|PACK_V2)' \
@@ -98,6 +107,11 @@ assert_action_surface_contract() {
 }
 
 assert_lua_example_dx_contract() {
+  if grep -RInE '#include[[:space:]]+"' "$repo_root/examples"; then
+    echo "Examples must not include local shared helper headers" >&2
+    exit 1
+  fi
+  assert_lua_examples_self_contained
   if grep -RInE \
     '(^|[[:space:]])local[[:space:]]+function[[:space:]]+[A-Za-z_][A-Za-z0-9_]*|^[[:space:]]*function[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(' \
     "$repo_root/examples/lua"; then
@@ -109,6 +123,7 @@ assert_lua_example_dx_contract() {
     exit 1
   fi
   assert_contains "$repo_root/examples/README.md" 'Lua examples follow the same rule'
+  assert_contains "$repo_root/examples/README.md" 'must not require another file from `examples/lua/`'
 }
 
 assert_kore_lonejson_contract() {
@@ -536,14 +551,15 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/tests/lua/smoke.lua" 'require\("zlib"\)'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'zlib\.gzip'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'zlib\.gzip_file'
-  assert_contains "$repo_root/examples/lua/raw_dependency_tools.lua" 'require\("zlib"\)'
-  assert_contains "$repo_root/examples/lua/raw_dependency_tools.lua" 'zlib\.decompress'
-  assert_contains "$repo_root/examples/lua/raw_dependency_tools.lua" 'zlib\.decompress_file'
+  assert_contains "$repo_root/TODO.md" '\[ \] Add a top-level `vectis\.libs` namespace'
+  assert_contains "$repo_root/examples/lua/local_data_pipeline.lua" 'require\("zlib"\)'
+  assert_contains "$repo_root/examples/lua/local_data_pipeline.lua" 'zlib\.decompress'
+  assert_contains "$repo_root/examples/lua/local_data_pipeline.lua" 'zlib\.decompress_file'
   assert_contains "$repo_root/docs/lua-zlib.md" 'file-backed'
   assert_contains "$repo_root/docs/api.md" '\[Lua zlib\]\(lua-zlib\.md\)'
   assert_contains "$repo_root/examples/README.md" 'zlib string/file compression'
   assert_contains "$matrix" 'file-backed bounded transforms'
-  assert_contains "$matrix" 'packed raw dependency example coverage'
+  assert_contains "$matrix" 'packed local data pipeline example coverage'
   assert_contains "$repo_root/scripts/verify_vectis_lua_preloads.sh" '"zlib"'
 }
 
