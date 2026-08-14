@@ -355,7 +355,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add `head` to the `vectis.rest.client` downstream JSON client for method parity with `vectis.http.head`.
 - [x] Add `options` to `vectis.http` and `vectis.rest.client` for method parity with C curl-backed OPTIONS workflows.
 - [x] Add `options_json` to `vectis.http` and its reusable client for JSON-normalized OPTIONS workflows.
-- [ ] Extend the REST DX with lockd operation presets only where examples show repeated service boilerplate.
+- [x] Extend the REST DX with lockd operation presets only where examples show repeated service boilerplate.
 - [x] Add a C-owned Lua `server:static_directory()` helper for serving disk docroots such as extracted packed asset trees.
 - [x] Add a C-owned Lua `server:json()` helper for fixed unguarded JSON endpoints in packed API service scenarios, including explicit method and status configuration.
 - [x] Add matching method and status configuration to the C-owned Lua `server:auth_json()` helper for fixed guarded API endpoints.

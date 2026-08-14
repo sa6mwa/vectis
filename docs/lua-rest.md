@@ -58,6 +58,11 @@ assert(rest.route(server, {
 REST routes are buffered. Use `server:dsv()` for DSV request-body streaming and
 future dedicated route surfaces for SSE or true streaming responses.
 
+REST does not provide lockd-specific route presets. Current public examples use
+`vectis.lockd.load_json`, `save_json`, `enqueue_json`, and
+`with_dequeued_json` directly, which keeps lockd workflow ownership in
+`vectis.lockd` and avoids duplicating the same API under `vectis.rest`.
+
 ## Client
 
 `rest.client(defaults)` returns a base-URL JSON client. It supports `request`,
