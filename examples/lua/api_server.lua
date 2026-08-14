@@ -1,5 +1,5 @@
 local vectis = require("vectis")
-local http = require("vectis.http")
+local rest = require("vectis.rest")
 
 local bind = os.getenv("VECTIS_LUA_API_EXAMPLE_BIND") or "127.0.0.1"
 local port = tonumber(os.getenv("VECTIS_LUA_API_EXAMPLE_PORT") or "28585")
@@ -7,24 +7,18 @@ local credentials_path = os.getenv("VECTIS_LUA_API_EXAMPLE_AUTH_PATH") or
     "vectis-lua-api-example-credentials.json"
 local serve_forever = os.getenv("VECTIS_LUA_API_EXAMPLE_SERVE") == "1"
 
-local function request(path, options)
-  options = options or {}
-  return http.request({
-    url = "http://" .. bind .. ":" .. tostring(port) .. path,
-    method = options.method,
-    body = options.body,
-    headers = options.headers,
-    protocols = "http",
-    timeout_ms = 2000,
-    connect_timeout_ms = 1000,
-    no_signal = true,
-  })
-end
+local api = rest.client({
+  base_url = "http://" .. bind .. ":" .. tostring(port),
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
 
 local function wait_ready()
   local response
   for _ = 1, 20 do
-    response = request("/health")
+    response = api.get("/health")
     if response.ok then
       return response
     end
@@ -58,18 +52,33 @@ local server = assert(vectis.server.new({
   port = port,
 }))
 
-assert(server:json({
+assert(rest.route(server, {
   path = "/health",
-  body = '{"ok":true,"service":"lua-api-example"}\n',
-  cache_control = "no-store",
+  decode_json = false,
+  handler = function()
+    return {
+      ok = true,
+      service = "lua-api-example",
+    }, {
+      headers = {
+        ["cache-control"] = "no-store",
+      },
+    }
+  end,
 }) == true)
-assert(server:json({
+assert(rest.route(server, {
   path = "/orders",
   method = "POST",
-  status = 201,
-  body = '{"ok":true,"created":true}\n',
+  handler = function()
+    return {
+      ok = true,
+      created = true,
+    }, {
+      status = 201,
+    }
+  end,
 }) == true)
-assert(server:auth_json({
+assert(rest.route(server, {
   path = "/admin/status",
   auth = {
     kind = "native",
@@ -77,7 +86,12 @@ assert(server:auth_json({
     realm = "lua-api-example",
     purpose = "webdav",
   },
-  body = '{"ok":true,"admin":true}\n',
+  handler = function()
+    return {
+      ok = true,
+      admin = true,
+    }
+  end,
 }) == true)
 
 assert(server:start() == true)
@@ -85,24 +99,28 @@ assert(server:start() == true)
 local health = wait_ready()
 assert(health.ok == true, health.error and health.error.message)
 assert(health.status == 200)
-assert(health.body == '{"ok":true,"service":"lua-api-example"}\n')
+assert(health.json.ok == true)
+assert(health.json.service == "lua-api-example")
+assert(health.headers:lower():find("cache-control: no-store", 1, true))
 
-local created = request("/orders", { method = "POST" })
+local created = api.post("/orders")
 assert(created.ok == true, created.error and created.error.message)
 assert(created.status == 201)
-assert(created.body == '{"ok":true,"created":true}\n')
+assert(created.json.ok == true)
+assert(created.json.created == true)
 
-local anonymous = request("/admin/status")
+local anonymous = api.get("/admin/status")
 assert(anonymous.status == 401)
 assert(anonymous.headers:lower():find(
     'www-authenticate: basic realm="lua-api-example"', 1, true))
 
-local guarded = request("/admin/status", {
+local guarded = api.get("/admin/status", {
   headers = { Authorization = authorization },
 })
 assert(guarded.ok == true, guarded.error and guarded.error.message)
 assert(guarded.status == 200)
-assert(guarded.body == '{"ok":true,"admin":true}\n')
+assert(guarded.json.ok == true)
+assert(guarded.json.admin == true)
 assert(guarded.headers:lower():find("cache-control: no-store", 1, true))
 
 if serve_forever then
