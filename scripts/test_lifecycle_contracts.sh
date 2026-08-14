@@ -340,6 +340,8 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/TODO.md" '\[x\] Add checked Lua facade conventions'
   assert_contains "$repo_root/TODO.md" '\[x\] Add Lua OpenAPI route metadata'
   assert_contains "$repo_root/TODO.md" '\[x\] Add explicit file-backed Lua `spooled_source` route responses'
+  assert_contains "$repo_root/TODO.md" '\[ \] Add true Lua route streaming surfaces for SSE and live response streaming'
+  assert_contains "$repo_root/TODO.md" 'file-backed `spooled_source` behavior explicitly separate'
   assert_contains "$matrix" 'file-backed `spooled_source` responses'
   assert_contains "$matrix" 'true live response streaming and SSE remain separate missing surfaces'
   assert_contains "$repo_root/src/vectis_cli.c" 'vectis_lua_response_spooled_source'

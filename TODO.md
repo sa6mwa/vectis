@@ -315,7 +315,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add reusable Lua HTTP client defaults for retry policies, proxy/TLS/client-cert settings, protocol allowlists, timeouts, credentials, and merged headers.
 - [x] Add richer Lua HTTP file-backed response presets if repeated app workflows need more than `download_path`/`upload_path` plus client defaults.
 - [x] Add C-owned Lua fixed route helpers for text responses and redirects alongside JSON/auth JSON routes.
-- [ ] Add Lua route APIs for request handlers, middleware-like before/after hooks, path/query/header/body access, JSON/body streaming policies, file responses, SSE/streaming responses, and auth-guarded route groups.
+- [ ] Add true Lua route streaming surfaces for SSE and live response streaming, plus any remaining request-body streaming policies; keep buffered routes and file-backed `spooled_source` behavior explicitly separate.
 - [x] Add C-owned Lua `server:route()` buffered request callback routes with method/path, named path/query/header lookup, bounded buffered body access, response headers, string bodies, status-only responses, and file responses.
 - [x] Add native/callback auth provider guards to Lua `server:route()` and expose the allowed principal to the handler request table.
 - [x] Add Lua `server:group()` buffered route groups with shared prefix/default auth/body/method settings and buffered before/after hooks, including short-circuit response support.
