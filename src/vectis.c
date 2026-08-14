@@ -18406,6 +18406,30 @@ vectis_ssh_handle_sftp_download_file(vectis_ssh *self, const char *remote_path,
                                        error);
 }
 
+static vectis_status vectis_ssh_handle_scp_upload_file(vectis_ssh *self,
+                                                       const char *local_path,
+                                                       const char *remote_path,
+                                                       vectis_error *error) {
+  if (self == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH handle is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_ssh_scp_upload_file(&self->config, local_path, remote_path,
+                                    error);
+}
+
+static vectis_status
+vectis_ssh_handle_scp_download_file(vectis_ssh *self, const char *remote_path,
+                                    const char *local_path,
+                                    vectis_error *error) {
+  if (self == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SSH handle is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_ssh_scp_download_file(&self->config, remote_path, local_path,
+                                      error);
+}
+
 vectis_status vectis_ssh_new(const vectis_ssh_config *config, vectis_ssh **out,
                              vectis_error *error) {
   vectis_ssh_config defaults;
@@ -18440,6 +18464,8 @@ vectis_status vectis_ssh_new(const vectis_ssh_config *config, vectis_ssh **out,
   ssh->exec = vectis_ssh_handle_exec;
   ssh->sftp_upload_file = vectis_ssh_handle_sftp_upload_file;
   ssh->sftp_download_file = vectis_ssh_handle_sftp_download_file;
+  ssh->scp_upload_file = vectis_ssh_handle_scp_upload_file;
+  ssh->scp_download_file = vectis_ssh_handle_scp_download_file;
   ssh->close = vectis_ssh_close;
   ssh->config = normalized;
   *out = ssh;
@@ -19122,6 +19148,287 @@ vectis_status vectis_ssh_sftp_download_file(const vectis_ssh_config *config,
   libssh2_session_disconnect(session, "vectis shutdown");
   libssh2_session_free(session);
   (void)close(fd);
+  if (status == VECTIS_OK) {
+    vectis_error_clear(error);
+  }
+  return status;
+}
+
+static void vectis_ssh_session_close(LIBSSH2_SESSION *session, int fd) {
+  if (session != NULL) {
+    libssh2_session_disconnect(session, "vectis shutdown");
+    libssh2_session_free(session);
+  }
+  if (fd >= 0) {
+    (void)close(fd);
+  }
+}
+
+static vectis_status
+vectis_ssh_authenticated_session(const vectis_ssh_config *config,
+                                 LIBSSH2_SESSION **out_session, int *out_fd,
+                                 vectis_error *error) {
+  LIBSSH2_SESSION *session;
+  int fd;
+  int rc;
+  vectis_status status;
+
+  if (out_session == NULL || out_fd == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH session outputs are required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out_session = NULL;
+  *out_fd = -1;
+  fd = -1;
+  status = vectis_ssh_connect_socket(config, &fd, error);
+  if (status != VECTIS_OK) {
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+    }
+    return status;
+  }
+  (void)pthread_once(&vectis_libssh2_once, vectis_libssh2_global_init_once);
+  session = libssh2_session_init();
+  if (session == NULL) {
+    (void)close(fd);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to initialize SSH session");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (config->timeout_ms > 0L) {
+    libssh2_session_set_timeout(session, (long)config->timeout_ms);
+  }
+  rc = libssh2_session_handshake(session, fd);
+  if (rc != 0) {
+    vectis_ssh_session_close(session, fd);
+    vectis_set_error(error, VECTIS_ERR_STATE, "SSH handshake failed");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+      error->dependency_code = (long)rc;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  status = vectis_ssh_verify_known_host(session, config, error);
+  if (status != VECTIS_OK) {
+    vectis_ssh_session_close(session, fd);
+    return status;
+  }
+  status = vectis_ssh_authenticate(session, config, error);
+  if (status != VECTIS_OK) {
+    vectis_ssh_session_close(session, fd);
+    return status;
+  }
+  *out_session = session;
+  *out_fd = fd;
+  return VECTIS_OK;
+}
+
+vectis_status vectis_ssh_scp_upload_file(const vectis_ssh_config *config,
+                                         const char *local_path,
+                                         const char *remote_path,
+                                         vectis_error *error) {
+  vectis_ssh_config effective;
+  LIBSSH2_SESSION *session;
+  LIBSSH2_CHANNEL *channel;
+  struct stat st;
+  FILE *local;
+  char buffer[32768];
+  char *cursor;
+  size_t nread;
+  size_t remaining;
+  ssize_t nwritten;
+  int fd;
+  vectis_status status;
+
+  if (config == NULL || config->host == NULL || config->username == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH config requires host and username");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->timeout_ms < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH timeout_ms must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+  if (local_path == NULL || remote_path == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SCP upload requires local_path and remote_path");
+    return VECTIS_ERR_INVALID;
+  }
+  if (stat(local_path, &st) != 0 || st.st_size < 0) {
+    vectis_set_errorf(error, VECTIS_ERR_INVALID,
+                      "failed to stat SSH SCP upload file: %s", local_path);
+    return VECTIS_ERR_INVALID;
+  }
+  local = fopen(local_path, "rb");
+  if (local == NULL) {
+    vectis_set_errorf(error, VECTIS_ERR_INVALID,
+                      "failed to open SSH SCP upload file: %s", local_path);
+    return VECTIS_ERR_INVALID;
+  }
+  effective = vectis_effective_ssh_config(config);
+  config = &effective;
+  session = NULL;
+  channel = NULL;
+  fd = -1;
+  status = vectis_ssh_authenticated_session(config, &session, &fd, error);
+  if (status != VECTIS_OK) {
+    (void)fclose(local);
+    return status;
+  }
+  channel = libssh2_scp_send64(session, remote_path, 0644,
+                               (libssh2_int64_t)st.st_size, 0L, 0L);
+  if (channel == NULL) {
+    (void)fclose(local);
+    vectis_ssh_session_close(session, fd);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to open remote SCP file for upload");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  status = VECTIS_OK;
+  while ((nread = fread(buffer, 1u, sizeof(buffer), local)) > 0u) {
+    cursor = buffer;
+    remaining = nread;
+    while (remaining > 0u) {
+      nwritten = libssh2_channel_write(channel, cursor, remaining);
+      if (nwritten < 0) {
+        status = VECTIS_ERR_STATE;
+        vectis_set_error(error, VECTIS_ERR_STATE,
+                         "failed to write remote SCP file");
+        if (error != NULL) {
+          error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+          error->dependency_code = (long)nwritten;
+        }
+        break;
+      }
+      cursor += nwritten;
+      remaining -= (size_t)nwritten;
+    }
+    if (status != VECTIS_OK) {
+      break;
+    }
+  }
+  if (status == VECTIS_OK && ferror(local)) {
+    status = VECTIS_ERR_STATE;
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to read local SCP upload file");
+  }
+  (void)fclose(local);
+  (void)libssh2_channel_send_eof(channel);
+  (void)libssh2_channel_wait_eof(channel);
+  (void)libssh2_channel_wait_closed(channel);
+  libssh2_channel_free(channel);
+  vectis_ssh_session_close(session, fd);
+  if (status == VECTIS_OK) {
+    vectis_error_clear(error);
+  }
+  return status;
+}
+
+vectis_status vectis_ssh_scp_download_file(const vectis_ssh_config *config,
+                                           const char *remote_path,
+                                           const char *local_path,
+                                           vectis_error *error) {
+  vectis_ssh_config effective;
+  LIBSSH2_SESSION *session;
+  LIBSSH2_CHANNEL *channel;
+  libssh2_struct_stat st;
+  FILE *local;
+  char buffer[32768];
+  libssh2_struct_stat_size remaining;
+  size_t want;
+  ssize_t nread;
+  int fd;
+  vectis_status status;
+
+  if (config == NULL || config->host == NULL || config->username == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH config requires host and username");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->timeout_ms < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH timeout_ms must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+  if (remote_path == NULL || local_path == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH SCP download requires remote_path and local_path");
+    return VECTIS_ERR_INVALID;
+  }
+  local = fopen(local_path, "wb");
+  if (local == NULL) {
+    vectis_set_errorf(error, VECTIS_ERR_INVALID,
+                      "failed to open SSH SCP download file: %s", local_path);
+    return VECTIS_ERR_INVALID;
+  }
+  effective = vectis_effective_ssh_config(config);
+  config = &effective;
+  session = NULL;
+  channel = NULL;
+  fd = -1;
+  status = vectis_ssh_authenticated_session(config, &session, &fd, error);
+  if (status != VECTIS_OK) {
+    (void)fclose(local);
+    return status;
+  }
+  memset(&st, 0, sizeof(st));
+  channel = libssh2_scp_recv2(session, remote_path, &st);
+  if (channel == NULL) {
+    (void)fclose(local);
+    vectis_ssh_session_close(session, fd);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to open remote SCP file for download");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  status = VECTIS_OK;
+  remaining = st.st_size;
+  while (remaining > 0) {
+    want = remaining > (libssh2_struct_stat_size)sizeof(buffer)
+               ? sizeof(buffer)
+               : (size_t)remaining;
+    nread = libssh2_channel_read(channel, buffer, want);
+    if (nread < 0) {
+      status = VECTIS_ERR_STATE;
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to read remote SCP file");
+      if (error != NULL) {
+        error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+        error->dependency_code = (long)nread;
+      }
+      break;
+    }
+    if (nread == 0) {
+      status = VECTIS_ERR_STATE;
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "remote SCP file ended before expected size");
+      break;
+    }
+    if (fwrite(buffer, 1u, (size_t)nread, local) != (size_t)nread) {
+      status = VECTIS_ERR_STATE;
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to write local SCP download file");
+      break;
+    }
+    remaining -= (libssh2_struct_stat_size)nread;
+  }
+  if (fclose(local) != 0 && status == VECTIS_OK) {
+    status = VECTIS_ERR_STATE;
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to flush local SCP download file");
+  }
+  (void)libssh2_channel_send_eof(channel);
+  (void)libssh2_channel_wait_eof(channel);
+  (void)libssh2_channel_wait_closed(channel);
+  libssh2_channel_free(channel);
+  vectis_ssh_session_close(session, fd);
   if (status == VECTIS_OK) {
     vectis_error_clear(error);
   }

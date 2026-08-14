@@ -1015,6 +1015,12 @@ struct vectis_ssh {
   vectis_status (*sftp_download_file)(vectis_ssh *self, const char *remote_path,
                                       const char *local_path,
                                       vectis_error *error);
+  vectis_status (*scp_upload_file)(vectis_ssh *self, const char *local_path,
+                                   const char *remote_path,
+                                   vectis_error *error);
+  vectis_status (*scp_download_file)(vectis_ssh *self, const char *remote_path,
+                                     const char *local_path,
+                                     vectis_error *error);
   void (*close)(vectis_ssh *self);
 
   /* Shallow effective config copy used by the methods above. */
@@ -1686,6 +1692,14 @@ vectis_status vectis_ssh_sftp_download_file(const vectis_ssh_config *config,
                                             const char *remote_path,
                                             const char *local_path,
                                             vectis_error *error);
+vectis_status vectis_ssh_scp_upload_file(const vectis_ssh_config *config,
+                                         const char *local_path,
+                                         const char *remote_path,
+                                         vectis_error *error);
+vectis_status vectis_ssh_scp_download_file(const vectis_ssh_config *config,
+                                           const char *remote_path,
+                                           const char *local_path,
+                                           vectis_error *error);
 
 void vectis_mqtt_config_init(vectis_mqtt_config *config);
 vectis_status vectis_mqtt_new(const vectis_mqtt_config *config,

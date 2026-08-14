@@ -942,6 +942,8 @@ static void assert_io_surface(void) {
   assert(ssh_handle->exec != NULL);
   assert(ssh_handle->sftp_upload_file != NULL);
   assert(ssh_handle->sftp_download_file != NULL);
+  assert(ssh_handle->scp_upload_file != NULL);
+  assert(ssh_handle->scp_download_file != NULL);
   assert(ssh_handle->close != NULL);
   assert(strcmp(ssh_handle->config.host, "127.0.0.1") == 0);
   assert(ssh_handle->config.port == 22u);
@@ -964,6 +966,10 @@ static void assert_io_surface(void) {
   vectis_source_init(&ssh.private_key);
   status = vectis_ssh_sftp_upload_file(&ssh, "local", "remote", &error);
   assert(status == VECTIS_ERR_INVALID || status == VECTIS_ERR_STATE);
+  status = vectis_ssh_scp_upload_file(&ssh, NULL, "remote", &error);
+  assert(status == VECTIS_ERR_INVALID);
+  status = vectis_ssh_scp_download_file(&ssh, "remote", NULL, &error);
+  assert(status == VECTIS_ERR_INVALID);
   status = vectis_ssh_exec(&ssh, "true", &result, &error);
   assert(status == VECTIS_ERR_STATE);
   assert(error.source == VECTIS_ERROR_SOURCE_LIBSSH2);

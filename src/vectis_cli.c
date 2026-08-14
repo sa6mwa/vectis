@@ -4060,6 +4060,73 @@ static int vectis_lua_ssh_sftp_download_file(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_ssh_scp_upload_file(lua_State *lua) {
+  vectis_ssh_config config;
+  vectis_error error;
+  vectis_status status;
+  const char *local_path;
+  const char *remote_path;
+  const char *config_error;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  local_path = vectis_lua_table_string(lua, 1, "local_path");
+  remote_path = vectis_lua_table_string(lua, 1, "remote_path");
+  if (local_path == NULL || local_path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "SCP local_path is required");
+  }
+  if (remote_path == NULL || remote_path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "SCP remote_path is required");
+  }
+  vectis_ssh_config_init(&config);
+  config_error = vectis_lua_ssh_config_from_table(lua, 1, &config);
+  if (config_error != NULL) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID, config_error);
+  }
+  vectis_error_clear(&error);
+  status = vectis_ssh_scp_upload_file(&config, local_path, remote_path, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_ssh_scp_download_file(lua_State *lua) {
+  vectis_ssh_config config;
+  vectis_error error;
+  vectis_status status;
+  const char *local_path;
+  const char *remote_path;
+  const char *config_error;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  remote_path = vectis_lua_table_string(lua, 1, "remote_path");
+  local_path = vectis_lua_table_string(lua, 1, "local_path");
+  if (remote_path == NULL || remote_path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "SCP remote_path is required");
+  }
+  if (local_path == NULL || local_path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "SCP local_path is required");
+  }
+  vectis_ssh_config_init(&config);
+  config_error = vectis_lua_ssh_config_from_table(lua, 1, &config);
+  if (config_error != NULL) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID, config_error);
+  }
+  vectis_error_clear(&error);
+  status =
+      vectis_ssh_scp_download_file(&config, remote_path, local_path, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
 static const char **vectis_lua_string_array_field(lua_State *lua, int index,
                                                   const char *field,
                                                   size_t *out_count) {
@@ -10193,6 +10260,10 @@ static void vectis_lua_push_ssh_table(lua_State *lua) {
   lua_setfield(lua, -2, "sftp_upload_file");
   lua_pushcfunction(lua, vectis_lua_ssh_sftp_download_file);
   lua_setfield(lua, -2, "sftp_download_file");
+  lua_pushcfunction(lua, vectis_lua_ssh_scp_upload_file);
+  lua_setfield(lua, -2, "scp_upload_file");
+  lua_pushcfunction(lua, vectis_lua_ssh_scp_download_file);
+  lua_setfield(lua, -2, "scp_download_file");
 }
 
 static int luaopen_vectis(lua_State *lua) {
