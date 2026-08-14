@@ -65,6 +65,8 @@ workflows:
 - `vectis.smtp`: SMTP send helper over curl, documented in
   [Lua SMTP](lua-smtp.md).
 - `vectis.ssh`: SSH/SFTP/SCP helpers, documented in [Lua SSH](lua-ssh.md).
+- `vectis.terminal`: Markdown rendering and bounded line editor helpers,
+  documented in [Lua terminal](lua-terminal.md).
 - `vectis.webdav`: WebDAV client helpers, documented in
   [Lua WebDAV](lua-webdav.md).
 - `vectis.xml`: XML parse helpers, documented in [Lua XML](lua-xml.md).

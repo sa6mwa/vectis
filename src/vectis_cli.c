@@ -53,6 +53,7 @@
 #include "vectis_rest_lua_init.h"
 #include "vectis_smtp_lua_init.h"
 #include "vectis_status_lua_init.h"
+#include "vectis_terminal_lua_init.h"
 #include "vectis_webdav_lua_init.h"
 #include "vectis_xml_lua_init.h"
 
@@ -12732,6 +12733,12 @@ static int luaopen_vectis(lua_State *lua) {
   }
   lua_setfield(lua, -2, "rest");
   lua_getglobal(lua, "require");
+  lua_pushliteral(lua, "vectis.terminal");
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    return lua_error(lua);
+  }
+  lua_setfield(lua, -2, "terminal");
+  lua_getglobal(lua, "require");
   lua_pushliteral(lua, "vectis.mqtt");
   if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
     return lua_error(lua);
@@ -14280,6 +14287,12 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   status = cpkt_lua_runtime_register_lua_module(
       runtime, "vectis.rest", vectis_rest_lua_init,
       sizeof(vectis_rest_lua_init), "vectis.rest");
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_lua_module(
+      runtime, "vectis.terminal", vectis_terminal_lua_init,
+      sizeof(vectis_terminal_lua_init), "vectis.terminal");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }

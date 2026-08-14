@@ -71,6 +71,11 @@ vectis_pack_and_run_lua_example(
   "lua mdf render example ok")
 
 vectis_pack_and_run_lua_example(
+  "terminal-tools"
+  "${VECTIS_SOURCE_DIR}/examples/lua/terminal_tools.lua"
+  "lua terminal tools example ok")
+
+vectis_pack_and_run_lua_example(
   "protocol-helpers"
   "${VECTIS_SOURCE_DIR}/examples/lua/protocol_helpers.lua"
   "lua protocol helpers example ok"

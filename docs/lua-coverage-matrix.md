@@ -29,8 +29,8 @@ Columns:
 | dep:pslog | libpslog Lua module | yes | planned | yes | yes | n/a | Raw logging module is preloaded and packed-tested; Vectis logger inheritance in Lua needs a clear helper surface. |
 | dep:lql | liblql Lua module | yes | planned | yes | yes | n/a | Raw module is preloaded and packed-tested. |
 | dep:cai | CAI Lua module | yes | planned | yes | yes | planned | Raw module is preloaded and packed-tested for local constructors/metadata; Vectis service integration waits on CAI SDK stabilization. |
-| dep:libmdf | libmdf Lua module | yes | planned | yes | yes | n/a | Raw module is preloaded and packed-tested; Agent Smith / terminal DX helpers are future work. |
-| dep:softline | softline Lua module | yes | planned | yes | yes | n/a | Raw module is preloaded and packed-tested; higher-level prompt/terminal helpers are future work. |
+| dep:libmdf | libmdf Lua module | yes | partial | yes | yes | n/a | Raw module is preloaded and packed-tested; `vectis.terminal` adds Markdown render DX while keeping raw access available. |
+| dep:softline | softline Lua module | yes | partial | yes | yes | n/a | Raw module is preloaded and packed-tested; `vectis.terminal` adds bounded editor construction while keeping raw access available. |
 | dep:curl | libcurl Lua facade | yes | partial | yes | yes | planned | `curl`, `vectis.http`, `vectis.webdav`, `vectis.mqtt`, and `vectis.smtp`; generic protocols are available through option tables. |
 | dep:openssl | OpenSSL | yes | partial | yes | yes | n/a | `openssl` exposes version, SHA-256, general EVP digest/HMAC, hex/Base64 codecs, PEM-backed signing/verification, and CSPRNG helpers; `vectis.cert` owns certificate workflows. |
 | dep:libssh2 | libssh2 | planned | partial | yes | no | yes | `vectis.ssh.exec`, libssh2-backed SFTP/SCP file upload/download, one-shot SFTP filesystem operations, and stateful SFTP session/file/directory receivers exist; opt-in SSH/SFTP e2e covers live handles; raw SSH channels and advanced host-key workflows remain missing. |
@@ -75,7 +75,7 @@ Columns:
 | workflow:cai | AI/client/tool/MCP workflows | yes | planned | yes | no | planned | Raw CAI preloaded; Vectis service adapters are future work. |
 | workflow:sus | Whisper/transcription workflows | partial | planned | yes | yes | planned | Catalog, cache-control paths, model-created transcribers, PCM transcription methods, audio decoder/VOX segmented methods, and callback registration are exposed; live/local loaded-model tests remain. |
 | workflow:audio | Audio capture/playback/processing workflows | partial | planned | yes | yes | planned | File/callback decode/encode, VOX/PTT, and capture/playback receiver shells are exposed; live device behavior remains opt-in. |
-| workflow:terminal-agent | libmdf/softline terminal and Agent Smith workflows | yes | planned | yes | no | n/a | Raw modules exist; Vectis-owned agent DX is future work. |
+| workflow:terminal-agent | libmdf/softline terminal and Agent Smith workflows | yes | partial | yes | yes | n/a | `vectis.terminal` covers Markdown render and editor construction DX; Agent Smith-specific workflows remain future work. |
 | workflow:pack | Pack/self-contained binary workflows | n/a | yes | yes | yes | n/a | `vectis -a pack` and packed Lua e2e exist. |
 | workflow:totp-qr | TOTP and QR helpers | n/a | yes | yes | yes | n/a | Exposed under `vectis.auth.totp` and `vectis.auth.qr`. |
 | workflow:openapi | OpenAPI generation | n/a | planned | yes | no | n/a | C SDK has generation support; Lua route metadata integration is missing. |
