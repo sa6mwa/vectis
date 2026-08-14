@@ -286,6 +286,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add a dependency-native zlib Lua facade for buffered string deflate/inflate, gzip/gunzip, auto-decompress, file-backed bounded transforms, version, and explicit output limits.
 - [x] For each dependency-native Lua facade, add a Vectis-owned helper only where it reduces real service workflow friction; do not replace or hide the direct dependency module when complete API coverage matters.
 - [x] Add an OPC UA Lua client/foundation facade over the `cpkt-opcua` C89 facade and statically preload it in the `vectis` binary as `require("opcua")`.
+- [x] Add packed e2e coverage for the OPC UA Lua client example against the deterministic local C test server.
 - [ ] Extend the OPC UA Lua facade to cover server-side APIs once Lua callback ownership and method/access-control contracts are defined.
 - [ ] Extend the OPC UA Lua facade to cover subscriptions, async client calls, browse callbacks, and PubSub with explicit Lua callback lifetime/error semantics.
 - [x] Add a Lua facade for XML parsing backed by the existing libxml2/lonejson C helpers, including memory/path XML-to-lonejson mapped-record workflows and deterministic tests.

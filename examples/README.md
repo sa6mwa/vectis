@@ -112,7 +112,7 @@ modules, but it must not require another file from `examples/lua/`.
   e2e SSH/SFTP service.
 - `lua/opcua_client.lua`: dependency-native cpkt OPC UA Lua client connect,
   read, write, disconnect, and manual client lifecycle against the local e2e
-  server.
+  server. CTest runs this example in normal and packed forms.
 - `lua/cai_local.lua`: dependency-native CAI Lua module constants, model
   metadata, dotenv parsing, tool schema, response params, registry, and MCP
   handler lifecycle without live provider calls.

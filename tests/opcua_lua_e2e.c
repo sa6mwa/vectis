@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -96,6 +97,94 @@ static int read_script_file(const char *path, unsigned char **buffer_out,
   *buffer_out = buffer;
   *size_out = (size_t)file_size;
   return 0;
+}
+
+static char *copy_string(const char *value) {
+  size_t size;
+  char *copy;
+
+  size = strlen(value) + 1u;
+  copy = (char *)malloc(size);
+  if (copy == NULL) {
+    return NULL;
+  }
+  memcpy(copy, value, size);
+  return copy;
+}
+
+static int make_temp_output_path(char **path_out) {
+  char template_path[] = "/tmp/vectis-opcua-pack-XXXXXX";
+  char *path;
+  int fd;
+  int saved_errno;
+
+  *path_out = NULL;
+  fd = mkstemp(template_path);
+  if (fd < 0) {
+    perror("mkstemp");
+    return 1;
+  }
+  if (close(fd) != 0) {
+    saved_errno = errno;
+    unlink(template_path);
+    errno = saved_errno;
+    perror("close");
+    return 1;
+  }
+  if (unlink(template_path) != 0) {
+    perror("unlink");
+    return 1;
+  }
+  path = copy_string(template_path);
+  if (path == NULL) {
+    fputs("failed to allocate packed output path\n", stderr);
+    return 1;
+  }
+  *path_out = path;
+  return 0;
+}
+
+static int run_child(const char *label, char *const argv[],
+                     const char *endpoint_url) {
+  pid_t pid;
+  int status;
+
+  pid = fork();
+  if (pid < 0) {
+    perror("fork");
+    return 1;
+  }
+  if (pid == 0) {
+    if (endpoint_url != NULL &&
+        setenv("OPCUA_ENDPOINT", endpoint_url, 1) != 0) {
+      perror("setenv");
+      _exit(127);
+    }
+    execv(argv[0], argv);
+    perror(label);
+    _exit(127);
+  }
+  do {
+    if (waitpid(pid, &status, 0) < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      perror("waitpid");
+      return 1;
+    }
+    break;
+  } while (1);
+  if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+    return 0;
+  }
+  if (WIFEXITED(status)) {
+    fprintf(stderr, "%s exited with status %d\n", label, WEXITSTATUS(status));
+  } else if (WIFSIGNALED(status)) {
+    fprintf(stderr, "%s terminated by signal %d\n", label, WTERMSIG(status));
+  } else {
+    fprintf(stderr, "%s ended unexpectedly\n", label);
+  }
+  return 1;
 }
 
 static int pick_loopback_port(unsigned short *port_out) {
@@ -232,6 +321,57 @@ static int run_lua_contract(const char *endpoint_url, const char *script_path) {
   return failed;
 }
 
+static int run_packed_lua_contract(const char *endpoint_url,
+                                   const char *script_path,
+                                   const char *vectis_bin) {
+  char *output_path;
+  char *vectis_path;
+  char *script_path_copy;
+  char arg_action[] = "-a";
+  char arg_pack[] = "pack";
+  char arg_script[] = "--script";
+  char arg_output[] = "--output";
+  char *pack_argv[8];
+  char *run_argv[2];
+  int failed;
+
+  if (script_path == NULL || vectis_bin == NULL) {
+    return 0;
+  }
+  vectis_path = copy_string(vectis_bin);
+  script_path_copy = copy_string(script_path);
+  if (vectis_path == NULL || script_path_copy == NULL) {
+    fputs("failed to allocate packed OPC UA argv\n", stderr);
+    free(vectis_path);
+    free(script_path_copy);
+    return 1;
+  }
+  if (make_temp_output_path(&output_path) != 0) {
+    free(vectis_path);
+    free(script_path_copy);
+    return 1;
+  }
+  pack_argv[0] = vectis_path;
+  pack_argv[1] = arg_action;
+  pack_argv[2] = arg_pack;
+  pack_argv[3] = arg_script;
+  pack_argv[4] = script_path_copy;
+  pack_argv[5] = arg_output;
+  pack_argv[6] = output_path;
+  pack_argv[7] = NULL;
+  failed = run_child("vectis pack opcua example", pack_argv, NULL);
+  if (!failed) {
+    run_argv[0] = output_path;
+    run_argv[1] = NULL;
+    failed = run_child("packed opcua Lua example", run_argv, endpoint_url);
+  }
+  unlink(output_path);
+  free(output_path);
+  free(vectis_path);
+  free(script_path_copy);
+  return failed;
+}
+
 int main(int argc, char **argv) {
   cpkt_opcua_server *server;
   cpkt_opcua_node_id value_node;
@@ -241,6 +381,7 @@ int main(int argc, char **argv) {
   pthread_t thread;
   char endpoint_url[128];
   const char *script_path;
+  const char *vectis_bin;
   size_t endpoint_required;
   unsigned short port;
   int thread_started;
@@ -250,7 +391,8 @@ int main(int argc, char **argv) {
   thread_started = 0;
   failed = 0;
   status = 0u;
-  script_path = argc > 1 ? argv[1] : NULL;
+  vectis_bin = argc > 2 ? argv[1] : NULL;
+  script_path = argc > 2 ? argv[2] : (argc > 1 ? argv[1] : NULL);
   endpoint_required = 0u;
 
   if (pick_loopback_port(&port) != 0) {
@@ -294,6 +436,9 @@ int main(int argc, char **argv) {
   if (!failed) {
     sleep_ms(50u);
     failed = run_lua_contract(endpoint_url, script_path);
+  }
+  if (!failed) {
+    failed = run_packed_lua_contract(endpoint_url, script_path, vectis_bin);
   }
   if (thread_started) {
     loop.stop = 1;

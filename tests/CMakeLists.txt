@@ -77,6 +77,7 @@ if(TARGET vectis_bin)
   endif()
   add_test(NAME vectis_lua_opcua_e2e
            COMMAND vectis_opcua_lua_e2e
+                   "$<TARGET_FILE:vectis_bin>"
                    "${CMAKE_SOURCE_DIR}/examples/lua/opcua_client.lua")
   set_tests_properties(vectis_lua_opcua_e2e PROPERTIES
     LABELS "lua;smoke;local;integration"
