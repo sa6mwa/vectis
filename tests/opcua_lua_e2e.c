@@ -8,6 +8,7 @@
 #include <netinet/in.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <time.h>
@@ -40,6 +41,60 @@ static int expect_ok(cpkt_opcua_result result, cpkt_opcua_status status,
   if (result != CPKT_OPCUA_OK) {
     return fail_result(result, status, operation);
   }
+  return 0;
+}
+
+static int read_script_file(const char *path, unsigned char **buffer_out,
+                            size_t *size_out) {
+  FILE *file;
+  unsigned char *buffer;
+  long file_size;
+  size_t read_size;
+
+  *buffer_out = NULL;
+  *size_out = 0u;
+  file = fopen(path, "rb");
+  if (file == NULL) {
+    perror(path);
+    return 1;
+  }
+  if (fseek(file, 0L, SEEK_END) != 0) {
+    perror("fseek");
+    fclose(file);
+    return 1;
+  }
+  file_size = ftell(file);
+  if (file_size < 0L) {
+    perror("ftell");
+    fclose(file);
+    return 1;
+  }
+  if (fseek(file, 0L, SEEK_SET) != 0) {
+    perror("fseek");
+    fclose(file);
+    return 1;
+  }
+  buffer = (unsigned char *)malloc((size_t)file_size + 1u);
+  if (buffer == NULL) {
+    fputs("failed to allocate Lua script buffer\n", stderr);
+    fclose(file);
+    return 1;
+  }
+  read_size = fread(buffer, 1u, (size_t)file_size, file);
+  if (read_size != (size_t)file_size) {
+    fputs("failed to read complete Lua script\n", stderr);
+    free(buffer);
+    fclose(file);
+    return 1;
+  }
+  if (fclose(file) != 0) {
+    perror("fclose");
+    free(buffer);
+    return 1;
+  }
+  buffer[file_size] = '\0';
+  *buffer_out = buffer;
+  *size_out = (size_t)file_size;
   return 0;
 }
 
@@ -107,7 +162,7 @@ static void *server_loop_main(void *user) {
   return NULL;
 }
 
-static int run_lua_contract(const char *endpoint_url) {
+static int run_lua_contract(const char *endpoint_url, const char *script_path) {
   static const unsigned char script[] =
       "local opcua = require(\"opcua\")\n"
       "local node = opcua.node_id_numeric(1, 7101)\n"
@@ -124,16 +179,32 @@ static int run_lua_contract(const char *endpoint_url) {
       "assert(manual:connect(OPCUA_ENDPOINT) == true)\n"
       "assert(manual:disconnect() == true)\n"
       "assert(manual:close() == true)\n";
+  unsigned char *file_script;
+  const unsigned char *script_data;
+  size_t script_size;
+  const char *chunk_name;
   cpkt_lua_runtime *runtime;
   cpkt_lua_runtime_status lua_status;
   int failed;
 
   runtime = NULL;
+  file_script = NULL;
+  script_data = script;
+  script_size = sizeof(script) - 1u;
+  chunk_name = "opcua_lua_e2e.lua";
   failed = 0;
+  if (script_path != NULL) {
+    if (read_script_file(script_path, &file_script, &script_size) != 0) {
+      return 1;
+    }
+    script_data = file_script;
+    chunk_name = script_path;
+  }
   lua_status = cpkt_lua_runtime_new(&runtime);
   if (lua_status != CPKT_LUA_RUNTIME_OK) {
     fprintf(stderr, "lua runtime new failed: %s\n",
             cpkt_lua_runtime_status_string(lua_status));
+    free(file_script);
     return 1;
   }
   lua_status = cpkt_lua_runtime_openlibs(runtime);
@@ -148,7 +219,7 @@ static int run_lua_contract(const char *endpoint_url) {
   }
   if (lua_status == CPKT_LUA_RUNTIME_OK) {
     lua_status = cpkt_lua_runtime_run_buffer(
-        runtime, script, sizeof(script) - 1u, "opcua_lua_e2e.lua", 0, NULL, 0);
+        runtime, script_data, script_size, chunk_name, 0, NULL, 0);
   }
   if (lua_status != CPKT_LUA_RUNTIME_OK) {
     fprintf(stderr, "lua contract failed: %s: %s\n",
@@ -157,10 +228,11 @@ static int run_lua_contract(const char *endpoint_url) {
     failed = 1;
   }
   cpkt_lua_runtime_free(runtime);
+  free(file_script);
   return failed;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
   cpkt_opcua_server *server;
   cpkt_opcua_node_id value_node;
   cpkt_opcua_value value;
@@ -168,6 +240,7 @@ int main(void) {
   opcua_server_loop loop;
   pthread_t thread;
   char endpoint_url[128];
+  const char *script_path;
   size_t endpoint_required;
   unsigned short port;
   int thread_started;
@@ -177,6 +250,7 @@ int main(void) {
   thread_started = 0;
   failed = 0;
   status = 0u;
+  script_path = argc > 1 ? argv[1] : NULL;
   endpoint_required = 0u;
 
   if (pick_loopback_port(&port) != 0) {
@@ -219,7 +293,7 @@ int main(void) {
   }
   if (!failed) {
     sleep_ms(50u);
-    failed = run_lua_contract(endpoint_url);
+    failed = run_lua_contract(endpoint_url, script_path);
   }
   if (thread_started) {
     loop.stop = 1;

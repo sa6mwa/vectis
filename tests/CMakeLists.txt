@@ -73,7 +73,9 @@ if(TARGET vectis_bin)
       -Wwrite-strings
     )
   endif()
-  add_test(NAME vectis_lua_opcua_e2e COMMAND vectis_opcua_lua_e2e)
+  add_test(NAME vectis_lua_opcua_e2e
+           COMMAND vectis_opcua_lua_e2e
+                   "${CMAKE_SOURCE_DIR}/examples/lua/opcua_client.lua")
   set_tests_properties(vectis_lua_opcua_e2e PROPERTIES
     LABELS "lua;smoke;local;integration"
     TIMEOUT 30)

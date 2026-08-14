@@ -97,6 +97,8 @@ surface directly, without local helper layers that would hide awkward API shape.
 - `lua/curl_protocols.lua`: protocol-neutral `curl.perform()` file-backed
   transfer, upload, download, and protocol allowlist behavior for workflows
   where adding a Vectis-specific wrapper would be redundant.
+- `lua/opcua_client.lua`: raw cpkt OPC UA Lua client connect, read, write,
+  disconnect, and manual client lifecycle against the local e2e server.
 - `lua/webdav_fileserver.lua`: mutable WebDAV fileserver mount and
   `vectis.webdav` client operations against a deterministic local server.
 - `lua/api_server.lua`: packable Lua API server script using C-owned
