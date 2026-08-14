@@ -270,7 +270,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add user-facing docs and smoke coverage for the direct `vectis.embedded` packed asset workflow module.
 - [x] Add a Lua coverage matrix under `docs/` that tracks every Vectis C SDK workflow and bundled dependency facade as `native`, `vectis DX`, `tested`, `packed-tested`, `live-tested`, or `intentionally C-only`.
 - [x] Add a lifecycle contract that fails when a bundled dependency or Vectis-owned C workflow is added without an explicit Lua coverage-matrix entry.
-- [ ] Ensure the `vectis` Lua facade exposes structured status/error objects consistently across all Vectis-owned Lua helpers, mirroring C status, source, timeout, ownership, and cleanup conventions.
+- [x] Ensure the `vectis` Lua facade exposes structured status/error objects consistently across all Vectis-owned Lua helpers, mirroring C status, source, timeout, ownership, and cleanup conventions.
 - [x] Normalize outbound `vectis.rest.client` JSON encode failures into structured result envelopes instead of raising Lua assertion errors.
 - [x] Normalize `vectis.rest.error_response` JSON encode failures into minimal structured JSON fallback responses instead of raising Lua assertion errors.
 - [x] Add a public `cpkt` error source and structured Vectis status/source envelopes to dependency-native cpkt-backed Lua facades (`audio`, `sus`, and `opcua`) while preserving dependency-native diagnostics.

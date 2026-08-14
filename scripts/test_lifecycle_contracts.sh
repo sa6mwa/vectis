@@ -580,6 +580,7 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/docs/lua-sus.md" 'model:reset_transcript_spacing'
   assert_contains "$repo_root/docs/lua-sus-audio-contract.md" 'docs/lua-audio\.md'
   assert_contains "$repo_root/docs/lua-sus-audio-contract.md" 'docs/lua-sus\.md'
+  assert_contains "$repo_root/TODO.md" '\[x\] Ensure the `vectis` Lua facade exposes structured status/error objects consistently'
   assert_contains "$repo_root/include/vectis/webdav.h" 'const char \*root_dir'
   assert_contains "$repo_root/src/vectis_cli.c" '"root_dir"'
   assert_contains "$repo_root/src/vectis_webdav.c" 'vectis_webdav_direct_root'
