@@ -5,9 +5,22 @@ Vectis depends on the cpkt C89 facades for speech and audio:
 - `cpkt_sus` over whisper.cpp
 - `cpkt_audio` over miniaudio
 
-The Lua facades are not implemented yet. This document records the required
-contract for implementing them without weakening the upstream C ownership,
-streaming, and model-cache semantics.
+The Lua facades are partially implemented as raw modules. This document records
+the required contract for completing them without weakening the upstream C
+ownership, streaming, and model-cache semantics.
+
+Current deterministic coverage includes:
+
+- `require("audio")` constants/result strings, format capability checks,
+  decoder file/URL/callback open, encoder file/callback open, callback
+  reader/writer error propagation, VOX, and PTT;
+- `require("sus")` constants/result strings, backend/facade metadata, model
+  catalog lookup, path/cache open error handling, model handles, and offline
+  cache status callback propagation.
+
+Remaining work includes loaded-model transcriber workflows, segmented
+decoder/VOX transcription, progress and abort callbacks during transcription,
+and opt-in capture/playback device helpers.
 
 ## Module Names
 

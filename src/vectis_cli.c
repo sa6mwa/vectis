@@ -318,6 +318,8 @@ extern int luaopen_libmdf_core(lua_State *lua);
 extern int luaopen_pslog_core(lua_State *lua);
 extern int luaopen_softline(lua_State *lua);
 extern int luaopen_opcua(lua_State *lua);
+extern int luaopen_audio(lua_State *lua);
+extern int luaopen_sus(lua_State *lua);
 
 static pthread_once_t vectis_lua_curl_once = PTHREAD_ONCE_INIT;
 
@@ -11191,6 +11193,14 @@ static int vectis_luaopen_opcua(void *lua_state) {
   return luaopen_opcua((lua_State *)lua_state);
 }
 
+static int vectis_luaopen_audio(void *lua_state) {
+  return luaopen_audio((lua_State *)lua_state);
+}
+
+static int vectis_luaopen_sus(void *lua_state) {
+  return luaopen_sus((lua_State *)lua_state);
+}
+
 static void vectis_lua_trace_hook(lua_State *lua, lua_Debug *debug) {
   const char *source;
 
@@ -11475,8 +11485,18 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  return cpkt_lua_runtime_register_c_module(runtime, "opcua",
-                                            vectis_luaopen_opcua);
+  status = cpkt_lua_runtime_register_c_module(runtime, "opcua",
+                                              vectis_luaopen_opcua);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_c_module(runtime, "audio",
+                                              vectis_luaopen_audio);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  return cpkt_lua_runtime_register_c_module(runtime, "sus",
+                                            vectis_luaopen_sus);
 }
 
 static int vectis_lua_prepare_runtime(cpkt_lua_runtime **out,

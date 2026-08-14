@@ -61,6 +61,8 @@ local modules = {
   "libmdf",
   "softline",
   "opcua",
+  "audio",
+  "sus",
 }
 
 local loaded = {}
@@ -84,6 +86,8 @@ assert(type(loaded["vectis.smtp"].send) == "function")
 assert(type(loaded["curl"].perform) == "function")
 assert(type(loaded["openssl"].sha256_hex) == "function")
 assert(type(loaded["opcua"].client) == "function")
+assert(type(loaded["audio"].can_decode) == "function")
+assert(type(loaded["sus"].model_catalog_count) == "function")
 
 if expected_version ~= nil then
   assert(loaded["vectis"].version == expected_version,

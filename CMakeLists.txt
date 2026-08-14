@@ -807,6 +807,8 @@ if(VECTIS_BUILD_BINARY)
   set(vectis_softline_lua_source
     "${vectis_softline_lua_source_dir}/lua/softline_lua.c")
   set(vectis_opcua_lua_source "${CMAKE_SOURCE_DIR}/src/vectis_opcua_lua.c")
+  set(vectis_audio_lua_source "${CMAKE_SOURCE_DIR}/src/vectis_audio_lua.c")
+  set(vectis_sus_lua_source "${CMAKE_SOURCE_DIR}/src/vectis_sus_lua.c")
   set(vectis_embedded_lua_c_sources
     "${vectis_lockdc_lua_source}"
     "${vectis_lonejson_lua_source}"
@@ -816,6 +818,8 @@ if(VECTIS_BUILD_BINARY)
     "${vectis_libmdf_lua_source}"
     "${vectis_softline_lua_source}"
     "${vectis_opcua_lua_source}"
+    "${vectis_audio_lua_source}"
+    "${vectis_sus_lua_source}"
   )
   set_source_files_properties(${vectis_embedded_lua_c_sources} PROPERTIES
     OBJECT_DEPENDS "${vectis_dependency_manifest}"
@@ -992,6 +996,64 @@ if(VECTIS_BUILD_BINARY)
   endif()
   vectis_apply_relocatable_paths(vectis_opcua_lua)
 
+  add_library(vectis_audio_lua OBJECT "${vectis_audio_lua_source}")
+  target_include_directories(vectis_audio_lua PRIVATE
+    "${vectis_external_include_dir}"
+  )
+  target_compile_definitions(vectis_audio_lua PRIVATE
+    _POSIX_C_SOURCE=200809L)
+  set_target_properties(vectis_audio_lua PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON
+  )
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(vectis_audio_lua PRIVATE
+      -std=c99
+      -Wall
+      -Wextra
+      -Werror
+      -Wpedantic
+      -Wstrict-prototypes
+      -Wmissing-prototypes
+      -Wshadow
+      -Wpointer-arith
+      -Wcast-qual
+      -Wwrite-strings
+    )
+  endif()
+  vectis_apply_relocatable_paths(vectis_audio_lua)
+
+  add_library(vectis_sus_lua OBJECT "${vectis_sus_lua_source}")
+  target_include_directories(vectis_sus_lua PRIVATE
+    "${vectis_external_include_dir}"
+  )
+  target_compile_definitions(vectis_sus_lua PRIVATE
+    _POSIX_C_SOURCE=200809L)
+  set_target_properties(vectis_sus_lua PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON
+  )
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(vectis_sus_lua PRIVATE
+      -std=c99
+      -Wall
+      -Wextra
+      -Werror
+      -Wpedantic
+      -Wstrict-prototypes
+      -Wmissing-prototypes
+      -Wshadow
+      -Wpointer-arith
+      -Wcast-qual
+      -Wwrite-strings
+    )
+  endif()
+  vectis_apply_relocatable_paths(vectis_sus_lua)
+
   add_executable(vectis_bin
     src/vectis_cli.c
     src/vectis_main.c
@@ -1002,6 +1064,8 @@ if(VECTIS_BUILD_BINARY)
     $<TARGET_OBJECTS:vectis_libmdf_lua>
     $<TARGET_OBJECTS:vectis_softline_lua>
     $<TARGET_OBJECTS:vectis_opcua_lua>
+    $<TARGET_OBJECTS:vectis_audio_lua>
+    $<TARGET_OBJECTS:vectis_sus_lua>
   )
   target_include_directories(vectis_bin PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
@@ -1017,6 +1081,8 @@ if(VECTIS_BUILD_BINARY)
   target_link_libraries(vectis_bin PRIVATE
     cpkt::lua_runtime
     cpkt::opcua
+    cpkt::audio
+    cpkt::sus
     cai::cai_static
     libmdf::mdf_static
     pslog::pslog_static

@@ -304,8 +304,9 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [ ] Add higher-level Lua auth DX helpers for opinionated admin/browser flows on top of the existing C-owned native auth routes and provider contract.
 - [ ] Add Lua CAI integration helpers once the CAI C SDK surface stabilizes: borrow/create clients, inherit logging, stream request bodies into `cai_source`, stream CAI output to HTTP/lockd/file sinks, expose tool callbacks, and preserve CAI as the primary OpenAI SDK.
 - [x] Add explicit Lua facade contracts for cpkt `sus`/whisper and cpkt audio/miniaudio, including streaming audio source/sink ownership, transcription/voice workflow shape, and deterministic smoke tests without requiring live external services.
-- [ ] Implement the cpkt `sus`/whisper Lua facade from `docs/lua-sus-audio-contract.md`.
-- [ ] Implement the cpkt audio/miniaudio Lua facade from `docs/lua-sus-audio-contract.md`.
+- [ ] Implement the remaining cpkt `sus`/whisper Lua facade from `docs/lua-sus-audio-contract.md`, including loaded-model transcribers, segmented decoder/VOX transcription, callback progress/abort contracts, and live/local model coverage.
+- [ ] Implement the remaining cpkt audio/miniaudio Lua facade from `docs/lua-sus-audio-contract.md`, including capture/playback device helpers behind opt-in tests.
+- [x] Add initial raw cpkt `sus` and audio Lua modules with deterministic metadata, catalog/cache, callback decoder/encoder, VOX, PTT, preload, example, and packed execution coverage.
 - [ ] Add Lua helpers for libmdf/softline where Vectis-owned terminal/agent workflows need higher-level DX; otherwise keep their raw modules available without wrapping.
 - [x] Add deterministic Lua examples for raw pslog, liblql, and softline module workflows without adding redundant Vectis-owned wrappers.
 - [x] Add packed execution coverage for raw pslog, liblql, and softline Lua module workflows.
@@ -327,7 +328,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add a Lua example for long-running consumer service workflows with deterministic local e2e coverage.
 - [x] Add a Lua example for SSH command execution with deterministic local e2e coverage.
 - [x] Add Lua examples for XML, DSV/CSV/TSV, WebDAV client, mutable WebDAV server, raw OpenSSL, certificate management, SCP, MQTT, SMTP, generic curl, OPC UA client, and raw CAI local workflows as those facades land.
-- [ ] Add Lua examples for raw SFTP/libssh2 lower-level operations, CAI live/service-adapter workflows, sus/whisper, and audio/miniaudio workflows as those facades land.
+- [ ] Add Lua examples for raw SFTP/libssh2 lower-level operations, CAI live/service-adapter workflows, loaded-model sus/whisper transcription, and capture/playback audio workflows as those facades land.
 - [ ] Add Lua unit and end-to-end tests for every Lua facade, including preload smoke, method-call DX, ownership/finalizer cleanup, structured error objects, packed execution, large-value streaming/spooling, and local deterministic protocol scenarios.
 - [x] Add release/package verification that the `vectis` binary includes all statically preloaded Lua modules while C binary SDK artifacts do not accidentally ship Lua source/runtime/package-manager state.
 

@@ -187,6 +187,14 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_ssh_sftp PROPERTIES
     LABELS "lua;smoke;local"
     TIMEOUT 30)
+  add_test(NAME vectis_lua_audio_sus
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/audio_sus.cmake")
+  set_tests_properties(vectis_lua_audio_sus PROPERTIES
+    LABELS "lua;smoke;local"
+    TIMEOUT 30)
   add_test(NAME vectis_lua_pack
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
@@ -246,6 +254,12 @@ if(TARGET vectis_bin)
                    "$<TARGET_FILE:vectis_bin>"
                    "${CMAKE_SOURCE_DIR}/examples/lua/cai_local.lua")
   set_tests_properties(vectis_example_lua_cai_local PROPERTIES
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
+  add_test(NAME vectis_example_lua_audio_sus
+           COMMAND "$<TARGET_FILE:vectis_bin>"
+                   "${CMAKE_SOURCE_DIR}/examples/lua/audio_sus.lua")
+  set_tests_properties(vectis_example_lua_audio_sus PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
   add_test(NAME vectis_example_lua_raw_dependency_tools
