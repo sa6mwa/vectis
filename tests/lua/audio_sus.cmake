@@ -1,7 +1,9 @@
 set(script "${WORK_DIR}/audio-sus-smoke.lua")
 set(cache_dir "${WORK_DIR}/sus-offline-cache")
+set(wav_path "${WORK_DIR}/audio-sus-file.wav")
 
 file(REMOVE_RECURSE "${cache_dir}")
+file(REMOVE "${wav_path}")
 file(MAKE_DIRECTORY "${cache_dir}")
 file(WRITE "${script}" [[
 local audio = require("audio")
@@ -64,6 +66,37 @@ assert(encoder:write_f32(frames) == 320)
 assert(encoder:close() == true)
 assert(sink.data:sub(1, 4) == "RIFF")
 assert(sink.data:sub(9, 12) == "WAVE")
+
+local wav_path = assert(arg[2])
+local file_encoder = assert(audio.encoder.open_file({
+  path = wav_path,
+  format = "wav",
+  sample_rate = 16000,
+  channels = 1,
+}))
+assert(file_encoder:write_f32(frames) == 320)
+assert(file_encoder:close() == true)
+
+local file_decoder = assert(audio.decoder.open_file({
+  path = wav_path,
+  encoding = "wav",
+}))
+local file_info = assert(file_decoder:info())
+assert(file_info.output_sample_rate == 16000)
+assert(file_info.output_channels == 1)
+local file_decoded, file_decoded_count = assert(file_decoder:read_f32_mono_16k(512))
+assert(file_decoded_count > 0)
+assert(#file_decoded == file_decoded_count)
+assert(file_decoder:close() == true)
+
+local url_decoder = assert(audio.decoder.open_url({
+  url = "file://" .. wav_path,
+  encoding = "wav",
+}))
+local url_decoded, url_decoded_count = assert(url_decoder:read_f32_mono_16k(512))
+assert(url_decoded_count > 0)
+assert(#url_decoded == url_decoded_count)
+assert(url_decoder:close() == true)
 
 local source = {
   data = sink.data,
@@ -207,7 +240,7 @@ assert(type(missing_model_err) == "table")
 print("lua audio sus smoke ok")
 ]])
 
-execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${cache_dir}"
+execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${cache_dir}" "${wav_path}"
                 RESULT_VARIABLE result
                 OUTPUT_VARIABLE stdout
                 ERROR_VARIABLE stderr)
