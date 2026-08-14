@@ -23,7 +23,7 @@ with minimal Vectis opinion:
 - `pslog`: upstream libpslog Lua module, documented in
   [Lua pslog](lua-pslog.md).
 - `lql`: upstream liblql Lua module, documented in [Lua lql](lua-lql.md).
-- `cai`: upstream CAI Lua module.
+- `cai`: upstream CAI Lua module, documented in [Lua CAI](lua-cai.md).
 - `libmdf`: upstream libmdf Lua module.
 - `softline`: upstream softline Lua module.
 - `curl`: generic libcurl facade, documented in [Lua curl](lua-curl.md).

@@ -63,6 +63,7 @@ Lua docs:
 
 - [Lua auth](lua-auth.md)
 - [Lua certificates](lua-certs.md)
+- [Lua CAI](lua-cai.md)
 - [Lua curl](lua-curl.md)
 - [Lua DSV](lua-dsv.md)
 - [Lua HTTP](lua-http.md)

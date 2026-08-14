@@ -240,9 +240,9 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Implement OpenSSL-backed CA-signed certificate/key PEM bundle generation from existing CA cert/key material.
 - [x] Add tests for valid, expired, malformed, and missing certificate material.
 
-## Area 11.5: Future CAI Integration
+## Area 11.5: CAI Service Integration
 
-- [ ] Track CAI as a future dependency once its C SDK surface stabilizes; current Vectis-side feedback is parked in `../cai/stash/feedbackfromvectis.md`.
+- [x] Track CAI as a dependency once its C SDK surface stabilizes.
 - [ ] Add a Vectis CAI config section that can borrow an external `cai_client` or create an app-owned client with Vectis logger inheritance.
 - [ ] Mirror the lockd logger model for CAI: dedicated CAI logger, fallback to app/Kore logger, and `logger_disabled` opt-out.
 - [ ] Add thin Vectis adapters for request-body reader to `cai_source`, CAI output to Vectis response/lockd payload, and CAI errors to JSON API responses.
