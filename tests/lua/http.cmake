@@ -54,6 +54,7 @@ assert(type(vectis.http.put) == "function")
 assert(type(vectis.http.patch) == "function")
 assert(type(vectis.http.delete) == "function")
 assert(type(vectis.http.head) == "function")
+assert(type(vectis.http.options) == "function")
 assert(type(vectis.http.form) == "function")
 assert(type(vectis.http.form_encode) == "function")
 assert(type(vectis.http.multipart) == "function")
@@ -188,6 +189,12 @@ assert(api_server:json({
   path = "/head-status",
   method = "HEAD",
   body = '{"ok":true,"surface":"head"}\n',
+  cache_control = "no-store",
+}) == true)
+assert(api_server:json({
+  path = "/options-status",
+  method = "OPTIONS",
+  body = '{"ok":true,"surface":"options"}\n',
   cache_control = "no-store",
 }) == true)
 assert(api_server:json({
@@ -738,6 +745,11 @@ assert(rest_head.ok == true, rest_head.error and rest_head.error.message)
 assert(rest_head.status == 200)
 assert(rest_head.body == "")
 assert(rest_head.headers:lower():find("cache-control: no-store", 1, true))
+local rest_options = rest_client.options("/options-status")
+assert(rest_options.ok == true, rest_options.error and rest_options.error.message)
+assert(rest_options.status == 200)
+assert(rest_options.json.ok == true)
+assert(rest_options.json.surface == "options")
 local dynamic_dsv_required = vectis.http.post("http://127.0.0.1:28484/dynamic-dsv", {
   body = "id,count\nalpha,2\nbeta,3\n",
   headers = {
@@ -779,6 +791,15 @@ local simple_head = vectis.http.head("http://127.0.0.1:28484/head-status", {
 assert(simple_head.ok == true, simple_head.error and simple_head.error.message)
 assert(simple_head.status == 200)
 assert(simple_head.body == "")
+local simple_options = vectis.http.options("http://127.0.0.1:28484/options-status", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(simple_options.ok == true,
+       simple_options.error and simple_options.error.message)
+assert(simple_options.status == 200)
+assert(simple_options.body == '{"ok":true,"surface":"options"}\n')
 local created_response = vectis.http.request({
   url = "http://127.0.0.1:28484/created",
   method = "POST",
@@ -904,6 +925,12 @@ local client_head = authenticated_client.head(
 assert(client_head.ok == true, client_head.error and client_head.error.message)
 assert(client_head.status == 200)
 assert(client_head.body == "")
+local client_options = authenticated_client.options(
+    "http://127.0.0.1:28484/options-status")
+assert(client_options.ok == true,
+       client_options.error and client_options.error.message)
+assert(client_options.status == 200)
+assert(client_options.body == '{"ok":true,"surface":"options"}\n')
 local client_callback_allowed = authenticated_client.get(
     "http://127.0.0.1:28484/callback-guarded",
     {headers = {Authorization = "Bearer callback-ok"}})

@@ -430,6 +430,16 @@ function M.client(defaults)
     return raw.request_json(opts)
   end
 
+  function client.options(path, opts)
+    local err
+    opts, err = prepare_or_error(defaults, path, opts)
+    if opts == nil then
+      return err
+    end
+    opts.method = opts.method or "OPTIONS"
+    return raw.request_json(opts)
+  end
+
   return client
 end
 

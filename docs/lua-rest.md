@@ -61,8 +61,8 @@ future dedicated route surfaces for SSE or true streaming responses.
 ## Client
 
 `rest.client(defaults)` returns a base-URL JSON client. It supports `request`,
-`get`, `post`, `put`, `patch`, `delete`, and `head`. Per-request `json = value` or a
-table `body` is JSON-encoded and sent with `Content-Type:
+`get`, `post`, `put`, `patch`, `delete`, `head`, and `options`. Per-request
+`json = value` or a table `body` is JSON-encoded and sent with `Content-Type:
 application/json; charset=utf-8` unless a content type is already provided.
 Responses use `vectis.http.request_json()` result normalization.
 If request JSON cannot be encoded, the client returns the same result envelope

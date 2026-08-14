@@ -350,6 +350,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Support shebang execution through `#!/usr/local/bin/vectis`.
 - [x] Provide a friendly REST API DX for defining buffered JSON routes, handlers, middleware-like hooks, JSON responses, and downstream JSON calls.
 - [x] Add `head` to the `vectis.rest.client` downstream JSON client for method parity with `vectis.http.head`.
+- [x] Add `options` to `vectis.http` and `vectis.rest.client` for method parity with C curl-backed OPTIONS workflows.
 - [ ] Extend the REST DX with lockd operation presets only where examples show repeated service boilerplate.
 - [x] Add a C-owned Lua `server:static_directory()` helper for serving disk docroots such as extracted packed asset trees.
 - [x] Add a C-owned Lua `server:json()` helper for fixed unguarded JSON endpoints in packed API service scenarios, including explicit method and status configuration.

@@ -190,6 +190,10 @@ function M.head(first, second)
   return request_with_method("HEAD", first, second)
 end
 
+function M.options(first, second)
+  return request_with_method("OPTIONS", first, second)
+end
+
 function M.get_json(first, second)
   local opts = opts_from(first, second)
   opts.method = opts.method or "GET"
@@ -348,6 +352,12 @@ function M.client(defaults)
   function client.head(first, second)
     local opts = merge_defaults(defaults, first, second)
     opts.method = opts.method or "HEAD"
+    return M.request(opts)
+  end
+
+  function client.options(first, second)
+    local opts = merge_defaults(defaults, first, second)
+    opts.method = opts.method or "OPTIONS"
     return M.request(opts)
   end
 
