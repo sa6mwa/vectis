@@ -123,8 +123,9 @@ modules, but it must not require another file from `examples/lua/`.
   `vectis.webdav` client operations against a deterministic local server.
 - `lua/api_server.lua`: packable Lua API server script using direct
   `server:json()`/`server:auth_json()` receivers, OpenAPI generation,
-  `vectis.rest` client helpers for self-test traffic, and native issued
-  credentials. By default it self-tests and exits; set
+  live `stream_source`, `server:sse()`, request-body streaming upload routes,
+  `vectis.rest`/`vectis.http` client helpers for self-test traffic, and native
+  issued credentials. By default it self-tests and exits; set
   `VECTIS_LUA_API_EXAMPLE_SERVE=1` to keep it listening. CTest also packs and
   executes this script as `vectis_example_lua_api_server_pack`.
 - `lua/downstream_api.lua`: packable Lua downstream API client example using
