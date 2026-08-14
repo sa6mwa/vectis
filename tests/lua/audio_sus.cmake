@@ -23,6 +23,17 @@ assert(missing_decoder == nil)
 assert(type(missing_decoder_err) == "table")
 assert(type(missing_decoder_err.message) == "string")
 
+local bad_reader, bad_reader_err = audio.decoder.open_reader({
+  encoding = "wav",
+  read = function()
+    return {}
+  end,
+})
+assert(bad_reader == nil)
+assert(type(bad_reader_err) == "table")
+assert(bad_reader_err.result == audio.ERR_IO or
+       bad_reader_err.result == audio.ERR_FORMAT)
+
 local sink = {
   data = "",
   position = 1,
@@ -66,6 +77,23 @@ assert(encoder:write_f32(frames) == 320)
 assert(encoder:close() == true)
 assert(sink.data:sub(1, 4) == "RIFF")
 assert(sink.data:sub(9, 12) == "WAVE")
+
+local bad_writer = assert(audio.encoder.open_writer({
+  format = "wav",
+  sample_rate = 16000,
+  channels = 1,
+  write = function()
+    return {}
+  end,
+  seek = function()
+    return true
+  end,
+}))
+bad_writer:write_f32(frames)
+local bad_close, bad_close_err = bad_writer:close()
+assert(bad_close == nil)
+assert(type(bad_close_err) == "table")
+assert(bad_close_err.result == audio.ERR_IO)
 
 local wav_path = assert(arg[2])
 local file_encoder = assert(audio.encoder.open_file({

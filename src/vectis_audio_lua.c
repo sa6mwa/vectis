@@ -219,7 +219,11 @@ static size_t vectis_audio_lua_read_cb(void *user, void *buffer,
     lua_settop(lua, top);
     return 0u;
   }
-  chunk = luaL_checklstring(lua, -1, &chunk_size);
+  if (lua_type(lua, -1) != LUA_TSTRING) {
+    lua_settop(lua, top);
+    return 0u;
+  }
+  chunk = lua_tolstring(lua, -1, &chunk_size);
   copied = chunk_size < bytes_to_read ? chunk_size : bytes_to_read;
   memcpy(buffer, chunk, copied);
   lua_settop(lua, top);
@@ -273,7 +277,11 @@ static size_t vectis_audio_lua_write_cb(void *user, const void *buffer,
     lua_settop(lua, top);
     return bytes_to_write;
   }
-  written = luaL_checkinteger(lua, -1);
+  if (lua_type(lua, -1) != LUA_TNUMBER) {
+    lua_settop(lua, top);
+    return 0u;
+  }
+  written = lua_tointeger(lua, -1);
   lua_settop(lua, top);
   if (written < 0) {
     return 0u;
