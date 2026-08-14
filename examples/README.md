@@ -86,6 +86,16 @@ surface directly, without local helper layers that would hide awkward API shape.
 
 - `lua/mdf_render.lua`: libmdf Lua Markdown rendering through both
   `render()` and `render_stream()`.
+- `lua/data_formats.lua`: typed DSV/CSV/TSV parsing, row callbacks,
+  serialization, and XML-to-LoneJSON table parsing through `vectis.dsv` and
+  `vectis.xml`.
+- `lua/crypto_certs.lua`: raw OpenSSL digest, HMAC, encoding, random, signing,
+  and verification helpers alongside Vectis certificate bundle generation,
+  validation, and inspection.
+- `lua/protocol_helpers.lua`: curl-backed MQTT and SMTP workflow helpers plus
+  SCP validation/error handling without requiring live external services.
+- `lua/webdav_fileserver.lua`: mutable WebDAV fileserver mount and
+  `vectis.webdav` client operations against a deterministic local server.
 - `lua/api_server.lua`: packable Lua API server script using C-owned
   `server:json()` and `server:auth_json()` routes plus native issued
   credentials. By default it self-tests and exits; set

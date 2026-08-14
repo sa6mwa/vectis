@@ -201,6 +201,41 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_example_lua_mdf_render PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
+  add_test(NAME vectis_example_lua_data_formats
+           COMMAND vectis_bin "${CMAKE_SOURCE_DIR}/examples/lua/data_formats.lua")
+  set_tests_properties(vectis_example_lua_data_formats PROPERTIES
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
+  add_test(NAME vectis_example_lua_crypto_certs
+           COMMAND "${CMAKE_COMMAND}" -E env
+                   "VECTIS_LUA_CRYPTO_EXAMPLE_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   "$<TARGET_FILE:vectis_bin>"
+                   "${CMAKE_SOURCE_DIR}/examples/lua/crypto_certs.lua")
+  set_tests_properties(vectis_example_lua_crypto_certs PROPERTIES
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
+  add_test(NAME vectis_example_lua_protocol_helpers
+           COMMAND "${CMAKE_COMMAND}" -E env
+                   "VECTIS_LUA_PROTOCOL_EXAMPLE_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   "$<TARGET_FILE:vectis_bin>"
+                   "${CMAKE_SOURCE_DIR}/examples/lua/protocol_helpers.lua")
+  set_tests_properties(vectis_example_lua_protocol_helpers PROPERTIES
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
+  add_test(NAME vectis_example_lua_webdav_fileserver
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
+                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                   "-DVECTIS_SCRIPT=${CMAKE_SOURCE_DIR}/examples/lua/webdav_fileserver.lua"
+                   "-DVECTIS_PORT_ENV=VECTIS_LUA_WEBDAV_EXAMPLE_PORT"
+                   "-DVECTIS_SUCCESS_MARKER=lua webdav fileserver example ok"
+                   "-DVECTIS_LABEL=Lua WebDAV fileserver example"
+                   "-DVECTIS_EXTRA_ENV=VECTIS_LUA_WEBDAV_EXAMPLE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/lua-webdav-fileserver-example"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/run_example_with_port.cmake")
+  set_tests_properties(vectis_example_lua_webdav_fileserver PROPERTIES
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
   add_test(NAME vectis_example_lua_api_server
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
