@@ -5,9 +5,11 @@ Vectis Lua runtime. It is intentionally separate from any future
 `vectis.sus` DX helpers so raw model-cache and backend behavior remain visible.
 
 The current Lua surface covers deterministic metadata, model catalog, path and
-cache-open error paths, model handles, and offline cache status callbacks.
-Loaded-model transcription and segmented decoder/VOX transcription remain
-future work until the project has a committed model fixture/cache policy.
+cache-open error paths, model handles, transcriber receiver shells, PCM
+transcription methods, and offline cache status callbacks. Live model
+transcription and segmented decoder/VOX transcription remain opt-in/future work
+until the project has a committed model fixture/cache policy and a stable
+audio/SUS Lua interop boundary.
 
 ## Metadata And Constants
 
@@ -21,8 +23,10 @@ Result constants include `OK`, `ERR_ARG`, `ERR_ALLOC`, `ERR_MODEL`,
 `ERR_UPSTREAM`, `ERR_CALLBACK`, `ERR_LOOKUP`, `ERR_IO`, `ERR_CHECKSUM`,
 `ERR_NETWORK`, and `ABORTED`.
 
-Cache status constants include `CACHE_STATUS_LOOKUP`, `CACHE_STATUS_HIT`, and
-`CACHE_STATUS_MISS`.
+Cache status constants include `CACHE_STATUS_LOOKUP`, `CACHE_STATUS_HIT`,
+`CACHE_STATUS_MISS`, `CACHE_STATUS_DOWNLOAD_BEGIN`,
+`CACHE_STATUS_DOWNLOAD_COMPLETE`, `CACHE_STATUS_VERIFY_BEGIN`,
+`CACHE_STATUS_VERIFY_COMPLETE`, and `CACHE_STATUS_LOAD_BEGIN`.
 
 ## Model Catalog
 
@@ -91,12 +95,41 @@ Methods:
 
 - `model:info()` returns `backend_version`, `backend_system_info`, and
   `cpu_only`.
+- `model:create_transcriber(opts)` returns a `sus.transcriber` receiver bound
+  to the loaded model.
 - `model:reset_transcript_spacing()` resets instance-level segmented transcript
   spacing state.
 - `model:close()` releases the loaded model.
 
-Transcriber construction and transcription methods are not exposed yet because
-they need deterministic model fixtures and callback lifetime tests.
+`model:create_transcriber(opts)` accepts:
+
+- `threads`
+- `cpu_only`
+- `language`
+- `translate`
+- `timestamps`
+- `initial_prompt`
+- `segment(segment)` or `on_segment(segment)`
+- `progress(percent)` or `on_progress(percent)`
+- `abort()` or `should_abort()`
+
+Segment/progress callbacks return `true`, `0`, or `nil` to continue, and
+`false` or a non-zero number to fail with `ERR_CALLBACK`. Abort callbacks
+return `true` or a non-zero number to request `ABORTED`.
+
+Transcriber methods:
+
+- `transcriber:transcribe_f32_mono_16k(frames)` runs inference over a Lua
+  array of float samples at mono 16 kHz and returns `true`.
+- `transcriber:transcribe_f32_mono_16k_text(frames)` returns materialized text
+  from a Lua array of float samples at mono 16 kHz.
+- `transcriber:revised_text()` returns the latest committed segmented
+  transcript text.
+- `transcriber:close()` releases the transcriber; the model remains open.
+
+Segmented decoder/VOX methods are not exposed yet because they need a stable
+Lua interop boundary for borrowing `audio.decoder` and `audio.segment` handles
+without duplicating private userdata layouts.
 
 ## Errors
 

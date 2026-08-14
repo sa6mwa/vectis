@@ -17,11 +17,13 @@ Current deterministic coverage includes:
   shells with opt-in live device tests, documented in `docs/lua-audio.md`;
 - `require("sus")` constants/result strings, backend/facade metadata, model
   catalog lookup, path/cache open error handling, model handles, and offline
-  cache status callback propagation, documented in `docs/lua-sus.md`.
+  cache status callback propagation, model-created transcriber handles,
+  PCM table transcription methods, and transcriber callback registration,
+  documented in `docs/lua-sus.md`.
 
-Remaining work includes loaded-model transcriber workflows, segmented
-decoder/VOX transcription, and progress and abort callbacks during
-transcription.
+Remaining deterministic work includes the Lua interop boundary needed for
+segmented decoder/VOX transcription. Live model transcription remains opt-in
+until a committed model fixture/cache policy exists.
 
 ## Module Names
 

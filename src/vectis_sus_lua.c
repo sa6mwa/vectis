@@ -2,13 +2,23 @@
 #include <lauxlib.h>
 #include <lua.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define VECTIS_SUS_MODEL "sus.model"
+#define VECTIS_SUS_TRANSCRIBER "sus.transcriber"
 
 typedef struct vectis_sus_model_lua {
   cpkt_sus *sus;
 } vectis_sus_model_lua;
+
+typedef struct vectis_sus_transcriber_lua {
+  cpkt_sus_transcriber *transcriber;
+  lua_State *lua;
+  int segment_ref;
+  int progress_ref;
+  int abort_ref;
+} vectis_sus_transcriber_lua;
 
 typedef struct vectis_sus_cache_status_lua {
   lua_State *lua;
@@ -60,6 +70,23 @@ static int vectis_sus_lua_table_bool(lua_State *lua, int index,
   return value;
 }
 
+static int vectis_sus_lua_table_int(lua_State *lua, int index,
+                                    const char *field, int fallback) {
+  lua_Integer value;
+
+  if (index < 0) {
+    index = lua_gettop(lua) + index + 1;
+  }
+  lua_getfield(lua, index, field);
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return fallback;
+  }
+  value = luaL_checkinteger(lua, -1);
+  lua_pop(lua, 1);
+  return (int)value;
+}
+
 static const char *vectis_sus_lua_table_string(lua_State *lua, int index,
                                                const char *field) {
   const char *value;
@@ -94,6 +121,112 @@ static int vectis_sus_lua_table_function_ref(lua_State *lua, int index,
   return ref;
 }
 
+static void vectis_sus_lua_push_segment(lua_State *lua,
+                                        const cpkt_sus_segment *segment) {
+  lua_newtable(lua);
+  if (segment->text != NULL) {
+    lua_pushlstring(lua, segment->text, (size_t)segment->text_length);
+  } else {
+    lua_pushliteral(lua, "");
+  }
+  lua_setfield(lua, -2, "text");
+  lua_pushinteger(lua, (lua_Integer)segment->text_length);
+  lua_setfield(lua, -2, "text_length");
+  lua_pushinteger(lua, (lua_Integer)segment->t0);
+  lua_setfield(lua, -2, "t0");
+  lua_pushinteger(lua, (lua_Integer)segment->t1);
+  lua_setfield(lua, -2, "t1");
+}
+
+static int vectis_sus_lua_continue_callback_result(lua_State *lua, int index) {
+  if (lua_type(lua, index) == LUA_TBOOLEAN) {
+    return lua_toboolean(lua, index) ? 0 : -1;
+  }
+  if (lua_type(lua, index) == LUA_TNUMBER) {
+    return lua_tointeger(lua, index) == 0 ? 0 : -1;
+  }
+  return 0;
+}
+
+static int vectis_sus_lua_abort_callback_result(lua_State *lua, int index) {
+  if (lua_type(lua, index) == LUA_TBOOLEAN) {
+    return lua_toboolean(lua, index) ? 1 : 0;
+  }
+  if (lua_type(lua, index) == LUA_TNUMBER) {
+    return lua_tointeger(lua, index) == 0 ? 0 : 1;
+  }
+  return 0;
+}
+
+static int vectis_sus_lua_segment_sink(const cpkt_sus_segment *segment,
+                                       void *user) {
+  vectis_sus_transcriber_lua *handle;
+  lua_State *lua;
+  int top;
+  int failed;
+
+  handle = (vectis_sus_transcriber_lua *)user;
+  lua = handle->lua;
+  if (handle->segment_ref == LUA_NOREF) {
+    return 0;
+  }
+  top = lua_gettop(lua);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, handle->segment_ref);
+  vectis_sus_lua_push_segment(lua, segment);
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    lua_settop(lua, top);
+    return -1;
+  }
+  failed = vectis_sus_lua_continue_callback_result(lua, -1);
+  lua_settop(lua, top);
+  return failed;
+}
+
+static int vectis_sus_lua_progress_sink(int progress, void *user) {
+  vectis_sus_transcriber_lua *handle;
+  lua_State *lua;
+  int top;
+  int failed;
+
+  handle = (vectis_sus_transcriber_lua *)user;
+  lua = handle->lua;
+  if (handle->progress_ref == LUA_NOREF) {
+    return 0;
+  }
+  top = lua_gettop(lua);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, handle->progress_ref);
+  lua_pushinteger(lua, (lua_Integer)progress);
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    lua_settop(lua, top);
+    return -1;
+  }
+  failed = vectis_sus_lua_continue_callback_result(lua, -1);
+  lua_settop(lua, top);
+  return failed;
+}
+
+static int vectis_sus_lua_abort_fn(void *user) {
+  vectis_sus_transcriber_lua *handle;
+  lua_State *lua;
+  int top;
+  int abort_requested;
+
+  handle = (vectis_sus_transcriber_lua *)user;
+  lua = handle->lua;
+  if (handle->abort_ref == LUA_NOREF) {
+    return 0;
+  }
+  top = lua_gettop(lua);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, handle->abort_ref);
+  if (lua_pcall(lua, 0, 1, 0) != LUA_OK) {
+    lua_settop(lua, top);
+    return 1;
+  }
+  abort_requested = vectis_sus_lua_abort_callback_result(lua, -1);
+  lua_settop(lua, top);
+  return abort_requested;
+}
+
 static int vectis_sus_lua_cache_status_sink(
     const cpkt_sus_cache_status_event *event, void *user) {
   vectis_sus_cache_status_lua *status;
@@ -123,6 +256,38 @@ static int vectis_sus_lua_cache_status_sink(
   }
   lua_settop(lua, top);
   return failed;
+}
+
+static float *vectis_sus_lua_frame_array(lua_State *lua, int index,
+                                         size_t *out_count) {
+  lua_Unsigned raw_count;
+  size_t count;
+  size_t i;
+  float *frames;
+
+  luaL_checktype(lua, index, LUA_TTABLE);
+  raw_count = (lua_Unsigned)lua_rawlen(lua, index);
+  if (raw_count > (((size_t)-1) / sizeof(float))) {
+    luaL_error(lua, "sus frame array is too large");
+    return NULL;
+  }
+  count = (size_t)raw_count;
+  if (count == 0u) {
+    *out_count = 0u;
+    return NULL;
+  }
+  frames = (float *)malloc(count * sizeof(float));
+  if (frames == NULL) {
+    luaL_error(lua, "sus frame allocation failed");
+    return NULL;
+  }
+  for (i = 0u; i < count; i++) {
+    lua_rawgeti(lua, index, (lua_Integer)i + 1);
+    frames[i] = (float)luaL_checknumber(lua, -1);
+    lua_pop(lua, 1);
+  }
+  *out_count = count;
+  return frames;
 }
 
 static void vectis_sus_lua_push_model_entry(
@@ -157,6 +322,47 @@ static vectis_sus_model_lua *vectis_sus_lua_check_model(lua_State *lua,
   return (vectis_sus_model_lua *)luaL_checkudata(lua, index, VECTIS_SUS_MODEL);
 }
 
+static vectis_sus_transcriber_lua *
+vectis_sus_lua_check_transcriber(lua_State *lua, int index) {
+  return (vectis_sus_transcriber_lua *)luaL_checkudata(
+      lua, index, VECTIS_SUS_TRANSCRIBER);
+}
+
+static void
+vectis_sus_lua_transcriber_unref(vectis_sus_transcriber_lua *handle) {
+  if (handle == NULL || handle->lua == NULL) {
+    return;
+  }
+  if (handle->segment_ref != LUA_NOREF) {
+    luaL_unref(handle->lua, LUA_REGISTRYINDEX, handle->segment_ref);
+    handle->segment_ref = LUA_NOREF;
+  }
+  if (handle->progress_ref != LUA_NOREF) {
+    luaL_unref(handle->lua, LUA_REGISTRYINDEX, handle->progress_ref);
+    handle->progress_ref = LUA_NOREF;
+  }
+  if (handle->abort_ref != LUA_NOREF) {
+    luaL_unref(handle->lua, LUA_REGISTRYINDEX, handle->abort_ref);
+    handle->abort_ref = LUA_NOREF;
+  }
+}
+
+static vectis_sus_transcriber_lua *
+vectis_sus_lua_new_transcriber(lua_State *lua) {
+  vectis_sus_transcriber_lua *handle;
+
+  handle =
+      (vectis_sus_transcriber_lua *)lua_newuserdatauv(lua, sizeof(*handle), 0);
+  handle->transcriber = NULL;
+  handle->lua = lua;
+  handle->segment_ref = LUA_NOREF;
+  handle->progress_ref = LUA_NOREF;
+  handle->abort_ref = LUA_NOREF;
+  luaL_getmetatable(lua, VECTIS_SUS_TRANSCRIBER);
+  lua_setmetatable(lua, -2);
+  return handle;
+}
+
 static int vectis_sus_lua_model_close(lua_State *lua) {
   vectis_sus_model_lua *handle;
 
@@ -165,6 +371,19 @@ static int vectis_sus_lua_model_close(lua_State *lua) {
     handle->sus->destroy(handle->sus);
     handle->sus = NULL;
   }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_sus_lua_transcriber_close(lua_State *lua) {
+  vectis_sus_transcriber_lua *handle;
+
+  handle = vectis_sus_lua_check_transcriber(lua, 1);
+  if (handle->transcriber != NULL) {
+    handle->transcriber->destroy(handle->transcriber);
+    handle->transcriber = NULL;
+  }
+  vectis_sus_lua_transcriber_unref(handle);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -192,6 +411,74 @@ static int vectis_sus_lua_model_info(lua_State *lua) {
   return 1;
 }
 
+static void vectis_sus_lua_transcriber_config(
+    lua_State *lua, int index, cpkt_sus_transcriber_config *config,
+    vectis_sus_transcriber_lua *handle) {
+  cpkt_sus_transcriber_config_default(config);
+  if (index == 0 || lua_isnoneornil(lua, index)) {
+    return;
+  }
+  luaL_checktype(lua, index, LUA_TTABLE);
+  config->threads = vectis_sus_lua_table_int(lua, index, "threads", 0);
+  config->cpu_only = vectis_sus_lua_table_bool(lua, index, "cpu_only", 0);
+  config->language = vectis_sus_lua_table_string(lua, index, "language");
+  config->translate = vectis_sus_lua_table_bool(lua, index, "translate", 0);
+  config->timestamps = vectis_sus_lua_table_bool(lua, index, "timestamps", 0);
+  config->initial_prompt =
+      vectis_sus_lua_table_string(lua, index, "initial_prompt");
+  handle->segment_ref =
+      vectis_sus_lua_table_function_ref(lua, index, "segment");
+  if (handle->segment_ref == LUA_NOREF) {
+    handle->segment_ref =
+        vectis_sus_lua_table_function_ref(lua, index, "on_segment");
+  }
+  handle->progress_ref =
+      vectis_sus_lua_table_function_ref(lua, index, "progress");
+  if (handle->progress_ref == LUA_NOREF) {
+    handle->progress_ref =
+        vectis_sus_lua_table_function_ref(lua, index, "on_progress");
+  }
+  handle->abort_ref = vectis_sus_lua_table_function_ref(lua, index, "abort");
+  if (handle->abort_ref == LUA_NOREF) {
+    handle->abort_ref =
+        vectis_sus_lua_table_function_ref(lua, index, "should_abort");
+  }
+  if (handle->segment_ref != LUA_NOREF) {
+    config->segment_sink = vectis_sus_lua_segment_sink;
+    config->segment_user = handle;
+  }
+  if (handle->progress_ref != LUA_NOREF) {
+    config->progress_sink = vectis_sus_lua_progress_sink;
+    config->progress_user = handle;
+  }
+  if (handle->abort_ref != LUA_NOREF) {
+    config->abort = vectis_sus_lua_abort_fn;
+    config->abort_user = handle;
+  }
+}
+
+static int vectis_sus_lua_model_create_transcriber(lua_State *lua) {
+  vectis_sus_model_lua *model;
+  vectis_sus_transcriber_lua *handle;
+  cpkt_sus_transcriber_config config;
+  cpkt_sus_result result;
+
+  model = vectis_sus_lua_check_model(lua, 1);
+  if (model->sus == NULL) {
+    return luaL_error(lua, "sus model is closed");
+  }
+  handle = vectis_sus_lua_new_transcriber(lua);
+  vectis_sus_lua_transcriber_config(lua, 2, &config, handle);
+  result =
+      model->sus->create_transcriber(model->sus, &handle->transcriber, &config);
+  if (result != CPKT_SUS_OK) {
+    vectis_sus_lua_transcriber_unref(handle);
+    lua_pop(lua, 1);
+    return vectis_sus_lua_push_error(lua, result, "sus create_transcriber");
+  }
+  return 1;
+}
+
 static int vectis_sus_lua_model_reset_spacing(lua_State *lua) {
   vectis_sus_model_lua *handle;
   cpkt_sus_result result;
@@ -206,6 +493,77 @@ static int vectis_sus_lua_model_reset_spacing(lua_State *lua) {
                                     "sus reset_transcript_spacing");
   }
   lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_sus_lua_transcriber_transcribe(lua_State *lua) {
+  vectis_sus_transcriber_lua *handle;
+  float *frames;
+  size_t frame_count;
+  cpkt_sus_result result;
+
+  handle = vectis_sus_lua_check_transcriber(lua, 1);
+  if (handle->transcriber == NULL) {
+    return luaL_error(lua, "sus transcriber is closed");
+  }
+  frame_count = 0u;
+  frames = vectis_sus_lua_frame_array(lua, 2, &frame_count);
+  result = handle->transcriber->transcribe_f32_mono_16k(
+      handle->transcriber, frames, (unsigned long)frame_count);
+  free(frames);
+  if (result != CPKT_SUS_OK) {
+    return vectis_sus_lua_push_error(lua, result, "sus transcribe_f32_mono_16k");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_sus_lua_transcriber_transcribe_text(lua_State *lua) {
+  vectis_sus_transcriber_lua *handle;
+  float *frames;
+  size_t frame_count;
+  char *text;
+  cpkt_sus_result result;
+
+  handle = vectis_sus_lua_check_transcriber(lua, 1);
+  if (handle->transcriber == NULL) {
+    return luaL_error(lua, "sus transcriber is closed");
+  }
+  frame_count = 0u;
+  text = NULL;
+  frames = vectis_sus_lua_frame_array(lua, 2, &frame_count);
+  result = handle->transcriber->transcribe_f32_mono_16k_text(
+      handle->transcriber, frames, (unsigned long)frame_count, &text);
+  free(frames);
+  if (result != CPKT_SUS_OK) {
+    return vectis_sus_lua_push_error(lua, result,
+                                    "sus transcribe_f32_mono_16k_text");
+  }
+  lua_pushstring(lua, text != NULL ? text : "");
+  if (text != NULL) {
+    cpkt_sus_string_free(text);
+  }
+  return 1;
+}
+
+static int vectis_sus_lua_transcriber_revised_text(lua_State *lua) {
+  vectis_sus_transcriber_lua *handle;
+  cpkt_sus_result result;
+  char *text;
+
+  handle = vectis_sus_lua_check_transcriber(lua, 1);
+  if (handle->transcriber == NULL) {
+    return luaL_error(lua, "sus transcriber is closed");
+  }
+  text = NULL;
+  result = handle->transcriber->revised_text(handle->transcriber, &text);
+  if (result != CPKT_SUS_OK) {
+    return vectis_sus_lua_push_error(lua, result, "sus revised_text");
+  }
+  lua_pushstring(lua, text != NULL ? text : "");
+  if (text != NULL) {
+    cpkt_sus_string_free(text);
+  }
   return 1;
 }
 
@@ -379,14 +737,32 @@ static void vectis_sus_lua_set_constants(lua_State *lua) {
   lua_setfield(lua, -2, "CACHE_STATUS_HIT");
   lua_pushinteger(lua, CPKT_SUS_CACHE_STATUS_MISS);
   lua_setfield(lua, -2, "CACHE_STATUS_MISS");
+  lua_pushinteger(lua, CPKT_SUS_CACHE_STATUS_DOWNLOAD_BEGIN);
+  lua_setfield(lua, -2, "CACHE_STATUS_DOWNLOAD_BEGIN");
+  lua_pushinteger(lua, CPKT_SUS_CACHE_STATUS_DOWNLOAD_COMPLETE);
+  lua_setfield(lua, -2, "CACHE_STATUS_DOWNLOAD_COMPLETE");
+  lua_pushinteger(lua, CPKT_SUS_CACHE_STATUS_VERIFY_BEGIN);
+  lua_setfield(lua, -2, "CACHE_STATUS_VERIFY_BEGIN");
+  lua_pushinteger(lua, CPKT_SUS_CACHE_STATUS_VERIFY_COMPLETE);
+  lua_setfield(lua, -2, "CACHE_STATUS_VERIFY_COMPLETE");
+  lua_pushinteger(lua, CPKT_SUS_CACHE_STATUS_LOAD_BEGIN);
+  lua_setfield(lua, -2, "CACHE_STATUS_LOAD_BEGIN");
 }
 
 int luaopen_sus(lua_State *lua) {
   static const luaL_Reg model_methods[] = {
       {"info", vectis_sus_lua_model_info},
+      {"create_transcriber", vectis_sus_lua_model_create_transcriber},
       {"reset_transcript_spacing", vectis_sus_lua_model_reset_spacing},
       {"close", vectis_sus_lua_model_close},
       {"__gc", vectis_sus_lua_model_close},
+      {NULL, NULL}};
+  static const luaL_Reg transcriber_methods[] = {
+      {"transcribe_f32_mono_16k", vectis_sus_lua_transcriber_transcribe},
+      {"transcribe_f32_mono_16k_text", vectis_sus_lua_transcriber_transcribe_text},
+      {"revised_text", vectis_sus_lua_transcriber_revised_text},
+      {"close", vectis_sus_lua_transcriber_close},
+      {"__gc", vectis_sus_lua_transcriber_close},
       {NULL, NULL}};
   static const luaL_Reg funcs[] = {
       {"result_string", vectis_sus_lua_result_string},
@@ -406,6 +782,12 @@ int luaopen_sus(lua_State *lua) {
   lua_pushvalue(lua, -1);
   lua_setfield(lua, -2, "__index");
   luaL_setfuncs(lua, model_methods, 0);
+  lua_pop(lua, 1);
+
+  luaL_newmetatable(lua, VECTIS_SUS_TRANSCRIBER);
+  lua_pushvalue(lua, -1);
+  lua_setfield(lua, -2, "__index");
+  luaL_setfuncs(lua, transcriber_methods, 0);
   lua_pop(lua, 1);
 
   luaL_newlib(lua, funcs);

@@ -313,7 +313,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [ ] Add higher-level Lua auth DX helpers for opinionated admin/browser flows on top of the existing C-owned native auth routes and provider contract.
 - [ ] Add Lua CAI integration helpers once the CAI C SDK surface stabilizes: borrow/create clients, inherit logging, stream request bodies into `cai_source`, stream CAI output to HTTP/lockd/file sinks, expose tool callbacks, and preserve CAI as the primary OpenAI SDK.
 - [x] Add explicit Lua facade contracts for cpkt `sus`/whisper and cpkt audio/miniaudio, including streaming audio source/sink ownership, transcription/voice workflow shape, and deterministic smoke tests without requiring live external services.
-- [ ] Implement the remaining cpkt `sus`/whisper Lua facade from `docs/lua-sus-audio-contract.md`, including loaded-model transcribers, segmented decoder/VOX transcription, callback progress/abort contracts, and live/local model coverage.
+- [x] Add cpkt `sus`/whisper Lua transcriber receiver shells from `docs/lua-sus-audio-contract.md`, including model-created transcribers, PCM table transcription methods, revised text, and segment/progress/abort callback registration.
+- [ ] Implement the remaining cpkt `sus`/whisper Lua facade from `docs/lua-sus-audio-contract.md`, including segmented decoder/VOX transcription, an audio/SUS Lua interop boundary, callback propagation coverage against a loaded model, and live/local model coverage.
 - [x] Implement the remaining cpkt audio/miniaudio Lua facade receiver shells from `docs/lua-sus-audio-contract.md`, including capture/playback device helpers behind opt-in tests.
 - [x] Add initial raw cpkt `sus` and audio Lua modules with deterministic metadata, catalog/cache, callback decoder/encoder, VOX, PTT, preload, example, and packed execution coverage.
 - [x] Add user-facing Lua docs for the raw cpkt `sus` and audio facades.
