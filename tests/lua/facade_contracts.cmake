@@ -629,6 +629,31 @@ assert_status_error(bad_rest_json_err, vectis.ERR_INVALID)
 assert(bad_rest_json_err.source == "lonejson")
 assert(bad_rest_json_err.source_code == vectis.ERROR_SOURCE_LONEJSON)
 
+local unsupported_json = {
+  unsupported = function()
+    return true
+  end,
+}
+local rest_client = rest.client({
+  base_url = "http://127.0.0.1:1",
+  timeout_ms = 50,
+  connect_timeout_ms = 50,
+  no_signal = true,
+})
+local outbound_json = rest_client.post("/orders", {
+  json = unsupported_json,
+})
+assert(outbound_json.ok == false, "ok=" .. tostring(outbound_json.ok))
+assert(outbound_json.transport_ok == false,
+       "transport_ok=" .. tostring(outbound_json.transport_ok))
+assert_status_error(outbound_json.error, vectis.ERR_INVALID)
+assert(outbound_json.error.kind == "json_encode",
+       "kind=" .. tostring(outbound_json.error.kind))
+assert(outbound_json.error.source == "lonejson",
+       "source=" .. tostring(outbound_json.error.source))
+assert(outbound_json.error.source_code == vectis.ERROR_SOURCE_LONEJSON,
+       "source_code=" .. tostring(outbound_json.error.source_code))
+
 local rest_error_response = rest.error_response({
   kind = "validation",
   message = "rest contract failed",

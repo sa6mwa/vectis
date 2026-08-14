@@ -62,6 +62,9 @@ future dedicated route surfaces for SSE or true streaming responses.
 table `body` is JSON-encoded and sent with `Content-Type:
 application/json; charset=utf-8` unless a content type is already provided.
 Responses use `vectis.http.request_json()` result normalization.
+If request JSON cannot be encoded, the client returns the same result envelope
+without attempting transport: `ok = false`, `transport_ok = false`, and a
+structured `error` with `ERR_INVALID` and `ERROR_SOURCE_LONEJSON`.
 
 ```lua
 local api = rest.client({

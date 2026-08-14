@@ -287,15 +287,42 @@ local function prepare_json_request(defaults, path, opts)
   opts.url = join_url(assert(defaults.base_url, "base_url is required"), path)
   opts.base_url = nil
   if opts.json ~= nil then
-    opts.body = assert(encode_json(opts.json))
+    local body, err = encode_json(opts.json)
+    if body == nil then
+      return nil, err
+    end
+    opts.body = body
     opts.json = nil
   elseif type(opts.body) == "table" then
-    opts.body = assert(encode_json(opts.body))
+    local body, err = encode_json(opts.body)
+    if body == nil then
+      return nil, err
+    end
+    opts.body = body
   end
   if opts.body ~= nil then
     opts.headers = with_json_content_type(opts.headers)
   end
   return opts
+end
+
+local function request_error(err)
+  return {
+    ok = false,
+    transport_ok = false,
+    error = vstatus.decorate_error(err, {
+      status = vstatus.ERR_INVALID,
+      source_code = vstatus.ERROR_SOURCE_VECTIS,
+    }),
+  }
+end
+
+local function prepare_or_error(defaults, path, opts)
+  local request, err = prepare_json_request(defaults, path, opts)
+  if request == nil then
+    return nil, request_error(err)
+  end
+  return request
 end
 
 function M.client(defaults)
@@ -306,35 +333,59 @@ function M.client(defaults)
   local client = {raw = raw}
 
   function client.request(path, opts)
-    return raw.request_json(prepare_json_request(defaults, path, opts))
+    local request, err = prepare_or_error(defaults, path, opts)
+    if request == nil then
+      return err
+    end
+    return raw.request_json(request)
   end
 
   function client.get(path, opts)
-    opts = prepare_json_request(defaults, path, opts)
+    local err
+    opts, err = prepare_or_error(defaults, path, opts)
+    if opts == nil then
+      return err
+    end
     opts.method = opts.method or "GET"
     return raw.request_json(opts)
   end
 
   function client.post(path, opts)
-    opts = prepare_json_request(defaults, path, opts)
+    local err
+    opts, err = prepare_or_error(defaults, path, opts)
+    if opts == nil then
+      return err
+    end
     opts.method = opts.method or "POST"
     return raw.request_json(opts)
   end
 
   function client.put(path, opts)
-    opts = prepare_json_request(defaults, path, opts)
+    local err
+    opts, err = prepare_or_error(defaults, path, opts)
+    if opts == nil then
+      return err
+    end
     opts.method = opts.method or "PUT"
     return raw.request_json(opts)
   end
 
   function client.patch(path, opts)
-    opts = prepare_json_request(defaults, path, opts)
+    local err
+    opts, err = prepare_or_error(defaults, path, opts)
+    if opts == nil then
+      return err
+    end
     opts.method = opts.method or "PATCH"
     return raw.request_json(opts)
   end
 
   function client.delete(path, opts)
-    opts = prepare_json_request(defaults, path, opts)
+    local err
+    opts, err = prepare_or_error(defaults, path, opts)
+    if opts == nil then
+      return err
+    end
     opts.method = opts.method or "DELETE"
     return raw.request_json(opts)
   end
