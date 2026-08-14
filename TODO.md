@@ -305,7 +305,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [ ] Add Lua CAI integration helpers once the CAI C SDK surface stabilizes: borrow/create clients, inherit logging, stream request bodies into `cai_source`, stream CAI output to HTTP/lockd/file sinks, expose tool callbacks, and preserve CAI as the primary OpenAI SDK.
 - [x] Add explicit Lua facade contracts for cpkt `sus`/whisper and cpkt audio/miniaudio, including streaming audio source/sink ownership, transcription/voice workflow shape, and deterministic smoke tests without requiring live external services.
 - [ ] Implement the remaining cpkt `sus`/whisper Lua facade from `docs/lua-sus-audio-contract.md`, including loaded-model transcribers, segmented decoder/VOX transcription, callback progress/abort contracts, and live/local model coverage.
-- [ ] Implement the remaining cpkt audio/miniaudio Lua facade from `docs/lua-sus-audio-contract.md`, including capture/playback device helpers behind opt-in tests.
+- [x] Implement the remaining cpkt audio/miniaudio Lua facade receiver shells from `docs/lua-sus-audio-contract.md`, including capture/playback device helpers behind opt-in tests.
 - [x] Add initial raw cpkt `sus` and audio Lua modules with deterministic metadata, catalog/cache, callback decoder/encoder, VOX, PTT, preload, example, and packed execution coverage.
 - [ ] Add Lua helpers for libmdf/softline where Vectis-owned terminal/agent workflows need higher-level DX; otherwise keep their raw modules available without wrapping.
 - [x] Add deterministic Lua examples for raw pslog, liblql, and softline module workflows without adding redundant Vectis-owned wrappers.

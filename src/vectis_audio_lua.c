@@ -7,6 +7,8 @@
 
 #define VECTIS_AUDIO_DECODER "audio.decoder"
 #define VECTIS_AUDIO_ENCODER "audio.encoder"
+#define VECTIS_AUDIO_CAPTURE "audio.capture_handle"
+#define VECTIS_AUDIO_PLAYBACK "audio.playback_handle"
 #define VECTIS_AUDIO_VOX "audio.vox_handle"
 #define VECTIS_AUDIO_PTT "audio.ptt_handle"
 #define VECTIS_AUDIO_SEGMENT "audio.segment"
@@ -25,6 +27,16 @@ typedef struct vectis_audio_encoder_lua {
   int seek_ref;
   unsigned long channels;
 } vectis_audio_encoder_lua;
+
+typedef struct vectis_audio_capture_lua {
+  cpkt_audio_capture *capture;
+  lua_State *lua;
+  int state_ref;
+} vectis_audio_capture_lua;
+
+typedef struct vectis_audio_playback_lua {
+  cpkt_audio_playback *playback;
+} vectis_audio_playback_lua;
 
 typedef struct vectis_audio_segmenter_lua {
   union {
@@ -199,6 +211,34 @@ static void vectis_audio_lua_encoder_config(lua_State *lua, int index,
   config->sample_rate =
       vectis_audio_lua_table_ulong(lua, index, "sample_rate", 0u);
   config->channels = vectis_audio_lua_table_ulong(lua, index, "channels", 0u);
+}
+
+static void vectis_audio_lua_capture_config(lua_State *lua, int index,
+                                            cpkt_audio_capture_config *config) {
+  memset(config, 0, sizeof(*config));
+  if (index == 0 || lua_isnoneornil(lua, index)) {
+    return;
+  }
+  luaL_checktype(lua, index, LUA_TTABLE);
+  config->backend = (int)vectis_audio_lua_table_ulong(lua, index, "backend", 0u);
+  config->buffer_ms =
+      vectis_audio_lua_table_ulong(lua, index, "buffer_ms", 0u);
+  config->period_ms =
+      vectis_audio_lua_table_ulong(lua, index, "period_ms", 0u);
+}
+
+static void vectis_audio_lua_playback_config(
+    lua_State *lua, int index, cpkt_audio_playback_config *config) {
+  memset(config, 0, sizeof(*config));
+  if (index == 0 || lua_isnoneornil(lua, index)) {
+    return;
+  }
+  luaL_checktype(lua, index, LUA_TTABLE);
+  config->backend = (int)vectis_audio_lua_table_ulong(lua, index, "backend", 0u);
+  config->buffer_ms =
+      vectis_audio_lua_table_ulong(lua, index, "buffer_ms", 0u);
+  config->period_ms =
+      vectis_audio_lua_table_ulong(lua, index, "period_ms", 0u);
 }
 
 static size_t vectis_audio_lua_read_cb(void *user, void *buffer,
@@ -693,6 +733,320 @@ static int vectis_audio_lua_encoder_open_writer(lua_State *lua) {
   return 1;
 }
 
+static int vectis_audio_lua_capture_state_sink(
+    const cpkt_audio_capture_state_event *event, void *user) {
+  vectis_audio_capture_lua *handle;
+  lua_State *lua;
+  int top;
+  int failed;
+
+  handle = (vectis_audio_capture_lua *)user;
+  lua = handle->lua;
+  if (handle->state_ref == LUA_NOREF) {
+    return 0;
+  }
+  top = lua_gettop(lua);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, handle->state_ref);
+  lua_newtable(lua);
+  lua_pushinteger(lua, (lua_Integer)event->state);
+  lua_setfield(lua, -2, "state");
+  lua_pushinteger(lua, (lua_Integer)event->frame_count);
+  lua_setfield(lua, -2, "frame_count");
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    lua_settop(lua, top);
+    return -1;
+  }
+  failed = 0;
+  if (lua_type(lua, -1) == LUA_TNUMBER) {
+    failed = lua_tointeger(lua, -1) == 0 ? 0 : -1;
+  } else if (lua_type(lua, -1) == LUA_TBOOLEAN) {
+    failed = lua_toboolean(lua, -1) ? 0 : -1;
+  }
+  lua_settop(lua, top);
+  return failed;
+}
+
+static vectis_audio_capture_lua *
+vectis_audio_lua_new_capture(lua_State *lua, cpkt_audio_capture *capture) {
+  vectis_audio_capture_lua *handle;
+
+  handle = (vectis_audio_capture_lua *)lua_newuserdatauv(lua, sizeof(*handle),
+                                                         0);
+  handle->capture = capture;
+  handle->lua = lua;
+  handle->state_ref = LUA_NOREF;
+  luaL_getmetatable(lua, VECTIS_AUDIO_CAPTURE);
+  lua_setmetatable(lua, -2);
+  return handle;
+}
+
+static vectis_audio_capture_lua *
+vectis_audio_lua_check_capture(lua_State *lua, int index) {
+  return (vectis_audio_capture_lua *)luaL_checkudata(lua, index,
+                                                     VECTIS_AUDIO_CAPTURE);
+}
+
+static int vectis_audio_lua_capture_close(lua_State *lua) {
+  vectis_audio_capture_lua *handle;
+
+  handle = vectis_audio_lua_check_capture(lua, 1);
+  if (handle->capture != NULL) {
+    handle->capture->destroy(handle->capture);
+    handle->capture = NULL;
+  }
+  if (handle->state_ref != LUA_NOREF) {
+    luaL_unref(lua, LUA_REGISTRYINDEX, handle->state_ref);
+    handle->state_ref = LUA_NOREF;
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_audio_lua_capture_start(lua_State *lua) {
+  vectis_audio_capture_lua *handle;
+  cpkt_audio_result result;
+
+  handle = vectis_audio_lua_check_capture(lua, 1);
+  if (handle->capture == NULL) {
+    return luaL_error(lua, "audio capture is closed");
+  }
+  result = handle->capture->start(handle->capture);
+  if (result != CPKT_AUDIO_OK) {
+    return vectis_audio_lua_push_error(lua, result, "audio capture start");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_audio_lua_capture_read(lua_State *lua) {
+  vectis_audio_capture_lua *handle;
+  lua_Integer requested;
+  float *frames;
+  size_t frames_read;
+  size_t i;
+  cpkt_audio_result result;
+
+  handle = vectis_audio_lua_check_capture(lua, 1);
+  if (handle->capture == NULL) {
+    return luaL_error(lua, "audio capture is closed");
+  }
+  requested = luaL_checkinteger(lua, 2);
+  if (requested < 0) {
+    return luaL_error(lua, "audio capture frame capacity must be non-negative");
+  }
+  frames = NULL;
+  if (requested > 0) {
+    frames = (float *)malloc((size_t)requested * sizeof(float));
+    if (frames == NULL) {
+      return luaL_error(lua, "audio capture frame allocation failed");
+    }
+  }
+  frames_read = 0u;
+  result = handle->capture->read_f32_mono_16k(handle->capture, frames,
+                                              (size_t)requested, &frames_read);
+  if (result != CPKT_AUDIO_OK) {
+    free(frames);
+    return vectis_audio_lua_push_error(lua, result, "audio capture read");
+  }
+  lua_createtable(lua, (int)frames_read, 0);
+  for (i = 0u; i < frames_read; i++) {
+    lua_pushnumber(lua, (lua_Number)frames[i]);
+    lua_rawseti(lua, -2, (lua_Integer)i + 1);
+  }
+  free(frames);
+  lua_pushinteger(lua, (lua_Integer)frames_read);
+  return 2;
+}
+
+static int vectis_audio_lua_capture_wait_ready(lua_State *lua) {
+  vectis_audio_capture_lua *handle;
+  unsigned long timeout_ms;
+  cpkt_audio_result result;
+
+  handle = vectis_audio_lua_check_capture(lua, 1);
+  if (handle->capture == NULL) {
+    return luaL_error(lua, "audio capture is closed");
+  }
+  timeout_ms = 0u;
+  if (!lua_isnoneornil(lua, 2)) {
+    lua_Integer value;
+    value = luaL_checkinteger(lua, 2);
+    if (value < 0) {
+      return luaL_error(lua, "audio capture timeout must be non-negative");
+    }
+    timeout_ms = (unsigned long)value;
+  }
+  result = handle->capture->wait_ready(handle->capture, timeout_ms);
+  if (result != CPKT_AUDIO_OK) {
+    return vectis_audio_lua_push_error(lua, result,
+                                      "audio capture wait_ready");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_audio_lua_capture_stop(lua_State *lua) {
+  vectis_audio_capture_lua *handle;
+  cpkt_audio_result result;
+
+  handle = vectis_audio_lua_check_capture(lua, 1);
+  if (handle->capture == NULL) {
+    return luaL_error(lua, "audio capture is closed");
+  }
+  result = handle->capture->stop(handle->capture);
+  if (result != CPKT_AUDIO_OK) {
+    return vectis_audio_lua_push_error(lua, result, "audio capture stop");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_audio_lua_capture_open_default(lua_State *lua) {
+  cpkt_audio_capture_config config;
+  cpkt_audio_capture *capture;
+  cpkt_audio_result result;
+  vectis_audio_capture_lua *handle;
+
+  vectis_audio_lua_capture_config(lua, 1, &config);
+  handle = vectis_audio_lua_new_capture(lua, NULL);
+  if (!lua_isnoneornil(lua, 1)) {
+    handle->state_ref = vectis_audio_lua_table_function_ref(lua, 1, "state");
+    if (handle->state_ref != LUA_NOREF) {
+      config.state_sink = vectis_audio_lua_capture_state_sink;
+      config.state_user = handle;
+    }
+  }
+  capture = NULL;
+  result = cpkt_audio_capture_open_default(&capture, &config);
+  if (result != CPKT_AUDIO_OK) {
+    lua_pop(lua, 1);
+    if (handle->state_ref != LUA_NOREF) {
+      luaL_unref(lua, LUA_REGISTRYINDEX, handle->state_ref);
+    }
+    return vectis_audio_lua_push_error(lua, result,
+                                      "audio capture open_default");
+  }
+  handle->capture = capture;
+  return 1;
+}
+
+static vectis_audio_playback_lua *
+vectis_audio_lua_new_playback(lua_State *lua, cpkt_audio_playback *playback) {
+  vectis_audio_playback_lua *handle;
+
+  handle = (vectis_audio_playback_lua *)lua_newuserdatauv(lua, sizeof(*handle),
+                                                          0);
+  handle->playback = playback;
+  luaL_getmetatable(lua, VECTIS_AUDIO_PLAYBACK);
+  lua_setmetatable(lua, -2);
+  return handle;
+}
+
+static vectis_audio_playback_lua *
+vectis_audio_lua_check_playback(lua_State *lua, int index) {
+  return (vectis_audio_playback_lua *)luaL_checkudata(lua, index,
+                                                      VECTIS_AUDIO_PLAYBACK);
+}
+
+static int vectis_audio_lua_playback_close(lua_State *lua) {
+  vectis_audio_playback_lua *handle;
+
+  handle = vectis_audio_lua_check_playback(lua, 1);
+  if (handle->playback != NULL) {
+    handle->playback->destroy(handle->playback);
+    handle->playback = NULL;
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_audio_lua_playback_start(lua_State *lua) {
+  vectis_audio_playback_lua *handle;
+  cpkt_audio_result result;
+
+  handle = vectis_audio_lua_check_playback(lua, 1);
+  if (handle->playback == NULL) {
+    return luaL_error(lua, "audio playback is closed");
+  }
+  result = handle->playback->start(handle->playback);
+  if (result != CPKT_AUDIO_OK) {
+    return vectis_audio_lua_push_error(lua, result, "audio playback start");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_audio_lua_playback_write(lua_State *lua) {
+  vectis_audio_playback_lua *handle;
+  float *frames;
+  size_t frame_count;
+  size_t frames_written;
+  cpkt_audio_result result;
+
+  handle = vectis_audio_lua_check_playback(lua, 1);
+  if (handle->playback == NULL) {
+    return luaL_error(lua, "audio playback is closed");
+  }
+  frames = vectis_audio_lua_frame_array(lua, 2, &frame_count);
+  frames_written = 0u;
+  result = handle->playback->write_f32_mono_16k(
+      handle->playback, frames, frame_count, &frames_written);
+  free(frames);
+  if (result != CPKT_AUDIO_OK) {
+    return vectis_audio_lua_push_error(lua, result, "audio playback write");
+  }
+  lua_pushinteger(lua, (lua_Integer)frames_written);
+  return 1;
+}
+
+static int vectis_audio_lua_playback_drain(lua_State *lua) {
+  vectis_audio_playback_lua *handle;
+  cpkt_audio_result result;
+
+  handle = vectis_audio_lua_check_playback(lua, 1);
+  if (handle->playback == NULL) {
+    return luaL_error(lua, "audio playback is closed");
+  }
+  result = handle->playback->drain(handle->playback);
+  if (result != CPKT_AUDIO_OK) {
+    return vectis_audio_lua_push_error(lua, result, "audio playback drain");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_audio_lua_playback_stop(lua_State *lua) {
+  vectis_audio_playback_lua *handle;
+  cpkt_audio_result result;
+
+  handle = vectis_audio_lua_check_playback(lua, 1);
+  if (handle->playback == NULL) {
+    return luaL_error(lua, "audio playback is closed");
+  }
+  result = handle->playback->stop(handle->playback);
+  if (result != CPKT_AUDIO_OK) {
+    return vectis_audio_lua_push_error(lua, result, "audio playback stop");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_audio_lua_playback_open_default(lua_State *lua) {
+  cpkt_audio_playback_config config;
+  cpkt_audio_playback *playback;
+  cpkt_audio_result result;
+
+  vectis_audio_lua_playback_config(lua, 1, &config);
+  playback = NULL;
+  result = cpkt_audio_playback_open_default(&playback, &config);
+  if (result != CPKT_AUDIO_OK) {
+    return vectis_audio_lua_push_error(lua, result,
+                                      "audio playback open_default");
+  }
+  vectis_audio_lua_new_playback(lua, playback);
+  return 1;
+}
+
 static vectis_audio_segment_lua *
 vectis_audio_lua_new_segment(lua_State *lua, cpkt_audio_vox_segment *segment) {
   vectis_audio_segment_lua *handle;
@@ -1142,6 +1496,16 @@ static void vectis_audio_lua_set_constants(lua_State *lua) {
   lua_setfield(lua, -2, "FORMAT_FLAC");
   lua_pushinteger(lua, CPKT_AUDIO_FORMAT_MP3);
   lua_setfield(lua, -2, "FORMAT_MP3");
+  lua_pushinteger(lua, CPKT_AUDIO_DEVICE_BACKEND_AUTO);
+  lua_setfield(lua, -2, "DEVICE_BACKEND_AUTO");
+  lua_pushinteger(lua, CPKT_AUDIO_DEVICE_BACKEND_PROCESS);
+  lua_setfield(lua, -2, "DEVICE_BACKEND_PROCESS");
+  lua_pushinteger(lua, CPKT_AUDIO_DEVICE_BACKEND_COREAUDIO);
+  lua_setfield(lua, -2, "DEVICE_BACKEND_COREAUDIO");
+  lua_pushinteger(lua, CPKT_AUDIO_DEVICE_BACKEND_NATIVE);
+  lua_setfield(lua, -2, "DEVICE_BACKEND_NATIVE");
+  lua_pushinteger(lua, CPKT_AUDIO_CAPTURE_READY);
+  lua_setfield(lua, -2, "CAPTURE_READY");
   lua_pushinteger(lua, CPKT_AUDIO_SEEK_SET);
   lua_setfield(lua, -2, "SEEK_SET");
   lua_pushinteger(lua, CPKT_AUDIO_SEEK_CUR);
@@ -1167,6 +1531,22 @@ int luaopen_audio(lua_State *lua) {
       {"write_f32", vectis_audio_lua_encoder_write_f32},
       {"close", vectis_audio_lua_encoder_close},
       {"__gc", vectis_audio_lua_encoder_close},
+      {NULL, NULL}};
+  static const luaL_Reg capture_methods[] = {
+      {"start", vectis_audio_lua_capture_start},
+      {"read_f32_mono_16k", vectis_audio_lua_capture_read},
+      {"wait_ready", vectis_audio_lua_capture_wait_ready},
+      {"stop", vectis_audio_lua_capture_stop},
+      {"close", vectis_audio_lua_capture_close},
+      {"__gc", vectis_audio_lua_capture_close},
+      {NULL, NULL}};
+  static const luaL_Reg playback_methods[] = {
+      {"start", vectis_audio_lua_playback_start},
+      {"write_f32_mono_16k", vectis_audio_lua_playback_write},
+      {"drain", vectis_audio_lua_playback_drain},
+      {"stop", vectis_audio_lua_playback_stop},
+      {"close", vectis_audio_lua_playback_close},
+      {"__gc", vectis_audio_lua_playback_close},
       {NULL, NULL}};
   static const luaL_Reg vox_methods[] = {
       {"push_f32_mono_16k", vectis_audio_lua_vox_push},
@@ -1194,6 +1574,8 @@ int luaopen_audio(lua_State *lua) {
 
   vectis_audio_lua_methods(lua, VECTIS_AUDIO_DECODER, decoder_methods);
   vectis_audio_lua_methods(lua, VECTIS_AUDIO_ENCODER, encoder_methods);
+  vectis_audio_lua_methods(lua, VECTIS_AUDIO_CAPTURE, capture_methods);
+  vectis_audio_lua_methods(lua, VECTIS_AUDIO_PLAYBACK, playback_methods);
   vectis_audio_lua_methods(lua, VECTIS_AUDIO_VOX, vox_methods);
   vectis_audio_lua_methods(lua, VECTIS_AUDIO_PTT, ptt_methods);
   vectis_audio_lua_methods(lua, VECTIS_AUDIO_SEGMENT, segment_methods);
@@ -1214,6 +1596,14 @@ int luaopen_audio(lua_State *lua) {
   lua_pushcfunction(lua, vectis_audio_lua_encoder_open_writer);
   lua_setfield(lua, -2, "open_writer");
   lua_setfield(lua, -2, "encoder");
+  lua_newtable(lua);
+  lua_pushcfunction(lua, vectis_audio_lua_capture_open_default);
+  lua_setfield(lua, -2, "open_default");
+  lua_setfield(lua, -2, "capture");
+  lua_newtable(lua);
+  lua_pushcfunction(lua, vectis_audio_lua_playback_open_default);
+  lua_setfield(lua, -2, "open_default");
+  lua_setfield(lua, -2, "playback");
   lua_newtable(lua);
   lua_pushcfunction(lua, vectis_audio_lua_vox_open);
   lua_setfield(lua, -2, "open");

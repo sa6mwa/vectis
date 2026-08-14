@@ -4,6 +4,8 @@ local sus = require("sus")
 assert(audio.can_decode("wav") == true)
 assert(audio.can_encode("wav") == true)
 assert(type(audio.result_string(audio.OK)) == "string")
+assert(type(audio.capture.open_default) == "function")
+assert(type(audio.playback.open_default) == "function")
 
 local sink = {data = "", position = 1}
 local function seek(offset, origin)

@@ -15,6 +15,8 @@ assert(audio.can_decode("wav") == true)
 assert(audio.can_encode("wav") == true)
 assert(audio.can_decode(audio.FORMAT_WAV) == true)
 assert(type(audio.can_decode("flac")) == "boolean")
+assert(type(audio.capture.open_default) == "function")
+assert(type(audio.playback.open_default) == "function")
 
 local missing_decoder, missing_decoder_err = audio.decoder.open_file({
   path = "/__vectis_missing_audio_input__.wav",
@@ -33,6 +35,20 @@ assert(bad_reader == nil)
 assert(type(bad_reader_err) == "table")
 assert(bad_reader_err.result == audio.ERR_IO or
        bad_reader_err.result == audio.ERR_FORMAT)
+
+local bad_capture, bad_capture_err = audio.capture.open_default({
+  backend = 999,
+})
+assert(bad_capture == nil)
+assert(type(bad_capture_err) == "table")
+assert(bad_capture_err.result == audio.ERR_ARG)
+
+local bad_playback, bad_playback_err = audio.playback.open_default({
+  backend = 999,
+})
+assert(bad_playback == nil)
+assert(type(bad_playback_err) == "table")
+assert(bad_playback_err.result == audio.ERR_ARG)
 
 local sink = {
   data = "",
@@ -197,6 +213,40 @@ assert(ptt:release() == true)
 assert(ptt:flush() == true)
 assert(ptt_segments == 1)
 assert(ptt:close() == true)
+
+if os.getenv("VECTIS_LUA_AUDIO_DEVICE_TEST") == "1" then
+  local capture_events = 0
+  local capture = assert(audio.capture.open_default({
+    backend = tonumber(os.getenv("VECTIS_LUA_AUDIO_DEVICE_BACKEND") or "") or
+        audio.DEVICE_BACKEND_AUTO,
+    buffer_ms = 200,
+    period_ms = 20,
+    state = function(event)
+      capture_events = capture_events + 1
+      assert(event.state == audio.CAPTURE_READY)
+      assert(type(event.frame_count) == "number")
+      return 0
+    end,
+  }))
+  assert(capture:start() == true)
+  capture:wait_ready(100)
+  local captured = assert(capture:read_f32_mono_16k(160))
+  assert(type(captured) == "table")
+  capture:stop()
+  assert(capture:close() == true)
+
+  local playback = assert(audio.playback.open_default({
+    backend = tonumber(os.getenv("VECTIS_LUA_AUDIO_DEVICE_BACKEND") or "") or
+        audio.DEVICE_BACKEND_AUTO,
+    buffer_ms = 200,
+    period_ms = 20,
+  }))
+  assert(playback:start() == true)
+  assert(playback:write_f32_mono_16k(frames) == #frames)
+  playback:drain()
+  playback:stop()
+  assert(playback:close() == true)
+end
 
 local bad_ptt = assert(audio.ptt.open({
   min_segment_ms = 1,

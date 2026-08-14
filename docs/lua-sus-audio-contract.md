@@ -13,14 +13,15 @@ Current deterministic coverage includes:
 
 - `require("audio")` constants/result strings, format capability checks,
   decoder file/URL/callback open, encoder file/callback open, callback
-  reader/writer error propagation, VOX, and PTT;
+  reader/writer error propagation, VOX, PTT, and capture/playback receiver
+  shells with opt-in live device tests;
 - `require("sus")` constants/result strings, backend/facade metadata, model
   catalog lookup, path/cache open error handling, model handles, and offline
   cache status callback propagation.
 
 Remaining work includes loaded-model transcriber workflows, segmented
-decoder/VOX transcription, progress and abort callbacks during transcription,
-and opt-in capture/playback device helpers.
+decoder/VOX transcription, and progress and abort callbacks during
+transcription.
 
 ## Module Names
 

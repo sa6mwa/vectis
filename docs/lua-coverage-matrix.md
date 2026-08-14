@@ -37,10 +37,10 @@ Columns:
 | dep:dsv | Vectis DSV/CSV/TSV helpers | partial | partial | yes | yes | n/a | `vectis.dsv` exposes materialized parse, typed source-to-callback iteration for dynamic and fixed-capacity string fields, spill, row serialization, and packed execution coverage; route-row Lua handler integration remains. |
 | dep:opcua | cpkt-opcua | partial | planned | yes | no | planned | `require("opcua")` covers client/foundation; server, async, subscriptions, PubSub remain. |
 | dep:sus | cpkt SUS / whisper | partial | planned | yes | yes | planned | Raw metadata, catalog lookup, path/cache open error handling, model handles, and offline cache status callbacks are exposed and packed-tested; transcriber/model-loaded workflows remain. |
-| dep:audio | cpkt audio / miniaudio | partial | planned | yes | yes | planned | Raw constants, result strings, capability checks, decoder file/URL/callback open, encoder file/callback open, callback reader/writer, VOX, and PTT are exposed and packed-tested; capture/playback remain opt-in future work. |
+| dep:audio | cpkt audio / miniaudio | partial | planned | yes | yes | planned | Raw constants, result strings, capability checks, decoder file/URL/callback open, encoder file/callback open, callback reader/writer, VOX, PTT, and capture/playback receiver shells are exposed and packed-tested; live devices remain opt-in. |
 | dep:nghttp2 | nghttp2 | n/a | n/a | yes | yes | n/a | Transport dependency behind curl/Kore; no direct app-facing Lua API expected unless HTTP/2 controls become product surface. |
 | dep:zlib | zlib | n/a | planned | yes | yes | n/a | Compression is transitive today; add Lua helpers only when archive/body compression workflows need them. |
-| dep:miniaudio | miniaudio | partial | planned | yes | yes | planned | Covered with `dep:audio`; capture/playback device helpers remain opt-in future work. |
+| dep:miniaudio | miniaudio | partial | planned | yes | yes | planned | Covered with `dep:audio`; capture/playback device helpers are exposed with opt-in live-device coverage. |
 
 ## Vectis Workflow Facades
 
@@ -71,7 +71,7 @@ Columns:
 | workflow:opcua-async | OPC UA async/subscription/PubSub workflows | planned | planned | no | no | planned | Needs callback and event-loop ownership contract. |
 | workflow:cai | AI/client/tool/MCP workflows | yes | planned | yes | no | planned | Raw CAI preloaded; Vectis service adapters are future work. |
 | workflow:sus | Whisper/transcription workflows | partial | planned | yes | yes | planned | Catalog and cache-control paths are exposed; local model transcription, segmented transcription, and live model tests remain. |
-| workflow:audio | Audio capture/playback/processing workflows | partial | planned | yes | yes | planned | File/callback decode/encode plus VOX/PTT are exposed; live capture/playback device helpers remain opt-in future work. |
+| workflow:audio | Audio capture/playback/processing workflows | partial | planned | yes | yes | planned | File/callback decode/encode, VOX/PTT, and capture/playback receiver shells are exposed; live device behavior remains opt-in. |
 | workflow:terminal-agent | libmdf/softline terminal and Agent Smith workflows | yes | planned | yes | no | n/a | Raw modules exist; Vectis-owned agent DX is future work. |
 | workflow:pack | Pack/self-contained binary workflows | n/a | yes | yes | yes | n/a | `vectis -a pack` and packed Lua e2e exist. |
 | workflow:totp-qr | TOTP and QR helpers | n/a | yes | yes | yes | n/a | Exposed under `vectis.auth.totp` and `vectis.auth.qr`. |
