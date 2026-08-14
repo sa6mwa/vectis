@@ -35,6 +35,22 @@ local function vectis_error(status_name, message)
   })
 end
 
+local function lockdc_error(err, message)
+  return vstatus.decorate_error(err, {
+    status = vstatus.ERR_STATE,
+    source_code = vstatus.ERROR_SOURCE_LOCKDC,
+    message = message or "lockdc workflow failed",
+  })
+end
+
+local function handler_error(err)
+  return vstatus.decorate_error(err, {
+    status = vstatus.ERR_STATE,
+    source_code = vstatus.ERROR_SOURCE_VECTIS,
+    message = "lockd handler failed",
+  })
+end
+
 function M.config(config)
   if config == nil then
     config = {}
@@ -82,7 +98,11 @@ function M.open(config)
   if normalized == nil then
     return nil, err
   end
-  return lockdc.open(normalized)
+  local client, open_err = lockdc.open(normalized)
+  if client == nil then
+    return nil, lockdc_error(open_err, "lockdc open failed")
+  end
+  return client
 end
 
 local function json_request(req)
@@ -115,7 +135,7 @@ function M.with_client(config, handler)
     error(result)
   end
   if handler_err ~= nil then
-    return nil, handler_err
+    return nil, handler_error(handler_err)
   end
   if result == nil then
     return true
@@ -132,7 +152,7 @@ function M.load_json(config, req)
   local lease, acquire_err = client:acquire(req)
   if lease == nil then
     client:close()
-    return nil, acquire_err
+    return nil, lockdc_error(acquire_err, "lockdc acquire failed")
   end
 
   local ok_get, value, meta_or_err = pcall(function()
@@ -147,7 +167,7 @@ function M.load_json(config, req)
       meta_or_err.no_content) then
     close_handle(lease)
     client:close()
-    return nil, meta_or_err
+    return nil, lockdc_error(meta_or_err, "lockdc get_json failed")
   end
 
   local ok_release, released, release_err = pcall(function()
@@ -161,7 +181,7 @@ function M.load_json(config, req)
   if released == nil then
     close_handle(lease)
     client:close()
-    return nil, release_err
+    return nil, lockdc_error(release_err, "lockdc release failed")
   end
   client:close()
   return value, meta_or_err
@@ -171,7 +191,7 @@ function M.save_json(config, req, value)
   return M.with_client(config, function(client)
     local lease, acquire_err = client:acquire(req)
     if lease == nil then
-      return nil, acquire_err
+      return nil, lockdc_error(acquire_err, "lockdc acquire failed")
     end
 
     local ok_update, updated, update_err = pcall(function()
@@ -183,7 +203,7 @@ function M.save_json(config, req, value)
     end
     if updated == nil then
       close_handle(lease)
-      return nil, update_err
+      return nil, lockdc_error(update_err, "lockdc update_json failed")
     end
 
     local ok_release, released, release_err = pcall(function()
@@ -195,7 +215,7 @@ function M.save_json(config, req, value)
     end
     if released == nil then
       close_handle(lease)
-      return nil, release_err
+      return nil, lockdc_error(release_err, "lockdc release failed")
     end
     return updated
   end)
@@ -203,7 +223,12 @@ end
 
 function M.enqueue_json(config, req, value)
   return M.with_client(config, function(client)
-    return client:enqueue(json_request(req), M.encode_json(value))
+    local enqueued, enqueue_err =
+        client:enqueue(json_request(req), M.encode_json(value))
+    if enqueued == nil then
+      return nil, lockdc_error(enqueue_err, "lockdc enqueue failed")
+    end
+    return enqueued
   end)
 end
 
@@ -215,7 +240,7 @@ function M.with_acquired_lease(config, req, handler)
   return M.with_client(config, function(client)
     local lease, acquire_err = client:acquire(req)
     if lease == nil then
-      return nil, acquire_err
+      return nil, lockdc_error(acquire_err, "lockdc acquire failed")
     end
 
     local ok, result, handler_err = pcall(handler, lease, client)
@@ -224,7 +249,7 @@ function M.with_acquired_lease(config, req, handler)
       error(result)
     end
     if handler_err ~= nil then
-      return nil, handler_err
+      return nil, handler_error(handler_err)
     end
     if result == nil then
       return true
@@ -241,7 +266,7 @@ function M.with_dequeued_json(config, req, handler)
   return M.with_client(config, function(client)
     local message, dequeue_err = client:dequeue(req)
     if message == nil then
-      return nil, dequeue_err
+      return nil, lockdc_error(dequeue_err, "lockdc dequeue failed")
     end
 
     local ok_payload, payload, payload_written_or_err = pcall(function()
@@ -253,7 +278,8 @@ function M.with_dequeued_json(config, req, handler)
     end
     if payload == nil then
       close_handle(message)
-      return nil, payload_written_or_err
+      return nil, lockdc_error(payload_written_or_err,
+                               "lockdc payload_json failed")
     end
 
     local ok, result, handler_err =
@@ -263,7 +289,7 @@ function M.with_dequeued_json(config, req, handler)
       error(result)
     end
     if handler_err ~= nil then
-      return nil, handler_err
+      return nil, handler_error(handler_err)
     end
     if result == nil then
       return true

@@ -49,6 +49,17 @@ When no packed lockd bundle exists, `client_bundle = "embedded"` returns
 `nil, err`; `err.status`, `err.status_string`, and `err.message` follow the
 Vectis Lua facade conventions.
 
+## Errors
+
+Expected workflow failures return `nil, err` with the standard Vectis status
+fields. Underlying `lockdc` open, acquire, update, release, enqueue, dequeue,
+and payload failures use `err.source = "lockdc"` and
+`err.source_code = vectis.ERROR_SOURCE_LOCKDC`. User callback failures returned
+as `nil, err` from `with_client`, `with_acquired_lease`, or
+`with_dequeued_json` use `err.source = "vectis"` and
+`err.source_code = vectis.ERROR_SOURCE_VECTIS` unless the callback already
+returned a structured source.
+
 ## Example
 
 ```lua

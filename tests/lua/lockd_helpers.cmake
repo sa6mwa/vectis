@@ -28,11 +28,27 @@ package.loaded.vectis = {
 package.loaded["vectis.status"] = {
   ERR_STATE = 3,
   ERROR_SOURCE_VECTIS = 1,
+  ERROR_SOURCE_LOCKDC = 3,
   status_string = function(status)
     return status == 3 and "state" or tostring(status)
   end,
   error_source_string = function(source)
-    return source == 1 and "vectis" or tostring(source)
+    if source == 1 then return "vectis" end
+    if source == 3 then return "lockdc" end
+    return tostring(source)
+  end,
+  decorate_error = function(err, defaults)
+    defaults = defaults or {}
+    if type(err) ~= "table" then
+      err = { message = tostring(err or defaults.message or "vectis error") }
+    end
+    err.status = err.status or defaults.status
+    err.status_string = err.status_string or
+        package.loaded["vectis.status"].status_string(err.status)
+    err.source_code = err.source_code or defaults.source_code
+    err.source = err.source or
+        package.loaded["vectis.status"].error_source_string(err.source_code)
+    return err
   end,
   error = function(err)
     err.status_string = err.status_string or
@@ -56,13 +72,22 @@ package.loaded.lockdc = {
   end,
   open = function(config)
     opened_configs[#opened_configs + 1] = config
+    if config.fail_open then
+      return nil, { message = "open failed" }
+    end
     local client = {}
     function client:enqueue(req, body)
+      if req.queue == "fail-enqueue" then
+        return nil, { message = "enqueue failed" }
+      end
       enqueue_req = req
       enqueue_body = body
       return true
     end
     function client:acquire(req)
+      if req.key == "fail-acquire" then
+        return nil, { message = "acquire failed" }
+      end
       acquired_req = req
       local lease = {}
       function lease:get_json()
@@ -82,6 +107,9 @@ package.loaded.lockdc = {
         return true
       end
       function lease:release()
+        if req.key == "fail-release" then
+          return nil, { message = "release failed" }
+        end
         released_leases = released_leases + 1
         return true
       end
@@ -118,6 +146,21 @@ package.loaded.lockdc = {
 package.loaded["vectis.lockd"] = nil
 local lockd = require("vectis.lockd")
 
+local function assert_status_error(err, source_code, message)
+  assert(type(err) == "table", "err is " .. type(err))
+  assert(err.status == package.loaded["vectis.status"].ERR_STATE,
+      "status=" .. tostring(err.status))
+  assert(err.status_string == "state",
+      "status_string=" .. tostring(err.status_string))
+  assert(err.source_code == source_code,
+      "source_code=" .. tostring(err.source_code))
+  assert(err.source ==
+      package.loaded["vectis.status"].error_source_string(source_code),
+      "source=" .. tostring(err.source))
+  assert(err.message == message,
+      "message=" .. tostring(err.message))
+end
+
 assert(type(lockd.enqueue_json) == "function")
 assert(type(lockd.with_acquired_lease) == "function")
 assert(type(lockd.with_dequeued_json) == "function")
@@ -141,6 +184,22 @@ assert(enqueue_req.content_type == "application/json")
 assert(enqueue_body == '{"type":"order.created","id":"1001"}')
 assert(closed_clients == 1)
 
+local open_failed, open_failed_err = lockd.open({ fail_open = true })
+assert(open_failed == nil)
+assert_status_error(open_failed_err,
+    package.loaded["vectis.status"].ERROR_SOURCE_LOCKDC, "open failed")
+
+local enqueue_failed, enqueue_failed_err = lockd.enqueue_json({}, {
+  queue = "fail-enqueue",
+}, {
+  type = "order.created",
+  id = "1001",
+})
+assert(enqueue_failed == nil)
+assert_status_error(enqueue_failed_err,
+    package.loaded["vectis.status"].ERROR_SOURCE_LOCKDC, "enqueue failed")
+assert(closed_clients == 2)
+
 local saved = assert(lockd.save_json({
   endpoints = {"https://127.0.0.1:1"},
 }, {
@@ -154,7 +213,7 @@ local saved = assert(lockd.save_json({
 assert(saved == true)
 assert(saved_value.type == "account.saved")
 assert(released_leases == 1)
-assert(closed_clients == 2)
+assert(closed_clients == 3)
 
 local loaded, loaded_meta = assert(lockd.load_json({
   endpoints = {"https://127.0.0.1:1"},
@@ -165,21 +224,38 @@ local loaded, loaded_meta = assert(lockd.load_json({
 assert(loaded.type == "account.loaded")
 assert(loaded_meta.etag == "loaded-etag")
 assert(released_leases == 2)
-assert(closed_clients == 3)
+assert(closed_clients == 4)
+
+local acquire_failed, acquire_failed_err = lockd.load_json({}, {
+  key = "fail-acquire",
+})
+assert(acquire_failed == nil)
+assert_status_error(acquire_failed_err,
+    package.loaded["vectis.status"].ERROR_SOURCE_LOCKDC, "acquire failed")
+assert(closed_clients == 5)
+
+local release_failed, release_failed_err = lockd.load_json({}, {
+  key = "fail-release",
+})
+assert(release_failed == nil)
+assert_status_error(release_failed_err,
+    package.loaded["vectis.status"].ERROR_SOURCE_LOCKDC, "release failed")
+assert(closed_leases == 1)
+assert(closed_clients == 6)
 
 local update_exploded = pcall(function()
   lockd.save_json({}, { key = "explode-update" }, { type = "bad" })
 end)
 assert(update_exploded == false)
-assert(closed_leases == 1)
-assert(closed_clients == 4)
+assert(closed_leases == 2)
+assert(closed_clients == 7)
 
 local load_exploded = pcall(function()
   lockd.load_json({}, { key = "explode-load" })
 end)
 assert(load_exploded == false)
-assert(closed_leases == 2)
-assert(closed_clients == 5)
+assert(closed_leases == 3)
+assert(closed_clients == 8)
 
 local handler_seen_client
 local lease_result = assert(lockd.with_acquired_lease({
@@ -195,17 +271,18 @@ end))
 assert(lease_result == "lease-ok")
 assert(acquired_req.key == "accounts/1001")
 assert(type(handler_seen_client) == "table")
-assert(closed_leases == 3)
-assert(closed_clients == 6)
+assert(closed_leases == 4)
+assert(closed_clients == 9)
 
 local failed, failed_err = lockd.with_acquired_lease({}, { key = "boom" },
   function()
     return nil, { message = "handler failed" }
   end)
 assert(failed == nil)
-assert(failed_err.message == "handler failed")
-assert(closed_leases == 4)
-assert(closed_clients == 7)
+assert_status_error(failed_err,
+    package.loaded["vectis.status"].ERROR_SOURCE_VECTIS, "handler failed")
+assert(closed_leases == 5)
+assert(closed_clients == 10)
 
 local dequeue_result = assert(lockd.with_dequeued_json({
   endpoints = {"https://127.0.0.1:1"},
@@ -224,7 +301,7 @@ assert(dequeue_result == "dequeue-ok")
 assert(dequeued_req.queue == "orders")
 assert(acked_messages == 1)
 assert(closed_messages == 1)
-assert(closed_clients == 8)
+assert(closed_clients == 11)
 
 local payload_missing, payload_missing_err = lockd.with_dequeued_json({}, {
   queue = "missing-payload",
@@ -232,9 +309,10 @@ local payload_missing, payload_missing_err = lockd.with_dequeued_json({}, {
   error("missing payload handler should not run")
 end)
 assert(payload_missing == nil)
-assert(payload_missing_err.message == "payload missing")
+assert_status_error(payload_missing_err,
+    package.loaded["vectis.status"].ERROR_SOURCE_LOCKDC, "payload missing")
 assert(closed_messages == 2)
-assert(closed_clients == 9)
+assert(closed_clients == 12)
 
 local payload_exploded = pcall(function()
   lockd.with_dequeued_json({}, { queue = "explode-payload" }, function()
@@ -243,7 +321,7 @@ local payload_exploded = pcall(function()
 end)
 assert(payload_exploded == false)
 assert(closed_messages == 3)
-assert(closed_clients == 10)
+assert(closed_clients == 13)
 
 print("vectis-lockd-helpers-ok")
 ]])

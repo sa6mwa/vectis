@@ -276,7 +276,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add a public `cpkt` error source and structured Vectis status/source envelopes to dependency-native cpkt-backed Lua facades (`audio`, `sus`, and `opcua`) while preserving dependency-native diagnostics.
 - [x] Convert packed embedded bundle/assets Lua helper failures to structured Vectis status/source errors and cover them in the packed scenario.
 - [x] Add a preloaded pure-Lua `vectis.status` helper and use it to enrich curl-backed HTTP/WebDAV/MQTT/SMTP normalized errors with Vectis status/source metadata, timeout mapping, dependency codes, and HTTP status diagnostics.
-- [x] Use the shared `vectis.status` helper for Vectis-owned DSV and lockd workflow helper errors, including LoneJSON decode-source attribution in `vectis.dsv`.
+- [x] Use the shared `vectis.status` helper for Vectis-owned DSV and lockd workflow helper errors, including LoneJSON decode-source attribution in `vectis.dsv`, lockdc-source attribution for lockd operations, and Vectis-source attribution for lockd callback failures.
 - [x] Integrate existing Lua rocks/source archives for lockdc, pslog, liblql, and dependency Lua modules from pinned dependency sources.
 - [x] Build lockdc, pslog, and Vectis-owned Lua modules against the provisioned Lua 5.5 ABI.
 - [x] Register bundled Lua modules statically through `package.preload` in the `vectis` binary.
