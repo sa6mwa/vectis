@@ -14,10 +14,10 @@ Current deterministic coverage includes:
 - `require("audio")` constants/result strings, format capability checks,
   decoder file/URL/callback open, encoder file/callback open, callback
   reader/writer error propagation, VOX, PTT, and capture/playback receiver
-  shells with opt-in live device tests;
+  shells with opt-in live device tests, documented in `docs/lua-audio.md`;
 - `require("sus")` constants/result strings, backend/facade metadata, model
   catalog lookup, path/cache open error handling, model handles, and offline
-  cache status callback propagation.
+  cache status callback propagation, documented in `docs/lua-sus.md`.
 
 Remaining work includes loaded-model transcriber workflows, segmented
 decoder/VOX transcription, and progress and abort callbacks during

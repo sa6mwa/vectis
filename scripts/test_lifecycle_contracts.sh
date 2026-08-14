@@ -251,6 +251,15 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$matrix" 'New Vectis C SDK workflows must add a `workflow:\*`'
   assert_contains "$repo_root/TODO.md" '\[x\] Add a Lua coverage matrix under `docs/`'
   assert_contains "$repo_root/TODO.md" '\[x\] Add a lifecycle contract that fails when a bundled dependency'
+  assert_contains "$matrix" 'docs/lua-audio\.md'
+  assert_contains "$matrix" 'docs/lua-sus\.md'
+  assert_contains "$repo_root/docs/lua-audio.md" 'audio\.decoder\.open_reader'
+  assert_contains "$repo_root/docs/lua-audio.md" 'audio\.capture\.open_default'
+  assert_contains "$repo_root/docs/lua-audio.md" 'audio\.playback\.open_default'
+  assert_contains "$repo_root/docs/lua-sus.md" 'sus\.open_cached'
+  assert_contains "$repo_root/docs/lua-sus.md" 'model:reset_transcript_spacing'
+  assert_contains "$repo_root/docs/lua-sus-audio-contract.md" 'docs/lua-audio\.md'
+  assert_contains "$repo_root/docs/lua-sus-audio-contract.md" 'docs/lua-sus\.md'
 }
 
 assert_luarocks_artifact_rejected() {

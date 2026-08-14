@@ -307,6 +307,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [ ] Implement the remaining cpkt `sus`/whisper Lua facade from `docs/lua-sus-audio-contract.md`, including loaded-model transcribers, segmented decoder/VOX transcription, callback progress/abort contracts, and live/local model coverage.
 - [x] Implement the remaining cpkt audio/miniaudio Lua facade receiver shells from `docs/lua-sus-audio-contract.md`, including capture/playback device helpers behind opt-in tests.
 - [x] Add initial raw cpkt `sus` and audio Lua modules with deterministic metadata, catalog/cache, callback decoder/encoder, VOX, PTT, preload, example, and packed execution coverage.
+- [x] Add user-facing Lua docs for the raw cpkt `sus` and audio facades.
 - [ ] Add Lua helpers for libmdf/softline where Vectis-owned terminal/agent workflows need higher-level DX; otherwise keep their raw modules available without wrapping.
 - [x] Add deterministic Lua examples for raw pslog, liblql, and softline module workflows without adding redundant Vectis-owned wrappers.
 - [x] Add packed execution coverage for raw pslog, liblql, and softline Lua module workflows.
