@@ -25,11 +25,11 @@ Columns:
 | dep:lua-runtime | cpkt Lua 5.5 runtime facade | yes | yes | yes | yes | n/a | Runtime is embedded; not a user module. |
 | dep:lockdc | liblockdc / lockdc Lua module | yes | partial | yes | yes | n/a | `require("lockdc")` and `vectis.lockd`; document/queue helpers still need fuller DX. |
 | dep:lonejson | LoneJSON Lua module | yes | partial | yes | yes | n/a | Raw encode/decode/schema available; Vectis JSON route/downstream DX remains incomplete. |
-| dep:pslog | libpslog Lua module | yes | planned | yes | no | n/a | Raw logging module is preloaded; Vectis logger inheritance in Lua needs a clear helper surface. |
-| dep:lql | liblql Lua module | yes | planned | yes | no | n/a | Raw module is preloaded. |
+| dep:pslog | libpslog Lua module | yes | planned | yes | yes | n/a | Raw logging module is preloaded and packed-tested; Vectis logger inheritance in Lua needs a clear helper surface. |
+| dep:lql | liblql Lua module | yes | planned | yes | yes | n/a | Raw module is preloaded and packed-tested. |
 | dep:cai | CAI Lua module | yes | planned | yes | no | planned | Raw module is preloaded; Vectis service integration waits on CAI SDK stabilization. |
 | dep:libmdf | libmdf Lua module | yes | planned | yes | no | n/a | Raw module is preloaded; Agent Smith / terminal DX helpers are future work. |
-| dep:softline | softline Lua module | yes | planned | yes | no | n/a | Raw module is preloaded; higher-level prompt/terminal helpers are future work. |
+| dep:softline | softline Lua module | yes | planned | yes | yes | n/a | Raw module is preloaded and packed-tested; higher-level prompt/terminal helpers are future work. |
 | dep:curl | libcurl Lua facade | yes | partial | yes | yes | planned | `curl`, `vectis.http`, `vectis.webdav`, `vectis.mqtt`, and `vectis.smtp`; generic protocols are available through option tables. |
 | dep:openssl | OpenSSL | yes | partial | yes | yes | n/a | `openssl` exposes version, SHA-256, general EVP digest/HMAC, hex/Base64 codecs, PEM-backed signing/verification, and CSPRNG helpers; `vectis.cert` owns certificate workflows. |
 | dep:libssh2 | libssh2 | planned | partial | yes | no | n/a | `vectis.ssh.exec` and libssh2-backed SFTP/SCP file upload/download exist; raw sessions, channels, deeper SFTP operations, and advanced host-key workflows are missing. |
