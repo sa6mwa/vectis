@@ -10360,6 +10360,12 @@ static int luaopen_vectis(lua_State *lua) {
   }
   lua_setfield(lua, -2, "mqtt");
   lua_getglobal(lua, "require");
+  lua_pushliteral(lua, "vectis.smtp");
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    return lua_error(lua);
+  }
+  lua_setfield(lua, -2, "smtp");
+  lua_getglobal(lua, "require");
   lua_pushliteral(lua, "vectis.lockd");
   if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
     return lua_error(lua);
