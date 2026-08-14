@@ -13,8 +13,11 @@ local xml = require("vectis.xml")
 
 local work_dir = assert(arg[1], "work directory argument is required")
 local auth_store = work_dir .. "/facade-auth-credentials.json"
+local auth_state = work_dir .. "/facade-auth-state.json"
 os.remove(auth_store)
 os.remove(auth_store .. ".lock")
+os.remove(auth_state)
+os.remove(auth_state .. ".lock")
 
 local function assert_status_error(err, status, message_fragment)
   assert(type(err) == "table")
@@ -40,6 +43,7 @@ assert(vectis.error_source_string(vectis.ERROR_SOURCE_LIBSSH2) == "libssh2")
 
 assert(vectis.auth.store_init({
   credentials_path = auth_store,
+  state_path = auth_state,
 }) == true)
 
 local user = assert(vectis.auth.user_add({
@@ -156,6 +160,187 @@ local invalid_response, invalid_response_err = invalid_callback:authenticate({})
 assert(invalid_response == nil)
 assert_status_error(invalid_response_err, vectis.ERR_INVALID,
                     "auth callback response action")
+
+local email_token = assert(vectis.auth.email_token_issue({
+  credentials_path = auth_store,
+  state_path = auth_state,
+  username = "email-user@example.com",
+  realm = "facade",
+  email = "email-user@example.com",
+  transaction_id = "email-tx-1",
+  token = "123456",
+  now = 1000,
+  ttl_seconds = 300,
+}))
+assert(email_token.transaction_id == "email-tx-1")
+assert(email_token.token == "123456")
+assert(email_token.expires_at == 1300)
+
+local wrong_email_token = assert(vectis.auth.email_token_verify({
+  credentials_path = auth_store,
+  state_path = auth_state,
+  transaction_id = "email-tx-1",
+  username = "email-user@example.com",
+  realm = "facade",
+  token = "000000",
+  now = 1100,
+}))
+assert(wrong_email_token.verified == false)
+assert(wrong_email_token.expired == false)
+assert(wrong_email_token.failed_attempts == 1)
+
+local good_email_token = assert(vectis.auth.email_token_verify({
+  credentials_path = auth_store,
+  state_path = auth_state,
+  transaction_id = "email-tx-1",
+  username = "email-user@example.com",
+  realm = "facade",
+  token = "123456",
+  now = 1100,
+}))
+assert(good_email_token.verified == true)
+assert(good_email_token.expired == false)
+assert(good_email_token.username == "email-user@example.com")
+assert(good_email_token.realm == "facade")
+assert(good_email_token.email == "email-user@example.com")
+
+local replayed_email_token = assert(vectis.auth.email_token_verify({
+  credentials_path = auth_store,
+  state_path = auth_state,
+  transaction_id = "email-tx-1",
+  username = "email-user@example.com",
+  realm = "facade",
+  token = "123456",
+  now = 1100,
+}))
+assert(replayed_email_token.verified == false)
+assert(replayed_email_token.expired == false)
+
+assert(vectis.auth.email_token_issue({
+  credentials_path = auth_store,
+  state_path = auth_state,
+  username = "email-user@example.com",
+  realm = "facade",
+  email = "email-user@example.com",
+  transaction_id = "email-tx-limited",
+  token = "limited",
+  now = 1300,
+  ttl_seconds = 300,
+  max_attempts = 2,
+}))
+
+local limited_wrong_one = assert(vectis.auth.email_token_verify({
+  credentials_path = auth_store,
+  state_path = auth_state,
+  transaction_id = "email-tx-limited",
+  username = "email-user@example.com",
+  realm = "facade",
+  token = "wrong-one",
+  now = 1310,
+}))
+assert(limited_wrong_one.verified == false)
+assert(limited_wrong_one.failed_attempts == 1)
+assert(limited_wrong_one.max_attempts == 2)
+
+local limited_wrong_two = assert(vectis.auth.email_token_verify({
+  credentials_path = auth_store,
+  state_path = auth_state,
+  transaction_id = "email-tx-limited",
+  username = "email-user@example.com",
+  realm = "facade",
+  token = "wrong-two",
+  now = 1310,
+}))
+assert(limited_wrong_two.verified == false)
+assert(limited_wrong_two.failed_attempts == 2)
+assert(limited_wrong_two.max_attempts == 2)
+
+local limited_consumed = assert(vectis.auth.email_token_verify({
+  credentials_path = auth_store,
+  state_path = auth_state,
+  transaction_id = "email-tx-limited",
+  username = "email-user@example.com",
+  realm = "facade",
+  token = "limited",
+  now = 1310,
+}))
+assert(limited_consumed.verified == false)
+assert(limited_consumed.expired == false)
+
+assert(vectis.auth.email_token_issue({
+  credentials_path = auth_store,
+  state_path = auth_state,
+  username = "email-user@example.com",
+  realm = "facade",
+  email = "email-user@example.com",
+  pending_transaction_id = "pending-email-1",
+  transaction_id = "email-tx-scoped",
+  token = "abcdef",
+  now = 1200,
+  ttl_seconds = 300,
+}))
+
+local wrong_pending = assert(vectis.auth.email_token_verify({
+  credentials_path = auth_store,
+  state_path = auth_state,
+  transaction_id = "email-tx-scoped",
+  username = "email-user@example.com",
+  realm = "facade",
+  pending_transaction_id = "pending-email-other",
+  token = "abcdef",
+  now = 1210,
+}))
+assert(wrong_pending.verified == false)
+assert(wrong_pending.expired == false)
+
+local scoped_email_token = assert(vectis.auth.email_token_verify({
+  credentials_path = auth_store,
+  state_path = auth_state,
+  transaction_id = "email-tx-scoped",
+  username = "email-user@example.com",
+  realm = "facade",
+  pending_transaction_id = "pending-email-1",
+  token = "abcdef",
+  now = 1210,
+}))
+assert(scoped_email_token.verified == true)
+assert(scoped_email_token.pending_transaction_id == "pending-email-1")
+
+assert(vectis.auth.email_token_issue({
+  credentials_path = auth_store,
+  state_path = auth_state,
+  username = "email-user@example.com",
+  realm = "facade",
+  email = "email-user@example.com",
+  transaction_id = "email-tx-expired",
+  token = "654321",
+  now = 2000,
+  ttl_seconds = 60,
+}))
+
+local expired_email_token = assert(vectis.auth.email_token_verify({
+  credentials_path = auth_store,
+  state_path = auth_state,
+  transaction_id = "email-tx-expired",
+  username = "email-user@example.com",
+  realm = "facade",
+  token = "654321",
+  now = 2061,
+}))
+assert(expired_email_token.verified == false)
+assert(expired_email_token.expired == true)
+
+local consumed_expired_token = assert(vectis.auth.email_token_verify({
+  credentials_path = auth_store,
+  state_path = auth_state,
+  transaction_id = "email-tx-expired",
+  username = "email-user@example.com",
+  realm = "facade",
+  token = "654321",
+  now = 2061,
+}))
+assert(consumed_expired_token.verified == false)
+assert(consumed_expired_token.expired == false)
 
 local verifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~facade"
 local oidc = assert(vectis.auth.oidc_authorization({
