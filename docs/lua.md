@@ -13,6 +13,23 @@ For shared naming, error, ownership, and payload-shape rules, see the
 For SUS/audio callback and ownership details, see the
 [SUS and audio contract](lua-sus-audio-contract.md).
 
+## Framework Model
+
+The Lua framework has two deliberate layers:
+
+- Dependency-native modules expose bundled libraries directly through
+  `require("<module>")`. They keep upstream naming and complete API coverage
+  where a dependency already has a useful Lua facade.
+- Vectis-owned modules live under `vectis.*` and compose Vectis concepts such
+  as server routes, auth, packed assets, lockd workflow cleanup, terminal DX,
+  certificate workflows, HTTP/WebDAV/MQTT/SMTP defaults, and structured status
+  metadata.
+
+`require("vectis").libs` is an alias table for bundled dependency modules, not
+a wrapper layer. Do not add a Vectis-owned helper solely to mirror a dependency
+API. Add one only when it removes real Vectis service-workflow friction, crosses
+multiple Vectis-owned concepts, or gives a safer ownership/cleanup boundary.
+
 ## Dependency-Native Modules
 
 These modules are intended to expose upstream or bundled C library behavior

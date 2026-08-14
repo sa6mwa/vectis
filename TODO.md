@@ -246,7 +246,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Add a Vectis CAI config section that can borrow an external `cai_client` or create an app-owned client with Vectis logger inheritance.
 - [ ] Mirror the lockd logger model for CAI: dedicated CAI logger, fallback to app/Kore logger, and `logger_disabled` opt-out.
 - [ ] Add thin Vectis adapters for request-body reader to `cai_source`, CAI output to Vectis response/lockd payload, and CAI errors to JSON API responses.
-- [ ] Keep CAI itself as the primary SDK for OpenAI mechanics; Vectis should provide integration glue and service-oriented DX, not a second CAI wrapper.
+- [x] Keep CAI itself as the primary SDK for OpenAI mechanics; Vectis should provide integration glue and service-oriented DX, not a second CAI wrapper.
 
 ## Area 12: Lua Runtime and Framework
 
@@ -284,7 +284,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add a top-level `vectis.libs` namespace that collects bundled dependency Lua facades (`lockdc`, `lonejson`, `pslog`, `lql`, `cai`, `libmdf`, `softline`, `curl`, `opcua`, `openssl`, `zlib`, `audio`, `sus`) without replacing direct `require(...)` access.
 - [x] Keep `vectis.libs` coverage current whenever any bundled Lua facade is added or renamed, including direct module aliasing, Lua smoke assertions, and coverage-matrix documentation in the same change.
 - [x] Add a dependency-native zlib Lua facade for buffered string deflate/inflate, gzip/gunzip, auto-decompress, file-backed bounded transforms, version, and explicit output limits.
-- [ ] For each dependency-native Lua facade, add a Vectis-owned helper only where it reduces real service workflow friction; do not replace or hide the direct dependency module when complete API coverage matters.
+- [x] For each dependency-native Lua facade, add a Vectis-owned helper only where it reduces real service workflow friction; do not replace or hide the direct dependency module when complete API coverage matters.
 - [x] Add an OPC UA Lua client/foundation facade over the `cpkt-opcua` C89 facade and statically preload it in the `vectis` binary as `require("opcua")`.
 - [ ] Extend the OPC UA Lua facade to cover server-side APIs once Lua callback ownership and method/access-control contracts are defined.
 - [ ] Extend the OPC UA Lua facade to cover subscriptions, async client calls, browse callbacks, and PubSub with explicit Lua callback lifetime/error semantics.
@@ -349,7 +349,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Keep LuaRocks out of the `vectis` binary runtime and release artifacts.
 - [ ] Add Vectis-owned Lua modules for Kore and broader libssh2 coverage.
 - [x] Add a Vectis-owned Lua SSH command execution helper backed by libssh2.
-- [ ] Keep the Lua framework model aligned with the C SDK model: dependency-native access plus a Vectis-owned DX layer with matching concepts and behavior.
+- [x] Keep the Lua framework model aligned with the C SDK model: dependency-native access plus a Vectis-owned DX layer with matching concepts and behavior.
 - [x] Support shebang execution through `#!/usr/local/bin/vectis`.
 - [x] Provide a friendly REST API DX for defining buffered JSON routes, handlers, middleware-like hooks, JSON responses, and downstream JSON calls.
 - [x] Add `head` to the `vectis.rest.client` downstream JSON client for method parity with `vectis.http.head`.
