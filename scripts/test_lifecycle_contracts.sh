@@ -328,6 +328,8 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$matrix" '\| workflow:opcua-server \|'
   assert_contains "$matrix" '\| workflow:opcua-async \|'
   assert_contains "$matrix" '\| workflow:cai \|'
+  assert_contains "$matrix" 'Dependency-native CAI local workflows are packed-tested'
+  assert_contains "$repo_root/tests/lua/example_local_facades_pack.cmake" 'examples/lua/cai_local\.lua'
   assert_contains "$matrix" '\| workflow:sus \|'
   assert_contains "$matrix" '\| workflow:audio \|'
   assert_contains "$matrix" '\| workflow:terminal-agent \|'
