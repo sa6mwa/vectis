@@ -325,7 +325,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add Lua examples for XML, DSV/CSV/TSV, WebDAV client, mutable WebDAV server, raw OpenSSL, certificate management, SCP, MQTT, and SMTP workflows as those facades land.
 - [ ] Add Lua examples for raw SFTP/libssh2 lower-level operations, OPC UA client, CAI, sus/whisper, and audio/miniaudio workflows as those facades land.
 - [ ] Add Lua unit and end-to-end tests for every Lua facade, including preload smoke, method-call DX, ownership/finalizer cleanup, structured error objects, packed execution, large-value streaming/spooling, and local deterministic protocol scenarios.
-- [ ] Add release/package verification that the `vectis` binary includes all statically preloaded Lua modules while C binary SDK artifacts do not accidentally ship Lua source/runtime/package-manager state.
+- [x] Add release/package verification that the `vectis` binary includes all statically preloaded Lua modules while C binary SDK artifacts do not accidentally ship Lua source/runtime/package-manager state.
 
 ## Area 13: Single Binary Packaging
 

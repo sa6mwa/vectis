@@ -38,6 +38,10 @@ verify_native_install_tree() {
   fi
   LD_LIBRARY_PATH="$package_root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
     "$package_root/bin/vectis" --version >/dev/null
+  LD_LIBRARY_PATH="$package_root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    bash "$script_dir/verify_vectis_lua_preloads.sh" \
+      "$package_root/bin/vectis" \
+      "${VECTIS_VERSION:-$("$script_dir/release_version.sh")}" >/dev/null
 }
 
 target_id_for_preset() {

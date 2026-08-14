@@ -88,6 +88,14 @@ if(TARGET vectis_bin)
     ENVIRONMENT "VECTIS_EXPECTED_VERSION=${PROJECT_VERSION}"
     LABELS "lua;smoke;local"
     TIMEOUT 30)
+  add_test(NAME vectis_lua_preload_artifact_contract
+           COMMAND bash
+                   "${CMAKE_SOURCE_DIR}/scripts/verify_vectis_lua_preloads.sh"
+                   "$<TARGET_FILE:vectis_bin>"
+                   "${PROJECT_VERSION}")
+  set_tests_properties(vectis_lua_preload_artifact_contract PROPERTIES
+    LABELS "lua;smoke;local"
+    TIMEOUT 30)
   add_test(NAME vectis_lua_curl
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"

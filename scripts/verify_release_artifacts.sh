@@ -102,6 +102,9 @@ while IFS= read -r artifact_name; do
             if [ -x "$root/bin/vectis" ]; then
               LD_LIBRARY_PATH="$root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
                 "$root/bin/vectis" --version >/dev/null
+              LD_LIBRARY_PATH="$root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+                bash "$script_dir/verify_vectis_lua_preloads.sh" \
+                  "$root/bin/vectis" "$version" >/dev/null
             fi
           fi
           ;;
