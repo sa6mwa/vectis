@@ -7,6 +7,7 @@ file(WRITE "${json_file}" "{\"ok\":true,\"message\":\"streamed\"}\n")
 file(WRITE "${script}" [[
 local curl = require("curl")
 local lonejson = require("lonejson")
+local smtp = require("vectis.smtp")
 
 local body_url = "file://" .. assert(arg[1])
 local json_url = "file://" .. assert(arg[2])
@@ -17,6 +18,7 @@ assert(curl.version():find("libcurl", 1, true))
 assert(type(curl.perform) == "function")
 assert(type(curl.json) == "function")
 assert(type(curl.stream_json) == "function")
+assert(type(smtp.send) == "function")
 
 local plain = curl.perform({
   url = body_url,
@@ -91,7 +93,29 @@ local smtp_ok, smtp_err = pcall(curl.perform, {
   smtp = {mail_from = "from@example.test", rcpt = {"to@example.test"}},
 })
 assert(smtp_ok == false)
-assert(tostring(smtp_err):find("curl body is required for SMTP upload", 1, true))
+assert(tostring(smtp_err):find("body, body_path, or upload_path", 1, true))
+
+local smtp_missing_body_ok, smtp_missing_body_err = pcall(smtp.send, {
+  url = "smtp://127.0.0.1:9",
+  mail_from = "from@example.test",
+  rcpt = {"to@example.test"},
+})
+assert(smtp_missing_body_ok == false)
+assert(tostring(smtp_missing_body_err):find("body, message, body_path, or upload_path", 1, true))
+
+local smtp_file = smtp.send({
+  url = "smtp://127.0.0.1:9",
+  mail_from = "from@example.test",
+  to = "to@example.test",
+  body_path = assert(arg[1]),
+  timeout_ms = 200,
+  connect_timeout_ms = 50,
+  retry = false,
+})
+assert(smtp_file.ok == false)
+assert(smtp_file.transport_ok == false)
+assert(type(smtp_file.error) == "table")
+assert(type(smtp_file.error.message) == "string")
 ]])
 
 execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${body_file}" "${json_file}"

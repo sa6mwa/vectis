@@ -776,6 +776,11 @@ if(VECTIS_BUILD_BINARY)
     "${CMAKE_BINARY_DIR}/generated/include/vectis_mqtt_lua_init.h"
   )
   vectis_generate_lua_init_header(
+    "${CMAKE_SOURCE_DIR}/lua/vectis/smtp.lua"
+    "vectis_smtp_lua_init"
+    "${CMAKE_BINARY_DIR}/generated/include/vectis_smtp_lua_init.h"
+  )
+  vectis_generate_lua_init_header(
     "${CMAKE_SOURCE_DIR}/lua/vectis/lockd.lua"
     "vectis_lockd_lua_init"
     "${CMAKE_BINARY_DIR}/generated/include/vectis_lockd_lua_init.h"

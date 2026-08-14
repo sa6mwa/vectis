@@ -74,12 +74,15 @@ libcurl into `lonejson_curl_write_callback()`.
 - `tcp_keepalive`: enables TCP keepalive.
 - `no_signal`: keeps libcurl signal-free, default true.
 - `smtp`: table enabling SMTP upload with `mail_from`, `rcpt`, optional
-  `use_ssl`, and optional `probe`.
+  `use_ssl`, and optional `probe`. SMTP payloads may use `body`, `body_path`,
+  or `upload_path`.
 
 The option families above cover the main protocol classes expected from the
 bundled libcurl build: HTTP/HTTPS, multipart uploads, WebDAV, SMTP/SMTPS,
 SFTP/SCP, FTP/file transfer, and MQTT-style publish payloads. Unsupported URL
 schemes remain libcurl runtime errors and are reported in the result table.
+Protocol-specific helpers such as `vectis.http`, `vectis.webdav`,
+`vectis.mqtt`, and `vectis.smtp` use this lower-level facade.
 
 Retry conditions may be `"transport"`, `"429"`, `"status_429"`, `"5xx"`,
 `"status_5xx"`, `"default"`, or `"none"`, or a table combining condition

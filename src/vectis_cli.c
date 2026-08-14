@@ -46,6 +46,7 @@
 #include "vectis_lockdc_lua_init.h"
 #include "vectis_mqtt_lua_init.h"
 #include "vectis_pslog_lua_init.h"
+#include "vectis_smtp_lua_init.h"
 #include "vectis_webdav_lua_init.h"
 #include "vectis_xml_lua_init.h"
 
@@ -7006,6 +7007,7 @@ static int vectis_lua_curl_apply_mail_rcpt(lua_State *lua, CURL *curl,
 static int vectis_lua_curl_apply_smtp(lua_State *lua, CURL *curl,
                                       int option_index,
                                       vectis_lua_curl_buffer *upload,
+                                      vectis_lua_curl_file_upload *file,
                                       struct curl_slist **recipients) {
   const char *mail_from;
   const char *body;
@@ -7045,7 +7047,21 @@ static int vectis_lua_curl_apply_smtp(lua_State *lua, CURL *curl,
   lua_getfield(lua, option_index, "body");
   body = lua_tolstring(lua, -1, &body_size);
   if (body == NULL) {
-    return luaL_error(lua, "curl body is required for SMTP upload");
+    lua_pop(lua, 1);
+    if (file != NULL && file->file != NULL) {
+      (void)curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+      (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION,
+                             vectis_lua_curl_read_file);
+      (void)curl_easy_setopt(curl, CURLOPT_READDATA, file);
+      if (file->size >= (curl_off_t)0) {
+        (void)curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, file->size);
+      }
+      lua_pop(lua, 1);
+      return 1;
+    }
+    return luaL_error(lua,
+                      "curl body, body_path, or upload_path is required for "
+                      "SMTP upload");
   }
   if (!vectis_lua_curl_buffer_append(upload, body, body_size)) {
     return luaL_error(lua, "curl SMTP body allocation failed");
@@ -7984,7 +8000,9 @@ static int vectis_lua_curl_perform(lua_State *lua) {
     is_smtp = 0;
     is_upload = 1;
   } else {
-    is_smtp = vectis_lua_curl_apply_smtp(lua, curl, 1, &body, &recipients);
+    is_smtp =
+        vectis_lua_curl_apply_smtp(lua, curl, 1, &body, &file_upload,
+                                   &recipients);
     is_upload = is_smtp;
   }
   if (vectis_lua_curl_apply_upload(lua, curl, 1, &body, is_smtp,
@@ -11377,6 +11395,12 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   status = cpkt_lua_runtime_register_lua_module(
       runtime, "vectis.mqtt", vectis_mqtt_lua_init,
       sizeof(vectis_mqtt_lua_init), "vectis.mqtt");
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_lua_module(
+      runtime, "vectis.smtp", vectis_smtp_lua_init,
+      sizeof(vectis_smtp_lua_init), "vectis.smtp");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
