@@ -4,6 +4,7 @@ file(WRITE "${script}" [[
 local vectis = require("vectis")
 local dsv = require("vectis.dsv")
 local http = require("vectis.http")
+local rest = require("vectis.rest")
 local status = require("vectis.status")
 local lonejson = require("lonejson")
 local mqtt = require("vectis.mqtt")
@@ -600,6 +601,53 @@ assert_status_error(status_http.error, vectis.ERR_STATE,
 assert(status_http.error.http_status == 404)
 assert(status_http.error.source == "curl")
 assert(status_http.error.body == "missing")
+
+local rest_response = assert(rest.json({
+  ok = true,
+  surface = "rest",
+}, {
+  status = 202,
+  headers = {
+    ["x-vectis-rest"] = "contract",
+  },
+}))
+assert(rest_response.status == 202)
+assert(rest_response.content_type == rest.JSON_CONTENT_TYPE)
+assert(rest_response.headers["x-vectis-rest"] == "contract")
+local rest_decoded = assert(lonejson.decode_json(rest_response.body))
+assert(rest_decoded.ok == true)
+assert(rest_decoded.surface == "rest")
+
+local bad_rest_json, bad_rest_json_err = rest.json({
+  unsupported = function()
+    return true
+  end,
+})
+assert(bad_rest_json == nil)
+assert(bad_rest_json_err.kind == "json_encode")
+assert_status_error(bad_rest_json_err, vectis.ERR_INVALID)
+assert(bad_rest_json_err.source == "lonejson")
+assert(bad_rest_json_err.source_code == vectis.ERROR_SOURCE_LONEJSON)
+
+local rest_error_response = rest.error_response({
+  kind = "validation",
+  message = "rest contract failed",
+  status = vectis.ERR_INVALID,
+}, {
+  headers = {
+    ["x-vectis-error"] = "contract",
+  },
+})
+assert(rest_error_response.status == 400)
+assert(rest_error_response.content_type == rest.JSON_CONTENT_TYPE)
+assert(rest_error_response.headers["x-vectis-error"] == "contract")
+local rest_error_body = assert(lonejson.decode_json(rest_error_response.body))
+assert(rest_error_body.ok == false)
+assert(rest_error_body.error.kind == "validation")
+assert_status_error(rest_error_body.error, vectis.ERR_INVALID,
+                    "rest contract failed")
+assert(rest_error_body.error.source == "vectis")
+assert(rest_error_body.error.source_code == vectis.ERROR_SOURCE_VECTIS)
 
 local mqtt_transport = mqtt.normalize({
   ok = false,

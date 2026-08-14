@@ -357,6 +357,8 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/scripts/verify_vectis_lua_preloads.sh" 'error_source_string'
   assert_contains "$repo_root/tests/lua/facade_contracts.cmake" 'source_code'
   assert_contains "$repo_root/tests/lua/facade_contracts.cmake" 'ERROR_SOURCE_VECTIS'
+  assert_contains "$repo_root/tests/lua/facade_contracts.cmake" 'rest\.error_response'
+  assert_contains "$repo_root/tests/lua/facade_contracts.cmake" 'ERROR_SOURCE_LONEJSON'
   assert_contains "$repo_root/src/vectis_cli.c" '"ERR_NOMEM"'
   assert_contains "$repo_root/src/vectis_cli.c" '"ERR_STATE"'
   assert_contains "$repo_root/src/vectis_cli.c" '"ERR_CONFLICT"'
