@@ -728,6 +728,8 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/lua/vectis/auth.lua" 'function browser_flow:mount'
   assert_contains "$repo_root/lua/vectis/auth.lua" 'function browser_flow:webdav_authorization'
   assert_contains "$repo_root/vectis.rockspec.in" '\["vectis\.auth"\] = "lua/vectis/auth\.lua"'
+  assert_contains "$repo_root/scripts/test_lua_rock.sh" 'stub\("vectis\.auth\.core"'
+  assert_contains "$repo_root/scripts/test_lua_rock.sh" 'vectis\.auth\.browser_flow'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'vectis\.auth\.basic_authorization'
   assert_contains "$repo_root/tests/lua/facade_contracts.cmake" 'vectis\.auth\.browser_flow'
   assert_contains "$repo_root/examples/lua/api_server.lua" 'vectis\.auth\.basic_authorization'

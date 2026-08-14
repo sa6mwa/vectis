@@ -47,6 +47,27 @@ end
 stub("curl.core")
 stub("vectis.dsv.core")
 stub("vectis.xml.core")
+stub("vectis.auth.core", {
+  BASIC = 1,
+  provider_native = function(opts)
+    return {
+      kind = "native",
+      credentials_path = opts.credentials_path,
+      state_path = opts.state_path,
+      purpose = opts.purpose,
+      realm = opts.realm,
+    }
+  end,
+  webdav_key = function(opts)
+    return {
+      client_id = opts.username,
+      client_secret = opts.password,
+    }
+  end,
+  basic_authorization = function(key)
+    return "Basic " .. key.client_id .. ":" .. key.client_secret
+  end,
+})
 
 local vectis = require("vectis")
 assert(type(vectis) == "table")
@@ -57,6 +78,25 @@ assert(vectis.libs.sus == package.loaded.sus)
 assert(vectis.status.OK == vectis.OK)
 assert(vectis.status_string(vectis.OK) == "ok")
 assert(type(require("vectis.http")) == "table")
+assert(vectis.auth == require("vectis.auth"))
+assert(vectis.auth.core == require("vectis.auth.core"))
+local flow = vectis.auth.browser_flow({
+  credentials_path = "credentials.json",
+  state_path = "state.json",
+  realm = "rock",
+  purpose = "webdav",
+})
+local provider = assert(flow:provider())
+assert(provider.kind == "native")
+assert(provider.credentials_path == "credentials.json")
+assert(provider.state_path == "state.json")
+assert(provider.purpose == "webdav")
+assert(provider.realm == "rock")
+local authorization = assert(flow:webdav_authorization({
+  username = "rock-user",
+  password = "rock-password",
+}))
+assert(authorization == "Basic rock-user:rock-password")
 assert(type(require("vectis.dsv")) == "table")
 assert(type(require("vectis.webdav")) == "table")
 print("vectis Lua rock ok")
