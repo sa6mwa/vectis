@@ -14,6 +14,7 @@ local download_path = assert(arg[2])
 assert(type(vectis.ssh.sftp_upload_file) == "function")
 assert(type(vectis.ssh.sftp_download_file) == "function")
 assert(type(vectis.ssh.sftp_open) == "function")
+assert(type(vectis.ssh.open) == "function")
 assert(type(vectis.ssh.scp_upload_file) == "function")
 assert(type(vectis.ssh.scp_download_file) == "function")
 assert(type(vectis.ssh.sftp_stat) == "function")
@@ -57,6 +58,17 @@ assert(bad_open_port == nil)
 assert(type(bad_open_port_err) == "table")
 assert(bad_open_port_err.status == vectis.ERR_INVALID)
 assert(bad_open_port_err.message:find("port", 1, true))
+
+local bad_ssh_port, bad_ssh_port_err = vectis.ssh.open({
+  host = "127.0.0.1",
+  username = "vectis",
+  password = "secret",
+  port = 70000,
+})
+assert(bad_ssh_port == nil)
+assert(type(bad_ssh_port_err) == "table")
+assert(bad_ssh_port_err.status == vectis.ERR_INVALID)
+assert(bad_ssh_port_err.message:find("port", 1, true))
 
 local missing_scp_remote, missing_scp_remote_err = vectis.ssh.scp_upload_file({
   host = "127.0.0.1",
@@ -143,6 +155,39 @@ assert(type(open_refused_err) == "table")
 assert(type(open_refused_err.status_string) == "string")
 assert(type(open_refused_err.message) == "string")
 assert(#open_refused_err.message > 0)
+
+local session_refused, session_refused_err = vectis.ssh.open({
+  host = "127.0.0.1",
+  port = 1,
+  username = "vectis",
+  password = "secret",
+  timeout_ms = 200,
+})
+assert(session_refused ~= nil, session_refused_err and session_refused_err.message)
+assert(type(session_refused.exec) == "function")
+assert(type(session_refused.sftp_upload_file) == "function")
+assert(type(session_refused.sftp_download_file) == "function")
+assert(type(session_refused.sftp_open) == "function")
+assert(type(session_refused.scp_upload_file) == "function")
+assert(type(session_refused.scp_download_file) == "function")
+assert(type(session_refused.sftp_stat) == "function")
+assert(type(session_refused.sftp_mkdir) == "function")
+assert(type(session_refused.sftp_remove) == "function")
+assert(type(session_refused.sftp_rmdir) == "function")
+assert(type(session_refused.sftp_rename) == "function")
+assert(type(session_refused.sftp_chmod) == "function")
+local session_exec_refused, session_exec_refused_err = session_refused:exec("true")
+assert(session_exec_refused == nil)
+assert(type(session_exec_refused_err) == "table")
+assert(type(session_exec_refused_err.status_string) == "string")
+assert(type(session_exec_refused_err.message) == "string")
+assert(#session_exec_refused_err.message > 0)
+assert(session_refused:close() == true)
+local closed_exec, closed_exec_err = session_refused:exec("true")
+assert(closed_exec == nil)
+assert(type(closed_exec_err) == "table")
+assert(closed_exec_err.status == vectis.ERR_INVALID)
+assert(closed_exec_err.message:find("closed", 1, true))
 
 local scp_refused, scp_refused_err = vectis.ssh.scp_upload_file({
   host = "127.0.0.1",

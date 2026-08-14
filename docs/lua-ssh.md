@@ -1,7 +1,7 @@
 # Vectis Lua SSH
 
-`vectis.ssh` exposes Vectis-owned libssh2-backed workflows. It is not a
-dependency-native libssh2 session/channel binding.
+`vectis.ssh` exposes Vectis-owned libssh2-backed workflows. It is not a raw
+dependency-native libssh2 channel binding.
 
 ## Command Execution
 
@@ -20,6 +20,21 @@ Optional fields:
 - `port`, defaulting to `22`
 - `known_hosts_path` or `known_hosts`
 - `timeout_ms`
+
+`vectis.ssh.open(opts)` opens a reusable SSH receiver with the same connection
+and authentication fields. Close it with `session:close()` when done; it also
+closes on Lua GC. Receiver methods return the same result shapes and structured
+errors as the one-shot helpers:
+
+- `session:exec(command)` or `session:exec({ command = command })`
+- `session:sftp_upload_file({ local_path, remote_path })`
+- `session:sftp_download_file({ remote_path, local_path })`
+- `session:scp_upload_file({ local_path, remote_path })`
+- `session:scp_download_file({ remote_path, local_path })`
+- `session:sftp_stat({ remote_path })`
+- `session:sftp_mkdir`, `session:sftp_remove`, `session:sftp_rmdir`,
+  `session:sftp_rename`, and `session:sftp_chmod`
+- `session:sftp_open()` for a reusable child SFTP receiver
 
 ## SFTP And SCP File Transfer
 
@@ -49,7 +64,8 @@ The SFTP and SCP helpers use the same SSH connection/auth fields as `exec`.
   `permissions`.
 
 These are one-shot helpers: they open an SSH connection, authenticate, run the
-SFTP operation, and close the session for each call.
+SFTP operation, and close the session for each call. Use `vectis.ssh.open` when
+several operations should share a Vectis-managed SSH receiver.
 
 ## Stateful SFTP
 
@@ -83,8 +99,23 @@ Directory methods:
   `nil` at EOF.
 - `dir:close()` closes the remote directory handle.
 
-Dependency-native libssh2 channel/session control and advanced host-key
-workflows remain outside this helper surface.
+Raw libssh2 channel control and advanced host-key workflows remain outside this
+helper surface.
+
+```lua
+local vectis = require("vectis")
+
+local ssh = assert(vectis.ssh.open({
+  host = "example.test",
+  username = "deploy",
+  private_key_path = "deploy.key",
+  known_hosts_path = "known_hosts",
+}))
+
+local result = assert(ssh:exec("printf ready"))
+assert(result.exit_status == 0)
+ssh:close()
+```
 
 ```lua
 local vectis = require("vectis")

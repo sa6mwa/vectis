@@ -43,4 +43,19 @@ if opts.command == "printf vectis-lua-ssh-ok" then
   assert(result.stdout == "vectis-lua-ssh-ok")
 end
 
+local session = assert(vectis.ssh.open(opts))
+local session_result = assert(session:exec(command))
+assert(session_result.exit_status == 0)
+if command == "printf vectis-lua-ssh-ok" then
+  assert(session_result.stdout == "vectis-lua-ssh-ok")
+end
+assert(type(session.sftp_open) == "function")
+assert(type(session.sftp_upload_file) == "function")
+assert(type(session.scp_download_file) == "function")
+assert(session:close() == true)
+local closed_result, closed_err = session:exec(command)
+assert(closed_result == nil)
+assert(type(closed_err) == "table")
+assert(closed_err.message:find("closed", 1, true))
+
 print("lua ssh command example ok")
