@@ -54,6 +54,8 @@ workflows:
   in [Lua HTTP](lua-http.md).
 - `vectis.lockd`: Vectis lockd client/workflow helpers, documented in
   [Lua lockd](lua-lockd.md).
+- `vectis.log`: logging defaults and structured Vectis error fields over pslog,
+  documented in [Lua logging](lua-log.md).
 - `vectis.mqtt`: MQTT publish helper over curl, documented in
   [Lua MQTT](lua-mqtt.md).
 - `vectis.rest`: buffered JSON REST route and client helpers, documented in

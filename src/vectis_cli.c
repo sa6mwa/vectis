@@ -48,6 +48,7 @@
 #include "vectis_liblql_lua_init.h"
 #include "vectis_lockd_lua_init.h"
 #include "vectis_lockdc_lua_init.h"
+#include "vectis_log_lua_init.h"
 #include "vectis_mqtt_lua_init.h"
 #include "vectis_pslog_lua_init.h"
 #include "vectis_rest_lua_init.h"
@@ -12715,6 +12716,12 @@ static int luaopen_vectis(lua_State *lua) {
   vectis_lua_push_ssh_table(lua);
   lua_setfield(lua, -2, "ssh");
   lua_getglobal(lua, "require");
+  lua_pushliteral(lua, "vectis.log");
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    return lua_error(lua);
+  }
+  lua_setfield(lua, -2, "log");
+  lua_getglobal(lua, "require");
   lua_pushliteral(lua, "vectis.http");
   if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
     return lua_error(lua);
@@ -14275,6 +14282,12 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   status = cpkt_lua_runtime_register_lua_module(
       runtime, "vectis.status", vectis_status_lua_init,
       sizeof(vectis_status_lua_init), "vectis.status");
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_lua_module(
+      runtime, "vectis.log", vectis_log_lua_init, sizeof(vectis_log_lua_init),
+      "vectis.log");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }

@@ -88,6 +88,8 @@ surface directly, without local helper layers that would hide awkward API shape.
   `render()` and `render_stream()`.
 - `lua/terminal_tools.lua`: Vectis terminal helper DX over libmdf Markdown
   rendering and softline bounded editor construction.
+- `lua/logging.lua`: Vectis logging helper DX over pslog with default fields
+  and structured Vectis error metadata.
 - `lua/data_formats.lua`: typed DSV/CSV/TSV parsing, row callbacks,
   serialization, and XML-to-LoneJSON table parsing through `vectis.dsv` and
   `vectis.xml`.

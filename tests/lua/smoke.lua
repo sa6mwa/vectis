@@ -13,6 +13,7 @@ local opcua = require("opcua")
 local audio = require("audio")
 local sus = require("sus")
 local status = require("vectis.status")
+local log = require("vectis.log")
 local rest = require("vectis.rest")
 local terminal = require("vectis.terminal")
 local webdav = require("vectis.webdav")
@@ -57,6 +58,7 @@ assert(status.status_string(status.ERR_INVALID) == "invalid")
 assert(status.error_source_string(status.ERROR_SOURCE_CURL) == "curl")
 assert(status.error_source_string(status.ERROR_SOURCE_CPKT) == "cpkt")
 assert(vectis.status == status)
+assert(vectis.log == log)
 assert(type(vectis.ssh) == "table")
 assert(type(vectis.ssh.exec) == "function")
 assert(type(vectis.ssh.sftp_upload_file) == "function")
@@ -85,6 +87,7 @@ assert(package.loaded.cai == cai)
 assert(package.loaded.lql == lql)
 assert(package.loaded["lql.core"] == lql.core)
 assert(package.loaded.pslog == pslog)
+assert(package.loaded["vectis.log"] == log)
 assert(package.loaded.libmdf == libmdf)
 assert(package.loaded.softline == softline)
 assert(package.loaded.curl == curl)
@@ -1073,14 +1076,43 @@ assert(type(pslog) == "table")
 assert(type(pslog.new_json) == "function")
 assert(type(pslog.version()) == "string")
 local log_chunks = {}
-local log = assert(pslog.new_json(function(chunk)
+local raw_log = assert(pslog.new_json(function(chunk)
   log_chunks[#log_chunks + 1] = chunk
 end, { timestamps = false }))
-log:info("lua smoke", "component", "vectis")
-log:close()
+raw_log:info("lua smoke", "component", "vectis")
+raw_log:close()
 local log_payload = table.concat(log_chunks)
 assert(log_payload:match('"msg":"lua smoke"'))
 assert(log_payload:match('"component":"vectis"'))
+assert(log.raw == pslog)
+local vectis_log_chunks = {}
+local vectis_logger = assert(log.new({
+  output = function(chunk)
+    vectis_log_chunks[#vectis_log_chunks + 1] = chunk
+  end,
+  disable_timestamp = true,
+  no_color = true,
+  fields = { service = "smoke" },
+}))
+local _, log_status_err = nil, status.error({
+  kind = "smoke",
+  message = "expected",
+  status = status.ERR_INVALID,
+  source_code = status.ERROR_SOURCE_VECTIS,
+})
+assert(log.log_error(vectis_logger, "error", "structured smoke",
+                     log_status_err, { path = "/smoke" }))
+vectis_logger:close()
+local vectis_log_payload = table.concat(vectis_log_chunks)
+assert(vectis_log_payload:match('"service":"smoke"'))
+assert(vectis_log_payload:match('"status_string":"invalid"'))
+assert(vectis_log_payload:match('"source":"vectis"'))
+assert(vectis_log_payload:match('"path":"/smoke"'))
+local level_ok, level_err =
+    log.log_error(vectis_logger, "verbose", "bad level", log_status_err)
+assert(level_ok == nil)
+assert(level_err.status == vectis.ERR_INVALID)
+assert(level_err.source_code == vectis.ERROR_SOURCE_VECTIS)
 
 assert(type(libmdf) == "table")
 assert(type(libmdf.render) == "function")

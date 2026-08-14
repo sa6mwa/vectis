@@ -766,6 +766,11 @@ if(VECTIS_BUILD_BINARY)
     "${CMAKE_BINARY_DIR}/generated/include/vectis_status_lua_init.h"
   )
   vectis_generate_lua_init_header(
+    "${CMAKE_SOURCE_DIR}/lua/vectis/log.lua"
+    "vectis_log_lua_init"
+    "${CMAKE_BINARY_DIR}/generated/include/vectis_log_lua_init.h"
+  )
+  vectis_generate_lua_init_header(
     "${CMAKE_SOURCE_DIR}/lua/vectis/http.lua"
     "vectis_http_lua_init"
     "${CMAKE_BINARY_DIR}/generated/include/vectis_http_lua_init.h"

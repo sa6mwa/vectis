@@ -328,6 +328,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [ ] Add Agent Smith-specific terminal helpers once the agent workflow contract exists.
 - [x] Add deterministic Lua examples for raw pslog, liblql, and softline module workflows without adding redundant Vectis-owned wrappers.
 - [x] Add packed execution coverage for raw pslog, liblql, and softline Lua module workflows.
+- [x] Add a narrow Vectis-owned Lua logging helper over pslog for JSON logger defaults, default fields, and structured Vectis error metadata without replacing raw pslog.
+- [ ] Add deeper Lua logger inheritance hooks for `vectis.server` and app-owned service components once the server/logger ownership contract is explicit.
 - [x] Add packed execution coverage for deterministic local Lua facade examples covering XML, raw OpenSSL/certs, generic curl protocols, CAI local APIs, MQTT/SMTP helper validation, and SCP helper validation.
 - [x] Add packed execution coverage for raw libmdf render/stream examples and the mutable WebDAV fileserver example.
 - [x] Add deterministic Lua example and packed coverage for opt-in audio capture/playback device workflows.

@@ -240,6 +240,11 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_example_lua_terminal_tools PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
+  add_test(NAME vectis_example_lua_logging
+           COMMAND vectis_bin "${CMAKE_SOURCE_DIR}/examples/lua/logging.lua")
+  set_tests_properties(vectis_example_lua_logging PROPERTIES
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
   add_test(NAME vectis_example_lua_data_formats
            COMMAND vectis_bin "${CMAKE_SOURCE_DIR}/examples/lua/data_formats.lua")
   set_tests_properties(vectis_example_lua_data_formats PROPERTIES
