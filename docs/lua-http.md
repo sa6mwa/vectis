@@ -12,7 +12,8 @@ code a consistent result shape for API calls and file transfers.
   response.
 - `vectis.http.request_json(opts)` calls `curl.json(opts)`.
 - `vectis.http.get_json(opts_or_url[, opts])`, `post_json`, `put_json`,
-  `patch_json`, and `delete_json` set the HTTP method and decode JSON bodies.
+  `patch_json`, `delete_json`, and `options_json` set the HTTP method and
+  decode JSON bodies.
 - `vectis.http.form(opts)` encodes `opts.form` as
   `application/x-www-form-urlencoded`, defaults to `POST`, and sends it as the
   request body.

@@ -224,6 +224,12 @@ function M.delete_json(first, second)
   return M.request_json(opts)
 end
 
+function M.options_json(first, second)
+  local opts = opts_from(first, second)
+  opts.method = opts.method or "OPTIONS"
+  return M.request_json(opts)
+end
+
 function M.download(opts)
   opts = opts_from(opts)
   if opts.download_path == nil then
@@ -388,6 +394,12 @@ function M.client(defaults)
   function client.delete_json(first, second)
     local opts = merge_defaults(defaults, first, second)
     opts.method = opts.method or "DELETE"
+    return M.request_json(opts)
+  end
+
+  function client.options_json(first, second)
+    local opts = merge_defaults(defaults, first, second)
+    opts.method = opts.method or "OPTIONS"
     return M.request_json(opts)
   end
 

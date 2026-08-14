@@ -62,6 +62,7 @@ assert(type(vectis.http.client) == "function")
 assert(type(vectis.http.request_json) == "function")
 assert(type(vectis.http.get_json) == "function")
 assert(type(vectis.http.post_json) == "function")
+assert(type(vectis.http.options_json) == "function")
 assert(type(vectis.http.download) == "function")
 assert(type(vectis.http.upload) == "function")
 assert(type(vectis.http.sftp_download) == "function")
@@ -91,6 +92,7 @@ local file_client = vectis.http.client({
   retry = false,
 })
 assert(type(file_client.get_json) == "function")
+assert(type(file_client.options_json) == "function")
 assert(type(file_client.form) == "function")
 assert(type(file_client.multipart) == "function")
 local client_decoded = file_client.get_json(json_url)
@@ -800,6 +802,16 @@ assert(simple_options.ok == true,
        simple_options.error and simple_options.error.message)
 assert(simple_options.status == 200)
 assert(simple_options.body == '{"ok":true,"surface":"options"}\n')
+local simple_options_json = vectis.http.options_json("http://127.0.0.1:28484/options-status", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(simple_options_json.ok == true,
+       simple_options_json.error and simple_options_json.error.message)
+assert(simple_options_json.status == 200)
+assert(simple_options_json.json.ok == true)
+assert(simple_options_json.json.surface == "options")
 local created_response = vectis.http.request({
   url = "http://127.0.0.1:28484/created",
   method = "POST",
@@ -931,6 +943,13 @@ assert(client_options.ok == true,
        client_options.error and client_options.error.message)
 assert(client_options.status == 200)
 assert(client_options.body == '{"ok":true,"surface":"options"}\n')
+local client_options_json = authenticated_client.options_json(
+    "http://127.0.0.1:28484/options-status")
+assert(client_options_json.ok == true,
+       client_options_json.error and client_options_json.error.message)
+assert(client_options_json.status == 200)
+assert(client_options_json.json.ok == true)
+assert(client_options_json.json.surface == "options")
 local client_callback_allowed = authenticated_client.get(
     "http://127.0.0.1:28484/callback-guarded",
     {headers = {Authorization = "Bearer callback-ok"}})
