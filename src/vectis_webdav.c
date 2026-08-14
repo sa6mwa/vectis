@@ -711,6 +711,16 @@ vectis_webdav_content_dir(const vectis_webdav_config *config,
     return VECTIS_ERR_INVALID;
   }
   out[0] = '\0';
+  if (vectis_webdav_direct_root(config)) {
+    if (strlen(config->root_dir) >= VECTIS_WEBDAV_STORAGE_PATH_MAX) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "WebDAV root_dir is too long");
+      return VECTIS_ERR_INVALID;
+    }
+    strcpy(out, config->root_dir);
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
   if (!vectis_webdav_base(config, base, sizeof(base)) ||
       !vectis_webdav_path_append(out, VECTIS_WEBDAV_STORAGE_PATH_MAX, base,
                                  "content")) {

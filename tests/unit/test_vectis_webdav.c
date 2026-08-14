@@ -86,9 +86,12 @@ int main(void) {
   char temp[] = "/tmp/vectis-webdav-unit.XXXXXX";
   char normalized[VECTIS_WEBDAV_PATH_MAX + 1u];
   char content_dir[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char root_dir[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char direct_file[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   unsigned char *body;
   size_t body_size;
   vectis_webdav_config config;
+  vectis_webdav_config direct_config;
   vectis_webdav_config limited_config;
   vectis_webdav_mount_config mount;
   vectis_webdav_embedded_mount_config embedded_mount;
@@ -247,6 +250,46 @@ int main(void) {
   expect(status == VECTIS_WEBDAV_OK &&
              entry.kind == VECTIS_WEBDAV_ENTRY_TOMBSTONE,
          "records tombstone");
+
+  expect(snprintf(root_dir, sizeof(root_dir), "%s/direct-root", temp) > 0,
+         "formats direct root path");
+  direct_config = config;
+  direct_config.site_id = "direct";
+  direct_config.root_dir = root_dir;
+  cstatus = vectis_webdav_content_dir(&direct_config, content_dir, &error);
+  expect(cstatus == VECTIS_OK && strcmp(content_dir, root_dir) == 0,
+         "reports direct WebDAV root as content directory");
+  status = vectis_webdav_mkcol(&direct_config, "/public");
+  expect(status == VECTIS_WEBDAV_OK, "creates direct root collection");
+  status = vectis_webdav_put(&direct_config, "/public/readme.txt",
+                             (const unsigned char *)"direct", 6u);
+  expect(status == VECTIS_WEBDAV_OK, "writes direct root file");
+  expect(snprintf(direct_file, sizeof(direct_file), "%s/public/readme.txt",
+                  root_dir) > 0,
+         "formats direct root file path");
+  expect(access(direct_file, F_OK) == 0, "direct root write reaches disk");
+  body = NULL;
+  body_size = 0u;
+  status = vectis_webdav_read(&direct_config, "/public/readme.txt", &body,
+                              &body_size, &entry);
+  expect(status == VECTIS_WEBDAV_OK && body_size == 6u &&
+             memcmp(body, "direct", 6u) == 0,
+         "reads direct root file");
+  free(body);
+  status =
+      vectis_webdav_copy(&direct_config, "/public/readme.txt", "/copy.txt", 0);
+  expect(status == VECTIS_WEBDAV_OK, "copies direct root file");
+  status =
+      vectis_webdav_move(&direct_config, "/copy.txt", "/moved.txt", 1);
+  expect(status == VECTIS_WEBDAV_OK, "moves direct root file");
+  status = vectis_webdav_lookup(&direct_config, "/copy.txt", &entry);
+  expect(status == VECTIS_WEBDAV_NOT_FOUND,
+         "direct root move does not tombstone source");
+  status = vectis_webdav_delete(&direct_config, "/moved.txt");
+  expect(status == VECTIS_WEBDAV_OK, "deletes direct root file");
+  status = vectis_webdav_lookup(&direct_config, "/moved.txt", &entry);
+  expect(status == VECTIS_WEBDAV_NOT_FOUND,
+         "direct root delete does not tombstone resource");
 
   limited_config = config;
   limited_config.site_id = "limited";
