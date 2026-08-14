@@ -1,21 +1,14 @@
 local openssl = require("openssl")
 local vectis = require("vectis")
 
-local function join_path(dir, name)
-  if dir:sub(-1) == "/" then
-    return dir .. name
-  end
-  return dir .. "/" .. name
-end
-
 local work_dir = os.getenv("VECTIS_LUA_CRYPTO_EXAMPLE_DIR")
 local cert_path
 local key_path
 local bundle_path
 if work_dir ~= nil and work_dir ~= "" then
-  cert_path = join_path(work_dir, "vectis-lua-example-cert.pem")
-  key_path = join_path(work_dir, "vectis-lua-example-key.pem")
-  bundle_path = join_path(work_dir, "vectis-lua-example-bundle.pem")
+  cert_path = work_dir .. "/vectis-lua-example-cert.pem"
+  key_path = work_dir .. "/vectis-lua-example-key.pem"
+  bundle_path = work_dir .. "/vectis-lua-example-bundle.pem"
 else
   cert_path = os.tmpname()
   key_path = os.tmpname()

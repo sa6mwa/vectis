@@ -1,34 +1,16 @@
 local curl = require("curl")
 
-local function join_path(dir, name)
-  if dir:sub(-1) == "/" then
-    return dir .. name
-  end
-  return dir .. "/" .. name
-end
-
-local function read_file(path)
-  local fp = assert(io.open(path, "rb"))
-  local body = fp:read("*a")
-  fp:close()
-  return body
-end
-
-local function write_file(path, body)
-  local fp = assert(io.open(path, "wb"))
-  fp:write(body)
-  fp:close()
-end
-
 local work_dir = os.getenv("VECTIS_LUA_CURL_PROTOCOL_EXAMPLE_DIR") or "."
-local source_path = join_path(work_dir, "vectis-lua-curl-source.txt")
-local download_path = join_path(work_dir, "vectis-lua-curl-download.txt")
-local upload_path = join_path(work_dir, "vectis-lua-curl-upload.txt")
+local source_path = work_dir .. "/vectis-lua-curl-source.txt"
+local download_path = work_dir .. "/vectis-lua-curl-download.txt"
+local upload_path = work_dir .. "/vectis-lua-curl-upload.txt"
 
 os.remove(source_path)
 os.remove(download_path)
 os.remove(upload_path)
-write_file(source_path, "generic curl protocol payload\n")
+local source_file = assert(io.open(source_path, "wb"))
+source_file:write("generic curl protocol payload\n")
+source_file:close()
 
 local download = curl.perform({
   url = "file://" .. source_path,
@@ -39,7 +21,9 @@ local download = curl.perform({
 })
 assert(download.ok == true, download.error)
 assert(download.body == "")
-assert(read_file(download_path) == "generic curl protocol payload\n")
+local downloaded_file = assert(io.open(download_path, "rb"))
+assert(downloaded_file:read("*a") == "generic curl protocol payload\n")
+downloaded_file:close()
 
 local upload = curl.perform({
   url = "file://" .. upload_path,
@@ -50,7 +34,9 @@ local upload = curl.perform({
   no_signal = true,
 })
 assert(upload.ok == true, upload.error)
-assert(read_file(upload_path) == "generic curl protocol payload\n")
+local uploaded_file = assert(io.open(upload_path, "rb"))
+assert(uploaded_file:read("*a") == "generic curl protocol payload\n")
+uploaded_file:close()
 
 local blocked = curl.perform({
   url = "file://" .. source_path,

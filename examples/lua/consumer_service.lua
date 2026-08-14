@@ -2,46 +2,27 @@ local lockdc = require("lockdc")
 local vectis = require("vectis")
 local http = require("vectis.http")
 
-local function env_or_default(name, fallback)
-  local value = os.getenv(name)
-  if value == nil or value == "" then
-    return fallback
-  end
-  return value
-end
-
-local function shell_quote(value)
-  return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
-end
-
-local function mkdir_p(path)
-  local ok = os.execute("mkdir -p " .. shell_quote(path))
-  assert(ok == true or ok == 0, "failed to create " .. path)
-end
-
-local function join_path(left, right)
-  if left:sub(-1) == "/" then
-    return left .. right
-  end
-  return left .. "/" .. right
-end
-
-local bind = env_or_default("VECTIS_LUA_CONSUMER_EXAMPLE_BIND", "127.0.0.1")
-local port = tonumber(env_or_default("VECTIS_LUA_CONSUMER_EXAMPLE_PORT", "28590"))
-local endpoint = env_or_default("LOCKD_ENDPOINT", "https://127.0.0.1:8443")
+local bind = os.getenv("VECTIS_LUA_CONSUMER_EXAMPLE_BIND") or "127.0.0.1"
+local port = tonumber(os.getenv("VECTIS_LUA_CONSUMER_EXAMPLE_PORT") or "28590")
+local endpoint = os.getenv("LOCKD_ENDPOINT") or "https://127.0.0.1:8443"
 local bundle = os.getenv("LOCKD_CLIENT_BUNDLE")
-local namespace = env_or_default("LOCKD_NAMESPACE", "examples")
-local queue = env_or_default("LOCKD_QUEUE", "lua-consumer-service")
-local owner = env_or_default("LOCKD_CONSUMER_OWNER", "vectis-lua-consumer-example")
-local cache_dir = env_or_default("VECTIS_LUA_CONSUMER_EXAMPLE_CACHE", "vectis-lua-consumer-cache")
-local site_id = env_or_default("VECTIS_LUA_CONSUMER_EXAMPLE_SITE_ID", "lua-consumer")
+local namespace = os.getenv("LOCKD_NAMESPACE") or "examples"
+local queue = os.getenv("LOCKD_QUEUE") or "lua-consumer-service"
+local owner = os.getenv("LOCKD_CONSUMER_OWNER") or
+    "vectis-lua-consumer-example"
+local cache_dir = os.getenv("VECTIS_LUA_CONSUMER_EXAMPLE_CACHE") or
+    "vectis-lua-consumer-cache"
+local site_id = os.getenv("VECTIS_LUA_CONSUMER_EXAMPLE_SITE_ID") or
+    "lua-consumer"
 local serve_forever = os.getenv("VECTIS_LUA_CONSUMER_EXAMPLE_SERVE") == "1"
-local marker_root = join_path(join_path(join_path(cache_dir, "webdav"), site_id), "content")
+local marker_root = cache_dir .. "/webdav/" .. site_id .. "/content"
 
-mkdir_p(marker_root)
+local mkdir_ok = os.execute("mkdir -p '" ..
+    tostring(marker_root):gsub("'", "'\\''") .. "'")
+assert(mkdir_ok == true or mkdir_ok == 0, "failed to create " .. marker_root)
 if not serve_forever then
-  os.remove(join_path(marker_root, "consumer-processing.txt"))
-  os.remove(join_path(marker_root, "consumer-done.txt"))
+  os.remove(marker_root .. "/consumer-processing.txt")
+  os.remove(marker_root .. "/consumer-done.txt")
 end
 
 local lockd_config = {
@@ -79,8 +60,8 @@ assert(server:consumer_service({
   worker_count = 1,
   wait_seconds = 1,
   visibility_timeout_seconds = 30,
-  processing_delay_seconds = tonumber(env_or_default(
-      "VECTIS_LUA_CONSUMER_EXAMPLE_DELAY_SECONDS", "1")),
+  processing_delay_seconds = tonumber(
+      os.getenv("VECTIS_LUA_CONSUMER_EXAMPLE_DELAY_SECONDS") or "1"),
   handler = {
     kind = "webdav_marker",
     cache_dir = cache_dir,
@@ -94,36 +75,29 @@ assert(server:consumer_service({
 
 assert(server:start() == true)
 
-local function request(path)
-  return http.request({
-    url = "http://" .. bind .. ":" .. tostring(port) .. path,
-    protocols = "http",
-    timeout_ms = 2000,
-    connect_timeout_ms = 1000,
-    no_signal = true,
-  })
-end
-
-local function wait_for(path, expected)
-  local response
-  for _ = 1, 40 do
-    response = request(path)
-    if response.ok == true and response.body == expected then
-      return response
-    end
-    os.execute("sleep 0.25")
-  end
-  error("timed out waiting for " .. path .. ": " ..
-        (response and (response.error and response.error.message or response.body) or "no response"))
-end
-
 if serve_forever then
   while true do
     os.execute("sleep 3600")
   end
 end
 
-local health = wait_for("/health", '{"ok":true,"service":"lua-consumer-service-example"}\n')
+local health
+for _ = 1, 40 do
+  health = http.request({
+    url = "http://" .. bind .. ":" .. tostring(port) .. "/health",
+    protocols = "http",
+    timeout_ms = 2000,
+    connect_timeout_ms = 1000,
+    no_signal = true,
+  })
+  if health.ok == true and
+      health.body == '{"ok":true,"service":"lua-consumer-service-example"}\n' then
+    break
+  end
+  os.execute("sleep 0.25")
+end
+assert(health.ok == true, health.error and health.error.message or
+    "health route was not ready")
 assert(health.status == 200)
 
 local client_config = {
@@ -149,8 +123,41 @@ local enqueued, enqueue_err = client:enqueue({
 assert(enqueued, enqueue_err and enqueue_err.message or "enqueue failed")
 client:close()
 
-wait_for("/markers/consumer-processing.txt", "processing\n")
-wait_for("/markers/consumer-done.txt", "handled\n")
+local processing_marker
+for _ = 1, 40 do
+  processing_marker = http.request({
+    url = "http://" .. bind .. ":" .. tostring(port) ..
+        "/markers/consumer-processing.txt",
+    protocols = "http",
+    timeout_ms = 2000,
+    connect_timeout_ms = 1000,
+    no_signal = true,
+  })
+  if processing_marker.ok == true and processing_marker.body == "processing\n" then
+    break
+  end
+  os.execute("sleep 0.25")
+end
+assert(processing_marker.ok == true, processing_marker.error and
+    processing_marker.error.message or "processing marker was not written")
+
+local done_marker
+for _ = 1, 40 do
+  done_marker = http.request({
+    url = "http://" .. bind .. ":" .. tostring(port) ..
+        "/markers/consumer-done.txt",
+    protocols = "http",
+    timeout_ms = 2000,
+    connect_timeout_ms = 1000,
+    no_signal = true,
+  })
+  if done_marker.ok == true and done_marker.body == "handled\n" then
+    break
+  end
+  os.execute("sleep 0.25")
+end
+assert(done_marker.ok == true, done_marker.error and
+    done_marker.error.message or "done marker was not written")
 
 assert(server:stop() == true)
 server:close()

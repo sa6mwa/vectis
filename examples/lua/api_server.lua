@@ -15,18 +15,6 @@ local api = rest.client({
   no_signal = true,
 })
 
-local function wait_ready()
-  local response
-  for _ = 1, 20 do
-    response = api.get("/health")
-    if response.ok then
-      return response
-    end
-    os.execute("sleep 0.1")
-  end
-  return response
-end
-
 if not serve_forever then
   os.remove(credentials_path)
   os.remove(credentials_path .. ".lock")
@@ -96,7 +84,14 @@ assert(rest.route(server, {
 
 assert(server:start() == true)
 
-local health = wait_ready()
+local health
+for _ = 1, 20 do
+  health = api.get("/health")
+  if health.ok then
+    break
+  end
+  os.execute("sleep 0.1")
+end
 assert(health.ok == true, health.error and health.error.message)
 assert(health.status == 200)
 assert(health.json.ok == true)

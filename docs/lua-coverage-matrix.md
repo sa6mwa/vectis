@@ -26,8 +26,8 @@ Columns:
 | dep:lua-runtime | cpkt Lua 5.5 runtime facade | yes | yes | yes | yes | n/a | Runtime is embedded; not a user module. |
 | dep:lockdc | liblockdc / lockdc Lua module | yes | partial | yes | yes | n/a | `require("lockdc")` and `vectis.lockd`; JSON passthroughs, embedded bundle config DX, one-shot state save/load, and queue enqueue helpers are documented in `docs/lua-lockd.md`; additional helpers remain only where raw lockdc is too noisy. |
 | dep:lonejson | LoneJSON Lua module | yes | partial | yes | yes | n/a | Raw encode/decode/schema available; Vectis JSON route/downstream DX remains incomplete. |
-| dep:pslog | libpslog Lua module | yes | partial | yes | yes | n/a | Raw logging module is preloaded and packed-tested; `vectis.log` adds JSON logger defaults, default fields, and structured Vectis error logging while keeping raw access available. |
-| dep:lql | liblql Lua module | yes | planned | yes | yes | n/a | Raw module is preloaded and packed-tested. |
+| dep:pslog | libpslog Lua module | yes | partial | yes | yes | n/a | Raw logging module is preloaded, documented in `docs/lua-pslog.md`, and packed-tested; `vectis.log` adds JSON logger defaults, default fields, and structured Vectis error logging while keeping raw access available. |
+| dep:lql | liblql Lua module | yes | planned | yes | yes | n/a | Raw module is preloaded, documented in `docs/lua-lql.md`, and packed-tested. |
 | dep:cai | CAI Lua module | yes | planned | yes | yes | planned | Raw module is preloaded and packed-tested for local constructors/metadata; Vectis service integration waits on CAI SDK stabilization. |
 | dep:libmdf | libmdf Lua module | yes | partial | yes | yes | n/a | Raw module is preloaded and packed-tested; `vectis.terminal` adds Markdown render DX while keeping raw access available. |
 | dep:softline | softline Lua module | yes | partial | yes | yes | n/a | Raw module is preloaded and packed-tested; `vectis.terminal` adds bounded editor construction while keeping raw access available. |

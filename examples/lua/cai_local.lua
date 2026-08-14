@@ -1,14 +1,7 @@
 local cai = require("cai")
 
-local function join_path(dir, name)
-  if dir:sub(-1) == "/" then
-    return dir .. name
-  end
-  return dir .. "/" .. name
-end
-
 local work_dir = os.getenv("VECTIS_LUA_CAI_EXAMPLE_DIR") or "."
-local dotenv_path = join_path(work_dir, "vectis-lua-cai.env")
+local dotenv_path = work_dir .. "/vectis-lua-cai.env"
 
 local dotenv = assert(io.open(dotenv_path, "wb"))
 dotenv:write("CAI_EXAMPLE_KEY=local-test-key\n")

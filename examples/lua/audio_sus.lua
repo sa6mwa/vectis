@@ -8,36 +8,33 @@ assert(type(audio.capture.open_default) == "function")
 assert(type(audio.playback.open_default) == "function")
 
 local sink = {data = "", position = 1}
-local function seek(offset, origin)
-  local next_position
-  if origin == audio.SEEK_SET then
-    next_position = offset + 1
-  elseif origin == audio.SEEK_CUR then
-    next_position = sink.position + offset
-  elseif origin == audio.SEEK_END then
-    next_position = #sink.data + offset + 1
-  else
-    return false
-  end
-  if next_position < 1 then
-    return false
-  end
-  sink.position = next_position
-  return true
-end
-local function write(chunk)
-  sink.data = sink.data:sub(1, sink.position - 1) ..
-      chunk .. sink.data:sub(sink.position + #chunk)
-  sink.position = sink.position + #chunk
-  return #chunk
-end
-
 local encoder = assert(audio.encoder.open_writer({
   format = "wav",
   sample_rate = 16000,
   channels = 1,
-  write = write,
-  seek = seek,
+  write = function(chunk)
+    sink.data = sink.data:sub(1, sink.position - 1) ..
+        chunk .. sink.data:sub(sink.position + #chunk)
+    sink.position = sink.position + #chunk
+    return #chunk
+  end,
+  seek = function(offset, origin)
+    local next_position
+    if origin == audio.SEEK_SET then
+      next_position = offset + 1
+    elseif origin == audio.SEEK_CUR then
+      next_position = sink.position + offset
+    elseif origin == audio.SEEK_END then
+      next_position = #sink.data + offset + 1
+    else
+      return false
+    end
+    if next_position < 1 then
+      return false
+    end
+    sink.position = next_position
+    return true
+  end,
 }))
 local frames = {}
 for i = 1, 160 do

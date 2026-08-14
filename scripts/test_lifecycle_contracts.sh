@@ -97,6 +97,16 @@ assert_action_surface_contract() {
   assert_contains "$repo_root/src/vectis_cli.c" 'traces Lua line execution to stderr'
 }
 
+assert_lua_example_dx_contract() {
+  if grep -RInE \
+    '(^|[[:space:]])local[[:space:]]+function[[:space:]]+[A-Za-z_][A-Za-z0-9_]*|^[[:space:]]*function[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(' \
+    "$repo_root/examples/lua"; then
+    echo "Lua examples must be self-contained and avoid named helper functions" >&2
+    exit 1
+  fi
+  assert_contains "$repo_root/examples/README.md" 'Lua examples follow the same rule'
+}
+
 assert_kore_lonejson_contract() {
   assert_contains "$repo_root/CMakeLists.txt" 'src/ljson\.c'
   assert_contains "$repo_root/CMakeLists.txt" 'KORE_USE_LONEJSON'
@@ -386,8 +396,8 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/docs/lua-conventions.md" 'Do not describe a materialized or spooled path as streaming'
   assert_contains "$lua_index" '`lockdc`'
   assert_contains "$lua_index" '`lonejson`'
-  assert_contains "$lua_index" '`pslog`'
-  assert_contains "$lua_index" '`lql`'
+  assert_contains "$lua_index" '\[Lua pslog\]\(lua-pslog\.md\)'
+  assert_contains "$lua_index" '\[Lua lql\]\(lua-lql\.md\)'
   assert_contains "$lua_index" '`cai`'
   assert_contains "$lua_index" '`libmdf`'
   assert_contains "$lua_index" '`softline`'
@@ -477,6 +487,10 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/docs/lua-log.md" 'log\.from_env'
   assert_contains "$repo_root/examples/lua/logging.lua" 'log\.log_error'
   assert_contains "$repo_root/examples/lua/logging.lua" 'log\.from_env'
+  assert_contains "$repo_root/docs/lua-pslog.md" 'pslog\.new_json'
+  assert_contains "$repo_root/docs/lua-pslog.md" 'pslog\.from_env'
+  assert_contains "$repo_root/docs/lua-lql.md" 'client:selector_parse'
+  assert_contains "$repo_root/docs/lua-lql.md" 'client:apply_string_spooled'
   assert_contains "$repo_root/tests/CMakeLists.txt" 'vectis_example_lua_logging'
   assert_contains "$repo_root/tests/lua/example_local_facades_pack.cmake" 'logging\.lua'
   assert_contains "$matrix" '`vectis\.log` adds JSON logger defaults'
@@ -593,6 +607,7 @@ assert_contains "$repo_root/examples/CMakeLists.txt" 'target_compile_options\(\$
 assert_contains "$repo_root/examples/CMakeLists.txt" 'Werror'
 assert_no_landed_test_assets
 assert_action_surface_contract
+assert_lua_example_dx_contract
 assert_kore_lonejson_contract
 assert_kore_static_runtime_contract
 assert_lockdc_lua_runtime_contract

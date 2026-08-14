@@ -1,46 +1,24 @@
 local vectis = require("vectis")
 
-local function env_or_default(name, fallback)
-  local value = os.getenv(name)
-  if value == nil or value == "" then
-    return fallback
-  end
-  return value
+local host = os.getenv("VECTIS_LUA_SFTP_HOST") or "127.0.0.1"
+local port = tonumber(os.getenv("VECTIS_LUA_SFTP_PORT") or "") or 29222
+if port <= 0 or port > 65535 then
+  port = 29222
 end
-
-local function env_port_or_default(name, fallback)
-  local value = os.getenv(name)
-  if value == nil or value == "" then
-    return fallback
-  end
-  local parsed = tonumber(value)
-  if parsed == nil or parsed <= 0 or parsed > 65535 then
-    return fallback
-  end
-  return parsed
-end
-
-local function dirname(path)
-  local dir = path:match("^(.*)/[^/]+$")
-  if dir == nil or dir == "" then
-    return "/"
-  end
-  return dir
-end
-
-local function basename(path)
-  return path:match("([^/]+)$") or path
-end
-
-local host = env_or_default("VECTIS_LUA_SFTP_HOST", "127.0.0.1")
-local port = env_port_or_default("VECTIS_LUA_SFTP_PORT", 29222)
-local username = env_or_default("VECTIS_LUA_SFTP_USERNAME", "vectis")
-local password = env_or_default("VECTIS_LUA_SFTP_PASSWORD", "vectispass")
+local username = os.getenv("VECTIS_LUA_SFTP_USERNAME") or "vectis"
+local password = os.getenv("VECTIS_LUA_SFTP_PASSWORD") or "vectispass"
 local known_hosts = os.getenv("VECTIS_LUA_SFTP_KNOWN_HOSTS")
 local private_key_path = os.getenv("VECTIS_LUA_SFTP_PRIVATE_KEY")
-local remote_path = env_or_default("VECTIS_LUA_SFTP_REMOTE_FILE", "/config/lua-sftp-handles.txt")
+local remote_path = os.getenv("VECTIS_LUA_SFTP_REMOTE_FILE") or
+    "/config/lua-sftp-handles.txt"
 local moved_path = remote_path .. ".moved"
-local payload = env_or_default("VECTIS_LUA_SFTP_PAYLOAD", "vectis lua stateful sftp e2e\n")
+local payload = os.getenv("VECTIS_LUA_SFTP_PAYLOAD") or
+    "vectis lua stateful sftp e2e\n"
+local remote_dir = remote_path:match("^(.*)/[^/]+$") or "/"
+if remote_dir == "" then
+  remote_dir = "/"
+end
+local remote_name = remote_path:match("([^/]+)$") or remote_path
 
 local session_opts = {
   host = host,
@@ -79,14 +57,14 @@ assert(stat.has_size == true)
 assert(stat.size == #payload)
 
 local listed = false
-local dir = assert(session:open_dir({remote_path = dirname(remote_path)}))
+local dir = assert(session:open_dir({remote_path = remote_dir}))
 while true do
   local entry, read_err = dir:read()
   assert(entry ~= nil or read_err == nil, read_err and read_err.message)
   if entry == nil then
     break
   end
-  if entry.name == basename(remote_path) then
+  if entry.name == remote_name then
     listed = true
     assert(entry.stat.has_size == true)
     assert(entry.stat.size == #payload)

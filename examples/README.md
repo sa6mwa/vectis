@@ -84,6 +84,11 @@ surface directly, without local helper layers that would hide awkward API shape.
 
 ## `lua/`
 
+Lua examples follow the same rule as the C examples: they are self-contained
+scripts and keep facade calls visible at the call site. Inline callbacks are
+used where the demonstrated API requires a callback, but local helper layers are
+kept out of the examples.
+
 - `lua/mdf_render.lua`: libmdf Lua Markdown rendering through both
   `render()` and `render_stream()`.
 - `lua/terminal_tools.lua`: Vectis terminal helper DX over libmdf Markdown

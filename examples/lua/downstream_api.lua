@@ -15,18 +15,6 @@ local api = rest.client({
   no_signal = true,
 })
 
-local function wait_ready()
-  local response
-  for _ = 1, 20 do
-    response = api.get("/inventory")
-    if response.ok then
-      return response
-    end
-    os.execute("sleep 0.1")
-  end
-  return response
-end
-
 local server = assert(vectis.server.new({
   app_name = "lua-downstream-api-example",
   bind = bind,
@@ -67,7 +55,14 @@ assert(rest.route(server, {
 
 assert(server:start() == true)
 
-local inventory = wait_ready()
+local inventory
+for _ = 1, 20 do
+  inventory = api.get("/inventory")
+  if inventory.ok then
+    break
+  end
+  os.execute("sleep 0.1")
+end
 assert(inventory.ok == true, inventory.error and inventory.error.message)
 assert(inventory.transport_ok == true)
 assert(inventory.status == 200)

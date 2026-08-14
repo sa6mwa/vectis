@@ -20,8 +20,9 @@ with minimal Vectis opinion:
 
 - `lockdc`: upstream liblockdc Lua module.
 - `lonejson`: upstream LoneJSON Lua module.
-- `pslog`: upstream libpslog Lua module.
-- `lql`: upstream liblql Lua module.
+- `pslog`: upstream libpslog Lua module, documented in
+  [Lua pslog](lua-pslog.md).
+- `lql`: upstream liblql Lua module, documented in [Lua lql](lua-lql.md).
 - `cai`: upstream CAI Lua module.
 - `libmdf`: upstream libmdf Lua module.
 - `softline`: upstream softline Lua module.

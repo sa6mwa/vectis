@@ -2,16 +2,9 @@ local mqtt = require("vectis.mqtt")
 local smtp = require("vectis.smtp")
 local vectis = require("vectis")
 
-local function join_path(dir, name)
-  if dir:sub(-1) == "/" then
-    return dir .. name
-  end
-  return dir .. "/" .. name
-end
-
 local work_dir = os.getenv("VECTIS_LUA_PROTOCOL_EXAMPLE_DIR") or "."
-local message_path = join_path(work_dir, "vectis-lua-protocol-message.eml")
-local scp_upload_path = join_path(work_dir, "vectis-lua-protocol-scp.txt")
+local message_path = work_dir .. "/vectis-lua-protocol-message.eml"
+local scp_upload_path = work_dir .. "/vectis-lua-protocol-scp.txt"
 
 local message_file = assert(io.open(message_path, "wb"))
 message_file:write(table.concat({

@@ -1,33 +1,24 @@
 local vectis = require("vectis")
 
-local function env_or_default(name, fallback)
-  local value = os.getenv(name)
-  if value == nil or value == "" then
-    return fallback
-  end
-  return value
+local host = os.getenv("VECTIS_LUA_SSH_HOST") or "127.0.0.1"
+local port = tonumber(os.getenv("VECTIS_LUA_SSH_PORT") or "") or 29222
+if port <= 0 or port > 65535 then
+  port = 29222
 end
-
-local function env_port_or_default(name, fallback)
-  local value = os.getenv(name)
-  if value == nil or value == "" then
-    return fallback
-  end
-  local parsed = tonumber(value)
-  if parsed == nil or parsed <= 0 or parsed > 65535 then
-    return fallback
-  end
-  return parsed
-end
-
+local username = os.getenv("VECTIS_LUA_SSH_USERNAME") or "vectis"
+local password = os.getenv("VECTIS_LUA_SSH_PASSWORD") or "vectispass"
+local command = os.getenv("VECTIS_LUA_SSH_COMMAND") or
+    "printf vectis-lua-ssh-ok"
+local timeout_ms = tonumber(os.getenv("VECTIS_LUA_SSH_TIMEOUT_MS") or "") or
+    10000
 local opts = {
-  host = env_or_default("VECTIS_LUA_SSH_HOST", "127.0.0.1"),
-  port = env_port_or_default("VECTIS_LUA_SSH_PORT", 29222),
-  username = env_or_default("VECTIS_LUA_SSH_USERNAME", "vectis"),
-  password = env_or_default("VECTIS_LUA_SSH_PASSWORD", "vectispass"),
+  host = host,
+  port = port,
+  username = username,
+  password = password,
   known_hosts = os.getenv("VECTIS_LUA_SSH_KNOWN_HOSTS"),
-  command = env_or_default("VECTIS_LUA_SSH_COMMAND", "printf vectis-lua-ssh-ok"),
-  timeout_ms = tonumber(env_or_default("VECTIS_LUA_SSH_TIMEOUT_MS", "10000")),
+  command = command,
+  timeout_ms = timeout_ms,
 }
 
 local private_key_path = os.getenv("VECTIS_LUA_SSH_PRIVATE_KEY")

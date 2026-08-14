@@ -3,18 +3,10 @@ local audio = require("audio")
 assert(type(audio.capture.open_default) == "function")
 assert(type(audio.playback.open_default) == "function")
 
-local function frames(count, hz)
-  local out = {}
-  local sample_rate = 16000
-  local amplitude = 0.05
-  for i = 1, count do
-    out[i] = math.sin(((i - 1) * hz * 2.0 * math.pi) / sample_rate) *
-        amplitude
-  end
-  return out
+local tone = {}
+for i = 1, 320 do
+  tone[i] = math.sin(((i - 1) * 440 * 2.0 * math.pi) / 16000) * 0.05
 end
-
-local tone = frames(320, 440)
 assert(#tone == 320)
 
 if os.getenv("VECTIS_LUA_AUDIO_DEVICE_EXAMPLE") == "1" then
