@@ -61,6 +61,11 @@ vectis_pack_and_run_lua_example(
   "lua audio sus example ok")
 
 vectis_pack_and_run_lua_example(
+  "audio-devices"
+  "${VECTIS_SOURCE_DIR}/examples/lua/audio_devices.lua"
+  "lua audio devices example ok")
+
+vectis_pack_and_run_lua_example(
   "mdf-render"
   "${VECTIS_SOURCE_DIR}/examples/lua/mdf_render.lua"
   "lua mdf render example ok")

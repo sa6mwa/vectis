@@ -114,6 +114,11 @@ Capture/playback helpers expose device receiver shells, but live device tests
 are opt-in because microphones, speakers, and platform commands are
 environment-sensitive.
 
+See `examples/lua/audio_devices.lua` for a capture/playback workflow. The
+example always validates the device helper surface and generated playback
+frames; it performs real device I/O only when
+`VECTIS_LUA_AUDIO_DEVICE_EXAMPLE=1` is set.
+
 - `audio.capture.open_default(opts)` opens the default input device.
 - `audio.playback.open_default(opts)` opens the default output device.
 

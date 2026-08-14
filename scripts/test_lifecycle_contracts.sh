@@ -220,7 +220,11 @@ assert_audio_sus_lua_runtime_contract() {
   assert_contains "$repo_root/tests/lua/audio_sus.cmake" 'audio\.decoder\.open_reader'
   assert_contains "$repo_root/tests/lua/audio_sus.cmake" 'audio\.capture\.open_default'
   assert_contains "$repo_root/tests/lua/audio_sus.cmake" 'sus\.open_cached'
+  assert_contains "$repo_root/examples/lua/audio_devices.lua" 'VECTIS_LUA_AUDIO_DEVICE_EXAMPLE'
+  assert_contains "$repo_root/tests/CMakeLists.txt" 'vectis_example_lua_audio_devices'
   assert_contains "$repo_root/tests/lua/example_local_facades_pack.cmake" 'examples/lua/audio_sus\.lua'
+  assert_contains "$repo_root/tests/lua/example_local_facades_pack.cmake" 'examples/lua/audio_devices\.lua'
+  assert_contains "$repo_root/TODO.md" '\[x\] Add deterministic Lua example and packed coverage for opt-in audio capture/playback device workflows'
 }
 
 assert_lua_coverage_matrix_contract() {
