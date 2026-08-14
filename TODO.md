@@ -343,6 +343,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add release/package verification that the `vectis` binary includes all statically preloaded Lua modules while C binary SDK artifacts do not accidentally ship Lua source/runtime/package-manager state.
 - [x] Add a checked Lua facade documentation index that links raw dependency modules, Vectis-owned workflow modules, the coverage matrix, and module-level docs.
 - [x] Expose the full public Vectis status enum in Lua and cover structured DSV callback-stop errors with `status`, `status_string`, and `message`.
+- [x] Extend Vectis-owned Lua `nil, err` objects with C error source metadata and optional dependency/http/detail diagnostics.
 - [x] Add checked Lua facade conventions and a focused contract test for structured errors, programmer misuse, ownership, and explicit payload naming.
 
 ## Area 13: Single Binary Packaging

@@ -12,6 +12,9 @@ Expected runtime failures return structured values instead of raising:
 
 - C-backed workflow failures return `nil, err` where `err.status`,
   `err.status_string`, and `err.message` mirror `vectis_status`.
+  `err.source` and `err.source_code` mirror `vectis_error_source`.
+  `err.dependency_code`, `err.http_status`, and `err.detail` are present only
+  when the C SDK error object carries those diagnostics.
 - Curl-backed workflow failures return a result table with `ok = false`,
   `transport_ok`, and `error.kind`.
 - HTTP status failures use `error.kind = "http_status"` and preserve the

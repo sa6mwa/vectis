@@ -4,16 +4,21 @@ file(WRITE "${script}" [[
 local vectis = require("vectis")
 local dsv = require("vectis.dsv")
 local http = require("vectis.http")
+local lonejson = require("lonejson")
 local mqtt = require("vectis.mqtt")
 local smtp = require("vectis.smtp")
 local webdav = require("vectis.webdav")
 local lockd = require("vectis.lockd")
+local xml = require("vectis.xml")
 
 local function assert_status_error(err, status, message_fragment)
   assert(type(err) == "table")
   assert(err.status == status)
   assert(err.status_string == vectis.status_string(status))
   assert(type(err.message) == "string")
+  assert(type(err.source) == "string")
+  assert(type(err.source_code) == "number")
+  assert(err.source == vectis.error_source_string(err.source_code))
   if message_fragment ~= nil then
     assert(err.message:find(message_fragment, 1, true), err.message)
   end
@@ -22,6 +27,11 @@ end
 assert(vectis.status_string(vectis.ERR_INVALID) == "invalid")
 assert(vectis.status_string(vectis.ERR_STATE) == "state")
 assert(vectis.status_string(vectis.ERR_TIMEOUT) == "timeout")
+assert(vectis.error_source_string(vectis.ERROR_SOURCE_NONE) == "none")
+assert(vectis.error_source_string(vectis.ERROR_SOURCE_VECTIS) == "vectis")
+assert(vectis.error_source_string(vectis.ERROR_SOURCE_LOCKDC) == "lockdc")
+assert(vectis.error_source_string(vectis.ERROR_SOURCE_LONEJSON) == "lonejson")
+assert(vectis.error_source_string(vectis.ERROR_SOURCE_LIBSSH2) == "libssh2")
 
 local stopped, stopped_err = dsv.each({
   data = "id\nalpha\n",
@@ -31,6 +41,8 @@ local stopped, stopped_err = dsv.each({
 })
 assert(stopped == nil)
 assert_status_error(stopped_err, vectis.ERR_STATE, "callback stopped")
+assert(stopped_err.source == "vectis")
+assert(stopped_err.source_code == vectis.ERROR_SOURCE_VECTIS)
 
 local bad_each_ok, bad_each_err = pcall(function()
   dsv.each({ data = "id\nalpha\n" })
@@ -44,6 +56,20 @@ local missing_bundle, missing_bundle_err = lockd.config({
 assert(missing_bundle == nil)
 assert_status_error(missing_bundle_err, vectis.ERR_STATE,
                     "no embedded lockd bundle")
+assert(missing_bundle_err.source == "vectis")
+
+local xml_schema = lonejson.schema("contract", {
+  lonejson.field("id", lonejson.string({required = true})),
+})
+local bad_xml, bad_xml_err = xml.parse({
+  schema = xml_schema,
+  xml = "<wrong id=\"x\"/>",
+  root_element = "contract",
+})
+assert(bad_xml == nil)
+assert_status_error(bad_xml_err, vectis.ERR_INVALID, "root element")
+assert(bad_xml_err.source == "vectis")
+assert(bad_xml_err.source_code == vectis.ERROR_SOURCE_VECTIS)
 
 local invalid_http = http.normalize(nil)
 assert(invalid_http.ok == false)

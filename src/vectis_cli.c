@@ -1605,6 +1605,7 @@ static void vectis_cli_error_set(vectis_error *error, vectis_status status,
   }
   vectis_error_clear(error);
   error->code = status;
+  error->source = VECTIS_ERROR_SOURCE_VECTIS;
   if (message != NULL) {
     (void)snprintf(error->message, sizeof(error->message), "%s", message);
   }
@@ -3121,6 +3122,20 @@ static int vectis_lua_status_string(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_error_source_string(lua_State *lua) {
+  lua_Integer source;
+  const char *name;
+
+  source = luaL_checkinteger(lua, 1);
+  name = vectis_error_source_string((vectis_error_source)source);
+  if (name == NULL) {
+    lua_pushnil(lua);
+  } else {
+    lua_pushstring(lua, name);
+  }
+  return 1;
+}
+
 static int vectis_lua_has_embedded_lockd_bundle(lua_State *lua) {
   vectis_lua_runtime_context *context;
 
@@ -3593,6 +3608,37 @@ static int vectis_lua_embedded_extract(lua_State *lua) {
   return 1;
 }
 
+static void vectis_lua_fill_error_table(lua_State *lua, vectis_status status,
+                                        const vectis_error *error,
+                                        const char *message) {
+  vectis_error_source source;
+
+  lua_pushinteger(lua, (lua_Integer)status);
+  lua_setfield(lua, -2, "status");
+  lua_pushstring(lua, vectis_status_string(status));
+  lua_setfield(lua, -2, "status_string");
+  lua_pushstring(lua, message != NULL ? message : "vectis error");
+  lua_setfield(lua, -2, "message");
+
+  source = error != NULL ? error->source : VECTIS_ERROR_SOURCE_VECTIS;
+  lua_pushinteger(lua, (lua_Integer)source);
+  lua_setfield(lua, -2, "source_code");
+  lua_pushstring(lua, vectis_error_source_string(source));
+  lua_setfield(lua, -2, "source");
+  if (error != NULL && error->dependency_code != 0L) {
+    lua_pushinteger(lua, (lua_Integer)error->dependency_code);
+    lua_setfield(lua, -2, "dependency_code");
+  }
+  if (error != NULL && error->http_status != 0L) {
+    lua_pushinteger(lua, (lua_Integer)error->http_status);
+    lua_setfield(lua, -2, "http_status");
+  }
+  if (error != NULL && error->detail[0] != '\0') {
+    lua_pushstring(lua, error->detail);
+    lua_setfield(lua, -2, "detail");
+  }
+}
+
 static int vectis_lua_push_error(lua_State *lua, vectis_status status,
                                  const vectis_error *error) {
   const char *message;
@@ -3602,25 +3648,22 @@ static int vectis_lua_push_error(lua_State *lua, vectis_status status,
                 : vectis_status_string(status);
   lua_pushnil(lua);
   lua_newtable(lua);
-  lua_pushinteger(lua, (lua_Integer)status);
-  lua_setfield(lua, -2, "status");
-  lua_pushstring(lua, vectis_status_string(status));
-  lua_setfield(lua, -2, "status_string");
-  lua_pushstring(lua, message != NULL ? message : "vectis error");
-  lua_setfield(lua, -2, "message");
+  vectis_lua_fill_error_table(lua, status, error, message);
   return 2;
 }
 
 static int vectis_lua_push_error_text(lua_State *lua, vectis_status status,
                                       const char *message) {
+  vectis_error error;
+
+  vectis_error_clear(&error);
+  error.code = status;
+  error.source = VECTIS_ERROR_SOURCE_VECTIS;
   lua_pushnil(lua);
   lua_newtable(lua);
-  lua_pushinteger(lua, (lua_Integer)status);
-  lua_setfield(lua, -2, "status");
-  lua_pushstring(lua, vectis_status_string(status));
-  lua_setfield(lua, -2, "status_string");
-  lua_pushstring(lua, message != NULL ? message : vectis_status_string(status));
-  lua_setfield(lua, -2, "message");
+  vectis_lua_fill_error_table(
+      lua, status, &error,
+      message != NULL ? message : vectis_status_string(status));
   return 2;
 }
 
@@ -11206,6 +11249,26 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "ERR_TIMEOUT");
   lua_pushcfunction(lua, vectis_lua_status_string);
   lua_setfield(lua, -2, "status_string");
+  lua_pushinteger(lua, VECTIS_ERROR_SOURCE_NONE);
+  lua_setfield(lua, -2, "ERROR_SOURCE_NONE");
+  lua_pushinteger(lua, VECTIS_ERROR_SOURCE_VECTIS);
+  lua_setfield(lua, -2, "ERROR_SOURCE_VECTIS");
+  lua_pushinteger(lua, VECTIS_ERROR_SOURCE_KORE);
+  lua_setfield(lua, -2, "ERROR_SOURCE_KORE");
+  lua_pushinteger(lua, VECTIS_ERROR_SOURCE_LOCKDC);
+  lua_setfield(lua, -2, "ERROR_SOURCE_LOCKDC");
+  lua_pushinteger(lua, VECTIS_ERROR_SOURCE_LONEJSON);
+  lua_setfield(lua, -2, "ERROR_SOURCE_LONEJSON");
+  lua_pushinteger(lua, VECTIS_ERROR_SOURCE_PSLOG);
+  lua_setfield(lua, -2, "ERROR_SOURCE_PSLOG");
+  lua_pushinteger(lua, VECTIS_ERROR_SOURCE_CURL);
+  lua_setfield(lua, -2, "ERROR_SOURCE_CURL");
+  lua_pushinteger(lua, VECTIS_ERROR_SOURCE_OPENSSL);
+  lua_setfield(lua, -2, "ERROR_SOURCE_OPENSSL");
+  lua_pushinteger(lua, VECTIS_ERROR_SOURCE_LIBSSH2);
+  lua_setfield(lua, -2, "ERROR_SOURCE_LIBSSH2");
+  lua_pushcfunction(lua, vectis_lua_error_source_string);
+  lua_setfield(lua, -2, "error_source_string");
   lua_pushcfunction(lua, vectis_lua_has_embedded_lockd_bundle);
   lua_setfield(lua, -2, "has_embedded_lockd_bundle");
   lua_pushcfunction(lua, vectis_lua_embedded_lockd_bundle_size);
