@@ -287,7 +287,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add Lua route-row handler integration for DSV routes.
 - [x] Add Lua WebDAV client helpers for PROPFIND, MKCOL, GET, PUT, COPY, MOVE, DELETE, auth headers, depth handling, destination handling, structured errors, and file-backed transfer; keep server-side WebDAV helpers on `vectis.server`.
 - [x] Add a C-owned Lua `server:webdav()` helper for ordinary Vectis-managed mutable WebDAV mounts, including unauthenticated mounts plus native and callback auth providers.
-- [ ] Expand Lua server-side WebDAV helpers beyond Vectis-managed storage so ordinary Lua apps can mount direct mutable disk docroots and read-only embedded docroots as WebDAV mounts without C glue.
+- [x] Add a C-owned Lua `server:webdav_embedded()` helper for read-only WebDAV mounts over packed embedded assets, including native/callback auth providers.
+- [ ] Expand Lua server-side WebDAV helpers beyond Vectis-managed storage so ordinary Lua apps can mount direct mutable disk docroots as WebDAV mounts without C glue.
 - [x] Add an initial raw-but-narrow OpenSSL Lua facade for stable primitives not covered by `vectis.cert`, while keeping Vectis certificate workflows as the default DX.
 - [x] Expand the raw OpenSSL Lua facade with general EVP digest and HMAC helpers while keeping fixed SHA-256 helpers for common workflows.
 - [x] Expand the raw OpenSSL Lua facade for advanced signing, verification, encoding, and key/certificate inspection operations that are not covered by `vectis.cert`.

@@ -91,6 +91,7 @@ int main(void) {
   vectis_webdav_config config;
   vectis_webdav_config limited_config;
   vectis_webdav_mount_config mount;
+  vectis_webdav_embedded_mount_config embedded_mount;
   vectis_webdav_auth_response auth_response;
   vectis_webdav_entry entry;
   vectis_webdav_status status;
@@ -98,6 +99,7 @@ int main(void) {
   vectis_app_config app_config;
   vectis_error error;
   vectis_app *app;
+  vectis_embedded_fs fake_fs;
   list_state listed;
 
   if (mkdtemp(temp) == NULL) {
@@ -119,6 +121,11 @@ int main(void) {
   expect(mount.auth_required == 1 && mount.conceal_unauthorized == 1 &&
              mount.auth == NULL,
          "defaults WebDAV mounts to protected concealment");
+  vectis_webdav_embedded_mount_config_init(&embedded_mount);
+  expect(embedded_mount.auth_required == 1 &&
+             embedded_mount.conceal_unauthorized == 1 &&
+             embedded_mount.auth == NULL && embedded_mount.path_prefix != NULL,
+         "defaults embedded WebDAV mounts to protected concealment");
   vectis_webdav_auth_response_init(&auth_response);
   expect(auth_response.action == VECTIS_WEBDAV_AUTH_DENY &&
              auth_response.status_code == 0 && auth_response.location == NULL &&
@@ -137,6 +144,14 @@ int main(void) {
     expect(app->webdav(app, &mount, &error) == VECTIS_OK &&
                vectis_route_count(app) == 1u,
            "registers mounted WebDAV route with auth adapter");
+    memset(&fake_fs, 0, sizeof(fake_fs));
+    vectis_webdav_embedded_mount_config_init(&embedded_mount);
+    embedded_mount.path_prefix = "/embedded-dav";
+    embedded_mount.fs = &fake_fs;
+    embedded_mount.auth = allow_webdav_auth;
+    expect(app->webdav_embedded(app, &embedded_mount, &error) == VECTIS_OK &&
+               vectis_route_count(app) == 2u,
+           "registers read-only embedded WebDAV route with auth adapter");
     app->close(app);
   }
 
@@ -156,6 +171,19 @@ int main(void) {
     mount.auth_required = 0;
     expect(app->webdav(app, &mount, &error) == VECTIS_OK,
            "registers explicitly public WebDAV mount without auth adapter");
+    memset(&fake_fs, 0, sizeof(fake_fs));
+    vectis_webdav_embedded_mount_config_init(&embedded_mount);
+    embedded_mount.path_prefix = "/embedded-dav";
+    expect(app->webdav_embedded(app, &embedded_mount, &error) ==
+               VECTIS_ERR_INVALID,
+           "rejects embedded WebDAV mount without embedded fs");
+    embedded_mount.fs = &fake_fs;
+    expect(app->webdav_embedded(app, &embedded_mount, &error) ==
+               VECTIS_ERR_INVALID,
+           "rejects protected embedded WebDAV mount without auth adapter");
+    embedded_mount.auth_required = 0;
+    expect(app->webdav_embedded(app, &embedded_mount, &error) == VECTIS_OK,
+           "registers explicitly public embedded WebDAV mount without auth");
     app->close(app);
   }
 

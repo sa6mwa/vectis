@@ -170,6 +170,8 @@ assert(server:dsv({
 - `server:static_directory(opts)` serves a disk directory.
 - `server:static_embedded(opts)` serves packed embedded assets read-only.
 - `server:webdav(opts)` serves Vectis-managed mutable WebDAV storage.
+- `server:webdav_embedded(opts)` serves packed embedded assets through a
+  read-only WebDAV mount without extracting them.
 - `server:webdav_embedded_site(opts)` extracts packed assets into mutable
   WebDAV storage and serves them.
 - `server:auth_routes(opts)` registers native login/auth/WebDAV-key routes.

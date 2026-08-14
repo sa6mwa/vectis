@@ -124,6 +124,20 @@ struct vectis_webdav_embedded_site_config {
   void *auth_userdata;
 };
 
+/* Read-only WebDAV mount over a borrowed embedded filesystem. Unlike
+ * vectis_webdav_embedded_site_config this does not extract or create mutable
+ * overlay storage; mutating WebDAV methods return 405. */
+struct vectis_webdav_embedded_mount_config {
+  const char *path_prefix;
+  const vectis_embedded_fs *fs;
+  const char *content_type;
+  const char *cache_control;
+  int auth_required;
+  int conceal_unauthorized;
+  vectis_webdav_auth_fn auth;
+  void *auth_userdata;
+};
+
 typedef struct vectis_webdav_auth_provider_config {
   const vectis_auth_provider *provider;
   const char *purpose;
@@ -169,6 +183,8 @@ void vectis_webdav_auth_response_init(vectis_webdav_auth_response *response);
 void vectis_webdav_mount_config_init(vectis_webdav_mount_config *config);
 void vectis_webdav_embedded_site_config_init(
     vectis_webdav_embedded_site_config *config);
+void vectis_webdav_embedded_mount_config_init(
+    vectis_webdav_embedded_mount_config *config);
 void vectis_webdav_auth_provider_config_init(
     vectis_webdav_auth_provider_config *config);
 vectis_status
@@ -184,6 +200,9 @@ vectis_status vectis_register_webdav_site(vectis_app *app,
                                           vectis_error *error);
 vectis_status vectis_register_webdav_embedded_site(
     vectis_app *app, const vectis_webdav_embedded_site_config *config,
+    vectis_error *error);
+vectis_status vectis_register_webdav_embedded(
+    vectis_app *app, const vectis_webdav_embedded_mount_config *config,
     vectis_error *error);
 
 #ifdef __cplusplus

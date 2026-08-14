@@ -66,6 +66,8 @@ typedef struct vectis_auth_routes_config vectis_auth_routes_config;
 typedef struct vectis_webdav_mount_config vectis_webdav_mount_config;
 typedef struct vectis_webdav_embedded_site_config
     vectis_webdav_embedded_site_config;
+typedef struct vectis_webdav_embedded_mount_config
+    vectis_webdav_embedded_mount_config;
 
 typedef enum vectis_status {
   VECTIS_OK = 0,
@@ -914,6 +916,9 @@ struct vectis_app {
                           vectis_error *error);
   vectis_status (*webdav_embedded_site)(
       vectis_app *self, const vectis_webdav_embedded_site_config *config,
+      vectis_error *error);
+  vectis_status (*webdav_embedded)(
+      vectis_app *self, const vectis_webdav_embedded_mount_config *config,
       vectis_error *error);
   vectis_status (*auth_routes)(vectis_app *self,
                                const vectis_auth_routes_config *config,

@@ -94,6 +94,9 @@ Server-side WebDAV stays on `vectis.server`.
 
 - `server:webdav(opts)` registers an ordinary mutable Vectis-managed WebDAV
   storage mount.
+- `server:webdav_embedded(opts)` registers a read-only WebDAV mount over packed
+  embedded assets without extracting them. It supports `OPTIONS`, `PROPFIND`,
+  `GET`, and `HEAD`; mutating WebDAV methods return `405`.
 - `server:webdav_embedded_site(opts)` extracts packed embedded assets into the
   mutable WebDAV storage tree, then registers a WebDAV mount over that storage.
 
@@ -107,6 +110,9 @@ Server-side WebDAV stays on `vectis.server`.
 By default WebDAV mounts require auth. Set `auth_required = false` only for
 deliberately public mounts. Auth tables accept the same native and callback
 provider shapes used by `server:auth_json` and `server:webdav_embedded_site`.
+`server:webdav_embedded()` accepts the same auth fields plus optional
+`cache_control` and fallback `content_type`; it requires a packed binary with
+embedded assets.
 
 ```lua
 local vectis = require("vectis")
@@ -125,5 +131,6 @@ assert(server:webdav({
 }) == true)
 ```
 
-This is not a direct arbitrary `root_dir` WebDAV backend. The current mutable
-server helper uses Vectis-managed WebDAV storage under `cache_dir/site_id`.
+This is not a direct arbitrary mutable `root_dir` WebDAV backend. The current
+mutable server helpers use Vectis-managed WebDAV storage under `cache_dir` and
+`site_id`; `server:webdav_embedded()` is read-only over the packed asset tree.

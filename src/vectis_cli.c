@@ -6194,6 +6194,75 @@ static int vectis_lua_server_webdav_embedded_site(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_server_webdav_embedded(lua_State *lua) {
+  vectis_lua_runtime_context *context;
+  vectis_lua_server *server;
+  vectis_app *app;
+  vectis_webdav_embedded_mount_config config;
+  vectis_lua_server_native_auth *auth;
+  vectis_error error;
+  vectis_status status;
+  const char *path_prefix;
+  int auth_required;
+
+  server = vectis_lua_check_server(lua, 1);
+  app = vectis_lua_server_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  context = (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(
+      (void *)lua);
+  if (context == NULL || context->embedded_fs == NULL) {
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID, "embedded WebDAV mount requires packed assets");
+  }
+
+  path_prefix = vectis_lua_table_string(lua, 2, "path_prefix");
+  if (path_prefix == NULL) {
+    path_prefix = vectis_lua_table_string(lua, 2, "prefix");
+  }
+  auth_required = vectis_lua_table_bool(lua, 2, "auth_required", 1);
+
+  vectis_webdav_embedded_mount_config_init(&config);
+  config.path_prefix = path_prefix != NULL ? path_prefix : "/";
+  config.fs = context->embedded_fs;
+  config.content_type = vectis_lua_table_string(lua, 2, "content_type");
+  config.cache_control = vectis_lua_table_string(lua, 2, "cache_control");
+  config.auth_required = auth_required;
+  config.conceal_unauthorized =
+      vectis_lua_table_bool(lua, 2, "conceal_unauthorized", 1);
+
+  auth = NULL;
+  vectis_error_clear(&error);
+  if (auth_required) {
+    lua_getfield(lua, 2, "auth");
+    if (!lua_istable(lua, -1)) {
+      lua_pop(lua, 1);
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_INVALID,
+          "embedded WebDAV mount requires auth when auth_required is true");
+    }
+    auth = vectis_lua_server_native_auth_new(lua, -1, "embedded WebDAV mount",
+                                             &error);
+    lua_pop(lua, 1);
+    if (auth == NULL) {
+      return vectis_lua_push_error(
+          lua, error.code != VECTIS_OK ? error.code : VECTIS_ERR_NOMEM, &error);
+    }
+    config.auth = vectis_webdav_auth_provider;
+    config.auth_userdata = &auth->webdav_config;
+  }
+
+  status = app->webdav_embedded(app, &config, &error);
+  if (status != VECTIS_OK) {
+    vectis_lua_server_native_auth_free(auth);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  if (auth != NULL) {
+    vectis_lua_server_native_auth_retain(server, auth);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
 static vectis_status
 vectis_lua_auth_json_response(vectis_response *response, int status_code,
                               const char *content_type, const void *body,
@@ -12185,6 +12254,8 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "webdav");
     lua_pushcfunction(lua, vectis_lua_server_webdav_embedded_site);
     lua_setfield(lua, -2, "webdav_embedded_site");
+    lua_pushcfunction(lua, vectis_lua_server_webdav_embedded);
+    lua_setfield(lua, -2, "webdav_embedded");
     lua_pushcfunction(lua, vectis_lua_server_auth_routes);
     lua_setfield(lua, -2, "auth_routes");
     lua_pushcfunction(lua, vectis_lua_server_route);

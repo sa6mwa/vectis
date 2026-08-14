@@ -1373,6 +1373,7 @@ static void assert_json_route_surface(void) {
   assert(app->static_embedded != NULL);
   assert(app->webdav != NULL);
   assert(app->webdav_embedded_site != NULL);
+  assert(app->webdav_embedded != NULL);
   assert(app->auth_routes != NULL);
   assert(app->openapi_doc != NULL);
   assert(app->openapi != NULL);
