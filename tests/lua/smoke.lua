@@ -86,6 +86,10 @@ assert(type(mqtt.publish) == "function")
 assert(type(openssl.version) == "function")
 assert(type(openssl.sha256_hex) == "function")
 assert(type(openssl.hmac_sha256_hex) == "function")
+assert(type(openssl.digest) == "function")
+assert(type(openssl.digest_hex) == "function")
+assert(type(openssl.hmac) == "function")
+assert(type(openssl.hmac_hex) == "function")
 assert(type(openssl.random_bytes) == "function")
 local xml_schema = lonejson.schema("invoice", {
   lonejson.field("id", lonejson.string({required = true})),

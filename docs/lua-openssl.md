@@ -12,6 +12,12 @@ remain under `vectis.cert`.
 - `openssl.hmac_sha256(key, data)` returns a 32-byte binary HMAC digest.
 - `openssl.hmac_sha256_hex(key, data)` returns the HMAC digest as lowercase
   hex.
+- `openssl.digest(algorithm, data)` returns a binary digest for an OpenSSL EVP
+  digest name such as `sha1`, `sha256`, or `sha512`.
+- `openssl.digest_hex(algorithm, data)` returns the digest as lowercase hex.
+- `openssl.hmac(algorithm, key, data)` returns a binary HMAC for an OpenSSL EVP
+  digest name.
+- `openssl.hmac_hex(algorithm, key, data)` returns the HMAC as lowercase hex.
 - `openssl.random_bytes(size)` returns CSPRNG bytes from `RAND_bytes`.
 - `openssl.random_hex(size)` returns CSPRNG bytes encoded as lowercase hex.
 
@@ -24,6 +30,8 @@ assert(openssl.sha256_hex("abc") ==
   "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
 
 local nonce = openssl.random_hex(16)
+local sha1 = openssl.digest_hex("sha1", "abc")
+local mac = openssl.hmac_hex("sha256", "key", "message")
 ```
 
 This facade is intentionally small. Additions should be made when they expose a

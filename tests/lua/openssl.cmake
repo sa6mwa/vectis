@@ -10,6 +10,10 @@ assert(type(openssl.sha256) == "function")
 assert(type(openssl.sha256_hex) == "function")
 assert(type(openssl.hmac_sha256) == "function")
 assert(type(openssl.hmac_sha256_hex) == "function")
+assert(type(openssl.digest) == "function")
+assert(type(openssl.digest_hex) == "function")
+assert(type(openssl.hmac) == "function")
+assert(type(openssl.hmac_hex) == "function")
 assert(type(openssl.random_bytes) == "function")
 assert(type(openssl.random_hex) == "function")
 
@@ -20,6 +24,22 @@ assert(openssl.sha256_hex("abc") ==
 assert(openssl.hmac_sha256_hex("key", "The quick brown fox jumps over the lazy dog") ==
        "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8")
 assert(#openssl.hmac_sha256("key", "data") == 32)
+assert(openssl.digest_hex("sha256", "abc") ==
+       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+assert(openssl.digest_hex("SHA1", "abc") ==
+       "a9993e364706816aba3e25717850c26c9cd0d89d")
+assert(#openssl.digest("sha1", "abc") == 20)
+assert(openssl.hmac_hex("sha256", "key", "The quick brown fox jumps over the lazy dog") ==
+       "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8")
+assert(openssl.hmac_hex("sha1", "key", "The quick brown fox jumps over the lazy dog") ==
+       "de7c9b85b8b78aa6bc8a7a36f70a90701c9db4d9")
+assert(#openssl.hmac("sha1", "key", "data") == 20)
+
+local bad_digest_ok, bad_digest_err = pcall(function()
+  openssl.digest_hex("no-such-digest", "abc")
+end)
+assert(bad_digest_ok == false)
+assert(tostring(bad_digest_err):find("unsupported openssl digest", 1, true))
 
 local empty = openssl.random_bytes(0)
 assert(empty == "")

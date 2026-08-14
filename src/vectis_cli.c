@@ -10426,6 +10426,106 @@ static int vectis_lua_openssl_hmac_sha256_hex(lua_State *lua) {
   return 1;
 }
 
+static const EVP_MD *vectis_lua_openssl_digest(lua_State *lua,
+                                               const char *algorithm) {
+  const EVP_MD *digest;
+
+  if (algorithm == NULL || algorithm[0] == '\0') {
+    luaL_error(lua, "openssl digest algorithm is required");
+    return NULL;
+  }
+  digest = EVP_get_digestbyname(algorithm);
+  if (digest == NULL) {
+    luaL_error(lua, "unsupported openssl digest algorithm: %s", algorithm);
+    return NULL;
+  }
+  return digest;
+}
+
+static int vectis_lua_openssl_digest_value(lua_State *lua) {
+  const EVP_MD *digest;
+  const unsigned char *data;
+  const char *algorithm;
+  size_t data_size;
+  unsigned char out[EVP_MAX_MD_SIZE];
+  unsigned int out_size;
+
+  algorithm = luaL_checkstring(lua, 1);
+  data = (const unsigned char *)luaL_checklstring(lua, 2, &data_size);
+  digest = vectis_lua_openssl_digest(lua, algorithm);
+  out_size = 0u;
+  if (EVP_Digest(data, data_size, out, &out_size, digest, NULL) != 1) {
+    return luaL_error(lua, "openssl digest failed");
+  }
+  lua_pushlstring(lua, (const char *)out, (size_t)out_size);
+  return 1;
+}
+
+static int vectis_lua_openssl_digest_hex(lua_State *lua) {
+  const EVP_MD *digest;
+  const unsigned char *data;
+  const char *algorithm;
+  size_t data_size;
+  unsigned char out[EVP_MAX_MD_SIZE];
+  unsigned int out_size;
+
+  algorithm = luaL_checkstring(lua, 1);
+  data = (const unsigned char *)luaL_checklstring(lua, 2, &data_size);
+  digest = vectis_lua_openssl_digest(lua, algorithm);
+  out_size = 0u;
+  if (EVP_Digest(data, data_size, out, &out_size, digest, NULL) != 1) {
+    return luaL_error(lua, "openssl digest failed");
+  }
+  vectis_lua_openssl_push_hex(lua, out, (size_t)out_size);
+  return 1;
+}
+
+static int vectis_lua_openssl_hmac(lua_State *lua) {
+  const EVP_MD *digest;
+  const unsigned char *key;
+  const unsigned char *data;
+  const char *algorithm;
+  size_t key_size;
+  size_t data_size;
+  unsigned char out[EVP_MAX_MD_SIZE];
+  unsigned int out_size;
+
+  algorithm = luaL_checkstring(lua, 1);
+  key = (const unsigned char *)luaL_checklstring(lua, 2, &key_size);
+  data = (const unsigned char *)luaL_checklstring(lua, 3, &data_size);
+  digest = vectis_lua_openssl_digest(lua, algorithm);
+  out_size = 0u;
+  if (HMAC(digest, key, (int)key_size, data, data_size, out, &out_size) ==
+      NULL) {
+    return luaL_error(lua, "openssl HMAC failed");
+  }
+  lua_pushlstring(lua, (const char *)out, (size_t)out_size);
+  return 1;
+}
+
+static int vectis_lua_openssl_hmac_hex(lua_State *lua) {
+  const EVP_MD *digest;
+  const unsigned char *key;
+  const unsigned char *data;
+  const char *algorithm;
+  size_t key_size;
+  size_t data_size;
+  unsigned char out[EVP_MAX_MD_SIZE];
+  unsigned int out_size;
+
+  algorithm = luaL_checkstring(lua, 1);
+  key = (const unsigned char *)luaL_checklstring(lua, 2, &key_size);
+  data = (const unsigned char *)luaL_checklstring(lua, 3, &data_size);
+  digest = vectis_lua_openssl_digest(lua, algorithm);
+  out_size = 0u;
+  if (HMAC(digest, key, (int)key_size, data, data_size, out, &out_size) ==
+      NULL) {
+    return luaL_error(lua, "openssl HMAC failed");
+  }
+  vectis_lua_openssl_push_hex(lua, out, (size_t)out_size);
+  return 1;
+}
+
 static size_t vectis_lua_openssl_size(lua_State *lua, int index,
                                       const char *label) {
   lua_Integer value;
@@ -10497,6 +10597,14 @@ static int luaopen_openssl(lua_State *lua) {
   lua_setfield(lua, -2, "hmac_sha256");
   lua_pushcfunction(lua, vectis_lua_openssl_hmac_sha256_hex);
   lua_setfield(lua, -2, "hmac_sha256_hex");
+  lua_pushcfunction(lua, vectis_lua_openssl_digest_value);
+  lua_setfield(lua, -2, "digest");
+  lua_pushcfunction(lua, vectis_lua_openssl_digest_hex);
+  lua_setfield(lua, -2, "digest_hex");
+  lua_pushcfunction(lua, vectis_lua_openssl_hmac);
+  lua_setfield(lua, -2, "hmac");
+  lua_pushcfunction(lua, vectis_lua_openssl_hmac_hex);
+  lua_setfield(lua, -2, "hmac_hex");
   lua_pushcfunction(lua, vectis_lua_openssl_random_bytes);
   lua_setfield(lua, -2, "random_bytes");
   lua_pushcfunction(lua, vectis_lua_openssl_random_hex);
