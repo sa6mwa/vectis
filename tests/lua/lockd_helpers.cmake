@@ -21,6 +21,24 @@ package.loaded.vectis = {
   end,
 }
 
+package.loaded["vectis.status"] = {
+  ERR_STATE = 3,
+  ERROR_SOURCE_VECTIS = 1,
+  status_string = function(status)
+    return status == 3 and "state" or tostring(status)
+  end,
+  error_source_string = function(source)
+    return source == 1 and "vectis" or tostring(source)
+  end,
+  error = function(err)
+    err.status_string = err.status_string or
+        package.loaded["vectis.status"].status_string(err.status)
+    err.source = err.source or
+        package.loaded["vectis.status"].error_source_string(err.source_code)
+    return err
+  end,
+}
+
 package.loaded.lockdc = {
   json_null = {},
   encode_json = function(value)

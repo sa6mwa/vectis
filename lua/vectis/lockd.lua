@@ -1,4 +1,5 @@
 local lockdc = require("lockdc")
+local vstatus = require("vectis.status")
 
 local M = {
   raw = lockdc,
@@ -26,15 +27,12 @@ local function vectis_module()
 end
 
 local function vectis_error(status_name, message)
-  local vectis = vectis_module()
-  local status = vectis[status_name]
-  return {
+  local status = vstatus[status_name]
+  return vstatus.error({
     status = status,
-    status_string = vectis.status_string(status),
-    source = vectis.error_source_string(vectis.ERROR_SOURCE_VECTIS),
-    source_code = vectis.ERROR_SOURCE_VECTIS,
+    source_code = vstatus.ERROR_SOURCE_VECTIS,
     message = message,
-  }
+  })
 end
 
 function M.config(config)

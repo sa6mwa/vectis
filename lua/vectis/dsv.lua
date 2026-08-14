@@ -1,18 +1,16 @@
 local core = require("vectis.dsv.core")
 local lonejson = require("lonejson")
+local vstatus = require("vectis.status")
 
 local M = {}
 
 local function vectis_error(status_name, message)
-  local vectis = require("vectis")
-  local status = vectis[status_name]
-  return {
+  local status = vstatus[status_name]
+  return vstatus.error({
     status = status,
-    status_string = vectis.status_string(status),
-    source = vectis.error_source_string(vectis.ERROR_SOURCE_VECTIS),
-    source_code = vectis.ERROR_SOURCE_VECTIS,
+    source_code = vstatus.ERROR_SOURCE_VECTIS,
     message = message,
-  }
+  })
 end
 
 local function copy_table(source)
@@ -39,9 +37,11 @@ local function decode_generated(json)
   if ok then
     return value
   end
-  return nil, {
+  return nil, vstatus.error({
+    status = vstatus.ERR_INVALID,
+    source_code = vstatus.ERROR_SOURCE_LONEJSON,
     message = tostring(value),
-  }
+  })
 end
 
 function M.parse_json(first, second)

@@ -21,6 +21,10 @@ Expected runtime failures return structured values instead of raising:
   `source = "curl"` and place the CURLcode in `dependency_code`.
 - HTTP status failures use `error.kind = "http_status"` and preserve the
   response status as `error.http_status` plus body fields that are available.
+- Vectis-owned pure Lua helper failures use the shared `vectis.status` helper
+  for the same `status`, `status_string`, `source`, and `source_code` fields.
+  For example, DSV callback stops are sourced from Vectis and DSV generated
+  JSON decode failures are sourced from LoneJSON.
 - Lua callback abort/stop paths return `nil, err` when abort is normal workflow
   control.
 

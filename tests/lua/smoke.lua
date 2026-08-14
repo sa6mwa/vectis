@@ -979,6 +979,10 @@ local embedded_lockd_config, embedded_lockd_err =
     vectis.lockd.config({ client_bundle = "embedded" })
 assert(embedded_lockd_config == nil)
 assert(type(embedded_lockd_err) == "table")
+assert(embedded_lockd_err.status == vectis.ERR_STATE)
+assert(embedded_lockd_err.status_string == "state")
+assert(embedded_lockd_err.source == "vectis")
+assert(embedded_lockd_err.source_code == vectis.ERROR_SOURCE_VECTIS)
 assert(embedded_lockd_err.message == "no embedded lockd bundle")
 
 assert(type(vectis.cert) == "table")
