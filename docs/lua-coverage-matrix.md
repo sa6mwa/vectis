@@ -1,7 +1,8 @@
 # Lua Coverage Matrix
 
 The `vectis` executable is a primary product surface. This matrix tracks the
-Lua exposure contract for bundled dependencies and Vectis C SDK workflows.
+Lua exposure contract for bundled dependencies and Vectis C SDK workflows. The
+developer-facing entry point is [`docs/lua.md`](lua.md).
 
 Coverage states:
 
@@ -80,8 +81,9 @@ Columns:
 ## Completion Rules
 
 - New bundled dependencies that are useful from app code must add a `dep:*`
-  row in this file before release.
+  row in this file and an entry in `docs/lua.md` before release.
 - New Vectis C SDK workflows must add a `workflow:*` row before release.
+- New Lua module documentation must be linked from `docs/lua.md`.
 - A `planned` or `partial` row is acceptable only when the Notes cell states
   the concrete missing surface or ownership decision.
 - Local deterministic tests are required when a row moves from `planned` to

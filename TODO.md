@@ -332,6 +332,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [ ] Add Lua examples for raw SFTP/libssh2 lower-level operations, CAI live/service-adapter workflows, loaded-model sus/whisper transcription, and capture/playback audio workflows as those facades land.
 - [ ] Add Lua unit and end-to-end tests for every Lua facade, including preload smoke, method-call DX, ownership/finalizer cleanup, structured error objects, packed execution, large-value streaming/spooling, and local deterministic protocol scenarios.
 - [x] Add release/package verification that the `vectis` binary includes all statically preloaded Lua modules while C binary SDK artifacts do not accidentally ship Lua source/runtime/package-manager state.
+- [x] Add a checked Lua facade documentation index that links raw dependency modules, Vectis-owned workflow modules, the coverage matrix, and module-level docs.
 
 ## Area 13: Single Binary Packaging
 
