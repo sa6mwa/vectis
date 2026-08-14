@@ -13343,6 +13343,34 @@ static void vectis_lua_push_ssh_table(lua_State *lua) {
   lua_setfield(lua, -2, "sftp_chmod");
 }
 
+static void vectis_lua_set_required_module(lua_State *lua, const char *field,
+                                           const char *module_name) {
+  lua_getglobal(lua, "require");
+  lua_pushstring(lua, module_name);
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    lua_error(lua);
+    return;
+  }
+  lua_setfield(lua, -2, field);
+}
+
+static void vectis_lua_push_libs_table(lua_State *lua) {
+  lua_newtable(lua);
+  vectis_lua_set_required_module(lua, "lockdc", "lockdc");
+  vectis_lua_set_required_module(lua, "lonejson", "lonejson");
+  vectis_lua_set_required_module(lua, "pslog", "pslog");
+  vectis_lua_set_required_module(lua, "lql", "lql");
+  vectis_lua_set_required_module(lua, "cai", "cai");
+  vectis_lua_set_required_module(lua, "libmdf", "libmdf");
+  vectis_lua_set_required_module(lua, "softline", "softline");
+  vectis_lua_set_required_module(lua, "curl", "curl");
+  vectis_lua_set_required_module(lua, "opcua", "opcua");
+  vectis_lua_set_required_module(lua, "openssl", "openssl");
+  vectis_lua_set_required_module(lua, "zlib", "zlib");
+  vectis_lua_set_required_module(lua, "audio", "audio");
+  vectis_lua_set_required_module(lua, "sus", "sus");
+}
+
 static int luaopen_vectis(lua_State *lua) {
   vectis_lua_register_totp_qr(lua);
   vectis_lua_register_embedded_chunks(lua);
@@ -13427,6 +13455,8 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "cert");
   vectis_lua_push_ssh_table(lua);
   lua_setfield(lua, -2, "ssh");
+  vectis_lua_push_libs_table(lua);
+  lua_setfield(lua, -2, "libs");
   lua_getglobal(lua, "require");
   lua_pushliteral(lua, "vectis.log");
   if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {

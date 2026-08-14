@@ -39,6 +39,12 @@ The C SDK artifacts intentionally do not ship the embedded Lua runtime, Lua
 source tree, or Lua package-manager state. The Lua surface is a product surface
 of the `vectis` executable.
 
+`require("vectis").libs` collects these bundled library facades under one
+namespace for applications that already use the top-level Vectis module:
+`vectis.libs.curl`, `vectis.libs.lockdc`, `vectis.libs.lonejson`, and so on are
+the same module tables returned by direct `require(...)`. Direct `require(...)`
+remains the canonical way to load an individual dependency facade.
+
 ## Vectis Workflow Modules
 
 These modules are Vectis-owned helpers over one or more raw modules or C SDK
