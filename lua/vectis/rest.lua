@@ -357,17 +357,17 @@ end
 
 function M.client(defaults)
   defaults = copy_table(defaults)
-  local raw_defaults = copy_table(defaults)
-  raw_defaults.base_url = nil
-  local raw = http.client(raw_defaults)
-  local client = {raw = raw}
+  local http_defaults = copy_table(defaults)
+  http_defaults.base_url = nil
+  local http_client = http.client(http_defaults)
+  local client = {http = http_client}
 
   function client.request(path, opts)
     local request, err = prepare_or_error(defaults, path, opts)
     if request == nil then
       return err
     end
-    return raw.request_json(request)
+    return http_client.request_json(request)
   end
 
   function client.get(path, opts)
@@ -377,7 +377,7 @@ function M.client(defaults)
       return err
     end
     opts.method = opts.method or "GET"
-    return raw.request_json(opts)
+    return http_client.request_json(opts)
   end
 
   function client.post(path, opts)
@@ -387,7 +387,7 @@ function M.client(defaults)
       return err
     end
     opts.method = opts.method or "POST"
-    return raw.request_json(opts)
+    return http_client.request_json(opts)
   end
 
   function client.put(path, opts)
@@ -397,7 +397,7 @@ function M.client(defaults)
       return err
     end
     opts.method = opts.method or "PUT"
-    return raw.request_json(opts)
+    return http_client.request_json(opts)
   end
 
   function client.patch(path, opts)
@@ -407,7 +407,7 @@ function M.client(defaults)
       return err
     end
     opts.method = opts.method or "PATCH"
-    return raw.request_json(opts)
+    return http_client.request_json(opts)
   end
 
   function client.delete(path, opts)
@@ -417,7 +417,7 @@ function M.client(defaults)
       return err
     end
     opts.method = opts.method or "DELETE"
-    return raw.request_json(opts)
+    return http_client.request_json(opts)
   end
 
   function client.head(path, opts)
@@ -427,7 +427,7 @@ function M.client(defaults)
       return err
     end
     opts.method = opts.method or "HEAD"
-    return raw.request_json(opts)
+    return http_client.request_json(opts)
   end
 
   function client.options(path, opts)
@@ -437,7 +437,7 @@ function M.client(defaults)
       return err
     end
     opts.method = opts.method or "OPTIONS"
-    return raw.request_json(opts)
+    return http_client.request_json(opts)
   end
 
   return client

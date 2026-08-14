@@ -1977,7 +1977,7 @@ static void assert_consumer_service_surface(void) {
   assert(status == VECTIS_ERR_INVALID);
   status = vectis_consumer_service_wait(NULL, &error);
   assert(status == VECTIS_ERR_INVALID);
-  assert(vectis_consumer_service_raw(NULL) == NULL);
+  assert(vectis_consumer_service_native(NULL) == NULL);
   vectis_consumer_service_receiver_config_init(&receiver_config);
   assert(receiver_config.visibility_timeout_seconds == 30L);
   assert(receiver_config.wait_seconds == 1L);
@@ -2051,7 +2051,8 @@ static void assert_consumer_service_surface(void) {
   assert(status == VECTIS_OK || status == VECTIS_ERR_STATE);
   if (status == VECTIS_OK) {
     assert(service != NULL);
-    assert(vectis_consumer_service_raw(service) != NULL);
+    assert(vectis_consumer_service_native(service) != NULL);
+    assert(service->native(service) != NULL);
     service->close(service);
   } else {
     assert(error.source == VECTIS_ERROR_SOURCE_LOCKDC);

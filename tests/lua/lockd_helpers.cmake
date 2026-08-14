@@ -368,7 +368,7 @@ assert(payload_exploded == false)
 assert(closed_messages == 3)
 assert(closed_clients == 13)
 
-local raw_client = assert(lockd.raw.open({}))
+local native_client = assert(lockd.native.open({}))
 for _, method in ipairs({
   "acquire",
   "get_json",
@@ -381,9 +381,9 @@ for _, method in ipairs({
   "dequeue_batch",
   "dequeue_with_state",
 }) do
-  assert(type(raw_client[method]) == "function", method)
+  assert(type(native_client[method]) == "function", method)
 end
-local raw_lease = assert(raw_client:acquire({ key = "raw-direct" }))
+local native_lease = assert(native_client:acquire({ key = "native-direct" }))
 for _, method in ipairs({
   "get_json",
   "update_json",
@@ -394,9 +394,9 @@ for _, method in ipairs({
   "get_attachment",
   "release",
 }) do
-  assert(type(raw_lease[method]) == "function", method)
+  assert(type(native_lease[method]) == "function", method)
 end
-local raw_message = assert(raw_client:dequeue({ queue = "raw-direct" }))
+local native_message = assert(native_client:dequeue({ queue = "native-direct" }))
 for _, method in ipairs({
   "payload_json",
   "ack",
@@ -404,11 +404,11 @@ for _, method in ipairs({
   "extend",
   "state",
 }) do
-  assert(type(raw_message[method]) == "function", method)
+  assert(type(native_message[method]) == "function", method)
 end
-raw_message:close()
-raw_lease:close()
-raw_client:close()
+native_message:close()
+native_lease:close()
+native_client:close()
 
 print("vectis-lockd-helpers-ok")
 ]])

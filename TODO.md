@@ -341,7 +341,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add packed execution coverage for deterministic local Lua facade examples covering XML, dependency-native OpenSSL/certs, generic curl protocols, CAI local APIs, MQTT/SMTP helper validation, and SCP helper validation.
 - [x] Add packed execution coverage for dependency-native libmdf render/stream examples and the mutable WebDAV fileserver example.
 - [x] Add deterministic Lua example and packed coverage for opt-in audio capture/playback device workflows.
-- [x] Add user-facing Lua docs and direct JSON passthrough helpers for `vectis.lockd`, keeping direct `lockdc` access available as `vectis.lockd.raw`.
+- [x] Add user-facing Lua docs and direct JSON passthrough helpers for `vectis.lockd`, keeping direct `lockdc` access available as `vectis.lockd.native`.
 - [x] Add narrow `vectis.lockd` workflow helpers for one-shot JSON enqueue and acquired-lease handler cleanup without hiding direct `lockdc` document/queue APIs.
 - [x] Add narrow `vectis.lockd` JSON state save/load helpers that mirror C acquire/update-or-load/release workflow semantics without hiding direct `lockdc` leases.
 - [x] Migrate public Lua lockd state/queue examples onto `vectis.lockd` helpers and cover them with deterministic local stub tests.

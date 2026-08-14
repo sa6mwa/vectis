@@ -4,7 +4,7 @@ local vstatus = require("vectis.status")
 local unpack_values = table.unpack or unpack
 
 local M = {
-  raw = pslog,
+  native = pslog,
 }
 
 local reserved_error_fields = {

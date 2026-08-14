@@ -2,7 +2,7 @@ local lockdc = require("lockdc")
 local vstatus = require("vectis.status")
 
 local M = {
-  raw = lockdc,
+  native = lockdc,
   encode_json = lockdc.encode_json,
   decode_json = lockdc.decode_json,
   json_null = lockdc.json_null,

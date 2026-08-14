@@ -963,10 +963,10 @@ struct vectis_app {
 };
 
 struct vectis_consumer_service {
-  /* Escape hatch for APIs not covered by the Vectis facade. The returned raw
-   * service remains owned by this handle.
+  /* Native liblockdc service for APIs not covered by the Vectis facade. The
+   * returned service remains owned by this handle.
    */
-  struct lc_consumer_service *(*raw)(vectis_consumer_service *self);
+  struct lc_consumer_service *(*native)(vectis_consumer_service *self);
   vectis_status (*run)(vectis_consumer_service *self, vectis_error *error);
   vectis_status (*start)(vectis_consumer_service *self, vectis_error *error);
   vectis_status (*stop)(vectis_consumer_service *self, vectis_error *error);
@@ -1390,7 +1390,7 @@ vectis_status vectis_consumer_service_new_receiver(
     vectis_app *app, const vectis_consumer_service_receiver_config *config,
     vectis_consumer_service **out, vectis_error *error);
 struct lc_consumer_service *
-vectis_consumer_service_raw(vectis_consumer_service *service);
+vectis_consumer_service_native(vectis_consumer_service *service);
 vectis_status vectis_consumer_service_run(vectis_consumer_service *service,
                                           vectis_error *error);
 vectis_status vectis_consumer_service_start(vectis_consumer_service *service,

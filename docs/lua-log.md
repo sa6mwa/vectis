@@ -2,7 +2,7 @@
 
 `vectis.log` is a small logging DX layer over the dependency-native `pslog` Lua
 module. It does not replace `pslog`; direct access remains available as
-`vectis.log.raw`.
+`vectis.log.native`.
 
 ## Logger Creation
 

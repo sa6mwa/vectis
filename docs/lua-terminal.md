@@ -7,8 +7,8 @@ without hiding the direct modules.
 
 Direct access remains available through:
 
-- `vectis.terminal.raw.libmdf`
-- `vectis.terminal.raw.softline`
+- `vectis.terminal.libs.libmdf`
+- `vectis.terminal.libs.softline`
 
 ## Entry Points
 

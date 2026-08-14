@@ -10500,7 +10500,7 @@ vectis_status vectis_consumer_service_new(
     return status;
   }
   lc_error_cleanup(&lcerr);
-  service->raw = vectis_consumer_service_raw;
+  service->native = vectis_consumer_service_native;
   service->run = vectis_consumer_service_run;
   service->start = vectis_consumer_service_start;
   service->stop = vectis_consumer_service_stop;
@@ -10690,7 +10690,7 @@ vectis_status vectis_consumer_service_new_receiver(
 }
 
 struct lc_consumer_service *
-vectis_consumer_service_raw(vectis_consumer_service *service) {
+vectis_consumer_service_native(vectis_consumer_service *service) {
   vectis_consumer_service_impl *impl;
 
   if (service == NULL) {

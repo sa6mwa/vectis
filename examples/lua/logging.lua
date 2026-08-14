@@ -4,7 +4,7 @@ local pslog = require("pslog")
 local status = require("vectis.status")
 
 assert(vectis.log == log)
-assert(log.raw == pslog)
+assert(log.native == pslog)
 
 local chunks = {}
 local logger = assert(log.new({

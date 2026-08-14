@@ -3,7 +3,7 @@ local softline = require("softline")
 local vstatus = require("vectis.status")
 
 local M = {
-  raw = {
+  libs = {
     libmdf = libmdf,
     softline = softline,
   },
