@@ -316,7 +316,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add deterministic Lua example and packed coverage for opt-in audio capture/playback device workflows.
 - [ ] Publish a separate `vectis` Lua rock for users who want to run the Vectis facade inside their own Lua 5.5 environment.
 - [x] Keep LuaRocks out of the `vectis` binary runtime and release artifacts.
-- [ ] Add Vectis-owned Lua modules for Kore, OpenSSL certificate workflows, and broader libssh2 coverage.
+- [ ] Add Vectis-owned Lua modules for Kore and broader libssh2 coverage.
 - [x] Add a Vectis-owned Lua SSH command execution helper backed by libssh2.
 - [ ] Keep the Lua framework model aligned with the C SDK model: raw dependency access plus a Vectis-owned DX layer with matching concepts and behavior.
 - [x] Support shebang execution through `#!/usr/local/bin/vectis`.

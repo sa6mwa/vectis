@@ -2,7 +2,7 @@
 
 `vectis.cert` exposes Vectis-owned OpenSSL-backed certificate workflows. It is
 the default Lua DX for certificate material; lower-level OpenSSL access remains
-a separate planned raw facade.
+a separate raw facade under `require("openssl")`.
 
 ## Generation
 
