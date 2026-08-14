@@ -176,7 +176,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [ ] Provide additional C helpers for retry-oriented queue workflow patterns only where raw `liblockdc` remains too noisy in real examples.
 - [ ] Provide Lua helpers for document store, retrieval, query, leases, enqueue, dequeue, ack/nack, and retry-oriented workflow patterns.
 - [x] Add Lua `vectis.lockd.with_dequeued_json()` to remove dequeue/payload/cleanup boilerplate while leaving ack/nack explicit in the handler.
-- [ ] Expose raw `liblockdc`/`lockdc` access for complete API coverage while making Vectis helpers the preferred workflow API.
+- [x] Expose raw `liblockdc`/`lockdc` access for complete API coverage while making Vectis helpers the preferred workflow API.
 - [x] Make lockd optional for Kore-only C services while preserving validation for configured lockd transports.
 - [x] Define consumer registration and lifecycle APIs for C.
 - [x] Expose lockd consumer service startup/configuration directly, then layer Vectis-owned worker DX on top.
