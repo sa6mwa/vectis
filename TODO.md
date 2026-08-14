@@ -314,6 +314,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add packed execution coverage for deterministic local Lua facade examples covering XML, raw OpenSSL/certs, generic curl protocols, CAI local APIs, MQTT/SMTP helper validation, and SCP helper validation.
 - [x] Add packed execution coverage for raw libmdf render/stream examples and the mutable WebDAV fileserver example.
 - [x] Add deterministic Lua example and packed coverage for opt-in audio capture/playback device workflows.
+- [x] Add user-facing Lua docs and direct JSON passthrough helpers for `vectis.lockd`, keeping raw `lockdc` available as `vectis.lockd.raw`.
 - [ ] Publish a separate `vectis` Lua rock for users who want to run the Vectis facade inside their own Lua 5.5 environment.
 - [x] Keep LuaRocks out of the `vectis` binary runtime and release artifacts.
 - [ ] Add Vectis-owned Lua modules for Kore and broader libssh2 coverage.

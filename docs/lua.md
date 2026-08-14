@@ -50,7 +50,8 @@ workflows:
   [Lua DSV](lua-dsv.md).
 - `vectis.http`: generic downstream HTTP and file transfer helpers, documented
   in [Lua HTTP](lua-http.md).
-- `vectis.lockd`: Vectis lockd client/workflow helpers.
+- `vectis.lockd`: Vectis lockd client/workflow helpers, documented in
+  [Lua lockd](lua-lockd.md).
 - `vectis.mqtt`: MQTT publish helper over curl, documented in
   [Lua MQTT](lua-mqtt.md).
 - `vectis.server`: Kore-backed server helpers, documented in

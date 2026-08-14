@@ -19,7 +19,7 @@ local enqueued, enqueue_err = client:enqueue({
   ttl_seconds = 3600,
   max_attempts = 5,
   content_type = "application/json",
-}, vectis.lockd.raw.encode_json({
+}, vectis.lockd.encode_json({
   type = "order.created",
   id = "1001",
 }))

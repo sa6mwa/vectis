@@ -1,6 +1,11 @@
 local lockdc = require("lockdc")
 
-local M = { raw = lockdc }
+local M = {
+  raw = lockdc,
+  encode_json = lockdc.encode_json,
+  decode_json = lockdc.decode_json,
+  json_null = lockdc.json_null,
+}
 
 local function copy_table(source)
   local target = {}
