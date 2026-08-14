@@ -1,8 +1,8 @@
 # Lua lql
 
-`require("lql")` is the raw liblql Lua module bundled into the `vectis`
-runner. It exposes selector, projection, mutation, file filtering, and spooled
-rewrite helpers directly from liblql.
+`require("lql")` is the dependency-native liblql Lua module bundled into the
+`vectis` runner. It exposes selector, projection, mutation, file filtering, and
+spooled rewrite helpers directly from liblql.
 
 ## Entry Points
 
@@ -46,6 +46,6 @@ local projection = assert(client:projection_parse("$.id,$.status"))
 assert(projection:path_count() == 2)
 ```
 
-The module is intentionally raw. Prefer higher-level Vectis helpers only when a
+The module is intentionally dependency-native. Prefer higher-level Vectis helpers only when a
 workflow crosses Vectis concepts such as HTTP routes, packed assets, lockd, or
 service logging.

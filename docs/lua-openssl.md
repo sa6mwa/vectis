@@ -1,8 +1,8 @@
 # OpenSSL Lua Facade
 
-`require("openssl")` exposes a narrow raw OpenSSL facade for stable crypto
-primitives that are useful from Lua application code. Certificate workflows
-remain under `vectis.cert`.
+`require("openssl")` exposes a narrow dependency-native OpenSSL facade for
+stable crypto primitives that are useful from Lua application code. Certificate
+workflows remain under `vectis.cert`.
 
 ## API
 

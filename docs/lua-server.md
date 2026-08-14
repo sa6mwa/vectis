@@ -120,7 +120,7 @@ source.
 the route and sends that response.
 
 `after` hooks run after the handler and receive `(request, response)`, where
-`response` is the handler's raw `nil`, string, or table response value.
+`response` is the handler's unprocessed `nil`, string, or table response value.
 Returning `nil` or `true` keeps the handler response. Returning a response
 table replaces it. Hooks are part of the buffered route surface; they do not
 make the route streaming.

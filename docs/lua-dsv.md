@@ -17,7 +17,7 @@ behavior.
 
 `parse()` and `parse_json()` are materialized. `each()` uses the C parser's
 source-to-callback path when `schema` is provided; without a schema it iterates
-the raw materialized parse result.
+the materialized parse result directly.
 
 Expected parse, serialization, spill, and row-callback stop failures return
 `nil, err`, where `err` is a structured table with at least `message`,

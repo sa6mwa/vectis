@@ -1,9 +1,9 @@
 # Lua pslog
 
-`require("pslog")` is the raw libpslog Lua module bundled into the `vectis`
-runner. Vectis preloads it unchanged for applications that need the complete
-upstream logging surface. Use [`vectis.log`](lua-log.md) when the narrower
-Vectis helper defaults are enough.
+`require("pslog")` is the dependency-native libpslog Lua module bundled into
+the `vectis` runner. Vectis preloads it unchanged for applications that need
+the complete upstream logging surface. Use [`vectis.log`](lua-log.md) when the
+narrower Vectis helper defaults are enough.
 
 ## Entry Points
 
@@ -40,6 +40,6 @@ logger:close()
 assert(table.concat(chunks):find('"service":"orders"', 1, true))
 ```
 
-`pslog` is a raw dependency facade. Expected Vectis helper errors are not added
-to raw pslog calls; use `vectis.log.log_error()` when Vectis structured error
+`pslog` is a dependency-native facade. Expected Vectis helper errors are not added
+to direct pslog calls; use `vectis.log.log_error()` when Vectis structured error
 metadata should be written as fields.

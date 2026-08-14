@@ -1,7 +1,7 @@
 # Vectis Lua SSH
 
-`vectis.ssh` exposes Vectis-owned libssh2-backed workflows. It is not a raw
-libssh2 session/channel binding.
+`vectis.ssh` exposes Vectis-owned libssh2-backed workflows. It is not a
+dependency-native libssh2 session/channel binding.
 
 ## Command Execution
 
@@ -83,8 +83,8 @@ Directory methods:
   `nil` at EOF.
 - `dir:close()` closes the remote directory handle.
 
-Raw libssh2 channel/session control and advanced host-key workflows remain
-outside this helper surface.
+Dependency-native libssh2 channel/session control and advanced host-key
+workflows remain outside this helper surface.
 
 ```lua
 local vectis = require("vectis")

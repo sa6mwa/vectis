@@ -5,9 +5,9 @@ Vectis depends on the cpkt C89 facades for speech and audio:
 - `cpkt_sus` over whisper.cpp
 - `cpkt_audio` over miniaudio
 
-The Lua facades are partially implemented as raw modules. This document records
-the required contract for completing them without weakening the upstream C
-ownership, streaming, and model-cache semantics.
+The Lua facades are partially implemented as dependency-native modules. This
+document records the required contract for completing them without weakening
+the upstream C ownership, streaming, and model-cache semantics.
 
 Current deterministic coverage includes:
 
@@ -29,13 +29,13 @@ exists.
 
 ## Module Names
 
-- `require("audio")` exposes the raw cpkt audio facade.
-- `require("sus")` exposes the raw cpkt SUS/whisper facade.
+- `require("audio")` exposes the dependency-native cpkt audio facade.
+- `require("sus")` exposes the dependency-native cpkt SUS/whisper facade.
 - Vectis-owned DX helpers may later live under `vectis.audio` and `vectis.sus`
   only when they reduce real service workflow friction.
 
-The raw modules must remain available. Vectis helpers must not hide the raw
-facades when full API coverage matters.
+The dependency-native modules must remain available. Vectis helpers must not
+hide the direct facades when full API coverage matters.
 
 ## Ownership
 
@@ -71,7 +71,7 @@ Do not call a helper streaming if it buffers, downloads, spools, or concatenates
 the full input or transcript behind the API. Bounded chunk buffers and the
 upstream VOX/PTT spool caps are acceptable when documented.
 
-## Audio Raw Surface
+## Audio Dependency-Native Surface
 
 Initial `audio` Lua coverage should expose:
 
@@ -98,7 +98,7 @@ Initial `audio` Lua coverage should expose:
 Capture/playback device helpers should be added only with opt-in tests because
 host audio devices and platform commands are environment-sensitive.
 
-## SUS Raw Surface
+## SUS Dependency-Native Surface
 
 Initial `sus` Lua coverage should expose:
 

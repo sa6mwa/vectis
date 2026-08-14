@@ -1,11 +1,11 @@
 # Vectis Lua Surface
 
-The `vectis` executable embeds the cpkt Lua runtime and preloads both raw
-dependency facades and Vectis-owned workflow helpers. Raw modules should stay
-thin over their C implementation. Vectis-owned modules should provide the
-service/application DX where a workflow crosses Vectis concepts such as Kore
-routes, packed assets, auth, lockd consumers, certificate workflows, or
-file-backed transfers.
+The `vectis` executable embeds the cpkt Lua runtime and preloads both
+dependency-native facades and Vectis-owned workflow helpers.
+Dependency-native modules should stay thin over their C implementation.
+Vectis-owned modules should provide the service/application DX where a workflow
+crosses Vectis concepts such as Kore routes, packed assets, auth, lockd
+consumers, certificate workflows, or file-backed transfers.
 
 For release tracking, see the [Lua coverage matrix](lua-coverage-matrix.md).
 For shared naming, error, ownership, and payload-shape rules, see the
@@ -13,7 +13,7 @@ For shared naming, error, ownership, and payload-shape rules, see the
 For SUS/audio callback and ownership details, see the
 [SUS and audio contract](lua-sus-audio-contract.md).
 
-## Raw Dependency Modules
+## Dependency-Native Modules
 
 These modules are intended to expose upstream or bundled C library behavior
 with minimal Vectis opinion:
@@ -47,8 +47,8 @@ remains the canonical way to load an individual dependency facade.
 
 ## Vectis Workflow Modules
 
-These modules are Vectis-owned helpers over one or more raw modules or C SDK
-workflows:
+These modules are Vectis-owned helpers over one or more dependency-native
+modules or C SDK workflows:
 
 - `vectis`: top-level runtime helpers and module namespace.
 - `vectis.auth`: native auth, TOTP/QR, email token, OAuth2/OIDC, and WebDAV key

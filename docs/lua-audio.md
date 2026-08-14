@@ -1,8 +1,8 @@
 # Audio Lua Facade
 
-`require("audio")` exposes the raw cpkt audio facade in the embedded Vectis Lua
-runtime. It is a receiver-shell binding over the bundled `cpkt_audio` C89
-facade, not a higher-level Vectis workflow wrapper.
+`require("audio")` exposes the dependency-native cpkt audio facade in the
+embedded Vectis Lua runtime. It is a receiver-shell binding over the bundled
+`cpkt_audio` C89 facade, not a higher-level Vectis workflow wrapper.
 
 The facade keeps streaming behavior explicit. Callback readers and writers are
 called incrementally by the C backend, decoder URL input is pulled through

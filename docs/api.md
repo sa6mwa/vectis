@@ -55,7 +55,7 @@ Major groups:
 ## Lua Surface
 
 The Lua surface is tracked by [Lua surface](lua.md) and
-[Lua coverage matrix](lua-coverage-matrix.md). Raw dependency facades should
+[Lua coverage matrix](lua-coverage-matrix.md). Dependency-native facades should
 stay thin over their upstream C implementations. Vectis-owned modules should
 cover service workflows where Vectis owns the cross-library DX.
 

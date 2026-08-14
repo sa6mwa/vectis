@@ -1,7 +1,7 @@
 # Lua zlib Facade
 
-The embedded Vectis runtime preloads `require("zlib")` as a raw facade over the
-bundled zlib dependency.
+The embedded Vectis runtime preloads `require("zlib")` as a
+dependency-native facade over the bundled zlib dependency.
 
 ## Entry Points
 

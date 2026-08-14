@@ -21,6 +21,6 @@ It exposes:
 `decorate_error` preserves existing protocol-specific fields such as
 `kind`, `code`, `code_name`, `attempts`, and `body`, while adding
 `status`, `status_string`, `source`, `source_code`, and optional
-`dependency_code`, `http_status`, and `detail`. Raw cpkt-backed facades such as
+`dependency_code`, `http_status`, and `detail`. Dependency-native cpkt-backed facades such as
 `audio`, `sus`, and `opcua` use `source = "cpkt"` and set `dependency` to the
 specific facade name while preserving native result/status diagnostics.

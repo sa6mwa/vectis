@@ -1,7 +1,7 @@
 # Vectis Lua Lockd
 
-`require("vectis").lockd` is a thin Vectis-owned workflow layer over the raw
-`lockdc` Lua module. It keeps the upstream module available as
+`require("vectis").lockd` is a thin Vectis-owned workflow layer over the
+dependency-native `lockdc` Lua module. It keeps the upstream module available as
 `vectis.lockd.raw` while adding Vectis-specific config normalization for packed
 lockd bundle sources.
 
@@ -32,12 +32,12 @@ lockd bundle sources.
   `message:ack()` or `message:nack()` in the handler.
 - `vectis.lockd.encode_json(value)` delegates to `lockdc.encode_json`.
 - `vectis.lockd.decode_json(json)` delegates to `lockdc.decode_json`.
-- `vectis.lockd.json_null` is the raw lockdc JSON null sentinel.
-- `vectis.lockd.raw` is the raw `lockdc` module for complete upstream access.
+- `vectis.lockd.json_null` is the direct lockdc JSON null sentinel.
+- `vectis.lockd.raw` is the direct `lockdc` module for complete upstream access.
 
 ## Config Normalization
 
-`config()` accepts the raw `lockdc.open` fields and adds these Vectis
+`config()` accepts the direct `lockdc.open` fields and adds these Vectis
 conveniences:
 
 - `namespace` is copied to `default_namespace` and then removed.

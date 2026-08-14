@@ -1,8 +1,9 @@
 # SUS Lua Facade
 
-`require("sus")` exposes the raw cpkt SUS/whisper facade in the embedded
-Vectis Lua runtime. It is intentionally separate from any future
-`vectis.sus` DX helpers so raw model-cache and backend behavior remain visible.
+`require("sus")` exposes the dependency-native cpkt SUS/whisper facade in the
+embedded Vectis Lua runtime. It is intentionally separate from any future
+`vectis.sus` DX helpers so dependency-native model-cache and backend behavior
+remain visible.
 
 The current Lua surface covers deterministic metadata, model catalog, path and
 cache-open error paths, model handles, transcriber receiver shells, PCM
@@ -154,7 +155,7 @@ Transcriber methods:
 
 Segmented `opts` accepts:
 
-- `mode`: `"simplex"`, `"continuous"`, or a raw cpkt numeric mode.
+- `mode`: `"simplex"`, `"continuous"`, or a direct cpkt numeric mode.
 - `read_frames`
 - `step_ms`
 - `length_ms`

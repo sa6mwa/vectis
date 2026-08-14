@@ -96,7 +96,8 @@ vectis_add_example(vectis_example_ssh ssh/ssh_command.c)
 vectis_add_example(vectis_example_ssh_sftp ssh/ssh2_sftp.c)
 
 vectis_add_example(vectis_example_certs certs/cert_bundle.c)
-vectis_add_example(vectis_example_raw_escape raw/raw_escape_hatches.c)
+vectis_add_example(vectis_example_dependency_escape
+                   dependency/dependency_escape_hatches.c)
 
 if(VECTIS_BUILD_TESTS)
   add_test(NAME vectis_example_mdf_render COMMAND vectis_example_mdf_render)

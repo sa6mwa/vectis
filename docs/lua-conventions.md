@@ -1,7 +1,7 @@
 # Lua Facade Conventions
 
 Vectis Lua modules follow the C SDK model where that model maps cleanly to Lua.
-The raw dependency modules stay thin over their upstream C facades. Vectis-owned
+Dependency-native modules stay thin over their upstream C facades. Vectis-owned
 modules provide workflow DX around Vectis concepts such as servers, auth,
 packed assets, lockd consumers, file-backed transfers, and certificate
 workflows.
@@ -27,8 +27,8 @@ Expected runtime failures return structured values instead of raising:
   JSON decode failures are sourced from LoneJSON.
 - Packed embedded bundle/assets helper failures return `nil, err` with
   `source = "vectis"` and the same structured status fields.
-- Raw cpkt-backed facades return `nil, err` with the same Vectis envelope and
-  `source = "cpkt"`. They also keep dependency-native diagnostics such as
+- Dependency-native cpkt-backed facades return `nil, err` with the same Vectis
+  envelope and `source = "cpkt"`. They also keep dependency-native diagnostics such as
   `result`, `result_string`, and `dependency`; OPC UA service status details use
   `opcua_status` and `opcua_status_name` so `err.status` remains the Vectis
   status code.
@@ -53,9 +53,8 @@ spooled, callback-backed, or streaming. `parse()`, `parse_json()`, `download()`,
 `upload()`, `parse_spill()`, and `stream_json()` are not interchangeable
 terms. Do not describe a materialized or spooled path as streaming.
 
-## Raw And DX Layers
+## Native And DX Layers
 
 When an upstream Lua facade already exposes the full library, prefer
-`require("<raw-module>")` for direct access. Add `vectis.*` helpers only where
-they reduce service workflow friction or compose multiple Vectis-owned
-concepts.
+direct `require("<module>")` access. Add `vectis.*` helpers only where they
+reduce service workflow friction or compose multiple Vectis-owned concepts.

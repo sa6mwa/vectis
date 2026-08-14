@@ -40,7 +40,7 @@ one deployable package:
 - Structured logging through `libpslog`.
 - CAI-backed OpenAI API, agent, tool, and MCP primitives.
 - libmdf-backed Markdown rendering for terminal and HTML output.
-- A raw escape hatch to the bundled dependency headers when the Vectis facade is
+- A direct escape hatch to the bundled dependency headers when the Vectis facade is
   intentionally not enough.
 
 MTConnect is planned as a protocol surface. It is not documented here as an
@@ -120,13 +120,13 @@ call methods with explicit `self`, and close the handle. Free functions remain
 available for lower-level use and compatibility.
 
 Borrowed inputs stay borrowed. Strings, `vectis_source` backing storage,
-`lc_source` objects, loggers, callbacks, and raw dependency handles supplied
+`lc_source` objects, loggers, callbacks, and dependency-native handles supplied
 through config or route registration must outlive the Vectis object or route
 that references them.
 
 ## Typed Routes And Streaming
 
-Vectis has both typed route helpers and raw streaming escape hatches.
+Vectis has both typed route helpers and low-level streaming escape hatches.
 
 Typed routes parse into caller-provided static `lonejson_map` structs:
 
@@ -139,7 +139,7 @@ Typed routes parse into caller-provided static `lonejson_map` structs:
 - `vectis_dsv_route()` gives handlers a pull iterator over typed DSV rows
   parsed into mapped row structs.
 
-Raw streaming upload routes are separate. Use `vectis_upload_reader_route()`
+Low-level streaming upload routes are separate. Use `vectis_upload_reader_route()`
 when the handler needs the upload byte stream itself instead of a typed parser.
 Use file upload routes when the product contract is file-oriented.
 
@@ -194,7 +194,7 @@ automatically, but the C SDK dependencies and `require("libmdf")` /
 `require("softline")` Lua modules are available for that integration.
 
 MTConnect is the next protocol family planned for this stack. The expected
-shape is a typed, streaming-aware integration rather than a raw string/DOM API.
+shape is a typed, streaming-aware integration rather than a bare string/DOM API.
 Until that surface lands, MTConnect should be treated as forward-looking
 roadmap, not an advertised SDK feature.
 
@@ -223,7 +223,7 @@ URL schemes, including SMTP usage through the same option-table model.
 `require("vectis").http`
 adds Vectis-owned JSON API helpers, structured transport/status errors, retry
 passthrough, file-backed downloads/uploads, and SFTP transfer helpers on top of
-that raw curl surface.
+that direct curl surface.
 For normal scripts and packed binaries, Vectis prepends the script or packed
 executable directory to `package.path` and `package.cpath` so app-local Lua and
 native helper modules load without manual setup.
@@ -312,7 +312,7 @@ are DX probes for the public SDK:
 - `examples/xml`: typed XML parsing into LoneJSON structs.
 - `examples/ssh`: SSH commands and libssh2 SFTP.
 - `examples/certs`: certificate and PEM bundle generation.
-- `examples/raw`: direct dependency escape hatches.
+- `examples/dependency`: direct dependency escape hatches.
 
 See [examples/README.md](examples/README.md) for the file-by-file map.
 

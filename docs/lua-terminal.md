@@ -1,11 +1,11 @@
 # Lua Terminal Helpers
 
-`require("vectis").terminal` is a small Vectis-owned DX layer over the raw
-`libmdf` and `softline` Lua modules. It exists for terminal-facing workflows
-that need Markdown rendering or bounded line editing without hiding the raw
-modules.
+`require("vectis").terminal` is a small Vectis-owned DX layer over the
+dependency-native `libmdf` and `softline` Lua modules. It exists for
+terminal-facing workflows that need Markdown rendering or bounded line editing
+without hiding the direct modules.
 
-Raw access remains available through:
+Direct access remains available through:
 
 - `vectis.terminal.raw.libmdf`
 - `vectis.terminal.raw.softline`

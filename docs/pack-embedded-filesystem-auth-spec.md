@@ -538,7 +538,7 @@ embedded index, lists packed assets,
 serves generated CSS, JavaScript, asset, and template files through ordinary GET
 requests, reads them through both full-read and source-backed chunk-iterator
 Lua embedded filesystem APIs, verifies bodyless HEAD metadata and HEAD
-byte-range metadata for the embedded static docroot, rejects raw literal and
+byte-range metadata for the embedded static docroot, rejects literal and
 encoded traversal attempts against both read-only mounts, verifies single
 byte-range and
 unsatisfiable byte-range behavior for the C-owned static embedded responder,
@@ -598,7 +598,7 @@ responsive while the packed consumer service is processing. Focused
 packed Lua smoke coverage in
 `vectis_lua_pack` also packages and executes a native-auth API service artifact,
 packages and executes a lockd consumer-service registration artifact with an
-embedded client bundle, proves the raw statically registered `lockdc` Lua
+embedded client bundle, proves the direct statically registered `lockdc` Lua
 module can open a client from the packed in-memory lockd bundle source without
 writing a runtime PEM file, generates a private self-signed certificate bundle,
 starts an HTTPS packed asset server with `tls.mode = "manual"`, and fetches the
@@ -659,7 +659,7 @@ password+email-token WebDAV-key issuance for a non-TOTP user through both
 issued by both endpoint styles and by a `require_email_token` auth mount, and
 pending-transaction mismatch rejection, unknown-user and missing-username
 email-token issuance/finalization rejection in the full packed webserver path,
-raw username/password Basic auth rejection for guarded API and WebDAV routes,
+direct username/password Basic auth rejection for guarded API and WebDAV routes,
 no-store headers across native login, email-token, WebDAV-key, and logout auth
 responses, split durable credentials versus transient auth-state files for
 pending login and email-token records, anonymous logout challenges on native

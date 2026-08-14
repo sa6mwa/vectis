@@ -15,7 +15,7 @@ surface directly, without local helper layers that would hide awkward API shape.
   chooses the HTTP status and response map at runtime.
 - `kore/kore_openapi_docs.c`: optional OpenAPI metadata attachment and JSON/YAML
   spec generation from lonejson maps.
-- `kore/kore_regex_routes.c`: raw Kore/POSIX regex route shape for cases where
+- `kore/kore_regex_routes.c`: direct Kore/POSIX regex route shape for cases where
   named Vectis path parameters are not the right fit.
 - `kore/kore_tls_acme.c`: manual TLS and ACME server configuration shape.
 - `kore/kore_tls_memory_bundles.c`: server cert/key, CA, and client-CA bundles
@@ -33,7 +33,7 @@ surface directly, without local helper layers that would hide awkward API shape.
 
 ## `lockd/`
 
-- `lockd/lockd_open_client.c`: raw liblockdc client setup with flexible bundle
+- `lockd/lockd_open_client.c`: direct liblockdc client setup with flexible bundle
   sourcing.
 - `lockd/lockd_acquire_save_load_release.c`: Vectis-owned lockd state
   save/load helpers using lonejson mapped structs.
@@ -47,7 +47,7 @@ surface directly, without local helper layers that would hide awkward API shape.
 - `lockd/lockd_consumer_service_with_state.c`: managed consumer service using
   dequeue-with-state and lonejson mapped state mutation.
 - `lockd/lockd_vectis_consumer_service.c`: Vectis app-owned lockd setup plus
-  the raw liblockdc managed consumer service config, with separate app and
+  the direct liblockdc managed consumer service config, with separate app and
   lockd client loggers.
 
 ## `curl/`
@@ -60,7 +60,7 @@ surface directly, without local helper layers that would hide awkward API shape.
 - `curl/curl_transfer.c`: handle-shaped generic curl-backed file download and
   upload.
 - `curl/curl_sftp.c`: SFTP upload/download through curl.
-- `curl/mqtt_publish.c`: MQTT raw and JSON publish through curl.
+- `curl/mqtt_publish.c`: MQTT byte payload and JSON publish through curl.
 
 ## `dsv/`
 
@@ -99,9 +99,9 @@ modules, but it must not require another file from `examples/lua/`.
 - `lua/data_formats.lua`: typed DSV/CSV/TSV parsing, row callbacks,
   serialization, and XML-to-LoneJSON table parsing through `vectis.dsv` and
   `vectis.xml`.
-- `lua/crypto_certs.lua`: raw OpenSSL digest, HMAC, encoding, random, signing,
-  and verification helpers alongside Vectis certificate bundle generation,
-  validation, and inspection.
+- `lua/crypto_certs.lua`: dependency-native OpenSSL digest, HMAC, encoding,
+  random, signing, and verification helpers alongside Vectis certificate bundle
+  generation, validation, and inspection.
 - `lua/protocol_clients.lua`: curl-backed MQTT and SMTP workflow helpers plus
   SCP validation/error handling without requiring live external services.
 - `lua/curl_protocols.lua`: protocol-neutral `curl.perform()` file-backed
@@ -110,14 +110,15 @@ modules, but it must not require another file from `examples/lua/`.
 - `lua/sftp_handles.lua`: stateful `vectis.ssh.sftp_open()` session, file,
   directory, stat, rename, and cleanup receiver workflow against the opt-in
   e2e SSH/SFTP service.
-- `lua/opcua_client.lua`: raw cpkt OPC UA Lua client connect, read, write,
-  disconnect, and manual client lifecycle against the local e2e server.
-- `lua/cai_local.lua`: raw CAI Lua module constants, model metadata, dotenv
-  parsing, tool schema, response params, registry, and MCP handler lifecycle
-  without live provider calls.
-- `lua/local_data_pipeline.lua`: raw liblql filtering/projection, pslog JSON
-  logging, softline editor state operations, and zlib string/file compression
-  through their raw Lua modules.
+- `lua/opcua_client.lua`: dependency-native cpkt OPC UA Lua client connect,
+  read, write, disconnect, and manual client lifecycle against the local e2e
+  server.
+- `lua/cai_local.lua`: dependency-native CAI Lua module constants, model
+  metadata, dotenv parsing, tool schema, response params, registry, and MCP
+  handler lifecycle without live provider calls.
+- `lua/local_data_pipeline.lua`: dependency-native liblql filtering/projection,
+  pslog JSON logging, softline editor state operations, and zlib string/file
+  compression through their direct Lua modules.
 - `lua/webdav_fileserver.lua`: mutable WebDAV fileserver mount and
   `vectis.webdav` client operations against a deterministic local server.
 - `lua/api_server.lua`: packable Lua API server script using direct
@@ -155,9 +156,9 @@ modules, but it must not require another file from `examples/lua/`.
 - `certs/cert_bundle.c`: OpenSSL-backed server and lockd client certificate
   bundle generation.
 
-## `raw/`
+## `dependency/`
 
-- `raw/raw_escape_hatches.c`: direct inclusion and use of bundled dependency
+- `dependency/dependency_escape_hatches.c`: direct inclusion and use of bundled dependency
   headers.
 
 The examples are compiled by the normal build so the public SDK shape remains
