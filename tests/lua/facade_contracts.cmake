@@ -649,6 +649,111 @@ assert_status_error(rest_error_body.error, vectis.ERR_INVALID,
 assert(rest_error_body.error.source == "vectis")
 assert(rest_error_body.error.source_code == vectis.ERROR_SOURCE_VECTIS)
 
+local order_request_schema = lonejson.schema("openapi-order-request", {
+  lonejson.field("sku", lonejson.string({required = true})),
+  lonejson.field("quantity", lonejson.i64({required = true})),
+})
+local order_response_schema = lonejson.schema("openapi-order-response", {
+  lonejson.field("id", lonejson.string({required = true})),
+  lonejson.field("status", lonejson.string({required = true})),
+})
+local error_response_schema = lonejson.schema("openapi-error-response", {
+  lonejson.field("message", lonejson.string({required = true})),
+})
+local openapi_server = assert(vectis.server.new({
+  app_name = "lua-openapi-contract",
+  bind = "127.0.0.1",
+  port = 28631,
+}))
+assert(openapi_server:json({
+  path = "/orders/:id?",
+  method = "POST",
+  status = 201,
+  body = "{\"id\":\"1001\",\"status\":\"created\"}\n",
+  openapi = {
+    summary = "Create order",
+    operation_id = "createOrder",
+    tags = {"orders"},
+    request = {
+      name = "OrderRequest",
+      schema = order_request_schema,
+    },
+    responses = {
+      {
+        status = 201,
+        description = "Created",
+        name = "OrderCreated",
+        schema = order_response_schema,
+      },
+      {
+        status = 409,
+        description = "Conflict",
+        name = "ApiError",
+        schema = error_response_schema,
+      },
+    },
+  },
+}) == true)
+assert(openapi_server:openapi_doc({
+  path = "/orders/:id?",
+  method = "GET",
+  summary = "Get order",
+  operation_id = "getOrder",
+  tags = {"orders"},
+  responses = {
+    {
+      status = 200,
+      description = "OK",
+      name = "OrderCreated",
+      schema = order_response_schema,
+    },
+  },
+}) == true)
+order_request_schema = nil
+order_response_schema = nil
+error_response_schema = nil
+collectgarbage("collect")
+collectgarbage("collect")
+
+local openapi_json = assert(openapi_server:openapi({
+  title = "Lua Orders API",
+  version = "1.2.3",
+  format = "json",
+}))
+assert(openapi_json:find('"openapi":"3.1.0"', 1, true))
+assert(openapi_json:find('"/orders/{id}"', 1, true))
+assert(openapi_json:find('"post":{"operationId":"createOrder"', 1, true))
+assert(openapi_json:find('"get":{"operationId":"getOrder"', 1, true))
+assert(openapi_json:find('"OrderRequest"', 1, true))
+assert(openapi_json:find('"OrderCreated"', 1, true))
+assert(openapi_json:find('"ApiError"', 1, true))
+
+local openapi_yaml = assert(openapi_server:openapi({
+  title = "Lua Orders API",
+  version = "1.2.3",
+  format = "yaml",
+}))
+assert(openapi_yaml:find("openapi: 3.1.0", 1, true))
+assert(openapi_yaml:find('    post:\n      operationId: "createOrder"', 1,
+                         true))
+assert(openapi_yaml:find("OrderCreated:", 1, true))
+
+local bad_openapi, bad_openapi_err = openapi_server:json({
+  path = "/bad-openapi",
+  openapi = true,
+})
+assert(bad_openapi == nil)
+assert_status_error(bad_openapi_err, vectis.ERR_INVALID,
+                    "route openapi must be a table")
+
+local bad_openapi_format, bad_openapi_format_err = openapi_server:openapi({
+  format = "toml",
+})
+assert(bad_openapi_format == nil)
+assert_status_error(bad_openapi_format_err, vectis.ERR_INVALID,
+                    "OpenAPI format must be json or yaml")
+openapi_server:close()
+
 local mqtt_transport = mqtt.normalize({
   ok = false,
   error = "mqtt failed",

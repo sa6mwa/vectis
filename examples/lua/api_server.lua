@@ -1,4 +1,5 @@
 local vectis = require("vectis")
+local lonejson = require("lonejson")
 local rest = require("vectis.rest")
 
 local bind = os.getenv("VECTIS_LUA_API_EXAMPLE_BIND") or "127.0.0.1"
@@ -40,46 +41,67 @@ local server = assert(vectis.server.new({
   port = port,
 }))
 
-assert(rest.route(server, {
+local order_request_schema = lonejson.schema("lua-api-order-request", {
+  lonejson.field("sku", lonejson.string({required = true})),
+  lonejson.field("quantity", lonejson.i64({required = true})),
+})
+local order_response_schema = lonejson.schema("lua-api-order-response", {
+  lonejson.field("ok", lonejson.boolean({required = true})),
+  lonejson.field("created", lonejson.boolean({required = true})),
+})
+
+assert(server:json({
   path = "/health",
-  decode_json = false,
-  handler = function()
-    return {
-      ok = true,
-      service = "lua-api-example",
-    }, {
-      headers = {
-        ["cache-control"] = "no-store",
-      },
-    }
-  end,
+  body = '{"ok":true,"service":"lua-api-example"}\n',
+  cache_control = "no-store",
 }) == true)
-assert(rest.route(server, {
+assert(server:json({
   path = "/orders",
   method = "POST",
-  handler = function()
-    return {
-      ok = true,
-      created = true,
-    }, {
-      status = 201,
-    }
-  end,
+  status = 201,
+  body = '{"ok":true,"created":true}\n',
+  openapi = {
+    summary = "Create order",
+    operation_id = "createOrder",
+    tags = {"orders"},
+    request = {
+      name = "OrderRequest",
+      schema = order_request_schema,
+    },
+    responses = {
+      {
+        status = 201,
+        description = "Created",
+        name = "OrderCreated",
+        schema = order_response_schema,
+      },
+    },
+  },
 }) == true)
-assert(rest.route(server, {
+assert(server:auth_json({
   path = "/admin/status",
+  body = '{"ok":true,"admin":true}\n',
   auth = {
     kind = "native",
     credentials_path = credentials_path,
     realm = "lua-api-example",
     purpose = "webdav",
   },
-  handler = function()
-    return {
-      ok = true,
-      admin = true,
-    }
-  end,
+}) == true)
+
+local openapi_json = assert(server:openapi({
+  title = "Lua API Example",
+  version = "1.0.0",
+  format = "json",
+}))
+assert(openapi_json:find('"openapi":"3.1.0"', 1, true))
+assert(openapi_json:find('"/orders"', 1, true))
+assert(openapi_json:find('"operationId":"createOrder"', 1, true))
+assert(server:json({
+  path = "/openapi.json",
+  body = openapi_json,
+  content_type = "application/json",
+  cache_control = "no-store",
 }) == true)
 
 assert(server:start() == true)
@@ -103,6 +125,12 @@ assert(created.ok == true, created.error and created.error.message)
 assert(created.status == 201)
 assert(created.json.ok == true)
 assert(created.json.created == true)
+
+local docs = api.get("/openapi.json")
+assert(docs.ok == true, docs.error and docs.error.message)
+assert(docs.status == 200)
+assert(docs.body:find('"title":"Lua API Example"', 1, true))
+assert(docs.body:find('"OrderCreated"', 1, true))
 
 local anonymous = api.get("/admin/status")
 assert(anonymous.status == 401)

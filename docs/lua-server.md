@@ -201,6 +201,70 @@ assert(server:dsv({
 }) == true)
 ```
 
+## OpenAPI
+
+`server:openapi_doc(opts)` attaches OpenAPI metadata to a route path and
+methods. `server:openapi(opts)` generates an OpenAPI document from attached
+metadata using the C SDK generator.
+
+Route helpers also accept an `openapi` table and attach it after the route is
+registered. This works for `server:route()`, `server:group()`, fixed route
+helpers, `server:dsv()`, and higher-level wrappers such as `vectis.rest.route()`
+because they pass route fields through to `server:route()`.
+
+OpenAPI schemas borrow Lua-owned LoneJSON schema userdata. The server retains
+those schema objects until `server:close()` so generated docs remain valid after
+normal Lua garbage collection.
+
+OpenAPI fields:
+
+- `summary`
+- `operation_id` or `operationId`
+- `tags`
+- `request = {name = "...", schema = lonejson_schema}`
+- `responses = {{status = 200, description = "OK", name = "...", schema = ...}}`
+
+`server:openapi({title = "...", version = "...", format = "json"})` returns a
+JSON string. `format = "yaml"` returns YAML.
+
+```lua
+local request_schema = lonejson.schema("order-request", {
+  lonejson.field("sku", lonejson.string({required = true})),
+})
+local response_schema = lonejson.schema("order-response", {
+  lonejson.field("id", lonejson.string({required = true})),
+})
+
+assert(server:route({
+  path = "/orders/:id?",
+  method = "POST",
+  openapi = {
+    summary = "Create order",
+    operation_id = "createOrder",
+    tags = {"orders"},
+    request = {name = "OrderRequest", schema = request_schema},
+    responses = {
+      {
+        status = 201,
+        description = "Created",
+        name = "OrderCreated",
+        schema = response_schema,
+      },
+    },
+  },
+  handler = function()
+    return {status = 201, body = '{"id":"1001"}\n'}
+  end,
+}) == true)
+
+local spec = assert(server:openapi({
+  title = "Orders API",
+  version = "1.0.0",
+  format = "json",
+}))
+assert(spec:find('"openapi":"3.1.0"', 1, true))
+```
+
 ## Mounts
 
 - `server:static_directory(opts)` serves a disk directory.

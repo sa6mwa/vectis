@@ -21,36 +21,16 @@ local server = assert(vectis.server.new({
   port = port,
 }))
 
-assert(rest.route(server, {
+assert(server:json({
   path = "/inventory",
-  decode_json = false,
-  handler = function()
-    return {
-      ok = true,
-      items = {
-        {
-          sku = "VX-100",
-          qty = 7,
-        },
-      },
-    }, {
-      headers = {
-        ["cache-control"] = "no-store",
-      },
-    }
-  end,
+  body = '{"ok":true,"items":[{"sku":"VX-100","qty":7}]}\n',
+  cache_control = "no-store",
 }) == true)
-assert(rest.route(server, {
+assert(server:json({
   path = "/events",
   method = "POST",
-  handler = function()
-    return {
-      ok = true,
-      accepted = true,
-    }, {
-      status = 202,
-    }
-  end,
+  status = 202,
+  body = '{"ok":true,"accepted":true}\n',
 }) == true)
 
 assert(server:start() == true)

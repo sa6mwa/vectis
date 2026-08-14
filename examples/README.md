@@ -119,14 +119,16 @@ kept out of the examples.
   through their raw Lua modules.
 - `lua/webdav_fileserver.lua`: mutable WebDAV fileserver mount and
   `vectis.webdav` client operations against a deterministic local server.
-- `lua/api_server.lua`: packable Lua API server script using `vectis.rest`
-  JSON routes and client helpers plus native issued credentials. By default it
-  self-tests and exits; set
+- `lua/api_server.lua`: packable Lua API server script using direct
+  `server:json()`/`server:auth_json()` receivers, OpenAPI generation,
+  `vectis.rest` client helpers for self-test traffic, and native issued
+  credentials. By default it self-tests and exits; set
   `VECTIS_LUA_API_EXAMPLE_SERVE=1` to keep it listening. CTest also packs and
   executes this script as `vectis_example_lua_api_server_pack`.
 - `lua/downstream_api.lua`: packable Lua downstream API client example using
-  `vectis.rest` route and base-URL client helpers against a deterministic
-  local API. CTest runs both normal and packed forms.
+  direct `server:json()` receivers for the deterministic local API and
+  `vectis.rest` base-URL client helpers for the downstream calls. CTest runs
+  both normal and packed forms.
 - `lua/sftp_transfer.lua`: curl-backed Lua SFTP upload/download through
   `vectis.http.sftp_upload()` and `sftp_download()`. The local e2e harness runs
   it against the compose SSH/SFTP service.

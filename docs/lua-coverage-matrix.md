@@ -79,7 +79,7 @@ Columns:
 | workflow:terminal-agent | libmdf/softline terminal and Agent Smith workflows | yes | partial | yes | yes | n/a | `vectis.terminal` covers Markdown render and editor construction DX; Agent Smith-specific workflows remain future work. |
 | workflow:pack | Pack/self-contained binary workflows | n/a | yes | yes | yes | n/a | `vectis -a pack` and packed Lua e2e exist. |
 | workflow:totp-qr | TOTP and QR helpers | n/a | yes | yes | yes | n/a | Exposed under `vectis.auth.totp` and `vectis.auth.qr`. |
-| workflow:openapi | OpenAPI generation | n/a | planned | yes | no | n/a | C SDK has generation support; Lua route metadata integration is missing. |
+| workflow:openapi | OpenAPI generation | n/a | yes | yes | yes | n/a | `server:openapi_doc()` attaches route metadata, route helpers accept `openapi` metadata tables, and `server:openapi()` generates JSON/YAML using LoneJSON schemas retained by the server; the packable Lua API example serves `/openapi.json`. |
 
 ## Completion Rules
 

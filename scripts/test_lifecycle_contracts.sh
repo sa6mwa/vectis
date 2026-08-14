@@ -104,6 +104,10 @@ assert_lua_example_dx_contract() {
     echo "Lua examples must be self-contained and avoid named helper functions" >&2
     exit 1
   fi
+  if grep -RInE 'rest\.(route|group)[[:space:]]*\(' "$repo_root/examples/lua"; then
+    echo "Lua server examples must use direct server receiver route methods" >&2
+    exit 1
+  fi
   assert_contains "$repo_root/examples/README.md" 'Lua examples follow the same rule'
 }
 
@@ -299,6 +303,7 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$matrix" '\| workflow:pack \|'
   assert_contains "$matrix" '\| workflow:totp-qr \|'
   assert_contains "$matrix" '\| workflow:openapi \|'
+  assert_contains "$matrix" '`server:openapi_doc\(\)` attaches route metadata'
 
   assert_contains "$matrix" 'New bundled dependencies that are useful from app code must add a `dep:\*`'
   assert_contains "$matrix" 'New Vectis C SDK workflows must add a `workflow:\*`'
@@ -308,6 +313,16 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/TODO.md" '\[x\] Add a checked Lua facade documentation index'
   assert_contains "$repo_root/TODO.md" '\[x\] Expose the full public Vectis status enum in Lua'
   assert_contains "$repo_root/TODO.md" '\[x\] Add checked Lua facade conventions'
+  assert_contains "$repo_root/TODO.md" '\[x\] Add Lua OpenAPI route metadata'
+  assert_contains "$repo_root/src/vectis_cli.c" 'vectis_lua_server_openapi_doc'
+  assert_contains "$repo_root/src/vectis_cli.c" 'vectis_lua_server_openapi_schema_refs_free_all'
+  assert_contains "$repo_root/src/vectis_cli.c" 'openapi_schema_refs'
+  assert_contains "$repo_root/docs/lua-server.md" 'server:openapi_doc'
+  assert_contains "$repo_root/docs/lua-server.md" 'server:openapi'
+  assert_contains "$repo_root/tests/lua/facade_contracts.cmake" 'openapi_server:openapi'
+  assert_contains "$repo_root/tests/lua/facade_contracts.cmake" 'collectgarbage\("collect"\)'
+  assert_contains "$repo_root/examples/lua/api_server.lua" '/openapi\.json'
+  assert_contains "$repo_root/examples/lua/api_server.lua" 'server:openapi'
   assert_contains "$repo_root/TODO.md" '\[x\] Add user-facing Lua docs and direct JSON passthrough helpers for `vectis\.lockd`'
   assert_contains "$repo_root/TODO.md" '\[x\] Add narrow `vectis\.lockd` workflow helpers'
   assert_contains "$repo_root/TODO.md" '\[x\] Add narrow `vectis\.lockd` JSON state save/load helpers'
@@ -501,10 +516,11 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/tests/lua/smoke.lua" 'vectis\.auth\.basic_authorization'
   assert_contains "$repo_root/examples/lua/api_server.lua" 'vectis\.auth\.basic_authorization'
   assert_contains "$repo_root/examples/lua/api_server.lua" 'require\("vectis\.rest"\)'
-  assert_contains "$repo_root/examples/lua/api_server.lua" 'rest\.route'
+  assert_contains "$repo_root/examples/lua/api_server.lua" 'server:auth_json'
+  assert_contains "$repo_root/examples/lua/api_server.lua" 'server:json'
   assert_contains "$repo_root/examples/lua/api_server.lua" 'rest\.client'
   assert_contains "$repo_root/examples/lua/downstream_api.lua" 'require\("vectis\.rest"\)'
-  assert_contains "$repo_root/examples/lua/downstream_api.lua" 'rest\.route'
+  assert_contains "$repo_root/examples/lua/downstream_api.lua" 'server:json'
   assert_contains "$repo_root/examples/lua/downstream_api.lua" 'rest\.client'
   assert_contains "$repo_root/docs/lua-auth.md" 'basic_authorization'
   assert_contains "$matrix" 'Basic Authorization formatting'

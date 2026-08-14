@@ -619,9 +619,11 @@ static int vectis_audio_lua_decoder_open_reader(lua_State *lua) {
     lua_pop(lua, 1);
     if (handle->read_ref != LUA_NOREF) {
       luaL_unref(lua, LUA_REGISTRYINDEX, handle->read_ref);
+      handle->read_ref = LUA_NOREF;
     }
     if (handle->seek_ref != LUA_NOREF) {
       luaL_unref(lua, LUA_REGISTRYINDEX, handle->seek_ref);
+      handle->seek_ref = LUA_NOREF;
     }
     return vectis_audio_lua_push_error(lua, result,
                                       "audio decoder open_reader");
@@ -749,6 +751,14 @@ static int vectis_audio_lua_encoder_open_writer(lua_State *lua) {
   handle->write_ref = vectis_audio_lua_table_function_ref(lua, 1, "write");
   handle->seek_ref = vectis_audio_lua_table_function_ref(lua, 1, "seek");
   if (handle->write_ref == LUA_NOREF || handle->seek_ref == LUA_NOREF) {
+    if (handle->write_ref != LUA_NOREF) {
+      luaL_unref(lua, LUA_REGISTRYINDEX, handle->write_ref);
+      handle->write_ref = LUA_NOREF;
+    }
+    if (handle->seek_ref != LUA_NOREF) {
+      luaL_unref(lua, LUA_REGISTRYINDEX, handle->seek_ref);
+      handle->seek_ref = LUA_NOREF;
+    }
     return luaL_error(lua,
                       "audio encoder writer write and seek callbacks are required");
   }
@@ -761,9 +771,11 @@ static int vectis_audio_lua_encoder_open_writer(lua_State *lua) {
     lua_pop(lua, 1);
     if (handle->write_ref != LUA_NOREF) {
       luaL_unref(lua, LUA_REGISTRYINDEX, handle->write_ref);
+      handle->write_ref = LUA_NOREF;
     }
     if (handle->seek_ref != LUA_NOREF) {
       luaL_unref(lua, LUA_REGISTRYINDEX, handle->seek_ref);
+      handle->seek_ref = LUA_NOREF;
     }
     return vectis_audio_lua_push_error(lua, result,
                                       "audio encoder open_writer");
@@ -961,6 +973,7 @@ static int vectis_audio_lua_capture_open_default(lua_State *lua) {
     lua_pop(lua, 1);
     if (handle->state_ref != LUA_NOREF) {
       luaL_unref(lua, LUA_REGISTRYINDEX, handle->state_ref);
+      handle->state_ref = LUA_NOREF;
     }
     return vectis_audio_lua_push_error(lua, result,
                                       "audio capture open_default");

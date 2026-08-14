@@ -61,8 +61,8 @@ workflows:
   [Lua MQTT](lua-mqtt.md).
 - `vectis.rest`: buffered JSON REST route and client helpers, documented in
   [Lua REST](lua-rest.md).
-- `vectis.server`: Kore-backed server helpers, documented in
-  [Lua server](lua-server.md).
+- `vectis.server`: Kore-backed server, route, OpenAPI, and service helpers,
+  documented in [Lua server](lua-server.md).
 - `vectis.status`: status/error-source constants and Lua error decoration,
   documented in [Lua status](lua-status.md).
 - `vectis.smtp`: SMTP send helper over curl, documented in

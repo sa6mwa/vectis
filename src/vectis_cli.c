@@ -109,6 +109,20 @@ typedef struct vectis_lua_dsv_route_context {
 
 static void vectis_cli_error_set(vectis_error *error, vectis_status status,
                                  const char *message);
+typedef struct vectis_lua_server vectis_lua_server;
+static int vectis_lua_server_attach_openapi(lua_State *lua,
+                                            vectis_lua_server *server,
+                                            int options_index,
+                                            vectis_http_methods methods,
+                                            const char *path);
+static int vectis_lua_server_openapi_doc(lua_State *lua);
+static int vectis_lua_server_openapi(lua_State *lua);
+
+typedef struct vectis_lua_server_openapi_schema_ref {
+  lua_State *lua;
+  int ref;
+  struct vectis_lua_server_openapi_schema_ref *next;
+} vectis_lua_server_openapi_schema_ref;
 
 typedef struct vectis_lua_server_native_auth {
   lua_State *lua;
@@ -190,7 +204,7 @@ typedef struct vectis_lua_consumer_registration {
   struct vectis_lua_consumer_registration *next;
 } vectis_lua_consumer_registration;
 
-typedef struct vectis_lua_server {
+struct vectis_lua_server {
   vectis_app *app;
   vectis_lua_server_json_route *json_routes;
   vectis_lua_server_callback_route *callback_routes;
@@ -198,7 +212,8 @@ typedef struct vectis_lua_server {
   vectis_lua_server_native_auth *native_auths;
   vectis_lua_server_auth_json_route *auth_json_routes;
   vectis_lua_consumer_registration *consumer_services;
-} vectis_lua_server;
+  vectis_lua_server_openapi_schema_ref *openapi_schema_refs;
+};
 
 typedef struct vectis_lua_ssh_sftp_session {
   vectis_ssh_sftp_session *session;
@@ -5321,6 +5336,27 @@ vectis_lua_server_auth_json_route_free_all(vectis_lua_server *server) {
   }
 }
 
+static void vectis_lua_server_openapi_schema_refs_free_all(
+    vectis_lua_server *server) {
+  vectis_lua_server_openapi_schema_ref *ref;
+  vectis_lua_server_openapi_schema_ref *next;
+
+  if (server == NULL) {
+    return;
+  }
+  ref = server->openapi_schema_refs;
+  server->openapi_schema_refs = NULL;
+  while (ref != NULL) {
+    next = ref->next;
+    if (ref->lua != NULL && ref->ref != LUA_NOREF) {
+      luaL_unref(ref->lua, LUA_REGISTRYINDEX, ref->ref);
+      ref->ref = LUA_NOREF;
+    }
+    free(ref);
+    ref = next;
+  }
+}
+
 static void vectis_lua_server_consumer_service_free(
     vectis_lua_consumer_registration *service) {
   vectis_error error;
@@ -5764,6 +5800,7 @@ static int vectis_lua_server_close(lua_State *lua) {
   vectis_lua_server_callback_route_free_all(server);
   vectis_lua_server_dsv_route_free_all(server);
   vectis_lua_server_auth_json_route_free_all(server);
+  vectis_lua_server_openapi_schema_refs_free_all(server);
   vectis_lua_server_native_auth_free_all(server);
   return 0;
 }
@@ -6785,6 +6822,7 @@ static int vectis_lua_server_route(lua_State *lua) {
   vectis_http_methods methods;
   vectis_body_policy body_policy;
   vectis_lua_server_native_auth *auth;
+  int openapi_result;
 
   server = vectis_lua_check_server(lua, 1);
   app = vectis_lua_server_app(lua, 1);
@@ -6891,6 +6929,12 @@ static int vectis_lua_server_route(lua_State *lua) {
   }
   route_data->next = server->callback_routes;
   server->callback_routes = route_data;
+  openapi_result =
+      vectis_lua_server_attach_openapi(lua, server, 2, methods, path);
+  if (openapi_result != 1 || !lua_toboolean(lua, -1)) {
+    return openapi_result;
+  }
+  lua_pop(lua, 1);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -7208,6 +7252,7 @@ static int vectis_lua_server_json(lua_State *lua) {
   const char *cache_control;
   vectis_http_methods methods;
   size_t status_code;
+  int openapi_result;
 
   server = vectis_lua_check_server(lua, 1);
   app = vectis_lua_server_app(lua, 1);
@@ -7265,6 +7310,12 @@ static int vectis_lua_server_json(lua_State *lua) {
 
   route_data->next = server->json_routes;
   server->json_routes = route_data;
+  openapi_result =
+      vectis_lua_server_attach_openapi(lua, server, 2, methods, path);
+  if (openapi_result != 1 || !lua_toboolean(lua, -1)) {
+    return openapi_result;
+  }
+  lua_pop(lua, 1);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -7282,6 +7333,7 @@ static int vectis_lua_server_text(lua_State *lua) {
   const char *cache_control;
   vectis_http_methods methods;
   size_t status_code;
+  int openapi_result;
 
   server = vectis_lua_check_server(lua, 1);
   app = vectis_lua_server_app(lua, 1);
@@ -7339,6 +7391,12 @@ static int vectis_lua_server_text(lua_State *lua) {
 
   route_data->next = server->json_routes;
   server->json_routes = route_data;
+  openapi_result =
+      vectis_lua_server_attach_openapi(lua, server, 2, methods, path);
+  if (openapi_result != 1 || !lua_toboolean(lua, -1)) {
+    return openapi_result;
+  }
+  lua_pop(lua, 1);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -7357,6 +7415,7 @@ static int vectis_lua_server_redirect(lua_State *lua) {
   const char *cache_control;
   vectis_http_methods methods;
   size_t status_code;
+  int openapi_result;
 
   server = vectis_lua_check_server(lua, 1);
   app = vectis_lua_server_app(lua, 1);
@@ -7421,6 +7480,12 @@ static int vectis_lua_server_redirect(lua_State *lua) {
 
   route_data->next = server->json_routes;
   server->json_routes = route_data;
+  openapi_result =
+      vectis_lua_server_attach_openapi(lua, server, 2, methods, path);
+  if (openapi_result != 1 || !lua_toboolean(lua, -1)) {
+    return openapi_result;
+  }
+  lua_pop(lua, 1);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -7438,6 +7503,7 @@ static int vectis_lua_server_auth_json(lua_State *lua) {
   const char *content_type;
   vectis_http_methods methods;
   size_t status_code;
+  int openapi_result;
 
   server = vectis_lua_check_server(lua, 1);
   app = vectis_lua_server_app(lua, 1);
@@ -7513,6 +7579,12 @@ static int vectis_lua_server_auth_json(lua_State *lua) {
   vectis_lua_server_native_auth_retain(server, auth);
   route_data->next = server->auth_json_routes;
   server->auth_json_routes = route_data;
+  openapi_result =
+      vectis_lua_server_attach_openapi(lua, server, 2, methods, path);
+  if (openapi_result != 1 || !lua_toboolean(lua, -1)) {
+    return openapi_result;
+  }
+  lua_pop(lua, 1);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -7838,6 +7910,7 @@ static int vectis_lua_server_new(lua_State *lua) {
   server->native_auths = NULL;
   server->auth_json_routes = NULL;
   server->consumer_services = NULL;
+  server->openapi_schema_refs = NULL;
   vectis_error_clear(&error);
   server->app = vectis_app_new(&config, &error);
   free(tls_domains);
@@ -8667,6 +8740,7 @@ static int vectis_lua_server_dsv(lua_State *lua) {
   size_t buffer_bytes;
   size_t max_body_bytes;
   int schema_index;
+  int openapi_result;
 
   owned_columns = NULL;
   server = vectis_lua_check_server(lua, 1);
@@ -8813,7 +8887,374 @@ static int vectis_lua_server_dsv(lua_State *lua) {
   }
   route_data->next = server->dsv_routes;
   server->dsv_routes = route_data;
+  openapi_result =
+      vectis_lua_server_attach_openapi(lua, server, 2, methods, path);
+  if (openapi_result != 1 || !lua_toboolean(lua, -1)) {
+    return openapi_result;
+  }
+  lua_pop(lua, 1);
   lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static void vectis_lua_openapi_schema_ref_free_list(
+    vectis_lua_server_openapi_schema_ref *refs) {
+  vectis_lua_server_openapi_schema_ref *next;
+
+  while (refs != NULL) {
+    next = refs->next;
+    if (refs->lua != NULL && refs->ref != LUA_NOREF) {
+      luaL_unref(refs->lua, LUA_REGISTRYINDEX, refs->ref);
+      refs->ref = LUA_NOREF;
+    }
+    free(refs);
+    refs = next;
+  }
+}
+
+static void vectis_lua_openapi_schema_ref_retain(
+    vectis_lua_server *server, vectis_lua_server_openapi_schema_ref *refs) {
+  vectis_lua_server_openapi_schema_ref *tail;
+
+  if (server == NULL || refs == NULL) {
+    return;
+  }
+  tail = refs;
+  while (tail->next != NULL) {
+    tail = tail->next;
+  }
+  tail->next = server->openapi_schema_refs;
+  server->openapi_schema_refs = refs;
+}
+
+static vectis_status vectis_lua_openapi_retain_schema_ref(
+    lua_State *lua, int schema_index,
+    vectis_lua_server_openapi_schema_ref **refs, vectis_error *error) {
+  vectis_lua_server_openapi_schema_ref *ref;
+
+  ref = (vectis_lua_server_openapi_schema_ref *)calloc(1u, sizeof(*ref));
+  if (ref == NULL) {
+    vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
+                         "failed to retain OpenAPI schema");
+    return VECTIS_ERR_NOMEM;
+  }
+  ref->lua = lua;
+  ref->ref = LUA_NOREF;
+  lua_pushvalue(lua, schema_index);
+  ref->ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  ref->next = *refs;
+  *refs = ref;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static const char *vectis_lua_openapi_schema_name(lua_State *lua, int index) {
+  const char *name;
+
+  name = vectis_lua_table_string(lua, index, "name");
+  if (name == NULL) {
+    name = vectis_lua_table_string(lua, index, "schema_name");
+  }
+  return name;
+}
+
+static vectis_status vectis_lua_openapi_schema_from_table(
+    lua_State *lua, int index, const char *context,
+    vectis_openapi_schema *schema,
+    vectis_lua_server_openapi_schema_ref **refs, vectis_error *error) {
+  lonejson_schema_view view;
+  const char *name;
+  int schema_index;
+
+  name = vectis_lua_openapi_schema_name(lua, index);
+  if (name == NULL || name[0] == '\0') {
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "OpenAPI schema name is required");
+    return VECTIS_ERR_INVALID;
+  }
+  lua_getfield(lua, index, "schema");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "OpenAPI schema field is required");
+    return VECTIS_ERR_INVALID;
+  }
+  schema_index = lua_gettop(lua);
+  (void)vectis_lua_lonejson_check_schema(lua, schema_index, &view, context);
+  if (vectis_lua_openapi_retain_schema_ref(lua, schema_index, refs, error) !=
+      VECTIS_OK) {
+    lua_pop(lua, 1);
+    return error->code != VECTIS_OK ? error->code : VECTIS_ERR_NOMEM;
+  }
+  *schema = vectis_openapi_lonejson_schema(name, view.map);
+  lua_pop(lua, 1);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_lua_openapi_parse_request(
+    lua_State *lua, int doc_index, vectis_openapi_route_doc *doc,
+    vectis_lua_server_openapi_schema_ref **refs, vectis_error *error) {
+  vectis_openapi_schema schema;
+  vectis_status status;
+  int request_index;
+
+  lua_getfield(lua, doc_index, "request");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return VECTIS_OK;
+  }
+  if (!lua_istable(lua, -1)) {
+    lua_pop(lua, 1);
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "OpenAPI request must be a table");
+    return VECTIS_ERR_INVALID;
+  }
+  request_index = lua_gettop(lua);
+  status = vectis_lua_openapi_schema_from_table(lua, request_index,
+                                                "OpenAPI request schema",
+                                                &schema, refs, error);
+  if (status == VECTIS_OK) {
+    status = vectis_openapi_request_json(doc, schema, error);
+  }
+  lua_pop(lua, 1);
+  return status;
+}
+
+static vectis_status vectis_lua_openapi_parse_response(
+    lua_State *lua, int response_index, vectis_openapi_route_doc *doc,
+    vectis_lua_server_openapi_schema_ref **refs, vectis_error *error) {
+  vectis_openapi_schema schema;
+  vectis_status status;
+  const char *description;
+  size_t status_code;
+
+  if (!lua_istable(lua, response_index)) {
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "OpenAPI response must be a table");
+    return VECTIS_ERR_INVALID;
+  }
+  status_code = vectis_lua_table_size(lua, response_index, "status", 0u);
+  if (status_code == 0u) {
+    status_code =
+        vectis_lua_table_size(lua, response_index, "status_code", 0u);
+  }
+  if (status_code < 100u || status_code > 599u) {
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "OpenAPI response status must be between 100 and 599");
+    return VECTIS_ERR_INVALID;
+  }
+  description = vectis_lua_table_string(lua, response_index, "description");
+  if (description == NULL) {
+    description = vectis_lua_table_string(lua, response_index, "desc");
+  }
+  status = vectis_lua_openapi_schema_from_table(lua, response_index,
+                                                "OpenAPI response schema",
+                                                &schema, refs, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  return vectis_openapi_response_json(doc, (int)status_code,
+                                      description != NULL ? description : "",
+                                      schema, error);
+}
+
+static vectis_status vectis_lua_openapi_parse_responses(
+    lua_State *lua, int doc_index, vectis_openapi_route_doc *doc,
+    vectis_lua_server_openapi_schema_ref **refs, vectis_error *error) {
+  vectis_status status;
+  size_t count;
+  size_t i;
+
+  lua_getfield(lua, doc_index, "responses");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return VECTIS_OK;
+  }
+  if (!lua_istable(lua, -1)) {
+    lua_pop(lua, 1);
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "OpenAPI responses must be a table");
+    return VECTIS_ERR_INVALID;
+  }
+  count = lua_rawlen(lua, -1);
+  if (count == 0u) {
+    lua_pop(lua, 1);
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "OpenAPI responses must not be empty");
+    return VECTIS_ERR_INVALID;
+  }
+  for (i = 0u; i < count; ++i) {
+    lua_rawgeti(lua, -1, (lua_Integer)i + 1);
+    status = vectis_lua_openapi_parse_response(lua, lua_gettop(lua), doc, refs,
+                                               error);
+    lua_pop(lua, 1);
+    if (status != VECTIS_OK) {
+      lua_pop(lua, 1);
+      return status;
+    }
+  }
+  lua_pop(lua, 1);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_lua_openapi_route_doc_from_table(
+    lua_State *lua, int doc_index, vectis_openapi_route_doc *doc,
+    const char ***owned_tags,
+    vectis_lua_server_openapi_schema_ref **refs, vectis_error *error) {
+  vectis_status status;
+  const char **tags;
+
+  *owned_tags = NULL;
+  vectis_openapi_route_doc_init(doc);
+  doc->summary = vectis_lua_table_string(lua, doc_index, "summary");
+  doc->operation_id = vectis_lua_table_string(lua, doc_index, "operation_id");
+  if (doc->operation_id == NULL) {
+    doc->operation_id = vectis_lua_table_string(lua, doc_index, "operationId");
+  }
+  tags = vectis_lua_string_array_field(lua, doc_index, "tags",
+                                       &doc->tag_count);
+  doc->tags = tags;
+  *owned_tags = tags;
+  status = vectis_lua_openapi_parse_request(lua, doc_index, doc, refs, error);
+  if (status == VECTIS_OK) {
+    status =
+        vectis_lua_openapi_parse_responses(lua, doc_index, doc, refs, error);
+  }
+  return status;
+}
+
+static int vectis_lua_server_attach_openapi(lua_State *lua,
+                                            vectis_lua_server *server,
+                                            int options_index,
+                                            vectis_http_methods methods,
+                                            const char *path) {
+  vectis_openapi_route_doc doc;
+  vectis_lua_server_openapi_schema_ref *refs;
+  const char **tags;
+  vectis_error error;
+  vectis_status status;
+  int openapi_index;
+
+  refs = NULL;
+  tags = NULL;
+  options_index = lua_absindex(lua, options_index);
+  lua_getfield(lua, options_index, "openapi");
+  if (lua_isnil(lua, -1) || lua_isboolean(lua, -1)) {
+    if (lua_isboolean(lua, -1) && lua_toboolean(lua, -1)) {
+      lua_pop(lua, 1);
+      return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                        "route openapi must be a table");
+    }
+    lua_pop(lua, 1);
+    lua_pushboolean(lua, 1);
+    return 1;
+  }
+  if (!lua_istable(lua, -1)) {
+    lua_pop(lua, 1);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "route openapi must be a table");
+  }
+  openapi_index = lua_gettop(lua);
+  vectis_error_clear(&error);
+  status = vectis_lua_openapi_route_doc_from_table(
+      lua, openapi_index, &doc, &tags, &refs, &error);
+  if (status == VECTIS_OK) {
+    status = server->app->openapi_doc(server->app, methods, path, &doc, &error);
+  }
+  vectis_openapi_route_doc_cleanup(&doc);
+  free((void *)tags);
+  lua_pop(lua, 1);
+  if (status != VECTIS_OK) {
+    vectis_lua_openapi_schema_ref_free_list(refs);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  vectis_lua_openapi_schema_ref_retain(server, refs);
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_server_openapi_doc(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_openapi_route_doc doc;
+  vectis_lua_server_openapi_schema_ref *refs;
+  const char **tags;
+  vectis_error error;
+  vectis_status status;
+  const char *path;
+  vectis_http_methods methods;
+
+  refs = NULL;
+  tags = NULL;
+  server = vectis_lua_check_server(lua, 1);
+  (void)vectis_lua_server_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  path = vectis_lua_table_string(lua, 2, "path");
+  if (path == NULL || path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "OpenAPI route path is required");
+  }
+  methods =
+      vectis_lua_route_methods(lua, 2, VECTIS_HTTP_METHODS_GET, "OpenAPI doc");
+  vectis_error_clear(&error);
+  status = vectis_lua_openapi_route_doc_from_table(lua, 2, &doc, &tags, &refs,
+                                                   &error);
+  if (status == VECTIS_OK) {
+    status = server->app->openapi_doc(server->app, methods, path, &doc, &error);
+  }
+  vectis_openapi_route_doc_cleanup(&doc);
+  free((void *)tags);
+  if (status != VECTIS_OK) {
+    vectis_lua_openapi_schema_ref_free_list(refs);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  vectis_lua_openapi_schema_ref_retain(server, refs);
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_server_openapi(lua_State *lua) {
+  vectis_app *app;
+  vectis_openapi_document document;
+  vectis_mutable_bytes out;
+  vectis_error error;
+  vectis_status status;
+  vectis_openapi_format format;
+  const char *value;
+
+  app = vectis_lua_server_app(lua, 1);
+  vectis_openapi_document_init(&document);
+  format = VECTIS_OPENAPI_JSON;
+  if (!lua_isnoneornil(lua, 2)) {
+    luaL_checktype(lua, 2, LUA_TTABLE);
+    value = vectis_lua_table_string(lua, 2, "title");
+    if (value != NULL) {
+      document.title = value;
+    }
+    value = vectis_lua_table_string(lua, 2, "version");
+    if (value != NULL) {
+      document.version = value;
+    }
+    value = vectis_lua_table_string(lua, 2, "format");
+    if (value != NULL) {
+      if (strcmp(value, "json") == 0) {
+        format = VECTIS_OPENAPI_JSON;
+      } else if (strcmp(value, "yaml") == 0 || strcmp(value, "yml") == 0) {
+        format = VECTIS_OPENAPI_YAML;
+      } else {
+        return vectis_lua_push_error_text(
+            lua, VECTIS_ERR_INVALID, "OpenAPI format must be json or yaml");
+      }
+    }
+  }
+  memset(&out, 0, sizeof(out));
+  vectis_error_clear(&error);
+  status = app->openapi(app, &document, format, &out, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushlstring(lua, (const char *)out.data, out.size);
+  vectis_mutable_bytes_cleanup(&out);
   return 1;
 }
 
@@ -12519,6 +12960,10 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "group");
     lua_pushcfunction(lua, vectis_lua_server_dsv);
     lua_setfield(lua, -2, "dsv");
+    lua_pushcfunction(lua, vectis_lua_server_openapi_doc);
+    lua_setfield(lua, -2, "openapi_doc");
+    lua_pushcfunction(lua, vectis_lua_server_openapi);
+    lua_setfield(lua, -2, "openapi");
     lua_pushcfunction(lua, vectis_lua_server_json);
     lua_setfield(lua, -2, "json");
     lua_pushcfunction(lua, vectis_lua_server_text);
