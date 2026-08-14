@@ -136,7 +136,9 @@ typedef struct vectis_lua_server_json_route {
 typedef struct vectis_lua_server_callback_route {
   lua_State *lua;
   char *path;
+  char *purpose;
   int callback_ref;
+  vectis_lua_server_native_auth *auth;
   struct vectis_lua_server_callback_route *next;
 } vectis_lua_server_callback_route;
 
@@ -5215,6 +5217,7 @@ vectis_lua_server_callback_route_free(vectis_lua_server_callback_route *route) {
     route->callback_ref = LUA_NOREF;
   }
   free(route->path);
+  free(route->purpose);
   free(route);
 }
 
@@ -6116,6 +6119,12 @@ static int vectis_lua_server_webdav_embedded_site(lua_State *lua) {
   return 1;
 }
 
+static vectis_status
+vectis_lua_auth_json_response(vectis_response *response, int status_code,
+                              const char *content_type, const void *body,
+                              size_t body_size, const char *fallback_body,
+                              vectis_error *error);
+
 static vectis_body_policy vectis_lua_route_body_policy(lua_State *lua,
                                                        int index) {
   vectis_body_policy policy;
@@ -6238,6 +6247,7 @@ static int vectis_lua_request_param_lookup(lua_State *lua) {
 
 static vectis_status vectis_lua_push_route_request(lua_State *lua,
                                                    vectis_request *request,
+                                                   const char *principal,
                                                    vectis_error *error) {
   vectis_bytes body;
   const char *path;
@@ -6249,6 +6259,10 @@ static vectis_status vectis_lua_push_route_request(lua_State *lua,
   if (path != NULL) {
     lua_pushstring(lua, path);
     lua_setfield(lua, -2, "path");
+  }
+  if (principal != NULL && principal[0] != '\0') {
+    lua_pushstring(lua, principal);
+    lua_setfield(lua, -2, "principal");
   }
   lua_pushboolean(lua, vectis_request_body_is_spooled(request));
   lua_setfield(lua, -2, "body_spooled");
@@ -6393,6 +6407,103 @@ static vectis_status vectis_lua_apply_route_response(
   return status;
 }
 
+static vectis_status vectis_lua_server_route_auth_gate(
+    vectis_lua_server_callback_route *route, vectis_request *request,
+    vectis_response *response, char *principal, size_t principal_size,
+    int *allowed, vectis_error *error) {
+  vectis_auth_provider_request auth_request;
+  vectis_auth_provider_response auth_response;
+  vectis_status status;
+  int status_code;
+
+  if (allowed != NULL) {
+    *allowed = 0;
+  }
+  if (principal != NULL && principal_size > 0u) {
+    principal[0] = '\0';
+  }
+  if (route == NULL || route->auth == NULL) {
+    if (allowed != NULL) {
+      *allowed = 1;
+    }
+    return VECTIS_OK;
+  }
+
+  vectis_auth_provider_request_init(&auth_request);
+  auth_request.request = request;
+  auth_request.purpose = route->purpose;
+  auth_request.resource = vectis_request_path(request);
+  auth_request.allowed_auth_modes = route->auth->allowed_auth_modes;
+  vectis_auth_provider_response_init(&auth_response);
+  status = vectis_auth_provider_authenticate(
+      &route->auth->provider, &auth_request, &auth_response, error);
+  if (status != VECTIS_OK) {
+    vectis_auth_provider_response_cleanup(&auth_response);
+    return status;
+  }
+
+  switch (auth_response.action) {
+  case VECTIS_AUTH_ALLOW:
+    if (allowed != NULL) {
+      *allowed = 1;
+    }
+    if (principal != NULL && principal_size > 0u &&
+        auth_response.principal[0] != '\0') {
+      snprintf(principal, principal_size, "%s", auth_response.principal);
+    }
+    status =
+        vectis_response_header(response, "cache-control", "no-store", error);
+    break;
+  case VECTIS_AUTH_REQUIRED:
+    if (auth_response.www_authenticate[0] != '\0') {
+      status = vectis_response_header(response, "www-authenticate",
+                                      auth_response.www_authenticate, error);
+      if (status != VECTIS_OK) {
+        break;
+      }
+    }
+    status_code =
+        auth_response.status_code > 0 ? auth_response.status_code : 401;
+    status = vectis_lua_auth_json_response(
+        response, status_code,
+        auth_response.content_type != NULL ? auth_response.content_type
+                                           : "text/plain; charset=utf-8",
+        auth_response.body, auth_response.body_size,
+        "authentication required\n", error);
+    break;
+  case VECTIS_AUTH_REDIRECT:
+    if (auth_response.location != NULL && auth_response.location[0] != '\0') {
+      status = vectis_response_header(response, "location",
+                                      auth_response.location, error);
+      if (status != VECTIS_OK) {
+        break;
+      }
+    }
+    status_code =
+        auth_response.status_code > 0 ? auth_response.status_code : 302;
+    status = vectis_lua_auth_json_response(
+        response, status_code,
+        auth_response.content_type != NULL ? auth_response.content_type
+                                           : "text/plain; charset=utf-8",
+        auth_response.body, auth_response.body_size,
+        "authentication required\n", error);
+    break;
+  case VECTIS_AUTH_DENY:
+  default:
+    status_code =
+        auth_response.status_code > 0 ? auth_response.status_code : 403;
+    status = vectis_lua_auth_json_response(
+        response, status_code,
+        auth_response.content_type != NULL ? auth_response.content_type
+                                           : "text/plain; charset=utf-8",
+        auth_response.body, auth_response.body_size, "forbidden\n", error);
+    break;
+  }
+
+  vectis_auth_provider_response_cleanup(&auth_response);
+  return status;
+}
+
 static vectis_status vectis_lua_server_route_dispatch(
     vectis_app *app, vectis_request *request, vectis_response *response,
     void *userdata, vectis_error *error) {
@@ -6400,6 +6511,8 @@ static vectis_status vectis_lua_server_route_dispatch(
   lua_State *lua;
   vectis_status status;
   int base;
+  int allowed;
+  char principal[128];
   const char *message;
 
   (void)app;
@@ -6410,6 +6523,12 @@ static vectis_status vectis_lua_server_route_dispatch(
                          "Lua route callback is not configured");
     return VECTIS_ERR_INVALID;
   }
+  status = vectis_lua_server_route_auth_gate(route, request, response,
+                                             principal, sizeof(principal),
+                                             &allowed, error);
+  if (status != VECTIS_OK || !allowed) {
+    return status;
+  }
   lua = route->lua;
   base = lua_gettop(lua);
   lua_rawgeti(lua, LUA_REGISTRYINDEX, route->callback_ref);
@@ -6419,7 +6538,7 @@ static vectis_status vectis_lua_server_route_dispatch(
                          "Lua route callback reference is invalid");
     return VECTIS_ERR_INVALID;
   }
-  status = vectis_lua_push_route_request(lua, request, error);
+  status = vectis_lua_push_route_request(lua, request, principal, error);
   if (status != VECTIS_OK) {
     lua_settop(lua, base);
     return status;
@@ -6446,6 +6565,7 @@ static int vectis_lua_server_route(lua_State *lua) {
   const char *path;
   vectis_http_methods methods;
   vectis_body_policy body_policy;
+  vectis_lua_server_native_auth *auth;
 
   server = vectis_lua_check_server(lua, 1);
   app = vectis_lua_server_app(lua, 1);
@@ -6458,9 +6578,29 @@ static int vectis_lua_server_route(lua_State *lua) {
   methods =
       vectis_lua_route_methods(lua, 2, VECTIS_HTTP_METHODS_GET, "route");
   body_policy = vectis_lua_route_body_policy(lua, 2);
+  auth = NULL;
+  lua_getfield(lua, 2, "auth");
+  if (!lua_isnil(lua, -1)) {
+    if (!lua_istable(lua, -1)) {
+      lua_pop(lua, 1);
+      return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                        "route auth must be a table");
+    }
+    vectis_error_clear(&error);
+    auth = vectis_lua_server_native_auth_new(lua, -1, "route", &error);
+    lua_pop(lua, 1);
+    if (auth == NULL) {
+      return vectis_lua_push_error(
+          lua, error.code != VECTIS_OK ? error.code : VECTIS_ERR_NOMEM,
+          &error);
+    }
+  } else {
+    lua_pop(lua, 1);
+  }
   lua_getfield(lua, 2, "handler");
   if (!lua_isfunction(lua, -1)) {
     lua_pop(lua, 1);
+    vectis_lua_server_native_auth_free(auth);
     return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
                                       "route handler is required");
   }
@@ -6468,17 +6608,24 @@ static int vectis_lua_server_route(lua_State *lua) {
       (vectis_lua_server_callback_route *)calloc(1u, sizeof(*route_data));
   if (route_data == NULL) {
     lua_pop(lua, 1);
+    vectis_lua_server_native_auth_free(auth);
     return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
                                       "failed to allocate route callback");
   }
   route_data->lua = lua;
   route_data->callback_ref = LUA_NOREF;
+  route_data->auth = auth;
   route_data->path = vectis_cli_strdup(path);
-  if (route_data->path == NULL) {
+  if (auth != NULL) {
+    route_data->purpose = vectis_cli_strdup(auth->purpose);
+  }
+  if (route_data->path == NULL ||
+      (auth != NULL && route_data->purpose == NULL)) {
     lua_pop(lua, 1);
     vectis_lua_server_callback_route_free(route_data);
+    vectis_lua_server_native_auth_free(auth);
     return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
-                                      "failed to copy route path");
+                                      "failed to copy route config");
   }
   route_data->callback_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
 
@@ -6489,7 +6636,11 @@ static int vectis_lua_server_route(lua_State *lua) {
   status = app->route(app, &route, &error);
   if (status != VECTIS_OK) {
     vectis_lua_server_callback_route_free(route_data);
+    vectis_lua_server_native_auth_free(auth);
     return vectis_lua_push_error(lua, status, &error);
+  }
+  if (auth != NULL) {
+    vectis_lua_server_native_auth_retain(server, auth);
   }
   route_data->next = server->callback_routes;
   server->callback_routes = route_data;

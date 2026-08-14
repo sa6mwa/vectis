@@ -48,7 +48,7 @@ Columns:
 | ID | Surface | Raw | DX | Local | Packed | Live | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | workflow:server-runtime | Kore-backed Lua server lifecycle | n/a | partial | yes | yes | n/a | `vectis.server.new/start/stop/close`, fixed routes, and buffered Lua callback routes; middleware-like DX remains. |
-| workflow:routes-json | JSON/API route helpers | n/a | partial | yes | yes | n/a | Fixed `server:json`, `server:auth_json`, `server:text`, `server:redirect`, and buffered `server:route` callbacks with request metadata/body and response tables. |
+| workflow:routes-json | JSON/API route helpers | n/a | partial | yes | yes | n/a | Fixed `server:json`, `server:auth_json`, `server:text`, `server:redirect`, and buffered `server:route` callbacks with request metadata/body, response tables, file responses, and native/callback auth guards. |
 | workflow:routes-streaming | Request/response streaming route helpers | n/a | planned | no | no | n/a | Must preserve real streaming, spooling, and file-backed naming; not covered by buffered `server:route`. |
 | workflow:status-errors | Status/error metadata helpers | n/a | yes | yes | yes | n/a | `vectis.status` mirrors public Vectis status and error-source constants for pure-Lua helpers, and curl-backed HTTP/WebDAV/MQTT/SMTP errors carry status/source metadata plus dependency/http diagnostics. |
 | workflow:static-assets | Static files and embedded assets | n/a | yes | yes | yes | n/a | Disk, embedded read-only, extract, and packed scenarios exist. |

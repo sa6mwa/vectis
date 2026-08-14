@@ -65,6 +65,8 @@ Route fields:
 - `method` or `methods`
 - `body`: `nil`, `false`, `"none"`, `true`, `"buffered"`, or
   `{mode = "buffered", max_bytes = ...}`
+- `auth`: optional native or callback auth provider config, using the same
+  contract as `server:auth_json`
 - `handler`: function receiving a borrowed request table
 
 The request table contains copied scalar fields plus borrowed lookup helpers
@@ -74,6 +76,7 @@ that are valid only during the handler call:
 - `path`
 - `body`, `body_size`
 - `body_spooled`, `body_path`
+- `principal` when an auth provider allowed the request with a principal
 - `header(name)`
 - `query(name)`
 - `param(name)`

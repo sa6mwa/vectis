@@ -233,6 +233,10 @@ local callback_provider = assert(vectis.auth.provider_callback(function(request)
       request.resource == "/callback-direct" then
     return {action = "allow", principal = "callback-direct-user"}
   end
+  if request.authorization == "Bearer route-ok" and
+      request.resource == "/dynamic-guarded" then
+    return {action = "allow", principal = "route-user"}
+  end
   return {
     action = "required",
     status_code = 401,
@@ -294,6 +298,22 @@ assert(api_server:route({
       status = 200,
       content_type = "text/plain",
       file_path = static_dir .. "/index.html",
+    }
+  end,
+}) == true)
+assert(api_server:route({
+  path = "/dynamic-guarded",
+  auth = {
+    provider = callback_provider,
+    purpose = "callback",
+    allowed_modes = {"bearer"},
+  },
+  handler = function(request)
+    assert(request.principal == "route-user")
+    return {
+      status = 200,
+      content_type = "application/json",
+      body = '{"ok":true,"principal":"' .. request.principal .. '"}\n',
     }
   end,
 }) == true)
@@ -377,6 +397,29 @@ assert(dynamic_file.ok == true,
        dynamic_file.error and dynamic_file.error.message)
 assert(dynamic_file.status == 200)
 assert(dynamic_file.body == "static directory index\n")
+local dynamic_guarded_required = vectis.http.get("http://127.0.0.1:28484/dynamic-guarded", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_guarded_required.ok == false)
+assert(dynamic_guarded_required.error.http_status == 401)
+assert(dynamic_guarded_required.error.message:find("HTTP request failed", 1, true))
+assert(dynamic_guarded_required.error.body == "callback login required\n")
+assert(dynamic_guarded_required.error.http_status == 401)
+local dynamic_guarded_allowed = vectis.http.get("http://127.0.0.1:28484/dynamic-guarded", {
+  headers = {
+    Authorization = "Bearer route-ok",
+  },
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_guarded_allowed.ok == true,
+       dynamic_guarded_allowed.error and dynamic_guarded_allowed.error.message)
+assert(dynamic_guarded_allowed.status == 200)
+assert(dynamic_guarded_allowed.body == '{"ok":true,"principal":"route-user"}\n')
+assert(dynamic_guarded_allowed.headers:lower():find("cache-control: no-store", 1, true))
 local simple_get = vectis.http.get("http://127.0.0.1:28484/status", {
   timeout_ms = 2000,
   connect_timeout_ms = 1000,
