@@ -84,6 +84,27 @@ package.loaded.lockdc = {
       enqueue_body = body
       return true
     end
+    function client:get_json()
+      return loaded_value, { etag = "client-etag" }
+    end
+    function client:update_json()
+      return true
+    end
+    function client:query_raw()
+      return { matched = 1 }
+    end
+    function client:queue_ack()
+      return true
+    end
+    function client:queue_nack()
+      return true
+    end
+    function client:dequeue_batch()
+      return {}
+    end
+    function client:dequeue_with_state(req)
+      return self:dequeue(req)
+    end
     function client:acquire(req)
       if req.key == "fail-acquire" then
         return nil, { message = "acquire failed" }
@@ -113,6 +134,21 @@ package.loaded.lockdc = {
         released_leases = released_leases + 1
         return true
       end
+      function lease:mutate()
+        return true
+      end
+      function lease:metadata()
+        return { metadata = true }
+      end
+      function lease:remove()
+        return true
+      end
+      function lease:attach()
+        return true
+      end
+      function lease:get_attachment()
+        return "attachment"
+      end
       return lease
     end
     function client:dequeue(req)
@@ -130,6 +166,15 @@ package.loaded.lockdc = {
       function message:ack()
         acked_messages = acked_messages + 1
         return true
+      end
+      function message:nack()
+        return true
+      end
+      function message:extend()
+        return true
+      end
+      function message:state()
+        return nil
       end
       function message:close()
         closed_messages = closed_messages + 1
@@ -322,6 +367,48 @@ end)
 assert(payload_exploded == false)
 assert(closed_messages == 3)
 assert(closed_clients == 13)
+
+local raw_client = assert(lockd.raw.open({}))
+for _, method in ipairs({
+  "acquire",
+  "get_json",
+  "update_json",
+  "query_raw",
+  "queue_ack",
+  "queue_nack",
+  "enqueue",
+  "dequeue",
+  "dequeue_batch",
+  "dequeue_with_state",
+}) do
+  assert(type(raw_client[method]) == "function", method)
+end
+local raw_lease = assert(raw_client:acquire({ key = "raw-direct" }))
+for _, method in ipairs({
+  "get_json",
+  "update_json",
+  "mutate",
+  "metadata",
+  "remove",
+  "attach",
+  "get_attachment",
+  "release",
+}) do
+  assert(type(raw_lease[method]) == "function", method)
+end
+local raw_message = assert(raw_client:dequeue({ queue = "raw-direct" }))
+for _, method in ipairs({
+  "payload_json",
+  "ack",
+  "nack",
+  "extend",
+  "state",
+}) do
+  assert(type(raw_message[method]) == "function", method)
+end
+raw_message:close()
+raw_lease:close()
+raw_client:close()
 
 print("vectis-lockd-helpers-ok")
 ]])

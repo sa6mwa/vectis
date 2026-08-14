@@ -35,6 +35,13 @@ lockd bundle sources.
 - `vectis.lockd.json_null` is the direct lockdc JSON null sentinel.
 - `vectis.lockd.raw` is the direct `lockdc` module for complete upstream access.
 
+Use direct `require("lockdc")` or `vectis.lockd.raw` for complete lockd API
+coverage: query output, namespace configuration, queue ack/nack/extend,
+dequeue batch/state variants, lease metadata/mutate/remove/attachment helpers,
+and message ack/nack/extend/state/payload controls. Vectis-owned helpers stay
+narrow and only wrap workflows that combine packed bundle config, JSON defaults,
+or deterministic client/handle cleanup.
+
 ## Config Normalization
 
 `config()` accepts the direct `lockdc.open` fields and adds these Vectis
