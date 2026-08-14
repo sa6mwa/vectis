@@ -145,6 +145,69 @@ assert(allowed.action == "allow")
 assert(allowed.result.authenticated == true)
 assert(allowed.result.auth_mode == "basic")
 
+assert(vectis.auth.core == require("vectis.auth.core"))
+assert(vectis.auth.core.provider_native == vectis.auth.provider_native)
+local browser_flow = assert(vectis.auth.browser_flow({
+  credentials_path = auth_store,
+  state_path = auth_state,
+  path_prefix = "/_vectis/auth",
+  realm = "facade-flow",
+  purpose = "webdav",
+  allowed_modes = { vectis.auth.BASIC },
+  required_factors = { "password", "totp" },
+  login_title = "Facade Login",
+  time = 59,
+  window = 0,
+}))
+local flow_routes = browser_flow:routes()
+assert(flow_routes.credentials_path == auth_store)
+assert(flow_routes.state_path == auth_state)
+assert(flow_routes.path_prefix == "/_vectis/auth")
+assert(flow_routes.realm == "facade-flow")
+assert(flow_routes.login_title == "Facade Login")
+assert(flow_routes.purpose == nil)
+local flow_provider = assert(browser_flow:provider())
+assert(flow_provider.kind == "native")
+assert(flow_provider.credentials_path == auth_store)
+assert(flow_provider.state_path == auth_state)
+assert(flow_provider.purpose == "webdav")
+assert(flow_provider.realm == "facade-flow")
+local flow_required = assert(flow_provider:authenticate({
+  resource = "/dav",
+  allowed_modes = "basic",
+}))
+assert(flow_required.action == "required")
+local flow_allowed = assert(flow_provider:authenticate({
+  authorization = authorization,
+  resource = "/dav",
+  allowed_modes = "basic",
+}))
+assert(flow_allowed.action == "allow")
+local flow_key = assert(browser_flow:webdav_key({
+  username = "facade-admin@example.com",
+  password = "facade-password",
+  totp_code = "287082",
+}))
+assert(type(flow_key.client_id) == "string")
+assert(type(flow_key.client_secret) == "string")
+local flow_authorization = assert(browser_flow:webdav_authorization({
+  username = "facade-admin@example.com",
+  password = "facade-password",
+  totp_code = "287082",
+}))
+assert(flow_authorization:find("Basic ", 1, true) == 1)
+local mounted_routes
+local fake_server = {
+  auth_routes = function(self, opts)
+    assert(self ~= nil)
+    mounted_routes = opts
+    return true
+  end,
+}
+assert(browser_flow:mount(fake_server, { path_prefix = "/auth2" }) == true)
+assert(mounted_routes.path_prefix == "/auth2")
+assert(mounted_routes.credentials_path == auth_store)
+
 local callback_seen = false
 local callback_provider = vectis.auth.provider_callback(function(request)
   callback_seen = request.resource == "/admin" and

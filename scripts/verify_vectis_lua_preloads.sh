@@ -35,6 +35,7 @@ if expected_version == "" then
 end
 
 local modules = {
+  "vectis.auth.core",
   "vectis.auth",
   "vectis.cert",
   "vectis.embedded",
@@ -87,6 +88,7 @@ assert(package.loaded.luarocks == nil)
 assert(not package.path:lower():find("luarocks", 1, true))
 assert(not package.cpath:lower():find("luarocks", 1, true))
 assert(loaded["vectis"].auth == loaded["vectis.auth"])
+assert(loaded["vectis.auth"].core == loaded["vectis.auth.core"])
 assert(loaded["vectis"].cert == loaded["vectis.cert"])
 assert(loaded["vectis"].embedded == loaded["vectis.embedded"])
 assert(loaded["vectis"].server == loaded["vectis.server"])
@@ -103,6 +105,7 @@ assert(loaded["vectis"].xml == loaded["vectis.xml"])
 assert(type(loaded["vectis"].error_source_string) == "function")
 assert(loaded["vectis"].error_source_string(loaded["vectis"].ERROR_SOURCE_VECTIS) == "vectis")
 assert(type(loaded["vectis.auth"].provider_native) == "function")
+assert(type(loaded["vectis.auth"].browser_flow) == "function")
 assert(type(loaded["vectis.cert"].generate_bundle) == "function")
 assert(type(loaded["vectis.embedded"].read) == "function")
 assert(type(loaded["vectis.server"].new) == "function")

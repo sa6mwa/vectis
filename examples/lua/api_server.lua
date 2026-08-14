@@ -36,8 +36,13 @@ assert(vectis.auth.user_add({
   password = "api-password",
 }).username == "api-user")
 
-local credential = assert(vectis.auth.webdav_key({
+local auth_flow = vectis.auth.browser_flow({
   credentials_path = credentials_path,
+  realm = "lua-api-example",
+  purpose = "webdav",
+})
+
+local credential = assert(auth_flow:webdav_key({
   username = "api-user",
   password = "api-password",
 }))
@@ -89,12 +94,7 @@ assert(server:json({
 assert(server:auth_json({
   path = "/admin/status",
   body = '{"ok":true,"admin":true}\n',
-  auth = {
-    kind = "native",
-    credentials_path = credentials_path,
-    realm = "lua-api-example",
-    purpose = "webdav",
-  },
+  auth = auth_flow:provider(),
 }) == true)
 assert(server:route({
   path = "/stream",

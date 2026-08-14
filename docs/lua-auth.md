@@ -245,6 +245,49 @@ transactions, email-token verification, and WebDAV-key issuance. Lua can mount
 the routes and can replace auth policy through providers, but the built-in
 native flow stays C-owned.
 
+`browser_flow(opts)` is a small Lua DX helper for that native route group. It
+does not implement a separate auth mechanism. It preserves the shared store and
+route configuration once and delegates to the C-owned functions:
+
+```lua
+local flow = vectis.auth.browser_flow({
+  credentials_path = "credentials.json",
+  state_path = "auth-state.json",
+  path_prefix = "/_vectis/auth",
+  realm = "admin",
+  purpose = "webdav",
+  allowed_modes = { vectis.auth.BASIC },
+  required_factors = { "password", "totp", "email_token" },
+})
+
+assert(flow:mount(server))
+
+assert(server:auth_json({
+  path = "/api/status",
+  auth = flow:provider(),
+  body = '{"ok":true}\n',
+}))
+
+local authorization = assert(flow:webdav_authorization({
+  username = "admin",
+  password = "secret",
+  totp_code = "123456",
+}))
+```
+
+The helper methods are:
+
+- `routes(opts)`: merge and return the `server:auth_routes` option table.
+- `mount(server, opts)`: call `server:auth_routes(flow:routes(opts))`.
+- `provider(opts)`: create a native provider for guarded routes and WebDAV.
+- `webdav_key(opts)`: issue a WebDAV Basic credential after native login.
+- `webdav_authorization(opts)`: issue a WebDAV credential and format the Basic
+  `Authorization` header.
+
+`vectis.auth.core` is the C-owned auth facade. `vectis.auth` re-exports the
+same native functions and constants, adds `browser_flow`, and exposes the core
+table as `vectis.auth.core`.
+
 ## TOTP And QR Helpers
 
 `vectis.auth.totp.new(secret)` returns a TOTP helper for generating codes,

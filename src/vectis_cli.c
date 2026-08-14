@@ -41,6 +41,7 @@
 #endif
 #include <zlib.h>
 
+#include "vectis_auth_lua_init.h"
 #include "vectis_curl_lua_init.h"
 #include "vectis_dsv_lua_init.h"
 #include "vectis_http_lua_init.h"
@@ -13605,6 +13606,10 @@ static int vectis_lua_auth_provider_native(lua_State *lua) {
   lua_setfield(lua, -2, "credentials_path");
   lua_getfield(lua, 1, "path");
   lua_setfield(lua, -2, "path");
+  lua_getfield(lua, 1, "state_path");
+  lua_setfield(lua, -2, "state_path");
+  lua_getfield(lua, 1, "auth_state_path");
+  lua_setfield(lua, -2, "auth_state_path");
   lua_getfield(lua, 1, "max_store_bytes");
   lua_setfield(lua, -2, "max_store_bytes");
   lua_getfield(lua, 1, "purpose");
@@ -16276,8 +16281,14 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }
-  status = cpkt_lua_runtime_register_c_module(runtime, "vectis.auth",
+  status = cpkt_lua_runtime_register_c_module(runtime, "vectis.auth.core",
                                               vectis_luaopen_vectis_auth);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_lua_module(
+      runtime, "vectis.auth", vectis_auth_lua_init, sizeof(vectis_auth_lua_init),
+      "vectis.auth");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }

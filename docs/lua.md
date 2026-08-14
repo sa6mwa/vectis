@@ -78,8 +78,9 @@ These modules are Vectis-owned helpers over one or more dependency-native
 modules or C SDK workflows:
 
 - `vectis`: top-level runtime helpers and module namespace.
-- `vectis.auth`: native auth, TOTP/QR, email token, OAuth2/OIDC, and WebDAV key
-  helpers, documented in [Lua auth](lua-auth.md).
+- `vectis.auth`: Lua DX helpers plus the native auth, TOTP/QR, email token,
+  OAuth2/OIDC, and WebDAV key facade, documented in
+  [Lua auth](lua-auth.md).
 - `vectis.cert`: certificate/key/CSR/CA workflows, documented in
   [Lua certificates](lua-certs.md).
 - `vectis.dsv`: CSV/TSV/DSV parsing and serialization, documented in
@@ -110,11 +111,12 @@ modules or C SDK workflows:
   [Lua WebDAV](lua-webdav.md).
 - `vectis.xml`: XML parse helpers, documented in [Lua XML](lua-xml.md).
 
-C-owned workflow tables including `vectis.auth`, `vectis.cert`,
-`vectis.embedded`, `vectis.server`, and `vectis.ssh` are direct preloaded modules
-inside the embedded binary. `require("vectis").auth` and
-`require("vectis.auth")` return the same table, and the same identity rule
-applies to the other workflow modules exposed through the top-level namespace.
+Workflow tables including `vectis.auth`, `vectis.cert`, `vectis.embedded`,
+`vectis.server`, and `vectis.ssh` are preloaded modules inside the embedded
+binary. `vectis.auth` re-exports the C-owned `vectis.auth.core` facade and adds
+Lua DX helpers. `require("vectis").auth` and `require("vectis.auth")` return the
+same table, and the same identity rule applies to the other workflow modules
+exposed through the top-level namespace.
 In ordinary Lua environments, the pure Lua top-level module attaches the
 workflow and dependency modules that are available through `package.path`,
 `package.cpath`, or `package.preload`, leaving unavailable embedded-only modules

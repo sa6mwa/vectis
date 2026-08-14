@@ -41,8 +41,34 @@ for _, name in ipairs(dependency_names) do
   end
 end
 
+package.preload["vectis.auth.core"] = function()
+  return {
+    __name = "vectis.auth.core",
+    BASIC = 1,
+    provider_native = function(opts)
+      return {
+        kind = "native",
+        config = opts,
+        credentials_path = opts.credentials_path,
+        state_path = opts.state_path,
+        purpose = opts.purpose,
+        realm = opts.realm,
+        allowed_modes = opts.allowed_modes,
+      }
+    end,
+    webdav_key = function(opts)
+      return {
+        client_id = opts.username,
+        client_secret = opts.password,
+      }
+    end,
+    basic_authorization = function(key)
+      return "Basic " .. key.client_id .. ":" .. key.client_secret
+    end,
+  }
+end
+
 local c_owned = {
-  "vectis.auth",
   "vectis.cert",
   "vectis.embedded",
   "vectis.server",
@@ -76,6 +102,7 @@ for _, name in ipairs(dependency_names) do
 end
 
 assert(vectis.auth == require("vectis.auth"))
+assert(vectis.auth.core == require("vectis.auth.core"))
 assert(vectis.cert == require("vectis.cert"))
 assert(vectis.embedded == require("vectis.embedded"))
 assert(vectis.server == require("vectis.server"))
@@ -90,6 +117,43 @@ assert(vectis.smtp == require("vectis.smtp"))
 assert(vectis.lockd == require("vectis.lockd"))
 assert(vectis.dsv == require("vectis.dsv"))
 assert(vectis.xml == require("vectis.xml"))
+
+local flow = vectis.auth.browser_flow({
+  credentials_path = "credentials.json",
+  state_path = "state.json",
+  path_prefix = "/_vectis/auth",
+  realm = "admin",
+  purpose = "webdav",
+  allowed_modes = { vectis.auth.BASIC },
+})
+local routes = flow:routes({ login_title = "Admin Login" })
+assert(routes.credentials_path == "credentials.json")
+assert(routes.state_path == "state.json")
+assert(routes.path_prefix == "/_vectis/auth")
+assert(routes.realm == "admin")
+assert(routes.login_title == "Admin Login")
+assert(routes.purpose == nil)
+local provider = assert(flow:provider())
+assert(provider.kind == "native")
+assert(provider.credentials_path == "credentials.json")
+assert(provider.state_path == "state.json")
+assert(provider.purpose == "webdav")
+assert(provider.realm == "admin")
+local authorization = assert(flow:webdav_authorization({
+  username = "admin",
+  password = "secret",
+}))
+assert(authorization == "Basic admin:secret")
+local mounted
+local server = {
+  auth_routes = function(self, opts)
+    assert(self ~= nil)
+    mounted = opts
+    return true
+  end
+}
+assert(flow:mount(server, { path_prefix = "/login" }) == true)
+assert(mounted.path_prefix == "/login")
 
 assert(vectis.has_embedded_lockd_bundle() == false)
 assert(vectis.embedded_lockd_bundle_size() == 0)
