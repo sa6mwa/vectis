@@ -56,4 +56,23 @@ assert(err.status == vectis.ERR_INVALID)
 assert(err.source_code == vectis.ERROR_SOURCE_VECTIS)
 assert(err.message:find("unknown pslog level", 1, true))
 
+local env_chunks = {}
+local env_logger = assert(log.from_env("VECTIS_LOGGING_EXAMPLE", {
+  output = function(chunk)
+    env_chunks[#env_chunks + 1] = chunk
+  end,
+  mode = "json",
+  disable_timestamp = true,
+  no_color = true,
+  default_fields = {
+    service = "vectis-logging-env",
+  },
+}))
+env_logger:info("from env ready", "component", "lua")
+env_logger:close()
+local env_payload = table.concat(env_chunks)
+assert(env_payload:find('"msg":"from env ready"', 1, true))
+assert(env_payload:find('"service":"vectis-logging-env"', 1, true))
+assert(env_payload:find('"component":"lua"', 1, true))
+
 print("lua logging example ok")

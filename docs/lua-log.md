@@ -27,7 +27,9 @@ the raw pslog option table. Other options are passed through to
 `pslog.new_json(opts)`.
 
 `log.from_env(prefix[, opts])` wraps `pslog.from_env(...)` with the same
-default-field behavior and structured Vectis errors.
+default-field behavior and structured Vectis errors. Use it when process
+environment should be allowed to override the raw pslog configuration while
+Vectis-owned default fields still apply.
 
 ## Error Logging
 
