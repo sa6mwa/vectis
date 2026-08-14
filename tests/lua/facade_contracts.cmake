@@ -157,6 +157,168 @@ assert(invalid_response == nil)
 assert_status_error(invalid_response_err, vectis.ERR_INVALID,
                     "auth callback response action")
 
+local verifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~facade"
+local oidc = assert(vectis.auth.oidc_authorization({
+  authorization_endpoint = "https://idp.example.test/authorize",
+  client_id = "facade-client",
+  redirect_uri = "http://127.0.0.1/callback",
+  scope = "openid dav",
+  state = "facade-state",
+  nonce = "facade-nonce",
+  code_verifier = verifier,
+}))
+assert(oidc.authorization_url:find("https://idp.example.test/authorize?", 1,
+                                   true) == 1)
+assert(oidc.authorization_url:find("client_id=facade-client", 1, true))
+assert(oidc.authorization_url:find("state=facade-state", 1, true))
+assert(oidc.authorization_url:find("nonce=facade-nonce", 1, true))
+assert(oidc.code_verifier == verifier)
+assert(type(oidc.code_challenge) == "string")
+assert(#oidc.code_challenge > 0)
+
+local oauth_transport_calls = {}
+local function oauth_transport(mode)
+  return function(request)
+    assert(request.method == "POST")
+    assert(request.url == "https://idp.example.test/token")
+    assert(request.content_type == "application/x-www-form-urlencoded")
+    assert(type(request.body) == "string")
+    oauth_transport_calls[#oauth_transport_calls + 1] = mode
+    if mode == "code" then
+      assert(request.body:find("grant_type=authorization_code", 1, true))
+      assert(request.body:find("code=facade-code", 1, true))
+      assert(request.body:find("client_id=facade-client", 1, true))
+      assert(request.body:find("code_verifier=", 1, true))
+      return {
+        status_code = 200,
+        content_type = "application/json",
+        body = "{\"access_token\":\"browser-token\",\"token_type\":\"Bearer\",\"refresh_token\":\"browser-refresh\",\"scope\":\"openid dav\",\"id_token\":\"id-token\",\"expires_in\":4200}",
+      }
+    elseif mode == "client" then
+      assert(request.body:find("grant_type=client_credentials", 1, true))
+      assert(request.body:find("client_id=facade-client", 1, true))
+      assert(request.body:find("client_secret=facade-secret", 1, true))
+      return {
+        status_code = 200,
+        content_type = "application/json",
+        body = "{\"access_token\":\"m2m-token\",\"token_type\":\"Bearer\",\"refresh_token\":\"m2m-refresh\",\"scope\":\"dav\",\"expires_in\":3600}",
+      }
+    elseif mode == "refresh" then
+      assert(request.body:find("grant_type=refresh_token", 1, true))
+      assert(request.body:find("refresh_token=old-refresh", 1, true))
+      return {
+        status_code = 200,
+        content_type = "application/json",
+        body = "{\"access_token\":\"refreshed-token\",\"token_type\":\"Bearer\",\"refresh_token\":\"new-refresh\",\"scope\":\"dav\",\"expires_in\":7200}",
+      }
+    end
+    error("unexpected OAuth transport mode")
+  end
+end
+
+local exchange = assert(vectis.auth.oidc_exchange_callback({
+  token_endpoint = "https://idp.example.test/token",
+  client_id = "facade-client",
+  client_secret = "facade-secret",
+  redirect_uri = "http://127.0.0.1/callback",
+  code_verifier = verifier,
+  callback_query = "?code=facade-code&state=facade-state",
+  expected_state = "facade-state",
+  now = 1000,
+  transport = oauth_transport("code"),
+}))
+assert(exchange.code == "facade-code")
+assert(exchange.state == "facade-state")
+assert(exchange.token.access_token == "browser-token")
+assert(exchange.token.id_token == "id-token")
+assert(exchange.token.has_expires_in == true)
+assert(exchange.token.expires_in == 4200)
+assert(exchange.flow.access_token == "browser-token")
+assert(exchange.flow.refresh_token == "browser-refresh")
+assert(exchange.flow.expires_at == 5200)
+
+local client_token = assert(vectis.auth.oauth2_client_credentials({
+  token_endpoint = "https://idp.example.test/token",
+  client_id = "facade-client",
+  client_secret = "facade-secret",
+  scope = "dav",
+  transport = oauth_transport("client"),
+}))
+assert(client_token.access_token == "m2m-token")
+assert(client_token.refresh_token == "m2m-refresh")
+assert(client_token.has_expires_in == true)
+assert(client_token.expires_in == 3600)
+
+local refreshed = assert(vectis.auth.oauth2_flow_ensure({
+  flow = {
+    access_token = "expired-token",
+    token_type = "Bearer",
+    refresh_token = "old-refresh",
+    scope = "dav",
+    expires_at = 10,
+  },
+  token_endpoint = "https://idp.example.test/token",
+  client_id = "facade-client",
+  client_secret = "facade-secret",
+  scope = "dav",
+  now = 1000,
+  disable_retry = true,
+  transport = oauth_transport("refresh"),
+}))
+assert(refreshed.result.state == "refreshed")
+assert(refreshed.result.refreshed == true)
+assert(refreshed.flow.access_token == "refreshed-token")
+assert(refreshed.flow.refresh_token == "new-refresh")
+assert(refreshed.flow.expires_at == 8200)
+
+assert(vectis.auth.oauth2_flow_upsert({
+  credentials_path = auth_store,
+  flow_id = "facade-flow",
+  subject = "facade-oidc@example.com",
+  flow = exchange.flow,
+}) == true)
+
+local loaded_flow = assert(vectis.auth.oauth2_flow_load({
+  credentials_path = auth_store,
+  flow_id = "facade-flow",
+}))
+assert(loaded_flow.found == true)
+assert(loaded_flow.flow_id == "facade-flow")
+assert(loaded_flow.subject == "facade-oidc@example.com")
+assert(loaded_flow.flow.access_token == "browser-token")
+assert(loaded_flow.flow.refresh_token == "browser-refresh")
+
+local stored_ready = assert(vectis.auth.oauth2_stored_flow_ensure({
+  credentials_path = auth_store,
+  flow_id = "facade-flow",
+  now = 1000,
+}))
+assert(stored_ready.found == true)
+assert(stored_ready.result.state == "ready")
+assert(stored_ready.result.refreshed == false)
+assert(stored_ready.flow.access_token == "browser-token")
+
+local oauth_webdav_key = assert(vectis.auth.oauth2_webdav_key({
+  credentials_path = auth_store,
+  flow_id = "facade-flow",
+  subject = "facade-oidc@example.com",
+}))
+assert(type(oauth_webdav_key.client_id) == "string")
+assert(type(oauth_webdav_key.client_secret) == "string")
+assert(oauth_webdav_key.claim_json:find("\"oauth2_flow_id\":\"facade-flow\"", 1,
+                                        true))
+local oauth_authorization =
+    assert(vectis.auth.basic_authorization(oauth_webdav_key))
+local oauth_verified = assert(vectis.auth.verify({
+  credentials_path = auth_store,
+  authorization = oauth_authorization,
+  allowed_modes = "basic",
+}))
+assert(oauth_verified.authenticated == true)
+assert(oauth_verified.claim_json:find("\"oauth2_flow_id\":\"facade-flow\"", 1,
+                                      true))
+assert(#oauth_transport_calls == 3)
+
 local stopped, stopped_err = dsv.each({
   data = "id\nalpha\n",
   on_row = function()
