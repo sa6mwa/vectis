@@ -14575,6 +14575,16 @@ static void vectis_lua_push_server_table(lua_State *lua) {
 
 static void vectis_lua_push_ssh_table(lua_State *lua) {
   lua_newtable(lua);
+  lua_pushinteger(lua, (lua_Integer)VECTIS_SSH_SFTP_OPEN_READ);
+  lua_setfield(lua, -2, "SFTP_OPEN_READ");
+  lua_pushinteger(lua, (lua_Integer)VECTIS_SSH_SFTP_OPEN_WRITE);
+  lua_setfield(lua, -2, "SFTP_OPEN_WRITE");
+  lua_pushinteger(lua, (lua_Integer)VECTIS_SSH_SFTP_OPEN_CREATE);
+  lua_setfield(lua, -2, "SFTP_OPEN_CREATE");
+  lua_pushinteger(lua, (lua_Integer)VECTIS_SSH_SFTP_OPEN_TRUNCATE);
+  lua_setfield(lua, -2, "SFTP_OPEN_TRUNCATE");
+  lua_pushinteger(lua, (lua_Integer)VECTIS_SSH_SFTP_OPEN_APPEND);
+  lua_setfield(lua, -2, "SFTP_OPEN_APPEND");
   lua_pushcfunction(lua, vectis_lua_ssh_open);
   lua_setfield(lua, -2, "open");
   lua_pushcfunction(lua, vectis_lua_ssh_exec);

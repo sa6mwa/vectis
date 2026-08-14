@@ -41,9 +41,11 @@ assert(session, session_err and session_err.message)
 session:remove({remote_path = remote_path})
 session:remove({remote_path = moved_path})
 
+local write_flags = vectis.ssh.SFTP_OPEN_WRITE | vectis.ssh.SFTP_OPEN_CREATE |
+                    vectis.ssh.SFTP_OPEN_TRUNCATE
 local writer = assert(session:open_file({
   remote_path = remote_path,
-  mode = "w",
+  flags = write_flags,
   permissions = 420,
 }))
 assert(writer:write(payload) == #payload)
@@ -75,7 +77,7 @@ assert(listed == true)
 
 local reader = assert(session:open_file({
   remote_path = remote_path,
-  mode = "r",
+  flags = vectis.ssh.SFTP_OPEN_READ,
 }))
 local chunks = {}
 while true do

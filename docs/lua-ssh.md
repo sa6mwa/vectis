@@ -77,8 +77,9 @@ Session methods:
 
 - `session:open_file({ remote_path = path, mode = "r", permissions = 420 })`
   returns a file receiver. Supported modes are `r`, `w`, `a`, `r+`, `w+`,
-  `a+`, and `rw`. Advanced users can pass numeric `flags` using the
-  `VECTIS_SSH_SFTP_OPEN_*` C constants through libvectis.
+  `a+`, and `rw`. Advanced users can pass numeric `flags` using
+  `vectis.ssh.SFTP_OPEN_READ`, `SFTP_OPEN_WRITE`, `SFTP_OPEN_CREATE`,
+  `SFTP_OPEN_TRUNCATE`, and `SFTP_OPEN_APPEND`.
 - `session:open_dir({ remote_path = path })` returns a directory receiver.
 - `session:stat({ remote_path = path })` returns the same stat table as
   `vectis.ssh.sftp_stat`.
@@ -99,8 +100,8 @@ Directory methods:
   `nil` at EOF.
 - `dir:close()` closes the remote directory handle.
 
-Raw libssh2 channel control and advanced host-key workflows remain outside this
-helper surface.
+Lower-level dependency-native libssh2 channel control and advanced host-key
+workflows remain outside this helper surface.
 
 ```lua
 local vectis = require("vectis")
