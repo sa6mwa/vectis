@@ -13149,6 +13149,26 @@ static void vectis_lua_register_embedded_chunks(lua_State *lua) {
   lua_pop(lua, 1);
 }
 
+static void vectis_lua_push_embedded_table(lua_State *lua) {
+  lua_newtable(lua);
+  lua_pushcfunction(lua, vectis_lua_embedded_has_assets);
+  lua_setfield(lua, -2, "has_assets");
+  lua_pushcfunction(lua, vectis_lua_embedded_default_extract_policy);
+  lua_setfield(lua, -2, "default_extract_policy");
+  lua_pushcfunction(lua, vectis_lua_embedded_tree_sha256);
+  lua_setfield(lua, -2, "tree_sha256");
+  lua_pushcfunction(lua, vectis_lua_embedded_read);
+  lua_setfield(lua, -2, "read");
+  lua_pushcfunction(lua, vectis_lua_embedded_stat);
+  lua_setfield(lua, -2, "stat");
+  lua_pushcfunction(lua, vectis_lua_embedded_chunks);
+  lua_setfield(lua, -2, "chunks");
+  lua_pushcfunction(lua, vectis_lua_embedded_list);
+  lua_setfield(lua, -2, "list");
+  lua_pushcfunction(lua, vectis_lua_embedded_extract);
+  lua_setfield(lua, -2, "extract");
+}
+
 static void vectis_lua_push_auth_table(lua_State *lua) {
   lua_newtable(lua);
   lua_pushinteger(lua, VECTIS_AUTH_MODE_BASIC);
@@ -13429,32 +13449,11 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "embedded_lockd_bundle_size");
   lua_pushcfunction(lua, vectis_lua_embedded_lockd_bundle_source);
   lua_setfield(lua, -2, "embedded_lockd_bundle_source");
-  lua_newtable(lua);
-  lua_pushcfunction(lua, vectis_lua_embedded_has_assets);
-  lua_setfield(lua, -2, "has_assets");
-  lua_pushcfunction(lua, vectis_lua_embedded_default_extract_policy);
-  lua_setfield(lua, -2, "default_extract_policy");
-  lua_pushcfunction(lua, vectis_lua_embedded_tree_sha256);
-  lua_setfield(lua, -2, "tree_sha256");
-  lua_pushcfunction(lua, vectis_lua_embedded_read);
-  lua_setfield(lua, -2, "read");
-  lua_pushcfunction(lua, vectis_lua_embedded_stat);
-  lua_setfield(lua, -2, "stat");
-  lua_pushcfunction(lua, vectis_lua_embedded_chunks);
-  lua_setfield(lua, -2, "chunks");
-  lua_pushcfunction(lua, vectis_lua_embedded_list);
-  lua_setfield(lua, -2, "list");
-  lua_pushcfunction(lua, vectis_lua_embedded_extract);
-  lua_setfield(lua, -2, "extract");
-  lua_setfield(lua, -2, "embedded");
-  vectis_lua_push_auth_table(lua);
-  lua_setfield(lua, -2, "auth");
-  vectis_lua_push_server_table(lua);
-  lua_setfield(lua, -2, "server");
-  vectis_lua_push_cert_table(lua);
-  lua_setfield(lua, -2, "cert");
-  vectis_lua_push_ssh_table(lua);
-  lua_setfield(lua, -2, "ssh");
+  vectis_lua_set_required_module(lua, "embedded", "vectis.embedded");
+  vectis_lua_set_required_module(lua, "auth", "vectis.auth");
+  vectis_lua_set_required_module(lua, "server", "vectis.server");
+  vectis_lua_set_required_module(lua, "cert", "vectis.cert");
+  vectis_lua_set_required_module(lua, "ssh", "vectis.ssh");
   vectis_lua_push_libs_table(lua);
   lua_setfield(lua, -2, "libs");
   lua_getglobal(lua, "require");
@@ -13522,6 +13521,55 @@ static int luaopen_vectis(lua_State *lua) {
 
 static int vectis_luaopen_vectis(void *lua_state) {
   return luaopen_vectis((lua_State *)lua_state);
+}
+
+static int luaopen_vectis_auth(lua_State *lua) {
+  vectis_lua_register_totp_qr(lua);
+  vectis_lua_push_auth_table(lua);
+  return 1;
+}
+
+static int vectis_luaopen_vectis_auth(void *lua_state) {
+  return luaopen_vectis_auth((lua_State *)lua_state);
+}
+
+static int luaopen_vectis_cert(lua_State *lua) {
+  vectis_lua_push_cert_table(lua);
+  return 1;
+}
+
+static int vectis_luaopen_vectis_cert(void *lua_state) {
+  return luaopen_vectis_cert((lua_State *)lua_state);
+}
+
+static int luaopen_vectis_embedded(lua_State *lua) {
+  vectis_lua_register_embedded_chunks(lua);
+  vectis_lua_push_embedded_table(lua);
+  return 1;
+}
+
+static int vectis_luaopen_vectis_embedded(void *lua_state) {
+  return luaopen_vectis_embedded((lua_State *)lua_state);
+}
+
+static int luaopen_vectis_server(lua_State *lua) {
+  vectis_lua_register_server(lua);
+  vectis_lua_push_server_table(lua);
+  return 1;
+}
+
+static int vectis_luaopen_vectis_server(void *lua_state) {
+  return luaopen_vectis_server((lua_State *)lua_state);
+}
+
+static int luaopen_vectis_ssh(lua_State *lua) {
+  vectis_lua_register_ssh_sftp(lua);
+  vectis_lua_push_ssh_table(lua);
+  return 1;
+}
+
+static int vectis_luaopen_vectis_ssh(void *lua_state) {
+  return luaopen_vectis_ssh((lua_State *)lua_state);
 }
 
 static int vectis_luaopen_lockdc_core(void *lua_state) {
@@ -14975,6 +15023,31 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
 
   status = cpkt_lua_runtime_register_c_module(runtime, "vectis",
                                               vectis_luaopen_vectis);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_c_module(runtime, "vectis.auth",
+                                              vectis_luaopen_vectis_auth);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_c_module(runtime, "vectis.cert",
+                                              vectis_luaopen_vectis_cert);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_c_module(runtime, "vectis.embedded",
+                                              vectis_luaopen_vectis_embedded);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_c_module(runtime, "vectis.server",
+                                              vectis_luaopen_vectis_server);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_c_module(runtime, "vectis.ssh",
+                                              vectis_luaopen_vectis_ssh);
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }

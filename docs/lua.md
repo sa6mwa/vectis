@@ -57,6 +57,8 @@ workflows:
   [Lua certificates](lua-certs.md).
 - `vectis.dsv`: CSV/TSV/DSV parsing and serialization, documented in
   [Lua DSV](lua-dsv.md).
+- `vectis.embedded`: packed embedded asset inspection, reading, chunking,
+  listing, and extraction helpers.
 - `vectis.http`: generic downstream HTTP and file transfer helpers, documented
   in [Lua HTTP](lua-http.md).
 - `vectis.lockd`: Vectis lockd client/workflow helpers, documented in
@@ -79,6 +81,12 @@ workflows:
 - `vectis.webdav`: WebDAV client helpers, documented in
   [Lua WebDAV](lua-webdav.md).
 - `vectis.xml`: XML parse helpers, documented in [Lua XML](lua-xml.md).
+
+C-owned workflow tables including `vectis.auth`, `vectis.cert`,
+`vectis.embedded`, `vectis.server`, and `vectis.ssh` are direct preloaded modules.
+`require("vectis").auth` and `require("vectis.auth")` return the same table, and
+the same identity rule applies to the other workflow modules exposed through the
+top-level namespace.
 
 ## Documentation Contract
 
