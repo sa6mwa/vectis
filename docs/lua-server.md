@@ -338,9 +338,53 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
 - `server:consumer_service(opts)` registers a C-owned lockd consumer service.
 
 `stream_source` provides true live response streaming for buffered callback
-routes. SSE convenience helpers remain a separate future route surface.
+routes. `server:sse(opts)` provides an SSE-specific convenience helper on top
+of `stream_source`.
 `spooled_source` is explicitly file-backed materialization, not live
 producer-to-transport streaming.
+
+## SSE Routes
+
+`server:sse(opts)` registers a GET route that returns
+`text/event-stream; charset=utf-8` with live chunked transfer. It delegates to
+`server:route()`, so `path`, `method` or `methods`, `auth`, `before`, `after`,
+and `openapi` fields follow the normal callback route contract.
+
+SSE fields:
+
+- `read(state, max_bytes)`: required callback returning the next event.
+- `open(request)`: optional callback called before streaming starts; its return
+  value becomes `state`.
+- `close(state)`: optional callback called when the stream source closes.
+- `headers`: optional response headers; `cache-control = "no-cache"` and
+  `x-accel-buffering = "no"` are added when absent.
+
+`read` returns `nil` or `false` at EOF, a string to send as a `data:` event, or
+an event table. Event tables accept `id`, `event`, `data`, `retry`, `comment`,
+or `frame`. `data` and `comment` values are split into SSE lines on newlines.
+`frame` sends a preformatted SSE frame unchanged. Each produced frame must fit
+inside the requested `max_bytes`; Vectis does not split one logical SSE event
+across multiple reads.
+
+```lua
+assert(server:sse({
+  path = "/events",
+  open = function(request)
+    return { topic = request.query("topic") or "default", index = 1 }
+  end,
+  read = function(state)
+    if state.index == 1 then
+      state.index = 2
+      return {
+        id = "1",
+        event = "ready",
+        data = "topic=" .. state.topic,
+      }
+    end
+    return nil
+  end,
+}) == true)
+```
 
 See [lua-auth.md](lua-auth.md) for native and callback auth providers,
 OAuth2/OIDC helpers, email-token flows, and WebDAV-key issuance.

@@ -470,6 +470,39 @@ assert(api_server:route({
     }
   end,
 }) == true)
+assert(api_server:sse({
+  path = "/dynamic-sse",
+  open = function(request)
+    assert(request.path == "/dynamic-sse")
+    return { index = 1 }
+  end,
+  read = function(state, max_bytes)
+    assert(type(max_bytes) == "number")
+    assert(max_bytes > 0)
+    if state.index == 1 then
+      state.index = 2
+      return {
+        id = "1",
+        event = "ready",
+        data = "alpha\nbeta",
+      }
+    end
+    if state.index == 2 then
+      state.index = 3
+      return { comment = "heartbeat" }
+    end
+    if state.index == 3 then
+      state.index = 4
+      return "done"
+    end
+    return nil
+  end,
+  close = function(state)
+    local fp = assert(io.open(static_dir .. "/sse-close.txt", "wb"))
+    fp:write("sse closed at " .. state.index .. "\n")
+    fp:close()
+  end,
+}) == true)
 assert(api_server:route({
   path = "/dynamic-guarded",
   auth = {
@@ -750,6 +783,32 @@ assert(dynamic_stream.status == 202)
 assert(dynamic_stream.body == "live stream response\n")
 assert(dynamic_stream.headers:lower():find("x-vectis-stream: callback", 1, true))
 assert(dynamic_stream.headers:lower():find("transfer-encoding: chunked", 1, true))
+local dynamic_sse = vectis.http.get(
+    "http://127.0.0.1:28484/dynamic-sse", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_sse.ok == true,
+       dynamic_sse.error and dynamic_sse.error.message)
+assert(dynamic_sse.status == 200)
+assert(dynamic_sse.body ==
+       "id: 1\nevent: ready\ndata: alpha\ndata: beta\n\n" ..
+       ": heartbeat\n\n" ..
+       "data: done\n\n")
+assert(dynamic_sse.headers:lower():find("content-type: text/event-stream", 1, true))
+assert(dynamic_sse.headers:lower():find("cache-control: no-cache", 1, true))
+assert(dynamic_sse.headers:lower():find("x-accel-buffering: no", 1, true))
+assert(dynamic_sse.headers:lower():find("transfer-encoding: chunked", 1, true))
+local dynamic_sse_closed = vectis.http.get(
+    "http://127.0.0.1:28484/files/sse-close.txt", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_sse_closed.ok == true,
+       dynamic_sse_closed.error and dynamic_sse_closed.error.message)
+assert(dynamic_sse_closed.body == "sse closed at 4\n")
 local dynamic_guarded_required = vectis.http.get("http://127.0.0.1:28484/dynamic-guarded", {
   timeout_ms = 2000,
   connect_timeout_ms = 1000,

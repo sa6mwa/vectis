@@ -5146,6 +5146,9 @@ static vectis_lua_server *vectis_lua_check_server(lua_State *lua, int index) {
   return (vectis_lua_server *)luaL_checkudata(lua, index, VECTIS_LUA_SERVER);
 }
 
+static void vectis_lua_copy_route_table(lua_State *lua, int source_index,
+                                        int target_index);
+
 static vectis_app *vectis_lua_server_app(lua_State *lua, int index) {
   vectis_lua_server *server;
 
@@ -7234,6 +7237,271 @@ static int vectis_lua_server_route(lua_State *lua) {
   lua_pop(lua, 1);
   lua_pushboolean(lua, 1);
   return 1;
+}
+
+static void vectis_lua_sse_add_lines(luaL_Buffer *buffer, const char *prefix,
+                                     const char *value, size_t value_len) {
+  size_t prefix_len;
+  size_t start;
+  size_t end;
+
+  prefix_len = strlen(prefix);
+  start = 0u;
+  for (;;) {
+    end = start;
+    while (end < value_len && value[end] != '\n') {
+      ++end;
+    }
+    luaL_addlstring(buffer, prefix, prefix_len);
+    if (end > start && value[end - 1u] == '\r') {
+      luaL_addlstring(buffer, value + start, end - start - 1u);
+    } else {
+      luaL_addlstring(buffer, value + start, end - start);
+    }
+    luaL_addchar(buffer, '\n');
+    if (end >= value_len) {
+      break;
+    }
+    start = end + 1u;
+  }
+}
+
+static int vectis_lua_sse_add_string_field(lua_State *lua, int event_index,
+                                           luaL_Buffer *buffer,
+                                           const char *field,
+                                           const char *prefix) {
+  const char *value;
+  size_t value_len;
+
+  lua_getfield(lua, event_index, field);
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return 0;
+  }
+  if (!lua_isstring(lua, -1)) {
+    return luaL_error(lua, "SSE event %s must be a string", field);
+  }
+  value = lua_tolstring(lua, -1, &value_len);
+  vectis_lua_sse_add_lines(buffer, prefix, value, value_len);
+  lua_pop(lua, 1);
+  return 0;
+}
+
+static int vectis_lua_sse_push_frame(lua_State *lua, int event_index,
+                                     lua_Integer max_bytes) {
+  luaL_Buffer buffer;
+  const char *value;
+  size_t value_len;
+  lua_Integer retry;
+  char retry_text[64];
+  int written;
+
+  event_index = lua_absindex(lua, event_index);
+  if (lua_isnil(lua, event_index) ||
+      (lua_isboolean(lua, event_index) && !lua_toboolean(lua, event_index))) {
+    lua_pushnil(lua);
+    return 1;
+  }
+  if (lua_isstring(lua, event_index)) {
+    value = lua_tolstring(lua, event_index, &value_len);
+    luaL_buffinit(lua, &buffer);
+    vectis_lua_sse_add_lines(&buffer, "data: ", value, value_len);
+    luaL_addchar(&buffer, '\n');
+    luaL_pushresult(&buffer);
+  } else if (lua_istable(lua, event_index)) {
+    lua_getfield(lua, event_index, "frame");
+    if (!lua_isnil(lua, -1)) {
+      if (!lua_isstring(lua, -1)) {
+        return luaL_error(lua, "SSE event frame must be a string");
+      }
+      lua_pushvalue(lua, -1);
+      lua_remove(lua, -2);
+    } else {
+      lua_pop(lua, 1);
+      luaL_buffinit(lua, &buffer);
+      if (vectis_lua_sse_add_string_field(lua, event_index, &buffer, "comment",
+                                          ": ") != 0 ||
+          vectis_lua_sse_add_string_field(lua, event_index, &buffer, "id",
+                                          "id: ") != 0 ||
+          vectis_lua_sse_add_string_field(lua, event_index, &buffer, "event",
+                                          "event: ") != 0) {
+        return lua_error(lua);
+      }
+      lua_getfield(lua, event_index, "retry");
+      if (!lua_isnil(lua, -1)) {
+        if (!lua_isinteger(lua, -1)) {
+          return luaL_error(lua, "SSE event retry must be an integer");
+        }
+        retry = lua_tointeger(lua, -1);
+        if (retry < 0) {
+          return luaL_error(lua, "SSE event retry must be non-negative");
+        }
+        written = snprintf(retry_text, sizeof(retry_text), "%lld",
+                           (long long)retry);
+        if (written <= 0 || (size_t)written >= sizeof(retry_text)) {
+          return luaL_error(lua, "SSE event retry is too large");
+        }
+        vectis_lua_sse_add_lines(&buffer, "retry: ", retry_text,
+                                 (size_t)written);
+      }
+      lua_pop(lua, 1);
+      if (vectis_lua_sse_add_string_field(lua, event_index, &buffer, "data",
+                                          "data: ") != 0) {
+        return lua_error(lua);
+      }
+      luaL_addchar(&buffer, '\n');
+      luaL_pushresult(&buffer);
+    }
+  } else {
+    return luaL_error(lua, "SSE read must return nil, string, or event table");
+  }
+
+  value = lua_tolstring(lua, -1, &value_len);
+  if (max_bytes > 0 && value_len > (size_t)max_bytes) {
+    return luaL_error(lua, "SSE frame exceeds stream chunk size");
+  }
+  return 1;
+}
+
+static int vectis_lua_server_sse_read(lua_State *lua) {
+  lua_Integer max_bytes;
+  const char *message;
+
+  max_bytes = luaL_optinteger(lua, 1, 8192);
+  luaL_checktype(lua, lua_upvalueindex(1), LUA_TTABLE);
+  lua_getfield(lua, lua_upvalueindex(1), "read");
+  if (!lua_isfunction(lua, -1)) {
+    return luaL_error(lua, "server:sse read callback is required");
+  }
+  lua_pushvalue(lua, lua_upvalueindex(2));
+  lua_pushinteger(lua, max_bytes);
+  if (lua_pcall(lua, 2, 1, 0) != LUA_OK) {
+    message = lua_tostring(lua, -1);
+    return luaL_error(lua, "%s",
+                      message != NULL ? message : "server:sse read failed");
+  }
+  return vectis_lua_sse_push_frame(lua, -1, max_bytes);
+}
+
+static int vectis_lua_server_sse_close(lua_State *lua) {
+  const char *message;
+
+  luaL_checktype(lua, lua_upvalueindex(1), LUA_TTABLE);
+  lua_getfield(lua, lua_upvalueindex(1), "close");
+  if (lua_isnil(lua, -1)) {
+    return 0;
+  }
+  if (!lua_isfunction(lua, -1)) {
+    return luaL_error(lua, "server:sse close callback must be a function");
+  }
+  lua_pushvalue(lua, lua_upvalueindex(2));
+  if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
+    message = lua_tostring(lua, -1);
+    return luaL_error(lua, "%s",
+                      message != NULL ? message : "server:sse close failed");
+  }
+  return 0;
+}
+
+static void vectis_lua_set_default_header(lua_State *lua, int headers_index,
+                                          const char *name,
+                                          const char *value) {
+  headers_index = lua_absindex(lua, headers_index);
+  lua_getfield(lua, headers_index, name);
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_pushstring(lua, value);
+    lua_setfield(lua, headers_index, name);
+  } else {
+    lua_pop(lua, 1);
+  }
+}
+
+static int vectis_lua_server_sse_handler(lua_State *lua) {
+  int opts_index;
+  int state_index;
+  lua_Integer status_code;
+  const char *content_type;
+  const char *message;
+
+  opts_index = lua_absindex(lua, lua_upvalueindex(1));
+  lua_getfield(lua, opts_index, "open");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_pushnil(lua);
+  } else {
+    if (!lua_isfunction(lua, -1)) {
+      return luaL_error(lua, "server:sse open callback must be a function");
+    }
+    lua_pushvalue(lua, 1);
+    if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+      message = lua_tostring(lua, -1);
+      return luaL_error(lua, "%s",
+                        message != NULL ? message : "server:sse open failed");
+    }
+  }
+  state_index = lua_absindex(lua, -1);
+
+  lua_newtable(lua);
+  status_code = (lua_Integer)vectis_lua_table_size(lua, opts_index,
+                                                   "status_code", 0u);
+  if (status_code == 0) {
+    status_code =
+        (lua_Integer)vectis_lua_table_size(lua, opts_index, "status", 200u);
+  }
+  lua_pushinteger(lua, status_code);
+  lua_setfield(lua, -2, "status");
+  content_type = vectis_lua_table_string(lua, opts_index, "content_type");
+  lua_pushstring(lua, content_type != NULL ? content_type
+                                           : "text/event-stream; charset=utf-8");
+  lua_setfield(lua, -2, "content_type");
+
+  lua_newtable(lua);
+  lua_getfield(lua, opts_index, "headers");
+  if (!lua_isnil(lua, -1)) {
+    if (!lua_istable(lua, -1)) {
+      return luaL_error(lua, "server:sse headers must be a table");
+    }
+    vectis_lua_copy_route_table(lua, -1, -2);
+  }
+  lua_pop(lua, 1);
+  vectis_lua_set_default_header(lua, -1, "cache-control", "no-cache");
+  vectis_lua_set_default_header(lua, -1, "x-accel-buffering", "no");
+  lua_setfield(lua, -2, "headers");
+
+  lua_newtable(lua);
+  lua_pushvalue(lua, opts_index);
+  lua_pushvalue(lua, state_index);
+  lua_pushcclosure(lua, vectis_lua_server_sse_read, 2);
+  lua_setfield(lua, -2, "read");
+  lua_pushvalue(lua, opts_index);
+  lua_pushvalue(lua, state_index);
+  lua_pushcclosure(lua, vectis_lua_server_sse_close, 2);
+  lua_setfield(lua, -2, "close");
+  lua_setfield(lua, -2, "stream_source");
+  return 1;
+}
+
+static int vectis_lua_server_sse(lua_State *lua) {
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  lua_getfield(lua, 2, "read");
+  if (!lua_isfunction(lua, -1)) {
+    lua_pop(lua, 1);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "server:sse read callback is required");
+  }
+  lua_pop(lua, 1);
+
+  lua_newtable(lua);
+  vectis_lua_copy_route_table(lua, 2, -1);
+  lua_pushstring(lua, "none");
+  lua_setfield(lua, -2, "body");
+  lua_pushvalue(lua, 2);
+  lua_pushcclosure(lua, vectis_lua_server_sse_handler, 1);
+  lua_setfield(lua, -2, "handler");
+  lua_replace(lua, 2);
+  lua_settop(lua, 2);
+  return vectis_lua_server_route(lua);
 }
 
 static void vectis_lua_copy_table_field(lua_State *lua, int source_index,
@@ -13277,6 +13545,8 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "group");
     lua_pushcfunction(lua, vectis_lua_server_dsv);
     lua_setfield(lua, -2, "dsv");
+    lua_pushcfunction(lua, vectis_lua_server_sse);
+    lua_setfield(lua, -2, "sse");
     lua_pushcfunction(lua, vectis_lua_server_openapi_doc);
     lua_setfield(lua, -2, "openapi_doc");
     lua_pushcfunction(lua, vectis_lua_server_openapi);
