@@ -17,6 +17,8 @@ enables libcurl upload mode. Results use transport-only normalization:
 - `ok = true` means libcurl completed the publish transfer.
 - `transport_ok` mirrors libcurl transfer success.
 - failures return `ok = false` and `error.kind = "transport"`.
+- transport errors carry Vectis status/source metadata with `source = "curl"`
+  and the CURLcode in `error.dependency_code` when available.
 
 ```lua
 local vectis = require("vectis")

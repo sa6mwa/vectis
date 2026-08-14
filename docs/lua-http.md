@@ -45,7 +45,11 @@ Structured errors use:
 
 - `kind = "transport"` for libcurl failures.
 - `kind = "http_status"` for HTTP status 400 and above.
-- `message`, plus `code`, `code_name`, `status`, `body`, `json`, and `attempts`
+- Vectis status metadata: `status`, `status_string`, `source`, and
+  `source_code`.
+- libcurl failures include `code`, `code_name`, `dependency_code`, and
+  `attempts` when available.
+- HTTP status failures include `http_status`, `body`, `json`, and `attempts`
   when those fields apply.
 
 Retry options are passed through to `curl.perform`, `curl.json`, and

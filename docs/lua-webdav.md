@@ -72,6 +72,9 @@ Results are normalized with `vectis.http.normalize`.
 - `ok = false, error.kind = "transport"` means libcurl failed.
 - `ok = false, error.kind = "http_status"` means the server returned HTTP 400
   or higher.
+- nested `error` tables carry Vectis status/source metadata; WebDAV transport
+  and HTTP status failures use `source = "curl"`, and protocol status is
+  exposed as `error.http_status`.
 
 `PROPFIND` defaults `depth` to `1` when not supplied.
 

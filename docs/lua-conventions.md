@@ -16,9 +16,11 @@ Expected runtime failures return structured values instead of raising:
   `err.dependency_code`, `err.http_status`, and `err.detail` are present only
   when the C SDK error object carries those diagnostics.
 - Curl-backed workflow failures return a result table with `ok = false`,
-  `transport_ok`, and `error.kind`.
+  `transport_ok`, and `error.kind`. Their nested `error` table also carries
+  `status`, `status_string`, `source`, and `source_code`; libcurl failures use
+  `source = "curl"` and place the CURLcode in `dependency_code`.
 - HTTP status failures use `error.kind = "http_status"` and preserve the
-  response status and body fields that are available.
+  response status as `error.http_status` plus body fields that are available.
 - Lua callback abort/stop paths return `nil, err` when abort is normal workflow
   control.
 

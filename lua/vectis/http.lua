@@ -1,4 +1,5 @@
 local curl = require("curl")
+local vstatus = require("vectis.status")
 
 local M = {}
 
@@ -29,6 +30,14 @@ end
 
 local function http_status_failed(status)
   return type(status) == "number" and status >= 400
+end
+
+local function curl_status(result)
+  if result and (result.code == 28 or
+      result.code_name == "CURLE_OPERATION_TIMEDOUT") then
+    return vstatus.ERR_TIMEOUT
+  end
+  return vstatus.ERR_STATE
 end
 
 local function request_with_method(method, first, second)
@@ -90,29 +99,36 @@ end
 
 function M.error_for(result)
   if type(result) ~= "table" then
-    return {
+    return vstatus.error({
       kind = "invalid_result",
       message = "HTTP result is invalid",
-    }
+      status = vstatus.ERR_INVALID,
+      source_code = vstatus.ERROR_SOURCE_VECTIS,
+    })
   end
   if result.ok ~= true then
-    return {
+    return vstatus.error({
       kind = "transport",
       code = result.code,
       code_name = result.code_name,
       message = result.error or result.code_name or "curl transfer failed",
       attempts = result.attempts,
-    }
+      status = curl_status(result),
+      source_code = vstatus.ERROR_SOURCE_CURL,
+      dependency_code = result.code,
+    })
   end
   if http_status_failed(result.status) then
-    return {
+    return vstatus.error({
       kind = "http_status",
-      status = result.status,
       message = "HTTP request failed with status " .. tostring(result.status),
       body = result.body,
       json = result.json,
       attempts = result.attempts,
-    }
+      status = vstatus.ERR_STATE,
+      source_code = vstatus.ERROR_SOURCE_CURL,
+      http_status = result.status,
+    })
   end
   return nil
 end

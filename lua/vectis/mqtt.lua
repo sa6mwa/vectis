@@ -1,6 +1,15 @@
 local curl = require("curl")
+local vstatus = require("vectis.status")
 
 local M = {}
+
+local function curl_status(result)
+  if result and (result.code == 28 or
+      result.code_name == "CURLE_OPERATION_TIMEDOUT") then
+    return vstatus.ERR_TIMEOUT
+  end
+  return vstatus.ERR_STATE
+end
 
 local function copy_table(source)
   local target = {}
@@ -23,19 +32,24 @@ end
 
 function M.error_for(result)
   if type(result) ~= "table" then
-    return {
+    return vstatus.error({
       kind = "invalid_result",
       message = "MQTT result is invalid",
-    }
+      status = vstatus.ERR_INVALID,
+      source_code = vstatus.ERROR_SOURCE_VECTIS,
+    })
   end
   if result.ok ~= true then
-    return {
+    return vstatus.error({
       kind = "transport",
       code = result.code,
       code_name = result.code_name,
       message = result.error or result.code_name or "curl MQTT transfer failed",
       attempts = result.attempts,
-    }
+      status = curl_status(result),
+      source_code = vstatus.ERROR_SOURCE_CURL,
+      dependency_code = result.code,
+    })
   end
   return nil
 end

@@ -4,6 +4,7 @@ file(WRITE "${script}" [[
 local vectis = require("vectis")
 local dsv = require("vectis.dsv")
 local http = require("vectis.http")
+local status = require("vectis.status")
 local lonejson = require("lonejson")
 local mqtt = require("vectis.mqtt")
 local smtp = require("vectis.smtp")
@@ -40,6 +41,9 @@ assert(vectis.error_source_string(vectis.ERROR_SOURCE_VECTIS) == "vectis")
 assert(vectis.error_source_string(vectis.ERROR_SOURCE_LOCKDC) == "lockdc")
 assert(vectis.error_source_string(vectis.ERROR_SOURCE_LONEJSON) == "lonejson")
 assert(vectis.error_source_string(vectis.ERROR_SOURCE_LIBSSH2) == "libssh2")
+assert(vectis.status == status)
+assert(status.status_string(status.ERR_TIMEOUT) == "timeout")
+assert(status.error_source_string(status.ERROR_SOURCE_CURL) == "curl")
 
 assert(vectis.auth.store_init({
   credentials_path = auth_store,
@@ -547,6 +551,9 @@ assert(invalid_http.ok == false)
 assert(invalid_http.transport_ok == false)
 assert(invalid_http.error.kind == "invalid_result")
 assert(invalid_http.error.message == "HTTP result is invalid")
+assert_status_error(invalid_http.error, vectis.ERR_INVALID,
+                    "HTTP result is invalid")
+assert(invalid_http.error.source == "vectis")
 
 local transport_http = http.normalize({
   ok = false,
@@ -560,7 +567,22 @@ assert(transport_http.transport_ok == false)
 assert(transport_http.error.kind == "transport")
 assert(transport_http.error.code == 7)
 assert(transport_http.error.attempts == 2)
+assert_status_error(transport_http.error, vectis.ERR_STATE,
+                    "connection refused")
+assert(transport_http.error.source == "curl")
+assert(transport_http.error.source_code == vectis.ERROR_SOURCE_CURL)
+assert(transport_http.error.dependency_code == 7)
 assert(transport_http.error_message == "connection refused")
+
+local timeout_http = http.normalize({
+  ok = false,
+  error = "timeout",
+  code = 28,
+  code_name = "CURLE_OPERATION_TIMEDOUT",
+  attempts = 1,
+})
+assert(timeout_http.error.kind == "transport")
+assert_status_error(timeout_http.error, vectis.ERR_TIMEOUT, "timeout")
 
 local status_http = http.normalize({
   ok = true,
@@ -571,7 +593,10 @@ local status_http = http.normalize({
 assert(status_http.ok == false)
 assert(status_http.transport_ok == true)
 assert(status_http.error.kind == "http_status")
-assert(status_http.error.status == 404)
+assert_status_error(status_http.error, vectis.ERR_STATE,
+                    "HTTP request failed")
+assert(status_http.error.http_status == 404)
+assert(status_http.error.source == "curl")
 assert(status_http.error.body == "missing")
 
 local mqtt_transport = mqtt.normalize({
@@ -583,6 +608,8 @@ assert(mqtt_transport.ok == false)
 assert(mqtt_transport.transport_ok == false)
 assert(mqtt_transport.error.kind == "transport")
 assert(mqtt_transport.error.attempts == 3)
+assert_status_error(mqtt_transport.error, vectis.ERR_STATE, "mqtt failed")
+assert(mqtt_transport.error.source == "curl")
 
 local smtp_transport = smtp.normalize({
   ok = false,
@@ -593,12 +620,18 @@ assert(smtp_transport.ok == false)
 assert(smtp_transport.transport_ok == false)
 assert(smtp_transport.error.kind == "transport")
 assert(smtp_transport.error.attempts == 4)
+assert_status_error(smtp_transport.error, vectis.ERR_STATE, "smtp failed")
+assert(smtp_transport.error.source == "curl")
 
-assert(webdav.normalize({
+local webdav_conflict = webdav.normalize({
   ok = true,
   status = 409,
   body = "conflict",
-}).error.kind == "http_status")
+})
+assert(webdav_conflict.error.kind == "http_status")
+assert(webdav_conflict.error.http_status == 409)
+assert_status_error(webdav_conflict.error, vectis.ERR_STATE,
+                    "HTTP request failed")
 
 local bad_webdav_ok, bad_webdav_err = pcall(function()
   webdav.copy({ url = "https://example.test/source" })

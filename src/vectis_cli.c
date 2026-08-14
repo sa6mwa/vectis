@@ -51,6 +51,7 @@
 #include "vectis_mqtt_lua_init.h"
 #include "vectis_pslog_lua_init.h"
 #include "vectis_smtp_lua_init.h"
+#include "vectis_status_lua_init.h"
 #include "vectis_webdav_lua_init.h"
 #include "vectis_xml_lua_init.h"
 
@@ -11269,6 +11270,12 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "ERROR_SOURCE_LIBSSH2");
   lua_pushcfunction(lua, vectis_lua_error_source_string);
   lua_setfield(lua, -2, "error_source_string");
+  lua_getglobal(lua, "require");
+  lua_pushliteral(lua, "vectis.status");
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    return lua_error(lua);
+  }
+  lua_setfield(lua, -2, "status");
   lua_pushcfunction(lua, vectis_lua_has_embedded_lockd_bundle);
   lua_setfield(lua, -2, "has_embedded_lockd_bundle");
   lua_pushcfunction(lua, vectis_lua_embedded_lockd_bundle_size);
@@ -12844,6 +12851,12 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   }
   status = cpkt_lua_runtime_register_c_module(runtime, "zlib",
                                               vectis_luaopen_zlib);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_lua_module(
+      runtime, "vectis.status", vectis_status_lua_init,
+      sizeof(vectis_status_lua_init), "vectis.status");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }

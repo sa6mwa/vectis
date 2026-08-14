@@ -35,4 +35,5 @@ assert(result.ok, result.error and result.error.message)
 
 Results are normalized like other Vectis protocol helpers. Transport failures
 return a result table with `ok = false`, `transport_ok = false`, and a
-structured `error`.
+structured `error` carrying Vectis status/source metadata, `source = "curl"`,
+and the CURLcode in `error.dependency_code` when available.

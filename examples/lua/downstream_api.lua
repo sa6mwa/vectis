@@ -67,7 +67,7 @@ local missing = http.get_json(request_opts("/missing"))
 assert(missing.ok == false)
 assert(missing.transport_ok == true)
 assert(missing.error.kind == "http_status")
-assert(missing.error.status == 404)
+assert(missing.error.http_status == 404)
 
 if serve_forever then
   print("lua downstream API example listening on " .. base_url)

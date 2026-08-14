@@ -44,6 +44,7 @@ local modules = {
   "curl",
   "openssl",
   "zlib",
+  "vectis.status",
   "vectis.http",
   "vectis.webdav",
   "vectis.mqtt",
@@ -78,6 +79,7 @@ assert(package.loaded.luarocks == nil)
 assert(not package.path:lower():find("luarocks", 1, true))
 assert(not package.cpath:lower():find("luarocks", 1, true))
 assert(loaded["vectis"].http == loaded["vectis.http"])
+assert(loaded["vectis"].status == loaded["vectis.status"])
 assert(loaded["vectis"].webdav == loaded["vectis.webdav"])
 assert(loaded["vectis"].mqtt == loaded["vectis.mqtt"])
 assert(loaded["vectis"].dsv == loaded["vectis.dsv"])

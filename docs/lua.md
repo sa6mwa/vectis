@@ -58,6 +58,8 @@ workflows:
   [Lua MQTT](lua-mqtt.md).
 - `vectis.server`: Kore-backed server helpers, documented in
   [Lua server](lua-server.md).
+- `vectis.status`: status/error-source constants and Lua error decoration,
+  documented in [Lua status](lua-status.md).
 - `vectis.smtp`: SMTP send helper over curl, documented in
   [Lua SMTP](lua-smtp.md).
 - `vectis.ssh`: SSH/SFTP/SCP helpers, documented in [Lua SSH](lua-ssh.md).
