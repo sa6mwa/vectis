@@ -373,4 +373,4 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [ ] Add a GitHub Actions Darwin arm64 verification workflow using hosted `macos-15`/`macos-latest` runners to execute the smoke-test zip and codesign checks.
 - [ ] Add release verification for GNU and musl deliverables.
 - [ ] Add on-device Darwin smoke verification once a Mac is available.
-- [ ] Add generated or checked API docs for C and Lua.
+- [x] Add generated or checked API docs for C and Lua.
