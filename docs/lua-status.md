@@ -12,7 +12,7 @@ It exposes:
 - error source constants: `ERROR_SOURCE_NONE`, `ERROR_SOURCE_VECTIS`,
   `ERROR_SOURCE_KORE`, `ERROR_SOURCE_LOCKDC`, `ERROR_SOURCE_LONEJSON`,
   `ERROR_SOURCE_PSLOG`, `ERROR_SOURCE_CURL`, `ERROR_SOURCE_OPENSSL`, and
-  `ERROR_SOURCE_LIBSSH2`
+  `ERROR_SOURCE_LIBSSH2`, and `ERROR_SOURCE_CPKT`
 - `status_string(status)`
 - `error_source_string(source)`
 - `decorate_error(err, defaults)`
@@ -21,4 +21,6 @@ It exposes:
 `decorate_error` preserves existing protocol-specific fields such as
 `kind`, `code`, `code_name`, `attempts`, and `body`, while adding
 `status`, `status_string`, `source`, `source_code`, and optional
-`dependency_code`, `http_status`, and `detail`.
+`dependency_code`, `http_status`, and `detail`. Raw cpkt-backed facades such as
+`audio`, `sus`, and `opcua` use `source = "cpkt"` and set `dependency` to the
+specific facade name while preserving native result/status diagnostics.

@@ -25,6 +25,11 @@ Expected runtime failures return structured values instead of raising:
   for the same `status`, `status_string`, `source`, and `source_code` fields.
   For example, DSV callback stops are sourced from Vectis and DSV generated
   JSON decode failures are sourced from LoneJSON.
+- Raw cpkt-backed facades return `nil, err` with the same Vectis envelope and
+  `source = "cpkt"`. They also keep dependency-native diagnostics such as
+  `result`, `result_string`, and `dependency`; OPC UA service status details use
+  `opcua_status` and `opcua_status_name` so `err.status` remains the Vectis
+  status code.
 - Lua callback abort/stop paths return `nil, err` when abort is normal workflow
   control.
 

@@ -6,8 +6,21 @@ file(REMOVE_RECURSE "${cache_dir}")
 file(REMOVE "${wav_path}")
 file(MAKE_DIRECTORY "${cache_dir}")
 file(WRITE "${script}" [[
+local vectis = require("vectis")
 local audio = require("audio")
 local sus = require("sus")
+
+local function assert_cpkt_error(err, expected_status, dependency)
+  assert(type(err) == "table")
+  assert(err.status == expected_status)
+  assert(err.status_string == vectis.status_string(expected_status))
+  assert(err.source == "cpkt")
+  assert(err.source_code == vectis.ERROR_SOURCE_CPKT)
+  assert(err.dependency == dependency)
+  assert(err.dependency_code == err.result)
+  assert(type(err.result_string) == "string")
+  assert(type(err.message) == "string")
+end
 
 assert(audio.result_string(audio.OK) == "ok")
 assert(type(audio.result_string(audio.ERR_IO)) == "string")
@@ -22,8 +35,7 @@ local missing_decoder, missing_decoder_err = audio.decoder.open_file({
   path = "/__vectis_missing_audio_input__.wav",
 })
 assert(missing_decoder == nil)
-assert(type(missing_decoder_err) == "table")
-assert(type(missing_decoder_err.message) == "string")
+assert_cpkt_error(missing_decoder_err, vectis.ERR_STATE, "audio")
 
 local bad_reader, bad_reader_err = audio.decoder.open_reader({
   encoding = "wav",
@@ -32,7 +44,7 @@ local bad_reader, bad_reader_err = audio.decoder.open_reader({
   end,
 })
 assert(bad_reader == nil)
-assert(type(bad_reader_err) == "table")
+assert_cpkt_error(bad_reader_err, vectis.ERR_STATE, "audio")
 assert(bad_reader_err.result == audio.ERR_IO or
        bad_reader_err.result == audio.ERR_FORMAT)
 
@@ -40,14 +52,14 @@ local bad_capture, bad_capture_err = audio.capture.open_default({
   backend = 999,
 })
 assert(bad_capture == nil)
-assert(type(bad_capture_err) == "table")
+assert_cpkt_error(bad_capture_err, vectis.ERR_INVALID, "audio")
 assert(bad_capture_err.result == audio.ERR_ARG)
 
 local bad_playback, bad_playback_err = audio.playback.open_default({
   backend = 999,
 })
 assert(bad_playback == nil)
-assert(type(bad_playback_err) == "table")
+assert_cpkt_error(bad_playback_err, vectis.ERR_INVALID, "audio")
 assert(bad_playback_err.result == audio.ERR_ARG)
 
 local sink = {
@@ -108,8 +120,14 @@ local bad_writer = assert(audio.encoder.open_writer({
 bad_writer:write_f32(frames)
 local bad_close, bad_close_err = bad_writer:close()
 assert(bad_close == nil)
-assert(type(bad_close_err) == "table")
+assert_cpkt_error(bad_close_err, vectis.ERR_STATE, "audio")
 assert(bad_close_err.result == audio.ERR_IO)
+
+local missing_model, missing_model_err =
+    sus.model_catalog_find("__vectis_missing_model__")
+assert(missing_model == nil)
+assert_cpkt_error(missing_model_err, vectis.ERR_STATE, "sus")
+assert(missing_model_err.result == sus.ERR_LOOKUP)
 
 local wav_path = assert(arg[2])
 local file_encoder = assert(audio.encoder.open_file({

@@ -974,6 +974,7 @@ if(VECTIS_BUILD_BINARY)
 
   add_library(vectis_opcua_lua OBJECT "${vectis_opcua_lua_source}")
   target_include_directories(vectis_opcua_lua PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
     "${vectis_external_include_dir}"
   )
   target_compile_definitions(vectis_opcua_lua PRIVATE
@@ -1003,6 +1004,7 @@ if(VECTIS_BUILD_BINARY)
 
   add_library(vectis_audio_lua OBJECT "${vectis_audio_lua_source}")
   target_include_directories(vectis_audio_lua PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
     "${vectis_external_include_dir}"
   )
   target_compile_definitions(vectis_audio_lua PRIVATE
@@ -1032,6 +1034,7 @@ if(VECTIS_BUILD_BINARY)
 
   add_library(vectis_sus_lua OBJECT "${vectis_sus_lua_source}")
   target_include_directories(vectis_sus_lua PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
     "${vectis_external_include_dir}"
   )
   target_compile_definitions(vectis_sus_lua PRIVATE

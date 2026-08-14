@@ -12417,6 +12417,8 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "ERROR_SOURCE_OPENSSL");
   lua_pushinteger(lua, VECTIS_ERROR_SOURCE_LIBSSH2);
   lua_setfield(lua, -2, "ERROR_SOURCE_LIBSSH2");
+  lua_pushinteger(lua, VECTIS_ERROR_SOURCE_CPKT);
+  lua_setfield(lua, -2, "ERROR_SOURCE_CPKT");
   lua_pushcfunction(lua, vectis_lua_error_source_string);
   lua_setfield(lua, -2, "error_source_string");
   lua_getglobal(lua, "require");

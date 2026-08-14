@@ -848,6 +848,8 @@ const char *vectis_error_source_string(vectis_error_source source) {
     return "openssl";
   case VECTIS_ERROR_SOURCE_LIBSSH2:
     return "libssh2";
+  case VECTIS_ERROR_SOURCE_CPKT:
+    return "cpkt";
   default:
     return "unknown";
   }

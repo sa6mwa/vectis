@@ -1,6 +1,8 @@
 #include "vectis_audio_lua.h"
 
 #include <cpkt/sus.h>
+#include <vectis/vectis.h>
+
 #include <lauxlib.h>
 #include <lua.h>
 #include <stddef.h>
@@ -47,13 +49,48 @@ static void vectis_sus_lua_set_string(lua_State *lua, const char *key,
   lua_setfield(lua, -2, key);
 }
 
+static const char *vectis_sus_lua_status_string(vectis_status status) {
+  switch (status) {
+  case VECTIS_ERR_INVALID:
+    return "invalid";
+  case VECTIS_ERR_NOMEM:
+    return "nomem";
+  case VECTIS_ERR_STATE:
+    return "state";
+  default:
+    return "unknown";
+  }
+}
+
 static int vectis_sus_lua_push_error(lua_State *lua, cpkt_sus_result result,
                                      const char *context) {
   const char *result_string;
+  vectis_status status;
 
   result_string = cpkt_sus_result_string(result);
+  switch (result) {
+  case CPKT_SUS_ERR_ARG:
+    status = VECTIS_ERR_INVALID;
+    break;
+  case CPKT_SUS_ERR_ALLOC:
+    status = VECTIS_ERR_NOMEM;
+    break;
+  default:
+    status = VECTIS_ERR_STATE;
+    break;
+  }
   lua_pushnil(lua);
   lua_newtable(lua);
+  lua_pushinteger(lua, status);
+  lua_setfield(lua, -2, "status");
+  vectis_sus_lua_set_string(lua, "status_string",
+                            vectis_sus_lua_status_string(status));
+  lua_pushinteger(lua, VECTIS_ERROR_SOURCE_CPKT);
+  lua_setfield(lua, -2, "source_code");
+  vectis_sus_lua_set_string(lua, "source", "cpkt");
+  vectis_sus_lua_set_string(lua, "dependency", "sus");
+  lua_pushinteger(lua, (lua_Integer)result);
+  lua_setfield(lua, -2, "dependency_code");
   lua_pushinteger(lua, (lua_Integer)result);
   lua_setfield(lua, -2, "result");
   vectis_sus_lua_set_string(lua, "result_string", result_string);

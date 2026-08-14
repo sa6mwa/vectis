@@ -268,6 +268,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add a Lua coverage matrix under `docs/` that tracks every Vectis C SDK workflow and bundled dependency facade as `raw`, `vectis DX`, `tested`, `packed-tested`, `live-tested`, or `intentionally C-only`.
 - [x] Add a lifecycle contract that fails when a bundled dependency or Vectis-owned C workflow is added without an explicit Lua coverage-matrix entry.
 - [ ] Ensure the `vectis` Lua facade exposes structured status/error objects consistently across all Vectis-owned Lua helpers, mirroring C status, source, timeout, ownership, and cleanup conventions.
+- [x] Add a public `cpkt` error source and structured Vectis status/source envelopes to raw cpkt-backed Lua facades (`audio`, `sus`, and `opcua`) while preserving dependency-native diagnostics.
 - [x] Add a preloaded pure-Lua `vectis.status` helper and use it to enrich curl-backed HTTP/WebDAV/MQTT/SMTP normalized errors with Vectis status/source metadata, timeout mapping, dependency codes, and HTTP status diagnostics.
 - [x] Use the shared `vectis.status` helper for Vectis-owned DSV and lockd workflow helper errors, including LoneJSON decode-source attribution in `vectis.dsv`.
 - [x] Integrate existing Lua rocks/source archives for lockdc, pslog, liblql, and dependency Lua modules from pinned dependency sources.

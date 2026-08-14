@@ -1,4 +1,6 @@
 #include <cpkt/opcua.h>
+#include <vectis/vectis.h>
+
 #include <lauxlib.h>
 #include <limits.h>
 #include <lua.h>
@@ -39,23 +41,62 @@ static void vectis_opcua_lua_set_field_string(lua_State *lua,
   lua_setfield(lua, -2, field);
 }
 
+static const char *vectis_opcua_lua_vectis_status_string(
+    vectis_status status) {
+  switch (status) {
+  case VECTIS_ERR_INVALID:
+    return "invalid";
+  case VECTIS_ERR_NOMEM:
+    return "nomem";
+  case VECTIS_ERR_STATE:
+    return "state";
+  default:
+    return "unknown";
+  }
+}
+
 static int vectis_opcua_lua_push_error(lua_State *lua,
                                        cpkt_opcua_result result,
                                        cpkt_opcua_status status,
                                        const char *context) {
   const char *result_string;
   const char *status_name;
+  vectis_status vectis_code;
 
   result_string = cpkt_opcua_result_string(result);
   status_name = cpkt_opcua_status_name(status);
+  switch (result) {
+  case CPKT_OPCUA_ERR_ARG:
+  case CPKT_OPCUA_ERR_TYPE:
+  case CPKT_OPCUA_ERR_RANGE:
+    vectis_code = VECTIS_ERR_INVALID;
+    break;
+  case CPKT_OPCUA_ERR_ALLOC:
+    vectis_code = VECTIS_ERR_NOMEM;
+    break;
+  default:
+    vectis_code = VECTIS_ERR_STATE;
+    break;
+  }
   lua_pushnil(lua);
   lua_newtable(lua);
+  lua_pushinteger(lua, vectis_code);
+  lua_setfield(lua, -2, "status");
+  vectis_opcua_lua_set_field_string(lua, "status_string",
+                                    vectis_opcua_lua_vectis_status_string(
+                                        vectis_code));
+  lua_pushinteger(lua, VECTIS_ERROR_SOURCE_CPKT);
+  lua_setfield(lua, -2, "source_code");
+  vectis_opcua_lua_set_field_string(lua, "source", "cpkt");
+  vectis_opcua_lua_set_field_string(lua, "dependency", "opcua");
+  lua_pushinteger(lua, (lua_Integer)result);
+  lua_setfield(lua, -2, "dependency_code");
   lua_pushinteger(lua, (lua_Integer)result);
   lua_setfield(lua, -2, "result");
   vectis_opcua_lua_set_field_string(lua, "result_string", result_string);
   lua_pushinteger(lua, (lua_Integer)status);
-  lua_setfield(lua, -2, "status");
-  vectis_opcua_lua_set_field_string(lua, "status_name", status_name);
+  lua_setfield(lua, -2, "opcua_status");
+  vectis_opcua_lua_set_field_string(lua, "opcua_status_name", status_name);
   if (context != NULL && context[0] != '\0') {
     lua_pushfstring(lua, "%s: %s%s%s", context,
                     result_string != NULL ? result_string : "opcua error",

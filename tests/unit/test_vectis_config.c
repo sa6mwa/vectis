@@ -92,6 +92,8 @@ int main(void) {
   assert(error.source == VECTIS_ERROR_SOURCE_NONE);
   assert(strcmp(vectis_error_source_string(VECTIS_ERROR_SOURCE_CURL), "curl") ==
          0);
+  assert(strcmp(vectis_error_source_string(VECTIS_ERROR_SOURCE_CPKT), "cpkt") ==
+         0);
   assert(strcmp(vectis_http_method_string(VECTIS_HTTP_OPTIONS), "OPTIONS") ==
          0);
   assert(strcmp(vectis_http_method_string(VECTIS_HTTP_PROPFIND), "PROPFIND") ==

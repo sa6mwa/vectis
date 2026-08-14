@@ -155,7 +155,8 @@ typedef enum vectis_error_source {
   VECTIS_ERROR_SOURCE_PSLOG = 5,
   VECTIS_ERROR_SOURCE_CURL = 6,
   VECTIS_ERROR_SOURCE_OPENSSL = 7,
-  VECTIS_ERROR_SOURCE_LIBSSH2 = 8
+  VECTIS_ERROR_SOURCE_LIBSSH2 = 8,
+  VECTIS_ERROR_SOURCE_CPKT = 9
 } vectis_error_source;
 
 typedef struct vectis_error {

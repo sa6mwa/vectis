@@ -41,9 +41,11 @@ assert(vectis.error_source_string(vectis.ERROR_SOURCE_VECTIS) == "vectis")
 assert(vectis.error_source_string(vectis.ERROR_SOURCE_LOCKDC) == "lockdc")
 assert(vectis.error_source_string(vectis.ERROR_SOURCE_LONEJSON) == "lonejson")
 assert(vectis.error_source_string(vectis.ERROR_SOURCE_LIBSSH2) == "libssh2")
+assert(vectis.error_source_string(vectis.ERROR_SOURCE_CPKT) == "cpkt")
 assert(vectis.status == status)
 assert(status.status_string(status.ERR_TIMEOUT) == "timeout")
 assert(status.error_source_string(status.ERROR_SOURCE_CURL) == "curl")
+assert(status.error_source_string(status.ERROR_SOURCE_CPKT) == "cpkt")
 
 assert(vectis.auth.store_init({
   credentials_path = auth_store,
