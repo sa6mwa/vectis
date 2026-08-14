@@ -172,6 +172,7 @@ typedef struct vectis_lua_server_callback_route {
 
 typedef struct vectis_lua_spooled_source {
   lua_State *lua;
+  const char *name;
   int read_ref;
   int reset_ref;
   int close_ref;
@@ -6575,8 +6576,12 @@ static size_t vectis_lua_spooled_source_read(void *userdata, void *buffer,
 
   source = (vectis_lua_spooled_source *)userdata;
   if (source == NULL || source->lua == NULL || source->read_ref == LUA_NOREF) {
-    vectis_lua_spooled_source_set_error(error, LC_ERR_INVALID,
-                                        "Lua spooled source read is required");
+    vectis_lua_spooled_source_set_error(
+        error, LC_ERR_INVALID,
+        source != NULL && source->name != NULL &&
+                strcmp(source->name, "stream_source") == 0
+            ? "Lua stream_source read is required"
+            : "Lua spooled_source read is required");
     return 0u;
   }
   source->read_started = 1;
@@ -6586,9 +6591,10 @@ static size_t vectis_lua_spooled_source_read(void *userdata, void *buffer,
   lua_pushinteger(lua, (lua_Integer)count);
   if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
     message = lua_tostring(lua, -1);
-    vectis_lua_spooled_source_set_error(
-        error, LC_ERR_TRANSPORT,
-        message != NULL ? message : "Lua spooled source read failed");
+    vectis_lua_spooled_source_set_error(error, LC_ERR_TRANSPORT,
+                                        message != NULL
+                                            ? message
+                                            : "Lua response source read failed");
     lua_settop(lua, top);
     return 0u;
   }
@@ -6600,7 +6606,7 @@ static size_t vectis_lua_spooled_source_read(void *userdata, void *buffer,
   if (!lua_isstring(lua, -1)) {
     vectis_lua_spooled_source_set_error(
         error, LC_ERR_INVALID,
-        "Lua spooled source read must return a string chunk or nil at EOF");
+        "Lua response source read must return a string chunk or nil at EOF");
     lua_settop(lua, top);
     return 0u;
   }
@@ -6623,7 +6629,7 @@ static int vectis_lua_spooled_source_reset(void *userdata, lc_error *error) {
   source = (vectis_lua_spooled_source *)userdata;
   if (source == NULL || source->lua == NULL) {
     vectis_lua_spooled_source_set_error(error, LC_ERR_INVALID,
-                                        "Lua spooled source is invalid");
+                                        "Lua response source is invalid");
     return LC_ERR_INVALID;
   }
   if (source->reset_ref == LUA_NOREF) {
@@ -6632,7 +6638,7 @@ static int vectis_lua_spooled_source_reset(void *userdata, lc_error *error) {
     }
     vectis_lua_spooled_source_set_error(
         error, LC_ERR_INVALID,
-        "Lua spooled source reset callback is required after reading");
+        "Lua response source reset callback is required after reading");
     return LC_ERR_INVALID;
   }
   lua = source->lua;
@@ -6640,9 +6646,10 @@ static int vectis_lua_spooled_source_reset(void *userdata, lc_error *error) {
   lua_rawgeti(lua, LUA_REGISTRYINDEX, source->reset_ref);
   if (lua_pcall(lua, 0, 1, 0) != LUA_OK) {
     message = lua_tostring(lua, -1);
-    vectis_lua_spooled_source_set_error(
-        error, LC_ERR_TRANSPORT,
-        message != NULL ? message : "Lua spooled source reset failed");
+    vectis_lua_spooled_source_set_error(error, LC_ERR_TRANSPORT,
+                                        message != NULL
+                                            ? message
+                                            : "Lua response source reset failed");
     lua_settop(lua, top);
     return LC_ERR_TRANSPORT;
   }
@@ -6650,7 +6657,7 @@ static int vectis_lua_spooled_source_reset(void *userdata, lc_error *error) {
   lua_settop(lua, top);
   if (!ok) {
     vectis_lua_spooled_source_set_error(error, LC_ERR_INVALID,
-                                        "Lua spooled source reset failed");
+                                        "Lua response source reset failed");
     return LC_ERR_INVALID;
   }
   source->read_started = 0;
@@ -6662,8 +6669,8 @@ static void vectis_lua_spooled_source_close(void *userdata) {
 }
 
 static vectis_status vectis_lua_spooled_source_ref(
-    lua_State *lua, int index, const char *field, int required, int *out,
-    vectis_error *error) {
+    lua_State *lua, int index, const char *source_name, const char *field,
+    int required, int *out, vectis_error *error) {
   int ref;
   char message[128];
 
@@ -6675,7 +6682,7 @@ static vectis_status vectis_lua_spooled_source_ref(
     lua_pop(lua, 1);
     if (required) {
       (void)snprintf(message, sizeof(message),
-                     "route response spooled_source.%s is required", field);
+                     "route response %s.%s is required", source_name, field);
       vectis_cli_error_set(error, VECTIS_ERR_INVALID, message);
       return VECTIS_ERR_INVALID;
     }
@@ -6684,7 +6691,7 @@ static vectis_status vectis_lua_spooled_source_ref(
   if (!lua_isfunction(lua, -1)) {
     lua_pop(lua, 1);
     (void)snprintf(message, sizeof(message),
-                   "route response spooled_source.%s must be a function",
+                   "route response %s.%s must be a function", source_name,
                    field);
     vectis_cli_error_set(error, VECTIS_ERR_INVALID, message);
     return VECTIS_ERR_INVALID;
@@ -6715,9 +6722,10 @@ static vectis_status vectis_lua_lc_error_to_vectis(vectis_error *error,
   return status;
 }
 
-static vectis_status vectis_lua_response_spooled_source(
-    lua_State *lua, int source_index, vectis_response *response,
-    int status_code, const char *content_type, vectis_error *error) {
+static vectis_status vectis_lua_response_callback_source(
+    lua_State *lua, int source_index, const char *source_name, int live_stream,
+    vectis_response *response, int status_code, const char *content_type,
+    vectis_error *error) {
   vectis_lua_spooled_source *state;
   lc_source *source;
   lc_error lcerr;
@@ -6726,28 +6734,33 @@ static vectis_status vectis_lua_response_spooled_source(
 
   source_index = lua_absindex(lua, source_index);
   if (!lua_istable(lua, source_index)) {
-    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
-                         "route response spooled_source must be a table");
+    char message[128];
+    (void)snprintf(message, sizeof(message),
+                   "route response %s must be a table", source_name);
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID, message);
     return VECTIS_ERR_INVALID;
   }
   state = (vectis_lua_spooled_source *)calloc(1u, sizeof(*state));
   if (state == NULL) {
     vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
-                         "failed to allocate Lua spooled source");
+                         "failed to allocate Lua response source");
     return VECTIS_ERR_NOMEM;
   }
   state->lua = lua;
+  state->name = source_name;
   state->read_ref = LUA_NOREF;
   state->reset_ref = LUA_NOREF;
   state->close_ref = LUA_NOREF;
-  status = vectis_lua_spooled_source_ref(lua, source_index, "read", 1,
-                                         &state->read_ref, error);
+  status = vectis_lua_spooled_source_ref(lua, source_index, source_name, "read",
+                                         1, &state->read_ref, error);
   if (status == VECTIS_OK) {
-    status = vectis_lua_spooled_source_ref(lua, source_index, "reset", 0,
+    status = vectis_lua_spooled_source_ref(lua, source_index, source_name,
+                                           "reset", 0,
                                            &state->reset_ref, error);
   }
   if (status == VECTIS_OK) {
-    status = vectis_lua_spooled_source_ref(lua, source_index, "close", 0,
+    status = vectis_lua_spooled_source_ref(lua, source_index, source_name,
+                                           "close", 0,
                                            &state->close_ref, error);
   }
   if (status != VECTIS_OK) {
@@ -6763,15 +6776,23 @@ static vectis_status vectis_lua_response_spooled_source(
   if (rc != LC_OK) {
     vectis_lua_spooled_source_free(state);
     status = vectis_lua_lc_error_to_vectis(
-        error, rc, &lcerr, "failed to create Lua spooled source");
+        error, rc, &lcerr, "failed to create Lua response source");
     lc_error_cleanup(&lcerr);
     return status;
   }
   lc_error_cleanup(&lcerr);
 
-  status =
-      vectis_response_source(response, status_code, content_type, source, error);
-  lc_source_close(source);
+  if (live_stream) {
+    status = vectis_response_stream_source(response, status_code, content_type,
+                                           source, error);
+    if (status != VECTIS_OK) {
+      lc_source_close(source);
+    }
+  } else {
+    status = vectis_response_source(response, status_code, content_type, source,
+                                    error);
+    lc_source_close(source);
+  }
   return status;
 }
 
@@ -6827,10 +6848,20 @@ static vectis_status vectis_lua_apply_route_response(
     return vectis_response_file(response, status_code, content_type, file_path,
                                 error);
   }
+  lua_getfield(lua, response_index, "stream_source");
+  if (!lua_isnil(lua, -1)) {
+    status = vectis_lua_response_callback_source(
+        lua, -1, "stream_source", 1, response, status_code, content_type,
+        error);
+    lua_pop(lua, 1);
+    return status;
+  }
+  lua_pop(lua, 1);
   lua_getfield(lua, response_index, "spooled_source");
   if (!lua_isnil(lua, -1)) {
-    status = vectis_lua_response_spooled_source(
-        lua, -1, response, status_code, content_type, error);
+    status = vectis_lua_response_callback_source(
+        lua, -1, "spooled_source", 0, response, status_code, content_type,
+        error);
     lua_pop(lua, 1);
     return status;
   }

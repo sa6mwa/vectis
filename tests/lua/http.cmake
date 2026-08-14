@@ -443,6 +443,34 @@ assert(api_server:route({
   end,
 }) == true)
 assert(api_server:route({
+  path = "/dynamic-stream",
+  handler = function()
+    local chunks = {"live ", "stream ", "response\n"}
+    local index = 1
+    local closed = false
+    return {
+      status = 202,
+      content_type = "text/plain",
+      headers = {
+        ["x-vectis-stream"] = "callback",
+      },
+      stream_source = {
+        read = function(max_bytes)
+          assert(type(max_bytes) == "number")
+          assert(max_bytes > 0)
+          assert(closed == false)
+          local chunk = chunks[index]
+          index = index + 1
+          return chunk
+        end,
+        close = function()
+          closed = true
+        end,
+      },
+    }
+  end,
+}) == true)
+assert(api_server:route({
   path = "/dynamic-guarded",
   auth = {
     provider = callback_provider,
@@ -710,6 +738,18 @@ local dynamic_spooled_bad = vectis.http.get(
 })
 assert(dynamic_spooled_bad.ok == false)
 assert(dynamic_spooled_bad.status == 500)
+local dynamic_stream = vectis.http.get(
+    "http://127.0.0.1:28484/dynamic-stream", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_stream.ok == true,
+       dynamic_stream.error and dynamic_stream.error.message)
+assert(dynamic_stream.status == 202)
+assert(dynamic_stream.body == "live stream response\n")
+assert(dynamic_stream.headers:lower():find("x-vectis-stream: callback", 1, true))
+assert(dynamic_stream.headers:lower():find("transfer-encoding: chunked", 1, true))
 local dynamic_guarded_required = vectis.http.get("http://127.0.0.1:28484/dynamic-guarded", {
   timeout_ms = 2000,
   connect_timeout_ms = 1000,

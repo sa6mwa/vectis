@@ -1910,11 +1910,185 @@ static vectis_status vectis_kore_attach_streamed_body(
                                           state->memory_size, error);
 }
 
+typedef struct vectis_kore_response_stream {
+  struct connection *connection;
+  struct lc_source *source;
+  int remove;
+} vectis_kore_response_stream;
+
+static void vectis_kore_response_stream_free(
+    vectis_kore_response_stream *stream) {
+  if (stream == NULL) {
+    return;
+  }
+  if (stream->source != NULL) {
+    lc_source_close(stream->source);
+    stream->source = NULL;
+  }
+  free(stream);
+}
+
+static int vectis_kore_response_stream_next(
+    vectis_kore_response_stream *stream);
+
+static int vectis_kore_response_stream_chunk_sent(struct netbuf *nb) {
+  vectis_kore_response_stream *stream;
+  int ret;
+
+  stream = nb != NULL ? (vectis_kore_response_stream *)nb->extra : NULL;
+  free(nb != NULL ? nb->buf : NULL);
+  if (nb != NULL) {
+    nb->buf = NULL;
+  }
+  if (stream == NULL || stream->connection == NULL || stream->remove) {
+    ret = KORE_RESULT_ERROR;
+  } else {
+    ret = vectis_kore_response_stream_next(stream);
+  }
+
+  if (ret != KORE_RESULT_RETRY) {
+    if (stream != NULL && stream->connection != NULL) {
+      if (stream->connection->hdlr_extra == stream) {
+        stream->connection->hdlr_extra = NULL;
+      }
+      stream->connection->disconnect = NULL;
+      stream->connection->flags &= ~CONN_IS_BUSY;
+      if (!stream->remove) {
+        http_start_recv(stream->connection);
+        net_send_queue(stream->connection, "0\r\n\r\n", 5u);
+      }
+    }
+    vectis_kore_response_stream_free(stream);
+  } else {
+    ret = KORE_RESULT_OK;
+  }
+  return ret;
+}
+
+static int vectis_kore_response_stream_next(
+    vectis_kore_response_stream *stream) {
+  unsigned char buffer[8192];
+  char prefix[32];
+  char *packet;
+  struct netbuf *nb;
+  lc_error lcerr;
+  size_t nread;
+  size_t prefix_len;
+  size_t packet_size;
+  int written;
+
+  if (stream == NULL || stream->connection == NULL || stream->source == NULL ||
+      stream->remove) {
+    return KORE_RESULT_ERROR;
+  }
+
+  lc_error_init(&lcerr);
+  nread = stream->source->read(stream->source, buffer, sizeof(buffer), &lcerr);
+  if (nread == 0u) {
+    if (lcerr.code != 0) {
+      lc_error_cleanup(&lcerr);
+      return KORE_RESULT_ERROR;
+    }
+    lc_error_cleanup(&lcerr);
+    return KORE_RESULT_OK;
+  }
+  lc_error_cleanup(&lcerr);
+
+  written = snprintf(prefix, sizeof(prefix), "%llx\r\n",
+                     (unsigned long long)nread);
+  if (written <= 0 || (size_t)written >= sizeof(prefix)) {
+    return KORE_RESULT_ERROR;
+  }
+  prefix_len = (size_t)written;
+  packet_size = prefix_len + nread + 2u;
+  packet = (char *)malloc(packet_size);
+  if (packet == NULL) {
+    return KORE_RESULT_ERROR;
+  }
+  memcpy(packet, prefix, prefix_len);
+  memcpy(packet + prefix_len, buffer, nread);
+  packet[prefix_len + nread] = '\r';
+  packet[prefix_len + nread + 1u] = '\n';
+
+  net_send_stream(stream->connection, packet, packet_size,
+                  vectis_kore_response_stream_chunk_sent, &nb);
+  nb->extra = stream;
+  return KORE_RESULT_RETRY;
+}
+
+static void vectis_kore_response_stream_disconnect(struct connection *c) {
+  vectis_kore_response_stream *stream;
+
+  stream = c != NULL ? (vectis_kore_response_stream *)c->hdlr_extra : NULL;
+  if (stream != NULL) {
+    stream->remove = 1;
+  }
+  if (c != NULL) {
+    c->hdlr_extra = NULL;
+  }
+}
+
+static int vectis_kore_send_stream_response(struct http_request *req,
+                                            int status,
+                                            struct lc_source *source) {
+  vectis_kore_response_stream *stream;
+  lc_error lcerr;
+
+  if (req == NULL || source == NULL || req->owner == NULL) {
+    if (source != NULL) {
+      lc_source_close(source);
+    }
+    return 0;
+  }
+
+  if (req->method == HTTP_METHOD_HEAD) {
+    lc_source_close(source);
+    http_response(req, status, NULL, 0);
+    return 1;
+  }
+
+  if (source->reset != NULL) {
+    lc_error_init(&lcerr);
+    if (source->reset(source, &lcerr) != LC_OK) {
+      lc_error_cleanup(&lcerr);
+      lc_source_close(source);
+      http_response(req, 500, NULL, 0);
+      return 1;
+    }
+    lc_error_cleanup(&lcerr);
+  }
+
+  stream = (vectis_kore_response_stream *)calloc(1u, sizeof(*stream));
+  if (stream == NULL) {
+    lc_source_close(source);
+    http_response(req, 500, NULL, 0);
+    return 1;
+  }
+  stream->connection = req->owner;
+  stream->source = source;
+  stream->connection->hdlr_extra = stream;
+  stream->connection->flags |= CONN_IS_BUSY;
+  stream->connection->disconnect = vectis_kore_response_stream_disconnect;
+
+  req->flags |= HTTP_REQUEST_NO_CONTENT_LENGTH;
+  http_response_header(req, "transfer-encoding", "chunked");
+  http_response(req, status, NULL, 0);
+  if (vectis_kore_response_stream_next(stream) != KORE_RESULT_RETRY) {
+    stream->connection->hdlr_extra = NULL;
+    stream->connection->disconnect = NULL;
+    stream->connection->flags &= ~CONN_IS_BUSY;
+    net_send_queue(stream->connection, "0\r\n\r\n", 5u);
+    vectis_kore_response_stream_free(stream);
+  }
+  return 1;
+}
+
 static void vectis_kore_send_response(struct http_request *req,
                                       vectis_response *response) {
   vectis_bytes body;
   const char *content_type;
   const char *file_path;
+  struct lc_source *stream_source;
   struct kore_fileref *ref;
   struct stat st;
   struct timespec ts;
@@ -1933,6 +2107,13 @@ static void vectis_kore_send_response(struct http_request *req,
   content_type = vectis_internal_response_content_type(response);
   if (content_type != NULL) {
     http_response_header(req, "content-type", content_type);
+  }
+  stream_source = vectis_internal_response_take_stream_source(response);
+  if (stream_source != NULL) {
+    if (!vectis_kore_send_stream_response(req, status, stream_source)) {
+      http_response(req, 500, NULL, 0);
+    }
+    return;
   }
   file_path = vectis_internal_response_file_path(response);
   if (file_path != NULL) {

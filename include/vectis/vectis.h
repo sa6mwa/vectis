@@ -1611,6 +1611,15 @@ vectis_status vectis_response_source(vectis_response *response, int status_code,
                                      const char *content_type,
                                      struct lc_source *source,
                                      vectis_error *error);
+/* Send a live source-backed response. Vectis takes ownership of `source` on
+ * success and closes it after the transport finishes or aborts streaming.
+ * Unlike vectis_response_source(), this does not spool to a temporary file.
+ */
+vectis_status vectis_response_stream_source(vectis_response *response,
+                                            int status_code,
+                                            const char *content_type,
+                                            struct lc_source *source,
+                                            vectis_error *error);
 vectis_status vectis_response_json(vectis_response *response, int status_code,
                                    const lonejson_map *map, const void *value,
                                    vectis_error *error);

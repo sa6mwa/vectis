@@ -103,7 +103,8 @@ Handlers return:
 - `nil` for `204`
 - a string for a `200 text/plain; charset=utf-8` response
 - a table with `status` or `status_code`, optional `content_type`, optional
-  `headers`, and one of `body`, `file_path`, or `spooled_source`
+  `headers`, and one of `body`, `file_path`, `spooled_source`, or
+  `stream_source`
 
 `spooled_source` is a file-backed response source, not true response streaming.
 Vectis reads chunks from Lua into a temporary response file, then serves that
@@ -114,6 +115,14 @@ callbacks. `read` returns a string chunk or `nil`/`false` at EOF. `reset` is
 called before the first read when present; without it, the source is valid for
 the initial response pass only. `close` is called when C closes the callback
 source.
+
+`stream_source` is a live response source, not file-backed materialization. The
+source table requires `read(max_bytes)` and accepts optional `reset()` and
+`close()`. `reset` is called once before streaming starts when present. `read`
+returns a string chunk or `nil`/`false` at EOF. Vectis sends the response with
+chunked transfer and reads the next Lua chunk only after Kore finishes sending
+the previous chunk. It does not write a temporary response file and does not
+concatenate the full response body.
 
 `before` hooks run after auth and before the handler. Returning `nil` or
 `true` continues into the handler. Returning a response table short-circuits
@@ -152,6 +161,24 @@ assert(server:route({
           index = 1
           return true
         end,
+        read = function()
+          local chunk = chunks[index]
+          index = index + 1
+          return chunk
+        end,
+      },
+    }
+  end,
+}) == true)
+
+assert(server:route({
+  path = "/events.txt",
+  handler = function()
+    local chunks = {"first\n", "second\n"}
+    local index = 1
+    return {
+      content_type = "text/plain; charset=utf-8",
+      stream_source = {
         read = function()
           local chunk = chunks[index]
           index = index + 1
@@ -310,8 +337,8 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
 - `server:auth_routes(opts)` registers native login/auth/WebDAV-key routes.
 - `server:consumer_service(opts)` registers a C-owned lockd consumer service.
 
-SSE and true streaming response helpers are separate future route surfaces.
-`server:route()` and `server:group()` are buffered/materialized route surfaces;
+`stream_source` provides true live response streaming for buffered callback
+routes. SSE convenience helpers remain a separate future route surface.
 `spooled_source` is explicitly file-backed materialization, not live
 producer-to-transport streaming.
 
