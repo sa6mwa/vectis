@@ -73,6 +73,7 @@ Lua docs:
 - [Lua audio](lua-audio.md)
 - [Lua WebDAV](lua-webdav.md)
 - [Lua XML](lua-xml.md)
+- [Lua zlib](lua-zlib.md)
 
 ## Release Contract
 

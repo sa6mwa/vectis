@@ -1,6 +1,7 @@
 local lql = require("lql")
 local pslog = require("pslog")
 local softline = require("softline")
+local zlib = require("zlib")
 
 local lql_client = assert(lql.new())
 local capabilities = lql_client:capabilities()
@@ -33,5 +34,8 @@ assert(editor:set_cursor(6))
 assert(editor:insert(" raw"))
 assert(editor:buffer() == "vectis raw lua")
 editor:close()
+
+local compressed = assert(zlib.gzip("vectis raw zlib\n"))
+assert(assert(zlib.decompress(compressed)) == "vectis raw zlib\n")
 
 print("lua raw dependency tools example ok")

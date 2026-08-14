@@ -43,6 +43,7 @@ local modules = {
   "curl.core",
   "curl",
   "openssl",
+  "zlib",
   "vectis.http",
   "vectis.webdav",
   "vectis.mqtt",
@@ -85,6 +86,8 @@ assert(type(loaded["vectis"].ssh.scp_upload_file) == "function")
 assert(type(loaded["vectis.smtp"].send) == "function")
 assert(type(loaded["curl"].perform) == "function")
 assert(type(loaded["openssl"].sha256_hex) == "function")
+assert(type(loaded["zlib"].deflate) == "function")
+assert(loaded["zlib"].inflate(loaded["zlib"].deflate("preload")) == "preload")
 assert(type(loaded["opcua"].client) == "function")
 assert(type(loaded["audio"].can_decode) == "function")
 assert(type(loaded["sus"].model_catalog_count) == "function")
