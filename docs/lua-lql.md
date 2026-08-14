@@ -46,6 +46,6 @@ local projection = assert(client:projection_parse("$.id,$.status"))
 assert(projection:path_count() == 2)
 ```
 
-The module is intentionally dependency-native. Prefer higher-level Vectis helpers only when a
-workflow crosses Vectis concepts such as HTTP routes, packed assets, lockd, or
-service logging.
+The module is intentionally dependency-native. Do not add a Vectis-owned helper
+unless a repeated workflow crosses Vectis concepts such as HTTP routes, packed
+assets, lockd, or service logging.

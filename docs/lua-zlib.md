@@ -38,6 +38,10 @@ Expected zlib failures return `nil, err`, where `err.status`,
 shape. Programmer misuse, such as a non-table options value or invalid level,
 raises a Lua error.
 
+The module is intentionally dependency-native. Do not add a Vectis-owned
+compression helper unless a repeated workflow crosses Vectis concepts such as
+HTTP response encoding, packed assets, or static file serving.
+
 ## Example
 
 ```lua
