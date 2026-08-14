@@ -240,6 +240,14 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_example_lua_curl_protocols PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
+  add_test(NAME vectis_example_lua_cai_local
+           COMMAND "${CMAKE_COMMAND}" -E env
+                   "VECTIS_LUA_CAI_EXAMPLE_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   "$<TARGET_FILE:vectis_bin>"
+                   "${CMAKE_SOURCE_DIR}/examples/lua/cai_local.lua")
+  set_tests_properties(vectis_example_lua_cai_local PROPERTIES
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
   add_test(NAME vectis_example_lua_webdav_fileserver
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
