@@ -307,6 +307,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [ ] Implement the cpkt `sus`/whisper Lua facade from `docs/lua-sus-audio-contract.md`.
 - [ ] Implement the cpkt audio/miniaudio Lua facade from `docs/lua-sus-audio-contract.md`.
 - [ ] Add Lua helpers for libmdf/softline where Vectis-owned terminal/agent workflows need higher-level DX; otherwise keep their raw modules available without wrapping.
+- [x] Add deterministic Lua examples for raw pslog, liblql, and softline module workflows without adding redundant Vectis-owned wrappers.
 - [ ] Publish a separate `vectis` Lua rock for users who want to run the Vectis facade inside their own Lua 5.5 environment.
 - [x] Keep LuaRocks out of the `vectis` binary runtime and release artifacts.
 - [ ] Add Vectis-owned Lua modules for Kore, OpenSSL certificate workflows, and broader libssh2 coverage.
