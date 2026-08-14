@@ -104,6 +104,52 @@ assert(server:route({
 }) == true)
 ```
 
+## DSV Row Routes
+
+`server:dsv(opts)` registers a C-owned streaming upload-reader route for
+CSV/TSV/DSV request bodies. It uses the same DSV parser and LoneJSON schema
+interop as `vectis.dsv.each()` and invokes Lua once per parsed row; it does not
+materialize the full request body.
+
+Route fields:
+
+- `path`
+- `method` or `methods`, default `POST`
+- `schema`: LoneJSON schema for each row
+- `on_row(row_number, row, request)`: required row callback
+- `on_complete(request, summary)`: optional response callback
+- DSV options such as `format`, `delimiter`, `header`, `columns`,
+  `strict_row_width`, `comment_prefix`, and `max_field_bytes`
+- `auth`: optional native or callback auth provider config
+- `max_body_bytes` and `buffer_bytes`
+
+`request.body` is `nil` for DSV routes because the body is consumed by the
+streaming parser. `summary.rows` contains the number of accepted rows. Without
+`on_complete`, Vectis returns `204`.
+
+```lua
+local schema = lonejson.schema("row", {
+  lonejson.field("id", lonejson.string({required = true})),
+  lonejson.field("count", lonejson.i64({required = true})),
+})
+
+local total = 0
+assert(server:dsv({
+  path = "/upload.csv",
+  schema = schema,
+  on_row = function(_, row)
+    total = total + row.count
+  end,
+  on_complete = function(_, summary)
+    return {
+      status = 200,
+      content_type = "application/json",
+      body = '{"rows":' .. summary.rows .. ',"total":' .. total .. '}\n',
+    }
+  end,
+}) == true)
+```
+
 ## Mounts
 
 - `server:static_directory(opts)` serves a disk directory.

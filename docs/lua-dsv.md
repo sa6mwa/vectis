@@ -12,6 +12,8 @@ behavior.
 - `vectis.dsv.parse_spill(opts)` parses DSV into a JSON array using the C SDK
   spill policy and returns either `data` or `path`.
 - `vectis.dsv.to_string(opts)` serializes Lua tables or LoneJSON records to DSV.
+- `vectis.server:dsv(opts)` registers a streaming DSV upload route; see
+  [Lua server](lua-server.md).
 
 `parse()` and `parse_json()` are materialized. `each()` uses the C parser's
 source-to-callback path when `schema` is provided; without a schema it iterates

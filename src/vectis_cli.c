@@ -95,6 +95,15 @@ typedef struct vectis_lua_dsv_rows_context {
   int next_index;
 } vectis_lua_dsv_rows_context;
 
+typedef struct vectis_lua_dsv_route_context {
+  lua_State *lua;
+  int schema_index;
+  int record_index;
+  int request_index;
+  int on_row_ref;
+  size_t row_count;
+} vectis_lua_dsv_route_context;
+
 static void vectis_cli_error_set(vectis_error *error, vectis_status status,
                                  const char *message);
 
@@ -142,6 +151,22 @@ typedef struct vectis_lua_server_callback_route {
   struct vectis_lua_server_callback_route *next;
 } vectis_lua_server_callback_route;
 
+typedef struct vectis_lua_server_dsv_route {
+  lua_State *lua;
+  char *path;
+  char *purpose;
+  int schema_ref;
+  int on_row_ref;
+  int on_complete_ref;
+  vectis_dsv_config config;
+  char **columns;
+  char *comment_prefix;
+  size_t buffer_bytes;
+  size_t max_body_bytes;
+  vectis_lua_server_native_auth *auth;
+  struct vectis_lua_server_dsv_route *next;
+} vectis_lua_server_dsv_route;
+
 typedef struct vectis_lua_consumer_registration {
   vectis_consumer_service *service;
   vectis_consumer_service_receiver_config config;
@@ -164,6 +189,7 @@ typedef struct vectis_lua_server {
   vectis_app *app;
   vectis_lua_server_json_route *json_routes;
   vectis_lua_server_callback_route *callback_routes;
+  vectis_lua_server_dsv_route *dsv_routes;
   vectis_lua_server_native_auth *native_auths;
   vectis_lua_server_auth_json_route *auth_json_routes;
   vectis_lua_consumer_registration *consumer_services;
@@ -5239,6 +5265,54 @@ vectis_lua_server_callback_route_free_all(vectis_lua_server *server) {
 }
 
 static void
+vectis_lua_server_dsv_route_free(vectis_lua_server_dsv_route *route) {
+  size_t i;
+
+  if (route == NULL) {
+    return;
+  }
+  if (route->lua != NULL && route->schema_ref != LUA_NOREF) {
+    luaL_unref(route->lua, LUA_REGISTRYINDEX, route->schema_ref);
+    route->schema_ref = LUA_NOREF;
+  }
+  if (route->lua != NULL && route->on_row_ref != LUA_NOREF) {
+    luaL_unref(route->lua, LUA_REGISTRYINDEX, route->on_row_ref);
+    route->on_row_ref = LUA_NOREF;
+  }
+  if (route->lua != NULL && route->on_complete_ref != LUA_NOREF) {
+    luaL_unref(route->lua, LUA_REGISTRYINDEX, route->on_complete_ref);
+    route->on_complete_ref = LUA_NOREF;
+  }
+  free(route->path);
+  free(route->purpose);
+  if (route->columns != NULL) {
+    for (i = 0u; i < route->config.column_count; ++i) {
+      free(route->columns[i]);
+    }
+    free(route->columns);
+  }
+  free(route->comment_prefix);
+  free(route);
+}
+
+static void
+vectis_lua_server_dsv_route_free_all(vectis_lua_server *server) {
+  vectis_lua_server_dsv_route *route;
+  vectis_lua_server_dsv_route *next;
+
+  if (server == NULL) {
+    return;
+  }
+  route = server->dsv_routes;
+  server->dsv_routes = NULL;
+  while (route != NULL) {
+    next = route->next;
+    vectis_lua_server_dsv_route_free(route);
+    route = next;
+  }
+}
+
+static void
 vectis_lua_server_auth_json_route_free_all(vectis_lua_server *server) {
   vectis_lua_server_auth_json_route *route;
   vectis_lua_server_auth_json_route *next;
@@ -5696,6 +5770,7 @@ static int vectis_lua_server_close(lua_State *lua) {
   }
   vectis_lua_server_json_route_free_all(server);
   vectis_lua_server_callback_route_free_all(server);
+  vectis_lua_server_dsv_route_free_all(server);
   vectis_lua_server_auth_json_route_free_all(server);
   vectis_lua_server_native_auth_free_all(server);
   return 0;
@@ -6248,6 +6323,7 @@ static int vectis_lua_request_param_lookup(lua_State *lua) {
 static vectis_status vectis_lua_push_route_request(lua_State *lua,
                                                    vectis_request *request,
                                                    const char *principal,
+                                                   int include_body,
                                                    vectis_error *error) {
   vectis_bytes body;
   const char *path;
@@ -6271,7 +6347,12 @@ static vectis_status vectis_lua_push_route_request(lua_State *lua,
     lua_pushstring(lua, path);
     lua_setfield(lua, -2, "body_path");
   }
-  if (vectis_request_body_bytes(request, &body, error) == VECTIS_OK) {
+  if (!include_body) {
+    lua_pushnil(lua);
+    lua_setfield(lua, -2, "body");
+    lua_pushinteger(lua, 0);
+    lua_setfield(lua, -2, "body_size");
+  } else if (vectis_request_body_bytes(request, &body, error) == VECTIS_OK) {
     lua_pushlstring(lua, body.data != NULL ? (const char *)body.data : "",
                     body.size);
     lua_setfield(lua, -2, "body");
@@ -6408,9 +6489,9 @@ static vectis_status vectis_lua_apply_route_response(
 }
 
 static vectis_status vectis_lua_server_route_auth_gate(
-    vectis_lua_server_callback_route *route, vectis_request *request,
-    vectis_response *response, char *principal, size_t principal_size,
-    int *allowed, vectis_error *error) {
+    vectis_lua_server_native_auth *auth, const char *purpose,
+    vectis_request *request, vectis_response *response, char *principal,
+    size_t principal_size, int *allowed, vectis_error *error) {
   vectis_auth_provider_request auth_request;
   vectis_auth_provider_response auth_response;
   vectis_status status;
@@ -6422,7 +6503,7 @@ static vectis_status vectis_lua_server_route_auth_gate(
   if (principal != NULL && principal_size > 0u) {
     principal[0] = '\0';
   }
-  if (route == NULL || route->auth == NULL) {
+  if (auth == NULL) {
     if (allowed != NULL) {
       *allowed = 1;
     }
@@ -6431,12 +6512,12 @@ static vectis_status vectis_lua_server_route_auth_gate(
 
   vectis_auth_provider_request_init(&auth_request);
   auth_request.request = request;
-  auth_request.purpose = route->purpose;
+  auth_request.purpose = purpose;
   auth_request.resource = vectis_request_path(request);
-  auth_request.allowed_auth_modes = route->auth->allowed_auth_modes;
+  auth_request.allowed_auth_modes = auth->allowed_auth_modes;
   vectis_auth_provider_response_init(&auth_response);
   status = vectis_auth_provider_authenticate(
-      &route->auth->provider, &auth_request, &auth_response, error);
+      &auth->provider, &auth_request, &auth_response, error);
   if (status != VECTIS_OK) {
     vectis_auth_provider_response_cleanup(&auth_response);
     return status;
@@ -6523,7 +6604,8 @@ static vectis_status vectis_lua_server_route_dispatch(
                          "Lua route callback is not configured");
     return VECTIS_ERR_INVALID;
   }
-  status = vectis_lua_server_route_auth_gate(route, request, response,
+  status = vectis_lua_server_route_auth_gate(route->auth, route->purpose,
+                                             request, response,
                                              principal, sizeof(principal),
                                              &allowed, error);
   if (status != VECTIS_OK || !allowed) {
@@ -6538,7 +6620,7 @@ static vectis_status vectis_lua_server_route_dispatch(
                          "Lua route callback reference is invalid");
     return VECTIS_ERR_INVALID;
   }
-  status = vectis_lua_push_route_request(lua, request, principal, error);
+  status = vectis_lua_push_route_request(lua, request, principal, 1, error);
   if (status != VECTIS_OK) {
     lua_settop(lua, base);
     return status;
@@ -7374,6 +7456,7 @@ static int vectis_lua_server_new(lua_State *lua) {
   server->app = NULL;
   server->json_routes = NULL;
   server->callback_routes = NULL;
+  server->dsv_routes = NULL;
   server->native_auths = NULL;
   server->auth_json_routes = NULL;
   server->consumer_services = NULL;
@@ -7989,6 +8072,371 @@ static int vectis_lua_dsv_parse_typed(lua_State *lua) {
 
 static int vectis_lua_dsv_each(lua_State *lua) {
   return vectis_lua_dsv_parse_typed_common(lua, 1);
+}
+
+static vectis_status vectis_lua_dsv_route_new_row_storage(
+    void *userdata, size_t row_number, void **row_storage,
+    vectis_error *error) {
+  vectis_lua_dsv_route_context *context;
+  lonejson_record_view record;
+  lonejson_error json_error;
+  lonejson_status json_status;
+
+  (void)row_number;
+  context = (vectis_lua_dsv_route_context *)userdata;
+  vectis_lua_lonejson_record_view_init(&record);
+  memset(&json_error, 0, sizeof(json_error));
+  json_status = lonejson_lua_new_record(context->lua, context->schema_index,
+                                        &context->record_index, &record,
+                                        &json_error);
+  if (json_status != LONEJSON_STATUS_OK) {
+    vectis_cli_error_set(
+        error, VECTIS_ERR_INVALID,
+        json_error.message[0] != '\0' ? json_error.message
+                                      : "lonejson DSV route row allocation "
+                                        "failed");
+    return VECTIS_ERR_INVALID;
+  }
+  *row_storage = record.record;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_lua_dsv_route_push_row(void *userdata,
+                                                   size_t row_number,
+                                                   void *row,
+                                                   vectis_error *error) {
+  vectis_lua_dsv_route_context *context;
+  int table_index;
+  const char *message;
+
+  (void)row;
+  context = (vectis_lua_dsv_route_context *)userdata;
+  table_index = lonejson_lua_record_to_table(context->lua,
+                                             context->record_index);
+  if (table_index == 0) {
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "failed to convert DSV route row to Lua table");
+    return VECTIS_ERR_INVALID;
+  }
+  lua_rawgeti(context->lua, LUA_REGISTRYINDEX, context->on_row_ref);
+  lua_pushinteger(context->lua, (lua_Integer)row_number);
+  lua_pushvalue(context->lua, table_index);
+  lua_pushvalue(context->lua, context->request_index);
+  if (lua_pcall(context->lua, 3, 1, 0) != LUA_OK) {
+    char detail[sizeof(error->message)];
+
+    message = lua_tostring(context->lua, -1);
+    (void)snprintf(detail, sizeof(detail), "DSV route row callback failed: %s",
+                   message != NULL ? message : "unknown Lua error");
+    vectis_cli_error_set(error, VECTIS_ERR_STATE, detail);
+    lua_settop(context->lua, context->record_index - 1);
+    return VECTIS_ERR_STATE;
+  }
+  if (lua_isboolean(context->lua, -1) &&
+      !lua_toboolean(context->lua, -1)) {
+    lua_settop(context->lua, context->record_index - 1);
+    vectis_cli_error_set(error, VECTIS_ERR_STATE,
+                         "DSV route row callback stopped");
+    return VECTIS_ERR_STATE;
+  }
+  lua_settop(context->lua, context->record_index - 1);
+  context->row_count++;
+  return VECTIS_OK;
+}
+
+static int vectis_lua_server_dsv_copy_config(lua_State *lua, int index,
+                                             const vectis_dsv_config *config,
+                                             const char **owned_columns,
+                                             vectis_lua_server_dsv_route *route,
+                                             vectis_error *error) {
+  const char *comment_prefix;
+  size_t i;
+
+  route->config = *config;
+  if (owned_columns != NULL && route->config.column_count > 0u) {
+    route->columns =
+        (char **)calloc(route->config.column_count, sizeof(route->columns[0]));
+    if (route->columns == NULL) {
+      free((void *)owned_columns);
+      vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
+                           "failed to allocate DSV route columns");
+      return 0;
+    }
+    for (i = 0u; i < route->config.column_count; ++i) {
+      route->columns[i] = vectis_cli_strdup(owned_columns[i]);
+      if (route->columns[i] == NULL) {
+        free((void *)owned_columns);
+        vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
+                             "failed to copy DSV route column");
+        return 0;
+      }
+    }
+    route->config.columns = (const char *const *)route->columns;
+  }
+  free((void *)owned_columns);
+
+  comment_prefix = vectis_lua_table_string(lua, index, "comment_prefix");
+  if (comment_prefix != NULL) {
+    route->comment_prefix = vectis_cli_strdup(comment_prefix);
+    if (route->comment_prefix == NULL) {
+      vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
+                           "failed to copy DSV route comment prefix");
+      return 0;
+    }
+    route->config.comment_prefix = route->comment_prefix;
+  }
+  return 1;
+}
+
+static vectis_status vectis_lua_server_dsv_dispatch(
+    vectis_app *app, vectis_request *request, struct lc_source *reader,
+    vectis_response *response, void *userdata, vectis_error *error) {
+  vectis_lua_server_dsv_route *route;
+  vectis_lua_dsv_route_context context;
+  lonejson_schema_view schema;
+  vectis_status status;
+  lua_State *lua;
+  int base;
+  int allowed;
+  char principal[128];
+  const char *message;
+
+  (void)app;
+  route = (vectis_lua_server_dsv_route *)userdata;
+  if (route == NULL || route->lua == NULL || route->schema_ref == LUA_NOREF ||
+      route->on_row_ref == LUA_NOREF || reader == NULL) {
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "Lua DSV route is not configured");
+    return VECTIS_ERR_INVALID;
+  }
+
+  status = vectis_lua_server_route_auth_gate(route->auth, route->purpose,
+                                             request, response,
+                                             principal, sizeof(principal),
+                                             &allowed, error);
+  if (status != VECTIS_OK || !allowed) {
+    return status;
+  }
+
+  lua = route->lua;
+  base = lua_gettop(lua);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, route->schema_ref);
+  vectis_lua_lonejson_schema_view_init(&schema);
+  if (vectis_lua_lonejson_check_schema(lua, -1, &schema,
+                                       "DSV route schema") != 0) {
+    message = lua_tostring(lua, -1);
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         message != NULL ? message : "DSV route schema is "
+                                                   "invalid");
+    lua_settop(lua, base);
+    return VECTIS_ERR_INVALID;
+  }
+
+  memset(&context, 0, sizeof(context));
+  context.lua = lua;
+  context.schema_index = lua_absindex(lua, -1);
+  context.record_index = 0;
+  context.on_row_ref = route->on_row_ref;
+  status = vectis_lua_push_route_request(lua, request, principal, 0, error);
+  if (status != VECTIS_OK) {
+    lua_settop(lua, base);
+    return status;
+  }
+  context.request_index = lua_absindex(lua, -1);
+
+  status = vectis_dsv_parse_lonejson_view(
+      reader, &schema, &route->config, vectis_lua_dsv_route_new_row_storage,
+      vectis_lua_dsv_route_push_row, &context, error);
+  if (status != VECTIS_OK) {
+    lua_settop(lua, base);
+    return status;
+  }
+
+  if (route->on_complete_ref != LUA_NOREF) {
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, route->on_complete_ref);
+    lua_pushvalue(lua, context.request_index);
+    lua_newtable(lua);
+    lua_pushinteger(lua, (lua_Integer)context.row_count);
+    lua_setfield(lua, -2, "rows");
+    if (lua_pcall(lua, 2, 1, 0) != LUA_OK) {
+      message = lua_tostring(lua, -1);
+      vectis_cli_error_set(error, VECTIS_ERR_STATE,
+                           message != NULL ? message
+                                           : "DSV route completion failed");
+      lua_settop(lua, base);
+      return VECTIS_ERR_STATE;
+    }
+    status = vectis_lua_apply_route_response(lua, -1, response, error);
+  } else {
+    status = vectis_response_status(response, 204, error);
+  }
+  lua_settop(lua, base);
+  return status;
+}
+
+static int vectis_lua_server_dsv(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_app *app;
+  vectis_lua_server_dsv_route *route_data;
+  vectis_upload_reader_route_config route;
+  vectis_error error;
+  vectis_status status;
+  lonejson_schema_view schema;
+  vectis_dsv_config parsed_config;
+  const char **owned_columns;
+  const char *path;
+  vectis_http_methods methods;
+  size_t buffer_bytes;
+  size_t max_body_bytes;
+  int schema_index;
+
+  owned_columns = NULL;
+  server = vectis_lua_check_server(lua, 1);
+  app = vectis_lua_server_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  path = vectis_lua_table_string(lua, 2, "path");
+  if (path == NULL || path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "DSV route path is required");
+  }
+
+  vectis_lua_lonejson_schema_view_init(&schema);
+  if (vectis_lua_dsv_schema(lua, 2, &schema, &schema_index) != 0 ||
+      schema_index == 0) {
+    return luaL_error(lua, "server:dsv requires schema");
+  }
+  methods =
+      vectis_lua_route_methods(lua, 2, VECTIS_HTTP_METHODS_POST, "DSV route");
+  if (vectis_lua_dsv_parse_config(lua, 2, &parsed_config,
+                                  &owned_columns) != 0) {
+    free((void *)owned_columns);
+    lua_pop(lua, 1);
+    return 1;
+  }
+  buffer_bytes =
+      vectis_lua_table_size(lua, 2, "buffer_bytes",
+                            VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES);
+  max_body_bytes = vectis_lua_table_size(lua, 2, "max_body_bytes", 0u);
+
+  route_data =
+      (vectis_lua_server_dsv_route *)calloc(1u, sizeof(*route_data));
+  if (route_data == NULL) {
+    free((void *)owned_columns);
+    lua_pop(lua, 1);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to allocate DSV route");
+  }
+  route_data->lua = lua;
+  route_data->schema_ref = LUA_NOREF;
+  route_data->on_row_ref = LUA_NOREF;
+  route_data->on_complete_ref = LUA_NOREF;
+  route_data->path = vectis_cli_strdup(path);
+  if (route_data->path == NULL) {
+    free((void *)owned_columns);
+    lua_pop(lua, 1);
+    vectis_lua_server_dsv_route_free(route_data);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to copy DSV route path");
+  }
+  lua_pushvalue(lua, schema_index);
+  route_data->schema_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  lua_pop(lua, 1);
+
+  vectis_error_clear(&error);
+  if (!vectis_lua_server_dsv_copy_config(lua, 2, &parsed_config,
+                                         owned_columns, route_data, &error)) {
+    vectis_lua_server_dsv_route_free(route_data);
+    return vectis_lua_push_error(
+        lua, error.code != VECTIS_OK ? error.code : VECTIS_ERR_INVALID,
+        &error);
+  }
+
+  lua_getfield(lua, 2, "on_row");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, 2, "callback");
+  }
+  if (!lua_isfunction(lua, -1)) {
+    lua_pop(lua, 1);
+    vectis_lua_server_dsv_route_free(route_data);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "DSV route on_row callback is required");
+  }
+  route_data->on_row_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+
+  lua_getfield(lua, 2, "on_complete");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, 2, "on_done");
+  }
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+  } else if (lua_isfunction(lua, -1)) {
+    route_data->on_complete_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  } else {
+    lua_pop(lua, 1);
+    vectis_lua_server_dsv_route_free(route_data);
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID,
+        "DSV route on_complete callback must be a function");
+  }
+
+  lua_getfield(lua, 2, "auth");
+  if (!lua_isnil(lua, -1)) {
+    if (!lua_istable(lua, -1)) {
+      lua_pop(lua, 1);
+      vectis_lua_server_dsv_route_free(route_data);
+      return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                        "DSV route auth must be a table");
+    }
+    vectis_error_clear(&error);
+    route_data->auth =
+        vectis_lua_server_native_auth_new(lua, -1, "DSV route", &error);
+    lua_pop(lua, 1);
+    if (route_data->auth == NULL) {
+      vectis_lua_server_dsv_route_free(route_data);
+      return vectis_lua_push_error(
+          lua, error.code != VECTIS_OK ? error.code : VECTIS_ERR_NOMEM,
+          &error);
+    }
+    route_data->purpose = vectis_cli_strdup(route_data->auth->purpose);
+    if (route_data->purpose == NULL) {
+      vectis_lua_server_native_auth_free(route_data->auth);
+      route_data->auth = NULL;
+      vectis_lua_server_dsv_route_free(route_data);
+      return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                        "failed to copy DSV route auth config");
+    }
+  } else {
+    lua_pop(lua, 1);
+  }
+
+  route_data->buffer_bytes = buffer_bytes;
+  route_data->max_body_bytes = max_body_bytes;
+
+  route = vectis_upload_reader_route_methods(
+      methods, route_data->path, vectis_lua_server_dsv_dispatch, route_data);
+  if (route_data->max_body_bytes > 0u) {
+    route.body = vectis_body_upload_max(route_data->max_body_bytes);
+  }
+  route.buffer_bytes = route_data->buffer_bytes;
+  vectis_error_clear(&error);
+  status = app->upload_reader(app, &route, &error);
+  if (status != VECTIS_OK) {
+    if (route_data->auth != NULL) {
+      vectis_lua_server_native_auth_free(route_data->auth);
+      route_data->auth = NULL;
+    }
+    vectis_lua_server_dsv_route_free(route_data);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  if (route_data->auth != NULL) {
+    vectis_lua_server_native_auth_retain(server, route_data->auth);
+  }
+  route_data->next = server->dsv_routes;
+  server->dsv_routes = route_data;
+  lua_pushboolean(lua, 1);
+  return 1;
 }
 
 static int vectis_lua_dsv_to_string(lua_State *lua) {
@@ -11687,6 +12135,8 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "auth_routes");
     lua_pushcfunction(lua, vectis_lua_server_route);
     lua_setfield(lua, -2, "route");
+    lua_pushcfunction(lua, vectis_lua_server_dsv);
+    lua_setfield(lua, -2, "dsv");
     lua_pushcfunction(lua, vectis_lua_server_json);
     lua_setfield(lua, -2, "json");
     lua_pushcfunction(lua, vectis_lua_server_text);

@@ -284,7 +284,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add Lua facades for DSV/CSV/TSV materialized parsing and serialization backed by the existing C helpers, including typed row callbacks through Lua-owned LoneJSON records, custom delimiter, strict/permissive width, comments, and spill-to-disk behavior.
 - [x] Extend DSV typed Lua parsing to support dynamic string fields without violating LoneJSON Lua record ownership/cleanup invariants.
 - [x] Add packed scenario coverage for DSV Lua workflows.
-- [ ] Add Lua route-row handler integration for DSV routes.
+- [x] Add Lua route-row handler integration for DSV routes.
 - [x] Add Lua WebDAV client helpers for PROPFIND, MKCOL, GET, PUT, COPY, MOVE, DELETE, auth headers, depth handling, destination handling, structured errors, and file-backed transfer; keep server-side WebDAV helpers on `vectis.server`.
 - [x] Add a C-owned Lua `server:webdav()` helper for ordinary Vectis-managed mutable WebDAV mounts, including unauthenticated mounts plus native and callback auth providers.
 - [ ] Expand Lua server-side WebDAV helpers beyond Vectis-managed storage so ordinary Lua apps can mount direct mutable disk docroots and read-only embedded docroots as WebDAV mounts without C glue.

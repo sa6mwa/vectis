@@ -237,6 +237,10 @@ local callback_provider = assert(vectis.auth.provider_callback(function(request)
       request.resource == "/dynamic-guarded" then
     return {action = "allow", principal = "route-user"}
   end
+  if request.authorization == "Bearer route-ok" and
+      request.resource == "/dynamic-dsv" then
+    return {action = "allow", principal = "route-user"}
+  end
   return {
     action = "required",
     status_code = 401,
@@ -314,6 +318,39 @@ assert(api_server:route({
       status = 200,
       content_type = "application/json",
       body = '{"ok":true,"principal":"' .. request.principal .. '"}\n',
+    }
+  end,
+}) == true)
+local dsv_route_schema = lonejson.schema("lua-http-dsv-route-row", {
+  lonejson.field("id", lonejson.string({required = true})),
+  lonejson.field("count", lonejson.i64({required = true})),
+})
+local dsv_route_rows = {}
+local dsv_route_sum = 0
+assert(api_server:dsv({
+  path = "/dynamic-dsv",
+  schema = dsv_route_schema,
+  auth = {
+    provider = callback_provider,
+    purpose = "callback",
+    allowed_modes = {"bearer"},
+  },
+  on_row = function(row_number, row, request)
+    assert(request.method == "POST")
+    assert(request.body == nil)
+    assert(request.principal == "route-user")
+    dsv_route_rows[#dsv_route_rows + 1] = row_number .. ":" .. row.id
+    dsv_route_sum = dsv_route_sum + row.count
+  end,
+  on_complete = function(request, summary)
+    assert(request.path == "/dynamic-dsv")
+    assert(summary.rows == 2)
+    return {
+      status = 200,
+      content_type = "application/json",
+      body = '{"rows":' .. tostring(summary.rows) ..
+             ',"sum":' .. tostring(dsv_route_sum) ..
+             ',"ids":"' .. table.concat(dsv_route_rows, ",") .. '"}\n',
     }
   end,
 }) == true)
@@ -420,6 +457,32 @@ assert(dynamic_guarded_allowed.ok == true,
 assert(dynamic_guarded_allowed.status == 200)
 assert(dynamic_guarded_allowed.body == '{"ok":true,"principal":"route-user"}\n')
 assert(dynamic_guarded_allowed.headers:lower():find("cache-control: no-store", 1, true))
+local dynamic_dsv_required = vectis.http.post("http://127.0.0.1:28484/dynamic-dsv", {
+  body = "id,count\nalpha,2\nbeta,3\n",
+  headers = {
+    ["content-type"] = "text/csv",
+  },
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_dsv_required.ok == false)
+assert(dynamic_dsv_required.error.http_status == 401)
+local dynamic_dsv_allowed = vectis.http.post("http://127.0.0.1:28484/dynamic-dsv", {
+  body = "id,count\nalpha,2\nbeta,3\n",
+  headers = {
+    ["content-type"] = "text/csv",
+    Authorization = "Bearer route-ok",
+  },
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_dsv_allowed.ok == true,
+       dynamic_dsv_allowed.error and dynamic_dsv_allowed.error.message)
+assert(dynamic_dsv_allowed.status == 200)
+assert(dynamic_dsv_allowed.body == '{"rows":2,"sum":5,"ids":"1:alpha,2:beta"}\n')
+assert(dynamic_dsv_allowed.headers:lower():find("cache-control: no-store", 1, true))
 local simple_get = vectis.http.get("http://127.0.0.1:28484/status", {
   timeout_ms = 2000,
   connect_timeout_ms = 1000,
