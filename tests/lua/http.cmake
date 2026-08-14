@@ -312,6 +312,70 @@ assert(api_server:route({
   end,
 }) == true)
 assert(api_server:route({
+  path = "/dynamic-spooled",
+  handler = function()
+    local chunks = {"spooled ", "source ", "response\n"}
+    local index = 1
+    return {
+      status = 203,
+      content_type = "text/plain",
+      headers = {
+        ["x-vectis-spooled"] = "callback",
+      },
+      spooled_source = {
+        reset = function()
+          index = 1
+          return true
+        end,
+        read = function(max_bytes)
+          assert(type(max_bytes) == "number")
+          assert(max_bytes > 0)
+          local chunk = chunks[index]
+          index = index + 1
+          return chunk
+        end,
+        close = function()
+          local fp = assert(io.open(static_dir .. "/spooled-close.txt", "wb"))
+          fp:write("spooled source closed\n")
+          fp:close()
+        end,
+      },
+    }
+  end,
+}) == true)
+assert(api_server:route({
+  path = "/dynamic-spooled-single-pass",
+  handler = function()
+    local done = false
+    return {
+      status = 200,
+      content_type = "text/plain",
+      spooled_source = {
+        read = function()
+          if done then
+            return nil
+          end
+          done = true
+          return "single pass spooled response\n"
+        end,
+      },
+    }
+  end,
+}) == true)
+assert(api_server:route({
+  path = "/dynamic-spooled-bad",
+  handler = function()
+    return {
+      status = 200,
+      spooled_source = {
+        read = function()
+          return {}
+        end,
+      },
+    }
+  end,
+}) == true)
+assert(api_server:route({
   path = "/dynamic-guarded",
   auth = {
     provider = callback_provider,
@@ -542,6 +606,43 @@ assert(dynamic_file.ok == true,
        dynamic_file.error and dynamic_file.error.message)
 assert(dynamic_file.status == 200)
 assert(dynamic_file.body == "static directory index\n")
+local dynamic_spooled = vectis.http.get("http://127.0.0.1:28484/dynamic-spooled", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_spooled.ok == true,
+       dynamic_spooled.error and dynamic_spooled.error.message)
+assert(dynamic_spooled.status == 203)
+assert(dynamic_spooled.body == "spooled source response\n")
+assert(dynamic_spooled.headers:lower():find("x-vectis-spooled: callback", 1, true))
+local dynamic_spooled_closed = vectis.http.get(
+    "http://127.0.0.1:28484/files/spooled-close.txt", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_spooled_closed.ok == true,
+       dynamic_spooled_closed.error and dynamic_spooled_closed.error.message)
+assert(dynamic_spooled_closed.body == "spooled source closed\n")
+local dynamic_spooled_single = vectis.http.get(
+    "http://127.0.0.1:28484/dynamic-spooled-single-pass", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_spooled_single.ok == true,
+       dynamic_spooled_single.error and dynamic_spooled_single.error.message)
+assert(dynamic_spooled_single.status == 200)
+assert(dynamic_spooled_single.body == "single pass spooled response\n")
+local dynamic_spooled_bad = vectis.http.get(
+    "http://127.0.0.1:28484/dynamic-spooled-bad", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_spooled_bad.ok == false)
+assert(dynamic_spooled_bad.status == 500)
 local dynamic_guarded_required = vectis.http.get("http://127.0.0.1:28484/dynamic-guarded", {
   timeout_ms = 2000,
   connect_timeout_ms = 1000,

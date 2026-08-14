@@ -103,7 +103,17 @@ Handlers return:
 - `nil` for `204`
 - a string for a `200 text/plain; charset=utf-8` response
 - a table with `status` or `status_code`, optional `content_type`, optional
-  `headers`, and either `body` or `file_path`
+  `headers`, and one of `body`, `file_path`, or `spooled_source`
+
+`spooled_source` is a file-backed response source, not true response streaming.
+Vectis reads chunks from Lua into a temporary response file, then serves that
+file through Kore. Use it when the application should avoid constructing one
+large Lua string but can accept file-backed materialization. The source table
+requires `read(max_bytes)` and accepts optional `reset()` and `close()`
+callbacks. `read` returns a string chunk or `nil`/`false` at EOF. `reset` is
+called before the first read when present; without it, the source is valid for
+the initial response pass only. `close` is called when C closes the callback
+source.
 
 `before` hooks run after auth and before the handler. Returning `nil` or
 `true` continues into the handler. Returning a response table short-circuits
@@ -126,6 +136,28 @@ assert(server:route({
       content_type = "text/plain; charset=utf-8",
       headers = {["cache-control"] = "no-store"},
       body = request.param("name") .. "\n",
+    }
+  end,
+}) == true)
+
+assert(server:route({
+  path = "/report.txt",
+  handler = function()
+    local chunks = {"first\n", "second\n"}
+    local index = 1
+    return {
+      content_type = "text/plain; charset=utf-8",
+      spooled_source = {
+        reset = function()
+          index = 1
+          return true
+        end,
+        read = function()
+          local chunk = chunks[index]
+          index = index + 1
+          return chunk
+        end,
+      },
     }
   end,
 }) == true)
@@ -278,9 +310,10 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
 - `server:auth_routes(opts)` registers native login/auth/WebDAV-key routes.
 - `server:consumer_service(opts)` registers a C-owned lockd consumer service.
 
-SSE and true streaming response helpers are separate future route surfaces;
-`server:route()` and `server:group()` must not be used to describe streaming
-behavior.
+SSE and true streaming response helpers are separate future route surfaces.
+`server:route()` and `server:group()` are buffered/materialized route surfaces;
+`spooled_source` is explicitly file-backed materialization, not live
+producer-to-transport streaming.
 
 See [lua-auth.md](lua-auth.md) for native and callback auth providers,
 OAuth2/OIDC helpers, email-token flows, and WebDAV-key issuance.
