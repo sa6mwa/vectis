@@ -337,7 +337,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add a Lua example for long-running consumer service workflows with deterministic local e2e coverage.
 - [x] Add a Lua example for SSH command execution with deterministic local e2e coverage.
 - [x] Add Lua examples for XML, DSV/CSV/TSV, WebDAV client, mutable WebDAV server, raw OpenSSL, certificate management, SCP, MQTT, SMTP, generic curl, OPC UA client, and raw CAI local workflows as those facades land.
-- [ ] Add Lua examples for raw SFTP/libssh2 lower-level operations, CAI live/service-adapter workflows, loaded-model sus/whisper transcription, and capture/playback audio workflows as those facades land.
+- [x] Add a Lua example for stateful SFTP/libssh2 lower-level handle operations with opt-in live e2e coverage.
+- [ ] Add Lua examples for CAI live/service-adapter workflows and loaded-model sus/whisper transcription as those facades land.
 - [ ] Add Lua unit and end-to-end tests for every Lua facade, including preload smoke, method-call DX, ownership/finalizer cleanup, structured error objects, packed execution, large-value streaming/spooling, and local deterministic protocol scenarios.
 - [x] Add release/package verification that the `vectis` binary includes all statically preloaded Lua modules while C binary SDK artifacts do not accidentally ship Lua source/runtime/package-manager state.
 - [x] Add a checked Lua facade documentation index that links raw dependency modules, Vectis-owned workflow modules, the coverage matrix, and module-level docs.

@@ -394,6 +394,27 @@ run_service_examples() {
     VECTIS_LUA_SFTP_DOWNLOAD_FILE="$work_dir/lua-sftp-download.txt" \
     VECTIS_LUA_SFTP_REMOTE_FILE="/config/lua-sftp-upload-$$.txt" \
     "$repo_root/build/debug/vectis" "$repo_root/examples/lua/sftp_transfer.lua"
+
+  printf '[e2e] lua stateful sftp handles\n'
+  env VECTIS_LUA_SFTP_HOST="127.0.0.1" \
+    VECTIS_LUA_SFTP_PORT="$ssh_port" \
+    VECTIS_LUA_SFTP_USERNAME="vectis" \
+    VECTIS_LUA_SFTP_PASSWORD="vectispass" \
+    VECTIS_LUA_SFTP_KNOWN_HOSTS="$ssh_known_hosts" \
+    VECTIS_LUA_SFTP_REMOTE_FILE="/config/lua-sftp-handles-$$.txt" \
+    "$repo_root/build/debug/vectis" "$repo_root/examples/lua/sftp_handles.lua"
+
+  printf '[e2e] lua stateful sftp handles reject wrong known_hosts pin\n'
+  if env VECTIS_LUA_SFTP_HOST="127.0.0.1" \
+      VECTIS_LUA_SFTP_PORT="$ssh_port" \
+      VECTIS_LUA_SFTP_USERNAME="vectis" \
+      VECTIS_LUA_SFTP_PASSWORD="vectispass" \
+      VECTIS_LUA_SFTP_KNOWN_HOSTS="$ssh_bad_known_hosts" \
+      VECTIS_LUA_SFTP_REMOTE_FILE="/config/lua-sftp-handles-bad-$$.txt" \
+      "$repo_root/build/debug/vectis" "$repo_root/examples/lua/sftp_handles.lua"; then
+    printf '%s\n' "Lua stateful SFTP unexpectedly accepted mismatched known_hosts pin" >&2
+    return 1
+  fi
 }
 
 run_downstream_http_examples() {

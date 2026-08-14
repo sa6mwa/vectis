@@ -40,7 +40,7 @@ The SFTP and SCP helpers use the same SSH connection/auth fields as `exec`.
   `has_permissions`, `permissions`, `has_atime`, `atime`, `has_mtime`, and
   `mtime`.
 - `vectis.ssh.sftp_mkdir(opts)` creates `remote_path`. `permissions` defaults
-  to `0755`.
+  to decimal `493`, which is octal `0755`.
 - `vectis.ssh.sftp_remove(opts)` removes the remote file at `remote_path`.
 - `vectis.ssh.sftp_rmdir(opts)` removes the remote directory at `remote_path`.
 - `vectis.ssh.sftp_rename(opts)` renames `old_path` to `new_path` using
@@ -59,7 +59,7 @@ connection/auth fields as `exec`. It returns a session receiver. Close it with
 
 Session methods:
 
-- `session:open_file({ remote_path = path, mode = "r", permissions = 0644 })`
+- `session:open_file({ remote_path = path, mode = "r", permissions = 420 })`
   returns a file receiver. Supported modes are `r`, `w`, `a`, `r+`, `w+`,
   `a+`, and `rw`. Advanced users can pass numeric `flags` using the
   `VECTIS_SSH_SFTP_OPEN_*` C constants through libvectis.

@@ -97,6 +97,9 @@ surface directly, without local helper layers that would hide awkward API shape.
 - `lua/curl_protocols.lua`: protocol-neutral `curl.perform()` file-backed
   transfer, upload, download, and protocol allowlist behavior for workflows
   where adding a Vectis-specific wrapper would be redundant.
+- `lua/sftp_handles.lua`: stateful `vectis.ssh.sftp_open()` session, file,
+  directory, stat, rename, and cleanup receiver workflow against the opt-in
+  e2e SSH/SFTP service.
 - `lua/opcua_client.lua`: raw cpkt OPC UA Lua client connect, read, write,
   disconnect, and manual client lifecycle against the local e2e server.
 - `lua/cai_local.lua`: raw CAI Lua module constants, model metadata, dotenv
