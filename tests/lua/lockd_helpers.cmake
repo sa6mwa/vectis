@@ -7,6 +7,9 @@ local enqueue_body
 local closed_clients = 0
 local acquired_req
 local closed_leases = 0
+local released_leases = 0
+local saved_value
+local loaded_value = { type = "account.loaded", id = "1001" }
 
 package.loaded.vectis = {
   ERR_STATE = 3,
@@ -40,11 +43,24 @@ package.loaded.lockdc = {
     function client:acquire(req)
       acquired_req = req
       local lease = {}
+      function lease:get_json()
+        if req.key == "explode-load" then
+          error("load exploded")
+        end
+        return loaded_value, { etag = "loaded-etag" }
+      end
       function lease:close()
         closed_leases = closed_leases + 1
       end
       function lease:update_json(value)
-        self.updated = value
+        if req.key == "explode-update" then
+          error("update exploded")
+        end
+        saved_value = value
+        return true
+      end
+      function lease:release()
+        released_leases = released_leases + 1
         return true
       end
       return lease
@@ -81,6 +97,46 @@ assert(enqueue_req.content_type == "application/json")
 assert(enqueue_body == '{"type":"order.created","id":"1001"}')
 assert(closed_clients == 1)
 
+local saved = assert(lockd.save_json({
+  endpoints = {"https://127.0.0.1:1"},
+}, {
+  key = "accounts/1001",
+  owner = "vectis-lockd-save-test",
+  ttl_seconds = 30,
+}, {
+  type = "account.saved",
+  id = "1001",
+}))
+assert(saved == true)
+assert(saved_value.type == "account.saved")
+assert(released_leases == 1)
+assert(closed_clients == 2)
+
+local loaded, loaded_meta = assert(lockd.load_json({
+  endpoints = {"https://127.0.0.1:1"},
+}, {
+  key = "accounts/1001",
+  owner = "vectis-lockd-load-test",
+}))
+assert(loaded.type == "account.loaded")
+assert(loaded_meta.etag == "loaded-etag")
+assert(released_leases == 2)
+assert(closed_clients == 3)
+
+local update_exploded = pcall(function()
+  lockd.save_json({}, { key = "explode-update" }, { type = "bad" })
+end)
+assert(update_exploded == false)
+assert(closed_leases == 1)
+assert(closed_clients == 4)
+
+local load_exploded = pcall(function()
+  lockd.load_json({}, { key = "explode-load" })
+end)
+assert(load_exploded == false)
+assert(closed_leases == 2)
+assert(closed_clients == 5)
+
 local handler_seen_client
 local lease_result = assert(lockd.with_acquired_lease({
   endpoints = {"https://127.0.0.1:1"},
@@ -95,8 +151,8 @@ end))
 assert(lease_result == "lease-ok")
 assert(acquired_req.key == "accounts/1001")
 assert(type(handler_seen_client) == "table")
-assert(closed_leases == 1)
-assert(closed_clients == 2)
+assert(closed_leases == 3)
+assert(closed_clients == 6)
 
 local failed, failed_err = lockd.with_acquired_lease({}, { key = "boom" },
   function()
@@ -104,8 +160,8 @@ local failed, failed_err = lockd.with_acquired_lease({}, { key = "boom" },
   end)
 assert(failed == nil)
 assert(failed_err.message == "handler failed")
-assert(closed_leases == 2)
-assert(closed_clients == 3)
+assert(closed_leases == 4)
+assert(closed_clients == 7)
 
 print("vectis-lockd-helpers-ok")
 ]])

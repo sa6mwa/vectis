@@ -317,6 +317,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add deterministic Lua example and packed coverage for opt-in audio capture/playback device workflows.
 - [x] Add user-facing Lua docs and direct JSON passthrough helpers for `vectis.lockd`, keeping raw `lockdc` available as `vectis.lockd.raw`.
 - [x] Add narrow `vectis.lockd` workflow helpers for one-shot JSON enqueue and acquired-lease handler cleanup without hiding raw `lockdc` document/queue APIs.
+- [x] Add narrow `vectis.lockd` JSON state save/load helpers that mirror C acquire/update-or-load/release workflow semantics without hiding raw `lockdc` leases.
 - [ ] Publish a separate `vectis` Lua rock for users who want to run the Vectis facade inside their own Lua 5.5 environment.
 - [x] Keep LuaRocks out of the `vectis` binary runtime and release artifacts.
 - [ ] Add Vectis-owned Lua modules for Kore and broader libssh2 coverage.

@@ -24,7 +24,7 @@ Columns:
 | ID | Surface | Raw | DX | Local | Packed | Live | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | dep:lua-runtime | cpkt Lua 5.5 runtime facade | yes | yes | yes | yes | n/a | Runtime is embedded; not a user module. |
-| dep:lockdc | liblockdc / lockdc Lua module | yes | partial | yes | yes | n/a | `require("lockdc")` and `vectis.lockd`; JSON passthroughs and embedded bundle config DX are documented in `docs/lua-lockd.md`; document/queue helpers still need fuller DX. |
+| dep:lockdc | liblockdc / lockdc Lua module | yes | partial | yes | yes | n/a | `require("lockdc")` and `vectis.lockd`; JSON passthroughs, embedded bundle config DX, one-shot state save/load, and queue enqueue helpers are documented in `docs/lua-lockd.md`; additional helpers remain only where raw lockdc is too noisy. |
 | dep:lonejson | LoneJSON Lua module | yes | partial | yes | yes | n/a | Raw encode/decode/schema available; Vectis JSON route/downstream DX remains incomplete. |
 | dep:pslog | libpslog Lua module | yes | planned | yes | yes | n/a | Raw logging module is preloaded and packed-tested; Vectis logger inheritance in Lua needs a clear helper surface. |
 | dep:lql | liblql Lua module | yes | planned | yes | yes | n/a | Raw module is preloaded and packed-tested. |
@@ -64,7 +64,7 @@ Columns:
 | workflow:smtp | SMTP send workflows | yes | yes | yes | yes | planned | `vectis.smtp.send` wraps curl SMTP upload with memory and file-backed payloads, with packed validation coverage; live SMTP coverage remains opt-in. |
 | workflow:xml | XML parse/serialize workflows | partial | partial | yes | yes | n/a | `vectis.xml.parse()` materializes a table and `parse_record()` returns a Lua-owned LoneJSON record; XML parsing has packed example coverage and XML serialization remains missing. |
 | workflow:dsv | CSV/TSV/DSV parse/serialize workflows | partial | partial | yes | yes | n/a | Lua covers memory/path parse, typed row callbacks for dynamic and fixed-capacity string fields, custom delimiters, comments, spill, serialization, and packed embedded asset parsing; Lua route-row handler integration remains missing. |
-| workflow:lockd-state | lockd document/state workflows | yes | partial | yes | yes | n/a | Raw lockdc plus `vectis.lockd` config/JSON helpers and `with_acquired_lease`; richer document/query helper coverage remains only where raw lockdc is too noisy. |
+| workflow:lockd-state | lockd document/state workflows | yes | partial | yes | yes | n/a | Raw lockdc plus `vectis.lockd` config/JSON helpers, `load_json`, `save_json`, and `with_acquired_lease`; richer document/query helper coverage remains only where raw lockdc is too noisy. |
 | workflow:lockd-queue | lockd queue and consumer workflows | yes | partial | yes | yes | n/a | Raw lockdc plus `vectis.lockd.enqueue_json`; retry-oriented helper DX remains only where raw lockdc is too noisy. |
 | workflow:server-consumer | Same-process server plus lockd consumer | n/a | yes | yes | yes | n/a | Scenario coverage exists. |
 | workflow:opcua-client | OPC UA client workflows | yes | planned | yes | no | planned | Local server-backed e2e exists; Vectis workflow helper is not designed yet. |

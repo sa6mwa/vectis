@@ -12,6 +12,12 @@ lockd bundle sources.
   `lockdc.open`.
 - `vectis.lockd.with_client(opts, handler)` opens a client, calls `handler`, and
   closes the client after the handler returns or raises.
+- `vectis.lockd.load_json(opts, req)` opens a client, acquires a state lease,
+  reads JSON with `lease:get_json()`, releases the lease after a successful
+  read or no-content response, closes the client, and returns `value, meta`.
+- `vectis.lockd.save_json(opts, req, value)` opens a client, acquires a state
+  lease, writes JSON with `lease:update_json(value)`, releases the lease after a
+  successful write, and closes the client.
 - `vectis.lockd.enqueue_json(opts, req, value)` opens a client, JSON-encodes
   `value`, sets `content_type = "application/json"` when absent, enqueues the
   payload, and closes the client.
@@ -61,6 +67,33 @@ local ok, err = client:enqueue({
 
 client:close()
 assert(ok, err and err.message or "enqueue failed")
+```
+
+For one-shot JSON state save/load:
+
+```lua
+assert(vectis.lockd.save_json({
+  endpoints = {"https://127.0.0.1:8443"},
+  client_bundle = "embedded",
+  namespace = "app",
+}, {
+  key = "accounts/1001",
+  owner = "accounts-api",
+  ttl_seconds = 30,
+}, {
+  status = "active",
+}))
+
+local state = assert(vectis.lockd.load_json({
+  endpoints = {"https://127.0.0.1:8443"},
+  client_bundle = "embedded",
+  namespace = "app",
+}, {
+  key = "accounts/1001",
+  owner = "accounts-api",
+  ttl_seconds = 30,
+}))
+assert(state.status == "active")
 ```
 
 For one-shot JSON queue publishing:

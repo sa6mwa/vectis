@@ -86,6 +86,12 @@ local function json_request(req)
   return next_req
 end
 
+local function close_handle(handle)
+  if type(handle) == "table" and type(handle.close) == "function" then
+    handle:close()
+  end
+end
+
 function M.with_client(config, handler)
   if type(handler) ~= "function" then
     error("vectis.lockd.with_client requires a handler", 2)
@@ -110,6 +116,84 @@ function M.with_client(config, handler)
   return result
 end
 
+function M.load_json(config, req)
+  local client, err = M.open(config)
+  if client == nil then
+    return nil, err
+  end
+
+  local lease, acquire_err = client:acquire(req)
+  if lease == nil then
+    client:close()
+    return nil, acquire_err
+  end
+
+  local ok_get, value, meta_or_err = pcall(function()
+    return lease:get_json()
+  end)
+  if not ok_get then
+    close_handle(lease)
+    client:close()
+    error(value)
+  end
+  if value == nil and not (type(meta_or_err) == "table" and
+      meta_or_err.no_content) then
+    close_handle(lease)
+    client:close()
+    return nil, meta_or_err
+  end
+
+  local ok_release, released, release_err = pcall(function()
+    return lease:release()
+  end)
+  if not ok_release then
+    close_handle(lease)
+    client:close()
+    error(released)
+  end
+  if released == nil then
+    close_handle(lease)
+    client:close()
+    return nil, release_err
+  end
+  client:close()
+  return value, meta_or_err
+end
+
+function M.save_json(config, req, value)
+  return M.with_client(config, function(client)
+    local lease, acquire_err = client:acquire(req)
+    if lease == nil then
+      return nil, acquire_err
+    end
+
+    local ok_update, updated, update_err = pcall(function()
+      return lease:update_json(value)
+    end)
+    if not ok_update then
+      close_handle(lease)
+      error(updated)
+    end
+    if updated == nil then
+      close_handle(lease)
+      return nil, update_err
+    end
+
+    local ok_release, released, release_err = pcall(function()
+      return lease:release()
+    end)
+    if not ok_release then
+      close_handle(lease)
+      error(released)
+    end
+    if released == nil then
+      close_handle(lease)
+      return nil, release_err
+    end
+    return updated
+  end)
+end
+
 function M.enqueue_json(config, req, value)
   return M.with_client(config, function(client)
     return client:enqueue(json_request(req), M.encode_json(value))
@@ -128,9 +212,7 @@ function M.with_acquired_lease(config, req, handler)
     end
 
     local ok, result, handler_err = pcall(handler, lease, client)
-    if type(lease.close) == "function" then
-      lease:close()
-    end
+    close_handle(lease)
     if not ok then
       error(result)
     end
