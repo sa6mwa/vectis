@@ -194,6 +194,35 @@ assert_opcua_lua_runtime_contract() {
   assert_contains "$repo_root/tests/lua/smoke.lua" 'opcua\.client'
 }
 
+assert_audio_sus_lua_runtime_contract() {
+  assert_contains "$repo_root/CMakeLists.txt" 'src/vectis_audio_lua\.c'
+  assert_contains "$repo_root/CMakeLists.txt" 'src/vectis_sus_lua\.c'
+  assert_contains "$repo_root/CMakeLists.txt" 'add_library\(vectis_audio_lua OBJECT'
+  assert_contains "$repo_root/CMakeLists.txt" 'add_library\(vectis_sus_lua OBJECT'
+  assert_contains "$repo_root/CMakeLists.txt" '\$<TARGET_OBJECTS:vectis_audio_lua>'
+  assert_contains "$repo_root/CMakeLists.txt" '\$<TARGET_OBJECTS:vectis_sus_lua>'
+  assert_contains "$repo_root/CMakeLists.txt" 'cpkt::audio'
+  assert_contains "$repo_root/CMakeLists.txt" 'cpkt::sus'
+  assert_contains "$repo_root/src/vectis_cli.c" 'cpkt_lua_runtime_register_c_module\(runtime, "audio"'
+  assert_contains "$repo_root/src/vectis_cli.c" 'cpkt_lua_runtime_register_c_module\(runtime, "sus"'
+  assert_contains "$repo_root/src/vectis_audio_lua.c" 'luaopen_audio'
+  assert_contains "$repo_root/src/vectis_audio_lua.c" 'cpkt_audio_decoder_open_reader'
+  assert_contains "$repo_root/src/vectis_audio_lua.c" 'cpkt_audio_encoder_open_writer'
+  assert_contains "$repo_root/src/vectis_audio_lua.c" 'cpkt_audio_capture_open_default'
+  assert_contains "$repo_root/src/vectis_audio_lua.c" 'cpkt_audio_playback_open_default'
+  assert_contains "$repo_root/src/vectis_sus_lua.c" 'luaopen_sus'
+  assert_contains "$repo_root/src/vectis_sus_lua.c" 'cpkt_sus_model_catalog_default'
+  assert_contains "$repo_root/src/vectis_sus_lua.c" 'cpkt_sus_open_cached'
+  assert_contains "$repo_root/scripts/verify_vectis_lua_preloads.sh" '"audio"'
+  assert_contains "$repo_root/scripts/verify_vectis_lua_preloads.sh" '"sus"'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'require\("audio"\)'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'require\("sus"\)'
+  assert_contains "$repo_root/tests/lua/audio_sus.cmake" 'audio\.decoder\.open_reader'
+  assert_contains "$repo_root/tests/lua/audio_sus.cmake" 'audio\.capture\.open_default'
+  assert_contains "$repo_root/tests/lua/audio_sus.cmake" 'sus\.open_cached'
+  assert_contains "$repo_root/tests/lua/example_local_facades_pack.cmake" 'examples/lua/audio_sus\.lua'
+}
+
 assert_lua_coverage_matrix_contract() {
   matrix="$repo_root/docs/lua-coverage-matrix.md"
 
@@ -342,6 +371,7 @@ assert_kore_static_runtime_contract
 assert_lockdc_lua_runtime_contract
 assert_lql_lua_runtime_contract
 assert_opcua_lua_runtime_contract
+assert_audio_sus_lua_runtime_contract
 assert_lua_coverage_matrix_contract
 assert_luarocks_artifact_rejected
 
