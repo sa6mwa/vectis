@@ -18,10 +18,21 @@ remain under `vectis.cert`.
 - `openssl.hmac(algorithm, key, data)` returns a binary HMAC for an OpenSSL EVP
   digest name.
 - `openssl.hmac_hex(algorithm, key, data)` returns the HMAC as lowercase hex.
+- `openssl.hex_encode(data)` returns lowercase hexadecimal.
+- `openssl.hex_decode(hex)` decodes lowercase or uppercase hexadecimal.
+- `openssl.base64_encode(data)` returns padded Base64.
+- `openssl.base64_decode(data)` decodes padded Base64.
+- `openssl.sign(opts)` signs `opts.data` with `opts.private_key_pem` or
+  `opts.private_key_path` and returns a binary signature. `opts.algorithm` or
+  `opts.digest` defaults to `sha256`.
+- `openssl.sign_hex(opts)` returns the signature as lowercase hex.
+- `openssl.verify(opts)` verifies `opts.signature` or `opts.signature_hex`
+  against `opts.data` using `opts.public_key_pem`, `opts.public_key_path`,
+  `opts.certificate_pem`, or `opts.certificate_path`. It returns a boolean.
 - `openssl.random_bytes(size)` returns CSPRNG bytes from `RAND_bytes`.
 - `openssl.random_hex(size)` returns CSPRNG bytes encoded as lowercase hex.
 
-`random_bytes` and `random_hex` accept sizes from `0` to `1048576` bytes.
+Allocation-backed helpers accept payloads from `0` to `1048576` bytes.
 
 ```lua
 local openssl = require("openssl")
@@ -32,6 +43,15 @@ assert(openssl.sha256_hex("abc") ==
 local nonce = openssl.random_hex(16)
 local sha1 = openssl.digest_hex("sha1", "abc")
 local mac = openssl.hmac_hex("sha256", "key", "message")
+local signature = openssl.sign({
+  private_key_path = "client-key.pem",
+  data = "payload",
+})
+assert(openssl.verify({
+  certificate_path = "client-cert.pem",
+  data = "payload",
+  signature = signature,
+}) == true)
 ```
 
 This facade is intentionally small. Additions should be made when they expose a

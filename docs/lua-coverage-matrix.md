@@ -31,7 +31,7 @@ Columns:
 | dep:libmdf | libmdf Lua module | yes | planned | yes | no | n/a | Raw module is preloaded; Agent Smith / terminal DX helpers are future work. |
 | dep:softline | softline Lua module | yes | planned | yes | no | n/a | Raw module is preloaded; higher-level prompt/terminal helpers are future work. |
 | dep:curl | libcurl Lua facade | yes | partial | yes | yes | planned | `curl`, `vectis.http`, and `vectis.webdav`; generic protocols are available through option tables. |
-| dep:openssl | OpenSSL | partial | partial | yes | yes | n/a | `openssl` exposes version, SHA-256, general EVP digest/HMAC, and CSPRNG helpers; `vectis.cert` owns certificate workflows; broader signing/verification primitives remain. |
+| dep:openssl | OpenSSL | yes | partial | yes | yes | n/a | `openssl` exposes version, SHA-256, general EVP digest/HMAC, hex/Base64 codecs, PEM-backed signing/verification, and CSPRNG helpers; `vectis.cert` owns certificate workflows. |
 | dep:libssh2 | libssh2 | planned | partial | yes | no | n/a | `vectis.ssh.exec` and libssh2-backed SFTP file upload/download exist; raw sessions, channels, SCP, and deeper SFTP operations are missing. |
 | dep:libxml2 | libxml2/XML | partial | partial | yes | no | n/a | `vectis.xml` exposes XML-to-LoneJSON parsing; raw DOM/libxml2 and XML serialization remain missing. |
 | dep:dsv | Vectis DSV/CSV/TSV helpers | partial | partial | yes | yes | n/a | `vectis.dsv` exposes materialized parse, typed source-to-callback iteration for dynamic and fixed-capacity string fields, spill, row serialization, and packed execution coverage; route-row Lua handler integration remains. |

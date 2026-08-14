@@ -10539,6 +10539,454 @@ static size_t vectis_lua_openssl_size(lua_State *lua, int index,
   return (size_t)value;
 }
 
+static void vectis_lua_openssl_check_bytes(lua_State *lua, size_t size,
+                                           const char *label) {
+  if (size > VECTIS_LUA_OPENSSL_MAX_BYTES) {
+    luaL_error(lua, "%s must be at most %u bytes", label,
+               (unsigned)VECTIS_LUA_OPENSSL_MAX_BYTES);
+  }
+}
+
+static int vectis_lua_openssl_hex_encode(lua_State *lua) {
+  const unsigned char *data;
+  size_t data_size;
+
+  data = (const unsigned char *)luaL_checklstring(lua, 1, &data_size);
+  vectis_lua_openssl_check_bytes(lua, data_size, "openssl hex input");
+  vectis_lua_openssl_push_hex(lua, data, data_size);
+  return 1;
+}
+
+static int vectis_lua_openssl_hex_digit(int ch) {
+  if (ch >= '0' && ch <= '9') {
+    return ch - '0';
+  }
+  if (ch >= 'a' && ch <= 'f') {
+    return ch - 'a' + 10;
+  }
+  if (ch >= 'A' && ch <= 'F') {
+    return ch - 'A' + 10;
+  }
+  return -1;
+}
+
+static int vectis_lua_openssl_hex_decode(lua_State *lua) {
+  const char *hex;
+  unsigned char *out;
+  size_t hex_size;
+  size_t out_size;
+  size_t i;
+  int hi;
+  int lo;
+
+  hex = luaL_checklstring(lua, 1, &hex_size);
+  if ((hex_size % 2u) != 0u) {
+    return luaL_error(lua, "openssl hex input must have an even length");
+  }
+  out_size = hex_size / 2u;
+  vectis_lua_openssl_check_bytes(lua, out_size, "openssl hex output");
+  if (out_size == 0u) {
+    lua_pushliteral(lua, "");
+    return 1;
+  }
+  out = (unsigned char *)malloc(out_size);
+  if (out == NULL) {
+    return luaL_error(lua, "openssl hex decode allocation failed");
+  }
+  for (i = 0u; i < out_size; ++i) {
+    hi = vectis_lua_openssl_hex_digit((unsigned char)hex[i * 2u]);
+    lo = vectis_lua_openssl_hex_digit((unsigned char)hex[i * 2u + 1u]);
+    if (hi < 0 || lo < 0) {
+      free(out);
+      return luaL_error(lua, "openssl hex input contains non-hex data");
+    }
+    out[i] = (unsigned char)((hi << 4) | lo);
+  }
+  lua_pushlstring(lua, (const char *)out, out_size);
+  free(out);
+  return 1;
+}
+
+static int vectis_lua_openssl_base64_encode(lua_State *lua) {
+  const unsigned char *data;
+  unsigned char *out;
+  size_t data_size;
+  size_t out_size;
+  int written;
+
+  data = (const unsigned char *)luaL_checklstring(lua, 1, &data_size);
+  vectis_lua_openssl_check_bytes(lua, data_size, "openssl base64 input");
+  if (data_size == 0u) {
+    lua_pushliteral(lua, "");
+    return 1;
+  }
+  out_size = 4u * ((data_size + 2u) / 3u);
+  out = (unsigned char *)malloc(out_size + 1u);
+  if (out == NULL) {
+    return luaL_error(lua, "openssl base64 encode allocation failed");
+  }
+  written = EVP_EncodeBlock(out, data, (int)data_size);
+  if (written < 0) {
+    free(out);
+    return luaL_error(lua, "openssl base64 encode failed");
+  }
+  lua_pushlstring(lua, (const char *)out, (size_t)written);
+  free(out);
+  return 1;
+}
+
+static int vectis_lua_openssl_base64_decode(lua_State *lua) {
+  const unsigned char *data;
+  unsigned char *out;
+  size_t data_size;
+  size_t out_size;
+  size_t max_input;
+  int decoded;
+  int padding;
+
+  data = (const unsigned char *)luaL_checklstring(lua, 1, &data_size);
+  if (data_size == 0u) {
+    lua_pushliteral(lua, "");
+    return 1;
+  }
+  if ((data_size % 4u) != 0u) {
+    return luaL_error(lua, "openssl base64 input length is invalid");
+  }
+  max_input = 4u * ((VECTIS_LUA_OPENSSL_MAX_BYTES + 2u) / 3u);
+  if (data_size > max_input) {
+    return luaL_error(lua, "openssl base64 output must be at most %u bytes",
+                      (unsigned)VECTIS_LUA_OPENSSL_MAX_BYTES);
+  }
+  out_size = (data_size / 4u) * 3u;
+  out = (unsigned char *)malloc(out_size);
+  if (out == NULL) {
+    return luaL_error(lua, "openssl base64 decode allocation failed");
+  }
+  decoded = EVP_DecodeBlock(out, data, (int)data_size);
+  if (decoded < 0) {
+    free(out);
+    return luaL_error(lua, "openssl base64 input is invalid");
+  }
+  padding = 0;
+  if (data[data_size - 1u] == '=') {
+    padding++;
+  }
+  if (data[data_size - 2u] == '=') {
+    padding++;
+  }
+  if ((size_t)decoded < (size_t)padding) {
+    free(out);
+    return luaL_error(lua, "openssl base64 input is invalid");
+  }
+  out_size = (size_t)decoded - (size_t)padding;
+  vectis_lua_openssl_check_bytes(lua, out_size, "openssl base64 output");
+  lua_pushlstring(lua, (const char *)out, out_size);
+  free(out);
+  return 1;
+}
+
+static int vectis_lua_openssl_pem_from_options(lua_State *lua,
+                                               int option_index,
+                                               const char *pem_field,
+                                               const char *path_field,
+                                               const unsigned char **pem,
+                                               size_t *pem_size,
+                                               unsigned char **owned,
+                                               const char *label) {
+  const char *path;
+
+  *pem = (const unsigned char *)vectis_lua_table_lstring(
+      lua, option_index, pem_field, pem_size);
+  *owned = NULL;
+  if (*pem != NULL) {
+    vectis_lua_openssl_check_bytes(lua, *pem_size, label);
+    return 0;
+  }
+  path = vectis_lua_table_string(lua, option_index, path_field);
+  if (path == NULL) {
+    return luaL_error(lua, "openssl %s or %s is required", pem_field,
+                      path_field);
+  }
+  if (vectis_read_all(path, owned, pem_size) != 0 || *pem_size == 0u) {
+    free(*owned);
+    *owned = NULL;
+    return luaL_error(lua, "failed to read openssl %s", path_field);
+  }
+  vectis_lua_openssl_check_bytes(lua, *pem_size, label);
+  *pem = *owned;
+  return 0;
+}
+
+static EVP_PKEY *vectis_lua_openssl_private_key(lua_State *lua,
+                                                int option_index) {
+  const unsigned char *pem;
+  unsigned char *owned;
+  size_t pem_size;
+  BIO *bio;
+  EVP_PKEY *key;
+
+  if (vectis_lua_openssl_pem_from_options(
+          lua, option_index, "private_key_pem", "private_key_path", &pem,
+          &pem_size, &owned, "openssl private key") != 0) {
+    return NULL;
+  }
+  bio = BIO_new_mem_buf(pem, (int)pem_size);
+  if (bio == NULL) {
+    free(owned);
+    luaL_error(lua, "failed to allocate openssl private key reader");
+    return NULL;
+  }
+  key = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+  BIO_free(bio);
+  free(owned);
+  if (key == NULL) {
+    luaL_error(lua, "failed to parse openssl private key");
+    return NULL;
+  }
+  return key;
+}
+
+static EVP_PKEY *vectis_lua_openssl_public_key_from_pem(
+    lua_State *lua, const unsigned char *pem, size_t pem_size,
+    int is_certificate) {
+  BIO *bio;
+  EVP_PKEY *key;
+  X509 *cert;
+
+  bio = BIO_new_mem_buf(pem, (int)pem_size);
+  if (bio == NULL) {
+    luaL_error(lua, "failed to allocate openssl public key reader");
+    return NULL;
+  }
+  if (is_certificate) {
+    cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+    BIO_free(bio);
+    if (cert == NULL) {
+      luaL_error(lua, "failed to parse openssl certificate");
+      return NULL;
+    }
+    key = X509_get_pubkey(cert);
+    X509_free(cert);
+  } else {
+    key = PEM_read_bio_PUBKEY(bio, NULL, NULL, NULL);
+    BIO_free(bio);
+  }
+  if (key == NULL) {
+    luaL_error(lua, "failed to parse openssl public key");
+    return NULL;
+  }
+  return key;
+}
+
+static EVP_PKEY *vectis_lua_openssl_public_key(lua_State *lua,
+                                               int option_index) {
+  const unsigned char *pem;
+  unsigned char *owned;
+  size_t pem_size;
+
+  pem = (const unsigned char *)vectis_lua_table_lstring(
+      lua, option_index, "certificate_pem", &pem_size);
+  owned = NULL;
+  if (pem != NULL) {
+    vectis_lua_openssl_check_bytes(lua, pem_size, "openssl certificate");
+    return vectis_lua_openssl_public_key_from_pem(lua, pem, pem_size, 1);
+  }
+  if (vectis_lua_table_string(lua, option_index, "certificate_path") != NULL) {
+    if (vectis_lua_openssl_pem_from_options(
+            lua, option_index, "certificate_pem", "certificate_path", &pem,
+            &pem_size, &owned, "openssl certificate") != 0) {
+      return NULL;
+    }
+    {
+      EVP_PKEY *key;
+
+      key = vectis_lua_openssl_public_key_from_pem(lua, pem, pem_size, 1);
+      free(owned);
+      return key;
+    }
+  }
+  if (vectis_lua_openssl_pem_from_options(
+          lua, option_index, "public_key_pem", "public_key_path", &pem,
+          &pem_size, &owned, "openssl public key") != 0) {
+    return NULL;
+  }
+  {
+    EVP_PKEY *key;
+
+    key = vectis_lua_openssl_public_key_from_pem(lua, pem, pem_size, 0);
+    free(owned);
+    return key;
+  }
+}
+
+static int vectis_lua_openssl_sign_impl(lua_State *lua, int as_hex) {
+  const EVP_MD *digest;
+  EVP_MD_CTX *ctx;
+  EVP_PKEY *key;
+  const unsigned char *data;
+  const char *algorithm;
+  unsigned char *signature;
+  size_t data_size;
+  size_t signature_size;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  algorithm = vectis_lua_table_string(lua, 1, "algorithm");
+  if (algorithm == NULL) {
+    algorithm = vectis_lua_table_string(lua, 1, "digest");
+  }
+  if (algorithm == NULL) {
+    algorithm = "sha256";
+  }
+  data = (const unsigned char *)vectis_lua_table_lstring(lua, 1, "data",
+                                                         &data_size);
+  if (data == NULL) {
+    return luaL_error(lua, "openssl sign data is required");
+  }
+  vectis_lua_openssl_check_bytes(lua, data_size, "openssl sign data");
+  digest = vectis_lua_openssl_digest(lua, algorithm);
+  key = vectis_lua_openssl_private_key(lua, 1);
+  if (key == NULL) {
+    return 1;
+  }
+  ctx = EVP_MD_CTX_new();
+  signature = NULL;
+  signature_size = 0u;
+  if (ctx == NULL ||
+      EVP_DigestSignInit(ctx, NULL, digest, NULL, key) != 1 ||
+      EVP_DigestSignUpdate(ctx, data, data_size) != 1 ||
+      EVP_DigestSignFinal(ctx, NULL, &signature_size) != 1 ||
+      signature_size > VECTIS_LUA_OPENSSL_MAX_BYTES) {
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(key);
+    return luaL_error(lua, "openssl sign failed");
+  }
+  signature = (unsigned char *)malloc(signature_size);
+  if (signature == NULL) {
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(key);
+    return luaL_error(lua, "openssl sign allocation failed");
+  }
+  if (EVP_DigestSignFinal(ctx, signature, &signature_size) != 1) {
+    OPENSSL_cleanse(signature, signature_size);
+    free(signature);
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(key);
+    return luaL_error(lua, "openssl sign failed");
+  }
+  if (as_hex) {
+    vectis_lua_openssl_push_hex(lua, signature, signature_size);
+  } else {
+    lua_pushlstring(lua, (const char *)signature, signature_size);
+  }
+  OPENSSL_cleanse(signature, signature_size);
+  free(signature);
+  EVP_MD_CTX_free(ctx);
+  EVP_PKEY_free(key);
+  return 1;
+}
+
+static int vectis_lua_openssl_sign(lua_State *lua) {
+  return vectis_lua_openssl_sign_impl(lua, 0);
+}
+
+static int vectis_lua_openssl_sign_hex(lua_State *lua) {
+  return vectis_lua_openssl_sign_impl(lua, 1);
+}
+
+static int vectis_lua_openssl_verify(lua_State *lua) {
+  const EVP_MD *digest;
+  EVP_MD_CTX *ctx;
+  EVP_PKEY *key;
+  const unsigned char *data;
+  const unsigned char *signature;
+  const char *algorithm;
+  unsigned char *decoded_signature;
+  size_t data_size;
+  size_t signature_size;
+  int result;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  algorithm = vectis_lua_table_string(lua, 1, "algorithm");
+  if (algorithm == NULL) {
+    algorithm = vectis_lua_table_string(lua, 1, "digest");
+  }
+  if (algorithm == NULL) {
+    algorithm = "sha256";
+  }
+  data = (const unsigned char *)vectis_lua_table_lstring(lua, 1, "data",
+                                                         &data_size);
+  if (data == NULL) {
+    return luaL_error(lua, "openssl verify data is required");
+  }
+  vectis_lua_openssl_check_bytes(lua, data_size, "openssl verify data");
+  signature = (const unsigned char *)vectis_lua_table_lstring(
+      lua, 1, "signature", &signature_size);
+  decoded_signature = NULL;
+  if (signature == NULL) {
+    const char *signature_hex;
+    size_t signature_hex_size;
+    size_t i;
+    int hi;
+    int lo;
+
+    signature_hex =
+        vectis_lua_table_lstring(lua, 1, "signature_hex", &signature_hex_size);
+    if (signature_hex == NULL) {
+      return luaL_error(lua, "openssl verify signature is required");
+    }
+    if ((signature_hex_size % 2u) != 0u) {
+      return luaL_error(lua,
+                        "openssl verify signature_hex must have an even length");
+    }
+    signature_size = signature_hex_size / 2u;
+    vectis_lua_openssl_check_bytes(lua, signature_size,
+                                   "openssl verify signature");
+    decoded_signature = (unsigned char *)malloc(signature_size);
+    if (decoded_signature == NULL) {
+      return luaL_error(lua, "openssl verify signature allocation failed");
+    }
+    for (i = 0u; i < signature_size; ++i) {
+      hi = vectis_lua_openssl_hex_digit(
+          (unsigned char)signature_hex[i * 2u]);
+      lo = vectis_lua_openssl_hex_digit(
+          (unsigned char)signature_hex[i * 2u + 1u]);
+      if (hi < 0 || lo < 0) {
+        free(decoded_signature);
+        return luaL_error(lua,
+                          "openssl verify signature_hex contains non-hex data");
+      }
+      decoded_signature[i] = (unsigned char)((hi << 4) | lo);
+    }
+    signature = decoded_signature;
+  }
+  vectis_lua_openssl_check_bytes(lua, signature_size,
+                                 "openssl verify signature");
+  digest = vectis_lua_openssl_digest(lua, algorithm);
+  key = vectis_lua_openssl_public_key(lua, 1);
+  if (key == NULL) {
+    free(decoded_signature);
+    return 1;
+  }
+  ctx = EVP_MD_CTX_new();
+  if (ctx == NULL ||
+      EVP_DigestVerifyInit(ctx, NULL, digest, NULL, key) != 1 ||
+      EVP_DigestVerifyUpdate(ctx, data, data_size) != 1) {
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(key);
+    free(decoded_signature);
+    return luaL_error(lua, "openssl verify failed");
+  }
+  result = EVP_DigestVerifyFinal(ctx, signature, signature_size);
+  EVP_MD_CTX_free(ctx);
+  EVP_PKEY_free(key);
+  free(decoded_signature);
+  if (result < 0) {
+    return luaL_error(lua, "openssl verify failed");
+  }
+  lua_pushboolean(lua, result == 1);
+  return 1;
+}
+
 static int vectis_lua_openssl_random_bytes(lua_State *lua) {
   size_t size;
   unsigned char *bytes;
@@ -10605,6 +11053,20 @@ static int luaopen_openssl(lua_State *lua) {
   lua_setfield(lua, -2, "hmac");
   lua_pushcfunction(lua, vectis_lua_openssl_hmac_hex);
   lua_setfield(lua, -2, "hmac_hex");
+  lua_pushcfunction(lua, vectis_lua_openssl_hex_encode);
+  lua_setfield(lua, -2, "hex_encode");
+  lua_pushcfunction(lua, vectis_lua_openssl_hex_decode);
+  lua_setfield(lua, -2, "hex_decode");
+  lua_pushcfunction(lua, vectis_lua_openssl_base64_encode);
+  lua_setfield(lua, -2, "base64_encode");
+  lua_pushcfunction(lua, vectis_lua_openssl_base64_decode);
+  lua_setfield(lua, -2, "base64_decode");
+  lua_pushcfunction(lua, vectis_lua_openssl_sign);
+  lua_setfield(lua, -2, "sign");
+  lua_pushcfunction(lua, vectis_lua_openssl_sign_hex);
+  lua_setfield(lua, -2, "sign_hex");
+  lua_pushcfunction(lua, vectis_lua_openssl_verify);
+  lua_setfield(lua, -2, "verify");
   lua_pushcfunction(lua, vectis_lua_openssl_random_bytes);
   lua_setfield(lua, -2, "random_bytes");
   lua_pushcfunction(lua, vectis_lua_openssl_random_hex);

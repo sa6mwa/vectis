@@ -286,7 +286,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [ ] Expand Lua server-side WebDAV helpers beyond Vectis-managed storage so ordinary Lua apps can mount direct mutable disk docroots and read-only embedded docroots as WebDAV mounts without C glue.
 - [x] Add an initial raw-but-narrow OpenSSL Lua facade for stable primitives not covered by `vectis.cert`, while keeping Vectis certificate workflows as the default DX.
 - [x] Expand the raw OpenSSL Lua facade with general EVP digest and HMAC helpers while keeping fixed SHA-256 helpers for common workflows.
-- [ ] Expand the raw OpenSSL Lua facade for advanced signing, verification, encoding, and key/certificate inspection operations that are not covered by `vectis.cert`.
+- [x] Expand the raw OpenSSL Lua facade for advanced signing, verification, encoding, and key/certificate inspection operations that are not covered by `vectis.cert`.
 - [x] Expand `vectis.cert` Lua helpers to cover private key generation, CSR generation, self-signed bundles, CA bundles, CA-signed cert/key pairs, cert/key pair validation, CA validation, and inspection.
 - [ ] Add certificate reload/update hooks where Kore can support them.
 - [x] Add Vectis-owned Lua libssh2-backed SFTP file upload/download helpers with host-key, known-hosts, timeout, and structured error contracts where curl-backed SFTP is insufficient.
