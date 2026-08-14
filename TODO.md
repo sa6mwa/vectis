@@ -294,7 +294,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add Vectis-owned Lua SSH/SCP workflow helpers on top of the raw libssh2 facade for common service operations, while preserving `vectis.http.sftp_*` for curl-backed transfers.
 - [x] Add Lua MQTT publish helpers/tests where the generic `curl.perform()` facade is sufficient but workflow defaults improve DX.
 - [x] Add other libcurl protocol examples/tests where the generic `curl.perform()` facade is sufficient but workflow defaults improve DX.
-- [x] Add Lua helpers for HTTP form bodies and non-JSON simple `get`, `post`, `put`, `patch`, and `delete` helpers in addition to JSON helpers.
+- [x] Add Lua helpers for HTTP form bodies and non-JSON simple `get`, `post`, `put`, `patch`, `delete`, and `head` helpers in addition to JSON helpers.
 - [x] Add Lua multipart upload helpers backed by libcurl MIME parts, including text shorthand and file-backed parts.
 - [x] Add reusable Lua HTTP client defaults for retry policies, proxy/TLS/client-cert settings, protocol allowlists, timeouts, credentials, and merged headers.
 - [ ] Add richer Lua HTTP file-backed response presets if repeated app workflows need more than `download_path`/`upload_path` plus client defaults.

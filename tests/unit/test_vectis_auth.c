@@ -491,6 +491,7 @@ int main(void) {
   vectis_webdav_auth_request webdav_request;
   vectis_webdav_auth_response webdav_response;
   vectis_request *webdav_vectis_request;
+  vectis_mutable_bytes basic_authorization;
   vectis_error error;
   vectis_status status;
   vectis_totp totp;
@@ -537,6 +538,7 @@ int main(void) {
   vectis_webdav_auth_provider_config_init(&webdav_auth_config);
   vectis_webdav_auth_response_init(&webdav_response);
   webdav_vectis_request = NULL;
+  memset(&basic_authorization, 0, sizeof(basic_authorization));
   vectis_error_clear(&error);
 
   if (mkdtemp(temp) == NULL) {
@@ -1217,6 +1219,20 @@ int main(void) {
       snprintf(basic_header, sizeof(basic_header), "Basic %s", basic_token);
   expect(written > 0 && (size_t)written < sizeof(basic_header),
          "formats basic header");
+  status = vectis_auth_basic_authorization(basic.client_id, basic.client_secret,
+                                           &basic_authorization, &error);
+  expect_ok(status, &error, "formats Basic Authorization helper");
+  expect(basic_authorization.data != NULL &&
+             basic_authorization.size == strlen(basic_header) &&
+             strcmp((const char *)basic_authorization.data, basic_header) == 0,
+         "Basic Authorization helper matches expected header");
+  vectis_mutable_bytes_cleanup(&basic_authorization);
+  status = vectis_auth_basic_authorization(NULL, basic.client_secret,
+                                           &basic_authorization, &error);
+  expect(status == VECTIS_ERR_INVALID,
+         "Basic Authorization helper rejects missing client_id");
+  expect(basic_authorization.data == NULL && basic_authorization.size == 0u,
+         "Basic Authorization helper leaves output empty on failure");
 
   status = vectis_auth_verify_authorization(
       &store, basic_header, VECTIS_AUTH_MODE_BASIC, &result, &error);
@@ -1624,6 +1640,7 @@ int main(void) {
   vectis_auth_issued_credential_cleanup(&webdav_key);
   vectis_auth_issued_credential_cleanup(&basic);
   vectis_auth_issued_credential_cleanup(&bearer);
+  vectis_mutable_bytes_cleanup(&basic_authorization);
   vectis_internal_request_free(webdav_vectis_request);
   remove_tree(temp);
   return failures == 0 ? 0 : 1;

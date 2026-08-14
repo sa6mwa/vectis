@@ -1849,6 +1849,79 @@ void vectis_auth_issued_credential_cleanup(
   vectis_auth_issued_credential_init(credential);
 }
 
+vectis_status vectis_auth_basic_authorization(const char *client_id,
+                                              const char *client_secret,
+                                              vectis_mutable_bytes *out,
+                                              vectis_error *error) {
+  static const char prefix[] = "Basic ";
+  unsigned char *clear;
+  char *header;
+  size_t client_id_len;
+  size_t client_secret_len;
+  size_t clear_len;
+  size_t token_len;
+  size_t total_len;
+  int encoded_len;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "Basic Authorization output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  out->data = NULL;
+  out->size = 0u;
+  if (client_id == NULL || client_id[0] == '\0' || client_secret == NULL ||
+      client_secret[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "Basic Authorization requires client_id and client_secret");
+    return VECTIS_ERR_INVALID;
+  }
+  client_id_len = strlen(client_id);
+  client_secret_len = strlen(client_secret);
+  if (client_id_len > (size_t)INT_MAX || client_secret_len > (size_t)INT_MAX ||
+      client_id_len > (size_t)INT_MAX - 1u - client_secret_len) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "Basic Authorization credential is too large");
+    return VECTIS_ERR_INVALID;
+  }
+  clear_len = client_id_len + 1u + client_secret_len;
+  token_len = 4u * ((clear_len + 2u) / 3u);
+  if (token_len > (size_t)INT_MAX ||
+      token_len > ((size_t)-1) - (sizeof(prefix) - 1u) - 1u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "Basic Authorization header is too large");
+    return VECTIS_ERR_INVALID;
+  }
+  total_len = (sizeof(prefix) - 1u) + token_len;
+  clear = (unsigned char *)malloc(clear_len);
+  header = (char *)malloc(total_len + 1u);
+  if (clear == NULL || header == NULL) {
+    free(header);
+    free(clear);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate Basic Authorization header");
+    return VECTIS_ERR_NOMEM;
+  }
+  memcpy(clear, client_id, client_id_len);
+  clear[client_id_len] = (unsigned char)':';
+  memcpy(clear + client_id_len + 1u, client_secret, client_secret_len);
+  memcpy(header, prefix, sizeof(prefix) - 1u);
+  encoded_len = EVP_EncodeBlock((unsigned char *)header + sizeof(prefix) - 1u,
+                                clear, (int)clear_len);
+  OPENSSL_cleanse(clear, clear_len);
+  free(clear);
+  if (encoded_len < 0 || (size_t)encoded_len != token_len) {
+    free(header);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to encode Basic Authorization header");
+    return VECTIS_ERR_STATE;
+  }
+  header[total_len] = '\0';
+  out->data = header;
+  out->size = total_len;
+  return VECTIS_OK;
+}
+
 void vectis_auth_result_init(vectis_auth_result *result) {
   if (result == NULL) {
     return;

@@ -797,6 +797,16 @@ local webdav_key = assert(vectis.auth.webdav_key({
 }))
 assert(type(webdav_key.client_id) == "string")
 assert(type(webdav_key.client_secret) == "string")
+local webdav_authorization = assert(vectis.auth.basic_authorization(webdav_key))
+assert(webdav_authorization == "Basic " .. base64_encode(
+  webdav_key.client_id .. ":" .. webdav_key.client_secret))
+assert(vectis.auth.basic_authorization(
+  webdav_key.client_id, webdav_key.client_secret) == webdav_authorization)
+local missing_basic, missing_basic_err =
+  vectis.auth.basic_authorization({client_id = webdav_key.client_id})
+assert(missing_basic == nil)
+assert(missing_basic_err.status == vectis.ERR_INVALID)
+assert(missing_basic_err.message:find("client_secret", 1, true))
 local totp = assert(vectis.auth.totp.new("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"))
 assert(totp:secret() == "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 assert(totp:generate(59) == "287082")
@@ -889,6 +899,7 @@ assert(type(vectis.cert.generate_csr) == "function")
 assert(type(vectis.cert.inspect_bundle) == "function")
 assert(type(vectis.cert.validate_bundle) == "function")
 assert(type(vectis.cert.validate_pair) == "function")
+assert(type(vectis.auth.basic_authorization) == "function")
 
 assert(type(pslog) == "table")
 assert(type(pslog.new_json) == "function")

@@ -7,30 +7,6 @@ local credentials_path = os.getenv("VECTIS_LUA_API_EXAMPLE_AUTH_PATH") or
     "vectis-lua-api-example-credentials.json"
 local serve_forever = os.getenv("VECTIS_LUA_API_EXAMPLE_SERVE") == "1"
 
-local b64chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-
-local function base64(data)
-  local out = {}
-  for i = 1, #data, 3 do
-    local a = data:byte(i) or 0
-    local b = data:byte(i + 1) or 0
-    local c = data:byte(i + 2) or 0
-    local n = a * 65536 + b * 256 + c
-    local pad = (#data - i == 0) and 2 or ((#data - i == 1) and 1 or 0)
-    out[#out + 1] = b64chars:sub(math.floor(n / 262144) % 64 + 1,
-                                  math.floor(n / 262144) % 64 + 1)
-    out[#out + 1] = b64chars:sub(math.floor(n / 4096) % 64 + 1,
-                                  math.floor(n / 4096) % 64 + 1)
-    out[#out + 1] = pad >= 2 and "=" or
-        b64chars:sub(math.floor(n / 64) % 64 + 1,
-                     math.floor(n / 64) % 64 + 1)
-    out[#out + 1] = pad >= 1 and "=" or
-        b64chars:sub(n % 64 + 1, n % 64 + 1)
-  end
-  return table.concat(out)
-end
-
 local function request(path, options)
   options = options or {}
   return http.request({
@@ -74,8 +50,7 @@ local credential = assert(vectis.auth.webdav_key({
   username = "api-user",
   password = "api-password",
 }))
-local authorization =
-    "Basic " .. base64(credential.client_id .. ":" .. credential.client_secret)
+local authorization = assert(vectis.auth.basic_authorization(credential))
 
 local server = assert(vectis.server.new({
   app_name = "lua-api-example",

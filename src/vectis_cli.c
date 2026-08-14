@@ -8358,6 +8358,34 @@ static void vectis_lua_auth_push_issued_credential(
   }
 }
 
+static int vectis_lua_auth_basic_authorization(lua_State *lua) {
+  const char *client_id;
+  const char *client_secret;
+  vectis_mutable_bytes header;
+  vectis_error error;
+  vectis_status status;
+
+  client_id = NULL;
+  client_secret = NULL;
+  if (lua_istable(lua, 1)) {
+    client_id = vectis_lua_table_string(lua, 1, "client_id");
+    client_secret = vectis_lua_table_string(lua, 1, "client_secret");
+  } else {
+    client_id = luaL_optstring(lua, 1, NULL);
+    client_secret = luaL_optstring(lua, 2, NULL);
+  }
+  memset(&header, 0, sizeof(header));
+  vectis_error_clear(&error);
+  status =
+      vectis_auth_basic_authorization(client_id, client_secret, &header, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushlstring(lua, (const char *)header.data, header.size);
+  vectis_mutable_bytes_cleanup(&header);
+  return 1;
+}
+
 static int vectis_lua_auth_copy_token_flow_string(lua_State *lua, int index,
                                                   const char *field,
                                                   char **out) {
@@ -10190,6 +10218,8 @@ static void vectis_lua_push_auth_table(lua_State *lua) {
   lua_setfield(lua, -2, "verify");
   lua_pushcfunction(lua, vectis_lua_auth_revoke);
   lua_setfield(lua, -2, "revoke");
+  lua_pushcfunction(lua, vectis_lua_auth_basic_authorization);
+  lua_setfield(lua, -2, "basic_authorization");
   lua_pushcfunction(lua, vectis_lua_auth_user_add);
   lua_setfield(lua, -2, "user_add");
   lua_pushcfunction(lua, vectis_lua_auth_user_login);

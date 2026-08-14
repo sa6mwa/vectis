@@ -616,6 +616,16 @@ void vectis_auth_oidc_token_exchange_init(
 void vectis_auth_oidc_token_exchange_cleanup(
     vectis_auth_oidc_token_exchange *exchange);
 
+/*
+ * Formats an HTTP Basic Authorization header for an issued Basic credential.
+ * `out` receives an owned NUL-terminated byte buffer containing
+ * "Basic <base64(client_id:client_secret)>"; release it with
+ * vectis_mutable_bytes_cleanup(). On failure, `out` is left empty.
+ */
+vectis_status vectis_auth_basic_authorization(const char *client_id,
+                                              const char *client_secret,
+                                              vectis_mutable_bytes *out,
+                                              vectis_error *error);
 vectis_status vectis_auth_store_init(const vectis_auth_store_config *config,
                                      vectis_error *error);
 /* Issues a lonejson-backed Basic and/or Bearer credential, appends the hashed

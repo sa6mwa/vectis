@@ -85,6 +85,19 @@ Vectis therefore issues application keys after the configured auth flow succeeds
 credential table with `client_id`, `client_secret`, `api_key`, and optional
 `claim_json`.
 
+`basic_authorization(credential)` or
+`basic_authorization(client_id, client_secret)` formats the HTTP
+`Authorization` header value for issued Basic credentials:
+
+```lua
+local key = assert(vectis.auth.webdav_key({
+  credentials_path = "credentials.json",
+  username = "admin",
+  password = "secret",
+}))
+local authorization = assert(vectis.auth.basic_authorization(key))
+```
+
 `oauth2_webdav_key(opts)` issues a WebDAV credential linked to a stored
 OAuth2/OIDC flow:
 
