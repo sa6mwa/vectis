@@ -255,6 +255,48 @@ assert(api_server:auth_json({
   auth = callback_provider,
   body = '{"ok":true,"provider":"callback-direct"}\n',
 }) == true)
+assert(api_server:route({
+  path = "/dynamic/:name",
+  methods = {"GET", "POST"},
+  body = {
+    mode = "buffered",
+    max_bytes = 4096,
+  },
+  handler = function(request)
+    local name = assert(request.param("name"))
+    local suffix = request.query("suffix") or ""
+    local trace = request.header("x-vectis-trace") or "none"
+    if request.method == "POST" then
+      assert(request.body == "payload=1")
+      assert(request.body_size == 9)
+      return {
+        status = 201,
+        content_type = "text/plain; charset=utf-8",
+        headers = {
+          ["x-vectis-handler"] = "dynamic",
+        },
+        body = name .. suffix .. ":" .. trace .. ":" .. request.body .. "\n",
+      }
+    end
+    return {
+      status = 200,
+      headers = {
+        ["x-vectis-handler"] = "dynamic",
+      },
+      body = name .. suffix .. ":" .. trace .. "\n",
+    }
+  end,
+}) == true)
+assert(api_server:route({
+  path = "/dynamic-file",
+  handler = function()
+    return {
+      status = 200,
+      content_type = "text/plain",
+      file_path = static_dir .. "/index.html",
+    }
+  end,
+}) == true)
 assert(api_server:static_directory({
   path_prefix = "/files",
   root_dir = static_dir,
@@ -299,6 +341,42 @@ assert(redirect_response.status == 303)
 assert(redirect_response.body == "see status\n")
 assert(redirect_response.headers:lower():find("location: /status", 1, true))
 assert(redirect_response.headers:lower():find("cache-control: no-store", 1, true))
+local dynamic_get = vectis.http.get("http://127.0.0.1:28484/dynamic/alice?suffix=-ok", {
+  headers = {
+    ["x-vectis-trace"] = "trace-get",
+  },
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_get.ok == true,
+       dynamic_get.error and dynamic_get.error.message)
+assert(dynamic_get.status == 200)
+assert(dynamic_get.body == "alice-ok:trace-get\n")
+assert(dynamic_get.headers:lower():find("x-vectis-handler: dynamic", 1, true))
+local dynamic_post = vectis.http.post("http://127.0.0.1:28484/dynamic/bob?suffix=-ok", {
+  body = "payload=1",
+  headers = {
+    ["x-vectis-trace"] = "trace-post",
+  },
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_post.ok == true,
+       dynamic_post.error and dynamic_post.error.message)
+assert(dynamic_post.status == 201)
+assert(dynamic_post.body == "bob-ok:trace-post:payload=1\n")
+assert(dynamic_post.headers:lower():find("x-vectis-handler: dynamic", 1, true))
+local dynamic_file = vectis.http.get("http://127.0.0.1:28484/dynamic-file", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_file.ok == true,
+       dynamic_file.error and dynamic_file.error.message)
+assert(dynamic_file.status == 200)
+assert(dynamic_file.body == "static directory index\n")
 local simple_get = vectis.http.get("http://127.0.0.1:28484/status", {
   timeout_ms = 2000,
   connect_timeout_ms = 1000,

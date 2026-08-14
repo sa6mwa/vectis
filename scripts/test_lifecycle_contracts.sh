@@ -261,6 +261,7 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$matrix" '\| workflow:server-runtime \|'
   assert_contains "$matrix" '\| workflow:routes-json \|'
   assert_contains "$matrix" '\| workflow:routes-streaming \|'
+  assert_contains "$repo_root/docs/lua-server.md" 'server:route'
   assert_contains "$matrix" '\| workflow:static-assets \|'
   assert_contains "$matrix" '\| workflow:webdav-server \|'
   assert_contains "$matrix" '\| workflow:webdav-client \|'

@@ -1,7 +1,8 @@
 # Vectis Lua Server
 
-`vectis.server` exposes C-owned server receivers for Lua applications. These
-helpers register fixed routes and mounts without Lua request callbacks.
+`vectis.server` exposes C-owned server receivers for Lua applications. It
+supports fixed routes, buffered Lua request callbacks, static mounts, WebDAV,
+auth routes, and lockd consumer services.
 
 ## Lifecycle
 
@@ -53,6 +54,53 @@ assert(server:redirect({
 }) == true)
 ```
 
+## Lua Callback Routes
+
+`server:route(opts)` registers an ordinary route handled by a Lua callback.
+The first callback surface is deliberately materialized, not streaming.
+
+Route fields:
+
+- `path`
+- `method` or `methods`
+- `body`: `nil`, `false`, `"none"`, `true`, `"buffered"`, or
+  `{mode = "buffered", max_bytes = ...}`
+- `handler`: function receiving a borrowed request table
+
+The request table contains copied scalar fields plus borrowed lookup helpers
+that are valid only during the handler call:
+
+- `method`
+- `path`
+- `body`, `body_size`
+- `body_spooled`, `body_path`
+- `header(name)`
+- `query(name)`
+- `param(name)`
+
+Handlers return:
+
+- `nil` for `204`
+- a string for a `200 text/plain; charset=utf-8` response
+- a table with `status` or `status_code`, optional `content_type`, optional
+  `headers`, and either `body` or `file_path`
+
+```lua
+assert(server:route({
+  path = "/hello/:name",
+  methods = {"GET", "POST"},
+  body = {mode = "buffered", max_bytes = 4096},
+  handler = function(request)
+    return {
+      status = request.method == "POST" and 201 or 200,
+      content_type = "text/plain; charset=utf-8",
+      headers = {["cache-control"] = "no-store"},
+      body = request.param("name") .. "\n",
+    }
+  end,
+}) == true)
+```
+
 ## Mounts
 
 - `server:static_directory(opts)` serves a disk directory.
@@ -63,8 +111,9 @@ assert(server:redirect({
 - `server:auth_routes(opts)` registers native login/auth/WebDAV-key routes.
 - `server:consumer_service(opts)` registers a C-owned lockd consumer service.
 
-Dynamic request callbacks, middleware-like hooks, request body access, SSE, and
-true streaming response helpers are not part of this fixed-route surface.
+Middleware-like hooks, SSE, and true streaming response helpers are separate
+future route surfaces; `server:route()` must not be used to describe streaming
+behavior.
 
 See [lua-auth.md](lua-auth.md) for native and callback auth providers,
 OAuth2/OIDC helpers, email-token flows, and WebDAV-key issuance.

@@ -305,6 +305,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [ ] Add richer Lua HTTP file-backed response presets if repeated app workflows need more than `download_path`/`upload_path` plus client defaults.
 - [x] Add C-owned Lua fixed route helpers for text responses and redirects alongside JSON/auth JSON routes.
 - [ ] Add Lua route APIs for request handlers, middleware-like before/after hooks, path/query/header/body access, JSON/body streaming policies, file responses, SSE/streaming responses, and auth-guarded route groups.
+- [x] Add C-owned Lua `server:route()` buffered request callback routes with method/path, named path/query/header lookup, bounded buffered body access, response headers, string bodies, status-only responses, and file responses.
 - [x] Document and expose the core Lua auth facade for user DB configuration, credential storage location, password/TOTP/email-token factor policy, OAuth2/OIDC flows, WebDAV key issuance/revocation, and callback/native provider registration.
 - [ ] Add higher-level Lua auth DX helpers for opinionated admin/browser flows on top of the existing C-owned native auth routes and provider contract.
 - [ ] Add Lua CAI integration helpers once the CAI C SDK surface stabilizes: borrow/create clients, inherit logging, stream request bodies into `cai_source`, stream CAI output to HTTP/lockd/file sinks, expose tool callbacks, and preserve CAI as the primary OpenAI SDK.
