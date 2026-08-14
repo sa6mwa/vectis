@@ -7,8 +7,8 @@ code a consistent result shape for API calls and file transfers.
 ## Entry Points
 
 - `vectis.http.request(opts)` calls `curl.perform(opts)`.
-- `vectis.http.get(opts_or_url[, opts])`, `post`, `put`, `patch`, and
-  `delete` set the HTTP method and return a normalized buffered response.
+- `vectis.http.get(opts_or_url[, opts])`, `post`, `put`, `patch`, `delete`,
+  and `head` set the HTTP method and return a normalized buffered response.
 - `vectis.http.request_json(opts)` calls `curl.json(opts)`.
 - `vectis.http.get_json(opts_or_url[, opts])`, `post_json`, `put_json`,
   `patch_json`, and `delete_json` set the HTTP method and decode JSON bodies.

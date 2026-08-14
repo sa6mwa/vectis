@@ -52,6 +52,7 @@ assert(type(vectis.http.post) == "function")
 assert(type(vectis.http.put) == "function")
 assert(type(vectis.http.patch) == "function")
 assert(type(vectis.http.delete) == "function")
+assert(type(vectis.http.head) == "function")
 assert(type(vectis.http.form) == "function")
 assert(type(vectis.http.form_encode) == "function")
 assert(type(vectis.http.multipart) == "function")
@@ -178,6 +179,12 @@ assert(api_server:json({
   cache_control = "no-store",
 }) == true)
 assert(api_server:json({
+  path = "/head-status",
+  method = "HEAD",
+  body = '{"ok":true,"surface":"head"}\n',
+  cache_control = "no-store",
+}) == true)
+assert(api_server:json({
   path = "/created",
   method = "POST",
   status = 201,
@@ -299,6 +306,14 @@ local simple_get = vectis.http.get("http://127.0.0.1:28484/status", {
 })
 assert(simple_get.ok == true, simple_get.error and simple_get.error.message)
 assert(simple_get.status == 200)
+local simple_head = vectis.http.head("http://127.0.0.1:28484/head-status", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(simple_head.ok == true, simple_head.error and simple_head.error.message)
+assert(simple_head.status == 200)
+assert(simple_head.body == "")
 local created_response = vectis.http.request({
   url = "http://127.0.0.1:28484/created",
   method = "POST",
@@ -419,6 +434,11 @@ assert(client_provider_native_allowed.ok == true,
        client_provider_native_allowed.error and
        client_provider_native_allowed.error.message)
 assert(client_provider_native_allowed.status == 200)
+local client_head = authenticated_client.head(
+    "http://127.0.0.1:28484/head-status")
+assert(client_head.ok == true, client_head.error and client_head.error.message)
+assert(client_head.status == 200)
+assert(client_head.body == "")
 local client_callback_allowed = authenticated_client.get(
     "http://127.0.0.1:28484/callback-guarded",
     {headers = {Authorization = "Bearer callback-ok"}})
