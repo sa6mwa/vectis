@@ -6,6 +6,20 @@ modules provide workflow DX around Vectis concepts such as servers, auth,
 packed assets, lockd consumers, file-backed transfers, and certificate
 workflows.
 
+## Naming And Options
+
+Vectis-owned Lua helpers use the same public concept names as the C SDK where
+they map cleanly to Lua. Handles use method-call syntax such as
+`server:start()`, `server:close()`, `logger:close()`, and `session:open_file()`.
+Configuration tables prefer explicit nouns over positional arguments when a
+workflow has credentials, paths, TLS material, retry policy, body policy, or
+ownership-sensitive handles.
+
+Timeout and duration fields use unit-suffixed names. Millisecond values use
+`*_ms`, such as `timeout_ms` and `connect_timeout_ms`; second-based protocol
+fields keep their protocol name when that name is already established, such as
+`visibility_timeout_seconds`.
+
 ## Errors
 
 Expected runtime failures return structured values instead of raising:
@@ -46,6 +60,12 @@ Objects with an explicit `close()` method may also have a finalizer, but Lua
 code should close them deterministically in service workflows. Helper functions
 that borrow a handle for a callback must release the handle after the callback
 returns or raises.
+
+Callback-owned request/event tables contain copied scalar values unless the
+module documentation explicitly marks a field as borrowed. Borrowed handles and
+Lua-owned records are valid only for the documented callback or receiver
+lifetime and must not be retained past that lifetime unless the module exposes a
+specific retained object.
 
 ## Payload Shape
 

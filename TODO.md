@@ -60,7 +60,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Expose dependency headers and low-level handles/APIs as explicit escape hatches without making them the primary DX.
 - [x] Define the first C pass of one Vectis-owned naming, source, error, timeout, ownership, and cleanup convention.
 - [x] Add stable string helpers for status, error source, HTTP method, and body mode names.
-- [ ] Mirror the C naming, source, error, timeout, ownership, and cleanup convention in Lua.
+- [x] Mirror the C naming, source, error, timeout, ownership, and cleanup convention in Lua.
 - [x] Define request/response abstractions that do not leak Kore internals unless explicitly requested.
 - [x] Add common C source constructors for path, memory, and `lc_source` material inputs.
 - [x] Add route constructors that infer literal, named-parameter, optional-parameter, and regex path kinds.
