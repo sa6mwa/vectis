@@ -275,6 +275,48 @@ assert(consumer_service_error.status == vectis.ERR_INVALID)
 assert(consumer_service_error.message:match("receiver_kind"))
 server:close()
 
+local tls_bundle_pem_server = assert(vectis.server.new({
+  app_name = "lua-manual-tls-bundle-pem",
+  port = 18170,
+  tls = {
+    mode = "manual",
+    cert_key_bundle_pem = "-----BEGIN CERTIFICATE-----\nplaceholder\n" ..
+        "-----END CERTIFICATE-----\n-----BEGIN PRIVATE KEY-----\n" ..
+        "placeholder\n-----END PRIVATE KEY-----\n",
+  },
+}))
+tls_bundle_pem_server:close()
+
+local tls_split_pem_server = assert(vectis.server.new({
+  app_name = "lua-manual-tls-split-pem",
+  port = 18171,
+  tls = {
+    mode = "manual",
+    certificate_pem = "-----BEGIN CERTIFICATE-----\nplaceholder\n" ..
+        "-----END CERTIFICATE-----\n",
+    private_key_pem = "-----BEGIN PRIVATE KEY-----\nplaceholder\n" ..
+        "-----END PRIVATE KEY-----\n",
+    ca_bundle_pem = "-----BEGIN CERTIFICATE-----\nca\n" ..
+        "-----END CERTIFICATE-----\n",
+  },
+}))
+tls_split_pem_server:close()
+
+local tls_client_ca_pem_server = assert(vectis.server.new({
+  app_name = "lua-manual-tls-client-ca-pem",
+  port = 18172,
+  tls = {
+    mode = "manual",
+    cert_key_bundle_pem = "-----BEGIN CERTIFICATE-----\nplaceholder\n" ..
+        "-----END CERTIFICATE-----\n-----BEGIN PRIVATE KEY-----\n" ..
+        "placeholder\n-----END PRIVATE KEY-----\n",
+    require_client_certificate = true,
+    client_ca_bundle_pem = "-----BEGIN CERTIFICATE-----\nclient-ca\n" ..
+        "-----END CERTIFICATE-----\n",
+  },
+}))
+tls_client_ca_pem_server:close()
+
 local acme_auth_path = os.tmpname()
 os.remove(acme_auth_path)
 assert(vectis.auth.store_init({ credentials_path = acme_auth_path }))

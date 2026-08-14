@@ -7359,6 +7359,8 @@ static int vectis_lua_server_new(lua_State *lua) {
   const char *mode;
   const char **lockd_endpoints;
   const char **tls_domains;
+  const char *pem;
+  size_t pem_size;
   size_t port;
   int tls_index;
 
@@ -7406,11 +7408,32 @@ static int vectis_lua_server_new(lua_State *lua) {
       config.tls.cert_key_bundle_path =
           vectis_lua_table_string(lua, tls_index, "bundle_path");
     }
+    pem = vectis_lua_table_lstring(lua, tls_index, "cert_key_bundle_pem",
+                                   &pem_size);
+    if (pem == NULL) {
+      pem = vectis_lua_table_lstring(lua, tls_index, "bundle_pem",
+                                     &pem_size);
+    }
+    if (pem != NULL) {
+      config.tls.cert_key_bundle_pem = pem;
+      config.tls.cert_key_bundle_pem_size = pem_size;
+      config.tls.cert_key_bundle_path = NULL;
+    }
     config.tls.certificate_path =
         vectis_lua_table_string(lua, tls_index, "certificate_path");
     if (config.tls.certificate_path == NULL) {
       config.tls.certificate_path =
           vectis_lua_table_string(lua, tls_index, "cert_path");
+    }
+    pem = vectis_lua_table_lstring(lua, tls_index, "certificate_pem",
+                                   &pem_size);
+    if (pem == NULL) {
+      pem = vectis_lua_table_lstring(lua, tls_index, "cert_pem", &pem_size);
+    }
+    if (pem != NULL) {
+      config.tls.certificate_pem = pem;
+      config.tls.certificate_pem_size = pem_size;
+      config.tls.certificate_path = NULL;
     }
     config.tls.private_key_path =
         vectis_lua_table_string(lua, tls_index, "private_key_path");
@@ -7418,17 +7441,48 @@ static int vectis_lua_server_new(lua_State *lua) {
       config.tls.private_key_path =
           vectis_lua_table_string(lua, tls_index, "key_path");
     }
+    pem = vectis_lua_table_lstring(lua, tls_index, "private_key_pem",
+                                   &pem_size);
+    if (pem == NULL) {
+      pem = vectis_lua_table_lstring(lua, tls_index, "key_pem", &pem_size);
+    }
+    if (pem != NULL) {
+      config.tls.private_key_pem = pem;
+      config.tls.private_key_pem_size = pem_size;
+      config.tls.private_key_path = NULL;
+    }
     config.tls.ca_bundle_path =
         vectis_lua_table_string(lua, tls_index, "ca_bundle_path");
     if (config.tls.ca_bundle_path == NULL) {
       config.tls.ca_bundle_path =
           vectis_lua_table_string(lua, tls_index, "ca_path");
     }
+    pem = vectis_lua_table_lstring(lua, tls_index, "ca_bundle_pem",
+                                   &pem_size);
+    if (pem == NULL) {
+      pem = vectis_lua_table_lstring(lua, tls_index, "ca_pem", &pem_size);
+    }
+    if (pem != NULL) {
+      config.tls.ca_bundle_pem = pem;
+      config.tls.ca_bundle_pem_size = pem_size;
+      config.tls.ca_bundle_path = NULL;
+    }
     config.tls.client_ca_bundle_path =
         vectis_lua_table_string(lua, tls_index, "client_ca_bundle_path");
     if (config.tls.client_ca_bundle_path == NULL) {
       config.tls.client_ca_bundle_path =
           vectis_lua_table_string(lua, tls_index, "client_ca_path");
+    }
+    pem = vectis_lua_table_lstring(lua, tls_index, "client_ca_bundle_pem",
+                                   &pem_size);
+    if (pem == NULL) {
+      pem = vectis_lua_table_lstring(lua, tls_index, "client_ca_pem",
+                                     &pem_size);
+    }
+    if (pem != NULL) {
+      config.tls.client_ca_bundle_pem = pem;
+      config.tls.client_ca_bundle_pem_size = pem_size;
+      config.tls.client_ca_bundle_path = NULL;
     }
     config.tls.require_client_certificate =
         vectis_lua_table_bool(lua, tls_index, "require_client_certificate", 0);

@@ -19,6 +19,21 @@ assert(server:stop() == true)
 server:close()
 ```
 
+`vectis.server.new({tls = ...})` accepts the same manual and ACME modes as the
+C app config. Manual TLS can use paths or in-memory PEM strings:
+
+- `cert_key_bundle_path`, `bundle_path`
+- `cert_key_bundle_pem`, `bundle_pem`
+- `certificate_path`, `cert_path`
+- `certificate_pem`, `cert_pem`
+- `private_key_path`, `key_path`
+- `private_key_pem`, `key_pem`
+- `ca_bundle_path`, `ca_path`
+- `ca_bundle_pem`, `ca_pem`
+- `client_ca_bundle_path`, `client_ca_path`
+- `client_ca_bundle_pem`, `client_ca_pem`
+- `require_client_certificate`
+
 ## Fixed Routes
 
 - `server:json(opts)` registers a fixed JSON response.
