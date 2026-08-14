@@ -36,11 +36,11 @@ Columns:
 | dep:libxml2 | libxml2/XML | partial | partial | yes | no | n/a | `vectis.xml` exposes XML-to-LoneJSON parsing; raw DOM/libxml2 and XML serialization remain missing. |
 | dep:dsv | Vectis DSV/CSV/TSV helpers | partial | partial | yes | no | n/a | `vectis.dsv` exposes materialized parse, typed source-to-callback iteration for fixed string fields, spill, and row serialization; dynamic-string typed parse and route-row Lua handler integration remain. |
 | dep:opcua | cpkt-opcua | partial | planned | yes | no | planned | `require("opcua")` covers client/foundation; server, async, subscriptions, PubSub remain. |
-| dep:sus | cpkt SUS / whisper | planned | planned | no | no | planned | No Lua facade yet; needs streaming source/sink contract. |
-| dep:audio | cpkt audio / miniaudio | planned | planned | no | no | planned | No Lua facade yet; needs audio buffer/stream ownership contract. |
+| dep:sus | cpkt SUS / whisper | planned | planned | no | no | planned | No Lua facade yet; Lua ownership/streaming/model-cache contract is documented in `docs/lua-sus-audio-contract.md`. |
+| dep:audio | cpkt audio / miniaudio | planned | planned | no | no | planned | No Lua facade yet; Lua buffer/source/sink ownership contract is documented in `docs/lua-sus-audio-contract.md`. |
 | dep:nghttp2 | nghttp2 | n/a | n/a | yes | yes | n/a | Transport dependency behind curl/Kore; no direct app-facing Lua API expected unless HTTP/2 controls become product surface. |
 | dep:zlib | zlib | n/a | planned | yes | yes | n/a | Compression is transitive today; add Lua helpers only when archive/body compression workflows need them. |
-| dep:miniaudio | miniaudio | planned | planned | no | no | planned | Covered with `dep:audio`; separate row kept because it is independently provisioned. |
+| dep:miniaudio | miniaudio | planned | planned | no | no | planned | Covered with `dep:audio`; Lua contract documented with audio/SUS facade contract. |
 
 ## Vectis Workflow Facades
 
