@@ -310,6 +310,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add deterministic Lua examples for raw pslog, liblql, and softline module workflows without adding redundant Vectis-owned wrappers.
 - [x] Add packed execution coverage for raw pslog, liblql, and softline Lua module workflows.
 - [x] Add packed execution coverage for deterministic local Lua facade examples covering XML, raw OpenSSL/certs, generic curl protocols, CAI local APIs, MQTT/SMTP helper validation, and SCP helper validation.
+- [x] Add packed execution coverage for raw libmdf render/stream examples and the mutable WebDAV fileserver example.
 - [ ] Publish a separate `vectis` Lua rock for users who want to run the Vectis facade inside their own Lua 5.5 environment.
 - [x] Keep LuaRocks out of the `vectis` binary runtime and release artifacts.
 - [ ] Add Vectis-owned Lua modules for Kore, OpenSSL certificate workflows, and broader libssh2 coverage.

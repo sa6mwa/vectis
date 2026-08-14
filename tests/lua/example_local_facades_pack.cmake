@@ -56,6 +56,11 @@ vectis_pack_and_run_lua_example(
   "VECTIS_LUA_CAI_EXAMPLE_DIR=${WORK_DIR}")
 
 vectis_pack_and_run_lua_example(
+  "mdf-render"
+  "${VECTIS_SOURCE_DIR}/examples/lua/mdf_render.lua"
+  "lua mdf render example ok")
+
+vectis_pack_and_run_lua_example(
   "protocol-helpers"
   "${VECTIS_SOURCE_DIR}/examples/lua/protocol_helpers.lua"
   "lua protocol helpers example ok"

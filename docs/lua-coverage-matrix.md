@@ -28,7 +28,7 @@ Columns:
 | dep:pslog | libpslog Lua module | yes | planned | yes | yes | n/a | Raw logging module is preloaded and packed-tested; Vectis logger inheritance in Lua needs a clear helper surface. |
 | dep:lql | liblql Lua module | yes | planned | yes | yes | n/a | Raw module is preloaded and packed-tested. |
 | dep:cai | CAI Lua module | yes | planned | yes | yes | planned | Raw module is preloaded and packed-tested for local constructors/metadata; Vectis service integration waits on CAI SDK stabilization. |
-| dep:libmdf | libmdf Lua module | yes | planned | yes | no | n/a | Raw module is preloaded; Agent Smith / terminal DX helpers are future work. |
+| dep:libmdf | libmdf Lua module | yes | planned | yes | yes | n/a | Raw module is preloaded and packed-tested; Agent Smith / terminal DX helpers are future work. |
 | dep:softline | softline Lua module | yes | planned | yes | yes | n/a | Raw module is preloaded and packed-tested; higher-level prompt/terminal helpers are future work. |
 | dep:curl | libcurl Lua facade | yes | partial | yes | yes | planned | `curl`, `vectis.http`, `vectis.webdav`, `vectis.mqtt`, and `vectis.smtp`; generic protocols are available through option tables. |
 | dep:openssl | OpenSSL | yes | partial | yes | yes | n/a | `openssl` exposes version, SHA-256, general EVP digest/HMAC, hex/Base64 codecs, PEM-backed signing/verification, and CSPRNG helpers; `vectis.cert` owns certificate workflows. |
