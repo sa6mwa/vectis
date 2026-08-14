@@ -39,6 +39,8 @@ set_target_properties(vectis_pick_port PROPERTIES
 )
 
 if(TARGET vectis_bin)
+  find_program(VECTIS_HOST_LUA NAMES lua5.5 lua)
+
   add_executable(vectis_opcua_lua_e2e
     opcua_lua_e2e.c
     $<TARGET_OBJECTS:vectis_opcua_lua>)
@@ -98,6 +100,17 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_preload_artifact_contract PROPERTIES
     LABELS "lua;smoke;local"
     TIMEOUT 30)
+  if(VECTIS_HOST_LUA)
+    add_test(NAME vectis_lua_top_level_module
+             COMMAND "${CMAKE_COMMAND}"
+                     "-DVECTIS_HOST_LUA=${VECTIS_HOST_LUA}"
+                     "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                     "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                     -P "${CMAKE_SOURCE_DIR}/tests/lua/top_level_module.cmake")
+    set_tests_properties(vectis_lua_top_level_module PROPERTIES
+      LABELS "lua;smoke;local"
+      TIMEOUT 30)
+  endif()
   add_test(NAME vectis_lua_curl
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"

@@ -1,7 +1,10 @@
 # Vectis Lua Surface
 
 The `vectis` executable embeds the cpkt Lua runtime and preloads both
-dependency-native facades and Vectis-owned workflow helpers.
+dependency-native facades and Vectis-owned workflow helpers. The repository
+also carries a pure Lua top-level `vectis` module so the Lua helper namespace
+can be loaded from an ordinary Lua 5.5 environment as the future standalone
+Lua rock surface.
 Dependency-native modules should stay thin over their C implementation.
 Vectis-owned modules should provide the service/application DX where a workflow
 crosses Vectis concepts such as Kore routes, packed assets, auth, lockd
@@ -107,10 +110,14 @@ modules or C SDK workflows:
 - `vectis.xml`: XML parse helpers, documented in [Lua XML](lua-xml.md).
 
 C-owned workflow tables including `vectis.auth`, `vectis.cert`,
-`vectis.embedded`, `vectis.server`, and `vectis.ssh` are direct preloaded modules.
-`require("vectis").auth` and `require("vectis.auth")` return the same table, and
-the same identity rule applies to the other workflow modules exposed through the
-top-level namespace.
+`vectis.embedded`, `vectis.server`, and `vectis.ssh` are direct preloaded modules
+inside the embedded binary. `require("vectis").auth` and
+`require("vectis.auth")` return the same table, and the same identity rule
+applies to the other workflow modules exposed through the top-level namespace.
+In ordinary Lua environments, the pure Lua top-level module attaches the
+workflow and dependency modules that are available through `package.path`,
+`package.cpath`, or `package.preload`, leaving unavailable embedded-only modules
+unset instead of fabricating C behavior.
 
 ## Documentation Contract
 
