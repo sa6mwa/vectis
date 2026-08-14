@@ -62,7 +62,7 @@ function M.decorate_error(err, defaults)
   err.status = code
   err.status_string = err.status_string or M.status_string(code)
   err.source_code = source
-  err.source = err.source or M.error_source_string(source)
+  err.source = M.error_source_string(source)
   if err.dependency_code == nil and defaults.dependency_code ~= nil then
     err.dependency_code = defaults.dependency_code
   end

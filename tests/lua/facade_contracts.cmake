@@ -47,6 +47,17 @@ assert(vectis.status == status)
 assert(status.status_string(status.ERR_TIMEOUT) == "timeout")
 assert(status.error_source_string(status.ERROR_SOURCE_CURL) == "curl")
 assert(status.error_source_string(status.ERROR_SOURCE_CPKT) == "cpkt")
+local canonical_source = status.decorate_error({
+  message = "source string must follow source_code",
+  source = "stale",
+}, {
+  status = status.ERR_STATE,
+  source_code = status.ERROR_SOURCE_CURL,
+})
+assert(canonical_source.source == "curl")
+assert(canonical_source.source_code == status.ERROR_SOURCE_CURL)
+assert_status_error(canonical_source, status.ERR_STATE,
+                    "source string must follow source_code")
 
 assert(vectis.auth.store_init({
   credentials_path = auth_store,
