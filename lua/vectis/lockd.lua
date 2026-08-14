@@ -53,6 +53,13 @@ function M.config(config)
     if normalized.client_bundle_source == nil then
       local source, err = vectis_module().embedded_lockd_bundle_source()
       if source == nil then
+        if type(err) == "table" then
+          return nil, vstatus.decorate_error(err, {
+            status = vstatus.ERR_STATE,
+            source_code = vstatus.ERROR_SOURCE_VECTIS,
+            message = "no embedded lockd bundle",
+          })
+        end
         return nil, vectis_error("ERR_STATE",
                                  err or "no embedded lockd bundle")
       end

@@ -3145,6 +3145,11 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   return 0;
 }
 
+static int vectis_lua_push_error(lua_State *lua, vectis_status status,
+                                 const vectis_error *error);
+static int vectis_lua_push_error_text(lua_State *lua, vectis_status status,
+                                      const char *message);
+
 static int vectis_lua_status_string(lua_State *lua) {
   lua_Integer status;
   const char *name;
@@ -3261,9 +3266,8 @@ static int vectis_lua_embedded_lockd_bundle_source(lua_State *lua) {
       (void *)lua);
   if (context == NULL || context->embedded_lockd_bundle == NULL ||
       context->embedded_lockd_bundle_size == 0u) {
-    lua_pushnil(lua);
-    lua_pushliteral(lua, "no embedded lockd bundle");
-    return 2;
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_STATE,
+                                      "no embedded lockd bundle");
   }
 
   lua_newtable(lua);
@@ -3313,15 +3317,13 @@ static int vectis_lua_embedded_tree_sha256(lua_State *lua) {
   context = (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(
       (void *)lua);
   if (context == NULL || context->embedded_fs == NULL) {
-    lua_pushnil(lua);
-    lua_pushliteral(lua, "no embedded assets");
-    return 2;
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_STATE,
+                                      "no embedded assets");
   }
   tree_sha256 = vectis_embedded_fs_tree_sha256(context->embedded_fs);
   if (tree_sha256 == NULL) {
-    lua_pushnil(lua);
-    lua_pushliteral(lua, "embedded asset tree hash is unavailable");
-    return 2;
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_STATE, "embedded asset tree hash is unavailable");
   }
   lua_pushstring(lua, tree_sha256);
   return 1;
@@ -3339,9 +3341,8 @@ static int vectis_lua_embedded_read(lua_State *lua) {
   context = (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(
       (void *)lua);
   if (context == NULL || context->embedded_fs == NULL) {
-    lua_pushnil(lua);
-    lua_pushliteral(lua, "no embedded assets");
-    return 2;
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_STATE,
+                                      "no embedded assets");
   }
   vectis_error_clear(&error);
   found = 0;
@@ -3350,16 +3351,11 @@ static int vectis_lua_embedded_read(lua_State *lua) {
   status = vectis_embedded_fs_read(context->embedded_fs, path, &found, &body,
                                    &error);
   if (status != VECTIS_OK) {
-    lua_pushnil(lua);
-    lua_pushstring(lua, error.message[0] != '\0'
-                            ? error.message
-                            : vectis_status_string(status));
-    return 2;
+    return vectis_lua_push_error(lua, status, &error);
   }
   if (!found) {
-    lua_pushnil(lua);
-    lua_pushliteral(lua, "embedded asset not found");
-    return 2;
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "embedded asset not found");
   }
   lua_pushlstring(lua, (const char *)body.data, body.size);
   return 1;
@@ -3377,9 +3373,8 @@ static int vectis_lua_embedded_stat(lua_State *lua) {
   context = (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(
       (void *)lua);
   if (context == NULL || context->embedded_fs == NULL) {
-    lua_pushnil(lua);
-    lua_pushliteral(lua, "no embedded assets");
-    return 2;
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_STATE,
+                                      "no embedded assets");
   }
   vectis_error_clear(&error);
   found = 0;
@@ -3387,16 +3382,11 @@ static int vectis_lua_embedded_stat(lua_State *lua) {
   status = vectis_embedded_fs_lookup(context->embedded_fs, path, &found, &entry,
                                      &error);
   if (status != VECTIS_OK) {
-    lua_pushnil(lua);
-    lua_pushstring(lua, error.message[0] != '\0'
-                            ? error.message
-                            : vectis_status_string(status));
-    return 2;
+    return vectis_lua_push_error(lua, status, &error);
   }
   if (!found) {
-    lua_pushnil(lua);
-    lua_pushliteral(lua, "embedded asset not found");
-    return 2;
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "embedded asset not found");
   }
   lua_newtable(lua);
   lua_pushstring(lua, entry.path);
@@ -3502,9 +3492,8 @@ static int vectis_lua_embedded_chunks(lua_State *lua) {
   context = (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(
       (void *)lua);
   if (context == NULL || context->embedded_fs == NULL) {
-    lua_pushnil(lua);
-    lua_pushliteral(lua, "no embedded assets");
-    return 2;
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_STATE,
+                                      "no embedded assets");
   }
   vectis_error_clear(&error);
   found = 0;
@@ -3512,16 +3501,11 @@ static int vectis_lua_embedded_chunks(lua_State *lua) {
   status = vectis_embedded_fs_open_source(context->embedded_fs, path, &found,
                                           &source, &error);
   if (status != VECTIS_OK) {
-    lua_pushnil(lua);
-    lua_pushstring(lua, error.message[0] != '\0'
-                            ? error.message
-                            : vectis_status_string(status));
-    return 2;
+    return vectis_lua_push_error(lua, status, &error);
   }
   if (!found) {
-    lua_pushnil(lua);
-    lua_pushliteral(lua, "embedded asset not found");
-    return 2;
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "embedded asset not found");
   }
   buffer = (unsigned char *)malloc((size_t)requested_chunk_size);
   if (buffer == NULL) {
@@ -3621,9 +3605,8 @@ static int vectis_lua_embedded_extract(lua_State *lua) {
   context = (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(
       (void *)lua);
   if (context == NULL || context->embedded_fs == NULL) {
-    lua_pushnil(lua);
-    lua_pushliteral(lua, "no embedded assets");
-    return 2;
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_STATE,
+                                      "no embedded assets");
   }
   vectis_embedded_fs_extract_config_init(&config);
   config.output_dir = output_dir;
@@ -3635,11 +3618,7 @@ static int vectis_lua_embedded_extract(lua_State *lua) {
   vectis_error_clear(&error);
   status = vectis_embedded_fs_extract(context->embedded_fs, &config, &error);
   if (status != VECTIS_OK) {
-    lua_pushnil(lua);
-    lua_pushstring(lua, error.message[0] != '\0'
-                            ? error.message
-                            : vectis_status_string(status));
-    return 2;
+    return vectis_lua_push_error(lua, status, &error);
   }
   lua_pushboolean(lua, 1);
   return 1;
