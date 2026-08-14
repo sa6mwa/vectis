@@ -1,0 +1,40 @@
+package = "vectis"
+version = "@VECTIS_LUA_ROCK_VERSION@-1"
+
+source = {
+  url = "@VECTIS_LUA_SOURCE_URL@",
+  dir = "@VECTIS_LUA_SOURCE_DIR@",
+}
+
+description = {
+  summary = "Vectis Lua facade helpers",
+  detailed = [[
+Vectis Lua helpers for applications that run the Vectis facade surface from a
+Lua 5.5 environment. Native dependency modules remain dependency-owned and must
+be provided by the embedding Vectis binary or separately installed facades.
+  ]],
+  homepage = "https://github.com/sa6mwa/vectis",
+  license = "MIT",
+}
+
+dependencies = {}
+
+build = {
+  type = "builtin",
+  modules = {
+    ["curl"] = "lua/curl/init.lua",
+    ["vectis"] = "lua/vectis.lua",
+    ["vectis.dsv"] = "lua/vectis/dsv.lua",
+    ["vectis.http"] = "lua/vectis/http.lua",
+    ["vectis.lockd"] = "lua/vectis/lockd.lua",
+    ["vectis.log"] = "lua/vectis/log.lua",
+    ["vectis.mqtt"] = "lua/vectis/mqtt.lua",
+    ["vectis.rest"] = "lua/vectis/rest.lua",
+    ["vectis.smtp"] = "lua/vectis/smtp.lua",
+    ["vectis.status"] = "lua/vectis/status.lua",
+    ["vectis.terminal"] = "lua/vectis/terminal.lua",
+    ["vectis.version"] = "lua/vectis/version.lua",
+    ["vectis.webdav"] = "lua/vectis/webdav.lua",
+    ["vectis.xml"] = "lua/vectis/xml.lua",
+  },
+}

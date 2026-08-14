@@ -53,6 +53,60 @@ expect_privacy_failure "repository file URL" "file://$repo_root"
 expect_privacy_failure "home file URL" "file://${HOME:-}"
 
 rm -rf "$dist" "$payload"
+mkdir -p "$dist"
+cat >"$dist/vectis-$version-1.rockspec" <<EOF
+package = "vectis"
+version = "$version-1"
+source = { url = "file://$repo_root" }
+build = { type = "builtin", modules = {} }
+EOF
+(cd "$dist" && sha256sum "vectis-$version-1.rockspec" >"vectis-$version-CHECKSUMS")
+if VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist \
+   "$repo_root/scripts/verify_release_privacy.sh" >"$work/lua-rockspec.out" 2>"$work/lua-rockspec.err"; then
+  echo "privacy verifier accepted Lua rockspec repository file URL" >&2
+  exit 1
+fi
+grep -F "repository file URL" "$work/lua-rockspec.err" >/dev/null || {
+  echo "privacy verifier did not report Lua rockspec repository file URL" >&2
+  cat "$work/lua-rockspec.err" >&2
+  exit 1
+}
+
+rm -rf "$dist" "$payload"
+mkdir -p "$dist" "$payload/vectis-lua-$version"
+printf '%s\n' "file://${HOME:-}" >"$payload/vectis-lua-$version/leak.txt"
+tar -C "$payload" -czf "$dist/vectis-lua-$version.tar.gz" "vectis-lua-$version"
+(cd "$dist" && sha256sum "vectis-lua-$version.tar.gz" >"vectis-$version-CHECKSUMS")
+if VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist \
+   "$repo_root/scripts/verify_release_privacy.sh" >"$work/lua-source.out" 2>"$work/lua-source.err"; then
+  echo "privacy verifier accepted Lua source archive home file URL" >&2
+  exit 1
+fi
+grep -F "home file URL" "$work/lua-source.err" >/dev/null || {
+  echo "privacy verifier did not report Lua source archive home file URL" >&2
+  cat "$work/lua-source.err" >&2
+  exit 1
+}
+
+if command -v zip >/dev/null 2>&1; then
+  rm -rf "$dist" "$payload"
+  mkdir -p "$dist" "$payload/source-rock"
+  printf '%s\n' '/tmp/luarocks-build/vectis' >"$payload/source-rock/leak.txt"
+  (cd "$payload/source-rock" && zip -q -X "$dist/vectis-$version-1.src.rock" leak.txt)
+  (cd "$dist" && sha256sum "vectis-$version-1.src.rock" >"vectis-$version-CHECKSUMS")
+  if VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist \
+     "$repo_root/scripts/verify_release_privacy.sh" >"$work/lua-src-rock.out" 2>"$work/lua-src-rock.err"; then
+    echo "privacy verifier accepted Lua source rock package-manager temp path" >&2
+    exit 1
+  fi
+  grep -F "package-manager temporary path" "$work/lua-src-rock.err" >/dev/null || {
+    echo "privacy verifier did not report Lua source rock package-manager temp path" >&2
+    cat "$work/lua-src-rock.err" >&2
+    exit 1
+  }
+fi
+
+rm -rf "$dist" "$payload"
 mkdir -p "$dist" "$payload/vectis-$version/bin" "$work/fakebin"
 printf 'not really an elf\n' >"$payload/vectis-$version/bin/vectis"
 tar -C "$payload" -czf "$dist/vectis-$version.tar.gz" "vectis-$version"

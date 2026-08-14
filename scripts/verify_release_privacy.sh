@@ -55,6 +55,18 @@ scan_path() {
 while read -r _hash artifact_name; do
   artifact="$dist_dir/$artifact_name"
   case "$artifact_name" in
+    *.rockspec)
+      mkdir -p "$work_root/extract/$artifact_name"
+      cp "$artifact" "$work_root/extract/$artifact_name/"
+      ;;
+    *.rock|*.src.rock)
+      mkdir -p "$work_root/extract/$artifact_name"
+      if command -v unzip >/dev/null 2>&1; then
+        unzip -q "$artifact" -d "$work_root/extract/$artifact_name"
+      else
+        (cd "$work_root/extract/$artifact_name" && "${CMAKE:-cmake}" -E tar xf "$artifact")
+      fi
+      ;;
     *.tar.gz)
       mkdir -p "$work_root/extract/$artifact_name"
       tar -C "$work_root/extract/$artifact_name" -xzf "$artifact"
@@ -90,6 +102,10 @@ scan_path "$repo_root" "repository path"
 scan_path "${HOME:-}" "home path"
 scan_path "$repo_root/.cache" "dependency cache path"
 scan_path "$repo_root/build" "build path"
+scan_path "/tmp/luarocks" "package-manager temporary path"
+if [ -n "${TMPDIR:-}" ]; then
+  scan_path "${TMPDIR:-}/luarocks" "package-manager temporary path"
+fi
 
 resolve_executable() {
   tool=$1

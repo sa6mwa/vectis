@@ -17,7 +17,7 @@ FUZZ_PRESET := fuzz
 	deps-debug deps-release deps-cross \
 	build build-debug build-release build-asan build-coverage build-fuzz \
 	test test-debug test-lifecycle test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
-	lua-env lua-test \
+	lua-env lua-rock lua-test release-lua-artifacts \
 	dev-up dev-down dev-reset dev-ps dev-logs \
 	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy release-darwin-smoke-bundle release-matrix prerelease-live prerelease-hardening lifecycle-version-contract release print-release-version clean-dist finalize-slice prerelease \
 	build-kore verify-kore-patches \
@@ -32,8 +32,9 @@ help:
 		'make test-target-tools  Run target tool discovery regression tests.' \
 		'make test-cpkt-toolchains Run pinned Bootlin/AFL++ resolver contract tests.' \
 		'make test-darwin-linker-route Run osxcross Darwin linker-route regression tests.' \
-		'make lua-test           Run Lua runner/facade smoke tests through the built vectis CLI.' \
-		'make lua-env            Print shell exports for running Lua examples with the built vectis CLI.' \
+		'make lua-rock           Build and install the pure Lua Vectis rock under build/luarocks.' \
+		'make lua-test           Run Lua runner/facade smoke tests plus the installed Lua rock smoke.' \
+		'make lua-env            Print shell exports for running Lua examples with the built vectis CLI and local rock.' \
 		'make test-no-kore       Configure and link a VECTIS_WITH_KORE_RUNTIME=OFF build.' \
 		'make test-e2e           Reset and run the local compose-backed lockd e2e smoke tests.' \
 		'make test-all           Run unit tests and local e2e smoke tests.' \
@@ -61,6 +62,7 @@ help:
 		'make deps-cross         Provision aarch64 and armhf GNU/musl release dependencies, plus Darwin when osxcross is available.' \
 		'make package            Build release SDK archives; Darwin is included only when osxcross is available.' \
 		'make package-source     Build the source release archive with injected VERSION.' \
+		'make release-lua-artifacts Build the Vectis Lua source archive, rockspec, and source rock.' \
 		'make package-source-smoke Extract and verify the source release archive.' \
 		'make package-checksums  Generate the versioned checksum manifest for dist artifacts.' \
 		'make package-verify     Verify checksum-listed artifacts, privacy, and relocatability.' \
@@ -169,7 +171,7 @@ package-verify:
 release-darwin-smoke-bundle:
 	$(TIMED) release-darwin-smoke-bundle bash ./scripts/package.sh arm64-apple-darwin
 
-release-matrix: package package-source package-checksums package-verify
+release-matrix: package package-source release-lua-artifacts package-checksums package-verify
 
 prerelease-live:
 	$(TIMED) prerelease-live bash ./scripts/test-live-oauth2.sh
@@ -219,15 +221,23 @@ fuzz-smoke: build-fuzz
 
 finalize-slice: format test-lifecycle test-target-tools test-cpkt-toolchains test
 
-lua-test: build-debug
+lua-rock:
+	$(TIMED) lua-rock bash ./scripts/build_lua_rock.sh
+
+release-lua-artifacts:
+	$(TIMED) release-lua-artifacts bash ./scripts/stage_lua_rock_sources.sh
+
+lua-test: build-debug lua-rock
 	$(TIMED) lua-test $(CTEST) --preset $(DEBUG_PRESET) -L lua
+	$(TIMED) lua-rock-smoke bash ./scripts/test_lua_rock.sh
 
 lua-env: build-debug
 	@printf '%s\n' 'export VECTIS_BIN="$(ROOT)/build/debug/vectis"'
 	@printf '%s\n' 'export PATH="$(ROOT)/build/debug:$$PATH"'
+	@printf '%s\n' 'eval "$$(luarocks path --tree "$(ROOT)/build/luarocks/tree")"'
 	@printf '%s\n' '# Example: "$$VECTIS_BIN" examples/lua/mdf_render.lua'
 
-prerelease: format test-lifecycle test-target-tools test-cpkt-toolchains lua-test test-all asan fuzz-smoke test-install-tree package-source-smoke package-checksums package-verify
+prerelease: format test-lifecycle test-target-tools test-cpkt-toolchains lua-test test-all asan fuzz-smoke test-install-tree package-source-smoke release-lua-artifacts package-checksums package-verify
 
 test-debug: build-debug
 	$(TIMED) test-debug $(CTEST) --preset $(DEBUG_PRESET)

@@ -42,11 +42,35 @@ mkdir -p "$work_root"
 
 manifest_files="$work_root/manifest-files.txt"
 awk '{print $2}' "$checksums" | sort >"$manifest_files"
+lua_artifacts_validated=0
 
 while IFS= read -r artifact_name; do
   artifact="$dist_dir/$artifact_name"
   [ -f "$artifact" ] || fail "checksum-listed artifact missing" "$artifact_name"
   case "$artifact_name" in
+    vectis-lua-"$version".tar.gz)
+      extract_dir="$work_root/${artifact_name%.tar.gz}"
+      mkdir -p "$extract_dir"
+      tar -C "$extract_dir" -xzf "$artifact"
+      root="$extract_dir/vectis-lua-$version"
+      [ -d "$root" ] || fail "Lua source archive root mismatch" "$artifact_name"
+      [ -f "$root/VERSION" ] || fail "Lua source archive missing VERSION" "$artifact_name"
+      [ -f "$root/RELEASE_MANIFEST" ] || fail "Lua source archive missing RELEASE_MANIFEST" "$artifact_name"
+      [ -f "$root/vectis.rockspec.in" ] || fail "Lua source archive missing rockspec template" "$artifact_name"
+      [ -f "$root/lua/vectis.lua" ] || fail "Lua source archive missing vectis.lua" "$artifact_name"
+      [ -f "$root/lua/vectis/status.lua" ] || fail "Lua source archive missing vectis.status" "$artifact_name"
+      if (cd "$root" &&
+          find . \( -path './.git/*' -o -path './build/*' -o -path './dist/*' -o -path './.luarocks/*' \)) |
+         grep . >/dev/null; then
+        fail "Lua source archive contains generated or VCS state" "$artifact_name"
+      fi
+      ;;
+    vectis-"$version"-1.rockspec|vectis-"$version"-1.src.rock)
+      if [ "$lua_artifacts_validated" = "0" ]; then
+        bash "$script_dir/validate_luarocks.sh" "$dist_dir" "$version" >/dev/null
+        lua_artifacts_validated=1
+      fi
+      ;;
     vectis-"$version".tar.gz|vectis-"$version"-*.tar.gz)
       extract_dir="$work_root/${artifact_name%.tar.gz}"
       mkdir -p "$extract_dir"
@@ -127,7 +151,12 @@ while IFS= read -r artifact_name; do
   esac
 done <"$manifest_files"
 
-find "$dist_dir" -maxdepth 1 -type f \( -name 'vectis-*.tar.gz' -o -name 'vectis-*.zip' \) \
+find "$dist_dir" -maxdepth 1 -type f \( \
+    -name 'vectis-*.tar.gz' -o \
+    -name 'vectis-*.zip' -o \
+    -name 'vectis-*.rockspec' -o \
+    -name 'vectis-*.src.rock' \
+  \) \
   -printf '%f\n' | sort >"$work_root/dist-release-files.txt"
 if ! cmp -s "$manifest_files" "$work_root/dist-release-files.txt"; then
   echo "dist artifacts do not match checksum manifest" >&2

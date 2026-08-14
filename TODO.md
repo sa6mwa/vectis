@@ -346,8 +346,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add narrow `vectis.lockd` JSON state save/load helpers that mirror C acquire/update-or-load/release workflow semantics without hiding direct `lockdc` leases.
 - [x] Migrate public Lua lockd state/queue examples onto `vectis.lockd` helpers and cover them with deterministic local stub tests.
 - [x] Add a pure Lua top-level `vectis` facade so ordinary Lua 5.5 environments can load the Vectis-owned Lua helper namespace without the embedded binary preloader.
-- [ ] Publish a separate `vectis` Lua rock for users who want to run the Vectis facade inside their own Lua 5.5 environment.
-- [x] Keep LuaRocks out of the `vectis` binary runtime and release artifacts.
+- [x] Publish a separate `vectis` Lua rock for users who want to run the Vectis facade inside their own Lua 5.5 environment.
+- [x] Keep LuaRocks out of the `vectis` binary runtime and C binary SDK artifacts.
 - [ ] Add Vectis-owned Lua modules for Kore and broader libssh2 coverage.
 - [x] Add a Vectis-owned Lua SSH command execution helper backed by libssh2.
 - [x] Keep the Lua framework model aligned with the C SDK model: dependency-native access plus a Vectis-owned DX layer with matching concepts and behavior.

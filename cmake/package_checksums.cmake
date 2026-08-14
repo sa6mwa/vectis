@@ -30,6 +30,9 @@ file(GLOB checksum_inputs RELATIVE "${dist_dir}" LIST_DIRECTORIES false
   "${dist_dir}/vectis-${VECTIS_VERSION}.tar.gz"
   "${dist_dir}/vectis-${VECTIS_VERSION}-*.tar.gz"
   "${dist_dir}/vectis-${VECTIS_VERSION}-*.zip"
+  "${dist_dir}/vectis-lua-${VECTIS_VERSION}.tar.gz"
+  "${dist_dir}/vectis-${VECTIS_VERSION}-1.rockspec"
+  "${dist_dir}/vectis-${VECTIS_VERSION}-1.src.rock"
 )
 list(REMOVE_DUPLICATES checksum_inputs)
 list(FILTER checksum_inputs EXCLUDE REGEX "^${checksums_name}$")

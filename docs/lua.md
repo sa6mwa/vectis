@@ -2,9 +2,9 @@
 
 The `vectis` executable embeds the cpkt Lua runtime and preloads both
 dependency-native facades and Vectis-owned workflow helpers. The repository
-also carries a pure Lua top-level `vectis` module so the Lua helper namespace
-can be loaded from an ordinary Lua 5.5 environment as the future standalone
-Lua rock surface.
+also carries a pure Lua top-level `vectis` module and standalone LuaRocks
+source artifacts so the Lua helper namespace can be loaded from an ordinary
+Lua 5.5 environment.
 Dependency-native modules should stay thin over their C implementation.
 Vectis-owned modules should provide the service/application DX where a workflow
 crosses Vectis concepts such as Kore routes, packed assets, auth, lockd
@@ -58,8 +58,9 @@ with minimal Vectis opinion:
 - `sus`: cpkt SUS/whisper facade, documented in [Lua SUS](lua-sus.md).
 
 The C SDK artifacts intentionally do not ship the embedded Lua runtime, Lua
-source tree, or Lua package-manager state. The Lua surface is a product surface
-of the `vectis` executable.
+source tree, or Lua package-manager state. Standalone Lua release artifacts are
+published separately as `vectis-lua-<version>.tar.gz`,
+`vectis-<version>-1.rockspec`, and `vectis-<version>-1.src.rock`.
 
 `require("vectis").libs` collects these bundled library facades under one
 namespace for applications that already use the top-level Vectis module:
@@ -118,6 +119,21 @@ In ordinary Lua environments, the pure Lua top-level module attaches the
 workflow and dependency modules that are available through `package.path`,
 `package.cpath`, or `package.preload`, leaving unavailable embedded-only modules
 unset instead of fabricating C behavior.
+
+## LuaRocks
+
+`make lua-rock` renders a development rockspec and installs the pure Lua Vectis
+helper modules under `build/luarocks`. `make lua-test` verifies both the
+embedded runner preloads and the repo-local installed rock with Lua 5.5.
+Release builds use `make release-lua-artifacts` to stage the standalone Lua
+source archive, render the release rockspec, create the source rock, and
+validate that none of those artifacts contain live-worktree or home-directory
+paths.
+
+The `vectis` rock does not bundle dependency-native C modules such as
+`lockdc`, `lonejson`, `pslog`, `curl.core`, `openssl`, `opcua`, `audio`, or
+`sus`. Applications running outside the `vectis` binary must install or preload
+those dependency modules separately when they use helpers that require them.
 
 ## Documentation Contract
 
