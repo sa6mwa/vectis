@@ -54,6 +54,14 @@ assert(openssl.verify({
 }) == true)
 ```
 
-This facade is intentionally small. Additions should be made when they expose a
-stable OpenSSL-backed primitive or unblock a concrete Vectis workflow without
-pulling Lua into OpenSSL object lifetime management.
+This facade is intentionally small. The current lower-level surface is limited
+to concrete workflows already needed by Vectis Lua applications: digest and
+HMAC helpers, encoding helpers, PEM-backed signing and verification,
+key/certificate-backed verification, and CSPRNG bytes. Certificate generation,
+CSR generation, CA material, bundle validation, and certificate inspection stay
+under `vectis.cert`.
+
+Do not add Lua bindings for OpenSSL object lifetime management, mutable X.509
+builders, BIO/EVP internals, or broad algorithm enumeration unless a concrete
+Vectis workflow needs that capability and cannot be expressed through
+`vectis.cert` or the existing stable primitives.

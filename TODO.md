@@ -125,7 +125,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add Vectis-owned OpenSSL-backed helpers for generating self-signed certificates, CA material, and CA-signed client/server PEM bundles.
 - [x] Add Vectis-owned OpenSSL-backed helpers for generating standalone private keys and CSRs.
 - [x] Expose initial lower-level OpenSSL access for advanced users while keeping certificate workflows as the primary C and Lua DX.
-- [ ] Extend lower-level OpenSSL Lua access only where concrete signing, verification, digest, encoding, or key-inspection workflows require it.
+- [x] Extend lower-level OpenSSL Lua access only where concrete signing, verification, digest, encoding, or key-inspection workflows require it.
 - [x] Support embedding a lockd client certificate bundle into a packaged Vectis binary.
 - [x] Support ACME runtime configuration through Kore for C services.
 - [ ] Add ACME lifecycle examples/tests beyond startup validation, using a controlled ACME test server if practical.
@@ -230,7 +230,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 
 - [x] Add Lua bindings or facades for certificate loading, parsing, validation, and bundle assembly.
 - [x] Add Lua certificate bundle and cert/key pair validation helpers backed by the C certificate workflow API.
-- [ ] Keep dependency-native OpenSSL exposure narrow; prefer Vectis certificate workflows over dumping OpenSSL APIs into Lua.
+- [x] Keep dependency-native OpenSSL exposure narrow; prefer Vectis certificate workflows over dumping OpenSSL APIs into Lua.
 - [x] Support client and server certificate management in the C shared Vectis config model.
 - [x] Support client and server certificate management in the Lua shared Vectis config model.
 - [x] Add runtime Lua HTTPS coverage for manual split cert/key server configuration through the shared Vectis TLS model.
