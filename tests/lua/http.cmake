@@ -314,6 +314,10 @@ local callback_provider = assert(vectis.auth.provider_callback(function(request)
       request.resource == "/dynamic-dsv" then
     return {action = "allow", principal = "route-user"}
   end
+  if request.authorization == "Bearer route-ok" and
+      request.resource == "/dynamic-upload/streamed" then
+    return {action = "allow", principal = "route-user"}
+  end
   return {
     action = "required",
     status_code = 401,
@@ -500,6 +504,63 @@ assert(api_server:sse({
   close = function(state)
     local fp = assert(io.open(static_dir .. "/sse-close.txt", "wb"))
     fp:write("sse closed at " .. state.index .. "\n")
+    fp:close()
+  end,
+}) == true)
+assert(api_server:upload({
+  path = "/dynamic-upload/:name",
+  auth = {
+    provider = callback_provider,
+    purpose = "callback",
+    allowed_modes = {"bearer"},
+  },
+  buffer_bytes = 5,
+  max_body_bytes = 4096,
+  open = function(request)
+    assert(request.path == "/dynamic-upload/streamed")
+    assert(request.param("name") == "streamed")
+    assert(request.query("mode") == "chunks")
+    assert(request.body == nil)
+    assert(request.body_size == 0)
+    assert(request.body_streaming_upload == true)
+    assert(request.principal == "route-user")
+    return {
+      chunks = 0,
+      bytes = 0,
+      body = {},
+      closed = false,
+    }
+  end,
+  on_chunk = function(request, chunk, state)
+    assert(request.body == nil)
+    assert(request.body_streaming_upload == true)
+    assert(type(chunk) == "string")
+    assert(#chunk > 0)
+    state.chunks = state.chunks + 1
+    state.bytes = state.bytes + #chunk
+    state.body[#state.body + 1] = chunk
+    return true
+  end,
+  on_complete = function(request, state)
+    assert(request.path == "/dynamic-upload/streamed")
+    assert(state.closed == false)
+    return {
+      status = 200,
+      content_type = "application/json",
+      headers = {
+        ["x-vectis-upload"] = "streaming",
+      },
+      body = '{"principal":"' .. request.principal ..
+             '","chunks":' .. tostring(state.chunks) ..
+             ',"bytes":' .. tostring(state.bytes) ..
+             ',"body":"' .. table.concat(state.body) .. '"}\n',
+    }
+  end,
+  close = function(request, state)
+    assert(request.body == nil)
+    state.closed = true
+    local fp = assert(io.open(static_dir .. "/upload-close.txt", "wb"))
+    fp:write("upload closed after " .. tostring(state.chunks) .. " chunks\n")
     fp:close()
   end,
 }) == true)
@@ -809,6 +870,45 @@ local dynamic_sse_closed = vectis.http.get(
 assert(dynamic_sse_closed.ok == true,
        dynamic_sse_closed.error and dynamic_sse_closed.error.message)
 assert(dynamic_sse_closed.body == "sse closed at 4\n")
+local dynamic_upload_required = vectis.http.post(
+    "http://127.0.0.1:28484/dynamic-upload/streamed?mode=chunks", {
+  body = "streaming upload body",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_upload_required.ok == false)
+assert(dynamic_upload_required.error.http_status == 401,
+       dynamic_upload_required.error and
+       ((dynamic_upload_required.error.message or "") .. ":" ..
+        tostring(dynamic_upload_required.error.http_status) .. ":" ..
+        tostring(dynamic_upload_required.error.body)))
+local dynamic_upload_allowed = vectis.http.post(
+    "http://127.0.0.1:28484/dynamic-upload/streamed?mode=chunks", {
+  body = "streaming upload body",
+  headers = {
+    Authorization = "Bearer route-ok",
+  },
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_upload_allowed.ok == true,
+       dynamic_upload_allowed.error and dynamic_upload_allowed.error.message)
+assert(dynamic_upload_allowed.status == 200)
+assert(dynamic_upload_allowed.body ==
+       '{"principal":"route-user","chunks":5,"bytes":21,"body":"streaming upload body"}\n')
+assert(dynamic_upload_allowed.headers:lower():find("x-vectis-upload: streaming", 1, true))
+assert(dynamic_upload_allowed.headers:lower():find("cache-control: no-store", 1, true))
+local dynamic_upload_closed = vectis.http.get(
+    "http://127.0.0.1:28484/files/upload-close.txt", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_upload_closed.ok == true,
+       dynamic_upload_closed.error and dynamic_upload_closed.error.message)
+assert(dynamic_upload_closed.body == "upload closed after 5 chunks\n")
 local dynamic_guarded_required = vectis.http.get("http://127.0.0.1:28484/dynamic-guarded", {
   timeout_ms = 2000,
   connect_timeout_ms = 1000,

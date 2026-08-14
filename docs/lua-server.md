@@ -337,11 +337,60 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
 - `server:auth_routes(opts)` registers native login/auth/WebDAV-key routes.
 - `server:consumer_service(opts)` registers a C-owned lockd consumer service.
 
+`server:upload(opts)` provides true request-body streaming through a bounded
+upload reader and Lua chunk callbacks.
 `stream_source` provides true live response streaming for buffered callback
 routes. `server:sse(opts)` provides an SSE-specific convenience helper on top
 of `stream_source`.
 `spooled_source` is explicitly file-backed materialization, not live
 producer-to-transport streaming.
+
+## Upload Routes
+
+`server:upload(opts)` registers a route whose request body is read through a
+bounded streaming reader. It does not populate `request.body`; handlers receive
+request metadata plus `body_streaming_upload = true`, and each non-empty chunk
+is delivered to `on_chunk(request, chunk, state)` without materializing the
+whole body. `path`, `method` or `methods`, `auth`, and `openapi` fields follow
+the normal route contract.
+
+Upload fields:
+
+- `on_chunk(request, chunk, state)`: required callback. Return `nil` or `true`
+  to continue.
+- `open(request)` or `on_open(request)`: optional callback. Its return value is
+  the per-request `state`; when omitted, Vectis creates an empty table.
+- `on_complete(request, state)`: optional callback returning a normal route
+  response table/string/nil after EOF. When omitted, the route returns `204`.
+- `close(request, state)` or `on_close(request, state)`: optional cleanup
+  callback called after completion or failure.
+- `buffer_bytes`: maximum read size delivered to Lua per chunk.
+- `max_body_bytes`: optional upload size limit.
+
+```lua
+assert(server:upload({
+  path = "/upload/:name",
+  auth = auth_provider,
+  buffer_bytes = 8192,
+  open = function(request)
+    return { name = request.param("name"), bytes = 0, chunks = {} }
+  end,
+  on_chunk = function(request, chunk, state)
+    assert(request.body == nil)
+    assert(request.body_streaming_upload == true)
+    state.bytes = state.bytes + #chunk
+    state.chunks[#state.chunks + 1] = chunk
+    return true
+  end,
+  on_complete = function(request, state)
+    return {
+      status = 200,
+      content_type = "text/plain",
+      body = state.name .. ":" .. tostring(state.bytes) .. "\n",
+    }
+  end,
+}) == true)
+```
 
 ## SSE Routes
 
