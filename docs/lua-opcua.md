@@ -473,12 +473,37 @@ belong to the owning client or server handle and are released when the operation
 subscription, or handle is closed. Lua callback errors become structured OPC UA
 callback errors and stop the relevant operation deterministically.
 
+## C-Only Native-Pointer Surfaces
+
+The Lua facade intentionally does not expose cpkt OPC UA native-pointer escape
+hatches. The excluded C-only APIs are `cpkt_opcua_client_native_config`,
+`cpkt_opcua_client_security_plugin_native_config`,
+`cpkt_opcua_client_native`, `cpkt_opcua_client_async_native`,
+`cpkt_opcua_client_history_native`,
+`cpkt_opcua_client_read_native_variant`,
+`cpkt_opcua_client_read_native_data_value`,
+`cpkt_opcua_server_native_config`,
+`cpkt_opcua_server_file_config_native_config`,
+`cpkt_opcua_server_security_plugin_native_config`,
+`cpkt_opcua_server_native`, `cpkt_opcua_server_pubsub_native`,
+`cpkt_opcua_server_history_native`,
+`cpkt_opcua_server_read_native_variant`, and
+`cpkt_opcua_server_read_native_data_value`.
+
+Those functions expose borrowed native open62541 pointers, native
+configuration/plugin pointers, native variants/data values, or C callback
+escape hatches whose lifetime and thread ownership cannot be made safe or
+portable as ordinary Lua values. Lua code should use the materialized
+`opcua.value`, data-value, security, PubSub graph, discovery, async, and
+callback helpers instead. Advanced native integrations belong in C against the
+cpkt C89 facade or in a future stable Lua-free ABI view before they are exposed
+through Vectis Lua.
+
 ## Complete Surface Target
 
 The dependency-native facade must cover the relevant public
 `cpkt_opcua_client_*` and `cpkt_opcua_server_*` application surface. Remaining
-server work includes security configuration, access-control callbacks,
-live PubSub/MQTT configuration validation, event monitoring workflows,
-async-safe callback queueing, and explicit C-only native-pointer exclusions.
-Remaining client work
-includes native-pointer exclusions and PubSub-related workflows.
+server work includes live PubSub/MQTT configuration validation, event monitoring
+workflows, and async-safe callback queueing. Remaining client work includes
+PubSub-related workflows. Native-pointer surfaces are documented C-only
+exclusions and must not be exposed as Lua userdata or raw pointer values.

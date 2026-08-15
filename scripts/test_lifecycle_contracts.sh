@@ -458,6 +458,13 @@ assert_opcua_lua_runtime_contract() {
   assert_contains "$repo_root/docs/lua-opcua.md" 'Every Lua-created OPC UA client or server is owned by the `lua_State`'
   assert_contains "$repo_root/docs/lua-opcua.md" 'Background threads must not call Lua callbacks directly'
   assert_contains "$repo_root/docs/lua-opcua.md" 'Kore serving and lockd consumption can run simultaneously'
+  assert_contains "$repo_root/docs/lua-opcua.md" 'C-Only Native-Pointer Surfaces'
+  assert_contains "$repo_root/docs/lua-opcua.md" 'cpkt_opcua_client_native_config'
+  assert_contains "$repo_root/docs/lua-opcua.md" 'cpkt_opcua_server_native_config'
+  assert_contains "$repo_root/docs/lua-opcua.md" 'cpkt_opcua_client_read_native_variant'
+  assert_contains "$repo_root/docs/lua-opcua.md" 'cpkt_opcua_server_read_native_data_value'
+  assert_contains "$repo_root/docs/lua-opcua.md" 'borrowed native open62541 pointers'
+  assert_contains "$repo_root/docs/lua-opcua.md" 'must not be exposed as Lua userdata or raw pointer values'
   assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'type/view/reference remote node-management'
   assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'expanded-node references'
   assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'array-dimension attributes'
@@ -468,6 +475,8 @@ assert_opcua_lua_runtime_contract() {
   assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'server access-control callbacks'
   assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'default security byte-material configuration'
   assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'endpoint and FindServers discovery'
+  assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'native-pointer surfaces are documented C-only exclusions'
+  assert_not_contains "$repo_root/src/vectis_opcua_lua.c" 'cpkt_opcua_.*native'
   assert_contains "$repo_root/src/vectis_opcua_lua.c" 'cpkt_opcua_server_set_access_control_callback'
   assert_contains "$repo_root/src/vectis_opcua_lua.c" 'vectis_opcua_lua_access_control_cb'
   assert_contains "$repo_root/src/vectis_opcua_lua.c" 'cpkt_opcua_server_set_default_security'
@@ -477,6 +486,7 @@ assert_opcua_lua_runtime_contract() {
   assert_contains "$repo_root/TODO.md" '\[x\] Add OPC UA Lua server access-control callback retention'
   assert_contains "$repo_root/TODO.md" '\[x\] Add OPC UA Lua client/server default security byte-material configuration'
   assert_contains "$repo_root/TODO.md" '\[x\] Add OPC UA Lua client endpoint and FindServers discovery helpers'
+  assert_contains "$repo_root/TODO.md" '\[x\] Document OPC UA Lua native-pointer C-only exclusions'
 }
 
 assert_audio_sus_lua_runtime_contract() {
