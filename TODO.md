@@ -310,7 +310,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add OPC UA Lua client async read, write, and method-call callbacks with owner-state callback retention, direct and packed local e2e coverage, and callback errors surfaced through `client:iterate()`.
 - [x] Add OPC UA Lua client async browse and async object/variable creation callbacks with owner-state callback retention, direct and packed local e2e coverage, and callback errors surfaced through `client:iterate()`.
 - [x] Resolve OPC UA Lua client PubSub scope: current cpkt C89 exposes no client PubSub symbols, the lifecycle surface audit fails if such symbols appear unbound, and client subscription/event/async callback lifetime and error semantics have deterministic direct and packed e2e coverage.
-- [ ] Add opt-in live OPC UA server PubSub/MQTT broker validation against the local MQTT integration service without weakening deterministic local Lua coverage.
+- [x] Add opt-in live OPC UA server PubSub/MQTT broker validation against the local MQTT integration service without weakening deterministic local Lua coverage.
 - [x] Add a Lua facade for XML parsing backed by the existing libxml2/lonejson C helpers, including memory/path XML-to-lonejson mapped-record workflows and deterministic tests.
 - [ ] Add XML serialization coverage once the C SDK has an XML writer contract; keep the behavior explicit as serialization, not hidden JSON/string conversion.
 - [x] Add Lua facades for DSV/CSV/TSV materialized parsing and serialization backed by the existing C helpers, including typed row callbacks through Lua-owned LoneJSON records, custom delimiter, strict/permissive width, comments, and spill-to-disk behavior.

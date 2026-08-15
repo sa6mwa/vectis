@@ -224,6 +224,11 @@ assert_opcua_lua_runtime_contract() {
   assert_contains "$repo_root/CMakeLists.txt" 'cpkt::opcua'
   assert_contains "$repo_root/Makefile" 'test-opcua-lua-surface'
   assert_contains "$repo_root/Makefile" 'scripts/verify_opcua_lua_surface\.py'
+  assert_contains "$repo_root/Makefile" 'test-opcua-pubsub-live'
+  assert_contains "$repo_root/Makefile" 'scripts/test-live-opcua-pubsub\.sh'
+  assert_contains "$repo_root/scripts/test-live-opcua-pubsub.sh" 'VECTIS_OPCUA_PUBSUB_LIVE'
+  assert_contains "$repo_root/scripts/test-live-opcua-pubsub.sh" 'server:add_mqtt_pubsub_connection'
+  assert_contains "$repo_root/scripts/test-live-opcua-pubsub.sh" 'opcua_pubsub_live=ok'
   assert_contains "$repo_root/scripts/verify_opcua_lua_surface.py" 'unexpected_missing'
   assert_contains "$repo_root/scripts/verify_opcua_lua_surface.py" 'client_pubsub'
   assert_contains "$repo_root/src/vectis_cli.c" 'cpkt_lua_runtime_register_c_module\(runtime, "opcua"'
@@ -468,6 +473,7 @@ assert_opcua_lua_runtime_contract() {
   assert_contains "$repo_root/docs/lua-opcua.md" 'Kore serving and lockd consumption can run simultaneously'
   assert_contains "$repo_root/docs/lua-opcua.md" 'all non-native client/server symbols'
   assert_contains "$repo_root/docs/lua-opcua.md" 'no client-side PubSub symbols'
+  assert_contains "$repo_root/docs/lua-opcua.md" 'VECTIS_OPCUA_PUBSUB_LIVE=1 make'
   assert_contains "$repo_root/docs/lua-opcua.md" 'C-Only Native-Pointer Surfaces'
   assert_contains "$repo_root/docs/lua-opcua.md" 'cpkt_opcua_client_native_config'
   assert_contains "$repo_root/docs/lua-opcua.md" 'cpkt_opcua_server_native_config'
@@ -489,6 +495,7 @@ assert_opcua_lua_runtime_contract() {
   assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'client raw history reads'
   assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'surface audit enforces'
   assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'no client PubSub symbols'
+  assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'make test-opcua-pubsub-live'
   assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'native-pointer surfaces are documented C-only exclusions'
   assert_not_contains "$repo_root/src/vectis_opcua_lua.c" 'cpkt_opcua_.*native'
   assert_contains "$repo_root/src/vectis_opcua_lua.c" 'cpkt_opcua_server_set_access_control_callback'
@@ -503,7 +510,7 @@ assert_opcua_lua_runtime_contract() {
   assert_contains "$repo_root/TODO.md" '\[x\] Add OPC UA Lua client raw history reads'
   assert_contains "$repo_root/TODO.md" '\[x\] Complete the dependency-native OPC UA Lua server facade over all non-native'
   assert_contains "$repo_root/TODO.md" '\[x\] Resolve OPC UA Lua client PubSub scope'
-  assert_contains "$repo_root/TODO.md" '\[ \] Add opt-in live OPC UA server PubSub/MQTT broker validation'
+  assert_contains "$repo_root/TODO.md" '\[x\] Add opt-in live OPC UA server PubSub/MQTT broker validation'
   assert_contains "$repo_root/TODO.md" '\[x\] Document OPC UA Lua native-pointer C-only exclusions'
 }
 
@@ -1367,6 +1374,7 @@ do
   assert_contains "$repo_root/Makefile" "^$target:"
 done
 assert_contains "$repo_root/Makefile" 'VECTIS_LIVE_OAUTH2_ENABLE=1'
+assert_contains "$repo_root/Makefile" 'VECTIS_OPCUA_PUBSUB_LIVE=1'
 assert_contains "$repo_root/scripts/test-live-oauth2.sh" 'VECTIS_LIVE_OAUTH2_ENABLE'
 assert_contains "$repo_root/scripts/test-live-oauth2.sh" 'SKIP: set VECTIS_LIVE_OAUTH2_ENABLE=1'
 assert_contains "$repo_root/docs/pack-embedded-filesystem-auth-audit.md" 'server:static_embedded'

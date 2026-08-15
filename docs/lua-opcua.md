@@ -523,4 +523,6 @@ pointer values.
 
 Server PubSub graph construction, serialization, and load behavior are covered
 by deterministic local e2e. Live OPC UA PubSub/MQTT broker validation is an
-opt-in integration workflow and must not replace the deterministic local gate.
+opt-in integration workflow through `VECTIS_OPCUA_PUBSUB_LIVE=1 make
+test-opcua-pubsub-live` or `prerelease-live`; it uses the local MQTT
+integration service and must not replace the deterministic local gate.
