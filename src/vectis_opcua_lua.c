@@ -2232,6 +2232,109 @@ vectis_opcua_lua_data_change_cb(cpkt_opcua_subscription_id subscription_id,
   lua_settop(lua, top);
 }
 
+static void vectis_opcua_lua_push_event_copy(lua_State *lua,
+                                             const cpkt_opcua_event *event) {
+  lua_newtable(lua);
+  lua_pushlstring(lua,
+                  event->event_id != NULL ? (const char *)event->event_id : "",
+                  event->event_id != NULL ? event->event_id_length : 0u);
+  lua_setfield(lua, -2, "event_id");
+  lua_pushlstring(lua, event->source_name != NULL ? event->source_name : "",
+                  event->source_name != NULL ? event->source_name_length : 0u);
+  lua_setfield(lua, -2, "source_name");
+  lua_pushlstring(lua, event->message != NULL ? event->message : "",
+                  event->message != NULL ? event->message_length : 0u);
+  lua_setfield(lua, -2, "message");
+  lua_pushinteger(lua, (lua_Integer)event->severity);
+  lua_setfield(lua, -2, "severity");
+}
+
+static void
+vectis_opcua_lua_event_cb(cpkt_opcua_subscription_id subscription_id,
+                          cpkt_opcua_monitored_item_id monitored_item_id,
+                          const cpkt_opcua_event *event,
+                          cpkt_opcua_status status, void *user) {
+  vectis_opcua_lua_monitor_callback *callback;
+  lua_State *lua;
+  int top;
+
+  callback = (vectis_opcua_lua_monitor_callback *)user;
+  if (callback == NULL || callback->owner == NULL ||
+      callback->callback_ref == LUA_NOREF) {
+    return;
+  }
+  lua = callback->owner;
+  top = lua_gettop(lua);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, callback->callback_ref);
+  lua_newtable(lua);
+  lua_pushinteger(lua, (lua_Integer)subscription_id);
+  lua_setfield(lua, -2, "subscription_id");
+  lua_pushinteger(lua, (lua_Integer)monitored_item_id);
+  lua_setfield(lua, -2, "monitored_item_id");
+  vectis_opcua_lua_push_event_copy(lua, event);
+  lua_setfield(lua, -2, "event");
+  lua_pushinteger(lua, (lua_Integer)status);
+  lua_setfield(lua, -2, "opcua_status");
+  vectis_opcua_lua_set_field_string(lua, "opcua_status_name",
+                                    cpkt_opcua_status_name(status));
+  if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
+    vectis_opcua_lua_client_set_callback_error(callback->client,
+                                               lua_tostring(lua, -1));
+    lua_pop(lua, 1);
+  }
+  lua_settop(lua, top);
+}
+
+static void
+vectis_opcua_lua_event_fields_cb(cpkt_opcua_subscription_id subscription_id,
+                                 cpkt_opcua_monitored_item_id monitored_item_id,
+                                 const cpkt_opcua_event_field *fields,
+                                 size_t field_count, cpkt_opcua_status status,
+                                 void *user) {
+  vectis_opcua_lua_monitor_callback *callback;
+  lua_State *lua;
+  size_t i;
+  int top;
+
+  callback = (vectis_opcua_lua_monitor_callback *)user;
+  if (callback == NULL || callback->owner == NULL ||
+      callback->callback_ref == LUA_NOREF) {
+    return;
+  }
+  lua = callback->owner;
+  top = lua_gettop(lua);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, callback->callback_ref);
+  lua_newtable(lua);
+  lua_pushinteger(lua, (lua_Integer)subscription_id);
+  lua_setfield(lua, -2, "subscription_id");
+  lua_pushinteger(lua, (lua_Integer)monitored_item_id);
+  lua_setfield(lua, -2, "monitored_item_id");
+  lua_newtable(lua);
+  for (i = 0u; i < field_count; ++i) {
+    lua_newtable(lua);
+    lua_pushlstring(lua, fields[i].name, fields[i].name_length);
+    lua_setfield(lua, -2, "name");
+    (void)vectis_opcua_lua_push_value_copy(lua, &fields[i].value);
+    lua_setfield(lua, -2, "value");
+    lua_pushinteger(lua, (lua_Integer)fields[i].status);
+    lua_setfield(lua, -2, "opcua_status");
+    vectis_opcua_lua_set_field_string(lua, "opcua_status_name",
+                                      cpkt_opcua_status_name(fields[i].status));
+    lua_rawseti(lua, -2, (lua_Integer)i + 1);
+  }
+  lua_setfield(lua, -2, "fields");
+  lua_pushinteger(lua, (lua_Integer)status);
+  lua_setfield(lua, -2, "opcua_status");
+  vectis_opcua_lua_set_field_string(lua, "opcua_status_name",
+                                    cpkt_opcua_status_name(status));
+  if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
+    vectis_opcua_lua_client_set_callback_error(callback->client,
+                                               lua_tostring(lua, -1));
+    lua_pop(lua, 1);
+  }
+  lua_settop(lua, top);
+}
+
 static vectis_opcua_lua_client *vectis_opcua_lua_check_client(lua_State *lua,
                                                               int index) {
   return (vectis_opcua_lua_client *)luaL_checkudata(lua, index,
@@ -2598,6 +2701,117 @@ static int vectis_opcua_lua_client_delete_monitored_item(lua_State *lua) {
   vectis_opcua_lua_client_forget_monitor_callback(client_ud, subscription_id,
                                                   monitored_item_id);
   lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_monitor_events(lua_State *lua) {
+  vectis_opcua_lua_client *client_ud;
+  cpkt_opcua_client *client;
+  cpkt_opcua_subscription_id subscription_id;
+  cpkt_opcua_node_id node_id;
+  double sampling_interval_ms;
+  vectis_opcua_lua_monitor_callback *callback;
+  cpkt_opcua_monitored_item_id monitored_item_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client_ud = vectis_opcua_lua_check_client(lua, 1);
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  subscription_id = vectis_opcua_lua_check_ulong(lua, 2, "subscription_id");
+  node_id = vectis_opcua_lua_node_id_at(lua, 3);
+  sampling_interval_ms = luaL_checknumber(lua, 4);
+  luaL_checktype(lua, 5, LUA_TFUNCTION);
+  callback =
+      vectis_opcua_lua_monitor_callback_new(lua, client_ud, 5, subscription_id);
+  monitored_item_id = 0u;
+  status = 0u;
+  result = cpkt_opcua_client_monitor_events(
+      client, subscription_id, node_id, sampling_interval_ms,
+      vectis_opcua_lua_event_cb, callback, &monitored_item_id, &status);
+  if (result != CPKT_OPCUA_OK) {
+    vectis_opcua_lua_monitor_callback_free(callback);
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client monitor events");
+  }
+  callback->monitored_item_id = monitored_item_id;
+  vectis_opcua_lua_client_keep_monitor_callback(client_ud, callback);
+  lua_pushinteger(lua, (lua_Integer)monitored_item_id);
+  return 1;
+}
+
+static cpkt_opcua_string_view *
+vectis_opcua_lua_event_field_names(lua_State *lua, int index,
+                                   size_t *field_count_out) {
+  cpkt_opcua_string_view *fields;
+  lua_Integer raw_count;
+  size_t field_count;
+  size_t i;
+  size_t name_size;
+  const char *name;
+
+  luaL_checktype(lua, index, LUA_TTABLE);
+  raw_count = luaL_len(lua, index);
+  if (raw_count < 0) {
+    (void)luaL_error(lua, "opcua event field names length is negative");
+    return NULL;
+  }
+  field_count = (size_t)raw_count;
+  fields = NULL;
+  if (field_count != 0u) {
+    fields = (cpkt_opcua_string_view *)calloc(field_count, sizeof(*fields));
+    if (fields == NULL) {
+      (void)luaL_error(lua, "opcua event field names allocation failed");
+      return NULL;
+    }
+  }
+  for (i = 0u; i < field_count; ++i) {
+    lua_rawgeti(lua, index, (lua_Integer)i + 1);
+    name = luaL_checklstring(lua, -1, &name_size);
+    fields[i].data = name;
+    fields[i].length = name_size;
+    lua_pop(lua, 1);
+  }
+  *field_count_out = field_count;
+  return fields;
+}
+
+static int vectis_opcua_lua_client_monitor_event_fields(lua_State *lua) {
+  vectis_opcua_lua_client *client_ud;
+  cpkt_opcua_client *client;
+  cpkt_opcua_subscription_id subscription_id;
+  cpkt_opcua_node_id node_id;
+  double sampling_interval_ms;
+  cpkt_opcua_string_view *field_names;
+  size_t field_count;
+  vectis_opcua_lua_monitor_callback *callback;
+  cpkt_opcua_monitored_item_id monitored_item_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client_ud = vectis_opcua_lua_check_client(lua, 1);
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  subscription_id = vectis_opcua_lua_check_ulong(lua, 2, "subscription_id");
+  node_id = vectis_opcua_lua_node_id_at(lua, 3);
+  sampling_interval_ms = luaL_checknumber(lua, 4);
+  luaL_checktype(lua, 6, LUA_TFUNCTION);
+  field_names = vectis_opcua_lua_event_field_names(lua, 5, &field_count);
+  callback =
+      vectis_opcua_lua_monitor_callback_new(lua, client_ud, 6, subscription_id);
+  monitored_item_id = 0u;
+  status = 0u;
+  result = cpkt_opcua_client_monitor_event_fields(
+      client, subscription_id, node_id, sampling_interval_ms, field_names,
+      field_count, vectis_opcua_lua_event_fields_cb, callback,
+      &monitored_item_id, &status);
+  free(field_names);
+  if (result != CPKT_OPCUA_OK) {
+    vectis_opcua_lua_monitor_callback_free(callback);
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client monitor event fields");
+  }
+  callback->monitored_item_id = monitored_item_id;
+  vectis_opcua_lua_client_keep_monitor_callback(client_ud, callback);
+  lua_pushinteger(lua, (lua_Integer)monitored_item_id);
   return 1;
 }
 
@@ -8423,6 +8637,8 @@ static void vectis_opcua_lua_register_client(lua_State *lua) {
       {"monitor_value_ex", vectis_opcua_lua_client_monitor_value_ex},
       {"set_monitoring_mode", vectis_opcua_lua_client_set_monitoring_mode},
       {"delete_monitored_item", vectis_opcua_lua_client_delete_monitored_item},
+      {"monitor_events", vectis_opcua_lua_client_monitor_events},
+      {"monitor_event_fields", vectis_opcua_lua_client_monitor_event_fields},
       {"read", vectis_opcua_lua_client_read},
       {"write", vectis_opcua_lua_client_write},
       {"add_object", vectis_opcua_lua_client_add_object},

@@ -300,7 +300,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add OPC UA Lua expanded-node-id constructors, parse/print/equality helpers, and client/server expanded-reference add/delete bindings with smoke coverage plus direct and packed local e2e coverage.
 - [x] Add OPC UA Lua client/server array-dimension attribute read/write helpers with smoke coverage plus direct and packed local e2e coverage.
 - [x] Add OPC UA Lua client subscription lifecycle and value-monitor callback bindings with owner-state callback retention, callback-error propagation through `client:iterate()`, smoke coverage plus direct and packed local e2e coverage.
-- [ ] Complete OPC UA Lua client async, event-monitor subscription callbacks, native-pointer exclusion, and PubSub-related workflows with explicit Lua callback lifetime/error semantics and deterministic local e2e.
+- [x] Add OPC UA Lua client compact event and selected event-field monitor callbacks with owner-state callback retention, direct and packed local e2e coverage, and callback errors surfaced through `client:iterate()`.
+- [ ] Complete OPC UA Lua client async, native-pointer exclusion, and PubSub-related workflows with explicit Lua callback lifetime/error semantics and deterministic local e2e.
 - [x] Add a Lua facade for XML parsing backed by the existing libxml2/lonejson C helpers, including memory/path XML-to-lonejson mapped-record workflows and deterministic tests.
 - [ ] Add XML serialization coverage once the C SDK has an XML writer contract; keep the behavior explicit as serialization, not hidden JSON/string conversion.
 - [x] Add Lua facades for DSV/CSV/TSV materialized parsing and serialization backed by the existing C helpers, including typed row callbacks through Lua-owned LoneJSON records, custom delimiter, strict/permissive width, comments, and spill-to-disk behavior.

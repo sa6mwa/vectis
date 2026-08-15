@@ -479,6 +479,7 @@ if server_port then
   assert(server:read_node_class(view_node) == opcua.NODE_CLASS_VIEW)
   assert(server:read_contains_no_loops(view_node) == true)
   assert(type(server:read_event_notifier(view_node)) == "number")
+  assert(server:write_event_notifier(object_node, 1) == true)
 
   local event, event_err = server:create_event({
     source_node_id = object_node,
@@ -504,7 +505,6 @@ if server_port then
   local event_id, event_id_err = event:trigger(server)
   assert(type(event_id) == "string",
          event_id_err and event_id_err.message or "event trigger")
-  assert(event:close() == true)
   local direct_event_id, direct_event_id_err = server:trigger_event({
     source_node_id = object_node,
     event_type_id = opcua.node_id_numeric(0, opcua.NODE_BASE_EVENT_TYPE),
@@ -514,6 +514,7 @@ if server_port then
   assert(type(direct_event_id) == "string",
          direct_event_id_err and direct_event_id_err.message or
          "server trigger event")
+  assert(event:close() == true)
   assert(type(server:endpoint_url()) == "string")
   assert(type(server:iterate(false)) == "number")
   assert(server:shutdown() == true)
@@ -782,6 +783,75 @@ assert(client:delete_monitored_item(
     error_subscription_id, error_monitored_item) == true)
 assert(client:delete_subscription(error_subscription_id) == true)
 assert(client:write(node, opcua.value_integer(updated_value)) == true)
+
+local event_subscription_id = assert(client:create_subscription(25))
+local compact_events = {}
+local selected_events = {}
+local compact_event_item = assert(client:monitor_events(
+    event_subscription_id, method_object, 10, function(change)
+      assert(type(change.subscription_id) == "number")
+      assert(type(change.monitored_item_id) == "number")
+      assert(type(change.event.event_id) == "string")
+      assert(type(change.event.source_name) == "string")
+      assert(type(change.event.message) == "string")
+      assert(type(change.event.severity) == "number")
+      assert(type(change.opcua_status) == "number")
+      assert(type(change.opcua_status_name) == "string")
+      compact_events[#compact_events + 1] = change
+    end))
+local selected_event_item = assert(client:monitor_event_fields(
+    event_subscription_id, method_object, 10, { "Message", "Severity" },
+    function(change)
+      assert(type(change.subscription_id) == "number")
+      assert(type(change.monitored_item_id) == "number")
+      assert(type(change.fields) == "table")
+      selected_events[#selected_events + 1] = change
+    end))
+assert(client:set_monitoring_mode(
+    event_subscription_id, compact_event_item,
+    opcua.MONITORING_REPORTING) == true)
+assert(client:set_monitoring_mode(
+    event_subscription_id, selected_event_item,
+    opcua.MONITORING_REPORTING) == true)
+local observed_compact_event = false
+local observed_selected_event = false
+for _ = 1, 150 do
+  local ok, err = client:iterate(20)
+  assert(ok == true, err and err.message or "client iterate event subscription")
+  for i = 1, #compact_events do
+    local compact = compact_events[i]
+    if compact.monitored_item_id == compact_event_item and
+        compact.event.message == "Fixture periodic event" and
+        compact.event.severity == 321 then
+      observed_compact_event = true
+    end
+  end
+  for i = 1, #selected_events do
+    local selected = selected_events[i]
+    if selected.monitored_item_id == selected_event_item then
+      for field_index = 1, #selected.fields do
+        local field = selected.fields[field_index]
+        if field.name == "Message" and
+            field.value:type() == opcua.VALUE_LOCALIZED_TEXT and
+            field.value:get().text == "Fixture periodic event" then
+          observed_selected_event = true
+        end
+      end
+    end
+  end
+  if observed_compact_event and observed_selected_event then
+    break
+  end
+end
+assert(observed_compact_event,
+       "client monitor_events callback should observe fixture event")
+assert(observed_selected_event,
+       "client monitor_event_fields callback should observe fixture event")
+assert(client:delete_monitored_item(
+    event_subscription_id, compact_event_item) == true)
+assert(client:delete_monitored_item(
+    event_subscription_id, selected_event_item) == true)
+assert(client:delete_subscription(event_subscription_id) == true)
 assert(client:read_method_argument_count(
     remote_method_node, opcua.METHOD_ARGUMENT_INPUT) == 1)
 assert(client:read_method_argument_count(

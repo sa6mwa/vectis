@@ -17,6 +17,10 @@
 
 typedef struct opcua_server_loop {
   cpkt_opcua_server *server;
+  cpkt_opcua_node_id event_source_node;
+  cpkt_opcua_node_id event_type_node;
+  unsigned int event_tick;
+  int trigger_events;
   volatile int stop;
   cpkt_opcua_result result;
 } opcua_server_loop;
@@ -159,8 +163,7 @@ static int make_temp_output_path(char **path_out) {
 }
 
 static int run_child(const char *label, char *const argv[],
-                     const char *endpoint_url,
-                     unsigned short lua_server_port) {
+                     const char *endpoint_url, unsigned short lua_server_port) {
   pid_t pid;
   int status;
   char port_text[16];
@@ -257,15 +260,29 @@ static void sleep_ms(unsigned long ms) {
 
 static void *server_loop_main(void *user) {
   opcua_server_loop *loop;
+  cpkt_opcua_status status;
+  unsigned char event_id[64];
+  size_t required_event_id_size;
   unsigned short wait_ms;
 
   loop = (opcua_server_loop *)user;
   loop->result = CPKT_OPCUA_OK;
+  status = 0u;
+  required_event_id_size = 0u;
   while (!loop->stop) {
     wait_ms = 0u;
     loop->result = cpkt_opcua_server_iterate(loop->server, 0, &wait_ms);
     if (loop->result != CPKT_OPCUA_OK) {
       return NULL;
+    }
+    if (loop->trigger_events && loop->event_tick++ % 10u == 0u) {
+      loop->result = cpkt_opcua_server_trigger_event(
+          loop->server, loop->event_source_node, loop->event_type_node, 321u,
+          "Fixture periodic event", event_id, sizeof(event_id),
+          &required_event_id_size, &status);
+      if (loop->result != CPKT_OPCUA_OK) {
+        return NULL;
+      }
     }
     if (wait_ms > 20u) {
       wait_ms = 20u;
@@ -354,17 +371,16 @@ static int run_lua_contract(const char *endpoint_url, const char *script_path,
         cpkt_lua_runtime_register_c_module(runtime, "opcua", open_opcua);
   }
   if (lua_status == CPKT_LUA_RUNTIME_OK) {
-    lua_status =
-        cpkt_lua_runtime_set_global_string(runtime, "OPCUA_ENDPOINT",
-                                           endpoint_url);
+    lua_status = cpkt_lua_runtime_set_global_string(runtime, "OPCUA_ENDPOINT",
+                                                    endpoint_url);
   }
   if (lua_status == CPKT_LUA_RUNTIME_OK) {
     lua_status = cpkt_lua_runtime_set_global_integer(
         runtime, "OPCUA_LUA_SERVER_PORT", lua_server_port);
   }
   if (lua_status == CPKT_LUA_RUNTIME_OK) {
-    lua_status = cpkt_lua_runtime_run_buffer(
-        runtime, script_data, script_size, chunk_name, 0, NULL, 0);
+    lua_status = cpkt_lua_runtime_run_buffer(runtime, script_data, script_size,
+                                             chunk_name, 0, NULL, 0);
   }
   if (lua_status != CPKT_LUA_RUNTIME_OK) {
     fprintf(stderr, "lua contract failed: %s: %s\n",
@@ -473,31 +489,37 @@ int main(int argc, char **argv) {
   objects_folder = cpkt_opcua_node_id_numeric(0u, 85u);
   method_object_node = cpkt_opcua_node_id_numeric(1u, 7102u);
   method_node = cpkt_opcua_node_id_numeric(1u, 7103u);
+  loop.event_type_node = cpkt_opcua_node_id_numeric(0u, 2041u);
   method_factor = 3;
   method_input_types[0] = CPKT_OPCUA_VALUE_INTEGER;
   cpkt_opcua_value_integer(&value, 42);
-  failed = expect_ok(cpkt_opcua_server_add_variable(
-                         server, value_node, "luaValue", "Lua Value", &value,
-                         &status),
-                     status, "server add variable");
+  failed =
+      expect_ok(cpkt_opcua_server_add_variable(server, value_node, "luaValue",
+                                               "Lua Value", &value, &status),
+                status, "server add variable");
   if (!failed) {
-    failed = expect_ok(cpkt_opcua_server_add_object(
-                           server, method_object_node, objects_folder,
-                           "methodObject", "Method Object", &status),
-                       status, "server add method object");
+    failed = expect_ok(
+        cpkt_opcua_server_add_object(server, method_object_node, objects_folder,
+                                     "methodObject", "Method Object", &status),
+        status, "server add method object");
   }
   if (!failed) {
-    failed = expect_ok(cpkt_opcua_server_add_method(
-                           server, method_node, method_object_node,
-                           "multiply", "Multiply", method_input_types, 1u,
-                           CPKT_OPCUA_VALUE_INTEGER, multiply_method,
-                           &method_factor, &status),
-                       status, "server add method");
+    failed = expect_ok(cpkt_opcua_server_write_event_notifier(
+                           server, method_object_node, 1u, &status),
+                       status, "server write event notifier");
   }
   if (!failed) {
-    failed = expect_ok(cpkt_opcua_server_endpoint_url(
-                           server, endpoint_url, sizeof(endpoint_url),
-                           &endpoint_required),
+    failed = expect_ok(
+        cpkt_opcua_server_add_method(server, method_node, method_object_node,
+                                     "multiply", "Multiply", method_input_types,
+                                     1u, CPKT_OPCUA_VALUE_INTEGER,
+                                     multiply_method, &method_factor, &status),
+        status, "server add method");
+  }
+  if (!failed) {
+    failed = expect_ok(cpkt_opcua_server_endpoint_url(server, endpoint_url,
+                                                      sizeof(endpoint_url),
+                                                      &endpoint_required),
                        status, "server endpoint url");
   }
   if (!failed && endpoint_required >= sizeof(endpoint_url)) {
@@ -510,6 +532,9 @@ int main(int argc, char **argv) {
   }
   if (!failed) {
     loop.server = server;
+    loop.event_source_node = method_object_node;
+    loop.event_tick = 0u;
+    loop.trigger_events = 1;
     loop.stop = 0;
     loop.result = CPKT_OPCUA_OK;
     if (pthread_create(&thread, NULL, server_loop_main, &loop) != 0) {
@@ -536,9 +561,8 @@ int main(int argc, char **argv) {
   }
   if (server != NULL) {
     if (!failed) {
-      failed =
-          expect_ok(cpkt_opcua_server_shutdown(server, &status), status,
-                    "server shutdown");
+      failed = expect_ok(cpkt_opcua_server_shutdown(server, &status), status,
+                         "server shutdown");
     } else {
       (void)cpkt_opcua_server_shutdown(server, &status);
     }

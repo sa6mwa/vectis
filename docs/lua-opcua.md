@@ -42,6 +42,9 @@ owned handles and structured Vectis error envelopes for dependency failures.
   callback)`, `client:monitor_value_ex(subscription_id, node_id, opts,
   callback)`, `client:set_monitoring_mode(subscription_id, monitored_item_id,
   mode)`, `client:delete_monitored_item(subscription_id, monitored_item_id)`,
+  `client:monitor_events(subscription_id, node_id, sampling_interval_ms,
+  callback)`, `client:monitor_event_fields(subscription_id, node_id,
+  sampling_interval_ms, field_names, callback)`,
   `client:read(node_id)`,
   `client:write(node_id, value)`, `client:add_object(opts)`,
   `client:add_variable(opts)`, `client:add_variable_under(opts)`,
@@ -270,6 +273,44 @@ The callback reference is retained by the client until
 structured OPC UA callback errors returned by the next `client:iterate(...)`
 call.
 
+Event-monitor callbacks follow the same retention and error rules.
+`client:monitor_events()` receives compact event data:
+
+```lua
+{
+  subscription_id = 1,
+  monitored_item_id = 2,
+  event = {
+    event_id = "...",
+    source_name = "Example Object",
+    message = "Example event",
+    severity = 100,
+  },
+  opcua_status = 0,
+  opcua_status_name = "Good",
+}
+```
+
+`client:monitor_event_fields()` accepts an array of field names and receives
+selected fields as owned `opcua.value` userdata:
+
+```lua
+{
+  subscription_id = 1,
+  monitored_item_id = 3,
+  fields = {
+    {
+      name = "Message",
+      value = opcua.value_localized_text("en-US", "Example event"),
+      opcua_status = 0,
+      opcua_status_name = "Good",
+    },
+  },
+  opcua_status = 0,
+  opcua_status_name = "Good",
+}
+```
+
 ## Server Example
 
 ```lua
@@ -333,5 +374,4 @@ The dependency-native facade must cover the relevant public
 server work includes security configuration, access-control callbacks,
 PubSub/MQTT configuration, event monitoring workflows, async-safe callback
 queueing, and explicit C-only native-pointer exclusions. Remaining client work
-includes async calls, event-monitor subscription callbacks, native-pointer
-exclusions, and PubSub-related workflows.
+includes async calls, native-pointer exclusions, and PubSub-related workflows.
