@@ -169,6 +169,16 @@ owned handles and structured Vectis error envelopes for dependency failures.
   `server:browse_children_ex(node_id, opts)`,
   `server:browse_children_page(node_id[, opts])`,
   `server:browse_next(continuation_point[, release])`,
+  `server:add_mqtt_pubsub_connection(opts[, buffer_opts])`,
+  `server:add_published_dataset(name[, buffer_opts])`,
+  `server:add_published_variable(opts[, buffer_opts])`,
+  `server:add_pubsub_writer_group(connection_id, opts[, buffer_opts])`,
+  `server:add_pubsub_data_set_writer(writer_group_id, published_dataset_id,
+  opts[, buffer_opts])`,
+  `server:add_pubsub_reader_group(connection_id, opts[, buffer_opts])`,
+  `server:add_pubsub_data_set_reader(reader_group_id, opts[, buffer_opts])`,
+  `server:write_pubsub_configuration([buffer_opts])`,
+  `server:load_pubsub_configuration(bytes)`,
   `server:add_method(opts)`, `server:add_method_many(opts)`,
   `server:read_method_argument_count(method_node_id, direction)`,
   `server:read_method_argument(method_node_id, direction, argument_index)`,
@@ -349,6 +359,21 @@ selected fields as owned `opcua.value` userdata:
 }
 ```
 
+Server PubSub helpers mirror cpkt's common C89 PubSub/MQTT wrappers. Node
+creation helpers return copied `opcua.node_id` userdata. Connection, writer,
+reader, and data-set option tables use the same field names as the cpkt structs:
+`name`, `host`/`broker_host`, `port`/`broker_port`, `topic`, `subscribe`,
+`publisher_id`, `keep_alive_seconds`, `enabled`, `writer_group_id`,
+`publishing_interval_ms`, `json_encoding`, `data_set_writer_id`,
+`key_frame_count`, and `message_receive_timeout_ms`.
+
+`server:write_pubsub_configuration()` returns the serialized PubSub
+configuration as a Lua byte string when the upstream server supports the
+configuration attribute for the selected graph. If the upstream server rejects
+that operation, the method returns the standard structured OPC UA error table.
+`server:load_pubsub_configuration(bytes)` loads a previously serialized byte
+string and returns `true` or a structured OPC UA error.
+
 ## Server Example
 
 ```lua
@@ -410,6 +435,7 @@ callback errors and stop the relevant operation deterministically.
 The dependency-native facade must cover the relevant public
 `cpkt_opcua_client_*` and `cpkt_opcua_server_*` application surface. Remaining
 server work includes security configuration, access-control callbacks,
-PubSub/MQTT configuration, event monitoring workflows, async-safe callback
-queueing, and explicit C-only native-pointer exclusions. Remaining client work
+live PubSub/MQTT configuration validation, event monitoring workflows,
+async-safe callback queueing, and explicit C-only native-pointer exclusions.
+Remaining client work
 includes native-pointer exclusions and PubSub-related workflows.

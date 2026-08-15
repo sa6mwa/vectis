@@ -481,6 +481,67 @@ if server_port then
   assert(type(server:read_event_notifier(view_node)) == "number")
   assert(server:write_event_notifier(object_node, 1) == true)
 
+  local pubsub_connection = assert(server:add_mqtt_pubsub_connection({
+    name = "exampleMqtt",
+    host = "127.0.0.1",
+    port = 1883,
+    topic = "vectis/example/opcua",
+    publisher_id = 1001,
+    enabled = false,
+  }))
+  assert(type(tostring(pubsub_connection)) == "string")
+  local published_dataset =
+      assert(server:add_published_dataset("exampleDataset"))
+  assert(type(tostring(published_dataset)) == "string")
+  local published_field = assert(server:add_published_variable({
+    published_dataset_id = published_dataset,
+    variable_node_id = owned_node,
+    field_name = "exampleValue",
+  }))
+  assert(type(tostring(published_field)) == "string")
+  local writer_group = assert(server:add_pubsub_writer_group(
+      pubsub_connection, {
+        name = "exampleWriterGroup",
+        writer_group_id = 101,
+        publishing_interval_ms = 1000,
+        json_encoding = true,
+        enabled = false,
+      }))
+  local data_set_writer = assert(server:add_pubsub_data_set_writer(
+      writer_group, published_dataset, {
+        name = "exampleDataSetWriter",
+        data_set_writer_id = 102,
+        key_frame_count = 1,
+        enabled = false,
+      }))
+  assert(type(tostring(data_set_writer)) == "string")
+  local reader_group = assert(server:add_pubsub_reader_group(
+      pubsub_connection, {
+        name = "exampleReaderGroup",
+        json_encoding = true,
+        enabled = false,
+      }))
+  local data_set_reader = assert(server:add_pubsub_data_set_reader(
+      reader_group, {
+        name = "exampleDataSetReader",
+        publisher_id = 1001,
+        writer_group_id = 101,
+        data_set_writer_id = 102,
+        message_receive_timeout_ms = 5000,
+        enabled = false,
+      }))
+  assert(type(tostring(data_set_reader)) == "string")
+  local pubsub_config, pubsub_config_err = server:write_pubsub_configuration()
+  if pubsub_config == nil then
+    assert(pubsub_config_err.dependency == "opcua")
+    assert(type(pubsub_config_err.opcua_status_name) == "string")
+  else
+    assert(type(pubsub_config) == "string")
+    local pubsub_config_server = assert(opcua.server())
+    assert(pubsub_config_server:load_pubsub_configuration(pubsub_config) == true)
+    assert(pubsub_config_server:close() == true)
+  end
+
   local event, event_err = server:create_event({
     source_node_id = object_node,
     event_type_id = opcua.node_id_numeric(0, opcua.NODE_BASE_EVENT_TYPE),

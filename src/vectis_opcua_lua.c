@@ -218,6 +218,21 @@ static int vectis_opcua_lua_table_int(lua_State *lua, int index,
   return (int)value;
 }
 
+static double vectis_opcua_lua_table_double(lua_State *lua, int index,
+                                            const char *field,
+                                            double fallback) {
+  double value;
+
+  lua_getfield(lua, index, field);
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return fallback;
+  }
+  value = luaL_checknumber(lua, -1);
+  lua_pop(lua, 1);
+  return value;
+}
+
 static const char *vectis_opcua_lua_vectis_status_string(vectis_status status) {
   switch (status) {
   case VECTIS_ERR_INVALID:
@@ -4517,6 +4532,550 @@ static int vectis_opcua_lua_server_add_view(lua_State *lua) {
   if (result != CPKT_OPCUA_OK) {
     return vectis_opcua_lua_push_error(lua, result, status,
                                        "opcua server add view");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static void vectis_opcua_lua_mqtt_pubsub_options_from_lua(
+    lua_State *lua, int index, cpkt_opcua_mqtt_connection_options *options) {
+  const char *host;
+
+  cpkt_opcua_mqtt_connection_options_default(options);
+  luaL_checktype(lua, index, LUA_TTABLE);
+  options->name = vectis_opcua_lua_table_string(lua, index, "name");
+  options->broker_host =
+      vectis_opcua_lua_table_string(lua, index, "broker_host");
+  host = vectis_opcua_lua_table_string(lua, index, "host");
+  if (host != NULL) {
+    options->broker_host = host;
+  }
+  options->broker_port = vectis_opcua_lua_table_ushort(
+      lua, index, "broker_port", options->broker_port);
+  options->broker_port =
+      vectis_opcua_lua_table_ushort(lua, index, "port", options->broker_port);
+  options->topic = vectis_opcua_lua_table_string(lua, index, "topic");
+  options->subscribe =
+      vectis_opcua_lua_table_bool(lua, index, "subscribe", options->subscribe);
+  options->username = vectis_opcua_lua_table_string(lua, index, "username");
+  options->password = vectis_opcua_lua_table_string(lua, index, "password");
+  options->publisher_id = vectis_opcua_lua_table_ulong(
+      lua, index, "publisher_id", options->publisher_id);
+  options->keep_alive_seconds = vectis_opcua_lua_table_ushort(
+      lua, index, "keep_alive_seconds", options->keep_alive_seconds);
+  options->validate_only = vectis_opcua_lua_table_bool(
+      lua, index, "validate_only", options->validate_only);
+  options->enabled =
+      vectis_opcua_lua_table_bool(lua, index, "enabled", options->enabled);
+}
+
+static void vectis_opcua_lua_pubsub_writer_group_options_from_lua(
+    lua_State *lua, int index,
+    cpkt_opcua_pubsub_writer_group_options *options) {
+  cpkt_opcua_pubsub_writer_group_options_default(options);
+  luaL_checktype(lua, index, LUA_TTABLE);
+  options->name = vectis_opcua_lua_table_string(lua, index, "name");
+  options->writer_group_id = vectis_opcua_lua_table_ushort(
+      lua, index, "writer_group_id", options->writer_group_id);
+  options->publishing_interval_ms = vectis_opcua_lua_table_double(
+      lua, index, "publishing_interval_ms", options->publishing_interval_ms);
+  options->json_encoding = vectis_opcua_lua_table_bool(
+      lua, index, "json_encoding", options->json_encoding);
+  options->enabled =
+      vectis_opcua_lua_table_bool(lua, index, "enabled", options->enabled);
+}
+
+static void vectis_opcua_lua_pubsub_data_set_writer_options_from_lua(
+    lua_State *lua, int index,
+    cpkt_opcua_pubsub_data_set_writer_options *options) {
+  cpkt_opcua_pubsub_data_set_writer_options_default(options);
+  luaL_checktype(lua, index, LUA_TTABLE);
+  options->name = vectis_opcua_lua_table_string(lua, index, "name");
+  options->data_set_writer_id = vectis_opcua_lua_table_ushort(
+      lua, index, "data_set_writer_id", options->data_set_writer_id);
+  options->key_frame_count = vectis_opcua_lua_table_ulong(
+      lua, index, "key_frame_count", options->key_frame_count);
+  options->enabled =
+      vectis_opcua_lua_table_bool(lua, index, "enabled", options->enabled);
+}
+
+static void vectis_opcua_lua_pubsub_reader_group_options_from_lua(
+    lua_State *lua, int index,
+    cpkt_opcua_pubsub_reader_group_options *options) {
+  cpkt_opcua_pubsub_reader_group_options_default(options);
+  luaL_checktype(lua, index, LUA_TTABLE);
+  options->name = vectis_opcua_lua_table_string(lua, index, "name");
+  options->json_encoding = vectis_opcua_lua_table_bool(
+      lua, index, "json_encoding", options->json_encoding);
+  options->enabled =
+      vectis_opcua_lua_table_bool(lua, index, "enabled", options->enabled);
+}
+
+static void vectis_opcua_lua_pubsub_data_set_reader_options_from_lua(
+    lua_State *lua, int index,
+    cpkt_opcua_pubsub_data_set_reader_options *options) {
+  cpkt_opcua_pubsub_data_set_reader_options_default(options);
+  luaL_checktype(lua, index, LUA_TTABLE);
+  options->name = vectis_opcua_lua_table_string(lua, index, "name");
+  options->publisher_id = vectis_opcua_lua_table_ulong(
+      lua, index, "publisher_id", options->publisher_id);
+  options->writer_group_id = vectis_opcua_lua_table_ushort(
+      lua, index, "writer_group_id", options->writer_group_id);
+  options->data_set_writer_id = vectis_opcua_lua_table_ushort(
+      lua, index, "data_set_writer_id", options->data_set_writer_id);
+  options->message_receive_timeout_ms =
+      vectis_opcua_lua_table_double(lua, index, "message_receive_timeout_ms",
+                                    options->message_receive_timeout_ms);
+  options->enabled =
+      vectis_opcua_lua_table_bool(lua, index, "enabled", options->enabled);
+}
+
+static int vectis_opcua_lua_push_server_node_result(
+    lua_State *lua, cpkt_opcua_result result, cpkt_opcua_status status,
+    const char *context, cpkt_opcua_node_id *node_id, char *buffer,
+    char *stack_buffer) {
+  if (result != CPKT_OPCUA_OK) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    return vectis_opcua_lua_push_error(lua, result, status, context);
+  }
+  (void)vectis_opcua_lua_push_node_id_copy(lua, node_id);
+  if (buffer != stack_buffer) {
+    free(buffer);
+  }
+  return 1;
+}
+
+static int vectis_opcua_lua_server_add_mqtt_pubsub_connection(lua_State *lua) {
+  cpkt_opcua_server *server;
+  cpkt_opcua_mqtt_connection_options options;
+  cpkt_opcua_node_id connection_id;
+  char stack_buffer[512];
+  char *buffer;
+  size_t buffer_size;
+  size_t required_size;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  vectis_opcua_lua_mqtt_pubsub_options_from_lua(lua, 2, &options);
+  buffer = stack_buffer;
+  buffer_size = vectis_opcua_lua_async_buffer_size(
+      lua, 3, sizeof(stack_buffer), "opcua server add mqtt pubsub");
+  if (buffer_size > sizeof(stack_buffer)) {
+    buffer = (char *)malloc(buffer_size);
+    if (buffer == NULL) {
+      return luaL_error(lua,
+                        "opcua server pubsub node buffer allocation failed");
+    }
+  }
+  required_size = 0u;
+  status = 0u;
+  result = cpkt_opcua_server_add_mqtt_pubsub_connection(
+      server, &options, &connection_id, buffer, buffer_size, &required_size,
+      &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > buffer_size) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    buffer_size = required_size + 1u;
+    buffer = (char *)malloc(buffer_size);
+    if (buffer == NULL) {
+      return luaL_error(lua,
+                        "opcua server pubsub node buffer allocation failed");
+    }
+    required_size = 0u;
+    status = 0u;
+    result = cpkt_opcua_server_add_mqtt_pubsub_connection(
+        server, &options, &connection_id, buffer, buffer_size, &required_size,
+        &status);
+  }
+  return vectis_opcua_lua_push_server_node_result(
+      lua, result, status, "opcua server add mqtt pubsub connection",
+      &connection_id, buffer, stack_buffer);
+}
+
+static int vectis_opcua_lua_server_add_published_dataset(lua_State *lua) {
+  cpkt_opcua_server *server;
+  const char *name;
+  cpkt_opcua_node_id dataset_id;
+  char stack_buffer[512];
+  char *buffer;
+  size_t buffer_size;
+  size_t required_size;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  name = luaL_checkstring(lua, 2);
+  buffer = stack_buffer;
+  buffer_size = vectis_opcua_lua_async_buffer_size(
+      lua, 3, sizeof(stack_buffer), "opcua server add published dataset");
+  if (buffer_size > sizeof(stack_buffer)) {
+    buffer = (char *)malloc(buffer_size);
+    if (buffer == NULL) {
+      return luaL_error(lua,
+                        "opcua server pubsub node buffer allocation failed");
+    }
+  }
+  required_size = 0u;
+  status = 0u;
+  result = cpkt_opcua_server_add_published_dataset(
+      server, name, &dataset_id, buffer, buffer_size, &required_size, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > buffer_size) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    buffer_size = required_size + 1u;
+    buffer = (char *)malloc(buffer_size);
+    if (buffer == NULL) {
+      return luaL_error(lua,
+                        "opcua server pubsub node buffer allocation failed");
+    }
+    required_size = 0u;
+    status = 0u;
+    result = cpkt_opcua_server_add_published_dataset(server, name, &dataset_id,
+                                                     buffer, buffer_size,
+                                                     &required_size, &status);
+  }
+  return vectis_opcua_lua_push_server_node_result(
+      lua, result, status, "opcua server add published dataset", &dataset_id,
+      buffer, stack_buffer);
+}
+
+static int vectis_opcua_lua_server_add_published_variable(lua_State *lua) {
+  cpkt_opcua_server *server;
+  cpkt_opcua_node_id dataset_id;
+  cpkt_opcua_node_id variable_node_id;
+  const char *field_name;
+  cpkt_opcua_node_id field_id;
+  char stack_buffer[512];
+  char *buffer;
+  size_t buffer_size;
+  size_t required_size;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  dataset_id = vectis_opcua_lua_node_id_field(
+      lua, 2, "published_dataset_id", "opcua server add_published_variable");
+  variable_node_id = vectis_opcua_lua_node_id_field(
+      lua, 2, "variable_node_id", "opcua server add_published_variable");
+  field_name = vectis_opcua_lua_table_string(lua, 2, "field_name");
+  if (field_name == NULL || field_name[0] == '\0') {
+    return luaL_error(
+        lua, "opcua server add_published_variable requires field_name");
+  }
+  buffer = stack_buffer;
+  buffer_size = vectis_opcua_lua_async_buffer_size(
+      lua, 3, sizeof(stack_buffer), "opcua server add published variable");
+  if (buffer_size > sizeof(stack_buffer)) {
+    buffer = (char *)malloc(buffer_size);
+    if (buffer == NULL) {
+      return luaL_error(lua,
+                        "opcua server pubsub node buffer allocation failed");
+    }
+  }
+  required_size = 0u;
+  status = 0u;
+  result = cpkt_opcua_server_add_published_variable(
+      server, dataset_id, variable_node_id, field_name, &field_id, buffer,
+      buffer_size, &required_size, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > buffer_size) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    buffer_size = required_size + 1u;
+    buffer = (char *)malloc(buffer_size);
+    if (buffer == NULL) {
+      return luaL_error(lua,
+                        "opcua server pubsub node buffer allocation failed");
+    }
+    required_size = 0u;
+    status = 0u;
+    result = cpkt_opcua_server_add_published_variable(
+        server, dataset_id, variable_node_id, field_name, &field_id, buffer,
+        buffer_size, &required_size, &status);
+  }
+  return vectis_opcua_lua_push_server_node_result(
+      lua, result, status, "opcua server add published variable", &field_id,
+      buffer, stack_buffer);
+}
+
+static int vectis_opcua_lua_server_add_pubsub_writer_group(lua_State *lua) {
+  cpkt_opcua_server *server;
+  cpkt_opcua_node_id connection_id;
+  cpkt_opcua_pubsub_writer_group_options options;
+  cpkt_opcua_node_id writer_group_id;
+  char stack_buffer[512];
+  char *buffer;
+  size_t buffer_size;
+  size_t required_size;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  connection_id = vectis_opcua_lua_node_id_at(lua, 2);
+  vectis_opcua_lua_pubsub_writer_group_options_from_lua(lua, 3, &options);
+  buffer = stack_buffer;
+  buffer_size = vectis_opcua_lua_async_buffer_size(
+      lua, 4, sizeof(stack_buffer), "opcua server add pubsub writer group");
+  if (buffer_size > sizeof(stack_buffer)) {
+    buffer = (char *)malloc(buffer_size);
+    if (buffer == NULL) {
+      return luaL_error(lua,
+                        "opcua server pubsub node buffer allocation failed");
+    }
+  }
+  required_size = 0u;
+  status = 0u;
+  result = cpkt_opcua_server_add_pubsub_writer_group(
+      server, connection_id, &options, &writer_group_id, buffer, buffer_size,
+      &required_size, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > buffer_size) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    buffer_size = required_size + 1u;
+    buffer = (char *)malloc(buffer_size);
+    if (buffer == NULL) {
+      return luaL_error(lua,
+                        "opcua server pubsub node buffer allocation failed");
+    }
+    required_size = 0u;
+    status = 0u;
+    result = cpkt_opcua_server_add_pubsub_writer_group(
+        server, connection_id, &options, &writer_group_id, buffer, buffer_size,
+        &required_size, &status);
+  }
+  return vectis_opcua_lua_push_server_node_result(
+      lua, result, status, "opcua server add pubsub writer group",
+      &writer_group_id, buffer, stack_buffer);
+}
+
+static int vectis_opcua_lua_server_add_pubsub_data_set_writer(lua_State *lua) {
+  cpkt_opcua_server *server;
+  cpkt_opcua_node_id writer_group_id;
+  cpkt_opcua_node_id published_dataset_id;
+  cpkt_opcua_pubsub_data_set_writer_options options;
+  cpkt_opcua_node_id data_set_writer_id;
+  char stack_buffer[512];
+  char *buffer;
+  size_t buffer_size;
+  size_t required_size;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  writer_group_id = vectis_opcua_lua_node_id_at(lua, 2);
+  published_dataset_id = vectis_opcua_lua_node_id_at(lua, 3);
+  vectis_opcua_lua_pubsub_data_set_writer_options_from_lua(lua, 4, &options);
+  buffer = stack_buffer;
+  buffer_size = vectis_opcua_lua_async_buffer_size(
+      lua, 5, sizeof(stack_buffer), "opcua server add pubsub data set writer");
+  if (buffer_size > sizeof(stack_buffer)) {
+    buffer = (char *)malloc(buffer_size);
+    if (buffer == NULL) {
+      return luaL_error(lua,
+                        "opcua server pubsub node buffer allocation failed");
+    }
+  }
+  required_size = 0u;
+  status = 0u;
+  result = cpkt_opcua_server_add_pubsub_data_set_writer(
+      server, writer_group_id, published_dataset_id, &options,
+      &data_set_writer_id, buffer, buffer_size, &required_size, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > buffer_size) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    buffer_size = required_size + 1u;
+    buffer = (char *)malloc(buffer_size);
+    if (buffer == NULL) {
+      return luaL_error(lua,
+                        "opcua server pubsub node buffer allocation failed");
+    }
+    required_size = 0u;
+    status = 0u;
+    result = cpkt_opcua_server_add_pubsub_data_set_writer(
+        server, writer_group_id, published_dataset_id, &options,
+        &data_set_writer_id, buffer, buffer_size, &required_size, &status);
+  }
+  return vectis_opcua_lua_push_server_node_result(
+      lua, result, status, "opcua server add pubsub data set writer",
+      &data_set_writer_id, buffer, stack_buffer);
+}
+
+static int vectis_opcua_lua_server_add_pubsub_reader_group(lua_State *lua) {
+  cpkt_opcua_server *server;
+  cpkt_opcua_node_id connection_id;
+  cpkt_opcua_pubsub_reader_group_options options;
+  cpkt_opcua_node_id reader_group_id;
+  char stack_buffer[512];
+  char *buffer;
+  size_t buffer_size;
+  size_t required_size;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  connection_id = vectis_opcua_lua_node_id_at(lua, 2);
+  vectis_opcua_lua_pubsub_reader_group_options_from_lua(lua, 3, &options);
+  buffer = stack_buffer;
+  buffer_size = vectis_opcua_lua_async_buffer_size(
+      lua, 4, sizeof(stack_buffer), "opcua server add pubsub reader group");
+  if (buffer_size > sizeof(stack_buffer)) {
+    buffer = (char *)malloc(buffer_size);
+    if (buffer == NULL) {
+      return luaL_error(lua,
+                        "opcua server pubsub node buffer allocation failed");
+    }
+  }
+  required_size = 0u;
+  status = 0u;
+  result = cpkt_opcua_server_add_pubsub_reader_group(
+      server, connection_id, &options, &reader_group_id, buffer, buffer_size,
+      &required_size, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > buffer_size) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    buffer_size = required_size + 1u;
+    buffer = (char *)malloc(buffer_size);
+    if (buffer == NULL) {
+      return luaL_error(lua,
+                        "opcua server pubsub node buffer allocation failed");
+    }
+    required_size = 0u;
+    status = 0u;
+    result = cpkt_opcua_server_add_pubsub_reader_group(
+        server, connection_id, &options, &reader_group_id, buffer, buffer_size,
+        &required_size, &status);
+  }
+  return vectis_opcua_lua_push_server_node_result(
+      lua, result, status, "opcua server add pubsub reader group",
+      &reader_group_id, buffer, stack_buffer);
+}
+
+static int vectis_opcua_lua_server_add_pubsub_data_set_reader(lua_State *lua) {
+  cpkt_opcua_server *server;
+  cpkt_opcua_node_id reader_group_id;
+  cpkt_opcua_pubsub_data_set_reader_options options;
+  cpkt_opcua_node_id data_set_reader_id;
+  char stack_buffer[512];
+  char *buffer;
+  size_t buffer_size;
+  size_t required_size;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  reader_group_id = vectis_opcua_lua_node_id_at(lua, 2);
+  vectis_opcua_lua_pubsub_data_set_reader_options_from_lua(lua, 3, &options);
+  buffer = stack_buffer;
+  buffer_size = vectis_opcua_lua_async_buffer_size(
+      lua, 4, sizeof(stack_buffer), "opcua server add pubsub data set reader");
+  if (buffer_size > sizeof(stack_buffer)) {
+    buffer = (char *)malloc(buffer_size);
+    if (buffer == NULL) {
+      return luaL_error(lua,
+                        "opcua server pubsub node buffer allocation failed");
+    }
+  }
+  required_size = 0u;
+  status = 0u;
+  result = cpkt_opcua_server_add_pubsub_data_set_reader(
+      server, reader_group_id, &options, &data_set_reader_id, buffer,
+      buffer_size, &required_size, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > buffer_size) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    buffer_size = required_size + 1u;
+    buffer = (char *)malloc(buffer_size);
+    if (buffer == NULL) {
+      return luaL_error(lua,
+                        "opcua server pubsub node buffer allocation failed");
+    }
+    required_size = 0u;
+    status = 0u;
+    result = cpkt_opcua_server_add_pubsub_data_set_reader(
+        server, reader_group_id, &options, &data_set_reader_id, buffer,
+        buffer_size, &required_size, &status);
+  }
+  return vectis_opcua_lua_push_server_node_result(
+      lua, result, status, "opcua server add pubsub data set reader",
+      &data_set_reader_id, buffer, stack_buffer);
+}
+
+static int vectis_opcua_lua_server_write_pubsub_configuration(lua_State *lua) {
+  cpkt_opcua_server *server;
+  unsigned char stack_buffer[4096];
+  unsigned char *buffer;
+  size_t buffer_size;
+  size_t required_size;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  buffer = stack_buffer;
+  buffer_size = vectis_opcua_lua_async_buffer_size(
+      lua, 2, sizeof(stack_buffer), "opcua server write pubsub config");
+  if (buffer_size > sizeof(stack_buffer)) {
+    buffer = (unsigned char *)malloc(buffer_size);
+    if (buffer == NULL) {
+      return luaL_error(lua, "opcua server pubsub config allocation failed");
+    }
+  }
+  required_size = 0u;
+  status = 0u;
+  result = cpkt_opcua_server_write_pubsub_configuration(
+      server, buffer, buffer_size, &required_size, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > buffer_size) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    buffer_size = required_size;
+    buffer = (unsigned char *)malloc(buffer_size);
+    if (buffer == NULL) {
+      return luaL_error(lua, "opcua server pubsub config allocation failed");
+    }
+    required_size = 0u;
+    status = 0u;
+    result = cpkt_opcua_server_write_pubsub_configuration(
+        server, buffer, buffer_size, &required_size, &status);
+  }
+  if (result != CPKT_OPCUA_OK) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    return vectis_opcua_lua_push_error(
+        lua, result, status, "opcua server write pubsub configuration");
+  }
+  lua_pushlstring(lua, (const char *)buffer, required_size);
+  if (buffer != stack_buffer) {
+    free(buffer);
+  }
+  return 1;
+}
+
+static int vectis_opcua_lua_server_load_pubsub_configuration(lua_State *lua) {
+  cpkt_opcua_server *server;
+  const char *data;
+  size_t data_size;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  data = luaL_checklstring(lua, 2, &data_size);
+  status = 0u;
+  result = cpkt_opcua_server_load_pubsub_configuration(
+      server, (const unsigned char *)data, data_size, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(
+        lua, result, status, "opcua server load pubsub configuration");
   }
   lua_pushboolean(lua, 1);
   return 1;
@@ -9472,6 +10031,23 @@ static void vectis_opcua_lua_register_server(lua_State *lua) {
       {"add_reference_type", vectis_opcua_lua_server_add_reference_type},
       {"add_data_type", vectis_opcua_lua_server_add_data_type},
       {"add_view", vectis_opcua_lua_server_add_view},
+      {"add_mqtt_pubsub_connection",
+       vectis_opcua_lua_server_add_mqtt_pubsub_connection},
+      {"add_published_dataset", vectis_opcua_lua_server_add_published_dataset},
+      {"add_published_variable",
+       vectis_opcua_lua_server_add_published_variable},
+      {"add_pubsub_writer_group",
+       vectis_opcua_lua_server_add_pubsub_writer_group},
+      {"add_pubsub_data_set_writer",
+       vectis_opcua_lua_server_add_pubsub_data_set_writer},
+      {"add_pubsub_reader_group",
+       vectis_opcua_lua_server_add_pubsub_reader_group},
+      {"add_pubsub_data_set_reader",
+       vectis_opcua_lua_server_add_pubsub_data_set_reader},
+      {"write_pubsub_configuration",
+       vectis_opcua_lua_server_write_pubsub_configuration},
+      {"load_pubsub_configuration",
+       vectis_opcua_lua_server_load_pubsub_configuration},
       {"add_method", vectis_opcua_lua_server_add_method},
       {"add_method_many", vectis_opcua_lua_server_add_method_many},
       {"delete_node", vectis_opcua_lua_server_delete_node},
