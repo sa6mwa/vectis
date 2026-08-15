@@ -187,7 +187,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add the Lua mailbox facade with owner-state `pump()` semantics so Lua callbacks are explicit drains rather than background-thread entry.
 - [x] Add deterministic C and Lua scenario coverage for route-style mailbox request/reply, OPC UA/lockd-style mailbox handoff, direct C receiver fast paths, and Lua owner-state pumping.
 - [ ] Add live typed adapters for Kore route, liblockdc consumer, OPC UA, and WebDAV events only where concrete service code proves generic byte payloads are too noisy.
-- [ ] Add route-local request/reply helper APIs with deadline handling and automatic reply mailbox cleanup.
+- [x] Add route-local request/reply helper APIs with deadline handling and automatic reply mailbox cleanup.
 - [x] Add metrics and diagnostics hooks for mailbox depth, publish failures, timeout failures, pump counts, and callback failures.
 - [x] Make API errors explicit when a Lua script attempts to run genuinely incompatible runtime loops in one process.
 - [x] Add integration tests covering enqueue/dequeue/ack workflows.

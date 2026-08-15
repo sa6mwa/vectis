@@ -7,7 +7,7 @@
 
 typedef struct worker_context {
   vectis_mailbox *requests;
-  vectis_mailbox *replies;
+  vectis_mailbox_broker *broker;
   int handled;
 } worker_context;
 
@@ -39,8 +39,8 @@ static void *worker_main(void *userdata) {
   reply.kind = "worker.result";
   reply.payload = response;
   reply.payload_size = sizeof(response) - 1u;
-  status = context->replies->reply(context->replies, request.correlation_id,
-                                   &reply, &error);
+  status = context->broker->reply(context->broker, request.correlation_id,
+                                  &reply, &error);
   vectis_mailbox_event_cleanup(&request);
   if (status != VECTIS_OK) {
     fprintf(stderr, "worker failed to publish reply: %s\n", error.message);
@@ -140,12 +140,12 @@ static int run_direct_handoff(void) {
 
 int main(void) {
   vectis_mailbox_config config;
+  vectis_mailbox_broker_config broker_config;
   vectis_mailbox_message request;
   vectis_mailbox_event reply;
   vectis_mailbox_stats request_stats;
-  vectis_mailbox_stats reply_stats;
   vectis_mailbox *requests;
-  vectis_mailbox *replies;
+  vectis_mailbox_broker *broker;
   vectis_error error;
   worker_context context;
   pthread_t worker;
@@ -156,7 +156,7 @@ int main(void) {
   int rc;
 
   requests = NULL;
-  replies = NULL;
+  broker = NULL;
   joined = 0;
   vectis_mailbox_config_init(&config);
   config.capacity = 4u;
@@ -167,21 +167,24 @@ int main(void) {
     fprintf(stderr, "failed to create request mailbox: %s\n", error.message);
     return 1;
   }
-  status = vectis_mailbox_new(&config, &replies, &error);
+  vectis_mailbox_broker_config_init(&broker_config);
+  broker_config.request_mailbox = requests;
+  broker_config.reply_mailbox.max_payload_bytes = 256u;
+  status = vectis_mailbox_broker_new(&broker_config, &broker, &error);
   if (status != VECTIS_OK) {
-    fprintf(stderr, "failed to create reply mailbox: %s\n", error.message);
+    fprintf(stderr, "failed to create mailbox broker: %s\n", error.message);
     requests->destroy(requests);
     return 1;
   }
 
   context.requests = requests;
-  context.replies = replies;
+  context.broker = broker;
   context.handled = 0;
   rc = pthread_create(&worker, NULL, worker_main, &context);
   if (rc != 0) {
     fprintf(stderr, "failed to start worker\n");
+    broker->destroy(broker);
     requests->destroy(requests);
-    replies->destroy(replies);
     return 1;
   }
 
@@ -189,34 +192,26 @@ int main(void) {
   request.kind = "route.opcua.write";
   request.payload = payload;
   request.payload_size = sizeof(payload) - 1u;
+  vectis_mailbox_event_init(&reply);
   status =
-      requests->publish_request(requests, &request, &correlation_id, &error);
+      broker->request(broker, &request, 1000L, &reply, &correlation_id, &error);
   if (status != VECTIS_OK) {
-    fprintf(stderr, "failed to publish request: %s\n", error.message);
+    fprintf(stderr, "failed to complete broker request: %s\n", error.message);
+    broker->close(broker);
     requests->close(requests);
     (void)pthread_join(worker, NULL);
+    broker->destroy(broker);
     requests->destroy(requests);
-    replies->destroy(replies);
     return 1;
   }
 
-  vectis_mailbox_event_init(&reply);
-  status = replies->wait_next(replies, &reply, 1000L, &error);
-  if (status != VECTIS_OK) {
-    fprintf(stderr, "failed to receive reply: %s\n", error.message);
-    requests->close(requests);
-    (void)pthread_join(worker, NULL);
-    requests->destroy(requests);
-    replies->destroy(replies);
-    return 1;
-  }
   rc = pthread_join(worker, NULL);
   joined = 1;
   if (rc != 0) {
     fprintf(stderr, "failed to join worker\n");
     vectis_mailbox_event_cleanup(&reply);
+    broker->destroy(broker);
     requests->destroy(requests);
-    replies->destroy(replies);
     return 1;
   }
   if (!context.handled || reply.correlation_id != correlation_id ||
@@ -224,8 +219,8 @@ int main(void) {
       memcmp(reply.payload, "{\"status\":\"ok\"", 14u) != 0) {
     fprintf(stderr, "unexpected mailbox reply\n");
     vectis_mailbox_event_cleanup(&reply);
+    broker->destroy(broker);
     requests->destroy(requests);
-    replies->destroy(replies);
     return 1;
   }
   vectis_mailbox_event_cleanup(&reply);
@@ -233,35 +228,27 @@ int main(void) {
   status = requests->stats(requests, &request_stats, &error);
   if (status != VECTIS_OK) {
     fprintf(stderr, "failed to read request stats: %s\n", error.message);
+    broker->destroy(broker);
     requests->destroy(requests);
-    replies->destroy(replies);
     return 1;
   }
-  status = replies->stats(replies, &reply_stats, &error);
-  if (status != VECTIS_OK) {
-    fprintf(stderr, "failed to read reply stats: %s\n", error.message);
-    requests->destroy(requests);
-    replies->destroy(replies);
-    return 1;
-  }
-  if (request_stats.requests_published != 1UL || request_stats.drained != 1UL ||
-      reply_stats.replies_published != 1UL || reply_stats.drained != 1UL) {
+  if (request_stats.requests_published != 1UL || request_stats.drained != 1UL) {
     fprintf(stderr, "unexpected mailbox stats\n");
+    broker->destroy(broker);
     requests->destroy(requests);
-    replies->destroy(replies);
     return 1;
   }
   if (run_direct_handoff() != 0) {
+    broker->destroy(broker);
     requests->destroy(requests);
-    replies->destroy(replies);
     return 1;
   }
 
   if (!joined) {
     (void)pthread_join(worker, NULL);
   }
+  broker->destroy(broker);
   requests->destroy(requests);
-  replies->destroy(replies);
   puts("mailbox request/reply completed");
   return 0;
 }

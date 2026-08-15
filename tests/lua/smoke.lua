@@ -170,6 +170,7 @@ assert(vectis.xml == xml)
 
 local box = mailbox.new({capacity = 2, max_payload_bytes = 32})
 assert(type(box.publish) == "function")
+assert(type(mailbox.broker) == "function")
 assert(box:depth() == 0)
 local box_stats = box:stats()
 assert(box_stats.capacity == 2)
@@ -248,6 +249,30 @@ assert(box_stats.pump_calls == 2)
 assert(box_stats.pump_events == 3)
 assert(box_stats.pump_callback_failures == 1)
 box:close()
+
+local broker_requests = mailbox.new({capacity = 2, max_payload_bytes = 64})
+local broker = assert(mailbox.broker({
+  requests = broker_requests,
+  reply = {max_payload_bytes = 64},
+  max_pending = 2,
+}))
+local broker_reply, broker_error = broker:request({
+  kind = "route.worker",
+  payload = "read",
+}, {timeout_ms = 1})
+assert(broker_reply == nil)
+assert(broker_error.status == vectis.ERR_TIMEOUT)
+local broker_request = assert(broker_requests:next(0))
+assert(broker_request.kind == "route.worker")
+assert(broker_request.expects_reply == true)
+local late_ok, late_error = broker:reply(broker_request.correlation_id, {
+  kind = "worker.result",
+  payload = "late",
+})
+assert(late_ok == nil)
+assert(late_error.status == vectis.ERR_TIMEOUT)
+broker:close()
+broker_requests:close()
 
 assert(type(dsv.parse) == "function")
 assert(type(dsv.parse_json) == "function")

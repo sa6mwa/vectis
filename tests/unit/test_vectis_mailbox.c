@@ -1,5 +1,6 @@
 #include <vectis/vectis.h>
 
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -198,9 +199,161 @@ static void test_request_reply_correlation(void) {
   replies->destroy(replies);
 }
 
+typedef struct broker_worker_context {
+  vectis_mailbox *requests;
+  vectis_mailbox_broker *broker;
+  int handled;
+} broker_worker_context;
+
+static void *broker_worker_main(void *userdata) {
+  broker_worker_context *context;
+  vectis_mailbox_event request;
+  vectis_mailbox_message reply;
+  vectis_error error;
+  vectis_status status;
+  const char payload[] = "{\"ok\":true}";
+
+  context = (broker_worker_context *)userdata;
+  vectis_mailbox_event_init(&request);
+  status =
+      context->requests->wait_next(context->requests, &request, 1000L, &error);
+  if (status != VECTIS_OK) {
+    return NULL;
+  }
+  vectis_mailbox_message_init(&reply);
+  reply.kind = "worker.result";
+  reply.payload = payload;
+  reply.payload_size = sizeof(payload) - 1u;
+  status = context->broker->reply(context->broker, request.correlation_id,
+                                  &reply, &error);
+  if (status == VECTIS_OK) {
+    context->handled = 1;
+  }
+  vectis_mailbox_event_cleanup(&request);
+  return NULL;
+}
+
+static void test_broker_request_reply(void) {
+  vectis_mailbox_config mailbox_config;
+  vectis_mailbox_broker_config broker_config;
+  vectis_mailbox_message request;
+  vectis_mailbox_event reply;
+  vectis_mailbox_stats stats;
+  vectis_mailbox *requests;
+  vectis_mailbox_broker *broker;
+  vectis_error error;
+  vectis_status status;
+  broker_worker_context context;
+  pthread_t worker;
+  unsigned long correlation_id;
+  const char payload[] = "{\"op\":\"write\"}";
+  int rc;
+
+  requests = NULL;
+  broker = NULL;
+  vectis_mailbox_config_init(&mailbox_config);
+  mailbox_config.capacity = 4u;
+  mailbox_config.max_payload_bytes = 128u;
+  status = vectis_mailbox_new(&mailbox_config, &requests, &error);
+  expect_status(status, VECTIS_OK, "broker request mailbox creation");
+
+  vectis_mailbox_broker_config_init(&broker_config);
+  broker_config.request_mailbox = requests;
+  broker_config.reply_mailbox.max_payload_bytes = 128u;
+  status = vectis_mailbox_broker_new(&broker_config, &broker, &error);
+  expect_status(status, VECTIS_OK, "mailbox broker creation");
+
+  context.requests = requests;
+  context.broker = broker;
+  context.handled = 0;
+  rc = pthread_create(&worker, NULL, broker_worker_main, &context);
+  expect(rc == 0, "broker worker started");
+  if (rc != 0) {
+    broker->destroy(broker);
+    requests->destroy(requests);
+    return;
+  }
+
+  vectis_mailbox_message_init(&request);
+  request.kind = "route.worker";
+  request.payload = payload;
+  request.payload_size = sizeof(payload) - 1u;
+  vectis_mailbox_event_init(&reply);
+  status =
+      broker->request(broker, &request, 1000L, &reply, &correlation_id, &error);
+  expect_status(status, VECTIS_OK, "broker request reply");
+  expect(correlation_id != 0UL, "broker correlation id assigned");
+  expect(reply.correlation_id == correlation_id, "broker reply correlation");
+  expect(reply.payload != NULL && memcmp(reply.payload, "{\"ok\":true}",
+                                         sizeof("{\"ok\":true}") - 1u) == 0,
+         "broker reply payload");
+  vectis_mailbox_event_cleanup(&reply);
+  rc = pthread_join(worker, NULL);
+  expect(rc == 0, "broker worker joined");
+  expect(context.handled == 1, "broker worker handled request");
+
+  status = requests->stats(requests, &stats, &error);
+  expect_status(status, VECTIS_OK, "broker request mailbox stats");
+  expect(stats.requests_published == 1UL, "broker request counted");
+  expect(stats.drained == 1UL, "broker request drained");
+
+  broker->destroy(broker);
+  requests->destroy(requests);
+}
+
+static void test_broker_timeout_cleanup(void) {
+  vectis_mailbox_config mailbox_config;
+  vectis_mailbox_broker_config broker_config;
+  vectis_mailbox_message request;
+  vectis_mailbox_message late_reply;
+  vectis_mailbox_event reply;
+  vectis_mailbox *requests;
+  vectis_mailbox_broker *broker;
+  vectis_error error;
+  vectis_status status;
+  unsigned long correlation_id;
+  const char payload[] = "read";
+
+  requests = NULL;
+  broker = NULL;
+  vectis_mailbox_config_init(&mailbox_config);
+  mailbox_config.capacity = 4u;
+  mailbox_config.max_payload_bytes = 128u;
+  status = vectis_mailbox_new(&mailbox_config, &requests, &error);
+  expect_status(status, VECTIS_OK, "timeout request mailbox creation");
+
+  vectis_mailbox_broker_config_init(&broker_config);
+  broker_config.request_mailbox = requests;
+  broker_config.reply_mailbox.max_payload_bytes = 128u;
+  status = vectis_mailbox_broker_new(&broker_config, &broker, &error);
+  expect_status(status, VECTIS_OK, "timeout broker creation");
+
+  vectis_mailbox_message_init(&request);
+  request.kind = "route.timeout";
+  request.payload = payload;
+  request.payload_size = sizeof(payload) - 1u;
+  vectis_mailbox_event_init(&reply);
+  status =
+      broker->request(broker, &request, 1L, &reply, &correlation_id, &error);
+  expect_status(status, VECTIS_ERR_TIMEOUT, "broker request timeout");
+  expect(correlation_id != 0UL, "timeout correlation id returned");
+
+  vectis_mailbox_message_init(&late_reply);
+  late_reply.kind = "worker.result";
+  late_reply.payload = payload;
+  late_reply.payload_size = sizeof(payload) - 1u;
+  status = broker->reply(broker, correlation_id, &late_reply, &error);
+  expect_status(status, VECTIS_ERR_TIMEOUT, "late broker reply rejected");
+
+  broker->destroy(broker);
+  requests->destroy(requests);
+}
+
 int main(void) {
   test_publish_and_drain();
   test_bounds_and_close();
   test_request_reply_correlation();
+  test_broker_request_reply();
+  test_broker_timeout_cleanup();
   return failures == 0 ? 0 : 1;
 }

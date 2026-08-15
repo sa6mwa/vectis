@@ -31,6 +31,7 @@
   VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES
 #define VECTIS_MAILBOX_DEFAULT_CAPACITY 1024u
 #define VECTIS_MAILBOX_DEFAULT_MAX_PAYLOAD_BYTES 1048576u
+#define VECTIS_MAILBOX_BROKER_DEFAULT_MAX_PENDING 64u
 #define VECTIS_SSH_SFTP_OPEN_READ 0x01u
 #define VECTIS_SSH_SFTP_OPEN_WRITE 0x02u
 #define VECTIS_SSH_SFTP_OPEN_CREATE 0x04u
@@ -54,6 +55,7 @@ typedef struct vectis_app vectis_app;
 typedef struct vectis_consumer_service vectis_consumer_service;
 typedef struct vectis_http_client vectis_http_client;
 typedef struct vectis_mailbox vectis_mailbox;
+typedef struct vectis_mailbox_broker vectis_mailbox_broker;
 typedef struct vectis_embedded_fs vectis_embedded_fs;
 typedef struct vectis_sftp vectis_sftp;
 typedef struct vectis_ssh vectis_ssh;
@@ -212,6 +214,21 @@ typedef struct vectis_mailbox_stats {
   unsigned long replies_published;
   unsigned long correlation_ids_issued;
 } vectis_mailbox_stats;
+
+typedef struct vectis_mailbox_broker_config {
+  /*
+   * Borrowed mailbox that receives worker requests. The broker does not close
+   * or destroy it.
+   */
+  vectis_mailbox *request_mailbox;
+  /*
+   * Per-request reply mailbox config. Zero capacity means one queued reply;
+   * zero max_payload_bytes means VECTIS_MAILBOX_DEFAULT_MAX_PAYLOAD_BYTES.
+   */
+  vectis_mailbox_config reply_mailbox;
+  /* Zero means VECTIS_MAILBOX_BROKER_DEFAULT_MAX_PENDING. */
+  size_t max_pending;
+} vectis_mailbox_broker_config;
 
 /*
  * Public configuration structs must be initialized with their matching
@@ -1221,6 +1238,31 @@ struct vectis_mailbox {
   void *impl;
 };
 
+/*
+ * Request/reply broker over a worker request mailbox. Methods are thread-safe.
+ *
+ * request() publishes a correlated request, waits on an internal per-request
+ * reply mailbox, and always removes that reply mailbox before returning.
+ * reply() is the worker-side entry point; it routes by correlation id and
+ * returns VECTIS_ERR_TIMEOUT when the request is no longer pending.
+ */
+struct vectis_mailbox_broker {
+  vectis_status (*request)(vectis_mailbox_broker *self,
+                           const vectis_mailbox_message *message,
+                           long timeout_ms, vectis_mailbox_event *reply,
+                           unsigned long *correlation_id,
+                           vectis_error *error);
+  vectis_status (*reply)(vectis_mailbox_broker *self,
+                         unsigned long correlation_id,
+                         const vectis_mailbox_message *message,
+                         vectis_error *error);
+  /* Close wakes pending request waiters; the borrowed request mailbox is left
+   * open. */
+  void (*close)(vectis_mailbox_broker *self);
+  void (*destroy)(vectis_mailbox_broker *self);
+  void *impl;
+};
+
 void vectis_error_clear(vectis_error *error);
 const char *vectis_status_string(vectis_status status);
 const char *vectis_error_source_string(vectis_error_source source);
@@ -1235,6 +1277,7 @@ void vectis_mailbox_message_init(vectis_mailbox_message *message);
 void vectis_mailbox_event_init(vectis_mailbox_event *event);
 void vectis_mailbox_event_cleanup(vectis_mailbox_event *event);
 void vectis_mailbox_stats_init(vectis_mailbox_stats *stats);
+void vectis_mailbox_broker_config_init(vectis_mailbox_broker_config *config);
 vectis_status vectis_mailbox_new(const vectis_mailbox_config *config,
                                  vectis_mailbox **out, vectis_error *error);
 vectis_status vectis_mailbox_publish(vectis_mailbox *mailbox,
@@ -1262,6 +1305,18 @@ vectis_status vectis_mailbox_stats_get(const vectis_mailbox *mailbox,
                                        vectis_error *error);
 void vectis_mailbox_close(vectis_mailbox *mailbox);
 void vectis_mailbox_destroy(vectis_mailbox *mailbox);
+vectis_status
+vectis_mailbox_broker_new(const vectis_mailbox_broker_config *config,
+                          vectis_mailbox_broker **out, vectis_error *error);
+vectis_status vectis_mailbox_broker_request(
+    vectis_mailbox_broker *broker, const vectis_mailbox_message *message,
+    long timeout_ms, vectis_mailbox_event *reply, unsigned long *correlation_id,
+    vectis_error *error);
+vectis_status vectis_mailbox_broker_reply(
+    vectis_mailbox_broker *broker, unsigned long correlation_id,
+    const vectis_mailbox_message *message, vectis_error *error);
+void vectis_mailbox_broker_close(vectis_mailbox_broker *broker);
+void vectis_mailbox_broker_destroy(vectis_mailbox_broker *broker);
 void vectis_app_config_init(vectis_app_config *config);
 void vectis_server_config_init(vectis_server_config *config);
 void vectis_autoblock_config_init(vectis_autoblock_config *config);

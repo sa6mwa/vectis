@@ -70,6 +70,7 @@
 #define VECTIS_PACK_MAX_DIR_STACK 1024u
 #define VECTIS_LUA_SERVER "vectis.server"
 #define VECTIS_LUA_MAILBOX "vectis.mailbox"
+#define VECTIS_LUA_MAILBOX_BROKER "vectis.mailbox.broker"
 #define VECTIS_LUA_SSH_SESSION "vectis.ssh.session"
 #define VECTIS_LUA_SSH_SFTP_SESSION "vectis.ssh.sftp_session"
 #define VECTIS_LUA_SSH_SFTP_FILE "vectis.ssh.sftp_file"
@@ -117,6 +118,12 @@ typedef struct vectis_lua_mailbox {
   unsigned long pump_events;
   unsigned long pump_callback_failures;
 } vectis_lua_mailbox;
+
+typedef struct vectis_lua_mailbox_broker {
+  lua_State *owner;
+  vectis_mailbox_broker *broker;
+  int request_ref;
+} vectis_lua_mailbox_broker;
 
 static void vectis_cli_error_set(vectis_error *error, vectis_status status,
                                  const char *message);
@@ -14057,6 +14064,179 @@ static int vectis_lua_mailbox_pump(lua_State *lua) {
   return 1;
 }
 
+static vectis_lua_mailbox_broker *
+vectis_lua_check_mailbox_broker(lua_State *lua, int index) {
+  return (vectis_lua_mailbox_broker *)luaL_checkudata(
+      lua, index, VECTIS_LUA_MAILBOX_BROKER);
+}
+
+static int
+vectis_lua_mailbox_broker_validate_owner(lua_State *lua,
+                                         vectis_lua_mailbox_broker *broker) {
+  if (broker == NULL || broker->broker == NULL) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_STATE,
+                                      "mailbox broker is closed");
+  }
+  if (broker->owner != lua) {
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_STATE, "mailbox broker belongs to another Lua state");
+  }
+  return 0;
+}
+
+static long vectis_lua_mailbox_broker_timeout(lua_State *lua, int index) {
+  long timeout_ms;
+
+  timeout_ms = 0L;
+  if (lua_isnoneornil(lua, index)) {
+    return timeout_ms;
+  }
+  if (lua_isnumber(lua, index)) {
+    timeout_ms = (long)luaL_checkinteger(lua, index);
+    return timeout_ms;
+  }
+  luaL_checktype(lua, index, LUA_TTABLE);
+  timeout_ms = vectis_lua_table_long(lua, index, "timeout_ms", timeout_ms);
+  return timeout_ms;
+}
+
+static int vectis_lua_mailbox_broker_new(lua_State *lua) {
+  vectis_mailbox_broker_config config;
+  vectis_lua_mailbox *request_box;
+  vectis_lua_mailbox_broker *broker;
+  vectis_error error;
+  vectis_status status;
+  int request_index;
+  int owner_error;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_mailbox_broker_config_init(&config);
+  lua_getfield(lua, 1, "requests");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, 1, "request_mailbox");
+  }
+  request_index = lua_absindex(lua, -1);
+  request_box = vectis_lua_check_mailbox(lua, request_index);
+  owner_error = vectis_lua_mailbox_validate_owner(lua, request_box);
+  if (owner_error != 0) {
+    return owner_error;
+  }
+  config.request_mailbox = request_box->mailbox;
+  config.max_pending =
+      vectis_lua_table_size(lua, 1, "max_pending", config.max_pending);
+
+  lua_getfield(lua, 1, "reply");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, 1, "reply_mailbox");
+  }
+  if (!lua_isnil(lua, -1)) {
+    luaL_checktype(lua, -1, LUA_TTABLE);
+    config.reply_mailbox.capacity = vectis_lua_table_size(
+        lua, -1, "capacity", config.reply_mailbox.capacity);
+    config.reply_mailbox.max_payload_bytes = vectis_lua_table_size(
+        lua, -1, "max_payload_bytes", config.reply_mailbox.max_payload_bytes);
+  }
+  lua_pop(lua, 1);
+
+  broker = (vectis_lua_mailbox_broker *)lua_newuserdata(lua, sizeof(*broker));
+  broker->owner = lua;
+  broker->broker = NULL;
+  broker->request_ref = LUA_NOREF;
+  luaL_getmetatable(lua, VECTIS_LUA_MAILBOX_BROKER);
+  lua_setmetatable(lua, -2);
+  lua_pushvalue(lua, request_index);
+  broker->request_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  vectis_error_clear(&error);
+  status = vectis_mailbox_broker_new(&config, &broker->broker, &error);
+  lua_remove(lua, request_index);
+  if (status != VECTIS_OK) {
+    luaL_unref(lua, LUA_REGISTRYINDEX, broker->request_ref);
+    broker->request_ref = LUA_NOREF;
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  return 1;
+}
+
+static int vectis_lua_mailbox_broker_close(lua_State *lua) {
+  vectis_lua_mailbox_broker *broker;
+
+  broker = vectis_lua_check_mailbox_broker(lua, 1);
+  if (broker->broker != NULL) {
+    broker->broker->destroy(broker->broker);
+    broker->broker = NULL;
+  }
+  if (broker->request_ref != LUA_NOREF) {
+    luaL_unref(lua, LUA_REGISTRYINDEX, broker->request_ref);
+    broker->request_ref = LUA_NOREF;
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_mailbox_broker_request(lua_State *lua) {
+  vectis_lua_mailbox_broker *broker;
+  vectis_mailbox_message message;
+  vectis_mailbox_event reply;
+  vectis_error error;
+  vectis_status status;
+  unsigned long correlation_id;
+  long timeout_ms;
+  int owner_error;
+
+  broker = vectis_lua_check_mailbox_broker(lua, 1);
+  owner_error = vectis_lua_mailbox_broker_validate_owner(lua, broker);
+  if (owner_error != 0) {
+    return owner_error;
+  }
+  (void)vectis_lua_mailbox_message(lua, 2, &message);
+  timeout_ms = vectis_lua_mailbox_broker_timeout(lua, 3);
+  vectis_mailbox_event_init(&reply);
+  vectis_error_clear(&error);
+  status = broker->broker->request(broker->broker, &message, timeout_ms, &reply,
+                                   &correlation_id, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  vectis_lua_mailbox_push_event(lua, &reply);
+  vectis_mailbox_event_cleanup(&reply);
+  lua_pushinteger(lua, (lua_Integer)correlation_id);
+  return 2;
+}
+
+static int vectis_lua_mailbox_broker_reply(lua_State *lua) {
+  vectis_lua_mailbox_broker *broker;
+  vectis_mailbox_message message;
+  vectis_error error;
+  vectis_status status;
+  unsigned long correlation_id;
+  lua_Integer correlation_value;
+  int owner_error;
+
+  broker = vectis_lua_check_mailbox_broker(lua, 1);
+  owner_error = vectis_lua_mailbox_broker_validate_owner(lua, broker);
+  if (owner_error != 0) {
+    return owner_error;
+  }
+  correlation_value = luaL_checkinteger(lua, 2);
+  if (correlation_value <= 0) {
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID,
+        "mailbox broker reply correlation id is required");
+  }
+  correlation_id = (unsigned long)correlation_value;
+  (void)vectis_lua_mailbox_message(lua, 3, &message);
+  vectis_error_clear(&error);
+  status =
+      broker->broker->reply(broker->broker, correlation_id, &message, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
 static void vectis_lua_register_mailbox(lua_State *lua) {
   if (luaL_newmetatable(lua, VECTIS_LUA_MAILBOX)) {
     lua_newtable(lua);
@@ -14081,12 +14261,27 @@ static void vectis_lua_register_mailbox(lua_State *lua) {
     lua_setfield(lua, -2, "__gc");
   }
   lua_pop(lua, 1);
+  if (luaL_newmetatable(lua, VECTIS_LUA_MAILBOX_BROKER)) {
+    lua_newtable(lua);
+    lua_pushcfunction(lua, vectis_lua_mailbox_broker_request);
+    lua_setfield(lua, -2, "request");
+    lua_pushcfunction(lua, vectis_lua_mailbox_broker_reply);
+    lua_setfield(lua, -2, "reply");
+    lua_pushcfunction(lua, vectis_lua_mailbox_broker_close);
+    lua_setfield(lua, -2, "close");
+    lua_setfield(lua, -2, "__index");
+    lua_pushcfunction(lua, vectis_lua_mailbox_broker_close);
+    lua_setfield(lua, -2, "__gc");
+  }
+  lua_pop(lua, 1);
 }
 
 static void vectis_lua_push_mailbox_table(lua_State *lua) {
   lua_newtable(lua);
   lua_pushcfunction(lua, vectis_lua_mailbox_new);
   lua_setfield(lua, -2, "new");
+  lua_pushcfunction(lua, vectis_lua_mailbox_broker_new);
+  lua_setfield(lua, -2, "broker");
 }
 
 static int vectis_lua_cert_generate_bundle(lua_State *lua) {

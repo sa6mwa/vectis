@@ -11,8 +11,8 @@ The DX layer provides a small mailbox primitive for cross-service handoff:
 - C services consume events from a `vectis_mailbox` without entering Lua.
 - Lua may publish and drain mailbox events, but Lua callbacks run only while the
   owner `lua_State` explicitly pumps the mailbox.
-- Request/reply flows use correlation ids and, when needed, a per-request or
-  route-owned reply mailbox.
+- Request/reply flows use correlation ids; `vectis_mailbox_broker` owns the
+  per-request reply mailbox lifecycle for route-local waits.
 - Durable work remains a liblockdc queue concern. The mailbox is the in-process
   handoff primitive and must not be presented as durable storage.
 
@@ -57,8 +57,14 @@ return `VECTIS_ERR_TIMEOUT` without modifying the output event.
 `vectis_mailbox_publish_request()` assigns or preserves a correlation id, marks
 the queued event as expecting a reply, and returns the correlation id to the
 caller. `vectis_mailbox_reply()` publishes a non-request event with the supplied
-correlation id. Higher-level APIs may wrap these primitives for route-local
-request/reply flows.
+correlation id.
+
+`vectis_mailbox_broker` is the route-local helper over these primitives. It
+borrows the worker request mailbox, creates a private one-slot reply mailbox for
+each `broker->request()` call, removes that pending reply mailbox on success,
+timeout, publish failure, or close, and exposes `broker->reply()` as the worker
+side routing entry point. Late replies after timeout fail with
+`VECTIS_ERR_TIMEOUT` instead of being delivered to a stale route wait.
 
 `vectis_mailbox_stats_get()` returns a thread-safe snapshot with capacity,
 current depth, high-water depth, publish/drain counts, full/closed/timeout
@@ -98,18 +104,19 @@ Lockd consumer to OPC UA action:
 
 Kore API request to worker result:
 
-- Low-latency local flow: route publishes a correlated mailbox request and waits
-  on a route-owned or app-owned reply mailbox with a timeout.
+- Low-latency local flow: route calls `vectis_mailbox_broker::request()` with a
+  deadline; the worker drains the request mailbox and calls
+  `vectis_mailbox_broker::reply()` with the request correlation id.
 - Durable flow: route enqueues through liblockdc, returns accepted/pending, or
   waits only when the product explicitly wants durable queue latency.
 
 ## Scenario Coverage
 
 `examples/concurrency/mailbox_request_reply.c` is the C contract example for the
-mailbox DX layer. It covers a route-style correlated request/reply handoff to a
-worker thread, plus an OPC UA/lockd-style direct C handoff where one receiver
-drains a mailbox event and publishes the next C-owned work item without entering
-Lua.
+mailbox DX layer. It covers a route-style `vectis_mailbox_broker` request/reply
+handoff to a worker thread with automatic reply mailbox cleanup, plus an OPC
+UA/lockd-style direct C handoff where one receiver drains a mailbox event and
+publishes the next C-owned work item without entering Lua.
 
 `examples/lua/mailbox_pipeline.lua` is the Lua contract example. It covers
 publishing a request, owner-state `pump()` dispatch, correlated reply
@@ -130,6 +137,12 @@ The Lua facade mirrors the C mailbox:
   on the owner Lua state.
 - `box:stats()` returns the core mailbox stats plus Lua-owned `pump_calls`,
   `pump_events`, and `pump_callback_failures`.
+- `vectis.mailbox.broker(opts)` creates a request/reply broker over a borrowed
+  request mailbox.
+- `broker:request(event, opts)` publishes a correlated request, waits for a
+  reply using `opts.timeout_ms`, and returns `reply_event, correlation_id`.
+- `broker:reply(correlation_id, event)` routes a worker reply to the matching
+  pending request.
 
 Lua mailbox events are tables with `kind`, `payload`, `correlation_id`, and
 `expects_reply`. The facade does not invoke handlers from background service
@@ -139,5 +152,3 @@ threads.
 
 - Add typed event adapters for common route, lockd, OPC UA, and WebDAV events
   when concrete scenario code proves that generic byte payloads are too noisy.
-- Add route-local helper APIs for request/reply with deadline and automatic reply
-  mailbox cleanup.

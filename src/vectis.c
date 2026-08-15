@@ -124,6 +124,22 @@ typedef struct vectis_mailbox_impl {
   unsigned long next_correlation_id;
 } vectis_mailbox_impl;
 
+typedef struct vectis_mailbox_pending_reply {
+  unsigned long correlation_id;
+  vectis_mailbox *mailbox;
+  struct vectis_mailbox_pending_reply *next;
+} vectis_mailbox_pending_reply;
+
+typedef struct vectis_mailbox_broker_impl {
+  pthread_mutex_t mutex;
+  vectis_mailbox *request_mailbox;
+  vectis_mailbox_config reply_mailbox;
+  vectis_mailbox_pending_reply *pending;
+  size_t pending_count;
+  size_t max_pending;
+  int closed;
+} vectis_mailbox_broker_impl;
+
 typedef struct vectis_upload_file_adapter {
   char *file_path;
   char *content_type;
@@ -745,6 +761,16 @@ void vectis_mailbox_stats_init(vectis_mailbox_stats *stats) {
   memset(stats, 0, sizeof(*stats));
 }
 
+void vectis_mailbox_broker_config_init(vectis_mailbox_broker_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  config->request_mailbox = NULL;
+  vectis_mailbox_config_init(&config->reply_mailbox);
+  config->reply_mailbox.capacity = 1u;
+  config->max_pending = VECTIS_MAILBOX_BROKER_DEFAULT_MAX_PENDING;
+}
+
 vectis_status vectis_mailbox_new(const vectis_mailbox_config *config,
                                  vectis_mailbox **out, vectis_error *error) {
   vectis_mailbox_config effective;
@@ -1113,6 +1139,315 @@ void vectis_mailbox_destroy(vectis_mailbox *mailbox) {
     free(impl);
   }
   free(mailbox);
+}
+
+static vectis_mailbox_pending_reply *
+vectis_mailbox_broker_find_pending_locked(vectis_mailbox_broker_impl *impl,
+                                          unsigned long correlation_id) {
+  vectis_mailbox_pending_reply *pending;
+
+  pending = impl->pending;
+  while (pending != NULL) {
+    if (pending->correlation_id == correlation_id) {
+      return pending;
+    }
+    pending = pending->next;
+  }
+  return NULL;
+}
+
+static vectis_mailbox *
+vectis_mailbox_broker_remove_pending_locked(vectis_mailbox_broker_impl *impl,
+                                            unsigned long correlation_id) {
+  vectis_mailbox_pending_reply *pending;
+  vectis_mailbox_pending_reply *previous;
+  vectis_mailbox *mailbox;
+
+  previous = NULL;
+  pending = impl->pending;
+  while (pending != NULL) {
+    if (pending->correlation_id == correlation_id) {
+      if (previous == NULL) {
+        impl->pending = pending->next;
+      } else {
+        previous->next = pending->next;
+      }
+      impl->pending_count--;
+      mailbox = pending->mailbox;
+      pending->mailbox = NULL;
+      free(pending);
+      return mailbox;
+    }
+    previous = pending;
+    pending = pending->next;
+  }
+  return NULL;
+}
+
+static void vectis_mailbox_broker_destroy_pending_list(
+    vectis_mailbox_pending_reply *pending) {
+  vectis_mailbox_pending_reply *next;
+
+  while (pending != NULL) {
+    next = pending->next;
+    if (pending->mailbox != NULL) {
+      pending->mailbox->destroy(pending->mailbox);
+    }
+    free(pending);
+    pending = next;
+  }
+}
+
+vectis_status
+vectis_mailbox_broker_new(const vectis_mailbox_broker_config *config,
+                          vectis_mailbox_broker **out, vectis_error *error) {
+  vectis_mailbox_broker_config effective;
+  vectis_mailbox_broker *broker;
+  vectis_mailbox_broker_impl *impl;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "mailbox broker output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  vectis_mailbox_broker_config_init(&effective);
+  if (config != NULL) {
+    effective = *config;
+    if (effective.reply_mailbox.capacity == 0u) {
+      effective.reply_mailbox.capacity = 1u;
+    }
+    if (effective.reply_mailbox.max_payload_bytes == 0u) {
+      effective.reply_mailbox.max_payload_bytes =
+          VECTIS_MAILBOX_DEFAULT_MAX_PAYLOAD_BYTES;
+    }
+    if (effective.max_pending == 0u) {
+      effective.max_pending = VECTIS_MAILBOX_BROKER_DEFAULT_MAX_PENDING;
+    }
+  }
+  if (effective.request_mailbox == NULL ||
+      effective.request_mailbox->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "mailbox broker request mailbox is required");
+    return VECTIS_ERR_INVALID;
+  }
+  broker = (vectis_mailbox_broker *)calloc(1u, sizeof(*broker));
+  impl = (vectis_mailbox_broker_impl *)calloc(1u, sizeof(*impl));
+  if (broker == NULL || impl == NULL) {
+    free(broker);
+    free(impl);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate mailbox broker");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (pthread_mutex_init(&impl->mutex, NULL) != 0) {
+    free(broker);
+    free(impl);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to initialize mailbox broker mutex");
+    return VECTIS_ERR_STATE;
+  }
+  impl->request_mailbox = effective.request_mailbox;
+  impl->reply_mailbox = effective.reply_mailbox;
+  impl->max_pending = effective.max_pending;
+  broker->request = vectis_mailbox_broker_request;
+  broker->reply = vectis_mailbox_broker_reply;
+  broker->close = vectis_mailbox_broker_close;
+  broker->destroy = vectis_mailbox_broker_destroy;
+  broker->impl = impl;
+  *out = broker;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_mailbox_broker_request(
+    vectis_mailbox_broker *broker, const vectis_mailbox_message *message,
+    long timeout_ms, vectis_mailbox_event *reply, unsigned long *correlation_id,
+    vectis_error *error) {
+  vectis_mailbox_broker_impl *impl;
+  vectis_mailbox_pending_reply *pending;
+  vectis_mailbox *reply_mailbox;
+  vectis_mailbox *removed;
+  vectis_mailbox_message request;
+  vectis_status status;
+  unsigned long id;
+  unsigned long published_id;
+
+  if (correlation_id != NULL) {
+    *correlation_id = 0UL;
+  }
+  if (reply == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "mailbox broker reply output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_mailbox_event_init(reply);
+  if (broker == NULL || broker->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "mailbox broker is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (message == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "mailbox broker request message is required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_mailbox_broker_impl *)broker->impl;
+  reply_mailbox = NULL;
+  pending = NULL;
+  status = vectis_mailbox_new(&impl->reply_mailbox, &reply_mailbox, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  pending = (vectis_mailbox_pending_reply *)calloc(1u, sizeof(*pending));
+  if (pending == NULL) {
+    reply_mailbox->destroy(reply_mailbox);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate mailbox broker pending reply");
+    return VECTIS_ERR_NOMEM;
+  }
+
+  (void)pthread_mutex_lock(&impl->mutex);
+  if (impl->closed) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    free(pending);
+    reply_mailbox->destroy(reply_mailbox);
+    vectis_set_error(error, VECTIS_ERR_STATE, "mailbox broker is closed");
+    return VECTIS_ERR_STATE;
+  }
+  if (impl->pending_count >= impl->max_pending) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    free(pending);
+    reply_mailbox->destroy(reply_mailbox);
+    vectis_set_error(error, VECTIS_ERR_CONFLICT,
+                     "mailbox broker has too many pending requests");
+    return VECTIS_ERR_CONFLICT;
+  }
+  status = impl->request_mailbox->issue_correlation_id(impl->request_mailbox,
+                                                       &id, error);
+  if (status != VECTIS_OK) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    free(pending);
+    reply_mailbox->destroy(reply_mailbox);
+    return status;
+  }
+  pending->correlation_id = id;
+  pending->mailbox = reply_mailbox;
+  pending->next = impl->pending;
+  impl->pending = pending;
+  impl->pending_count++;
+  (void)pthread_mutex_unlock(&impl->mutex);
+
+  request = *message;
+  request.correlation_id = id;
+  request.expects_reply = 1;
+  published_id = id;
+  status = impl->request_mailbox->publish_request(
+      impl->request_mailbox, &request, &published_id, error);
+  if (status != VECTIS_OK) {
+    (void)pthread_mutex_lock(&impl->mutex);
+    removed = vectis_mailbox_broker_remove_pending_locked(impl, id);
+    (void)pthread_mutex_unlock(&impl->mutex);
+    if (removed != NULL) {
+      removed->destroy(removed);
+    }
+    return status;
+  }
+  if (correlation_id != NULL) {
+    *correlation_id = id;
+  }
+
+  status = reply_mailbox->wait_next(reply_mailbox, reply, timeout_ms, error);
+  (void)pthread_mutex_lock(&impl->mutex);
+  removed = vectis_mailbox_broker_remove_pending_locked(impl, id);
+  (void)pthread_mutex_unlock(&impl->mutex);
+  if (removed != NULL) {
+    removed->destroy(removed);
+  }
+  return status;
+}
+
+vectis_status vectis_mailbox_broker_reply(vectis_mailbox_broker *broker,
+                                          unsigned long correlation_id,
+                                          const vectis_mailbox_message *message,
+                                          vectis_error *error) {
+  vectis_mailbox_broker_impl *impl;
+  vectis_mailbox_pending_reply *pending;
+  vectis_status status;
+
+  if (correlation_id == 0UL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "mailbox broker reply correlation id is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (broker == NULL || broker->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "mailbox broker is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (message == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "mailbox broker reply message is required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_mailbox_broker_impl *)broker->impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  if (impl->closed) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_STATE, "mailbox broker is closed");
+    return VECTIS_ERR_STATE;
+  }
+  pending = vectis_mailbox_broker_find_pending_locked(impl, correlation_id);
+  if (pending == NULL || pending->mailbox == NULL) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_TIMEOUT,
+                     "mailbox broker request is no longer pending");
+    return VECTIS_ERR_TIMEOUT;
+  }
+  status =
+      pending->mailbox->reply(pending->mailbox, correlation_id, message, error);
+  (void)pthread_mutex_unlock(&impl->mutex);
+  return status;
+}
+
+void vectis_mailbox_broker_close(vectis_mailbox_broker *broker) {
+  vectis_mailbox_broker_impl *impl;
+  vectis_mailbox_pending_reply *pending;
+
+  if (broker == NULL || broker->impl == NULL) {
+    return;
+  }
+  impl = (vectis_mailbox_broker_impl *)broker->impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  impl->closed = 1;
+  pending = impl->pending;
+  while (pending != NULL) {
+    if (pending->mailbox != NULL) {
+      pending->mailbox->close(pending->mailbox);
+    }
+    pending = pending->next;
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
+}
+
+void vectis_mailbox_broker_destroy(vectis_mailbox_broker *broker) {
+  vectis_mailbox_broker_impl *impl;
+  vectis_mailbox_pending_reply *pending;
+
+  if (broker == NULL) {
+    return;
+  }
+  impl = (vectis_mailbox_broker_impl *)broker->impl;
+  if (impl != NULL) {
+    vectis_mailbox_broker_close(broker);
+    (void)pthread_mutex_lock(&impl->mutex);
+    pending = impl->pending;
+    impl->pending = NULL;
+    impl->pending_count = 0u;
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_mailbox_broker_destroy_pending_list(pending);
+    (void)pthread_mutex_destroy(&impl->mutex);
+    free(impl);
+  }
+  free(broker);
 }
 
 static void vectis_request_close_body_reader(vectis_request *request) {
