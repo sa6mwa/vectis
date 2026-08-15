@@ -396,6 +396,25 @@ if server_port then
     target_node_id = linked_object,
     delete_bidirectional = true,
   }) == true)
+  local linked_expanded = opcua.expanded_node_id_local(linked_object)
+  assert(linked_expanded:node_id() == linked_object)
+  assert(linked_expanded:server_index() == 0)
+  assert(linked_expanded:namespace_uri() == nil)
+  assert(opcua.expanded_node_id(tostring(linked_expanded)) == linked_expanded)
+  assert(server:add_reference_ex({
+    source_node_id = object_node,
+    reference_type_id = organizes,
+    is_forward = true,
+    target_node_id = linked_expanded,
+    target_node_class = opcua.NODE_CLASS_OBJECT,
+  }) == true)
+  assert(server:delete_reference_ex({
+    source_node_id = object_node,
+    reference_type_id = organizes,
+    is_forward = true,
+    target_node_id = linked_expanded,
+    delete_bidirectional = true,
+  }) == true)
 
   local object_type = opcua.node_id_numeric(namespace_index, 8210)
   assert(server:add_object_type({
@@ -626,6 +645,24 @@ assert(client:delete_reference({
   target_node_id = remote_linked_object,
   delete_bidirectional = true,
 }) == true, "client delete reference")
+local remote_linked_expanded = opcua.expanded_node_id_local(remote_linked_object)
+assert(remote_linked_expanded:node_id() == remote_linked_object)
+assert(opcua.expanded_node_id(tostring(remote_linked_expanded)) ==
+       remote_linked_expanded)
+assert(client:add_reference_ex({
+  source_node_id = remote_object,
+  reference_type_id = organizes,
+  is_forward = true,
+  target_node_id = remote_linked_expanded,
+  target_node_class = opcua.NODE_CLASS_OBJECT,
+}) == true, "client add reference ex")
+assert(client:delete_reference_ex({
+  source_node_id = remote_object,
+  reference_type_id = organizes,
+  is_forward = true,
+  target_node_id = remote_linked_expanded,
+  delete_bidirectional = true,
+}) == true, "client delete reference ex")
 local client_array_added, client_array_add_err = client:add_variable_under({
   node_id = remote_array,
   parent_node_id = remote_object,
