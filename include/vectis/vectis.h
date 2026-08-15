@@ -33,6 +33,7 @@
 #define VECTIS_MAILBOX_DEFAULT_MAX_PAYLOAD_BYTES 1048576u
 #define VECTIS_MAILBOX_BROKER_DEFAULT_MAX_PENDING 64u
 #define VECTIS_ROUTE_EVENT_DEFAULT_MAX_BODY_BYTES 65536u
+#define VECTIS_LOCKD_CONSUMER_EVENT_DEFAULT_MAX_PAYLOAD_BYTES 65536u
 #define VECTIS_SSH_SFTP_OPEN_READ 0x01u
 #define VECTIS_SSH_SFTP_OPEN_WRITE 0x02u
 #define VECTIS_SSH_SFTP_OPEN_CREATE 0x04u
@@ -290,6 +291,41 @@ typedef struct vectis_route_event {
   vectis_mailbox_message message;
   vectis_mutable_bytes payload;
 } vectis_route_event;
+
+typedef struct vectis_lockd_consumer_event_config {
+  /* Defaults to "vectis.lockd.consumer". */
+  const char *kind;
+  /*
+   * Payload bytes are copied only when include_payload is nonzero. This is a
+   * bounded materialized projection of the lockd message payload, not a
+   * streaming bridge.
+   */
+  int include_payload;
+  /* Zero means VECTIS_LOCKD_CONSUMER_EVENT_DEFAULT_MAX_PAYLOAD_BYTES. */
+  size_t max_payload_bytes;
+} vectis_lockd_consumer_event_config;
+
+typedef struct vectis_lockd_consumer_event {
+  vectis_mailbox_message message;
+  vectis_mutable_bytes payload;
+} vectis_lockd_consumer_event;
+
+typedef struct vectis_lockd_consumer_mailbox_receiver_config {
+  /*
+   * Fire-and-forget target. The receiver returns success after the event has
+   * been copied into this mailbox.
+   */
+  vectis_mailbox *mailbox;
+  /*
+   * Request/reply target. When set, this takes precedence over mailbox and the
+   * receiver returns success only when the broker receives a reply before the
+   * timeout.
+   */
+  vectis_mailbox_broker *broker;
+  /* Negative waits indefinitely; zero polls once. */
+  long reply_timeout_ms;
+  vectis_lockd_consumer_event_config event;
+} vectis_lockd_consumer_mailbox_receiver_config;
 
 typedef enum vectis_body_materialized_kind {
   VECTIS_BODY_MATERIALIZED_NONE = 0,
@@ -1361,6 +1397,18 @@ vectis_status vectis_route_mailbox_request(
     vectis_mailbox_broker *broker, vectis_request *request,
     vectis_response *response, const vectis_route_event_config *config,
     long timeout_ms, unsigned long *correlation_id, vectis_error *error);
+void vectis_lockd_consumer_event_config_init(
+    vectis_lockd_consumer_event_config *config);
+void vectis_lockd_consumer_event_init(vectis_lockd_consumer_event *event);
+void vectis_lockd_consumer_event_cleanup(vectis_lockd_consumer_event *event);
+vectis_status vectis_lockd_consumer_event_from_message(
+    struct lc_consumer_message *message,
+    const vectis_lockd_consumer_event_config *config,
+    vectis_lockd_consumer_event *out, vectis_error *error);
+void vectis_lockd_consumer_mailbox_receiver_config_init(
+    vectis_lockd_consumer_mailbox_receiver_config *config);
+vectis_status vectis_lockd_consumer_mailbox_receiver_adapter(
+    vectis_consumer_receiver_adapter *out, vectis_error *error);
 void vectis_app_config_init(vectis_app_config *config);
 void vectis_server_config_init(vectis_server_config *config);
 void vectis_autoblock_config_init(vectis_autoblock_config *config);

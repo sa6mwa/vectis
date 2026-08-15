@@ -2,6 +2,7 @@
 
 #include "vectis_internal.h"
 
+#include <lc/lc.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
@@ -372,6 +373,249 @@ static void test_broker_timeout_cleanup(void) {
   requests->destroy(requests);
 }
 
+typedef struct fake_lockd_payload {
+  const char *bytes;
+  size_t size;
+} fake_lockd_payload;
+
+static int fake_lockd_write_payload(lc_message *self, lc_sink *dst,
+                                    size_t *written, lc_error *error) {
+  fake_lockd_payload *payload;
+
+  payload = (fake_lockd_payload *)self->impl;
+  if (payload == NULL || dst == NULL || dst->write == NULL) {
+    if (error != NULL) {
+      lc_error_cleanup(error);
+      lc_error_init(error);
+      error->code = LC_ERR_INVALID;
+    }
+    return LC_ERR_INVALID;
+  }
+  if (!dst->write(dst, payload->bytes, payload->size, error)) {
+    return error != NULL && error->code != LC_OK ? error->code
+                                                 : LC_ERR_PROTOCOL;
+  }
+  if (written != NULL) {
+    *written = payload->size;
+  }
+  return LC_OK;
+}
+
+static void fake_lockd_message_init(lc_consumer_message *consumer,
+                                    lc_message *message,
+                                    fake_lockd_payload *payload) {
+  memset(consumer, 0, sizeof(*consumer));
+  memset(message, 0, sizeof(*message));
+  consumer->name = "unit-consumer";
+  consumer->queue = "jobs";
+  consumer->with_state = 1;
+  consumer->message = message;
+  message->namespace_name = "unit";
+  message->queue = "jobs";
+  message->message_id = "msg-1";
+  message->attempts = 2;
+  message->max_attempts = 5;
+  message->failure_attempts = 1;
+  message->visibility_timeout_seconds = 30L;
+  message->payload_content_type = "application/json";
+  message->correlation_id = "lockd-correlation";
+  message->lease_id = "lease-1";
+  message->fencing_token = 7L;
+  message->txn_id = "txn-1";
+  message->write_payload = fake_lockd_write_payload;
+  message->impl = payload;
+}
+
+static void test_lockd_consumer_event_builder(void) {
+  vectis_lockd_consumer_event_config config;
+  vectis_lockd_consumer_event event;
+  lc_consumer_message consumer;
+  lc_message message;
+  fake_lockd_payload payload;
+  vectis_error error;
+  vectis_status status;
+
+  payload.bytes = "{\"job\":\"render\"}";
+  payload.size = strlen(payload.bytes);
+  fake_lockd_message_init(&consumer, &message, &payload);
+  vectis_lockd_consumer_event_config_init(&config);
+  config.include_payload = 1;
+  config.max_payload_bytes = 64u;
+  vectis_lockd_consumer_event_init(&event);
+  status =
+      vectis_lockd_consumer_event_from_message(&consumer, &config, &event,
+                                               &error);
+  expect_status(status, VECTIS_OK, "lockd consumer event build");
+  expect(event.message.kind != NULL &&
+             strcmp(event.message.kind, "vectis.lockd.consumer") == 0,
+         "lockd consumer event kind");
+  expect(bytes_contains(event.message.payload, event.message.payload_size,
+                        "\"type\":\"vectis.lockd.consumer\""),
+         "lockd consumer event type");
+  expect(bytes_contains(event.message.payload, event.message.payload_size,
+                        "\"queue\":\"jobs\""),
+         "lockd consumer event queue");
+  expect(bytes_contains(event.message.payload, event.message.payload_size,
+                        "\"message_id\":\"msg-1\""),
+         "lockd consumer event message id");
+  expect(bytes_contains(event.message.payload, event.message.payload_size,
+                        "\"with_state\":true"),
+         "lockd consumer event with state");
+  expect(bytes_contains(event.message.payload, event.message.payload_size,
+                        "\"payload\":{\"included\":true"),
+         "lockd consumer event payload included");
+  expect(bytes_contains(event.message.payload, event.message.payload_size,
+                        "\"content\":\"{\\\"job\\\":\\\"render\\\"}\""),
+         "lockd consumer event payload content");
+  vectis_lockd_consumer_event_cleanup(&event);
+
+  config.max_payload_bytes = 4u;
+  status =
+      vectis_lockd_consumer_event_from_message(&consumer, &config, &event,
+                                               &error);
+  expect_status(status, VECTIS_ERR_INVALID, "lockd consumer payload limit");
+  vectis_lockd_consumer_event_cleanup(&event);
+}
+
+static void test_lockd_consumer_mailbox_receiver_publish(void) {
+  vectis_mailbox_config mailbox_config;
+  vectis_lockd_consumer_mailbox_receiver_config receiver_config;
+  vectis_consumer_receiver_adapter adapter;
+  vectis_consumer_receiver receiver;
+  vectis_mailbox_event queued;
+  vectis_mailbox *mailbox;
+  lc_consumer_message consumer;
+  lc_message message;
+  fake_lockd_payload payload;
+  lc_error lcerr;
+  vectis_error error;
+  vectis_status status;
+  int rc;
+
+  payload.bytes = "payload";
+  payload.size = strlen(payload.bytes);
+  fake_lockd_message_init(&consumer, &message, &payload);
+  vectis_mailbox_config_init(&mailbox_config);
+  mailbox_config.capacity = 2u;
+  mailbox_config.max_payload_bytes = 4096u;
+  status = vectis_mailbox_new(&mailbox_config, &mailbox, &error);
+  expect_status(status, VECTIS_OK, "lockd mailbox target");
+  vectis_lockd_consumer_mailbox_receiver_config_init(&receiver_config);
+  receiver_config.mailbox = mailbox;
+  receiver_config.event.include_payload = 1;
+  status = vectis_lockd_consumer_mailbox_receiver_adapter(&adapter, &error);
+  expect_status(status, VECTIS_OK, "lockd mailbox adapter factory");
+  status = adapter.create(adapter.context, &receiver_config, &receiver, &error);
+  expect_status(status, VECTIS_OK, "lockd mailbox receiver create");
+  lc_error_init(&lcerr);
+  rc = receiver.handle(receiver.context, &consumer, &lcerr);
+  expect(rc == LC_OK, "lockd mailbox receiver handle publish");
+  vectis_mailbox_event_init(&queued);
+  status = mailbox->wait_next(mailbox, &queued, 0L, &error);
+  expect_status(status, VECTIS_OK, "lockd mailbox event queued");
+  expect(queued.expects_reply == 0, "lockd mailbox event is fire and forget");
+  expect(bytes_contains(queued.payload, queued.payload_size,
+                        "\"payload\":{\"included\":true"),
+         "lockd mailbox event has payload");
+  vectis_mailbox_event_cleanup(&queued);
+  lc_error_cleanup(&lcerr);
+  receiver.cleanup(receiver.context);
+  mailbox->destroy(mailbox);
+}
+
+typedef struct lockd_broker_worker_context {
+  vectis_mailbox *requests;
+  vectis_mailbox_broker *broker;
+  int saw_event;
+} lockd_broker_worker_context;
+
+static void *lockd_broker_worker_main(void *userdata) {
+  lockd_broker_worker_context *context;
+  vectis_mailbox_event request;
+  vectis_mailbox_message reply;
+  vectis_error error;
+  vectis_status status;
+  const char payload[] = "ok";
+
+  context = (lockd_broker_worker_context *)userdata;
+  vectis_mailbox_event_init(&request);
+  status =
+      context->requests->wait_next(context->requests, &request, 1000L, &error);
+  if (status != VECTIS_OK) {
+    return NULL;
+  }
+  if (request.expects_reply &&
+      bytes_contains(request.payload, request.payload_size,
+                     "\"type\":\"vectis.lockd.consumer\"") &&
+      bytes_contains(request.payload, request.payload_size,
+                     "\"message_id\":\"msg-1\"")) {
+    context->saw_event = 1;
+  }
+  vectis_mailbox_message_init(&reply);
+  reply.kind = "lockd.worker.result";
+  reply.payload = payload;
+  reply.payload_size = sizeof(payload) - 1u;
+  (void)context->broker->reply(context->broker, request.correlation_id, &reply,
+                               &error);
+  vectis_mailbox_event_cleanup(&request);
+  return NULL;
+}
+
+static void test_lockd_consumer_mailbox_receiver_broker(void) {
+  vectis_mailbox_config mailbox_config;
+  vectis_mailbox_broker_config broker_config;
+  vectis_lockd_consumer_mailbox_receiver_config receiver_config;
+  vectis_consumer_receiver_adapter adapter;
+  vectis_consumer_receiver receiver;
+  vectis_mailbox *requests;
+  vectis_mailbox_broker *broker;
+  lc_consumer_message consumer;
+  lc_message message;
+  fake_lockd_payload payload;
+  lc_error lcerr;
+  vectis_error error;
+  vectis_status status;
+  lockd_broker_worker_context context;
+  pthread_t worker;
+  int rc;
+
+  payload.bytes = "payload";
+  payload.size = strlen(payload.bytes);
+  fake_lockd_message_init(&consumer, &message, &payload);
+  vectis_mailbox_config_init(&mailbox_config);
+  mailbox_config.capacity = 2u;
+  mailbox_config.max_payload_bytes = 4096u;
+  status = vectis_mailbox_new(&mailbox_config, &requests, &error);
+  expect_status(status, VECTIS_OK, "lockd broker request mailbox");
+  vectis_mailbox_broker_config_init(&broker_config);
+  broker_config.request_mailbox = requests;
+  status = vectis_mailbox_broker_new(&broker_config, &broker, &error);
+  expect_status(status, VECTIS_OK, "lockd broker");
+  vectis_lockd_consumer_mailbox_receiver_config_init(&receiver_config);
+  receiver_config.broker = broker;
+  receiver_config.reply_timeout_ms = 1000L;
+  status = vectis_lockd_consumer_mailbox_receiver_adapter(&adapter, &error);
+  expect_status(status, VECTIS_OK, "lockd broker adapter factory");
+  status = adapter.create(adapter.context, &receiver_config, &receiver, &error);
+  expect_status(status, VECTIS_OK, "lockd broker receiver create");
+  context.requests = requests;
+  context.broker = broker;
+  context.saw_event = 0;
+  rc = pthread_create(&worker, NULL, lockd_broker_worker_main, &context);
+  expect(rc == 0, "lockd broker worker started");
+  if (rc == 0) {
+    lc_error_init(&lcerr);
+    rc = receiver.handle(receiver.context, &consumer, &lcerr);
+    expect(rc == LC_OK, "lockd broker receiver handled reply");
+    lc_error_cleanup(&lcerr);
+    (void)pthread_join(worker, NULL);
+    expect(context.saw_event == 1, "lockd broker worker saw event");
+  }
+  receiver.cleanup(receiver.context);
+  broker->destroy(broker);
+  requests->destroy(requests);
+}
+
 typedef struct route_worker_context {
   vectis_mailbox *requests;
   vectis_mailbox_broker *broker;
@@ -566,6 +810,9 @@ int main(void) {
   test_request_reply_correlation();
   test_broker_request_reply();
   test_broker_timeout_cleanup();
+  test_lockd_consumer_event_builder();
+  test_lockd_consumer_mailbox_receiver_publish();
+  test_lockd_consumer_mailbox_receiver_broker();
   test_route_event_builder();
   test_route_mailbox_request_response();
   return failures == 0 ? 0 : 1;

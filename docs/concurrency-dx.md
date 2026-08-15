@@ -132,6 +132,26 @@ through a `vectis_mailbox_broker`, maps successful worker reply bytes to the
 configured success response, maps timeout to the configured timeout response,
 and maps other broker failures through Vectis JSON error responses.
 
+## Typed Lockd Consumer Adapter
+
+The lockd consumer adapter is C-side and plugs into the existing
+`vectis_consumer_receiver` registry as the built-in `mailbox` receiver kind.
+`vectis_lockd_consumer_event_from_message()` projects a managed
+`lc_consumer_message` into a JSON mailbox payload with delivery metadata and an
+optional copied payload.
+
+Payload copying is disabled by default. When `include_payload` is set, the
+adapter copies through a bounded `lc_sink`; payloads over `max_payload_bytes`
+fail during the copy and the managed consumer receives a normal liblockdc
+callback error. This is materialized payload projection, not a streaming bridge.
+
+`vectis_lockd_consumer_mailbox_receiver_config` supports two target modes:
+`mailbox` for fire-and-forget delivery into a mailbox, and `broker` for
+request/reply delivery. Broker mode takes precedence and returns success only
+after a reply arrives before `reply_timeout_ms`; failures propagate to the
+managed consumer callback so liblockdc can use its documented nack/failure
+semantics.
+
 ## Scenario Coverage
 
 `examples/concurrency/mailbox_request_reply.c` is the C contract example for the

@@ -211,6 +211,12 @@ typedef struct vectis_lonejson_builder_sink {
   vectis_error *error;
 } vectis_lonejson_builder_sink;
 
+typedef struct vectis_lockd_payload_sink_context {
+  vectis_string_builder payload;
+  size_t max_payload_bytes;
+  vectis_status status;
+} vectis_lockd_payload_sink_context;
+
 typedef struct vectis_lonejson_fd_sink {
   int fd;
   vectis_error *error;
@@ -423,6 +429,13 @@ typedef struct vectis_webdav_marker_receiver {
   char *done_body;
   long processing_delay_seconds;
 } vectis_webdav_marker_receiver;
+
+typedef struct vectis_lockd_consumer_mailbox_receiver {
+  vectis_mailbox *mailbox;
+  vectis_mailbox_broker *broker;
+  long reply_timeout_ms;
+  vectis_lockd_consumer_event_config event;
+} vectis_lockd_consumer_mailbox_receiver;
 
 typedef struct vectis_curl_buffer {
   char *data;
@@ -2728,6 +2741,18 @@ static char *vectis_strndup(const char *value, size_t len) {
   return copy;
 }
 
+static void vectis_lc_error_set(lc_error *error, int code,
+                                const char *message) {
+  if (error == NULL) {
+    return;
+  }
+  lc_error_cleanup(error);
+  lc_error_init(error);
+  error->code = code;
+  error->message =
+      vectis_strdup(message != NULL ? message : "vectis operation failed");
+}
+
 static void
 vectis_consumer_receiver_runtime_cleanup(vectis_consumer_receiver_runtime *rt) {
   vectis_consumer_receiver_runtime *next;
@@ -2804,6 +2829,122 @@ static int vectis_webdav_marker_receiver_handle(void *context,
                                            receiver->done_body);
   }
   return rc;
+}
+
+static int vectis_lockd_consumer_lc_status(vectis_status status) {
+  switch (status) {
+  case VECTIS_OK:
+    return LC_OK;
+  case VECTIS_ERR_INVALID:
+    return LC_ERR_INVALID;
+  case VECTIS_ERR_NOMEM:
+    return LC_ERR_NOMEM;
+  default:
+    return LC_ERR_PROTOCOL;
+  }
+}
+
+static int vectis_lockd_consumer_mailbox_receiver_handle(
+    void *context, lc_consumer_message *message, lc_error *error) {
+  vectis_lockd_consumer_mailbox_receiver *receiver;
+  vectis_lockd_consumer_event event;
+  vectis_mailbox_event reply;
+  vectis_error verror;
+  vectis_status status;
+  unsigned long correlation_id;
+
+  receiver = (vectis_lockd_consumer_mailbox_receiver *)context;
+  if (receiver == NULL) {
+    vectis_lc_error_set(error, LC_ERR_INVALID,
+                        "lockd consumer mailbox receiver is invalid");
+    return LC_ERR_INVALID;
+  }
+  vectis_error_clear(&verror);
+  vectis_lockd_consumer_event_init(&event);
+  status = vectis_lockd_consumer_event_from_message(message, &receiver->event,
+                                                    &event, &verror);
+  if (status != VECTIS_OK) {
+    vectis_lc_error_set(error, vectis_lockd_consumer_lc_status(status),
+                        verror.message);
+    return vectis_lockd_consumer_lc_status(status);
+  }
+  if (receiver->broker != NULL) {
+    vectis_mailbox_event_init(&reply);
+    correlation_id = 0UL;
+    status = receiver->broker->request(receiver->broker, &event.message,
+                                       receiver->reply_timeout_ms, &reply,
+                                       &correlation_id, &verror);
+    vectis_mailbox_event_cleanup(&reply);
+  } else if (receiver->mailbox != NULL) {
+    status = receiver->mailbox->publish(receiver->mailbox, &event.message,
+                                        &verror);
+  } else {
+    status = VECTIS_ERR_INVALID;
+    vectis_set_error(&verror, VECTIS_ERR_INVALID,
+                     "lockd consumer mailbox receiver target is required");
+  }
+  vectis_lockd_consumer_event_cleanup(&event);
+  if (status != VECTIS_OK) {
+    vectis_lc_error_set(error, vectis_lockd_consumer_lc_status(status),
+                        verror.message);
+    return vectis_lockd_consumer_lc_status(status);
+  }
+  return LC_OK;
+}
+
+static void
+vectis_lockd_consumer_mailbox_receiver_cleanup(void *context) {
+  free(context);
+}
+
+static vectis_status vectis_lockd_consumer_mailbox_receiver_create(
+    void *adapter_context, const void *receiver_config,
+    vectis_consumer_receiver *out, vectis_error *error) {
+  const vectis_lockd_consumer_mailbox_receiver_config *config;
+  vectis_lockd_consumer_mailbox_receiver *receiver;
+
+  (void)adapter_context;
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "receiver output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(out, 0, sizeof(*out));
+  if (receiver_config == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "mailbox receiver config is required");
+    return VECTIS_ERR_INVALID;
+  }
+  config =
+      (const vectis_lockd_consumer_mailbox_receiver_config *)receiver_config;
+  if (config->broker == NULL && config->mailbox == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "mailbox receiver requires mailbox or broker");
+    return VECTIS_ERR_INVALID;
+  }
+  receiver =
+      (vectis_lockd_consumer_mailbox_receiver *)calloc(1u, sizeof(*receiver));
+  if (receiver == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate mailbox receiver");
+    return VECTIS_ERR_NOMEM;
+  }
+  receiver->mailbox = config->mailbox;
+  receiver->broker = config->broker;
+  receiver->reply_timeout_ms = config->reply_timeout_ms;
+  vectis_lockd_consumer_event_config_init(&receiver->event);
+  receiver->event = config->event;
+  if (receiver->event.kind == NULL || receiver->event.kind[0] == '\0') {
+    receiver->event.kind = "vectis.lockd.consumer";
+  }
+  if (receiver->event.max_payload_bytes == 0u) {
+    receiver->event.max_payload_bytes =
+        VECTIS_LOCKD_CONSUMER_EVENT_DEFAULT_MAX_PAYLOAD_BYTES;
+  }
+  out->handle = vectis_lockd_consumer_mailbox_receiver_handle;
+  out->context = receiver;
+  out->cleanup = vectis_lockd_consumer_mailbox_receiver_cleanup;
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 static void vectis_webdav_marker_receiver_cleanup(void *context) {
@@ -4323,6 +4464,19 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
 
   {
     vectis_consumer_receiver_adapter adapter;
+
+    status = vectis_lockd_consumer_mailbox_receiver_adapter(&adapter, error);
+    if (status != VECTIS_OK) {
+      vectis_destroy_impl(impl);
+      free(app);
+      return NULL;
+    }
+    status = vectis_register_consumer_receiver_impl(impl, &adapter, error);
+    if (status != VECTIS_OK) {
+      vectis_destroy_impl(impl);
+      free(app);
+      return NULL;
+    }
 
     adapter.kind = "webdav_marker";
     adapter.create = vectis_webdav_marker_receiver_create;
@@ -9971,6 +10125,308 @@ vectis_status vectis_route_mailbox_request(
       broker_error.detail[0] != '\0' ? broker_error.detail : NULL, error);
 }
 
+void vectis_lockd_consumer_event_config_init(
+    vectis_lockd_consumer_event_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->kind = "vectis.lockd.consumer";
+  config->max_payload_bytes =
+      VECTIS_LOCKD_CONSUMER_EVENT_DEFAULT_MAX_PAYLOAD_BYTES;
+}
+
+void vectis_lockd_consumer_event_init(vectis_lockd_consumer_event *event) {
+  if (event == NULL) {
+    return;
+  }
+  vectis_mailbox_message_init(&event->message);
+  event->payload.data = NULL;
+  event->payload.size = 0u;
+}
+
+void vectis_lockd_consumer_event_cleanup(vectis_lockd_consumer_event *event) {
+  if (event == NULL) {
+    return;
+  }
+  vectis_mutable_bytes_cleanup(&event->payload);
+  vectis_lockd_consumer_event_init(event);
+}
+
+static int vectis_lockd_payload_sink_write(lc_sink *sink, const void *bytes,
+                                           size_t count, lc_error *error) {
+  vectis_lockd_payload_sink_context *context;
+  vectis_error verror;
+
+  context = sink != NULL ? (vectis_lockd_payload_sink_context *)sink->impl
+                         : NULL;
+  if (context == NULL) {
+    vectis_lc_error_set(error, LC_ERR_INVALID,
+                        "lockd consumer payload sink is invalid");
+    return 0;
+  }
+  if (count > 0u && bytes == NULL) {
+    context->status = VECTIS_ERR_INVALID;
+    vectis_lc_error_set(error, LC_ERR_INVALID,
+                        "lockd consumer payload bytes are required");
+    return 0;
+  }
+  if (count > context->max_payload_bytes ||
+      context->payload.size > context->max_payload_bytes - count) {
+    context->status = VECTIS_ERR_INVALID;
+    vectis_lc_error_set(error, LC_ERR_INVALID,
+                        "lockd consumer event payload exceeds configured "
+                        "limit");
+    return 0;
+  }
+  vectis_error_clear(&verror);
+  if (vectis_string_builder_append_n(&context->payload, (const char *)bytes,
+                                     count, &verror) != VECTIS_OK) {
+    context->status = VECTIS_ERR_NOMEM;
+    vectis_lc_error_set(error, LC_ERR_NOMEM,
+                        verror.message[0] != '\0'
+                            ? verror.message
+                            : "failed to copy lockd consumer payload");
+    return 0;
+  }
+  context->status = VECTIS_OK;
+  return 1;
+}
+
+static void vectis_lockd_payload_sink_close(lc_sink *sink) { (void)sink; }
+
+static vectis_status vectis_lockd_consumer_event_payload(
+    lc_message *message, size_t max_payload_bytes,
+    vectis_string_builder *payload, vectis_error *error) {
+  vectis_lockd_payload_sink_context context;
+  lc_sink sink;
+  lc_error lcerr;
+  size_t written;
+  int rc;
+
+  if (message == NULL || message->write_payload == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "lockd consumer message payload writer is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&context, 0, sizeof(context));
+  context.max_payload_bytes = max_payload_bytes;
+  context.status = VECTIS_OK;
+  memset(&sink, 0, sizeof(sink));
+  sink.write = vectis_lockd_payload_sink_write;
+  sink.close = vectis_lockd_payload_sink_close;
+  sink.impl = &context;
+  lc_error_init(&lcerr);
+  written = 0u;
+  rc = message->write_payload(message, &sink, &written, &lcerr);
+  if (rc != LC_OK) {
+    if (context.status == VECTIS_ERR_INVALID) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "lockd consumer event payload exceeds configured "
+                       "limit");
+    } else if (context.status == VECTIS_ERR_NOMEM) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy lockd consumer payload");
+    } else {
+      (void)vectis_set_lockdc_error(
+          error, rc, &lcerr, "failed to copy lockd consumer payload");
+    }
+    lc_error_cleanup(&lcerr);
+    vectis_string_builder_cleanup(&context.payload);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  if (written != context.payload.size) {
+    vectis_string_builder_cleanup(&context.payload);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "lockd consumer payload byte count mismatch");
+    return VECTIS_ERR_STATE;
+  }
+  *payload = context.payload;
+  return VECTIS_OK;
+}
+
+vectis_status vectis_lockd_consumer_event_from_message(
+    lc_consumer_message *message,
+    const vectis_lockd_consumer_event_config *config,
+    vectis_lockd_consumer_event *out, vectis_error *error) {
+  vectis_lockd_consumer_event_config effective;
+  vectis_string_builder builder;
+  vectis_string_builder copied_payload;
+  lc_message *delivery;
+  vectis_status status;
+
+  if (message == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "lockd consumer message is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (message->message == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "lockd consumer delivery message is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "lockd consumer event output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_lockd_consumer_event_init(out);
+  vectis_lockd_consumer_event_config_init(&effective);
+  if (config != NULL) {
+    effective = *config;
+    if (effective.kind == NULL || effective.kind[0] == '\0') {
+      effective.kind = "vectis.lockd.consumer";
+    }
+    if (effective.max_payload_bytes == 0u) {
+      effective.max_payload_bytes =
+          VECTIS_LOCKD_CONSUMER_EVENT_DEFAULT_MAX_PAYLOAD_BYTES;
+    }
+  }
+
+  memset(&builder, 0, sizeof(builder));
+  memset(&copied_payload, 0, sizeof(copied_payload));
+  delivery = message->message;
+  if (effective.include_payload) {
+    status = vectis_lockd_consumer_event_payload(
+        delivery, effective.max_payload_bytes, &copied_payload, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
+
+  if (vectis_string_builder_append(&builder, "{", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "type", error) != VECTIS_OK ||
+      vectis_append_lonejson_string(&builder, "vectis.lockd.consumer",
+                                    error) != VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "name", error) != VECTIS_OK ||
+      vectis_append_lonejson_string(&builder, message->name, error) !=
+          VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "namespace", error) !=
+          VECTIS_OK ||
+      vectis_append_lonejson_string(&builder, delivery->namespace_name,
+                                    error) != VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "queue", error) != VECTIS_OK ||
+      vectis_append_lonejson_string(&builder, delivery->queue != NULL
+                                                  ? delivery->queue
+                                                  : message->queue,
+                                    error) != VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "message_id", error) !=
+          VECTIS_OK ||
+      vectis_append_lonejson_string(&builder, delivery->message_id, error) !=
+          VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "correlation_id", error) !=
+          VECTIS_OK ||
+      vectis_append_lonejson_string(&builder, delivery->correlation_id,
+                                    error) != VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "lease_id", error) !=
+          VECTIS_OK ||
+      vectis_append_lonejson_string(&builder, delivery->lease_id, error) !=
+          VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "txn_id", error) != VECTIS_OK ||
+      vectis_append_lonejson_string(&builder, delivery->txn_id, error) !=
+          VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "with_state", error) !=
+          VECTIS_OK ||
+      vectis_string_builder_append(&builder,
+                                   message->with_state ? "true" : "false",
+                                   error) != VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "attempts", error) !=
+          VECTIS_OK ||
+      vectis_string_builder_appendf(&builder, error, "%d",
+                                    delivery->attempts) != VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "max_attempts", error) !=
+          VECTIS_OK ||
+      vectis_string_builder_appendf(&builder, error, "%d",
+                                    delivery->max_attempts) != VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "failure_attempts", error) !=
+          VECTIS_OK ||
+      vectis_string_builder_appendf(&builder, error, "%d",
+                                    delivery->failure_attempts) != VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "visibility_timeout_seconds",
+                                    error) != VECTIS_OK ||
+      vectis_string_builder_appendf(
+          &builder, error, "%ld", delivery->visibility_timeout_seconds) !=
+          VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "payload_content_type", error) !=
+          VECTIS_OK ||
+      vectis_append_lonejson_string(&builder, delivery->payload_content_type,
+                                    error) != VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "fencing_token", error) !=
+          VECTIS_OK ||
+      vectis_string_builder_appendf(&builder, error, "%ld",
+                                    delivery->fencing_token) != VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "payload", error) != VECTIS_OK ||
+      vectis_string_builder_append(&builder, "{", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "included", error) !=
+          VECTIS_OK) {
+    status = error != NULL ? error->code : VECTIS_ERR_STATE;
+    vectis_string_builder_cleanup(&builder);
+    vectis_string_builder_cleanup(&copied_payload);
+    return status;
+  }
+  if (!effective.include_payload) {
+    status = vectis_string_builder_append(&builder, "false}", error);
+  } else {
+    status = vectis_string_builder_append(&builder, "true,", error);
+    if (status == VECTIS_OK) {
+      status = vectis_route_event_append_key(&builder, "size", error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_string_builder_appendf(
+          &builder, error, "%lu", (unsigned long)copied_payload.size);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_string_builder_append(&builder, ",", error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_route_event_append_key(&builder, "content", error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_append_lonejson_string_n(
+          &builder,
+          copied_payload.data != NULL ? (const char *)copied_payload.data : "",
+          copied_payload.size, error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_string_builder_append(&builder, "}", error);
+    }
+  }
+  vectis_string_builder_cleanup(&copied_payload);
+  if (status != VECTIS_OK ||
+      vectis_string_builder_append(&builder, "}", error) != VECTIS_OK) {
+    status = error != NULL ? error->code : VECTIS_ERR_STATE;
+    vectis_string_builder_cleanup(&builder);
+    return status;
+  }
+  out->payload.data = builder.data;
+  out->payload.size = builder.size;
+  builder.data = NULL;
+  builder.size = 0u;
+  builder.capacity = 0u;
+  out->message.kind = effective.kind;
+  out->message.payload = out->payload.data;
+  out->message.payload_size = out->payload.size;
+  vectis_string_builder_cleanup(&builder);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 static vectis_status vectis_openapi_append_path(vectis_string_builder *builder,
                                                 const char *path,
                                                 vectis_error *error) {
@@ -11707,6 +12163,30 @@ void vectis_webdav_marker_receiver_config_init(
   config->max_file_bytes = storage.max_file_bytes;
   config->max_total_bytes = storage.max_total_bytes;
   config->max_resources = storage.max_resources;
+}
+
+void vectis_lockd_consumer_mailbox_receiver_config_init(
+    vectis_lockd_consumer_mailbox_receiver_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->reply_timeout_ms = -1L;
+  vectis_lockd_consumer_event_config_init(&config->event);
+}
+
+vectis_status vectis_lockd_consumer_mailbox_receiver_adapter(
+    vectis_consumer_receiver_adapter *out, vectis_error *error) {
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "consumer receiver adapter output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(out, 0, sizeof(*out));
+  out->kind = "mailbox";
+  out->create = vectis_lockd_consumer_mailbox_receiver_create;
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 static vectis_status vectis_register_consumer_receiver_impl(
