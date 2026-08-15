@@ -616,6 +616,290 @@ static void test_lockd_consumer_mailbox_receiver_broker(void) {
   requests->destroy(requests);
 }
 
+static void test_opcua_monitor_mailbox_data_change(void) {
+  vectis_mailbox_config mailbox_config;
+  vectis_opcua_monitor_mailbox_config adapter_config;
+  vectis_opcua_monitor_mailbox_stats stats;
+  vectis_opcua_monitor_mailbox *adapter;
+  vectis_mailbox_event queued;
+  vectis_mailbox *mailbox;
+  cpkt_opcua_value value;
+  vectis_error error;
+  vectis_status status;
+
+  vectis_mailbox_config_init(&mailbox_config);
+  mailbox_config.capacity = 2u;
+  mailbox_config.max_payload_bytes = 4096u;
+  status = vectis_mailbox_new(&mailbox_config, &mailbox, &error);
+  expect_status(status, VECTIS_OK, "OPC UA mailbox target");
+  vectis_opcua_monitor_mailbox_config_init(&adapter_config);
+  adapter_config.mailbox = mailbox;
+  adapter_config.event.data_change_kind = "custom.opcua.value";
+  status = vectis_opcua_monitor_mailbox_new(&adapter_config, &adapter, &error);
+  expect_status(status, VECTIS_OK, "OPC UA monitor mailbox adapter");
+
+  memset(&value, 0, sizeof(value));
+  value.type = CPKT_OPCUA_VALUE_INTEGER;
+  value.integer_value = 42L;
+  adapter->data_change(3UL, 4UL, &value, 0UL, adapter->user);
+
+  vectis_mailbox_event_init(&queued);
+  status = mailbox->wait_next(mailbox, &queued, 0L, &error);
+  expect_status(status, VECTIS_OK, "OPC UA data change queued");
+  expect(queued.kind != NULL && strcmp(queued.kind, "custom.opcua.value") == 0,
+         "OPC UA data change kind");
+  expect(bytes_contains(queued.payload, queued.payload_size,
+                        "\"type\":\"custom.opcua.value\""),
+         "OPC UA data change type");
+  expect(bytes_contains(queued.payload, queued.payload_size,
+                        "\"subscription_id\":3"),
+         "OPC UA data change subscription id");
+  expect(bytes_contains(queued.payload, queued.payload_size,
+                        "\"monitored_item_id\":4"),
+         "OPC UA data change monitored item id");
+  expect(bytes_contains(queued.payload, queued.payload_size,
+                        "\"type_name\":\"integer\""),
+         "OPC UA data change value type");
+  expect(bytes_contains(queued.payload, queued.payload_size, "\"value\":42"),
+         "OPC UA data change value");
+  vectis_mailbox_event_cleanup(&queued);
+
+  status = adapter->stats(adapter, &stats, &error);
+  expect_status(status, VECTIS_OK, "OPC UA monitor stats");
+  expect(stats.data_changes == 1UL, "OPC UA data change stats");
+  expect(stats.publish_failures == 0UL, "OPC UA publish failure stats");
+
+  adapter->destroy(adapter);
+  mailbox->destroy(mailbox);
+}
+
+static void test_opcua_monitor_mailbox_event_fields(void) {
+  vectis_mailbox_config mailbox_config;
+  vectis_opcua_monitor_mailbox_config adapter_config;
+  vectis_opcua_monitor_mailbox_stats stats;
+  vectis_opcua_monitor_mailbox *adapter;
+  vectis_mailbox_event queued;
+  vectis_mailbox *mailbox;
+  cpkt_opcua_event_field fields[2];
+  cpkt_opcua_string_view strings[2];
+  vectis_error error;
+  vectis_status status;
+
+  vectis_mailbox_config_init(&mailbox_config);
+  mailbox_config.capacity = 2u;
+  mailbox_config.max_payload_bytes = 4096u;
+  status = vectis_mailbox_new(&mailbox_config, &mailbox, &error);
+  expect_status(status, VECTIS_OK, "OPC UA event fields mailbox target");
+  vectis_opcua_monitor_mailbox_config_init(&adapter_config);
+  adapter_config.mailbox = mailbox;
+  status = vectis_opcua_monitor_mailbox_new(&adapter_config, &adapter, &error);
+  expect_status(status, VECTIS_OK, "OPC UA event fields adapter");
+
+  memset(fields, 0, sizeof(fields));
+  fields[0].name = "Message";
+  fields[0].name_length = strlen(fields[0].name);
+  fields[0].value.type = CPKT_OPCUA_VALUE_LOCALIZED_TEXT;
+  fields[0].value.localized_text_locale = "en-US";
+  fields[0].value.localized_text_locale_length = 5u;
+  fields[0].value.localized_text = "Alarm";
+  fields[0].value.localized_text_length = 5u;
+  fields[0].status = 0UL;
+  strings[0].data = "a";
+  strings[0].length = 1u;
+  strings[1].data = "b";
+  strings[1].length = 1u;
+  fields[1].name = "Tags";
+  fields[1].name_length = strlen(fields[1].name);
+  fields[1].value.type = CPKT_OPCUA_VALUE_STRING_ARRAY;
+  fields[1].value.string_array_values = strings;
+  fields[1].value.string_array_length = 2u;
+  fields[1].status = 0UL;
+  adapter->event_fields(5UL, 6UL, fields, 2u, 0UL, adapter->user);
+
+  vectis_mailbox_event_init(&queued);
+  status = mailbox->wait_next(mailbox, &queued, 0L, &error);
+  expect_status(status, VECTIS_OK, "OPC UA event fields queued");
+  expect(queued.kind != NULL &&
+             strcmp(queued.kind, "vectis.opcua.event_fields") == 0,
+         "OPC UA event fields kind");
+  expect(bytes_contains(queued.payload, queued.payload_size,
+                        "\"name\":\"Message\""),
+         "OPC UA event field message name");
+  expect(bytes_contains(queued.payload, queued.payload_size,
+                        "\"type_name\":\"localized_text\""),
+         "OPC UA event field localized text");
+  expect(bytes_contains(queued.payload, queued.payload_size,
+                        "\"type_name\":\"string_array\""),
+         "OPC UA event field string array");
+  expect(bytes_contains(queued.payload, queued.payload_size,
+                        "\"value\":[\"a\",\"b\"]"),
+         "OPC UA event field string array values");
+  vectis_mailbox_event_cleanup(&queued);
+
+  status = adapter->stats(adapter, &stats, &error);
+  expect_status(status, VECTIS_OK, "OPC UA event fields stats read");
+  expect(stats.event_fields == 1UL, "OPC UA event fields stats");
+
+  adapter->destroy(adapter);
+  mailbox->destroy(mailbox);
+}
+
+static void test_opcua_monitor_mailbox_event_and_limit(void) {
+  vectis_mailbox_config mailbox_config;
+  vectis_opcua_monitor_mailbox_config adapter_config;
+  vectis_opcua_monitor_mailbox_stats stats;
+  vectis_opcua_monitor_mailbox *adapter;
+  vectis_mailbox_event queued;
+  vectis_mailbox *mailbox;
+  cpkt_opcua_event event;
+  unsigned char event_id[3];
+  vectis_error error;
+  vectis_status status;
+
+  vectis_mailbox_config_init(&mailbox_config);
+  mailbox_config.capacity = 2u;
+  mailbox_config.max_payload_bytes = 4096u;
+  status = vectis_mailbox_new(&mailbox_config, &mailbox, &error);
+  expect_status(status, VECTIS_OK, "OPC UA event mailbox target");
+  vectis_opcua_monitor_mailbox_config_init(&adapter_config);
+  adapter_config.mailbox = mailbox;
+  adapter_config.event.max_payload_bytes = 512u;
+  status = vectis_opcua_monitor_mailbox_new(&adapter_config, &adapter, &error);
+  expect_status(status, VECTIS_OK, "OPC UA event adapter");
+
+  event_id[0] = 0x01u;
+  event_id[1] = 0xabu;
+  event_id[2] = 0xffu;
+  memset(&event, 0, sizeof(event));
+  event.event_id = event_id;
+  event.event_id_length = sizeof(event_id);
+  event.source_name = "Machine";
+  event.source_name_length = strlen(event.source_name);
+  event.message = "High temperature";
+  event.message_length = strlen(event.message);
+  event.severity = 700UL;
+  adapter->event(7UL, 8UL, &event, 0UL, adapter->user);
+
+  vectis_mailbox_event_init(&queued);
+  status = mailbox->wait_next(mailbox, &queued, 0L, &error);
+  expect_status(status, VECTIS_OK, "OPC UA event queued");
+  expect(bytes_contains(queued.payload, queued.payload_size,
+                        "\"event_id\":\"01abff\""),
+         "OPC UA event id hex");
+  expect(bytes_contains(queued.payload, queued.payload_size,
+                        "\"severity\":700"),
+         "OPC UA event severity");
+  vectis_mailbox_event_cleanup(&queued);
+  adapter->destroy(adapter);
+
+  vectis_opcua_monitor_mailbox_config_init(&adapter_config);
+  adapter_config.mailbox = mailbox;
+  adapter_config.event.max_payload_bytes = 32u;
+  status = vectis_opcua_monitor_mailbox_new(&adapter_config, &adapter, &error);
+  expect_status(status, VECTIS_OK, "OPC UA bounded adapter");
+  adapter->event(7UL, 8UL, &event, 0UL, adapter->user);
+  status = mailbox->wait_next(mailbox, &queued, 0L, &error);
+  expect_status(status, VECTIS_ERR_TIMEOUT,
+                "OPC UA oversized event not queued");
+  status = adapter->stats(adapter, &stats, &error);
+  expect_status(status, VECTIS_OK, "OPC UA bounded stats read");
+  expect(stats.publish_failures == 1UL, "OPC UA bounded failure stats");
+  expect(stats.last_error.code == VECTIS_ERR_INVALID,
+         "OPC UA bounded last error");
+
+  adapter->destroy(adapter);
+  mailbox->destroy(mailbox);
+}
+
+typedef struct opcua_broker_worker_context {
+  vectis_mailbox *requests;
+  vectis_mailbox_broker *broker;
+  int saw_event;
+} opcua_broker_worker_context;
+
+static void *opcua_broker_worker_main(void *userdata) {
+  opcua_broker_worker_context *context;
+  vectis_mailbox_event request;
+  vectis_mailbox_message reply;
+  vectis_error error;
+  vectis_status status;
+  const char payload[] = "ok";
+
+  context = (opcua_broker_worker_context *)userdata;
+  vectis_mailbox_event_init(&request);
+  status =
+      context->requests->wait_next(context->requests, &request, 1000L, &error);
+  if (status != VECTIS_OK) {
+    return NULL;
+  }
+  if (request.expects_reply &&
+      bytes_contains(request.payload, request.payload_size,
+                     "\"type\":\"vectis.opcua.data_change\"")) {
+    context->saw_event = 1;
+  }
+  vectis_mailbox_message_init(&reply);
+  reply.kind = "opcua.worker.result";
+  reply.payload = payload;
+  reply.payload_size = sizeof(payload) - 1u;
+  (void)context->broker->reply(context->broker, request.correlation_id, &reply,
+                               &error);
+  vectis_mailbox_event_cleanup(&request);
+  return NULL;
+}
+
+static void test_opcua_monitor_mailbox_broker(void) {
+  vectis_mailbox_config mailbox_config;
+  vectis_mailbox_broker_config broker_config;
+  vectis_opcua_monitor_mailbox_config adapter_config;
+  vectis_opcua_monitor_mailbox_stats stats;
+  vectis_opcua_monitor_mailbox *adapter;
+  vectis_mailbox *requests;
+  vectis_mailbox_broker *broker;
+  cpkt_opcua_value value;
+  vectis_error error;
+  vectis_status status;
+  opcua_broker_worker_context context;
+  pthread_t worker;
+  int rc;
+
+  vectis_mailbox_config_init(&mailbox_config);
+  mailbox_config.capacity = 2u;
+  mailbox_config.max_payload_bytes = 4096u;
+  status = vectis_mailbox_new(&mailbox_config, &requests, &error);
+  expect_status(status, VECTIS_OK, "OPC UA broker request mailbox");
+  vectis_mailbox_broker_config_init(&broker_config);
+  broker_config.request_mailbox = requests;
+  status = vectis_mailbox_broker_new(&broker_config, &broker, &error);
+  expect_status(status, VECTIS_OK, "OPC UA broker");
+  vectis_opcua_monitor_mailbox_config_init(&adapter_config);
+  adapter_config.broker = broker;
+  adapter_config.reply_timeout_ms = 1000L;
+  status = vectis_opcua_monitor_mailbox_new(&adapter_config, &adapter, &error);
+  expect_status(status, VECTIS_OK, "OPC UA broker adapter");
+
+  context.requests = requests;
+  context.broker = broker;
+  context.saw_event = 0;
+  rc = pthread_create(&worker, NULL, opcua_broker_worker_main, &context);
+  expect(rc == 0, "OPC UA broker worker started");
+  if (rc == 0) {
+    memset(&value, 0, sizeof(value));
+    value.type = CPKT_OPCUA_VALUE_BOOLEAN;
+    value.boolean_value = 1;
+    adapter->data_change(9UL, 10UL, &value, 0UL, adapter->user);
+    (void)pthread_join(worker, NULL);
+    expect(context.saw_event == 1, "OPC UA broker worker saw event");
+  }
+  status = adapter->stats(adapter, &stats, &error);
+  expect_status(status, VECTIS_OK, "OPC UA broker stats");
+  expect(stats.data_changes == 1UL, "OPC UA broker data change stats");
+  expect(stats.request_failures == 0UL, "OPC UA broker failure stats");
+
+  adapter->destroy(adapter);
+  broker->destroy(broker);
+  requests->destroy(requests);
+}
+
 typedef struct route_worker_context {
   vectis_mailbox *requests;
   vectis_mailbox_broker *broker;
@@ -813,6 +1097,10 @@ int main(void) {
   test_lockd_consumer_event_builder();
   test_lockd_consumer_mailbox_receiver_publish();
   test_lockd_consumer_mailbox_receiver_broker();
+  test_opcua_monitor_mailbox_data_change();
+  test_opcua_monitor_mailbox_event_fields();
+  test_opcua_monitor_mailbox_event_and_limit();
+  test_opcua_monitor_mailbox_broker();
   test_route_event_builder();
   test_route_mailbox_request_response();
   return failures == 0 ? 0 : 1;

@@ -87,7 +87,7 @@ surface directly, without local helper layers that would hide awkward API shape.
 - `concurrency/mailbox_request_reply.c`: `vectis_mailbox_broker` request/reply
   flow between a route-style producer and worker thread with automatic reply
   mailbox cleanup, plus an OPC UA/lockd-style direct C receiver handoff without
-  entering Lua.
+  entering Lua and the typed OPC UA monitor callback mailbox adapter.
 
 ## `lua/`
 

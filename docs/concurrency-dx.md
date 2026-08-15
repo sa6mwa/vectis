@@ -152,13 +152,34 @@ after a reply arrives before `reply_timeout_ms`; failures propagate to the
 managed consumer callback so liblockdc can use its documented nack/failure
 semantics.
 
+## Typed OPC UA Monitor Adapter
+
+The OPC UA monitor adapter is C-side and owns callback functions for the cpkt
+OPC UA C89 facade. Create it with `vectis_opcua_monitor_mailbox_new()`, then
+pass `adapter->data_change`, `adapter->event`, or `adapter->event_fields` and
+`adapter->user` to the matching `cpkt_opcua_client_monitor_*()` call.
+
+The adapter copies borrowed callback data synchronously into a bounded JSON
+mailbox payload. It covers all value kinds represented by `cpkt_opcua_value`,
+including arrays, GUIDs, status values, UInt64, DateTime, byte strings,
+qualified names, and localized text. Byte strings and event ids are represented
+as lowercase hex strings.
+
+OPC UA monitor callbacks return `void`, so publish or broker failures cannot be
+returned to the OPC UA stack. The adapter records callback counts, publish
+failures, broker request failures, and the last Vectis error in
+`vectis_opcua_monitor_mailbox_stats`. Use broker mode only when intentionally
+blocking the callback thread until a downstream worker replies.
+
 ## Scenario Coverage
 
 `examples/concurrency/mailbox_request_reply.c` is the C contract example for the
 mailbox DX layer. It covers a route-style `vectis_mailbox_broker` request/reply
 handoff to a worker thread with automatic reply mailbox cleanup, plus an OPC
 UA/lockd-style direct C handoff where one receiver drains a mailbox event and
-publishes the next C-owned work item without entering Lua.
+publishes the next C-owned work item without entering Lua. It also shows the
+OPC UA monitor mailbox adapter by invoking its cpkt-compatible data-change
+callback and draining the resulting typed event.
 
 `examples/lua/mailbox_pipeline.lua` is the Lua contract example. It covers
 publishing a request, owner-state `pump()` dispatch, correlated reply

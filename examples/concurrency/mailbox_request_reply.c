@@ -11,6 +11,27 @@ typedef struct worker_context {
   int handled;
 } worker_context;
 
+static int payload_contains(const void *data, size_t size, const char *needle) {
+  const unsigned char *bytes;
+  size_t needle_size;
+  size_t i;
+
+  if (data == NULL || needle == NULL) {
+    return 0;
+  }
+  bytes = (const unsigned char *)data;
+  needle_size = strlen(needle);
+  if (needle_size == 0u || needle_size > size) {
+    return 0;
+  }
+  for (i = 0u; i + needle_size <= size; ++i) {
+    if (memcmp(bytes + i, needle, needle_size) == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
 static void *worker_main(void *userdata) {
   worker_context *context;
   vectis_mailbox_event request;
@@ -138,6 +159,79 @@ static int run_direct_handoff(void) {
   return 0;
 }
 
+static int run_opcua_monitor_adapter(void) {
+  vectis_mailbox_config mailbox_config;
+  vectis_opcua_monitor_mailbox_config adapter_config;
+  vectis_opcua_monitor_mailbox_stats stats;
+  vectis_opcua_monitor_mailbox *adapter;
+  vectis_mailbox_event event;
+  vectis_mailbox *mailbox;
+  cpkt_opcua_value value;
+  vectis_error error;
+  vectis_status status;
+
+  mailbox = NULL;
+  adapter = NULL;
+  vectis_mailbox_config_init(&mailbox_config);
+  mailbox_config.capacity = 4u;
+  mailbox_config.max_payload_bytes = 4096u;
+  vectis_error_clear(&error);
+  status = vectis_mailbox_new(&mailbox_config, &mailbox, &error);
+  if (status != VECTIS_OK) {
+    fprintf(stderr, "failed to create OPC UA monitor mailbox: %s\n",
+            error.message);
+    return 1;
+  }
+
+  vectis_opcua_monitor_mailbox_config_init(&adapter_config);
+  adapter_config.mailbox = mailbox;
+  status = vectis_opcua_monitor_mailbox_new(&adapter_config, &adapter, &error);
+  if (status != VECTIS_OK) {
+    fprintf(stderr, "failed to create OPC UA monitor adapter: %s\n",
+            error.message);
+    mailbox->destroy(mailbox);
+    return 1;
+  }
+
+  memset(&value, 0, sizeof(value));
+  value.type = CPKT_OPCUA_VALUE_DOUBLE;
+  value.double_value = 21.5;
+  adapter->data_change(1UL, 2UL, &value, 0UL, adapter->user);
+
+  vectis_mailbox_event_init(&event);
+  status = mailbox->next(mailbox, &event, &error);
+  if (status != VECTIS_OK) {
+    fprintf(stderr, "failed to drain OPC UA monitor event: %s\n",
+            error.message);
+    adapter->destroy(adapter);
+    mailbox->destroy(mailbox);
+    return 1;
+  }
+  if (event.kind == NULL ||
+      strcmp(event.kind, "vectis.opcua.data_change") != 0 ||
+      event.payload == NULL ||
+      !payload_contains(event.payload, event.payload_size, "\"value\":21.5")) {
+    fprintf(stderr, "unexpected OPC UA monitor event\n");
+    vectis_mailbox_event_cleanup(&event);
+    adapter->destroy(adapter);
+    mailbox->destroy(mailbox);
+    return 1;
+  }
+  vectis_mailbox_event_cleanup(&event);
+
+  status = adapter->stats(adapter, &stats, &error);
+  if (status != VECTIS_OK || stats.data_changes != 1UL) {
+    fprintf(stderr, "unexpected OPC UA monitor adapter stats\n");
+    adapter->destroy(adapter);
+    mailbox->destroy(mailbox);
+    return 1;
+  }
+
+  adapter->destroy(adapter);
+  mailbox->destroy(mailbox);
+  return 0;
+}
+
 int main(void) {
   vectis_mailbox_config config;
   vectis_mailbox_broker_config broker_config;
@@ -239,6 +333,11 @@ int main(void) {
     return 1;
   }
   if (run_direct_handoff() != 0) {
+    broker->destroy(broker);
+    requests->destroy(requests);
+    return 1;
+  }
+  if (run_opcua_monitor_adapter() != 0) {
     broker->destroy(broker);
     requests->destroy(requests);
     return 1;

@@ -1,6 +1,7 @@
 #ifndef VECTIS_VECTIS_H
 #define VECTIS_VECTIS_H
 
+#include <cpkt/opcua.h>
 #include <curl/curl.h>
 #include <stddef.h>
 #ifndef LONEJSON_WITH_CURL
@@ -34,6 +35,7 @@
 #define VECTIS_MAILBOX_BROKER_DEFAULT_MAX_PENDING 64u
 #define VECTIS_ROUTE_EVENT_DEFAULT_MAX_BODY_BYTES 65536u
 #define VECTIS_LOCKD_CONSUMER_EVENT_DEFAULT_MAX_PAYLOAD_BYTES 65536u
+#define VECTIS_OPCUA_MONITOR_EVENT_DEFAULT_MAX_PAYLOAD_BYTES 65536u
 #define VECTIS_SSH_SFTP_OPEN_READ 0x01u
 #define VECTIS_SSH_SFTP_OPEN_WRITE 0x02u
 #define VECTIS_SSH_SFTP_OPEN_CREATE 0x04u
@@ -58,6 +60,7 @@ typedef struct vectis_consumer_service vectis_consumer_service;
 typedef struct vectis_http_client vectis_http_client;
 typedef struct vectis_mailbox vectis_mailbox;
 typedef struct vectis_mailbox_broker vectis_mailbox_broker;
+typedef struct vectis_opcua_monitor_mailbox vectis_opcua_monitor_mailbox;
 typedef struct vectis_embedded_fs vectis_embedded_fs;
 typedef struct vectis_sftp vectis_sftp;
 typedef struct vectis_ssh vectis_ssh;
@@ -326,6 +329,42 @@ typedef struct vectis_lockd_consumer_mailbox_receiver_config {
   long reply_timeout_ms;
   vectis_lockd_consumer_event_config event;
 } vectis_lockd_consumer_mailbox_receiver_config;
+
+typedef struct vectis_opcua_monitor_event_config {
+  /* Defaults to "vectis.opcua.data_change". */
+  const char *data_change_kind;
+  /* Defaults to "vectis.opcua.event". */
+  const char *event_kind;
+  /* Defaults to "vectis.opcua.event_fields". */
+  const char *event_fields_kind;
+  /* Zero means VECTIS_OPCUA_MONITOR_EVENT_DEFAULT_MAX_PAYLOAD_BYTES. */
+  size_t max_payload_bytes;
+} vectis_opcua_monitor_event_config;
+
+typedef struct vectis_opcua_monitor_mailbox_config {
+  /*
+   * Fire-and-forget target. The adapter copies each callback event into this
+   * mailbox and records publish failures in adapter stats.
+   */
+  vectis_mailbox *mailbox;
+  /*
+   * Request/reply target. When set, this takes precedence over mailbox and the
+   * callback waits for a broker reply using reply_timeout_ms.
+   */
+  vectis_mailbox_broker *broker;
+  /* Negative waits indefinitely; zero polls once. */
+  long reply_timeout_ms;
+  vectis_opcua_monitor_event_config event;
+} vectis_opcua_monitor_mailbox_config;
+
+typedef struct vectis_opcua_monitor_mailbox_stats {
+  unsigned long data_changes;
+  unsigned long events;
+  unsigned long event_fields;
+  unsigned long publish_failures;
+  unsigned long request_failures;
+  vectis_error last_error;
+} vectis_opcua_monitor_mailbox_stats;
 
 typedef enum vectis_body_materialized_kind {
   VECTIS_BODY_MATERIALIZED_NONE = 0,
@@ -1331,6 +1370,23 @@ struct vectis_mailbox_broker {
   void *impl;
 };
 
+/*
+ * C-owned OPC UA monitor callback adapter. Pass the callback fields and `user`
+ * directly to cpkt_opcua_client_monitor_value*(), monitor_events(), or
+ * monitor_event_fields(). The adapter owns no OPC UA client or subscription.
+ */
+struct vectis_opcua_monitor_mailbox {
+  cpkt_opcua_data_change_fn data_change;
+  cpkt_opcua_event_fn event;
+  cpkt_opcua_event_fields_fn event_fields;
+  void *user;
+  vectis_status (*stats)(const vectis_opcua_monitor_mailbox *self,
+                         vectis_opcua_monitor_mailbox_stats *out,
+                         vectis_error *error);
+  void (*destroy)(vectis_opcua_monitor_mailbox *self);
+  void *impl;
+};
+
 void vectis_error_clear(vectis_error *error);
 const char *vectis_status_string(vectis_status status);
 const char *vectis_error_source_string(vectis_error_source source);
@@ -1409,6 +1465,20 @@ void vectis_lockd_consumer_mailbox_receiver_config_init(
     vectis_lockd_consumer_mailbox_receiver_config *config);
 vectis_status vectis_lockd_consumer_mailbox_receiver_adapter(
     vectis_consumer_receiver_adapter *out, vectis_error *error);
+void vectis_opcua_monitor_event_config_init(
+    vectis_opcua_monitor_event_config *config);
+void vectis_opcua_monitor_mailbox_config_init(
+    vectis_opcua_monitor_mailbox_config *config);
+void vectis_opcua_monitor_mailbox_stats_init(
+    vectis_opcua_monitor_mailbox_stats *stats);
+vectis_status vectis_opcua_monitor_mailbox_new(
+    const vectis_opcua_monitor_mailbox_config *config,
+    vectis_opcua_monitor_mailbox **out, vectis_error *error);
+vectis_status vectis_opcua_monitor_mailbox_stats_get(
+    const vectis_opcua_monitor_mailbox *adapter,
+    vectis_opcua_monitor_mailbox_stats *out, vectis_error *error);
+void vectis_opcua_monitor_mailbox_destroy(
+    vectis_opcua_monitor_mailbox *adapter);
 void vectis_app_config_init(vectis_app_config *config);
 void vectis_server_config_init(vectis_server_config *config);
 void vectis_autoblock_config_init(vectis_autoblock_config *config);

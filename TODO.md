@@ -188,7 +188,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add deterministic C and Lua scenario coverage for route-style mailbox request/reply, OPC UA/lockd-style mailbox handoff, direct C receiver fast paths, and Lua owner-state pumping.
 - [x] Add a live typed Kore route event adapter with explicit selected path/query/header fields, opt-in buffered body inclusion, broker request dispatch, timeout mapping, and response mapping.
 - [x] Add a live typed liblockdc consumer event adapter where it reduces concrete consumer-to-mailbox boilerplate.
-- [ ] Add a live typed OPC UA event adapter where it reduces concrete OPC UA callback-to-mailbox boilerplate.
+- [x] Add a live typed OPC UA event adapter where it reduces concrete OPC UA callback-to-mailbox boilerplate.
 - [ ] Add a live typed WebDAV event adapter only if concrete WebDAV code proves generic byte payloads are too noisy.
 - [x] Add route-local request/reply helper APIs with deadline handling and automatic reply mailbox cleanup.
 - [x] Add metrics and diagnostics hooks for mailbox depth, publish failures, timeout failures, pump counts, and callback failures.
