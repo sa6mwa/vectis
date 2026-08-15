@@ -80,6 +80,40 @@ if server_port then
          "server translate browse path")
   assert(translated_node == object_node,
          "browse path should resolve the object node")
+  local server_children, server_children_err =
+      server:browse_children(object_node)
+  assert(server_children ~= nil,
+         server_children_err and server_children_err.message or
+         "server browse children")
+  local found_server_child = false
+  for i = 1, #server_children do
+    if server_children[i].target_node_id == child_node then
+      assert(server_children[i].node_class == opcua.NODE_CLASS_VARIABLE)
+      assert(server_children[i].browse_name.namespace_index == namespace_index)
+      assert(server_children[i].browse_name.name == "childValue")
+      assert(server_children[i].display_name == "Child Value")
+      found_server_child = true
+    end
+  end
+  assert(found_server_child, "server browse children should return childValue")
+  local server_variable_children, server_variable_children_err =
+      server:browse_children_ex(object_node, {
+    node_class_mask = opcua.NODE_CLASS_VARIABLE,
+    result_mask = opcua.BROWSE_RESULT_ALL,
+  })
+  assert(server_variable_children ~= nil,
+         server_variable_children_err and
+         server_variable_children_err.message or
+         "server browse children ex")
+  assert(#server_variable_children >= 1,
+         "server browse children ex should return variables")
+  local server_page, server_page_err =
+      server:browse_children_page(object_node, { max_references = 1 })
+  assert(server_page ~= nil,
+         server_page_err and server_page_err.message or
+         "server browse children page")
+  assert(type(server_page.entries) == "table")
+  assert(server_page.entries[1].target_node_id == child_node)
 
   local array_node = opcua.node_id_numeric(namespace_index, 8205)
   local initial_integer_array = opcua.value_integer_array({ 1, 2, 3, 4 })
@@ -503,6 +537,40 @@ assert(client_translated ~= nil,
        client_translated_err and client_translated_err.message or
        "client translate browse path")
 assert(client_translated == remote_object)
+local client_children, client_children_err =
+    client:browse_children(remote_object)
+assert(client_children ~= nil,
+       client_children_err and client_children_err.message or
+       "client browse children")
+local found_client_child = false
+for i = 1, #client_children do
+  if client_children[i].target_node_id == remote_array then
+    assert(client_children[i].node_class == opcua.NODE_CLASS_VARIABLE)
+    assert(client_children[i].browse_name.namespace_index == 1)
+    assert(client_children[i].browse_name.name == "clientArray")
+    assert(client_children[i].display_name == "Client Array")
+    found_client_child = true
+  end
+end
+assert(found_client_child, "client browse children should return clientArray")
+local client_variable_children, client_variable_children_err =
+    client:browse_children_ex(remote_object, {
+  node_class_mask = opcua.NODE_CLASS_VARIABLE,
+  result_mask = opcua.BROWSE_RESULT_ALL,
+})
+assert(client_variable_children ~= nil,
+       client_variable_children_err and
+       client_variable_children_err.message or
+       "client browse children ex")
+assert(#client_variable_children >= 1,
+       "client browse children ex should return variables")
+local client_page, client_page_err =
+    client:browse_children_page(remote_object, { max_references = 1 })
+assert(client_page ~= nil,
+       client_page_err and client_page_err.message or
+       "client browse children page")
+assert(type(client_page.entries) == "table")
+assert(client_page.entries[1].target_node_id == remote_array)
 assert(client:delete_node(remote_array, true) == true)
 assert(client:delete_node(remote_object, true) == true)
 

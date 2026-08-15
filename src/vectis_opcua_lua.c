@@ -53,6 +53,12 @@ typedef struct vectis_opcua_lua_event {
   cpkt_opcua_server_event *event;
 } vectis_opcua_lua_event;
 
+typedef struct vectis_opcua_lua_browse_collect {
+  lua_State *lua;
+  int table_index;
+  size_t count;
+} vectis_opcua_lua_browse_collect;
+
 int luaopen_opcua(lua_State *lua);
 static int vectis_opcua_lua_connect_client(lua_State *lua,
                                            cpkt_opcua_client *client,
@@ -125,6 +131,23 @@ static unsigned long vectis_opcua_lua_table_ulong(lua_State *lua, int index,
     return (unsigned long)luaL_error(lua, "%s must be non-negative", field);
   }
   return (unsigned long)value;
+}
+
+static int vectis_opcua_lua_table_int(lua_State *lua, int index,
+                                      const char *field, int fallback) {
+  lua_Integer value;
+
+  lua_getfield(lua, index, field);
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return fallback;
+  }
+  value = luaL_checkinteger(lua, -1);
+  lua_pop(lua, 1);
+  if (value < INT_MIN || value > INT_MAX) {
+    return (int)luaL_error(lua, "%s must fit in an int", field);
+  }
+  return (int)value;
 }
 
 static const char *vectis_opcua_lua_vectis_status_string(
@@ -4144,6 +4167,263 @@ static int vectis_opcua_lua_client_write_index_range(lua_State *lua) {
   return 1;
 }
 
+static void vectis_opcua_lua_browse_options_from_lua(
+    lua_State *lua, int index, cpkt_opcua_browse_options *options) {
+  int abs_index;
+
+  cpkt_opcua_browse_options_default(options);
+  if (lua_isnoneornil(lua, index)) {
+    return;
+  }
+  luaL_checktype(lua, index, LUA_TTABLE);
+  abs_index = lua_absindex(lua, index);
+  options->browse_direction = vectis_opcua_lua_table_int(
+      lua, abs_index, "browse_direction", options->browse_direction);
+  options->browse_direction = vectis_opcua_lua_table_int(
+      lua, abs_index, "direction", options->browse_direction);
+  options->include_subtypes = vectis_opcua_lua_table_bool(
+      lua, abs_index, "include_subtypes", options->include_subtypes);
+  options->node_class_mask = vectis_opcua_lua_table_ulong(
+      lua, abs_index, "node_class_mask", options->node_class_mask);
+  options->result_mask = vectis_opcua_lua_table_ulong(
+      lua, abs_index, "result_mask", options->result_mask);
+  options->max_references = vectis_opcua_lua_table_ulong(
+      lua, abs_index, "max_references", options->max_references);
+
+  lua_getfield(lua, abs_index, "reference_type_id");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, abs_index, "reference_type");
+  }
+  if (!lua_isnil(lua, -1)) {
+    options->reference_type_id = vectis_opcua_lua_node_id_at(lua, -1);
+    options->has_reference_type = 1;
+  }
+  lua_pop(lua, 1);
+}
+
+static void vectis_opcua_lua_push_optional_string(lua_State *lua,
+                                                  const char *value) {
+  if (value != NULL) {
+    lua_pushstring(lua, value);
+  } else {
+    lua_pushnil(lua);
+  }
+}
+
+static int vectis_opcua_lua_browse_collect_cb(
+    const cpkt_opcua_browse_entry *entry, void *user) {
+  vectis_opcua_lua_browse_collect *collect;
+  lua_State *lua;
+
+  collect = (vectis_opcua_lua_browse_collect *)user;
+  lua = collect->lua;
+  lua_newtable(lua);
+  (void)vectis_opcua_lua_push_node_id_copy(lua, &entry->target_node_id);
+  lua_setfield(lua, -2, "target_node_id");
+  lua_pushinteger(lua, (lua_Integer)entry->node_class);
+  lua_setfield(lua, -2, "node_class");
+  lua_newtable(lua);
+  lua_pushinteger(lua, (lua_Integer)entry->browse_name_namespace_index);
+  lua_setfield(lua, -2, "namespace_index");
+  vectis_opcua_lua_push_optional_string(lua, entry->browse_name);
+  lua_setfield(lua, -2, "name");
+  lua_setfield(lua, -2, "browse_name");
+  vectis_opcua_lua_push_optional_string(lua, entry->display_name);
+  lua_setfield(lua, -2, "display_name");
+  lua_pushboolean(lua, entry->is_forward != 0);
+  lua_setfield(lua, -2, "is_forward");
+  ++collect->count;
+  lua_rawseti(lua, collect->table_index, (lua_Integer)collect->count);
+  return 0;
+}
+
+static int vectis_opcua_lua_push_browse_page_result(
+    lua_State *lua, int entries_index, const unsigned char *continuation_point,
+    size_t continuation_point_size) {
+  entries_index = lua_absindex(lua, entries_index);
+  lua_newtable(lua);
+  lua_pushvalue(lua, entries_index);
+  lua_setfield(lua, -2, "entries");
+  if (continuation_point_size > 0u) {
+    lua_pushlstring(lua, (const char *)continuation_point,
+                    continuation_point_size);
+  } else {
+    lua_pushnil(lua);
+  }
+  lua_setfield(lua, -2, "continuation_point");
+  lua_remove(lua, entries_index);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_browse_children_common(lua_State *lua,
+                                                          int force_ex) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id parent_node_id;
+  cpkt_opcua_browse_options options;
+  vectis_opcua_lua_browse_collect collect;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  int has_options;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  parent_node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  has_options = !lua_isnoneornil(lua, 3);
+  lua_newtable(lua);
+  collect.lua = lua;
+  collect.table_index = lua_absindex(lua, -1);
+  collect.count = 0u;
+  status = 0u;
+  if (force_ex || has_options) {
+    vectis_opcua_lua_browse_options_from_lua(lua, 3, &options);
+    result = cpkt_opcua_client_browse_children_ex(
+        client, parent_node_id, &options, vectis_opcua_lua_browse_collect_cb,
+        &collect, &status);
+  } else {
+    result = cpkt_opcua_client_browse_children(
+        client, parent_node_id, vectis_opcua_lua_browse_collect_cb, &collect,
+        &status);
+  }
+  if (result != CPKT_OPCUA_OK) {
+    lua_pop(lua, 1);
+    return vectis_opcua_lua_push_error(
+        lua, result, status,
+        force_ex || has_options ? "opcua client browse children ex"
+                                : "opcua client browse children");
+  }
+  return 1;
+}
+
+static int vectis_opcua_lua_client_browse_children(lua_State *lua) {
+  return vectis_opcua_lua_client_browse_children_common(lua, 0);
+}
+
+static int vectis_opcua_lua_client_browse_children_ex(lua_State *lua) {
+  return vectis_opcua_lua_client_browse_children_common(lua, 1);
+}
+
+static int vectis_opcua_lua_client_browse_children_page(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id parent_node_id;
+  cpkt_opcua_browse_options options;
+  vectis_opcua_lua_browse_collect collect;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  unsigned char stack_buffer[256];
+  unsigned char *buffer;
+  size_t buffer_size;
+  size_t required_size;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  parent_node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  vectis_opcua_lua_browse_options_from_lua(lua, 3, &options);
+  lua_newtable(lua);
+  collect.lua = lua;
+  collect.table_index = lua_absindex(lua, -1);
+  collect.count = 0u;
+  buffer = stack_buffer;
+  buffer_size = sizeof(stack_buffer);
+  required_size = 0u;
+  status = 0u;
+  result = cpkt_opcua_client_browse_children_page(
+      client, parent_node_id, &options, vectis_opcua_lua_browse_collect_cb,
+      &collect, buffer, buffer_size, &required_size, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > sizeof(stack_buffer)) {
+    buffer = (unsigned char *)malloc(required_size);
+    if (buffer == NULL) {
+      lua_pop(lua, 1);
+      return luaL_error(lua,
+                        "opcua client browse continuation allocation failed");
+    }
+    buffer_size = required_size;
+    lua_pop(lua, 1);
+    lua_newtable(lua);
+    collect.table_index = lua_absindex(lua, -1);
+    collect.count = 0u;
+    required_size = 0u;
+    result = cpkt_opcua_client_browse_children_page(
+        client, parent_node_id, &options, vectis_opcua_lua_browse_collect_cb,
+        &collect, buffer, buffer_size, &required_size, &status);
+  }
+  if (result != CPKT_OPCUA_OK) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    lua_pop(lua, 1);
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client browse children page");
+  }
+  result = vectis_opcua_lua_push_browse_page_result(lua, -1, buffer,
+                                                    required_size);
+  if (buffer != stack_buffer) {
+    free(buffer);
+  }
+  return result;
+}
+
+static int vectis_opcua_lua_client_browse_next(lua_State *lua) {
+  cpkt_opcua_client *client;
+  const char *continuation_point;
+  size_t continuation_point_size;
+  int release_continuation_point;
+  vectis_opcua_lua_browse_collect collect;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  unsigned char stack_buffer[256];
+  unsigned char *buffer;
+  size_t buffer_size;
+  size_t required_size;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  continuation_point = luaL_checklstring(lua, 2, &continuation_point_size);
+  release_continuation_point = lua_isnoneornil(lua, 3) ? 0 : lua_toboolean(lua, 3);
+  lua_newtable(lua);
+  collect.lua = lua;
+  collect.table_index = lua_absindex(lua, -1);
+  collect.count = 0u;
+  buffer = stack_buffer;
+  buffer_size = sizeof(stack_buffer);
+  required_size = 0u;
+  status = 0u;
+  result = cpkt_opcua_client_browse_next(
+      client, (const unsigned char *)continuation_point, continuation_point_size,
+      release_continuation_point, vectis_opcua_lua_browse_collect_cb, &collect,
+      buffer, buffer_size, &required_size, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > sizeof(stack_buffer)) {
+    buffer = (unsigned char *)malloc(required_size);
+    if (buffer == NULL) {
+      lua_pop(lua, 1);
+      return luaL_error(lua,
+                        "opcua client browse continuation allocation failed");
+    }
+    buffer_size = required_size;
+    lua_pop(lua, 1);
+    lua_newtable(lua);
+    collect.table_index = lua_absindex(lua, -1);
+    collect.count = 0u;
+    required_size = 0u;
+    result = cpkt_opcua_client_browse_next(
+        client, (const unsigned char *)continuation_point,
+        continuation_point_size, release_continuation_point,
+        vectis_opcua_lua_browse_collect_cb, &collect, buffer, buffer_size,
+        &required_size, &status);
+  }
+  if (result != CPKT_OPCUA_OK) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    lua_pop(lua, 1);
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client browse next");
+  }
+  result = vectis_opcua_lua_push_browse_page_result(lua, -1, buffer,
+                                                    required_size);
+  if (buffer != stack_buffer) {
+    free(buffer);
+  }
+  return result;
+}
+
 static int vectis_opcua_lua_client_translate_browse_path(lua_State *lua) {
   cpkt_opcua_client *client;
   cpkt_opcua_node_id start_node_id;
@@ -4396,6 +4676,174 @@ static int vectis_opcua_lua_server_write_index_range(lua_State *lua) {
   }
   lua_pushboolean(lua, 1);
   return 1;
+}
+
+static int vectis_opcua_lua_server_browse_children_common(lua_State *lua,
+                                                          int force_ex) {
+  cpkt_opcua_server *server;
+  cpkt_opcua_node_id parent_node_id;
+  cpkt_opcua_browse_options options;
+  vectis_opcua_lua_browse_collect collect;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  int has_options;
+
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  parent_node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  has_options = !lua_isnoneornil(lua, 3);
+  lua_newtable(lua);
+  collect.lua = lua;
+  collect.table_index = lua_absindex(lua, -1);
+  collect.count = 0u;
+  status = 0u;
+  if (force_ex || has_options) {
+    vectis_opcua_lua_browse_options_from_lua(lua, 3, &options);
+    result = cpkt_opcua_server_browse_children_ex(
+        server, parent_node_id, &options, vectis_opcua_lua_browse_collect_cb,
+        &collect, &status);
+  } else {
+    result = cpkt_opcua_server_browse_children(
+        server, parent_node_id, vectis_opcua_lua_browse_collect_cb, &collect,
+        &status);
+  }
+  if (result != CPKT_OPCUA_OK) {
+    lua_pop(lua, 1);
+    return vectis_opcua_lua_push_error(
+        lua, result, status,
+        force_ex || has_options ? "opcua server browse children ex"
+                                : "opcua server browse children");
+  }
+  return 1;
+}
+
+static int vectis_opcua_lua_server_browse_children(lua_State *lua) {
+  return vectis_opcua_lua_server_browse_children_common(lua, 0);
+}
+
+static int vectis_opcua_lua_server_browse_children_ex(lua_State *lua) {
+  return vectis_opcua_lua_server_browse_children_common(lua, 1);
+}
+
+static int vectis_opcua_lua_server_browse_children_page(lua_State *lua) {
+  cpkt_opcua_server *server;
+  cpkt_opcua_node_id parent_node_id;
+  cpkt_opcua_browse_options options;
+  vectis_opcua_lua_browse_collect collect;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  unsigned char stack_buffer[256];
+  unsigned char *buffer;
+  size_t buffer_size;
+  size_t required_size;
+
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  parent_node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  vectis_opcua_lua_browse_options_from_lua(lua, 3, &options);
+  lua_newtable(lua);
+  collect.lua = lua;
+  collect.table_index = lua_absindex(lua, -1);
+  collect.count = 0u;
+  buffer = stack_buffer;
+  buffer_size = sizeof(stack_buffer);
+  required_size = 0u;
+  status = 0u;
+  result = cpkt_opcua_server_browse_children_page(
+      server, parent_node_id, &options, vectis_opcua_lua_browse_collect_cb,
+      &collect, buffer, buffer_size, &required_size, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > sizeof(stack_buffer)) {
+    buffer = (unsigned char *)malloc(required_size);
+    if (buffer == NULL) {
+      lua_pop(lua, 1);
+      return luaL_error(lua,
+                        "opcua server browse continuation allocation failed");
+    }
+    buffer_size = required_size;
+    lua_pop(lua, 1);
+    lua_newtable(lua);
+    collect.table_index = lua_absindex(lua, -1);
+    collect.count = 0u;
+    required_size = 0u;
+    result = cpkt_opcua_server_browse_children_page(
+        server, parent_node_id, &options, vectis_opcua_lua_browse_collect_cb,
+        &collect, buffer, buffer_size, &required_size, &status);
+  }
+  if (result != CPKT_OPCUA_OK) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    lua_pop(lua, 1);
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua server browse children page");
+  }
+  result = vectis_opcua_lua_push_browse_page_result(lua, -1, buffer,
+                                                    required_size);
+  if (buffer != stack_buffer) {
+    free(buffer);
+  }
+  return result;
+}
+
+static int vectis_opcua_lua_server_browse_next(lua_State *lua) {
+  cpkt_opcua_server *server;
+  const char *continuation_point;
+  size_t continuation_point_size;
+  int release_continuation_point;
+  vectis_opcua_lua_browse_collect collect;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  unsigned char stack_buffer[256];
+  unsigned char *buffer;
+  size_t buffer_size;
+  size_t required_size;
+
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  continuation_point = luaL_checklstring(lua, 2, &continuation_point_size);
+  release_continuation_point = lua_isnoneornil(lua, 3) ? 0 : lua_toboolean(lua, 3);
+  lua_newtable(lua);
+  collect.lua = lua;
+  collect.table_index = lua_absindex(lua, -1);
+  collect.count = 0u;
+  buffer = stack_buffer;
+  buffer_size = sizeof(stack_buffer);
+  required_size = 0u;
+  status = 0u;
+  result = cpkt_opcua_server_browse_next(
+      server, (const unsigned char *)continuation_point, continuation_point_size,
+      release_continuation_point, vectis_opcua_lua_browse_collect_cb, &collect,
+      buffer, buffer_size, &required_size, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > sizeof(stack_buffer)) {
+    buffer = (unsigned char *)malloc(required_size);
+    if (buffer == NULL) {
+      lua_pop(lua, 1);
+      return luaL_error(lua,
+                        "opcua server browse continuation allocation failed");
+    }
+    buffer_size = required_size;
+    lua_pop(lua, 1);
+    lua_newtable(lua);
+    collect.table_index = lua_absindex(lua, -1);
+    collect.count = 0u;
+    required_size = 0u;
+    result = cpkt_opcua_server_browse_next(
+        server, (const unsigned char *)continuation_point,
+        continuation_point_size, release_continuation_point,
+        vectis_opcua_lua_browse_collect_cb, &collect, buffer, buffer_size,
+        &required_size, &status);
+  }
+  if (result != CPKT_OPCUA_OK) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    lua_pop(lua, 1);
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua server browse next");
+  }
+  result = vectis_opcua_lua_push_browse_page_result(lua, -1, buffer,
+                                                    required_size);
+  if (buffer != stack_buffer) {
+    free(buffer);
+  }
+  return result;
 }
 
 static int vectis_opcua_lua_server_translate_browse_path(lua_State *lua) {
@@ -4740,6 +5188,13 @@ static void vectis_opcua_lua_register_client(lua_State *lua) {
                          vectis_opcua_lua_client_read_integer_array_range},
                         {"write_index_range",
                          vectis_opcua_lua_client_write_index_range},
+                        {"browse_children",
+                         vectis_opcua_lua_client_browse_children},
+                        {"browse_children_ex",
+                         vectis_opcua_lua_client_browse_children_ex},
+                        {"browse_children_page",
+                         vectis_opcua_lua_client_browse_children_page},
+                        {"browse_next", vectis_opcua_lua_client_browse_next},
                         {"translate_browse_path",
                          vectis_opcua_lua_client_translate_browse_path},
                         {"namespace_index",
@@ -4841,6 +5296,10 @@ static void vectis_opcua_lua_register_server(lua_State *lua) {
       {"read_localized_text_array_range",
        vectis_opcua_lua_server_read_localized_text_array_range},
       {"write_index_range", vectis_opcua_lua_server_write_index_range},
+      {"browse_children", vectis_opcua_lua_server_browse_children},
+      {"browse_children_ex", vectis_opcua_lua_server_browse_children_ex},
+      {"browse_children_page", vectis_opcua_lua_server_browse_children_page},
+      {"browse_next", vectis_opcua_lua_server_browse_next},
       {"translate_browse_path",
        vectis_opcua_lua_server_translate_browse_path},
       {"create_event", vectis_opcua_lua_server_create_event},
@@ -4975,6 +5434,45 @@ int luaopen_opcua(lua_State *lua) {
                              CPKT_OPCUA_NODE_ID_GUID);
   vectis_opcua_lua_set_const(lua, "NODE_ID_BYTE_STRING",
                              CPKT_OPCUA_NODE_ID_BYTE_STRING);
+
+  vectis_opcua_lua_set_const(lua, "NODE_CLASS_UNSPECIFIED",
+                             CPKT_OPCUA_NODE_CLASS_UNSPECIFIED);
+  vectis_opcua_lua_set_const(lua, "NODE_CLASS_OBJECT",
+                             CPKT_OPCUA_NODE_CLASS_OBJECT);
+  vectis_opcua_lua_set_const(lua, "NODE_CLASS_VARIABLE",
+                             CPKT_OPCUA_NODE_CLASS_VARIABLE);
+  vectis_opcua_lua_set_const(lua, "NODE_CLASS_METHOD",
+                             CPKT_OPCUA_NODE_CLASS_METHOD);
+  vectis_opcua_lua_set_const(lua, "NODE_CLASS_OBJECT_TYPE",
+                             CPKT_OPCUA_NODE_CLASS_OBJECT_TYPE);
+  vectis_opcua_lua_set_const(lua, "NODE_CLASS_VARIABLE_TYPE",
+                             CPKT_OPCUA_NODE_CLASS_VARIABLE_TYPE);
+  vectis_opcua_lua_set_const(lua, "NODE_CLASS_REFERENCE_TYPE",
+                             CPKT_OPCUA_NODE_CLASS_REFERENCE_TYPE);
+  vectis_opcua_lua_set_const(lua, "NODE_CLASS_DATA_TYPE",
+                             CPKT_OPCUA_NODE_CLASS_DATA_TYPE);
+  vectis_opcua_lua_set_const(lua, "NODE_CLASS_VIEW",
+                             CPKT_OPCUA_NODE_CLASS_VIEW);
+
+  vectis_opcua_lua_set_const(lua, "BROWSE_FORWARD",
+                             CPKT_OPCUA_BROWSE_FORWARD);
+  vectis_opcua_lua_set_const(lua, "BROWSE_INVERSE",
+                             CPKT_OPCUA_BROWSE_INVERSE);
+  vectis_opcua_lua_set_const(lua, "BROWSE_BOTH", CPKT_OPCUA_BROWSE_BOTH);
+  vectis_opcua_lua_set_const(lua, "BROWSE_RESULT_REFERENCE_TYPE",
+                             CPKT_OPCUA_BROWSE_RESULT_REFERENCE_TYPE);
+  vectis_opcua_lua_set_const(lua, "BROWSE_RESULT_IS_FORWARD",
+                             CPKT_OPCUA_BROWSE_RESULT_IS_FORWARD);
+  vectis_opcua_lua_set_const(lua, "BROWSE_RESULT_NODE_CLASS",
+                             CPKT_OPCUA_BROWSE_RESULT_NODE_CLASS);
+  vectis_opcua_lua_set_const(lua, "BROWSE_RESULT_BROWSE_NAME",
+                             CPKT_OPCUA_BROWSE_RESULT_BROWSE_NAME);
+  vectis_opcua_lua_set_const(lua, "BROWSE_RESULT_DISPLAY_NAME",
+                             CPKT_OPCUA_BROWSE_RESULT_DISPLAY_NAME);
+  vectis_opcua_lua_set_const(lua, "BROWSE_RESULT_TYPE_DEFINITION",
+                             CPKT_OPCUA_BROWSE_RESULT_TYPE_DEFINITION);
+  vectis_opcua_lua_set_const(lua, "BROWSE_RESULT_ALL",
+                             CPKT_OPCUA_BROWSE_RESULT_ALL);
 
   vectis_opcua_lua_set_const(lua, "VALUE_EMPTY", CPKT_OPCUA_VALUE_EMPTY);
   vectis_opcua_lua_set_const(lua, "VALUE_BOOLEAN", CPKT_OPCUA_VALUE_BOOLEAN);

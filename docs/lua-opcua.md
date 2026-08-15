@@ -37,6 +37,10 @@ owned handles and structured Vectis error envelopes for dependency failures.
   `client:read_integer_array(node_id)`,
   `client:read_integer_array_range(node_id, range)`,
   `client:write_index_range(node_id, range, value)`,
+  `client:browse_children(node_id[, opts])`,
+  `client:browse_children_ex(node_id, opts)`,
+  `client:browse_children_page(node_id[, opts])`,
+  `client:browse_next(continuation_point[, release])`,
   `client:translate_browse_path(start_node_id, elements)`,
   `client:namespace_index(uri)`, `client:namespace_uri(index)`, and
   `client:close()`.
@@ -73,6 +77,10 @@ owned handles and structured Vectis error envelopes for dependency failures.
   `server:read_localized_text_array(node_id)`,
   `server:read_localized_text_array_range(node_id, range)`,
   `server:write_index_range(node_id, range, value)`,
+  `server:browse_children(node_id[, opts])`,
+  `server:browse_children_ex(node_id, opts)`,
+  `server:browse_children_page(node_id[, opts])`,
+  `server:browse_next(continuation_point[, release])`,
   `server:translate_browse_path(start_node_id, elements)`,
   `server:create_event(opts)`, `event:set_field(ns, name, value)`,
   `event:trigger(server)`, `event:close()`, `server:trigger_event(opts)`,
@@ -114,6 +122,25 @@ owned handles and structured Vectis error envelopes for dependency failures.
 `opcua.server({ json = bytes })` and
 `opcua.server({ json_path = path })` construct from cpkt JSON5 server
 configuration. `config_path` is accepted as an alias for `json_path`.
+
+Browse methods materialize each borrowed cpkt callback entry into an owned Lua
+table:
+
+```lua
+{
+  target_node_id = opcua.node_id(...),
+  node_class = opcua.NODE_CLASS_VARIABLE,
+  browse_name = { namespace_index = 1, name = "child" },
+  display_name = "Child",
+  is_forward = true,
+}
+```
+
+`browse_children()` returns an array of entries. `browse_children_page()` and
+`browse_next()` return `{ entries = { ... }, continuation_point = bytes_or_nil
+}`. Options accept `browse_direction` or `direction`, `include_subtypes`,
+`reference_type_id` or `reference_type`, `node_class_mask`, `result_mask`, and
+`max_references`.
 
 ## Server Example
 
