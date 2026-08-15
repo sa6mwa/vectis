@@ -30,8 +30,16 @@ owned handles and structured Vectis error envelopes for dependency failures.
 - Clients: `client()`, `connect(endpoint[, opts])`,
   `client:connect(endpoint[, opts])`, `client:disconnect()`,
   `client:iterate(timeout_ms)`, `client:read(node_id)`,
-  `client:write(node_id, value)`, `client:namespace_index(uri)`,
-  `client:namespace_uri(index)`, and `client:close()`.
+  `client:write(node_id, value)`, `client:add_object(opts)`,
+  `client:add_variable(opts)`, `client:add_variable_under(opts)`,
+  `client:delete_node(node_id, delete_target_refs)`,
+  `client:read_node_class(node_id)`, `client:read_data_value(node_id)`,
+  `client:read_integer_array(node_id)`,
+  `client:read_integer_array_range(node_id, range)`,
+  `client:write_index_range(node_id, range, value)`,
+  `client:translate_browse_path(start_node_id, elements)`,
+  `client:namespace_index(uri)`, `client:namespace_uri(index)`, and
+  `client:close()`.
 - Servers: `server([port_or_opts])`, `server:set_endpoint(opts_or_host, port)`,
   `server:set_application_identity(opts)`, `server:set_access_control(opts)`,
   `server:add_namespace(uri)`, `server:add_variable(opts)`,
@@ -170,6 +178,7 @@ The dependency-native facade must cover the relevant public
 server work includes security configuration, access-control callbacks, methods,
 browse callbacks/pagination, method argument metadata, PubSub/MQTT
 configuration, event monitoring workflows, and explicit C-only native-pointer
-exclusions. Remaining client work includes async calls, subscriptions,
-browse/method callbacks, remote node management, and deterministic local e2e for
-callback ownership and error propagation.
+exclusions. Remaining client work includes the broader read/write attribute
+family, full array family parity beyond integer arrays, async calls,
+subscriptions, browse/method callbacks, remote node-management variants, and
+deterministic local e2e for callback ownership and error propagation.

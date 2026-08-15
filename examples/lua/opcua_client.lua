@@ -449,6 +449,63 @@ local updated = assert(client:read(node))
 assert(updated:type() == opcua.VALUE_INTEGER)
 assert(updated:get() == updated_value)
 
+local remote_object = opcua.node_id_numeric(1, 7201)
+local remote_array = opcua.node_id_numeric(1, 7202)
+local objects_folder = opcua.node_id_numeric(0, opcua.NODE_OBJECTS_FOLDER)
+local client_object_added, client_object_add_err = client:add_object({
+  node_id = remote_object,
+  parent_node_id = objects_folder,
+  browse_name = "clientObject",
+  display_name = "Client Object",
+})
+assert(client_object_added == true,
+       client_object_add_err and client_object_add_err.message or
+       "client add object")
+assert(client:read_node_class(remote_object) == opcua.NODE_CLASS_OBJECT)
+local client_array_added, client_array_add_err = client:add_variable_under({
+  node_id = remote_array,
+  parent_node_id = remote_object,
+  browse_name = "clientArray",
+  display_name = "Client Array",
+  value = opcua.value_integer_array({ 1, 2, 3, 4 }),
+})
+assert(client_array_added == true,
+       client_array_add_err and client_array_add_err.message or
+       "client add array variable")
+local client_data_value, client_data_value_err = client:read_data_value(node)
+assert(client_data_value ~= nil,
+       client_data_value_err and client_data_value_err.message or
+       "client read data value")
+assert(client_data_value.has_value == true)
+assert(client_data_value.value:type() == opcua.VALUE_INTEGER)
+local client_range, client_range_err =
+    client:read_integer_array_range(remote_array, "1:2")
+assert(client_range ~= nil,
+       client_range_err and client_range_err.message or
+       "client read integer array range")
+assert(client_range[1] == 2 and client_range[2] == 3)
+assert(client:write_index_range(
+    remote_array, "1:2", opcua.value_integer_array({ 20, 30 })) == true)
+local client_array_items, client_array_items_err =
+    client:read_integer_array(remote_array)
+assert(client_array_items ~= nil,
+       client_array_items_err and client_array_items_err.message or
+       "client read integer array")
+assert(client_array_items[1] == 1)
+assert(client_array_items[2] == 20)
+assert(client_array_items[3] == 30)
+assert(client_array_items[4] == 4)
+local client_translated, client_translated_err =
+    client:translate_browse_path(objects_folder, {
+  { namespace_index = 1, name = "clientObject" },
+})
+assert(client_translated ~= nil,
+       client_translated_err and client_translated_err.message or
+       "client translate browse path")
+assert(client_translated == remote_object)
+assert(client:delete_node(remote_array, true) == true)
+assert(client:delete_node(remote_object, true) == true)
+
 assert(client:disconnect() == true)
 assert(client:close() == true)
 
