@@ -189,7 +189,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add a live typed Kore route event adapter with explicit selected path/query/header fields, opt-in buffered body inclusion, broker request dispatch, timeout mapping, and response mapping.
 - [x] Add a live typed liblockdc consumer event adapter where it reduces concrete consumer-to-mailbox boilerplate.
 - [x] Add a live typed OPC UA event adapter where it reduces concrete OPC UA callback-to-mailbox boilerplate.
-- [ ] Add a live typed WebDAV event adapter only if concrete WebDAV code proves generic byte payloads are too noisy.
+- [x] Audit the WebDAV surface for a live typed event adapter; no adapter is shipped until a mount observer contract exists because current WebDAV code has no operation callback equivalent to Kore, liblockdc, or OPC UA monitor events.
 - [x] Add route-local request/reply helper APIs with deadline handling and automatic reply mailbox cleanup.
 - [x] Add metrics and diagnostics hooks for mailbox depth, publish failures, timeout failures, pump counts, and callback failures.
 - [x] Make API errors explicit when a Lua script attempts to run genuinely incompatible runtime loops in one process.

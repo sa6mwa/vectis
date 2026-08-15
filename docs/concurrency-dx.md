@@ -171,6 +171,21 @@ failures, broker request failures, and the last Vectis error in
 `vectis_opcua_monitor_mailbox_stats`. Use broker mode only when intentionally
 blocking the callback thread until a downstream worker replies.
 
+## WebDAV Adapter Audit
+
+No separate typed WebDAV mailbox adapter is shipped at this point. The current
+WebDAV surface has storage functions, a list callback, route dispatch, and a
+structured auth callback. It does not expose a live operation observer callback
+equivalent to Kore route handling, liblockdc consumer delivery, or cpkt OPC UA
+monitor callbacks.
+
+Adding a WebDAV mailbox adapter would require a new mount observer contract and
+new request semantics: whether observer failure can fail a WebDAV request,
+whether broker mode may block mutating methods, and whether notifications fire
+before or after storage mutation. Until that product contract exists, generic
+mailbox messages remain the explicit integration surface for application-owned
+WebDAV workflows.
+
 ## Scenario Coverage
 
 `examples/concurrency/mailbox_request_reply.c` is the C contract example for the
