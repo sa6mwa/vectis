@@ -226,6 +226,29 @@ owned handles and structured Vectis error envelopes for dependency failures.
 `opcua.server({ json_path = path })` construct from cpkt JSON5 server
 configuration. `config_path` is accepted as an alias for `json_path`.
 
+`server:set_access_control(opts)` supports the simple static form
+`{ allow_anonymous = false, username = "name", password = "secret" }` and a
+Lua callback form:
+
+```lua
+server:set_access_control({
+  allow_anonymous = false,
+  callback = function(login)
+    if login.username == "lua-user" and login.password == "lua-pass" then
+      return true
+    end
+    return opcua.STATUS_BAD_USER_ACCESS_DENIED
+  end,
+})
+```
+
+The callback is retained by the server until access control is replaced or the
+server is closed. It receives `username`, `password`, `username_length`, and
+`password_length` fields. Returning `true`, `0`, or `{ status = 0 }` accepts the
+login. Returning `false`, `nil`, `opcua.STATUS_BAD_USER_ACCESS_DENIED`, or a
+table such as `{ ok = false }` rejects it. Callback errors fail closed and reject
+the login.
+
 Browse methods materialize each borrowed cpkt callback entry into an owned Lua
 table:
 

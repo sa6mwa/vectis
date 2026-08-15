@@ -339,6 +339,7 @@ assert_opcua_lua_runtime_contract() {
   assert_contains "$repo_root/tests/lua/smoke.lua" 'opcua\.BROWSE_RESULT_ALL'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'opcua\.MONITORING_REPORTING'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'opcua\.DEADBAND_NONE'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'STATUS_BAD_USER_ACCESS_DENIED'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'METHOD_ARGUMENT_INPUT'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'read_data_value'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'read_localized_text_array'
@@ -378,6 +379,9 @@ assert_opcua_lua_runtime_contract() {
   assert_contains "$repo_root/examples/lua/opcua_client.lua" 'server:add_published_dataset'
   assert_contains "$repo_root/examples/lua/opcua_client.lua" 'server:add_pubsub_data_set_reader'
   assert_contains "$repo_root/examples/lua/opcua_client.lua" 'server:write_pubsub_configuration'
+  assert_contains "$repo_root/examples/lua/opcua_client.lua" 'STATUS_BAD_USER_ACCESS_DENIED'
+  assert_contains "$repo_root/tests/opcua_lua_e2e.c" 'bad OPC UA credentials should be rejected'
+  assert_contains "$repo_root/tests/opcua_lua_e2e.c" 'access-control callback should observe denied and accepted'
   assert_contains "$repo_root/examples/lua/opcua_client.lua" 'server:add_method'
   assert_contains "$repo_root/examples/lua/opcua_client.lua" 'server:read_method_argument'
   assert_contains "$repo_root/examples/lua/opcua_client.lua" 'client:add_variable_under'
@@ -424,6 +428,8 @@ assert_opcua_lua_runtime_contract() {
   assert_contains "$repo_root/docs/lua-opcua.md" 'server:add_method'
   assert_contains "$repo_root/docs/lua-opcua.md" 'server:add_mqtt_pubsub_connection'
   assert_contains "$repo_root/docs/lua-opcua.md" 'server:write_pubsub_configuration'
+  assert_contains "$repo_root/docs/lua-opcua.md" 'server:set_access_control'
+  assert_contains "$repo_root/docs/lua-opcua.md" 'The callback is retained by the server'
   assert_contains "$repo_root/docs/lua-opcua.md" 'Server PubSub helpers mirror cpkt'
   assert_contains "$repo_root/docs/lua-opcua.md" 'client:call_method_many'
   assert_contains "$repo_root/docs/lua-opcua.md" 'client:monitor_value_ex'
@@ -445,6 +451,10 @@ assert_opcua_lua_runtime_contract() {
   assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'selected event-field callbacks'
   assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'async client read/write/browse/method/node-create callbacks'
   assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'server PubSub/MQTT graph wrappers'
+  assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'server access-control callbacks'
+  assert_contains "$repo_root/src/vectis_opcua_lua.c" 'cpkt_opcua_server_set_access_control_callback'
+  assert_contains "$repo_root/src/vectis_opcua_lua.c" 'vectis_opcua_lua_access_control_cb'
+  assert_contains "$repo_root/TODO.md" '\[x\] Add OPC UA Lua server access-control callback retention'
 }
 
 assert_audio_sus_lua_runtime_contract() {

@@ -14,6 +14,7 @@
 #define VECTIS_OPCUA_CLIENT "opcua.client"
 #define VECTIS_OPCUA_SERVER "opcua.server"
 #define VECTIS_OPCUA_EVENT "opcua.event"
+#define VECTIS_OPCUA_STATUS_BAD_USER_ACCESS_DENIED 0x801F0000UL
 
 typedef union vectis_opcua_lua_value_storage_align {
   void *pointer_value;
@@ -103,6 +104,7 @@ typedef struct vectis_opcua_lua_method_callback {
 typedef struct vectis_opcua_lua_server {
   cpkt_opcua_server *server;
   lua_State *owner;
+  int access_control_ref;
   vectis_opcua_lua_method_callback *methods;
 } vectis_opcua_lua_server;
 
@@ -2097,6 +2099,108 @@ vectis_opcua_lua_method_many_cb(const cpkt_opcua_value *inputs,
       output_count);
 }
 
+static void
+vectis_opcua_lua_server_unref_access_control(vectis_opcua_lua_server *server) {
+  if (server != NULL && server->owner != NULL &&
+      server->access_control_ref != LUA_NOREF) {
+    luaL_unref(server->owner, LUA_REGISTRYINDEX, server->access_control_ref);
+    server->access_control_ref = LUA_NOREF;
+  }
+}
+
+static cpkt_opcua_status
+vectis_opcua_lua_access_control_status_from_table(lua_State *lua, int index) {
+  cpkt_opcua_status status;
+  lua_Integer value;
+  int absolute_index;
+
+  status = VECTIS_OPCUA_STATUS_BAD_USER_ACCESS_DENIED;
+  absolute_index = lua_absindex(lua, index);
+  lua_getfield(lua, absolute_index, "status");
+  if (!lua_isnil(lua, -1)) {
+    if (lua_isnumber(lua, -1)) {
+      value = lua_tointeger(lua, -1);
+      if (value >= 0) {
+        status = (cpkt_opcua_status)value;
+      }
+    }
+    lua_pop(lua, 1);
+    return status;
+  }
+  lua_pop(lua, 1);
+
+  lua_getfield(lua, absolute_index, "ok");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, absolute_index, "allow");
+  }
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, absolute_index, "allowed");
+  }
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, absolute_index, "accept");
+  }
+  if (!lua_isnil(lua, -1)) {
+    status = lua_toboolean(lua, -1)
+                 ? 0u
+                 : VECTIS_OPCUA_STATUS_BAD_USER_ACCESS_DENIED;
+  }
+  lua_pop(lua, 1);
+  return status;
+}
+
+static cpkt_opcua_status
+vectis_opcua_lua_access_control_cb(const char *username, size_t username_length,
+                                   const unsigned char *password,
+                                   size_t password_length, void *user) {
+  vectis_opcua_lua_server *server;
+  lua_State *lua;
+  cpkt_opcua_status status;
+  lua_Integer value;
+  int top;
+
+  server = (vectis_opcua_lua_server *)user;
+  if (server == NULL || server->owner == NULL ||
+      server->access_control_ref == LUA_NOREF) {
+    return VECTIS_OPCUA_STATUS_BAD_USER_ACCESS_DENIED;
+  }
+  lua = server->owner;
+  top = lua_gettop(lua);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, server->access_control_ref);
+  lua_newtable(lua);
+  lua_pushlstring(lua, username != NULL ? username : "",
+                  username != NULL ? username_length : 0u);
+  lua_setfield(lua, -2, "username");
+  lua_pushinteger(lua, (lua_Integer)(username != NULL ? username_length : 0u));
+  lua_setfield(lua, -2, "username_length");
+  lua_pushlstring(lua, password != NULL ? (const char *)password : "",
+                  password != NULL ? password_length : 0u);
+  lua_setfield(lua, -2, "password");
+  lua_pushinteger(lua, (lua_Integer)(password != NULL ? password_length : 0u));
+  lua_setfield(lua, -2, "password_length");
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    lua_settop(lua, top);
+    return VECTIS_OPCUA_STATUS_BAD_USER_ACCESS_DENIED;
+  }
+  status = VECTIS_OPCUA_STATUS_BAD_USER_ACCESS_DENIED;
+  if (lua_isboolean(lua, -1)) {
+    status = lua_toboolean(lua, -1)
+                 ? 0u
+                 : VECTIS_OPCUA_STATUS_BAD_USER_ACCESS_DENIED;
+  } else if (lua_isnumber(lua, -1)) {
+    value = lua_tointeger(lua, -1);
+    if (value >= 0) {
+      status = (cpkt_opcua_status)value;
+    }
+  } else if (lua_istable(lua, -1)) {
+    status = vectis_opcua_lua_access_control_status_from_table(lua, -1);
+  }
+  lua_settop(lua, top);
+  return status;
+}
+
 static void vectis_opcua_lua_monitor_callback_free(
     vectis_opcua_lua_monitor_callback *callback) {
   if (callback == NULL) {
@@ -4072,6 +4176,7 @@ static int vectis_opcua_lua_server_close(lua_State *lua) {
     cpkt_opcua_server_free(server->server);
     server->server = NULL;
   }
+  vectis_opcua_lua_server_unref_access_control(server);
   vectis_opcua_lua_server_free_method_callbacks(server);
   lua_pushboolean(lua, 1);
   return 1;
@@ -4090,6 +4195,7 @@ static int vectis_opcua_lua_server_new(lua_State *lua) {
       lua, sizeof(vectis_opcua_lua_server), 0);
   server->server = NULL;
   server->owner = lua;
+  server->access_control_ref = LUA_NOREF;
   server->methods = NULL;
   luaL_getmetatable(lua, VECTIS_OPCUA_SERVER);
   lua_setmetatable(lua, -2);
@@ -4186,30 +4292,69 @@ static int vectis_opcua_lua_server_set_application_identity(lua_State *lua) {
 }
 
 static int vectis_opcua_lua_server_set_access_control(lua_State *lua) {
-  cpkt_opcua_server *server;
+  vectis_opcua_lua_server *server_ud;
   const char *username;
   const char *password;
   cpkt_opcua_status status;
   cpkt_opcua_result result;
   int allow_anonymous;
+  int callback_ref;
+  int old_callback_ref;
 
-  server = vectis_opcua_lua_server_handle(lua, 1);
+  server_ud = vectis_opcua_lua_check_server(lua, 1);
+  if (server_ud->server == NULL) {
+    return luaL_error(lua, "closed opcua server");
+  }
   luaL_checktype(lua, 2, LUA_TTABLE);
   allow_anonymous = vectis_opcua_lua_table_bool(lua, 2, "allow_anonymous", 1);
   username = vectis_opcua_lua_table_string(lua, 2, "username");
   password = vectis_opcua_lua_table_string(lua, 2, "password");
+  lua_getfield(lua, 2, "callback");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, 2, "handler");
+  }
+  if (!lua_isnil(lua, -1)) {
+    if (username != NULL || password != NULL) {
+      return luaL_error(lua, "opcua server access control callback cannot be "
+                             "combined with username/password");
+    }
+    luaL_checktype(lua, -1, LUA_TFUNCTION);
+    lua_pushvalue(lua, -1);
+    callback_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+    old_callback_ref = server_ud->access_control_ref;
+    server_ud->access_control_ref = callback_ref;
+    status = 0u;
+    result = cpkt_opcua_server_set_access_control_callback(
+        server_ud->server, allow_anonymous, vectis_opcua_lua_access_control_cb,
+        server_ud, &status);
+    lua_pop(lua, 1);
+    if (result != CPKT_OPCUA_OK) {
+      luaL_unref(lua, LUA_REGISTRYINDEX, callback_ref);
+      server_ud->access_control_ref = old_callback_ref;
+      return vectis_opcua_lua_push_error(
+          lua, result, status, "opcua server access control callback");
+    }
+    if (old_callback_ref != LUA_NOREF) {
+      luaL_unref(lua, LUA_REGISTRYINDEX, old_callback_ref);
+    }
+    lua_pushboolean(lua, 1);
+    return 1;
+  }
+  lua_pop(lua, 1);
   if ((username == NULL) != (password == NULL)) {
     return luaL_error(lua,
                       "opcua server access control username and password must "
                       "be provided together");
   }
   status = 0u;
-  result = cpkt_opcua_server_set_access_control(server, allow_anonymous,
-                                                username, password, &status);
+  result = cpkt_opcua_server_set_access_control(
+      server_ud->server, allow_anonymous, username, password, &status);
   if (result != CPKT_OPCUA_OK) {
     return vectis_opcua_lua_push_error(lua, result, status,
                                        "opcua server access control");
   }
+  vectis_opcua_lua_server_unref_access_control(server_ud);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -10238,6 +10383,8 @@ int luaopen_opcua(lua_State *lua) {
   vectis_opcua_lua_set_const(lua, "ERR_TYPE", CPKT_OPCUA_ERR_TYPE);
   vectis_opcua_lua_set_const(lua, "ERR_RANGE", CPKT_OPCUA_ERR_RANGE);
   vectis_opcua_lua_set_const(lua, "ERR_CALLBACK", CPKT_OPCUA_ERR_CALLBACK);
+  vectis_opcua_lua_set_const(lua, "STATUS_BAD_USER_ACCESS_DENIED",
+                             VECTIS_OPCUA_STATUS_BAD_USER_ACCESS_DENIED);
 
   vectis_opcua_lua_set_const(lua, "NODE_ID_NULL", CPKT_OPCUA_NODE_ID_NULL);
   vectis_opcua_lua_set_const(lua, "NODE_ID_NUMERIC",

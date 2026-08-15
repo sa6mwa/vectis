@@ -580,6 +580,42 @@ if server_port then
   assert(type(server:iterate(false)) == "number")
   assert(server:shutdown() == true)
   assert(server:close() == true)
+
+  local auth_attempts = {}
+  local auth_server = assert(opcua.server({ port = server_port }))
+  assert(auth_server:set_endpoint({ host = "127.0.0.1", port = server_port }) ==
+         true)
+  assert(auth_server:set_application_identity({
+    application_uri = "urn:vectis:example:opcua:auth",
+    product_uri = "urn:vectis",
+    application_name = "Vectis OPC UA Lua Auth Example",
+  }) == true)
+  assert(auth_server:set_access_control({
+    allow_anonymous = false,
+    callback = function(login)
+      auth_attempts[#auth_attempts + 1] = login.username
+      if login.username == "lua-user" and login.password == "lua-pass" then
+        return true
+      end
+      return opcua.STATUS_BAD_USER_ACCESS_DENIED
+    end,
+  }) == true)
+  local auth_namespace =
+      assert(auth_server:add_namespace("urn:vectis:example:opcua:auth"))
+  local auth_node = opcua.node_id_numeric(auth_namespace, 8301)
+  assert(auth_server:add_variable({
+    node_id = auth_node,
+    browse_name = "authValue",
+    display_name = "Auth Value",
+    value = opcua.value_integer(91),
+  }) == true)
+  assert(auth_server:startup() == true)
+  assert(type(auth_server:endpoint_url()) == "string")
+  assert(type(auth_server:iterate(false)) == "number")
+  assert(#auth_attempts == 0,
+         "access-control callback should be retained without being called")
+  assert(auth_server:shutdown() == true)
+  assert(auth_server:close() == true)
 end
 
 local node = opcua.node_id_numeric(1, 7101)

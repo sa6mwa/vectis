@@ -25,6 +25,12 @@ typedef struct opcua_server_loop {
   cpkt_opcua_result result;
 } opcua_server_loop;
 
+typedef struct opcua_lua_auth_client {
+  char endpoint_url[128];
+  volatile int done;
+  int result;
+} opcua_lua_auth_client;
+
 extern int luaopen_opcua(lua_State *lua);
 
 static cpkt_opcua_result multiply_method(const cpkt_opcua_value *inputs,
@@ -446,6 +452,181 @@ static int run_packed_lua_contract(const char *endpoint_url,
   return failed;
 }
 
+static void *lua_auth_client_main(void *user) {
+  static const unsigned char script[] =
+      "local opcua = require(\"opcua\")\n"
+      "local denied, denied_err = opcua.connect(OPCUA_AUTH_ENDPOINT, {\n"
+      "  username = \"lua-user\",\n"
+      "  password = \"bad-pass\",\n"
+      "})\n"
+      "assert(denied == nil, \"bad OPC UA credentials should be rejected\")\n"
+      "assert(denied_err and denied_err.dependency == \"opcua\",\n"
+      "       \"OPC UA auth failure should return a structured dependency "
+      "error\")\n"
+      "local client = assert(opcua.connect(OPCUA_AUTH_ENDPOINT, {\n"
+      "  username = \"lua-user\",\n"
+      "  password = \"lua-pass\",\n"
+      "}))\n"
+      "assert(client:disconnect() == true)\n"
+      "assert(client:close() == true)\n";
+  opcua_lua_auth_client *client;
+  cpkt_lua_runtime *runtime;
+  cpkt_lua_runtime_status status;
+
+  client = (opcua_lua_auth_client *)user;
+  runtime = NULL;
+  client->result = 1;
+  status = cpkt_lua_runtime_new(&runtime);
+  if (status == CPKT_LUA_RUNTIME_OK) {
+    status = cpkt_lua_runtime_openlibs(runtime);
+  }
+  if (status == CPKT_LUA_RUNTIME_OK) {
+    status = cpkt_lua_runtime_register_c_module(runtime, "opcua", open_opcua);
+  }
+  if (status == CPKT_LUA_RUNTIME_OK) {
+    status = cpkt_lua_runtime_set_global_string(runtime, "OPCUA_AUTH_ENDPOINT",
+                                                client->endpoint_url);
+  }
+  if (status == CPKT_LUA_RUNTIME_OK) {
+    status =
+        cpkt_lua_runtime_run_buffer(runtime, script, sizeof(script) - 1u,
+                                    "opcua_lua_auth_client.lua", 0, NULL, 0);
+  }
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    fprintf(stderr, "lua auth client failed: %s: %s\n",
+            cpkt_lua_runtime_status_string(status),
+            runtime != NULL ? cpkt_lua_runtime_error(runtime) : "");
+  } else {
+    client->result = 0;
+  }
+  cpkt_lua_runtime_free(runtime);
+  client->done = 1;
+  return NULL;
+}
+
+static int run_lua_auth_contract(unsigned short lua_server_port) {
+  static const unsigned char setup_script[] =
+      "local opcua = require(\"opcua\")\n"
+      "AUTH_ATTEMPTS = {}\n"
+      "AUTH_SERVER = assert(opcua.server({ port = OPCUA_LUA_SERVER_PORT }))\n"
+      "assert(AUTH_SERVER:set_endpoint({ host = \"127.0.0.1\", port = "
+      "OPCUA_LUA_SERVER_PORT }) == true)\n"
+      "assert(AUTH_SERVER:set_application_identity({\n"
+      "  application_uri = \"urn:vectis:lua:opcua:auth\",\n"
+      "  product_uri = \"urn:vectis\",\n"
+      "  application_name = \"Vectis Lua OPC UA Auth\",\n"
+      "}) == true)\n"
+      "assert(AUTH_SERVER:set_access_control({\n"
+      "  allow_anonymous = false,\n"
+      "  callback = function(login)\n"
+      "    AUTH_ATTEMPTS[#AUTH_ATTEMPTS + 1] = login.username\n"
+      "    if login.username == \"lua-user\" and login.password == "
+      "\"lua-pass\" then\n"
+      "      return true\n"
+      "    end\n"
+      "    return opcua.STATUS_BAD_USER_ACCESS_DENIED\n"
+      "  end,\n"
+      "}) == true)\n"
+      "assert(AUTH_SERVER:startup() == true)\n";
+  static const unsigned char pump_script[] =
+      "assert(type(AUTH_SERVER:iterate(false)) == \"number\")\n";
+  static const unsigned char verify_script[] =
+      "assert(#AUTH_ATTEMPTS >= 2,\n"
+      "       \"access-control callback should observe denied and accepted "
+      "logins\")\n";
+  static const unsigned char close_script[] =
+      "if AUTH_SERVER ~= nil then\n"
+      "  pcall(function() AUTH_SERVER:shutdown() end)\n"
+      "  pcall(function() AUTH_SERVER:close() end)\n"
+      "  AUTH_SERVER = nil\n"
+      "end\n";
+  cpkt_lua_runtime *runtime;
+  cpkt_lua_runtime_status status;
+  opcua_lua_auth_client client;
+  pthread_t thread;
+  unsigned int i;
+  int thread_started;
+  int failed;
+
+  runtime = NULL;
+  thread_started = 0;
+  failed = 0;
+  memset(&client, 0, sizeof(client));
+  snprintf(client.endpoint_url, sizeof(client.endpoint_url),
+           "opc.tcp://127.0.0.1:%u", (unsigned int)lua_server_port);
+  status = cpkt_lua_runtime_new(&runtime);
+  if (status == CPKT_LUA_RUNTIME_OK) {
+    status = cpkt_lua_runtime_openlibs(runtime);
+  }
+  if (status == CPKT_LUA_RUNTIME_OK) {
+    status = cpkt_lua_runtime_register_c_module(runtime, "opcua", open_opcua);
+  }
+  if (status == CPKT_LUA_RUNTIME_OK) {
+    status = cpkt_lua_runtime_set_global_integer(
+        runtime, "OPCUA_LUA_SERVER_PORT", lua_server_port);
+  }
+  if (status == CPKT_LUA_RUNTIME_OK) {
+    status = cpkt_lua_runtime_run_buffer(
+        runtime, setup_script, sizeof(setup_script) - 1u,
+        "opcua_lua_auth_setup.lua", 0, NULL, 0);
+  }
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    fprintf(stderr, "lua auth setup failed: %s: %s\n",
+            cpkt_lua_runtime_status_string(status),
+            runtime != NULL ? cpkt_lua_runtime_error(runtime) : "");
+    failed = 1;
+  }
+  if (!failed) {
+    if (pthread_create(&thread, NULL, lua_auth_client_main, &client) != 0) {
+      perror("pthread_create");
+      failed = 1;
+    } else {
+      thread_started = 1;
+    }
+  }
+  for (i = 0u; !failed && !client.done && i < 5000u; ++i) {
+    status = cpkt_lua_runtime_run_buffer(runtime, pump_script,
+                                         sizeof(pump_script) - 1u,
+                                         "opcua_lua_auth_pump.lua", 0, NULL, 0);
+    if (status != CPKT_LUA_RUNTIME_OK) {
+      fprintf(stderr, "lua auth pump failed: %s: %s\n",
+              cpkt_lua_runtime_status_string(status),
+              cpkt_lua_runtime_error(runtime));
+      failed = 1;
+      break;
+    }
+    sleep_ms(1u);
+  }
+  if (!failed && !client.done) {
+    fprintf(stderr, "lua auth client timed out\n");
+    failed = 1;
+  }
+  if (thread_started) {
+    pthread_join(thread, NULL);
+    if (!failed && client.result != 0) {
+      failed = 1;
+    }
+  }
+  if (!failed) {
+    status = cpkt_lua_runtime_run_buffer(
+        runtime, verify_script, sizeof(verify_script) - 1u,
+        "opcua_lua_auth_verify.lua", 0, NULL, 0);
+    if (status != CPKT_LUA_RUNTIME_OK) {
+      fprintf(stderr, "lua auth verify failed: %s: %s\n",
+              cpkt_lua_runtime_status_string(status),
+              cpkt_lua_runtime_error(runtime));
+      failed = 1;
+    }
+  }
+  if (runtime != NULL) {
+    (void)cpkt_lua_runtime_run_buffer(runtime, close_script,
+                                      sizeof(close_script) - 1u,
+                                      "opcua_lua_auth_close.lua", 0, NULL, 0);
+  }
+  cpkt_lua_runtime_free(runtime);
+  return failed;
+}
+
 int main(int argc, char **argv) {
   cpkt_opcua_server *server;
   cpkt_opcua_node_id value_node;
@@ -479,6 +660,9 @@ int main(int argc, char **argv) {
     return 1;
   }
   if (pick_loopback_port(&lua_server_port) != 0) {
+    return 1;
+  }
+  if (run_lua_auth_contract(lua_server_port) != 0) {
     return 1;
   }
   if (expect_ok(cpkt_opcua_server_new(&server, port), status, "server new")) {
