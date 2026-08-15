@@ -71,6 +71,30 @@ if server_port then
   }) == true)
   assert(server:read_node_class(child_node) == opcua.NODE_CLASS_VARIABLE)
   assert(assert(server:read(child_node)):get() == 11)
+  local method_node = opcua.node_id_numeric(namespace_index, 8222)
+  assert(server:add_method({
+    node_id = method_node,
+    parent_node_id = object_node,
+    browse_name = "triple",
+    display_name = "Triple",
+    input_types = { opcua.VALUE_INTEGER },
+    output_type = opcua.VALUE_INTEGER,
+    callback = function(inputs)
+      return opcua.value_integer(inputs[1]:get() * 3)
+    end,
+  }) == true)
+  assert(server:read_node_class(method_node) == opcua.NODE_CLASS_METHOD)
+  assert(server:read_method_argument_count(
+      method_node, opcua.METHOD_ARGUMENT_INPUT) == 1)
+  assert(server:read_method_argument_count(
+      method_node, opcua.METHOD_ARGUMENT_OUTPUT) == 1)
+  local method_input_argument, method_input_argument_err =
+      server:read_method_argument(method_node, opcua.METHOD_ARGUMENT_INPUT, 1)
+  assert(method_input_argument ~= nil,
+         method_input_argument_err and method_input_argument_err.message or
+         "server read method input argument")
+  assert(type(tostring(method_input_argument.data_type)) == "string")
+  assert(type(method_input_argument.value_rank) == "number")
   local translated_node, translated_node_err =
       server:translate_browse_path(objects_folder, {
     { namespace_index = namespace_index, name = "exampleObject" },
@@ -470,6 +494,8 @@ if server_port then
 end
 
 local node = opcua.node_id_numeric(1, 7101)
+local method_object = opcua.node_id_numeric(1, 7102)
+local remote_method_node = opcua.node_id_numeric(1, 7103)
 local client = assert(opcua.connect(endpoint))
 
 local value = assert(client:read(node))
@@ -512,6 +538,30 @@ assert(client_data_value ~= nil,
        "client read data value")
 assert(client_data_value.has_value == true)
 assert(client_data_value.value:type() == opcua.VALUE_INTEGER)
+assert(client:read_method_argument_count(
+    remote_method_node, opcua.METHOD_ARGUMENT_INPUT) == 1)
+assert(client:read_method_argument_count(
+    remote_method_node, opcua.METHOD_ARGUMENT_OUTPUT) == 1)
+local client_method_argument, client_method_argument_err =
+    client:read_method_argument(
+        remote_method_node, opcua.METHOD_ARGUMENT_INPUT, 1)
+assert(client_method_argument ~= nil,
+       client_method_argument_err and client_method_argument_err.message or
+       "client read method input argument")
+assert(type(tostring(client_method_argument.data_type)) == "string")
+local method_value, method_value_err =
+    client:call_method(method_object, remote_method_node,
+                       { opcua.value_integer(9) })
+assert(method_value ~= nil,
+       method_value_err and method_value_err.message or "client call method")
+assert(method_value:get() == 27)
+local method_values, method_values_err =
+    client:call_method_many(method_object, remote_method_node,
+                            { opcua.value_integer(4) }, 1)
+assert(method_values ~= nil,
+       method_values_err and method_values_err.message or
+       "client call method many")
+assert(method_values[1]:get() == 12)
 local client_range, client_range_err =
     client:read_integer_array_range(remote_array, "1:2")
 assert(client_range ~= nil,

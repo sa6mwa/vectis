@@ -23,6 +23,20 @@ typedef struct opcua_server_loop {
 
 extern int luaopen_opcua(lua_State *lua);
 
+static cpkt_opcua_result multiply_method(const cpkt_opcua_value *inputs,
+                                         size_t input_count,
+                                         cpkt_opcua_value *output, void *user) {
+  long factor;
+
+  if (inputs == NULL || input_count != 1u || output == NULL || user == NULL ||
+      inputs[0].type != CPKT_OPCUA_VALUE_INTEGER) {
+    return CPKT_OPCUA_ERR_ARG;
+  }
+  factor = *(long *)user;
+  cpkt_opcua_value_integer(output, inputs[0].integer_value * factor);
+  return CPKT_OPCUA_OK;
+}
+
 static int open_opcua(void *lua_state) {
   return luaopen_opcua((lua_State *)lua_state);
 }
@@ -419,6 +433,9 @@ static int run_packed_lua_contract(const char *endpoint_url,
 int main(int argc, char **argv) {
   cpkt_opcua_server *server;
   cpkt_opcua_node_id value_node;
+  cpkt_opcua_node_id objects_folder;
+  cpkt_opcua_node_id method_object_node;
+  cpkt_opcua_node_id method_node;
   cpkt_opcua_value value;
   cpkt_opcua_status status;
   opcua_server_loop loop;
@@ -429,6 +446,8 @@ int main(int argc, char **argv) {
   size_t endpoint_required;
   unsigned short port;
   unsigned short lua_server_port;
+  long method_factor;
+  int method_input_types[1];
   int thread_started;
   int failed;
 
@@ -451,11 +470,30 @@ int main(int argc, char **argv) {
   }
 
   value_node = cpkt_opcua_node_id_numeric(1u, 7101u);
+  objects_folder = cpkt_opcua_node_id_numeric(0u, 85u);
+  method_object_node = cpkt_opcua_node_id_numeric(1u, 7102u);
+  method_node = cpkt_opcua_node_id_numeric(1u, 7103u);
+  method_factor = 3;
+  method_input_types[0] = CPKT_OPCUA_VALUE_INTEGER;
   cpkt_opcua_value_integer(&value, 42);
   failed = expect_ok(cpkt_opcua_server_add_variable(
                          server, value_node, "luaValue", "Lua Value", &value,
                          &status),
                      status, "server add variable");
+  if (!failed) {
+    failed = expect_ok(cpkt_opcua_server_add_object(
+                           server, method_object_node, objects_folder,
+                           "methodObject", "Method Object", &status),
+                       status, "server add method object");
+  }
+  if (!failed) {
+    failed = expect_ok(cpkt_opcua_server_add_method(
+                           server, method_node, method_object_node,
+                           "multiply", "Multiply", method_input_types, 1u,
+                           CPKT_OPCUA_VALUE_INTEGER, multiply_method,
+                           &method_factor, &status),
+                       status, "server add method");
+  }
   if (!failed) {
     failed = expect_ok(cpkt_opcua_server_endpoint_url(
                            server, endpoint_url, sizeof(endpoint_url),

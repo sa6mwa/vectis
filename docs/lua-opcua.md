@@ -41,6 +41,11 @@ owned handles and structured Vectis error envelopes for dependency failures.
   `client:browse_children_ex(node_id, opts)`,
   `client:browse_children_page(node_id[, opts])`,
   `client:browse_next(continuation_point[, release])`,
+  `client:read_method_argument_count(method_node_id, direction)`,
+  `client:read_method_argument(method_node_id, direction, argument_index)`,
+  `client:call_method(object_node_id, method_node_id, inputs)`,
+  `client:call_method_many(object_node_id, method_node_id, inputs,
+  output_count)`,
   `client:translate_browse_path(start_node_id, elements)`,
   `client:namespace_index(uri)`, `client:namespace_uri(index)`, and
   `client:close()`.
@@ -81,6 +86,9 @@ owned handles and structured Vectis error envelopes for dependency failures.
   `server:browse_children_ex(node_id, opts)`,
   `server:browse_children_page(node_id[, opts])`,
   `server:browse_next(continuation_point[, release])`,
+  `server:add_method(opts)`, `server:add_method_many(opts)`,
+  `server:read_method_argument_count(method_node_id, direction)`,
+  `server:read_method_argument(method_node_id, direction, argument_index)`,
   `server:translate_browse_path(start_node_id, elements)`,
   `server:create_event(opts)`, `event:set_field(ns, name, value)`,
   `event:trigger(server)`, `event:close()`, `server:trigger_event(opts)`,
@@ -142,6 +150,24 @@ table:
 `reference_type_id` or `reference_type`, `node_class_mask`, `result_mask`, and
 `max_references`.
 
+Method callbacks registered through `server:add_method()` and
+`server:add_method_many()` are retained by the server userdata until
+`server:close()` or garbage collection. They run only when the owning Lua state
+is explicitly pumping the OPC UA server, receive an array of owned Lua
+`opcua.value` inputs, and must return one output value or an output-value array
+for `add_method_many()`. String-like callback outputs are copied into C-owned
+per-method storage before returning to cpkt.
+
+Method argument metadata readers use one-based `argument_index` and return:
+
+```lua
+{
+  data_type = opcua.node_id(...),
+  value_rank = -1,
+  name = "InputArguments",
+}
+```
+
 ## Server Example
 
 ```lua
@@ -202,10 +228,10 @@ callback errors and stop the relevant operation deterministically.
 
 The dependency-native facade must cover the relevant public
 `cpkt_opcua_client_*` and `cpkt_opcua_server_*` application surface. Remaining
-server work includes security configuration, access-control callbacks, methods,
-browse callbacks/pagination, method argument metadata, PubSub/MQTT
-configuration, event monitoring workflows, and explicit C-only native-pointer
-exclusions. Remaining client work includes the broader read/write attribute
-family, full array family parity beyond integer arrays, async calls,
-subscriptions, browse/method callbacks, remote node-management variants, and
-deterministic local e2e for callback ownership and error propagation.
+server work includes security configuration, access-control callbacks,
+PubSub/MQTT configuration, event monitoring workflows, async-safe callback
+queueing, and explicit C-only native-pointer exclusions. Remaining client work
+includes the broader read/write attribute family, full array family parity
+beyond integer arrays, async calls, subscriptions, remote node-management
+variants, PubSub-related workflows, and deterministic local e2e for callback
+ownership and error propagation.

@@ -45,8 +45,23 @@ typedef struct vectis_opcua_lua_client {
   cpkt_opcua_client *client;
 } vectis_opcua_lua_client;
 
+typedef struct vectis_opcua_lua_method_output_slot {
+  unsigned char *storage;
+  size_t storage_size;
+} vectis_opcua_lua_method_output_slot;
+
+typedef struct vectis_opcua_lua_method_callback {
+  lua_State *owner;
+  int callback_ref;
+  size_t output_count;
+  vectis_opcua_lua_method_output_slot *outputs;
+  struct vectis_opcua_lua_method_callback *next;
+} vectis_opcua_lua_method_callback;
+
 typedef struct vectis_opcua_lua_server {
   cpkt_opcua_server *server;
+  lua_State *owner;
+  vectis_opcua_lua_method_callback *methods;
 } vectis_opcua_lua_server;
 
 typedef struct vectis_opcua_lua_event {
@@ -575,6 +590,132 @@ static void vectis_opcua_lua_value_from_lua(lua_State *lua, int index,
     return;
   }
   (void)luaL_error(lua, "opcua scalar value expected");
+}
+
+static int vectis_opcua_lua_try_value_from_lua(lua_State *lua, int index,
+                                               cpkt_opcua_value *value_out) {
+  size_t string_size;
+  const char *string_value;
+
+  if (luaL_testudata(lua, index, VECTIS_OPCUA_VALUE) != NULL) {
+    *value_out = vectis_opcua_lua_check_value(lua, index)->value;
+    return 1;
+  }
+  if (lua_type(lua, index) == LUA_TBOOLEAN) {
+    cpkt_opcua_value_boolean(value_out, lua_toboolean(lua, index));
+    return 1;
+  }
+  if (lua_type(lua, index) == LUA_TNUMBER) {
+    if (lua_isinteger(lua, index)) {
+      cpkt_opcua_value_integer(value_out, (long)lua_tointeger(lua, index));
+    } else {
+      cpkt_opcua_value_double(value_out, lua_tonumber(lua, index));
+    }
+    return 1;
+  }
+  if (lua_type(lua, index) == LUA_TSTRING) {
+    string_value = lua_tolstring(lua, index, &string_size);
+    cpkt_opcua_value_string(value_out, string_value, string_size);
+    return 1;
+  }
+  return 0;
+}
+
+static cpkt_opcua_result vectis_opcua_lua_method_output_slot_reserve(
+    vectis_opcua_lua_method_output_slot *slot, size_t size) {
+  unsigned char *storage;
+
+  if (size == 0u) {
+    size = 1u;
+  }
+  if (slot->storage_size >= size) {
+    return CPKT_OPCUA_OK;
+  }
+  storage = (unsigned char *)realloc(slot->storage, size);
+  if (storage == NULL) {
+    return CPKT_OPCUA_ERR_ALLOC;
+  }
+  slot->storage = storage;
+  slot->storage_size = size;
+  return CPKT_OPCUA_OK;
+}
+
+static cpkt_opcua_result vectis_opcua_lua_copy_method_output(
+    lua_State *lua, int index, cpkt_opcua_value *output,
+    vectis_opcua_lua_method_output_slot *slot) {
+  cpkt_opcua_value value;
+  cpkt_opcua_result result;
+  size_t storage_size;
+
+  cpkt_opcua_value_clear(&value);
+  if (!vectis_opcua_lua_try_value_from_lua(lua, index, &value)) {
+    return CPKT_OPCUA_ERR_TYPE;
+  }
+  switch (value.type) {
+  case CPKT_OPCUA_VALUE_EMPTY:
+  case CPKT_OPCUA_VALUE_BOOLEAN:
+  case CPKT_OPCUA_VALUE_INTEGER:
+  case CPKT_OPCUA_VALUE_DOUBLE:
+  case CPKT_OPCUA_VALUE_GUID:
+  case CPKT_OPCUA_VALUE_STATUS:
+  case CPKT_OPCUA_VALUE_UINT64:
+  case CPKT_OPCUA_VALUE_DATETIME:
+    *output = value;
+    return CPKT_OPCUA_OK;
+  case CPKT_OPCUA_VALUE_STRING:
+    storage_size = value.string_length + 1u;
+    result = vectis_opcua_lua_method_output_slot_reserve(slot, storage_size);
+    if (result != CPKT_OPCUA_OK) {
+      return result;
+    }
+    memcpy(slot->storage, value.string_value, value.string_length);
+    slot->storage[value.string_length] = '\0';
+    *output = value;
+    output->string_value = (const char *)slot->storage;
+    return CPKT_OPCUA_OK;
+  case CPKT_OPCUA_VALUE_BYTE_STRING:
+    storage_size = value.bytes_length;
+    result = vectis_opcua_lua_method_output_slot_reserve(slot, storage_size);
+    if (result != CPKT_OPCUA_OK) {
+      return result;
+    }
+    memcpy(slot->storage, value.bytes_value, value.bytes_length);
+    *output = value;
+    output->bytes_value = slot->storage;
+    return CPKT_OPCUA_OK;
+  case CPKT_OPCUA_VALUE_QUALIFIED_NAME:
+    storage_size = value.qualified_name_length + 1u;
+    result = vectis_opcua_lua_method_output_slot_reserve(slot, storage_size);
+    if (result != CPKT_OPCUA_OK) {
+      return result;
+    }
+    memcpy(slot->storage, value.qualified_name, value.qualified_name_length);
+    slot->storage[value.qualified_name_length] = '\0';
+    *output = value;
+    output->qualified_name = (const char *)slot->storage;
+    return CPKT_OPCUA_OK;
+  case CPKT_OPCUA_VALUE_LOCALIZED_TEXT:
+    storage_size =
+        value.localized_text_locale_length + value.localized_text_length + 2u;
+    result = vectis_opcua_lua_method_output_slot_reserve(slot, storage_size);
+    if (result != CPKT_OPCUA_OK) {
+      return result;
+    }
+    memcpy(slot->storage, value.localized_text_locale,
+           value.localized_text_locale_length);
+    slot->storage[value.localized_text_locale_length] = '\0';
+    memcpy(slot->storage + value.localized_text_locale_length + 1u,
+           value.localized_text, value.localized_text_length);
+    slot->storage[value.localized_text_locale_length + 1u +
+                  value.localized_text_length] = '\0';
+    *output = value;
+    output->localized_text_locale = (const char *)slot->storage;
+    output->localized_text =
+        (const char *)(slot->storage + value.localized_text_locale_length + 1u);
+    return CPKT_OPCUA_OK;
+  default:
+    return CPKT_OPCUA_ERR_TYPE;
+  }
 }
 
 static int vectis_opcua_lua_push_value_get(lua_State *lua,
@@ -1494,6 +1635,129 @@ static int vectis_opcua_lua_push_value_copy(lua_State *lua,
   return 1;
 }
 
+static void vectis_opcua_lua_method_callback_free(
+    vectis_opcua_lua_method_callback *callback) {
+  size_t i;
+
+  if (callback == NULL) {
+    return;
+  }
+  if (callback->owner != NULL && callback->callback_ref != LUA_NOREF) {
+    luaL_unref(callback->owner, LUA_REGISTRYINDEX, callback->callback_ref);
+  }
+  for (i = 0u; i < callback->output_count; ++i) {
+    free(callback->outputs[i].storage);
+  }
+  free(callback->outputs);
+  free(callback);
+}
+
+static void vectis_opcua_lua_server_free_method_callbacks(
+    vectis_opcua_lua_server *server) {
+  vectis_opcua_lua_method_callback *callback;
+  vectis_opcua_lua_method_callback *next;
+
+  callback = server->methods;
+  server->methods = NULL;
+  while (callback != NULL) {
+    next = callback->next;
+    vectis_opcua_lua_method_callback_free(callback);
+    callback = next;
+  }
+}
+
+static vectis_opcua_lua_method_callback *
+vectis_opcua_lua_method_callback_new(lua_State *lua, int callback_index,
+                                     size_t output_count) {
+  vectis_opcua_lua_method_callback *callback;
+
+  callback = (vectis_opcua_lua_method_callback *)calloc(1u, sizeof(*callback));
+  if (callback == NULL) {
+    (void)luaL_error(lua, "opcua method callback allocation failed");
+    return NULL;
+  }
+  callback->owner = lua;
+  callback->callback_ref = LUA_NOREF;
+  callback->output_count = output_count;
+  if (output_count > 0u) {
+    callback->outputs = (vectis_opcua_lua_method_output_slot *)calloc(
+        output_count, sizeof(*callback->outputs));
+    if (callback->outputs == NULL) {
+      free(callback);
+      (void)luaL_error(lua, "opcua method output allocation failed");
+      return NULL;
+    }
+  }
+  lua_pushvalue(lua, callback_index);
+  callback->callback_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  return callback;
+}
+
+static void vectis_opcua_lua_server_keep_method_callback(
+    vectis_opcua_lua_server *server,
+    vectis_opcua_lua_method_callback *callback) {
+  callback->next = server->methods;
+  server->methods = callback;
+}
+
+static cpkt_opcua_result vectis_opcua_lua_method_callback_call(
+    vectis_opcua_lua_method_callback *callback,
+    const cpkt_opcua_value *inputs, size_t input_count,
+    cpkt_opcua_value *outputs, size_t output_count) {
+  lua_State *lua;
+  size_t i;
+  cpkt_opcua_result result;
+
+  if (callback == NULL || callback->owner == NULL ||
+      callback->callback_ref == LUA_NOREF || outputs == NULL ||
+      output_count != callback->output_count) {
+    return CPKT_OPCUA_ERR_ARG;
+  }
+  lua = callback->owner;
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, callback->callback_ref);
+  lua_newtable(lua);
+  for (i = 0u; i < input_count; ++i) {
+    (void)vectis_opcua_lua_push_value_copy(lua, &inputs[i]);
+    lua_rawseti(lua, -2, (lua_Integer)i + 1);
+  }
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    lua_pop(lua, 1);
+    return CPKT_OPCUA_ERR_CALLBACK;
+  }
+  result = CPKT_OPCUA_OK;
+  if (output_count == 1u) {
+    result = vectis_opcua_lua_copy_method_output(lua, -1, &outputs[0],
+                                                 &callback->outputs[0]);
+  } else if (!lua_istable(lua, -1)) {
+    result = CPKT_OPCUA_ERR_TYPE;
+  } else {
+    for (i = 0u; i < output_count && result == CPKT_OPCUA_OK; ++i) {
+      lua_rawgeti(lua, -1, (lua_Integer)i + 1);
+      result = vectis_opcua_lua_copy_method_output(
+          lua, -1, &outputs[i], &callback->outputs[i]);
+      lua_pop(lua, 1);
+    }
+  }
+  lua_pop(lua, 1);
+  return result;
+}
+
+static cpkt_opcua_result vectis_opcua_lua_method_cb(
+    const cpkt_opcua_value *inputs, size_t input_count,
+    cpkt_opcua_value *output, void *user) {
+  return vectis_opcua_lua_method_callback_call(
+      (vectis_opcua_lua_method_callback *)user, inputs, input_count, output,
+      1u);
+}
+
+static cpkt_opcua_result vectis_opcua_lua_method_many_cb(
+    const cpkt_opcua_value *inputs, size_t input_count,
+    cpkt_opcua_value *outputs, size_t output_count, void *user) {
+  return vectis_opcua_lua_method_callback_call(
+      (vectis_opcua_lua_method_callback *)user, inputs, input_count, outputs,
+      output_count);
+}
+
 static vectis_opcua_lua_client *vectis_opcua_lua_check_client(lua_State *lua,
                                                               int index) {
   return (vectis_opcua_lua_client *)luaL_checkudata(lua, index,
@@ -1813,6 +2077,71 @@ static void vectis_opcua_lua_value_field(lua_State *lua, int index,
   lua_pop(lua, 1);
 }
 
+static int *vectis_opcua_lua_int_array_field(lua_State *lua, int index,
+                                             const char *field,
+                                             size_t *count_out) {
+  int *values;
+  size_t count;
+  size_t i;
+
+  *count_out = 0u;
+  lua_getfield(lua, index, field);
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return NULL;
+  }
+  count = vectis_opcua_lua_array_len(lua, -1, field);
+  if (count > ((size_t)-1) / sizeof(int)) {
+    lua_pop(lua, 1);
+    (void)luaL_error(lua, "%s size overflow", field);
+    return NULL;
+  }
+  values = (int *)malloc(sizeof(int) * (count == 0u ? 1u : count));
+  if (values == NULL) {
+    lua_pop(lua, 1);
+    (void)luaL_error(lua, "%s allocation failed", field);
+    return NULL;
+  }
+  for (i = 0u; i < count; ++i) {
+    lua_rawgeti(lua, -1, (lua_Integer)i + 1);
+    values[i] = (int)luaL_checkinteger(lua, -1);
+    lua_pop(lua, 1);
+  }
+  lua_pop(lua, 1);
+  *count_out = count;
+  return values;
+}
+
+static cpkt_opcua_value *vectis_opcua_lua_value_array_from_lua(
+    lua_State *lua, int index, size_t *count_out, const char *context) {
+  cpkt_opcua_value *values;
+  size_t count;
+  size_t i;
+
+  *count_out = 0u;
+  if (lua_isnoneornil(lua, index)) {
+    return NULL;
+  }
+  count = vectis_opcua_lua_array_len(lua, index, context);
+  if (count > ((size_t)-1) / sizeof(cpkt_opcua_value)) {
+    (void)luaL_error(lua, "%s size overflow", context);
+    return NULL;
+  }
+  values = (cpkt_opcua_value *)malloc(sizeof(cpkt_opcua_value) *
+                                      (count == 0u ? 1u : count));
+  if (values == NULL) {
+    (void)luaL_error(lua, "%s allocation failed", context);
+    return NULL;
+  }
+  for (i = 0u; i < count; ++i) {
+    lua_rawgeti(lua, index, (lua_Integer)i + 1);
+    vectis_opcua_lua_value_from_lua(lua, -1, &values[i]);
+    lua_pop(lua, 1);
+  }
+  *count_out = count;
+  return values;
+}
+
 typedef cpkt_opcua_result (*vectis_opcua_lua_server_read_ulong_fn)(
     cpkt_opcua_server *server, cpkt_opcua_node_id node_id,
     unsigned long *value_out, cpkt_opcua_status *status_out);
@@ -2089,6 +2418,7 @@ static int vectis_opcua_lua_server_close(lua_State *lua) {
     cpkt_opcua_server_free(server->server);
     server->server = NULL;
   }
+  vectis_opcua_lua_server_free_method_callbacks(server);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -2105,6 +2435,8 @@ static int vectis_opcua_lua_server_new(lua_State *lua) {
   server = (vectis_opcua_lua_server *)lua_newuserdatauv(
       lua, sizeof(vectis_opcua_lua_server), 0);
   server->server = NULL;
+  server->owner = lua;
+  server->methods = NULL;
   luaL_getmetatable(lua, VECTIS_OPCUA_SERVER);
   lua_setmetatable(lua, -2);
 
@@ -2551,6 +2883,126 @@ static int vectis_opcua_lua_server_add_view(lua_State *lua) {
     return vectis_opcua_lua_push_error(lua, result, status,
                                        "opcua server add view");
   }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_opcua_lua_server_add_method(lua_State *lua) {
+  vectis_opcua_lua_server *server_ud;
+  cpkt_opcua_server *server;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_node_id parent_node_id;
+  const char *browse_name;
+  const char *display_name;
+  int *input_types;
+  size_t input_count;
+  int output_type;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  vectis_opcua_lua_method_callback *callback;
+
+  server_ud = vectis_opcua_lua_check_server(lua, 1);
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  node_id = vectis_opcua_lua_node_id_field(lua, 2, "node_id",
+                                           "opcua server add_method");
+  parent_node_id = vectis_opcua_lua_node_id_field(
+      lua, 2, "parent_node_id", "opcua server add_method");
+  browse_name = vectis_opcua_lua_table_string(lua, 2, "browse_name");
+  display_name = vectis_opcua_lua_table_string(lua, 2, "display_name");
+  if (browse_name == NULL || browse_name[0] == '\0') {
+    return luaL_error(lua, "opcua server add_method requires browse_name");
+  }
+  if (display_name == NULL) {
+    display_name = browse_name;
+  }
+  lua_getfield(lua, 2, "callback");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, 2, "handler");
+  }
+  luaL_checktype(lua, -1, LUA_TFUNCTION);
+  output_type =
+      vectis_opcua_lua_table_int(lua, 2, "output_type", CPKT_OPCUA_VALUE_EMPTY);
+  input_types =
+      vectis_opcua_lua_int_array_field(lua, 2, "input_types", &input_count);
+  callback = vectis_opcua_lua_method_callback_new(lua, -1, 1u);
+  lua_pop(lua, 1);
+  status = 0u;
+  result = cpkt_opcua_server_add_method(
+      server, node_id, parent_node_id, browse_name, display_name, input_types,
+      input_count, output_type, vectis_opcua_lua_method_cb, callback, &status);
+  free(input_types);
+  if (result != CPKT_OPCUA_OK) {
+    vectis_opcua_lua_method_callback_free(callback);
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua server add method");
+  }
+  vectis_opcua_lua_server_keep_method_callback(server_ud, callback);
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_opcua_lua_server_add_method_many(lua_State *lua) {
+  vectis_opcua_lua_server *server_ud;
+  cpkt_opcua_server *server;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_node_id parent_node_id;
+  const char *browse_name;
+  const char *display_name;
+  int *input_types;
+  int *output_types;
+  size_t input_count;
+  size_t output_count;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  vectis_opcua_lua_method_callback *callback;
+
+  server_ud = vectis_opcua_lua_check_server(lua, 1);
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  node_id = vectis_opcua_lua_node_id_field(lua, 2, "node_id",
+                                           "opcua server add_method_many");
+  parent_node_id = vectis_opcua_lua_node_id_field(
+      lua, 2, "parent_node_id", "opcua server add_method_many");
+  browse_name = vectis_opcua_lua_table_string(lua, 2, "browse_name");
+  display_name = vectis_opcua_lua_table_string(lua, 2, "display_name");
+  if (browse_name == NULL || browse_name[0] == '\0') {
+    return luaL_error(lua, "opcua server add_method_many requires browse_name");
+  }
+  if (display_name == NULL) {
+    display_name = browse_name;
+  }
+  lua_getfield(lua, 2, "callback");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, 2, "handler");
+  }
+  luaL_checktype(lua, -1, LUA_TFUNCTION);
+  input_types =
+      vectis_opcua_lua_int_array_field(lua, 2, "input_types", &input_count);
+  output_types =
+      vectis_opcua_lua_int_array_field(lua, 2, "output_types", &output_count);
+  if (output_count == 0u) {
+    free(input_types);
+    free(output_types);
+    return luaL_error(lua, "opcua server add_method_many requires output_types");
+  }
+  callback = vectis_opcua_lua_method_callback_new(lua, -1, output_count);
+  lua_pop(lua, 1);
+  status = 0u;
+  result = cpkt_opcua_server_add_method_many(
+      server, node_id, parent_node_id, browse_name, display_name, input_types,
+      input_count, output_types, output_count, vectis_opcua_lua_method_many_cb,
+      callback, &status);
+  free(input_types);
+  free(output_types);
+  if (result != CPKT_OPCUA_OK) {
+    vectis_opcua_lua_method_callback_free(callback);
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua server add method many");
+  }
+  vectis_opcua_lua_server_keep_method_callback(server_ud, callback);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -4424,6 +4876,254 @@ static int vectis_opcua_lua_client_browse_next(lua_State *lua) {
   return result;
 }
 
+static int vectis_opcua_lua_client_read_method_argument_count(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id method_node_id;
+  int direction;
+  size_t count;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  method_node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  direction = (int)luaL_checkinteger(lua, 3);
+  count = 0u;
+  status = 0u;
+  result = cpkt_opcua_client_read_method_argument_count(
+      client, method_node_id, direction, &count, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(
+        lua, result, status, "opcua client read method argument count");
+  }
+  lua_pushinteger(lua, (lua_Integer)count);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_read_method_argument(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id method_node_id;
+  cpkt_opcua_node_id data_type;
+  int direction;
+  lua_Integer argument_index;
+  long value_rank;
+  char stack_buffer[256];
+  char *buffer;
+  size_t required_size;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  method_node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  direction = (int)luaL_checkinteger(lua, 3);
+  argument_index = luaL_checkinteger(lua, 4);
+  if (argument_index < 1) {
+    return luaL_error(lua, "argument_index must be >= 1");
+  }
+  buffer = stack_buffer;
+  required_size = 0u;
+  value_rank = 0;
+  data_type = cpkt_opcua_node_id_null();
+  status = 0u;
+  result = cpkt_opcua_client_read_method_argument(
+      client, method_node_id, direction, (size_t)(argument_index - 1),
+      &data_type, &value_rank, buffer, sizeof(stack_buffer), &required_size,
+      &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > sizeof(stack_buffer)) {
+    buffer = (char *)malloc(required_size + 1u);
+    if (buffer == NULL) {
+      return luaL_error(lua, "opcua client method argument allocation failed");
+    }
+    data_type = cpkt_opcua_node_id_null();
+    result = cpkt_opcua_client_read_method_argument(
+        client, method_node_id, direction, (size_t)(argument_index - 1),
+        &data_type, &value_rank, buffer, required_size + 1u, NULL, &status);
+  }
+  if (result != CPKT_OPCUA_OK) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    return vectis_opcua_lua_push_error(
+        lua, result, status, "opcua client read method argument");
+  }
+  lua_newtable(lua);
+  (void)vectis_opcua_lua_push_node_id_copy(lua, &data_type);
+  lua_setfield(lua, -2, "data_type");
+  lua_pushinteger(lua, (lua_Integer)value_rank);
+  lua_setfield(lua, -2, "value_rank");
+  lua_pushstring(lua, buffer);
+  lua_setfield(lua, -2, "name");
+  if (buffer != stack_buffer) {
+    free(buffer);
+  }
+  return 1;
+}
+
+static int vectis_opcua_lua_client_call_method(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id object_node_id;
+  cpkt_opcua_node_id method_node_id;
+  cpkt_opcua_value *inputs;
+  size_t input_count;
+  cpkt_opcua_value output;
+  char stack_buffer[512];
+  char *buffer;
+  size_t required_size;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  object_node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  method_node_id = vectis_opcua_lua_node_id_at(lua, 3);
+  inputs =
+      vectis_opcua_lua_value_array_from_lua(lua, 4, &input_count,
+                                            "opcua client method inputs");
+  buffer = stack_buffer;
+  required_size = 0u;
+  cpkt_opcua_value_clear(&output);
+  status = 0u;
+  result = cpkt_opcua_client_call_method(
+      client, object_node_id, method_node_id, inputs, input_count, &output,
+      buffer, sizeof(stack_buffer), &required_size, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > sizeof(stack_buffer)) {
+    buffer = (char *)malloc(required_size + 1u);
+    if (buffer == NULL) {
+      free(inputs);
+      return luaL_error(lua, "opcua client method output allocation failed");
+    }
+    cpkt_opcua_value_clear(&output);
+    result = cpkt_opcua_client_call_method(
+        client, object_node_id, method_node_id, inputs, input_count, &output,
+        buffer, required_size + 1u, NULL, &status);
+  }
+  free(inputs);
+  if (result != CPKT_OPCUA_OK) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client call method");
+  }
+  (void)vectis_opcua_lua_push_value_copy(lua, &output);
+  if (buffer != stack_buffer) {
+    free(buffer);
+  }
+  return 1;
+}
+
+static void vectis_opcua_lua_free_method_many_buffers(
+    char **buffers, size_t count) {
+  size_t i;
+
+  if (buffers == NULL) {
+    return;
+  }
+  for (i = 0u; i < count; ++i) {
+    free(buffers[i]);
+  }
+  free(buffers);
+}
+
+static int vectis_opcua_lua_client_call_method_many(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id object_node_id;
+  cpkt_opcua_node_id method_node_id;
+  cpkt_opcua_value *inputs;
+  cpkt_opcua_value *outputs;
+  char **buffers;
+  size_t *buffer_sizes;
+  size_t *required_sizes;
+  size_t input_count;
+  size_t output_count;
+  size_t i;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  object_node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  method_node_id = vectis_opcua_lua_node_id_at(lua, 3);
+  inputs =
+      vectis_opcua_lua_value_array_from_lua(lua, 4, &input_count,
+                                            "opcua client method inputs");
+  output_count = (size_t)vectis_opcua_lua_check_ulong(lua, 5, "output_count");
+  if (output_count == 0u) {
+    free(inputs);
+    return luaL_error(lua, "output_count must be non-zero");
+  }
+  outputs = (cpkt_opcua_value *)calloc(output_count, sizeof(*outputs));
+  buffers = (char **)calloc(output_count, sizeof(*buffers));
+  buffer_sizes = (size_t *)calloc(output_count, sizeof(*buffer_sizes));
+  required_sizes = (size_t *)calloc(output_count, sizeof(*required_sizes));
+  if (outputs == NULL || buffers == NULL || buffer_sizes == NULL ||
+      required_sizes == NULL) {
+    free(inputs);
+    free(outputs);
+    vectis_opcua_lua_free_method_many_buffers(buffers, output_count);
+    free(buffer_sizes);
+    free(required_sizes);
+    return luaL_error(lua, "opcua client method many allocation failed");
+  }
+  for (i = 0u; i < output_count; ++i) {
+    buffer_sizes[i] = 512u;
+    buffers[i] = (char *)malloc(buffer_sizes[i]);
+    if (buffers[i] == NULL) {
+      free(inputs);
+      free(outputs);
+      vectis_opcua_lua_free_method_many_buffers(buffers, output_count);
+      free(buffer_sizes);
+      free(required_sizes);
+      return luaL_error(lua, "opcua client method many buffer allocation failed");
+    }
+  }
+  status = 0u;
+  result = cpkt_opcua_client_call_method_many(
+      client, object_node_id, method_node_id, inputs, input_count, outputs,
+      output_count, buffers, buffer_sizes, required_sizes, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE) {
+    for (i = 0u; i < output_count; ++i) {
+      if (required_sizes[i] > buffer_sizes[i]) {
+        char *new_buffer;
+
+        new_buffer = (char *)realloc(buffers[i], required_sizes[i] + 1u);
+        if (new_buffer == NULL) {
+          free(inputs);
+          free(outputs);
+          vectis_opcua_lua_free_method_many_buffers(buffers, output_count);
+          free(buffer_sizes);
+          free(required_sizes);
+          return luaL_error(lua,
+                            "opcua client method many output allocation failed");
+        }
+        buffers[i] = new_buffer;
+        buffer_sizes[i] = required_sizes[i] + 1u;
+      }
+      required_sizes[i] = 0u;
+      cpkt_opcua_value_clear(&outputs[i]);
+    }
+    result = cpkt_opcua_client_call_method_many(
+        client, object_node_id, method_node_id, inputs, input_count, outputs,
+        output_count, buffers, buffer_sizes, required_sizes, &status);
+  }
+  free(inputs);
+  if (result != CPKT_OPCUA_OK) {
+    free(outputs);
+    vectis_opcua_lua_free_method_many_buffers(buffers, output_count);
+    free(buffer_sizes);
+    free(required_sizes);
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client call method many");
+  }
+  lua_newtable(lua);
+  for (i = 0u; i < output_count; ++i) {
+    (void)vectis_opcua_lua_push_value_copy(lua, &outputs[i]);
+    lua_rawseti(lua, -2, (lua_Integer)i + 1);
+  }
+  free(outputs);
+  vectis_opcua_lua_free_method_many_buffers(buffers, output_count);
+  free(buffer_sizes);
+  free(required_sizes);
+  return 1;
+}
+
 static int vectis_opcua_lua_client_translate_browse_path(lua_State *lua) {
   cpkt_opcua_client *client;
   cpkt_opcua_node_id start_node_id;
@@ -4846,6 +5546,88 @@ static int vectis_opcua_lua_server_browse_next(lua_State *lua) {
   return result;
 }
 
+static int vectis_opcua_lua_server_read_method_argument_count(lua_State *lua) {
+  cpkt_opcua_server *server;
+  cpkt_opcua_node_id method_node_id;
+  int direction;
+  size_t count;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  method_node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  direction = (int)luaL_checkinteger(lua, 3);
+  count = 0u;
+  status = 0u;
+  result = cpkt_opcua_server_read_method_argument_count(
+      server, method_node_id, direction, &count, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(
+        lua, result, status, "opcua server read method argument count");
+  }
+  lua_pushinteger(lua, (lua_Integer)count);
+  return 1;
+}
+
+static int vectis_opcua_lua_server_read_method_argument(lua_State *lua) {
+  cpkt_opcua_server *server;
+  cpkt_opcua_node_id method_node_id;
+  cpkt_opcua_node_id data_type;
+  int direction;
+  lua_Integer argument_index;
+  long value_rank;
+  char stack_buffer[256];
+  char *buffer;
+  size_t required_size;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  method_node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  direction = (int)luaL_checkinteger(lua, 3);
+  argument_index = luaL_checkinteger(lua, 4);
+  if (argument_index < 1) {
+    return luaL_error(lua, "argument_index must be >= 1");
+  }
+  buffer = stack_buffer;
+  required_size = 0u;
+  value_rank = 0;
+  data_type = cpkt_opcua_node_id_null();
+  status = 0u;
+  result = cpkt_opcua_server_read_method_argument(
+      server, method_node_id, direction, (size_t)(argument_index - 1),
+      &data_type, &value_rank, buffer, sizeof(stack_buffer), &required_size,
+      &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > sizeof(stack_buffer)) {
+    buffer = (char *)malloc(required_size + 1u);
+    if (buffer == NULL) {
+      return luaL_error(lua, "opcua server method argument allocation failed");
+    }
+    data_type = cpkt_opcua_node_id_null();
+    result = cpkt_opcua_server_read_method_argument(
+        server, method_node_id, direction, (size_t)(argument_index - 1),
+        &data_type, &value_rank, buffer, required_size + 1u, NULL, &status);
+  }
+  if (result != CPKT_OPCUA_OK) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    return vectis_opcua_lua_push_error(
+        lua, result, status, "opcua server read method argument");
+  }
+  lua_newtable(lua);
+  (void)vectis_opcua_lua_push_node_id_copy(lua, &data_type);
+  lua_setfield(lua, -2, "data_type");
+  lua_pushinteger(lua, (lua_Integer)value_rank);
+  lua_setfield(lua, -2, "value_rank");
+  lua_pushstring(lua, buffer);
+  lua_setfield(lua, -2, "name");
+  if (buffer != stack_buffer) {
+    free(buffer);
+  }
+  return 1;
+}
+
 static int vectis_opcua_lua_server_translate_browse_path(lua_State *lua) {
   cpkt_opcua_server *server;
   cpkt_opcua_node_id start_node_id;
@@ -5195,6 +5977,13 @@ static void vectis_opcua_lua_register_client(lua_State *lua) {
                         {"browse_children_page",
                          vectis_opcua_lua_client_browse_children_page},
                         {"browse_next", vectis_opcua_lua_client_browse_next},
+                        {"read_method_argument_count",
+                         vectis_opcua_lua_client_read_method_argument_count},
+                        {"read_method_argument",
+                         vectis_opcua_lua_client_read_method_argument},
+                        {"call_method", vectis_opcua_lua_client_call_method},
+                        {"call_method_many",
+                         vectis_opcua_lua_client_call_method_many},
                         {"translate_browse_path",
                          vectis_opcua_lua_client_translate_browse_path},
                         {"namespace_index",
@@ -5249,6 +6038,8 @@ static void vectis_opcua_lua_register_server(lua_State *lua) {
       {"add_reference_type", vectis_opcua_lua_server_add_reference_type},
       {"add_data_type", vectis_opcua_lua_server_add_data_type},
       {"add_view", vectis_opcua_lua_server_add_view},
+      {"add_method", vectis_opcua_lua_server_add_method},
+      {"add_method_many", vectis_opcua_lua_server_add_method_many},
       {"delete_node", vectis_opcua_lua_server_delete_node},
       {"add_reference", vectis_opcua_lua_server_add_reference},
       {"delete_reference", vectis_opcua_lua_server_delete_reference},
@@ -5300,6 +6091,9 @@ static void vectis_opcua_lua_register_server(lua_State *lua) {
       {"browse_children_ex", vectis_opcua_lua_server_browse_children_ex},
       {"browse_children_page", vectis_opcua_lua_server_browse_children_page},
       {"browse_next", vectis_opcua_lua_server_browse_next},
+      {"read_method_argument_count",
+       vectis_opcua_lua_server_read_method_argument_count},
+      {"read_method_argument", vectis_opcua_lua_server_read_method_argument},
       {"translate_browse_path",
        vectis_opcua_lua_server_translate_browse_path},
       {"create_event", vectis_opcua_lua_server_create_event},
@@ -5473,6 +6267,11 @@ int luaopen_opcua(lua_State *lua) {
                              CPKT_OPCUA_BROWSE_RESULT_TYPE_DEFINITION);
   vectis_opcua_lua_set_const(lua, "BROWSE_RESULT_ALL",
                              CPKT_OPCUA_BROWSE_RESULT_ALL);
+
+  vectis_opcua_lua_set_const(lua, "METHOD_ARGUMENT_INPUT",
+                             CPKT_OPCUA_METHOD_ARGUMENT_INPUT);
+  vectis_opcua_lua_set_const(lua, "METHOD_ARGUMENT_OUTPUT",
+                             CPKT_OPCUA_METHOD_ARGUMENT_OUTPUT);
 
   vectis_opcua_lua_set_const(lua, "VALUE_EMPTY", CPKT_OPCUA_VALUE_EMPTY);
   vectis_opcua_lua_set_const(lua, "VALUE_BOOLEAN", CPKT_OPCUA_VALUE_BOOLEAN);
