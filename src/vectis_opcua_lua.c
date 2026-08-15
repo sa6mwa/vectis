@@ -135,6 +135,8 @@ static cpkt_opcua_node_id vectis_opcua_lua_node_id_field(lua_State *lua,
 static void vectis_opcua_lua_value_field(lua_State *lua, int index,
                                          const char *field, const char *context,
                                          cpkt_opcua_value *value_out);
+static size_t vectis_opcua_lua_array_len(lua_State *lua, int index,
+                                         const char *context);
 
 static void vectis_opcua_lua_set_field_string(lua_State *lua, const char *field,
                                               const char *value) {
@@ -201,6 +203,71 @@ static unsigned long vectis_opcua_lua_table_ulong(lua_State *lua, int index,
     return (unsigned long)luaL_error(lua, "%s must be non-negative", field);
   }
   return (unsigned long)value;
+}
+
+static void
+vectis_opcua_lua_table_bytes_alias(lua_State *lua, int index, const char *field,
+                                   const char *alias1, const char *alias2,
+                                   cpkt_opcua_byte_string_view *view) {
+  size_t size;
+
+  view->data = NULL;
+  view->length = 0u;
+  lua_getfield(lua, index, field);
+  if (lua_isnil(lua, -1) && alias1 != NULL) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, index, alias1);
+  }
+  if (lua_isnil(lua, -1) && alias2 != NULL) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, index, alias2);
+  }
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return;
+  }
+  view->data = (const unsigned char *)luaL_checklstring(lua, -1, &size);
+  view->length = size;
+  lua_pop(lua, 1);
+}
+
+static cpkt_opcua_byte_string_view *
+vectis_opcua_lua_table_byte_string_views(lua_State *lua, int index,
+                                         const char *field, size_t *count_out) {
+  cpkt_opcua_byte_string_view *views;
+  const char *bytes;
+  size_t count;
+  size_t size;
+  size_t i;
+
+  *count_out = 0u;
+  lua_getfield(lua, index, field);
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return NULL;
+  }
+  luaL_checktype(lua, -1, LUA_TTABLE);
+  count = vectis_opcua_lua_array_len(lua, -1, field);
+  if (count == 0u) {
+    lua_pop(lua, 1);
+    return NULL;
+  }
+  views = (cpkt_opcua_byte_string_view *)calloc(count, sizeof(*views));
+  if (views == NULL) {
+    lua_pop(lua, 1);
+    (void)luaL_error(lua, "opcua %s allocation failed", field);
+    return NULL;
+  }
+  for (i = 0u; i < count; ++i) {
+    lua_rawgeti(lua, -1, (lua_Integer)i + 1);
+    bytes = luaL_checklstring(lua, -1, &size);
+    views[i].data = (const unsigned char *)bytes;
+    views[i].length = size;
+    lua_pop(lua, 1);
+  }
+  lua_pop(lua, 1);
+  *count_out = count;
+  return views;
 }
 
 static int vectis_opcua_lua_table_int(lua_State *lua, int index,
@@ -2953,6 +3020,46 @@ static int vectis_opcua_lua_connect(lua_State *lua) {
   return 1;
 }
 
+static int vectis_opcua_lua_client_set_default_encryption(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_byte_string_view certificate;
+  cpkt_opcua_byte_string_view private_key;
+  cpkt_opcua_byte_string_view *trust_list;
+  cpkt_opcua_byte_string_view *revocation_list;
+  size_t trust_list_count;
+  size_t revocation_list_count;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  vectis_opcua_lua_table_bytes_alias(lua, 2, "certificate", "certificate_pem",
+                                     "cert", &certificate);
+  vectis_opcua_lua_table_bytes_alias(lua, 2, "private_key", "private_key_pem",
+                                     "key", &private_key);
+  if ((certificate.data == NULL) != (private_key.data == NULL)) {
+    return luaL_error(lua, "opcua client default encryption certificate and "
+                           "private_key must be provided together");
+  }
+  trust_list = vectis_opcua_lua_table_byte_string_views(lua, 2, "trust_list",
+                                                        &trust_list_count);
+  revocation_list = vectis_opcua_lua_table_byte_string_views(
+      lua, 2, "revocation_list", &revocation_list_count);
+  status = 0u;
+  result = cpkt_opcua_client_set_default_encryption(
+      client, certificate.data, certificate.length, private_key.data,
+      private_key.length, trust_list, trust_list_count, revocation_list,
+      revocation_list_count, &status);
+  free(trust_list);
+  free(revocation_list);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client default encryption");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
 static int vectis_opcua_lua_client_disconnect(lua_State *lua) {
   cpkt_opcua_client *client;
   cpkt_opcua_status status;
@@ -4286,6 +4393,54 @@ static int vectis_opcua_lua_server_set_application_identity(lua_State *lua) {
   if (result != CPKT_OPCUA_OK) {
     return vectis_opcua_lua_push_error(lua, result, 0u,
                                        "opcua server identity");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_opcua_lua_server_set_default_security(lua_State *lua) {
+  cpkt_opcua_server *server;
+  cpkt_opcua_byte_string_view certificate;
+  cpkt_opcua_byte_string_view private_key;
+  cpkt_opcua_byte_string_view *trust_list;
+  cpkt_opcua_byte_string_view *issuer_list;
+  cpkt_opcua_byte_string_view *revocation_list;
+  size_t trust_list_count;
+  size_t issuer_list_count;
+  size_t revocation_list_count;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  int secure_only;
+
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  secure_only = vectis_opcua_lua_table_bool(lua, 2, "secure_only", 0);
+  vectis_opcua_lua_table_bytes_alias(lua, 2, "certificate", "certificate_pem",
+                                     "cert", &certificate);
+  vectis_opcua_lua_table_bytes_alias(lua, 2, "private_key", "private_key_pem",
+                                     "key", &private_key);
+  if ((certificate.data == NULL) != (private_key.data == NULL)) {
+    return luaL_error(lua, "opcua server default security certificate and "
+                           "private_key must be provided together");
+  }
+  trust_list = vectis_opcua_lua_table_byte_string_views(lua, 2, "trust_list",
+                                                        &trust_list_count);
+  issuer_list = vectis_opcua_lua_table_byte_string_views(lua, 2, "issuer_list",
+                                                         &issuer_list_count);
+  revocation_list = vectis_opcua_lua_table_byte_string_views(
+      lua, 2, "revocation_list", &revocation_list_count);
+  status = 0u;
+  result = cpkt_opcua_server_set_default_security(
+      server, secure_only, certificate.data, certificate.length,
+      private_key.data, private_key.length, trust_list, trust_list_count,
+      issuer_list, issuer_list_count, revocation_list, revocation_list_count,
+      &status);
+  free(trust_list);
+  free(issuer_list);
+  free(revocation_list);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua server default security");
   }
   lua_pushboolean(lua, 1);
   return 1;
@@ -10003,6 +10158,8 @@ static void vectis_opcua_lua_register_value(lua_State *lua) {
 static void vectis_opcua_lua_register_client(lua_State *lua) {
   luaL_Reg methods[] = {
       {"connect", vectis_opcua_lua_client_connect},
+      {"set_default_encryption",
+       vectis_opcua_lua_client_set_default_encryption},
       {"disconnect", vectis_opcua_lua_client_disconnect},
       {"iterate", vectis_opcua_lua_client_iterate},
       {"create_subscription", vectis_opcua_lua_client_create_subscription},
@@ -10166,6 +10323,7 @@ static void vectis_opcua_lua_register_server(lua_State *lua) {
       {"set_endpoint", vectis_opcua_lua_server_set_endpoint},
       {"set_application_identity",
        vectis_opcua_lua_server_set_application_identity},
+      {"set_default_security", vectis_opcua_lua_server_set_default_security},
       {"set_access_control", vectis_opcua_lua_server_set_access_control},
       {"add_namespace", vectis_opcua_lua_server_add_namespace},
       {"add_variable", vectis_opcua_lua_server_add_variable},

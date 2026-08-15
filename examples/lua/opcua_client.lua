@@ -6,6 +6,15 @@ assert(endpoint ~= nil and endpoint ~= "", "OPCUA_ENDPOINT is required")
 local server_port =
     tonumber(OPCUA_LUA_SERVER_PORT or os.getenv("OPCUA_LUA_SERVER_PORT") or "")
 if server_port then
+  local security_validation_server = assert(opcua.server({}))
+  local security_validation_ok, security_validation_err = pcall(function()
+    security_validation_server:set_default_security({ certificate = "cert-only" })
+  end)
+  assert(not security_validation_ok)
+  assert(tostring(security_validation_err):find(
+      "certificate and private_key", 1, true))
+  assert(security_validation_server:close() == true)
+
   local server = assert(opcua.server({ port = server_port }))
   assert(server:set_endpoint({ host = "127.0.0.1", port = server_port }) == true)
   assert(server:set_application_identity({
@@ -621,6 +630,15 @@ end
 local node = opcua.node_id_numeric(1, 7101)
 local method_object = opcua.node_id_numeric(1, 7102)
 local remote_method_node = opcua.node_id_numeric(1, 7103)
+local encryption_validation_client = assert(opcua.client())
+local encryption_validation_ok, encryption_validation_err = pcall(function()
+  encryption_validation_client:set_default_encryption({ private_key = "key-only" })
+end)
+assert(not encryption_validation_ok)
+assert(tostring(encryption_validation_err):find(
+    "certificate and private_key", 1, true))
+assert(encryption_validation_client:close() == true)
+
 local client = assert(opcua.connect(endpoint))
 
 local value = assert(client:read(node))

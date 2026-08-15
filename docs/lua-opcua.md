@@ -129,10 +129,11 @@ owned handles and structured Vectis error envelopes for dependency failures.
   `client:call_method_many(object_node_id, method_node_id, inputs,
   output_count)`,
   `client:translate_browse_path(start_node_id, elements)`,
-  `client:namespace_index(uri)`, `client:namespace_uri(index)`, and
-  `client:close()`.
+  `client:set_default_encryption(opts)`, `client:namespace_index(uri)`,
+  `client:namespace_uri(index)`, and `client:close()`.
 - Servers: `server([port_or_opts])`, `server:set_endpoint(opts_or_host, port)`,
-  `server:set_application_identity(opts)`, `server:set_access_control(opts)`,
+  `server:set_application_identity(opts)`,
+  `server:set_default_security(opts)`, `server:set_access_control(opts)`,
   `server:add_namespace(uri)`, `server:add_variable(opts)`,
   `server:add_object(opts)`, `server:add_variable_under(opts)`,
   `server:add_object_type(opts)`, `server:add_variable_type(opts)`,
@@ -225,6 +226,15 @@ owned handles and structured Vectis error envelopes for dependency failures.
 `opcua.server({ json = bytes })` and
 `opcua.server({ json_path = path })` construct from cpkt JSON5 server
 configuration. `config_path` is accepted as an alias for `json_path`.
+
+`server:set_default_security(opts)` mirrors
+`cpkt_opcua_server_set_default_security()`. `client:set_default_encryption(opts)`
+mirrors `cpkt_opcua_client_set_default_encryption()`. Both accept
+`certificate`/`certificate_pem`, `private_key`/`private_key_pem`, `trust_list`,
+and `revocation_list` byte strings; server options also accept `issuer_list` and
+`secure_only`. Certificate and private-key material must be provided together.
+The facade does not read files implicitly; use `vectis.cert` or ordinary Lua I/O
+to produce the byte strings before calling these methods.
 
 `server:set_access_control(opts)` supports the simple static form
 `{ allow_anonymous = false, username = "name", password = "secret" }` and a
