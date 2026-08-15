@@ -30,6 +30,11 @@ if server_port then
   assert(assert(server:read(owned_node)):get() == 5)
   assert(server:write(owned_node, opcua.value_integer(6)) == true)
   assert(assert(server:read(owned_node)):get() == 6)
+  local data_value, data_value_err = server:read_data_value(owned_node)
+  assert(data_value ~= nil,
+         data_value_err and data_value_err.message or "server read data value")
+  assert(data_value.has_value == true, "data value should carry Value")
+  assert(data_value.value:get() == 6, "data value should reflect written value")
   assert(server:read_node_id(owned_node) == owned_node)
   assert(server:read_node_class(owned_node) == opcua.NODE_CLASS_VARIABLE)
   local browse_name = assert(server:read_browse_name(owned_node))
@@ -66,6 +71,251 @@ if server_port then
   }) == true)
   assert(server:read_node_class(child_node) == opcua.NODE_CLASS_VARIABLE)
   assert(assert(server:read(child_node)):get() == 11)
+  local translated_node, translated_node_err =
+      server:translate_browse_path(objects_folder, {
+    { namespace_index = namespace_index, name = "exampleObject" },
+  })
+  assert(translated_node ~= nil,
+         translated_node_err and translated_node_err.message or
+         "server translate browse path")
+  assert(translated_node == object_node,
+         "browse path should resolve the object node")
+
+  local array_node = opcua.node_id_numeric(namespace_index, 8205)
+  local initial_integer_array = opcua.value_integer_array({ 1, 2, 3, 4 })
+  local added_integer_array, added_integer_array_err = server:add_variable({
+    node_id = array_node,
+    browse_name = "arrayValue",
+    display_name = "Array Value",
+    value = initial_integer_array,
+  })
+  assert(added_integer_array == true,
+         added_integer_array_err and added_integer_array_err.message or
+         "server add integer array variable should return true")
+  assert(initial_integer_array:type() == opcua.VALUE_INTEGER_ARRAY,
+         "integer array constructor should return an integer array value")
+  local array_items = assert(initial_integer_array:get())
+  assert(array_items[1] == 1 and array_items[4] == 4,
+         "integer array value should round-trip")
+  local read_items, read_items_err = server:read_integer_array(array_node)
+  assert(read_items ~= nil,
+         read_items_err and read_items_err.message or
+         "server read integer array")
+  assert(read_items[2] == 2 and read_items[4] == 4,
+         "server read_integer_array should return all items")
+  local range_items, range_items_err =
+      server:read_integer_array_range(array_node, "1:2")
+  assert(range_items ~= nil,
+         range_items_err and range_items_err.message or
+         "server read integer array range")
+  assert(range_items[1] == 2 and range_items[2] == 3,
+         "integer array range should use OPC UA numeric range indexes")
+  assert(server:write_index_range(
+      array_node, "1:2", opcua.value_integer_array({ 20, 30 })) == true)
+  local updated_items, updated_items_err = server:read_integer_array(array_node)
+  assert(updated_items ~= nil,
+         updated_items_err and updated_items_err.message or
+         "server read updated integer array")
+  assert(updated_items[1] == 1, "range write should preserve first item")
+  assert(updated_items[2] == 20, "range write should update second item")
+  assert(updated_items[3] == 30, "range write should update third item")
+  assert(updated_items[4] == 4, "range write should preserve fourth item")
+
+  local boolean_array_node = opcua.node_id_numeric(namespace_index, 8206)
+  assert(server:add_variable({
+    node_id = boolean_array_node,
+    browse_name = "booleanArrayValue",
+    display_name = "Boolean Array Value",
+    value = opcua.value_boolean_array({ true, false, true }),
+  }) == true)
+  local boolean_items, boolean_items_err =
+      server:read_boolean_array(boolean_array_node)
+  assert(boolean_items ~= nil,
+         boolean_items_err and boolean_items_err.message or
+         "server read boolean array")
+  assert(boolean_items[1] == true and boolean_items[2] == false,
+         "boolean array should round-trip")
+
+  local double_array_node = opcua.node_id_numeric(namespace_index, 8207)
+  assert(server:add_variable({
+    node_id = double_array_node,
+    browse_name = "doubleArrayValue",
+    display_name = "Double Array Value",
+    value = opcua.value_double_array({ 1.5, 2.5 }),
+  }) == true)
+  local double_items, double_items_err =
+      server:read_double_array(double_array_node)
+  assert(double_items ~= nil,
+         double_items_err and double_items_err.message or
+         "server read double array")
+  assert(double_items[1] == 1.5 and double_items[2] == 2.5,
+         "double array should round-trip")
+
+  local string_array_node = opcua.node_id_numeric(namespace_index, 8208)
+  local added_string_array, added_string_array_err = server:add_variable({
+    node_id = string_array_node,
+    browse_name = "stringArrayValue",
+    display_name = "String Array Value",
+    value = opcua.value_string_array({ "alpha", "beta" }),
+  })
+  assert(added_string_array == true,
+         added_string_array_err and added_string_array_err.message or
+         "server add string array variable")
+  local string_items, string_items_err =
+      server:read_string_array(string_array_node)
+  assert(string_items ~= nil,
+         string_items_err and string_items_err.message or
+         "server read string array")
+  assert(string_items[1] == "alpha" and string_items[2] == "beta",
+         "string array should round-trip")
+
+  local byte_string_array_node = opcua.node_id_numeric(namespace_index, 8209)
+  local added_byte_string_array, added_byte_string_array_err =
+      server:add_variable({
+    node_id = byte_string_array_node,
+    browse_name = "byteStringArrayValue",
+    display_name = "Byte String Array Value",
+    value = opcua.value_byte_string_array({ "one", "two" }),
+  })
+  assert(added_byte_string_array == true,
+         added_byte_string_array_err and
+         added_byte_string_array_err.message or
+         "server add byte string array variable")
+  local byte_string_items, byte_string_items_err =
+      server:read_byte_string_array(byte_string_array_node)
+  assert(byte_string_items ~= nil,
+         byte_string_items_err and byte_string_items_err.message or
+         "server read byte string array")
+  assert(byte_string_items[1] == "one" and byte_string_items[2] == "two",
+         "byte string array should round-trip")
+
+  local uint64_array_node = opcua.node_id_numeric(namespace_index, 8216)
+  local added_uint64_array, added_uint64_array_err = server:add_variable({
+    node_id = uint64_array_node,
+    browse_name = "uint64ArrayValue",
+    display_name = "UInt64 Array Value",
+    value = opcua.value_uint64_array({
+      { high32 = 0, low32 = 1 },
+      { high32 = 2, low32 = 3 },
+    }),
+  })
+  assert(added_uint64_array == true,
+         added_uint64_array_err and added_uint64_array_err.message or
+         "server add uint64 array variable")
+  local uint64_items, uint64_items_err =
+      server:read_uint64_array(uint64_array_node)
+  assert(uint64_items ~= nil,
+         uint64_items_err and uint64_items_err.message or
+         "server read uint64 array")
+  assert(uint64_items[1].low32 == 1 and uint64_items[2].high32 == 2,
+         "uint64 array should round-trip")
+
+  local datetime_array_node = opcua.node_id_numeric(namespace_index, 8217)
+  local added_datetime_array, added_datetime_array_err = server:add_variable({
+    node_id = datetime_array_node,
+    browse_name = "datetimeArrayValue",
+    display_name = "DateTime Array Value",
+    value = opcua.value_datetime_array({
+      { high32 = 1, low32 = 2 },
+      { high32 = 3, low32 = 4 },
+    }),
+  })
+  assert(added_datetime_array == true,
+         added_datetime_array_err and added_datetime_array_err.message or
+         "server add datetime array variable")
+  local datetime_items, datetime_items_err =
+      server:read_datetime_array(datetime_array_node)
+  assert(datetime_items ~= nil,
+         datetime_items_err and datetime_items_err.message or
+         "server read datetime array")
+  assert(datetime_items[1].high32 == 1 and datetime_items[2].low32 == 4,
+         "datetime array should round-trip")
+
+  local status_array_node = opcua.node_id_numeric(namespace_index, 8218)
+  local added_status_array, added_status_array_err = server:add_variable({
+    node_id = status_array_node,
+    browse_name = "statusArrayValue",
+    display_name = "Status Array Value",
+    value = opcua.value_status_array({ 0, 0 }),
+  })
+  assert(added_status_array == true,
+         added_status_array_err and added_status_array_err.message or
+         "server add status array variable")
+  local status_items, status_items_err =
+      server:read_status_array(status_array_node)
+  assert(status_items ~= nil,
+         status_items_err and status_items_err.message or
+         "server read status array")
+  assert(status_items[1] == 0 and status_items[2] == 0,
+         "status array should round-trip")
+
+  local guid_array_node = opcua.node_id_numeric(namespace_index, 8219)
+  local added_guid_array, added_guid_array_err = server:add_variable({
+    node_id = guid_array_node,
+    browse_name = "guidArrayValue",
+    display_name = "Guid Array Value",
+    value = opcua.value_guid_array({
+      "00112233-4455-6677-8899-aabbccddeeff",
+      "11112222-3333-4444-5555-666677778888",
+    }),
+  })
+  assert(added_guid_array == true,
+         added_guid_array_err and added_guid_array_err.message or
+         "server add guid array variable")
+  local guid_items, guid_items_err = server:read_guid_array(guid_array_node)
+  assert(guid_items ~= nil,
+         guid_items_err and guid_items_err.message or
+         "server read guid array")
+  assert(guid_items[1] == "00112233-4455-6677-8899-aabbccddeeff",
+         "guid array should round-trip")
+
+  local qualified_name_array_node = opcua.node_id_numeric(namespace_index, 8220)
+  local added_qualified_name_array, added_qualified_name_array_err =
+      server:add_variable({
+    node_id = qualified_name_array_node,
+    browse_name = "qualifiedNameArrayValue",
+    display_name = "Qualified Name Array Value",
+    value = opcua.value_qualified_name_array({
+      { namespace_index = namespace_index, name = "firstName" },
+      { namespace_index = namespace_index, name = "secondName" },
+    }),
+  })
+  assert(added_qualified_name_array == true,
+         added_qualified_name_array_err and
+         added_qualified_name_array_err.message or
+         "server add qualified name array variable")
+  local qualified_name_items, qualified_name_items_err =
+      server:read_qualified_name_array(qualified_name_array_node)
+  assert(qualified_name_items ~= nil,
+         qualified_name_items_err and qualified_name_items_err.message or
+         "server read qualified name array")
+  assert(qualified_name_items[1].namespace_index == namespace_index)
+  assert(qualified_name_items[2].name == "secondName",
+         "qualified name array should round-trip")
+
+  local localized_text_array_node = opcua.node_id_numeric(namespace_index, 8221)
+  local added_localized_text_array, added_localized_text_array_err =
+      server:add_variable({
+    node_id = localized_text_array_node,
+    browse_name = "localizedTextArrayValue",
+    display_name = "Localized Text Array Value",
+    value = opcua.value_localized_text_array({
+      { locale = "en-US", text = "First" },
+      { locale = "sv-SE", text = "Second" },
+    }),
+  })
+  assert(added_localized_text_array == true,
+         added_localized_text_array_err and
+         added_localized_text_array_err.message or
+         "server add localized text array variable")
+  local localized_text_items, localized_text_items_err =
+      server:read_localized_text_array(localized_text_array_node)
+  assert(localized_text_items ~= nil,
+         localized_text_items_err and localized_text_items_err.message or
+         "server read localized text array")
+  assert(localized_text_items[1].locale == "en-US")
+  assert(localized_text_items[2].text == "Second",
+         "localized text array should round-trip")
 
   local linked_object = opcua.node_id_numeric(namespace_index, 8204)
   assert(server:add_object({
@@ -145,6 +395,17 @@ if server_port then
   assert(server:read_contains_no_loops(view_node) == true)
   assert(type(server:read_event_notifier(view_node)) == "number")
 
+  local event, event_err = server:create_event({
+    source_node_id = object_node,
+    event_type_id = opcua.node_id_numeric(0, opcua.NODE_BASE_EVENT_TYPE),
+    severity = 100,
+    message = "Example event",
+  })
+  assert(event ~= nil, event_err and event_err.message or "server create event")
+  assert(event:set_field(
+      0, "Message", opcua.value_localized_text("en-US", "Example event")) == true,
+      "event field set should succeed")
+
   local disposable_node = opcua.node_id_numeric(namespace_index, 8215)
   assert(server:add_variable({
     node_id = disposable_node,
@@ -155,6 +416,19 @@ if server_port then
   assert(server:delete_node(disposable_node, true) == true)
 
   assert(server:startup() == true)
+  local event_id, event_id_err = event:trigger(server)
+  assert(type(event_id) == "string",
+         event_id_err and event_id_err.message or "event trigger")
+  assert(event:close() == true)
+  local direct_event_id, direct_event_id_err = server:trigger_event({
+    source_node_id = object_node,
+    event_type_id = opcua.node_id_numeric(0, opcua.NODE_BASE_EVENT_TYPE),
+    severity = 50,
+    message = "Direct example event",
+  })
+  assert(type(direct_event_id) == "string",
+         direct_event_id_err and direct_event_id_err.message or
+         "server trigger event")
   assert(type(server:endpoint_url()) == "string")
   assert(type(server:iterate(false)) == "number")
   assert(server:shutdown() == true)
