@@ -183,6 +183,10 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Complete support for one Vectis process to run a Kore-backed API/WebDAV server and an app-owned liblockdc `startconsumer` service simultaneously, with receiver-shell C APIs and Lua registration hooks; Kore serving and consumer service startup are concurrent capabilities, not mutually exclusive runtime modes.
 - [x] Add a same-process scenario test that serves an API/WebDAV mount while receiving lockd messages through `startconsumer`, proving HTTP/WebDAV responsiveness during active consumer work and covering the production shape of a web/API fileserver plus lockd consumer in one Vectis process.
 - [x] Define Lua consumer-service runner behavior for the combined server-plus-consumer process model.
+- [x] Add the C-owned concurrency DX mailbox for in-process service handoff, bounded backpressure, and request/reply correlation.
+- [x] Add the Lua mailbox facade with owner-state `pump()` semantics so Lua callbacks are explicit drains rather than background-thread entry.
+- [ ] Add C and Lua scenario coverage for Kore route -> mailbox worker -> reply, OPC UA/lockd-style mailbox handoff, and direct C receiver fast paths.
+- [ ] Add metrics and diagnostics hooks for mailbox depth, publish failures, timeout failures, pump counts, and callback failures.
 - [x] Make API errors explicit when a Lua script attempts to run genuinely incompatible runtime loops in one process.
 - [x] Add integration tests covering enqueue/dequeue/ack workflows.
 - [x] Add direct liblockdc C examples for open client, lease save/load, query, attachments, enqueue, manual dequeue, and managed consumer services.

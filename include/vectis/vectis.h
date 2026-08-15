@@ -29,6 +29,8 @@
 #define VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES 262144u
 #define VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES                          \
   VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES
+#define VECTIS_MAILBOX_DEFAULT_CAPACITY 1024u
+#define VECTIS_MAILBOX_DEFAULT_MAX_PAYLOAD_BYTES 1048576u
 #define VECTIS_SSH_SFTP_OPEN_READ 0x01u
 #define VECTIS_SSH_SFTP_OPEN_WRITE 0x02u
 #define VECTIS_SSH_SFTP_OPEN_CREATE 0x04u
@@ -51,6 +53,7 @@ struct lc_error;
 typedef struct vectis_app vectis_app;
 typedef struct vectis_consumer_service vectis_consumer_service;
 typedef struct vectis_http_client vectis_http_client;
+typedef struct vectis_mailbox vectis_mailbox;
 typedef struct vectis_embedded_fs vectis_embedded_fs;
 typedef struct vectis_sftp vectis_sftp;
 typedef struct vectis_ssh vectis_ssh;
@@ -167,6 +170,31 @@ typedef struct vectis_error {
   char message[256];
   char detail[256];
 } vectis_error;
+
+typedef struct vectis_mailbox_config {
+  /* Zero means VECTIS_MAILBOX_DEFAULT_CAPACITY. */
+  size_t capacity;
+  /* Zero means VECTIS_MAILBOX_DEFAULT_MAX_PAYLOAD_BYTES. */
+  size_t max_payload_bytes;
+} vectis_mailbox_config;
+
+/* Borrowed input message. publish functions copy kind and payload bytes. */
+typedef struct vectis_mailbox_message {
+  const char *kind;
+  const void *payload;
+  size_t payload_size;
+  unsigned long correlation_id;
+  int expects_reply;
+} vectis_mailbox_message;
+
+/* Owned output event. Release with vectis_mailbox_event_cleanup(). */
+typedef struct vectis_mailbox_event {
+  char *kind;
+  void *payload;
+  size_t payload_size;
+  unsigned long correlation_id;
+  int expects_reply;
+} vectis_mailbox_event;
 
 /*
  * Public configuration structs must be initialized with their matching
@@ -471,8 +499,7 @@ typedef vectis_status (*vectis_lockd_state_update_fn)(struct lc_lease *lease,
                                                       vectis_error *error);
 
 typedef int (*vectis_consumer_receiver_handle_fn)(
-    void *context, struct lc_consumer_message *message,
-    struct lc_error *error);
+    void *context, struct lc_consumer_message *message, struct lc_error *error);
 typedef void (*vectis_consumer_receiver_cleanup_fn)(void *context);
 
 typedef struct vectis_consumer_receiver {
@@ -1071,8 +1098,7 @@ struct vectis_ssh {
                                const char *new_path, vectis_error *error);
   vectis_status (*sftp_chmod)(vectis_ssh *self, const char *remote_path,
                               unsigned long permissions, vectis_error *error);
-  vectis_status (*sftp_open)(vectis_ssh *self,
-                             vectis_ssh_sftp_session **out,
+  vectis_status (*sftp_open)(vectis_ssh *self, vectis_ssh_sftp_session **out,
                              vectis_error *error);
   void (*close)(vectis_ssh *self);
 
@@ -1085,28 +1111,23 @@ struct vectis_ssh_sftp_session {
   vectis_status (*open_file)(vectis_ssh_sftp_session *self,
                              const char *remote_path, unsigned flags,
                              unsigned long permissions,
-                             vectis_ssh_sftp_file **out,
-                             vectis_error *error);
+                             vectis_ssh_sftp_file **out, vectis_error *error);
   vectis_status (*open_dir)(vectis_ssh_sftp_session *self,
-                            const char *remote_path,
-                            vectis_ssh_sftp_dir **out, vectis_error *error);
-  vectis_status (*stat)(vectis_ssh_sftp_session *self,
-                        const char *remote_path,
+                            const char *remote_path, vectis_ssh_sftp_dir **out,
+                            vectis_error *error);
+  vectis_status (*stat)(vectis_ssh_sftp_session *self, const char *remote_path,
                         vectis_ssh_sftp_stat_result *result,
                         vectis_error *error);
-  vectis_status (*mkdir)(vectis_ssh_sftp_session *self,
-                         const char *remote_path, unsigned long permissions,
-                         vectis_error *error);
+  vectis_status (*mkdir)(vectis_ssh_sftp_session *self, const char *remote_path,
+                         unsigned long permissions, vectis_error *error);
   vectis_status (*remove)(vectis_ssh_sftp_session *self,
                           const char *remote_path, vectis_error *error);
-  vectis_status (*rmdir)(vectis_ssh_sftp_session *self,
-                         const char *remote_path, vectis_error *error);
-  vectis_status (*rename)(vectis_ssh_sftp_session *self,
-                          const char *old_path, const char *new_path,
-                          vectis_error *error);
-  vectis_status (*chmod)(vectis_ssh_sftp_session *self,
-                         const char *remote_path, unsigned long permissions,
+  vectis_status (*rmdir)(vectis_ssh_sftp_session *self, const char *remote_path,
                          vectis_error *error);
+  vectis_status (*rename)(vectis_ssh_sftp_session *self, const char *old_path,
+                          const char *new_path, vectis_error *error);
+  vectis_status (*chmod)(vectis_ssh_sftp_session *self, const char *remote_path,
+                         unsigned long permissions, vectis_error *error);
   void (*close)(vectis_ssh_sftp_session *self);
 
   /* Shallow effective config copy used by the methods above. */
@@ -1116,8 +1137,7 @@ struct vectis_ssh_sftp_session {
 
 struct vectis_ssh_sftp_file {
   vectis_status (*read)(vectis_ssh_sftp_file *self, void *buffer,
-                        size_t capacity, size_t *out_size,
-                        vectis_error *error);
+                        size_t capacity, size_t *out_size, vectis_error *error);
   vectis_status (*write)(vectis_ssh_sftp_file *self, const void *data,
                          size_t size, size_t *out_size, vectis_error *error);
   vectis_status (*stat)(vectis_ssh_sftp_file *self,
@@ -1129,8 +1149,7 @@ struct vectis_ssh_sftp_file {
 
 struct vectis_ssh_sftp_dir {
   vectis_status (*read)(vectis_ssh_sftp_dir *self,
-                        vectis_ssh_sftp_dir_entry *entry,
-                        vectis_error *error);
+                        vectis_ssh_sftp_dir_entry *entry, vectis_error *error);
   void (*close)(vectis_ssh_sftp_dir *self);
   void *impl;
 };
@@ -1149,6 +1168,40 @@ struct vectis_mqtt {
   void *impl;
 };
 
+/* Bounded FIFO for in-process service handoff. Methods are thread-safe. */
+struct vectis_mailbox {
+  /* Copy a message into the queue or fail with VECTIS_ERR_CONFLICT when full.
+   */
+  vectis_status (*publish)(vectis_mailbox *self,
+                           const vectis_mailbox_message *message,
+                           vectis_error *error);
+  /* Publish a request event, assigning a nonzero correlation id when omitted.
+   */
+  vectis_status (*publish_request)(vectis_mailbox *self,
+                                   const vectis_mailbox_message *message,
+                                   unsigned long *correlation_id,
+                                   vectis_error *error);
+  /* Publish a reply event with the supplied nonzero correlation id. */
+  vectis_status (*reply)(vectis_mailbox *self, unsigned long correlation_id,
+                         const vectis_mailbox_message *message,
+                         vectis_error *error);
+  /* Non-blocking drain. Returns VECTIS_ERR_TIMEOUT when no event is available.
+   */
+  vectis_status (*next)(vectis_mailbox *self, vectis_mailbox_event *out,
+                        vectis_error *error);
+  /* Drain with timeout_ms; negative waits indefinitely, zero polls. */
+  vectis_status (*wait_next)(vectis_mailbox *self, vectis_mailbox_event *out,
+                             long timeout_ms, vectis_error *error);
+  vectis_status (*issue_correlation_id)(vectis_mailbox *self,
+                                        unsigned long *out,
+                                        vectis_error *error);
+  size_t (*depth)(const vectis_mailbox *self);
+  /* Close rejects new publishes and wakes blocked waiters. */
+  void (*close)(vectis_mailbox *self);
+  void (*destroy)(vectis_mailbox *self);
+  void *impl;
+};
+
 void vectis_error_clear(vectis_error *error);
 const char *vectis_status_string(vectis_status status);
 const char *vectis_error_source_string(vectis_error_source source);
@@ -1158,6 +1211,34 @@ void vectis_source_init(vectis_source *source);
 vectis_source vectis_source_from_path(const char *path);
 vectis_source vectis_source_from_memory(const void *memory, size_t memory_size);
 vectis_source vectis_source_from_lc(struct lc_source *source);
+void vectis_mailbox_config_init(vectis_mailbox_config *config);
+void vectis_mailbox_message_init(vectis_mailbox_message *message);
+void vectis_mailbox_event_init(vectis_mailbox_event *event);
+void vectis_mailbox_event_cleanup(vectis_mailbox_event *event);
+vectis_status vectis_mailbox_new(const vectis_mailbox_config *config,
+                                 vectis_mailbox **out, vectis_error *error);
+vectis_status vectis_mailbox_publish(vectis_mailbox *mailbox,
+                                     const vectis_mailbox_message *message,
+                                     vectis_error *error);
+vectis_status vectis_mailbox_publish_request(
+    vectis_mailbox *mailbox, const vectis_mailbox_message *message,
+    unsigned long *correlation_id, vectis_error *error);
+vectis_status vectis_mailbox_reply(vectis_mailbox *mailbox,
+                                   unsigned long correlation_id,
+                                   const vectis_mailbox_message *message,
+                                   vectis_error *error);
+vectis_status vectis_mailbox_next(vectis_mailbox *mailbox,
+                                  vectis_mailbox_event *out,
+                                  vectis_error *error);
+vectis_status vectis_mailbox_wait_next(vectis_mailbox *mailbox,
+                                       vectis_mailbox_event *out,
+                                       long timeout_ms, vectis_error *error);
+vectis_status vectis_mailbox_issue_correlation_id(vectis_mailbox *mailbox,
+                                                  unsigned long *out,
+                                                  vectis_error *error);
+size_t vectis_mailbox_depth(const vectis_mailbox *mailbox);
+void vectis_mailbox_close(vectis_mailbox *mailbox);
+void vectis_mailbox_destroy(vectis_mailbox *mailbox);
 void vectis_app_config_init(vectis_app_config *config);
 void vectis_server_config_init(vectis_server_config *config);
 void vectis_autoblock_config_init(vectis_autoblock_config *config);
@@ -1834,8 +1915,7 @@ vectis_status vectis_ssh_sftp_rmdir(const vectis_ssh_config *config,
                                     const char *remote_path,
                                     vectis_error *error);
 vectis_status vectis_ssh_sftp_rename(const vectis_ssh_config *config,
-                                     const char *old_path,
-                                     const char *new_path,
+                                     const char *old_path, const char *new_path,
                                      vectis_error *error);
 vectis_status vectis_ssh_sftp_chmod(const vectis_ssh_config *config,
                                     const char *remote_path,
@@ -1847,40 +1927,42 @@ vectis_status vectis_ssh_sftp_session_new(const vectis_ssh_config *config,
 void vectis_ssh_sftp_session_close(vectis_ssh_sftp_session *session);
 vectis_status vectis_ssh_sftp_session_open_file(
     vectis_ssh_sftp_session *session, const char *remote_path, unsigned flags,
-    unsigned long permissions, vectis_ssh_sftp_file **out,
-    vectis_error *error);
-vectis_status vectis_ssh_sftp_session_open_dir(
-    vectis_ssh_sftp_session *session, const char *remote_path,
-    vectis_ssh_sftp_dir **out, vectis_error *error);
-vectis_status vectis_ssh_sftp_session_stat(
-    vectis_ssh_sftp_session *session, const char *remote_path,
-    vectis_ssh_sftp_stat_result *result, vectis_error *error);
-vectis_status vectis_ssh_sftp_session_mkdir(
-    vectis_ssh_sftp_session *session, const char *remote_path,
-    unsigned long permissions, vectis_error *error);
-vectis_status vectis_ssh_sftp_session_remove(
-    vectis_ssh_sftp_session *session, const char *remote_path,
-    vectis_error *error);
-vectis_status vectis_ssh_sftp_session_rmdir(
-    vectis_ssh_sftp_session *session, const char *remote_path,
-    vectis_error *error);
-vectis_status vectis_ssh_sftp_session_rename(
-    vectis_ssh_sftp_session *session, const char *old_path,
-    const char *new_path, vectis_error *error);
-vectis_status vectis_ssh_sftp_session_chmod(
-    vectis_ssh_sftp_session *session, const char *remote_path,
-    unsigned long permissions, vectis_error *error);
+    unsigned long permissions, vectis_ssh_sftp_file **out, vectis_error *error);
+vectis_status vectis_ssh_sftp_session_open_dir(vectis_ssh_sftp_session *session,
+                                               const char *remote_path,
+                                               vectis_ssh_sftp_dir **out,
+                                               vectis_error *error);
+vectis_status vectis_ssh_sftp_session_stat(vectis_ssh_sftp_session *session,
+                                           const char *remote_path,
+                                           vectis_ssh_sftp_stat_result *result,
+                                           vectis_error *error);
+vectis_status vectis_ssh_sftp_session_mkdir(vectis_ssh_sftp_session *session,
+                                            const char *remote_path,
+                                            unsigned long permissions,
+                                            vectis_error *error);
+vectis_status vectis_ssh_sftp_session_remove(vectis_ssh_sftp_session *session,
+                                             const char *remote_path,
+                                             vectis_error *error);
+vectis_status vectis_ssh_sftp_session_rmdir(vectis_ssh_sftp_session *session,
+                                            const char *remote_path,
+                                            vectis_error *error);
+vectis_status vectis_ssh_sftp_session_rename(vectis_ssh_sftp_session *session,
+                                             const char *old_path,
+                                             const char *new_path,
+                                             vectis_error *error);
+vectis_status vectis_ssh_sftp_session_chmod(vectis_ssh_sftp_session *session,
+                                            const char *remote_path,
+                                            unsigned long permissions,
+                                            vectis_error *error);
 vectis_status vectis_ssh_sftp_file_read(vectis_ssh_sftp_file *file,
                                         void *buffer, size_t capacity,
-                                        size_t *out_size,
-                                        vectis_error *error);
+                                        size_t *out_size, vectis_error *error);
 vectis_status vectis_ssh_sftp_file_write(vectis_ssh_sftp_file *file,
                                          const void *data, size_t size,
-                                         size_t *out_size,
-                                         vectis_error *error);
-vectis_status vectis_ssh_sftp_file_stat(
-    vectis_ssh_sftp_file *file, vectis_ssh_sftp_stat_result *result,
-    vectis_error *error);
+                                         size_t *out_size, vectis_error *error);
+vectis_status vectis_ssh_sftp_file_stat(vectis_ssh_sftp_file *file,
+                                        vectis_ssh_sftp_stat_result *result,
+                                        vectis_error *error);
 void vectis_ssh_sftp_file_close(vectis_ssh_sftp_file *file);
 vectis_status vectis_ssh_sftp_dir_read(vectis_ssh_sftp_dir *dir,
                                        vectis_ssh_sftp_dir_entry *entry,

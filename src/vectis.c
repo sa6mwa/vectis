@@ -103,6 +103,26 @@ typedef struct vectis_static_route_data {
   vectis_http_methods allowed_methods;
 } vectis_static_route_data;
 
+typedef struct vectis_mailbox_entry {
+  char *kind;
+  void *payload;
+  size_t payload_size;
+  unsigned long correlation_id;
+  int expects_reply;
+} vectis_mailbox_entry;
+
+typedef struct vectis_mailbox_impl {
+  pthread_mutex_t mutex;
+  pthread_cond_t cond;
+  vectis_mailbox_entry *entries;
+  size_t capacity;
+  size_t max_payload_bytes;
+  size_t head;
+  size_t count;
+  int closed;
+  unsigned long next_correlation_id;
+} vectis_mailbox_impl;
+
 typedef struct vectis_upload_file_adapter {
   char *file_path;
   char *content_type;
@@ -587,6 +607,444 @@ static vectis_status vectis_set_lockdc_error(vectis_error *error, int rc,
     }
   }
   return VECTIS_ERR_STATE;
+}
+
+static void vectis_mailbox_entry_cleanup(vectis_mailbox_entry *entry) {
+  if (entry == NULL) {
+    return;
+  }
+  free(entry->kind);
+  free(entry->payload);
+  entry->kind = NULL;
+  entry->payload = NULL;
+  entry->payload_size = 0u;
+  entry->correlation_id = 0UL;
+  entry->expects_reply = 0;
+}
+
+static void vectis_mailbox_deadline(long timeout_ms,
+                                    struct timespec *deadline) {
+  struct timeval now;
+  long seconds;
+  long millis;
+  long nanos;
+
+  (void)gettimeofday(&now, NULL);
+  seconds = timeout_ms / 1000L;
+  millis = timeout_ms % 1000L;
+  nanos = (long)now.tv_usec * 1000L + millis * 1000000L;
+  deadline->tv_sec = now.tv_sec + seconds + nanos / 1000000000L;
+  deadline->tv_nsec = nanos % 1000000000L;
+}
+
+static vectis_status
+vectis_mailbox_copy_message(const vectis_mailbox_message *message,
+                            size_t max_payload_bytes,
+                            vectis_mailbox_entry *entry, vectis_error *error) {
+  size_t kind_size;
+
+  if (message == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "mailbox message is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (message->payload_size > 0u && message->payload == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "mailbox message payload is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (message->payload_size > max_payload_bytes) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "mailbox message payload exceeds configured limit");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_mailbox_entry_cleanup(entry);
+  if (message->kind != NULL && message->kind[0] != '\0') {
+    kind_size = strlen(message->kind) + 1u;
+    entry->kind = (char *)malloc(kind_size);
+    if (entry->kind == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy mailbox message kind");
+      return VECTIS_ERR_NOMEM;
+    }
+    memcpy(entry->kind, message->kind, kind_size);
+  }
+  if (message->payload_size > 0u) {
+    entry->payload = malloc(message->payload_size);
+    if (entry->payload == NULL) {
+      vectis_mailbox_entry_cleanup(entry);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy mailbox message payload");
+      return VECTIS_ERR_NOMEM;
+    }
+    memcpy(entry->payload, message->payload, message->payload_size);
+  }
+  entry->payload_size = message->payload_size;
+  entry->correlation_id = message->correlation_id;
+  entry->expects_reply = message->expects_reply ? 1 : 0;
+  return VECTIS_OK;
+}
+
+static unsigned long
+vectis_mailbox_issue_correlation_id_locked(vectis_mailbox_impl *impl) {
+  unsigned long id;
+
+  id = impl->next_correlation_id++;
+  if (impl->next_correlation_id == 0UL) {
+    impl->next_correlation_id = 1UL;
+  }
+  if (id == 0UL) {
+    id = impl->next_correlation_id++;
+  }
+  return id;
+}
+
+void vectis_mailbox_config_init(vectis_mailbox_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  config->capacity = VECTIS_MAILBOX_DEFAULT_CAPACITY;
+  config->max_payload_bytes = VECTIS_MAILBOX_DEFAULT_MAX_PAYLOAD_BYTES;
+}
+
+void vectis_mailbox_message_init(vectis_mailbox_message *message) {
+  if (message == NULL) {
+    return;
+  }
+  message->kind = NULL;
+  message->payload = NULL;
+  message->payload_size = 0u;
+  message->correlation_id = 0UL;
+  message->expects_reply = 0;
+}
+
+void vectis_mailbox_event_init(vectis_mailbox_event *event) {
+  if (event == NULL) {
+    return;
+  }
+  event->kind = NULL;
+  event->payload = NULL;
+  event->payload_size = 0u;
+  event->correlation_id = 0UL;
+  event->expects_reply = 0;
+}
+
+void vectis_mailbox_event_cleanup(vectis_mailbox_event *event) {
+  if (event == NULL) {
+    return;
+  }
+  free(event->kind);
+  free(event->payload);
+  vectis_mailbox_event_init(event);
+}
+
+vectis_status vectis_mailbox_new(const vectis_mailbox_config *config,
+                                 vectis_mailbox **out, vectis_error *error) {
+  vectis_mailbox_config effective;
+  vectis_mailbox *mailbox;
+  vectis_mailbox_impl *impl;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "mailbox output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  vectis_mailbox_config_init(&effective);
+  if (config != NULL) {
+    effective = *config;
+    if (effective.capacity == 0u) {
+      effective.capacity = VECTIS_MAILBOX_DEFAULT_CAPACITY;
+    }
+    if (effective.max_payload_bytes == 0u) {
+      effective.max_payload_bytes = VECTIS_MAILBOX_DEFAULT_MAX_PAYLOAD_BYTES;
+    }
+  }
+  mailbox = (vectis_mailbox *)calloc(1u, sizeof(*mailbox));
+  impl = (vectis_mailbox_impl *)calloc(1u, sizeof(*impl));
+  if (mailbox == NULL || impl == NULL) {
+    free(mailbox);
+    free(impl);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate mailbox");
+    return VECTIS_ERR_NOMEM;
+  }
+  impl->entries = (vectis_mailbox_entry *)calloc(effective.capacity,
+                                                 sizeof(*impl->entries));
+  if (impl->entries == NULL) {
+    free(mailbox);
+    free(impl);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate mailbox storage");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (pthread_mutex_init(&impl->mutex, NULL) != 0) {
+    free(impl->entries);
+    free(mailbox);
+    free(impl);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to initialize mailbox mutex");
+    return VECTIS_ERR_STATE;
+  }
+  if (pthread_cond_init(&impl->cond, NULL) != 0) {
+    (void)pthread_mutex_destroy(&impl->mutex);
+    free(impl->entries);
+    free(mailbox);
+    free(impl);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to initialize mailbox condition");
+    return VECTIS_ERR_STATE;
+  }
+  impl->capacity = effective.capacity;
+  impl->max_payload_bytes = effective.max_payload_bytes;
+  impl->next_correlation_id = 1UL;
+  mailbox->publish = vectis_mailbox_publish;
+  mailbox->publish_request = vectis_mailbox_publish_request;
+  mailbox->reply = vectis_mailbox_reply;
+  mailbox->next = vectis_mailbox_next;
+  mailbox->wait_next = vectis_mailbox_wait_next;
+  mailbox->issue_correlation_id = vectis_mailbox_issue_correlation_id;
+  mailbox->depth = vectis_mailbox_depth;
+  mailbox->close = vectis_mailbox_close;
+  mailbox->destroy = vectis_mailbox_destroy;
+  mailbox->impl = impl;
+  *out = mailbox;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_mailbox_publish(vectis_mailbox *mailbox,
+                                     const vectis_mailbox_message *message,
+                                     vectis_error *error) {
+  vectis_mailbox_impl *impl;
+  vectis_mailbox_entry entry;
+  vectis_mailbox_entry *slot;
+  size_t index;
+  vectis_status status;
+
+  if (mailbox == NULL || mailbox->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "mailbox is required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_mailbox_impl *)mailbox->impl;
+  memset(&entry, 0, sizeof(entry));
+  status = vectis_mailbox_copy_message(message, impl->max_payload_bytes, &entry,
+                                       error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  (void)pthread_mutex_lock(&impl->mutex);
+  if (impl->closed) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_mailbox_entry_cleanup(&entry);
+    vectis_set_error(error, VECTIS_ERR_STATE, "mailbox is closed");
+    return VECTIS_ERR_STATE;
+  }
+  if (impl->count == impl->capacity) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_mailbox_entry_cleanup(&entry);
+    vectis_set_error(error, VECTIS_ERR_CONFLICT, "mailbox is full");
+    return VECTIS_ERR_CONFLICT;
+  }
+  index = (impl->head + impl->count) % impl->capacity;
+  slot = &impl->entries[index];
+  *slot = entry;
+  impl->count++;
+  (void)pthread_cond_signal(&impl->cond);
+  (void)pthread_mutex_unlock(&impl->mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_mailbox_publish_request(
+    vectis_mailbox *mailbox, const vectis_mailbox_message *message,
+    unsigned long *correlation_id, vectis_error *error) {
+  vectis_mailbox_message request;
+  vectis_status status;
+  unsigned long id;
+
+  if (correlation_id == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "mailbox correlation id output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (message == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "mailbox message is required");
+    return VECTIS_ERR_INVALID;
+  }
+  request = *message;
+  id = request.correlation_id;
+  if (id == 0UL) {
+    status = vectis_mailbox_issue_correlation_id(mailbox, &id, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
+  request.correlation_id = id;
+  request.expects_reply = 1;
+  status = vectis_mailbox_publish(mailbox, &request, error);
+  if (status == VECTIS_OK) {
+    *correlation_id = id;
+  }
+  return status;
+}
+
+vectis_status vectis_mailbox_reply(vectis_mailbox *mailbox,
+                                   unsigned long correlation_id,
+                                   const vectis_mailbox_message *message,
+                                   vectis_error *error) {
+  vectis_mailbox_message reply;
+
+  if (correlation_id == 0UL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "mailbox reply correlation id is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (message == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "mailbox message is required");
+    return VECTIS_ERR_INVALID;
+  }
+  reply = *message;
+  reply.correlation_id = correlation_id;
+  reply.expects_reply = 0;
+  return vectis_mailbox_publish(mailbox, &reply, error);
+}
+
+vectis_status vectis_mailbox_wait_next(vectis_mailbox *mailbox,
+                                       vectis_mailbox_event *out,
+                                       long timeout_ms, vectis_error *error) {
+  vectis_mailbox_impl *impl;
+  vectis_mailbox_entry entry;
+  struct timespec deadline;
+  int rc;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "mailbox event output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (mailbox == NULL || mailbox->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "mailbox is required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_mailbox_impl *)mailbox->impl;
+  memset(&entry, 0, sizeof(entry));
+  (void)pthread_mutex_lock(&impl->mutex);
+  if (timeout_ms > 0L) {
+    vectis_mailbox_deadline(timeout_ms, &deadline);
+  }
+  while (impl->count == 0u && !impl->closed) {
+    if (timeout_ms == 0L) {
+      (void)pthread_mutex_unlock(&impl->mutex);
+      vectis_set_error(error, VECTIS_ERR_TIMEOUT, "mailbox has no events");
+      return VECTIS_ERR_TIMEOUT;
+    }
+    if (timeout_ms < 0L) {
+      rc = pthread_cond_wait(&impl->cond, &impl->mutex);
+    } else {
+      rc = pthread_cond_timedwait(&impl->cond, &impl->mutex, &deadline);
+    }
+    if (rc == ETIMEDOUT) {
+      (void)pthread_mutex_unlock(&impl->mutex);
+      vectis_set_error(error, VECTIS_ERR_TIMEOUT, "mailbox wait timed out");
+      return VECTIS_ERR_TIMEOUT;
+    }
+    if (rc != 0) {
+      (void)pthread_mutex_unlock(&impl->mutex);
+      vectis_set_error(error, VECTIS_ERR_STATE, "mailbox wait failed");
+      return VECTIS_ERR_STATE;
+    }
+  }
+  if (impl->count == 0u && impl->closed) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_STATE, "mailbox is closed");
+    return VECTIS_ERR_STATE;
+  }
+  entry = impl->entries[impl->head];
+  memset(&impl->entries[impl->head], 0, sizeof(impl->entries[impl->head]));
+  impl->head = (impl->head + 1u) % impl->capacity;
+  impl->count--;
+  (void)pthread_mutex_unlock(&impl->mutex);
+  out->kind = entry.kind;
+  out->payload = entry.payload;
+  out->payload_size = entry.payload_size;
+  out->correlation_id = entry.correlation_id;
+  out->expects_reply = entry.expects_reply;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_mailbox_next(vectis_mailbox *mailbox,
+                                  vectis_mailbox_event *out,
+                                  vectis_error *error) {
+  return vectis_mailbox_wait_next(mailbox, out, 0L, error);
+}
+
+vectis_status vectis_mailbox_issue_correlation_id(vectis_mailbox *mailbox,
+                                                  unsigned long *out,
+                                                  vectis_error *error) {
+  vectis_mailbox_impl *impl;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "mailbox correlation id output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (mailbox == NULL || mailbox->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "mailbox is required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_mailbox_impl *)mailbox->impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  *out = vectis_mailbox_issue_correlation_id_locked(impl);
+  (void)pthread_mutex_unlock(&impl->mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+size_t vectis_mailbox_depth(const vectis_mailbox *mailbox) {
+  vectis_mailbox_impl *impl;
+  size_t depth;
+
+  if (mailbox == NULL || mailbox->impl == NULL) {
+    return 0u;
+  }
+  impl = (vectis_mailbox_impl *)mailbox->impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  depth = impl->count;
+  (void)pthread_mutex_unlock(&impl->mutex);
+  return depth;
+}
+
+void vectis_mailbox_close(vectis_mailbox *mailbox) {
+  vectis_mailbox_impl *impl;
+
+  if (mailbox == NULL || mailbox->impl == NULL) {
+    return;
+  }
+  impl = (vectis_mailbox_impl *)mailbox->impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  impl->closed = 1;
+  (void)pthread_cond_broadcast(&impl->cond);
+  (void)pthread_mutex_unlock(&impl->mutex);
+}
+
+void vectis_mailbox_destroy(vectis_mailbox *mailbox) {
+  vectis_mailbox_impl *impl;
+  size_t i;
+
+  if (mailbox == NULL) {
+    return;
+  }
+  impl = (vectis_mailbox_impl *)mailbox->impl;
+  if (impl != NULL) {
+    vectis_mailbox_close(mailbox);
+    for (i = 0u; i < impl->capacity; ++i) {
+      vectis_mailbox_entry_cleanup(&impl->entries[i]);
+    }
+    (void)pthread_cond_destroy(&impl->cond);
+    (void)pthread_mutex_destroy(&impl->mutex);
+    free(impl->entries);
+    free(impl);
+  }
+  free(mailbox);
 }
 
 static void vectis_request_close_body_reader(vectis_request *request) {
@@ -1881,8 +2339,8 @@ vectis_consumer_receiver_runtime_cleanup(vectis_consumer_receiver_runtime *rt) {
   }
 }
 
-static void
-vectis_consumer_receiver_entries_cleanup(vectis_consumer_receiver_entry *entry) {
+static void vectis_consumer_receiver_entries_cleanup(
+    vectis_consumer_receiver_entry *entry) {
   vectis_consumer_receiver_entry *next;
 
   while (entry != NULL) {
@@ -1991,19 +2449,18 @@ static vectis_status vectis_webdav_marker_receiver_create(
     return VECTIS_ERR_NOMEM;
   }
   receiver->cache_dir = vectis_strdup(config->cache_dir);
-  receiver->site_id = vectis_strdup(config->site_id != NULL ? config->site_id
-                                                            : "consumer");
-  receiver->processing_path =
-      vectis_strdup(config->processing_path != NULL ? config->processing_path
-                                                    : "/consumer-processing.txt");
-  receiver->done_path = vectis_strdup(config->done_path != NULL
-                                          ? config->done_path
-                                          : "/consumer-done.txt");
+  receiver->site_id =
+      vectis_strdup(config->site_id != NULL ? config->site_id : "consumer");
+  receiver->processing_path = vectis_strdup(config->processing_path != NULL
+                                                ? config->processing_path
+                                                : "/consumer-processing.txt");
+  receiver->done_path = vectis_strdup(
+      config->done_path != NULL ? config->done_path : "/consumer-done.txt");
   receiver->processing_body =
       vectis_strdup(config->processing_body != NULL ? config->processing_body
                                                     : "processing\n");
-  receiver->done_body =
-      vectis_strdup(config->done_body != NULL ? config->done_body : "handled\n");
+  receiver->done_body = vectis_strdup(
+      config->done_body != NULL ? config->done_body : "handled\n");
   if (receiver->cache_dir == NULL || receiver->site_id == NULL ||
       receiver->processing_path == NULL || receiver->done_path == NULL ||
       receiver->processing_body == NULL || receiver->done_body == NULL) {
@@ -4441,18 +4898,17 @@ static vectis_status vectis_static_embedded_response(
       VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
-  if (has_etag && vectis_static_embedded_if_none_match(
-                      vectis_request_header(request, "if-none-match"),
-                      entry->etag)) {
+  if (has_etag &&
+      vectis_static_embedded_if_none_match(
+          vectis_request_header(request, "if-none-match"), entry->etag)) {
     return vectis_response_status(response, 304, error);
   }
   range_header = vectis_request_header(request, "range");
   if (range_header != NULL && range_header[0] != '\0') {
     if_range_header = vectis_request_header(request, "if-range");
     if (if_range_header != NULL && if_range_header[0] != '\0' &&
-        (!has_etag ||
-         !vectis_static_embedded_if_range_matches(if_range_header,
-                                                  entry->etag))) {
+        (!has_etag || !vectis_static_embedded_if_range_matches(if_range_header,
+                                                               entry->etag))) {
       range_header = NULL;
     }
   }
@@ -5442,8 +5898,8 @@ vectis_webdav_embedded_exact_entry(const vectis_embedded_fs_entry *entry,
 
   (void)error;
   state = (vectis_webdav_embedded_exact_state *)userdata;
-  if (entry == NULL || state == NULL || state->found ||
-      entry->path == NULL || strcmp(entry->path, state->path) != 0) {
+  if (entry == NULL || state == NULL || state->found || entry->path == NULL ||
+      strcmp(entry->path, state->path) != 0) {
     return VECTIS_OK;
   }
   state->found = 1;
@@ -5451,9 +5907,10 @@ vectis_webdav_embedded_exact_entry(const vectis_embedded_fs_entry *entry,
   return VECTIS_OK;
 }
 
-static vectis_status vectis_webdav_embedded_exact(
-    const vectis_embedded_fs *fs, const char *path, int *found,
-    vectis_embedded_fs_entry *entry, vectis_error *error) {
+static vectis_status
+vectis_webdav_embedded_exact(const vectis_embedded_fs *fs, const char *path,
+                             int *found, vectis_embedded_fs_entry *entry,
+                             vectis_error *error) {
   vectis_webdav_embedded_exact_state state;
   vectis_status status;
 
@@ -5537,11 +5994,9 @@ vectis_webdav_embedded_propfind_entry(const vectis_embedded_fs_entry *entry,
   return state->status;
 }
 
-static vectis_status
-vectis_webdav_embedded_propfind(const vectis_webdav_route_data *data,
-                                const char *resource, vectis_request *request,
-                                vectis_response *response,
-                                vectis_error *error) {
+static vectis_status vectis_webdav_embedded_propfind(
+    const vectis_webdav_route_data *data, const char *resource,
+    vectis_request *request, vectis_response *response, vectis_error *error) {
   vectis_webdav_embedded_propfind_state state;
   vectis_embedded_fs_entry entry;
   vectis_webdav_entry_kind kind;
@@ -5603,15 +6058,17 @@ vectis_webdav_embedded_propfind(const vectis_webdav_route_data *data,
   }
   bytes.data = xml.data;
   bytes.size = xml.size;
-  status = vectis_response_bytes(response, 207, "application/xml; charset=utf-8",
-                                 bytes, error);
+  status = vectis_response_bytes(
+      response, 207, "application/xml; charset=utf-8", bytes, error);
   vectis_string_builder_cleanup(&xml);
   return status;
 }
 
-static vectis_status vectis_webdav_embedded_dispatch(
-    vectis_app *app, vectis_request *request, vectis_response *response,
-    void *userdata, vectis_error *error) {
+static vectis_status vectis_webdav_embedded_dispatch(vectis_app *app,
+                                                     vectis_request *request,
+                                                     vectis_response *response,
+                                                     void *userdata,
+                                                     vectis_error *error) {
   vectis_webdav_route_data *data;
   vectis_static_route_data static_data;
   vectis_embedded_fs_entry entry;
@@ -5641,8 +6098,8 @@ static vectis_status vectis_webdav_embedded_dispatch(
   if (method == VECTIS_HTTP_OPTIONS) {
     if (vectis_response_header(response, "dav", "1", error) != VECTIS_OK ||
         vectis_response_header(response, "allow",
-                               "OPTIONS, PROPFIND, GET, HEAD", error) !=
-            VECTIS_OK) {
+                               "OPTIONS, PROPFIND, GET, HEAD",
+                               error) != VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_INVALID;
     }
     return vectis_response_status(response, 204, error);
@@ -5653,8 +6110,8 @@ static vectis_status vectis_webdav_embedded_dispatch(
   }
   if (method != VECTIS_HTTP_GET && method != VECTIS_HTTP_HEAD) {
     if (vectis_response_header(response, "allow",
-                               "OPTIONS, PROPFIND, GET, HEAD", error) !=
-        VECTIS_OK) {
+                               "OPTIONS, PROPFIND, GET, HEAD",
+                               error) != VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_INVALID;
     }
     return vectis_response_status(response, 405, error);
@@ -10649,8 +11106,9 @@ vectis_status vectis_consumer_service_new_receiver(
                      "failed to allocate consumer receiver runtime");
     return VECTIS_ERR_NOMEM;
   }
-  status = entry->adapter.create(entry->adapter.context, config->receiver_config,
-                                 &runtime->receiver, error);
+  status =
+      entry->adapter.create(entry->adapter.context, config->receiver_config,
+                            &runtime->receiver, error);
   if (status != VECTIS_OK) {
     free(runtime);
     return status;
@@ -18939,8 +19397,9 @@ static vectis_status vectis_ssh_handle_sftp_chmod(vectis_ssh *self,
   return vectis_ssh_sftp_chmod(&self->config, remote_path, permissions, error);
 }
 
-static vectis_status vectis_ssh_handle_sftp_open(
-    vectis_ssh *self, vectis_ssh_sftp_session **out, vectis_error *error) {
+static vectis_status vectis_ssh_handle_sftp_open(vectis_ssh *self,
+                                                 vectis_ssh_sftp_session **out,
+                                                 vectis_error *error) {
   if (self == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "SSH handle is required");
     return VECTIS_ERR_INVALID;
@@ -19828,9 +20287,9 @@ static void vectis_set_sftp_operation_error(vectis_error *error,
   }
 }
 
-static void vectis_ssh_sftp_stat_result_from_attrs(
-    vectis_ssh_sftp_stat_result *result,
-    const LIBSSH2_SFTP_ATTRIBUTES *attrs) {
+static void
+vectis_ssh_sftp_stat_result_from_attrs(vectis_ssh_sftp_stat_result *result,
+                                       const LIBSSH2_SFTP_ATTRIBUTES *attrs) {
   vectis_ssh_sftp_stat_result_init(result);
   result->flags = (unsigned long)attrs->flags;
   if ((attrs->flags & LIBSSH2_SFTP_ATTR_SIZE) != 0) {
@@ -19890,8 +20349,8 @@ vectis_status vectis_ssh_sftp_stat(const vectis_ssh_config *config,
   session = NULL;
   sftp = NULL;
   fd = -1;
-  status = vectis_ssh_sftp_session_open(&effective, &session, &fd, &sftp,
-                                        error);
+  status =
+      vectis_ssh_sftp_session_open(&effective, &session, &fd, &sftp, error);
   if (status != VECTIS_OK) {
     return status;
   }
@@ -19938,8 +20397,8 @@ vectis_status vectis_ssh_sftp_mkdir(const vectis_ssh_config *config,
   session = NULL;
   sftp = NULL;
   fd = -1;
-  status = vectis_ssh_sftp_session_open(&effective, &session, &fd, &sftp,
-                                        error);
+  status =
+      vectis_ssh_sftp_session_open(&effective, &session, &fd, &sftp, error);
   if (status != VECTIS_OK) {
     return status;
   }
@@ -19947,9 +20406,8 @@ vectis_status vectis_ssh_sftp_mkdir(const vectis_ssh_config *config,
                           (long)(permissions != 0UL ? permissions : 0755UL));
   vectis_ssh_sftp_raw_session_close(sftp, session, fd);
   if (rc != 0) {
-    vectis_set_sftp_operation_error(error,
-                                    "failed to create remote SFTP directory",
-                                    rc);
+    vectis_set_sftp_operation_error(
+        error, "failed to create remote SFTP directory", rc);
     return VECTIS_ERR_STATE;
   }
   vectis_error_clear(error);
@@ -19979,8 +20437,8 @@ vectis_status vectis_ssh_sftp_remove(const vectis_ssh_config *config,
   session = NULL;
   sftp = NULL;
   fd = -1;
-  status = vectis_ssh_sftp_session_open(&effective, &session, &fd, &sftp,
-                                        error);
+  status =
+      vectis_ssh_sftp_session_open(&effective, &session, &fd, &sftp, error);
   if (status != VECTIS_OK) {
     return status;
   }
@@ -20018,17 +20476,16 @@ vectis_status vectis_ssh_sftp_rmdir(const vectis_ssh_config *config,
   session = NULL;
   sftp = NULL;
   fd = -1;
-  status = vectis_ssh_sftp_session_open(&effective, &session, &fd, &sftp,
-                                        error);
+  status =
+      vectis_ssh_sftp_session_open(&effective, &session, &fd, &sftp, error);
   if (status != VECTIS_OK) {
     return status;
   }
   rc = libssh2_sftp_rmdir(sftp, remote_path);
   vectis_ssh_sftp_raw_session_close(sftp, session, fd);
   if (rc != 0) {
-    vectis_set_sftp_operation_error(error,
-                                    "failed to remove remote SFTP directory",
-                                    rc);
+    vectis_set_sftp_operation_error(
+        error, "failed to remove remote SFTP directory", rc);
     return VECTIS_ERR_STATE;
   }
   vectis_error_clear(error);
@@ -20036,8 +20493,7 @@ vectis_status vectis_ssh_sftp_rmdir(const vectis_ssh_config *config,
 }
 
 vectis_status vectis_ssh_sftp_rename(const vectis_ssh_config *config,
-                                     const char *old_path,
-                                     const char *new_path,
+                                     const char *old_path, const char *new_path,
                                      vectis_error *error) {
   vectis_ssh_config effective;
   LIBSSH2_SESSION *session;
@@ -20060,8 +20516,8 @@ vectis_status vectis_ssh_sftp_rename(const vectis_ssh_config *config,
   session = NULL;
   sftp = NULL;
   fd = -1;
-  status = vectis_ssh_sftp_session_open(&effective, &session, &fd, &sftp,
-                                        error);
+  status =
+      vectis_ssh_sftp_session_open(&effective, &session, &fd, &sftp, error);
   if (status != VECTIS_OK) {
     return status;
   }
@@ -20106,8 +20562,8 @@ vectis_status vectis_ssh_sftp_chmod(const vectis_ssh_config *config,
   session = NULL;
   sftp = NULL;
   fd = -1;
-  status = vectis_ssh_sftp_session_open(&effective, &session, &fd, &sftp,
-                                        error);
+  status =
+      vectis_ssh_sftp_session_open(&effective, &session, &fd, &sftp, error);
   if (status != VECTIS_OK) {
     return status;
   }
@@ -20117,8 +20573,8 @@ vectis_status vectis_ssh_sftp_chmod(const vectis_ssh_config *config,
   rc = libssh2_sftp_setstat(sftp, remote_path, &attrs);
   vectis_ssh_sftp_raw_session_close(sftp, session, fd);
   if (rc != 0) {
-    vectis_set_sftp_operation_error(error,
-                                    "failed to chmod remote SFTP path", rc);
+    vectis_set_sftp_operation_error(error, "failed to chmod remote SFTP path",
+                                    rc);
     return VECTIS_ERR_STATE;
   }
   vectis_error_clear(error);
@@ -20184,16 +20640,14 @@ vectis_ssh_sftp_dir_impl_from(vectis_ssh_sftp_dir *dir, vectis_error *error) {
   return (vectis_ssh_sftp_dir_impl *)dir->impl;
 }
 
-static void
-vectis_ssh_sftp_child_link(vectis_ssh_sftp_session_impl *session,
-                           vectis_ssh_sftp_child *child) {
+static void vectis_ssh_sftp_child_link(vectis_ssh_sftp_session_impl *session,
+                                       vectis_ssh_sftp_child *child) {
   child->next = session->children;
   session->children = child;
 }
 
-static void
-vectis_ssh_sftp_child_unlink(vectis_ssh_sftp_session_impl *session,
-                             vectis_ssh_sftp_child *child) {
+static void vectis_ssh_sftp_child_unlink(vectis_ssh_sftp_session_impl *session,
+                                         vectis_ssh_sftp_child *child) {
   vectis_ssh_sftp_child **cursor;
 
   if (session == NULL || child == NULL) {
@@ -20242,9 +20696,9 @@ static void vectis_ssh_sftp_child_free_impl(vectis_ssh_sftp_child *child) {
                                        offsetof(vectis_ssh_sftp_file_impl,
                                                 child)));
   } else if (child->kind == VECTIS_SSH_SFTP_CHILD_DIR) {
-    free((vectis_ssh_sftp_dir_impl *)((char *)child -
-                                      offsetof(vectis_ssh_sftp_dir_impl,
-                                               child)));
+    free((
+        vectis_ssh_sftp_dir_impl *)((char *)child -
+                                    offsetof(vectis_ssh_sftp_dir_impl, child)));
   }
 }
 
@@ -20295,8 +20749,8 @@ vectis_status vectis_ssh_sftp_session_new(const vectis_ssh_config *config,
   ssh_session = NULL;
   sftp = NULL;
   fd = -1;
-  status = vectis_ssh_sftp_session_open(&effective, &ssh_session, &fd, &sftp,
-                                        error);
+  status =
+      vectis_ssh_sftp_session_open(&effective, &ssh_session, &fd, &sftp, error);
   if (status != VECTIS_OK) {
     return status;
   }
@@ -20384,8 +20838,7 @@ vectis_status vectis_ssh_sftp_session_open_file(
     return VECTIS_ERR_INVALID;
   }
   if ((flags & ~(VECTIS_SSH_SFTP_OPEN_READ | VECTIS_SSH_SFTP_OPEN_WRITE |
-                 VECTIS_SSH_SFTP_OPEN_CREATE |
-                 VECTIS_SSH_SFTP_OPEN_TRUNCATE |
+                 VECTIS_SSH_SFTP_OPEN_CREATE | VECTIS_SSH_SFTP_OPEN_TRUNCATE |
                  VECTIS_SSH_SFTP_OPEN_APPEND)) != 0u) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "SSH SFTP open_file received unsupported flags");
@@ -20397,8 +20850,9 @@ vectis_status vectis_ssh_sftp_session_open_file(
     return VECTIS_ERR_INVALID;
   }
   native_flags = vectis_ssh_sftp_open_flags(flags);
-  handle = libssh2_sftp_open(impl->sftp, remote_path, (unsigned long)native_flags,
-                             (long)(permissions != 0UL ? permissions : 0644UL));
+  handle =
+      libssh2_sftp_open(impl->sftp, remote_path, (unsigned long)native_flags,
+                        (long)(permissions != 0UL ? permissions : 0644UL));
   if (handle == NULL) {
     vectis_set_error(error, VECTIS_ERR_STATE,
                      "failed to open remote SFTP file");
@@ -20432,9 +20886,10 @@ vectis_status vectis_ssh_sftp_session_open_file(
   return VECTIS_OK;
 }
 
-vectis_status vectis_ssh_sftp_session_open_dir(
-    vectis_ssh_sftp_session *session, const char *remote_path,
-    vectis_ssh_sftp_dir **out, vectis_error *error) {
+vectis_status vectis_ssh_sftp_session_open_dir(vectis_ssh_sftp_session *session,
+                                               const char *remote_path,
+                                               vectis_ssh_sftp_dir **out,
+                                               vectis_error *error) {
   vectis_ssh_sftp_session_impl *impl;
   vectis_ssh_sftp_dir *dir;
   vectis_ssh_sftp_dir_impl *dir_impl;
@@ -20487,9 +20942,10 @@ vectis_status vectis_ssh_sftp_session_open_dir(
   return VECTIS_OK;
 }
 
-vectis_status vectis_ssh_sftp_session_stat(
-    vectis_ssh_sftp_session *session, const char *remote_path,
-    vectis_ssh_sftp_stat_result *result, vectis_error *error) {
+vectis_status vectis_ssh_sftp_session_stat(vectis_ssh_sftp_session *session,
+                                           const char *remote_path,
+                                           vectis_ssh_sftp_stat_result *result,
+                                           vectis_error *error) {
   vectis_ssh_sftp_session_impl *impl;
   LIBSSH2_SFTP_ATTRIBUTES attrs;
   int rc;
@@ -20521,9 +20977,10 @@ vectis_status vectis_ssh_sftp_session_stat(
   return VECTIS_OK;
 }
 
-vectis_status vectis_ssh_sftp_session_mkdir(
-    vectis_ssh_sftp_session *session, const char *remote_path,
-    unsigned long permissions, vectis_error *error) {
+vectis_status vectis_ssh_sftp_session_mkdir(vectis_ssh_sftp_session *session,
+                                            const char *remote_path,
+                                            unsigned long permissions,
+                                            vectis_error *error) {
   vectis_ssh_sftp_session_impl *impl;
   int rc;
 
@@ -20544,18 +21001,17 @@ vectis_status vectis_ssh_sftp_session_mkdir(
   rc = libssh2_sftp_mkdir(impl->sftp, remote_path,
                           (long)(permissions != 0UL ? permissions : 0755UL));
   if (rc != 0) {
-    vectis_set_sftp_operation_error(error,
-                                    "failed to create remote SFTP directory",
-                                    rc);
+    vectis_set_sftp_operation_error(
+        error, "failed to create remote SFTP directory", rc);
     return VECTIS_ERR_STATE;
   }
   vectis_error_clear(error);
   return VECTIS_OK;
 }
 
-vectis_status vectis_ssh_sftp_session_remove(
-    vectis_ssh_sftp_session *session, const char *remote_path,
-    vectis_error *error) {
+vectis_status vectis_ssh_sftp_session_remove(vectis_ssh_sftp_session *session,
+                                             const char *remote_path,
+                                             vectis_error *error) {
   vectis_ssh_sftp_session_impl *impl;
   int rc;
 
@@ -20578,9 +21034,9 @@ vectis_status vectis_ssh_sftp_session_remove(
   return VECTIS_OK;
 }
 
-vectis_status vectis_ssh_sftp_session_rmdir(
-    vectis_ssh_sftp_session *session, const char *remote_path,
-    vectis_error *error) {
+vectis_status vectis_ssh_sftp_session_rmdir(vectis_ssh_sftp_session *session,
+                                            const char *remote_path,
+                                            vectis_error *error) {
   vectis_ssh_sftp_session_impl *impl;
   int rc;
 
@@ -20595,18 +21051,18 @@ vectis_status vectis_ssh_sftp_session_rmdir(
   }
   rc = libssh2_sftp_rmdir(impl->sftp, remote_path);
   if (rc != 0) {
-    vectis_set_sftp_operation_error(error,
-                                    "failed to remove remote SFTP directory",
-                                    rc);
+    vectis_set_sftp_operation_error(
+        error, "failed to remove remote SFTP directory", rc);
     return VECTIS_ERR_STATE;
   }
   vectis_error_clear(error);
   return VECTIS_OK;
 }
 
-vectis_status vectis_ssh_sftp_session_rename(
-    vectis_ssh_sftp_session *session, const char *old_path,
-    const char *new_path, vectis_error *error) {
+vectis_status vectis_ssh_sftp_session_rename(vectis_ssh_sftp_session *session,
+                                             const char *old_path,
+                                             const char *new_path,
+                                             vectis_error *error) {
   vectis_ssh_sftp_session_impl *impl;
   int rc;
 
@@ -20630,9 +21086,10 @@ vectis_status vectis_ssh_sftp_session_rename(
   return VECTIS_OK;
 }
 
-vectis_status vectis_ssh_sftp_session_chmod(
-    vectis_ssh_sftp_session *session, const char *remote_path,
-    unsigned long permissions, vectis_error *error) {
+vectis_status vectis_ssh_sftp_session_chmod(vectis_ssh_sftp_session *session,
+                                            const char *remote_path,
+                                            unsigned long permissions,
+                                            vectis_error *error) {
   vectis_ssh_sftp_session_impl *impl;
   LIBSSH2_SFTP_ATTRIBUTES attrs;
   int rc;
@@ -20656,8 +21113,8 @@ vectis_status vectis_ssh_sftp_session_chmod(
   attrs.permissions = (unsigned long)permissions;
   rc = libssh2_sftp_setstat(impl->sftp, remote_path, &attrs);
   if (rc != 0) {
-    vectis_set_sftp_operation_error(error,
-                                    "failed to chmod remote SFTP path", rc);
+    vectis_set_sftp_operation_error(error, "failed to chmod remote SFTP path",
+                                    rc);
     return VECTIS_ERR_STATE;
   }
   vectis_error_clear(error);
@@ -20666,8 +21123,7 @@ vectis_status vectis_ssh_sftp_session_chmod(
 
 vectis_status vectis_ssh_sftp_file_read(vectis_ssh_sftp_file *file,
                                         void *buffer, size_t capacity,
-                                        size_t *out_size,
-                                        vectis_error *error) {
+                                        size_t *out_size, vectis_error *error) {
   vectis_ssh_sftp_file_impl *impl;
   ssize_t nread;
 
@@ -20754,9 +21210,9 @@ vectis_status vectis_ssh_sftp_file_write(vectis_ssh_sftp_file *file,
   return VECTIS_OK;
 }
 
-vectis_status vectis_ssh_sftp_file_stat(
-    vectis_ssh_sftp_file *file, vectis_ssh_sftp_stat_result *result,
-    vectis_error *error) {
+vectis_status vectis_ssh_sftp_file_stat(vectis_ssh_sftp_file *file,
+                                        vectis_ssh_sftp_stat_result *result,
+                                        vectis_error *error) {
   vectis_ssh_sftp_file_impl *impl;
   LIBSSH2_SFTP_ATTRIBUTES attrs;
   int rc;
@@ -20859,7 +21315,8 @@ vectis_status vectis_ssh_sftp_dir_read(vectis_ssh_sftp_dir *dir,
   }
   entry->name = vectis_strdup(name);
   entry->long_name = long_name[0] != '\0' ? vectis_strdup(long_name) : NULL;
-  if (entry->name == NULL || (long_name[0] != '\0' && entry->long_name == NULL)) {
+  if (entry->name == NULL ||
+      (long_name[0] != '\0' && entry->long_name == NULL)) {
     vectis_ssh_sftp_dir_entry_cleanup(entry);
     vectis_set_error(error, VECTIS_ERR_NOMEM,
                      "failed to allocate SSH SFTP directory entry");
