@@ -32,8 +32,44 @@ owned handles and structured Vectis error envelopes for dependency failures.
   `client:iterate(timeout_ms)`, `client:read(node_id)`,
   `client:write(node_id, value)`, `client:add_object(opts)`,
   `client:add_variable(opts)`, `client:add_variable_under(opts)`,
+  `client:add_object_type(opts)`, `client:add_variable_type(opts)`,
+  `client:add_reference_type(opts)`, `client:add_data_type(opts)`,
+  `client:add_view(opts)`,
   `client:delete_node(node_id, delete_target_refs)`,
-  `client:read_node_class(node_id)`, `client:read_data_value(node_id)`,
+  `client:add_reference(opts)`, `client:delete_reference(opts)`,
+  `client:read_node_id(node_id)`, `client:read_node_class(node_id)`,
+  `client:read_browse_name(node_id)`, `client:read_display_name(node_id)`,
+  `client:read_description(node_id)`,
+  `client:write_display_name(node_id, value)`,
+  `client:write_description(node_id, value)`,
+  `client:read_write_mask(node_id)`,
+  `client:read_user_write_mask(node_id)`,
+  `client:write_write_mask(node_id, value)`,
+  `client:read_is_abstract(node_id)`,
+  `client:write_is_abstract(node_id, value)`,
+  `client:read_symmetric(node_id)`, `client:write_symmetric(node_id, value)`,
+  `client:read_inverse_name(node_id)`,
+  `client:write_inverse_name(node_id, value)`,
+  `client:read_contains_no_loops(node_id)`,
+  `client:write_contains_no_loops(node_id, value)`,
+  `client:read_event_notifier(node_id)`,
+  `client:write_event_notifier(node_id, value)`,
+  `client:read_data_type(node_id)`, `client:write_data_type(node_id, value)`,
+  `client:read_value_rank(node_id)`,
+  `client:write_value_rank(node_id, value)`,
+  `client:read_access_level(node_id)`,
+  `client:read_user_access_level(node_id)`,
+  `client:write_access_level(node_id, value)`,
+  `client:read_access_level_ex(node_id)`,
+  `client:write_access_level_ex(node_id, value)`,
+  `client:read_minimum_sampling_interval(node_id)`,
+  `client:write_minimum_sampling_interval(node_id, value)`,
+  `client:read_historizing(node_id)`,
+  `client:write_historizing(node_id, value)`,
+  `client:read_executable(node_id)`,
+  `client:read_user_executable(node_id)`,
+  `client:write_executable(node_id, value)`,
+  `client:read_data_value(node_id)`,
   `client:read_boolean_array(node_id)`,
   `client:read_boolean_array_range(node_id, range)`,
   `client:read_integer_array(node_id)`,
@@ -250,8 +286,8 @@ The dependency-native facade must cover the relevant public
 `cpkt_opcua_client_*` and `cpkt_opcua_server_*` application surface. Remaining
 server work includes security configuration, access-control callbacks,
 PubSub/MQTT configuration, event monitoring workflows, async-safe callback
-queueing, and explicit C-only native-pointer exclusions. Remaining client work
-includes the broader read/write attribute family, full array family parity
-beyond integer arrays, async calls, subscriptions, remote node-management
-variants, PubSub-related workflows, and deterministic local e2e for callback
-ownership and error propagation.
+queueing, array-dimension helpers, and explicit C-only native-pointer
+exclusions. Remaining client work includes async calls, subscriptions,
+expanded-node/native-pointer variants, PubSub-related workflows,
+array-dimension helpers, and deterministic local e2e for callback ownership
+and error propagation.

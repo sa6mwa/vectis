@@ -521,7 +521,14 @@ local remote_status_array = opcua.node_id_numeric(1, 7209)
 local remote_guid_array = opcua.node_id_numeric(1, 7210)
 local remote_qualified_name_array = opcua.node_id_numeric(1, 7211)
 local remote_localized_text_array = opcua.node_id_numeric(1, 7212)
+local remote_object_type = opcua.node_id_numeric(1, 7220)
+local remote_variable_type = opcua.node_id_numeric(1, 7221)
+local remote_data_type = opcua.node_id_numeric(1, 7222)
+local remote_reference_type = opcua.node_id_numeric(1, 7223)
+local remote_view = opcua.node_id_numeric(1, 7224)
+local remote_linked_object = opcua.node_id_numeric(1, 7225)
 local objects_folder = opcua.node_id_numeric(0, opcua.NODE_OBJECTS_FOLDER)
+local organizes = opcua.node_id_numeric(0, opcua.REFERENCE_ORGANIZES)
 local client_object_added, client_object_add_err = client:add_object({
   node_id = remote_object,
   parent_node_id = objects_folder,
@@ -529,9 +536,96 @@ local client_object_added, client_object_add_err = client:add_object({
   display_name = "Client Object",
 })
 assert(client_object_added == true,
-       client_object_add_err and client_object_add_err.message or
-       "client add object")
+	       client_object_add_err and client_object_add_err.message or
+	       "client add object")
 assert(client:read_node_class(remote_object) == opcua.NODE_CLASS_OBJECT)
+assert(client:read_node_id(remote_object) == remote_object)
+local client_object_browse_name, client_object_browse_name_err =
+    client:read_browse_name(remote_object)
+assert(client_object_browse_name ~= nil,
+       client_object_browse_name_err and
+       client_object_browse_name_err.message or "client read browse name")
+assert(client_object_browse_name.namespace_index == 1)
+assert(client_object_browse_name.name == "clientObject")
+assert(client:read_display_name(remote_object) == "Client Object")
+assert(client:write_display_name(remote_object, "Client Object Updated") == true)
+assert(client:read_display_name(remote_object) == "Client Object Updated")
+assert(client:write_description(remote_object, "Client-created object") == true)
+assert(client:read_description(remote_object) == "Client-created object")
+assert(type(client:read_write_mask(remote_object)) == "number")
+assert(type(client:read_user_write_mask(remote_object)) == "number")
+assert(client:add_object_type({
+  node_id = remote_object_type,
+  parent_node_id = opcua.node_id_numeric(0, opcua.NODE_BASE_OBJECT_TYPE),
+  browse_name = "ClientObjectType",
+  display_name = "Client Object Type",
+  is_abstract = false,
+}) == true, "client add object type")
+assert(client:read_node_class(remote_object_type) == opcua.NODE_CLASS_OBJECT_TYPE)
+assert(client:read_is_abstract(remote_object_type) == false)
+assert(client:add_variable_type({
+  node_id = remote_variable_type,
+  parent_node_id = opcua.node_id_numeric(0, opcua.NODE_BASE_DATA_VARIABLE_TYPE),
+  browse_name = "ClientVariableType",
+  display_name = "Client Variable Type",
+  value = opcua.value_integer(0),
+  is_abstract = false,
+}) == true, "client add variable type")
+assert(client:read_node_class(remote_variable_type) ==
+       opcua.NODE_CLASS_VARIABLE_TYPE)
+assert(client:add_data_type({
+  node_id = remote_data_type,
+  parent_node_id = opcua.node_id_numeric(0, opcua.NODE_BASE_DATA_TYPE),
+  browse_name = "ClientDataType",
+  display_name = "Client Data Type",
+  is_abstract = false,
+}) == true, "client add data type")
+assert(client:read_node_class(remote_data_type) == opcua.NODE_CLASS_DATA_TYPE)
+assert(client:add_reference_type({
+  node_id = remote_reference_type,
+  parent_node_id = opcua.node_id_numeric(0, opcua.NODE_REFERENCES),
+  browse_name = "ClientReference",
+  display_name = "Client Reference",
+  inverse_name = "Client Reference Inverse",
+  is_abstract = false,
+  symmetric = false,
+}) == true, "client add reference type")
+assert(client:read_node_class(remote_reference_type) ==
+       opcua.NODE_CLASS_REFERENCE_TYPE)
+assert(client:read_symmetric(remote_reference_type) == false)
+assert(client:read_inverse_name(remote_reference_type) ==
+       "Client Reference Inverse")
+assert(client:add_view({
+  node_id = remote_view,
+  parent_node_id = opcua.node_id_numeric(0, opcua.NODE_VIEWS_FOLDER),
+  browse_name = "ClientView",
+  display_name = "Client View",
+  contains_no_loops = true,
+  event_notifier = 0,
+}) == true, "client add view")
+assert(client:read_node_class(remote_view) == opcua.NODE_CLASS_VIEW)
+assert(client:read_contains_no_loops(remote_view) == true)
+assert(type(client:read_event_notifier(remote_view)) == "number")
+assert(client:add_object({
+  node_id = remote_linked_object,
+  parent_node_id = objects_folder,
+  browse_name = "clientLinkedObject",
+  display_name = "Client Linked Object",
+}) == true, "client add linked object")
+assert(client:add_reference({
+  source_node_id = remote_object,
+  reference_type_id = organizes,
+  is_forward = true,
+  target_node_id = remote_linked_object,
+  target_node_class = opcua.NODE_CLASS_OBJECT,
+}) == true, "client add reference")
+assert(client:delete_reference({
+  source_node_id = remote_object,
+  reference_type_id = organizes,
+  is_forward = true,
+  target_node_id = remote_linked_object,
+  delete_bidirectional = true,
+}) == true, "client delete reference")
 local client_array_added, client_array_add_err = client:add_variable_under({
   node_id = remote_array,
   parent_node_id = remote_object,
@@ -542,6 +636,13 @@ local client_array_added, client_array_add_err = client:add_variable_under({
 assert(client_array_added == true,
        client_array_add_err and client_array_add_err.message or
        "client add array variable")
+assert(type(tostring(client:read_data_type(remote_array))) == "string")
+assert(type(client:read_value_rank(remote_array)) == "number")
+assert(type(client:read_access_level(remote_array)) == "number")
+assert(type(client:read_user_access_level(remote_array)) == "number")
+assert(type(client:read_access_level_ex(remote_array)) == "number")
+assert(type(client:read_minimum_sampling_interval(remote_array)) == "number")
+assert(type(client:read_historizing(remote_array)) == "boolean")
 local client_data_value, client_data_value_err = client:read_data_value(node)
 assert(client_data_value ~= nil,
        client_data_value_err and client_data_value_err.message or
@@ -840,7 +941,13 @@ assert(client:delete_node(remote_status_array, true) == true)
 assert(client:delete_node(remote_guid_array, true) == true)
 assert(client:delete_node(remote_qualified_name_array, true) == true)
 assert(client:delete_node(remote_localized_text_array, true) == true)
+assert(client:delete_node(remote_linked_object, true) == true)
 assert(client:delete_node(remote_object, true) == true)
+assert(client:delete_node(remote_object_type, true) == true)
+assert(client:delete_node(remote_variable_type, true) == true)
+assert(client:delete_node(remote_data_type, true) == true)
+assert(client:delete_node(remote_reference_type, true) == true)
+assert(client:delete_node(remote_view, true) == true)
 
 assert(client:disconnect() == true)
 assert(client:close() == true)

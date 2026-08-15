@@ -4335,6 +4335,276 @@ static int vectis_opcua_lua_server_read_localized_text_cb_array_common(
   return 1;
 }
 
+typedef cpkt_opcua_result (*vectis_opcua_lua_client_read_ulong_fn)(
+    cpkt_opcua_client *client, cpkt_opcua_node_id node_id,
+    unsigned long *value_out, cpkt_opcua_status *status_out);
+
+typedef cpkt_opcua_result (*vectis_opcua_lua_client_write_ulong_fn)(
+    cpkt_opcua_client *client, cpkt_opcua_node_id node_id, unsigned long value,
+    cpkt_opcua_status *status_out);
+
+typedef cpkt_opcua_result (*vectis_opcua_lua_client_read_long_fn)(
+    cpkt_opcua_client *client, cpkt_opcua_node_id node_id, long *value_out,
+    cpkt_opcua_status *status_out);
+
+typedef cpkt_opcua_result (*vectis_opcua_lua_client_write_long_fn)(
+    cpkt_opcua_client *client, cpkt_opcua_node_id node_id, long value,
+    cpkt_opcua_status *status_out);
+
+typedef cpkt_opcua_result (*vectis_opcua_lua_client_read_bool_fn)(
+    cpkt_opcua_client *client, cpkt_opcua_node_id node_id, int *value_out,
+    cpkt_opcua_status *status_out);
+
+typedef cpkt_opcua_result (*vectis_opcua_lua_client_write_bool_fn)(
+    cpkt_opcua_client *client, cpkt_opcua_node_id node_id, int value,
+    cpkt_opcua_status *status_out);
+
+typedef cpkt_opcua_result (*vectis_opcua_lua_client_read_double_fn)(
+    cpkt_opcua_client *client, cpkt_opcua_node_id node_id, double *value_out,
+    cpkt_opcua_status *status_out);
+
+typedef cpkt_opcua_result (*vectis_opcua_lua_client_write_double_fn)(
+    cpkt_opcua_client *client, cpkt_opcua_node_id node_id, double value,
+    cpkt_opcua_status *status_out);
+
+typedef cpkt_opcua_result (*vectis_opcua_lua_client_read_string_fn)(
+    cpkt_opcua_client *client, cpkt_opcua_node_id node_id, char *buffer,
+    size_t buffer_size, size_t *required_size_out,
+    cpkt_opcua_status *status_out);
+
+typedef cpkt_opcua_result (*vectis_opcua_lua_client_write_string_fn)(
+    cpkt_opcua_client *client, cpkt_opcua_node_id node_id, const char *value,
+    cpkt_opcua_status *status_out);
+
+static int vectis_opcua_lua_client_read_ulong_attr(
+    lua_State *lua, vectis_opcua_lua_client_read_ulong_fn fn,
+    const char *context) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  unsigned long value;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  value = 0u;
+  status = 0u;
+  result = fn(client, node_id, &value, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status, context);
+  }
+  lua_pushinteger(lua, (lua_Integer)value);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_write_ulong_attr(
+    lua_State *lua, vectis_opcua_lua_client_write_ulong_fn fn,
+    const char *context) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  unsigned long value;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  value = vectis_opcua_lua_check_ulong(lua, 3, "value");
+  status = 0u;
+  result = fn(client, node_id, value, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status, context);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int
+vectis_opcua_lua_client_read_long_attr(lua_State *lua,
+                                       vectis_opcua_lua_client_read_long_fn fn,
+                                       const char *context) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  long value;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  value = 0L;
+  status = 0u;
+  result = fn(client, node_id, &value, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status, context);
+  }
+  lua_pushinteger(lua, (lua_Integer)value);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_write_long_attr(
+    lua_State *lua, vectis_opcua_lua_client_write_long_fn fn,
+    const char *context) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  long value;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  value = (long)luaL_checkinteger(lua, 3);
+  status = 0u;
+  result = fn(client, node_id, value, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status, context);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int
+vectis_opcua_lua_client_read_bool_attr(lua_State *lua,
+                                       vectis_opcua_lua_client_read_bool_fn fn,
+                                       const char *context) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  int value;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  value = 0;
+  status = 0u;
+  result = fn(client, node_id, &value, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status, context);
+  }
+  lua_pushboolean(lua, value);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_write_bool_attr(
+    lua_State *lua, vectis_opcua_lua_client_write_bool_fn fn,
+    const char *context) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  int value;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  value = lua_toboolean(lua, 3);
+  status = 0u;
+  result = fn(client, node_id, value, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status, context);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_read_double_attr(
+    lua_State *lua, vectis_opcua_lua_client_read_double_fn fn,
+    const char *context) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  double value;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  value = 0.0;
+  status = 0u;
+  result = fn(client, node_id, &value, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status, context);
+  }
+  lua_pushnumber(lua, (lua_Number)value);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_write_double_attr(
+    lua_State *lua, vectis_opcua_lua_client_write_double_fn fn,
+    const char *context) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  double value;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  value = luaL_checknumber(lua, 3);
+  status = 0u;
+  result = fn(client, node_id, value, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status, context);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_read_string_attr(
+    lua_State *lua, vectis_opcua_lua_client_read_string_fn fn,
+    const char *context) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  char stack_buffer[512];
+  char *buffer;
+  size_t required_size;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  buffer = stack_buffer;
+  required_size = 0u;
+  status = 0u;
+  result = fn(client, node_id, buffer, sizeof(stack_buffer), &required_size,
+              &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > sizeof(stack_buffer)) {
+    buffer = (char *)malloc(required_size + 1u);
+    if (buffer == NULL) {
+      return luaL_error(lua, "opcua client string attribute allocation failed");
+    }
+    result = fn(client, node_id, buffer, required_size + 1u, NULL, &status);
+  }
+  if (result != CPKT_OPCUA_OK) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    return vectis_opcua_lua_push_error(lua, result, status, context);
+  }
+  lua_pushstring(lua, buffer);
+  if (buffer != stack_buffer) {
+    free(buffer);
+  }
+  return 1;
+}
+
+static int vectis_opcua_lua_client_write_string_attr(
+    lua_State *lua, vectis_opcua_lua_client_write_string_fn fn,
+    const char *context) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  const char *value;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  value = luaL_checkstring(lua, 3);
+  status = 0u;
+  result = fn(client, node_id, value, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status, context);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
 static int vectis_opcua_lua_client_add_object(lua_State *lua) {
   cpkt_opcua_client *client;
   cpkt_opcua_node_id node_id;
@@ -4423,6 +4693,171 @@ static int vectis_opcua_lua_client_add_variable_under(lua_State *lua) {
   return 1;
 }
 
+static int vectis_opcua_lua_client_add_object_type(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_node_id parent_node_id;
+  const char *browse_name;
+  const char *display_name;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  int is_abstract;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  node_id = vectis_opcua_lua_node_id_field(lua, 2, "node_id",
+                                           "opcua client add_object_type");
+  parent_node_id = vectis_opcua_lua_node_id_field(
+      lua, 2, "parent_node_id", "opcua client add_object_type");
+  browse_name = vectis_opcua_lua_table_string(lua, 2, "browse_name");
+  display_name = vectis_opcua_lua_table_string(lua, 2, "display_name");
+  is_abstract = vectis_opcua_lua_table_bool(lua, 2, "is_abstract", 0);
+  status = 0u;
+  result = cpkt_opcua_client_add_object_type(client, node_id, parent_node_id,
+                                             browse_name, display_name,
+                                             is_abstract, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client add object type");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_add_variable_type(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_node_id parent_node_id;
+  cpkt_opcua_value value;
+  const char *browse_name;
+  const char *display_name;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  int is_abstract;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  node_id = vectis_opcua_lua_node_id_field(lua, 2, "node_id",
+                                           "opcua client add_variable_type");
+  parent_node_id = vectis_opcua_lua_node_id_field(
+      lua, 2, "parent_node_id", "opcua client add_variable_type");
+  browse_name = vectis_opcua_lua_table_string(lua, 2, "browse_name");
+  display_name = vectis_opcua_lua_table_string(lua, 2, "display_name");
+  vectis_opcua_lua_value_field(lua, 2, "value",
+                               "opcua client add_variable_type", &value);
+  is_abstract = vectis_opcua_lua_table_bool(lua, 2, "is_abstract", 0);
+  status = 0u;
+  result = cpkt_opcua_client_add_variable_type(client, node_id, parent_node_id,
+                                               browse_name, display_name,
+                                               &value, is_abstract, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client add variable type");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_add_reference_type(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_node_id parent_node_id;
+  const char *browse_name;
+  const char *display_name;
+  const char *inverse_name;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  int is_abstract;
+  int symmetric;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  node_id = vectis_opcua_lua_node_id_field(lua, 2, "node_id",
+                                           "opcua client add_reference_type");
+  parent_node_id = vectis_opcua_lua_node_id_field(
+      lua, 2, "parent_node_id", "opcua client add_reference_type");
+  browse_name = vectis_opcua_lua_table_string(lua, 2, "browse_name");
+  display_name = vectis_opcua_lua_table_string(lua, 2, "display_name");
+  inverse_name = vectis_opcua_lua_table_string(lua, 2, "inverse_name");
+  is_abstract = vectis_opcua_lua_table_bool(lua, 2, "is_abstract", 0);
+  symmetric = vectis_opcua_lua_table_bool(lua, 2, "symmetric", 0);
+  status = 0u;
+  result = cpkt_opcua_client_add_reference_type(
+      client, node_id, parent_node_id, browse_name, display_name, inverse_name,
+      is_abstract, symmetric, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client add reference type");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_add_data_type(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_node_id parent_node_id;
+  const char *browse_name;
+  const char *display_name;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  int is_abstract;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  node_id = vectis_opcua_lua_node_id_field(lua, 2, "node_id",
+                                           "opcua client add_data_type");
+  parent_node_id = vectis_opcua_lua_node_id_field(lua, 2, "parent_node_id",
+                                                  "opcua client add_data_type");
+  browse_name = vectis_opcua_lua_table_string(lua, 2, "browse_name");
+  display_name = vectis_opcua_lua_table_string(lua, 2, "display_name");
+  is_abstract = vectis_opcua_lua_table_bool(lua, 2, "is_abstract", 0);
+  status = 0u;
+  result = cpkt_opcua_client_add_data_type(client, node_id, parent_node_id,
+                                           browse_name, display_name,
+                                           is_abstract, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client add data type");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_add_view(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_node_id parent_node_id;
+  const char *browse_name;
+  const char *display_name;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  int contains_no_loops;
+  unsigned long event_notifier;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  node_id = vectis_opcua_lua_node_id_field(lua, 2, "node_id",
+                                           "opcua client add_view");
+  parent_node_id = vectis_opcua_lua_node_id_field(lua, 2, "parent_node_id",
+                                                  "opcua client add_view");
+  browse_name = vectis_opcua_lua_table_string(lua, 2, "browse_name");
+  display_name = vectis_opcua_lua_table_string(lua, 2, "display_name");
+  contains_no_loops =
+      vectis_opcua_lua_table_bool(lua, 2, "contains_no_loops", 0);
+  event_notifier = vectis_opcua_lua_table_ulong(lua, 2, "event_notifier", 0u);
+  status = 0u;
+  result = cpkt_opcua_client_add_view(
+      client, node_id, parent_node_id, browse_name, display_name,
+      contains_no_loops, event_notifier, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client add view");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
 static int vectis_opcua_lua_client_delete_node(lua_State *lua) {
   cpkt_opcua_client *client;
   cpkt_opcua_node_id node_id;
@@ -4441,6 +4876,114 @@ static int vectis_opcua_lua_client_delete_node(lua_State *lua) {
                                        "opcua client delete node");
   }
   lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_add_reference(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id source_node_id;
+  cpkt_opcua_node_id reference_type_id;
+  cpkt_opcua_node_id target_node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  int is_forward;
+  unsigned long target_node_class;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  source_node_id = vectis_opcua_lua_node_id_field(lua, 2, "source_node_id",
+                                                  "opcua client add_reference");
+  reference_type_id = vectis_opcua_lua_node_id_field(
+      lua, 2, "reference_type_id", "opcua client add_reference");
+  target_node_id = vectis_opcua_lua_node_id_field(lua, 2, "target_node_id",
+                                                  "opcua client add_reference");
+  is_forward = vectis_opcua_lua_table_bool(lua, 2, "is_forward", 1);
+  target_node_class = vectis_opcua_lua_table_ulong(
+      lua, 2, "target_node_class", CPKT_OPCUA_NODE_CLASS_UNSPECIFIED);
+  status = 0u;
+  result = cpkt_opcua_client_add_reference(
+      client, source_node_id, reference_type_id, is_forward, target_node_id,
+      target_node_class, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client add reference");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_delete_reference(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id source_node_id;
+  cpkt_opcua_node_id reference_type_id;
+  cpkt_opcua_node_id target_node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  int is_forward;
+  int delete_bidirectional;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  source_node_id = vectis_opcua_lua_node_id_field(
+      lua, 2, "source_node_id", "opcua client delete_reference");
+  reference_type_id = vectis_opcua_lua_node_id_field(
+      lua, 2, "reference_type_id", "opcua client delete_reference");
+  target_node_id = vectis_opcua_lua_node_id_field(
+      lua, 2, "target_node_id", "opcua client delete_reference");
+  is_forward = vectis_opcua_lua_table_bool(lua, 2, "is_forward", 1);
+  delete_bidirectional =
+      vectis_opcua_lua_table_bool(lua, 2, "delete_bidirectional", 0);
+  status = 0u;
+  result = cpkt_opcua_client_delete_reference(
+      client, source_node_id, reference_type_id, is_forward, target_node_id,
+      delete_bidirectional, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client delete reference");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_read_node_id(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_node_id result_node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  char stack_buffer[256];
+  char *buffer;
+  size_t required_size;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  buffer = stack_buffer;
+  required_size = 0u;
+  status = 0u;
+  result_node_id = cpkt_opcua_node_id_null();
+  result = cpkt_opcua_client_read_node_id(client, node_id, &result_node_id,
+                                          buffer, sizeof(stack_buffer),
+                                          &required_size, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > sizeof(stack_buffer)) {
+    buffer = (char *)malloc(required_size + 1u);
+    if (buffer == NULL) {
+      return luaL_error(lua, "opcua client read node id allocation failed");
+    }
+    result =
+        cpkt_opcua_client_read_node_id(client, node_id, &result_node_id, buffer,
+                                       required_size + 1u, NULL, &status);
+  }
+  if (result != CPKT_OPCUA_OK) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client read node id");
+  }
+  (void)vectis_opcua_lua_push_node_id_copy(lua, &result_node_id);
+  if (buffer != stack_buffer) {
+    free(buffer);
+  }
   return 1;
 }
 
@@ -4463,6 +5006,270 @@ static int vectis_opcua_lua_client_read_node_class(lua_State *lua) {
   }
   lua_pushinteger(lua, (lua_Integer)node_class);
   return 1;
+}
+
+static int vectis_opcua_lua_client_read_browse_name(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  unsigned short namespace_index;
+  char stack_buffer[512];
+  char *buffer;
+  size_t required_size;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  buffer = stack_buffer;
+  required_size = 0u;
+  namespace_index = 0u;
+  status = 0u;
+  result = cpkt_opcua_client_read_browse_name(client, node_id, &namespace_index,
+                                              buffer, sizeof(stack_buffer),
+                                              &required_size, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > sizeof(stack_buffer)) {
+    buffer = (char *)malloc(required_size + 1u);
+    if (buffer == NULL) {
+      return luaL_error(lua, "opcua client browse name allocation failed");
+    }
+    result = cpkt_opcua_client_read_browse_name(
+        client, node_id, &namespace_index, buffer, required_size + 1u, NULL,
+        &status);
+  }
+  if (result != CPKT_OPCUA_OK) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client read browse name");
+  }
+  lua_newtable(lua);
+  lua_pushinteger(lua, (lua_Integer)namespace_index);
+  lua_setfield(lua, -2, "namespace_index");
+  lua_pushstring(lua, buffer);
+  lua_setfield(lua, -2, "name");
+  if (buffer != stack_buffer) {
+    free(buffer);
+  }
+  return 1;
+}
+
+static int vectis_opcua_lua_client_read_display_name(lua_State *lua) {
+  return vectis_opcua_lua_client_read_string_attr(
+      lua, cpkt_opcua_client_read_display_name,
+      "opcua client read display name");
+}
+
+static int vectis_opcua_lua_client_read_description(lua_State *lua) {
+  return vectis_opcua_lua_client_read_string_attr(
+      lua, cpkt_opcua_client_read_description, "opcua client read description");
+}
+
+static int vectis_opcua_lua_client_write_display_name(lua_State *lua) {
+  return vectis_opcua_lua_client_write_string_attr(
+      lua, cpkt_opcua_client_write_display_name,
+      "opcua client write display name");
+}
+
+static int vectis_opcua_lua_client_write_description(lua_State *lua) {
+  return vectis_opcua_lua_client_write_string_attr(
+      lua, cpkt_opcua_client_write_description,
+      "opcua client write description");
+}
+
+static int vectis_opcua_lua_client_read_write_mask(lua_State *lua) {
+  return vectis_opcua_lua_client_read_ulong_attr(
+      lua, cpkt_opcua_client_read_write_mask, "opcua client read write mask");
+}
+
+static int vectis_opcua_lua_client_read_user_write_mask(lua_State *lua) {
+  return vectis_opcua_lua_client_read_ulong_attr(
+      lua, cpkt_opcua_client_read_user_write_mask,
+      "opcua client read user write mask");
+}
+
+static int vectis_opcua_lua_client_write_write_mask(lua_State *lua) {
+  return vectis_opcua_lua_client_write_ulong_attr(
+      lua, cpkt_opcua_client_write_write_mask, "opcua client write write mask");
+}
+
+static int vectis_opcua_lua_client_read_is_abstract(lua_State *lua) {
+  return vectis_opcua_lua_client_read_bool_attr(
+      lua, cpkt_opcua_client_read_is_abstract, "opcua client read is abstract");
+}
+
+static int vectis_opcua_lua_client_write_is_abstract(lua_State *lua) {
+  return vectis_opcua_lua_client_write_bool_attr(
+      lua, cpkt_opcua_client_write_is_abstract,
+      "opcua client write is abstract");
+}
+
+static int vectis_opcua_lua_client_read_symmetric(lua_State *lua) {
+  return vectis_opcua_lua_client_read_bool_attr(
+      lua, cpkt_opcua_client_read_symmetric, "opcua client read symmetric");
+}
+
+static int vectis_opcua_lua_client_write_symmetric(lua_State *lua) {
+  return vectis_opcua_lua_client_write_bool_attr(
+      lua, cpkt_opcua_client_write_symmetric, "opcua client write symmetric");
+}
+
+static int vectis_opcua_lua_client_read_inverse_name(lua_State *lua) {
+  return vectis_opcua_lua_client_read_string_attr(
+      lua, cpkt_opcua_client_read_inverse_name,
+      "opcua client read inverse name");
+}
+
+static int vectis_opcua_lua_client_write_inverse_name(lua_State *lua) {
+  return vectis_opcua_lua_client_write_string_attr(
+      lua, cpkt_opcua_client_write_inverse_name,
+      "opcua client write inverse name");
+}
+
+static int vectis_opcua_lua_client_read_contains_no_loops(lua_State *lua) {
+  return vectis_opcua_lua_client_read_bool_attr(
+      lua, cpkt_opcua_client_read_contains_no_loops,
+      "opcua client read contains no loops");
+}
+
+static int vectis_opcua_lua_client_write_contains_no_loops(lua_State *lua) {
+  return vectis_opcua_lua_client_write_bool_attr(
+      lua, cpkt_opcua_client_write_contains_no_loops,
+      "opcua client write contains no loops");
+}
+
+static int vectis_opcua_lua_client_read_event_notifier(lua_State *lua) {
+  return vectis_opcua_lua_client_read_ulong_attr(
+      lua, cpkt_opcua_client_read_event_notifier,
+      "opcua client read event notifier");
+}
+
+static int vectis_opcua_lua_client_write_event_notifier(lua_State *lua) {
+  return vectis_opcua_lua_client_write_ulong_attr(
+      lua, cpkt_opcua_client_write_event_notifier,
+      "opcua client write event notifier");
+}
+
+static int vectis_opcua_lua_client_read_data_type(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_node_id data_type;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  data_type = cpkt_opcua_node_id_null();
+  status = 0u;
+  result =
+      cpkt_opcua_client_read_data_type(client, node_id, &data_type, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client read data type");
+  }
+  return vectis_opcua_lua_push_node_id_copy(lua, &data_type);
+}
+
+static int vectis_opcua_lua_client_write_data_type(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_node_id data_type;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  data_type = vectis_opcua_lua_node_id_at(lua, 3);
+  status = 0u;
+  result =
+      cpkt_opcua_client_write_data_type(client, node_id, data_type, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client write data type");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_read_value_rank(lua_State *lua) {
+  return vectis_opcua_lua_client_read_long_attr(
+      lua, cpkt_opcua_client_read_value_rank, "opcua client read value rank");
+}
+
+static int vectis_opcua_lua_client_write_value_rank(lua_State *lua) {
+  return vectis_opcua_lua_client_write_long_attr(
+      lua, cpkt_opcua_client_write_value_rank, "opcua client write value rank");
+}
+
+static int vectis_opcua_lua_client_read_access_level(lua_State *lua) {
+  return vectis_opcua_lua_client_read_ulong_attr(
+      lua, cpkt_opcua_client_read_access_level,
+      "opcua client read access level");
+}
+
+static int vectis_opcua_lua_client_read_user_access_level(lua_State *lua) {
+  return vectis_opcua_lua_client_read_ulong_attr(
+      lua, cpkt_opcua_client_read_user_access_level,
+      "opcua client read user access level");
+}
+
+static int vectis_opcua_lua_client_write_access_level(lua_State *lua) {
+  return vectis_opcua_lua_client_write_ulong_attr(
+      lua, cpkt_opcua_client_write_access_level,
+      "opcua client write access level");
+}
+
+static int vectis_opcua_lua_client_read_access_level_ex(lua_State *lua) {
+  return vectis_opcua_lua_client_read_ulong_attr(
+      lua, cpkt_opcua_client_read_access_level_ex,
+      "opcua client read access level ex");
+}
+
+static int vectis_opcua_lua_client_write_access_level_ex(lua_State *lua) {
+  return vectis_opcua_lua_client_write_ulong_attr(
+      lua, cpkt_opcua_client_write_access_level_ex,
+      "opcua client write access level ex");
+}
+
+static int
+vectis_opcua_lua_client_read_minimum_sampling_interval(lua_State *lua) {
+  return vectis_opcua_lua_client_read_double_attr(
+      lua, cpkt_opcua_client_read_minimum_sampling_interval,
+      "opcua client read minimum sampling interval");
+}
+
+static int
+vectis_opcua_lua_client_write_minimum_sampling_interval(lua_State *lua) {
+  return vectis_opcua_lua_client_write_double_attr(
+      lua, cpkt_opcua_client_write_minimum_sampling_interval,
+      "opcua client write minimum sampling interval");
+}
+
+static int vectis_opcua_lua_client_read_historizing(lua_State *lua) {
+  return vectis_opcua_lua_client_read_bool_attr(
+      lua, cpkt_opcua_client_read_historizing, "opcua client read historizing");
+}
+
+static int vectis_opcua_lua_client_write_historizing(lua_State *lua) {
+  return vectis_opcua_lua_client_write_bool_attr(
+      lua, cpkt_opcua_client_write_historizing,
+      "opcua client write historizing");
+}
+
+static int vectis_opcua_lua_client_read_executable(lua_State *lua) {
+  return vectis_opcua_lua_client_read_bool_attr(
+      lua, cpkt_opcua_client_read_executable, "opcua client read executable");
+}
+
+static int vectis_opcua_lua_client_read_user_executable(lua_State *lua) {
+  return vectis_opcua_lua_client_read_bool_attr(
+      lua, cpkt_opcua_client_read_user_executable,
+      "opcua client read user executable");
+}
+
+static int vectis_opcua_lua_client_write_executable(lua_State *lua) {
+  return vectis_opcua_lua_client_write_bool_attr(
+      lua, cpkt_opcua_client_write_executable, "opcua client write executable");
 }
 
 static int vectis_opcua_lua_client_read_data_value(lua_State *lua) {
@@ -6576,8 +7383,55 @@ static void vectis_opcua_lua_register_client(lua_State *lua) {
       {"add_object", vectis_opcua_lua_client_add_object},
       {"add_variable", vectis_opcua_lua_client_add_variable},
       {"add_variable_under", vectis_opcua_lua_client_add_variable_under},
+      {"add_object_type", vectis_opcua_lua_client_add_object_type},
+      {"add_variable_type", vectis_opcua_lua_client_add_variable_type},
+      {"add_reference_type", vectis_opcua_lua_client_add_reference_type},
+      {"add_data_type", vectis_opcua_lua_client_add_data_type},
+      {"add_view", vectis_opcua_lua_client_add_view},
       {"delete_node", vectis_opcua_lua_client_delete_node},
+      {"add_reference", vectis_opcua_lua_client_add_reference},
+      {"delete_reference", vectis_opcua_lua_client_delete_reference},
+      {"read_node_id", vectis_opcua_lua_client_read_node_id},
       {"read_node_class", vectis_opcua_lua_client_read_node_class},
+      {"read_browse_name", vectis_opcua_lua_client_read_browse_name},
+      {"read_display_name", vectis_opcua_lua_client_read_display_name},
+      {"read_description", vectis_opcua_lua_client_read_description},
+      {"write_display_name", vectis_opcua_lua_client_write_display_name},
+      {"write_description", vectis_opcua_lua_client_write_description},
+      {"read_write_mask", vectis_opcua_lua_client_read_write_mask},
+      {"read_user_write_mask", vectis_opcua_lua_client_read_user_write_mask},
+      {"write_write_mask", vectis_opcua_lua_client_write_write_mask},
+      {"read_is_abstract", vectis_opcua_lua_client_read_is_abstract},
+      {"write_is_abstract", vectis_opcua_lua_client_write_is_abstract},
+      {"read_symmetric", vectis_opcua_lua_client_read_symmetric},
+      {"write_symmetric", vectis_opcua_lua_client_write_symmetric},
+      {"read_inverse_name", vectis_opcua_lua_client_read_inverse_name},
+      {"write_inverse_name", vectis_opcua_lua_client_write_inverse_name},
+      {"read_contains_no_loops",
+       vectis_opcua_lua_client_read_contains_no_loops},
+      {"write_contains_no_loops",
+       vectis_opcua_lua_client_write_contains_no_loops},
+      {"read_event_notifier", vectis_opcua_lua_client_read_event_notifier},
+      {"write_event_notifier", vectis_opcua_lua_client_write_event_notifier},
+      {"read_data_type", vectis_opcua_lua_client_read_data_type},
+      {"write_data_type", vectis_opcua_lua_client_write_data_type},
+      {"read_value_rank", vectis_opcua_lua_client_read_value_rank},
+      {"write_value_rank", vectis_opcua_lua_client_write_value_rank},
+      {"read_access_level", vectis_opcua_lua_client_read_access_level},
+      {"read_user_access_level",
+       vectis_opcua_lua_client_read_user_access_level},
+      {"write_access_level", vectis_opcua_lua_client_write_access_level},
+      {"read_access_level_ex", vectis_opcua_lua_client_read_access_level_ex},
+      {"write_access_level_ex", vectis_opcua_lua_client_write_access_level_ex},
+      {"read_minimum_sampling_interval",
+       vectis_opcua_lua_client_read_minimum_sampling_interval},
+      {"write_minimum_sampling_interval",
+       vectis_opcua_lua_client_write_minimum_sampling_interval},
+      {"read_historizing", vectis_opcua_lua_client_read_historizing},
+      {"write_historizing", vectis_opcua_lua_client_write_historizing},
+      {"read_executable", vectis_opcua_lua_client_read_executable},
+      {"read_user_executable", vectis_opcua_lua_client_read_user_executable},
+      {"write_executable", vectis_opcua_lua_client_write_executable},
       {"read_data_value", vectis_opcua_lua_client_read_data_value},
       {"read_boolean_array", vectis_opcua_lua_client_read_boolean_array},
       {"read_boolean_array_range",
