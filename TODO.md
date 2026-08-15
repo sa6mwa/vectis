@@ -428,9 +428,11 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add optional arm64 Apple Darwin release archive and smoke-test zip generation when osxcross is available.
 - [ ] Add a GitHub Actions Darwin arm64 verification workflow using hosted `macos-15`/`macos-latest` runners to execute the smoke-test zip and codesign checks.
 - [ ] Add release verification for GNU and musl deliverables.
-- [ ] Run the lifecycle release-review gate with the same review command mandated
-  by the lifecycle skill,
-  `codex review -c model=gpt-5.6-sol -c model_reasoning_effort=medium --base <release-branch>`,
-  and resolve relevant actionable findings until the review comes back clean.
+- [ ] Run the same Codex review command mandated by the lifecycle skill and
+  resolve relevant actionable findings until review comes back clean: use
+  `codex review -c model=gpt-5.6-sol -c model_reasoning_effort=medium --uncommitted`
+  during fix iterations, then the release-gate form
+  `codex review -c model=gpt-5.6-sol -c model_reasoning_effort=medium --base <release-branch>`
+  before release.
 - [ ] Add on-device Darwin smoke verification once a Mac is available.
 - [x] Add generated or checked API docs for C and Lua.
