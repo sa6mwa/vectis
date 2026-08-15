@@ -852,6 +852,87 @@ assert(client:delete_monitored_item(
 assert(client:delete_monitored_item(
     event_subscription_id, selected_event_item) == true)
 assert(client:delete_subscription(event_subscription_id) == true)
+
+local async_write_result = nil
+local async_write_request = assert(client:write_async(
+    node, opcua.value_integer(updated_value + 2), function(result)
+      assert(type(result.request_id) == "number")
+      assert(type(result.result) == "number")
+      assert(type(result.result_string) == "string")
+      assert(type(result.opcua_status) == "number")
+      assert(type(result.opcua_status_name) == "string")
+      async_write_result = result
+    end))
+for _ = 1, 100 do
+  local ok, err = client:iterate(20)
+  assert(ok == true, err and err.message or "client iterate async write")
+  if async_write_result ~= nil then
+    break
+  end
+end
+assert(async_write_result ~= nil, "client write_async should complete")
+assert(async_write_result.request_id == async_write_request)
+assert(async_write_result.ok == true)
+
+local async_read_result = nil
+local async_read_request = assert(client:read_async(node, function(result)
+  assert(type(result.request_id) == "number")
+  assert(type(result.result) == "number")
+  assert(type(result.result_string) == "string")
+  assert(type(result.opcua_status) == "number")
+  assert(type(result.opcua_status_name) == "string")
+  assert(result.value:type() == opcua.VALUE_INTEGER)
+  async_read_result = result
+end))
+for _ = 1, 100 do
+  local ok, err = client:iterate(20)
+  assert(ok == true, err and err.message or "client iterate async read")
+  if async_read_result ~= nil then
+    break
+  end
+end
+assert(async_read_result ~= nil, "client read_async should complete")
+assert(async_read_result.request_id == async_read_request)
+assert(async_read_result.ok == true)
+assert(async_read_result.value:get() == updated_value + 2)
+
+local async_method_result = nil
+local async_method_request = assert(client:call_method_async(
+    method_object, remote_method_node, { opcua.value_integer(6) }, 1,
+    function(result)
+      assert(type(result.request_id) == "number")
+      assert(type(result.outputs) == "table")
+      async_method_result = result
+    end))
+for _ = 1, 100 do
+  local ok, err = client:iterate(20)
+  assert(ok == true, err and err.message or "client iterate async method")
+  if async_method_result ~= nil then
+    break
+  end
+end
+assert(async_method_result ~= nil, "client call_method_async should complete")
+assert(async_method_result.request_id == async_method_request)
+assert(async_method_result.ok == true)
+assert(async_method_result.outputs[1]:get() == 18)
+
+local async_callback_error_seen = false
+assert(client:write_async(node, opcua.value_integer(updated_value + 3),
+                          function()
+                            error("intentional opcua async failure")
+                          end))
+for _ = 1, 100 do
+  local ok, err = client:iterate(20)
+  if ok == nil then
+    assert(err.dependency == "opcua")
+    assert(err.message:find("intentional opcua async failure", 1, true))
+    async_callback_error_seen = true
+    break
+  end
+end
+assert(async_callback_error_seen,
+       "client async callback error should surface through iterate")
+assert(client:write(node, opcua.value_integer(updated_value)) == true)
 assert(client:read_method_argument_count(
     remote_method_node, opcua.METHOD_ARGUMENT_INPUT) == 1)
 assert(client:read_method_argument_count(
