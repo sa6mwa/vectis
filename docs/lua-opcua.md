@@ -63,6 +63,8 @@ owned handles and structured Vectis error envelopes for dependency failures.
   `client:read_data_type(node_id)`, `client:write_data_type(node_id, value)`,
   `client:read_value_rank(node_id)`,
   `client:write_value_rank(node_id, value)`,
+  `client:read_array_dimensions(node_id)`,
+  `client:write_array_dimensions(node_id, values)`,
   `client:read_access_level(node_id)`,
   `client:read_user_access_level(node_id)`,
   `client:write_access_level(node_id, value)`,
@@ -175,6 +177,8 @@ owned handles and structured Vectis error envelopes for dependency failures.
   `server:read_data_type(node_id)`, `server:write_data_type(node_id, value)`,
   `server:read_value_rank(node_id)`,
   `server:write_value_rank(node_id, value)`,
+  `server:read_array_dimensions(node_id)`,
+  `server:write_array_dimensions(node_id, values)`,
   `server:read_access_level(node_id)`,
   `server:read_user_access_level(node_id)`,
   `server:write_access_level(node_id, value)`,
@@ -293,7 +297,7 @@ The dependency-native facade must cover the relevant public
 `cpkt_opcua_client_*` and `cpkt_opcua_server_*` application surface. Remaining
 server work includes security configuration, access-control callbacks,
 PubSub/MQTT configuration, event monitoring workflows, async-safe callback
-queueing, array-dimension helpers, and explicit C-only native-pointer
-exclusions. Remaining client work includes async calls, subscriptions,
-native-pointer exclusions, PubSub-related workflows, array-dimension helpers,
-and deterministic local e2e for callback ownership and error propagation.
+queueing, and explicit C-only native-pointer exclusions. Remaining client work
+includes async calls, subscriptions, native-pointer exclusions, PubSub-related
+workflows, and deterministic local e2e for callback ownership and error
+propagation.

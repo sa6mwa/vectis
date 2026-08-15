@@ -178,6 +178,14 @@ if server_port then
   assert(updated_items[2] == 20, "range write should update second item")
   assert(updated_items[3] == 30, "range write should update third item")
   assert(updated_items[4] == 4, "range write should preserve fourth item")
+  assert(server:write_array_dimensions(array_node, { 4 }) == true)
+  local array_dimensions, array_dimensions_err =
+      server:read_array_dimensions(array_node)
+  assert(array_dimensions ~= nil,
+         array_dimensions_err and array_dimensions_err.message or
+         "server read array dimensions")
+  assert(#array_dimensions == 1 and array_dimensions[1] == 4,
+         "server array dimensions should round-trip")
 
   local boolean_array_node = opcua.node_id_numeric(namespace_index, 8206)
   assert(server:add_variable({
@@ -675,6 +683,14 @@ assert(client_array_added == true,
        "client add array variable")
 assert(type(tostring(client:read_data_type(remote_array))) == "string")
 assert(type(client:read_value_rank(remote_array)) == "number")
+assert(client:write_array_dimensions(remote_array, { 4 }) == true)
+local client_array_dimensions, client_array_dimensions_err =
+    client:read_array_dimensions(remote_array)
+assert(client_array_dimensions ~= nil,
+       client_array_dimensions_err and client_array_dimensions_err.message or
+       "client read array dimensions")
+assert(#client_array_dimensions == 1 and client_array_dimensions[1] == 4,
+       "client array dimensions should round-trip")
 assert(type(client:read_access_level(remote_array)) == "number")
 assert(type(client:read_user_access_level(remote_array)) == "number")
 assert(type(client:read_access_level_ex(remote_array)) == "number")

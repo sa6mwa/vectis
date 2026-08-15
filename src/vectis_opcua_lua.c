@@ -2383,6 +2383,50 @@ static int *vectis_opcua_lua_int_array_field(lua_State *lua, int index,
   return values;
 }
 
+static unsigned long *
+vectis_opcua_lua_ulong_array_from_lua(lua_State *lua, int index,
+                                      size_t *count_out, const char *context) {
+  unsigned long *values;
+  size_t count;
+  size_t i;
+
+  *count_out = 0u;
+  count = vectis_opcua_lua_array_len(lua, index, context);
+  if (count > ((size_t)-1) / sizeof(unsigned long)) {
+    (void)luaL_error(lua, "%s size overflow", context);
+    return NULL;
+  }
+  values = (unsigned long *)malloc(sizeof(unsigned long) *
+                                   (count == 0u ? 1u : count));
+  if (values == NULL) {
+    (void)luaL_error(lua, "%s allocation failed", context);
+    return NULL;
+  }
+  for (i = 0u; i < count; ++i) {
+    lua_rawgeti(lua, index, (lua_Integer)i + 1);
+    values[i] = vectis_opcua_lua_check_ulong(lua, -1, context);
+    lua_pop(lua, 1);
+  }
+  *count_out = count;
+  return values;
+}
+
+static void vectis_opcua_lua_push_ulong_array(lua_State *lua,
+                                              const unsigned long *values,
+                                              size_t count) {
+  size_t i;
+
+  if (count > (size_t)INT_MAX) {
+    (void)luaL_error(lua, "opcua unsigned long array length overflow");
+    return;
+  }
+  lua_createtable(lua, (int)count, 0);
+  for (i = 0u; i < count; ++i) {
+    lua_pushinteger(lua, (lua_Integer)values[i]);
+    lua_rawseti(lua, -2, (lua_Integer)i + 1);
+  }
+}
+
 static cpkt_opcua_value *
 vectis_opcua_lua_value_array_from_lua(lua_State *lua, int index,
                                       size_t *count_out, const char *context) {
@@ -3670,6 +3714,75 @@ static int vectis_opcua_lua_server_read_value_rank(lua_State *lua) {
 static int vectis_opcua_lua_server_write_value_rank(lua_State *lua) {
   return vectis_opcua_lua_server_write_long_attr(
       lua, cpkt_opcua_server_write_value_rank, "opcua server write value rank");
+}
+
+static int vectis_opcua_lua_server_read_array_dimensions(lua_State *lua) {
+  cpkt_opcua_server *server;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  unsigned long stack_dimensions[4];
+  unsigned long *dimensions;
+  size_t required_count;
+  size_t capacity;
+
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  dimensions = stack_dimensions;
+  capacity = sizeof(stack_dimensions) / sizeof(stack_dimensions[0]);
+  required_count = 0u;
+  status = 0u;
+  result = cpkt_opcua_server_read_array_dimensions(
+      server, node_id, dimensions, capacity, &required_count, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_count > capacity) {
+    if (required_count > ((size_t)-1) / sizeof(unsigned long)) {
+      return luaL_error(lua, "opcua server array dimensions size overflow");
+    }
+    dimensions =
+        (unsigned long *)malloc(sizeof(unsigned long) * required_count);
+    if (dimensions == NULL) {
+      return luaL_error(lua, "opcua server array dimensions allocation failed");
+    }
+    capacity = required_count;
+    result = cpkt_opcua_server_read_array_dimensions(
+        server, node_id, dimensions, capacity, &required_count, &status);
+  }
+  if (result != CPKT_OPCUA_OK) {
+    if (dimensions != stack_dimensions) {
+      free(dimensions);
+    }
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua server read array dimensions");
+  }
+  vectis_opcua_lua_push_ulong_array(lua, dimensions, required_count);
+  if (dimensions != stack_dimensions) {
+    free(dimensions);
+  }
+  return 1;
+}
+
+static int vectis_opcua_lua_server_write_array_dimensions(lua_State *lua) {
+  cpkt_opcua_server *server;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  unsigned long *dimensions;
+  size_t dimension_count;
+
+  server = vectis_opcua_lua_server_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  dimensions = vectis_opcua_lua_ulong_array_from_lua(lua, 3, &dimension_count,
+                                                     "array dimensions");
+  status = 0u;
+  result = cpkt_opcua_server_write_array_dimensions(server, node_id, dimensions,
+                                                    dimension_count, &status);
+  free(dimensions);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua server write array dimensions");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
 }
 
 static int vectis_opcua_lua_server_read_access_level(lua_State *lua) {
@@ -5613,6 +5726,75 @@ static int vectis_opcua_lua_client_read_value_rank(lua_State *lua) {
 static int vectis_opcua_lua_client_write_value_rank(lua_State *lua) {
   return vectis_opcua_lua_client_write_long_attr(
       lua, cpkt_opcua_client_write_value_rank, "opcua client write value rank");
+}
+
+static int vectis_opcua_lua_client_read_array_dimensions(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  unsigned long stack_dimensions[4];
+  unsigned long *dimensions;
+  size_t required_count;
+  size_t capacity;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  dimensions = stack_dimensions;
+  capacity = sizeof(stack_dimensions) / sizeof(stack_dimensions[0]);
+  required_count = 0u;
+  status = 0u;
+  result = cpkt_opcua_client_read_array_dimensions(
+      client, node_id, dimensions, capacity, &required_count, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_count > capacity) {
+    if (required_count > ((size_t)-1) / sizeof(unsigned long)) {
+      return luaL_error(lua, "opcua client array dimensions size overflow");
+    }
+    dimensions =
+        (unsigned long *)malloc(sizeof(unsigned long) * required_count);
+    if (dimensions == NULL) {
+      return luaL_error(lua, "opcua client array dimensions allocation failed");
+    }
+    capacity = required_count;
+    result = cpkt_opcua_client_read_array_dimensions(
+        client, node_id, dimensions, capacity, &required_count, &status);
+  }
+  if (result != CPKT_OPCUA_OK) {
+    if (dimensions != stack_dimensions) {
+      free(dimensions);
+    }
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client read array dimensions");
+  }
+  vectis_opcua_lua_push_ulong_array(lua, dimensions, required_count);
+  if (dimensions != stack_dimensions) {
+    free(dimensions);
+  }
+  return 1;
+}
+
+static int vectis_opcua_lua_client_write_array_dimensions(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  unsigned long *dimensions;
+  size_t dimension_count;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  dimensions = vectis_opcua_lua_ulong_array_from_lua(lua, 3, &dimension_count,
+                                                     "array dimensions");
+  status = 0u;
+  result = cpkt_opcua_client_write_array_dimensions(client, node_id, dimensions,
+                                                    dimension_count, &status);
+  free(dimensions);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client write array dimensions");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
 }
 
 static int vectis_opcua_lua_client_read_access_level(lua_State *lua) {
@@ -7853,6 +8035,9 @@ static void vectis_opcua_lua_register_client(lua_State *lua) {
       {"write_data_type", vectis_opcua_lua_client_write_data_type},
       {"read_value_rank", vectis_opcua_lua_client_read_value_rank},
       {"write_value_rank", vectis_opcua_lua_client_write_value_rank},
+      {"read_array_dimensions", vectis_opcua_lua_client_read_array_dimensions},
+      {"write_array_dimensions",
+       vectis_opcua_lua_client_write_array_dimensions},
       {"read_access_level", vectis_opcua_lua_client_read_access_level},
       {"read_user_access_level",
        vectis_opcua_lua_client_read_user_access_level},
@@ -8051,6 +8236,9 @@ static void vectis_opcua_lua_register_server(lua_State *lua) {
       {"write_data_type", vectis_opcua_lua_server_write_data_type},
       {"read_value_rank", vectis_opcua_lua_server_read_value_rank},
       {"write_value_rank", vectis_opcua_lua_server_write_value_rank},
+      {"read_array_dimensions", vectis_opcua_lua_server_read_array_dimensions},
+      {"write_array_dimensions",
+       vectis_opcua_lua_server_write_array_dimensions},
       {"read_access_level", vectis_opcua_lua_server_read_access_level},
       {"read_user_access_level",
        vectis_opcua_lua_server_read_user_access_level},
