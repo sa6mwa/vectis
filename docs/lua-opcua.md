@@ -514,8 +514,13 @@ through Vectis Lua.
 ## Complete Surface Target
 
 The dependency-native facade must cover the relevant public
-`cpkt_opcua_client_*` and `cpkt_opcua_server_*` application surface. Remaining
-server work includes live PubSub/MQTT configuration validation, event monitoring
-workflows, and async-safe callback queueing. Remaining client work includes
-PubSub-related workflows. Native-pointer surfaces are documented C-only
-exclusions and must not be exposed as Lua userdata or raw pointer values.
+`cpkt_opcua_client_*` and `cpkt_opcua_server_*` application surface. The local
+surface audit verifies that all non-native client/server symbols in the cpkt
+C89 header are represented in the Lua facade and that the current cpkt C89
+header exposes no client-side PubSub symbols. Native-pointer surfaces are
+documented C-only exclusions and must not be exposed as Lua userdata or raw
+pointer values.
+
+Server PubSub graph construction, serialization, and load behavior are covered
+by deterministic local e2e. Live OPC UA PubSub/MQTT broker validation is an
+opt-in integration workflow and must not replace the deterministic local gate.

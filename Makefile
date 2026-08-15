@@ -17,7 +17,7 @@ FUZZ_PRESET := fuzz
 	deps-debug deps-release deps-cross \
 	build build-debug build-release build-asan build-coverage build-fuzz \
 	test test-debug test-lifecycle test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
-	lua-env lua-rock lua-test release-lua-artifacts \
+	lua-env lua-rock lua-test test-opcua-lua-surface release-lua-artifacts \
 	dev-up dev-down dev-reset dev-ps dev-logs \
 	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy release-darwin-smoke-bundle release-matrix prerelease-live prerelease-hardening lifecycle-version-contract release print-release-version clean-dist finalize-slice prerelease \
 	build-kore verify-kore-patches \
@@ -34,6 +34,7 @@ help:
 		'make test-darwin-linker-route Run osxcross Darwin linker-route regression tests.' \
 		'make lua-rock           Build and install the pure Lua Vectis rock under build/luarocks.' \
 		'make lua-test           Run Lua runner/facade smoke tests plus the installed Lua rock smoke.' \
+		'make test-opcua-lua-surface Verify OPC UA Lua covers all non-native cpkt C89 client/server symbols.' \
 		'make lua-env            Print shell exports for running Lua examples with the built vectis CLI and local rock.' \
 		'make test-no-kore       Configure and link a VECTIS_WITH_KORE_RUNTIME=OFF build.' \
 		'make test-e2e           Reset and run the local compose-backed lockd e2e smoke tests.' \
@@ -224,10 +225,13 @@ finalize-slice: format test-lifecycle test-target-tools test-cpkt-toolchains tes
 lua-rock:
 	$(TIMED) lua-rock bash ./scripts/build_lua_rock.sh
 
+test-opcua-lua-surface: deps-debug
+	$(TIMED) test-opcua-lua-surface python3 ./scripts/verify_opcua_lua_surface.py
+
 release-lua-artifacts:
 	$(TIMED) release-lua-artifacts bash ./scripts/stage_lua_rock_sources.sh
 
-lua-test: build-debug lua-rock
+lua-test: build-debug lua-rock test-opcua-lua-surface
 	$(TIMED) lua-test $(CTEST) --preset $(DEBUG_PRESET) -L lua
 	$(TIMED) lua-rock-smoke bash ./scripts/test_lua_rock.sh
 
