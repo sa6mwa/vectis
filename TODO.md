@@ -304,6 +304,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add OPC UA Lua expanded-node-id constructors, parse/print/equality helpers, and client/server expanded-reference add/delete bindings with smoke coverage plus direct and packed local e2e coverage.
 - [x] Add OPC UA Lua client/server array-dimension attribute read/write helpers with smoke coverage plus direct and packed local e2e coverage.
 - [x] Add OPC UA Lua client endpoint and FindServers discovery helpers over `cpkt_opcua_client_get_endpoint_*` and `cpkt_opcua_client_find_server_*`, with direct and packed local e2e coverage.
+- [x] Add OPC UA Lua client raw history reads over `cpkt_opcua_client_history_read_raw`, returning materialized owned data-value tables and structured no-history-backend errors with smoke plus direct and packed local e2e coverage.
 - [x] Add OPC UA Lua client subscription lifecycle and value-monitor callback bindings with owner-state callback retention, callback-error propagation through `client:iterate()`, smoke coverage plus direct and packed local e2e coverage.
 - [x] Add OPC UA Lua client compact event and selected event-field monitor callbacks with owner-state callback retention, direct and packed local e2e coverage, and callback errors surfaced through `client:iterate()`.
 - [x] Add OPC UA Lua client async read, write, and method-call callbacks with owner-state callback retention, direct and packed local e2e coverage, and callback errors surfaced through `client:iterate()`.

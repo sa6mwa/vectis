@@ -96,6 +96,7 @@ owned handles and structured Vectis error envelopes for dependency failures.
   `client:read_user_executable(node_id)`,
   `client:write_executable(node_id, value)`,
   `client:read_data_value(node_id)`,
+  `client:history_read_raw(node_id[, opts])`,
   `client:read_boolean_array(node_id)`,
   `client:read_boolean_array_range(node_id, range)`,
   `client:read_integer_array(node_id)`,
@@ -305,6 +306,17 @@ Method argument metadata readers use one-based `argument_index` and return:
   name = "InputArguments",
 }
 ```
+
+`client:history_read_raw(node_id[, opts])` mirrors
+`cpkt_opcua_client_history_read_raw()` and returns a materialized Lua array of
+owned data-value tables. `opts.start_time` and `opts.end_time` use the same
+`{ high32 = signed_word, low32 = unsigned_word }` DateTime table shape as
+`value_datetime()` and datetime arrays; omitted times default to zero.
+`opts.index_range`, `opts.return_bounds`, and `opts.values_per_response` map
+directly to the cpkt C89 call. Each returned data-value table includes
+`more_data_available`. If the connected server has no history backend for the
+node, the method returns `nil, err` with the normal structured OPC UA error
+envelope.
 
 Client value subscriptions are explicit: create a subscription, register one or
 more monitored items, pump with `client:iterate(...)`, then delete monitored

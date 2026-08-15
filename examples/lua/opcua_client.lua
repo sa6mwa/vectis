@@ -843,6 +843,28 @@ assert(client_data_value ~= nil,
        "client read data value")
 assert(client_data_value.has_value == true)
 assert(client_data_value.value:type() == opcua.VALUE_INTEGER)
+local history_values, history_err = client:history_read_raw(node, {
+  start_time = { high32 = 0, low32 = 0 },
+  end_time = { high32 = 0, low32 = 0 },
+  values_per_response = 4,
+})
+if history_values ~= nil then
+  assert(type(history_values) == "table", "client history values table")
+  for i, entry in ipairs(history_values) do
+    assert(type(entry.has_value) == "boolean", "history value has_value flag")
+    assert(type(entry.more_data_available) == "boolean",
+           "history value continuation flag")
+    if entry.has_value then
+      assert(type(entry.value.type) == "function",
+             "history entry owns an opcua.value")
+    end
+    assert(i >= 1, "history index should be one-based")
+  end
+else
+  assert(history_err ~= nil and history_err.dependency == "opcua",
+         history_err and history_err.message or
+         "client history read raw structured error")
+end
 local subscription_id = assert(client:create_subscription(50))
 assert(client:modify_subscription(subscription_id, 25) == true)
 local subscription_changes = {}

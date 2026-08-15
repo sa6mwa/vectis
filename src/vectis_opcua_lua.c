@@ -118,6 +118,12 @@ typedef struct vectis_opcua_lua_browse_collect {
   size_t count;
 } vectis_opcua_lua_browse_collect;
 
+typedef struct vectis_opcua_lua_history_collect {
+  lua_State *lua;
+  int table_index;
+  size_t count;
+} vectis_opcua_lua_history_collect;
+
 int luaopen_opcua(lua_State *lua);
 static int vectis_opcua_lua_connect_client(lua_State *lua,
                                            cpkt_opcua_client *client,
@@ -203,6 +209,42 @@ static unsigned long vectis_opcua_lua_table_ulong(lua_State *lua, int index,
     return (unsigned long)luaL_error(lua, "%s must be non-negative", field);
   }
   return (unsigned long)value;
+}
+
+static cpkt_opcua_datetime
+vectis_opcua_lua_datetime_table(lua_State *lua, int index,
+                                const char *context) {
+  cpkt_opcua_datetime value;
+  lua_Integer high32;
+
+  index = lua_absindex(lua, index);
+  luaL_checktype(lua, index, LUA_TTABLE);
+  lua_getfield(lua, index, "high32");
+  high32 = lua_isnil(lua, -1) ? 0 : luaL_checkinteger(lua, -1);
+  lua_pop(lua, 1);
+  if (high32 < LONG_MIN || high32 > LONG_MAX) {
+    (void)luaL_error(lua, "%s high32 is out of range", context);
+  }
+  value.high32 = (long)high32;
+  value.low32 = vectis_opcua_lua_table_ulong(lua, index, "low32", 0u);
+  return value;
+}
+
+static cpkt_opcua_datetime
+vectis_opcua_lua_datetime_field(lua_State *lua, int index, const char *field,
+                                const char *context) {
+  cpkt_opcua_datetime value;
+
+  value.high32 = 0;
+  value.low32 = 0u;
+  lua_getfield(lua, index, field);
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return value;
+  }
+  value = vectis_opcua_lua_datetime_table(lua, -1, context);
+  lua_pop(lua, 1);
+  return value;
 }
 
 static void
@@ -8387,6 +8429,106 @@ static int vectis_opcua_lua_client_read_data_value(lua_State *lua) {
   return 1;
 }
 
+static int
+vectis_opcua_lua_history_collect_cb(const cpkt_opcua_data_value *data_value,
+                                    int more_data_available, void *user) {
+  vectis_opcua_lua_history_collect *collect;
+  lua_State *lua;
+
+  collect = (vectis_opcua_lua_history_collect *)user;
+  lua = collect->lua;
+  (void)vectis_opcua_lua_push_data_value(lua, data_value);
+  lua_pushboolean(lua, more_data_available);
+  lua_setfield(lua, -2, "more_data_available");
+  ++collect->count;
+  lua_rawseti(lua, collect->table_index, (lua_Integer)collect->count);
+  return 0;
+}
+
+static int vectis_opcua_lua_client_history_read_raw(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_datetime start_time;
+  cpkt_opcua_datetime end_time;
+  const char *index_range;
+  int return_bounds;
+  unsigned long values_per_response;
+  vectis_opcua_lua_history_collect collect;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  char stack_buffer[4096];
+  char *buffer;
+  size_t buffer_size;
+  size_t required_size;
+  int options_index;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  node_id = vectis_opcua_lua_node_id_at(lua, 2);
+  start_time.high32 = 0;
+  start_time.low32 = 0u;
+  end_time.high32 = 0;
+  end_time.low32 = 0u;
+  index_range = NULL;
+  return_bounds = 0;
+  values_per_response = 0u;
+  if (!lua_isnoneornil(lua, 3)) {
+    luaL_checktype(lua, 3, LUA_TTABLE);
+    options_index = lua_absindex(lua, 3);
+    start_time = vectis_opcua_lua_datetime_field(
+        lua, options_index, "start_time", "opcua client history read raw");
+    end_time = vectis_opcua_lua_datetime_field(
+        lua, options_index, "end_time", "opcua client history read raw");
+    index_range = vectis_opcua_lua_table_string(lua, options_index,
+                                                "index_range");
+    return_bounds = vectis_opcua_lua_table_bool(lua, options_index,
+                                                "return_bounds", 0);
+    values_per_response = vectis_opcua_lua_table_ulong(
+        lua, options_index, "values_per_response", 0u);
+  }
+
+  lua_newtable(lua);
+  collect.lua = lua;
+  collect.table_index = lua_absindex(lua, -1);
+  collect.count = 0u;
+  buffer = stack_buffer;
+  buffer_size = sizeof(stack_buffer);
+  required_size = 0u;
+  status = 0u;
+  result = cpkt_opcua_client_history_read_raw(
+      client, node_id, start_time, end_time, index_range, return_bounds,
+      values_per_response, vectis_opcua_lua_history_collect_cb, &collect,
+      buffer, buffer_size, &required_size, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > sizeof(stack_buffer)) {
+    buffer = (char *)malloc(required_size + 1u);
+    if (buffer == NULL) {
+      lua_pop(lua, 1);
+      return luaL_error(lua, "opcua client history read raw allocation failed");
+    }
+    buffer_size = required_size + 1u;
+    lua_pop(lua, 1);
+    lua_newtable(lua);
+    collect.table_index = lua_absindex(lua, -1);
+    collect.count = 0u;
+    required_size = 0u;
+    result = cpkt_opcua_client_history_read_raw(
+        client, node_id, start_time, end_time, index_range, return_bounds,
+        values_per_response, vectis_opcua_lua_history_collect_cb, &collect,
+        buffer, buffer_size, NULL, &status);
+  }
+  if (result != CPKT_OPCUA_OK) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    lua_pop(lua, 1);
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client history read raw");
+  }
+  if (buffer != stack_buffer) {
+    free(buffer);
+  }
+  return 1;
+}
+
 static int vectis_opcua_lua_client_read_integer_array_common(lua_State *lua,
                                                              int has_range) {
   cpkt_opcua_client *client;
@@ -10533,6 +10675,7 @@ static void vectis_opcua_lua_register_client(lua_State *lua) {
       {"read_user_executable", vectis_opcua_lua_client_read_user_executable},
       {"write_executable", vectis_opcua_lua_client_write_executable},
       {"read_data_value", vectis_opcua_lua_client_read_data_value},
+      {"history_read_raw", vectis_opcua_lua_client_history_read_raw},
       {"read_boolean_array", vectis_opcua_lua_client_read_boolean_array},
       {"read_boolean_array_range",
        vectis_opcua_lua_client_read_boolean_array_range},
