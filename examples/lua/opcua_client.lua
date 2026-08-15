@@ -511,6 +511,16 @@ assert(updated:get() == updated_value)
 
 local remote_object = opcua.node_id_numeric(1, 7201)
 local remote_array = opcua.node_id_numeric(1, 7202)
+local remote_boolean_array = opcua.node_id_numeric(1, 7203)
+local remote_double_array = opcua.node_id_numeric(1, 7204)
+local remote_string_array = opcua.node_id_numeric(1, 7205)
+local remote_byte_string_array = opcua.node_id_numeric(1, 7206)
+local remote_uint64_array = opcua.node_id_numeric(1, 7207)
+local remote_datetime_array = opcua.node_id_numeric(1, 7208)
+local remote_status_array = opcua.node_id_numeric(1, 7209)
+local remote_guid_array = opcua.node_id_numeric(1, 7210)
+local remote_qualified_name_array = opcua.node_id_numeric(1, 7211)
+local remote_localized_text_array = opcua.node_id_numeric(1, 7212)
 local objects_folder = opcua.node_id_numeric(0, opcua.NODE_OBJECTS_FOLDER)
 local client_object_added, client_object_add_err = client:add_object({
   node_id = remote_object,
@@ -579,6 +589,204 @@ assert(client_array_items[1] == 1)
 assert(client_array_items[2] == 20)
 assert(client_array_items[3] == 30)
 assert(client_array_items[4] == 4)
+assert(client:add_variable_under({
+  node_id = remote_boolean_array,
+  parent_node_id = remote_object,
+  browse_name = "clientBooleans",
+  display_name = "Client Booleans",
+  value = opcua.value_boolean_array({ true, false, true }),
+}) == true, "client add boolean array")
+local client_booleans =
+    assert(client:read_boolean_array(remote_boolean_array),
+           "client read boolean array")
+assert(client_booleans[1] == true and client_booleans[2] == false,
+       "client boolean array values")
+local client_boolean_range, client_boolean_range_err =
+    client:read_boolean_array_range(remote_boolean_array, "1:2")
+assert(client_boolean_range ~= nil,
+       client_boolean_range_err and client_boolean_range_err.message or
+       "client read boolean array range")
+assert(client_boolean_range[1] == false and client_boolean_range[2] == true,
+       "client boolean array range values")
+assert(client:add_variable_under({
+  node_id = remote_double_array,
+  parent_node_id = remote_object,
+  browse_name = "clientDoubles",
+  display_name = "Client Doubles",
+  value = opcua.value_double_array({ 1.5, 2.5, 3.5 }),
+}) == true, "client add double array")
+local client_doubles =
+    assert(client:read_double_array(remote_double_array),
+           "client read double array")
+assert(client_doubles[2] == 2.5, "client double array values")
+local client_double_range, client_double_range_err =
+    client:read_double_array_range(remote_double_array, "0:1")
+assert(client_double_range ~= nil,
+       client_double_range_err and client_double_range_err.message or
+       "client read double array range")
+assert(client_double_range[1] == 1.5, "client double array range values")
+assert(client:add_variable_under({
+  node_id = remote_string_array,
+  parent_node_id = remote_object,
+  browse_name = "clientStrings",
+  display_name = "Client Strings",
+  value = opcua.value_string_array({ "alpha", "beta", "gamma" }),
+}) == true, "client add string array")
+local client_strings =
+    assert(client:read_string_array(remote_string_array),
+           "client read string array")
+assert(client_strings[2] == "beta", "client string array values")
+local client_string_range, client_string_range_err =
+    client:read_string_array_range(remote_string_array, "1:2")
+assert(client_string_range ~= nil,
+       client_string_range_err and client_string_range_err.message or
+       "client read string array range")
+assert(client_string_range[2] == "gamma", "client string array range values")
+assert(client:add_variable_under({
+  node_id = remote_byte_string_array,
+  parent_node_id = remote_object,
+  browse_name = "clientBytes",
+  display_name = "Client Bytes",
+  value = opcua.value_byte_string_array({ "aa", "bb", "cc" }),
+}) == true, "client add byte string array")
+local client_bytes =
+    assert(client:read_byte_string_array(remote_byte_string_array),
+           "client read byte string array")
+assert(client_bytes[3] == "cc", "client byte string array values")
+local client_byte_range, client_byte_range_err =
+    client:read_byte_string_array_range(remote_byte_string_array, "0:1")
+assert(client_byte_range ~= nil,
+       client_byte_range_err and client_byte_range_err.message or
+       "client read byte string array range")
+assert(client_byte_range[2] == "bb", "client byte string array range values")
+assert(client:add_variable_under({
+  node_id = remote_uint64_array,
+  parent_node_id = remote_object,
+  browse_name = "clientUint64s",
+  display_name = "Client Uint64s",
+  value = opcua.value_uint64_array({
+    { high32 = 0, low32 = 10 },
+    { high32 = 1, low32 = 11 },
+  }),
+}) == true, "client add uint64 array")
+local client_uint64s =
+    assert(client:read_uint64_array(remote_uint64_array),
+           "client read uint64 array")
+assert(client_uint64s[2].high32 == 1 and client_uint64s[2].low32 == 11,
+       "client uint64 array values")
+local client_uint64_range, client_uint64_range_err =
+    client:read_uint64_array_range(remote_uint64_array, "0:1")
+assert(client_uint64_range ~= nil,
+       client_uint64_range_err and client_uint64_range_err.message or
+       "client read uint64 array range")
+assert(client_uint64_range[2].low32 == 11, "client uint64 array range values")
+assert(client:add_variable_under({
+  node_id = remote_datetime_array,
+  parent_node_id = remote_object,
+  browse_name = "clientDateTimes",
+  display_name = "Client DateTimes",
+  value = opcua.value_datetime_array({
+    { high32 = 2, low32 = 20 },
+    { high32 = 3, low32 = 30 },
+  }),
+}) == true, "client add datetime array")
+local client_datetimes =
+    assert(client:read_datetime_array(remote_datetime_array),
+           "client read datetime array")
+assert(client_datetimes[1].high32 == 2 and client_datetimes[2].low32 == 30,
+       "client datetime array values")
+local client_datetime_range, client_datetime_range_err =
+    client:read_datetime_array_range(remote_datetime_array, "0:1")
+assert(client_datetime_range ~= nil,
+       client_datetime_range_err and client_datetime_range_err.message or
+       "client read datetime array range")
+assert(client_datetime_range[2].high32 == 3,
+       "client datetime array range values")
+assert(client:add_variable_under({
+  node_id = remote_status_array,
+  parent_node_id = remote_object,
+  browse_name = "clientStatuses",
+  display_name = "Client Statuses",
+  value = opcua.value_status_array({ 0, 1, 2 }),
+}) == true, "client add status array")
+local client_statuses =
+    assert(client:read_status_array(remote_status_array),
+           "client read status array")
+assert(client_statuses[3] == 2, "client status array values")
+local client_status_range, client_status_range_err =
+    client:read_status_array_range(remote_status_array, "1:2")
+assert(client_status_range ~= nil,
+       client_status_range_err and client_status_range_err.message or
+       "client read status array range")
+assert(client_status_range[1] == 1, "client status array range values")
+assert(client:add_variable_under({
+  node_id = remote_guid_array,
+  parent_node_id = remote_object,
+  browse_name = "clientGuids",
+  display_name = "Client Guids",
+  value = opcua.value_guid_array({
+    "00112233-4455-6677-8899-aabbccddeeff",
+    "11112222-3333-4444-5555-666677778888",
+  }),
+}) == true, "client add guid array")
+local client_guids =
+    assert(client:read_guid_array(remote_guid_array),
+           "client read guid array")
+assert(client_guids[1] == "00112233-4455-6677-8899-aabbccddeeff",
+       "client guid array values")
+local client_guid_range, client_guid_range_err =
+    client:read_guid_array_range(remote_guid_array, "0:1")
+assert(client_guid_range ~= nil,
+       client_guid_range_err and client_guid_range_err.message or
+       "client read guid array range")
+assert(client_guid_range[2] == "11112222-3333-4444-5555-666677778888",
+       "client guid array range values")
+assert(client:add_variable_under({
+  node_id = remote_qualified_name_array,
+  parent_node_id = remote_object,
+  browse_name = "clientQualifiedNames",
+  display_name = "Client Qualified Names",
+  value = opcua.value_qualified_name_array({
+    { namespace_index = 1, name = "first" },
+    { namespace_index = 1, name = "second" },
+  }),
+}) == true, "client add qualified name array")
+local client_qualified_names =
+    assert(client:read_qualified_name_array(remote_qualified_name_array),
+           "client read qualified name array")
+assert(client_qualified_names[2].name == "second",
+       "client qualified name array values")
+local client_qualified_name_range, client_qualified_name_range_err =
+    client:read_qualified_name_array_range(remote_qualified_name_array, "0:1")
+assert(client_qualified_name_range ~= nil,
+       client_qualified_name_range_err and
+       client_qualified_name_range_err.message or
+       "client read qualified name array range")
+assert(client_qualified_name_range[1].name == "first",
+       "client qualified name array range values")
+assert(client:add_variable_under({
+  node_id = remote_localized_text_array,
+  parent_node_id = remote_object,
+  browse_name = "clientLocalizedTexts",
+  display_name = "Client Localized Texts",
+  value = opcua.value_localized_text_array({
+    { locale = "en-US", text = "First" },
+    { locale = "en-US", text = "Second" },
+  }),
+}) == true, "client add localized text array")
+local client_localized_texts =
+    assert(client:read_localized_text_array(remote_localized_text_array),
+           "client read localized text array")
+assert(client_localized_texts[2].text == "Second",
+       "client localized text array values")
+local client_localized_text_range, client_localized_text_range_err =
+    client:read_localized_text_array_range(remote_localized_text_array, "0:1")
+assert(client_localized_text_range ~= nil,
+       client_localized_text_range_err and
+       client_localized_text_range_err.message or
+       "client read localized text array range")
+assert(client_localized_text_range[1].text == "First",
+       "client localized text array range values")
 local client_translated, client_translated_err =
     client:translate_browse_path(objects_folder, {
   { namespace_index = 1, name = "clientObject" },
@@ -622,6 +830,16 @@ assert(client_page ~= nil,
 assert(type(client_page.entries) == "table")
 assert(client_page.entries[1].target_node_id == remote_array)
 assert(client:delete_node(remote_array, true) == true)
+assert(client:delete_node(remote_boolean_array, true) == true)
+assert(client:delete_node(remote_double_array, true) == true)
+assert(client:delete_node(remote_string_array, true) == true)
+assert(client:delete_node(remote_byte_string_array, true) == true)
+assert(client:delete_node(remote_uint64_array, true) == true)
+assert(client:delete_node(remote_datetime_array, true) == true)
+assert(client:delete_node(remote_status_array, true) == true)
+assert(client:delete_node(remote_guid_array, true) == true)
+assert(client:delete_node(remote_qualified_name_array, true) == true)
+assert(client:delete_node(remote_localized_text_array, true) == true)
 assert(client:delete_node(remote_object, true) == true)
 
 assert(client:disconnect() == true)
