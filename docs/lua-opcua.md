@@ -34,7 +34,15 @@ owned handles and structured Vectis error envelopes for dependency failures.
   `value_localized_text_array(values)`.
 - Clients: `client()`, `connect(endpoint[, opts])`,
   `client:connect(endpoint[, opts])`, `client:disconnect()`,
-  `client:iterate(timeout_ms)`, `client:read(node_id)`,
+  `client:iterate(timeout_ms)`,
+  `client:create_subscription(publishing_interval_ms)`,
+  `client:modify_subscription(subscription_id, publishing_interval_ms)`,
+  `client:delete_subscription(subscription_id)`,
+  `client:monitor_value(subscription_id, node_id, sampling_interval_ms,
+  callback)`, `client:monitor_value_ex(subscription_id, node_id, opts,
+  callback)`, `client:set_monitoring_mode(subscription_id, monitored_item_id,
+  mode)`, `client:delete_monitored_item(subscription_id, monitored_item_id)`,
+  `client:read(node_id)`,
   `client:write(node_id, value)`, `client:add_object(opts)`,
   `client:add_variable(opts)`, `client:add_variable_under(opts)`,
   `client:add_object_type(opts)`, `client:add_variable_type(opts)`,
@@ -235,6 +243,33 @@ Method argument metadata readers use one-based `argument_index` and return:
 }
 ```
 
+Client value subscriptions are explicit: create a subscription, register one or
+more monitored items, pump with `client:iterate(...)`, then delete monitored
+items and the subscription when done. `client:monitor_value()` accepts a simple
+sampling interval. `client:monitor_value_ex()` accepts
+`sampling_interval_ms`, `queue_size`, `discard_oldest`, `deadband_type`, and
+`deadband_value`; deadband constants are exposed as `DEADBAND_NONE`,
+`DEADBAND_ABSOLUTE`, and `DEADBAND_PERCENT`. Monitoring modes are
+`MONITORING_DISABLED`, `MONITORING_SAMPLING`, and `MONITORING_REPORTING`.
+
+Value-monitor callbacks receive owned Lua tables:
+
+```lua
+{
+  subscription_id = 1,
+  monitored_item_id = 2,
+  value = opcua.value_integer(7),
+  opcua_status = 0,
+  opcua_status_name = "Good",
+}
+```
+
+The callback reference is retained by the client until
+`client:delete_monitored_item()`, `client:delete_subscription()`,
+`client:close()`, or garbage collection. Callback failures are converted into
+structured OPC UA callback errors returned by the next `client:iterate(...)`
+call.
+
 ## Server Example
 
 ```lua
@@ -298,6 +333,5 @@ The dependency-native facade must cover the relevant public
 server work includes security configuration, access-control callbacks,
 PubSub/MQTT configuration, event monitoring workflows, async-safe callback
 queueing, and explicit C-only native-pointer exclusions. Remaining client work
-includes async calls, subscriptions, native-pointer exclusions, PubSub-related
-workflows, and deterministic local e2e for callback ownership and error
-propagation.
+includes async calls, event-monitor subscription callbacks, native-pointer
+exclusions, and PubSub-related workflows.

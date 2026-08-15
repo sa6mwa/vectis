@@ -702,6 +702,86 @@ assert(client_data_value ~= nil,
        "client read data value")
 assert(client_data_value.has_value == true)
 assert(client_data_value.value:type() == opcua.VALUE_INTEGER)
+local subscription_id = assert(client:create_subscription(50))
+assert(client:modify_subscription(subscription_id, 25) == true)
+local subscription_changes = {}
+local monitored_basic = assert(client:monitor_value(
+    subscription_id, node, 10, function(change)
+      assert(type(change.subscription_id) == "number")
+      assert(type(change.monitored_item_id) == "number")
+      assert(change.value:type() == opcua.VALUE_INTEGER)
+      assert(type(change.opcua_status) == "number")
+      assert(type(change.opcua_status_name) == "string")
+      subscription_changes[#subscription_changes + 1] = change
+    end))
+local monitored_options = assert(client:monitor_value_ex(
+    subscription_id, node, {
+      sampling_interval_ms = 10,
+      queue_size = 4,
+      discard_oldest = true,
+      deadband_type = opcua.DEADBAND_NONE,
+    }, function(change)
+      assert(change.value:type() == opcua.VALUE_INTEGER)
+      subscription_changes[#subscription_changes + 1] = change
+    end))
+assert(client:set_monitoring_mode(
+    subscription_id, monitored_basic, opcua.MONITORING_REPORTING) == true)
+assert(client:set_monitoring_mode(
+    subscription_id, monitored_options, opcua.MONITORING_REPORTING) == true)
+local subscription_value = updated_value + 1
+assert(client:write(node, opcua.value_integer(subscription_value)) == true)
+local observed_basic = false
+local observed_options = false
+for _ = 1, 100 do
+  local ok, err = client:iterate(20)
+  assert(ok == true, err and err.message or "client iterate subscription")
+  for i = 1, #subscription_changes do
+    local change = subscription_changes[i]
+    if change.value:get() == subscription_value then
+      if change.monitored_item_id == monitored_basic then
+        observed_basic = true
+      end
+      if change.monitored_item_id == monitored_options then
+        observed_options = true
+      end
+    end
+  end
+  if observed_basic and observed_options then
+    break
+  end
+end
+assert(observed_basic, "client monitor_value callback should observe write")
+assert(observed_options, "client monitor_value_ex callback should observe write")
+assert(client:set_monitoring_mode(
+    subscription_id, monitored_basic, opcua.MONITORING_DISABLED) == true)
+assert(client:delete_monitored_item(
+    subscription_id, monitored_basic) == true)
+assert(client:delete_monitored_item(
+    subscription_id, monitored_options) == true)
+assert(client:delete_subscription(subscription_id) == true)
+
+local error_subscription_id = assert(client:create_subscription(25))
+local error_monitored_item = assert(client:monitor_value(
+    error_subscription_id, node, 10, function()
+      error("intentional opcua monitor failure")
+    end))
+assert(client:write(node, opcua.value_integer(subscription_value + 1)) == true)
+local callback_error_observed = false
+for _ = 1, 100 do
+  local ok, err = client:iterate(20)
+  if ok == nil then
+    assert(err.dependency == "opcua")
+    assert(err.message:find("intentional opcua monitor failure", 1, true))
+    callback_error_observed = true
+    break
+  end
+end
+assert(callback_error_observed,
+       "client monitor callback error should surface through iterate")
+assert(client:delete_monitored_item(
+    error_subscription_id, error_monitored_item) == true)
+assert(client:delete_subscription(error_subscription_id) == true)
+assert(client:write(node, opcua.value_integer(updated_value)) == true)
 assert(client:read_method_argument_count(
     remote_method_node, opcua.METHOD_ARGUMENT_INPUT) == 1)
 assert(client:read_method_argument_count(

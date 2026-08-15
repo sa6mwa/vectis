@@ -48,8 +48,20 @@ typedef struct vectis_opcua_lua_value {
   unsigned char storage[1];
 } vectis_opcua_lua_value;
 
+typedef struct vectis_opcua_lua_monitor_callback {
+  lua_State *owner;
+  struct vectis_opcua_lua_client *client;
+  int callback_ref;
+  cpkt_opcua_subscription_id subscription_id;
+  cpkt_opcua_monitored_item_id monitored_item_id;
+  struct vectis_opcua_lua_monitor_callback *next;
+} vectis_opcua_lua_monitor_callback;
+
 typedef struct vectis_opcua_lua_client {
   cpkt_opcua_client *client;
+  lua_State *owner;
+  int callback_error_ref;
+  vectis_opcua_lua_monitor_callback *monitors;
 } vectis_opcua_lua_client;
 
 typedef struct vectis_opcua_lua_method_output_slot {
@@ -2031,6 +2043,195 @@ vectis_opcua_lua_method_many_cb(const cpkt_opcua_value *inputs,
       output_count);
 }
 
+static void vectis_opcua_lua_monitor_callback_free(
+    vectis_opcua_lua_monitor_callback *callback) {
+  if (callback == NULL) {
+    return;
+  }
+  if (callback->owner != NULL && callback->callback_ref != LUA_NOREF) {
+    luaL_unref(callback->owner, LUA_REGISTRYINDEX, callback->callback_ref);
+    callback->callback_ref = LUA_NOREF;
+  }
+  free(callback);
+}
+
+static void vectis_opcua_lua_client_free_monitor_callbacks(
+    vectis_opcua_lua_client *client) {
+  vectis_opcua_lua_monitor_callback *callback;
+  vectis_opcua_lua_monitor_callback *next;
+
+  callback = client->monitors;
+  client->monitors = NULL;
+  while (callback != NULL) {
+    next = callback->next;
+    vectis_opcua_lua_monitor_callback_free(callback);
+    callback = next;
+  }
+}
+
+static vectis_opcua_lua_monitor_callback *vectis_opcua_lua_monitor_callback_new(
+    lua_State *lua, vectis_opcua_lua_client *client, int callback_index,
+    cpkt_opcua_subscription_id subscription_id) {
+  vectis_opcua_lua_monitor_callback *callback;
+
+  callback = (vectis_opcua_lua_monitor_callback *)calloc(1u, sizeof(*callback));
+  if (callback == NULL) {
+    (void)luaL_error(lua, "opcua monitor callback allocation failed");
+    return NULL;
+  }
+  callback->owner = lua;
+  callback->client = client;
+  callback->callback_ref = LUA_NOREF;
+  callback->subscription_id = subscription_id;
+  callback->monitored_item_id = 0u;
+  lua_pushvalue(lua, callback_index);
+  callback->callback_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  return callback;
+}
+
+static void vectis_opcua_lua_client_keep_monitor_callback(
+    vectis_opcua_lua_client *client,
+    vectis_opcua_lua_monitor_callback *callback) {
+  callback->next = client->monitors;
+  client->monitors = callback;
+}
+
+static void vectis_opcua_lua_client_forget_monitor_callback(
+    vectis_opcua_lua_client *client, cpkt_opcua_subscription_id subscription_id,
+    cpkt_opcua_monitored_item_id monitored_item_id) {
+  vectis_opcua_lua_monitor_callback *callback;
+  vectis_opcua_lua_monitor_callback *previous;
+
+  previous = NULL;
+  callback = client->monitors;
+  while (callback != NULL) {
+    if (callback->subscription_id == subscription_id &&
+        callback->monitored_item_id == monitored_item_id) {
+      if (previous == NULL) {
+        client->monitors = callback->next;
+      } else {
+        previous->next = callback->next;
+      }
+      vectis_opcua_lua_monitor_callback_free(callback);
+      return;
+    }
+    previous = callback;
+    callback = callback->next;
+  }
+}
+
+static void vectis_opcua_lua_client_forget_subscription_callbacks(
+    vectis_opcua_lua_client *client,
+    cpkt_opcua_subscription_id subscription_id) {
+  vectis_opcua_lua_monitor_callback *callback;
+  vectis_opcua_lua_monitor_callback *previous;
+  vectis_opcua_lua_monitor_callback *next;
+
+  previous = NULL;
+  callback = client->monitors;
+  while (callback != NULL) {
+    next = callback->next;
+    if (callback->subscription_id == subscription_id) {
+      if (previous == NULL) {
+        client->monitors = next;
+      } else {
+        previous->next = next;
+      }
+      vectis_opcua_lua_monitor_callback_free(callback);
+    } else {
+      previous = callback;
+    }
+    callback = next;
+  }
+}
+
+static void
+vectis_opcua_lua_client_set_callback_error(vectis_opcua_lua_client *client,
+                                           const char *message) {
+  lua_State *lua;
+
+  if (client == NULL || client->owner == NULL ||
+      client->callback_error_ref != LUA_NOREF) {
+    return;
+  }
+  lua = client->owner;
+  lua_pushstring(lua, message != NULL ? message : "opcua callback failed");
+  client->callback_error_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+}
+
+static int vectis_opcua_lua_client_take_callback_error(
+    lua_State *lua, vectis_opcua_lua_client *client, const char *context) {
+  const char *message;
+
+  if (client->callback_error_ref == LUA_NOREF) {
+    return 0;
+  }
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, client->callback_error_ref);
+  luaL_unref(lua, LUA_REGISTRYINDEX, client->callback_error_ref);
+  client->callback_error_ref = LUA_NOREF;
+  message = lua_tostring(lua, -1);
+  lua_pushnil(lua);
+  lua_newtable(lua);
+  lua_pushinteger(lua, VECTIS_ERR_STATE);
+  lua_setfield(lua, -2, "status");
+  vectis_opcua_lua_set_field_string(lua, "status_string", "state");
+  lua_pushinteger(lua, VECTIS_ERROR_SOURCE_CPKT);
+  lua_setfield(lua, -2, "source_code");
+  vectis_opcua_lua_set_field_string(lua, "source", "cpkt");
+  vectis_opcua_lua_set_field_string(lua, "dependency", "opcua");
+  lua_pushinteger(lua, (lua_Integer)CPKT_OPCUA_ERR_CALLBACK);
+  lua_setfield(lua, -2, "dependency_code");
+  lua_pushinteger(lua, (lua_Integer)CPKT_OPCUA_ERR_CALLBACK);
+  lua_setfield(lua, -2, "result");
+  vectis_opcua_lua_set_field_string(
+      lua, "result_string", cpkt_opcua_result_string(CPKT_OPCUA_ERR_CALLBACK));
+  lua_pushinteger(lua, 0);
+  lua_setfield(lua, -2, "opcua_status");
+  vectis_opcua_lua_set_field_string(lua, "opcua_status_name",
+                                    cpkt_opcua_status_name(0u));
+  lua_pushfstring(lua, "%s: %s", context,
+                  message != NULL ? message : "opcua callback failed");
+  lua_setfield(lua, -2, "message");
+  lua_remove(lua, -3);
+  return 2;
+}
+
+static void
+vectis_opcua_lua_data_change_cb(cpkt_opcua_subscription_id subscription_id,
+                                cpkt_opcua_monitored_item_id monitored_item_id,
+                                const cpkt_opcua_value *value,
+                                cpkt_opcua_status status, void *user) {
+  vectis_opcua_lua_monitor_callback *callback;
+  lua_State *lua;
+  int top;
+
+  callback = (vectis_opcua_lua_monitor_callback *)user;
+  if (callback == NULL || callback->owner == NULL ||
+      callback->callback_ref == LUA_NOREF) {
+    return;
+  }
+  lua = callback->owner;
+  top = lua_gettop(lua);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, callback->callback_ref);
+  lua_newtable(lua);
+  lua_pushinteger(lua, (lua_Integer)subscription_id);
+  lua_setfield(lua, -2, "subscription_id");
+  lua_pushinteger(lua, (lua_Integer)monitored_item_id);
+  lua_setfield(lua, -2, "monitored_item_id");
+  (void)vectis_opcua_lua_push_value_copy(lua, value);
+  lua_setfield(lua, -2, "value");
+  lua_pushinteger(lua, (lua_Integer)status);
+  lua_setfield(lua, -2, "opcua_status");
+  vectis_opcua_lua_set_field_string(lua, "opcua_status_name",
+                                    cpkt_opcua_status_name(status));
+  if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
+    vectis_opcua_lua_client_set_callback_error(callback->client,
+                                               lua_tostring(lua, -1));
+    lua_pop(lua, 1);
+  }
+  lua_settop(lua, top);
+}
+
 static vectis_opcua_lua_client *vectis_opcua_lua_check_client(lua_State *lua,
                                                               int index) {
   return (vectis_opcua_lua_client *)luaL_checkudata(lua, index,
@@ -2052,6 +2253,11 @@ static int vectis_opcua_lua_client_close(lua_State *lua) {
   vectis_opcua_lua_client *client;
 
   client = vectis_opcua_lua_check_client(lua, 1);
+  vectis_opcua_lua_client_free_monitor_callbacks(client);
+  if (client->owner != NULL && client->callback_error_ref != LUA_NOREF) {
+    luaL_unref(client->owner, LUA_REGISTRYINDEX, client->callback_error_ref);
+    client->callback_error_ref = LUA_NOREF;
+  }
   if (client->client != NULL) {
     cpkt_opcua_client_free(client->client);
     client->client = NULL;
@@ -2067,6 +2273,9 @@ static int vectis_opcua_lua_client_new(lua_State *lua) {
   client = (vectis_opcua_lua_client *)lua_newuserdatauv(
       lua, sizeof(vectis_opcua_lua_client), 0);
   client->client = NULL;
+  client->owner = lua;
+  client->callback_error_ref = LUA_NOREF;
+  client->monitors = NULL;
   luaL_getmetatable(lua, VECTIS_OPCUA_CLIENT);
   lua_setmetatable(lua, -2);
   result = cpkt_opcua_client_new(&client->client);
@@ -2160,11 +2369,14 @@ static int vectis_opcua_lua_client_disconnect(lua_State *lua) {
 }
 
 static int vectis_opcua_lua_client_iterate(lua_State *lua) {
+  vectis_opcua_lua_client *client_ud;
   cpkt_opcua_client *client;
   unsigned long timeout_ms;
   cpkt_opcua_status status;
   cpkt_opcua_result result;
+  int callback_result_count;
 
+  client_ud = vectis_opcua_lua_check_client(lua, 1);
   client = vectis_opcua_lua_client_handle(lua, 1);
   timeout_ms = lua_isnoneornil(lua, 2)
                    ? 0u
@@ -2175,6 +2387,216 @@ static int vectis_opcua_lua_client_iterate(lua_State *lua) {
     return vectis_opcua_lua_push_error(lua, result, status,
                                        "opcua client iterate");
   }
+  callback_result_count = vectis_opcua_lua_client_take_callback_error(
+      lua, client_ud, "opcua client iterate");
+  if (callback_result_count != 0) {
+    return callback_result_count;
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_create_subscription(lua_State *lua) {
+  cpkt_opcua_client *client;
+  double publishing_interval_ms;
+  cpkt_opcua_subscription_id subscription_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  publishing_interval_ms = luaL_checknumber(lua, 2);
+  subscription_id = 0u;
+  status = 0u;
+  result = cpkt_opcua_client_create_subscription(client, publishing_interval_ms,
+                                                 &subscription_id, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client create subscription");
+  }
+  lua_pushinteger(lua, (lua_Integer)subscription_id);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_modify_subscription(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_subscription_id subscription_id;
+  double publishing_interval_ms;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  subscription_id = vectis_opcua_lua_check_ulong(lua, 2, "subscription_id");
+  publishing_interval_ms = luaL_checknumber(lua, 3);
+  status = 0u;
+  result = cpkt_opcua_client_modify_subscription(
+      client, subscription_id, publishing_interval_ms, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client modify subscription");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_delete_subscription(lua_State *lua) {
+  vectis_opcua_lua_client *client_ud;
+  cpkt_opcua_client *client;
+  cpkt_opcua_subscription_id subscription_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client_ud = vectis_opcua_lua_check_client(lua, 1);
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  subscription_id = vectis_opcua_lua_check_ulong(lua, 2, "subscription_id");
+  status = 0u;
+  result =
+      cpkt_opcua_client_delete_subscription(client, subscription_id, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client delete subscription");
+  }
+  vectis_opcua_lua_client_forget_subscription_callbacks(client_ud,
+                                                        subscription_id);
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static void vectis_opcua_lua_monitor_options_from_table(
+    lua_State *lua, int index, cpkt_opcua_monitor_options *options) {
+  cpkt_opcua_monitor_options_default(options);
+  luaL_checktype(lua, index, LUA_TTABLE);
+  lua_getfield(lua, index, "sampling_interval_ms");
+  if (!lua_isnil(lua, -1)) {
+    options->sampling_interval_ms = luaL_checknumber(lua, -1);
+  }
+  lua_pop(lua, 1);
+  options->queue_size = vectis_opcua_lua_table_ulong(lua, index, "queue_size",
+                                                     options->queue_size);
+  options->discard_oldest = vectis_opcua_lua_table_bool(
+      lua, index, "discard_oldest", options->discard_oldest);
+  options->deadband_type = vectis_opcua_lua_table_int(
+      lua, index, "deadband_type", options->deadband_type);
+  lua_getfield(lua, index, "deadband_value");
+  if (!lua_isnil(lua, -1)) {
+    options->deadband_value = luaL_checknumber(lua, -1);
+  }
+  lua_pop(lua, 1);
+}
+
+static int vectis_opcua_lua_client_monitor_value(lua_State *lua) {
+  vectis_opcua_lua_client *client_ud;
+  cpkt_opcua_client *client;
+  cpkt_opcua_subscription_id subscription_id;
+  cpkt_opcua_node_id node_id;
+  double sampling_interval_ms;
+  vectis_opcua_lua_monitor_callback *callback;
+  cpkt_opcua_monitored_item_id monitored_item_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client_ud = vectis_opcua_lua_check_client(lua, 1);
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  subscription_id = vectis_opcua_lua_check_ulong(lua, 2, "subscription_id");
+  node_id = vectis_opcua_lua_node_id_at(lua, 3);
+  sampling_interval_ms = luaL_checknumber(lua, 4);
+  luaL_checktype(lua, 5, LUA_TFUNCTION);
+  callback =
+      vectis_opcua_lua_monitor_callback_new(lua, client_ud, 5, subscription_id);
+  monitored_item_id = 0u;
+  status = 0u;
+  result = cpkt_opcua_client_monitor_value(
+      client, subscription_id, node_id, sampling_interval_ms,
+      vectis_opcua_lua_data_change_cb, callback, &monitored_item_id, &status);
+  if (result != CPKT_OPCUA_OK) {
+    vectis_opcua_lua_monitor_callback_free(callback);
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client monitor value");
+  }
+  callback->monitored_item_id = monitored_item_id;
+  vectis_opcua_lua_client_keep_monitor_callback(client_ud, callback);
+  lua_pushinteger(lua, (lua_Integer)monitored_item_id);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_monitor_value_ex(lua_State *lua) {
+  vectis_opcua_lua_client *client_ud;
+  cpkt_opcua_client *client;
+  cpkt_opcua_subscription_id subscription_id;
+  cpkt_opcua_node_id node_id;
+  cpkt_opcua_monitor_options options;
+  vectis_opcua_lua_monitor_callback *callback;
+  cpkt_opcua_monitored_item_id monitored_item_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client_ud = vectis_opcua_lua_check_client(lua, 1);
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  subscription_id = vectis_opcua_lua_check_ulong(lua, 2, "subscription_id");
+  node_id = vectis_opcua_lua_node_id_at(lua, 3);
+  vectis_opcua_lua_monitor_options_from_table(lua, 4, &options);
+  luaL_checktype(lua, 5, LUA_TFUNCTION);
+  callback =
+      vectis_opcua_lua_monitor_callback_new(lua, client_ud, 5, subscription_id);
+  monitored_item_id = 0u;
+  status = 0u;
+  result = cpkt_opcua_client_monitor_value_ex(
+      client, subscription_id, node_id, &options,
+      vectis_opcua_lua_data_change_cb, callback, &monitored_item_id, &status);
+  if (result != CPKT_OPCUA_OK) {
+    vectis_opcua_lua_monitor_callback_free(callback);
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client monitor value ex");
+  }
+  callback->monitored_item_id = monitored_item_id;
+  vectis_opcua_lua_client_keep_monitor_callback(client_ud, callback);
+  lua_pushinteger(lua, (lua_Integer)monitored_item_id);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_set_monitoring_mode(lua_State *lua) {
+  cpkt_opcua_client *client;
+  cpkt_opcua_subscription_id subscription_id;
+  cpkt_opcua_monitored_item_id monitored_item_id;
+  int monitoring_mode;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  subscription_id = vectis_opcua_lua_check_ulong(lua, 2, "subscription_id");
+  monitored_item_id = vectis_opcua_lua_check_ulong(lua, 3, "monitored_item_id");
+  monitoring_mode = (int)luaL_checkinteger(lua, 4);
+  status = 0u;
+  result = cpkt_opcua_client_set_monitoring_mode(
+      client, subscription_id, monitored_item_id, monitoring_mode, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client set monitoring mode");
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_delete_monitored_item(lua_State *lua) {
+  vectis_opcua_lua_client *client_ud;
+  cpkt_opcua_client *client;
+  cpkt_opcua_subscription_id subscription_id;
+  cpkt_opcua_monitored_item_id monitored_item_id;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client_ud = vectis_opcua_lua_check_client(lua, 1);
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  subscription_id = vectis_opcua_lua_check_ulong(lua, 2, "subscription_id");
+  monitored_item_id = vectis_opcua_lua_check_ulong(lua, 3, "monitored_item_id");
+  status = 0u;
+  result = cpkt_opcua_client_delete_monitored_item(client, subscription_id,
+                                                   monitored_item_id, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua client delete monitored item");
+  }
+  vectis_opcua_lua_client_forget_monitor_callback(client_ud, subscription_id,
+                                                  monitored_item_id);
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -7994,6 +8416,13 @@ static void vectis_opcua_lua_register_client(lua_State *lua) {
       {"connect", vectis_opcua_lua_client_connect},
       {"disconnect", vectis_opcua_lua_client_disconnect},
       {"iterate", vectis_opcua_lua_client_iterate},
+      {"create_subscription", vectis_opcua_lua_client_create_subscription},
+      {"modify_subscription", vectis_opcua_lua_client_modify_subscription},
+      {"delete_subscription", vectis_opcua_lua_client_delete_subscription},
+      {"monitor_value", vectis_opcua_lua_client_monitor_value},
+      {"monitor_value_ex", vectis_opcua_lua_client_monitor_value_ex},
+      {"set_monitoring_mode", vectis_opcua_lua_client_set_monitoring_mode},
+      {"delete_monitored_item", vectis_opcua_lua_client_delete_monitored_item},
       {"read", vectis_opcua_lua_client_read},
       {"write", vectis_opcua_lua_client_write},
       {"add_object", vectis_opcua_lua_client_add_object},
@@ -8385,6 +8814,18 @@ int luaopen_opcua(lua_State *lua) {
                              CPKT_OPCUA_BROWSE_RESULT_TYPE_DEFINITION);
   vectis_opcua_lua_set_const(lua, "BROWSE_RESULT_ALL",
                              CPKT_OPCUA_BROWSE_RESULT_ALL);
+
+  vectis_opcua_lua_set_const(lua, "MONITORING_DISABLED",
+                             CPKT_OPCUA_MONITORING_DISABLED);
+  vectis_opcua_lua_set_const(lua, "MONITORING_SAMPLING",
+                             CPKT_OPCUA_MONITORING_SAMPLING);
+  vectis_opcua_lua_set_const(lua, "MONITORING_REPORTING",
+                             CPKT_OPCUA_MONITORING_REPORTING);
+  vectis_opcua_lua_set_const(lua, "DEADBAND_NONE", CPKT_OPCUA_DEADBAND_NONE);
+  vectis_opcua_lua_set_const(lua, "DEADBAND_ABSOLUTE",
+                             CPKT_OPCUA_DEADBAND_ABSOLUTE);
+  vectis_opcua_lua_set_const(lua, "DEADBAND_PERCENT",
+                             CPKT_OPCUA_DEADBAND_PERCENT);
 
   vectis_opcua_lua_set_const(lua, "METHOD_ARGUMENT_INPUT",
                              CPKT_OPCUA_METHOD_ARGUMENT_INPUT);
