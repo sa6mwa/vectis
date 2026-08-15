@@ -130,7 +130,12 @@ owned handles and structured Vectis error envelopes for dependency failures.
   output_count)`,
   `client:translate_browse_path(start_node_id, elements)`,
   `client:set_default_encryption(opts)`, `client:namespace_index(uri)`,
-  `client:namespace_uri(index)`, and `client:close()`.
+  `client:namespace_uri(index)`, `client:endpoint_count(server_url)`,
+  `client:endpoint_url_at(server_url, index)`, `client:endpoints(server_url)`,
+  `client:server_count(server_url)`,
+  `client:server_application_uri(server_url, index)`,
+  `client:server_application_name(server_url, index)`,
+  `client:find_servers(server_url)`, and `client:close()`.
 - Servers: `server([port_or_opts])`, `server:set_endpoint(opts_or_host, port)`,
   `server:set_application_identity(opts)`,
   `server:set_default_security(opts)`, `server:set_access_control(opts)`,
@@ -235,6 +240,11 @@ and `revocation_list` byte strings; server options also accept `issuer_list` and
 `secure_only`. Certificate and private-key material must be provided together.
 The facade does not read files implicitly; use `vectis.cert` or ordinary Lua I/O
 to produce the byte strings before calling these methods.
+
+Discovery helpers mirror cpkt endpoint and FindServers APIs. Indexed discovery
+methods use 1-based Lua indexes; `endpoints(server_url)` returns an array of
+endpoint URLs, and `find_servers(server_url)` returns `{ application_uri,
+application_name }` entries.
 
 `server:set_access_control(opts)` supports the simple static form
 `{ allow_anonymous = false, username = "name", password = "secret" }` and a

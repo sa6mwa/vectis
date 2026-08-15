@@ -3848,6 +3848,302 @@ static int vectis_opcua_lua_client_namespace_uri(lua_State *lua) {
   return 1;
 }
 
+static int vectis_opcua_lua_client_endpoint_count(lua_State *lua) {
+  cpkt_opcua_client *client;
+  const char *server_url;
+  size_t count;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  server_url = luaL_checkstring(lua, 2);
+  count = 0u;
+  status = 0u;
+  result =
+      cpkt_opcua_client_get_endpoint_count(client, server_url, &count, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua endpoint count");
+  }
+  lua_pushinteger(lua, (lua_Integer)count);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_endpoint_url_at(lua_State *lua) {
+  cpkt_opcua_client *client;
+  const char *server_url;
+  lua_Integer endpoint_index_value;
+  size_t endpoint_index;
+  char stack_buffer[512];
+  char *buffer;
+  size_t required_size;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  server_url = luaL_checkstring(lua, 2);
+  endpoint_index_value = luaL_checkinteger(lua, 3);
+  if (endpoint_index_value <= 0) {
+    return luaL_error(lua, "endpoint_index is 1-based");
+  }
+  endpoint_index = (size_t)(endpoint_index_value - 1);
+  buffer = stack_buffer;
+  required_size = 0u;
+  status = 0u;
+  result = cpkt_opcua_client_get_endpoint_url(
+      client, server_url, endpoint_index, buffer, sizeof(stack_buffer),
+      &required_size, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > sizeof(stack_buffer)) {
+    buffer = (char *)malloc(required_size + 1u);
+    if (buffer == NULL) {
+      return luaL_error(lua, "opcua endpoint url allocation failed");
+    }
+    result = cpkt_opcua_client_get_endpoint_url(
+        client, server_url, endpoint_index, buffer, required_size + 1u, NULL,
+        &status);
+  }
+  if (result != CPKT_OPCUA_OK) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua endpoint url");
+  }
+  lua_pushstring(lua, buffer);
+  if (buffer != stack_buffer) {
+    free(buffer);
+  }
+  return 1;
+}
+
+static int vectis_opcua_lua_client_endpoints(lua_State *lua) {
+  cpkt_opcua_client *client;
+  const char *server_url;
+  size_t count;
+  size_t i;
+  char stack_buffer[512];
+  char *buffer;
+  size_t required_size;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  server_url = luaL_checkstring(lua, 2);
+  count = 0u;
+  status = 0u;
+  result =
+      cpkt_opcua_client_get_endpoint_count(client, server_url, &count, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua endpoints count");
+  }
+  lua_newtable(lua);
+  for (i = 0u; i < count; ++i) {
+    buffer = stack_buffer;
+    required_size = 0u;
+    result = cpkt_opcua_client_get_endpoint_url(client, server_url, i, buffer,
+                                                sizeof(stack_buffer),
+                                                &required_size, &status);
+    if (result == CPKT_OPCUA_ERR_RANGE &&
+        required_size > sizeof(stack_buffer)) {
+      buffer = (char *)malloc(required_size + 1u);
+      if (buffer == NULL) {
+        return luaL_error(lua, "opcua endpoint url allocation failed");
+      }
+      result = cpkt_opcua_client_get_endpoint_url(
+          client, server_url, i, buffer, required_size + 1u, NULL, &status);
+    }
+    if (result != CPKT_OPCUA_OK) {
+      if (buffer != stack_buffer) {
+        free(buffer);
+      }
+      return vectis_opcua_lua_push_error(lua, result, status,
+                                         "opcua endpoints");
+    }
+    lua_pushstring(lua, buffer);
+    lua_rawseti(lua, -2, (lua_Integer)i + 1);
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+  }
+  return 1;
+}
+
+static int vectis_opcua_lua_client_server_count(lua_State *lua) {
+  cpkt_opcua_client *client;
+  const char *server_url;
+  size_t count;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  server_url = luaL_checkstring(lua, 2);
+  count = 0u;
+  status = 0u;
+  result =
+      cpkt_opcua_client_find_server_count(client, server_url, &count, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua server count");
+  }
+  lua_pushinteger(lua, (lua_Integer)count);
+  return 1;
+}
+
+static int vectis_opcua_lua_client_server_string_at(
+    lua_State *lua,
+    cpkt_opcua_result (*fn)(cpkt_opcua_client *, const char *, size_t, char *,
+                            size_t, size_t *, cpkt_opcua_status *),
+    const char *context) {
+  cpkt_opcua_client *client;
+  const char *server_url;
+  lua_Integer server_index_value;
+  size_t server_index;
+  char stack_buffer[512];
+  char *buffer;
+  size_t required_size;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  server_url = luaL_checkstring(lua, 2);
+  server_index_value = luaL_checkinteger(lua, 3);
+  if (server_index_value <= 0) {
+    return luaL_error(lua, "server_index is 1-based");
+  }
+  server_index = (size_t)(server_index_value - 1);
+  buffer = stack_buffer;
+  required_size = 0u;
+  status = 0u;
+  result = fn(client, server_url, server_index, buffer, sizeof(stack_buffer),
+              &required_size, &status);
+  if (result == CPKT_OPCUA_ERR_RANGE && required_size > sizeof(stack_buffer)) {
+    buffer = (char *)malloc(required_size + 1u);
+    if (buffer == NULL) {
+      return luaL_error(lua, "opcua server discovery string allocation failed");
+    }
+    result = fn(client, server_url, server_index, buffer, required_size + 1u,
+                NULL, &status);
+  }
+  if (result != CPKT_OPCUA_OK) {
+    if (buffer != stack_buffer) {
+      free(buffer);
+    }
+    return vectis_opcua_lua_push_error(lua, result, status, context);
+  }
+  lua_pushstring(lua, buffer);
+  if (buffer != stack_buffer) {
+    free(buffer);
+  }
+  return 1;
+}
+
+static int vectis_opcua_lua_client_server_application_uri(lua_State *lua) {
+  return vectis_opcua_lua_client_server_string_at(
+      lua, cpkt_opcua_client_find_server_application_uri,
+      "opcua server application uri");
+}
+
+static int vectis_opcua_lua_client_server_application_name(lua_State *lua) {
+  return vectis_opcua_lua_client_server_string_at(
+      lua, cpkt_opcua_client_find_server_application_name,
+      "opcua server application name");
+}
+
+static int vectis_opcua_lua_client_find_servers(lua_State *lua) {
+  cpkt_opcua_client *client;
+  const char *server_url;
+  size_t count;
+  size_t i;
+  char uri_stack_buffer[512];
+  char name_stack_buffer[512];
+  char *uri_buffer;
+  char *name_buffer;
+  size_t uri_required_size;
+  size_t name_required_size;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  client = vectis_opcua_lua_client_handle(lua, 1);
+  server_url = luaL_checkstring(lua, 2);
+  count = 0u;
+  status = 0u;
+  result =
+      cpkt_opcua_client_find_server_count(client, server_url, &count, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_opcua_lua_push_error(lua, result, status,
+                                       "opcua find servers count");
+  }
+  lua_newtable(lua);
+  for (i = 0u; i < count; ++i) {
+    uri_buffer = uri_stack_buffer;
+    uri_required_size = 0u;
+    result = cpkt_opcua_client_find_server_application_uri(
+        client, server_url, i, uri_buffer, sizeof(uri_stack_buffer),
+        &uri_required_size, &status);
+    if (result == CPKT_OPCUA_ERR_RANGE &&
+        uri_required_size > sizeof(uri_stack_buffer)) {
+      uri_buffer = (char *)malloc(uri_required_size + 1u);
+      if (uri_buffer == NULL) {
+        return luaL_error(lua, "opcua server uri allocation failed");
+      }
+      result = cpkt_opcua_client_find_server_application_uri(
+          client, server_url, i, uri_buffer, uri_required_size + 1u, NULL,
+          &status);
+    }
+    if (result != CPKT_OPCUA_OK) {
+      if (uri_buffer != uri_stack_buffer) {
+        free(uri_buffer);
+      }
+      return vectis_opcua_lua_push_error(lua, result, status,
+                                         "opcua find server uri");
+    }
+
+    name_buffer = name_stack_buffer;
+    name_required_size = 0u;
+    result = cpkt_opcua_client_find_server_application_name(
+        client, server_url, i, name_buffer, sizeof(name_stack_buffer),
+        &name_required_size, &status);
+    if (result == CPKT_OPCUA_ERR_RANGE &&
+        name_required_size > sizeof(name_stack_buffer)) {
+      name_buffer = (char *)malloc(name_required_size + 1u);
+      if (name_buffer == NULL) {
+        if (uri_buffer != uri_stack_buffer) {
+          free(uri_buffer);
+        }
+        return luaL_error(lua, "opcua server name allocation failed");
+      }
+      result = cpkt_opcua_client_find_server_application_name(
+          client, server_url, i, name_buffer, name_required_size + 1u, NULL,
+          &status);
+    }
+    if (result != CPKT_OPCUA_OK) {
+      if (uri_buffer != uri_stack_buffer) {
+        free(uri_buffer);
+      }
+      if (name_buffer != name_stack_buffer) {
+        free(name_buffer);
+      }
+      return vectis_opcua_lua_push_error(lua, result, status,
+                                         "opcua find server name");
+    }
+
+    lua_newtable(lua);
+    lua_pushstring(lua, uri_buffer);
+    lua_setfield(lua, -2, "application_uri");
+    lua_pushstring(lua, name_buffer);
+    lua_setfield(lua, -2, "application_name");
+    lua_rawseti(lua, -2, (lua_Integer)i + 1);
+    if (uri_buffer != uri_stack_buffer) {
+      free(uri_buffer);
+    }
+    if (name_buffer != name_stack_buffer) {
+      free(name_buffer);
+    }
+  }
+  return 1;
+}
+
 static vectis_opcua_lua_server *vectis_opcua_lua_check_server(lua_State *lua,
                                                               int index) {
   return (vectis_opcua_lua_server *)luaL_checkudata(lua, index,
@@ -10283,6 +10579,15 @@ static void vectis_opcua_lua_register_client(lua_State *lua) {
       {"call_method", vectis_opcua_lua_client_call_method},
       {"call_method_many", vectis_opcua_lua_client_call_method_many},
       {"translate_browse_path", vectis_opcua_lua_client_translate_browse_path},
+      {"endpoint_count", vectis_opcua_lua_client_endpoint_count},
+      {"endpoint_url_at", vectis_opcua_lua_client_endpoint_url_at},
+      {"endpoints", vectis_opcua_lua_client_endpoints},
+      {"server_count", vectis_opcua_lua_client_server_count},
+      {"server_application_uri",
+       vectis_opcua_lua_client_server_application_uri},
+      {"server_application_name",
+       vectis_opcua_lua_client_server_application_name},
+      {"find_servers", vectis_opcua_lua_client_find_servers},
       {"namespace_index", vectis_opcua_lua_client_namespace_index},
       {"namespace_uri", vectis_opcua_lua_client_namespace_uri},
       {"close", vectis_opcua_lua_client_close},

@@ -639,6 +639,29 @@ assert(tostring(encryption_validation_err):find(
     "certificate and private_key", 1, true))
 assert(encryption_validation_client:close() == true)
 
+local discovery_client = assert(opcua.client())
+local endpoint_count = assert(discovery_client:endpoint_count(endpoint))
+assert(endpoint_count >= 1, "OPC UA endpoint discovery should return endpoints")
+local first_endpoint = assert(discovery_client:endpoint_url_at(endpoint, 1))
+assert(type(first_endpoint) == "string" and #first_endpoint > 0)
+local endpoints = assert(discovery_client:endpoints(endpoint))
+assert(#endpoints == endpoint_count)
+local discovered_server_count =
+    assert(discovery_client:server_count(endpoint))
+local discovered_servers = assert(discovery_client:find_servers(endpoint))
+assert(#discovered_servers == discovered_server_count)
+if discovered_server_count > 0 then
+  local application_uri =
+      assert(discovery_client:server_application_uri(endpoint, 1))
+  local application_name =
+      assert(discovery_client:server_application_name(endpoint, 1))
+  assert(type(application_uri) == "string")
+  assert(type(application_name) == "string")
+  assert(discovered_servers[1].application_uri == application_uri)
+  assert(discovered_servers[1].application_name == application_name)
+end
+assert(discovery_client:close() == true)
+
 local client = assert(opcua.connect(endpoint))
 
 local value = assert(client:read(node))
