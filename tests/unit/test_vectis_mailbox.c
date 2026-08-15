@@ -1,5 +1,7 @@
 #include <vectis/vectis.h>
 
+#include "vectis_internal.h"
+
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
@@ -20,6 +22,27 @@ static void expect_status(vectis_status actual, vectis_status expected,
             vectis_status_string(actual), vectis_status_string(expected));
     failures++;
   }
+}
+
+static int bytes_contains(const void *data, size_t size, const char *needle) {
+  const unsigned char *bytes;
+  size_t needle_size;
+  size_t i;
+
+  if (data == NULL || needle == NULL) {
+    return 0;
+  }
+  bytes = (const unsigned char *)data;
+  needle_size = strlen(needle);
+  if (needle_size == 0u || needle_size > size) {
+    return 0;
+  }
+  for (i = 0u; i + needle_size <= size; ++i) {
+    if (memcmp(bytes + i, needle, needle_size) == 0) {
+      return 1;
+    }
+  }
+  return 0;
 }
 
 static void test_publish_and_drain(void) {
@@ -349,11 +372,201 @@ static void test_broker_timeout_cleanup(void) {
   requests->destroy(requests);
 }
 
+typedef struct route_worker_context {
+  vectis_mailbox *requests;
+  vectis_mailbox_broker *broker;
+  int saw_event;
+} route_worker_context;
+
+static void *route_worker_main(void *userdata) {
+  route_worker_context *context;
+  vectis_mailbox_event request;
+  vectis_mailbox_message reply;
+  vectis_error error;
+  vectis_status status;
+  const char payload[] = "route reply";
+
+  context = (route_worker_context *)userdata;
+  vectis_mailbox_event_init(&request);
+  status =
+      context->requests->wait_next(context->requests, &request, 1000L, &error);
+  if (status != VECTIS_OK) {
+    return NULL;
+  }
+  if (bytes_contains(request.payload, request.payload_size,
+                     "\"method\":\"POST\"") &&
+      bytes_contains(request.payload, request.payload_size,
+                     "\"path\":\"/machines/alpha\"") &&
+      bytes_contains(request.payload, request.payload_size,
+                     "\"id\":\"alpha\"") &&
+      bytes_contains(request.payload, request.payload_size,
+                     "\"content-type\":\"application/json\"") &&
+      bytes_contains(request.payload, request.payload_size,
+                     "\"content\":\"{\\\"value\\\":42}\"")) {
+    context->saw_event = 1;
+  }
+  vectis_mailbox_message_init(&reply);
+  reply.kind = "route.reply";
+  reply.payload = payload;
+  reply.payload_size = sizeof(payload) - 1u;
+  (void)context->broker->reply(context->broker, request.correlation_id, &reply,
+                               &error);
+  vectis_mailbox_event_cleanup(&request);
+  return NULL;
+}
+
+static void test_route_event_builder(void) {
+  vectis_route_event_config config;
+  vectis_route_event event;
+  vectis_request *request;
+  vectis_error error;
+  vectis_status status;
+  const char *params[] = {"id"};
+  const char *query[] = {"expand"};
+  const char *headers[] = {"content-type"};
+  const char body[] = "{\"value\":42}";
+
+  request = vectis_internal_request_new(&error);
+  expect(request != NULL, "route event request allocated");
+  vectis_internal_request_set_method(request, VECTIS_HTTP_POST);
+  status = vectis_internal_request_set_path(request, "/machines/alpha", &error);
+  expect_status(status, VECTIS_OK, "route event path");
+  status =
+      vectis_internal_request_add_path_param(request, "id", "alpha", &error);
+  expect_status(status, VECTIS_OK, "route event path param");
+  status =
+      vectis_internal_request_add_query(request, "expand", "state", &error);
+  expect_status(status, VECTIS_OK, "route event query");
+  status = vectis_internal_request_add_header(request, "content-type",
+                                              "application/json", &error);
+  expect_status(status, VECTIS_OK, "route event header");
+  status = vectis_internal_request_set_body(request, body, sizeof(body) - 1u,
+                                            &error);
+  expect_status(status, VECTIS_OK, "route event body");
+
+  vectis_route_event_config_init(&config);
+  config.path_params = params;
+  config.path_param_count = 1u;
+  config.query = query;
+  config.query_count = 1u;
+  config.headers = headers;
+  config.header_count = 1u;
+  config.include_body = 1;
+  config.max_body_bytes = 64u;
+  vectis_route_event_init(&event);
+  status = vectis_route_event_from_request(request, &config, &event, &error);
+  expect_status(status, VECTIS_OK, "route event build");
+  expect(event.message.kind != NULL &&
+             strcmp(event.message.kind, "vectis.route") == 0,
+         "route event kind");
+  expect(bytes_contains(event.message.payload, event.message.payload_size,
+                        "\"query\":{\"expand\":\"state\"}"),
+         "route event selected query");
+  expect(bytes_contains(event.message.payload, event.message.payload_size,
+                        "\"body\":{\"included\":true"),
+         "route event body included");
+  vectis_route_event_cleanup(&event);
+
+  config.max_body_bytes = 4u;
+  status = vectis_route_event_from_request(request, &config, &event, &error);
+  expect_status(status, VECTIS_ERR_INVALID, "route event body limit");
+  vectis_route_event_cleanup(&event);
+  vectis_internal_request_free(request);
+}
+
+static void test_route_mailbox_request_response(void) {
+  vectis_mailbox_config mailbox_config;
+  vectis_mailbox_broker_config broker_config;
+  vectis_route_event_config route_config;
+  vectis_request *request;
+  vectis_response *response;
+  vectis_mailbox *requests;
+  vectis_mailbox_broker *broker;
+  vectis_bytes response_body;
+  vectis_error error;
+  vectis_status status;
+  route_worker_context context;
+  pthread_t worker;
+  unsigned long correlation_id;
+  const char *params[] = {"id"};
+  const char *headers[] = {"content-type"};
+  const char body[] = "{\"value\":42}";
+  int rc;
+
+  request = vectis_internal_request_new(&error);
+  response = vectis_internal_response_new(&error);
+  expect(request != NULL, "route mailbox request allocated");
+  expect(response != NULL, "route mailbox response allocated");
+  vectis_internal_request_set_method(request, VECTIS_HTTP_POST);
+  status = vectis_internal_request_set_path(request, "/machines/alpha", &error);
+  expect_status(status, VECTIS_OK, "route mailbox path");
+  status =
+      vectis_internal_request_add_path_param(request, "id", "alpha", &error);
+  expect_status(status, VECTIS_OK, "route mailbox path param");
+  status = vectis_internal_request_add_header(request, "content-type",
+                                              "application/json", &error);
+  expect_status(status, VECTIS_OK, "route mailbox header");
+  status = vectis_internal_request_set_body(request, body, sizeof(body) - 1u,
+                                            &error);
+  expect_status(status, VECTIS_OK, "route mailbox body");
+
+  vectis_mailbox_config_init(&mailbox_config);
+  mailbox_config.capacity = 4u;
+  mailbox_config.max_payload_bytes = 4096u;
+  status = vectis_mailbox_new(&mailbox_config, &requests, &error);
+  expect_status(status, VECTIS_OK, "route mailbox requests");
+  vectis_mailbox_broker_config_init(&broker_config);
+  broker_config.request_mailbox = requests;
+  broker_config.reply_mailbox.max_payload_bytes = 128u;
+  status = vectis_mailbox_broker_new(&broker_config, &broker, &error);
+  expect_status(status, VECTIS_OK, "route mailbox broker");
+
+  vectis_route_event_config_init(&route_config);
+  route_config.path_params = params;
+  route_config.path_param_count = 1u;
+  route_config.headers = headers;
+  route_config.header_count = 1u;
+  route_config.include_body = 1;
+  route_config.reply_status_code = 202;
+  route_config.reply_content_type = "text/plain";
+  context.requests = requests;
+  context.broker = broker;
+  context.saw_event = 0;
+  rc = pthread_create(&worker, NULL, route_worker_main, &context);
+  expect(rc == 0, "route worker started");
+  if (rc == 0) {
+    status =
+        vectis_route_mailbox_request(broker, request, response, &route_config,
+                                     1000L, &correlation_id, &error);
+    expect_status(status, VECTIS_OK, "route mailbox request response");
+    (void)pthread_join(worker, NULL);
+    expect(context.saw_event == 1, "route worker saw typed event");
+    expect(correlation_id != 0UL, "route mailbox correlation id");
+    response_body = vectis_internal_response_body(response);
+    expect(vectis_internal_response_status_code(response) == 202,
+           "route mailbox response status");
+    expect(strcmp(vectis_internal_response_content_type(response),
+                  "text/plain") == 0,
+           "route mailbox response content type");
+    expect(response_body.size == sizeof("route reply") - 1u &&
+               memcmp(response_body.data, "route reply",
+                      sizeof("route reply") - 1u) == 0,
+           "route mailbox response body");
+  }
+
+  broker->destroy(broker);
+  requests->destroy(requests);
+  vectis_internal_response_free(response);
+  vectis_internal_request_free(request);
+}
+
 int main(void) {
   test_publish_and_drain();
   test_bounds_and_close();
   test_request_reply_correlation();
   test_broker_request_reply();
   test_broker_timeout_cleanup();
+  test_route_event_builder();
+  test_route_mailbox_request_response();
   return failures == 0 ? 0 : 1;
 }

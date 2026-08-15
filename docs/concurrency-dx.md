@@ -107,8 +107,30 @@ Kore API request to worker result:
 - Low-latency local flow: route calls `vectis_mailbox_broker::request()` with a
   deadline; the worker drains the request mailbox and calls
   `vectis_mailbox_broker::reply()` with the request correlation id.
+- Typed route flow: route builds a `vectis.route` JSON event through
+  `vectis_route_event_from_request()` or calls
+  `vectis_route_mailbox_request()` to build, dispatch, wait, and map the worker
+  reply to the HTTP response.
 - Durable flow: route enqueues through liblockdc, returns accepted/pending, or
   waits only when the product explicitly wants durable queue latency.
+
+## Typed Route Adapter
+
+The route adapter is C-side and explicit. `vectis_route_event_config` selects
+which path parameters, query values, and request headers are copied into the
+event. It never enumerates Kore internals and it never reads a request body
+unless `include_body` is set.
+
+When `include_body` is set, the body must already be available through
+`vectis_request_body_bytes()` and must fit under `max_body_bytes`. Reader-backed
+uploads, streaming upload readers, and bodies over the configured bound fail
+closed instead of being secretly materialized.
+
+The event payload is JSON with `type`, `method`, `path`, `path_params`, `query`,
+`headers`, and `body` fields. `vectis_route_mailbox_request()` sends that event
+through a `vectis_mailbox_broker`, maps successful worker reply bytes to the
+configured success response, maps timeout to the configured timeout response,
+and maps other broker failures through Vectis JSON error responses.
 
 ## Scenario Coverage
 

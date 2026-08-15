@@ -9633,16 +9633,15 @@ static const char *vectis_openapi_schema_name(vectis_openapi_schema schema) {
 }
 
 static vectis_status
-vectis_append_lonejson_string(vectis_string_builder *builder, const char *value,
-                              vectis_error *error) {
+vectis_append_lonejson_string_n(vectis_string_builder *builder,
+                                const char *value, size_t length,
+                                vectis_error *error) {
   vectis_lonejson_builder_sink sink;
   lonejson_error json_error;
   lonejson *runtime;
-  size_t length;
   lonejson_status json_status;
 
   value = value != NULL ? value : "";
-  length = strlen(value);
   sink.builder = builder;
   sink.error = error;
   runtime = vectis_lonejson_new(error);
@@ -9664,6 +9663,312 @@ vectis_append_lonejson_string(vectis_string_builder *builder, const char *value,
     return VECTIS_ERR_INVALID;
   }
   return VECTIS_OK;
+}
+
+static vectis_status
+vectis_append_lonejson_string(vectis_string_builder *builder, const char *value,
+                              vectis_error *error) {
+  return vectis_append_lonejson_string_n(builder, value != NULL ? value : "",
+                                         value != NULL ? strlen(value) : 0u,
+                                         error);
+}
+
+static vectis_status
+vectis_route_event_append_key(vectis_string_builder *builder, const char *key,
+                              vectis_error *error) {
+  if (vectis_append_lonejson_string(builder, key, error) != VECTIS_OK ||
+      vectis_string_builder_append(builder, ":", error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  return VECTIS_OK;
+}
+
+static const char *vectis_route_event_selected_value(vectis_request *request,
+                                                     int selector,
+                                                     const char *name) {
+  if (selector == 0) {
+    return vectis_request_path_param(request, name);
+  }
+  if (selector == 1) {
+    return vectis_request_query(request, name);
+  }
+  return vectis_request_header(request, name);
+}
+
+static vectis_status vectis_route_event_append_selected(
+    vectis_string_builder *builder, vectis_request *request,
+    const char *const *names, size_t count, int selector, vectis_error *error) {
+  const char *value;
+  size_t i;
+  int first;
+
+  if (vectis_string_builder_append(builder, "{", error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  first = 1;
+  for (i = 0u; i < count; ++i) {
+    if (names == NULL || names[i] == NULL || names[i][0] == '\0') {
+      continue;
+    }
+    value = vectis_route_event_selected_value(request, selector, names[i]);
+    if (value == NULL) {
+      continue;
+    }
+    if (!first &&
+        vectis_string_builder_append(builder, ",", error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    first = 0;
+    if (vectis_route_event_append_key(builder, names[i], error) != VECTIS_OK ||
+        vectis_append_lonejson_string(builder, value, error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+  }
+  if (vectis_string_builder_append(builder, "}", error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  return VECTIS_OK;
+}
+
+void vectis_route_event_config_init(vectis_route_event_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->kind = "vectis.route";
+  config->max_body_bytes = VECTIS_ROUTE_EVENT_DEFAULT_MAX_BODY_BYTES;
+  config->reply_status_code = 200;
+  config->reply_content_type = "application/octet-stream";
+  config->timeout_status_code = 504;
+  config->timeout_content_type = "text/plain";
+  config->timeout_body = "request timed out\n";
+  config->error_status_code = 500;
+}
+
+void vectis_route_event_init(vectis_route_event *event) {
+  if (event == NULL) {
+    return;
+  }
+  vectis_mailbox_message_init(&event->message);
+  event->payload.data = NULL;
+  event->payload.size = 0u;
+}
+
+void vectis_route_event_cleanup(vectis_route_event *event) {
+  if (event == NULL) {
+    return;
+  }
+  vectis_mutable_bytes_cleanup(&event->payload);
+  vectis_route_event_init(event);
+}
+
+vectis_status
+vectis_route_event_from_request(vectis_request *request,
+                                const vectis_route_event_config *config,
+                                vectis_route_event *out, vectis_error *error) {
+  vectis_route_event_config effective;
+  vectis_string_builder builder;
+  vectis_bytes body;
+  const char *path;
+  const char *method;
+  size_t max_body_bytes;
+  vectis_status status;
+
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "route event request is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "route event output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_route_event_init(out);
+  vectis_route_event_config_init(&effective);
+  if (config != NULL) {
+    effective = *config;
+    if (effective.kind == NULL || effective.kind[0] == '\0') {
+      effective.kind = "vectis.route";
+    }
+    if (effective.max_body_bytes == 0u) {
+      effective.max_body_bytes = VECTIS_ROUTE_EVENT_DEFAULT_MAX_BODY_BYTES;
+    }
+    if (effective.reply_status_code == 0) {
+      effective.reply_status_code = 200;
+    }
+    if (effective.timeout_status_code == 0) {
+      effective.timeout_status_code = 504;
+    }
+    if (effective.error_status_code == 0) {
+      effective.error_status_code = 500;
+    }
+  }
+  memset(&builder, 0, sizeof(builder));
+  path = vectis_request_path(request);
+  method = vectis_http_method_string(vectis_request_method(request));
+  if (vectis_string_builder_append(&builder, "{", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "type", error) != VECTIS_OK ||
+      vectis_append_lonejson_string(&builder, "vectis.route", error) !=
+          VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "method", error) != VECTIS_OK ||
+      vectis_append_lonejson_string(&builder, method, error) != VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "path", error) != VECTIS_OK ||
+      vectis_append_lonejson_string(&builder, path, error) != VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "path_params", error) !=
+          VECTIS_OK ||
+      vectis_route_event_append_selected(
+          &builder, request, effective.path_params, effective.path_param_count,
+          0, error) != VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "query", error) != VECTIS_OK ||
+      vectis_route_event_append_selected(&builder, request, effective.query,
+                                         effective.query_count, 1,
+                                         error) != VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "headers", error) != VECTIS_OK ||
+      vectis_route_event_append_selected(&builder, request, effective.headers,
+                                         effective.header_count, 2,
+                                         error) != VECTIS_OK ||
+      vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "body", error) != VECTIS_OK ||
+      vectis_string_builder_append(&builder, "{", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "included", error) != VECTIS_OK) {
+    status = error != NULL ? error->code : VECTIS_ERR_STATE;
+    vectis_string_builder_cleanup(&builder);
+    return status;
+  }
+  if (!effective.include_body) {
+    status = vectis_string_builder_append(&builder, "false}", error);
+  } else {
+    max_body_bytes = effective.max_body_bytes;
+    status = vectis_request_body_bytes(request, &body, error);
+    if (status == VECTIS_OK && body.size > max_body_bytes) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "route event body exceeds configured limit");
+      status = VECTIS_ERR_INVALID;
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_string_builder_append(&builder, "true,", error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_route_event_append_key(&builder, "size", error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_string_builder_appendf(&builder, error, "%lu",
+                                             (unsigned long)body.size);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_string_builder_append(&builder, ",", error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_route_event_append_key(&builder, "content", error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_append_lonejson_string_n(
+          &builder, body.data != NULL ? (const char *)body.data : "", body.size,
+          error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_string_builder_append(&builder, "}", error);
+    }
+  }
+  if (status != VECTIS_OK ||
+      vectis_string_builder_append(&builder, "}", error) != VECTIS_OK) {
+    status = error != NULL ? error->code : VECTIS_ERR_STATE;
+    vectis_string_builder_cleanup(&builder);
+    return status;
+  }
+  out->payload.data = builder.data;
+  out->payload.size = builder.size;
+  builder.data = NULL;
+  builder.size = 0u;
+  builder.capacity = 0u;
+  out->message.kind = effective.kind;
+  out->message.payload = out->payload.data;
+  out->message.payload_size = out->payload.size;
+  vectis_string_builder_cleanup(&builder);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_route_mailbox_request(
+    vectis_mailbox_broker *broker, vectis_request *request,
+    vectis_response *response, const vectis_route_event_config *config,
+    long timeout_ms, unsigned long *correlation_id, vectis_error *error) {
+  vectis_route_event_config effective;
+  vectis_route_event event;
+  vectis_mailbox_event reply;
+  vectis_bytes body;
+  vectis_error broker_error;
+  vectis_status status;
+  int status_code;
+  const char *content_type;
+  const char *text;
+
+  if (response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "route mailbox response is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_route_event_config_init(&effective);
+  if (config != NULL) {
+    effective = *config;
+  }
+  if (effective.reply_status_code == 0) {
+    effective.reply_status_code = 200;
+  }
+  if (effective.reply_content_type == NULL ||
+      effective.reply_content_type[0] == '\0') {
+    effective.reply_content_type = "application/octet-stream";
+  }
+  if (effective.timeout_status_code == 0) {
+    effective.timeout_status_code = 504;
+  }
+  if (effective.timeout_content_type == NULL ||
+      effective.timeout_content_type[0] == '\0') {
+    effective.timeout_content_type = "text/plain";
+  }
+  if (effective.timeout_body == NULL) {
+    effective.timeout_body = "request timed out\n";
+  }
+  if (effective.error_status_code == 0) {
+    effective.error_status_code = 500;
+  }
+  vectis_route_event_init(&event);
+  status = vectis_route_event_from_request(request, &effective, &event, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  vectis_mailbox_event_init(&reply);
+  vectis_error_clear(&broker_error);
+  status = broker->request(broker, &event.message, timeout_ms, &reply,
+                           correlation_id, &broker_error);
+  vectis_route_event_cleanup(&event);
+  if (status == VECTIS_OK) {
+    body.data = reply.payload;
+    body.size = reply.payload_size;
+    status = vectis_response_bytes(response, effective.reply_status_code,
+                                   effective.reply_content_type, body, error);
+    vectis_mailbox_event_cleanup(&reply);
+    return status;
+  }
+  vectis_mailbox_event_cleanup(&reply);
+  if (status == VECTIS_ERR_TIMEOUT) {
+    status_code = effective.timeout_status_code;
+    content_type = effective.timeout_content_type;
+    text = effective.timeout_body;
+    return vectis_response_text(response, status_code, content_type, text,
+                                error);
+  }
+  return vectis_response_error_json(
+      response, effective.error_status_code, vectis_status_string(status),
+      broker_error.message[0] != '\0' ? broker_error.message
+                                      : vectis_status_string(status),
+      broker_error.detail[0] != '\0' ? broker_error.detail : NULL, error);
 }
 
 static vectis_status vectis_openapi_append_path(vectis_string_builder *builder,

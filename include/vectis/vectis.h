@@ -32,6 +32,7 @@
 #define VECTIS_MAILBOX_DEFAULT_CAPACITY 1024u
 #define VECTIS_MAILBOX_DEFAULT_MAX_PAYLOAD_BYTES 1048576u
 #define VECTIS_MAILBOX_BROKER_DEFAULT_MAX_PENDING 64u
+#define VECTIS_ROUTE_EVENT_DEFAULT_MAX_BODY_BYTES 65536u
 #define VECTIS_SSH_SFTP_OPEN_READ 0x01u
 #define VECTIS_SSH_SFTP_OPEN_WRITE 0x02u
 #define VECTIS_SSH_SFTP_OPEN_CREATE 0x04u
@@ -230,6 +231,33 @@ typedef struct vectis_mailbox_broker_config {
   size_t max_pending;
 } vectis_mailbox_broker_config;
 
+typedef struct vectis_route_event_config {
+  /* Defaults to "vectis.route". */
+  const char *kind;
+  const char *const *path_params;
+  size_t path_param_count;
+  const char *const *query;
+  size_t query_count;
+  const char *const *headers;
+  size_t header_count;
+  /*
+   * Body bytes are copied only when include_body is nonzero and the request
+   * body is already buffered. Reader-backed or streaming bodies fail closed.
+   */
+  int include_body;
+  /* Zero means VECTIS_ROUTE_EVENT_DEFAULT_MAX_BODY_BYTES. */
+  size_t max_body_bytes;
+  /* Success response mapping for vectis_route_mailbox_request(). */
+  int reply_status_code;
+  const char *reply_content_type;
+  /* Timeout response mapping for vectis_route_mailbox_request(). */
+  int timeout_status_code;
+  const char *timeout_content_type;
+  const char *timeout_body;
+  /* Non-timeout broker error response mapping. */
+  int error_status_code;
+} vectis_route_event_config;
+
 /*
  * Public configuration structs must be initialized with their matching
  * vectis_*_init() function before use. NULL pointers and zero-valued scalar
@@ -257,6 +285,11 @@ typedef struct vectis_mutable_bytes {
   void *data;
   size_t size;
 } vectis_mutable_bytes;
+
+typedef struct vectis_route_event {
+  vectis_mailbox_message message;
+  vectis_mutable_bytes payload;
+} vectis_route_event;
 
 typedef enum vectis_body_materialized_kind {
   VECTIS_BODY_MATERIALIZED_NONE = 0,
@@ -1250,8 +1283,7 @@ struct vectis_mailbox_broker {
   vectis_status (*request)(vectis_mailbox_broker *self,
                            const vectis_mailbox_message *message,
                            long timeout_ms, vectis_mailbox_event *reply,
-                           unsigned long *correlation_id,
-                           vectis_error *error);
+                           unsigned long *correlation_id, vectis_error *error);
   vectis_status (*reply)(vectis_mailbox_broker *self,
                          unsigned long correlation_id,
                          const vectis_mailbox_message *message,
@@ -1278,6 +1310,9 @@ void vectis_mailbox_event_init(vectis_mailbox_event *event);
 void vectis_mailbox_event_cleanup(vectis_mailbox_event *event);
 void vectis_mailbox_stats_init(vectis_mailbox_stats *stats);
 void vectis_mailbox_broker_config_init(vectis_mailbox_broker_config *config);
+void vectis_route_event_config_init(vectis_route_event_config *config);
+void vectis_route_event_init(vectis_route_event *event);
+void vectis_route_event_cleanup(vectis_route_event *event);
 vectis_status vectis_mailbox_new(const vectis_mailbox_config *config,
                                  vectis_mailbox **out, vectis_error *error);
 vectis_status vectis_mailbox_publish(vectis_mailbox *mailbox,
@@ -1312,11 +1347,20 @@ vectis_status vectis_mailbox_broker_request(
     vectis_mailbox_broker *broker, const vectis_mailbox_message *message,
     long timeout_ms, vectis_mailbox_event *reply, unsigned long *correlation_id,
     vectis_error *error);
-vectis_status vectis_mailbox_broker_reply(
-    vectis_mailbox_broker *broker, unsigned long correlation_id,
-    const vectis_mailbox_message *message, vectis_error *error);
+vectis_status vectis_mailbox_broker_reply(vectis_mailbox_broker *broker,
+                                          unsigned long correlation_id,
+                                          const vectis_mailbox_message *message,
+                                          vectis_error *error);
 void vectis_mailbox_broker_close(vectis_mailbox_broker *broker);
 void vectis_mailbox_broker_destroy(vectis_mailbox_broker *broker);
+vectis_status
+vectis_route_event_from_request(vectis_request *request,
+                                const vectis_route_event_config *config,
+                                vectis_route_event *out, vectis_error *error);
+vectis_status vectis_route_mailbox_request(
+    vectis_mailbox_broker *broker, vectis_request *request,
+    vectis_response *response, const vectis_route_event_config *config,
+    long timeout_ms, unsigned long *correlation_id, vectis_error *error);
 void vectis_app_config_init(vectis_app_config *config);
 void vectis_server_config_init(vectis_server_config *config);
 void vectis_autoblock_config_init(vectis_autoblock_config *config);
