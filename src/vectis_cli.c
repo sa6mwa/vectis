@@ -113,6 +113,9 @@ typedef struct vectis_lua_dsv_route_context {
 typedef struct vectis_lua_mailbox {
   lua_State *owner;
   vectis_mailbox *mailbox;
+  unsigned long pump_calls;
+  unsigned long pump_events;
+  unsigned long pump_callback_failures;
 } vectis_lua_mailbox;
 
 static void vectis_cli_error_set(vectis_error *error, vectis_status status,
@@ -13774,6 +13777,9 @@ static int vectis_lua_mailbox_new(lua_State *lua) {
   box = (vectis_lua_mailbox *)lua_newuserdata(lua, sizeof(*box));
   box->owner = lua;
   box->mailbox = NULL;
+  box->pump_calls = 0UL;
+  box->pump_events = 0UL;
+  box->pump_callback_failures = 0UL;
   luaL_getmetatable(lua, VECTIS_LUA_MAILBOX);
   lua_setmetatable(lua, -2);
   vectis_error_clear(&error);
@@ -13911,6 +13917,67 @@ static int vectis_lua_mailbox_depth(lua_State *lua) {
   return 1;
 }
 
+static void vectis_lua_mailbox_push_stats(lua_State *lua,
+                                          const vectis_mailbox_stats *stats,
+                                          const vectis_lua_mailbox *box) {
+  lua_newtable(lua);
+  lua_pushinteger(lua, (lua_Integer)stats->capacity);
+  lua_setfield(lua, -2, "capacity");
+  lua_pushinteger(lua, (lua_Integer)stats->max_payload_bytes);
+  lua_setfield(lua, -2, "max_payload_bytes");
+  lua_pushinteger(lua, (lua_Integer)stats->current_depth);
+  lua_setfield(lua, -2, "current_depth");
+  lua_pushinteger(lua, (lua_Integer)stats->current_depth);
+  lua_setfield(lua, -2, "depth");
+  lua_pushinteger(lua, (lua_Integer)stats->high_water_depth);
+  lua_setfield(lua, -2, "high_water_depth");
+  lua_pushinteger(lua, (lua_Integer)stats->published);
+  lua_setfield(lua, -2, "published");
+  lua_pushinteger(lua, (lua_Integer)stats->publish_failures);
+  lua_setfield(lua, -2, "publish_failures");
+  lua_pushinteger(lua, (lua_Integer)stats->full_failures);
+  lua_setfield(lua, -2, "full_failures");
+  lua_pushinteger(lua, (lua_Integer)stats->closed_failures);
+  lua_setfield(lua, -2, "closed_failures");
+  lua_pushinteger(lua, (lua_Integer)stats->timeout_failures);
+  lua_setfield(lua, -2, "timeout_failures");
+  lua_pushinteger(lua, (lua_Integer)stats->drained);
+  lua_setfield(lua, -2, "drained");
+  lua_pushinteger(lua, (lua_Integer)stats->requests_published);
+  lua_setfield(lua, -2, "requests_published");
+  lua_pushinteger(lua, (lua_Integer)stats->replies_published);
+  lua_setfield(lua, -2, "replies_published");
+  lua_pushinteger(lua, (lua_Integer)stats->correlation_ids_issued);
+  lua_setfield(lua, -2, "correlation_ids_issued");
+  lua_pushinteger(lua, (lua_Integer)box->pump_calls);
+  lua_setfield(lua, -2, "pump_calls");
+  lua_pushinteger(lua, (lua_Integer)box->pump_events);
+  lua_setfield(lua, -2, "pump_events");
+  lua_pushinteger(lua, (lua_Integer)box->pump_callback_failures);
+  lua_setfield(lua, -2, "pump_callback_failures");
+}
+
+static int vectis_lua_mailbox_stats(lua_State *lua) {
+  vectis_lua_mailbox *box;
+  vectis_mailbox_stats stats;
+  vectis_error error;
+  vectis_status status;
+  int owner_error;
+
+  box = vectis_lua_check_mailbox(lua, 1);
+  owner_error = vectis_lua_mailbox_validate_owner(lua, box);
+  if (owner_error != 0) {
+    return owner_error;
+  }
+  vectis_error_clear(&error);
+  status = box->mailbox->stats(box->mailbox, &stats, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  vectis_lua_mailbox_push_stats(lua, &stats, box);
+  return 1;
+}
+
 static int vectis_lua_mailbox_pump_options(lua_State *lua, int index,
                                            size_t *max_events,
                                            long *timeout_ms) {
@@ -13955,6 +14022,7 @@ static int vectis_lua_mailbox_pump(lua_State *lua) {
   }
   luaL_checktype(lua, 2, LUA_TFUNCTION);
   (void)vectis_lua_mailbox_pump_options(lua, 3, &max_events, &timeout_ms);
+  box->pump_calls++;
   drained = 0u;
   while (drained < max_events) {
     vectis_mailbox_event_init(&event);
@@ -13975,7 +14043,9 @@ static int vectis_lua_mailbox_pump(lua_State *lua) {
     lua_pushvalue(lua, 2);
     vectis_lua_mailbox_push_event(lua, &event);
     vectis_mailbox_event_cleanup(&event);
+    box->pump_events++;
     if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
+      box->pump_callback_failures++;
       return vectis_lua_push_error_text(lua, VECTIS_ERR_STATE,
                                         lua_tostring(lua, -1) != NULL
                                             ? lua_tostring(lua, -1)
@@ -14002,6 +14072,8 @@ static void vectis_lua_register_mailbox(lua_State *lua) {
     lua_setfield(lua, -2, "pump");
     lua_pushcfunction(lua, vectis_lua_mailbox_depth);
     lua_setfield(lua, -2, "depth");
+    lua_pushcfunction(lua, vectis_lua_mailbox_stats);
+    lua_setfield(lua, -2, "stats");
     lua_pushcfunction(lua, vectis_lua_mailbox_close);
     lua_setfield(lua, -2, "close");
     lua_setfield(lua, -2, "__index");

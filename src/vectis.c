@@ -115,6 +115,7 @@ typedef struct vectis_mailbox_impl {
   pthread_mutex_t mutex;
   pthread_cond_t cond;
   vectis_mailbox_entry *entries;
+  vectis_mailbox_stats stats;
   size_t capacity;
   size_t max_payload_bytes;
   size_t head;
@@ -737,6 +738,13 @@ void vectis_mailbox_event_cleanup(vectis_mailbox_event *event) {
   vectis_mailbox_event_init(event);
 }
 
+void vectis_mailbox_stats_init(vectis_mailbox_stats *stats) {
+  if (stats == NULL) {
+    return;
+  }
+  memset(stats, 0, sizeof(*stats));
+}
+
 vectis_status vectis_mailbox_new(const vectis_mailbox_config *config,
                                  vectis_mailbox **out, vectis_error *error) {
   vectis_mailbox_config effective;
@@ -794,6 +802,9 @@ vectis_status vectis_mailbox_new(const vectis_mailbox_config *config,
   }
   impl->capacity = effective.capacity;
   impl->max_payload_bytes = effective.max_payload_bytes;
+  vectis_mailbox_stats_init(&impl->stats);
+  impl->stats.capacity = impl->capacity;
+  impl->stats.max_payload_bytes = impl->max_payload_bytes;
   impl->next_correlation_id = 1UL;
   mailbox->publish = vectis_mailbox_publish;
   mailbox->publish_request = vectis_mailbox_publish_request;
@@ -802,6 +813,7 @@ vectis_status vectis_mailbox_new(const vectis_mailbox_config *config,
   mailbox->wait_next = vectis_mailbox_wait_next;
   mailbox->issue_correlation_id = vectis_mailbox_issue_correlation_id;
   mailbox->depth = vectis_mailbox_depth;
+  mailbox->stats = vectis_mailbox_stats_get;
   mailbox->close = vectis_mailbox_close;
   mailbox->destroy = vectis_mailbox_destroy;
   mailbox->impl = impl;
@@ -828,18 +840,25 @@ vectis_status vectis_mailbox_publish(vectis_mailbox *mailbox,
   status = vectis_mailbox_copy_message(message, impl->max_payload_bytes, &entry,
                                        error);
   if (status != VECTIS_OK) {
+    (void)pthread_mutex_lock(&impl->mutex);
+    impl->stats.publish_failures++;
+    (void)pthread_mutex_unlock(&impl->mutex);
     return status;
   }
   (void)pthread_mutex_lock(&impl->mutex);
   if (impl->closed) {
-    (void)pthread_mutex_unlock(&impl->mutex);
     vectis_mailbox_entry_cleanup(&entry);
+    impl->stats.publish_failures++;
+    impl->stats.closed_failures++;
+    (void)pthread_mutex_unlock(&impl->mutex);
     vectis_set_error(error, VECTIS_ERR_STATE, "mailbox is closed");
     return VECTIS_ERR_STATE;
   }
   if (impl->count == impl->capacity) {
-    (void)pthread_mutex_unlock(&impl->mutex);
     vectis_mailbox_entry_cleanup(&entry);
+    impl->stats.publish_failures++;
+    impl->stats.full_failures++;
+    (void)pthread_mutex_unlock(&impl->mutex);
     vectis_set_error(error, VECTIS_ERR_CONFLICT, "mailbox is full");
     return VECTIS_ERR_CONFLICT;
   }
@@ -847,6 +866,11 @@ vectis_status vectis_mailbox_publish(vectis_mailbox *mailbox,
   slot = &impl->entries[index];
   *slot = entry;
   impl->count++;
+  impl->stats.published++;
+  impl->stats.current_depth = impl->count;
+  if (impl->count > impl->stats.high_water_depth) {
+    impl->stats.high_water_depth = impl->count;
+  }
   (void)pthread_cond_signal(&impl->cond);
   (void)pthread_mutex_unlock(&impl->mutex);
   vectis_error_clear(error);
@@ -881,6 +905,11 @@ vectis_status vectis_mailbox_publish_request(
   request.expects_reply = 1;
   status = vectis_mailbox_publish(mailbox, &request, error);
   if (status == VECTIS_OK) {
+    vectis_mailbox_impl *impl;
+    impl = (vectis_mailbox_impl *)mailbox->impl;
+    (void)pthread_mutex_lock(&impl->mutex);
+    impl->stats.requests_published++;
+    (void)pthread_mutex_unlock(&impl->mutex);
     *correlation_id = id;
   }
   return status;
@@ -891,6 +920,7 @@ vectis_status vectis_mailbox_reply(vectis_mailbox *mailbox,
                                    const vectis_mailbox_message *message,
                                    vectis_error *error) {
   vectis_mailbox_message reply;
+  vectis_status status;
 
   if (correlation_id == 0UL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
@@ -904,7 +934,15 @@ vectis_status vectis_mailbox_reply(vectis_mailbox *mailbox,
   reply = *message;
   reply.correlation_id = correlation_id;
   reply.expects_reply = 0;
-  return vectis_mailbox_publish(mailbox, &reply, error);
+  status = vectis_mailbox_publish(mailbox, &reply, error);
+  if (status == VECTIS_OK) {
+    vectis_mailbox_impl *impl;
+    impl = (vectis_mailbox_impl *)mailbox->impl;
+    (void)pthread_mutex_lock(&impl->mutex);
+    impl->stats.replies_published++;
+    (void)pthread_mutex_unlock(&impl->mutex);
+  }
+  return status;
 }
 
 vectis_status vectis_mailbox_wait_next(vectis_mailbox *mailbox,
@@ -932,6 +970,7 @@ vectis_status vectis_mailbox_wait_next(vectis_mailbox *mailbox,
   }
   while (impl->count == 0u && !impl->closed) {
     if (timeout_ms == 0L) {
+      impl->stats.timeout_failures++;
       (void)pthread_mutex_unlock(&impl->mutex);
       vectis_set_error(error, VECTIS_ERR_TIMEOUT, "mailbox has no events");
       return VECTIS_ERR_TIMEOUT;
@@ -942,6 +981,7 @@ vectis_status vectis_mailbox_wait_next(vectis_mailbox *mailbox,
       rc = pthread_cond_timedwait(&impl->cond, &impl->mutex, &deadline);
     }
     if (rc == ETIMEDOUT) {
+      impl->stats.timeout_failures++;
       (void)pthread_mutex_unlock(&impl->mutex);
       vectis_set_error(error, VECTIS_ERR_TIMEOUT, "mailbox wait timed out");
       return VECTIS_ERR_TIMEOUT;
@@ -953,6 +993,7 @@ vectis_status vectis_mailbox_wait_next(vectis_mailbox *mailbox,
     }
   }
   if (impl->count == 0u && impl->closed) {
+    impl->stats.closed_failures++;
     (void)pthread_mutex_unlock(&impl->mutex);
     vectis_set_error(error, VECTIS_ERR_STATE, "mailbox is closed");
     return VECTIS_ERR_STATE;
@@ -961,6 +1002,8 @@ vectis_status vectis_mailbox_wait_next(vectis_mailbox *mailbox,
   memset(&impl->entries[impl->head], 0, sizeof(impl->entries[impl->head]));
   impl->head = (impl->head + 1u) % impl->capacity;
   impl->count--;
+  impl->stats.drained++;
+  impl->stats.current_depth = impl->count;
   (void)pthread_mutex_unlock(&impl->mutex);
   out->kind = entry.kind;
   out->payload = entry.payload;
@@ -994,6 +1037,7 @@ vectis_status vectis_mailbox_issue_correlation_id(vectis_mailbox *mailbox,
   impl = (vectis_mailbox_impl *)mailbox->impl;
   (void)pthread_mutex_lock(&impl->mutex);
   *out = vectis_mailbox_issue_correlation_id_locked(impl);
+  impl->stats.correlation_ids_issued++;
   (void)pthread_mutex_unlock(&impl->mutex);
   vectis_error_clear(error);
   return VECTIS_OK;
@@ -1011,6 +1055,30 @@ size_t vectis_mailbox_depth(const vectis_mailbox *mailbox) {
   depth = impl->count;
   (void)pthread_mutex_unlock(&impl->mutex);
   return depth;
+}
+
+vectis_status vectis_mailbox_stats_get(const vectis_mailbox *mailbox,
+                                       vectis_mailbox_stats *out,
+                                       vectis_error *error) {
+  vectis_mailbox_impl *impl;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "mailbox stats output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_mailbox_stats_init(out);
+  if (mailbox == NULL || mailbox->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "mailbox is required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_mailbox_impl *)mailbox->impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  *out = impl->stats;
+  out->current_depth = impl->count;
+  (void)pthread_mutex_unlock(&impl->mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 void vectis_mailbox_close(vectis_mailbox *mailbox) {

@@ -186,7 +186,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add the C-owned concurrency DX mailbox for in-process service handoff, bounded backpressure, and request/reply correlation.
 - [x] Add the Lua mailbox facade with owner-state `pump()` semantics so Lua callbacks are explicit drains rather than background-thread entry.
 - [ ] Add C and Lua scenario coverage for Kore route -> mailbox worker -> reply, OPC UA/lockd-style mailbox handoff, and direct C receiver fast paths.
-- [ ] Add metrics and diagnostics hooks for mailbox depth, publish failures, timeout failures, pump counts, and callback failures.
+- [x] Add metrics and diagnostics hooks for mailbox depth, publish failures, timeout failures, pump counts, and callback failures.
 - [x] Make API errors explicit when a Lua script attempts to run genuinely incompatible runtime loops in one process.
 - [x] Add integration tests covering enqueue/dequeue/ack workflows.
 - [x] Add direct liblockdc C examples for open client, lease save/load, query, attachments, enqueue, manual dequeue, and managed consumer services.

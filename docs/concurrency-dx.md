@@ -60,6 +60,11 @@ caller. `vectis_mailbox_reply()` publishes a non-request event with the supplied
 correlation id. Higher-level APIs may wrap these primitives for route-local
 request/reply flows.
 
+`vectis_mailbox_stats_get()` returns a thread-safe snapshot with capacity,
+current depth, high-water depth, publish/drain counts, full/closed/timeout
+failure counts, and request/reply correlation counters. The stats surface is
+diagnostic only and must not be used as an exclusive synchronization primitive.
+
 ## Performance Model
 
 The intended performance hierarchy is:
@@ -110,6 +115,8 @@ The Lua facade mirrors the C mailbox:
 - `box:next(timeout_ms)` returns the next event table or `nil, error`.
 - `box:pump(handler, opts)` drains up to a bounded count and calls `handler(event)`
   on the owner Lua state.
+- `box:stats()` returns the core mailbox stats plus Lua-owned `pump_calls`,
+  `pump_events`, and `pump_callback_failures`.
 
 Lua mailbox events are tables with `kind`, `payload`, `correlation_id`, and
 `expects_reply`. The facade does not invoke handlers from background service
@@ -121,5 +128,3 @@ threads.
   when concrete scenario code proves that generic byte payloads are too noisy.
 - Add route-local helper APIs for request/reply with deadline and automatic reply
   mailbox cleanup.
-- Add metrics hooks for queue depth, publish failures, drain count, and callback
-  failures.

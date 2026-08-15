@@ -196,6 +196,23 @@ typedef struct vectis_mailbox_event {
   int expects_reply;
 } vectis_mailbox_event;
 
+/* Snapshot counters for mailbox diagnostics. Counters are monotonic. */
+typedef struct vectis_mailbox_stats {
+  size_t capacity;
+  size_t max_payload_bytes;
+  size_t current_depth;
+  size_t high_water_depth;
+  unsigned long published;
+  unsigned long publish_failures;
+  unsigned long full_failures;
+  unsigned long closed_failures;
+  unsigned long timeout_failures;
+  unsigned long drained;
+  unsigned long requests_published;
+  unsigned long replies_published;
+  unsigned long correlation_ids_issued;
+} vectis_mailbox_stats;
+
 /*
  * Public configuration structs must be initialized with their matching
  * vectis_*_init() function before use. NULL pointers and zero-valued scalar
@@ -1196,6 +1213,8 @@ struct vectis_mailbox {
                                         unsigned long *out,
                                         vectis_error *error);
   size_t (*depth)(const vectis_mailbox *self);
+  vectis_status (*stats)(const vectis_mailbox *self, vectis_mailbox_stats *out,
+                         vectis_error *error);
   /* Close rejects new publishes and wakes blocked waiters. */
   void (*close)(vectis_mailbox *self);
   void (*destroy)(vectis_mailbox *self);
@@ -1215,6 +1234,7 @@ void vectis_mailbox_config_init(vectis_mailbox_config *config);
 void vectis_mailbox_message_init(vectis_mailbox_message *message);
 void vectis_mailbox_event_init(vectis_mailbox_event *event);
 void vectis_mailbox_event_cleanup(vectis_mailbox_event *event);
+void vectis_mailbox_stats_init(vectis_mailbox_stats *stats);
 vectis_status vectis_mailbox_new(const vectis_mailbox_config *config,
                                  vectis_mailbox **out, vectis_error *error);
 vectis_status vectis_mailbox_publish(vectis_mailbox *mailbox,
@@ -1237,6 +1257,9 @@ vectis_status vectis_mailbox_issue_correlation_id(vectis_mailbox *mailbox,
                                                   unsigned long *out,
                                                   vectis_error *error);
 size_t vectis_mailbox_depth(const vectis_mailbox *mailbox);
+vectis_status vectis_mailbox_stats_get(const vectis_mailbox *mailbox,
+                                       vectis_mailbox_stats *out,
+                                       vectis_error *error);
 void vectis_mailbox_close(vectis_mailbox *mailbox);
 void vectis_mailbox_destroy(vectis_mailbox *mailbox);
 void vectis_app_config_init(vectis_app_config *config);

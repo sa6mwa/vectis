@@ -25,6 +25,7 @@ static void test_publish_and_drain(void) {
   vectis_mailbox_config config;
   vectis_mailbox_message message;
   vectis_mailbox_event event;
+  vectis_mailbox_stats stats;
   vectis_mailbox *mailbox;
   vectis_error error;
   vectis_status status;
@@ -45,6 +46,13 @@ static void test_publish_and_drain(void) {
   status = mailbox->publish(mailbox, &message, &error);
   expect_status(status, VECTIS_OK, "mailbox publish");
   expect(mailbox->depth(mailbox) == 1u, "mailbox depth after publish");
+  status = mailbox->stats(mailbox, &stats, &error);
+  expect_status(status, VECTIS_OK, "mailbox stats after publish");
+  expect(stats.capacity == 2u, "mailbox stats capacity");
+  expect(stats.max_payload_bytes == 16u, "mailbox stats max payload");
+  expect(stats.current_depth == 1u, "mailbox stats current depth");
+  expect(stats.high_water_depth == 1u, "mailbox stats high water");
+  expect(stats.published == 1UL, "mailbox stats published");
 
   vectis_mailbox_event_init(&event);
   status = mailbox->next(mailbox, &event, &error);
@@ -59,6 +67,10 @@ static void test_publish_and_drain(void) {
   expect(event.expects_reply == 1, "mailbox expects reply");
   vectis_mailbox_event_cleanup(&event);
   expect(mailbox->depth(mailbox) == 0u, "mailbox depth after drain");
+  status = vectis_mailbox_stats_get(mailbox, &stats, &error);
+  expect_status(status, VECTIS_OK, "mailbox stats after drain");
+  expect(stats.current_depth == 0u, "mailbox stats drained depth");
+  expect(stats.drained == 1UL, "mailbox stats drained count");
 
   mailbox->destroy(mailbox);
 }
@@ -67,6 +79,7 @@ static void test_bounds_and_close(void) {
   vectis_mailbox_config config;
   vectis_mailbox_message message;
   vectis_mailbox_event event;
+  vectis_mailbox_stats stats;
   vectis_mailbox *mailbox;
   vectis_error error;
   vectis_status status;
@@ -84,6 +97,9 @@ static void test_bounds_and_close(void) {
   message.payload_size = sizeof(payload) - 1u;
   status = vectis_mailbox_publish(mailbox, &message, &error);
   expect_status(status, VECTIS_ERR_INVALID, "payload size limit");
+  status = mailbox->stats(mailbox, &stats, &error);
+  expect_status(status, VECTIS_OK, "stats after size failure");
+  expect(stats.publish_failures == 1UL, "stats size publish failure");
 
   message.kind = "one";
   message.payload_size = 1u;
@@ -92,6 +108,11 @@ static void test_bounds_and_close(void) {
   message.kind = "two";
   status = vectis_mailbox_publish(mailbox, &message, &error);
   expect_status(status, VECTIS_ERR_CONFLICT, "bounded publish rejects full");
+  status = mailbox->stats(mailbox, &stats, &error);
+  expect_status(status, VECTIS_OK, "stats after full failure");
+  expect(stats.full_failures == 1UL, "stats full failure");
+  expect(stats.publish_failures == 2UL, "stats publish failures");
+  expect(stats.high_water_depth == 1u, "stats full high water");
 
   vectis_mailbox_event_init(&event);
   status = vectis_mailbox_wait_next(mailbox, &event, 0L, &error);
@@ -99,12 +120,18 @@ static void test_bounds_and_close(void) {
   vectis_mailbox_event_cleanup(&event);
   status = vectis_mailbox_wait_next(mailbox, &event, 0L, &error);
   expect_status(status, VECTIS_ERR_TIMEOUT, "empty mailbox poll timeout");
+  status = mailbox->stats(mailbox, &stats, &error);
+  expect_status(status, VECTIS_OK, "stats after timeout");
+  expect(stats.timeout_failures == 1UL, "stats timeout failure");
 
   mailbox->close(mailbox);
   status = vectis_mailbox_publish(mailbox, &message, &error);
   expect_status(status, VECTIS_ERR_STATE, "closed mailbox publish");
   status = vectis_mailbox_wait_next(mailbox, &event, 0L, &error);
   expect_status(status, VECTIS_ERR_STATE, "closed empty mailbox drain");
+  status = mailbox->stats(mailbox, &stats, &error);
+  expect_status(status, VECTIS_OK, "stats after closed failures");
+  expect(stats.closed_failures == 2UL, "stats closed failures");
   mailbox->destroy(mailbox);
 }
 
@@ -113,6 +140,7 @@ static void test_request_reply_correlation(void) {
   vectis_mailbox_message request;
   vectis_mailbox_message reply;
   vectis_mailbox_event event;
+  vectis_mailbox_stats stats;
   vectis_mailbox *requests;
   vectis_mailbox *replies;
   vectis_error error;
@@ -136,6 +164,10 @@ static void test_request_reply_correlation(void) {
       requests->publish_request(requests, &request, &correlation_id, &error);
   expect_status(status, VECTIS_OK, "publish request");
   expect(correlation_id != 0UL, "request correlation assigned");
+  status = requests->stats(requests, &stats, &error);
+  expect_status(status, VECTIS_OK, "request stats after publish");
+  expect(stats.requests_published == 1UL, "request stats requests published");
+  expect(stats.correlation_ids_issued == 1UL, "request stats correlation ids");
 
   vectis_mailbox_event_init(&event);
   status = requests->next(requests, &event, &error);
@@ -150,6 +182,9 @@ static void test_request_reply_correlation(void) {
   reply.payload_size = sizeof(reply_payload) - 1u;
   status = replies->reply(replies, correlation_id, &reply, &error);
   expect_status(status, VECTIS_OK, "publish reply");
+  status = replies->stats(replies, &stats, &error);
+  expect_status(status, VECTIS_OK, "reply stats after publish");
+  expect(stats.replies_published == 1UL, "reply stats replies published");
   status = replies->next(replies, &event, &error);
   expect_status(status, VECTIS_OK, "drain reply");
   expect(event.correlation_id == correlation_id, "reply correlation carried");
