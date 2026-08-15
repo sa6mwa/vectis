@@ -555,6 +555,8 @@ local remote_data_type = opcua.node_id_numeric(1, 7222)
 local remote_reference_type = opcua.node_id_numeric(1, 7223)
 local remote_view = opcua.node_id_numeric(1, 7224)
 local remote_linked_object = opcua.node_id_numeric(1, 7225)
+local remote_async_object = opcua.node_id_numeric(1, 7230)
+local remote_async_variable = opcua.node_id_numeric(1, 7231)
 local objects_folder = opcua.node_id_numeric(0, opcua.NODE_OBJECTS_FOLDER)
 local organizes = opcua.node_id_numeric(0, opcua.REFERENCE_ORGANIZES)
 local client_object_added, client_object_add_err = client:add_object({
@@ -915,6 +917,93 @@ assert(async_method_result ~= nil, "client call_method_async should complete")
 assert(async_method_result.request_id == async_method_request)
 assert(async_method_result.ok == true)
 assert(async_method_result.outputs[1]:get() == 18)
+
+local async_object_result = nil
+local async_object_request = assert(client:add_object_async({
+  node_id = remote_async_object,
+  parent_node_id = objects_folder,
+  browse_name = "clientAsyncObject",
+  display_name = "Client Async Object",
+}, function(result)
+  assert(type(result.request_id) == "number")
+  assert(type(result.result) == "number")
+  assert(type(result.result_string) == "string")
+  assert(type(result.opcua_status) == "number")
+  assert(type(result.opcua_status_name) == "string")
+  assert(result.node_id == remote_async_object)
+  async_object_result = result
+end))
+for _ = 1, 100 do
+  local ok, err = client:iterate(20)
+  assert(ok == true, err and err.message or "client iterate async object add")
+  if async_object_result ~= nil then
+    break
+  end
+end
+assert(async_object_result ~= nil, "client add_object_async should complete")
+assert(async_object_result.request_id == async_object_request)
+assert(async_object_result.ok == true)
+assert(client:read_node_class(remote_async_object) == opcua.NODE_CLASS_OBJECT)
+
+local async_variable_result = nil
+local async_variable_request = assert(client:add_variable_async({
+  node_id = remote_async_variable,
+  parent_node_id = remote_async_object,
+  browse_name = "clientAsyncValue",
+  display_name = "Client Async Value",
+  value = opcua.value_integer(44),
+}, function(result)
+  assert(type(result.request_id) == "number")
+  assert(type(result.node_id) == "userdata")
+  assert(result.node_id == remote_async_variable)
+  async_variable_result = result
+end))
+for _ = 1, 100 do
+  local ok, err = client:iterate(20)
+  assert(ok == true, err and err.message or "client iterate async variable add")
+  if async_variable_result ~= nil then
+    break
+  end
+end
+assert(async_variable_result ~= nil, "client add_variable_async should complete")
+assert(async_variable_result.request_id == async_variable_request)
+assert(async_variable_result.ok == true)
+assert(assert(client:read(remote_async_variable)):get() == 44)
+
+local async_browse_result = nil
+local async_browse_request = assert(client:browse_children_async(
+    remote_async_object, function(result)
+      assert(type(result.request_id) == "number")
+      assert(type(result.entries) == "table")
+      assert(type(result.entry_count) == "number")
+      async_browse_result = result
+    end, {
+      node_class_mask = opcua.NODE_CLASS_VARIABLE,
+      result_mask = opcua.BROWSE_RESULT_ALL,
+    }))
+for _ = 1, 100 do
+  local ok, err = client:iterate(20)
+  assert(ok == true, err and err.message or "client iterate async browse")
+  if async_browse_result ~= nil then
+    break
+  end
+end
+assert(async_browse_result ~= nil, "client browse_children_async should complete")
+assert(async_browse_result.request_id == async_browse_request)
+assert(async_browse_result.ok == true)
+local async_browse_found = false
+for i = 1, #async_browse_result.entries do
+  local entry = async_browse_result.entries[i]
+  if entry.target_node_id == remote_async_variable then
+    assert(entry.node_class == opcua.NODE_CLASS_VARIABLE)
+    assert(entry.browse_name.name == "clientAsyncValue")
+    async_browse_found = true
+  end
+end
+assert(async_browse_found,
+       "client browse_children_async should return async variable")
+assert(client:delete_node(remote_async_variable, true) == true)
+assert(client:delete_node(remote_async_object, true) == true)
 
 local async_callback_error_seen = false
 assert(client:write_async(node, opcua.value_integer(updated_value + 3),

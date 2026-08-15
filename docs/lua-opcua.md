@@ -47,8 +47,11 @@ owned handles and structured Vectis error envelopes for dependency failures.
   sampling_interval_ms, field_names, callback)`,
   `client:read_async(node_id, callback[, opts])`,
   `client:write_async(node_id, value, callback)`,
+  `client:browse_children_async(parent_node_id, callback[, opts])`,
   `client:call_method_async(object_node_id, method_node_id, inputs,
   output_count, callback[, opts])`,
+  `client:add_object_async(opts, callback[, async_opts])`,
+  `client:add_variable_async(opts, callback[, async_opts])`,
   `client:read(node_id)`,
   `client:write(node_id, value)`, `client:add_object(opts)`,
   `client:add_variable(opts)`, `client:add_variable_under(opts)`,
@@ -296,10 +299,11 @@ Event-monitor callbacks follow the same retention and error rules.
 ```
 
 Async client callbacks are retained by the client until completion, close, or
-garbage collection. `client:read_async()`, `client:write_async()`, and
-`client:call_method_async()` return a numeric `request_id` immediately and
-deliver completion while `client:iterate(...)` pumps the owning Lua state.
-Completion callbacks receive one owned table:
+garbage collection. `client:read_async()`, `client:write_async()`,
+`client:browse_children_async()`, `client:call_method_async()`,
+`client:add_object_async()`, and `client:add_variable_async()` return a numeric
+`request_id` immediately and deliver completion while `client:iterate(...)`
+pumps the owning Lua state. Completion callbacks receive one owned table:
 
 ```lua
 {
@@ -310,14 +314,20 @@ Completion callbacks receive one owned table:
   opcua_status = 0,
   opcua_status_name = "Good",
   value = opcua.value_integer(7), -- read_async only
+  entries = { { target_node_id = opcua.node_id("ns=1;i=1") } }, -- browse only
   outputs = { opcua.value_integer(21) }, -- call_method_async only
+  node_id = opcua.node_id("ns=1;i=2"), -- async node creation only
 }
 ```
 
 `read_async()` and `call_method_async()` accept optional
-`string_buffer_size`/`buffer_size` options for string-like results. If a Lua
-completion callback fails, the error becomes a structured OPC UA callback error
-returned by the next `client:iterate(...)` call.
+`string_buffer_size`/`buffer_size` options for string-like results.
+`add_object_async()` and `add_variable_async()` accept optional
+`node_id_buffer_size`/`buffer_size` options for returned string-like node ids.
+`browse_children_async()` accepts the same browse options as
+`browse_children_ex()`. If a Lua completion callback fails, the error becomes a
+structured OPC UA callback error returned by the next `client:iterate(...)`
+call.
 
 `client:monitor_event_fields()` accepts an array of field names and receives
 selected fields as owned `opcua.value` userdata:
@@ -402,5 +412,4 @@ The dependency-native facade must cover the relevant public
 server work includes security configuration, access-control callbacks,
 PubSub/MQTT configuration, event monitoring workflows, async-safe callback
 queueing, and explicit C-only native-pointer exclusions. Remaining client work
-includes async browse and async node-creation calls, native-pointer exclusions,
-and PubSub-related workflows.
+includes native-pointer exclusions and PubSub-related workflows.
