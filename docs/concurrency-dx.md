@@ -103,6 +103,19 @@ Kore API request to worker result:
 - Durable flow: route enqueues through liblockdc, returns accepted/pending, or
   waits only when the product explicitly wants durable queue latency.
 
+## Scenario Coverage
+
+`examples/concurrency/mailbox_request_reply.c` is the C contract example for the
+mailbox DX layer. It covers a route-style correlated request/reply handoff to a
+worker thread, plus an OPC UA/lockd-style direct C handoff where one receiver
+drains a mailbox event and publishes the next C-owned work item without entering
+Lua.
+
+`examples/lua/mailbox_pipeline.lua` is the Lua contract example. It covers
+publishing a request, owner-state `pump()` dispatch, correlated reply
+publication, reply draining, and stats inspection without reusable helper
+functions that would hide the facade shape.
+
 ## Lua Surface
 
 The Lua facade mirrors the C mailbox:

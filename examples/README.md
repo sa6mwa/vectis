@@ -82,6 +82,12 @@ surface directly, without local helper layers that would hide awkward API shape.
 - `mdf/mdf_render.c`: libmdf Markdown rendering from both a C string and a
   callback-backed source into a callback-backed sink.
 
+## `concurrency/`
+
+- `concurrency/mailbox_request_reply.c`: C-owned mailbox request/reply flow
+  between a route-style producer and worker thread, plus an OPC UA/lockd-style
+  direct C receiver handoff without entering Lua.
+
 ## `lua/`
 
 Lua examples follow the same rule as the C examples: they are self-contained
@@ -119,6 +125,8 @@ modules, but it must not require another file from `examples/lua/`.
 - `lua/local_data_pipeline.lua`: dependency-native liblql filtering/projection,
   pslog JSON logging, softline editor state operations, and zlib string/file
   compression through their direct Lua modules.
+- `lua/mailbox_pipeline.lua`: owner-state `vectis.mailbox` pipeline showing
+  publish, bounded pump, correlated reply, and stats without helper layers.
 - `lua/webdav_fileserver.lua`: mutable WebDAV fileserver mount and
   `vectis.webdav` client operations against a deterministic local server.
 - `lua/api_server.lua`: packable Lua API server script using direct

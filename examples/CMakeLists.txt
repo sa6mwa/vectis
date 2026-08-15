@@ -98,10 +98,19 @@ vectis_add_example(vectis_example_ssh_sftp ssh/ssh2_sftp.c)
 vectis_add_example(vectis_example_certs certs/cert_bundle.c)
 vectis_add_example(vectis_example_dependency_escape
                    dependency/dependency_escape_hatches.c)
+vectis_add_example(vectis_example_mailbox_request_reply
+                   concurrency/mailbox_request_reply.c)
+target_link_libraries(vectis_example_mailbox_request_reply PRIVATE
+  Threads::Threads)
 
 if(VECTIS_BUILD_TESTS)
   add_test(NAME vectis_example_mdf_render COMMAND vectis_example_mdf_render)
   set_tests_properties(vectis_example_mdf_render PROPERTIES
+    LABELS "example-smoke;local"
+    TIMEOUT 30)
+  add_test(NAME vectis_example_mailbox_request_reply
+           COMMAND vectis_example_mailbox_request_reply)
+  set_tests_properties(vectis_example_mailbox_request_reply PROPERTIES
     LABELS "example-smoke;local"
     TIMEOUT 30)
 endif()

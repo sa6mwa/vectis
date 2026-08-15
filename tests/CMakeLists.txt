@@ -323,6 +323,12 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_example_lua_local_data_pipeline PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
+  add_test(NAME vectis_example_lua_mailbox_pipeline
+           COMMAND "$<TARGET_FILE:vectis_bin>"
+                   "${CMAKE_SOURCE_DIR}/examples/lua/mailbox_pipeline.lua")
+  set_tests_properties(vectis_example_lua_mailbox_pipeline PROPERTIES
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
   add_test(NAME vectis_example_lua_local_data_pipeline_pack
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
