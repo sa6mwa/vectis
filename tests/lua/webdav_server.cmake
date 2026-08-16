@@ -131,7 +131,7 @@ local ready
 for _ = 1, 20 do
   ready = webdav.propfind(request_opts("/open", {depth = 0}))
   if ready.transport_ok then break end
-  os.execute("sleep 0.1")
+  assert(vectis.sleep_ms(100) == true)
 end
 assert(ready.transport_ok == true, ready.error and ready.error.message)
 

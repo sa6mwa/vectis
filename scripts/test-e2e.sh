@@ -893,9 +893,7 @@ run_lua_examples() {
     '  cache_control = "no-store",' \
     '}))' \
     'assert(server:start())' \
-    'while true do' \
-    '  os.execute("sleep 3600")' \
-    'end' >"$packed_service_script"
+    'assert(server:wait())' >"$packed_service_script"
   "$repo_root/build/debug/vectis" -a pack \
     --script "$packed_service_script" \
     --asset-dir "/:$packed_service_site" \
@@ -1070,9 +1068,7 @@ run_lua_examples() {
     '  cache_control = "max-age=30",' \
     '}))' \
     'assert(server:start())' \
-    'while true do' \
-    '  os.execute("sleep 3600")' \
-    'end' >"$packed_https_script"
+    'assert(server:wait())' >"$packed_https_script"
   "$repo_root/build/debug/vectis" -a pack \
     --script "$packed_https_script" \
     --asset-dir "/:$packed_service_site" \
@@ -1128,9 +1124,7 @@ run_lua_examples() {
     '  body = [[{"ok":true,"surface":"acme-state"}]],' \
     '}))' \
     'assert(server:start())' \
-    'while true do' \
-    '  os.execute("sleep 3600")' \
-    'end' >"$acme_state_script"
+    'assert(server:wait())' >"$acme_state_script"
   start_server "lua acme state" "$acme_state_log" \
     env VECTIS_ACME_STATE_PORT="$kore_acme_port" \
       VECTIS_ACME_STATE_CACHE="$acme_state_cache" \

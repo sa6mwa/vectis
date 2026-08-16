@@ -66,7 +66,7 @@ local ready
 for _ = 1, 20 do
   ready = webdav.get(request_opts("/dav/assets/source.txt"))
   if ready.ok then break end
-  os.execute("sleep 0.1")
+  assert(vectis.sleep_ms(100) == true)
 end
 assert(ready.ok == true, ready.error and ready.error.message)
 assert(ready.status == 200)

@@ -747,7 +747,7 @@ for _ = 1, 20 do
     no_signal = true,
   })
   if api_response.ok then break end
-  os.execute("sleep 0.1")
+  assert(vectis.sleep_ms(100) == true)
 end
 assert(api_response.ok == true, api_response.error and api_response.error.message)
 assert(api_response.status == 200)
