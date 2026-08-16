@@ -144,6 +144,9 @@ stub("cai", {
   mcp_handler = function()
     return {}
   end,
+  mcp_client = function()
+    return {}
+  end,
   chatgpt_auth_default_path = function()
     return "auth.json"
   end,
@@ -275,6 +278,7 @@ assert(vectis.auth == require("vectis.auth"))
 assert(vectis.auth.core == require("vectis.auth.core"))
 assert(vectis.cai == require("vectis.cai"))
 assert(vectis.cai.native == package.loaded.cai)
+assert(type(vectis.cai.mcp_client) == "function")
 assert(vectis.cai.config({ provider = "openrouter" }).openrouter == true)
 local rock_cai_err = vectis.cai.error({ dependency_code = 1 }, "rock cai")
 assert(rock_cai_err.source == "cai")

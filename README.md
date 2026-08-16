@@ -62,7 +62,7 @@ archive cache. The current expected dependency set is:
   storage support.
 - `lonejson` 0.42.0 for typed JSON parsing, serialization, streaming arrays,
   spooled fields, and C/Lua bindings.
-- `cai` 0.3.0 for OpenAI API, agent, tool, MCP, and Lua binding sources.
+- `cai` 0.4.0 for OpenAI API, agent, tool, MCP, and Lua binding sources.
 - `liblql` 0.2.0 for the LQL dependency exposed by `liblockdc` 0.13.1.
 - `libmdf` 0.6.0 for Markdown-to-ANSI/HTML rendering and Lua binding sources.
 - `softline` 0.2.0 for line editing, terminal prompt UX, and Lua binding

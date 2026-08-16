@@ -11,6 +11,7 @@ local M = {
   tool_schema = cai.tool_schema,
   tool_registry = cai.tool_registry,
   mcp_handler = cai.mcp_handler,
+  mcp_client = cai.mcp_client,
   chatgpt_auth_default_path = cai.chatgpt_auth_default_path,
   chatgpt_auth = cai.chatgpt_auth,
   chatgpt_login = cai.chatgpt_login,

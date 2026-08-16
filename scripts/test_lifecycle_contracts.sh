@@ -823,12 +823,12 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$lua_index" '\[Lua CAI\]\(lua-cai\.md\)'
   assert_contains "$repo_root/docs/api.md" '\[Lua CAI\]\(lua-cai\.md\)'
   assert_contains "$repo_root/docs/lua-cai.md" 'dependency-native CAI Lua module'
-  assert_contains "$repo_root/docs/lua-cai.md" 'The pinned CAI dependency is `0\.3\.0`'
+  assert_contains "$repo_root/docs/lua-cai.md" 'The pinned CAI dependency is `0\.4\.0`'
   assert_contains "$repo_root/docs/lua-cai.md" '`vectis\.cai` is a service DX'
   assert_contains "$repo_root/docs/lua-cai.md" 'not a second AI SDK'
   assert_contains "$repo_root/docs/lua-cai.md" 'The C adapters preserve true streaming'
   assert_contains "$repo_root/TODO.md" '\[x\] Track CAI as a dependency once its C SDK surface stabilizes'
-  assert_contains "$matrix" 'Dependency-native CAI 0\.3\.0 module is preloaded'
+  assert_contains "$matrix" 'Dependency-native CAI 0\.4\.0 module is preloaded'
   assert_contains "$matrix" '`vectis\.cai` covers normalized service config'
   assert_contains "$lua_index" '\[Lua libmdf\]\(lua-libmdf\.md\)'
   assert_contains "$lua_index" '\[Lua softline\]\(lua-softline\.md\)'
@@ -1233,7 +1233,7 @@ for expected in \
   '^liblockdc_sha256=fcce40120a8e6c6990efdb4d54c427011619abb280a8ecbd4644b720eda7cbb8$' \
   '^lonejson_sha256=e04f80b907d92f7e38f825fbd339297e85372fc1ce110abb9a93715ee450ece3$' \
   '^pslog_sha256=7981ce7e60f6f1e144042e7a9192bb661472756ae34336fb0c2ed8316b31945f$' \
-  '^cai_sha256=e344102fa5b46e8c05d67a5120ea0c74bf9ee8ad9ec0bc01e08ea5ccc1f1bdc9$' \
+  '^cai_sha256=46d7c0c88633b932b98d6e6e0c035d6d4c4c24e8576122961d6e5a8affa78b5d$' \
   '^lql_sha256=a32b3ecc33b0634df23c630843b1c2c16a8a2caa947109a33bad20965e47a399$' \
   '^lql_lua_sha256=b440ce543586ebfc9aafd0e09a700126b9d62d85b8c34ae2ac19b0990db28438$' \
   '^softline_sha256=5d5e662269cf5bae9276f1ba7216dfb7e63127ea89c7c9b5f23cb33dbc970012$'

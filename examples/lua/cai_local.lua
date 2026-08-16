@@ -44,6 +44,7 @@ local handler = assert(cai.mcp_handler({
   disable_origin_validation = 1,
 }))
 assert(type(handler.handle_http) == "function")
+assert(type(cai.mcp_client) == "function")
 handler:close()
 registry:close()
 schema:close()

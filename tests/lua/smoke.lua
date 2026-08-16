@@ -106,6 +106,7 @@ assert(vcai.native == cai)
 assert(vcai.tool_schema == cai.tool_schema)
 assert(vcai.response_params == cai.response_params)
 assert(vcai.model_info == cai.model_info)
+assert(vcai.mcp_client == cai.mcp_client)
 local vcai_config = vcai.config({
   provider = "openrouter",
   api_key_env = "VECTIS_TEST_CAI_KEY",
@@ -1390,6 +1391,7 @@ assert(type(lql.new) == "function")
 assert(type(cai) == "table")
 assert(type(cai.open) == "function")
 assert(type(cai.mcp_handler) == "function")
+assert(type(cai.mcp_client) == "function")
 assert(type(cai.MODEL_DEFAULT_RESPONSES) == "string")
 assert(type(cai.MCP_PROTOCOL_VERSION) == "string")
 

@@ -394,7 +394,8 @@ assert(server:mcp({
 ```
 
 MCP client support is intentionally not implemented in Vectis-owned Lua code;
-it comes from the upstream CAI Lua facade when CAI ships that binding.
+use the upstream CAI Lua facade through `cai.mcp_client` or
+`vectis.cai.mcp_client`.
 
 ## Upload Routes
 

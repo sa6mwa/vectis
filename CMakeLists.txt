@@ -55,7 +55,7 @@ set(VECTIS_EXPECTED_SYSTEM_VERSION "0.9.0")
 set(VECTIS_EXPECTED_LOCKDC_VERSION "0.13.1")
 set(VECTIS_EXPECTED_LONEJSON_VERSION "0.42.0")
 set(VECTIS_EXPECTED_PSLOG_VERSION "0.9.0")
-set(VECTIS_EXPECTED_CAI_VERSION "0.3.0")
+set(VECTIS_EXPECTED_CAI_VERSION "0.4.0")
 set(VECTIS_EXPECTED_LIBLQL_VERSION "0.2.0")
 set(VECTIS_EXPECTED_LIBMDF_VERSION "0.6.0")
 set(VECTIS_EXPECTED_SOFTLINE_VERSION "0.2.0")
@@ -944,6 +944,7 @@ if(VECTIS_BUILD_BINARY)
   add_library(vectis_cai_lua OBJECT "${vectis_cai_lua_source}")
   target_include_directories(vectis_cai_lua PRIVATE
     "${vectis_external_include_dir}"
+    "${vectis_pslog_lua_source_dir}/include"
   )
   target_compile_definitions(vectis_cai_lua PRIVATE
     _POSIX_C_SOURCE=200809L)

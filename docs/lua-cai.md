@@ -6,7 +6,7 @@ Vectis should add only service-integration glue around CAI when a workflow needs
 to cross Vectis-owned concepts such as routes, lockd payloads, files, logging,
 or auth.
 
-The pinned CAI dependency is `0.3.0`. The module is preloaded and also
+The pinned CAI dependency is `0.4.0`. The module is preloaded and also
 available as `require("vectis").libs.cai`; both names return the same module
 table.
 
@@ -23,12 +23,13 @@ tests includes:
 - `cai.response_params`
 - `cai.tool_registry`
 - `cai.mcp_handler`
+- `cai.mcp_client`
 
 Use CAI directly for OpenAI request construction, sessions, tool schemas,
 dependency-native MCP handlers, model metadata, and credential loading.
 `vectis.cai` is a service DX layer around those native objects, not a second AI SDK.
-MCP client bindings are CAI-owned; Vectis will re-export the upstream CAI
-client surface when it is available.
+MCP client bindings are CAI-owned and available through `cai.mcp_client`,
+`vectis.libs.cai.mcp_client`, and the `vectis.cai.mcp_client` alias.
 
 ## Vectis Boundary
 
@@ -37,7 +38,7 @@ client surface when it is available.
 - `native`, which is the same table as `require("cai")`
 - aliases for common CAI constructors and metadata helpers such as
   `tool_schema`, `response_params`, `tool_registry`, `mcp_handler`,
-  `model_info`, and ChatGPT auth/login helpers
+  `mcp_client`, `model_info`, and ChatGPT auth/login helpers
 - `config(opts)`, which normalizes Vectis service naming such as
   `provider = "openrouter"` and `auth_json_path`
 - `open(opts)`, `with_client(opts, handler)`, `new_agent(opts)`, and
