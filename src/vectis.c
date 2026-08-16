@@ -353,6 +353,8 @@ typedef struct vectis_app_impl {
   pid_t kore_child_pid;
   int kore_child_reaped;
   int kore_child_control_fd;
+  int service_control_read_fd;
+  int service_control_write_fd;
   int owns_logger;
   char *app_name;
   char *bind;
@@ -622,6 +624,13 @@ vectis_app_start_requested_consumer_services(vectis_app_impl *impl,
 static vectis_status
 vectis_app_check_consumer_service_exit(vectis_app_impl *impl,
                                        vectis_error *error);
+static vectis_status vectis_app_service_control_open(vectis_app_impl *impl,
+                                                     vectis_error *error);
+static void vectis_app_service_control_close(vectis_app_impl *impl);
+static void vectis_app_notify_consumer_service_failure(
+    vectis_consumer_service_impl *service, const vectis_error *terminal_error);
+static vectis_status vectis_app_read_service_control(vectis_app_impl *impl,
+                                                     vectis_error *error);
 static int
 vectis_app_has_requested_consumer_services(const vectis_app_impl *impl);
 static int
@@ -4514,6 +4523,9 @@ static void *vectis_consumer_service_monitor_main(void *userdata) {
     service->monitor_done = 1;
     service->started = 0;
   }
+  if (rc != LC_OK) {
+    vectis_app_notify_consumer_service_failure(service, &terminal_error);
+  }
   return NULL;
 }
 
@@ -5017,6 +5029,7 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
     impl->kore_child_control_fd = -1;
   }
   vectis_app_close_consumer_services(impl);
+  vectis_app_service_control_close(impl);
   vectis_close_lockd_client_for_current_process(impl);
   vectis_close_cai_client_for_current_process(impl);
 
@@ -5661,6 +5674,8 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
     return NULL;
   }
   impl->kore_child_control_fd = -1;
+  impl->service_control_read_fd = -1;
+  impl->service_control_write_fd = -1;
 
   impl->app_name = vectis_strdup(
       effective->app_name != NULL ? effective->app_name : "vectis");
@@ -5941,6 +5956,131 @@ static void vectis_close_fd_if_open(int *fd) {
   }
 }
 
+static vectis_status vectis_app_service_control_open(vectis_app_impl *impl,
+                                                     vectis_error *error) {
+  int fds[2];
+
+  if (impl == NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  (void)pthread_mutex_lock(&impl->mutex);
+  if (impl->service_control_read_fd >= 0 ||
+      impl->service_control_write_fd >= 0) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
+
+  fds[0] = -1;
+  fds[1] = -1;
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "failed to create service control channel: %s",
+                      strerror(errno));
+    return VECTIS_ERR_STATE;
+  }
+
+  (void)pthread_mutex_lock(&impl->mutex);
+  if (impl->service_control_read_fd >= 0 ||
+      impl->service_control_write_fd >= 0) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_close_fd_if_open(&fds[0]);
+    vectis_close_fd_if_open(&fds[1]);
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  impl->service_control_read_fd = fds[0];
+  impl->service_control_write_fd = fds[1];
+  (void)pthread_mutex_unlock(&impl->mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static void vectis_app_service_control_close(vectis_app_impl *impl) {
+  int read_fd;
+  int write_fd;
+
+  if (impl == NULL) {
+    return;
+  }
+  (void)pthread_mutex_lock(&impl->mutex);
+  read_fd = impl->service_control_read_fd;
+  write_fd = impl->service_control_write_fd;
+  impl->service_control_read_fd = -1;
+  impl->service_control_write_fd = -1;
+  (void)pthread_mutex_unlock(&impl->mutex);
+  vectis_close_fd_if_open(&read_fd);
+  vectis_close_fd_if_open(&write_fd);
+}
+
+static void vectis_app_notify_consumer_service_failure(
+    vectis_consumer_service_impl *service, const vectis_error *terminal_error) {
+  vectis_app_impl *owner;
+  const char *message;
+  size_t message_size;
+  int fd;
+  int should_notify;
+
+  if (service == NULL || service->owner == NULL) {
+    return;
+  }
+  owner = service->owner;
+  message = terminal_error != NULL && terminal_error->message[0] != '\0'
+                ? terminal_error->message
+                : "consumer service failed";
+  message_size = strlen(message);
+  if (message_size > 65535u) {
+    message_size = 65535u;
+  }
+
+  (void)pthread_mutex_lock(&owner->mutex);
+  fd = owner->service_control_write_fd;
+  should_notify = fd >= 0 && service->monitor_done &&
+                  service->monitor_rc != LC_OK && !service->stop_requested;
+  (void)pthread_mutex_unlock(&owner->mutex);
+  if (!should_notify) {
+    return;
+  }
+  (void)vectis_internal_runtime_control_write(
+      fd, VECTIS_RUNTIME_CONTROL_SERVICE_FAILURE, message, message_size, NULL);
+}
+
+static vectis_status vectis_app_read_service_control(vectis_app_impl *impl,
+                                                     vectis_error *error) {
+  vectis_runtime_control_type frame_type;
+  vectis_mutable_bytes payload;
+  vectis_status status;
+  int fd;
+
+  if (impl == NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  (void)pthread_mutex_lock(&impl->mutex);
+  fd = impl->service_control_read_fd;
+  (void)pthread_mutex_unlock(&impl->mutex);
+  if (fd < 0) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+
+  memset(&payload, 0, sizeof(payload));
+  status =
+      vectis_internal_runtime_control_read(fd, &frame_type, &payload, error);
+  vectis_mutable_bytes_cleanup(&payload);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (frame_type != VECTIS_RUNTIME_CONTROL_SERVICE_FAILURE) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "service control channel returned an unexpected frame");
+    return VECTIS_ERR_STATE;
+  }
+  return vectis_app_check_consumer_service_exit(impl, error);
+}
+
 static vectis_status vectis_app_stop_kore_child(pid_t child_pid, int control_fd,
                                                 long shutdown_grace_ms,
                                                 vectis_error *error) {
@@ -6189,6 +6329,14 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
     (void)pthread_mutex_lock(&impl->mutex);
     impl->started = 1;
     (void)pthread_mutex_unlock(&impl->mutex);
+    status = vectis_app_service_control_open(impl, error);
+    if (status != VECTIS_OK) {
+      vectis_error cleanup_error;
+
+      vectis_error_clear(&cleanup_error);
+      (void)vectis_app_stop_impl(app, &cleanup_error);
+      return status;
+    }
     status = vectis_metrics_worker_start(app, error);
     if (status != VECTIS_OK) {
       vectis_error cleanup_error;
@@ -6212,11 +6360,20 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
   (void)pthread_mutex_lock(&impl->mutex);
   impl->started = 1;
   (void)pthread_mutex_unlock(&impl->mutex);
+  status = vectis_app_service_control_open(impl, error);
+  if (status != VECTIS_OK) {
+    (void)pthread_mutex_lock(&impl->mutex);
+    impl->started = 0;
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_close_lockd_client_for_current_process(impl);
+    return status;
+  }
   status = vectis_metrics_worker_start(app, error);
   if (status != VECTIS_OK) {
     (void)pthread_mutex_lock(&impl->mutex);
     impl->started = 0;
     (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_app_service_control_close(impl);
     vectis_close_lockd_client_for_current_process(impl);
     return status;
   }
@@ -6277,8 +6434,10 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
   }
 
   if (vectis_app_stop_consumer_services(impl, error) != VECTIS_OK) {
+    vectis_app_service_control_close(impl);
     return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
+  vectis_app_service_control_close(impl);
 
   (void)pthread_mutex_lock(&impl->mutex);
   vectis_close_lockd_client_for_current_process(impl);
@@ -6566,9 +6725,13 @@ static vectis_status vectis_app_wait_for_process_signal(vectis_app_impl *impl,
   struct sigaction old_int;
   struct sigaction old_term;
   struct sigaction old_quit;
+  fd_set readfds;
+  struct timeval timeout;
   int have_int;
   int have_term;
   int have_quit;
+  int service_fd;
+  int select_rc;
   int err;
 
   vectis_wait_signal = 0;
@@ -6607,6 +6770,42 @@ static vectis_status vectis_app_wait_for_process_signal(vectis_app_impl *impl,
       (void)sigaction(SIGQUIT, &old_quit, NULL);
       return error != NULL ? error->code : VECTIS_ERR_STATE;
     }
+    service_fd = -1;
+    if (impl != NULL) {
+      (void)pthread_mutex_lock(&impl->mutex);
+      service_fd = impl->service_control_read_fd;
+      (void)pthread_mutex_unlock(&impl->mutex);
+    }
+    if (service_fd >= 0) {
+      FD_ZERO(&readfds);
+      FD_SET(service_fd, &readfds);
+      timeout.tv_sec = 0;
+      timeout.tv_usec = 100000;
+      select_rc = select(service_fd + 1, &readfds, NULL, NULL, &timeout);
+      if (select_rc > 0 && FD_ISSET(service_fd, &readfds)) {
+        if (vectis_app_read_service_control(impl, error) != VECTIS_OK) {
+          (void)sigaction(SIGINT, &old_int, NULL);
+          (void)sigaction(SIGTERM, &old_term, NULL);
+          (void)sigaction(SIGQUIT, &old_quit, NULL);
+          return error != NULL ? error->code : VECTIS_ERR_STATE;
+        }
+        continue;
+      }
+      if (select_rc < 0 && errno != EINTR) {
+        err = errno != 0 ? errno : EINVAL;
+        (void)sigaction(SIGINT, &old_int, NULL);
+        (void)sigaction(SIGTERM, &old_term, NULL);
+        (void)sigaction(SIGQUIT, &old_quit, NULL);
+        vectis_set_error(error, VECTIS_ERR_STATE, "vectis wait failed");
+        if (error != NULL) {
+          error->dependency_code = (long)err;
+          (void)snprintf(error->detail, sizeof(error->detail), "%s",
+                         strerror(err));
+        }
+        return VECTIS_ERR_STATE;
+      }
+      continue;
+    }
     err = vectis_wait_sleep_ms(100L);
     if (err != 0) {
       (void)sigaction(SIGINT, &old_int, NULL);
@@ -6641,6 +6840,10 @@ static vectis_status vectis_app_wait_supervised_child(vectis_app_impl *impl,
   int have_quit;
   int err;
   int status;
+  int service_fd;
+  int select_rc;
+  fd_set readfds;
+  struct timeval timeout;
   pid_t waited;
 
   if (impl == NULL || child_pid <= 0) {
@@ -6718,6 +6921,41 @@ static vectis_status vectis_app_wait_supervised_child(vectis_app_impl *impl,
       (void)sigaction(SIGTERM, &old_term, NULL);
       (void)sigaction(SIGQUIT, &old_quit, NULL);
       return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    service_fd = -1;
+    (void)pthread_mutex_lock(&impl->mutex);
+    service_fd = impl->service_control_read_fd;
+    (void)pthread_mutex_unlock(&impl->mutex);
+    if (service_fd >= 0) {
+      FD_ZERO(&readfds);
+      FD_SET(service_fd, &readfds);
+      timeout.tv_sec = 0;
+      timeout.tv_usec = 100000;
+      select_rc = select(service_fd + 1, &readfds, NULL, NULL, &timeout);
+      if (select_rc > 0 && FD_ISSET(service_fd, &readfds)) {
+        if (vectis_app_read_service_control(impl, error) != VECTIS_OK) {
+          (void)sigaction(SIGINT, &old_int, NULL);
+          (void)sigaction(SIGTERM, &old_term, NULL);
+          (void)sigaction(SIGQUIT, &old_quit, NULL);
+          return error != NULL ? error->code : VECTIS_ERR_STATE;
+        }
+        continue;
+      }
+      if (select_rc < 0 && errno != EINTR) {
+        err = errno != 0 ? errno : EINVAL;
+        (void)sigaction(SIGINT, &old_int, NULL);
+        (void)sigaction(SIGTERM, &old_term, NULL);
+        (void)sigaction(SIGQUIT, &old_quit, NULL);
+        vectis_set_error(error, VECTIS_ERR_STATE,
+                         "supervised vectis wait failed");
+        if (error != NULL) {
+          error->dependency_code = (long)err;
+          (void)snprintf(error->detail, sizeof(error->detail), "%s",
+                         strerror(err));
+        }
+        return VECTIS_ERR_STATE;
+      }
+      continue;
     }
     err = vectis_wait_sleep_ms(100L);
     if (err != 0) {

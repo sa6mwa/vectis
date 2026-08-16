@@ -436,16 +436,19 @@ The runtime bus should carry:
 - optional route-to-supervisor request/reply messages when configured;
 - structured errors with Vectis status/source metadata.
 
-Current implementation commits the first layer as an internal supervisor control
-channel, not a public libvectis or Lua API. Frames use the private `VRC1`
-header, a typed control kind, and a bounded payload. The first implemented
-frames are child readiness and child stop. STOP is best-effort graceful
-shutdown: the supervisor sends the frame first, then keeps the existing bounded
-SIGTERM/SIGKILL fallback so an unresponsive child cannot hang shutdown. Later
-metrics, service-failure, and request/reply frames must use the same bounded
-copied-message model or a deliberately named spooled/chunked extension; they
-must not smuggle in-process pointers or materialize unbounded "streaming"
-payloads.
+Current implementation commits the first layer as internal supervisor control
+channels, not a public libvectis or Lua API. Frames use the private `VRC1`
+header, a typed control kind, and a bounded payload. The implemented frames are
+child readiness, child stop, and supervisor-local service failure wakeups. STOP
+is best-effort graceful shutdown: the supervisor sends the frame first, then
+keeps the existing bounded SIGTERM/SIGKILL fallback so an unresponsive child
+cannot hang shutdown. Service failure frames wake `wait()` after the service
+monitor has recorded copied terminal state; the service state/error surface
+remains the diagnostic source of truth and the configured failure policy decides
+whether the app fail-closes or continues. Later metrics and request/reply frames
+must use the same bounded copied-message model or a deliberately named
+spooled/chunked extension; they must not smuggle in-process pointers or
+materialize unbounded "streaming" payloads.
 
 ## Quiescence Guard
 
@@ -589,7 +592,8 @@ Required semantics:
    - child readiness; implemented as an internal typed control frame.
    - child stop; implemented as an internal typed control frame with signal
      fallback.
-   - service failure propagation;
+   - service failure propagation; implemented as a supervisor-local typed
+     control frame that wakes `wait()` after monitor state is recorded.
    - metrics snapshot transfer.
 6. Lua lifecycle updates:
    - align `server:consumer_service`, `server:run`, `server:start`,
