@@ -8,9 +8,9 @@
 #include <cai/mcp.h>
 #include <cpkt/opcua.h>
 #include <curl/curl.h>
-#include <stddef.h>
 #include <lonejson.h>
 #include <pslog.h>
+#include <stddef.h>
 
 #define VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION                           \
   "https://acme-v02.api.letsencrypt.org/directory"
@@ -2101,10 +2101,11 @@ vectis_status vectis_cai_output_response(cai_output *output,
                                          vectis_error *error);
 vectis_status vectis_cai_output_file(cai_output *output, const char *path,
                                      size_t *written, vectis_error *error);
-vectis_status vectis_cai_output_enqueue(
-    cai_output *output, struct lc_client *client,
-    const struct lc_enqueue_req *request, struct lc_enqueue_res *out,
-    vectis_error *error);
+vectis_status vectis_cai_output_enqueue(cai_output *output,
+                                        struct lc_client *client,
+                                        const struct lc_enqueue_req *request,
+                                        struct lc_enqueue_res *out,
+                                        vectis_error *error);
 
 void vectis_http_client_config_init(vectis_http_client_config *config);
 vectis_status vectis_http_client_new(const vectis_http_client_config *config,

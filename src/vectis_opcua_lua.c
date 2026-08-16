@@ -8476,12 +8476,12 @@ static int vectis_opcua_lua_client_history_read_raw(lua_State *lua) {
     options_index = lua_absindex(lua, 3);
     start_time = vectis_opcua_lua_datetime_field(
         lua, options_index, "start_time", "opcua client history read raw");
-    end_time = vectis_opcua_lua_datetime_field(
-        lua, options_index, "end_time", "opcua client history read raw");
-    index_range = vectis_opcua_lua_table_string(lua, options_index,
-                                                "index_range");
-    return_bounds = vectis_opcua_lua_table_bool(lua, options_index,
-                                                "return_bounds", 0);
+    end_time = vectis_opcua_lua_datetime_field(lua, options_index, "end_time",
+                                               "opcua client history read raw");
+    index_range =
+        vectis_opcua_lua_table_string(lua, options_index, "index_range");
+    return_bounds =
+        vectis_opcua_lua_table_bool(lua, options_index, "return_bounds", 0);
     values_per_response = vectis_opcua_lua_table_ulong(
         lua, options_index, "values_per_response", 0u);
   }

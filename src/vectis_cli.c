@@ -3286,7 +3286,8 @@ static int vectis_lua_sleep_ms(lua_State *lua) {
 
   delay_ms = luaL_checkinteger(lua, 1);
   if (delay_ms < 0) {
-    return luaL_error(lua, "vectis.sleep_ms requires non-negative milliseconds");
+    return luaL_error(lua,
+                      "vectis.sleep_ms requires non-negative milliseconds");
   }
   if (delay_ms > LONG_MAX) {
     return luaL_error(lua, "vectis.sleep_ms value is too large");
@@ -5992,8 +5993,7 @@ static void vectis_lua_server_upload_route_free_all(vectis_lua_server *server) {
   }
 }
 
-static void
-vectis_lua_server_mcp_tool_free(vectis_lua_server_mcp_tool *tool) {
+static void vectis_lua_server_mcp_tool_free(vectis_lua_server_mcp_tool *tool) {
   if (tool == NULL) {
     return;
   }
@@ -10709,8 +10709,7 @@ static int vectis_lua_server_mcp_set_error(cai_error *error, int code,
 
 static int vectis_lua_server_mcp_tool_call(void *context,
                                            const char *arguments_json,
-                                           cai_sink *output,
-                                           cai_error *error) {
+                                           cai_sink *output, cai_error *error) {
   vectis_lua_server_mcp_tool *tool;
   lua_State *lua;
   const char *result;
@@ -10815,10 +10814,9 @@ static int vectis_lua_server_mcp_add_tool(lua_State *lua,
   strict = vectis_lua_table_bool(lua, index, "strict", 1);
 
   cai_error_init(&caierr);
-  rc = cai_tool_registry_register_raw(route->registry, name, description,
-                                      schema_json, strict,
-                                      vectis_lua_server_mcp_tool_call, tool,
-                                      &caierr);
+  rc = cai_tool_registry_register_raw(
+      route->registry, name, description, schema_json, strict,
+      vectis_lua_server_mcp_tool_call, tool, &caierr);
   if (rc != CAI_OK) {
     vectis_cai_error(error, &caierr, "failed to register MCP tool");
     cai_error_cleanup(&caierr);
@@ -10891,11 +10889,11 @@ static int vectis_lua_server_mcp(lua_State *lua) {
   if (path == NULL || path[0] == '\0') {
     path = "/mcp";
   }
-  methods = vectis_lua_route_methods(
-      lua, 2,
-      VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_POST |
-          VECTIS_HTTP_METHODS_DELETE,
-      "MCP route");
+  methods = vectis_lua_route_methods(lua, 2,
+                                     VECTIS_HTTP_METHODS_GET |
+                                         VECTIS_HTTP_METHODS_POST |
+                                         VECTIS_HTTP_METHODS_DELETE,
+                                     "MCP route");
 
   route_data = (vectis_lua_server_mcp_route *)calloc(1u, sizeof(*route_data));
   if (route_data == NULL) {
@@ -10922,10 +10920,8 @@ static int vectis_lua_server_mcp(lua_State *lua) {
   vectis_error_clear(&error);
   if (!vectis_lua_server_mcp_tools(lua, route_data, 2, &error)) {
     vectis_lua_server_mcp_route_free(route_data);
-    return vectis_lua_push_error(lua,
-                                 error.code != VECTIS_OK ? error.code
-                                                         : VECTIS_ERR_INVALID,
-                                 &error);
+    return vectis_lua_push_error(
+        lua, error.code != VECTIS_OK ? error.code : VECTIS_ERR_INVALID, &error);
   }
 
   route = vectis_cai_mcp_route_configured(route_data->path, NULL);
@@ -10933,29 +10929,26 @@ static int vectis_lua_server_mcp(lua_State *lua) {
   name = vectis_lua_table_string(lua, 2, "name");
   version = vectis_lua_table_string(lua, 2, "version");
   route.handler_config.name = name != NULL ? name : "vectis";
-  route.handler_config.version =
-      version != NULL ? version : VECTIS_VERSION;
+  route.handler_config.version = version != NULL ? version : VECTIS_VERSION;
   route.handler_config.tools = route_data->registry;
-  route.handler_config.request_max_bytes =
-      vectis_lua_table_size(lua, 2, "request_max_bytes",
-                            route.handler_config.request_max_bytes);
-  route.handler_config.response_spool_memory_limit = vectis_lua_table_size(
-      lua, 2, "response_spool_memory_limit",
-      route.handler_config.response_spool_memory_limit);
-  route.handler_config.tool_output_max_bytes = vectis_lua_table_size(
-      lua, 2, "tool_output_max_bytes",
-      route.handler_config.tool_output_max_bytes);
-  route.handler_config.enable_sessions =
-      vectis_lua_table_bool(lua, 2, "enable_sessions",
-                            route.handler_config.enable_sessions);
-  route.handler_config.disable_origin_validation = vectis_lua_table_bool(
-      lua, 2, "disable_origin_validation",
-      route.handler_config.disable_origin_validation);
+  route.handler_config.request_max_bytes = vectis_lua_table_size(
+      lua, 2, "request_max_bytes", route.handler_config.request_max_bytes);
+  route.handler_config.response_spool_memory_limit =
+      vectis_lua_table_size(lua, 2, "response_spool_memory_limit",
+                            route.handler_config.response_spool_memory_limit);
+  route.handler_config.tool_output_max_bytes =
+      vectis_lua_table_size(lua, 2, "tool_output_max_bytes",
+                            route.handler_config.tool_output_max_bytes);
+  route.handler_config.enable_sessions = vectis_lua_table_bool(
+      lua, 2, "enable_sessions", route.handler_config.enable_sessions);
+  route.handler_config.disable_origin_validation =
+      vectis_lua_table_bool(lua, 2, "disable_origin_validation",
+                            route.handler_config.disable_origin_validation);
   route.handler_config.protocol_version =
       vectis_lua_table_string(lua, 2, "protocol_version");
-  route.handler_config.require_protocol_version = vectis_lua_table_bool(
-      lua, 2, "require_protocol_version",
-      route.handler_config.require_protocol_version);
+  route.handler_config.require_protocol_version =
+      vectis_lua_table_bool(lua, 2, "require_protocol_version",
+                            route.handler_config.require_protocol_version);
   route.buffer_bytes = vectis_lua_table_size(
       lua, 2, "buffer_bytes", VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES);
   route.body = vectis_body_upload_max(

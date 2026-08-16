@@ -76,8 +76,7 @@ static const char *vectis_audio_lua_status_string(vectis_status status) {
   }
 }
 
-static int vectis_audio_lua_push_error(lua_State *lua,
-                                       cpkt_audio_result result,
+static int vectis_audio_lua_push_error(lua_State *lua, cpkt_audio_result result,
                                        const char *context) {
   const char *result_string;
   vectis_status status;
@@ -121,8 +120,8 @@ static int vectis_audio_lua_push_error(lua_State *lua,
 }
 
 static unsigned long vectis_audio_lua_table_ulong(lua_State *lua, int index,
-                                                 const char *field,
-                                                 unsigned long fallback) {
+                                                  const char *field,
+                                                  unsigned long fallback) {
   lua_Integer value;
 
   if (index < 0) {
@@ -259,25 +258,24 @@ static void vectis_audio_lua_capture_config(lua_State *lua, int index,
     return;
   }
   luaL_checktype(lua, index, LUA_TTABLE);
-  config->backend = (int)vectis_audio_lua_table_ulong(lua, index, "backend", 0u);
-  config->buffer_ms =
-      vectis_audio_lua_table_ulong(lua, index, "buffer_ms", 0u);
-  config->period_ms =
-      vectis_audio_lua_table_ulong(lua, index, "period_ms", 0u);
+  config->backend =
+      (int)vectis_audio_lua_table_ulong(lua, index, "backend", 0u);
+  config->buffer_ms = vectis_audio_lua_table_ulong(lua, index, "buffer_ms", 0u);
+  config->period_ms = vectis_audio_lua_table_ulong(lua, index, "period_ms", 0u);
 }
 
-static void vectis_audio_lua_playback_config(
-    lua_State *lua, int index, cpkt_audio_playback_config *config) {
+static void
+vectis_audio_lua_playback_config(lua_State *lua, int index,
+                                 cpkt_audio_playback_config *config) {
   memset(config, 0, sizeof(*config));
   if (index == 0 || lua_isnoneornil(lua, index)) {
     return;
   }
   luaL_checktype(lua, index, LUA_TTABLE);
-  config->backend = (int)vectis_audio_lua_table_ulong(lua, index, "backend", 0u);
-  config->buffer_ms =
-      vectis_audio_lua_table_ulong(lua, index, "buffer_ms", 0u);
-  config->period_ms =
-      vectis_audio_lua_table_ulong(lua, index, "period_ms", 0u);
+  config->backend =
+      (int)vectis_audio_lua_table_ulong(lua, index, "backend", 0u);
+  config->buffer_ms = vectis_audio_lua_table_ulong(lua, index, "buffer_ms", 0u);
+  config->period_ms = vectis_audio_lua_table_ulong(lua, index, "period_ms", 0u);
 }
 
 static size_t vectis_audio_lua_read_cb(void *user, void *buffer,
@@ -435,8 +433,8 @@ static vectis_audio_decoder_lua *
 vectis_audio_lua_new_decoder(lua_State *lua, cpkt_audio_decoder *decoder) {
   vectis_audio_decoder_lua *handle;
 
-  handle = (vectis_audio_decoder_lua *)lua_newuserdatauv(lua, sizeof(*handle),
-                                                         0);
+  handle =
+      (vectis_audio_decoder_lua *)lua_newuserdatauv(lua, sizeof(*handle), 0);
   handle->decoder = decoder;
   handle->lua = lua;
   handle->read_ref = LUA_NOREF;
@@ -446,8 +444,8 @@ vectis_audio_lua_new_decoder(lua_State *lua, cpkt_audio_decoder *decoder) {
   return handle;
 }
 
-static vectis_audio_decoder_lua *
-vectis_audio_lua_check_decoder(lua_State *lua, int index) {
+static vectis_audio_decoder_lua *vectis_audio_lua_check_decoder(lua_State *lua,
+                                                                int index) {
   return (vectis_audio_decoder_lua *)luaL_checkudata(lua, index,
                                                      VECTIS_AUDIO_DECODER);
 }
@@ -525,8 +523,8 @@ static int vectis_audio_lua_decoder_read(lua_State *lua) {
     }
   }
   frames_read = 0u;
-  result = handle->decoder->read_f32_mono_16k(
-      handle->decoder, frames, (size_t)requested, &frames_read);
+  result = handle->decoder->read_f32_mono_16k(handle->decoder, frames,
+                                              (size_t)requested, &frames_read);
   if (result != CPKT_AUDIO_OK && result != CPKT_AUDIO_AT_END) {
     free(frames);
     return vectis_audio_lua_push_error(lua, result, "audio decoder read");
@@ -626,7 +624,7 @@ static int vectis_audio_lua_decoder_open_reader(lua_State *lua) {
       handle->seek_ref = LUA_NOREF;
     }
     return vectis_audio_lua_push_error(lua, result,
-                                      "audio decoder open_reader");
+                                       "audio decoder open_reader");
   }
   handle->decoder = decoder;
   return 1;
@@ -637,8 +635,8 @@ vectis_audio_lua_new_encoder(lua_State *lua, cpkt_audio_encoder *encoder,
                              unsigned long channels) {
   vectis_audio_encoder_lua *handle;
 
-  handle = (vectis_audio_encoder_lua *)lua_newuserdatauv(lua, sizeof(*handle),
-                                                         0);
+  handle =
+      (vectis_audio_encoder_lua *)lua_newuserdatauv(lua, sizeof(*handle), 0);
   handle->encoder = encoder;
   handle->lua = lua;
   handle->write_ref = LUA_NOREF;
@@ -649,8 +647,8 @@ vectis_audio_lua_new_encoder(lua_State *lua, cpkt_audio_encoder *encoder,
   return handle;
 }
 
-static vectis_audio_encoder_lua *
-vectis_audio_lua_check_encoder(lua_State *lua, int index) {
+static vectis_audio_encoder_lua *vectis_audio_lua_check_encoder(lua_State *lua,
+                                                                int index) {
   return (vectis_audio_encoder_lua *)luaL_checkudata(lua, index,
                                                      VECTIS_AUDIO_ENCODER);
 }
@@ -759,8 +757,8 @@ static int vectis_audio_lua_encoder_open_writer(lua_State *lua) {
       luaL_unref(lua, LUA_REGISTRYINDEX, handle->seek_ref);
       handle->seek_ref = LUA_NOREF;
     }
-    return luaL_error(lua,
-                      "audio encoder writer write and seek callbacks are required");
+    return luaL_error(
+        lua, "audio encoder writer write and seek callbacks are required");
   }
   writer.user = handle;
   writer.write = vectis_audio_lua_write_cb;
@@ -778,14 +776,15 @@ static int vectis_audio_lua_encoder_open_writer(lua_State *lua) {
       handle->seek_ref = LUA_NOREF;
     }
     return vectis_audio_lua_push_error(lua, result,
-                                      "audio encoder open_writer");
+                                       "audio encoder open_writer");
   }
   handle->encoder = encoder;
   return 1;
 }
 
-static int vectis_audio_lua_capture_state_sink(
-    const cpkt_audio_capture_state_event *event, void *user) {
+static int
+vectis_audio_lua_capture_state_sink(const cpkt_audio_capture_state_event *event,
+                                    void *user) {
   vectis_audio_capture_lua *handle;
   lua_State *lua;
   int top;
@@ -821,8 +820,8 @@ static vectis_audio_capture_lua *
 vectis_audio_lua_new_capture(lua_State *lua, cpkt_audio_capture *capture) {
   vectis_audio_capture_lua *handle;
 
-  handle = (vectis_audio_capture_lua *)lua_newuserdatauv(lua, sizeof(*handle),
-                                                         0);
+  handle =
+      (vectis_audio_capture_lua *)lua_newuserdatauv(lua, sizeof(*handle), 0);
   handle->capture = capture;
   handle->lua = lua;
   handle->state_ref = LUA_NOREF;
@@ -831,8 +830,8 @@ vectis_audio_lua_new_capture(lua_State *lua, cpkt_audio_capture *capture) {
   return handle;
 }
 
-static vectis_audio_capture_lua *
-vectis_audio_lua_check_capture(lua_State *lua, int index) {
+static vectis_audio_capture_lua *vectis_audio_lua_check_capture(lua_State *lua,
+                                                                int index) {
   return (vectis_audio_capture_lua *)luaL_checkudata(lua, index,
                                                      VECTIS_AUDIO_CAPTURE);
 }
@@ -929,8 +928,7 @@ static int vectis_audio_lua_capture_wait_ready(lua_State *lua) {
   }
   result = handle->capture->wait_ready(handle->capture, timeout_ms);
   if (result != CPKT_AUDIO_OK) {
-    return vectis_audio_lua_push_error(lua, result,
-                                      "audio capture wait_ready");
+    return vectis_audio_lua_push_error(lua, result, "audio capture wait_ready");
   }
   lua_pushboolean(lua, 1);
   return 1;
@@ -976,7 +974,7 @@ static int vectis_audio_lua_capture_open_default(lua_State *lua) {
       handle->state_ref = LUA_NOREF;
     }
     return vectis_audio_lua_push_error(lua, result,
-                                      "audio capture open_default");
+                                       "audio capture open_default");
   }
   handle->capture = capture;
   return 1;
@@ -986,8 +984,8 @@ static vectis_audio_playback_lua *
 vectis_audio_lua_new_playback(lua_State *lua, cpkt_audio_playback *playback) {
   vectis_audio_playback_lua *handle;
 
-  handle = (vectis_audio_playback_lua *)lua_newuserdatauv(lua, sizeof(*handle),
-                                                          0);
+  handle =
+      (vectis_audio_playback_lua *)lua_newuserdatauv(lua, sizeof(*handle), 0);
   handle->playback = playback;
   luaL_getmetatable(lua, VECTIS_AUDIO_PLAYBACK);
   lua_setmetatable(lua, -2);
@@ -1041,8 +1039,8 @@ static int vectis_audio_lua_playback_write(lua_State *lua) {
   }
   frames = vectis_audio_lua_frame_array(lua, 2, &frame_count);
   frames_written = 0u;
-  result = handle->playback->write_f32_mono_16k(
-      handle->playback, frames, frame_count, &frames_written);
+  result = handle->playback->write_f32_mono_16k(handle->playback, frames,
+                                                frame_count, &frames_written);
   free(frames);
   if (result != CPKT_AUDIO_OK) {
     return vectis_audio_lua_push_error(lua, result, "audio playback write");
@@ -1093,7 +1091,7 @@ static int vectis_audio_lua_playback_open_default(lua_State *lua) {
   result = cpkt_audio_playback_open_default(&playback, &config);
   if (result != CPKT_AUDIO_OK) {
     return vectis_audio_lua_push_error(lua, result,
-                                      "audio playback open_default");
+                                       "audio playback open_default");
   }
   vectis_audio_lua_new_playback(lua, playback);
   return 1;
@@ -1103,16 +1101,16 @@ static vectis_audio_segment_lua *
 vectis_audio_lua_new_segment(lua_State *lua, cpkt_audio_vox_segment *segment) {
   vectis_audio_segment_lua *handle;
 
-  handle = (vectis_audio_segment_lua *)lua_newuserdatauv(lua, sizeof(*handle),
-                                                         0);
+  handle =
+      (vectis_audio_segment_lua *)lua_newuserdatauv(lua, sizeof(*handle), 0);
   handle->segment = segment;
   luaL_getmetatable(lua, VECTIS_AUDIO_SEGMENT);
   lua_setmetatable(lua, -2);
   return handle;
 }
 
-static vectis_audio_segment_lua *
-vectis_audio_lua_check_segment(lua_State *lua, int index) {
+static vectis_audio_segment_lua *vectis_audio_lua_check_segment(lua_State *lua,
+                                                                int index) {
   return (vectis_audio_segment_lua *)luaL_checkudata(lua, index,
                                                      VECTIS_AUDIO_SEGMENT);
 }
@@ -1142,8 +1140,8 @@ int vectis_audio_lua_borrow_vox_segment(lua_State *lua, int index,
     return 0;
   }
   *out = NULL;
-  handle =
-      (vectis_audio_segment_lua *)luaL_testudata(lua, index, VECTIS_AUDIO_SEGMENT);
+  handle = (vectis_audio_segment_lua *)luaL_testudata(lua, index,
+                                                      VECTIS_AUDIO_SEGMENT);
   if (handle == NULL || handle->segment == NULL) {
     return 0;
   }
@@ -1286,8 +1284,8 @@ static vectis_audio_segmenter_lua *
 vectis_audio_lua_new_segmenter(lua_State *lua, const char *metatable) {
   vectis_audio_segmenter_lua *handle;
 
-  handle = (vectis_audio_segmenter_lua *)lua_newuserdatauv(lua,
-                                                           sizeof(*handle), 0);
+  handle =
+      (vectis_audio_segmenter_lua *)lua_newuserdatauv(lua, sizeof(*handle), 0);
   memset(handle, 0, sizeof(*handle));
   handle->lua = lua;
   handle->segment_ref = LUA_NOREF;
@@ -1297,20 +1295,21 @@ vectis_audio_lua_new_segmenter(lua_State *lua, const char *metatable) {
   return handle;
 }
 
-static vectis_audio_segmenter_lua *
-vectis_audio_lua_check_vox(lua_State *lua, int index) {
+static vectis_audio_segmenter_lua *vectis_audio_lua_check_vox(lua_State *lua,
+                                                              int index) {
   return (vectis_audio_segmenter_lua *)luaL_checkudata(lua, index,
                                                        VECTIS_AUDIO_VOX);
 }
 
-static vectis_audio_segmenter_lua *
-vectis_audio_lua_check_ptt(lua_State *lua, int index) {
+static vectis_audio_segmenter_lua *vectis_audio_lua_check_ptt(lua_State *lua,
+                                                              int index) {
   return (vectis_audio_segmenter_lua *)luaL_checkudata(lua, index,
                                                        VECTIS_AUDIO_PTT);
 }
 
-static void vectis_audio_lua_unref_segmenter(lua_State *lua,
-                                             vectis_audio_segmenter_lua *handle) {
+static void
+vectis_audio_lua_unref_segmenter(lua_State *lua,
+                                 vectis_audio_segmenter_lua *handle) {
   if (handle->segment_ref != LUA_NOREF) {
     luaL_unref(lua, LUA_REGISTRYINDEX, handle->segment_ref);
     handle->segment_ref = LUA_NOREF;
@@ -1530,21 +1529,20 @@ static int vectis_audio_lua_ptt_open(lua_State *lua) {
 }
 
 static int vectis_audio_lua_result_string(lua_State *lua) {
-  lua_pushstring(lua,
-                 cpkt_audio_result_string((cpkt_audio_result)luaL_checkinteger(
-                     lua, 1)));
+  lua_pushstring(lua, cpkt_audio_result_string(
+                          (cpkt_audio_result)luaL_checkinteger(lua, 1)));
   return 1;
 }
 
 static int vectis_audio_lua_can_decode(lua_State *lua) {
-  lua_pushboolean(lua, cpkt_audio_format_can_decode(
-                           vectis_audio_lua_format(lua, 1)) != 0);
+  lua_pushboolean(
+      lua, cpkt_audio_format_can_decode(vectis_audio_lua_format(lua, 1)) != 0);
   return 1;
 }
 
 static int vectis_audio_lua_can_encode(lua_State *lua) {
-  lua_pushboolean(lua, cpkt_audio_format_can_encode(
-                           vectis_audio_lua_format(lua, 1)) != 0);
+  lua_pushboolean(
+      lua, cpkt_audio_format_can_encode(vectis_audio_lua_format(lua, 1)) != 0);
   return 1;
 }
 

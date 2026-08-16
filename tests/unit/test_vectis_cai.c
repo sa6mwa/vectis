@@ -47,12 +47,10 @@ static void test_source_from_request(void) {
   vectis_error_clear(&error);
   request = vectis_internal_request_new(&error);
   assert(request != NULL);
-  assert(vectis_internal_request_set_body(request, payload,
-                                          sizeof(payload) - 1u,
-                                          &error) == VECTIS_OK);
+  assert(vectis_internal_request_set_body(
+             request, payload, sizeof(payload) - 1u, &error) == VECTIS_OK);
   source = NULL;
-  assert(vectis_cai_source_from_request(request, &source, &error) ==
-         VECTIS_OK);
+  assert(vectis_cai_source_from_request(request, &source, &error) == VECTIS_OK);
   assert(source != NULL);
   expect_cai_source_bytes(source, payload);
   cai_source_close(source);
@@ -138,8 +136,7 @@ static void test_mcp_route_config(void) {
   assert(config.path == NULL);
   assert(config.handler == NULL);
   assert(config.handler_config.tools == NULL);
-  assert(config.buffer_bytes ==
-         VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES);
+  assert(config.buffer_bytes == VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES);
 }
 
 static void test_mcp_route_registration(void) {

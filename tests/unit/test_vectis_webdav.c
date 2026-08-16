@@ -279,8 +279,7 @@ int main(void) {
   status =
       vectis_webdav_copy(&direct_config, "/public/readme.txt", "/copy.txt", 0);
   expect(status == VECTIS_WEBDAV_OK, "copies direct root file");
-  status =
-      vectis_webdav_move(&direct_config, "/copy.txt", "/moved.txt", 1);
+  status = vectis_webdav_move(&direct_config, "/copy.txt", "/moved.txt", 1);
   expect(status == VECTIS_WEBDAV_OK, "moves direct root file");
   status = vectis_webdav_lookup(&direct_config, "/copy.txt", &entry);
   expect(status == VECTIS_WEBDAV_NOT_FOUND,

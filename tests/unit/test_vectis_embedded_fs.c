@@ -82,18 +82,17 @@ static vectis_status list_entry(const vectis_embedded_fs_entry *entry,
     state->app_metadata =
         entry->kind == VECTIS_EMBEDDED_FS_ENTRY_FILE && entry->mode == 0444u &&
         entry->etag != NULL &&
-        strcmp(entry->etag,
-               "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\"") ==
-            0 &&
+        strcmp(entry->etag, "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f9"
+                            "95eae6d078875901\"") == 0 &&
         entry->data != NULL && entry->size == 4u &&
         memcmp(entry->data, "app\n", 4u) == 0;
   }
   if (strcmp(entry->path, "/assets") == 0) {
     state->saw_assets_dir = 1;
-    state->dir_metadata =
-        entry->kind == VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY &&
-        entry->mode == 0555u && entry->etag == NULL &&
-        entry->sha256 == NULL && entry->data == NULL && entry->size == 0u;
+    state->dir_metadata = entry->kind == VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY &&
+                          entry->mode == 0555u && entry->etag == NULL &&
+                          entry->sha256 == NULL && entry->data == NULL &&
+                          entry->size == 0u;
   }
   if (strcmp(entry->path, "/assets2/skip.txt") == 0) {
     state->saw_skip = 1;
@@ -128,14 +127,16 @@ static vectis_embedded_fs *new_fixture_fs(vectis_error *error) {
       "\"sha256\":"
       "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\","
       "\"etag\":"
-      "\"\\\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\\\"\","
+      "\"\\\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\\"
+      "\"\","
       "\"content_type\":\"text/html\"},"
       "{\"path\":\"/assets/app.txt\",\"offset\":6,\"size\":4,"
       "\"kind\":\"file\",\"mode\":292,"
       "\"sha256\":"
       "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\","
       "\"etag\":"
-      "\"\\\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\\\"\","
+      "\"\\\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\\"
+      "\"\","
       "\"content_type\":\"text/plain\"}]}";
   vectis_embedded_fs_config config;
   vectis_embedded_fs *fs;
@@ -288,7 +289,8 @@ int main(void) {
       "\"sha256\":"
       "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\","
       "\"etag\":"
-      "\"\\\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\\\"\"}]}";
+      "\"\\\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\\"
+      "\"\"}]}";
   static const char invalid_kind_manifest[] =
       "{\"format\":\"vectis-pack\",\"assets\":["
       "{\"path\":\"/index.html\",\"kind\":\"symlink\",\"offset\":0,"
@@ -318,14 +320,15 @@ int main(void) {
              VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS,
          "manifest without extract_mode defaults to fail_exists");
   expect(fs->tree_sha256 != NULL &&
-             strcmp(fs->tree_sha256(fs),
-                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") ==
-                 0,
+             strcmp(fs->tree_sha256(fs), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                                         "aaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0,
          "receiver exposes manifest asset tree hash");
-  expect(strcmp(vectis_embedded_fs_tree_sha256(fs),
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") ==
-             0,
-         "wrapper exposes manifest asset tree hash");
+  expect(
+      strcmp(
+          vectis_embedded_fs_tree_sha256(fs),
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") ==
+          0,
+      "wrapper exposes manifest asset tree hash");
   expect(vectis_embedded_fs_tree_sha256(NULL) == NULL,
          "null embedded fs has no tree hash");
   expect(strcmp(vectis_embedded_fs_extract_policy_string(
@@ -348,9 +351,8 @@ int main(void) {
   expect(entry.kind == VECTIS_EMBEDDED_FS_ENTRY_FILE && entry.mode == 0444u,
          "lookup exposes file kind and portable mode metadata");
   expect(entry.etag != NULL &&
-             strcmp(entry.etag,
-                    "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"") ==
-                 0,
+             strcmp(entry.etag, "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af"
+                                "34d08286a2e846f6be03\"") == 0,
          "lookup exposes strong ETag metadata");
 
   found = 0;
@@ -541,8 +543,8 @@ int main(void) {
   found = 0;
   body.data = NULL;
   body.size = 0u;
-  status = vectis_embedded_fs_read(directory_fs, "/assets", &found, &body,
-                                   &error);
+  status =
+      vectis_embedded_fs_read(directory_fs, "/assets", &found, &body, &error);
   expect(status == VECTIS_ERR_INVALID && found,
          "embedded directory cannot be read as file bytes");
   found = 0;
@@ -558,8 +560,8 @@ int main(void) {
   expect(status == VECTIS_ERR_INVALID && found && chunked.count == 0u,
          "embedded directory cannot be streamed as file chunks");
   memset(&listed, 0, sizeof(listed));
-  status = vectis_embedded_fs_list(directory_fs, "/assets", list_entry,
-                                   &listed, &error);
+  status = vectis_embedded_fs_list(directory_fs, "/assets", list_entry, &listed,
+                                   &error);
   expect(status == VECTIS_OK && listed.count == 2u && listed.saw_assets_dir &&
              listed.saw_app && listed.dir_metadata,
          "lists embedded directory entries under prefix");

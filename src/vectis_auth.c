@@ -1872,8 +1872,9 @@ vectis_status vectis_auth_basic_authorization(const char *client_id,
   out->size = 0u;
   if (client_id == NULL || client_id[0] == '\0' || client_secret == NULL ||
       client_secret[0] == '\0') {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "Basic Authorization requires client_id and client_secret");
+    vectis_set_error(
+        error, VECTIS_ERR_INVALID,
+        "Basic Authorization requires client_id and client_secret");
     return VECTIS_ERR_INVALID;
   }
   client_id_len = strlen(client_id);

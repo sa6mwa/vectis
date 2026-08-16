@@ -220,11 +220,9 @@ static int sample_consumer_handler(void *context, lc_consumer_message *message,
   return LC_OK;
 }
 
-static vectis_status
-sample_consumer_receiver_create(void *adapter_context,
-                                const void *receiver_config,
-                                vectis_consumer_receiver *out,
-                                vectis_error *error) {
+static vectis_status sample_consumer_receiver_create(
+    void *adapter_context, const void *receiver_config,
+    vectis_consumer_receiver *out, vectis_error *error) {
   (void)adapter_context;
   (void)receiver_config;
   if (out == NULL) {
@@ -1022,8 +1020,7 @@ static void assert_io_surface(void) {
   status = vectis_ssh_sftp_session_open_file(
       NULL, "remote", VECTIS_SSH_SFTP_OPEN_READ, 0UL, &sftp_file, &error);
   assert(status == VECTIS_ERR_INVALID);
-  status =
-      vectis_ssh_sftp_session_open_dir(NULL, "remote", &sftp_dir, &error);
+  status = vectis_ssh_sftp_session_open_dir(NULL, "remote", &sftp_dir, &error);
   assert(status == VECTIS_ERR_INVALID);
   status = vectis_ssh_sftp_session_stat(NULL, "remote", &stat_result, &error);
   assert(status == VECTIS_ERR_INVALID);

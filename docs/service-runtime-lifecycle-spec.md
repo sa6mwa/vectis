@@ -44,8 +44,8 @@ testable.
 - Do not hide full-message buffering behind a streaming-looking API.
 - Do not require users to hand-order `fork()`, `pthread_create()`, or Kore
   internals.
-- Do not introduce a `pack V2`, "legacy" runtime, or parallel old/new command
-  model. Vectis is not shipped yet.
+- Do not introduce versioned pack command variants, "legacy" runtime labels, or
+  parallel old/new command models. Vectis is not shipped yet.
 
 ## Current Risk Model
 
@@ -218,6 +218,15 @@ tears down supervisor-owned services and resources, and returns
 diagnostic message. It must not keep waiting indefinitely for a process signal
 after the HTTP ingress process has died.
 
+For asynchronously started supervisor services, Vectis owns service terminal
+state observation. Dependencies such as liblockdc that expose only blocking
+`wait()` calls are monitored by a supervisor-owned monitor thread that starts
+only after the Kore child fork boundary. If a monitored service exits before
+Vectis requested shutdown, `wait()` fails closed, stops the remaining app-owned
+services, and returns the dependency diagnostic. Explicit `service->wait()` and
+`service->close()` join the same monitor instead of calling the dependency
+`wait()` a second time.
+
 `stop()` is idempotent only after the app has entered a started/running state.
 Calling `stop()` on a never-started app remains an error unless the API is
 explicitly changed everywhere.
@@ -267,6 +276,13 @@ Materialization:
 1. Open or reuse a supervisor-domain lockdc client.
 2. Call `lc_client_new_consumer_service()` in that domain.
 3. Start the native service only after the Kore child has been forked for T2.
+4. Start a supervisor monitor thread that blocks in `lc_consumer_service_wait()`
+   and records terminal state for app-level failure propagation.
+
+Lockdc transport validation must distinguish local and network endpoints.
+`pouch://` endpoints are local storage backends and do not require TLS client
+bundle material. TCP/TLS endpoints still require explicit client material unless
+the app uses a Unix-domain socket.
 
 Callbacks:
 

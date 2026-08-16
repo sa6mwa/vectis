@@ -228,8 +228,9 @@ static void vectis_sus_lua_push_segment(lua_State *lua,
   lua_setfield(lua, -2, "t1");
 }
 
-static void vectis_sus_lua_push_segmented_event(
-    lua_State *lua, const cpkt_sus_segmented_event *event) {
+static void
+vectis_sus_lua_push_segmented_event(lua_State *lua,
+                                    const cpkt_sus_segmented_event *event) {
   lua_newtable(lua);
   if (event->text != NULL) {
     lua_pushlstring(lua, event->text, (size_t)event->text_length);
@@ -338,8 +339,8 @@ static int vectis_sus_lua_abort_fn(void *user) {
   return abort_requested;
 }
 
-static int vectis_sus_lua_segmented_sink(
-    const cpkt_sus_segmented_event *event, void *user) {
+static int vectis_sus_lua_segmented_sink(const cpkt_sus_segmented_event *event,
+                                         void *user) {
   vectis_sus_segmented_lua *sink;
   lua_State *lua;
   int top;
@@ -388,8 +389,9 @@ static void vectis_sus_lua_log_sink(const cpkt_sus_log_event *event,
   lua_settop(lua, top);
 }
 
-static int vectis_sus_lua_cache_status_sink(
-    const cpkt_sus_cache_status_event *event, void *user) {
+static int
+vectis_sus_lua_cache_status_sink(const cpkt_sus_cache_status_event *event,
+                                 void *user) {
   vectis_sus_cache_status_lua *status;
   lua_State *lua;
   int top;
@@ -465,14 +467,13 @@ static cpkt_sus_segment_mode vectis_sus_lua_segment_mode(lua_State *lua,
   if (strcmp(name, "continuous") == 0) {
     return CPKT_SUS_SEGMENT_MODE_CONTINUOUS;
   }
-  return (cpkt_sus_segment_mode)luaL_error(lua,
-                                           "unsupported sus segment mode: %s",
-                                           name);
+  return (cpkt_sus_segment_mode)luaL_error(
+      lua, "unsupported sus segment mode: %s", name);
 }
 
-static void vectis_sus_lua_segmented_config(
-    lua_State *lua, int index, cpkt_sus_segmented_config *config,
-    vectis_sus_segmented_lua *sink) {
+static void vectis_sus_lua_segmented_config(lua_State *lua, int index,
+                                            cpkt_sus_segmented_config *config,
+                                            vectis_sus_segmented_lua *sink) {
   cpkt_sus_segmented_config_default(config);
   sink->lua = lua;
   sink->ref = LUA_NOREF;
@@ -505,15 +506,13 @@ static void vectis_sus_lua_segmented_config(
   config->max_spool_bytes =
       vectis_sus_lua_table_ulong(lua, index, "max_spool_bytes", 0u);
   config->audio_ctx = vectis_sus_lua_table_ulong(lua, index, "audio_ctx", 0u);
-  config->max_tokens =
-      vectis_sus_lua_table_ulong(lua, index, "max_tokens", 0u);
+  config->max_tokens = vectis_sus_lua_table_ulong(lua, index, "max_tokens", 0u);
   sink->ref = vectis_sus_lua_table_function_ref(lua, index, "segmented");
   if (sink->ref == LUA_NOREF) {
     sink->ref = vectis_sus_lua_table_function_ref(lua, index, "on_segmented");
   }
   if (sink->ref == LUA_NOREF) {
-    sink->ref =
-        vectis_sus_lua_table_function_ref(lua, index, "on_transcript");
+    sink->ref = vectis_sus_lua_table_function_ref(lua, index, "on_transcript");
   }
   if (sink->ref != LUA_NOREF) {
     config->segmented_sink = vectis_sus_lua_segmented_sink;
@@ -521,8 +520,8 @@ static void vectis_sus_lua_segmented_config(
   }
 }
 
-static void vectis_sus_lua_push_model_entry(
-    lua_State *lua, const cpkt_sus_model_entry *entry) {
+static void vectis_sus_lua_push_model_entry(lua_State *lua,
+                                            const cpkt_sus_model_entry *entry) {
   lua_newtable(lua);
   vectis_sus_lua_set_string(lua, "name", entry->name);
   vectis_sus_lua_set_string(lua, "provider", entry->provider);
@@ -555,8 +554,8 @@ static vectis_sus_model_lua *vectis_sus_lua_check_model(lua_State *lua,
 
 static vectis_sus_transcriber_lua *
 vectis_sus_lua_check_transcriber(lua_State *lua, int index) {
-  return (vectis_sus_transcriber_lua *)luaL_checkudata(
-      lua, index, VECTIS_SUS_TRANSCRIBER);
+  return (vectis_sus_transcriber_lua *)luaL_checkudata(lua, index,
+                                                       VECTIS_SUS_TRANSCRIBER);
 }
 
 static void
@@ -642,9 +641,10 @@ static int vectis_sus_lua_model_info(lua_State *lua) {
   return 1;
 }
 
-static void vectis_sus_lua_transcriber_config(
-    lua_State *lua, int index, cpkt_sus_transcriber_config *config,
-    vectis_sus_transcriber_lua *handle) {
+static void
+vectis_sus_lua_transcriber_config(lua_State *lua, int index,
+                                  cpkt_sus_transcriber_config *config,
+                                  vectis_sus_transcriber_lua *handle) {
   cpkt_sus_transcriber_config_default(config);
   if (index == 0 || lua_isnoneornil(lua, index)) {
     return;
@@ -721,7 +721,7 @@ static int vectis_sus_lua_model_reset_spacing(lua_State *lua) {
   result = handle->sus->reset_transcript_spacing(handle->sus);
   if (result != CPKT_SUS_OK) {
     return vectis_sus_lua_push_error(lua, result,
-                                    "sus reset_transcript_spacing");
+                                     "sus reset_transcript_spacing");
   }
   lua_pushboolean(lua, 1);
   return 1;
@@ -743,7 +743,8 @@ static int vectis_sus_lua_transcriber_transcribe(lua_State *lua) {
       handle->transcriber, frames, (unsigned long)frame_count);
   free(frames);
   if (result != CPKT_SUS_OK) {
-    return vectis_sus_lua_push_error(lua, result, "sus transcribe_f32_mono_16k");
+    return vectis_sus_lua_push_error(lua, result,
+                                     "sus transcribe_f32_mono_16k");
   }
   lua_pushboolean(lua, 1);
   return 1;
@@ -768,7 +769,7 @@ static int vectis_sus_lua_transcriber_transcribe_text(lua_State *lua) {
   free(frames);
   if (result != CPKT_SUS_OK) {
     return vectis_sus_lua_push_error(lua, result,
-                                    "sus transcribe_f32_mono_16k_text");
+                                     "sus transcribe_f32_mono_16k_text");
   }
   lua_pushstring(lua, text != NULL ? text : "");
   if (text != NULL) {
@@ -790,7 +791,7 @@ static int vectis_sus_lua_transcriber_transcribe_decoder(lua_State *lua) {
   }
   if (!vectis_audio_lua_borrow_decoder(lua, 2, &decoder)) {
     return vectis_sus_lua_push_error(lua, CPKT_SUS_ERR_ARG,
-                                    "sus segmented decoder transcription");
+                                     "sus segmented decoder transcription");
   }
   vectis_sus_lua_segmented_config(lua, 3, &config, &sink);
   result = handle->transcriber->transcribe_audio_decoder_segmented(
@@ -799,8 +800,8 @@ static int vectis_sus_lua_transcriber_transcribe_decoder(lua_State *lua) {
     luaL_unref(lua, LUA_REGISTRYINDEX, sink.ref);
   }
   if (result != CPKT_SUS_OK) {
-    return vectis_sus_lua_push_error(
-        lua, result, "sus transcribe_audio_decoder_segmented");
+    return vectis_sus_lua_push_error(lua, result,
+                                     "sus transcribe_audio_decoder_segmented");
   }
   lua_pushboolean(lua, 1);
   return 1;
@@ -853,7 +854,7 @@ static int vectis_sus_lua_transcriber_transcribe_vox_segment(lua_State *lua) {
   }
   if (!vectis_audio_lua_borrow_vox_segment(lua, 2, &segment)) {
     return vectis_sus_lua_push_error(lua, CPKT_SUS_ERR_ARG,
-                                    "sus VOX segment transcription");
+                                     "sus VOX segment transcription");
   }
   vectis_sus_lua_segmented_config(lua, 3, &config, &sink);
   result = handle->transcriber->transcribe_audio_vox_segment(
@@ -863,7 +864,7 @@ static int vectis_sus_lua_transcriber_transcribe_vox_segment(lua_State *lua) {
   }
   if (result != CPKT_SUS_OK) {
     return vectis_sus_lua_push_error(lua, result,
-                                    "sus transcribe_audio_vox_segment");
+                                     "sus transcribe_audio_vox_segment");
   }
   lua_pushboolean(lua, 1);
   return 1;
@@ -917,8 +918,7 @@ static int vectis_sus_lua_facade_version(lua_State *lua) {
 }
 
 static int vectis_sus_lua_set_log_sink(lua_State *lua) {
-  if (vectis_sus_lua_log.lua != NULL &&
-      vectis_sus_lua_log.ref != LUA_NOREF) {
+  if (vectis_sus_lua_log.lua != NULL && vectis_sus_lua_log.ref != LUA_NOREF) {
     luaL_unref(vectis_sus_lua_log.lua, LUA_REGISTRYINDEX,
                vectis_sus_lua_log.ref);
   }
@@ -1117,7 +1117,8 @@ int luaopen_sus(lua_State *lua) {
       {NULL, NULL}};
   static const luaL_Reg transcriber_methods[] = {
       {"transcribe_f32_mono_16k", vectis_sus_lua_transcriber_transcribe},
-      {"transcribe_f32_mono_16k_text", vectis_sus_lua_transcriber_transcribe_text},
+      {"transcribe_f32_mono_16k_text",
+       vectis_sus_lua_transcriber_transcribe_text},
       {"transcribe_audio_decoder_segmented",
        vectis_sus_lua_transcriber_transcribe_decoder},
       {"transcribe_audio_decoder_segmented_text",

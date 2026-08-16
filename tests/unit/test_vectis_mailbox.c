@@ -442,9 +442,8 @@ static void test_lockd_consumer_event_builder(void) {
   config.include_payload = 1;
   config.max_payload_bytes = 64u;
   vectis_lockd_consumer_event_init(&event);
-  status =
-      vectis_lockd_consumer_event_from_message(&consumer, &config, &event,
-                                               &error);
+  status = vectis_lockd_consumer_event_from_message(&consumer, &config, &event,
+                                                    &error);
   expect_status(status, VECTIS_OK, "lockd consumer event build");
   expect(event.message.kind != NULL &&
              strcmp(event.message.kind, "vectis.lockd.consumer") == 0,
@@ -470,9 +469,8 @@ static void test_lockd_consumer_event_builder(void) {
   vectis_lockd_consumer_event_cleanup(&event);
 
   config.max_payload_bytes = 4u;
-  status =
-      vectis_lockd_consumer_event_from_message(&consumer, &config, &event,
-                                               &error);
+  status = vectis_lockd_consumer_event_from_message(&consumer, &config, &event,
+                                                    &error);
   expect_status(status, VECTIS_ERR_INVALID, "lockd consumer payload limit");
   vectis_lockd_consumer_event_cleanup(&event);
 }
@@ -786,9 +784,9 @@ static void test_opcua_monitor_mailbox_event_and_limit(void) {
   expect(bytes_contains(queued.payload, queued.payload_size,
                         "\"event_id\":\"01abff\""),
          "OPC UA event id hex");
-  expect(bytes_contains(queued.payload, queued.payload_size,
-                        "\"severity\":700"),
-         "OPC UA event severity");
+  expect(
+      bytes_contains(queued.payload, queued.payload_size, "\"severity\":700"),
+      "OPC UA event severity");
   vectis_mailbox_event_cleanup(&queued);
   adapter->destroy(adapter);
 

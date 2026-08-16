@@ -174,16 +174,16 @@ static int vectis_embedded_etag_matches_sha256(const char *etag,
     return 0;
   }
   sha_size = strlen(sha256);
-  if (sha_size != SHA256_DIGEST_LENGTH * 2u ||
-      strlen(etag) != sha_size + 2u || etag[0] != '"' ||
-      etag[sha_size + 1u] != '"') {
+  if (sha_size != SHA256_DIGEST_LENGTH * 2u || strlen(etag) != sha_size + 2u ||
+      etag[0] != '"' || etag[sha_size + 1u] != '"') {
     return 0;
   }
   return memcmp(etag + 1u, sha256, sha_size) == 0;
 }
 
-static int vectis_embedded_manifest_kind_parse(
-    const char *kind, vectis_embedded_fs_entry_kind *out) {
+static int
+vectis_embedded_manifest_kind_parse(const char *kind,
+                                    vectis_embedded_fs_entry_kind *out) {
   if (out == NULL) {
     return 0;
   }
@@ -475,8 +475,7 @@ static vectis_status vectis_embedded_add(
   if (asset->content_type != NULL) {
     entry->content_type = vectis_embedded_strdup(asset->content_type);
   }
-  if (entry->path == NULL ||
-      (asset->sha256 != NULL && entry->sha256 == NULL) ||
+  if (entry->path == NULL || (asset->sha256 != NULL && entry->sha256 == NULL) ||
       (kind == VECTIS_EMBEDDED_FS_ENTRY_FILE && entry->etag == NULL) ||
       (asset->content_type != NULL && entry->content_type == NULL)) {
     free(entry->path);
@@ -1082,9 +1081,8 @@ vectis_embedded_extract_impl(const vectis_embedded_fs *self,
     }
     if (impl->entries[i].kind == VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY) {
       status = vectis_embedded_ensure_dir(path, error);
-      if (status == VECTIS_OK &&
-          chmod(path, vectis_embedded_extract_mode(impl->entries[i].mode)) !=
-              0) {
+      if (status == VECTIS_OK && chmod(path, vectis_embedded_extract_mode(
+                                                 impl->entries[i].mode)) != 0) {
         vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
                                    "failed to set embedded directory mode: %s",
                                    path);

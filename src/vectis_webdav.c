@@ -53,9 +53,8 @@ static int vectis_webdav_direct_root(const vectis_webdav_config *config) {
          config->root_dir[0] == '/';
 }
 
-static int
-vectis_webdav_path_in_root(const char *root, const char *path,
-                           char out[VECTIS_WEBDAV_STORAGE_PATH_MAX]);
+static int vectis_webdav_path_in_root(const char *root, const char *path,
+                                      char out[VECTIS_WEBDAV_STORAGE_PATH_MAX]);
 
 static int vectis_webdav_path_append(char *out, size_t out_size,
                                      const char *left, const char *right) {
@@ -155,8 +154,7 @@ static int vectis_webdav_disk_path(const vectis_webdav_config *config,
       !vectis_webdav_path_normalize(path, normalized)) {
     return 0;
   }
-  if (strcmp(category, "content") == 0 &&
-      vectis_webdav_direct_root(config)) {
+  if (strcmp(category, "content") == 0 && vectis_webdav_direct_root(config)) {
     return vectis_webdav_path_in_root(config->root_dir, normalized, out);
   }
   relative = normalized[1] == '\0' ? "" : normalized + 1;
@@ -377,8 +375,7 @@ vectis_webdav_path_in_root(const char *root, const char *path,
   if (normalized[1] == '\0') {
     written = snprintf(out, VECTIS_WEBDAV_STORAGE_PATH_MAX, "%s", root);
   } else if (strcmp(root, "/") == 0) {
-    written =
-        snprintf(out, VECTIS_WEBDAV_STORAGE_PATH_MAX, "%s", normalized);
+    written = snprintf(out, VECTIS_WEBDAV_STORAGE_PATH_MAX, "%s", normalized);
   } else {
     written =
         snprintf(out, VECTIS_WEBDAV_STORAGE_PATH_MAX, "%s%s", root, normalized);
@@ -1203,10 +1200,11 @@ vectis_webdav_status vectis_webdav_mkcol(const vectis_webdav_config *config,
   return VECTIS_WEBDAV_OK;
 }
 
-static vectis_webdav_status vectis_webdav_copy_or_move_direct(
-    const vectis_webdav_config *config, const char *source,
-    const char *destination, int overwrite, int remove_source,
-    int destination_embedded_exists) {
+static vectis_webdav_status
+vectis_webdav_copy_or_move_direct(const vectis_webdav_config *config,
+                                  const char *source, const char *destination,
+                                  int overwrite, int remove_source,
+                                  int destination_embedded_exists) {
   vectis_webdav_entry source_entry;
   vectis_webdav_entry destination_entry;
   char normalized_source[VECTIS_WEBDAV_PATH_MAX + 1u];
@@ -1296,10 +1294,9 @@ static vectis_webdav_status vectis_webdav_copy_or_move_direct(
       !vectis_webdav_disk_usage(destination_disk, &destination_usage,
                                 &destination_resources) ||
       usage < destination_usage ||
-      (!remove_source &&
-       (usage - destination_usage > config->max_total_bytes ||
-        source_usage >
-            config->max_total_bytes - (usage - destination_usage)))) {
+      (!remove_source && (usage - destination_usage > config->max_total_bytes ||
+                          source_usage > config->max_total_bytes -
+                                             (usage - destination_usage)))) {
     vectis_webdav_unlock(lock_fd);
     return VECTIS_WEBDAV_LIMIT;
   }
@@ -1434,9 +1431,9 @@ static vectis_webdav_status vectis_webdav_copy_or_move(
     if (embedded_source) {
       return VECTIS_WEBDAV_INVALID;
     }
-    return vectis_webdav_copy_or_move_direct(
-        config, source, destination, overwrite, remove_source,
-        destination_embedded_exists);
+    return vectis_webdav_copy_or_move_direct(config, source, destination,
+                                             overwrite, remove_source,
+                                             destination_embedded_exists);
   }
   lock_fd = vectis_webdav_lock(config);
   if (lock_fd < 0) {

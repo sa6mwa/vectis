@@ -46,7 +46,8 @@ const struct kore_vectis_runtime_symbol kore_vectis_runtime_symbols[] = {
     {"vectis_kore_body_chunk", (void *)vectis_kore_body_chunk},
     {"vectis_kore_request_free", (void *)vectis_kore_request_free}};
 const size_t kore_vectis_runtime_symbol_count =
-    sizeof(kore_vectis_runtime_symbols) / sizeof(kore_vectis_runtime_symbols[0]);
+    sizeof(kore_vectis_runtime_symbols) /
+    sizeof(kore_vectis_runtime_symbols[0]);
 #endif
 
 extern int skip_chroot;
@@ -1953,8 +1954,8 @@ typedef struct vectis_kore_response_stream {
   int remove;
 } vectis_kore_response_stream;
 
-static void vectis_kore_response_stream_free(
-    vectis_kore_response_stream *stream) {
+static void
+vectis_kore_response_stream_free(vectis_kore_response_stream *stream) {
   if (stream == NULL) {
     return;
   }
@@ -1965,8 +1966,8 @@ static void vectis_kore_response_stream_free(
   free(stream);
 }
 
-static int vectis_kore_response_stream_next(
-    vectis_kore_response_stream *stream);
+static int
+vectis_kore_response_stream_next(vectis_kore_response_stream *stream);
 
 static int vectis_kore_response_stream_chunk_sent(struct netbuf *nb) {
   vectis_kore_response_stream *stream;
@@ -2002,8 +2003,8 @@ static int vectis_kore_response_stream_chunk_sent(struct netbuf *nb) {
   return ret;
 }
 
-static int vectis_kore_response_stream_next(
-    vectis_kore_response_stream *stream) {
+static int
+vectis_kore_response_stream_next(vectis_kore_response_stream *stream) {
   unsigned char buffer[8192];
   char prefix[32];
   char *packet;
@@ -2031,8 +2032,8 @@ static int vectis_kore_response_stream_next(
   }
   lc_error_cleanup(&lcerr);
 
-  written = snprintf(prefix, sizeof(prefix), "%llx\r\n",
-                     (unsigned long long)nread);
+  written =
+      snprintf(prefix, sizeof(prefix), "%llx\r\n", (unsigned long long)nread);
   if (written <= 0 || (size_t)written >= sizeof(prefix)) {
     return KORE_RESULT_ERROR;
   }
