@@ -438,7 +438,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add tests that package a Lua API service and a Lua consumer service, then execute both artifacts.
 - [x] Add a packed-service scenario that runs the embedded site/WebDAV server and lockd `startconsumer` service in the same self-contained Vectis binary and process, with HTTP/WebDAV requests still succeeding while the consumer receives and handles lockd messages.
 - [ ] Harden Vectis as a landed-style production webserver for both libvectis embedders and the Lua-controlled `vectis` binary workflow, without carrying landed/taktiv.se-specific C bindings, layouts, or site stats.
-- [ ] Add a generic Vectis metrics/stats handler for libvectis and a matching Lua `vectis.server` route helper that exposes basic runtime, server, request, WebDAV, auth, pack, and Vectis service metrics only when explicitly enabled behind authentication.
+- [x] Add a generic Vectis metrics/stats handler for libvectis and a matching Lua `vectis.server` route helper that exposes basic runtime, server, request, auth, and Vectis service metrics only when explicitly enabled, with optional shared-route auth and lockdc/pouch snapshot persistence.
 
 ## Area 14: Verification and Release
 

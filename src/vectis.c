@@ -31,6 +31,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#include <vectis/auth.h>
 #include <vectis/embedded_fs.h>
 #include <vectis/webdav.h>
 
@@ -210,6 +211,43 @@ typedef struct vectis_openapi_doc_entry {
   vectis_openapi_route_doc doc;
 } vectis_openapi_doc_entry;
 
+typedef struct vectis_metrics_state {
+  pthread_mutex_t mutex;
+  pthread_cond_t cond;
+  pthread_t worker;
+  int worker_started;
+  int stop_worker;
+  time_t started_at;
+  time_t last_load_sample_at;
+  int load_supported;
+  double loadavg[3];
+  char *html_path;
+  char *json_path;
+  char *title;
+  char *storage_endpoint;
+  char *storage_namespace;
+  char *storage_owner;
+  unsigned snapshot_interval_seconds;
+  int persistence_enabled;
+  const vectis_auth_provider *auth_provider;
+  char *auth_purpose;
+  unsigned allowed_auth_modes;
+  unsigned long long requests_total;
+  unsigned long long status_buckets[6];
+  unsigned long long route_misses;
+  unsigned long long body_rejects;
+  unsigned long long auth_allowed;
+  unsigned long long auth_denied;
+  unsigned long long auth_required;
+  unsigned long long auth_redirected;
+  unsigned long long snapshot_writes;
+  unsigned long long snapshot_errors;
+} vectis_metrics_state;
+
+typedef struct vectis_metrics_route_data {
+  int html;
+} vectis_metrics_route_data;
+
 typedef struct vectis_string_builder {
   char *data;
   size_t size;
@@ -370,6 +408,7 @@ typedef struct vectis_app_impl {
   vectis_openapi_doc_entry *openapi_docs;
   size_t openapi_doc_count;
   size_t openapi_doc_capacity;
+  vectis_metrics_state *metrics;
   struct lc_client *lockd_client;
   pid_t lockd_client_pid;
   struct vectis_consumer_receiver_entry *consumer_receivers;
@@ -521,6 +560,19 @@ static vectis_status vectis_app_stop_impl(vectis_app *app, vectis_error *error);
 static void
 vectis_close_lockd_client_for_current_process(vectis_app_impl *impl);
 static void vectis_close_cai_client_for_current_process(vectis_app_impl *impl);
+static vectis_status
+vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
+                        vectis_error *error);
+static char *vectis_metrics_default_storage_endpoint(void);
+static vectis_status vectis_metrics_route_handler(vectis_app *app,
+                                                  vectis_request *request,
+                                                  vectis_response *response,
+                                                  void *userdata,
+                                                  vectis_error *error);
+static void vectis_metrics_state_destroy(vectis_metrics_state *metrics);
+static vectis_status vectis_metrics_worker_start(vectis_app *app,
+                                                 vectis_error *error);
+static void vectis_metrics_worker_stop(vectis_app *app);
 static vectis_status vectis_app_register_route_impl(
     vectis_app *app, const vectis_route_config *route, vectis_error *error);
 static vectis_status vectis_app_register_route_owned_userdata(
@@ -2195,6 +2247,19 @@ void vectis_cai_mcp_route_config_init(vectis_cai_mcp_route_config *config) {
   cai_mcp_handler_config_init(&config->handler_config);
 }
 
+void vectis_metrics_config_init(vectis_metrics_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->path = "/.metrics";
+  config->json_path = "/.metrics.json";
+  config->auth_purpose = "metrics";
+  config->storage_namespace = "vectis.metrics";
+  config->storage_owner = "vectis";
+  config->snapshot_interval_seconds = 300u;
+}
+
 void vectis_json_route_config_init(vectis_json_route_config *config) {
   if (config == NULL) {
     return;
@@ -2978,8 +3043,8 @@ static int vectis_lockd_consumer_mailbox_receiver_handle(
                                        &correlation_id, &verror);
     vectis_mailbox_event_cleanup(&reply);
   } else if (receiver->mailbox != NULL) {
-    status = receiver->mailbox->publish(receiver->mailbox, &event.message,
-                                        &verror);
+    status =
+        receiver->mailbox->publish(receiver->mailbox, &event.message, &verror);
   } else {
     status = VECTIS_ERR_INVALID;
     vectis_set_error(&verror, VECTIS_ERR_INVALID,
@@ -2994,8 +3059,7 @@ static int vectis_lockd_consumer_mailbox_receiver_handle(
   return LC_OK;
 }
 
-static void
-vectis_lockd_consumer_mailbox_receiver_cleanup(void *context) {
+static void vectis_lockd_consumer_mailbox_receiver_cleanup(void *context) {
   free(context);
 }
 
@@ -3864,10 +3928,9 @@ static vectis_status vectis_copy_cai_config(vectis_app_impl *impl,
   if (vectis_copy_optional_string(&impl->cai_api_key,
                                   cai->client_config.api_key, "CAI api key",
                                   error) != VECTIS_OK ||
-      vectis_copy_optional_string(&impl->cai_api_key_env,
-                                  cai->client_config.api_key_env,
-                                  "CAI api key environment name",
-                                  error) != VECTIS_OK ||
+      vectis_copy_optional_string(
+          &impl->cai_api_key_env, cai->client_config.api_key_env,
+          "CAI api key environment name", error) != VECTIS_OK ||
       vectis_copy_optional_string(&impl->cai_base_url,
                                   cai->client_config.base_url, "CAI base URL",
                                   error) != VECTIS_OK ||
@@ -4130,6 +4193,8 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
   vectis_close_lockd_client_for_current_process(impl);
   vectis_close_cai_client_for_current_process(impl);
 
+  vectis_metrics_state_destroy(impl->metrics);
+  impl->metrics = NULL;
   vectis_free_routes(impl);
   vectis_free_openapi_docs(impl);
   vectis_free_endpoints(impl);
@@ -4456,7 +4521,8 @@ vectis_status vectis_app_cai_client(vectis_app *app, cai_client **out,
   int rc;
 
   if (out == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "CAI client output is required");
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI client output is required");
     return VECTIS_ERR_INVALID;
   }
   *out = NULL;
@@ -4487,10 +4553,10 @@ vectis_status vectis_app_cai_client(vectis_app *app, cai_client **out,
       config.logger = NULL;
       config.logger_disabled = 1;
     } else {
-      config.logger = impl->cai_logger != NULL
-                          ? impl->cai_logger
-                          : (configured_logger != NULL ? configured_logger
-                                                       : impl->logger);
+      config.logger =
+          impl->cai_logger != NULL
+              ? impl->cai_logger
+              : (configured_logger != NULL ? configured_logger : impl->logger);
       config.logger_disabled = 0;
     }
     cai_error_init(&caierr);
@@ -4821,6 +4887,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   app->webdav_embedded_site = vectis_register_webdav_embedded_site;
   app->webdav_embedded = vectis_register_webdav_embedded;
   app->auth_routes = vectis_register_auth_routes;
+  app->metrics = vectis_register_metrics;
   app->openapi_doc = vectis_attach_openapi_doc;
   app->openapi = vectis_generate_openapi;
   app->route_count = vectis_route_count;
@@ -4950,6 +5017,17 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
   (void)pthread_mutex_lock(&impl->mutex);
   impl->started = 1;
   (void)pthread_mutex_unlock(&impl->mutex);
+  status = vectis_metrics_worker_start(app, error);
+  if (status != VECTIS_OK) {
+    (void)pthread_mutex_lock(&impl->mutex);
+    impl->started = 0;
+    (void)pthread_mutex_unlock(&impl->mutex);
+    if (route_count > 0u) {
+      (void)vectis_internal_kore_stop(app, NULL);
+    }
+    vectis_close_lockd_client_for_current_process(impl);
+    return status;
+  }
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -4980,6 +5058,8 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
   }
   impl->started = 0;
   (void)pthread_mutex_unlock(&impl->mutex);
+
+  vectis_metrics_worker_stop(app);
 
   if (vectis_internal_kore_stop(app, error) != VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_STATE;
@@ -5109,6 +5189,163 @@ vectis_status vectis_register_route(vectis_app *app,
     return VECTIS_ERR_INVALID;
   }
   return vectis_app_register_route_impl(app, route, error);
+}
+
+static vectis_status
+vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
+                        vectis_error *error) {
+  vectis_metrics_config defaults;
+  const vectis_metrics_config *effective;
+  vectis_app_impl *impl;
+  vectis_metrics_state *metrics;
+  vectis_metrics_route_data *html_data;
+  vectis_metrics_route_data *json_data;
+  vectis_route_config route;
+  vectis_status status;
+
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_metrics_config_init(&defaults);
+  effective = config != NULL ? config : &defaults;
+  impl = (vectis_app_impl *)app->impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  if (impl->started) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "metrics cannot be registered after app start");
+    return VECTIS_ERR_STATE;
+  }
+  if (impl->metrics != NULL) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_CONFLICT,
+                     "metrics are already registered");
+    return VECTIS_ERR_CONFLICT;
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
+
+  if (effective->path == NULL || effective->path[0] != '/') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "metrics path must be an absolute route path");
+    return VECTIS_ERR_INVALID;
+  }
+  if (effective->json_path == NULL || effective->json_path[0] != '/') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "metrics json_path must be an absolute route path");
+    return VECTIS_ERR_INVALID;
+  }
+  if (strcmp(effective->path, effective->json_path) == 0) {
+    vectis_set_error(error, VECTIS_ERR_CONFLICT,
+                     "metrics path and json_path must differ");
+    return VECTIS_ERR_CONFLICT;
+  }
+
+  metrics = (vectis_metrics_state *)calloc(1u, sizeof(*metrics));
+  html_data = (vectis_metrics_route_data *)calloc(1u, sizeof(*html_data));
+  json_data = (vectis_metrics_route_data *)calloc(1u, sizeof(*json_data));
+  if (metrics == NULL || html_data == NULL || json_data == NULL) {
+    free(metrics);
+    free(html_data);
+    free(json_data);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate metrics state");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (pthread_mutex_init(&metrics->mutex, NULL) != 0 ||
+      pthread_cond_init(&metrics->cond, NULL) != 0) {
+    free(metrics);
+    free(html_data);
+    free(json_data);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to initialize metrics state");
+    return VECTIS_ERR_STATE;
+  }
+  metrics->started_at = time(NULL);
+  metrics->html_path = vectis_strdup(effective->path);
+  metrics->json_path = vectis_strdup(effective->json_path);
+  metrics->title = vectis_strdup(effective->title);
+  metrics->storage_namespace = vectis_strdup(
+      effective->storage_namespace != NULL ? effective->storage_namespace
+                                           : "vectis.metrics");
+  metrics->storage_owner = vectis_strdup(
+      effective->storage_owner != NULL ? effective->storage_owner : "vectis");
+  metrics->auth_purpose = vectis_strdup(
+      effective->auth_purpose != NULL ? effective->auth_purpose : "metrics");
+  metrics->auth_provider = effective->auth_provider;
+  metrics->allowed_auth_modes = effective->allowed_auth_modes;
+  metrics->persistence_enabled = effective->persistence_enabled;
+  metrics->snapshot_interval_seconds =
+      effective->snapshot_interval_seconds < 300u
+          ? 300u
+          : effective->snapshot_interval_seconds;
+  if (effective->storage_endpoint != NULL &&
+      effective->storage_endpoint[0] != '\0') {
+    metrics->storage_endpoint = vectis_strdup(effective->storage_endpoint);
+  } else if (metrics->persistence_enabled) {
+    metrics->storage_endpoint = vectis_metrics_default_storage_endpoint();
+  }
+  if (metrics->html_path == NULL || metrics->json_path == NULL ||
+      metrics->storage_namespace == NULL || metrics->storage_owner == NULL ||
+      metrics->auth_purpose == NULL ||
+      (effective->title != NULL && metrics->title == NULL) ||
+      (metrics->persistence_enabled && metrics->storage_endpoint == NULL)) {
+    vectis_metrics_state_destroy(metrics);
+    free(html_data);
+    free(json_data);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy metrics config");
+    return VECTIS_ERR_NOMEM;
+  }
+
+  (void)pthread_mutex_lock(&impl->mutex);
+  impl->metrics = metrics;
+  (void)pthread_mutex_unlock(&impl->mutex);
+
+  html_data->html = 1;
+  vectis_route_config_init(&route);
+  route.method = VECTIS_HTTP_GET;
+  route.methods = VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD;
+  route.path = metrics->html_path;
+  route.path_kind = VECTIS_ROUTE_PATH_LITERAL;
+  route.handler = vectis_metrics_route_handler;
+  route.userdata = html_data;
+  status = vectis_app_register_route_owned_userdata(app, &route, 1, error);
+  if (status != VECTIS_OK) {
+    (void)pthread_mutex_lock(&impl->mutex);
+    impl->metrics = NULL;
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_metrics_state_destroy(metrics);
+    free(json_data);
+    return status;
+  }
+
+  json_data->html = 0;
+  vectis_route_config_init(&route);
+  route.method = VECTIS_HTTP_GET;
+  route.methods = VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD;
+  route.path = metrics->json_path;
+  route.path_kind = VECTIS_ROUTE_PATH_LITERAL;
+  route.handler = vectis_metrics_route_handler;
+  route.userdata = json_data;
+  status = vectis_app_register_route_owned_userdata(app, &route, 1, error);
+  if (status != VECTIS_OK) {
+    (void)pthread_mutex_lock(&impl->mutex);
+    if (impl->route_count > 0u &&
+        strcmp(impl->routes[impl->route_count - 1u].path, metrics->html_path) ==
+            0) {
+      free(impl->routes[impl->route_count - 1u].path);
+      vectis_route_entry_free_userdata(&impl->routes[impl->route_count - 1u]);
+      memset(&impl->routes[impl->route_count - 1u], 0,
+             sizeof(impl->routes[impl->route_count - 1u]));
+      impl->route_count--;
+    }
+    impl->metrics = NULL;
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_metrics_state_destroy(metrics);
+    return status;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 static vectis_status vectis_app_register_upload_owned_userdata(
@@ -10148,6 +10385,916 @@ vectis_route_event_append_key(vectis_string_builder *builder, const char *key,
   return VECTIS_OK;
 }
 
+static unsigned long long vectis_metrics_now_ms(void) {
+  struct timespec ts;
+
+  if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+    return (unsigned long long)time(NULL) * 1000ULL;
+  }
+  return (unsigned long long)ts.tv_sec * 1000ULL +
+         (unsigned long long)(ts.tv_nsec / 1000000L);
+}
+
+static unsigned long long vectis_metrics_time_ms(time_t value) {
+  return (unsigned long long)value * 1000ULL;
+}
+
+static void vectis_metrics_sample_load_locked(vectis_metrics_state *metrics,
+                                              time_t now) {
+  double values[3];
+
+  if (metrics == NULL || now - metrics->last_load_sample_at < 60) {
+    return;
+  }
+  metrics->last_load_sample_at = now;
+#if defined(_WIN32)
+  metrics->load_supported = 0;
+  metrics->loadavg[0] = 0.0;
+  metrics->loadavg[1] = 0.0;
+  metrics->loadavg[2] = 0.0;
+#else
+  if (getloadavg(values, 3) == 3) {
+    metrics->load_supported = 1;
+    metrics->loadavg[0] = values[0];
+    metrics->loadavg[1] = values[1];
+    metrics->loadavg[2] = values[2];
+  } else {
+    metrics->load_supported = 0;
+    metrics->loadavg[0] = 0.0;
+    metrics->loadavg[1] = 0.0;
+    metrics->loadavg[2] = 0.0;
+  }
+#endif
+}
+
+static vectis_status
+vectis_metrics_snapshot_json_impl(vectis_app *app, vectis_mutable_bytes *out,
+                                  const char *title_override,
+                                  vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_metrics_state snapshot;
+  vectis_string_builder json;
+  time_t now;
+  const char *title;
+  unsigned long long uptime;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "metrics snapshot output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  out->data = NULL;
+  out->size = 0u;
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  if (impl->metrics == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "metrics are not enabled");
+    return VECTIS_ERR_STATE;
+  }
+
+  now = time(NULL);
+  memset(&snapshot, 0, sizeof(snapshot));
+  (void)pthread_mutex_lock(&impl->metrics->mutex);
+  vectis_metrics_sample_load_locked(impl->metrics, now);
+  snapshot = *impl->metrics;
+  (void)pthread_mutex_unlock(&impl->metrics->mutex);
+
+  memset(&json, 0, sizeof(json));
+  title = title_override != NULL && title_override[0] != '\0'
+              ? title_override
+              : (snapshot.title != NULL && snapshot.title[0] != '\0'
+                     ? snapshot.title
+                     : (impl->app_name != NULL && impl->app_name[0] != '\0'
+                            ? impl->app_name
+                            : "vectis"));
+  uptime = snapshot.started_at > 0 && now >= snapshot.started_at
+               ? (unsigned long long)(now - snapshot.started_at)
+               : 0ULL;
+  if (vectis_string_builder_append(&json, "{", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&json, "service", error) != VECTIS_OK ||
+      vectis_append_lonejson_string(&json, title, error) != VECTIS_OK ||
+      vectis_string_builder_append(&json, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&json, "timestamp_ms", error) !=
+          VECTIS_OK ||
+      vectis_string_builder_appendf(&json, error, "%llu",
+                                    vectis_metrics_now_ms()) != VECTIS_OK ||
+      vectis_string_builder_append(&json, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&json, "pid", error) != VECTIS_OK ||
+      vectis_string_builder_appendf(&json, error, "%ld", (long)getpid()) !=
+          VECTIS_OK ||
+      vectis_string_builder_append(&json, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&json, "uptime_seconds", error) !=
+          VECTIS_OK ||
+      vectis_string_builder_appendf(&json, error, "%llu", uptime) !=
+          VECTIS_OK ||
+      vectis_string_builder_append(&json, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&json, "started_at_ms", error) !=
+          VECTIS_OK ||
+      vectis_string_builder_appendf(
+          &json, error, "%llu", vectis_metrics_time_ms(snapshot.started_at)) !=
+          VECTIS_OK ||
+      vectis_string_builder_append(&json, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&json, "route_count", error) != VECTIS_OK ||
+      vectis_string_builder_appendf(&json, error, "%llu",
+                                    (unsigned long long)impl->route_count) !=
+          VECTIS_OK ||
+      vectis_string_builder_append(&json, ",", error) != VECTIS_OK ||
+      vectis_route_event_append_key(&json, "lifecycle", error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &json, impl->started ? "\"started\"" : "\"stopped\"", error) !=
+          VECTIS_OK ||
+      vectis_string_builder_append(&json, ",\"loadavg\":", error) !=
+          VECTIS_OK) {
+    vectis_string_builder_cleanup(&json);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  if (snapshot.load_supported) {
+    if (vectis_string_builder_appendf(
+            &json, error,
+            "{\"supported\":true,\"one\":%.6f,\"five\":%.6f,\"fifteen\":%.6f,"
+            "\"sampled_at_ms\":%llu}",
+            snapshot.loadavg[0], snapshot.loadavg[1], snapshot.loadavg[2],
+            vectis_metrics_time_ms(snapshot.last_load_sample_at)) !=
+        VECTIS_OK) {
+      vectis_string_builder_cleanup(&json);
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+  } else if (vectis_string_builder_append(&json, "{\"supported\":false}",
+                                          error) != VECTIS_OK) {
+    vectis_string_builder_cleanup(&json);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  if (vectis_string_builder_appendf(
+          &json, error,
+          ",\"http\":{\"requests_total\":%llu,\"status\":{\"1xx\":%llu,"
+          "\"2xx\":%llu,\"3xx\":%llu,\"4xx\":%llu,\"5xx\":%llu},"
+          "\"route_misses\":%llu,\"body_rejects\":%llu}",
+          snapshot.requests_total, snapshot.status_buckets[1],
+          snapshot.status_buckets[2], snapshot.status_buckets[3],
+          snapshot.status_buckets[4], snapshot.status_buckets[5],
+          snapshot.route_misses, snapshot.body_rejects) != VECTIS_OK ||
+      vectis_string_builder_appendf(
+          &json, error,
+          ",\"auth\":{\"allowed\":%llu,\"denied\":%llu,\"required\":%llu,"
+          "\"redirected\":%llu}",
+          snapshot.auth_allowed, snapshot.auth_denied, snapshot.auth_required,
+          snapshot.auth_redirected) != VECTIS_OK ||
+      vectis_string_builder_appendf(
+          &json, error,
+          ",\"persistence\":{\"enabled\":%s,\"writes\":%llu,\"errors\":%llu}",
+          snapshot.persistence_enabled ? "true" : "false",
+          snapshot.snapshot_writes, snapshot.snapshot_errors) != VECTIS_OK ||
+      vectis_string_builder_append(&json, "}\n", error) != VECTIS_OK) {
+    vectis_string_builder_cleanup(&json);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  out->data = json.data;
+  out->size = json.size;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_metrics_snapshot_json(vectis_app *app,
+                                           vectis_mutable_bytes *out,
+                                           vectis_error *error) {
+  return vectis_metrics_snapshot_json_impl(app, out, NULL, error);
+}
+
+static vectis_status
+vectis_metrics_auth_gate(vectis_app *app, const vectis_metrics_state *metrics,
+                         vectis_request *request, vectis_response *response,
+                         vectis_error *error) {
+  vectis_auth_provider_request auth_request;
+  vectis_auth_provider_response auth_response;
+  vectis_status status;
+  int status_code;
+  vectis_bytes body;
+  const char *content_type;
+
+  if (metrics == NULL || metrics->auth_provider == NULL) {
+    return VECTIS_OK;
+  }
+  vectis_auth_provider_request_init(&auth_request);
+  auth_request.request = request;
+  auth_request.purpose =
+      metrics->auth_purpose != NULL ? metrics->auth_purpose : "metrics";
+  auth_request.resource = vectis_request_path(request);
+  auth_request.allowed_auth_modes = metrics->allowed_auth_modes;
+  vectis_auth_provider_response_init(&auth_response);
+  status = vectis_auth_provider_authenticate(
+      metrics->auth_provider, &auth_request, &auth_response, error);
+  if (status != VECTIS_OK) {
+    vectis_auth_provider_response_cleanup(&auth_response);
+    return status;
+  }
+  vectis_internal_metrics_note_auth(app, auth_response.action);
+  if (auth_response.action == VECTIS_AUTH_ALLOW) {
+    vectis_auth_provider_response_cleanup(&auth_response);
+    return VECTIS_OK;
+  }
+  if (auth_response.action == VECTIS_AUTH_REQUIRED &&
+      auth_response.www_authenticate[0] != '\0' &&
+      vectis_response_header(response, "www-authenticate",
+                             auth_response.www_authenticate,
+                             error) != VECTIS_OK) {
+    vectis_auth_provider_response_cleanup(&auth_response);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  if (auth_response.action == VECTIS_AUTH_REDIRECT &&
+      auth_response.location != NULL && auth_response.location[0] != '\0' &&
+      vectis_response_header(response, "location", auth_response.location,
+                             error) != VECTIS_OK) {
+    vectis_auth_provider_response_cleanup(&auth_response);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  status_code = auth_response.status_code > 0
+                    ? auth_response.status_code
+                    : (auth_response.action == VECTIS_AUTH_REDIRECT   ? 302
+                       : auth_response.action == VECTIS_AUTH_REQUIRED ? 401
+                                                                      : 403);
+  content_type = auth_response.content_type != NULL
+                     ? auth_response.content_type
+                     : "text/plain; charset=utf-8";
+  body.data = auth_response.body != NULL
+                  ? auth_response.body
+                  : (auth_response.action == VECTIS_AUTH_DENY
+                         ? "forbidden\n"
+                         : "authentication required\n");
+  body.size = auth_response.body != NULL ? auth_response.body_size
+                                         : strlen((const char *)body.data);
+  status =
+      vectis_response_bytes(response, status_code, content_type, body, error);
+  vectis_auth_provider_response_cleanup(&auth_response);
+  return status;
+}
+
+static vectis_status vectis_metrics_html_escape(vectis_string_builder *html,
+                                                const char *value,
+                                                vectis_error *error) {
+  const char *p;
+
+  if (value == NULL) {
+    return VECTIS_OK;
+  }
+  for (p = value; *p != '\0'; ++p) {
+    if (*p == '&') {
+      if (vectis_string_builder_append(html, "&amp;", error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+    } else if (*p == '<') {
+      if (vectis_string_builder_append(html, "&lt;", error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+    } else if (*p == '>') {
+      if (vectis_string_builder_append(html, "&gt;", error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+    } else if (*p == '"') {
+      if (vectis_string_builder_append(html, "&quot;", error) != VECTIS_OK) {
+        return error != NULL ? error->code : VECTIS_ERR_STATE;
+      }
+    } else if (vectis_string_builder_append_n(html, p, 1u, error) !=
+               VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+  }
+  return VECTIS_OK;
+}
+
+static const char *vectis_metrics_request_title(vectis_app_impl *impl,
+                                                vectis_request *request) {
+  const char *host;
+
+  host = vectis_request_header(request, "host");
+  if (host != NULL && host[0] != '\0') {
+    return host;
+  }
+  if (impl != NULL && impl->domain != NULL && impl->domain[0] != '\0' &&
+      strcmp(impl->domain, "*") != 0) {
+    return impl->domain;
+  }
+  if (impl != NULL && impl->bind != NULL && impl->bind[0] != '\0') {
+    return impl->bind;
+  }
+  return "vectis";
+}
+
+static vectis_status vectis_metrics_dashboard_html(vectis_app *app,
+                                                   vectis_request *request,
+                                                   vectis_mutable_bytes *json,
+                                                   vectis_mutable_bytes *out,
+                                                   vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_metrics_state snapshot;
+  vectis_string_builder html;
+  const char *title;
+  unsigned long long http_2xx;
+  unsigned long long http_4xx;
+  unsigned long long http_5xx;
+  unsigned status_2xx_pct;
+  unsigned status_3xx_pct;
+  unsigned status_4xx_pct;
+  unsigned status_5xx_pct;
+  unsigned load_1m_pct;
+  unsigned load_5m_pct;
+  unsigned load_15m_pct;
+
+  if (app == NULL || app->impl == NULL || json == NULL || out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "metrics dashboard arguments are required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  memset(&snapshot, 0, sizeof(snapshot));
+  (void)pthread_mutex_lock(&impl->metrics->mutex);
+  snapshot = *impl->metrics;
+  (void)pthread_mutex_unlock(&impl->metrics->mutex);
+  title = snapshot.title != NULL && snapshot.title[0] != '\0'
+              ? snapshot.title
+              : vectis_metrics_request_title(impl, request);
+  http_2xx = snapshot.status_buckets[2];
+  http_4xx = snapshot.status_buckets[4];
+  http_5xx = snapshot.status_buckets[5];
+  status_2xx_pct =
+      snapshot.requests_total > 0
+          ? (unsigned)((http_2xx * 100ULL) / snapshot.requests_total)
+          : 2u;
+  status_3xx_pct = snapshot.requests_total > 0
+                       ? (unsigned)((snapshot.status_buckets[3] * 100ULL) /
+                                    snapshot.requests_total)
+                       : 2u;
+  status_4xx_pct =
+      snapshot.requests_total > 0
+          ? (unsigned)((http_4xx * 100ULL) / snapshot.requests_total)
+          : 2u;
+  status_5xx_pct =
+      snapshot.requests_total > 0
+          ? (unsigned)((http_5xx * 100ULL) / snapshot.requests_total)
+          : 2u;
+  load_1m_pct =
+      snapshot.load_supported
+          ? (unsigned)(snapshot.loadavg[0] > 4.0 ? 100.0
+                                                 : snapshot.loadavg[0] * 25.0)
+          : 2u;
+  load_5m_pct =
+      snapshot.load_supported
+          ? (unsigned)(snapshot.loadavg[1] > 4.0 ? 100.0
+                                                 : snapshot.loadavg[1] * 25.0)
+          : 2u;
+  load_15m_pct =
+      snapshot.load_supported
+          ? (unsigned)(snapshot.loadavg[2] > 4.0 ? 100.0
+                                                 : snapshot.loadavg[2] * 25.0)
+          : 2u;
+
+  memset(&html, 0, sizeof(html));
+  if (vectis_string_builder_append(
+          &html,
+          "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          "<meta name=\"viewport\" "
+          "content=\"width=device-width,initial-scale=1\">"
+          "<title>",
+          error) != VECTIS_OK ||
+      vectis_metrics_html_escape(&html, title, error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          "</title><style>:root{color-scheme:dark;--bg:#0b0c0f;"
+          "--panel:#181b1f;--border:#30343b;--text:#e7e9ec;",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          "--muted:#9aa3ad;--blue:#5794f2;--green:#73bf69;"
+          "--red:#f2495c;--orange:#f05a28}*{box-sizing:border-box}",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          "body{margin:0;background:var(--bg);color:var(--text);"
+          "font:13px/1.45 Arial,Helvetica,sans-serif}",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          "header{height:52px;background:#111217;border-bottom:1px solid "
+          "#272a30;"
+          "display:flex;align-items:center;justify-content:space-between;",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          "padding:0 18px;gap:16px}h1{font-size:17px;font-weight:500;margin:0}"
+          ".toolbar{display:flex;justify-content:space-between;",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          "gap:16px;padding:12px 18px;border-bottom:1px solid #22262c;"
+          "background:#0f1115}.summary{color:var(--muted)}",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(&html,
+                                   ".dashboard{display:grid;grid-template-"
+                                   "columns:repeat(12,minmax(0,1fr));"
+                                   "gap:8px;padding:8px 14px 14px}.panel{",
+                                   error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          "background:var(--panel);border:1px solid "
+          "var(--border);border-radius:2px;"
+          "display:flex;flex-direction:column;min-width:0}",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          ".stat-panel{grid-column:span 2;min-height:104px}.chart-panel{"
+          "grid-column:span 4;min-height:248px}.wide{grid-column:span 8}",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          ".panel h2{font-size:12px;font-weight:500;margin:0;padding:8px 9px;"
+          "border-bottom:1px solid #252a31}.stat{",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(&html,
+                                   "display:grid;place-items:center;flex:1;"
+                                   "font-size:30px;font-weight:400}"
+                                   ".stat small{display:block;font-size:11px;",
+                                   error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          "color:var(--muted);font-weight:400;text-align:center}.bars{display:"
+          "flex;"
+          "align-items:end;gap:8px;height:160px;padding:18px}",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          ".bar{flex:1;min-height:2px;background:var(--blue);position:relative}"
+          ".bar.green{background:var(--green)}.bar.red{background:var(--red)}",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          ".bar "
+          "span{position:absolute;top:-18px;left:0;right:0;text-align:center;"
+          "color:var(--muted);font-size:11px}",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          ".json{white-space:pre-wrap;overflow:auto;padding:10px;color:#c5c8cc}"
+          ".legend{display:flex;gap:10px;color:var(--muted);",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          "padding:0 9px 8px;font-size:11px}.legend i{display:inline-block;"
+          "width:8px;height:8px;margin-right:4px;border-radius:50%}",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          "@media(max-width:1100px){.stat-panel{grid-column:span 3}"
+          ".chart-panel,.wide{grid-column:span 6}}",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(&html,
+                                   "@media(max-width:760px){header,.toolbar{"
+                                   "height:auto;align-items:flex-start;"
+                                   "flex-direction:column;padding:12px 14px}",
+                                   error) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          ".dashboard{grid-template-columns:1fr;padding:8px 12px 12px}"
+          ".stat-panel,.chart-panel,.wide{grid-column:span 1}}",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(&html, "</style></head><body><header><h1>",
+                                   error) != VECTIS_OK ||
+      vectis_metrics_html_escape(&html, title, error) != VECTIS_OK ||
+      vectis_string_builder_appendf(
+          &html, error,
+          "</h1></header><div class=\"toolbar\"><div class=\"summary\">Vectis "
+          "runtime metrics, in-memory collection</div><div "
+          "class=\"summary\">JSON: %s</div>"
+          "</div><main class=\"dashboard\">",
+          impl->metrics->json_path != NULL ? impl->metrics->json_path : "") !=
+          VECTIS_OK ||
+      vectis_string_builder_appendf(
+          &html, error,
+          "<section class=\"panel stat-panel\"><h2>HTTP requests</h2><div "
+          "class=\"stat\">%llu"
+          "<small>total</small></div></section>"
+          "<section class=\"panel stat-panel\"><h2>2xx</h2><div "
+          "class=\"stat\">%llu"
+          "<small>successful responses</small></div></section>"
+          "<section class=\"panel stat-panel\"><h2>4xx</h2><div "
+          "class=\"stat\">%llu"
+          "<small>client errors</small></div></section>"
+          "<section class=\"panel stat-panel\"><h2>5xx</h2><div "
+          "class=\"stat\">%llu"
+          "<small>server errors</small></div></section>",
+          snapshot.requests_total, http_2xx, http_4xx, http_5xx) != VECTIS_OK ||
+      vectis_string_builder_appendf(
+          &html, error,
+          "<section class=\"panel stat-panel\"><h2>Auth required</h2><div "
+          "class=\"stat\">%llu"
+          "<small>guard responses</small></div></section>"
+          "<section class=\"panel stat-panel\"><h2>Persistence</h2><div "
+          "class=\"stat\">%llu"
+          "<small>writes / %llu errors</small></div></section>",
+          snapshot.auth_required, snapshot.snapshot_writes,
+          snapshot.snapshot_errors) != VECTIS_OK ||
+      vectis_string_builder_appendf(
+          &html, error,
+          "<section class=\"panel chart-panel\"><h2>Status buckets</h2><div "
+          "class=\"bars\">"
+          "<div class=\"bar green\" "
+          "style=\"height:%u%%\"><span>2xx</span></div>"
+          "<div class=\"bar\" style=\"height:%u%%\"><span>3xx</span></div>"
+          "<div class=\"bar red\" style=\"height:%u%%\"><span>4xx</span></div>"
+          "<div class=\"bar red\" "
+          "style=\"height:%u%%\"><span>5xx</span></div></div>",
+          status_2xx_pct, status_3xx_pct, status_4xx_pct,
+          status_5xx_pct) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          "<div class=\"legend\"><span><i "
+          "style=\"background:var(--green)\"></i>success</span>"
+          "<span><i style=\"background:var(--blue)\"></i>redirect</span>"
+          "<span><i "
+          "style=\"background:var(--red)\"></i>errors</span></div></section>",
+          error) != VECTIS_OK ||
+      vectis_string_builder_appendf(
+          &html, error,
+          "<section class=\"panel chart-panel\"><h2>Load average</h2><div "
+          "class=\"bars\">"
+          "<div class=\"bar\" style=\"height:%u%%\"><span>1m</span></div>"
+          "<div class=\"bar\" style=\"height:%u%%\"><span>5m</span></div>"
+          "<div class=\"bar\" "
+          "style=\"height:%u%%\"><span>15m</span></div></div>",
+          load_1m_pct, load_5m_pct, load_15m_pct) != VECTIS_OK ||
+      vectis_string_builder_append(
+          &html,
+          "<div class=\"legend\"><span><i "
+          "style=\"background:var(--blue)\"></i>raw host load</span>"
+          "</div></section><section class=\"panel wide\"><h2>JSON "
+          "snapshot</h2><pre class=\"json\">",
+          error) != VECTIS_OK ||
+      vectis_metrics_html_escape(&html, (const char *)json->data, error) !=
+          VECTIS_OK ||
+      vectis_string_builder_append(&html,
+                                   "</pre></section></main></body></html>\n",
+                                   error) != VECTIS_OK) {
+    vectis_string_builder_cleanup(&html);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  out->data = html.data;
+  out->size = html.size;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_metrics_route_handler(vectis_app *app,
+                                                  vectis_request *request,
+                                                  vectis_response *response,
+                                                  void *userdata,
+                                                  vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_metrics_route_data *route;
+  vectis_mutable_bytes json;
+  vectis_mutable_bytes html;
+  vectis_status status;
+  vectis_bytes body;
+  const char *title;
+
+  route = (vectis_metrics_route_data *)userdata;
+  if (app == NULL || app->impl == NULL || route == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "metrics route is not configured");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  status =
+      vectis_metrics_auth_gate(app, impl->metrics, request, response, error);
+  if (status != VECTIS_OK ||
+      vectis_internal_response_status_code(response) != 0) {
+    return status;
+  }
+  title = impl->metrics->title != NULL && impl->metrics->title[0] != '\0'
+              ? impl->metrics->title
+              : vectis_metrics_request_title(impl, request);
+  memset(&json, 0, sizeof(json));
+  memset(&html, 0, sizeof(html));
+  status = vectis_metrics_snapshot_json_impl(app, &json, title, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (!route->html) {
+    body.data = json.data;
+    body.size = json.size;
+    status =
+        vectis_response_bytes(response, 200, "application/json", body, error);
+    vectis_mutable_bytes_cleanup(&json);
+    return status;
+  }
+  status = vectis_metrics_dashboard_html(app, request, &json, &html, error);
+  vectis_mutable_bytes_cleanup(&json);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  body.data = html.data;
+  body.size = html.size;
+  status = vectis_response_bytes(response, 200, "text/html; charset=utf-8",
+                                 body, error);
+  vectis_mutable_bytes_cleanup(&html);
+  return status;
+}
+
+static int vectis_mkdir_recursive(const char *path) {
+  char tmp[4096];
+  char *p;
+  size_t len;
+
+  if (path == NULL || path[0] != '/') {
+    return 0;
+  }
+  len = strlen(path);
+  if (len == 0u || len >= sizeof(tmp)) {
+    return 0;
+  }
+  memcpy(tmp, path, len + 1u);
+  for (p = tmp + 1; *p != '\0'; ++p) {
+    if (*p == '/') {
+      *p = '\0';
+      if (mkdir(tmp, 0700) != 0 && errno != EEXIST) {
+        return 0;
+      }
+      *p = '/';
+    }
+  }
+  if (mkdir(tmp, 0700) != 0 && errno != EEXIST) {
+    return 0;
+  }
+  return 1;
+}
+
+static char *vectis_metrics_default_storage_endpoint(void) {
+  const char *xdg;
+  const char *home;
+  char path[4096];
+  char endpoint[4108];
+  int n;
+
+  xdg = getenv("XDG_STATE_HOME");
+  if (xdg != NULL && xdg[0] == '/') {
+    n = snprintf(path, sizeof(path), "%s/vectis/storage", xdg);
+  } else {
+    home = getenv("HOME");
+    if (home == NULL || home[0] != '/') {
+      return NULL;
+    }
+    n = snprintf(path, sizeof(path), "%s/.local/state/vectis/storage", home);
+  }
+  if (n <= 0 || (size_t)n >= sizeof(path) || !vectis_mkdir_recursive(path)) {
+    return NULL;
+  }
+  n = snprintf(endpoint, sizeof(endpoint), "pouch://%s", path);
+  if (n <= 0 || (size_t)n >= sizeof(endpoint)) {
+    return NULL;
+  }
+  return vectis_strdup(endpoint);
+}
+
+typedef struct vectis_metrics_write_context {
+  vectis_mutable_bytes json;
+} vectis_metrics_write_context;
+
+static int vectis_metrics_write_update(void *context,
+                                       lc_acquire_for_update_context *update,
+                                       lc_error *error) {
+  vectis_metrics_write_context *write;
+  lc_source *source;
+  lc_update_opts opts;
+  int rc;
+
+  write = (vectis_metrics_write_context *)context;
+  if (write == NULL || update == NULL || update->lease == NULL) {
+    if (error != NULL) {
+      lc_error_init(error);
+      error->code = LC_ERR_INVALID;
+      error->message = vectis_strdup("metrics write context is invalid");
+    }
+    return LC_ERR_INVALID;
+  }
+  source = NULL;
+  rc =
+      lc_source_from_memory(write->json.data, write->json.size, &source, error);
+  if (rc != LC_OK) {
+    return rc;
+  }
+  lc_update_opts_init(&opts);
+  opts.content_type = "application/json";
+  rc = update->lease->update(update->lease, source, &opts, error);
+  source->close(source);
+  return rc;
+}
+
+static void vectis_metrics_note_snapshot_error(vectis_metrics_state *metrics) {
+  if (metrics == NULL) {
+    return;
+  }
+  (void)pthread_mutex_lock(&metrics->mutex);
+  metrics->snapshot_errors++;
+  (void)pthread_mutex_unlock(&metrics->mutex);
+}
+
+static void vectis_metrics_note_snapshot_write(vectis_metrics_state *metrics) {
+  if (metrics == NULL) {
+    return;
+  }
+  (void)pthread_mutex_lock(&metrics->mutex);
+  metrics->snapshot_writes++;
+  (void)pthread_mutex_unlock(&metrics->mutex);
+}
+
+static vectis_status vectis_metrics_persist_snapshot(vectis_app *app) {
+  vectis_app_impl *impl;
+  vectis_metrics_state *metrics;
+  vectis_metrics_write_context write;
+  lc_client_config config;
+  lc_client *client;
+  lc_acquire_req req;
+  lc_error lcerr;
+  char key[64];
+  const char *endpoint;
+  int rc;
+
+  if (app == NULL || app->impl == NULL) {
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  metrics = impl->metrics;
+  if (metrics == NULL || !metrics->persistence_enabled) {
+    return VECTIS_OK;
+  }
+  memset(&write, 0, sizeof(write));
+  if (vectis_metrics_snapshot_json_impl(app, &write.json, NULL, NULL) !=
+      VECTIS_OK) {
+    vectis_metrics_note_snapshot_error(metrics);
+    return VECTIS_ERR_STATE;
+  }
+  endpoint = metrics->storage_endpoint;
+  lc_client_config_init(&config);
+  config.endpoints = &endpoint;
+  config.endpoint_count = 1u;
+  config.default_namespace = metrics->storage_namespace != NULL
+                                 ? metrics->storage_namespace
+                                 : "vectis.metrics";
+  config.timeout_ms = 30000L;
+  lc_error_init(&lcerr);
+  client = NULL;
+  rc = lc_client_open(&config, &client, &lcerr);
+  if (rc == LC_OK) {
+    lc_acquire_req_init(&req);
+    req.namespace_name = config.default_namespace;
+    req.owner =
+        metrics->storage_owner != NULL ? metrics->storage_owner : "vectis";
+    req.ttl_seconds = 30L;
+    req.block_seconds = 1L;
+    (void)snprintf(key, sizeof(key), "snapshot.%llu",
+                   (unsigned long long)time(NULL));
+    req.key = key;
+    rc = client->acquire_for_update(client, &req, vectis_metrics_write_update,
+                                    &write, &lcerr);
+  }
+  if (client != NULL) {
+    client->close(client);
+  }
+  lc_error_cleanup(&lcerr);
+  vectis_mutable_bytes_cleanup(&write.json);
+  if (rc != LC_OK) {
+    vectis_metrics_note_snapshot_error(metrics);
+    return VECTIS_ERR_STATE;
+  }
+  vectis_metrics_note_snapshot_write(metrics);
+  return VECTIS_OK;
+}
+
+static void *vectis_metrics_worker_main(void *arg) {
+  vectis_app *app;
+  vectis_app_impl *impl;
+  vectis_metrics_state *metrics;
+  struct timespec wait_until;
+  time_t now;
+  time_t last_snapshot;
+  unsigned interval;
+
+  app = (vectis_app *)arg;
+  impl = app != NULL ? (vectis_app_impl *)app->impl : NULL;
+  metrics = impl != NULL ? impl->metrics : NULL;
+  last_snapshot = 0;
+  while (metrics != NULL) {
+    now = time(NULL);
+    (void)pthread_mutex_lock(&metrics->mutex);
+    vectis_metrics_sample_load_locked(metrics, now);
+    if (metrics->stop_worker) {
+      (void)pthread_mutex_unlock(&metrics->mutex);
+      break;
+    }
+    interval = metrics->snapshot_interval_seconds > 0u
+                   ? metrics->snapshot_interval_seconds
+                   : 300u;
+    if (metrics->persistence_enabled &&
+        (last_snapshot == 0 || now - last_snapshot >= (time_t)interval)) {
+      last_snapshot = now;
+      (void)pthread_mutex_unlock(&metrics->mutex);
+      (void)vectis_metrics_persist_snapshot(app);
+      (void)pthread_mutex_lock(&metrics->mutex);
+    }
+    wait_until.tv_sec = time(NULL) + 60;
+    wait_until.tv_nsec = 0L;
+    if (!metrics->stop_worker) {
+      (void)pthread_cond_timedwait(&metrics->cond, &metrics->mutex,
+                                   &wait_until);
+    }
+    if (metrics->stop_worker) {
+      (void)pthread_mutex_unlock(&metrics->mutex);
+      break;
+    }
+    (void)pthread_mutex_unlock(&metrics->mutex);
+  }
+  return NULL;
+}
+
+static vectis_status vectis_metrics_worker_start(vectis_app *app,
+                                                 vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_metrics_state *metrics;
+
+  if (app == NULL || app->impl == NULL) {
+    return VECTIS_OK;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  metrics = impl->metrics;
+  if (metrics == NULL) {
+    return VECTIS_OK;
+  }
+  (void)pthread_mutex_lock(&metrics->mutex);
+  if (metrics->worker_started) {
+    (void)pthread_mutex_unlock(&metrics->mutex);
+    return VECTIS_OK;
+  }
+  metrics->stop_worker = 0;
+  metrics->started_at = time(NULL);
+  (void)pthread_mutex_unlock(&metrics->mutex);
+  if (pthread_create(&metrics->worker, NULL, vectis_metrics_worker_main, app) !=
+      0) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to start metrics worker");
+    return VECTIS_ERR_STATE;
+  }
+  (void)pthread_mutex_lock(&metrics->mutex);
+  metrics->worker_started = 1;
+  (void)pthread_mutex_unlock(&metrics->mutex);
+  return VECTIS_OK;
+}
+
+static void vectis_metrics_worker_stop(vectis_app *app) {
+  vectis_app_impl *impl;
+  vectis_metrics_state *metrics;
+  pthread_t worker;
+  int join;
+
+  if (app == NULL || app->impl == NULL) {
+    return;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  metrics = impl->metrics;
+  if (metrics == NULL) {
+    return;
+  }
+  (void)pthread_mutex_lock(&metrics->mutex);
+  join = metrics->worker_started;
+  worker = metrics->worker;
+  metrics->stop_worker = 1;
+  (void)pthread_cond_broadcast(&metrics->cond);
+  (void)pthread_mutex_unlock(&metrics->mutex);
+  if (join) {
+    (void)pthread_join(worker, NULL);
+    (void)pthread_mutex_lock(&metrics->mutex);
+    metrics->worker_started = 0;
+    (void)pthread_mutex_unlock(&metrics->mutex);
+  }
+}
+
+static void vectis_metrics_state_destroy(vectis_metrics_state *metrics) {
+  if (metrics == NULL) {
+    return;
+  }
+  free(metrics->html_path);
+  free(metrics->json_path);
+  free(metrics->title);
+  free(metrics->storage_endpoint);
+  free(metrics->storage_namespace);
+  free(metrics->storage_owner);
+  free(metrics->auth_purpose);
+  (void)pthread_cond_destroy(&metrics->cond);
+  (void)pthread_mutex_destroy(&metrics->mutex);
+  free(metrics);
+}
+
 static const char *vectis_route_event_selected_value(vectis_request *request,
                                                      int selector,
                                                      const char *name) {
@@ -10469,8 +11616,8 @@ static int vectis_lockd_payload_sink_write(lc_sink *sink, const void *bytes,
   vectis_lockd_payload_sink_context *context;
   vectis_error verror;
 
-  context = sink != NULL ? (vectis_lockd_payload_sink_context *)sink->impl
-                         : NULL;
+  context =
+      sink != NULL ? (vectis_lockd_payload_sink_context *)sink->impl : NULL;
   if (context == NULL) {
     vectis_lc_error_set(error, LC_ERR_INVALID,
                         "lockd consumer payload sink is invalid");
@@ -10539,8 +11686,8 @@ static vectis_status vectis_lockd_consumer_event_payload(
       vectis_set_error(error, VECTIS_ERR_NOMEM,
                        "failed to copy lockd consumer payload");
     } else {
-      (void)vectis_set_lockdc_error(
-          error, rc, &lcerr, "failed to copy lockd consumer payload");
+      (void)vectis_set_lockdc_error(error, rc, &lcerr,
+                                    "failed to copy lockd consumer payload");
     }
     lc_error_cleanup(&lcerr);
     vectis_string_builder_cleanup(&context.payload);
@@ -10608,8 +11755,8 @@ vectis_status vectis_lockd_consumer_event_from_message(
 
   if (vectis_string_builder_append(&builder, "{", error) != VECTIS_OK ||
       vectis_route_event_append_key(&builder, "type", error) != VECTIS_OK ||
-      vectis_append_lonejson_string(&builder, "vectis.lockd.consumer",
-                                    error) != VECTIS_OK ||
+      vectis_append_lonejson_string(&builder, "vectis.lockd.consumer", error) !=
+          VECTIS_OK ||
       vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
       vectis_route_event_append_key(&builder, "name", error) != VECTIS_OK ||
       vectis_append_lonejson_string(&builder, message->name, error) !=
@@ -10621,10 +11768,9 @@ vectis_status vectis_lockd_consumer_event_from_message(
                                     error) != VECTIS_OK ||
       vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
       vectis_route_event_append_key(&builder, "queue", error) != VECTIS_OK ||
-      vectis_append_lonejson_string(&builder, delivery->queue != NULL
-                                                  ? delivery->queue
-                                                  : message->queue,
-                                    error) != VECTIS_OK ||
+      vectis_append_lonejson_string(
+          &builder, delivery->queue != NULL ? delivery->queue : message->queue,
+          error) != VECTIS_OK ||
       vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
       vectis_route_event_append_key(&builder, "message_id", error) !=
           VECTIS_OK ||
@@ -10636,8 +11782,7 @@ vectis_status vectis_lockd_consumer_event_from_message(
       vectis_append_lonejson_string(&builder, delivery->correlation_id,
                                     error) != VECTIS_OK ||
       vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
-      vectis_route_event_append_key(&builder, "lease_id", error) !=
-          VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "lease_id", error) != VECTIS_OK ||
       vectis_append_lonejson_string(&builder, delivery->lease_id, error) !=
           VECTIS_OK ||
       vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
@@ -10651,8 +11796,7 @@ vectis_status vectis_lockd_consumer_event_from_message(
                                    message->with_state ? "true" : "false",
                                    error) != VECTIS_OK ||
       vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
-      vectis_route_event_append_key(&builder, "attempts", error) !=
-          VECTIS_OK ||
+      vectis_route_event_append_key(&builder, "attempts", error) != VECTIS_OK ||
       vectis_string_builder_appendf(&builder, error, "%d",
                                     delivery->attempts) != VECTIS_OK ||
       vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
@@ -10668,8 +11812,8 @@ vectis_status vectis_lockd_consumer_event_from_message(
       vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
       vectis_route_event_append_key(&builder, "visibility_timeout_seconds",
                                     error) != VECTIS_OK ||
-      vectis_string_builder_appendf(
-          &builder, error, "%ld", delivery->visibility_timeout_seconds) !=
+      vectis_string_builder_appendf(&builder, error, "%ld",
+                                    delivery->visibility_timeout_seconds) !=
           VECTIS_OK ||
       vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
       vectis_route_event_append_key(&builder, "payload_content_type", error) !=
@@ -10684,8 +11828,7 @@ vectis_status vectis_lockd_consumer_event_from_message(
       vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
       vectis_route_event_append_key(&builder, "payload", error) != VECTIS_OK ||
       vectis_string_builder_append(&builder, "{", error) != VECTIS_OK ||
-      vectis_route_event_append_key(&builder, "included", error) !=
-          VECTIS_OK) {
+      vectis_route_event_append_key(&builder, "included", error) != VECTIS_OK) {
     status = error != NULL ? error->code : VECTIS_ERR_STATE;
     vectis_string_builder_cleanup(&builder);
     vectis_string_builder_cleanup(&copied_payload);
@@ -10738,10 +11881,10 @@ vectis_status vectis_lockd_consumer_event_from_message(
   return VECTIS_OK;
 }
 
-static vectis_status
-vectis_bounded_append_n(vectis_string_builder *builder, size_t max_bytes,
-                        const char *text, size_t length,
-                        vectis_error *error) {
+static vectis_status vectis_bounded_append_n(vectis_string_builder *builder,
+                                             size_t max_bytes, const char *text,
+                                             size_t length,
+                                             vectis_error *error) {
   if (length > max_bytes || builder->size > max_bytes - length) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "OPC UA monitor event exceeds configured payload limit");
@@ -10798,20 +11941,20 @@ static lonejson_status vectis_lonejson_bounded_builder_sink_write(
     if (json_error != NULL) {
       lonejson_error_init(json_error);
       json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
-      (void)snprintf(
-          json_error->message, sizeof(json_error->message), "%s",
-          sink->error != NULL && sink->error->message[0] != '\0'
-              ? sink->error->message
-              : "bounded JSON sink failed");
+      (void)snprintf(json_error->message, sizeof(json_error->message), "%s",
+                     sink->error != NULL && sink->error->message[0] != '\0'
+                         ? sink->error->message
+                         : "bounded JSON sink failed");
     }
     return LONEJSON_STATUS_CALLBACK_FAILED;
   }
   return LONEJSON_STATUS_OK;
 }
 
-static vectis_status vectis_bounded_json_string_n(
-    vectis_string_builder *builder, size_t max_bytes, const char *value,
-    size_t length, vectis_error *error) {
+static vectis_status
+vectis_bounded_json_string_n(vectis_string_builder *builder, size_t max_bytes,
+                             const char *value, size_t length,
+                             vectis_error *error) {
   vectis_lonejson_bounded_builder_sink sink;
   lonejson_error json_error;
   lonejson *runtime;
@@ -10844,18 +11987,17 @@ static vectis_status vectis_bounded_json_string_n(
   return VECTIS_OK;
 }
 
-static vectis_status vectis_bounded_json_string(
-    vectis_string_builder *builder, size_t max_bytes, const char *value,
-    vectis_error *error) {
-  return vectis_bounded_json_string_n(builder, max_bytes,
-                                      value != NULL ? value : "",
-                                      value != NULL ? strlen(value) : 0u,
-                                      error);
+static vectis_status vectis_bounded_json_string(vectis_string_builder *builder,
+                                                size_t max_bytes,
+                                                const char *value,
+                                                vectis_error *error) {
+  return vectis_bounded_json_string_n(
+      builder, max_bytes, value != NULL ? value : "",
+      value != NULL ? strlen(value) : 0u, error);
 }
 
 static vectis_status vectis_opcua_append_key(vectis_string_builder *builder,
-                                             size_t max_bytes,
-                                             const char *key,
+                                             size_t max_bytes, const char *key,
                                              vectis_error *error) {
   if (vectis_bounded_json_string(builder, max_bytes, key, error) != VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, ":", error) != VECTIS_OK) {
@@ -10917,9 +12059,10 @@ static const char *vectis_opcua_value_type_name(int type) {
   }
 }
 
-static vectis_status vectis_opcua_append_hex_string(
-    vectis_string_builder *builder, size_t max_bytes, const unsigned char *data,
-    size_t size, vectis_error *error) {
+static vectis_status
+vectis_opcua_append_hex_string(vectis_string_builder *builder, size_t max_bytes,
+                               const unsigned char *data, size_t size,
+                               vectis_error *error) {
   static const char hex[] = "0123456789abcdef";
   char pair[2];
   size_t i;
@@ -10943,20 +12086,19 @@ static vectis_status vectis_opcua_append_hex_string(
   return vectis_bounded_append(builder, max_bytes, "\"", error);
 }
 
-static vectis_status vectis_opcua_append_status_value(
-    vectis_string_builder *builder, size_t max_bytes, cpkt_opcua_status status,
-    vectis_error *error) {
+static vectis_status
+vectis_opcua_append_status_value(vectis_string_builder *builder,
+                                 size_t max_bytes, cpkt_opcua_status status,
+                                 vectis_error *error) {
   if (vectis_bounded_append(builder, max_bytes, "{", error) != VECTIS_OK ||
-      vectis_opcua_append_key(builder, max_bytes, "code", error) !=
-          VECTIS_OK ||
+      vectis_opcua_append_key(builder, max_bytes, "code", error) != VECTIS_OK ||
       vectis_bounded_appendf(builder, max_bytes, error, "%lu", status) !=
           VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, ",", error) != VECTIS_OK ||
-      vectis_opcua_append_key(builder, max_bytes, "name", error) !=
-          VECTIS_OK ||
+      vectis_opcua_append_key(builder, max_bytes, "name", error) != VECTIS_OK ||
       vectis_bounded_json_string(builder, max_bytes,
-                                 cpkt_opcua_status_name(status), error) !=
-          VECTIS_OK ||
+                                 cpkt_opcua_status_name(status),
+                                 error) != VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, "}", error) != VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
@@ -10976,8 +12118,7 @@ static vectis_status vectis_opcua_append_uint64_value(
       vectis_opcua_append_key(builder, max_bytes, "low32", error) !=
           VECTIS_OK ||
       vectis_bounded_appendf(builder, max_bytes, error, "%lu",
-                             value != NULL ? value->low32 : 0UL) !=
-          VECTIS_OK ||
+                             value != NULL ? value->low32 : 0UL) != VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, "}", error) != VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
@@ -10991,23 +12132,22 @@ static vectis_status vectis_opcua_append_datetime_value(
       vectis_opcua_append_key(builder, max_bytes, "high32", error) !=
           VECTIS_OK ||
       vectis_bounded_appendf(builder, max_bytes, error, "%ld",
-                             value != NULL ? value->high32 : 0L) !=
-          VECTIS_OK ||
+                             value != NULL ? value->high32 : 0L) != VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, ",", error) != VECTIS_OK ||
       vectis_opcua_append_key(builder, max_bytes, "low32", error) !=
           VECTIS_OK ||
       vectis_bounded_appendf(builder, max_bytes, error, "%lu",
-                             value != NULL ? value->low32 : 0UL) !=
-          VECTIS_OK ||
+                             value != NULL ? value->low32 : 0UL) != VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, "}", error) != VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
   return VECTIS_OK;
 }
 
-static vectis_status vectis_opcua_append_guid_value(
-    vectis_string_builder *builder, size_t max_bytes, const unsigned char guid[16],
-    vectis_error *error) {
+static vectis_status
+vectis_opcua_append_guid_value(vectis_string_builder *builder, size_t max_bytes,
+                               const unsigned char guid[16],
+                               vectis_error *error) {
   char guid_buffer[37];
   cpkt_opcua_result result;
   size_t required_size;
@@ -11016,8 +12156,7 @@ static vectis_status vectis_opcua_append_guid_value(
   result = cpkt_opcua_guid_print(guid, guid_buffer, sizeof(guid_buffer),
                                  &required_size);
   if (result != CPKT_OPCUA_OK) {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "failed to format OPC UA GUID");
+    vectis_set_error(error, VECTIS_ERR_INVALID, "failed to format OPC UA GUID");
     return VECTIS_ERR_INVALID;
   }
   return vectis_bounded_json_string(builder, max_bytes, guid_buffer, error);
@@ -11033,8 +12172,7 @@ static vectis_status vectis_opcua_append_qualified_name_value(
       vectis_bounded_appendf(builder, max_bytes, error, "%u",
                              (unsigned int)namespace_index) != VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, ",", error) != VECTIS_OK ||
-      vectis_opcua_append_key(builder, max_bytes, "name", error) !=
-          VECTIS_OK ||
+      vectis_opcua_append_key(builder, max_bytes, "name", error) != VECTIS_OK ||
       vectis_bounded_json_string_n(builder, max_bytes, name, name_length,
                                    error) != VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, "}", error) != VECTIS_OK) {
@@ -11053,8 +12191,7 @@ static vectis_status vectis_opcua_append_localized_text_value(
       vectis_bounded_json_string_n(builder, max_bytes, locale, locale_length,
                                    error) != VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, ",", error) != VECTIS_OK ||
-      vectis_opcua_append_key(builder, max_bytes, "text", error) !=
-          VECTIS_OK ||
+      vectis_opcua_append_key(builder, max_bytes, "text", error) != VECTIS_OK ||
       vectis_bounded_json_string_n(builder, max_bytes, text, text_length,
                                    error) != VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, "}", error) != VECTIS_OK) {
@@ -11063,9 +12200,10 @@ static vectis_status vectis_opcua_append_localized_text_value(
   return VECTIS_OK;
 }
 
-static vectis_status vectis_opcua_append_double_literal(
-    vectis_string_builder *builder, size_t max_bytes, double value,
-    vectis_error *error) {
+static vectis_status
+vectis_opcua_append_double_literal(vectis_string_builder *builder,
+                                   size_t max_bytes, double value,
+                                   vectis_error *error) {
   char buffer[128];
   int n;
 
@@ -11102,16 +12240,14 @@ static vectis_status vectis_opcua_append_value_scalar(
     return vectis_opcua_append_double_literal(builder, max_bytes,
                                               value->double_value, error);
   case CPKT_OPCUA_VALUE_STRING:
-    return vectis_bounded_json_string_n(builder, max_bytes,
-                                        value->string_value,
+    return vectis_bounded_json_string_n(builder, max_bytes, value->string_value,
                                         value->string_length, error);
   case CPKT_OPCUA_VALUE_BYTE_STRING:
-    return vectis_opcua_append_hex_string(builder, max_bytes,
-                                          value->bytes_value,
-                                          value->bytes_length, error);
+    return vectis_opcua_append_hex_string(
+        builder, max_bytes, value->bytes_value, value->bytes_length, error);
   case CPKT_OPCUA_VALUE_GUID:
-    return vectis_opcua_append_guid_value(builder, max_bytes,
-                                          value->guid_value, error);
+    return vectis_opcua_append_guid_value(builder, max_bytes, value->guid_value,
+                                          error);
   case CPKT_OPCUA_VALUE_STATUS:
     return vectis_opcua_append_status_value(builder, max_bytes,
                                             value->status_value, error);
@@ -11135,9 +12271,10 @@ static vectis_status vectis_opcua_append_value_scalar(
   }
 }
 
-static vectis_status vectis_opcua_append_value_array(
-    vectis_string_builder *builder, size_t max_bytes,
-    const cpkt_opcua_value *value, vectis_error *error) {
+static vectis_status
+vectis_opcua_append_value_array(vectis_string_builder *builder,
+                                size_t max_bytes, const cpkt_opcua_value *value,
+                                vectis_error *error) {
   size_t i;
   vectis_status status;
 
@@ -11182,8 +12319,7 @@ static vectis_status vectis_opcua_append_value_array(
     }
     break;
   case CPKT_OPCUA_VALUE_DOUBLE_ARRAY:
-    if (value->double_array_length > 0u &&
-        value->double_array_values == NULL) {
+    if (value->double_array_length > 0u && value->double_array_values == NULL) {
       vectis_set_error(error, VECTIS_ERR_INVALID,
                        "OPC UA double array values are required");
       return VECTIS_ERR_INVALID;
@@ -11199,8 +12335,7 @@ static vectis_status vectis_opcua_append_value_array(
     }
     break;
   case CPKT_OPCUA_VALUE_STRING_ARRAY:
-    if (value->string_array_length > 0u &&
-        value->string_array_values == NULL) {
+    if (value->string_array_length > 0u && value->string_array_values == NULL) {
       vectis_set_error(error, VECTIS_ERR_INVALID,
                        "OPC UA string array values are required");
       return VECTIS_ERR_INVALID;
@@ -11236,8 +12371,7 @@ static vectis_status vectis_opcua_append_value_array(
     }
     break;
   case CPKT_OPCUA_VALUE_UINT64_ARRAY:
-    if (value->uint64_array_length > 0u &&
-        value->uint64_array_values == NULL) {
+    if (value->uint64_array_length > 0u && value->uint64_array_values == NULL) {
       vectis_set_error(error, VECTIS_ERR_INVALID,
                        "OPC UA uint64 array values are required");
       return VECTIS_ERR_INVALID;
@@ -11259,8 +12393,7 @@ static vectis_status vectis_opcua_append_value_array(
                        "OPC UA datetime array values are required");
       return VECTIS_ERR_INVALID;
     }
-    for (i = 0u; i < value->datetime_array_length && status == VECTIS_OK;
-         ++i) {
+    for (i = 0u; i < value->datetime_array_length && status == VECTIS_OK; ++i) {
       if (i > 0u) {
         status = vectis_bounded_append(builder, max_bytes, ",", error);
       }
@@ -11271,8 +12404,7 @@ static vectis_status vectis_opcua_append_value_array(
     }
     break;
   case CPKT_OPCUA_VALUE_STATUS_ARRAY:
-    if (value->status_array_length > 0u &&
-        value->status_array_values == NULL) {
+    if (value->status_array_length > 0u && value->status_array_values == NULL) {
       vectis_set_error(error, VECTIS_ERR_INVALID,
                        "OPC UA status array values are required");
       return VECTIS_ERR_INVALID;
@@ -11310,8 +12442,7 @@ static vectis_status vectis_opcua_append_value_array(
                        "OPC UA qualified name array values are required");
       return VECTIS_ERR_INVALID;
     }
-    for (i = 0u; i < value->qualified_name_array_length &&
-                 status == VECTIS_OK;
+    for (i = 0u; i < value->qualified_name_array_length && status == VECTIS_OK;
          ++i) {
       if (i > 0u) {
         status = vectis_bounded_append(builder, max_bytes, ",", error);
@@ -11332,8 +12463,7 @@ static vectis_status vectis_opcua_append_value_array(
                        "OPC UA localized text array values are required");
       return VECTIS_ERR_INVALID;
     }
-    for (i = 0u; i < value->localized_text_array_length &&
-                 status == VECTIS_OK;
+    for (i = 0u; i < value->localized_text_array_length && status == VECTIS_OK;
          ++i) {
       if (i > 0u) {
         status = vectis_bounded_append(builder, max_bytes, ",", error);
@@ -11379,19 +12509,17 @@ static vectis_status vectis_opcua_append_value_object(
   vectis_status status;
 
   if (vectis_bounded_append(builder, max_bytes, "{", error) != VECTIS_OK ||
-      vectis_opcua_append_key(builder, max_bytes, "type", error) !=
-          VECTIS_OK ||
-      vectis_bounded_appendf(builder, max_bytes, error, "%d",
-                             value != NULL ? value->type
-                                           : CPKT_OPCUA_VALUE_EMPTY) !=
-          VECTIS_OK ||
+      vectis_opcua_append_key(builder, max_bytes, "type", error) != VECTIS_OK ||
+      vectis_bounded_appendf(
+          builder, max_bytes, error, "%d",
+          value != NULL ? value->type : CPKT_OPCUA_VALUE_EMPTY) != VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, ",", error) != VECTIS_OK ||
       vectis_opcua_append_key(builder, max_bytes, "type_name", error) !=
           VECTIS_OK ||
       vectis_bounded_json_string(
-          builder, max_bytes, vectis_opcua_value_type_name(
-                                  value != NULL ? value->type
-                                                : CPKT_OPCUA_VALUE_EMPTY),
+          builder, max_bytes,
+          vectis_opcua_value_type_name(value != NULL ? value->type
+                                                     : CPKT_OPCUA_VALUE_EMPTY),
           error) != VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, ",", error) != VECTIS_OK ||
       vectis_opcua_append_key(builder, max_bytes, "value", error) !=
@@ -11415,8 +12543,7 @@ static vectis_status vectis_opcua_monitor_event_begin(
     cpkt_opcua_monitored_item_id monitored_item_id, cpkt_opcua_status status,
     vectis_error *error) {
   if (vectis_bounded_append(builder, max_bytes, "{", error) != VECTIS_OK ||
-      vectis_opcua_append_key(builder, max_bytes, "type", error) !=
-          VECTIS_OK ||
+      vectis_opcua_append_key(builder, max_bytes, "type", error) != VECTIS_OK ||
       vectis_bounded_json_string(builder, max_bytes, type, error) !=
           VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, ",", error) != VECTIS_OK ||
@@ -11425,8 +12552,8 @@ static vectis_status vectis_opcua_monitor_event_begin(
       vectis_bounded_appendf(builder, max_bytes, error, "%lu",
                              subscription_id) != VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, ",", error) != VECTIS_OK ||
-      vectis_opcua_append_key(builder, max_bytes, "monitored_item_id",
-                              error) != VECTIS_OK ||
+      vectis_opcua_append_key(builder, max_bytes, "monitored_item_id", error) !=
+          VECTIS_OK ||
       vectis_bounded_appendf(builder, max_bytes, error, "%lu",
                              monitored_item_id) != VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, ",", error) != VECTIS_OK ||
@@ -11435,11 +12562,11 @@ static vectis_status vectis_opcua_monitor_event_begin(
       vectis_bounded_appendf(builder, max_bytes, error, "%lu", status) !=
           VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, ",", error) != VECTIS_OK ||
-      vectis_opcua_append_key(builder, max_bytes, "opcua_status_name",
-                              error) != VECTIS_OK ||
+      vectis_opcua_append_key(builder, max_bytes, "opcua_status_name", error) !=
+          VECTIS_OK ||
       vectis_bounded_json_string(builder, max_bytes,
-                                 cpkt_opcua_status_name(status), error) !=
-          VECTIS_OK) {
+                                 cpkt_opcua_status_name(status),
+                                 error) != VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
   return VECTIS_OK;
@@ -11451,9 +12578,9 @@ static vectis_status vectis_opcua_build_data_change_payload(
     cpkt_opcua_monitored_item_id monitored_item_id,
     const cpkt_opcua_value *value, cpkt_opcua_status status,
     vectis_error *error) {
-  if (vectis_opcua_monitor_event_begin(
-          builder, max_bytes, event_type, subscription_id,
-          monitored_item_id, status, error) != VECTIS_OK ||
+  if (vectis_opcua_monitor_event_begin(builder, max_bytes, event_type,
+                                       subscription_id, monitored_item_id,
+                                       status, error) != VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, ",", error) != VECTIS_OK ||
       vectis_opcua_append_key(builder, max_bytes, "value", error) !=
           VECTIS_OK ||
@@ -11471,9 +12598,9 @@ static vectis_status vectis_opcua_build_event_payload(
     cpkt_opcua_monitored_item_id monitored_item_id,
     const cpkt_opcua_event *event, cpkt_opcua_status status,
     vectis_error *error) {
-  if (vectis_opcua_monitor_event_begin(
-          builder, max_bytes, event_type, subscription_id,
-          monitored_item_id, status, error) != VECTIS_OK ||
+  if (vectis_opcua_monitor_event_begin(builder, max_bytes, event_type,
+                                       subscription_id, monitored_item_id,
+                                       status, error) != VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, ",", error) != VECTIS_OK ||
       vectis_opcua_append_key(builder, max_bytes, "event", error) !=
           VECTIS_OK ||
@@ -11489,8 +12616,7 @@ static vectis_status vectis_opcua_build_event_payload(
           VECTIS_OK ||
       vectis_bounded_json_string_n(
           builder, max_bytes, event != NULL ? event->source_name : "",
-          event != NULL ? event->source_name_length : 0u, error) !=
-          VECTIS_OK ||
+          event != NULL ? event->source_name_length : 0u, error) != VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, ",", error) != VECTIS_OK ||
       vectis_opcua_append_key(builder, max_bytes, "message", error) !=
           VECTIS_OK ||
@@ -11523,9 +12649,9 @@ static vectis_status vectis_opcua_build_event_fields_payload(
                      "OPC UA event fields are required");
     return VECTIS_ERR_INVALID;
   }
-  if (vectis_opcua_monitor_event_begin(
-          builder, max_bytes, event_type, subscription_id,
-          monitored_item_id, status, error) != VECTIS_OK ||
+  if (vectis_opcua_monitor_event_begin(builder, max_bytes, event_type,
+                                       subscription_id, monitored_item_id,
+                                       status, error) != VECTIS_OK ||
       vectis_bounded_append(builder, max_bytes, ",", error) != VECTIS_OK ||
       vectis_opcua_append_key(builder, max_bytes, "fields", error) !=
           VECTIS_OK ||
@@ -11537,8 +12663,7 @@ static vectis_status vectis_opcua_build_event_fields_payload(
         vectis_bounded_append(builder, max_bytes, ",", error) != VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_STATE;
     }
-    field_status =
-        vectis_bounded_append(builder, max_bytes, "{", error);
+    field_status = vectis_bounded_append(builder, max_bytes, "{", error);
     if (field_status == VECTIS_OK) {
       field_status = vectis_opcua_append_key(builder, max_bytes, "name", error);
     }
@@ -11554,8 +12679,8 @@ static vectis_status vectis_opcua_build_event_fields_payload(
           vectis_opcua_append_key(builder, max_bytes, "value", error);
     }
     if (field_status == VECTIS_OK) {
-      field_status = vectis_opcua_append_value_object(
-          builder, max_bytes, &fields[i].value, error);
+      field_status = vectis_opcua_append_value_object(builder, max_bytes,
+                                                      &fields[i].value, error);
     }
     if (field_status == VECTIS_OK) {
       field_status = vectis_bounded_append(builder, max_bytes, ",", error);
@@ -11589,9 +12714,10 @@ static vectis_status vectis_opcua_build_event_fields_payload(
   return vectis_bounded_append(builder, max_bytes, "]}", error);
 }
 
-static void vectis_opcua_monitor_record_failure(
-    vectis_opcua_monitor_mailbox_impl *impl, int broker_mode,
-    const vectis_error *error) {
+static void
+vectis_opcua_monitor_record_failure(vectis_opcua_monitor_mailbox_impl *impl,
+                                    int broker_mode,
+                                    const vectis_error *error) {
   if (impl == NULL) {
     return;
   }
@@ -11607,8 +12733,9 @@ static void vectis_opcua_monitor_record_failure(
   (void)pthread_mutex_unlock(&impl->mutex);
 }
 
-static void vectis_opcua_monitor_record_event(
-    vectis_opcua_monitor_mailbox_impl *impl, int event_kind) {
+static void
+vectis_opcua_monitor_record_event(vectis_opcua_monitor_mailbox_impl *impl,
+                                  int event_kind) {
   if (impl == NULL) {
     return;
   }
@@ -11623,9 +12750,10 @@ static void vectis_opcua_monitor_record_event(
   (void)pthread_mutex_unlock(&impl->mutex);
 }
 
-static void vectis_opcua_monitor_dispatch(
-    vectis_opcua_monitor_mailbox_impl *impl, const char *kind,
-    vectis_string_builder *payload) {
+static void
+vectis_opcua_monitor_dispatch(vectis_opcua_monitor_mailbox_impl *impl,
+                              const char *kind,
+                              vectis_string_builder *payload) {
   vectis_mailbox_message message;
   vectis_mailbox_event reply;
   vectis_error error;
@@ -11643,9 +12771,9 @@ static void vectis_opcua_monitor_dispatch(
   if (impl->broker != NULL) {
     vectis_mailbox_event_init(&reply);
     correlation_id = 0UL;
-    status = impl->broker->request(impl->broker, &message,
-                                   impl->reply_timeout_ms, &reply,
-                                   &correlation_id, &error);
+    status =
+        impl->broker->request(impl->broker, &message, impl->reply_timeout_ms,
+                              &reply, &correlation_id, &error);
     vectis_mailbox_event_cleanup(&reply);
     if (status != VECTIS_OK) {
       vectis_opcua_monitor_record_failure(impl, 1, &error);
@@ -11658,8 +12786,8 @@ static void vectis_opcua_monitor_dispatch(
   }
 }
 
-static size_t
-vectis_opcua_monitor_effective_max(const vectis_opcua_monitor_mailbox_impl *impl) {
+static size_t vectis_opcua_monitor_effective_max(
+    const vectis_opcua_monitor_mailbox_impl *impl) {
   if (impl == NULL || impl->event.max_payload_bytes == 0u) {
     return VECTIS_OPCUA_MONITOR_EVENT_DEFAULT_MAX_PAYLOAD_BYTES;
   }
@@ -11684,8 +12812,8 @@ static void vectis_opcua_monitor_data_change_cb(
   vectis_error_clear(&error);
   if (vectis_opcua_build_data_change_payload(
           &payload, vectis_opcua_monitor_effective_max(impl), kind,
-          subscription_id, monitored_item_id, value, status, &error) !=
-      VECTIS_OK) {
+          subscription_id, monitored_item_id, value, status,
+          &error) != VECTIS_OK) {
     vectis_opcua_monitor_record_failure(impl, impl->broker != NULL, &error);
     vectis_string_builder_cleanup(&payload);
     return;
@@ -11695,10 +12823,11 @@ static void vectis_opcua_monitor_data_change_cb(
   vectis_string_builder_cleanup(&payload);
 }
 
-static void vectis_opcua_monitor_event_cb(
-    cpkt_opcua_subscription_id subscription_id,
-    cpkt_opcua_monitored_item_id monitored_item_id,
-    const cpkt_opcua_event *event, cpkt_opcua_status status, void *user) {
+static void
+vectis_opcua_monitor_event_cb(cpkt_opcua_subscription_id subscription_id,
+                              cpkt_opcua_monitored_item_id monitored_item_id,
+                              const cpkt_opcua_event *event,
+                              cpkt_opcua_status status, void *user) {
   vectis_opcua_monitor_mailbox_impl *impl;
   vectis_string_builder payload;
   vectis_error error;
@@ -11711,10 +12840,10 @@ static void vectis_opcua_monitor_event_cb(
   kind = impl->event.event_kind;
   memset(&payload, 0, sizeof(payload));
   vectis_error_clear(&error);
-  if (vectis_opcua_build_event_payload(
-          &payload, vectis_opcua_monitor_effective_max(impl), kind,
-          subscription_id, monitored_item_id, event, status, &error) !=
-      VECTIS_OK) {
+  if (vectis_opcua_build_event_payload(&payload,
+                                       vectis_opcua_monitor_effective_max(impl),
+                                       kind, subscription_id, monitored_item_id,
+                                       event, status, &error) != VECTIS_OK) {
     vectis_opcua_monitor_record_failure(impl, impl->broker != NULL, &error);
     vectis_string_builder_cleanup(&payload);
     return;
@@ -12869,6 +13998,98 @@ size_t vectis_route_count(const vectis_app *app) {
   return vectis_app_route_count_impl(app);
 }
 
+void vectis_internal_metrics_note_http_status(vectis_app *app, int status) {
+  vectis_app_impl *impl;
+  vectis_metrics_state *metrics;
+  int bucket;
+
+  if (app == NULL || app->impl == NULL || status < 100 || status > 599) {
+    return;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  metrics = impl->metrics;
+  if (metrics == NULL) {
+    return;
+  }
+  bucket = status / 100;
+  if (bucket < 1 || bucket > 5) {
+    bucket = 0;
+  }
+  (void)pthread_mutex_lock(&metrics->mutex);
+  metrics->requests_total++;
+  if (bucket >= 1 && bucket <= 5) {
+    metrics->status_buckets[bucket]++;
+  }
+  (void)pthread_mutex_unlock(&metrics->mutex);
+}
+
+void vectis_internal_metrics_note_route_miss(vectis_app *app) {
+  vectis_app_impl *impl;
+  vectis_metrics_state *metrics;
+
+  if (app == NULL || app->impl == NULL) {
+    return;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  metrics = impl->metrics;
+  if (metrics == NULL) {
+    return;
+  }
+  (void)pthread_mutex_lock(&metrics->mutex);
+  metrics->route_misses++;
+  (void)pthread_mutex_unlock(&metrics->mutex);
+}
+
+void vectis_internal_metrics_note_body_reject(vectis_app *app, int status) {
+  vectis_app_impl *impl;
+  vectis_metrics_state *metrics;
+
+  if (app == NULL || app->impl == NULL) {
+    return;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  metrics = impl->metrics;
+  if (metrics == NULL) {
+    return;
+  }
+  (void)pthread_mutex_lock(&metrics->mutex);
+  metrics->body_rejects++;
+  (void)pthread_mutex_unlock(&metrics->mutex);
+  vectis_internal_metrics_note_http_status(app, status);
+}
+
+void vectis_internal_metrics_note_auth(vectis_app *app,
+                                       vectis_auth_action action) {
+  vectis_app_impl *impl;
+  vectis_metrics_state *metrics;
+
+  if (app == NULL || app->impl == NULL) {
+    return;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  metrics = impl->metrics;
+  if (metrics == NULL) {
+    return;
+  }
+  (void)pthread_mutex_lock(&metrics->mutex);
+  switch (action) {
+  case VECTIS_AUTH_ALLOW:
+    metrics->auth_allowed++;
+    break;
+  case VECTIS_AUTH_REQUIRED:
+    metrics->auth_required++;
+    break;
+  case VECTIS_AUTH_REDIRECT:
+    metrics->auth_redirected++;
+    break;
+  case VECTIS_AUTH_DENY:
+  default:
+    metrics->auth_denied++;
+    break;
+  }
+  (void)pthread_mutex_unlock(&metrics->mutex);
+}
+
 vectis_status vectis_internal_invoke_route(vectis_app *app, size_t index,
                                            vectis_request *request,
                                            vectis_response *response,
@@ -13120,6 +14341,7 @@ vectis_internal_dispatch_route(vectis_app *app, vectis_http_method method,
     vectis_kv_truncate(&request->path_params, &request->path_param_count,
                        saved_count);
     (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_internal_metrics_note_route_miss(app);
     vectis_set_error(error, VECTIS_ERR_STATE, "no route matched request");
     return VECTIS_ERR_STATE;
   }
@@ -19837,13 +21059,11 @@ static void vectis_cai_lc_error(cai_error *error, int code,
   free(error->detail);
   free(error->server_code);
   free(error->request_id);
-  error->message =
-      vectis_cai_strdup(lcerr != NULL && lcerr->message != NULL
-                            ? lcerr->message
-                            : fallback_message);
-  error->detail =
-      vectis_cai_strdup(lcerr != NULL && lcerr->detail != NULL ? lcerr->detail
-                                                               : NULL);
+  error->message = vectis_cai_strdup(lcerr != NULL && lcerr->message != NULL
+                                         ? lcerr->message
+                                         : fallback_message);
+  error->detail = vectis_cai_strdup(
+      lcerr != NULL && lcerr->detail != NULL ? lcerr->detail : NULL);
   error->server_code = NULL;
   error->request_id = NULL;
 }
@@ -19923,7 +21143,8 @@ static vectis_status vectis_cai_source_from_lc(lc_source *source,
     if (close_source && source != NULL) {
       lc_source_close(source);
     }
-    vectis_set_error(error, VECTIS_ERR_INVALID, "CAI source output is required");
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI source output is required");
     return VECTIS_ERR_INVALID;
   }
   *out = NULL;
@@ -20049,7 +21270,8 @@ vectis_status vectis_cai_output_response(cai_output *output,
   cai_error_cleanup(&caierr);
   status = vectis_response_stream_source(
       response, status_code,
-      content_type != NULL ? content_type : VECTIS_CAI_DEFAULT_OUTPUT_CONTENT_TYPE,
+      content_type != NULL ? content_type
+                           : VECTIS_CAI_DEFAULT_OUTPUT_CONTENT_TYPE,
       source, error);
   if (status != VECTIS_OK) {
     lc_source_close(source);
@@ -20110,10 +21332,11 @@ vectis_status vectis_cai_output_file(cai_output *output, const char *path,
   return VECTIS_OK;
 }
 
-vectis_status vectis_cai_output_enqueue(
-    cai_output *output, struct lc_client *client,
-    const struct lc_enqueue_req *request, struct lc_enqueue_res *out,
-    vectis_error *error) {
+vectis_status vectis_cai_output_enqueue(cai_output *output,
+                                        struct lc_client *client,
+                                        const struct lc_enqueue_req *request,
+                                        struct lc_enqueue_res *out,
+                                        vectis_error *error) {
   lc_source *source;
   lc_error lcerr;
   cai_error caierr;
@@ -20171,8 +21394,7 @@ static int vectis_cai_mcp_set_cai_error(cai_error *error, int code,
 }
 
 static int vectis_cai_mcp_response_header(void *context, const char *name,
-                                          const char *value,
-                                          cai_error *error) {
+                                          const char *value, cai_error *error) {
   vectis_cai_mcp_response_header_context *headers;
   vectis_error verr;
   char *copy;
@@ -20197,10 +21419,9 @@ static int vectis_cai_mcp_response_header(void *context, const char *name,
   vectis_error_clear(&verr);
   status = vectis_response_header(headers->response, name, value, &verr);
   if (status != VECTIS_OK) {
-    status = vectis_cai_mcp_set_cai_error(error, CAI_ERR_INVALID,
-                                          verr.message[0] != '\0'
-                                              ? verr.message
-                                              : "failed to set MCP header");
+    status = vectis_cai_mcp_set_cai_error(
+        error, CAI_ERR_INVALID,
+        verr.message[0] != '\0' ? verr.message : "failed to set MCP header");
     return status;
   }
   return CAI_OK;
@@ -20256,13 +21477,15 @@ static vectis_status vectis_cai_mcp_route_dispatch(
     (void)unlink(path);
     free(path);
     cai_source_close(body);
-    (void)vectis_cai_error(error, &caierr, "failed to create MCP response sink");
+    (void)vectis_cai_error(error, &caierr,
+                           "failed to create MCP response sink");
     cai_error_cleanup(&caierr);
     return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
 
   headers.response = response;
-  mcp_request.method = vectis_http_method_string(vectis_request_method(request));
+  mcp_request.method =
+      vectis_http_method_string(vectis_request_method(request));
   mcp_request.body = body;
   mcp_request.header = vectis_cai_mcp_request_header;
   mcp_request.header_context = request;
@@ -20284,13 +21507,14 @@ static vectis_status vectis_cai_mcp_route_dispatch(
   }
   cai_error_cleanup(&caierr);
 
-  content_type = headers.content_type != NULL ? headers.content_type
-                                              : "application/json";
-  status = vectis_response_file_owned(
-      response, mcp_response.status >= 100 && mcp_response.status <= 599
-                    ? mcp_response.status
-                    : 200,
-      content_type, path, 1, error);
+  content_type =
+      headers.content_type != NULL ? headers.content_type : "application/json";
+  status = vectis_response_file_owned(response,
+                                      mcp_response.status >= 100 &&
+                                              mcp_response.status <= 599
+                                          ? mcp_response.status
+                                          : 200,
+                                      content_type, path, 1, error);
   free(headers.content_type);
   return status;
 }

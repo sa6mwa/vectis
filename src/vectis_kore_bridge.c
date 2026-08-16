@@ -1735,9 +1735,15 @@ static int vectis_kore_body_state_append(vectis_kore_body_state *state,
 static void vectis_kore_reject_body_chunk(struct http_request *req,
                                           vectis_kore_body_state *state,
                                           int status, const char *message) {
+  vectis_app *app;
+
   if (state != NULL) {
     state->error_status = status;
   }
+  (void)pthread_mutex_lock(&vectis_kore_mutex);
+  app = vectis_kore_current.app;
+  (void)pthread_mutex_unlock(&vectis_kore_mutex);
+  vectis_internal_metrics_note_body_reject(app, status);
   http_response(req, status, message, message != NULL ? strlen(message) : 0u);
   req->flags |= HTTP_REQUEST_DELETE;
 }
@@ -2083,7 +2089,7 @@ static int vectis_kore_send_stream_response(struct http_request *req,
   return 1;
 }
 
-static void vectis_kore_send_response(struct http_request *req,
+static void vectis_kore_send_response(vectis_app *app, struct http_request *req,
                                       vectis_response *response) {
   vectis_bytes body;
   const char *content_type;
@@ -2110,7 +2116,9 @@ static void vectis_kore_send_response(struct http_request *req,
   }
   stream_source = vectis_internal_response_take_stream_source(response);
   if (stream_source != NULL) {
+    vectis_internal_metrics_note_http_status(app, status);
     if (!vectis_kore_send_stream_response(req, status, stream_source)) {
+      vectis_internal_metrics_note_http_status(app, 500);
       http_response(req, 500, NULL, 0);
     }
     return;
@@ -2119,12 +2127,14 @@ static void vectis_kore_send_response(struct http_request *req,
   if (file_path != NULL) {
     if (req->owner == NULL || req->owner->owner == NULL ||
         req->owner->owner->server == NULL) {
+      vectis_internal_metrics_note_http_status(app, 500);
       http_response(req, 500, NULL, 0);
       return;
     }
     if (!vectis_internal_response_file_temporary(response)) {
       ref = kore_fileref_get(file_path, req->owner->owner->server->tls);
       if (ref != NULL) {
+        vectis_internal_metrics_note_http_status(app, status);
         http_response_fileref(req, status, ref);
         return;
       }
@@ -2134,6 +2144,7 @@ static void vectis_kore_send_response(struct http_request *req,
       if (fd != -1) {
         (void)close(fd);
       }
+      vectis_internal_metrics_note_http_status(app, 404);
       http_response(req, 404, NULL, 0);
       return;
     }
@@ -2143,16 +2154,19 @@ static void vectis_kore_send_response(struct http_request *req,
                               st.st_size, &ts);
     if (ref == NULL) {
       (void)close(fd);
+      vectis_internal_metrics_note_http_status(app, 500);
       http_response(req, 500, NULL, 0);
       return;
     }
     if (vectis_internal_response_file_temporary(response)) {
       (void)unlink(file_path);
     }
+    vectis_internal_metrics_note_http_status(app, status);
     http_response_fileref(req, status, ref);
     return;
   }
   body = vectis_internal_response_body(response);
+  vectis_internal_metrics_note_http_status(app, status);
   http_response(req, status, body.data, body.size);
 }
 
@@ -2186,11 +2200,13 @@ int vectis_kore_route(struct http_request *req) {
     if (response != NULL) {
       vectis_internal_response_free(response);
     }
+    vectis_internal_metrics_note_http_status(app, 500);
     http_response(req, 500, error.message, strlen(error.message));
     return KORE_RESULT_OK;
   }
 
   if (app == NULL || req == NULL || req->path == NULL) {
+    vectis_internal_metrics_note_http_status(app, 503);
     http_response(req, 503, NULL, 0);
     vectis_internal_request_free(request);
     vectis_internal_response_free(response);
@@ -2207,12 +2223,15 @@ int vectis_kore_route(struct http_request *req) {
                                                   &body_state->stream, &error);
     route_matched = 1;
     if (status == VECTIS_OK) {
-      vectis_kore_send_response(req, response);
+      vectis_kore_send_response(app, req, response);
     } else if (status == VECTIS_ERR_INVALID) {
+      vectis_internal_metrics_note_http_status(app, 400);
       http_response(req, 400, error.message, strlen(error.message));
     } else if (status == VECTIS_ERR_NOT_IMPLEMENTED) {
+      vectis_internal_metrics_note_http_status(app, 501);
       http_response(req, 501, error.message, strlen(error.message));
     } else {
+      vectis_internal_metrics_note_http_status(app, 500);
       http_response(req, 500, error.message, strlen(error.message));
     }
     vectis_internal_upload_stream_close(app, request, &body_state->stream);
@@ -2241,12 +2260,15 @@ int vectis_kore_route(struct http_request *req) {
       status = vectis_internal_upload_stream_finish(app, request, response,
                                                     &stream, &error);
       if (status == VECTIS_OK) {
-        vectis_kore_send_response(req, response);
+        vectis_kore_send_response(app, req, response);
       } else if (status == VECTIS_ERR_INVALID) {
+        vectis_internal_metrics_note_http_status(app, 400);
         http_response(req, 400, error.message, strlen(error.message));
       } else if (status == VECTIS_ERR_NOT_IMPLEMENTED) {
+        vectis_internal_metrics_note_http_status(app, 501);
         http_response(req, 501, error.message, strlen(error.message));
       } else {
+        vectis_internal_metrics_note_http_status(app, 500);
         http_response(req, 500, error.message, strlen(error.message));
       }
       vectis_internal_upload_stream_close(app, request, &stream);
@@ -2256,8 +2278,10 @@ int vectis_kore_route(struct http_request *req) {
     }
     if (status != VECTIS_ERR_STATE) {
       if (status == VECTIS_ERR_INVALID) {
+        vectis_internal_metrics_note_http_status(app, 400);
         http_response(req, 400, error.message, strlen(error.message));
       } else {
+        vectis_internal_metrics_note_http_status(app, 500);
         http_response(req, 500, error.message, strlen(error.message));
       }
       vectis_internal_request_free(request);
@@ -2277,16 +2301,21 @@ int vectis_kore_route(struct http_request *req) {
   }
 
   if (status == VECTIS_OK) {
-    vectis_kore_send_response(req, response);
+    vectis_kore_send_response(app, req, response);
   } else if (error_status != 0) {
+    vectis_internal_metrics_note_http_status(app, error_status);
     http_response(req, error_status, error.message, strlen(error.message));
   } else if (status == VECTIS_ERR_INVALID) {
+    vectis_internal_metrics_note_http_status(app, 400);
     http_response(req, 400, error.message, strlen(error.message));
   } else if (status == VECTIS_ERR_STATE && !route_matched) {
+    vectis_internal_metrics_note_http_status(app, 404);
     http_response(req, 404, NULL, 0);
   } else if (status == VECTIS_ERR_NOT_IMPLEMENTED) {
+    vectis_internal_metrics_note_http_status(app, 501);
     http_response(req, 501, error.message, strlen(error.message));
   } else {
+    vectis_internal_metrics_note_http_status(app, 500);
     http_response(req, 500, error.message, strlen(error.message));
   }
 

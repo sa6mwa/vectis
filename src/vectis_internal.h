@@ -1,6 +1,7 @@
 #ifndef VECTIS_INTERNAL_H
 #define VECTIS_INTERNAL_H
 
+#include <vectis/auth.h>
 #include <vectis/vectis.h>
 
 struct http_request;
@@ -79,6 +80,11 @@ vectis_status
 vectis_internal_dispatch_route(vectis_app *app, vectis_http_method method,
                                const char *path, vectis_request *request,
                                vectis_response *response, vectis_error *error);
+void vectis_internal_metrics_note_http_status(vectis_app *app, int status);
+void vectis_internal_metrics_note_route_miss(vectis_app *app);
+void vectis_internal_metrics_note_body_reject(vectis_app *app, int status);
+void vectis_internal_metrics_note_auth(vectis_app *app,
+                                       vectis_auth_action action);
 vectis_status vectis_internal_route_body_policy(vectis_app *app,
                                                 vectis_http_method method,
                                                 const char *path,

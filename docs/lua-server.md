@@ -335,6 +335,8 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
 - `server:webdav_embedded_site(opts)` extracts packed assets into mutable
   WebDAV storage and serves them.
 - `server:auth_routes(opts)` registers native login/auth/WebDAV-key routes.
+- `server:metrics(opts)` registers the opt-in C-owned metrics dashboard and
+  JSON snapshot routes.
 - `server:consumer_service(opts)` registers a C-owned lockd consumer service.
 - `server:mcp(opts)` registers a C-owned CAI Streamable HTTP MCP route with
   Lua-defined raw JSON tools.
@@ -486,6 +488,26 @@ assert(server:sse({
   end,
 }) == true)
 ```
+
+## Metrics
+
+`server:metrics(opts)` enables metrics collection and registers the dashboard
+and JSON snapshot routes. Metrics are disabled until this method is called.
+
+```lua
+assert(server:metrics({
+  path = "/.metrics",
+  json_path = "/.metrics.json",
+  title = "admin.example",
+  auth = auth_provider,
+  persistence_enabled = false,
+}))
+```
+
+`auth` is optional and uses the same native/callback auth provider contract as
+ordinary routes and WebDAV. Persistence is also optional; when enabled, Vectis
+writes snapshots through lockdc and defaults to a local `pouch://` store under
+XDG state. See [metrics.md](metrics.md) for the full contract.
 
 See [lua-auth.md](lua-auth.md) for native and callback auth providers,
 OAuth2/OIDC helpers, email-token flows, and WebDAV-key issuance.

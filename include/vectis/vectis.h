@@ -578,6 +578,35 @@ typedef struct vectis_route_config {
   void *userdata;
 } vectis_route_config;
 
+typedef struct vectis_metrics_config {
+  /* HTML dashboard path. Defaults to "/.metrics". */
+  const char *path;
+  /* JSON snapshot path. Defaults to path + ".json". */
+  const char *json_path;
+  /* Optional dashboard title. When NULL, Vectis derives a request host/listen
+   * title and falls back to the app name or "vectis".
+   */
+  const char *title;
+  /* Optional route auth provider. When set, both HTML and JSON metrics routes
+   * are guarded by the same Vectis auth provider contract used by WebDAV and
+   * Lua routes.
+   */
+  const struct vectis_auth_provider *auth_provider;
+  const char *auth_purpose;
+  unsigned allowed_auth_modes;
+  /*
+   * Snapshot persistence is opt-in. When enabled, a background worker writes
+   * JSON snapshots through liblockdc. storage_endpoint may be any lockdc
+   * endpoint, including pouch://. When NULL, Vectis uses a local pouch under
+   * ${XDG_STATE_HOME:-$HOME/.local/state}/vectis/storage.
+   */
+  int persistence_enabled;
+  const char *storage_endpoint;
+  const char *storage_namespace;
+  const char *storage_owner;
+  unsigned snapshot_interval_seconds;
+} vectis_metrics_config;
+
 typedef struct vectis_upload_route_config {
   vectis_http_method method;
   vectis_http_methods methods;
@@ -1149,6 +1178,9 @@ struct vectis_app {
   vectis_status (*auth_routes)(vectis_app *self,
                                const vectis_auth_routes_config *config,
                                vectis_error *error);
+  vectis_status (*metrics)(vectis_app *self,
+                           const vectis_metrics_config *config,
+                           vectis_error *error);
 
   /* Attach per-route OpenAPI metadata or generate an OpenAPI document from the
    * current route registry. Generation writes to `out`; callers clean it with
@@ -1566,6 +1598,7 @@ void vectis_json_typed_route_config_init(
     vectis_json_typed_route_config *config);
 void vectis_xml_route_config_init(vectis_xml_route_config *config);
 void vectis_dsv_route_config_init(vectis_dsv_route_config *config);
+void vectis_metrics_config_init(vectis_metrics_config *config);
 void vectis_openapi_document_init(vectis_openapi_document *document);
 void vectis_openapi_route_doc_init(vectis_openapi_route_doc *doc);
 void vectis_openapi_route_doc_cleanup(vectis_openapi_route_doc *doc);
@@ -2025,6 +2058,9 @@ vectis_status vectis_response_json_generated(vectis_response *response,
                                              const lonejson_map *map,
                                              const void *value,
                                              vectis_error *error);
+vectis_status vectis_metrics_snapshot_json(vectis_app *app,
+                                           vectis_mutable_bytes *out,
+                                           vectis_error *error);
 vectis_status vectis_json_reply(vectis_json_response *response, int status_code,
                                 const lonejson_map *map, const void *value,
                                 vectis_error *error);

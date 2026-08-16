@@ -491,6 +491,120 @@ static int connect_local(unsigned short port) {
   return fd;
 }
 
+static vectis_status
+metrics_required_provider(const vectis_auth_provider_request *request,
+                          vectis_auth_provider_response *response,
+                          void *userdata, vectis_error *error) {
+  (void)request;
+  (void)userdata;
+  (void)error;
+  response->action = VECTIS_AUTH_REQUIRED;
+  response->status_code = 401;
+  response->content_type = "text/plain; charset=utf-8";
+  response->body = "metrics auth required\n";
+  response->body_size = strlen((const char *)response->body);
+  (void)snprintf(response->www_authenticate, sizeof(response->www_authenticate),
+                 "%s", "Bearer realm=\"metrics\"");
+  return VECTIS_OK;
+}
+
+static void assert_metrics_surface(void) {
+  vectis_app *app;
+  vectis_metrics_config metrics;
+  vectis_mutable_bytes snapshot;
+  vectis_request *request;
+  vectis_response *response;
+  vectis_bytes body;
+  vectis_error error;
+  vectis_status status;
+  vectis_auth_provider provider;
+
+  vectis_error_clear(&error);
+  app = vectis_app_new(NULL, &error);
+  assert(app != NULL);
+  memset(&snapshot, 0, sizeof(snapshot));
+  status = vectis_metrics_snapshot_json(app, &snapshot, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(snapshot.data == NULL);
+
+  vectis_metrics_config_init(&metrics);
+  metrics.path = "/metrics";
+  metrics.json_path = "/metrics.json";
+  metrics.title = "runtime metrics";
+  status = app->metrics(app, &metrics, &error);
+  assert(status == VECTIS_OK);
+  assert(app->route_count(app) == 2u);
+  status = vectis_metrics_snapshot_json(app, &snapshot, &error);
+  assert(status == VECTIS_OK);
+  assert(snapshot.data != NULL);
+  assert(strstr((const char *)snapshot.data,
+                "\"service\":\"runtime metrics\"") != NULL);
+  assert(strstr((const char *)snapshot.data, "\"requests_total\":0") != NULL);
+  vectis_mutable_bytes_cleanup(&snapshot);
+
+  request = vectis_internal_request_new(&error);
+  response = vectis_internal_response_new(&error);
+  assert(request != NULL && response != NULL);
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/metrics.json",
+                                          request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 200);
+  assert(strcmp(vectis_internal_response_content_type(response),
+                "application/json") == 0);
+  body = vectis_internal_response_body(response);
+  assert(body.data != NULL &&
+         strstr((const char *)body.data, "\"route_count\":2") != NULL);
+  vectis_internal_response_free(response);
+  vectis_internal_request_free(request);
+
+  request = vectis_internal_request_new(&error);
+  response = vectis_internal_response_new(&error);
+  assert(request != NULL && response != NULL);
+  status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/metrics",
+                                          request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 200);
+  assert(strcmp(vectis_internal_response_content_type(response),
+                "text/html; charset=utf-8") == 0);
+  body = vectis_internal_response_body(response);
+  assert(body.data != NULL &&
+         strstr((const char *)body.data, "runtime metrics") != NULL);
+  vectis_internal_response_free(response);
+  vectis_internal_request_free(request);
+  app->close(app);
+
+  app = vectis_app_new(NULL, &error);
+  assert(app != NULL);
+  vectis_auth_provider_init(&provider);
+  status = vectis_auth_provider_from_callback(
+      &provider, metrics_required_provider, NULL, &error);
+  assert(status == VECTIS_OK);
+  vectis_metrics_config_init(&metrics);
+  metrics.path = "/secure-metrics";
+  metrics.json_path = "/secure-metrics.json";
+  metrics.auth_provider = &provider;
+  metrics.auth_purpose = "metrics";
+  status = app->metrics(app, &metrics, &error);
+  assert(status == VECTIS_OK);
+  request = vectis_internal_request_new(&error);
+  response = vectis_internal_response_new(&error);
+  assert(request != NULL && response != NULL);
+  status = vectis_internal_dispatch_route(
+      app, VECTIS_HTTP_GET, "/secure-metrics.json", request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 401);
+  body = vectis_internal_response_body(response);
+  assert(body.data != NULL &&
+         strstr((const char *)body.data, "metrics auth required") != NULL);
+  vectis_internal_response_free(response);
+  vectis_internal_request_free(request);
+  status = vectis_metrics_snapshot_json(app, &snapshot, &error);
+  assert(status == VECTIS_OK);
+  assert(strstr((const char *)snapshot.data, "\"required\":1") != NULL);
+  vectis_mutable_bytes_cleanup(&snapshot);
+  app->close(app);
+}
+
 static void socket_send_all(int fd, const char *data, size_t size) {
   size_t offset;
   ssize_t written;
@@ -2416,6 +2530,7 @@ int main(void) {
 
   assert_server_config_validation();
   assert_route_body_policy_validation();
+  assert_metrics_surface();
 
   vectis_app_config_init(&config);
   config.tls.mode = (vectis_tls_mode)99;

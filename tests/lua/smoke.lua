@@ -689,6 +689,7 @@ assert(type(server.dsv) == "function")
 assert(type(server.upload) == "function")
 assert(type(server.mcp) == "function")
 assert(type(server.sse) == "function")
+assert(type(server.metrics) == "function")
 assert(type(server.json) == "function")
 assert(type(server.text) == "function")
 assert(type(server.redirect) == "function")
@@ -698,6 +699,11 @@ assert(mcp_bad == nil)
 assert(type(mcp_bad_err) == "table")
 assert(mcp_bad_err.status == vectis.ERR_INVALID)
 assert(mcp_bad_err.message:match("tools"))
+assert(server:metrics({
+  path = "/.metrics",
+  json_path = "/.metrics.json",
+  title = "lua smoke metrics",
+}) == true)
 assert(server:mcp({
   path = "/mcp",
   name = "lua-smoke-mcp",

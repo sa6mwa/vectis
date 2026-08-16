@@ -6880,6 +6880,76 @@ static int vectis_lua_server_webdav_embedded(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_server_metrics(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_app *app;
+  vectis_metrics_config config;
+  vectis_lua_server_native_auth *auth;
+  vectis_error error;
+  vectis_status status;
+
+  server = vectis_lua_check_server(lua, 1);
+  app = vectis_lua_server_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+
+  vectis_metrics_config_init(&config);
+  config.path = vectis_lua_table_string(lua, 2, "path");
+  if (config.path == NULL) {
+    config.path = vectis_lua_table_string(lua, 2, "dashboard_path");
+  }
+  if (config.path == NULL) {
+    config.path = "/.metrics";
+  }
+  config.json_path = vectis_lua_table_string(lua, 2, "json_path");
+  if (config.json_path == NULL) {
+    config.json_path = vectis_lua_table_string(lua, 2, "snapshot_path");
+  }
+  if (config.json_path == NULL) {
+    config.json_path = "/.metrics.json";
+  }
+  config.title = vectis_lua_table_string(lua, 2, "title");
+  config.persistence_enabled =
+      vectis_lua_table_bool(lua, 2, "persistence_enabled",
+                            vectis_lua_table_bool(lua, 2, "persist", 0));
+  config.storage_endpoint = vectis_lua_table_string(lua, 2, "storage_endpoint");
+  if (config.storage_endpoint == NULL) {
+    config.storage_endpoint = vectis_lua_table_string(lua, 2, "endpoint");
+  }
+  config.storage_namespace =
+      vectis_lua_table_string(lua, 2, "storage_namespace");
+  config.storage_owner = vectis_lua_table_string(lua, 2, "storage_owner");
+  config.snapshot_interval_seconds = (unsigned)vectis_lua_table_size(
+      lua, 2, "snapshot_interval_seconds", config.snapshot_interval_seconds);
+
+  auth = NULL;
+  vectis_error_clear(&error);
+  lua_getfield(lua, 2, "auth");
+  if (lua_istable(lua, -1)) {
+    auth = vectis_lua_server_native_auth_new(lua, -1, "metrics route", &error);
+    lua_pop(lua, 1);
+    if (auth == NULL) {
+      return vectis_lua_push_error(
+          lua, error.code != VECTIS_OK ? error.code : VECTIS_ERR_NOMEM, &error);
+    }
+    config.auth_provider = &auth->provider;
+    config.auth_purpose = auth->purpose;
+    config.allowed_auth_modes = auth->allowed_auth_modes;
+  } else {
+    lua_pop(lua, 1);
+  }
+
+  status = app->metrics(app, &config, &error);
+  if (status != VECTIS_OK) {
+    vectis_lua_server_native_auth_free(auth);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  if (auth != NULL) {
+    vectis_lua_server_native_auth_retain(server, auth);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
 static vectis_status
 vectis_lua_auth_json_response(vectis_response *response, int status_code,
                               const char *content_type, const void *body,
@@ -15363,6 +15433,8 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "webdav_embedded");
     lua_pushcfunction(lua, vectis_lua_server_auth_routes);
     lua_setfield(lua, -2, "auth_routes");
+    lua_pushcfunction(lua, vectis_lua_server_metrics);
+    lua_setfield(lua, -2, "metrics");
     lua_pushcfunction(lua, vectis_lua_server_route);
     lua_setfield(lua, -2, "route");
     lua_pushcfunction(lua, vectis_lua_server_group);

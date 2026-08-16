@@ -4,6 +4,7 @@ set(download_target "${WORK_DIR}/vectis-http-download-target.txt")
 set(upload_source "${WORK_DIR}/vectis-http-upload-source.txt")
 set(upload_target "${WORK_DIR}/vectis-http-upload-target.txt")
 set(auth_path "${WORK_DIR}/vectis-http-auth.json")
+set(metrics_storage_dir "${WORK_DIR}/vectis-http-metrics-pouch")
 set(static_dir "${WORK_DIR}/vectis-http-static")
 set(script "${WORK_DIR}/vectis-http-smoke.lua")
 
@@ -15,6 +16,8 @@ file(WRITE "${static_dir}/index.html" "static directory index\n")
 file(WRITE "${static_dir}/assets/app.txt" "static directory asset\n")
 file(REMOVE "${download_target}" "${upload_target}" "${auth_path}"
             "${auth_path}.lock")
+file(REMOVE_RECURSE "${metrics_storage_dir}")
+file(MAKE_DIRECTORY "${metrics_storage_dir}")
 
 file(WRITE "${script}" [[
 local vectis = require("vectis")
@@ -28,6 +31,7 @@ local upload_path = assert(arg[4])
 local upload_url = "file://" .. assert(arg[5])
 local auth_path = assert(arg[6])
 local static_dir = assert(arg[7])
+local metrics_storage_dir = assert(arg[8])
 
 local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local function base64(data)
@@ -721,6 +725,17 @@ assert(api_server:static_directory({
   content_type = "text/plain",
   index_file = "index.html",
 }) == true)
+assert(api_server:metrics({
+  path = "/.metrics",
+  json_path = "/.metrics.json",
+  title = "lua http metrics",
+  auth = native_provider,
+  persistence_enabled = true,
+  storage_endpoint = "pouch://" .. metrics_storage_dir,
+  storage_namespace = "vectis.http.metrics",
+  storage_owner = "lua-http",
+  snapshot_interval_seconds = 300,
+}) == true)
 assert(api_server:start() == true)
 local api_response
 for _ = 1, 20 do
@@ -1278,6 +1293,49 @@ local static_traversal = vectis.http.request({
   no_signal = true,
 })
 assert(static_traversal.status == 404)
+local metrics_missing_route = vectis.http.request({
+  url = "http://127.0.0.1:28484/missing-metrics-test",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(metrics_missing_route.status == 404)
+local anonymous_metrics = vectis.http.request({
+  url = "http://127.0.0.1:28484/.metrics.json",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(anonymous_metrics.status == 401)
+assert(anonymous_metrics.headers:lower():find(
+    'www-authenticate: basic realm="http-provider"', 1, true))
+local metrics_json_response = authenticated_client.get(
+    "http://127.0.0.1:28484/.metrics.json")
+assert(metrics_json_response.ok == true,
+       metrics_json_response.error and metrics_json_response.error.message)
+assert(metrics_json_response.status == 200)
+assert(metrics_json_response.headers:lower():find(
+    "content-type: application/json", 1, true))
+local metrics_snapshot = assert(lonejson.decode_json(metrics_json_response.body))
+assert(metrics_snapshot.service == "lua http metrics")
+assert(metrics_snapshot.route_count >= 1)
+assert(metrics_snapshot.http.requests_total >= 1)
+assert(metrics_snapshot.http.status["2xx"] >= 1)
+assert(metrics_snapshot.http.status["4xx"] >= 1)
+assert(metrics_snapshot.auth.required >= 1)
+assert(metrics_snapshot.auth.allowed >= 1)
+local metrics_html_response = authenticated_client.get(
+    "http://127.0.0.1:28484/.metrics")
+assert(metrics_html_response.ok == true,
+       metrics_html_response.error and metrics_html_response.error.message)
+assert(metrics_html_response.status == 200)
+assert(metrics_html_response.headers:lower():find(
+    "content-type: text/html; charset=utf-8", 1, true))
+assert(metrics_html_response.body:find("lua http metrics", 1, true))
+assert(metrics_html_response.body:find("/.metrics.json", 1, true))
+assert(metrics_snapshot.persistence.enabled == true)
 assert(api_server:stop() == true)
 api_server:close()
 
@@ -1298,10 +1356,29 @@ assert(streamed.response_json.message == "vectis-http")
 execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${json_file}"
                         "${download_source}" "${download_target}"
                         "${upload_source}" "${upload_target}" "${auth_path}"
-                        "${static_dir}"
+                        "${static_dir}" "${metrics_storage_dir}"
                 RESULT_VARIABLE http_result
                 OUTPUT_VARIABLE http_stdout
                 ERROR_VARIABLE http_stderr)
 if(NOT http_result EQUAL 0)
   message(FATAL_ERROR "vectis HTTP Lua smoke failed: ${http_stdout}${http_stderr}")
+endif()
+
+file(GLOB metrics_segments
+     "${metrics_storage_dir}/namespaces/vectis.http.metrics/segments/*.log")
+if(NOT metrics_segments)
+  message(FATAL_ERROR "vectis HTTP Lua metrics persistence wrote no pouch segments")
+endif()
+set(metrics_persisted 0)
+foreach(metrics_segment IN LISTS metrics_segments)
+  file(READ "${metrics_segment}" metrics_segment_content)
+  string(FIND "${metrics_segment_content}" "\"service\":\"lua http metrics\""
+         metrics_payload_offset)
+  if(NOT metrics_payload_offset EQUAL -1)
+    set(metrics_persisted 1)
+  endif()
+endforeach()
+if(NOT metrics_persisted)
+  message(FATAL_ERROR
+          "vectis HTTP Lua metrics persistence wrote no snapshot payload")
 endif()
