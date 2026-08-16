@@ -791,6 +791,189 @@ static void vectis_set_errorf(vectis_error *error, vectis_status code,
   va_end(ap);
 }
 
+static int vectis_runtime_control_type_valid(vectis_runtime_control_type type) {
+  return type == VECTIS_RUNTIME_CONTROL_READY ||
+         type == VECTIS_RUNTIME_CONTROL_STOP ||
+         type == VECTIS_RUNTIME_CONTROL_SERVICE_FAILURE ||
+         type == VECTIS_RUNTIME_CONTROL_METRICS;
+}
+
+static vectis_status vectis_runtime_control_write_all(int fd, const void *data,
+                                                      size_t size,
+                                                      vectis_error *error) {
+  const unsigned char *cursor;
+  size_t remaining;
+  ssize_t n;
+  int err;
+
+  cursor = (const unsigned char *)data;
+  remaining = size;
+  while (remaining > 0u) {
+    n = write(fd, cursor, remaining);
+    if (n < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      err = errno != 0 ? errno : EINVAL;
+      vectis_set_errorf(error, VECTIS_ERR_STATE,
+                        "failed to write runtime control frame: %s",
+                        strerror(err));
+      return VECTIS_ERR_STATE;
+    }
+    if (n == 0) {
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "runtime control frame write made no progress");
+      return VECTIS_ERR_STATE;
+    }
+    cursor += (size_t)n;
+    remaining -= (size_t)n;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_runtime_control_read_all(int fd, void *data,
+                                                     size_t size,
+                                                     vectis_error *error) {
+  unsigned char *cursor;
+  size_t remaining;
+  ssize_t n;
+  int err;
+
+  cursor = (unsigned char *)data;
+  remaining = size;
+  while (remaining > 0u) {
+    n = read(fd, cursor, remaining);
+    if (n < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      err = errno != 0 ? errno : EINVAL;
+      vectis_set_errorf(error, VECTIS_ERR_STATE,
+                        "failed to read runtime control frame: %s",
+                        strerror(err));
+      return VECTIS_ERR_STATE;
+    }
+    if (n == 0) {
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "runtime control channel closed before a complete "
+                       "frame was received");
+      return VECTIS_ERR_STATE;
+    }
+    cursor += (size_t)n;
+    remaining -= (size_t)n;
+  }
+  return VECTIS_OK;
+}
+
+vectis_status
+vectis_internal_runtime_control_write(int fd, vectis_runtime_control_type type,
+                                      const void *payload, size_t payload_size,
+                                      vectis_error *error) {
+  unsigned char header[8];
+  vectis_status status;
+
+  if (fd < 0) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "runtime control channel fd is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!vectis_runtime_control_type_valid(type)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "runtime control frame type is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (payload_size > 65535u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "runtime control frame payload is too large");
+    return VECTIS_ERR_INVALID;
+  }
+  if (payload_size > 0u && payload == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "runtime control frame payload is required");
+    return VECTIS_ERR_INVALID;
+  }
+
+  header[0] = 'V';
+  header[1] = 'R';
+  header[2] = 'C';
+  header[3] = '1';
+  header[4] = (unsigned char)type;
+  header[5] = 0u;
+  header[6] = (unsigned char)((payload_size >> 8) & 0xffu);
+  header[7] = (unsigned char)(payload_size & 0xffu);
+  status = vectis_runtime_control_write_all(fd, header, sizeof(header), error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (payload_size > 0u) {
+    status = vectis_runtime_control_write_all(fd, payload, payload_size, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_internal_runtime_control_read(
+    int fd, vectis_runtime_control_type *type_out,
+    vectis_mutable_bytes *payload, vectis_error *error) {
+  unsigned char header[8];
+  vectis_runtime_control_type type;
+  size_t payload_size;
+  vectis_status status;
+
+  if (type_out == NULL || payload == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "runtime control frame outputs are required");
+    return VECTIS_ERR_INVALID;
+  }
+  *type_out = (vectis_runtime_control_type)0;
+  payload->data = NULL;
+  payload->size = 0u;
+  if (fd < 0) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "runtime control channel fd is required");
+    return VECTIS_ERR_INVALID;
+  }
+
+  status = vectis_runtime_control_read_all(fd, header, sizeof(header), error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (header[0] != 'V' || header[1] != 'R' || header[2] != 'C' ||
+      header[3] != '1' || header[5] != 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "runtime control frame header is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  type = (vectis_runtime_control_type)header[4];
+  if (!vectis_runtime_control_type_valid(type)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "runtime control frame type is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  payload_size = ((size_t)header[6] << 8) | (size_t)header[7];
+  if (payload_size > 0u) {
+    payload->data = malloc(payload_size);
+    if (payload->data == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to allocate runtime control payload");
+      return VECTIS_ERR_NOMEM;
+    }
+    status =
+        vectis_runtime_control_read_all(fd, payload->data, payload_size, error);
+    if (status != VECTIS_OK) {
+      vectis_mutable_bytes_cleanup(payload);
+      return status;
+    }
+    payload->size = payload_size;
+  }
+  *type_out = type;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 static vectis_status vectis_set_lockdc_error(vectis_error *error, int rc,
                                              const lc_error *lcerr,
                                              const char *message) {
@@ -6154,14 +6337,15 @@ static int vectis_wait_sleep_ms(long delay_ms) {
 static vectis_status
 vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
                                        int ready_fd, vectis_error *error) {
-  char ready;
   fd_set readfds;
   struct timeval timeout;
+  vectis_runtime_control_type frame_type;
+  vectis_mutable_bytes payload;
+  vectis_status status;
   long remaining_ms;
   int select_rc;
   int wait_status;
   int err;
-  ssize_t n;
   pid_t waited;
 
   if (child_pid <= 0 || ready_fd < 0) {
@@ -6212,29 +6396,48 @@ vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
     timeout.tv_usec = 100000;
     select_rc = select(ready_fd + 1, &readfds, NULL, NULL, &timeout);
     if (select_rc > 0 && FD_ISSET(ready_fd, &readfds)) {
-      do {
-        n = read(ready_fd, &ready, 1u);
-      } while (n < 0 && errno == EINTR);
-      if (n == 1 && ready == 'R') {
+      memset(&payload, 0, sizeof(payload));
+      status = vectis_internal_runtime_control_read(ready_fd, &frame_type,
+                                                    &payload, error);
+      if (status != VECTIS_OK) {
+        vectis_mutable_bytes_cleanup(&payload);
+        waited = waitpid(child_pid, &wait_status, WNOHANG);
+        if (waited == child_pid) {
+          if (impl != NULL) {
+            (void)pthread_mutex_lock(&impl->mutex);
+            if (impl->kore_child_pid == child_pid) {
+              impl->kore_child_pid = 0;
+              impl->kore_child_reaped = 1;
+            }
+            (void)pthread_mutex_unlock(&impl->mutex);
+          }
+          if (WIFEXITED(wait_status)) {
+            vectis_set_errorf(error, VECTIS_ERR_STATE,
+                              "supervised Kore runtime exited before "
+                              "readiness with status %d",
+                              WEXITSTATUS(wait_status));
+          } else if (WIFSIGNALED(wait_status)) {
+            vectis_set_errorf(error, VECTIS_ERR_STATE,
+                              "supervised Kore runtime exited before "
+                              "readiness on signal %d",
+                              WTERMSIG(wait_status));
+          } else {
+            vectis_set_error(error, VECTIS_ERR_STATE,
+                             "supervised Kore runtime exited before readiness");
+          }
+          return VECTIS_ERR_STATE;
+        }
+        return status;
+      }
+      if (frame_type == VECTIS_RUNTIME_CONTROL_READY && payload.size == 0u) {
+        vectis_mutable_bytes_cleanup(&payload);
         vectis_error_clear(error);
         return VECTIS_OK;
       }
-      if (n == 0) {
-        vectis_set_error(error, VECTIS_ERR_STATE,
-                         "supervised Kore readiness channel closed before "
-                         "readiness");
-        return VECTIS_ERR_STATE;
-      }
-      if (n == 1) {
-        vectis_set_error(error, VECTIS_ERR_STATE,
-                         "supervised Kore readiness channel returned an "
-                         "unexpected message");
-        return VECTIS_ERR_STATE;
-      }
-      err = errno != 0 ? errno : EINVAL;
-      vectis_set_errorf(error, VECTIS_ERR_STATE,
-                        "failed to read supervised Kore readiness: %s",
-                        strerror(err));
+      vectis_mutable_bytes_cleanup(&payload);
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "supervised Kore readiness channel returned an "
+                       "unexpected control frame");
       return VECTIS_ERR_STATE;
     }
     if (select_rc < 0 && errno != EINTR) {

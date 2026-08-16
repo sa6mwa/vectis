@@ -436,6 +436,14 @@ The runtime bus should carry:
 - optional route-to-supervisor request/reply messages when configured;
 - structured errors with Vectis status/source metadata.
 
+Current implementation commits the first layer as an internal supervisor control
+channel, not a public libvectis or Lua API. Frames use the private `VRC1`
+header, a typed control kind, and a bounded payload. The first implemented
+frame is child readiness. Later metrics, service-failure, and request/reply
+frames must use the same bounded copied-message model or a deliberately named
+spooled/chunked extension; they must not smuggle in-process pointers or
+materialize unbounded "streaming" payloads.
+
 ## Quiescence Guard
 
 Before starting T1 or forking the T2 Kore child, Vectis must verify that the
@@ -518,7 +526,8 @@ Required additions or semantic changes:
 - descriptor-backed `vectis_consumer_service`.
 - app-owned service registration APIs for future OPC UA/curl/audio/SUS worker
   declarations.
-- runtime bus primitives or a documented narrow internal control channel.
+- documented narrow internal runtime control channel for supervisor child
+  readiness, with room for later copied control frames.
 
 Public comments must state whether a function declares, materializes, starts,
 or runs a service.
@@ -566,7 +575,7 @@ Required semantics:
      handlers;
    - parent monitors signals and child/service exit.
 5. Runtime bus/control channel:
-   - child readiness;
+   - child readiness; implemented as an internal typed control frame.
    - child stop;
    - service failure propagation;
    - metrics snapshot transfer.
@@ -623,7 +632,8 @@ external product decisions. The following choices should be committed before
 implementing later service families:
 
 - exact Lua pump API for supervisor-owned Lua callbacks;
-- runtime bus public exposure level: internal only, C API, Lua API, or both;
+- runtime bus public exposure level for app-level request/reply: internal only,
+  C API, Lua API, or both. The supervisor control channel itself is internal.
 - whether route-to-supervisor request/reply should prefer runtime bus or lockdc
   by default;
 - Darwin quiescence policy before exact thread-count inspection exists.

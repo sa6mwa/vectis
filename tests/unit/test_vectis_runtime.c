@@ -157,6 +157,73 @@ static void *runtime_enqueue_after_delay_main(void *userdata) {
   return NULL;
 }
 
+static void assert_runtime_control_frame_contract(void) {
+  vectis_error error;
+  vectis_status status;
+  vectis_runtime_control_type type;
+  vectis_mutable_bytes payload;
+  int fds[2];
+  const char message[] = "metrics-delta";
+  unsigned char bad_header[8];
+  unsigned char partial_header[4];
+
+  assert(pipe(fds) == 0);
+  status = vectis_internal_runtime_control_write(
+      fds[1], VECTIS_RUNTIME_CONTROL_METRICS, message, sizeof(message) - 1u,
+      &error);
+  assert(status == VECTIS_OK);
+  memset(&payload, 0, sizeof(payload));
+  status =
+      vectis_internal_runtime_control_read(fds[0], &type, &payload, &error);
+  assert(status == VECTIS_OK);
+  assert(type == VECTIS_RUNTIME_CONTROL_METRICS);
+  assert(payload.size == sizeof(message) - 1u);
+  assert(memcmp(payload.data, message, payload.size) == 0);
+  vectis_mutable_bytes_cleanup(&payload);
+  close(fds[0]);
+  close(fds[1]);
+
+  assert(pipe(fds) == 0);
+  status = vectis_internal_runtime_control_write(
+      fds[1], (vectis_runtime_control_type)99, NULL, 0u, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "type") != NULL);
+  close(fds[0]);
+  close(fds[1]);
+
+  assert(pipe(fds) == 0);
+  memset(bad_header, 0, sizeof(bad_header));
+  bad_header[0] = 'B';
+  bad_header[1] = 'A';
+  bad_header[2] = 'D';
+  bad_header[3] = '1';
+  bad_header[4] = (unsigned char)VECTIS_RUNTIME_CONTROL_READY;
+  assert(write(fds[1], bad_header, sizeof(bad_header)) ==
+         (ssize_t)sizeof(bad_header));
+  memset(&payload, 0, sizeof(payload));
+  status =
+      vectis_internal_runtime_control_read(fds[0], &type, &payload, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "header") != NULL);
+  close(fds[0]);
+  close(fds[1]);
+
+  assert(pipe(fds) == 0);
+  partial_header[0] = 'V';
+  partial_header[1] = 'R';
+  partial_header[2] = 'C';
+  partial_header[3] = '1';
+  assert(write(fds[1], partial_header, sizeof(partial_header)) ==
+         (ssize_t)sizeof(partial_header));
+  close(fds[1]);
+  memset(&payload, 0, sizeof(payload));
+  status =
+      vectis_internal_runtime_control_read(fds[0], &type, &payload, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "complete frame") != NULL);
+  close(fds[0]);
+}
+
 static void enqueue_lockd_test_message(const char *endpoint,
                                        const char *queue) {
   const char *endpoints[1];
@@ -3224,6 +3291,10 @@ static int run_named_runtime_test(const char *name) {
     assert_server_config_validation();
     return 1;
   }
+  if (strcmp(name, "runtime_control_frame_contract") == 0) {
+    assert_runtime_control_frame_contract();
+    return 1;
+  }
   if (strcmp(name, "route_body_policy_validation") == 0) {
     assert_route_body_policy_validation();
     return 1;
@@ -3287,6 +3358,7 @@ int main(void) {
   }
 
   assert_server_config_validation();
+  assert_runtime_control_frame_contract();
   assert_route_body_policy_validation();
   assert_metrics_surface();
   assert_supervised_metrics_persistence_worker();

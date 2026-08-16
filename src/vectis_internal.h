@@ -52,6 +52,13 @@ typedef struct vectis_kore_runtime_config {
   int ready_fd;
 } vectis_kore_runtime_config;
 
+typedef enum vectis_runtime_control_type {
+  VECTIS_RUNTIME_CONTROL_READY = 1,
+  VECTIS_RUNTIME_CONTROL_STOP = 2,
+  VECTIS_RUNTIME_CONTROL_SERVICE_FAILURE = 3,
+  VECTIS_RUNTIME_CONTROL_METRICS = 4
+} vectis_runtime_control_type;
+
 typedef struct vectis_upload_stream_runtime {
   vectis_body_policy policy;
   vectis_upload_write_fn write;
@@ -74,6 +81,13 @@ vectis_internal_kore_validate(const vectis_kore_runtime_config *config,
 vectis_status vectis_internal_kore_stop(vectis_app *app, vectis_error *error);
 int vectis_internal_kore_signal_requested(void);
 int vectis_internal_kore_signal_number(void);
+vectis_status
+vectis_internal_runtime_control_write(int fd, vectis_runtime_control_type type,
+                                      const void *payload, size_t payload_size,
+                                      vectis_error *error);
+vectis_status vectis_internal_runtime_control_read(
+    int fd, vectis_runtime_control_type *type_out,
+    vectis_mutable_bytes *payload, vectis_error *error);
 #if defined(VECTIS_BUILD_FUZZERS)
 void vectis_internal_kore_fuzzer_set_app(vectis_app *app);
 #endif

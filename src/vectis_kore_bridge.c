@@ -877,7 +877,6 @@ static int vectis_kore_write_all(int fd, const void *data, size_t size) {
 }
 
 static void vectis_kore_notify_ready(void) {
-  char ready;
   int fd;
 
   fd = vectis_kore_current.ready_fd;
@@ -885,8 +884,8 @@ static void vectis_kore_notify_ready(void) {
     return;
   }
   vectis_kore_current.ready_fd = -1;
-  ready = 'R';
-  (void)vectis_kore_write_all(fd, &ready, 1u);
+  (void)vectis_internal_runtime_control_write(fd, VECTIS_RUNTIME_CONTROL_READY,
+                                              NULL, 0u, NULL);
   (void)close(fd);
 }
 
