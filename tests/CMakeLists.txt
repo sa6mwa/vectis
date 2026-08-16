@@ -234,6 +234,13 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_audio_sus PROPERTIES
     LABELS "lua;smoke;local"
     TIMEOUT 30)
+  add_test(NAME vectis_lua_sus_audio_live
+           COMMAND "${CMAKE_COMMAND}" -E env
+                   "VECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   bash "${CMAKE_SOURCE_DIR}/scripts/test-live-sus-audio.sh")
+  set_tests_properties(vectis_lua_sus_audio_live PROPERTIES
+    LABELS "lua;live"
+    TIMEOUT 300)
   add_test(NAME vectis_lua_pack
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
@@ -309,6 +316,14 @@ if(TARGET vectis_bin)
            COMMAND "$<TARGET_FILE:vectis_bin>"
                    "${CMAKE_SOURCE_DIR}/examples/lua/audio_sus.lua")
   set_tests_properties(vectis_example_lua_audio_sus PROPERTIES
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
+  add_test(NAME vectis_example_lua_sus_loaded_model
+           COMMAND "${CMAKE_COMMAND}" -E env
+                   "VECTIS_LUA_SUS_EXAMPLE_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   "$<TARGET_FILE:vectis_bin>"
+                   "${CMAKE_SOURCE_DIR}/examples/lua/sus_loaded_model.lua")
+  set_tests_properties(vectis_example_lua_sus_loaded_model PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
   add_test(NAME vectis_example_lua_audio_devices

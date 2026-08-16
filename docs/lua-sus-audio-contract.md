@@ -23,9 +23,9 @@ Current deterministic coverage includes:
   `docs/lua-sus.md`.
 
 The audio/SUS Lua interop boundary lets `sus` borrow `audio.decoder` and
-`audio.segment` handles without exposing private userdata layouts. Live model
-transcription remains opt-in until a committed model fixture/cache policy
-exists.
+`audio.segment` handles without exposing private userdata layouts. Loaded-model
+transcription is covered by an explicit opt-in live/local gate because the
+project does not commit a whisper model fixture into the deterministic suite.
 
 ## Module Names
 
@@ -164,4 +164,9 @@ Required deterministic coverage:
   abort, and segmented transcript sinks.
 
 Live model transcription, live URL decoding, capture, and playback tests must
-remain opt-in.
+remain opt-in. `make test-sus-audio-live` runs the loaded-model SUS/audio gate
+when `VECTIS_LUA_SUS_MODEL_PATH=/path/to/ggml-model.bin` is set, or when
+`VECTIS_LUA_SUS_CACHE_ENABLE=1` explicitly permits cache-backed model
+resolution. The gate opens a real model, exercises PCM transcription,
+materialized text, decoder-segmented transcription, VOX-segment transcription,
+and abort callback propagation through Lua.

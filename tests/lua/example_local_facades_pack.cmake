@@ -61,6 +61,12 @@ vectis_pack_and_run_lua_example(
   "lua audio sus example ok")
 
 vectis_pack_and_run_lua_example(
+  "sus-loaded-model"
+  "${VECTIS_SOURCE_DIR}/examples/lua/sus_loaded_model.lua"
+  "lua sus loaded model example ok"
+  "VECTIS_LUA_SUS_EXAMPLE_DIR=${WORK_DIR}")
+
+vectis_pack_and_run_lua_example(
   "audio-devices"
   "${VECTIS_SOURCE_DIR}/examples/lua/audio_devices.lua"
   "lua audio devices example ok")

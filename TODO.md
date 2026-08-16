@@ -368,7 +368,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add cpkt `sus`/whisper Lua transcriber receiver shells from `docs/lua-sus-audio-contract.md`, including model-created transcribers, PCM table transcription methods, revised text, and segment/progress/abort callback registration.
 - [x] Add cpkt `sus`/whisper Lua process-wide backend log sink configuration and log-level constants.
 - [x] Add the audio/SUS Lua interop boundary and expose `sus` segmented decoder/VOX transcription methods that borrow `audio.decoder` and `audio.segment` handles without duplicating private userdata layouts.
-- [ ] Implement remaining loaded-model cpkt `sus`/whisper Lua coverage from `docs/lua-sus-audio-contract.md`, including callback propagation coverage against a loaded model and live/local model coverage.
+- [x] Implement remaining loaded-model cpkt `sus`/whisper Lua coverage from `docs/lua-sus-audio-contract.md`, including callback propagation coverage against a loaded model and live/local model coverage.
 - [x] Implement the remaining cpkt audio/miniaudio Lua facade receiver shells from `docs/lua-sus-audio-contract.md`, including capture/playback device helpers behind opt-in tests.
 - [x] Add initial dependency-native cpkt `sus` and audio Lua modules with deterministic metadata, catalog/cache, callback decoder/encoder, VOX, PTT, preload, example, and packed execution coverage.
 - [x] Add user-facing Lua docs for the dependency-native cpkt `sus` and audio facades.
@@ -407,7 +407,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add a Lua example for SSH command execution with deterministic local e2e coverage.
 - [x] Add Lua examples for XML, DSV/CSV/TSV, WebDAV client, mutable WebDAV server, dependency-native OpenSSL, certificate management, SCP, MQTT, SMTP, generic curl, OPC UA client, and dependency-native CAI local workflows as those facades land.
 - [x] Add a Lua example for stateful SFTP/libssh2 lower-level handle operations with opt-in live e2e coverage.
-- [ ] Add Lua examples for CAI live/service-adapter workflows and loaded-model sus/whisper transcription as those facades land.
+- [ ] Add Lua examples for CAI live/service-adapter workflows as those facades land.
+- [x] Add a self-contained Lua example for loaded-model SUS/whisper transcription with deterministic skip behavior and packed execution coverage.
 - [ ] Add Lua unit and end-to-end tests for every Lua facade, including preload smoke, method-call DX, ownership/finalizer cleanup, structured error objects, packed execution, large-value streaming/spooling, and local deterministic protocol scenarios.
 - [x] Add release/package verification that the `vectis` binary includes all statically preloaded Lua modules while C binary SDK artifacts do not accidentally ship Lua source/runtime/package-manager state.
 - [x] Add a checked Lua facade documentation index that links dependency-native modules, Vectis-owned workflow modules, the coverage matrix, and module-level docs.
@@ -435,6 +436,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add packed smoke coverage that extracts embedded assets and serves the extracted docroot through the Lua `server:static_directory()` C-owned route.
 - [x] Add tests that package a Lua API service and a Lua consumer service, then execute both artifacts.
 - [x] Add a packed-service scenario that runs the embedded site/WebDAV server and lockd `startconsumer` service in the same self-contained Vectis binary and process, with HTTP/WebDAV requests still succeeding while the consumer receives and handles lockd messages.
+- [ ] Harden Vectis as a landed-style production webserver for both libvectis embedders and the Lua-controlled `vectis` binary workflow, without carrying landed/taktiv.se-specific C bindings, layouts, or site stats.
+- [ ] Add a generic Vectis metrics/stats handler for libvectis and a matching Lua `vectis.server` route helper that exposes basic runtime, server, request, WebDAV, auth, pack, and Vectis service metrics only when explicitly enabled behind authentication.
 
 ## Area 14: Verification and Release
 

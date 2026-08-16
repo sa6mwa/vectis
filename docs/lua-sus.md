@@ -7,10 +7,10 @@ remain visible.
 
 The current Lua surface covers deterministic metadata, model catalog, path and
 cache-open error paths, model handles, transcriber receiver shells, PCM
-transcription methods, and offline cache status callbacks. Live model
-transcription and segmented decoder/VOX transcription remain opt-in/future work
-until the project has a committed model fixture/cache policy and a stable
-audio/SUS Lua interop boundary.
+transcription methods, segmented decoder/VOX transcription methods, offline
+cache status callbacks, and process-wide backend log callbacks. Loaded-model
+behavior is covered by an opt-in live/local gate because Vectis does not commit
+a whisper model fixture into the deterministic suite.
 
 ## Metadata And Constants
 
@@ -80,6 +80,25 @@ Options:
 
 Checksum validation is enabled by default. Disabling it requires
 `insecure_no_checksum = true`.
+
+## Live Loaded-Model Validation
+
+`make test-sus-audio-live` runs the loaded-model SUS/audio validation gate. It
+skips unless either:
+
+- `VECTIS_LUA_SUS_MODEL_PATH=/path/to/ggml-model.bin` points at a local model,
+  or
+- `VECTIS_LUA_SUS_CACHE_ENABLE=1` explicitly permits `sus.open_cached()` to
+  resolve/download the configured catalog model.
+
+The live gate opens a real model, exercises PCM table transcription,
+materialized text, decoder-segmented transcription over a generated WAV,
+VOX-segment transcription through `audio.ptt`, revised-text retrieval,
+transcript-spacing reset, and abort callback propagation from C into Lua.
+
+The same opt-in variables drive `examples/lua/sus_loaded_model.lua`. Without
+them, the example exits successfully after printing a skipped marker so packed
+example smoke tests remain deterministic.
 
 Cache status callbacks receive a Lua-owned event table with:
 
