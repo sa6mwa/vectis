@@ -99,3 +99,21 @@ Runnable Lua examples are available under `examples/lua/`:
   native issued Bearer credentials, and a callback provider adapter;
 - `metrics_ephemeral.lua`: unauthenticated Hello World plus in-memory-only
   metrics.
+
+Before running `metrics_authenticated.lua`, create the browser-flow user through
+the operator CLI:
+
+```sh
+vectis -a users \
+  --store vectis-metrics-auth-example-credentials.json \
+  --add metrics-admin \
+  --password metrics-password \
+  --totp-secret GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ \
+  --label Vectis:metrics-admin \
+  --issuer "Vectis Metrics Example"
+```
+
+The command prints the TOTP secret and terminal QR code. The Lua example then
+validates username, password, and TOTP before issuing the Basic credential used
+to read `/.metrics`. For a real deployment, omit `--totp-secret` and use
+`--totp` so Vectis generates a fresh secret.

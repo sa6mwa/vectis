@@ -147,7 +147,8 @@ modules, but it must not require another file from `examples/lua/`.
   TOTP, native issued Bearer credentials for M2M-style access, and opt-in
   `pouch://` persistence. External OAuth2/OIDC M2M validation is plugged in
   through the same callback-provider contract; it is not a separate
-  metrics-specific adapter.
+  metrics-specific adapter. Create the user before running it:
+  `vectis -a users --store vectis-metrics-auth-example-credentials.json --add metrics-admin --password metrics-password --totp-secret GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ --label Vectis:metrics-admin --issuer "Vectis Metrics Example"`.
 - `lua/metrics_ephemeral.lua`: simple Hello World page with unauthenticated
   `/.metrics` dashboard and JSON snapshot using in-memory metrics only.
 - `lua/downstream_api.lua`: packable Lua downstream API client example using
