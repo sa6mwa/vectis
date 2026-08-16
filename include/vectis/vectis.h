@@ -755,6 +755,23 @@ typedef struct vectis_consumer_service_receiver_config {
   const void *receiver_config;
 } vectis_consumer_service_receiver_config;
 
+typedef struct vectis_consumer_service_state {
+  size_t size;
+  unsigned abi_version;
+  int declared;
+  int materialized;
+  int process_local;
+  int start_requested;
+  int stop_requested;
+  int started;
+  int monitor_active;
+  int monitor_done;
+  int monitor_joined;
+  int failed;
+  long dependency_code;
+  vectis_status terminal_status;
+} vectis_consumer_service_state;
+
 typedef struct vectis_webdav_marker_receiver_config {
   const char *cache_dir;
   const char *site_id;
@@ -1268,6 +1285,11 @@ struct vectis_consumer_service {
   vectis_status (*run_until)(vectis_consumer_service *self,
                              const volatile int *done, long timeout_ms,
                              vectis_error *error);
+  /* Copy process-local lifecycle diagnostics into `out` without materializing
+   * the dependency service. */
+  vectis_status (*state)(const vectis_consumer_service *self,
+                         vectis_consumer_service_state *out,
+                         vectis_error *error);
   void (*close)(vectis_consumer_service *self);
   void *impl;
 };
@@ -1590,6 +1612,11 @@ void vectis_lockd_consumer_mailbox_receiver_config_init(
     vectis_lockd_consumer_mailbox_receiver_config *config);
 vectis_status vectis_lockd_consumer_mailbox_receiver_adapter(
     vectis_consumer_receiver_adapter *out, vectis_error *error);
+void vectis_consumer_service_state_init(vectis_consumer_service_state *state);
+vectis_status
+vectis_consumer_service_state_get(const vectis_consumer_service *service,
+                                  vectis_consumer_service_state *out,
+                                  vectis_error *error);
 void vectis_opcua_monitor_event_config_init(
     vectis_opcua_monitor_event_config *config);
 void vectis_opcua_monitor_mailbox_config_init(

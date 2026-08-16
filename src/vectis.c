@@ -16087,6 +16087,7 @@ vectis_status vectis_consumer_service_new(
   service->stop = vectis_consumer_service_stop;
   service->wait = vectis_consumer_service_wait;
   service->run_until = vectis_consumer_service_run_until;
+  service->state = vectis_consumer_service_state_get;
   service->close = vectis_consumer_service_destroy;
   service->impl = service_impl;
   service_impl->owner = impl;
@@ -16108,6 +16109,60 @@ void vectis_consumer_service_receiver_config_init(
   config->visibility_timeout_seconds = 30L;
   config->wait_seconds = 1L;
   config->worker_count = 1u;
+}
+
+void vectis_consumer_service_state_init(vectis_consumer_service_state *state) {
+  if (state == NULL) {
+    return;
+  }
+  memset(state, 0, sizeof(*state));
+  state->size = sizeof(*state);
+  state->abi_version = 1u;
+  state->terminal_status = VECTIS_OK;
+}
+
+vectis_status
+vectis_consumer_service_state_get(const vectis_consumer_service *service,
+                                  vectis_consumer_service_state *out,
+                                  vectis_error *error) {
+  const vectis_consumer_service_impl *impl;
+  vectis_app_impl *owner;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "consumer service state output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_consumer_service_state_init(out);
+  impl = service != NULL ? (const vectis_consumer_service_impl *)service->impl
+                         : NULL;
+  if (impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
+    return VECTIS_ERR_INVALID;
+  }
+  owner = impl->owner;
+  if (owner != NULL) {
+    (void)pthread_mutex_lock(&owner->mutex);
+  }
+  out->declared = 1;
+  out->materialized = impl->materialized;
+  out->process_local = impl->service != NULL && impl->service_pid == getpid();
+  out->start_requested = impl->start_requested;
+  out->stop_requested = impl->stop_requested;
+  out->started = impl->started;
+  out->monitor_active = impl->monitor_active;
+  out->monitor_done = impl->monitor_done;
+  out->monitor_joined = impl->monitor_joined;
+  out->failed = impl->monitor_done && impl->monitor_rc != LC_OK;
+  out->dependency_code = (long)impl->monitor_rc;
+  out->terminal_status = out->failed && impl->monitor_error.code != VECTIS_OK
+                             ? impl->monitor_error.code
+                             : (out->failed ? VECTIS_ERR_STATE : VECTIS_OK);
+  if (owner != NULL) {
+    (void)pthread_mutex_unlock(&owner->mutex);
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 void vectis_webdav_marker_receiver_config_init(

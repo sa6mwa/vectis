@@ -6589,6 +6589,77 @@ vectis_lua_server_consumer_service_mark_stopped_all(vectis_lua_server *server) {
   }
 }
 
+static void vectis_lua_consumer_state_set_bool(lua_State *lua,
+                                               const char *field, int value) {
+  lua_pushboolean(lua, value ? 1 : 0);
+  lua_setfield(lua, -2, field);
+}
+
+static void vectis_lua_push_consumer_service_state(
+    lua_State *lua, const vectis_lua_consumer_registration *service,
+    const vectis_consumer_service_state *state) {
+  lua_newtable(lua);
+  if (service->name != NULL) {
+    lua_pushstring(lua, service->name);
+    lua_setfield(lua, -2, "name");
+  }
+  if (service->queue != NULL) {
+    lua_pushstring(lua, service->queue);
+    lua_setfield(lua, -2, "queue");
+  }
+  if (service->owner != NULL) {
+    lua_pushstring(lua, service->owner);
+    lua_setfield(lua, -2, "owner");
+  }
+  vectis_lua_consumer_state_set_bool(lua, "declared", state->declared);
+  vectis_lua_consumer_state_set_bool(lua, "materialized", state->materialized);
+  vectis_lua_consumer_state_set_bool(lua, "process_local",
+                                     state->process_local);
+  vectis_lua_consumer_state_set_bool(lua, "start_requested",
+                                     state->start_requested);
+  vectis_lua_consumer_state_set_bool(lua, "stop_requested",
+                                     state->stop_requested);
+  vectis_lua_consumer_state_set_bool(lua, "started", state->started);
+  vectis_lua_consumer_state_set_bool(lua, "monitor_active",
+                                     state->monitor_active);
+  vectis_lua_consumer_state_set_bool(lua, "monitor_done", state->monitor_done);
+  vectis_lua_consumer_state_set_bool(lua, "monitor_joined",
+                                     state->monitor_joined);
+  vectis_lua_consumer_state_set_bool(lua, "failed", state->failed);
+  lua_pushinteger(lua, (lua_Integer)state->dependency_code);
+  lua_setfield(lua, -2, "dependency_code");
+  lua_pushinteger(lua, (lua_Integer)state->terminal_status);
+  lua_setfield(lua, -2, "terminal_status");
+  lua_pushstring(lua, vectis_status_string(state->terminal_status));
+  lua_setfield(lua, -2, "terminal_status_string");
+}
+
+static int vectis_lua_server_consumer_service_states(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_lua_consumer_registration *service;
+  vectis_consumer_service_state state;
+  vectis_error error;
+  vectis_status status;
+  lua_Integer index;
+
+  server = vectis_lua_check_server(lua, 1);
+  lua_newtable(lua);
+  index = 1;
+  for (service = server->consumer_services; service != NULL;
+       service = service->next) {
+    vectis_error_clear(&error);
+    status = service->service->state(service->service, &state, &error);
+    if (status != VECTIS_OK) {
+      lua_pop(lua, 1);
+      return vectis_lua_push_error(lua, status, &error);
+    }
+    vectis_lua_push_consumer_service_state(lua, service, &state);
+    lua_rawseti(lua, -2, index);
+    ++index;
+  }
+  return 1;
+}
+
 static int vectis_lua_server_stop(lua_State *lua) {
   vectis_lua_server *server;
   vectis_app *app;
@@ -15678,6 +15749,8 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "auth_json");
     lua_pushcfunction(lua, vectis_lua_server_consumer_service);
     lua_setfield(lua, -2, "consumer_service");
+    lua_pushcfunction(lua, vectis_lua_server_consumer_service_states);
+    lua_setfield(lua, -2, "consumer_service_states");
     lua_pushcfunction(lua, vectis_lua_server_start);
     lua_setfield(lua, -2, "start");
     lua_pushcfunction(lua, vectis_lua_server_run);

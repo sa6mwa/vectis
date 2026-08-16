@@ -350,6 +350,9 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
   The default `start = true` means "start with the selected app runtime"; it
   does not create a consumer pthread while the Lua script is still declaring a
   route-backed server.
+- `server:consumer_service_states()` returns diagnostic snapshots for declared
+  consumer services, including whether each service is materialized,
+  process-local, requested to start, running, monitored, or failed.
 - `server:mcp(opts)` registers a C-owned CAI Streamable HTTP MCP route with
   Lua-defined raw JSON tools.
 

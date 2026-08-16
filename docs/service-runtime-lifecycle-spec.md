@@ -505,10 +505,11 @@ Required additions or semantic changes:
 - `vectis_app_config.shutdown_grace_ms` for shutdown grace.
 - `vectis_app_config.supervision_policy` for explicit `auto`, `direct`, or
   `supervised` route-backed topology selection.
+- `vectis_consumer_service_state_get()` and `service->state(...)` for copied
+  service lifecycle diagnostics without materializing the dependency service.
 - future runtime config fields still need quiescence strictness and service
   failure policy.
 - descriptor-backed `vectis_consumer_service`.
-- service state query helpers for tests and diagnostics.
 - app-owned service registration APIs for future OPC UA/curl/audio/SUS worker
   declarations.
 - runtime bus primitives or a documented narrow internal control channel.
@@ -527,6 +528,8 @@ Required semantics:
   mirrors the C topology policy.
 - `server:consumer_service({ start = true })` means start with the app runtime,
   not start a pthread during declaration for route-backed apps.
+- `server:consumer_service_states()` returns copied lifecycle diagnostics for
+  declared C-owned consumer services.
 - Direct Lua callbacks for background services remain rejected unless they are
   attached to an explicit owner-state pump.
 - Examples must not use `os.execute`, shell `sleep`, or external commands for

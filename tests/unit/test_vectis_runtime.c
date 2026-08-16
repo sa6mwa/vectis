@@ -2831,6 +2831,7 @@ static void assert_consumer_service_declaration_before_routes(void) {
   lc_consumer_config consumer;
   lc_consumer_service_config service_config;
   vectis_consumer_service *service;
+  vectis_consumer_service_state service_state;
   vectis_route_config route;
 
   vectis_app_config_init(&config);
@@ -2851,10 +2852,23 @@ static void assert_consumer_service_declaration_before_routes(void) {
   assert(status == VECTIS_OK);
   assert(service != NULL);
   assert(service->native(service) == NULL);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.declared);
+  assert(!service_state.materialized);
+  assert(!service_state.process_local);
+  assert(!service_state.start_requested);
+  assert(!service_state.started);
+  assert(!service_state.failed);
 
   status = service->start(service, &error);
   assert(status == VECTIS_OK);
   assert(service->native(service) == NULL);
+  status = vectis_consumer_service_state_get(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.start_requested);
+  assert(!service_state.materialized);
+  assert(!service_state.started);
 
   route = vectis_route(VECTIS_HTTP_GET, "/declared", sample_handler, NULL);
   status = app->route(app, &route, &error);
@@ -2936,6 +2950,7 @@ static void assert_supervised_wait_reports_consumer_service_exit(void) {
   lc_consumer_config consumer;
   lc_consumer_service_config service_config;
   vectis_consumer_service *service;
+  vectis_consumer_service_state service_state;
   char pouch_dir[] = "/tmp/vectis-runtime-consumer.XXXXXX";
   char endpoint[4096];
   const char *endpoints[1];
@@ -2987,6 +3002,15 @@ static void assert_supervised_wait_reports_consumer_service_exit(void) {
   assert(status == VECTIS_OK);
   status = app->start(app, &error);
   assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.declared);
+  assert(service_state.materialized);
+  assert(service_state.process_local);
+  assert(service_state.start_requested);
+  assert(service_state.started);
+  assert(service_state.monitor_active);
+  assert(!service_state.failed);
 
   enqueue_lockd_test_message(endpoint, "runtime-failing");
 

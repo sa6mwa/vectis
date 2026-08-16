@@ -698,7 +698,18 @@ assert(not encryption_ok)
 assert(tostring(encryption_err):find("certificate and private_key", 1, true))
 assert(client:close() == true)
 
-local server = assert(vectis.server.new({ app_name = "lua-smoke", port = 18080 }))
+local server
+do
+  local smoke_lockd_dir = os.tmpname()
+  os.remove(smoke_lockd_dir)
+  server = assert(vectis.server.new({
+    app_name = "lua-smoke",
+    port = 18080,
+    lockd = {
+      endpoints = {"pouch://" .. smoke_lockd_dir},
+    },
+  }))
+end
 assert(type(server.static_directory) == "function")
 assert(type(server.webdav) == "function")
 assert(type(server.webdav_embedded) == "function")
@@ -751,6 +762,31 @@ assert(server:auth_routes({
   auth_state_path = route_auth_state_path,
   realm = "lua-route-state",
 }) == true)
+do
+  local consumer_cache_dir = os.tmpname()
+  os.remove(consumer_cache_dir)
+  assert(server:consumer_service({
+    name = "lua-smoke-state",
+    queue = "lua-smoke-state",
+    owner = "lua-smoke",
+    handler = {
+      kind = "webdav_marker",
+      cache_dir = consumer_cache_dir,
+    },
+  }) == true)
+  local consumer_states = server:consumer_service_states()
+  assert(type(consumer_states) == "table")
+  assert(#consumer_states == 1)
+  assert(consumer_states[1].name == "lua-smoke-state")
+  assert(consumer_states[1].queue == "lua-smoke-state")
+  assert(consumer_states[1].owner == "lua-smoke")
+  assert(consumer_states[1].declared == true)
+  assert(consumer_states[1].start_requested == true)
+  assert(consumer_states[1].materialized == false)
+  assert(consumer_states[1].started == false)
+  assert(consumer_states[1].failed == false)
+  assert(consumer_states[1].terminal_status == vectis.OK)
+end
 local consumer_service, consumer_service_error = server:consumer_service({
   queue = "lua-smoke",
   on_message = function() end,
