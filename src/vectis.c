@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -593,6 +594,9 @@ static vectis_status vectis_app_wait_for_process_signal(vectis_app_impl *impl,
 static vectis_status vectis_app_wait_supervised_child(vectis_app_impl *impl,
                                                       pid_t child_pid,
                                                       vectis_error *error);
+static vectis_status
+vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
+                                       int ready_fd, vectis_error *error);
 static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
                                               vectis_error *error);
 static void
@@ -5633,6 +5637,7 @@ vectis_app_make_kore_runtime_config(vectis_app *app, vectis_app_impl *impl,
   kore_config->body_disk_offload_bytes = vectis_app_body_disk_offload_bytes(
       impl, &kore_config->body_disk_offload_configured);
   kore_config->logger = impl->logger;
+  kore_config->ready_fd = -1;
 }
 
 static vectis_status vectis_app_start_impl(vectis_app *app,
@@ -5642,6 +5647,10 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
   vectis_status status;
   size_t route_count;
   pid_t pid;
+  pid_t cleanup_pid;
+  pid_t waited;
+  int ready_pipe[2];
+  int wait_status;
 
   if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
@@ -5685,25 +5694,57 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
   }
 
   if (route_count > 0u) {
+    ready_pipe[0] = -1;
+    ready_pipe[1] = -1;
     vectis_app_make_kore_runtime_config(app, impl, &kore_config);
     status = vectis_internal_kore_validate(&kore_config, error);
     if (status != VECTIS_OK) {
       return status;
     }
+    if (pipe(ready_pipe) != 0) {
+      vectis_set_errorf(error, VECTIS_ERR_STATE,
+                        "failed to create Kore readiness channel: %s",
+                        strerror(errno));
+      return VECTIS_ERR_STATE;
+    }
+    kore_config.ready_fd = ready_pipe[1];
     pid = fork();
     if (pid < 0) {
+      (void)close(ready_pipe[0]);
+      (void)close(ready_pipe[1]);
       vectis_set_errorf(error, VECTIS_ERR_STATE,
                         "failed to fork Kore runtime: %s", strerror(errno));
       return VECTIS_ERR_STATE;
     }
     if (pid == 0) {
+      (void)close(ready_pipe[0]);
       status = vectis_internal_kore_run(&kore_config, NULL);
       _exit(status == VECTIS_OK ? 0 : 1);
     }
+    (void)close(ready_pipe[1]);
     (void)pthread_mutex_lock(&impl->mutex);
-    impl->started = 1;
     impl->kore_child_pid = pid;
     impl->kore_child_reaped = 0;
+    (void)pthread_mutex_unlock(&impl->mutex);
+    status =
+        vectis_app_wait_supervised_child_ready(impl, pid, ready_pipe[0], error);
+    (void)close(ready_pipe[0]);
+    if (status != VECTIS_OK) {
+      (void)pthread_mutex_lock(&impl->mutex);
+      cleanup_pid = impl->kore_child_pid;
+      impl->kore_child_pid = 0;
+      impl->kore_child_reaped = 0;
+      (void)pthread_mutex_unlock(&impl->mutex);
+      if (cleanup_pid > 0) {
+        (void)kill(cleanup_pid, SIGTERM);
+        do {
+          waited = waitpid(cleanup_pid, &wait_status, 0);
+        } while (waited < 0 && errno == EINTR);
+      }
+      return status;
+    }
+    (void)pthread_mutex_lock(&impl->mutex);
+    impl->started = 1;
     (void)pthread_mutex_unlock(&impl->mutex);
     status = vectis_app_start_requested_consumer_services(impl, error);
     if (status != VECTIS_OK) {
@@ -5938,6 +5979,107 @@ static int vectis_wait_sleep_ms(long delay_ms) {
     }
   } while (errno == EINTR);
   return errno != 0 ? errno : EINVAL;
+}
+
+static vectis_status
+vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
+                                       int ready_fd, vectis_error *error) {
+  char ready;
+  fd_set readfds;
+  struct timeval timeout;
+  long remaining_ms;
+  int select_rc;
+  int wait_status;
+  int err;
+  ssize_t n;
+  pid_t waited;
+
+  if (child_pid <= 0 || ready_fd < 0) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "supervised Kore readiness channel is required");
+    return VECTIS_ERR_INVALID;
+  }
+
+  remaining_ms = 30000L;
+  while (remaining_ms > 0L) {
+    waited = waitpid(child_pid, &wait_status, WNOHANG);
+    if (waited == child_pid) {
+      if (impl != NULL) {
+        (void)pthread_mutex_lock(&impl->mutex);
+        if (impl->kore_child_pid == child_pid) {
+          impl->kore_child_pid = 0;
+          impl->kore_child_reaped = 1;
+        }
+        (void)pthread_mutex_unlock(&impl->mutex);
+      }
+      if (WIFEXITED(wait_status)) {
+        vectis_set_errorf(error, VECTIS_ERR_STATE,
+                          "supervised Kore runtime exited before readiness "
+                          "with status %d",
+                          WEXITSTATUS(wait_status));
+      } else if (WIFSIGNALED(wait_status)) {
+        vectis_set_errorf(error, VECTIS_ERR_STATE,
+                          "supervised Kore runtime exited before readiness on "
+                          "signal %d",
+                          WTERMSIG(wait_status));
+      } else {
+        vectis_set_error(error, VECTIS_ERR_STATE,
+                         "supervised Kore runtime exited before readiness");
+      }
+      return VECTIS_ERR_STATE;
+    }
+    if (waited < 0 && errno != EINTR) {
+      err = errno != 0 ? errno : EINVAL;
+      vectis_set_errorf(error, VECTIS_ERR_STATE,
+                        "failed to wait for supervised Kore readiness: %s",
+                        strerror(err));
+      return VECTIS_ERR_STATE;
+    }
+
+    FD_ZERO(&readfds);
+    FD_SET(ready_fd, &readfds);
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 100000;
+    select_rc = select(ready_fd + 1, &readfds, NULL, NULL, &timeout);
+    if (select_rc > 0 && FD_ISSET(ready_fd, &readfds)) {
+      do {
+        n = read(ready_fd, &ready, 1u);
+      } while (n < 0 && errno == EINTR);
+      if (n == 1 && ready == 'R') {
+        vectis_error_clear(error);
+        return VECTIS_OK;
+      }
+      if (n == 0) {
+        vectis_set_error(error, VECTIS_ERR_STATE,
+                         "supervised Kore readiness channel closed before "
+                         "readiness");
+        return VECTIS_ERR_STATE;
+      }
+      if (n == 1) {
+        vectis_set_error(error, VECTIS_ERR_STATE,
+                         "supervised Kore readiness channel returned an "
+                         "unexpected message");
+        return VECTIS_ERR_STATE;
+      }
+      err = errno != 0 ? errno : EINVAL;
+      vectis_set_errorf(error, VECTIS_ERR_STATE,
+                        "failed to read supervised Kore readiness: %s",
+                        strerror(err));
+      return VECTIS_ERR_STATE;
+    }
+    if (select_rc < 0 && errno != EINTR) {
+      err = errno != 0 ? errno : EINVAL;
+      vectis_set_errorf(error, VECTIS_ERR_STATE,
+                        "failed to wait for supervised Kore readiness: %s",
+                        strerror(err));
+      return VECTIS_ERR_STATE;
+    }
+    remaining_ms -= 100L;
+  }
+
+  vectis_set_error(error, VECTIS_ERR_TIMEOUT,
+                   "timed out waiting for supervised Kore readiness");
+  return VECTIS_ERR_TIMEOUT;
 }
 
 static vectis_status vectis_app_wait_for_process_signal(vectis_app_impl *impl,

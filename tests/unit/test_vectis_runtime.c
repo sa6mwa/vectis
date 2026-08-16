@@ -2695,7 +2695,7 @@ static void assert_kore_start_rejects_extra_thread(void) {
   app->close(app);
 }
 
-static void assert_supervised_wait_reports_child_exit(void) {
+static void assert_supervised_start_reports_child_readiness_failure(void) {
   vectis_app_config config;
   vectis_app *app;
   vectis_error error;
@@ -2715,10 +2715,11 @@ static void assert_supervised_wait_reports_child_exit(void) {
   status = app->route(app, &route, &error);
   assert(status == VECTIS_OK);
   status = app->start(app, &error);
-  assert(status == VECTIS_OK);
-  status = app->wait(app, &error);
   assert(status == VECTIS_ERR_STATE);
-  assert(strstr(error.message, "supervised Kore runtime exited") != NULL);
+  assert(strstr(error.message, "before readiness") != NULL);
+  status = app->stop(app, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "app is not started") != NULL);
   app->close(app);
   close(reserved_fd);
 }
@@ -2884,7 +2885,7 @@ int main(void) {
   assert_metrics_surface();
   assert_consumer_service_declaration_before_routes();
   assert_kore_start_rejects_extra_thread();
-  assert_supervised_wait_reports_child_exit();
+  assert_supervised_start_reports_child_readiness_failure();
   assert_supervised_wait_reports_consumer_service_exit();
   assert_service_only_wait_reports_consumer_service_exit();
 

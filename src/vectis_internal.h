@@ -49,6 +49,7 @@ typedef struct vectis_kore_runtime_config {
   int runtime_certfile_temporary;
   int runtime_certkey_temporary;
   int runtime_client_ca_temporary;
+  int ready_fd;
 } vectis_kore_runtime_config;
 
 typedef struct vectis_upload_stream_runtime {

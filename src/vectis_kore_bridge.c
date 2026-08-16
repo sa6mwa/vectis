@@ -876,6 +876,20 @@ static int vectis_kore_write_all(int fd, const void *data, size_t size) {
   return 1;
 }
 
+static void vectis_kore_notify_ready(void) {
+  char ready;
+  int fd;
+
+  fd = vectis_kore_current.ready_fd;
+  if (fd < 0) {
+    return;
+  }
+  vectis_kore_current.ready_fd = -1;
+  ready = 'R';
+  (void)vectis_kore_write_all(fd, &ready, 1u);
+  (void)close(fd);
+}
+
 static vectis_status vectis_kore_temp_file_from_bytes(const void *data,
                                                       size_t size,
                                                       char **path_out,
@@ -2457,6 +2471,7 @@ void kore_parent_configure(int argc, char **argv) {
     }
   }
   kore_server_finalize(server);
+  vectis_kore_notify_ready();
   (void)pthread_mutex_unlock(&vectis_kore_mutex);
 }
 

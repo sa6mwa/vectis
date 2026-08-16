@@ -173,9 +173,12 @@ Flow:
 3. Create supervisor-child control channels.
 4. Fork the Kore child.
 5. Child closes supervisor-only channel ends and enters Kore.
-6. Parent materializes declared supervisor services.
-7. Parent starts services according to declared start policy.
-8. Parent monitors signals, child exit, service failures, and shutdown
+6. Child reports readiness only after the listener, domains, and routes are
+   configured successfully.
+7. Parent waits for readiness or child exit before reporting successful start.
+8. Parent materializes declared supervisor services.
+9. Parent starts services according to declared start policy.
+10. Parent monitors signals, child exit, service failures, and shutdown
    deadlines.
 
 This is the normal production topology for "webserver plus daemon work".
@@ -217,6 +220,12 @@ tears down supervisor-owned services and resources, and returns
 `VECTIS_ERR_STATE` with the child exit status or terminating signal in the
 diagnostic message. It must not keep waiting indefinitely for a process signal
 after the HTTP ingress process has died.
+
+For managed route-backed `start()`, Vectis must not report success until the
+Kore child has reported readiness over the supervisor control channel. If the
+child exits first, or readiness times out, `start()` returns an error and leaves
+the app in the not-started state. Supervisor-owned services must not materialize
+until this readiness barrier has passed.
 
 For asynchronously started supervisor services, Vectis owns service terminal
 state observation. Dependencies such as liblockdc that expose only blocking
@@ -517,6 +526,7 @@ Required semantics:
    - service-only apps materialize immediately when started.
 4. Supervised route runtime:
    - fork Kore child before materializing services;
+   - wait for child readiness before reporting successful start;
    - supervisor starts lockdc consumer services and metrics after fork;
    - parent monitors signals and child/service exit.
 5. Runtime bus/control channel:
