@@ -164,6 +164,16 @@ typedef struct vectis_upload_reader_adapter {
   void (*free_userdata)(void *userdata);
 } vectis_upload_reader_adapter;
 
+typedef struct vectis_cai_mcp_route_adapter {
+  cai_mcp_handler *handler;
+  int owns_handler;
+} vectis_cai_mcp_route_adapter;
+
+typedef struct vectis_cai_mcp_response_header_context {
+  vectis_response *response;
+  char *content_type;
+} vectis_cai_mcp_response_header_context;
+
 typedef struct vectis_upload_reader_state {
   pthread_mutex_t mutex;
   pthread_cond_t readable;
@@ -553,6 +563,10 @@ vectis_register_upload_file(vectis_app *app,
 vectis_status
 vectis_register_upload_reader(vectis_app *app,
                               const vectis_upload_reader_route_config *route,
+                              vectis_error *error);
+vectis_status
+vectis_register_cai_mcp_route(vectis_app *app,
+                              const vectis_cai_mcp_route_config *route,
                               vectis_error *error);
 vectis_status vectis_register_xml_route(vectis_app *app,
                                         const vectis_xml_route_config *route,
@@ -2167,6 +2181,20 @@ void vectis_upload_reader_route_config_init(
   config->buffer_bytes = VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
 }
 
+void vectis_cai_mcp_route_config_init(vectis_cai_mcp_route_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->method = VECTIS_HTTP_ANY;
+  config->methods = VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_POST |
+                    VECTIS_HTTP_METHODS_DELETE;
+  config->path_kind = VECTIS_ROUTE_PATH_LITERAL;
+  config->body = vectis_body_upload();
+  config->buffer_bytes = VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+  cai_mcp_handler_config_init(&config->handler_config);
+}
+
 void vectis_json_route_config_init(vectis_json_route_config *config) {
   if (config == NULL) {
     return;
@@ -2578,6 +2606,31 @@ vectis_upload_reader_route_config vectis_upload_reader_route_methods(
                                          : vectis_first_method(methods),
                                      path, handler, userdata);
   route.methods = methods;
+  return route;
+}
+
+vectis_cai_mcp_route_config vectis_cai_mcp_route(const char *path,
+                                                 cai_mcp_handler *handler) {
+  vectis_cai_mcp_route_config route;
+
+  vectis_cai_mcp_route_config_init(&route);
+  route.path = path;
+  route.path_kind = vectis_infer_route_path_kind(path);
+  route.handler = handler;
+  return route;
+}
+
+vectis_cai_mcp_route_config
+vectis_cai_mcp_route_configured(const char *path,
+                                const cai_mcp_handler_config *handler_config) {
+  vectis_cai_mcp_route_config route;
+
+  vectis_cai_mcp_route_config_init(&route);
+  route.path = path;
+  route.path_kind = vectis_infer_route_path_kind(path);
+  if (handler_config != NULL) {
+    route.handler_config = *handler_config;
+  }
   return route;
 }
 
@@ -4755,6 +4808,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   app->upload_stream = vectis_register_upload_stream;
   app->upload_file = vectis_register_upload_file;
   app->upload_reader = vectis_register_upload_reader;
+  app->cai_mcp_route = vectis_register_cai_mcp_route;
   app->prefixed_route = vectis_register_prefixed_route;
   app->prefixed_json_route = vectis_register_prefixed_json_route;
   app->prefixed_json_typed_route = vectis_register_prefixed_json_typed_route;
@@ -20099,6 +20153,240 @@ vectis_status vectis_cai_output_enqueue(
   lc_error_cleanup(&lcerr);
   vectis_error_clear(error);
   return VECTIS_OK;
+}
+
+static const char *vectis_cai_mcp_request_header(void *context,
+                                                 const char *name) {
+  return vectis_request_header((vectis_request *)context, name);
+}
+
+static int vectis_cai_mcp_set_cai_error(cai_error *error, int code,
+                                        const char *message) {
+  if (error != NULL) {
+    error->code = code;
+    free(error->message);
+    error->message = vectis_cai_strdup(message);
+  }
+  return code;
+}
+
+static int vectis_cai_mcp_response_header(void *context, const char *name,
+                                          const char *value,
+                                          cai_error *error) {
+  vectis_cai_mcp_response_header_context *headers;
+  vectis_error verr;
+  char *copy;
+  vectis_status status;
+
+  headers = (vectis_cai_mcp_response_header_context *)context;
+  if (headers == NULL || headers->response == NULL || name == NULL ||
+      value == NULL) {
+    return vectis_cai_mcp_set_cai_error(error, CAI_ERR_INVALID,
+                                        "MCP response header is invalid");
+  }
+  if (strcasecmp(name, "content-type") == 0) {
+    copy = vectis_strdup(value);
+    if (copy == NULL) {
+      return vectis_cai_mcp_set_cai_error(
+          error, CAI_ERR_NOMEM, "failed to copy MCP response content type");
+    }
+    free(headers->content_type);
+    headers->content_type = copy;
+    return CAI_OK;
+  }
+  vectis_error_clear(&verr);
+  status = vectis_response_header(headers->response, name, value, &verr);
+  if (status != VECTIS_OK) {
+    status = vectis_cai_mcp_set_cai_error(error, CAI_ERR_INVALID,
+                                          verr.message[0] != '\0'
+                                              ? verr.message
+                                              : "failed to set MCP header");
+    return status;
+  }
+  return CAI_OK;
+}
+
+static vectis_status vectis_cai_mcp_route_dispatch(
+    vectis_app *app, vectis_request *request, struct lc_source *reader,
+    vectis_response *response, void *userdata, vectis_error *error) {
+  vectis_cai_mcp_route_adapter *adapter;
+  vectis_cai_mcp_response_header_context headers;
+  cai_mcp_http_request mcp_request;
+  cai_mcp_http_response mcp_response;
+  cai_source *body;
+  cai_sink *sink;
+  cai_error caierr;
+  FILE *fp;
+  char *path;
+  const char *content_type;
+  vectis_status status;
+  int rc;
+
+  (void)app;
+  adapter = (vectis_cai_mcp_route_adapter *)userdata;
+  if (adapter == NULL || adapter->handler == NULL || request == NULL ||
+      reader == NULL || response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI MCP route is not configured");
+    return VECTIS_ERR_INVALID;
+  }
+
+  body = NULL;
+  sink = NULL;
+  fp = NULL;
+  path = NULL;
+  memset(&headers, 0, sizeof(headers));
+  memset(&mcp_request, 0, sizeof(mcp_request));
+  memset(&mcp_response, 0, sizeof(mcp_response));
+  cai_error_init(&caierr);
+
+  status = vectis_cai_source_from_lc(reader, 0, &body, error);
+  if (status != VECTIS_OK) {
+    cai_error_cleanup(&caierr);
+    return status;
+  }
+  if (vectis_create_response_temp_file(&fp, &path, error) != VECTIS_OK) {
+    cai_source_close(body);
+    cai_error_cleanup(&caierr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  rc = cai_sink_file(fp, 1, &sink, &caierr);
+  fp = NULL;
+  if (rc != CAI_OK) {
+    (void)unlink(path);
+    free(path);
+    cai_source_close(body);
+    (void)vectis_cai_error(error, &caierr, "failed to create MCP response sink");
+    cai_error_cleanup(&caierr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+
+  headers.response = response;
+  mcp_request.method = vectis_http_method_string(vectis_request_method(request));
+  mcp_request.body = body;
+  mcp_request.header = vectis_cai_mcp_request_header;
+  mcp_request.header_context = request;
+  mcp_response.body = sink;
+  mcp_response.set_header = vectis_cai_mcp_response_header;
+  mcp_response.header_context = &headers;
+
+  rc = adapter->handler->handle_http(adapter->handler, &mcp_request,
+                                     &mcp_response, &caierr);
+  cai_sink_close(sink);
+  cai_source_close(body);
+  if (rc != CAI_OK) {
+    (void)unlink(path);
+    free(path);
+    free(headers.content_type);
+    (void)vectis_cai_error(error, &caierr, "CAI MCP request failed");
+    cai_error_cleanup(&caierr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  cai_error_cleanup(&caierr);
+
+  content_type = headers.content_type != NULL ? headers.content_type
+                                              : "application/json";
+  status = vectis_response_file_owned(
+      response, mcp_response.status >= 100 && mcp_response.status <= 599
+                    ? mcp_response.status
+                    : 200,
+      content_type, path, 1, error);
+  free(headers.content_type);
+  return status;
+}
+
+static void vectis_cai_mcp_route_adapter_free(void *userdata) {
+  vectis_cai_mcp_route_adapter *adapter;
+
+  adapter = (vectis_cai_mcp_route_adapter *)userdata;
+  if (adapter == NULL) {
+    return;
+  }
+  if (adapter->owns_handler && adapter->handler != NULL) {
+    adapter->handler->destroy(adapter->handler);
+  }
+  free(adapter);
+}
+
+vectis_status
+vectis_register_cai_mcp_route(vectis_app *app,
+                              const vectis_cai_mcp_route_config *route,
+                              vectis_error *error) {
+  vectis_cai_mcp_route_adapter *mcp_adapter;
+  vectis_upload_reader_adapter *upload_adapter;
+  vectis_upload_reader_route_config upload_route;
+  cai_mcp_handler *handler;
+  cai_error caierr;
+  vectis_status status;
+  int owns_handler;
+  int rc;
+
+  if (route == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "CAI MCP route is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (route->path == NULL || route->path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI MCP route path is required");
+    return VECTIS_ERR_INVALID;
+  }
+
+  handler = route->handler;
+  owns_handler = 0;
+  cai_error_init(&caierr);
+  if (handler == NULL) {
+    rc = cai_mcp_handler_new(&route->handler_config, &handler, &caierr);
+    if (rc != CAI_OK) {
+      (void)vectis_cai_error(error, &caierr,
+                             "failed to create CAI MCP handler");
+      cai_error_cleanup(&caierr);
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    owns_handler = 1;
+  }
+  cai_error_cleanup(&caierr);
+
+  mcp_adapter =
+      (vectis_cai_mcp_route_adapter *)calloc(1u, sizeof(*mcp_adapter));
+  upload_adapter =
+      (vectis_upload_reader_adapter *)calloc(1u, sizeof(*upload_adapter));
+  if (mcp_adapter == NULL || upload_adapter == NULL) {
+    free(mcp_adapter);
+    free(upload_adapter);
+    if (owns_handler && handler != NULL) {
+      handler->destroy(handler);
+    }
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate CAI MCP route adapter");
+    return VECTIS_ERR_NOMEM;
+  }
+
+  mcp_adapter->handler = handler;
+  mcp_adapter->owns_handler = owns_handler;
+  upload_adapter->handler = vectis_cai_mcp_route_dispatch;
+  upload_adapter->userdata = mcp_adapter;
+  upload_adapter->buffer_bytes =
+      route->buffer_bytes > 0u ? route->buffer_bytes
+                               : VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+  upload_adapter->free_userdata = vectis_cai_mcp_route_adapter_free;
+
+  vectis_upload_reader_route_config_init(&upload_route);
+  upload_route.method = route->method;
+  upload_route.methods = route->methods;
+  upload_route.path = route->path;
+  upload_route.path_kind = route->path_kind;
+  upload_route.body = route->body;
+  upload_route.buffer_bytes = upload_adapter->buffer_bytes;
+  upload_route.handler = vectis_cai_mcp_route_dispatch;
+  upload_route.userdata = mcp_adapter;
+
+  status = vectis_register_upload_reader_adapter(app, &upload_route,
+                                                 upload_adapter, error);
+  if (status != VECTIS_OK) {
+    vectis_cai_mcp_route_adapter_free(mcp_adapter);
+    free(upload_adapter);
+  }
+  return status;
 }
 
 void vectis_http_client_config_init(vectis_http_client_config *config) {

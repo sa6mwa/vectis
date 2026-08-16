@@ -336,6 +336,8 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
   WebDAV storage and serves them.
 - `server:auth_routes(opts)` registers native login/auth/WebDAV-key routes.
 - `server:consumer_service(opts)` registers a C-owned lockd consumer service.
+- `server:mcp(opts)` registers a C-owned CAI Streamable HTTP MCP route with
+  Lua-defined raw JSON tools.
 
 `server:upload(opts)` provides true request-body streaming through a bounded
 upload reader and Lua chunk callbacks.
@@ -344,6 +346,55 @@ routes. `server:sse(opts)` provides an SSE-specific convenience helper on top
 of `stream_source`.
 `spooled_source` is explicitly file-backed materialization, not live
 producer-to-transport streaming.
+
+## MCP Routes
+
+`server:mcp(opts)` mounts CAI's Streamable HTTP MCP server handler through the
+Vectis/Kore route system. The default path is `/mcp`, and the default methods
+are `GET`, `POST`, and `DELETE`. Request bodies flow through the upload-reader
+path into CAI as a `cai_source`; responses are file-backed through the current
+Vectis route model because CAI writes to a sink before Kore pulls the final
+response.
+
+Fields:
+
+- `path`: route path, default `/mcp`.
+- `methods` or `method`: optional override; normally leave the MCP default.
+- `name`, `version`: server metadata advertised by CAI.
+- `request_max_bytes`, `response_spool_memory_limit`,
+  `tool_output_max_bytes`, `enable_sessions`, `disable_origin_validation`,
+  `protocol_version`, and `require_protocol_version`: forwarded to CAI's MCP
+  handler config.
+- `tools`: non-empty array of Lua tool definitions.
+
+Tool fields:
+
+- `name`: required MCP tool name.
+- `description`: optional tool description.
+- `schema_json` or `schema`: required JSON schema string for the raw CAI tool.
+- `strict`: optional boolean, default `true`.
+- `callback(arguments_json)` or `run(arguments_json)`: required Lua callback.
+  Return a JSON string or `nil, "message"` on failure.
+
+```lua
+assert(server:mcp({
+  path = "/mcp",
+  tools = {
+    {
+      name = "echo",
+      description = "echo raw arguments",
+      schema_json = '{"type":"object","properties":{"text":{"type":"string"}}}',
+      callback = function(arguments_json)
+        return '{"content":[{"type":"text","text":' ..
+            string.format("%q", arguments_json) .. '}]}'
+      end,
+    },
+  },
+}))
+```
+
+MCP client support is intentionally not implemented in Vectis-owned Lua code;
+it comes from the upstream CAI Lua facade when CAI ships that binding.
 
 ## Upload Routes
 

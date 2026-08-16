@@ -119,6 +119,64 @@ static void test_invalid_output_adapters(void) {
          VECTIS_ERR_INVALID);
 }
 
+static int test_mcp_tool(void *context, const char *arguments_json,
+                         cai_sink *output, cai_error *error) {
+  const char result[] = "{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}";
+  (void)context;
+  (void)arguments_json;
+  return cai_sink_write(output, result, sizeof(result) - 1u, error);
+}
+
+static void test_mcp_route_config(void) {
+  vectis_cai_mcp_route_config config;
+
+  vectis_cai_mcp_route_config_init(&config);
+  assert(config.method == VECTIS_HTTP_ANY);
+  assert((config.methods & VECTIS_HTTP_METHODS_GET) != 0u);
+  assert((config.methods & VECTIS_HTTP_METHODS_POST) != 0u);
+  assert((config.methods & VECTIS_HTTP_METHODS_DELETE) != 0u);
+  assert(config.path == NULL);
+  assert(config.handler == NULL);
+  assert(config.handler_config.tools == NULL);
+  assert(config.buffer_bytes ==
+         VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES);
+}
+
+static void test_mcp_route_registration(void) {
+  vectis_app_config app_config;
+  vectis_cai_mcp_route_config route;
+  vectis_error error;
+  vectis_app *app;
+  cai_tool_registry *registry;
+  cai_error caierr;
+  const char schema[] = "{\"type\":\"object\",\"properties\":{}}";
+
+  vectis_error_clear(&error);
+  vectis_app_config_init(&app_config);
+  app_config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  app = vectis_app_new(&app_config, &error);
+  assert(app != NULL);
+
+  route = vectis_cai_mcp_route_configured("/mcp", NULL);
+  assert(app->cai_mcp_route(app, &route, &error) == VECTIS_ERR_INVALID);
+  assert(error.source == VECTIS_ERROR_SOURCE_CAI);
+
+  registry = NULL;
+  cai_error_init(&caierr);
+  assert(cai_tool_registry_new(&registry, &caierr) == CAI_OK);
+  assert(cai_tool_registry_register_raw(registry, "ping", "ping tool", schema,
+                                        1, test_mcp_tool, NULL,
+                                        &caierr) == CAI_OK);
+  route = vectis_cai_mcp_route_configured("/mcp-ready", NULL);
+  route.handler_config.tools = registry;
+  vectis_error_clear(&error);
+  assert(vectis_register_cai_mcp_route(app, &route, &error) == VECTIS_OK);
+
+  vectis_destroy(app);
+  cai_tool_registry_destroy(registry);
+  cai_error_cleanup(&caierr);
+}
+
 int main(void) {
   vectis_cai_config config;
 
@@ -134,6 +192,8 @@ int main(void) {
   test_borrowed_client_contract();
   test_error_mapping();
   test_invalid_output_adapters();
+  test_mcp_route_config();
+  test_mcp_route_registration();
 
   return 0;
 }

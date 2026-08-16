@@ -24,9 +24,11 @@ tests includes:
 - `cai.tool_registry`
 - `cai.mcp_handler`
 
-Use CAI directly for OpenAI request construction, sessions, tool schemas, MCP
-handling, model metadata, and credential loading. `vectis.cai` is a service DX
-layer around those native objects, not a second AI SDK.
+Use CAI directly for OpenAI request construction, sessions, tool schemas,
+dependency-native MCP handlers, model metadata, and credential loading.
+`vectis.cai` is a service DX layer around those native objects, not a second AI SDK.
+MCP client bindings are CAI-owned; Vectis will re-export the upstream CAI
+client surface when it is available.
 
 ## Vectis Boundary
 
@@ -51,8 +53,38 @@ The C API also exposes service adapters for embedders:
 - writing CAI output to a Vectis HTTP response, lockd payload, or file sink
 - mapping CAI errors into Vectis errors
 - logger inheritance where Vectis owns the surrounding service component
+- mounting a CAI Streamable HTTP MCP handler as a Vectis/Kore route
 
-The C adapters preserve true streaming. The Lua helper does not claim to wrap a
-Vectis HTTP request/response userdata because that userdata bridge is not part
-of the current Lua server surface; Lua code should use CAI's dependency-native
-spooled and callback-backed APIs for large values.
+The C adapters preserve true streaming where the public API says they stream.
+The request side of the MCP route preserves true upload-reader streaming into a
+`cai_source`. The response side is file-backed through the current Vectis route
+model because CAI writes to a sink while Kore pulls route responses after the
+handler returns; it is intentionally not described as live response streaming.
+
+Lua applications can mount MCP servers through `server:mcp()` from
+`require("vectis.server")` or `require("vectis").server`. That helper builds a
+CAI tool registry in C from Lua callbacks and registers the handler with
+libvectis:
+
+```lua
+assert(server:mcp({
+  path = "/mcp",
+  name = "site-tools",
+  tools = {
+    {
+      name = "echo",
+      description = "echo raw JSON arguments",
+      schema_json = '{"type":"object","properties":{"text":{"type":"string"}}}',
+      callback = function(arguments_json)
+        return '{"content":[{"type":"text","text":' ..
+            string.format("%q", arguments_json) .. '}]}'
+      end,
+    },
+  },
+}))
+```
+
+Each Lua tool callback receives the raw arguments JSON string and must return
+the raw JSON/text payload that CAI writes to the tool result sink. For the full
+dependency-native CAI table/schema conversion semantics, create CAI registries
+and handlers directly through `require("cai")`.

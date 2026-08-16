@@ -686,11 +686,32 @@ assert(type(server.webdav_embedded) == "function")
 assert(type(server.route) == "function")
 assert(type(server.dsv) == "function")
 assert(type(server.upload) == "function")
+assert(type(server.mcp) == "function")
 assert(type(server.sse) == "function")
 assert(type(server.json) == "function")
 assert(type(server.text) == "function")
 assert(type(server.redirect) == "function")
 assert(type(server.auth_json) == "function")
+local mcp_bad, mcp_bad_err = server:mcp({ path = "/mcp-bad", tools = {} })
+assert(mcp_bad == nil)
+assert(type(mcp_bad_err) == "table")
+assert(mcp_bad_err.status == vectis.ERR_INVALID)
+assert(mcp_bad_err.message:match("tools"))
+assert(server:mcp({
+  path = "/mcp",
+  name = "lua-smoke-mcp",
+  tools = {
+    {
+      name = "echo",
+      description = "echo raw JSON arguments",
+      schema_json = '{"type":"object","properties":{"text":{"type":"string"}}}',
+      callback = function(arguments_json)
+        return '{"content":[{"type":"text","text":' ..
+            string.format("%q", arguments_json) .. '}]}'
+      end,
+    },
+  },
+}) == true)
 local route_auth_path = os.tmpname()
 os.remove(route_auth_path)
 local route_auth_state_path = os.tmpname()

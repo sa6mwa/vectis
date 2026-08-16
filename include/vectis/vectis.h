@@ -5,6 +5,7 @@
 #define LONEJSON_WITH_CURL 1
 #endif
 #include <cai/cai.h>
+#include <cai/mcp.h>
 #include <cpkt/opcua.h>
 #include <curl/curl.h>
 #include <stddef.h>
@@ -611,6 +612,30 @@ typedef struct vectis_upload_reader_route_config {
   void *userdata;
 } vectis_upload_reader_route_config;
 
+typedef struct vectis_cai_mcp_route_config {
+  /** Single-method fallback; VECTIS_HTTP_ANY means use methods. */
+  vectis_http_method method;
+  /** Allowed MCP HTTP methods; defaults to GET, POST, and DELETE. */
+  vectis_http_methods methods;
+  /** Literal or regex route path. Defaults are supplied by factory helpers. */
+  const char *path;
+  /** Path interpretation for path. */
+  vectis_route_path_kind path_kind;
+  /** Request body policy used before CAI receives the body source. */
+  vectis_body_policy body;
+  /** Bounded bridge buffer for streaming the request body into CAI. */
+  size_t buffer_bytes;
+  /** Borrowed handler. If NULL, Vectis creates and owns one from
+   * handler_config for the route lifetime. Responses are file-backed through
+   * the current Vectis route model, not live response streaming.
+   */
+  cai_mcp_handler *handler;
+  /** CAI handler config used when handler is NULL; nested pointers are
+   * borrowed and must outlive the registered route.
+   */
+  cai_mcp_handler_config handler_config;
+} vectis_cai_mcp_route_config;
+
 typedef struct vectis_static_file_config {
   const char *path;
   const char *file_path;
@@ -1085,6 +1110,9 @@ struct vectis_app {
   vectis_status (*upload_reader)(vectis_app *self,
                                  const vectis_upload_reader_route_config *route,
                                  vectis_error *error);
+  vectis_status (*cai_mcp_route)(vectis_app *self,
+                                 const vectis_cai_mcp_route_config *route,
+                                 vectis_error *error);
   vectis_status (*prefixed_route)(vectis_app *self, const char *prefix,
                                   const vectis_route_config *route,
                                   vectis_error *error);
@@ -1532,6 +1560,7 @@ void vectis_upload_file_route_config_init(
     vectis_upload_file_route_config *config);
 void vectis_upload_reader_route_config_init(
     vectis_upload_reader_route_config *config);
+void vectis_cai_mcp_route_config_init(vectis_cai_mcp_route_config *config);
 void vectis_json_route_config_init(vectis_json_route_config *config);
 void vectis_json_typed_route_config_init(
     vectis_json_typed_route_config *config);
@@ -1605,6 +1634,11 @@ vectis_upload_reader_route(vectis_http_method method, const char *path,
 vectis_upload_reader_route_config vectis_upload_reader_route_methods(
     vectis_http_methods methods, const char *path,
     vectis_upload_reader_handler_fn handler, void *userdata);
+vectis_cai_mcp_route_config vectis_cai_mcp_route(const char *path,
+                                                 cai_mcp_handler *handler);
+vectis_cai_mcp_route_config
+vectis_cai_mcp_route_configured(const char *path,
+                                const cai_mcp_handler_config *handler_config);
 vectis_json_route_config
 vectis_json_route(vectis_http_method method, const char *path,
                   const lonejson_map *input_map, size_t input_size,
@@ -1670,6 +1704,10 @@ vectis_register_upload_file(vectis_app *app,
 vectis_status
 vectis_register_upload_reader(vectis_app *app,
                               const vectis_upload_reader_route_config *route,
+                              vectis_error *error);
+vectis_status
+vectis_register_cai_mcp_route(vectis_app *app,
+                              const vectis_cai_mcp_route_config *route,
                               vectis_error *error);
 vectis_status vectis_register_json_route(vectis_app *app,
                                          const vectis_json_route_config *route,

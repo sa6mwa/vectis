@@ -228,6 +228,20 @@ typedef struct vectis_lua_server_upload_route {
   struct vectis_lua_server_upload_route *next;
 } vectis_lua_server_upload_route;
 
+typedef struct vectis_lua_server_mcp_tool {
+  lua_State *lua;
+  char *name;
+  int callback_ref;
+  struct vectis_lua_server_mcp_tool *next;
+} vectis_lua_server_mcp_tool;
+
+typedef struct vectis_lua_server_mcp_route {
+  cai_tool_registry *registry;
+  vectis_lua_server_mcp_tool *tools;
+  char *path;
+  struct vectis_lua_server_mcp_route *next;
+} vectis_lua_server_mcp_route;
+
 typedef struct vectis_lua_consumer_registration {
   vectis_consumer_service *service;
   vectis_consumer_service_receiver_config config;
@@ -252,6 +266,7 @@ struct vectis_lua_server {
   vectis_lua_server_callback_route *callback_routes;
   vectis_lua_server_dsv_route *dsv_routes;
   vectis_lua_server_upload_route *upload_routes;
+  vectis_lua_server_mcp_route *mcp_routes;
   vectis_lua_server_native_auth *native_auths;
   vectis_lua_server_auth_json_route *auth_json_routes;
   vectis_lua_consumer_registration *consumer_services;
@@ -5838,6 +5853,58 @@ static void vectis_lua_server_upload_route_free_all(vectis_lua_server *server) {
 }
 
 static void
+vectis_lua_server_mcp_tool_free(vectis_lua_server_mcp_tool *tool) {
+  if (tool == NULL) {
+    return;
+  }
+  if (tool->lua != NULL && tool->callback_ref != LUA_NOREF) {
+    luaL_unref(tool->lua, LUA_REGISTRYINDEX, tool->callback_ref);
+    tool->callback_ref = LUA_NOREF;
+  }
+  free(tool->name);
+  free(tool);
+}
+
+static void
+vectis_lua_server_mcp_route_free(vectis_lua_server_mcp_route *route) {
+  vectis_lua_server_mcp_tool *tool;
+  vectis_lua_server_mcp_tool *next_tool;
+
+  if (route == NULL) {
+    return;
+  }
+  if (route->registry != NULL) {
+    cai_tool_registry_destroy(route->registry);
+    route->registry = NULL;
+  }
+  tool = route->tools;
+  route->tools = NULL;
+  while (tool != NULL) {
+    next_tool = tool->next;
+    vectis_lua_server_mcp_tool_free(tool);
+    tool = next_tool;
+  }
+  free(route->path);
+  free(route);
+}
+
+static void vectis_lua_server_mcp_route_free_all(vectis_lua_server *server) {
+  vectis_lua_server_mcp_route *route;
+  vectis_lua_server_mcp_route *next;
+
+  if (server == NULL) {
+    return;
+  }
+  route = server->mcp_routes;
+  server->mcp_routes = NULL;
+  while (route != NULL) {
+    next = route->next;
+    vectis_lua_server_mcp_route_free(route);
+    route = next;
+  }
+}
+
+static void
 vectis_lua_server_auth_json_route_free_all(vectis_lua_server *server) {
   vectis_lua_server_auth_json_route *route;
   vectis_lua_server_auth_json_route *next;
@@ -6318,6 +6385,7 @@ static int vectis_lua_server_close(lua_State *lua) {
   vectis_lua_server_callback_route_free_all(server);
   vectis_lua_server_dsv_route_free_all(server);
   vectis_lua_server_upload_route_free_all(server);
+  vectis_lua_server_mcp_route_free_all(server);
   vectis_lua_server_auth_json_route_free_all(server);
   vectis_lua_server_openapi_schema_refs_free_all(server);
   vectis_lua_server_native_auth_free_all(server);
@@ -8968,6 +9036,7 @@ static int vectis_lua_server_new(lua_State *lua) {
   server->callback_routes = NULL;
   server->dsv_routes = NULL;
   server->upload_routes = NULL;
+  server->mcp_routes = NULL;
   server->native_auths = NULL;
   server->auth_json_routes = NULL;
   server->consumer_services = NULL;
@@ -10339,6 +10408,289 @@ static int vectis_lua_server_upload(lua_State *lua) {
   }
   route_data->next = server->upload_routes;
   server->upload_routes = route_data;
+  openapi_result =
+      vectis_lua_server_attach_openapi(lua, server, 2, methods, path);
+  if (openapi_result != 1 || !lua_toboolean(lua, -1)) {
+    return openapi_result;
+  }
+  lua_pop(lua, 1);
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_server_mcp_set_error(cai_error *error, int code,
+                                           const char *message) {
+  if (error != NULL) {
+    error->code = code;
+    if (error->message == NULL && message != NULL) {
+      error->message = cai_tool_result_strdup(message, NULL);
+    }
+  }
+  return code;
+}
+
+static int vectis_lua_server_mcp_tool_call(void *context,
+                                           const char *arguments_json,
+                                           cai_sink *output,
+                                           cai_error *error) {
+  vectis_lua_server_mcp_tool *tool;
+  lua_State *lua;
+  const char *result;
+  size_t result_size;
+  int rc;
+
+  tool = (vectis_lua_server_mcp_tool *)context;
+  if (tool == NULL || tool->lua == NULL || tool->callback_ref == LUA_NOREF ||
+      output == NULL) {
+    return vectis_lua_server_mcp_set_error(error, CAI_ERR_INVALID,
+                                           "Lua MCP tool is not configured");
+  }
+  lua = tool->lua;
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, tool->callback_ref);
+  lua_pushstring(lua, arguments_json != NULL ? arguments_json : "{}");
+  rc = lua_pcall(lua, 1, 2, 0);
+  if (rc != LUA_OK) {
+    lua_pop(lua, 1);
+    return vectis_lua_server_mcp_set_error(error, CAI_ERR_INVALID,
+                                           "Lua MCP tool callback failed");
+  }
+  if (lua_isnil(lua, -2)) {
+    result = lua_isnil(lua, -1) ? "Lua MCP tool callback returned nil"
+                                : lua_tostring(lua, -1);
+    lua_pop(lua, 2);
+    return vectis_lua_server_mcp_set_error(
+        error, CAI_ERR_INVALID,
+        result != NULL ? result : "Lua MCP tool callback failed");
+  }
+  result = lua_tolstring(lua, -2, &result_size);
+  if (result == NULL) {
+    lua_pop(lua, 2);
+    return vectis_lua_server_mcp_set_error(
+        error, CAI_ERR_INVALID,
+        "Lua MCP tool callback must return a JSON string");
+  }
+  rc = cai_sink_write(output, result, result_size, error);
+  lua_pop(lua, 2);
+  return rc;
+}
+
+static int vectis_lua_server_mcp_add_tool(lua_State *lua,
+                                          vectis_lua_server_mcp_route *route,
+                                          int index, vectis_error *error) {
+  vectis_lua_server_mcp_tool *tool;
+  const char *name;
+  const char *description;
+  const char *schema_json;
+  int strict;
+  cai_error caierr;
+  int rc;
+
+  index = lua_absindex(lua, index);
+  name = vectis_lua_table_string(lua, index, "name");
+  if (name == NULL || name[0] == '\0') {
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "MCP tool name is required");
+    return 0;
+  }
+  description = vectis_lua_table_string(lua, index, "description");
+  if (description == NULL) {
+    description = "";
+  }
+  schema_json = vectis_lua_table_string(lua, index, "schema_json");
+  if (schema_json == NULL) {
+    schema_json = vectis_lua_table_string(lua, index, "schema");
+  }
+  if (schema_json == NULL || schema_json[0] == '\0') {
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "MCP tool schema_json is required");
+    return 0;
+  }
+
+  tool = (vectis_lua_server_mcp_tool *)calloc(1u, sizeof(*tool));
+  if (tool == NULL) {
+    vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
+                         "failed to allocate MCP tool");
+    return 0;
+  }
+  tool->lua = lua;
+  tool->callback_ref = LUA_NOREF;
+  tool->name = vectis_cli_strdup(name);
+  if (tool->name == NULL) {
+    vectis_lua_server_mcp_tool_free(tool);
+    vectis_cli_error_set(error, VECTIS_ERR_NOMEM, "failed to copy MCP tool");
+    return 0;
+  }
+
+  lua_getfield(lua, index, "callback");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, index, "run");
+  }
+  if (!lua_isfunction(lua, -1)) {
+    lua_pop(lua, 1);
+    vectis_lua_server_mcp_tool_free(tool);
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "MCP tool callback is required");
+    return 0;
+  }
+  tool->callback_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  strict = vectis_lua_table_bool(lua, index, "strict", 1);
+
+  cai_error_init(&caierr);
+  rc = cai_tool_registry_register_raw(route->registry, name, description,
+                                      schema_json, strict,
+                                      vectis_lua_server_mcp_tool_call, tool,
+                                      &caierr);
+  if (rc != CAI_OK) {
+    vectis_cai_error(error, &caierr, "failed to register MCP tool");
+    cai_error_cleanup(&caierr);
+    vectis_lua_server_mcp_tool_free(tool);
+    return 0;
+  }
+  cai_error_cleanup(&caierr);
+  tool->next = route->tools;
+  route->tools = tool;
+  return 1;
+}
+
+static int vectis_lua_server_mcp_tools(lua_State *lua,
+                                       vectis_lua_server_mcp_route *route,
+                                       int index, vectis_error *error) {
+  size_t count;
+  size_t i;
+
+  index = lua_absindex(lua, index);
+  lua_getfield(lua, index, "tools");
+  if (!lua_istable(lua, -1)) {
+    lua_pop(lua, 1);
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "MCP route tools must be a table");
+    return 0;
+  }
+  count = (size_t)lua_rawlen(lua, -1);
+  if (count == 0u) {
+    lua_pop(lua, 1);
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "MCP route tools must not be empty");
+    return 0;
+  }
+  for (i = 1u; i <= count; ++i) {
+    lua_rawgeti(lua, -1, (lua_Integer)i);
+    if (!lua_istable(lua, -1)) {
+      lua_pop(lua, 2);
+      vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                           "MCP route tool entries must be tables");
+      return 0;
+    }
+    if (!vectis_lua_server_mcp_add_tool(lua, route, -1, error)) {
+      lua_pop(lua, 2);
+      return 0;
+    }
+    lua_pop(lua, 1);
+  }
+  lua_pop(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_server_mcp(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_app *app;
+  vectis_lua_server_mcp_route *route_data;
+  vectis_cai_mcp_route_config route;
+  vectis_http_methods methods;
+  const char *path;
+  const char *name;
+  const char *version;
+  cai_error caierr;
+  vectis_error error;
+  vectis_status status;
+  int openapi_result;
+
+  server = vectis_lua_check_server(lua, 1);
+  app = vectis_lua_server_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  path = vectis_lua_table_string(lua, 2, "path");
+  if (path == NULL || path[0] == '\0') {
+    path = "/mcp";
+  }
+  methods = vectis_lua_route_methods(
+      lua, 2,
+      VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_POST |
+          VECTIS_HTTP_METHODS_DELETE,
+      "MCP route");
+
+  route_data = (vectis_lua_server_mcp_route *)calloc(1u, sizeof(*route_data));
+  if (route_data == NULL) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to allocate MCP route");
+  }
+  route_data->path = vectis_cli_strdup(path);
+  if (route_data->path == NULL) {
+    vectis_lua_server_mcp_route_free(route_data);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to copy MCP route path");
+  }
+
+  cai_error_init(&caierr);
+  if (cai_tool_registry_new(&route_data->registry, &caierr) != CAI_OK) {
+    vectis_error_clear(&error);
+    vectis_cai_error(&error, &caierr, "failed to create MCP tool registry");
+    cai_error_cleanup(&caierr);
+    vectis_lua_server_mcp_route_free(route_data);
+    return vectis_lua_push_error(lua, error.code, &error);
+  }
+  cai_error_cleanup(&caierr);
+
+  vectis_error_clear(&error);
+  if (!vectis_lua_server_mcp_tools(lua, route_data, 2, &error)) {
+    vectis_lua_server_mcp_route_free(route_data);
+    return vectis_lua_push_error(lua,
+                                 error.code != VECTIS_OK ? error.code
+                                                         : VECTIS_ERR_INVALID,
+                                 &error);
+  }
+
+  route = vectis_cai_mcp_route_configured(route_data->path, NULL);
+  route.methods = methods;
+  name = vectis_lua_table_string(lua, 2, "name");
+  version = vectis_lua_table_string(lua, 2, "version");
+  route.handler_config.name = name != NULL ? name : "vectis";
+  route.handler_config.version =
+      version != NULL ? version : VECTIS_VERSION;
+  route.handler_config.tools = route_data->registry;
+  route.handler_config.request_max_bytes =
+      vectis_lua_table_size(lua, 2, "request_max_bytes",
+                            route.handler_config.request_max_bytes);
+  route.handler_config.response_spool_memory_limit = vectis_lua_table_size(
+      lua, 2, "response_spool_memory_limit",
+      route.handler_config.response_spool_memory_limit);
+  route.handler_config.tool_output_max_bytes = vectis_lua_table_size(
+      lua, 2, "tool_output_max_bytes",
+      route.handler_config.tool_output_max_bytes);
+  route.handler_config.enable_sessions =
+      vectis_lua_table_bool(lua, 2, "enable_sessions",
+                            route.handler_config.enable_sessions);
+  route.handler_config.disable_origin_validation = vectis_lua_table_bool(
+      lua, 2, "disable_origin_validation",
+      route.handler_config.disable_origin_validation);
+  route.handler_config.protocol_version =
+      vectis_lua_table_string(lua, 2, "protocol_version");
+  route.handler_config.require_protocol_version = vectis_lua_table_bool(
+      lua, 2, "require_protocol_version",
+      route.handler_config.require_protocol_version);
+  route.buffer_bytes = vectis_lua_table_size(
+      lua, 2, "buffer_bytes", VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES);
+  route.body = vectis_body_upload_max(
+      vectis_lua_table_size(lua, 2, "max_body_bytes", 0u));
+
+  vectis_error_clear(&error);
+  status = app->cai_mcp_route(app, &route, &error);
+  if (status != VECTIS_OK) {
+    vectis_lua_server_mcp_route_free(route_data);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  route_data->next = server->mcp_routes;
+  server->mcp_routes = route_data;
   openapi_result =
       vectis_lua_server_attach_openapi(lua, server, 2, methods, path);
   if (openapi_result != 1 || !lua_toboolean(lua, -1)) {
@@ -15019,6 +15371,8 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "dsv");
     lua_pushcfunction(lua, vectis_lua_server_upload);
     lua_setfield(lua, -2, "upload");
+    lua_pushcfunction(lua, vectis_lua_server_mcp);
+    lua_setfield(lua, -2, "mcp");
     lua_pushcfunction(lua, vectis_lua_server_sse);
     lua_setfield(lua, -2, "sse");
     lua_pushcfunction(lua, vectis_lua_server_openapi_doc);

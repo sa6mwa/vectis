@@ -257,6 +257,9 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add thin C-side Vectis adapters for request-body reader to `cai_source`, CAI output to Vectis response/lockd payload/file, and CAI errors to Vectis structured errors.
 - [x] Keep CAI itself as the primary SDK for OpenAI mechanics; Vectis should provide integration glue and service-oriented DX, not a second CAI wrapper.
 - [x] Add a Lua `vectis.cai` service helper for normalized config, owned/borrowed client and agent workflows, ChatGPT auth aliases, one-shot response helpers, and Vectis-structured CAI errors while preserving direct `require("cai")`.
+- [x] Add a libvectis/Kore CAI MCP route adapter that mounts CAI's Streamable HTTP handler, streams request bodies into CAI as a `cai_source`, and names the current response side as file-backed rather than live streaming.
+- [x] Add Lua `server:mcp()` for Vectis-owned MCP servers with C-owned CAI tool registries populated from Lua raw JSON tool callbacks.
+- [ ] Re-export the upstream CAI MCP client Lua binding through the existing CAI/vectis.libs surfaces once it lands upstream; do not implement a Vectis-owned duplicate client binding.
 
 ## Area 12: Lua Runtime and Framework
 
