@@ -410,6 +410,47 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_example_lua_api_server_pack PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
+  add_test(NAME vectis_example_lua_metrics_persistent
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
+                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                   "-DVECTIS_SCRIPT=${CMAKE_SOURCE_DIR}/examples/lua/metrics_persistent.lua"
+                   "-DVECTIS_PORT_ENV=VECTIS_LUA_METRICS_PERSISTENT_EXAMPLE_PORT"
+                   "-DVECTIS_SUCCESS_MARKER=lua metrics persistent example ok"
+                   "-DVECTIS_LABEL=Lua metrics persistent example"
+                   "-DVECTIS_EXTRA_ENV=VECTIS_LUA_METRICS_PERSISTENT_EXAMPLE_STORAGE=${CMAKE_CURRENT_BINARY_DIR}/lua-metrics-persistent-pouch"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/run_example_with_port.cmake")
+  set_tests_properties(vectis_example_lua_metrics_persistent PROPERTIES
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
+  add_test(NAME vectis_example_lua_metrics_authenticated
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
+                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                   "-DVECTIS_SCRIPT=${CMAKE_SOURCE_DIR}/examples/lua/metrics_authenticated.lua"
+                   "-DVECTIS_PORT_ENV=VECTIS_LUA_METRICS_AUTH_EXAMPLE_PORT"
+                   "-DVECTIS_SUCCESS_MARKER=lua metrics authenticated example ok"
+                   "-DVECTIS_LABEL=Lua metrics authenticated example"
+                   "-DVECTIS_EXTRA_ENV=VECTIS_LUA_METRICS_AUTH_EXAMPLE_AUTH_PATH=${CMAKE_CURRENT_BINARY_DIR}/lua-metrics-auth-example-credentials.json;VECTIS_LUA_METRICS_AUTH_EXAMPLE_STATE_PATH=${CMAKE_CURRENT_BINARY_DIR}/lua-metrics-auth-example-state.json;VECTIS_LUA_METRICS_AUTH_EXAMPLE_STORAGE=${CMAKE_CURRENT_BINARY_DIR}/lua-metrics-auth-pouch"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/run_example_with_port.cmake")
+  set_tests_properties(vectis_example_lua_metrics_authenticated PROPERTIES
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
+  add_test(NAME vectis_example_lua_metrics_ephemeral
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
+                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                   "-DVECTIS_SCRIPT=${CMAKE_SOURCE_DIR}/examples/lua/metrics_ephemeral.lua"
+                   "-DVECTIS_PORT_ENV=VECTIS_LUA_METRICS_EPHEMERAL_EXAMPLE_PORT"
+                   "-DVECTIS_SUCCESS_MARKER=lua metrics ephemeral example ok"
+                   "-DVECTIS_LABEL=Lua metrics ephemeral example"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/run_example_with_port.cmake")
+  set_tests_properties(vectis_example_lua_metrics_ephemeral PROPERTIES
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
   add_test(NAME vectis_example_lua_downstream_api
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"

@@ -99,7 +99,9 @@ function browser_flow:provider(opts)
 end
 
 function browser_flow:mount(server, opts)
-  if type(server) ~= "table" or type(server.auth_routes) ~= "function" then
+  local server_type = type(server)
+  if (server_type ~= "table" and server_type ~= "userdata") or
+      type(server.auth_routes) ~= "function" then
     error("vectis.auth.browser_flow:mount requires a vectis server", 2)
   end
   return server:auth_routes(self:routes(opts))

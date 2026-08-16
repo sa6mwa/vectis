@@ -137,6 +137,18 @@ modules, but it must not require another file from `examples/lua/`.
   issued credentials. By default it self-tests and exits; set
   `VECTIS_LUA_API_EXAMPLE_SERVE=1` to keep it listening. CTest also packs and
   executes this script as `vectis_example_lua_api_server_pack`.
+- `lua/metrics_persistent.lua`: simple Hello World page with unauthenticated
+  `/.metrics` dashboard, `/.metrics/snapshot.json`, and opt-in `pouch://`
+  persistence. Set `VECTIS_LUA_METRICS_PERSISTENT_EXAMPLE_SERVE=1` to keep it
+  listening.
+- `lua/metrics_authenticated.lua`: simple Hello World page with
+  authenticated `/.metrics` routes, native browser-flow login routes, a
+  browser/WebDAV Basic credential path, native issued Bearer credentials for
+  M2M-style access, and opt-in `pouch://` persistence. External OAuth2/OIDC
+  M2M validation is plugged in through the same callback-provider contract; it
+  is not a separate metrics-specific adapter.
+- `lua/metrics_ephemeral.lua`: simple Hello World page with unauthenticated
+  `/.metrics` dashboard and JSON snapshot using in-memory metrics only.
 - `lua/downstream_api.lua`: packable Lua downstream API client example using
   direct `server:json()` receivers for the deterministic local API and
   `vectis.rest` base-URL client helpers for the downstream calls. CTest runs
