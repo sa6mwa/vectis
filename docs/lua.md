@@ -82,6 +82,9 @@ modules or C SDK workflows:
 - `vectis.auth`: Lua DX helpers plus the native auth, TOTP/QR, email token,
   OAuth2/OIDC, and WebDAV key facade, documented in
   [Lua auth](lua-auth.md).
+- `vectis.cai`: CAI service configuration, owned/borrowed client and agent
+  helpers, and structured CAI error decoration, documented in
+  [Lua CAI](lua-cai.md).
 - `vectis.cert`: certificate/key/CSR/CA workflows, documented in
   [Lua certificates](lua-certs.md).
 - `vectis.dsv`: CSV/TSV/DSV parsing and serialization, documented in

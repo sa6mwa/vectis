@@ -105,6 +105,61 @@ stub("softline", {
     return { opts = opts }
   end,
 })
+stub("cai", {
+  open = function()
+    local client = {}
+    function client:close()
+      self.closed = true
+    end
+    function client:new_agent()
+      local agent = {}
+      function agent:close()
+        self.closed = true
+      end
+      return agent
+    end
+    return client
+  end,
+  load_dotenv_api_key = function()
+    return "key"
+  end,
+  model_info = function()
+    return { id = "model" }
+  end,
+  model_can_estimate_usage_usd = function()
+    return true
+  end,
+  response_params = function()
+    return {}
+  end,
+  conversation_items_params = function()
+    return {}
+  end,
+  tool_schema = function()
+    return {}
+  end,
+  tool_registry = function()
+    return {}
+  end,
+  mcp_handler = function()
+    return {}
+  end,
+  chatgpt_auth_default_path = function()
+    return "auth.json"
+  end,
+  chatgpt_auth = function()
+    return {}
+  end,
+  chatgpt_login = function()
+    return {}
+  end,
+  chatgpt_login_browser_command = function()
+    return { "open" }
+  end,
+  chatgpt_login_open_browser = function()
+    return true
+  end,
+})
 stub("curl.core", {
   version = function()
     return "curl-stub"
@@ -170,6 +225,7 @@ local expected_modules = {
   "curl",
   "vectis",
   "vectis.auth",
+  "vectis.cai",
   "vectis.dsv",
   "vectis.http",
   "vectis.lockd",
@@ -217,6 +273,28 @@ assert(http_result.ok == true)
 assert(last_curl_opts.protocols == "http,https")
 assert(vectis.auth == require("vectis.auth"))
 assert(vectis.auth.core == require("vectis.auth.core"))
+assert(vectis.cai == require("vectis.cai"))
+assert(vectis.cai.native == package.loaded.cai)
+assert(vectis.cai.config({ provider = "openrouter" }).openrouter == true)
+local rock_cai_err = vectis.cai.error({ dependency_code = 1 }, "rock cai")
+assert(rock_cai_err.source == "cai")
+assert(rock_cai_err.source_code == vectis.ERROR_SOURCE_CAI)
+local rock_agent = { closed = false }
+function rock_agent:close()
+  self.closed = true
+end
+local rock_client = {}
+function rock_client:new_agent()
+  return rock_agent
+end
+local rock_agent_result = assert(vectis.cai.with_agent({
+  client = rock_client,
+}, function(agent)
+  assert(agent == rock_agent)
+  return "agent"
+end))
+assert(rock_agent_result == "agent")
+assert(rock_agent.closed == true)
 local flow = vectis.auth.browser_flow({
   credentials_path = "credentials.json",
   state_path = "state.json",

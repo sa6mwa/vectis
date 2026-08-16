@@ -12,7 +12,7 @@ It exposes:
 - error source constants: `ERROR_SOURCE_NONE`, `ERROR_SOURCE_VECTIS`,
   `ERROR_SOURCE_KORE`, `ERROR_SOURCE_LOCKDC`, `ERROR_SOURCE_LONEJSON`,
   `ERROR_SOURCE_PSLOG`, `ERROR_SOURCE_CURL`, `ERROR_SOURCE_OPENSSL`, and
-  `ERROR_SOURCE_LIBSSH2`, and `ERROR_SOURCE_CPKT`
+  `ERROR_SOURCE_LIBSSH2`, `ERROR_SOURCE_CPKT`, and `ERROR_SOURCE_CAI`
 - `status_string(status)`
 - `error_source_string(source)`
 - `decorate_error(err, defaults)`

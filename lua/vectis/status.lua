@@ -18,6 +18,7 @@ M.ERROR_SOURCE_CURL = 6
 M.ERROR_SOURCE_OPENSSL = 7
 M.ERROR_SOURCE_LIBSSH2 = 8
 M.ERROR_SOURCE_CPKT = 9
+M.ERROR_SOURCE_CAI = 10
 
 local status_names = {
   [M.OK] = "ok",
@@ -40,6 +41,7 @@ local source_names = {
   [M.ERROR_SOURCE_OPENSSL] = "openssl",
   [M.ERROR_SOURCE_LIBSSH2] = "libssh2",
   [M.ERROR_SOURCE_CPKT] = "cpkt",
+  [M.ERROR_SOURCE_CAI] = "cai",
 }
 
 function M.status_string(status)

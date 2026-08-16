@@ -24,18 +24,35 @@ tests includes:
 - `cai.tool_registry`
 - `cai.mcp_handler`
 
-Use CAI directly for OpenAI request construction, tool schemas, MCP handling,
-model metadata, and credential loading. Do not add a `vectis.cai` helper that
-duplicates CAI request-building APIs.
+Use CAI directly for OpenAI request construction, sessions, tool schemas, MCP
+handling, model metadata, and credential loading. `vectis.cai` is a service DX
+layer around those native objects, not a second AI SDK.
 
 ## Vectis Boundary
 
-Future Vectis-owned CAI helpers should be limited to integration surfaces:
+`require("vectis.cai")` exposes:
+
+- `native`, which is the same table as `require("cai")`
+- aliases for common CAI constructors and metadata helpers such as
+  `tool_schema`, `response_params`, `tool_registry`, `mcp_handler`,
+  `model_info`, and ChatGPT auth/login helpers
+- `config(opts)`, which normalizes Vectis service naming such as
+  `provider = "openrouter"` and `auth_json_path`
+- `open(opts)`, `with_client(opts, handler)`, `new_agent(opts)`, and
+  `with_agent(opts, handler)` for owned/borrowed client workflows
+- `send_text(opts, text)` as a small one-shot convenience over CAI agents that
+  returns the CAI response handle
+- `error(err, message)`, which maps CAI failures into Vectis structured error
+  tables with `source_code = ERROR_SOURCE_CAI`
+
+The C API also exposes service adapters for embedders:
 
 - adapting a Vectis request-body reader into a `cai_source`
 - writing CAI output to a Vectis HTTP response, lockd payload, or file sink
-- mapping CAI errors into Vectis JSON API responses
+- mapping CAI errors into Vectis errors
 - logger inheritance where Vectis owns the surrounding service component
 
-Those helpers need an explicit ownership and streaming contract before they are
-implemented. They must preserve CAI as the primary SDK for AI mechanics.
+The C adapters preserve true streaming. The Lua helper does not claim to wrap a
+Vectis HTTP request/response userdata because that userdata bridge is not part
+of the current Lua server surface; Lua code should use CAI's dependency-native
+spooled and callback-backed APIs for large values.

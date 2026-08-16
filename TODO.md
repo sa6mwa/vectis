@@ -252,10 +252,11 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 ## Area 11.5: CAI Service Integration
 
 - [x] Track CAI as a dependency once its C SDK surface stabilizes.
-- [ ] Add a Vectis CAI config section that can borrow an external `cai_client` or create an app-owned client with Vectis logger inheritance.
-- [ ] Mirror the lockd logger model for CAI: dedicated CAI logger, fallback to app/Kore logger, and `logger_disabled` opt-out.
-- [ ] Add thin Vectis adapters for request-body reader to `cai_source`, CAI output to Vectis response/lockd payload, and CAI errors to JSON API responses.
+- [x] Add a Vectis CAI config section that can borrow an external `cai_client` or create an app-owned client with Vectis logger inheritance.
+- [x] Mirror the lockd logger model for CAI: dedicated CAI logger, fallback to app/Kore logger, and `logger_disabled` opt-out.
+- [x] Add thin C-side Vectis adapters for request-body reader to `cai_source`, CAI output to Vectis response/lockd payload/file, and CAI errors to Vectis structured errors.
 - [x] Keep CAI itself as the primary SDK for OpenAI mechanics; Vectis should provide integration glue and service-oriented DX, not a second CAI wrapper.
+- [x] Add a Lua `vectis.cai` service helper for normalized config, owned/borrowed client and agent workflows, ChatGPT auth aliases, one-shot response helpers, and Vectis-structured CAI errors while preserving direct `require("cai")`.
 
 ## Area 12: Lua Runtime and Framework
 
@@ -359,7 +360,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add Lua OpenAPI route metadata and JSON/YAML generation helpers on the C-owned `vectis.server` receiver, including schema lifetime retention and packed API example coverage.
 - [x] Document and expose the core Lua auth facade for user DB configuration, credential storage location, password/TOTP/email-token factor policy, OAuth2/OIDC flows, WebDAV key issuance/revocation, and callback/native provider registration.
 - [x] Add higher-level Lua auth DX helpers for opinionated admin/browser flows on top of the existing C-owned native auth routes and provider contract.
-- [ ] Add Lua CAI integration helpers once the CAI C SDK surface stabilizes: borrow/create clients, inherit logging, stream request bodies into `cai_source`, stream CAI output to HTTP/lockd/file sinks, expose tool callbacks, and preserve CAI as the primary OpenAI SDK.
+- [x] Add Lua CAI integration helpers once the CAI C SDK surface stabilizes: borrow/create clients, normalize config/auth paths, expose common CAI constructors and tool helpers, decorate CAI errors with Vectis status/source metadata, and preserve CAI as the primary OpenAI SDK. C embedders use the public CAI request/source and output sink adapters for true streaming HTTP/lockd/file integration; the current Lua server route surface uses CAI's dependency-native spooled/callback APIs rather than a Vectis request/response userdata bridge.
 - [x] Add explicit Lua facade contracts for cpkt `sus`/whisper and cpkt audio/miniaudio, including streaming audio source/sink ownership, transcription/voice workflow shape, and deterministic smoke tests without requiring live external services.
 - [x] Add cpkt `sus`/whisper Lua transcriber receiver shells from `docs/lua-sus-audio-contract.md`, including model-created transcribers, PCM table transcription methods, revised text, and segment/progress/abort callback registration.
 - [x] Add cpkt `sus`/whisper Lua process-wide backend log sink configuration and log-level constants.

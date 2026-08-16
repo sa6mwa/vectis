@@ -26,6 +26,7 @@ local terminal = require("vectis.terminal")
 local webdav = require("vectis.webdav")
 local mqtt = require("vectis.mqtt")
 local http = require("vectis.http")
+local vcai = require("vectis.cai")
 local lockd = require("vectis.lockd")
 local dsv = require("vectis.dsv")
 local xml = require("vectis.xml")
@@ -77,9 +78,11 @@ assert(vectis.status_string(vectis.ERR_TIMEOUT) == "timeout")
 assert(vectis.error_source_string(vectis.ERROR_SOURCE_VECTIS) == "vectis")
 assert(vectis.error_source_string(vectis.ERROR_SOURCE_LIBSSH2) == "libssh2")
 assert(vectis.error_source_string(vectis.ERROR_SOURCE_CPKT) == "cpkt")
+assert(vectis.error_source_string(vectis.ERROR_SOURCE_CAI) == "cai")
 assert(status.status_string(status.ERR_INVALID) == "invalid")
 assert(status.error_source_string(status.ERROR_SOURCE_CURL) == "curl")
 assert(status.error_source_string(status.ERROR_SOURCE_CPKT) == "cpkt")
+assert(status.error_source_string(status.ERROR_SOURCE_CAI) == "cai")
 assert(vectis.status == status)
 assert(vectis.auth == auth)
 assert(auth.core == auth_core)
@@ -98,6 +101,63 @@ assert(type(embedded.chunks) == "function")
 assert(type(embedded.list) == "function")
 assert(type(embedded.extract) == "function")
 assert(vectis.log == log)
+assert(vectis.cai == vcai)
+assert(vcai.native == cai)
+assert(vcai.tool_schema == cai.tool_schema)
+assert(vcai.response_params == cai.response_params)
+assert(vcai.model_info == cai.model_info)
+local vcai_config = vcai.config({
+  provider = "openrouter",
+  api_key_env = "VECTIS_TEST_CAI_KEY",
+  auth_json_path = "auth.json",
+  usage_limits = { max_total_tokens = 16 },
+  agent_config = { model = "openai/gpt-oss-20b" },
+})
+assert(vcai_config.provider == nil)
+assert(vcai_config.openrouter == true)
+assert(vcai_config.api_key_env == "VECTIS_TEST_CAI_KEY")
+assert(vcai_config.auth_json_path == nil)
+assert(vcai_config.chatgpt_auth_json == "auth.json")
+assert(vcai_config.usage_limits.max_total_tokens == 16)
+local cai_err = vcai.error({ dependency_code = 7, http_status = 429 },
+                           "rate limited")
+assert(cai_err.status == status.ERR_STATE)
+assert(cai_err.source_code == status.ERROR_SOURCE_CAI)
+assert(cai_err.source == "cai")
+assert(cai_err.dependency_code == 7)
+assert(cai_err.http_status == 429)
+local fake_agent = { closed = false }
+function fake_agent:close()
+  self.closed = true
+end
+function fake_agent:send_text(text)
+  return { text = text }
+end
+local fake_client = { closed = false, created = false }
+function fake_client:close()
+  self.closed = true
+end
+function fake_client:new_agent(agent_config)
+  self.created = agent_config and agent_config.model == "fake-model"
+  return fake_agent
+end
+local client_result = assert(vcai.with_client({ client = fake_client },
+                                              function(client)
+  assert(client == fake_client)
+  return "borrowed"
+end))
+assert(client_result == "borrowed")
+assert(fake_client.closed == false)
+local agent_result = assert(vcai.with_agent({
+  client = fake_client,
+  agent_config = { model = "fake-model" },
+}, function(agent)
+  assert(agent == fake_agent)
+  return "agent"
+end))
+assert(agent_result == "agent")
+assert(fake_client.created == true)
+assert(fake_agent.closed == true)
 assert(type(ssh) == "table")
 assert(type(ssh.open) == "function")
 assert(type(ssh.exec) == "function")

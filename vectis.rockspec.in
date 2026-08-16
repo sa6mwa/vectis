@@ -25,6 +25,7 @@ build = {
     ["curl"] = "lua/curl/init.lua",
     ["vectis"] = "lua/vectis.lua",
     ["vectis.auth"] = "lua/vectis/auth.lua",
+    ["vectis.cai"] = "lua/vectis/cai.lua",
     ["vectis.dsv"] = "lua/vectis/dsv.lua",
     ["vectis.http"] = "lua/vectis/http.lua",
     ["vectis.lockd"] = "lua/vectis/lockd.lua",

@@ -22,6 +22,7 @@ local status_exports = {
   "ERROR_SOURCE_OPENSSL",
   "ERROR_SOURCE_LIBSSH2",
   "ERROR_SOURCE_CPKT",
+  "ERROR_SOURCE_CAI",
 }
 
 local dependency_modules = {
@@ -48,6 +49,7 @@ local workflow_modules = {
   ssh = "vectis.ssh",
   log = "vectis.log",
   http = "vectis.http",
+  cai = "vectis.cai",
   webdav = "vectis.webdav",
   rest = "vectis.rest",
   terminal = "vectis.terminal",
