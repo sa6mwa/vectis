@@ -100,6 +100,24 @@ The same opt-in variables drive `examples/lua/sus_loaded_model.lua`. Without
 them, the example exits successfully after printing a skipped marker so packed
 example smoke tests remain deterministic.
 
+`make test-sus-audio-hardening` is the stronger cached-model transcription
+gate. It is part of `make prerelease-hardening`, not normal `make prerelease`,
+and skips unless `VECTIS_SUS_AUDIO_HARDENING=1` is set. When enabled, it
+caches the configured MP3 speech fixture and index page under
+`${XDG_CACHE_HOME:-$HOME/.cache}/vectis/hardening/sus-audio` unless
+`VECTIS_SUS_AUDIO_HARDENING_CACHE` overrides the root. The model is opened via
+`sus.open_cached()` using `VECTIS_SUS_AUDIO_HARDENING_MODEL` or `tiny`, so the
+model cache path and checksum policy stay owned by the cpkt SUS catalog.
+
+Useful hardening overrides:
+
+- `VECTIS_SUS_AUDIO_HARDENING_AUDIO_URL`
+- `VECTIS_SUS_AUDIO_HARDENING_INDEX_URL`
+- `VECTIS_SUS_AUDIO_HARDENING_EXPECTED_TEXT`
+- `VECTIS_SUS_AUDIO_HARDENING_MODEL`
+- `VECTIS_SUS_AUDIO_HARDENING_THREADS`
+- `VECTIS_SUS_AUDIO_HARDENING_LANGUAGE`
+
 Cache status callbacks receive a Lua-owned event table with:
 
 - `phase`

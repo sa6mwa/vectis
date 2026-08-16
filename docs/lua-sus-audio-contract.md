@@ -170,3 +170,12 @@ when `VECTIS_LUA_SUS_MODEL_PATH=/path/to/ggml-model.bin` is set, or when
 resolution. The gate opens a real model, exercises PCM transcription,
 materialized text, decoder-segmented transcription, VOX-segment transcription,
 and abort callback propagation through Lua.
+
+`make test-sus-audio-hardening` is the network/cache-backed production
+hardening gate. It skips unless `VECTIS_SUS_AUDIO_HARDENING=1` is set. When
+enabled, it caches a real MP3 speech fixture and index-derived expected text
+under the user cache directory, lets `sus.open_cached()` resolve/cache the
+configured catalog model, and verifies that decoder-segmented transcription and
+revised text contain the expected normalized transcript. This target is wired
+into `make prerelease-hardening`, not the normal deterministic `make
+prerelease` gate.

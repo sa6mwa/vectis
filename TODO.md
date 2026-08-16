@@ -369,6 +369,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add cpkt `sus`/whisper Lua process-wide backend log sink configuration and log-level constants.
 - [x] Add the audio/SUS Lua interop boundary and expose `sus` segmented decoder/VOX transcription methods that borrow `audio.decoder` and `audio.segment` handles without duplicating private userdata layouts.
 - [x] Implement remaining loaded-model cpkt `sus`/whisper Lua coverage from `docs/lua-sus-audio-contract.md`, including callback propagation coverage against a loaded model and live/local model coverage.
+- [x] Add a hardening-only cached-model SUS/audio transcription gate that downloads/caches a real speech fixture, uses the cpkt SUS model catalog/cache path, and verifies expected transcript text outside normal prerelease.
 - [x] Implement the remaining cpkt audio/miniaudio Lua facade receiver shells from `docs/lua-sus-audio-contract.md`, including capture/playback device helpers behind opt-in tests.
 - [x] Add initial dependency-native cpkt `sus` and audio Lua modules with deterministic metadata, catalog/cache, callback decoder/encoder, VOX, PTT, preload, example, and packed execution coverage.
 - [x] Add user-facing Lua docs for the dependency-native cpkt `sus` and audio facades.
