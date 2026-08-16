@@ -905,11 +905,25 @@ typedef struct vectis_server_config {
   vectis_autoblock_config autoblock;
 } vectis_server_config;
 
+typedef enum vectis_supervision_policy {
+  /* Choose direct foreground Kore unless app-owned services require a managed
+   * supervisor topology. */
+  VECTIS_SUPERVISION_AUTO = 0,
+  /* Require direct foreground Kore for run(); fails if app-owned services are
+   * declared because those services require supervision. */
+  VECTIS_SUPERVISION_DIRECT = 1,
+  /* Force the managed supervisor topology for route-backed apps. */
+  VECTIS_SUPERVISION_SUPERVISED = 2
+} vectis_supervision_policy;
+
 typedef struct vectis_app_config {
   const char *app_name;
   pslog_logger *logger;
   pslog_mode log_mode;
   pslog_level min_log_level;
+  /* Runtime topology selection for route-backed apps. AUTO chooses direct
+   * foreground Kore unless app-owned services require supervision. */
+  vectis_supervision_policy supervision_policy;
   /* Grace period for managed runtime shutdown before forced termination.
    * Zero uses VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS. */
   long shutdown_grace_ms;

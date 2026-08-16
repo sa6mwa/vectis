@@ -23,7 +23,10 @@ server:close()
 for tests and tools that need the Lua parent to continue; pair it with
 `server:wait()` or `server:stop()`. `shutdown_grace_ms` controls the managed
 runtime grace period before forced child termination; zero or omission uses the
-Vectis default.
+Vectis default. `supervision_policy` accepts `auto`, `direct`, or `supervised`:
+`auto` uses direct foreground Kore unless app-owned services require the managed
+supervisor topology, `direct` fails if such services are declared, and
+`supervised` forces the managed supervisor topology for route-backed apps.
 
 `vectis.server.new({tls = ...})` accepts the same manual and ACME modes as the
 C app config. Manual TLS can use paths or in-memory PEM strings:

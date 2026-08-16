@@ -9161,6 +9161,7 @@ static int vectis_lua_server_new(lua_State *lua) {
   const char *app_name;
   const char *bind;
   const char *mode;
+  const char *supervision_policy;
   const char **lockd_endpoints;
   const char **tls_domains;
   const char *pem;
@@ -9179,6 +9180,19 @@ static int vectis_lua_server_new(lua_State *lua) {
   bind = vectis_lua_table_string(lua, 1, "bind");
   vectis_app_config_init(&config);
   config.app_name = app_name != NULL ? app_name : "vectis-lua";
+  supervision_policy = vectis_lua_table_string(lua, 1, "supervision_policy");
+  if (supervision_policy != NULL) {
+    if (strcmp(supervision_policy, "auto") == 0) {
+      config.supervision_policy = VECTIS_SUPERVISION_AUTO;
+    } else if (strcmp(supervision_policy, "direct") == 0) {
+      config.supervision_policy = VECTIS_SUPERVISION_DIRECT;
+    } else if (strcmp(supervision_policy, "supervised") == 0) {
+      config.supervision_policy = VECTIS_SUPERVISION_SUPERVISED;
+    } else {
+      return luaL_error(
+          lua, "server supervision_policy must be auto, direct, or supervised");
+    }
+  }
   config.shutdown_grace_ms = vectis_lua_table_long(lua, 1, "shutdown_grace_ms",
                                                    config.shutdown_grace_ms);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;

@@ -784,6 +784,36 @@ do
   assert(bad_shutdown_error.message:match("shutdown_grace_ms"))
 end
 
+do
+  local direct_policy_server = assert(vectis.server.new({
+    app_name = "lua-direct-supervision-policy",
+    port = 18161,
+    supervision_policy = "direct",
+  }))
+  direct_policy_server:close()
+end
+
+do
+  local supervised_policy_server = assert(vectis.server.new({
+    app_name = "lua-supervised-supervision-policy",
+    port = 18162,
+    supervision_policy = "supervised",
+  }))
+  supervised_policy_server:close()
+end
+
+do
+  local ok, err = pcall(function()
+    return vectis.server.new({
+      app_name = "lua-bad-supervision-policy",
+      port = 18163,
+      supervision_policy = "invalid",
+    })
+  end)
+  assert(ok == false)
+  assert(tostring(err):match("supervision_policy"))
+end
+
 local tls_bundle_pem_server = assert(vectis.server.new({
   app_name = "lua-manual-tls-bundle-pem",
   port = 18170,

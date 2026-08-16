@@ -1197,6 +1197,7 @@ static void assert_server_config_validation(void) {
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  assert(config.supervision_policy == VECTIS_SUPERVISION_AUTO);
   assert(config.shutdown_grace_ms == VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS);
 
   config.server.max_connections = 0u;
@@ -1216,6 +1217,16 @@ static void assert_server_config_validation(void) {
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.server.max_request_header_bytes = 1023u;
   assert_invalid_server_config(&config, "max_request_header_bytes");
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.supervision_policy = VECTIS_SUPERVISION_DIRECT;
+  assert_valid_server_config(&config);
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.supervision_policy = VECTIS_SUPERVISION_SUPERVISED;
+  assert_valid_server_config(&config);
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
@@ -1249,6 +1260,11 @@ static void assert_server_config_validation(void) {
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.supervision_policy = (vectis_supervision_policy)99;
+  assert_invalid_server_config(&config, "supervision_policy");
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.shutdown_grace_ms = -1L;
   assert_invalid_server_config(&config, "shutdown_grace_ms");
 
@@ -1259,6 +1275,40 @@ static void assert_server_config_validation(void) {
   config.server.keepalive_max_requests = 0u;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
+  app->close(app);
+}
+
+static void assert_direct_supervision_policy_rejects_app_services(void) {
+  vectis_app_config config;
+  vectis_metrics_config metrics;
+  vectis_route_config route;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.supervision_policy = VECTIS_SUPERVISION_DIRECT;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_metrics_config_init(&metrics);
+  metrics.path = "/.metrics";
+  metrics.json_path = "/.metrics.json";
+  metrics.persistence_enabled = 1;
+  metrics.storage_endpoint = "pouch:///tmp/vectis-direct-policy-not-used";
+  status = app->metrics(app, &metrics, &error);
+  assert(status == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/direct-policy", sample_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+
+  status = app->start(app, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "direct supervision_policy") != NULL);
+  status = app->run(app, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "direct supervision_policy") != NULL);
   app->close(app);
 }
 
@@ -3044,6 +3094,10 @@ static int run_named_runtime_test(const char *name) {
     assert_supervised_metrics_persistence_worker();
     return 1;
   }
+  if (strcmp(name, "direct_supervision_policy_rejects_app_services") == 0) {
+    assert_direct_supervision_policy_rejects_app_services();
+    return 1;
+  }
   if (strcmp(name, "consumer_service_declaration_before_routes") == 0) {
     assert_consumer_service_declaration_before_routes();
     return 1;
@@ -3090,6 +3144,7 @@ int main(void) {
   assert_route_body_policy_validation();
   assert_metrics_surface();
   assert_supervised_metrics_persistence_worker();
+  assert_direct_supervision_policy_rejects_app_services();
   assert_consumer_service_declaration_before_routes();
   assert_kore_start_rejects_extra_thread();
   assert_supervised_start_reports_child_readiness_failure();

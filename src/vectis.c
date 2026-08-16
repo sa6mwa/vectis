@@ -406,6 +406,7 @@ typedef struct vectis_app_impl {
   int cai_logger_disabled;
   long timeout_ms;
   long shutdown_grace_ms;
+  vectis_supervision_policy supervision_policy;
   unsigned short port;
   vectis_tls_mode tls_mode;
   int require_client_certificate;
@@ -624,6 +625,9 @@ static int
 vectis_app_has_materialized_consumer_services(const vectis_app_impl *impl);
 static int vectis_app_has_metrics_persistence(const vectis_app_impl *impl);
 static int vectis_app_needs_supervised_runtime(const vectis_app_impl *impl);
+static vectis_status
+vectis_app_should_supervise_routes(const vectis_app_impl *impl,
+                                   int *supervise_out, vectis_error *error);
 static vectis_status
 vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
                         vectis_error *error);
@@ -2085,6 +2089,7 @@ void vectis_app_config_init(vectis_app_config *config) {
   config->app_name = "vectis";
   config->log_mode = PSLOG_MODE_JSON;
   config->min_log_level = PSLOG_LEVEL_INFO;
+  config->supervision_policy = VECTIS_SUPERVISION_AUTO;
   config->shutdown_grace_ms = VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS;
   vectis_server_config_init(&config->server);
   vectis_tls_config_init(&config->tls);
@@ -4733,6 +4738,40 @@ static int vectis_app_needs_supervised_runtime(const vectis_app_impl *impl) {
          vectis_app_has_metrics_persistence(impl);
 }
 
+static vectis_status
+vectis_app_should_supervise_routes(const vectis_app_impl *impl,
+                                   int *supervise_out, vectis_error *error) {
+  int required;
+
+  if (supervise_out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "supervision output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *supervise_out = 0;
+  if (impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  required = vectis_app_needs_supervised_runtime(impl);
+  if (impl->supervision_policy == VECTIS_SUPERVISION_SUPERVISED) {
+    *supervise_out = 1;
+    return VECTIS_OK;
+  }
+  if (impl->supervision_policy == VECTIS_SUPERVISION_DIRECT) {
+    if (required) {
+      vectis_set_error(
+          error, VECTIS_ERR_STATE,
+          "direct supervision_policy cannot run app-owned services");
+      return VECTIS_ERR_STATE;
+    }
+    *supervise_out = 0;
+    return VECTIS_OK;
+  }
+  *supervise_out = required;
+  return VECTIS_OK;
+}
+
 static void vectis_app_close_consumer_services(vectis_app_impl *impl) {
   vectis_consumer_service_impl *service;
   vectis_error error;
@@ -5374,6 +5413,13 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
                      "lockd timeout_ms must be non-negative");
     return NULL;
   }
+  if (effective->supervision_policy != VECTIS_SUPERVISION_AUTO &&
+      effective->supervision_policy != VECTIS_SUPERVISION_DIRECT &&
+      effective->supervision_policy != VECTIS_SUPERVISION_SUPERVISED) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "supervision_policy must be auto, direct, or supervised");
+    return NULL;
+  }
   if (effective->shutdown_grace_ms < 0L) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "shutdown_grace_ms must be non-negative");
@@ -5436,6 +5482,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   impl->timeout_ms = vectis_default_long(effective->lockd.timeout_ms, 30000L);
   impl->shutdown_grace_ms = vectis_default_long(
       effective->shutdown_grace_ms, VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS);
+  impl->supervision_policy = effective->supervision_policy;
   impl->port = vectis_default_ushort(effective->tls.port, 8443u);
   impl->tls_mode = effective->tls.mode;
   impl->require_client_certificate = effective->tls.require_client_certificate;
@@ -5754,6 +5801,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
   vectis_kore_runtime_config kore_config;
   vectis_status status;
   size_t route_count;
+  int supervise_routes;
   pid_t pid;
   pid_t cleanup_pid;
   int ready_pipe[2];
@@ -5787,6 +5835,10 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
       return status;
     }
     status = vectis_app_validate_quiescent_for_kore(impl, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    status = vectis_app_should_supervise_routes(impl, &supervise_routes, error);
     if (status != VECTIS_OK) {
       return status;
     }
@@ -5963,6 +6015,7 @@ static vectis_status vectis_app_run_impl(vectis_app *app, vectis_error *error) {
   vectis_kore_runtime_config kore_config;
   vectis_status status;
   size_t route_count;
+  int supervise_routes;
 
   if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
@@ -6005,7 +6058,11 @@ static vectis_status vectis_app_run_impl(vectis_app *app, vectis_error *error) {
   if (status != VECTIS_OK) {
     return status;
   }
-  if (vectis_app_needs_supervised_runtime(impl)) {
+  status = vectis_app_should_supervise_routes(impl, &supervise_routes, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (supervise_routes) {
     pid_t child_pid;
 
     status = vectis_app_start_impl(app, error);

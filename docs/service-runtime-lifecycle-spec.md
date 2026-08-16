@@ -26,6 +26,8 @@ testable.
   child owns HTTP/WebDAV/API ingress.
 - Preserve direct foreground Kore serving for apps that have no app-owned
   background services and pass the quiescence guard.
+- Expose explicit topology policy so operators can accept automatic selection,
+  require direct foreground Kore, or force supervised route runtime.
 - Keep Lua state ownership explicit. No background service thread may enter an
   arbitrary Lua callback. Lua callbacks run only in the Lua state and process
   that owns them.
@@ -488,6 +490,11 @@ the configured shutdown deadline, then escalates to `SIGKILL` and reaps the
 child so `stop()` cannot hang indefinitely. `vectis_app_config.shutdown_grace_ms`
 and Lua `vectis.server.new({shutdown_grace_ms = ...})` configure this grace
 period; zero or omission uses `VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS`.
+`vectis_app_config.supervision_policy` and Lua
+`vectis.server.new({supervision_policy = ...})` configure route-backed topology:
+`auto` chooses direct foreground Kore unless app-owned services require
+supervision, `direct` fails closed when such services are declared, and
+`supervised` forces the managed supervisor topology.
 
 ## C API Surface Changes
 
@@ -495,9 +502,11 @@ The existing receiver-shell style remains.
 
 Required additions or semantic changes:
 
-- `vectis_app_config.shutdown_grace_ms` for shutdown grace; future runtime
-  config fields still need supervision policy, quiescence strictness, and
-  service failure policy.
+- `vectis_app_config.shutdown_grace_ms` for shutdown grace.
+- `vectis_app_config.supervision_policy` for explicit `auto`, `direct`, or
+  `supervised` route-backed topology selection.
+- future runtime config fields still need quiescence strictness and service
+  failure policy.
 - descriptor-backed `vectis_consumer_service`.
 - service state query helpers for tests and diagnostics.
 - app-owned service registration APIs for future OPC UA/curl/audio/SUS worker
@@ -514,6 +523,8 @@ Required semantics:
 - `server:run()` selects T1, T2, or T3 automatically from app declarations.
 - `server:start()` starts the selected managed runtime and returns.
 - `server:wait()` waits for the selected runtime and shuts it down.
+- `server.new({supervision_policy = "auto" | "direct" | "supervised"})`
+  mirrors the C topology policy.
 - `server:consumer_service({ start = true })` means start with the app runtime,
   not start a pthread during declaration for route-backed apps.
 - Direct Lua callbacks for background services remain rejected unless they are
