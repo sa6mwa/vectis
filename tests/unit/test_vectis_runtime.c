@@ -618,6 +618,11 @@ metrics_required_provider(const vectis_auth_provider_request *request,
   return VECTIS_OK;
 }
 
+static int metrics_pouch_snapshot_contains_text(const char *endpoint,
+                                                const char *namespace_name,
+                                                const char *needle);
+static void remove_tree(const char *path);
+
 static void assert_metrics_surface(void) {
   vectis_app *app;
   vectis_metrics_config metrics;
@@ -713,6 +718,78 @@ static void assert_metrics_surface(void) {
   assert(strstr((const char *)snapshot.data, "\"required\":1") != NULL);
   vectis_mutable_bytes_cleanup(&snapshot);
   app->close(app);
+}
+
+static void assert_supervised_metrics_persistence_worker(void) {
+  vectis_app_config config;
+  vectis_metrics_config metrics;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  char pouch_dir[] = "/tmp/vectis-runtime-metrics.XXXXXX";
+  char endpoint[4096];
+  struct timespec pause_time;
+  unsigned short port;
+  int reserved_fd;
+  int written;
+  int found;
+  int wrote;
+  int i;
+
+  assert(mkdtemp(pouch_dir) != NULL);
+  written = snprintf(endpoint, sizeof(endpoint),
+                     "pouch://%s?single_writer=false", pouch_dir);
+  assert(written > 0 && (size_t)written < sizeof(endpoint));
+  reserved_fd = reserve_loopback_port(&port);
+  close(reserved_fd);
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = port;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_metrics_config_init(&metrics);
+  metrics.path = "/.metrics";
+  metrics.json_path = "/.metrics.json";
+  metrics.title = "supervised metrics worker";
+  metrics.persistence_enabled = 1;
+  metrics.storage_endpoint = endpoint;
+  metrics.storage_namespace = "vectis.runtime.metrics";
+  metrics.storage_owner = "runtime-test";
+  metrics.snapshot_interval_seconds = 300u;
+  status = app->metrics(app, &metrics, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+
+  pause_time.tv_sec = 0;
+  pause_time.tv_nsec = 100000000L;
+  wrote = 0;
+  for (i = 0; i < 50 && !wrote; ++i) {
+    vectis_mutable_bytes snapshot;
+
+    memset(&snapshot, 0, sizeof(snapshot));
+    status = vectis_metrics_snapshot_json(app, &snapshot, &error);
+    assert(status == VECTIS_OK);
+    wrote = snapshot.data != NULL &&
+            strstr((const char *)snapshot.data, "\"writes\":1") != NULL;
+    vectis_mutable_bytes_cleanup(&snapshot);
+    if (!wrote) {
+      (void)nanosleep(&pause_time, NULL);
+    }
+  }
+  assert(wrote);
+  found = metrics_pouch_snapshot_contains_text(
+      endpoint, "vectis.runtime.metrics",
+      "\"service\":\"supervised metrics worker\"");
+  assert(found);
+
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  app->close(app);
+  remove_tree(pouch_dir);
 }
 
 static void socket_send_all(int fd, const char *data, size_t size) {
@@ -918,6 +995,75 @@ static void remove_tree(const char *path) {
   }
   (void)closedir(directory);
   (void)rmdir(path);
+}
+
+static int metrics_pouch_snapshot_contains_text(const char *endpoint,
+                                                const char *namespace_name,
+                                                const char *needle) {
+  const char *endpoints[1];
+  lc_client_config client_config;
+  lc_client *client;
+  lc_error lcerr;
+  time_t now;
+  long offset;
+  char key[64];
+  int found;
+  int rc;
+
+  if (endpoint == NULL || namespace_name == NULL || needle == NULL) {
+    return 0;
+  }
+  endpoints[0] = endpoint;
+  lc_error_init(&lcerr);
+  lc_client_config_init(&client_config);
+  client_config.endpoints = endpoints;
+  client_config.endpoint_count = 1u;
+  client_config.default_namespace = namespace_name;
+  client = NULL;
+  rc = lc_client_open(&client_config, &client, &lcerr);
+  if (rc != LC_OK) {
+    lc_error_cleanup(&lcerr);
+    return 0;
+  }
+
+  found = 0;
+  now = time(NULL);
+  for (offset = -10L; offset <= 10L && !found; ++offset) {
+    lc_sink *sink;
+    lc_get_res get_res;
+    const void *bytes;
+    size_t length;
+
+    if (snprintf(key, sizeof(key), "snapshot.%llu",
+                 (unsigned long long)(now + (time_t)offset)) <= 0) {
+      continue;
+    }
+    sink = NULL;
+    rc = lc_sink_to_memory(&sink, &lcerr);
+    if (rc != LC_OK || sink == NULL) {
+      continue;
+    }
+    memset(&get_res, 0, sizeof(get_res));
+    rc = client->get(client, key, NULL, sink, &get_res, &lcerr);
+    if (rc == LC_OK &&
+        lc_sink_memory_bytes(sink, &bytes, &length, &lcerr) == LC_OK &&
+        bytes != NULL && length > 0u) {
+      char *copy;
+
+      copy = (char *)malloc(length + 1u);
+      assert(copy != NULL);
+      memcpy(copy, bytes, length);
+      copy[length] = '\0';
+      found = strstr(copy, needle) != NULL;
+      free(copy);
+    }
+    lc_get_res_cleanup(&get_res);
+    sink->close(sink);
+  }
+
+  client->close(client);
+  lc_error_cleanup(&lcerr);
+  return found;
 }
 
 static int count_fd_dir(const char *path) {
@@ -2871,6 +3017,55 @@ int main(void) {
   return 0;
 }
 #else
+static int run_named_runtime_test(const char *name) {
+  if (name == NULL || name[0] == '\0') {
+    return 0;
+  }
+  if (strcmp(name, "server_config_validation") == 0) {
+    assert_server_config_validation();
+    return 1;
+  }
+  if (strcmp(name, "route_body_policy_validation") == 0) {
+    assert_route_body_policy_validation();
+    return 1;
+  }
+  if (strcmp(name, "metrics_surface") == 0) {
+    assert_metrics_surface();
+    return 1;
+  }
+  if (strcmp(name, "supervised_metrics_persistence_worker") == 0) {
+    assert_supervised_metrics_persistence_worker();
+    return 1;
+  }
+  if (strcmp(name, "consumer_service_declaration_before_routes") == 0) {
+    assert_consumer_service_declaration_before_routes();
+    return 1;
+  }
+  if (strcmp(name, "kore_start_rejects_extra_thread") == 0) {
+    assert_kore_start_rejects_extra_thread();
+    return 1;
+  }
+  if (strcmp(name, "supervised_start_reports_child_readiness_failure") == 0) {
+    assert_supervised_start_reports_child_readiness_failure();
+    return 1;
+  }
+  if (strcmp(name, "supervised_wait_reports_consumer_service_exit") == 0) {
+    assert_supervised_wait_reports_consumer_service_exit();
+    return 1;
+  }
+  if (strcmp(name, "service_only_wait_reports_consumer_service_exit") == 0) {
+    assert_service_only_wait_reports_consumer_service_exit();
+    return 1;
+  }
+  if (strcmp(name, "kore_smoke") == 0) {
+    assert_kore_smoke();
+    return 1;
+  }
+  fprintf(stderr, "unknown VECTIS_RUNTIME_TEST case: %s\n", name);
+  abort();
+  return 1;
+}
+
 int main(void) {
   vectis_app_config config;
   vectis_error error;
@@ -2880,9 +3075,14 @@ int main(void) {
   vectis_route_config route;
   vectis_body_policy policy;
 
+  if (run_named_runtime_test(getenv("VECTIS_RUNTIME_TEST"))) {
+    return 0;
+  }
+
   assert_server_config_validation();
   assert_route_body_policy_validation();
   assert_metrics_surface();
+  assert_supervised_metrics_persistence_worker();
   assert_consumer_service_declaration_before_routes();
   assert_kore_start_rejects_extra_thread();
   assert_supervised_start_reports_child_readiness_failure();

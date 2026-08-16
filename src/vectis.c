@@ -597,6 +597,9 @@ static vectis_status vectis_app_wait_supervised_child(vectis_app_impl *impl,
 static vectis_status
 vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
                                        int ready_fd, vectis_error *error);
+static vectis_status vectis_app_stop_kore_child(pid_t child_pid,
+                                                vectis_error *error);
+static int vectis_wait_sleep_ms(long delay_ms);
 static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
                                               vectis_error *error);
 static void
@@ -617,6 +620,8 @@ static int
 vectis_app_has_requested_consumer_services(const vectis_app_impl *impl);
 static int
 vectis_app_has_materialized_consumer_services(const vectis_app_impl *impl);
+static int vectis_app_has_metrics_persistence(const vectis_app_impl *impl);
+static int vectis_app_needs_supervised_runtime(const vectis_app_impl *impl);
 static vectis_status
 vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
                         vectis_error *error);
@@ -4715,6 +4720,16 @@ vectis_app_has_materialized_consumer_services(const vectis_app_impl *impl) {
   return 0;
 }
 
+static int vectis_app_has_metrics_persistence(const vectis_app_impl *impl) {
+  return impl != NULL && impl->metrics != NULL &&
+         impl->metrics->persistence_enabled;
+}
+
+static int vectis_app_needs_supervised_runtime(const vectis_app_impl *impl) {
+  return vectis_app_has_requested_consumer_services(impl) ||
+         vectis_app_has_metrics_persistence(impl);
+}
+
 static void vectis_app_close_consumer_services(vectis_app_impl *impl) {
   vectis_consumer_service_impl *service;
   vectis_error error;
@@ -5640,6 +5655,87 @@ vectis_app_make_kore_runtime_config(vectis_app *app, vectis_app_impl *impl,
   kore_config->ready_fd = -1;
 }
 
+static vectis_status vectis_app_stop_kore_child(pid_t child_pid,
+                                                vectis_error *error) {
+  long remaining_ms;
+  long sleep_ms;
+  int wait_status;
+  int err;
+  pid_t waited;
+
+  if (child_pid <= 0) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+
+  if (kill(child_pid, SIGTERM) != 0) {
+    if (errno == ESRCH) {
+      vectis_error_clear(error);
+      return VECTIS_OK;
+    }
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "failed to signal Kore runtime: %s", strerror(errno));
+    return VECTIS_ERR_STATE;
+  }
+
+  remaining_ms = 5000L;
+  while (remaining_ms >= 0L) {
+    waited = waitpid(child_pid, &wait_status, WNOHANG);
+    if (waited == child_pid) {
+      vectis_error_clear(error);
+      return VECTIS_OK;
+    }
+    if (waited < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      if (errno == ECHILD) {
+        vectis_error_clear(error);
+        return VECTIS_OK;
+      }
+      err = errno != 0 ? errno : EINVAL;
+      vectis_set_errorf(error, VECTIS_ERR_STATE,
+                        "failed to wait for Kore runtime: %s", strerror(err));
+      return VECTIS_ERR_STATE;
+    }
+    if (remaining_ms == 0L) {
+      break;
+    }
+    sleep_ms = remaining_ms < 50L ? remaining_ms : 50L;
+    err = vectis_wait_sleep_ms(sleep_ms);
+    if (err != 0) {
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to wait for Kore runtime shutdown");
+      if (error != NULL) {
+        error->dependency_code = (long)err;
+        (void)snprintf(error->detail, sizeof(error->detail), "%s",
+                       strerror(err));
+      }
+      return VECTIS_ERR_STATE;
+    }
+    remaining_ms -= sleep_ms;
+  }
+
+  if (kill(child_pid, SIGKILL) != 0 && errno != ESRCH) {
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "failed to kill unresponsive Kore runtime: %s",
+                      strerror(errno));
+    return VECTIS_ERR_STATE;
+  }
+
+  do {
+    waited = waitpid(child_pid, &wait_status, 0);
+  } while (waited < 0 && errno == EINTR);
+  if (waited == child_pid || (waited < 0 && errno == ECHILD)) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  err = errno != 0 ? errno : EINVAL;
+  vectis_set_errorf(error, VECTIS_ERR_STATE,
+                    "failed to reap killed Kore runtime: %s", strerror(err));
+  return VECTIS_ERR_STATE;
+}
+
 static vectis_status vectis_app_start_impl(vectis_app *app,
                                            vectis_error *error) {
   vectis_app_impl *impl;
@@ -5648,9 +5744,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
   size_t route_count;
   pid_t pid;
   pid_t cleanup_pid;
-  pid_t waited;
   int ready_pipe[2];
-  int wait_status;
 
   if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
@@ -5736,16 +5830,21 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
       impl->kore_child_reaped = 0;
       (void)pthread_mutex_unlock(&impl->mutex);
       if (cleanup_pid > 0) {
-        (void)kill(cleanup_pid, SIGTERM);
-        do {
-          waited = waitpid(cleanup_pid, &wait_status, 0);
-        } while (waited < 0 && errno == EINTR);
+        (void)vectis_app_stop_kore_child(cleanup_pid, NULL);
       }
       return status;
     }
     (void)pthread_mutex_lock(&impl->mutex);
     impl->started = 1;
     (void)pthread_mutex_unlock(&impl->mutex);
+    status = vectis_metrics_worker_start(app, error);
+    if (status != VECTIS_OK) {
+      vectis_error cleanup_error;
+
+      vectis_error_clear(&cleanup_error);
+      (void)vectis_app_stop_impl(app, &cleanup_error);
+      return status;
+    }
     status = vectis_app_start_requested_consumer_services(impl, error);
     if (status != VECTIS_OK) {
       vectis_error cleanup_error;
@@ -5783,7 +5882,6 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
   vectis_app_impl *impl;
   pid_t child_pid;
   int child_reaped;
-  int wait_status;
 
   if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
@@ -5810,22 +5908,9 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
   vectis_metrics_worker_stop(app);
 
   if (child_pid > 0) {
-    if (kill(child_pid, SIGTERM) != 0 && errno != ESRCH) {
-      vectis_set_errorf(error, VECTIS_ERR_STATE,
-                        "failed to signal Kore runtime: %s", strerror(errno));
-      return VECTIS_ERR_STATE;
+    if (vectis_app_stop_kore_child(child_pid, error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
     }
-    do {
-      if (waitpid(child_pid, &wait_status, 0) >= 0) {
-        break;
-      }
-      if (errno != EINTR) {
-        vectis_set_errorf(error, VECTIS_ERR_STATE,
-                          "failed to wait for Kore runtime: %s",
-                          strerror(errno));
-        return VECTIS_ERR_STATE;
-      }
-    } while (1);
   } else if (!child_reaped && impl->route_count > 0u &&
              vectis_internal_kore_stop(app, error) != VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_STATE;
@@ -5906,7 +5991,7 @@ static vectis_status vectis_app_run_impl(vectis_app *app, vectis_error *error) {
   if (status != VECTIS_OK) {
     return status;
   }
-  if (vectis_app_has_requested_consumer_services(impl)) {
+  if (vectis_app_needs_supervised_runtime(impl)) {
     pid_t child_pid;
 
     status = vectis_app_start_impl(app, error);
@@ -12217,7 +12302,6 @@ static vectis_status vectis_metrics_route_handler(vectis_app *app,
   title = impl->metrics->title != NULL && impl->metrics->title[0] != '\0'
               ? impl->metrics->title
               : vectis_metrics_request_title(impl, request);
-  vectis_metrics_persist_snapshot_if_due(app);
   memset(&json, 0, sizeof(json));
   memset(&html, 0, sizeof(html));
   status = vectis_metrics_snapshot_json_impl(app, &json, title, error);

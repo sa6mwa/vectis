@@ -201,7 +201,7 @@ No Kore fork boundary exists in this topology.
 `app->run(app, error)` and `server:run()` are production entry points:
 
 - route-backed with no services: T1 direct Kore runtime;
-- route-backed with services: T2 supervised Kore runtime;
+- route-backed with services or metrics persistence: T2 supervised Kore runtime;
 - service-only: T3 service-only runtime.
 
 `app->start(app, error)` and `server:start()` are managed starts:
@@ -225,7 +225,9 @@ For managed route-backed `start()`, Vectis must not report success until the
 Kore child has reported readiness over the supervisor control channel. If the
 child exits first, or readiness times out, `start()` returns an error and leaves
 the app in the not-started state. Supervisor-owned services must not materialize
-until this readiness barrier has passed.
+until this readiness barrier has passed. Metrics persistence is an app-owned
+supervisor service: when enabled, the metrics worker starts after the readiness
+barrier and performs persistent snapshot writes outside the request path.
 
 For asynchronously started supervisor services, Vectis owns service terminal
 state observation. Dependencies such as liblockdc that expose only blocking
@@ -319,6 +321,8 @@ When enabled:
 - in T2, Kore-domain metrics are reported to the supervisor through the runtime
   control channel or a bounded metrics channel;
 - persistent snapshots are written by the supervisor, not by a request worker;
+- route-backed metrics persistence selects T2 supervision even when no other
+  background service is declared;
 - snapshot frequency is at most once every five minutes;
 - sampling frequency for loadavg and other system metrics is at most once per
   minute;
@@ -478,6 +482,11 @@ If a child or service exits unexpectedly, the default policy is fail closed:
 mark the app stopping, stop the rest of the runtime, and return an error from
 `run()`/`wait()`.
 
+Supervised child termination must be bounded. The supervisor first requests a
+graceful Kore shutdown with `SIGTERM`, reaps with nonblocking observation until
+the shutdown deadline, then escalates to `SIGKILL` and reaps the child so
+`stop()` cannot hang indefinitely.
+
 ## C API Surface Changes
 
 The existing receiver-shell style remains.
@@ -527,7 +536,9 @@ Required semantics:
 4. Supervised route runtime:
    - fork Kore child before materializing services;
    - wait for child readiness before reporting successful start;
-   - supervisor starts lockdc consumer services and metrics after fork;
+   - supervisor starts lockdc consumer services and metrics after readiness;
+   - metrics persistence is written by the supervisor worker, not request
+     handlers;
    - parent monitors signals and child/service exit.
 5. Runtime bus/control channel:
    - child readiness;
