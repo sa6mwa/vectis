@@ -223,6 +223,11 @@ typedef struct vectis_lockd_payload_sink_context {
   vectis_status status;
 } vectis_lockd_payload_sink_context;
 
+typedef struct vectis_cai_lc_source_context {
+  lc_source *source;
+  int close_source;
+} vectis_cai_lc_source_context;
+
 typedef struct vectis_lonejson_fd_sink {
   int fd;
   vectis_error *error;
@@ -330,6 +335,19 @@ typedef struct vectis_app_impl {
   size_t endpoint_count;
   pslog_logger *lockd_logger;
   int lockd_logger_disabled;
+  cai_client *borrowed_cai_client;
+  cai_client *owned_cai_client;
+  pid_t owned_cai_client_pid;
+  cai_client_config cai_client_config;
+  char *cai_api_key;
+  char *cai_api_key_env;
+  char *cai_base_url;
+  char *cai_organization_id;
+  char *cai_project_id;
+  char *cai_ca_bundle_path;
+  char *cai_ca_path;
+  pslog_logger *cai_logger;
+  int cai_logger_disabled;
   long timeout_ms;
   unsigned short port;
   vectis_tls_mode tls_mode;
@@ -492,6 +510,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
 static vectis_status vectis_app_stop_impl(vectis_app *app, vectis_error *error);
 static void
 vectis_close_lockd_client_for_current_process(vectis_app_impl *impl);
+static void vectis_close_cai_client_for_current_process(vectis_app_impl *impl);
 static vectis_status vectis_app_register_route_impl(
     vectis_app *app, const vectis_route_config *route, vectis_error *error);
 static vectis_status vectis_app_register_route_owned_userdata(
@@ -1744,6 +1763,8 @@ const char *vectis_error_source_string(vectis_error_source source) {
     return "libssh2";
   case VECTIS_ERROR_SOURCE_CPKT:
     return "cpkt";
+  case VECTIS_ERROR_SOURCE_CAI:
+    return "cai";
   default:
     return "unknown";
   }
@@ -1882,6 +1903,14 @@ void vectis_lockd_config_init(vectis_lockd_config *config) {
   config->timeout_ms = 30000L;
 }
 
+void vectis_cai_config_init(vectis_cai_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  cai_client_config_init(&config->client_config);
+}
+
 void vectis_server_config_init(vectis_server_config *config) {
   if (config == NULL) {
     return;
@@ -1928,6 +1957,7 @@ void vectis_app_config_init(vectis_app_config *config) {
   vectis_server_config_init(&config->server);
   vectis_tls_config_init(&config->tls);
   vectis_lockd_config_init(&config->lockd);
+  vectis_cai_config_init(&config->cai);
 }
 
 void vectis_body_policy_init(vectis_body_policy *policy) {
@@ -3750,6 +3780,69 @@ static vectis_status vectis_copy_endpoints(vectis_app_impl *impl,
   return VECTIS_OK;
 }
 
+static vectis_status vectis_copy_optional_string(char **dst, const char *src,
+                                                 const char *label,
+                                                 vectis_error *error) {
+  if (src == NULL) {
+    *dst = NULL;
+    return VECTIS_OK;
+  }
+  *dst = vectis_strdup(src);
+  if (*dst == NULL) {
+    vectis_set_errorf(error, VECTIS_ERR_NOMEM, "failed to copy %s", label);
+    return VECTIS_ERR_NOMEM;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_copy_cai_config(vectis_app_impl *impl,
+                                            const vectis_cai_config *cai,
+                                            vectis_error *error) {
+  if (impl == NULL || cai == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "CAI config is required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl->borrowed_cai_client = cai->client;
+  impl->cai_client_config = cai->client_config;
+  impl->cai_logger = cai->logger;
+  impl->cai_logger_disabled =
+      cai->logger_disabled || cai->client_config.logger_disabled;
+
+  if (vectis_copy_optional_string(&impl->cai_api_key,
+                                  cai->client_config.api_key, "CAI api key",
+                                  error) != VECTIS_OK ||
+      vectis_copy_optional_string(&impl->cai_api_key_env,
+                                  cai->client_config.api_key_env,
+                                  "CAI api key environment name",
+                                  error) != VECTIS_OK ||
+      vectis_copy_optional_string(&impl->cai_base_url,
+                                  cai->client_config.base_url, "CAI base URL",
+                                  error) != VECTIS_OK ||
+      vectis_copy_optional_string(&impl->cai_organization_id,
+                                  cai->client_config.organization_id,
+                                  "CAI organization id", error) != VECTIS_OK ||
+      vectis_copy_optional_string(&impl->cai_project_id,
+                                  cai->client_config.project_id,
+                                  "CAI project id", error) != VECTIS_OK ||
+      vectis_copy_optional_string(&impl->cai_ca_bundle_path,
+                                  cai->client_config.ca_bundle_path,
+                                  "CAI CA bundle path", error) != VECTIS_OK ||
+      vectis_copy_optional_string(&impl->cai_ca_path,
+                                  cai->client_config.ca_path, "CAI CA path",
+                                  error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+
+  impl->cai_client_config.api_key = impl->cai_api_key;
+  impl->cai_client_config.api_key_env = impl->cai_api_key_env;
+  impl->cai_client_config.base_url = impl->cai_base_url;
+  impl->cai_client_config.organization_id = impl->cai_organization_id;
+  impl->cai_client_config.project_id = impl->cai_project_id;
+  impl->cai_client_config.ca_bundle_path = impl->cai_ca_bundle_path;
+  impl->cai_client_config.ca_path = impl->cai_ca_path;
+  return VECTIS_OK;
+}
+
 static pslog_logger *vectis_make_owned_logger(const vectis_app_config *config,
                                               vectis_error *error) {
   pslog_config psconf;
@@ -3982,6 +4075,7 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
   }
 
   vectis_close_lockd_client_for_current_process(impl);
+  vectis_close_cai_client_for_current_process(impl);
 
   vectis_free_routes(impl);
   vectis_free_openapi_docs(impl);
@@ -4009,6 +4103,13 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
   free(impl->client_bundle_pem);
   free(impl->client_bundle_path);
   free(impl->default_namespace);
+  free(impl->cai_api_key);
+  free(impl->cai_api_key_env);
+  free(impl->cai_base_url);
+  free(impl->cai_organization_id);
+  free(impl->cai_project_id);
+  free(impl->cai_ca_bundle_path);
+  free(impl->cai_ca_path);
 
   if (impl->owns_logger && impl->logger != NULL) {
     impl->logger->destroy(impl->logger);
@@ -4225,6 +4326,135 @@ vectis_close_lockd_client_for_current_process(vectis_app_impl *impl) {
   }
   impl->lockd_client = NULL;
   impl->lockd_client_pid = 0;
+}
+
+static vectis_status vectis_cai_status_to_vectis(int status) {
+  switch (status) {
+  case CAI_OK:
+    return VECTIS_OK;
+  case CAI_ERR_INVALID:
+    return VECTIS_ERR_INVALID;
+  case CAI_ERR_NOMEM:
+    return VECTIS_ERR_NOMEM;
+  case CAI_ERR_CANCELLED:
+    return VECTIS_ERR_TIMEOUT;
+  case CAI_ERR_LIMIT:
+    return VECTIS_ERR_CONFLICT;
+  case CAI_ERR_TRANSPORT:
+  case CAI_ERR_PROTOCOL:
+  case CAI_ERR_SERVER:
+  default:
+    return VECTIS_ERR_STATE;
+  }
+}
+
+vectis_status vectis_cai_error(vectis_error *error, const cai_error *cai,
+                               const char *fallback_message) {
+  vectis_status status;
+  const char *message;
+
+  if (cai == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     fallback_message != NULL ? fallback_message
+                                              : "CAI operation failed");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_CAI;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  status = vectis_cai_status_to_vectis(cai->code);
+  message = cai->message != NULL ? cai->message : fallback_message;
+  vectis_set_error(error, status,
+                   message != NULL ? message : "CAI operation failed");
+  if (error != NULL) {
+    error->source = VECTIS_ERROR_SOURCE_CAI;
+    error->dependency_code = (long)cai->code;
+    error->http_status = cai->http_status;
+    if (cai->detail != NULL) {
+      (void)snprintf(error->detail, sizeof(error->detail), "%s", cai->detail);
+    } else if (cai->server_code != NULL || cai->request_id != NULL) {
+      (void)snprintf(error->detail, sizeof(error->detail),
+                     "server_code=%s request_id=%s",
+                     cai->server_code != NULL ? cai->server_code : "",
+                     cai->request_id != NULL ? cai->request_id : "");
+    }
+  }
+  return status;
+}
+
+static void vectis_close_cai_client_for_current_process(vectis_app_impl *impl) {
+  if (impl == NULL || impl->owned_cai_client == NULL) {
+    return;
+  }
+  if (impl->owned_cai_client_pid == 0 ||
+      impl->owned_cai_client_pid == getpid()) {
+    cai_client_close(impl->owned_cai_client);
+  }
+  impl->owned_cai_client = NULL;
+  impl->owned_cai_client_pid = 0;
+}
+
+vectis_status vectis_app_cai_client(vectis_app *app, cai_client **out,
+                                    vectis_error *error) {
+  vectis_app_impl *impl;
+  cai_client_config config;
+  pslog_logger *configured_logger;
+  cai_error caierr;
+  int rc;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "CAI client output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  if (impl->borrowed_cai_client != NULL) {
+    *out = impl->borrowed_cai_client;
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+
+  if (pthread_mutex_lock(&impl->mutex) != 0) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to lock app mutex");
+    return VECTIS_ERR_STATE;
+  }
+  if (impl->owned_cai_client != NULL &&
+      impl->owned_cai_client_pid != getpid()) {
+    impl->owned_cai_client = NULL;
+    impl->owned_cai_client_pid = 0;
+  }
+  if (impl->owned_cai_client == NULL) {
+    config = impl->cai_client_config;
+    configured_logger = config.logger;
+    if (impl->cai_logger_disabled) {
+      config.logger = NULL;
+      config.logger_disabled = 1;
+    } else {
+      config.logger = impl->cai_logger != NULL
+                          ? impl->cai_logger
+                          : (configured_logger != NULL ? configured_logger
+                                                       : impl->logger);
+      config.logger_disabled = 0;
+    }
+    cai_error_init(&caierr);
+    rc = cai_client_open(&config, &impl->owned_cai_client, &caierr);
+    if (rc != CAI_OK) {
+      (void)pthread_mutex_unlock(&impl->mutex);
+      (void)vectis_cai_error(error, &caierr, "failed to open CAI client");
+      cai_error_cleanup(&caierr);
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    cai_error_cleanup(&caierr);
+    impl->owned_cai_client_pid = getpid();
+  }
+  *out = impl->owned_cai_client;
+  (void)pthread_mutex_unlock(&impl->mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
@@ -4481,6 +4711,13 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
     impl->owns_logger = 1;
   }
 
+  status = vectis_copy_cai_config(impl, &effective->cai, error);
+  if (status != VECTIS_OK) {
+    vectis_destroy_impl(impl);
+    free(app);
+    return NULL;
+  }
+
   {
     vectis_consumer_receiver_adapter adapter;
 
@@ -4534,6 +4771,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   app->openapi = vectis_generate_openapi;
   app->route_count = vectis_route_count;
   app->logger = vectis_logger;
+  app->cai_client = vectis_app_cai_client;
   app->lockd_client = vectis_lockd_client;
   app->consumer_service = vectis_consumer_service_new;
   app->register_consumer_receiver = vectis_register_consumer_receiver;
@@ -19516,6 +19754,351 @@ vectis_status vectis_response_error_json(vectis_response *response,
   }
   return vectis_response_json(response, status_code, &vectis_error_response_map,
                               &body, error);
+}
+
+static char *vectis_cai_strdup(const char *value) {
+  size_t size;
+  char *copy;
+
+  if (value == NULL) {
+    return NULL;
+  }
+  size = strlen(value) + 1u;
+  copy = (char *)malloc(size);
+  if (copy != NULL) {
+    memcpy(copy, value, size);
+  }
+  return copy;
+}
+
+static void vectis_cai_lc_error(cai_error *error, int code,
+                                const lc_error *lcerr,
+                                const char *fallback_message) {
+  if (error == NULL) {
+    return;
+  }
+  error->code = code;
+  error->http_status = lcerr != NULL ? lcerr->http_status : 0L;
+  free(error->message);
+  free(error->detail);
+  free(error->server_code);
+  free(error->request_id);
+  error->message =
+      vectis_cai_strdup(lcerr != NULL && lcerr->message != NULL
+                            ? lcerr->message
+                            : fallback_message);
+  error->detail =
+      vectis_cai_strdup(lcerr != NULL && lcerr->detail != NULL ? lcerr->detail
+                                                               : NULL);
+  error->server_code = NULL;
+  error->request_id = NULL;
+}
+
+static size_t vectis_cai_lc_source_read(void *userdata, void *buffer,
+                                        size_t count, cai_error *error) {
+  vectis_cai_lc_source_context *context;
+  lc_error lcerr;
+  size_t nread;
+
+  context = (vectis_cai_lc_source_context *)userdata;
+  if (context == NULL || context->source == NULL) {
+    if (error != NULL) {
+      error->code = CAI_ERR_INVALID;
+      error->message = vectis_cai_strdup("CAI source is invalid");
+    }
+    return 0u;
+  }
+  lc_error_init(&lcerr);
+  nread = context->source->read(context->source, buffer, count, &lcerr);
+  if (nread == 0u && lcerr.code != LC_OK) {
+    vectis_cai_lc_error(error, CAI_ERR_TRANSPORT, &lcerr,
+                        "failed to read Vectis source");
+  }
+  lc_error_cleanup(&lcerr);
+  return nread;
+}
+
+static int vectis_cai_lc_source_reset(void *userdata, cai_error *error) {
+  vectis_cai_lc_source_context *context;
+  lc_error lcerr;
+  int rc;
+
+  context = (vectis_cai_lc_source_context *)userdata;
+  if (context == NULL || context->source == NULL) {
+    if (error != NULL) {
+      error->code = CAI_ERR_INVALID;
+      error->message = vectis_cai_strdup("CAI source is invalid");
+    }
+    return CAI_ERR_INVALID;
+  }
+  lc_error_init(&lcerr);
+  rc = context->source->reset(context->source, &lcerr);
+  if (rc != LC_OK) {
+    vectis_cai_lc_error(error, CAI_ERR_INVALID, &lcerr,
+                        "failed to reset Vectis source");
+    lc_error_cleanup(&lcerr);
+    return CAI_ERR_INVALID;
+  }
+  lc_error_cleanup(&lcerr);
+  return CAI_OK;
+}
+
+static void vectis_cai_lc_source_close(void *userdata) {
+  vectis_cai_lc_source_context *context;
+
+  context = (vectis_cai_lc_source_context *)userdata;
+  if (context == NULL) {
+    return;
+  }
+  if (context->close_source && context->source != NULL) {
+    lc_source_close(context->source);
+  }
+  free(context);
+}
+
+static vectis_status vectis_cai_source_from_lc(lc_source *source,
+                                               int close_source,
+                                               cai_source **out,
+                                               vectis_error *error) {
+  vectis_cai_lc_source_context *context;
+  cai_source_callbacks callbacks;
+  cai_error caierr;
+  int rc;
+
+  if (out == NULL) {
+    if (close_source && source != NULL) {
+      lc_source_close(source);
+    }
+    vectis_set_error(error, VECTIS_ERR_INVALID, "CAI source output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  if (source == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "Vectis source is required");
+    return VECTIS_ERR_INVALID;
+  }
+  context = (vectis_cai_lc_source_context *)calloc(1u, sizeof(*context));
+  if (context == NULL) {
+    if (close_source) {
+      lc_source_close(source);
+    }
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate CAI source adapter");
+    return VECTIS_ERR_NOMEM;
+  }
+  context->source = source;
+  context->close_source = close_source ? 1 : 0;
+  callbacks.read = vectis_cai_lc_source_read;
+  callbacks.reset = vectis_cai_lc_source_reset;
+  callbacks.close = vectis_cai_lc_source_close;
+  callbacks.context = context;
+  cai_error_init(&caierr);
+  rc = cai_source_from_callbacks(&callbacks, out, &caierr);
+  if (rc != CAI_OK) {
+    vectis_cai_lc_source_close(context);
+    (void)vectis_cai_error(error, &caierr, "failed to create CAI source");
+    cai_error_cleanup(&caierr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  cai_error_cleanup(&caierr);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_cai_source_from_source(const vectis_source *source,
+                                            cai_source **out,
+                                            vectis_error *error) {
+  lc_source *lcsrc;
+  lc_error lcerr;
+  int rc;
+
+  if (source == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "Vectis source is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (source->source != NULL) {
+    return vectis_cai_source_from_lc(source->source, 0, out, error);
+  }
+  lcsrc = NULL;
+  lc_error_init(&lcerr);
+  if (source->memory != NULL || source->memory_size > 0u) {
+    rc = lc_source_from_memory(source->memory, source->memory_size, &lcsrc,
+                               &lcerr);
+  } else if (source->path != NULL && source->path[0] != '\0') {
+    rc = lc_source_from_file(source->path, &lcsrc, &lcerr);
+  } else {
+    lc_error_cleanup(&lcerr);
+    vectis_set_error(error, VECTIS_ERR_INVALID, "Vectis source is empty");
+    return VECTIS_ERR_INVALID;
+  }
+  if (rc != LC_OK) {
+    (void)vectis_source_error(error, rc, &lcerr,
+                              "failed to open Vectis source for CAI");
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  return vectis_cai_source_from_lc(lcsrc, 1, out, error);
+}
+
+vectis_status vectis_cai_source_from_request(vectis_request *request,
+                                             cai_source **out,
+                                             vectis_error *error) {
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->body_streaming_upload) {
+    vectis_set_error(
+        error, VECTIS_ERR_INVALID,
+        "streaming upload body is only available through the upload reader");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->body_reader == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "request body reader is not available");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_request_reset_body_reader(request, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  return vectis_cai_source_from_lc(request->body_reader, 0, out, error);
+}
+
+vectis_status vectis_cai_output_response(cai_output *output,
+                                         vectis_response *response,
+                                         int status_code,
+                                         const char *content_type,
+                                         vectis_error *error) {
+  lc_source *source;
+  cai_error caierr;
+  vectis_status status;
+  int rc;
+
+  if (output == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "CAI output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "response is required");
+    return VECTIS_ERR_INVALID;
+  }
+  source = NULL;
+  cai_error_init(&caierr);
+  rc = cai_output_as_lc_source(output, &source, &caierr);
+  if (rc != CAI_OK) {
+    (void)vectis_cai_error(error, &caierr,
+                           "failed to open CAI output response source");
+    cai_error_cleanup(&caierr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  cai_error_cleanup(&caierr);
+  status = vectis_response_stream_source(
+      response, status_code,
+      content_type != NULL ? content_type : VECTIS_CAI_DEFAULT_OUTPUT_CONTENT_TYPE,
+      source, error);
+  if (status != VECTIS_OK) {
+    lc_source_close(source);
+  }
+  return status;
+}
+
+vectis_status vectis_cai_output_file(cai_output *output, const char *path,
+                                     size_t *written, vectis_error *error) {
+  lc_source *source;
+  lc_sink *sink;
+  lc_error lcerr;
+  cai_error caierr;
+  int rc;
+
+  if (written != NULL) {
+    *written = 0u;
+  }
+  if (output == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "CAI output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (path == NULL || path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "output path is required");
+    return VECTIS_ERR_INVALID;
+  }
+  source = NULL;
+  cai_error_init(&caierr);
+  rc = cai_output_as_lc_source(output, &source, &caierr);
+  if (rc != CAI_OK) {
+    (void)vectis_cai_error(error, &caierr,
+                           "failed to open CAI output file source");
+    cai_error_cleanup(&caierr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  cai_error_cleanup(&caierr);
+  sink = NULL;
+  lc_error_init(&lcerr);
+  rc = lc_sink_to_file(path, &sink, &lcerr);
+  if (rc != LC_OK) {
+    lc_source_close(source);
+    (void)vectis_source_error(error, rc, &lcerr,
+                              "failed to open CAI output file sink");
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  rc = lc_copy(source, sink, written, &lcerr);
+  lc_sink_close(sink);
+  lc_source_close(source);
+  if (rc != LC_OK) {
+    (void)vectis_source_error(error, rc, &lcerr,
+                              "failed to write CAI output file");
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_cai_output_enqueue(
+    cai_output *output, struct lc_client *client,
+    const struct lc_enqueue_req *request, struct lc_enqueue_res *out,
+    vectis_error *error) {
+  lc_source *source;
+  lc_error lcerr;
+  cai_error caierr;
+  int rc;
+
+  if (output == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "CAI output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (client == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "lockd client is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "enqueue request is required");
+    return VECTIS_ERR_INVALID;
+  }
+  source = NULL;
+  cai_error_init(&caierr);
+  rc = cai_output_as_lc_source(output, &source, &caierr);
+  if (rc != CAI_OK) {
+    (void)vectis_cai_error(error, &caierr,
+                           "failed to open CAI output enqueue source");
+    cai_error_cleanup(&caierr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  cai_error_cleanup(&caierr);
+  lc_error_init(&lcerr);
+  rc = lc_enqueue(client, request, source, out, &lcerr);
+  lc_source_close(source);
+  if (rc != LC_OK) {
+    (void)vectis_source_error(error, rc, &lcerr,
+                              "failed to enqueue CAI output");
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 void vectis_http_client_config_init(vectis_http_client_config *config) {

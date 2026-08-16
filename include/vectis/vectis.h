@@ -1,12 +1,13 @@
 #ifndef VECTIS_VECTIS_H
 #define VECTIS_VECTIS_H
 
-#include <cpkt/opcua.h>
-#include <curl/curl.h>
-#include <stddef.h>
 #ifndef LONEJSON_WITH_CURL
 #define LONEJSON_WITH_CURL 1
 #endif
+#include <cai/cai.h>
+#include <cpkt/opcua.h>
+#include <curl/curl.h>
+#include <stddef.h>
 #include <lonejson.h>
 #include <pslog.h>
 
@@ -50,6 +51,8 @@ struct lc_client;
 struct lc_lease;
 struct lc_sink;
 struct lc_source;
+struct lc_enqueue_req;
+struct lc_enqueue_res;
 struct lc_consumer_service;
 struct lc_consumer_service_config;
 struct lc_consumer_message;
@@ -78,6 +81,8 @@ typedef struct vectis_webdav_embedded_site_config
     vectis_webdav_embedded_site_config;
 typedef struct vectis_webdav_embedded_mount_config
     vectis_webdav_embedded_mount_config;
+
+#define VECTIS_CAI_DEFAULT_OUTPUT_CONTENT_TYPE "text/plain; charset=utf-8"
 
 typedef enum vectis_status {
   VECTIS_OK = 0,
@@ -166,7 +171,8 @@ typedef enum vectis_error_source {
   VECTIS_ERROR_SOURCE_CURL = 6,
   VECTIS_ERROR_SOURCE_OPENSSL = 7,
   VECTIS_ERROR_SOURCE_LIBSSH2 = 8,
-  VECTIS_ERROR_SOURCE_CPKT = 9
+  VECTIS_ERROR_SOURCE_CPKT = 9,
+  VECTIS_ERROR_SOURCE_CAI = 10
 } vectis_error_source;
 
 typedef struct vectis_error {
@@ -446,6 +452,27 @@ typedef struct vectis_lockd_config {
   pslog_logger *logger;
   int logger_disabled;
 } vectis_lockd_config;
+
+typedef struct vectis_cai_config {
+  /*
+   * Borrowed CAI client. When set, Vectis returns this client and never closes
+   * it. When NULL, vectis_app_cai_client() lazily opens an app-owned CAI client
+   * from client_config.
+   */
+  cai_client *client;
+  /*
+   * Configuration for a Vectis-owned CAI client. String fields are copied into
+   * the app at construction time; chatgpt_auth, logger, allocator callbacks,
+   * and other handle/context pointers remain borrowed.
+   */
+  cai_client_config client_config;
+  /*
+   * Dedicated CAI logger override. When NULL and logging is not disabled, CAI
+   * inherits the Vectis app logger.
+   */
+  pslog_logger *logger;
+  int logger_disabled;
+} vectis_cai_config;
 
 typedef struct vectis_tls_config {
   vectis_tls_mode mode;
@@ -831,6 +858,7 @@ typedef struct vectis_app_config {
   vectis_server_config server;
   vectis_tls_config tls;
   vectis_lockd_config lockd;
+  vectis_cai_config cai;
 } vectis_app_config;
 
 typedef struct vectis_http_client_config {
@@ -1108,6 +1136,13 @@ struct vectis_app {
                            vectis_mutable_bytes *out, vectis_error *error);
   size_t (*route_count)(const vectis_app *self);
   pslog_logger *(*logger)(vectis_app *self);
+
+  /* Return the borrowed or app-owned CAI client, opening the app-owned client
+   * lazily when necessary. The returned client remains owned by its configured
+   * owner and must not be closed by the caller.
+   */
+  vectis_status (*cai_client)(vectis_app *self, cai_client **out,
+                              vectis_error *error);
 
   /* Returns the app-owned process-local lockd client when lockd is configured
    * and open in the current process. Route handlers on a started
@@ -1484,6 +1519,7 @@ void vectis_server_config_init(vectis_server_config *config);
 void vectis_autoblock_config_init(vectis_autoblock_config *config);
 void vectis_tls_config_init(vectis_tls_config *config);
 void vectis_lockd_config_init(vectis_lockd_config *config);
+void vectis_cai_config_init(vectis_cai_config *config);
 void vectis_body_policy_init(vectis_body_policy *policy);
 vectis_body_policy vectis_body_none(void);
 vectis_body_policy vectis_body_json_default(void);
@@ -1691,6 +1727,8 @@ vectis_status vectis_generate_openapi(vectis_app *app,
                                       vectis_error *error);
 size_t vectis_route_count(const vectis_app *app);
 pslog_logger *vectis_logger(vectis_app *app);
+vectis_status vectis_app_cai_client(vectis_app *app, cai_client **out,
+                                    vectis_error *error);
 /* Returns the app-owned lockd client after successful runtime startup.
  * Route handlers on a started lockd-configured app can treat this as present.
  * NULL is reserved for invalid apps or pre-start lifecycle inspection.
@@ -1959,6 +1997,26 @@ vectis_status vectis_response_error_json(vectis_response *response,
                                          const char *message,
                                          const char *detail,
                                          vectis_error *error);
+
+vectis_status vectis_cai_error(vectis_error *error, const cai_error *cai,
+                               const char *fallback_message);
+vectis_status vectis_cai_source_from_source(const vectis_source *source,
+                                            cai_source **out,
+                                            vectis_error *error);
+vectis_status vectis_cai_source_from_request(vectis_request *request,
+                                             cai_source **out,
+                                             vectis_error *error);
+vectis_status vectis_cai_output_response(cai_output *output,
+                                         vectis_response *response,
+                                         int status_code,
+                                         const char *content_type,
+                                         vectis_error *error);
+vectis_status vectis_cai_output_file(cai_output *output, const char *path,
+                                     size_t *written, vectis_error *error);
+vectis_status vectis_cai_output_enqueue(
+    cai_output *output, struct lc_client *client,
+    const struct lc_enqueue_req *request, struct lc_enqueue_res *out,
+    vectis_error *error);
 
 void vectis_http_client_config_init(vectis_http_client_config *config);
 vectis_status vectis_http_client_new(const vectis_http_client_config *config,

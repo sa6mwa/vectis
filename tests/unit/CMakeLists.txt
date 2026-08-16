@@ -54,6 +54,7 @@ function(vectis_add_cpp_header_test target_name)
 endfunction()
 
 vectis_add_unit_test(vectis_unit_config test_vectis_config.c)
+vectis_add_unit_test(vectis_unit_cai test_vectis_cai.c)
 vectis_add_unit_test(vectis_unit_certs test_vectis_certs.c)
 vectis_add_unit_test(vectis_unit_auth test_vectis_auth.c)
 vectis_add_unit_test(vectis_unit_totp_qr test_vectis_totp_qr.c)
