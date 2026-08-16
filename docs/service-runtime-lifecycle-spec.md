@@ -483,6 +483,11 @@ Shutdown is one coordinated runtime state transition:
 If a child or service exits unexpectedly, the default policy is fail closed:
 mark the app stopping, stop the rest of the runtime, and return an error from
 `run()`/`wait()`.
+`vectis_app_config.service_failure_policy` and Lua
+`vectis.server.new({service_failure_policy = ...})` configure monitored
+app-owned service failures. `fail_closed` is the default and stops the app;
+`continue` keeps the app running while preserving failed service diagnostics
+through the service state surface.
 
 Supervised child termination must be bounded. The supervisor first requests a
 graceful Kore shutdown with `SIGTERM`, reaps with nonblocking observation until
@@ -507,8 +512,9 @@ Required additions or semantic changes:
   `supervised` route-backed topology selection.
 - `vectis_consumer_service_state_get()` and `service->state(...)` for copied
   service lifecycle diagnostics without materializing the dependency service.
-- future runtime config fields still need quiescence strictness and service
-  failure policy.
+- `vectis_app_config.service_failure_policy` for explicit `fail_closed` or
+  `continue` behavior when monitored app-owned services fail.
+- future runtime config fields still need quiescence strictness.
 - descriptor-backed `vectis_consumer_service`.
 - app-owned service registration APIs for future OPC UA/curl/audio/SUS worker
   declarations.
@@ -526,6 +532,8 @@ Required semantics:
 - `server:wait()` waits for the selected runtime and shuts it down.
 - `server.new({supervision_policy = "auto" | "direct" | "supervised"})`
   mirrors the C topology policy.
+- `server.new({service_failure_policy = "fail_closed" | "continue"})` mirrors
+  the C monitored service failure policy.
 - `server:consumer_service({ start = true })` means start with the app runtime,
   not start a pthread during declaration for route-backed apps.
 - `server:consumer_service_states()` returns copied lifecycle diagnostics for

@@ -9233,6 +9233,7 @@ static int vectis_lua_server_new(lua_State *lua) {
   const char *bind;
   const char *mode;
   const char *supervision_policy;
+  const char *service_failure_policy;
   const char **lockd_endpoints;
   const char **tls_domains;
   const char *pem;
@@ -9262,6 +9263,18 @@ static int vectis_lua_server_new(lua_State *lua) {
     } else {
       return luaL_error(
           lua, "server supervision_policy must be auto, direct, or supervised");
+    }
+  }
+  service_failure_policy =
+      vectis_lua_table_string(lua, 1, "service_failure_policy");
+  if (service_failure_policy != NULL) {
+    if (strcmp(service_failure_policy, "fail_closed") == 0) {
+      config.service_failure_policy = VECTIS_SERVICE_FAILURE_FAIL_CLOSED;
+    } else if (strcmp(service_failure_policy, "continue") == 0) {
+      config.service_failure_policy = VECTIS_SERVICE_FAILURE_CONTINUE;
+    } else {
+      return luaL_error(lua, "server service_failure_policy must be "
+                             "fail_closed or continue");
     }
   }
   config.shutdown_grace_ms = vectis_lua_table_long(lua, 1, "shutdown_grace_ms",

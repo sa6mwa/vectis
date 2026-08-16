@@ -124,6 +124,39 @@ static int failing_consumer_on_error(void *context,
   return LC_ERR_PROTOCOL;
 }
 
+static int signaling_failing_consumer_handler(void *context,
+                                              lc_consumer_message *message,
+                                              lc_error *error) {
+  int rc;
+
+  rc = failing_consumer_handler(context, message, error);
+  (void)kill(getpid(), SIGTERM);
+  return rc;
+}
+
+typedef struct runtime_enqueue_after_delay {
+  const char *endpoint;
+  const char *queue;
+  long delay_ms;
+} runtime_enqueue_after_delay;
+
+static void enqueue_lockd_test_message(const char *endpoint, const char *queue);
+
+static void *runtime_enqueue_after_delay_main(void *userdata) {
+  runtime_enqueue_after_delay *task;
+  struct timespec delay;
+
+  task = (runtime_enqueue_after_delay *)userdata;
+  if (task == NULL) {
+    return NULL;
+  }
+  delay.tv_sec = task->delay_ms / 1000L;
+  delay.tv_nsec = (task->delay_ms % 1000L) * 1000000L;
+  (void)nanosleep(&delay, NULL);
+  enqueue_lockd_test_message(task->endpoint, task->queue);
+  return NULL;
+}
+
 static void enqueue_lockd_test_message(const char *endpoint,
                                        const char *queue) {
   const char *endpoints[1];
@@ -1198,6 +1231,7 @@ static void assert_server_config_validation(void) {
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   assert(config.supervision_policy == VECTIS_SUPERVISION_AUTO);
+  assert(config.service_failure_policy == VECTIS_SERVICE_FAILURE_FAIL_CLOSED);
   assert(config.shutdown_grace_ms == VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS);
 
   config.server.max_connections = 0u;
@@ -1226,6 +1260,11 @@ static void assert_server_config_validation(void) {
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.supervision_policy = VECTIS_SUPERVISION_SUPERVISED;
+  assert_valid_server_config(&config);
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.service_failure_policy = VECTIS_SERVICE_FAILURE_CONTINUE;
   assert_valid_server_config(&config);
 
   vectis_app_config_init(&config);
@@ -1262,6 +1301,11 @@ static void assert_server_config_validation(void) {
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.supervision_policy = (vectis_supervision_policy)99;
   assert_invalid_server_config(&config, "supervision_policy");
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.service_failure_policy = (vectis_service_failure_policy)99;
+  assert_invalid_server_config(&config, "service_failure_policy");
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
@@ -3092,6 +3136,80 @@ static void assert_service_only_wait_reports_consumer_service_exit(void) {
   remove_tree(pouch_dir);
 }
 
+static void assert_service_failure_continue_waits_for_signal(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  lc_consumer_config consumer;
+  lc_consumer_service_config service_config;
+  vectis_consumer_service *service;
+  vectis_consumer_service_state service_state;
+  char pouch_dir[] = "/tmp/vectis-runtime-service-continue.XXXXXX";
+  char endpoint[4096];
+  const char *endpoints[1];
+  runtime_enqueue_after_delay enqueue_task;
+  pthread_t enqueue_thread;
+  int handled_count;
+  int written;
+
+  assert(mkdtemp(pouch_dir) != NULL);
+  written = snprintf(endpoint, sizeof(endpoint),
+                     "pouch://%s?single_writer=false", pouch_dir);
+  assert(written > 0 && (size_t)written < sizeof(endpoint));
+  endpoints[0] = endpoint;
+
+  vectis_app_config_init(&config);
+  config.service_failure_policy = VECTIS_SERVICE_FAILURE_CONTINUE;
+  config.lockd.endpoints = endpoints;
+  config.lockd.endpoint_count = 1u;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  handled_count = 0;
+  lc_consumer_config_init(&consumer);
+  lc_consumer_service_config_init(&service_config);
+  consumer.name = "service-continue-failing";
+  consumer.request.queue = "service-continue-failing";
+  consumer.request.owner = "service-continue-failing-owner";
+  consumer.request.wait_seconds = 1L;
+  consumer.request.visibility_timeout_seconds = 1L;
+  consumer.handle = signaling_failing_consumer_handler;
+  consumer.on_error = failing_consumer_on_error;
+  consumer.context = &handled_count;
+  service_config.consumers = &consumer;
+  service_config.consumer_count = 1u;
+  service = NULL;
+  status = app->consumer_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+  assert(service != NULL);
+  status = service->start(service, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+
+  enqueue_task.endpoint = endpoint;
+  enqueue_task.queue = "service-continue-failing";
+  enqueue_task.delay_ms = 100L;
+  assert(pthread_create(&enqueue_thread, NULL, runtime_enqueue_after_delay_main,
+                        &enqueue_task) == 0);
+
+  (void)alarm(10u);
+  status = app->wait(app, &error);
+  (void)alarm(0u);
+  assert(pthread_join(enqueue_thread, NULL) == 0);
+  assert(status == VECTIS_OK);
+  assert(handled_count == 1);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.failed);
+  assert(service_state.dependency_code != (long)LC_OK);
+
+  service->close(service);
+  app->close(app);
+  remove_tree(pouch_dir);
+}
+
 #ifdef VECTIS_RUNTIME_HEADER_LIMIT_ONLY
 int main(void) {
   assert_default_header_limit_accepts_64k();
@@ -3142,6 +3260,10 @@ static int run_named_runtime_test(const char *name) {
     assert_service_only_wait_reports_consumer_service_exit();
     return 1;
   }
+  if (strcmp(name, "service_failure_continue_waits_for_signal") == 0) {
+    assert_service_failure_continue_waits_for_signal();
+    return 1;
+  }
   if (strcmp(name, "kore_smoke") == 0) {
     assert_kore_smoke();
     return 1;
@@ -3174,6 +3296,7 @@ int main(void) {
   assert_supervised_start_reports_child_readiness_failure();
   assert_supervised_wait_reports_consumer_service_exit();
   assert_service_only_wait_reports_consumer_service_exit();
+  assert_service_failure_continue_waits_for_signal();
 
   vectis_app_config_init(&config);
   config.tls.mode = (vectis_tls_mode)99;

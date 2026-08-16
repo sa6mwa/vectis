@@ -27,6 +27,10 @@ Vectis default. `supervision_policy` accepts `auto`, `direct`, or `supervised`:
 `auto` uses direct foreground Kore unless app-owned services require the managed
 supervisor topology, `direct` fails if such services are declared, and
 `supervised` forces the managed supervisor topology for route-backed apps.
+`service_failure_policy` accepts `fail_closed` or `continue`; the default
+`fail_closed` stops the app when a monitored app-owned service fails, while
+`continue` leaves the app running and reports the failed service through
+`server:consumer_service_states()`.
 
 `vectis.server.new({tls = ...})` accepts the same manual and ACME modes as the
 C app config. Manual TLS can use paths or in-memory PEM strings:

@@ -933,6 +933,14 @@ typedef enum vectis_supervision_policy {
   VECTIS_SUPERVISION_SUPERVISED = 2
 } vectis_supervision_policy;
 
+typedef enum vectis_service_failure_policy {
+  /* Stop the app and return the service failure from run()/wait(). */
+  VECTIS_SERVICE_FAILURE_FAIL_CLOSED = 0,
+  /* Keep the app running; failed service state remains observable through
+   * service diagnostics. */
+  VECTIS_SERVICE_FAILURE_CONTINUE = 1
+} vectis_service_failure_policy;
+
 typedef struct vectis_app_config {
   const char *app_name;
   pslog_logger *logger;
@@ -941,6 +949,8 @@ typedef struct vectis_app_config {
   /* Runtime topology selection for route-backed apps. AUTO chooses direct
    * foreground Kore unless app-owned services require supervision. */
   vectis_supervision_policy supervision_policy;
+  /* Policy for monitored app-owned service failures. */
+  vectis_service_failure_policy service_failure_policy;
   /* Grace period for managed runtime shutdown before forced termination.
    * Zero uses VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS. */
   long shutdown_grace_ms;

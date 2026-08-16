@@ -850,6 +850,27 @@ do
   assert(tostring(err):match("supervision_policy"))
 end
 
+do
+  local service_policy_server = assert(vectis.server.new({
+    app_name = "lua-service-failure-continue-policy",
+    port = 18164,
+    service_failure_policy = "continue",
+  }))
+  service_policy_server:close()
+end
+
+do
+  local ok, err = pcall(function()
+    return vectis.server.new({
+      app_name = "lua-bad-service-failure-policy",
+      port = 18165,
+      service_failure_policy = "invalid",
+    })
+  end)
+  assert(ok == false)
+  assert(tostring(err):match("service_failure_policy"))
+end
+
 local tls_bundle_pem_server = assert(vectis.server.new({
   app_name = "lua-manual-tls-bundle-pem",
   port = 18170,

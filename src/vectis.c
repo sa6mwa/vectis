@@ -407,6 +407,7 @@ typedef struct vectis_app_impl {
   long timeout_ms;
   long shutdown_grace_ms;
   vectis_supervision_policy supervision_policy;
+  vectis_service_failure_policy service_failure_policy;
   unsigned short port;
   vectis_tls_mode tls_mode;
   int require_client_certificate;
@@ -2090,6 +2091,7 @@ void vectis_app_config_init(vectis_app_config *config) {
   config->log_mode = PSLOG_MODE_JSON;
   config->min_log_level = PSLOG_LEVEL_INFO;
   config->supervision_policy = VECTIS_SUPERVISION_AUTO;
+  config->service_failure_policy = VECTIS_SERVICE_FAILURE_FAIL_CLOSED;
   config->shutdown_grace_ms = VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS;
   vectis_server_config_init(&config->server);
   vectis_tls_config_init(&config->tls);
@@ -4398,6 +4400,7 @@ static vectis_status vectis_app_stop_consumer_services(vectis_app_impl *impl,
       }
     }
     if (service->monitor_done && service->monitor_rc != LC_OK &&
+        impl->service_failure_policy != VECTIS_SERVICE_FAILURE_CONTINUE &&
         first_status == VECTIS_OK) {
       if (error != NULL) {
         *error = service->monitor_error;
@@ -4702,6 +4705,10 @@ vectis_app_check_consumer_service_exit(vectis_app_impl *impl,
   }
   (void)pthread_mutex_unlock(&impl->mutex);
   if (!failed) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (impl->service_failure_policy == VECTIS_SERVICE_FAILURE_CONTINUE) {
     vectis_error_clear(error);
     return VECTIS_OK;
   }
@@ -5420,6 +5427,12 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
                      "supervision_policy must be auto, direct, or supervised");
     return NULL;
   }
+  if (effective->service_failure_policy != VECTIS_SERVICE_FAILURE_FAIL_CLOSED &&
+      effective->service_failure_policy != VECTIS_SERVICE_FAILURE_CONTINUE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "service_failure_policy must be fail_closed or continue");
+    return NULL;
+  }
   if (effective->shutdown_grace_ms < 0L) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "shutdown_grace_ms must be non-negative");
@@ -5483,6 +5496,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   impl->shutdown_grace_ms = vectis_default_long(
       effective->shutdown_grace_ms, VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS);
   impl->supervision_policy = effective->supervision_policy;
+  impl->service_failure_policy = effective->service_failure_policy;
   impl->port = vectis_default_ushort(effective->tls.port, 8443u);
   impl->tls_mode = effective->tls.mode;
   impl->require_client_certificate = effective->tls.require_client_certificate;
