@@ -52,7 +52,7 @@ typedef struct vectis_kore_runtime_config {
   /* Private supervisor control channel. The child writes READY and listens for
    * STOP frames; the supervisor owns the other end.
    */
-  int ready_fd;
+  int control_fd;
 } vectis_kore_runtime_config;
 
 typedef enum vectis_runtime_control_type {

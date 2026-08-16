@@ -601,7 +601,7 @@ static vectis_status vectis_app_wait_supervised_child(vectis_app_impl *impl,
                                                       vectis_error *error);
 static vectis_status
 vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
-                                       int ready_fd, vectis_error *error);
+                                       int control_fd, vectis_error *error);
 static vectis_status vectis_app_stop_kore_child(pid_t child_pid, int control_fd,
                                                 long shutdown_grace_ms,
                                                 vectis_error *error);
@@ -5931,7 +5931,7 @@ vectis_app_make_kore_runtime_config(vectis_app *app, vectis_app_impl *impl,
   kore_config->body_disk_offload_bytes = vectis_app_body_disk_offload_bytes(
       impl, &kore_config->body_disk_offload_configured);
   kore_config->logger = impl->logger;
-  kore_config->ready_fd = -1;
+  kore_config->control_fd = -1;
 }
 
 static void vectis_close_fd_if_open(int *fd) {
@@ -6148,7 +6148,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
                         strerror(errno));
       return VECTIS_ERR_STATE;
     }
-    kore_config.ready_fd = control_fds[1];
+    kore_config.control_fd = control_fds[1];
     pid = fork();
     if (pid < 0) {
       vectis_close_fd_if_open(&control_fds[0]);
@@ -6433,7 +6433,7 @@ static int vectis_wait_sleep_ms(long delay_ms) {
 
 static vectis_status
 vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
-                                       int ready_fd, vectis_error *error) {
+                                       int control_fd, vectis_error *error) {
   fd_set readfds;
   struct timeval timeout;
   vectis_runtime_control_type frame_type;
@@ -6446,7 +6446,7 @@ vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
   int probe;
   pid_t waited;
 
-  if (child_pid <= 0 || ready_fd < 0) {
+  if (child_pid <= 0 || control_fd < 0) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "supervised Kore readiness channel is required");
     return VECTIS_ERR_INVALID;
@@ -6489,13 +6489,13 @@ vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
     }
 
     FD_ZERO(&readfds);
-    FD_SET(ready_fd, &readfds);
+    FD_SET(control_fd, &readfds);
     timeout.tv_sec = 0;
     timeout.tv_usec = 100000;
-    select_rc = select(ready_fd + 1, &readfds, NULL, NULL, &timeout);
-    if (select_rc > 0 && FD_ISSET(ready_fd, &readfds)) {
+    select_rc = select(control_fd + 1, &readfds, NULL, NULL, &timeout);
+    if (select_rc > 0 && FD_ISSET(control_fd, &readfds)) {
       memset(&payload, 0, sizeof(payload));
-      status = vectis_internal_runtime_control_read(ready_fd, &frame_type,
+      status = vectis_internal_runtime_control_read(control_fd, &frame_type,
                                                     &payload, error);
       if (status != VECTIS_OK) {
         vectis_mutable_bytes_cleanup(&payload);

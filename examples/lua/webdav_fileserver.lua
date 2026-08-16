@@ -4,8 +4,11 @@ local webdav = require("vectis.webdav")
 local port = tonumber(assert(os.getenv("VECTIS_LUA_WEBDAV_EXAMPLE_PORT")))
 local cache_dir = assert(os.getenv("VECTIS_LUA_WEBDAV_EXAMPLE_CACHE_DIR"))
 local base_url = "http://127.0.0.1:" .. tostring(port)
-local site_id = "example-" .. tostring(port)
-local collection_path = "/dav/public-" .. tostring(port)
+local run_id = os.getenv("VECTIS_LUA_WEBDAV_EXAMPLE_RUN_ID")
+  or os.getenv("VECTIS_PORT_RUN_ID")
+  or tostring(port)
+local site_id = "example-" .. run_id
+local collection_path = "/dav/public-" .. run_id
 local file_path = collection_path .. "/readme.txt"
 
 local server = assert(vectis.server.new({

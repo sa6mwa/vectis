@@ -744,9 +744,9 @@ static void vectis_kore_cleanup_config(vectis_kore_runtime_config *config) {
   if (config == NULL) {
     return;
   }
-  if (config->ready_fd >= 0) {
-    (void)close(config->ready_fd);
-    config->ready_fd = -1;
+  if (config->control_fd >= 0) {
+    (void)close(config->control_fd);
+    config->control_fd = -1;
   }
   if (config->runtime_certfile_temporary && config->runtime_certfile != NULL) {
     (void)unlink(config->runtime_certfile);
@@ -885,7 +885,7 @@ static int vectis_kore_write_all(int fd, const void *data, size_t size) {
 static void vectis_kore_notify_ready(void) {
   int fd;
 
-  fd = vectis_kore_current.ready_fd;
+  fd = vectis_kore_current.control_fd;
   if (fd < 0) {
     return;
   }
@@ -909,7 +909,7 @@ static void vectis_kore_control_timer(void *arg, u_int64_t now) {
 
   (void)arg;
   (void)now;
-  fd = vectis_kore_current.ready_fd;
+  fd = vectis_kore_current.control_fd;
   if (fd < 0 || kore_quit != KORE_QUIT_NONE) {
     return;
   }
@@ -941,7 +941,7 @@ static void vectis_kore_control_timer(void *arg, u_int64_t now) {
 }
 
 void vectis_kore_parent_timers(void) {
-  if (vectis_kore_current.ready_fd >= 0) {
+  if (vectis_kore_current.control_fd >= 0) {
     (void)kore_timer_add(vectis_kore_control_timer, 100, NULL, 0);
   }
 }
