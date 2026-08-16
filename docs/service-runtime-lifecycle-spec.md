@@ -439,10 +439,13 @@ The runtime bus should carry:
 Current implementation commits the first layer as an internal supervisor control
 channel, not a public libvectis or Lua API. Frames use the private `VRC1`
 header, a typed control kind, and a bounded payload. The first implemented
-frame is child readiness. Later metrics, service-failure, and request/reply
-frames must use the same bounded copied-message model or a deliberately named
-spooled/chunked extension; they must not smuggle in-process pointers or
-materialize unbounded "streaming" payloads.
+frames are child readiness and child stop. STOP is best-effort graceful
+shutdown: the supervisor sends the frame first, then keeps the existing bounded
+SIGTERM/SIGKILL fallback so an unresponsive child cannot hang shutdown. Later
+metrics, service-failure, and request/reply frames must use the same bounded
+copied-message model or a deliberately named spooled/chunked extension; they
+must not smuggle in-process pointers or materialize unbounded "streaming"
+payloads.
 
 ## Quiescence Guard
 
@@ -584,7 +587,8 @@ Required semantics:
    - parent monitors signals and child/service exit.
 5. Runtime bus/control channel:
    - child readiness; implemented as an internal typed control frame.
-   - child stop;
+   - child stop; implemented as an internal typed control frame with signal
+     fallback.
    - service failure propagation;
    - metrics snapshot transfer.
 6. Lua lifecycle updates:
@@ -644,4 +648,3 @@ implementing later service families:
   C API, Lua API, or both. The supervisor control channel itself is internal.
 - whether route-to-supervisor request/reply should prefer runtime bus or lockdc
   by default;
-- Darwin quiescence policy before exact thread-count inspection exists.

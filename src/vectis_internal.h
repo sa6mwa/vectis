@@ -49,6 +49,9 @@ typedef struct vectis_kore_runtime_config {
   int runtime_certfile_temporary;
   int runtime_certkey_temporary;
   int runtime_client_ca_temporary;
+  /* Private supervisor control channel. The child writes READY and listens for
+   * STOP frames; the supervisor owns the other end.
+   */
   int ready_fd;
 } vectis_kore_runtime_config;
 

@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -37,6 +38,7 @@ int vectis_kore_body_chunk(struct http_request *req, const void *data,
 void vectis_kore_request_free(struct http_request *req);
 void kore_parent_configure(int argc, char **argv);
 void kore_parent_teardown(void);
+void vectis_kore_parent_timers(void);
 
 #if defined(KORE_VECTIS_STATIC_RUNTIME)
 const struct kore_vectis_runtime_symbol kore_vectis_runtime_symbols[] = {
@@ -742,6 +744,10 @@ static void vectis_kore_cleanup_config(vectis_kore_runtime_config *config) {
   if (config == NULL) {
     return;
   }
+  if (config->ready_fd >= 0) {
+    (void)close(config->ready_fd);
+    config->ready_fd = -1;
+  }
   if (config->runtime_certfile_temporary && config->runtime_certfile != NULL) {
     (void)unlink(config->runtime_certfile);
   }
@@ -883,10 +889,61 @@ static void vectis_kore_notify_ready(void) {
   if (fd < 0) {
     return;
   }
-  vectis_kore_current.ready_fd = -1;
   (void)vectis_internal_runtime_control_write(fd, VECTIS_RUNTIME_CONTROL_READY,
                                               NULL, 0u, NULL);
-  (void)close(fd);
+}
+
+static void vectis_kore_request_controlled_shutdown(void) {
+  kore_quit = KORE_QUIT_NORMAL;
+  kore_signal(SIGTERM);
+  vectis_kore_wake_listener();
+}
+
+static void vectis_kore_control_timer(void *arg, u_int64_t now) {
+  vectis_runtime_control_type type;
+  vectis_mutable_bytes payload;
+  struct timeval timeout;
+  fd_set readfds;
+  int fd;
+  int selected;
+
+  (void)arg;
+  (void)now;
+  fd = vectis_kore_current.ready_fd;
+  if (fd < 0 || kore_quit != KORE_QUIT_NONE) {
+    return;
+  }
+
+  FD_ZERO(&readfds);
+  FD_SET(fd, &readfds);
+  timeout.tv_sec = 0;
+  timeout.tv_usec = 0;
+  selected = select(fd + 1, &readfds, NULL, NULL, &timeout);
+  if (selected == 0 || (selected < 0 && errno == EINTR)) {
+    return;
+  }
+  if (selected < 0) {
+    vectis_kore_request_controlled_shutdown();
+    return;
+  }
+
+  memset(&payload, 0, sizeof(payload));
+  if (vectis_internal_runtime_control_read(fd, &type, &payload, NULL) !=
+      VECTIS_OK) {
+    vectis_mutable_bytes_cleanup(&payload);
+    vectis_kore_request_controlled_shutdown();
+    return;
+  }
+  vectis_mutable_bytes_cleanup(&payload);
+  if (type == VECTIS_RUNTIME_CONTROL_STOP) {
+    vectis_kore_request_controlled_shutdown();
+  }
+}
+
+void vectis_kore_parent_timers(void) {
+  if (vectis_kore_current.ready_fd >= 0) {
+    (void)kore_timer_add(vectis_kore_control_timer, 100, NULL, 0);
+  }
 }
 
 static vectis_status vectis_kore_temp_file_from_bytes(const void *data,

@@ -352,6 +352,7 @@ typedef struct vectis_app_impl {
   int started;
   pid_t kore_child_pid;
   int kore_child_reaped;
+  int kore_child_control_fd;
   int owns_logger;
   char *app_name;
   char *bind;
@@ -601,7 +602,7 @@ static vectis_status vectis_app_wait_supervised_child(vectis_app_impl *impl,
 static vectis_status
 vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
                                        int ready_fd, vectis_error *error);
-static vectis_status vectis_app_stop_kore_child(pid_t child_pid,
+static vectis_status vectis_app_stop_kore_child(pid_t child_pid, int control_fd,
                                                 long shutdown_grace_ms,
                                                 vectis_error *error);
 static int vectis_wait_sleep_ms(long delay_ms);
@@ -5011,6 +5012,10 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
     return;
   }
 
+  if (impl->kore_child_control_fd >= 0) {
+    (void)close(impl->kore_child_control_fd);
+    impl->kore_child_control_fd = -1;
+  }
   vectis_app_close_consumer_services(impl);
   vectis_close_lockd_client_for_current_process(impl);
   vectis_close_cai_client_for_current_process(impl);
@@ -5655,6 +5660,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
     vectis_set_error(error, VECTIS_ERR_STATE, "failed to initialize app mutex");
     return NULL;
   }
+  impl->kore_child_control_fd = -1;
 
   impl->app_name = vectis_strdup(
       effective->app_name != NULL ? effective->app_name : "vectis");
@@ -5928,21 +5934,76 @@ vectis_app_make_kore_runtime_config(vectis_app *app, vectis_app_impl *impl,
   kore_config->ready_fd = -1;
 }
 
-static vectis_status vectis_app_stop_kore_child(pid_t child_pid,
+static void vectis_close_fd_if_open(int *fd) {
+  if (fd != NULL && *fd >= 0) {
+    (void)close(*fd);
+    *fd = -1;
+  }
+}
+
+static vectis_status vectis_app_stop_kore_child(pid_t child_pid, int control_fd,
                                                 long shutdown_grace_ms,
                                                 vectis_error *error) {
   long remaining_ms;
   long sleep_ms;
+  long control_wait_ms;
   int wait_status;
   int err;
   pid_t waited;
 
   if (child_pid <= 0) {
+    vectis_close_fd_if_open(&control_fd);
     vectis_error_clear(error);
     return VECTIS_OK;
   }
 
+  remaining_ms = shutdown_grace_ms > 0L ? shutdown_grace_ms
+                                        : VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS;
+  if (control_fd >= 0) {
+    (void)vectis_internal_runtime_control_write(
+        control_fd, VECTIS_RUNTIME_CONTROL_STOP, NULL, 0u, NULL);
+    control_wait_ms = remaining_ms < 150L ? remaining_ms : 150L;
+    while (control_wait_ms > 0L) {
+      waited = waitpid(child_pid, &wait_status, WNOHANG);
+      if (waited == child_pid) {
+        vectis_close_fd_if_open(&control_fd);
+        vectis_error_clear(error);
+        return VECTIS_OK;
+      }
+      if (waited < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        if (errno == ECHILD) {
+          vectis_close_fd_if_open(&control_fd);
+          vectis_error_clear(error);
+          return VECTIS_OK;
+        }
+        vectis_close_fd_if_open(&control_fd);
+        err = errno != 0 ? errno : EINVAL;
+        vectis_set_errorf(error, VECTIS_ERR_STATE,
+                          "failed to wait for Kore runtime: %s", strerror(err));
+        return VECTIS_ERR_STATE;
+      }
+      sleep_ms = control_wait_ms < 25L ? control_wait_ms : 25L;
+      err = vectis_wait_sleep_ms(sleep_ms);
+      if (err != 0) {
+        vectis_close_fd_if_open(&control_fd);
+        vectis_set_error(error, VECTIS_ERR_STATE,
+                         "failed to wait for Kore runtime shutdown");
+        if (error != NULL) {
+          error->dependency_code = (long)err;
+          (void)snprintf(error->detail, sizeof(error->detail), "%s",
+                         strerror(err));
+        }
+        return VECTIS_ERR_STATE;
+      }
+      control_wait_ms -= sleep_ms;
+      remaining_ms -= sleep_ms;
+    }
+  }
   if (kill(child_pid, SIGTERM) != 0) {
+    vectis_close_fd_if_open(&control_fd);
     if (errno == ESRCH) {
       vectis_error_clear(error);
       return VECTIS_OK;
@@ -5952,11 +6013,10 @@ static vectis_status vectis_app_stop_kore_child(pid_t child_pid,
     return VECTIS_ERR_STATE;
   }
 
-  remaining_ms = shutdown_grace_ms > 0L ? shutdown_grace_ms
-                                        : VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS;
   while (remaining_ms >= 0L) {
     waited = waitpid(child_pid, &wait_status, WNOHANG);
     if (waited == child_pid) {
+      vectis_close_fd_if_open(&control_fd);
       vectis_error_clear(error);
       return VECTIS_OK;
     }
@@ -5965,9 +6025,11 @@ static vectis_status vectis_app_stop_kore_child(pid_t child_pid,
         continue;
       }
       if (errno == ECHILD) {
+        vectis_close_fd_if_open(&control_fd);
         vectis_error_clear(error);
         return VECTIS_OK;
       }
+      vectis_close_fd_if_open(&control_fd);
       err = errno != 0 ? errno : EINVAL;
       vectis_set_errorf(error, VECTIS_ERR_STATE,
                         "failed to wait for Kore runtime: %s", strerror(err));
@@ -5979,6 +6041,7 @@ static vectis_status vectis_app_stop_kore_child(pid_t child_pid,
     sleep_ms = remaining_ms < 50L ? remaining_ms : 50L;
     err = vectis_wait_sleep_ms(sleep_ms);
     if (err != 0) {
+      vectis_close_fd_if_open(&control_fd);
       vectis_set_error(error, VECTIS_ERR_STATE,
                        "failed to wait for Kore runtime shutdown");
       if (error != NULL) {
@@ -5992,6 +6055,7 @@ static vectis_status vectis_app_stop_kore_child(pid_t child_pid,
   }
 
   if (kill(child_pid, SIGKILL) != 0 && errno != ESRCH) {
+    vectis_close_fd_if_open(&control_fd);
     vectis_set_errorf(error, VECTIS_ERR_STATE,
                       "failed to kill unresponsive Kore runtime: %s",
                       strerror(errno));
@@ -6002,9 +6066,11 @@ static vectis_status vectis_app_stop_kore_child(pid_t child_pid,
     waited = waitpid(child_pid, &wait_status, 0);
   } while (waited < 0 && errno == EINTR);
   if (waited == child_pid || (waited < 0 && errno == ECHILD)) {
+    vectis_close_fd_if_open(&control_fd);
     vectis_error_clear(error);
     return VECTIS_OK;
   }
+  vectis_close_fd_if_open(&control_fd);
   err = errno != 0 ? errno : EINVAL;
   vectis_set_errorf(error, VECTIS_ERR_STATE,
                     "failed to reap killed Kore runtime: %s", strerror(err));
@@ -6020,7 +6086,8 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
   int supervise_routes;
   pid_t pid;
   pid_t cleanup_pid;
-  int ready_pipe[2];
+  int cleanup_control_fd;
+  int control_fds[2];
 
   if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
@@ -6068,50 +6135,54 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
   }
 
   if (route_count > 0u) {
-    ready_pipe[0] = -1;
-    ready_pipe[1] = -1;
+    control_fds[0] = -1;
+    control_fds[1] = -1;
     vectis_app_make_kore_runtime_config(app, impl, &kore_config);
     status = vectis_internal_kore_validate(&kore_config, error);
     if (status != VECTIS_OK) {
       return status;
     }
-    if (pipe(ready_pipe) != 0) {
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, control_fds) != 0) {
       vectis_set_errorf(error, VECTIS_ERR_STATE,
-                        "failed to create Kore readiness channel: %s",
+                        "failed to create Kore control channel: %s",
                         strerror(errno));
       return VECTIS_ERR_STATE;
     }
-    kore_config.ready_fd = ready_pipe[1];
+    kore_config.ready_fd = control_fds[1];
     pid = fork();
     if (pid < 0) {
-      (void)close(ready_pipe[0]);
-      (void)close(ready_pipe[1]);
+      vectis_close_fd_if_open(&control_fds[0]);
+      vectis_close_fd_if_open(&control_fds[1]);
       vectis_set_errorf(error, VECTIS_ERR_STATE,
                         "failed to fork Kore runtime: %s", strerror(errno));
       return VECTIS_ERR_STATE;
     }
     if (pid == 0) {
-      (void)close(ready_pipe[0]);
+      vectis_close_fd_if_open(&control_fds[0]);
       status = vectis_internal_kore_run(&kore_config, NULL);
       _exit(status == VECTIS_OK ? 0 : 1);
     }
-    (void)close(ready_pipe[1]);
+    vectis_close_fd_if_open(&control_fds[1]);
     (void)pthread_mutex_lock(&impl->mutex);
     impl->kore_child_pid = pid;
     impl->kore_child_reaped = 0;
+    impl->kore_child_control_fd = control_fds[0];
     (void)pthread_mutex_unlock(&impl->mutex);
-    status =
-        vectis_app_wait_supervised_child_ready(impl, pid, ready_pipe[0], error);
-    (void)close(ready_pipe[0]);
+    status = vectis_app_wait_supervised_child_ready(impl, pid, control_fds[0],
+                                                    error);
     if (status != VECTIS_OK) {
       (void)pthread_mutex_lock(&impl->mutex);
       cleanup_pid = impl->kore_child_pid;
+      cleanup_control_fd = impl->kore_child_control_fd;
       impl->kore_child_pid = 0;
       impl->kore_child_reaped = 0;
+      impl->kore_child_control_fd = -1;
       (void)pthread_mutex_unlock(&impl->mutex);
       if (cleanup_pid > 0) {
-        (void)vectis_app_stop_kore_child(cleanup_pid, impl->shutdown_grace_ms,
-                                         NULL);
+        (void)vectis_app_stop_kore_child(cleanup_pid, cleanup_control_fd,
+                                         impl->shutdown_grace_ms, NULL);
+      } else {
+        vectis_close_fd_if_open(&cleanup_control_fd);
       }
       return status;
     }
@@ -6163,6 +6234,7 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
   vectis_app_impl *impl;
   pid_t child_pid;
   int child_reaped;
+  int control_fd;
 
   if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
@@ -6178,7 +6250,9 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
   }
   child_pid = impl->kore_child_pid;
   child_reaped = impl->kore_child_reaped;
+  control_fd = impl->kore_child_control_fd;
   impl->kore_child_pid = 0;
+  impl->kore_child_control_fd = -1;
   impl->started = 0;
   if (impl->kore_child_reaped) {
     child_pid = 0;
@@ -6189,13 +6263,17 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
   vectis_metrics_worker_stop(app);
 
   if (child_pid > 0) {
-    if (vectis_app_stop_kore_child(child_pid, impl->shutdown_grace_ms, error) !=
-        VECTIS_OK) {
+    if (vectis_app_stop_kore_child(child_pid, control_fd,
+                                   impl->shutdown_grace_ms,
+                                   error) != VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_STATE;
     }
   } else if (!child_reaped && impl->route_count > 0u &&
              vectis_internal_kore_stop(app, error) != VECTIS_OK) {
+    vectis_close_fd_if_open(&control_fd);
     return error != NULL ? error->code : VECTIS_ERR_STATE;
+  } else {
+    vectis_close_fd_if_open(&control_fd);
   }
 
   if (vectis_app_stop_consumer_services(impl, error) != VECTIS_OK) {
