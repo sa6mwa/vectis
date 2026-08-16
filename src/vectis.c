@@ -350,6 +350,7 @@ typedef struct vectis_app_impl {
   pthread_mutex_t mutex;
   int started;
   pid_t kore_child_pid;
+  int kore_child_reaped;
   int owns_logger;
   char *app_name;
   char *bind;
@@ -581,6 +582,9 @@ static vectis_status vectis_app_stop_impl(vectis_app *app, vectis_error *error);
 static vectis_status vectis_app_run_impl(vectis_app *app, vectis_error *error);
 static vectis_status vectis_app_wait_impl(vectis_app *app, vectis_error *error);
 static vectis_status vectis_wait_for_process_signal(vectis_error *error);
+static vectis_status vectis_app_wait_supervised_child(vectis_app_impl *impl,
+                                                      pid_t child_pid,
+                                                      vectis_error *error);
 static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
                                               vectis_error *error);
 static void
@@ -5502,6 +5506,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
     (void)pthread_mutex_lock(&impl->mutex);
     impl->started = 1;
     impl->kore_child_pid = pid;
+    impl->kore_child_reaped = 0;
     (void)pthread_mutex_unlock(&impl->mutex);
     status = vectis_app_start_requested_consumer_services(impl, error);
     if (status != VECTIS_OK) {
@@ -5539,6 +5544,7 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
                                           vectis_error *error) {
   vectis_app_impl *impl;
   pid_t child_pid;
+  int child_reaped;
   int wait_status;
 
   if (app == NULL || app->impl == NULL) {
@@ -5554,8 +5560,13 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
     return VECTIS_ERR_STATE;
   }
   child_pid = impl->kore_child_pid;
+  child_reaped = impl->kore_child_reaped;
   impl->kore_child_pid = 0;
   impl->started = 0;
+  if (impl->kore_child_reaped) {
+    child_pid = 0;
+    impl->kore_child_reaped = 0;
+  }
   (void)pthread_mutex_unlock(&impl->mutex);
 
   vectis_metrics_worker_stop(app);
@@ -5577,7 +5588,8 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
         return VECTIS_ERR_STATE;
       }
     } while (1);
-  } else if (vectis_internal_kore_stop(app, error) != VECTIS_OK) {
+  } else if (!child_reaped && impl->route_count > 0u &&
+             vectis_internal_kore_stop(app, error) != VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
 
@@ -5657,11 +5669,18 @@ static vectis_status vectis_app_run_impl(vectis_app *app, vectis_error *error) {
     return status;
   }
   if (vectis_app_has_requested_consumer_services(impl)) {
+    pid_t child_pid;
+
     status = vectis_app_start_impl(app, error);
     if (status != VECTIS_OK) {
       return status;
     }
-    status = vectis_wait_for_process_signal(error);
+    (void)pthread_mutex_lock(&impl->mutex);
+    child_pid = impl->kore_child_pid;
+    (void)pthread_mutex_unlock(&impl->mutex);
+    status = child_pid > 0 ? vectis_app_wait_supervised_child(impl, child_pid,
+                                                              error)
+                           : vectis_wait_for_process_signal(error);
     if (status != VECTIS_OK) {
       (void)vectis_app_stop_impl(app, NULL);
       return status;
@@ -5786,6 +5805,114 @@ static vectis_status vectis_wait_for_process_signal(vectis_error *error) {
   return VECTIS_OK;
 }
 
+static vectis_status vectis_app_wait_supervised_child(vectis_app_impl *impl,
+                                                      pid_t child_pid,
+                                                      vectis_error *error) {
+  struct sigaction action;
+  struct sigaction old_int;
+  struct sigaction old_term;
+  struct sigaction old_quit;
+  int have_int;
+  int have_term;
+  int have_quit;
+  int err;
+  int status;
+  pid_t waited;
+
+  if (impl == NULL || child_pid <= 0) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "supervised Kore child is required");
+    return VECTIS_ERR_INVALID;
+  }
+
+  vectis_wait_signal = 0;
+  memset(&action, 0, sizeof(action));
+  action.sa_handler = vectis_wait_on_signal;
+  sigemptyset(&action.sa_mask);
+  action.sa_flags = 0;
+  have_int = sigaction(SIGINT, &action, &old_int) == 0;
+  have_term = sigaction(SIGTERM, &action, &old_term) == 0;
+  have_quit = sigaction(SIGQUIT, &action, &old_quit) == 0;
+  if (!have_int || !have_term || !have_quit) {
+    err = errno != 0 ? errno : EINVAL;
+    if (have_int) {
+      (void)sigaction(SIGINT, &old_int, NULL);
+    }
+    if (have_term) {
+      (void)sigaction(SIGTERM, &old_term, NULL);
+    }
+    if (have_quit) {
+      (void)sigaction(SIGQUIT, &old_quit, NULL);
+    }
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to install vectis wait signal handlers");
+    if (error != NULL) {
+      error->dependency_code = (long)err;
+      (void)snprintf(error->detail, sizeof(error->detail), "%s",
+                     strerror(err));
+    }
+    return VECTIS_ERR_STATE;
+  }
+
+  while (vectis_wait_signal == 0) {
+    waited = waitpid(child_pid, &status, WNOHANG);
+    if (waited == child_pid) {
+      (void)pthread_mutex_lock(&impl->mutex);
+      if (impl->kore_child_pid == child_pid) {
+        impl->kore_child_pid = 0;
+        impl->kore_child_reaped = 1;
+      }
+      (void)pthread_mutex_unlock(&impl->mutex);
+      (void)sigaction(SIGINT, &old_int, NULL);
+      (void)sigaction(SIGTERM, &old_term, NULL);
+      (void)sigaction(SIGQUIT, &old_quit, NULL);
+      if (WIFEXITED(status)) {
+        vectis_set_errorf(error, VECTIS_ERR_STATE,
+                          "supervised Kore runtime exited with status %d",
+                          WEXITSTATUS(status));
+      } else if (WIFSIGNALED(status)) {
+        vectis_set_errorf(error, VECTIS_ERR_STATE,
+                          "supervised Kore runtime exited on signal %d",
+                          WTERMSIG(status));
+      } else {
+        vectis_set_error(error, VECTIS_ERR_STATE,
+                         "supervised Kore runtime exited unexpectedly");
+      }
+      return VECTIS_ERR_STATE;
+    }
+    if (waited < 0 && errno != EINTR) {
+      err = errno != 0 ? errno : EINVAL;
+      (void)sigaction(SIGINT, &old_int, NULL);
+      (void)sigaction(SIGTERM, &old_term, NULL);
+      (void)sigaction(SIGQUIT, &old_quit, NULL);
+      vectis_set_errorf(error, VECTIS_ERR_STATE,
+                        "failed to wait for supervised Kore runtime: %s",
+                        strerror(err));
+      return VECTIS_ERR_STATE;
+    }
+    err = vectis_wait_sleep_ms(100L);
+    if (err != 0) {
+      (void)sigaction(SIGINT, &old_int, NULL);
+      (void)sigaction(SIGTERM, &old_term, NULL);
+      (void)sigaction(SIGQUIT, &old_quit, NULL);
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "supervised vectis wait failed");
+      if (error != NULL) {
+        error->dependency_code = (long)err;
+        (void)snprintf(error->detail, sizeof(error->detail), "%s",
+                       strerror(err));
+      }
+      return VECTIS_ERR_STATE;
+    }
+  }
+
+  (void)sigaction(SIGINT, &old_int, NULL);
+  (void)sigaction(SIGTERM, &old_term, NULL);
+  (void)sigaction(SIGQUIT, &old_quit, NULL);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 static vectis_status vectis_app_wait_impl(vectis_app *app,
                                           vectis_error *error) {
   vectis_app_impl *impl;
@@ -5812,9 +5939,15 @@ static vectis_status vectis_app_wait_impl(vectis_app *app,
   }
   (void)pthread_mutex_unlock(&impl->mutex);
 
-  status = (!has_routes || child_pid > 0) ? vectis_wait_for_process_signal(error)
-                                          : VECTIS_OK;
+  if (has_routes && child_pid > 0) {
+    status = vectis_app_wait_supervised_child(impl, child_pid, error);
+  } else if (!has_routes) {
+    status = vectis_wait_for_process_signal(error);
+  } else {
+    status = VECTIS_OK;
+  }
   if (status != VECTIS_OK) {
+    (void)vectis_app_stop_impl(app, NULL);
     return status;
   }
   return vectis_app_stop_impl(app, error);

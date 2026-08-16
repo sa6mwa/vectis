@@ -211,6 +211,13 @@ No Kore fork boundary exists in this topology.
 `wait()` blocks until signal, child exit, service failure, or explicit stop
 condition, then runs the same shutdown sequence.
 
+In supervised route runtimes, `wait()` must actively monitor the Kore child.
+If the child exits before a shutdown signal, Vectis marks the child as reaped,
+tears down supervisor-owned services and resources, and returns
+`VECTIS_ERR_STATE` with the child exit status or terminating signal in the
+diagnostic message. It must not keep waiting indefinitely for a process signal
+after the HTTP ingress process has died.
+
 `stop()` is idempotent only after the app has entered a started/running state.
 Calling `stop()` on a never-started app remains an error unless the API is
 explicitly changed everywhere.

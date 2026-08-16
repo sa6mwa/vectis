@@ -516,6 +516,33 @@ static int connect_local(unsigned short port) {
   return fd;
 }
 
+static int reserve_loopback_port(unsigned short *out) {
+  struct sockaddr_in addr;
+  socklen_t addr_len;
+  int fd;
+  int opt;
+  int rc;
+
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  opt = 1;
+  (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, (socklen_t)sizeof(opt));
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(0u);
+  rc = inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+  assert(rc == 1);
+  rc = bind(fd, (const struct sockaddr *)&addr, (socklen_t)sizeof(addr));
+  assert(rc == 0);
+  rc = listen(fd, 1);
+  assert(rc == 0);
+  addr_len = (socklen_t)sizeof(addr);
+  rc = getsockname(fd, (struct sockaddr *)&addr, &addr_len);
+  assert(rc == 0);
+  *out = ntohs(addr.sin_port);
+  return fd;
+}
+
 static vectis_status
 metrics_required_provider(const vectis_auth_provider_request *request,
                           vectis_auth_provider_response *response,
@@ -2610,6 +2637,34 @@ static void assert_kore_start_rejects_extra_thread(void) {
   app->close(app);
 }
 
+static void assert_supervised_wait_reports_child_exit(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_route_config route;
+  unsigned short port;
+  int reserved_fd;
+
+  reserved_fd = reserve_loopback_port(&port);
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = port;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/child-exit", sample_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  status = app->wait(app, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "supervised Kore runtime exited") != NULL);
+  app->close(app);
+  close(reserved_fd);
+}
+
 #ifdef VECTIS_RUNTIME_HEADER_LIMIT_ONLY
 int main(void) {
   assert_default_header_limit_accepts_64k();
@@ -2630,6 +2685,7 @@ int main(void) {
   assert_metrics_surface();
   assert_consumer_service_declaration_before_routes();
   assert_kore_start_rejects_extra_thread();
+  assert_supervised_wait_reports_child_exit();
 
   vectis_app_config_init(&config);
   config.tls.mode = (vectis_tls_mode)99;
