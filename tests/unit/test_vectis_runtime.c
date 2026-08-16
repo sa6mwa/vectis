@@ -124,6 +124,42 @@ static int failing_consumer_on_error(void *context,
   return LC_ERR_PROTOCOL;
 }
 
+static void enqueue_lockd_test_message(const char *endpoint,
+                                       const char *queue) {
+  const char *endpoints[1];
+  lc_client_config client_config;
+  lc_client *client;
+  lc_error lcerr;
+  lc_enqueue_req enqueue_req;
+  lc_enqueue_res enqueue_res;
+  lc_source *source;
+  const char payload[] = "{\"ok\":true}";
+  int rc;
+
+  endpoints[0] = endpoint;
+  lc_error_init(&lcerr);
+  lc_client_config_init(&client_config);
+  client_config.endpoints = endpoints;
+  client_config.endpoint_count = 1u;
+  client = NULL;
+  rc = lc_client_open(&client_config, &client, &lcerr);
+  assert(rc == LC_OK);
+  lc_enqueue_req_init(&enqueue_req);
+  enqueue_req.queue = queue;
+  enqueue_req.visibility_timeout_seconds = 1L;
+  enqueue_req.ttl_seconds = 60L;
+  source = NULL;
+  rc = lc_source_from_memory(payload, sizeof(payload) - 1u, &source, &lcerr);
+  assert(rc == LC_OK);
+  memset(&enqueue_res, 0, sizeof(enqueue_res));
+  rc = client->enqueue(client, &enqueue_req, source, &enqueue_res, &lcerr);
+  assert(rc == LC_OK);
+  lc_source_close(source);
+  lc_enqueue_res_cleanup(&enqueue_res);
+  lc_client_close(client);
+  lc_error_cleanup(&lcerr);
+}
+
 static void *runtime_probe_thread(void *userdata) {
   runtime_thread_probe *probe;
   struct timespec delay;
@@ -2699,15 +2735,7 @@ static void assert_supervised_wait_reports_consumer_service_exit(void) {
   char pouch_dir[] = "/tmp/vectis-runtime-consumer.XXXXXX";
   char endpoint[4096];
   const char *endpoints[1];
-  lc_client_config client_config;
-  lc_client *client;
-  lc_error lcerr;
-  lc_enqueue_req enqueue_req;
-  lc_enqueue_res enqueue_res;
-  lc_source *source;
-  const char payload[] = "{\"ok\":true}";
   int handled_count;
-  int rc;
   int reserved_fd;
   int written;
   unsigned short port;
@@ -2756,27 +2784,71 @@ static void assert_supervised_wait_reports_consumer_service_exit(void) {
   status = app->start(app, &error);
   assert(status == VECTIS_OK);
 
-  lc_error_init(&lcerr);
-  lc_client_config_init(&client_config);
-  client_config.endpoints = endpoints;
-  client_config.endpoint_count = 1u;
-  client = NULL;
-  rc = lc_client_open(&client_config, &client, &lcerr);
-  assert(rc == LC_OK);
-  lc_enqueue_req_init(&enqueue_req);
-  enqueue_req.queue = "runtime-failing";
-  enqueue_req.visibility_timeout_seconds = 1L;
-  enqueue_req.ttl_seconds = 60L;
-  source = NULL;
-  rc = lc_source_from_memory(payload, sizeof(payload) - 1u, &source, &lcerr);
-  assert(rc == LC_OK);
-  memset(&enqueue_res, 0, sizeof(enqueue_res));
-  rc = client->enqueue(client, &enqueue_req, source, &enqueue_res, &lcerr);
-  assert(rc == LC_OK);
-  lc_source_close(source);
-  lc_enqueue_res_cleanup(&enqueue_res);
-  lc_client_close(client);
-  lc_error_cleanup(&lcerr);
+  enqueue_lockd_test_message(endpoint, "runtime-failing");
+
+  (void)alarm(10u);
+  status = app->wait(app, &error);
+  (void)alarm(0u);
+  assert(status == VECTIS_ERR_STATE);
+  assert(error.source == VECTIS_ERROR_SOURCE_LOCKDC);
+  assert(error.dependency_code != (long)LC_OK);
+  assert(strstr(error.message, "lockd consumer service wait failed") != NULL);
+  assert(handled_count == 1);
+
+  service->close(service);
+  app->close(app);
+  remove_tree(pouch_dir);
+}
+
+static void assert_service_only_wait_reports_consumer_service_exit(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  lc_consumer_config consumer;
+  lc_consumer_service_config service_config;
+  vectis_consumer_service *service;
+  char pouch_dir[] = "/tmp/vectis-runtime-service-only.XXXXXX";
+  char endpoint[4096];
+  const char *endpoints[1];
+  int handled_count;
+  int written;
+
+  assert(mkdtemp(pouch_dir) != NULL);
+  written = snprintf(endpoint, sizeof(endpoint),
+                     "pouch://%s?single_writer=false", pouch_dir);
+  assert(written > 0 && (size_t)written < sizeof(endpoint));
+  endpoints[0] = endpoint;
+
+  vectis_app_config_init(&config);
+  config.lockd.endpoints = endpoints;
+  config.lockd.endpoint_count = 1u;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  handled_count = 0;
+  lc_consumer_config_init(&consumer);
+  lc_consumer_service_config_init(&service_config);
+  consumer.name = "service-only-failing";
+  consumer.request.queue = "service-only-failing";
+  consumer.request.owner = "service-only-failing-owner";
+  consumer.request.wait_seconds = 1L;
+  consumer.request.visibility_timeout_seconds = 1L;
+  consumer.handle = failing_consumer_handler;
+  consumer.on_error = failing_consumer_on_error;
+  consumer.context = &handled_count;
+  service_config.consumers = &consumer;
+  service_config.consumer_count = 1u;
+  service = NULL;
+  status = app->consumer_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+  assert(service != NULL);
+  status = service->start(service, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+
+  enqueue_lockd_test_message(endpoint, "service-only-failing");
 
   (void)alarm(10u);
   status = app->wait(app, &error);
@@ -2814,6 +2886,7 @@ int main(void) {
   assert_kore_start_rejects_extra_thread();
   assert_supervised_wait_reports_child_exit();
   assert_supervised_wait_reports_consumer_service_exit();
+  assert_service_only_wait_reports_consumer_service_exit();
 
   vectis_app_config_init(&config);
   config.tls.mode = (vectis_tls_mode)99;

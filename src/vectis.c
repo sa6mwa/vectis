@@ -588,7 +588,8 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
 static vectis_status vectis_app_stop_impl(vectis_app *app, vectis_error *error);
 static vectis_status vectis_app_run_impl(vectis_app *app, vectis_error *error);
 static vectis_status vectis_app_wait_impl(vectis_app *app, vectis_error *error);
-static vectis_status vectis_wait_for_process_signal(vectis_error *error);
+static vectis_status vectis_app_wait_for_process_signal(vectis_app_impl *impl,
+                                                        vectis_error *error);
 static vectis_status vectis_app_wait_supervised_child(vectis_app_impl *impl,
                                                       pid_t child_pid,
                                                       vectis_error *error);
@@ -5848,7 +5849,7 @@ static vectis_status vectis_app_run_impl(vectis_app *app, vectis_error *error) {
     if (status != VECTIS_OK) {
       return status;
     }
-    status = vectis_wait_for_process_signal(error);
+    status = vectis_app_wait_for_process_signal(impl, error);
     if (status != VECTIS_OK) {
       (void)vectis_app_stop_impl(app, NULL);
       return status;
@@ -5876,7 +5877,7 @@ static vectis_status vectis_app_run_impl(vectis_app *app, vectis_error *error) {
     (void)pthread_mutex_unlock(&impl->mutex);
     status = child_pid > 0
                  ? vectis_app_wait_supervised_child(impl, child_pid, error)
-                 : vectis_wait_for_process_signal(error);
+                 : vectis_app_wait_for_process_signal(impl, error);
     if (status != VECTIS_OK) {
       (void)vectis_app_stop_impl(app, NULL);
       return status;
@@ -5939,7 +5940,8 @@ static int vectis_wait_sleep_ms(long delay_ms) {
   return errno != 0 ? errno : EINVAL;
 }
 
-static vectis_status vectis_wait_for_process_signal(vectis_error *error) {
+static vectis_status vectis_app_wait_for_process_signal(vectis_app_impl *impl,
+                                                        vectis_error *error) {
   struct sigaction action;
   struct sigaction old_int;
   struct sigaction old_term;
@@ -5978,6 +5980,13 @@ static vectis_status vectis_wait_for_process_signal(vectis_error *error) {
   }
 
   while (vectis_wait_signal == 0) {
+    if (impl != NULL &&
+        vectis_app_check_consumer_service_exit(impl, error) != VECTIS_OK) {
+      (void)sigaction(SIGINT, &old_int, NULL);
+      (void)sigaction(SIGTERM, &old_term, NULL);
+      (void)sigaction(SIGQUIT, &old_quit, NULL);
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
     err = vectis_wait_sleep_ms(100L);
     if (err != 0) {
       (void)sigaction(SIGINT, &old_int, NULL);
@@ -6142,7 +6151,7 @@ static vectis_status vectis_app_wait_impl(vectis_app *app,
   if (has_routes && child_pid > 0) {
     status = vectis_app_wait_supervised_child(impl, child_pid, error);
   } else if (!has_routes) {
-    status = vectis_wait_for_process_signal(error);
+    status = vectis_app_wait_for_process_signal(impl, error);
   } else {
     status = VECTIS_OK;
   }

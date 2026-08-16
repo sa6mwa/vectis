@@ -188,7 +188,7 @@ Flow:
 
 1. Materialize declared services in the current process.
 2. Start requested services.
-3. Wait for process signals or explicit stop.
+3. Wait for process signals, service failures, or explicit stop.
 4. Stop services and close app-owned resources.
 
 No Kore fork boundary exists in this topology.
