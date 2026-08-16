@@ -871,6 +871,27 @@ do
   assert(tostring(err):match("service_failure_policy"))
 end
 
+do
+  local quiescence_policy_server = assert(vectis.server.new({
+    app_name = "lua-quiescence-warn-unavailable-policy",
+    port = 18166,
+    quiescence_policy = "warn_unavailable",
+  }))
+  quiescence_policy_server:close()
+end
+
+do
+  local ok, err = pcall(function()
+    return vectis.server.new({
+      app_name = "lua-bad-quiescence-policy",
+      port = 18167,
+      quiescence_policy = "invalid",
+    })
+  end)
+  assert(ok == false)
+  assert(tostring(err):match("quiescence_policy"))
+end
+
 local tls_bundle_pem_server = assert(vectis.server.new({
   app_name = "lua-manual-tls-bundle-pem",
   port = 18170,

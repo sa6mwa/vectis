@@ -124,20 +124,12 @@ static int failing_consumer_on_error(void *context,
   return LC_ERR_PROTOCOL;
 }
 
-static int signaling_failing_consumer_handler(void *context,
-                                              lc_consumer_message *message,
-                                              lc_error *error) {
-  int rc;
-
-  rc = failing_consumer_handler(context, message, error);
-  (void)kill(getpid(), SIGTERM);
-  return rc;
-}
-
 typedef struct runtime_enqueue_after_delay {
   const char *endpoint;
   const char *queue;
   long delay_ms;
+  vectis_consumer_service *service;
+  int signal_after_failure;
 } runtime_enqueue_after_delay;
 
 static void enqueue_lockd_test_message(const char *endpoint, const char *queue);
@@ -145,6 +137,9 @@ static void enqueue_lockd_test_message(const char *endpoint, const char *queue);
 static void *runtime_enqueue_after_delay_main(void *userdata) {
   runtime_enqueue_after_delay *task;
   struct timespec delay;
+  vectis_consumer_service_state state;
+  vectis_error error;
+  int i;
 
   task = (runtime_enqueue_after_delay *)userdata;
   if (task == NULL) {
@@ -154,6 +149,21 @@ static void *runtime_enqueue_after_delay_main(void *userdata) {
   delay.tv_nsec = (task->delay_ms % 1000L) * 1000000L;
   (void)nanosleep(&delay, NULL);
   enqueue_lockd_test_message(task->endpoint, task->queue);
+  if (task->signal_after_failure && task->service != NULL) {
+    delay.tv_sec = 0;
+    delay.tv_nsec = 50000000L;
+    for (i = 0; i < 100; ++i) {
+      vectis_error_clear(&error);
+      vectis_consumer_service_state_init(&state);
+      if (task->service->state(task->service, &state, &error) == VECTIS_OK &&
+          state.failed) {
+        (void)kill(getpid(), SIGTERM);
+        return NULL;
+      }
+      (void)nanosleep(&delay, NULL);
+    }
+    (void)kill(getpid(), SIGTERM);
+  }
   return NULL;
 }
 
@@ -1299,6 +1309,7 @@ static void assert_server_config_validation(void) {
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   assert(config.supervision_policy == VECTIS_SUPERVISION_AUTO);
   assert(config.service_failure_policy == VECTIS_SERVICE_FAILURE_FAIL_CLOSED);
+  assert(config.quiescence_policy == VECTIS_QUIESCENCE_STRICT);
   assert(config.shutdown_grace_ms == VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS);
 
   config.server.max_connections = 0u;
@@ -1332,6 +1343,11 @@ static void assert_server_config_validation(void) {
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.service_failure_policy = VECTIS_SERVICE_FAILURE_CONTINUE;
+  assert_valid_server_config(&config);
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.quiescence_policy = VECTIS_QUIESCENCE_WARN_UNAVAILABLE;
   assert_valid_server_config(&config);
 
   vectis_app_config_init(&config);
@@ -1373,6 +1389,11 @@ static void assert_server_config_validation(void) {
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.service_failure_policy = (vectis_service_failure_policy)99;
   assert_invalid_server_config(&config, "service_failure_policy");
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.quiescence_policy = (vectis_quiescence_policy)99;
+  assert_invalid_server_config(&config, "quiescence_policy");
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
@@ -3241,7 +3262,7 @@ static void assert_service_failure_continue_waits_for_signal(void) {
   consumer.request.owner = "service-continue-failing-owner";
   consumer.request.wait_seconds = 1L;
   consumer.request.visibility_timeout_seconds = 1L;
-  consumer.handle = signaling_failing_consumer_handler;
+  consumer.handle = failing_consumer_handler;
   consumer.on_error = failing_consumer_on_error;
   consumer.context = &handled_count;
   service_config.consumers = &consumer;
@@ -3258,6 +3279,8 @@ static void assert_service_failure_continue_waits_for_signal(void) {
   enqueue_task.endpoint = endpoint;
   enqueue_task.queue = "service-continue-failing";
   enqueue_task.delay_ms = 100L;
+  enqueue_task.service = service;
+  enqueue_task.signal_after_failure = 1;
   assert(pthread_create(&enqueue_thread, NULL, runtime_enqueue_after_delay_main,
                         &enqueue_task) == 0);
 

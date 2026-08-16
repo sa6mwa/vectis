@@ -31,6 +31,11 @@ supervisor topology, `direct` fails if such services are declared, and
 `fail_closed` stops the app when a monitored app-owned service fails, while
 `continue` leaves the app running and reports the failed service through
 `server:consumer_service_states()`.
+`quiescence_policy` accepts `strict` or `warn_unavailable`; the default
+`strict` fails closed when Vectis cannot prove the declaration process is safe
+for Kore startup. `warn_unavailable` only applies on platforms without exact
+thread inspection and does not allow known unsafe services or observed extra
+threads.
 
 `vectis.server.new({tls = ...})` accepts the same manual and ACME modes as the
 C app config. Manual TLS can use paths or in-memory PEM strings:

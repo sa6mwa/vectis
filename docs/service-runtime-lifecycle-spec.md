@@ -462,6 +462,11 @@ Required checks:
 
 On Linux, exact thread count can be checked through `/proc/self/task`. Darwin
 needs a platform-specific implementation or strict-mode failure until it exists.
+`vectis_app_config.quiescence_policy` and Lua
+`vectis.server.new({quiescence_policy = ...})` configure only the unavailable
+inspection case: `strict` is the default and fails closed; `warn_unavailable`
+logs and continues when exact inspection is not implemented. It does not permit
+known active app-owned services or observable extra threads.
 
 Error messages must identify the unsafe condition and tell the developer to
 register the work as an app service or start the app before creating
@@ -522,7 +527,8 @@ Required additions or semantic changes:
   service lifecycle diagnostics without materializing the dependency service.
 - `vectis_app_config.service_failure_policy` for explicit `fail_closed` or
   `continue` behavior when monitored app-owned services fail.
-- future runtime config fields still need quiescence strictness.
+- `vectis_app_config.quiescence_policy` for strict default behavior and
+  opt-in warning behavior when exact thread inspection is unavailable.
 - descriptor-backed `vectis_consumer_service`.
 - app-owned service registration APIs for future OPC UA/curl/audio/SUS worker
   declarations.
@@ -543,6 +549,8 @@ Required semantics:
   mirrors the C topology policy.
 - `server.new({service_failure_policy = "fail_closed" | "continue"})` mirrors
   the C monitored service failure policy.
+- `server.new({quiescence_policy = "strict" | "warn_unavailable"})` mirrors
+  the C quiescence policy.
 - `server:consumer_service({ start = true })` means start with the app runtime,
   not start a pthread during declaration for route-backed apps.
 - `server:consumer_service_states()` returns copied lifecycle diagnostics for

@@ -941,6 +941,15 @@ typedef enum vectis_service_failure_policy {
   VECTIS_SERVICE_FAILURE_CONTINUE = 1
 } vectis_service_failure_policy;
 
+typedef enum vectis_quiescence_policy {
+  /* Fail closed when exact process quiescence cannot be proven. */
+  VECTIS_QUIESCENCE_STRICT = 0,
+  /* Allow platforms without exact thread inspection to continue after logging a
+   * warning. Known unsafe app-owned services and observable extra threads still
+   * fail closed. */
+  VECTIS_QUIESCENCE_WARN_UNAVAILABLE = 1
+} vectis_quiescence_policy;
+
 typedef struct vectis_app_config {
   const char *app_name;
   pslog_logger *logger;
@@ -951,6 +960,8 @@ typedef struct vectis_app_config {
   vectis_supervision_policy supervision_policy;
   /* Policy for monitored app-owned service failures. */
   vectis_service_failure_policy service_failure_policy;
+  /* Policy for route-backed process quiescence proof before Kore starts. */
+  vectis_quiescence_policy quiescence_policy;
   /* Grace period for managed runtime shutdown before forced termination.
    * Zero uses VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS. */
   long shutdown_grace_ms;

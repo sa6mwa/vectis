@@ -9234,6 +9234,7 @@ static int vectis_lua_server_new(lua_State *lua) {
   const char *mode;
   const char *supervision_policy;
   const char *service_failure_policy;
+  const char *quiescence_policy;
   const char **lockd_endpoints;
   const char **tls_domains;
   const char *pem;
@@ -9275,6 +9276,17 @@ static int vectis_lua_server_new(lua_State *lua) {
     } else {
       return luaL_error(lua, "server service_failure_policy must be "
                              "fail_closed or continue");
+    }
+  }
+  quiescence_policy = vectis_lua_table_string(lua, 1, "quiescence_policy");
+  if (quiescence_policy != NULL) {
+    if (strcmp(quiescence_policy, "strict") == 0) {
+      config.quiescence_policy = VECTIS_QUIESCENCE_STRICT;
+    } else if (strcmp(quiescence_policy, "warn_unavailable") == 0) {
+      config.quiescence_policy = VECTIS_QUIESCENCE_WARN_UNAVAILABLE;
+    } else {
+      return luaL_error(lua, "server quiescence_policy must be strict or "
+                             "warn_unavailable");
     }
   }
   config.shutdown_grace_ms = vectis_lua_table_long(lua, 1, "shutdown_grace_ms",

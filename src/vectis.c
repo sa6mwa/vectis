@@ -408,6 +408,7 @@ typedef struct vectis_app_impl {
   long shutdown_grace_ms;
   vectis_supervision_policy supervision_policy;
   vectis_service_failure_policy service_failure_policy;
+  vectis_quiescence_policy quiescence_policy;
   unsigned short port;
   vectis_tls_mode tls_mode;
   int require_client_certificate;
@@ -2275,6 +2276,7 @@ void vectis_app_config_init(vectis_app_config *config) {
   config->min_log_level = PSLOG_LEVEL_INFO;
   config->supervision_policy = VECTIS_SUPERVISION_AUTO;
   config->service_failure_policy = VECTIS_SERVICE_FAILURE_FAIL_CLOSED;
+  config->quiescence_policy = VECTIS_QUIESCENCE_STRICT;
   config->shutdown_grace_ms = VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS;
   vectis_server_config_init(&config->server);
   vectis_tls_config_init(&config->tls);
@@ -5305,10 +5307,10 @@ static vectis_status vectis_process_thread_count(size_t *out,
   return VECTIS_OK;
 #else
   (void)out;
-  vectis_set_error(error, VECTIS_ERR_STATE,
+  vectis_set_error(error, VECTIS_ERR_NOT_IMPLEMENTED,
                    "process thread count inspection is not implemented on "
                    "this platform");
-  return VECTIS_ERR_STATE;
+  return VECTIS_ERR_NOT_IMPLEMENTED;
 #endif
 }
 
@@ -5337,6 +5339,16 @@ vectis_app_validate_quiescent_for_kore(const vectis_app_impl *impl,
   }
   status = vectis_process_thread_count(&thread_count, error);
   if (status != VECTIS_OK) {
+    if (status == VECTIS_ERR_NOT_IMPLEMENTED &&
+        impl->quiescence_policy == VECTIS_QUIESCENCE_WARN_UNAVAILABLE) {
+      if (impl->logger != NULL) {
+        impl->logger->warnf(impl->logger,
+                            "vectis quiescence thread inspection unavailable",
+                            "policy=%s", "warn_unavailable");
+      }
+      vectis_error_clear(error);
+      return VECTIS_OK;
+    }
     return status;
   }
   if (thread_count > 1u) {
@@ -5616,6 +5628,12 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
                      "service_failure_policy must be fail_closed or continue");
     return NULL;
   }
+  if (effective->quiescence_policy != VECTIS_QUIESCENCE_STRICT &&
+      effective->quiescence_policy != VECTIS_QUIESCENCE_WARN_UNAVAILABLE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "quiescence_policy must be strict or warn_unavailable");
+    return NULL;
+  }
   if (effective->shutdown_grace_ms < 0L) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "shutdown_grace_ms must be non-negative");
@@ -5680,6 +5698,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
       effective->shutdown_grace_ms, VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS);
   impl->supervision_policy = effective->supervision_policy;
   impl->service_failure_policy = effective->service_failure_policy;
+  impl->quiescence_policy = effective->quiescence_policy;
   impl->port = vectis_default_ushort(effective->tls.port, 8443u);
   impl->tls_mode = effective->tls.mode;
   impl->require_client_certificate = effective->tls.require_client_certificate;
@@ -6346,6 +6365,7 @@ vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
   int select_rc;
   int wait_status;
   int err;
+  int probe;
   pid_t waited;
 
   if (child_pid <= 0 || ready_fd < 0) {
@@ -6401,7 +6421,14 @@ vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
                                                     &payload, error);
       if (status != VECTIS_OK) {
         vectis_mutable_bytes_cleanup(&payload);
-        waited = waitpid(child_pid, &wait_status, WNOHANG);
+        waited = 0;
+        for (probe = 0; probe < 20; ++probe) {
+          waited = waitpid(child_pid, &wait_status, WNOHANG);
+          if (waited == child_pid || (waited < 0 && errno != EINTR)) {
+            break;
+          }
+          (void)vectis_wait_sleep_ms(10L);
+        }
         if (waited == child_pid) {
           if (impl != NULL) {
             (void)pthread_mutex_lock(&impl->mutex);
