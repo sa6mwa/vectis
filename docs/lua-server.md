@@ -21,7 +21,9 @@ server:close()
 `server:run()` enters the foreground server runtime and returns after `SIGINT`,
 `SIGTERM`, or `SIGQUIT`. `server:start()` starts a managed Kore child process
 for tests and tools that need the Lua parent to continue; pair it with
-`server:wait()` or `server:stop()`.
+`server:wait()` or `server:stop()`. `shutdown_grace_ms` controls the managed
+runtime grace period before forced child termination; zero or omission uses the
+Vectis default.
 
 `vectis.server.new({tls = ...})` accepts the same manual and ACME modes as the
 C app config. Manual TLS can use paths or in-memory PEM strings:

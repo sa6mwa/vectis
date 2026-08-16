@@ -1197,6 +1197,7 @@ static void assert_server_config_validation(void) {
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  assert(config.shutdown_grace_ms == VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS);
 
   config.server.max_connections = 0u;
   config.server.max_request_header_bytes = 0u;
@@ -1245,6 +1246,11 @@ static void assert_server_config_validation(void) {
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.server.keepalive_timeout_ms = -1L;
   assert_invalid_server_config(&config, "keepalive_timeout_ms");
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.shutdown_grace_ms = -1L;
+  assert_invalid_server_config(&config, "shutdown_grace_ms");
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
@@ -2855,6 +2861,7 @@ static void assert_supervised_start_reports_child_readiness_failure(void) {
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
   config.tls.port = port;
+  config.shutdown_grace_ms = 250L;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/child-exit", sample_handler, NULL);

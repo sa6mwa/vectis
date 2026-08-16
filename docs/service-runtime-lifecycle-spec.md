@@ -484,8 +484,10 @@ mark the app stopping, stop the rest of the runtime, and return an error from
 
 Supervised child termination must be bounded. The supervisor first requests a
 graceful Kore shutdown with `SIGTERM`, reaps with nonblocking observation until
-the shutdown deadline, then escalates to `SIGKILL` and reaps the child so
-`stop()` cannot hang indefinitely.
+the configured shutdown deadline, then escalates to `SIGKILL` and reaps the
+child so `stop()` cannot hang indefinitely. `vectis_app_config.shutdown_grace_ms`
+and Lua `vectis.server.new({shutdown_grace_ms = ...})` configure this grace
+period; zero or omission uses `VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS`.
 
 ## C API Surface Changes
 
@@ -493,8 +495,9 @@ The existing receiver-shell style remains.
 
 Required additions or semantic changes:
 
-- `vectis_runtime_config` or equivalent app config fields for supervision
-  policy, quiescence strictness, shutdown grace, and service failure policy.
+- `vectis_app_config.shutdown_grace_ms` for shutdown grace; future runtime
+  config fields still need supervision policy, quiescence strictness, and
+  service failure policy.
 - descriptor-backed `vectis_consumer_service`.
 - service state query helpers for tests and diagnostics.
 - app-owned service registration APIs for future OPC UA/curl/audio/SUS worker

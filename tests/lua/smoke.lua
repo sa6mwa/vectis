@@ -772,6 +772,18 @@ assert(consumer_service_error.status == vectis.ERR_INVALID)
 assert(consumer_service_error.message:match("receiver_kind"))
 server:close()
 
+do
+  local bad_shutdown_server, bad_shutdown_error = vectis.server.new({
+    app_name = "lua-bad-shutdown-grace",
+    port = 18160,
+    shutdown_grace_ms = -1,
+  })
+  assert(bad_shutdown_server == nil)
+  assert(type(bad_shutdown_error) == "table")
+  assert(bad_shutdown_error.status == vectis.ERR_INVALID)
+  assert(bad_shutdown_error.message:match("shutdown_grace_ms"))
+end
+
 local tls_bundle_pem_server = assert(vectis.server.new({
   app_name = "lua-manual-tls-bundle-pem",
   port = 18170,

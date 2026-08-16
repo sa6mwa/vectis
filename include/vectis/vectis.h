@@ -25,6 +25,7 @@
 #define VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS 30000L
 #define VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS 5000L
 #define VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS 100u
+#define VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS 5000L
 #define VECTIS_AUTOBLOCK_MAX_STATUS_RULES 16u
 #define VECTIS_AUTOBLOCK_MAX_EVENT_RULES 16u
 #define VECTIS_AUTOBLOCK_MAX_TRUSTED_PROXIES 16u
@@ -909,6 +910,9 @@ typedef struct vectis_app_config {
   pslog_logger *logger;
   pslog_mode log_mode;
   pslog_level min_log_level;
+  /* Grace period for managed runtime shutdown before forced termination.
+   * Zero uses VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS. */
+  long shutdown_grace_ms;
   vectis_server_config server;
   vectis_tls_config tls;
   vectis_lockd_config lockd;

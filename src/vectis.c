@@ -405,6 +405,7 @@ typedef struct vectis_app_impl {
   pslog_logger *cai_logger;
   int cai_logger_disabled;
   long timeout_ms;
+  long shutdown_grace_ms;
   unsigned short port;
   vectis_tls_mode tls_mode;
   int require_client_certificate;
@@ -598,6 +599,7 @@ static vectis_status
 vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
                                        int ready_fd, vectis_error *error);
 static vectis_status vectis_app_stop_kore_child(pid_t child_pid,
+                                                long shutdown_grace_ms,
                                                 vectis_error *error);
 static int vectis_wait_sleep_ms(long delay_ms);
 static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
@@ -2083,6 +2085,7 @@ void vectis_app_config_init(vectis_app_config *config) {
   config->app_name = "vectis";
   config->log_mode = PSLOG_MODE_JSON;
   config->min_log_level = PSLOG_LEVEL_INFO;
+  config->shutdown_grace_ms = VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS;
   vectis_server_config_init(&config->server);
   vectis_tls_config_init(&config->tls);
   vectis_lockd_config_init(&config->lockd);
@@ -5371,6 +5374,11 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
                      "lockd timeout_ms must be non-negative");
     return NULL;
   }
+  if (effective->shutdown_grace_ms < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "shutdown_grace_ms must be non-negative");
+    return NULL;
+  }
 
   app = (vectis_app *)calloc(1u, sizeof(*app));
   impl = (vectis_app_impl *)calloc(1u, sizeof(*impl));
@@ -5426,6 +5434,8 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   impl->lockd_logger = effective->lockd.logger;
   impl->lockd_logger_disabled = effective->lockd.logger_disabled;
   impl->timeout_ms = vectis_default_long(effective->lockd.timeout_ms, 30000L);
+  impl->shutdown_grace_ms = vectis_default_long(
+      effective->shutdown_grace_ms, VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS);
   impl->port = vectis_default_ushort(effective->tls.port, 8443u);
   impl->tls_mode = effective->tls.mode;
   impl->require_client_certificate = effective->tls.require_client_certificate;
@@ -5656,6 +5666,7 @@ vectis_app_make_kore_runtime_config(vectis_app *app, vectis_app_impl *impl,
 }
 
 static vectis_status vectis_app_stop_kore_child(pid_t child_pid,
+                                                long shutdown_grace_ms,
                                                 vectis_error *error) {
   long remaining_ms;
   long sleep_ms;
@@ -5678,7 +5689,8 @@ static vectis_status vectis_app_stop_kore_child(pid_t child_pid,
     return VECTIS_ERR_STATE;
   }
 
-  remaining_ms = 5000L;
+  remaining_ms = shutdown_grace_ms > 0L ? shutdown_grace_ms
+                                        : VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS;
   while (remaining_ms >= 0L) {
     waited = waitpid(child_pid, &wait_status, WNOHANG);
     if (waited == child_pid) {
@@ -5830,7 +5842,8 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
       impl->kore_child_reaped = 0;
       (void)pthread_mutex_unlock(&impl->mutex);
       if (cleanup_pid > 0) {
-        (void)vectis_app_stop_kore_child(cleanup_pid, NULL);
+        (void)vectis_app_stop_kore_child(cleanup_pid, impl->shutdown_grace_ms,
+                                         NULL);
       }
       return status;
     }
@@ -5908,7 +5921,8 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
   vectis_metrics_worker_stop(app);
 
   if (child_pid > 0) {
-    if (vectis_app_stop_kore_child(child_pid, error) != VECTIS_OK) {
+    if (vectis_app_stop_kore_child(child_pid, impl->shutdown_grace_ms, error) !=
+        VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_STATE;
     }
   } else if (!child_reaped && impl->route_count > 0u &&
