@@ -269,7 +269,9 @@ Required Lua concepts:
   callback. Direct Lua `on_message` callbacks remain rejected; a future Lua
   callback implementation needs an explicit C adapter or worker-owned Lua
   state/queue bridge.
-- `server:start()`, `server:stop()`, and `server:close()`
+- `server:run()` for foreground serving, plus process-backed `server:start()`,
+  `server:wait()`, `server:stop()`, and `server:close()` for managed test/tool
+  flows
 
 Streaming semantics:
 

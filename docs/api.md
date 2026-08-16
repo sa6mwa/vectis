@@ -26,7 +26,8 @@ Core conventions:
 Major groups:
 
 - Runtime/server: `vectis_app`, `vectis_server_config`,
-  `vectis_register_route()`, `vectis_start()`, and `vectis_stop()`.
+  `vectis_register_route()`, foreground `vectis_run()`, process-backed
+  `vectis_start()`, and `vectis_stop()`.
 - Requests/responses: `vectis_request_*`, `vectis_response_*`,
   materialized/spilled body helpers, JSON replies, file responses, and
   source-backed responses.

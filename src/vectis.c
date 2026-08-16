@@ -2,6 +2,7 @@
 
 #include <ctype.h>
 #include <curl/curl.h>
+#include <dirent.h>
 #include <errno.h>
 #include <lc/lc.h>
 #include <libssh2.h>
@@ -29,11 +30,14 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #include <vectis/auth.h>
 #include <vectis/embedded_fs.h>
 #include <vectis/webdav.h>
+
+static volatile sig_atomic_t vectis_wait_signal = 0;
 
 typedef enum vectis_route_entry_kind {
   VECTIS_ROUTE_ENTRY_HANDLER = 0,
@@ -219,6 +223,7 @@ typedef struct vectis_metrics_state {
   int stop_worker;
   time_t started_at;
   time_t last_load_sample_at;
+  time_t last_snapshot_at;
   int load_supported;
   double loadavg[3];
   char *html_path;
@@ -344,6 +349,7 @@ typedef struct vectis_spill_writer {
 typedef struct vectis_app_impl {
   pthread_mutex_t mutex;
   int started;
+  pid_t kore_child_pid;
   int owns_logger;
   char *app_name;
   char *bind;
@@ -412,6 +418,7 @@ typedef struct vectis_app_impl {
   struct lc_client *lockd_client;
   pid_t lockd_client_pid;
   struct vectis_consumer_receiver_entry *consumer_receivers;
+  struct vectis_consumer_service_impl *consumer_services;
 } vectis_app_impl;
 
 struct vectis_request {
@@ -478,7 +485,21 @@ LONEJSON_MAP_DEFINE(vectis_error_response_map, vectis_error_response_body,
 
 typedef struct vectis_consumer_service_impl {
   lc_consumer_service *service;
+  lc_consumer_service_config config;
+  lc_consumer_config *consumers;
+  char **consumer_names;
+  char **namespace_names;
+  char **queues;
+  char **owners;
+  char **txn_ids;
+  char **start_after_values;
   struct vectis_consumer_receiver_runtime *receivers;
+  vectis_app_impl *owner;
+  struct vectis_consumer_service_impl *next_owned;
+  pid_t service_pid;
+  int materialized;
+  int start_requested;
+  int started;
 } vectis_consumer_service_impl;
 
 typedef struct vectis_consumer_receiver_entry {
@@ -557,9 +578,25 @@ typedef struct vectis_curl_request_body {
 static vectis_status vectis_app_start_impl(vectis_app *app,
                                            vectis_error *error);
 static vectis_status vectis_app_stop_impl(vectis_app *app, vectis_error *error);
+static vectis_status vectis_app_run_impl(vectis_app *app, vectis_error *error);
+static vectis_status vectis_app_wait_impl(vectis_app *app, vectis_error *error);
+static vectis_status vectis_wait_for_process_signal(vectis_error *error);
+static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
+                                              vectis_error *error);
 static void
 vectis_close_lockd_client_for_current_process(vectis_app_impl *impl);
 static void vectis_close_cai_client_for_current_process(vectis_app_impl *impl);
+static vectis_status vectis_app_validate_quiescent_for_kore(
+    const vectis_app_impl *impl, vectis_error *error);
+static vectis_status
+vectis_app_stop_consumer_services(vectis_app_impl *impl, vectis_error *error);
+static vectis_status
+vectis_app_start_requested_consumer_services(vectis_app_impl *impl,
+                                             vectis_error *error);
+static int vectis_app_has_requested_consumer_services(
+    const vectis_app_impl *impl);
+static int vectis_app_has_materialized_consumer_services(
+    const vectis_app_impl *impl);
 static vectis_status
 vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
                         vectis_error *error);
@@ -573,6 +610,7 @@ static void vectis_metrics_state_destroy(vectis_metrics_state *metrics);
 static vectis_status vectis_metrics_worker_start(vectis_app *app,
                                                  vectis_error *error);
 static void vectis_metrics_worker_stop(vectis_app *app);
+static void vectis_metrics_persist_snapshot_if_due(vectis_app *app);
 static vectis_status vectis_app_register_route_impl(
     vectis_app *app, const vectis_route_config *route, vectis_error *error);
 static vectis_status vectis_app_register_route_owned_userdata(
@@ -4185,11 +4223,361 @@ vectis_openapi_route_doc_deep_copy(vectis_openapi_route_doc *dst,
   return VECTIS_OK;
 }
 
+static vectis_status
+vectis_app_stop_consumer_services(vectis_app_impl *impl, vectis_error *error) {
+  vectis_consumer_service_impl *service;
+  vectis_status first_status;
+  lc_error lcerr;
+  int rc;
+
+  if (error != NULL) {
+    vectis_error_clear(error);
+  }
+  first_status = VECTIS_OK;
+  if (impl == NULL) {
+    return first_status;
+  }
+  for (service = impl->consumer_services; service != NULL;
+       service = service->next_owned) {
+    if (service->service == NULL || !service->started) {
+      continue;
+    }
+    rc = service->service->stop(service->service);
+    if (rc != LC_OK && first_status == VECTIS_OK) {
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "lockd consumer service stop failed");
+      if (error != NULL) {
+        error->source = VECTIS_ERROR_SOURCE_LOCKDC;
+        error->dependency_code = (long)rc;
+      }
+      first_status = VECTIS_ERR_STATE;
+    }
+    lc_error_init(&lcerr);
+    rc = service->service->wait(service->service, &lcerr);
+    if (rc != LC_OK && first_status == VECTIS_OK) {
+      first_status = vectis_set_lockdc_error(
+          error, rc, &lcerr, "lockd consumer service wait failed");
+    }
+    lc_error_cleanup(&lcerr);
+    service->started = 0;
+  }
+  return first_status;
+}
+
+static void vectis_consumer_service_config_cleanup(
+    vectis_consumer_service_impl *impl) {
+  size_t i;
+
+  if (impl == NULL) {
+    return;
+  }
+  if (impl->config.consumer_count > 0u) {
+    for (i = 0u; i < impl->config.consumer_count; ++i) {
+      free(impl->consumer_names != NULL ? impl->consumer_names[i] : NULL);
+      free(impl->namespace_names != NULL ? impl->namespace_names[i] : NULL);
+      free(impl->queues != NULL ? impl->queues[i] : NULL);
+      free(impl->owners != NULL ? impl->owners[i] : NULL);
+      free(impl->txn_ids != NULL ? impl->txn_ids[i] : NULL);
+      free(impl->start_after_values != NULL ? impl->start_after_values[i]
+                                            : NULL);
+    }
+  }
+  free(impl->consumers);
+  free(impl->consumer_names);
+  free(impl->namespace_names);
+  free(impl->queues);
+  free(impl->owners);
+  free(impl->txn_ids);
+  free(impl->start_after_values);
+  memset(&impl->config, 0, sizeof(impl->config));
+  impl->consumers = NULL;
+  impl->consumer_names = NULL;
+  impl->namespace_names = NULL;
+  impl->queues = NULL;
+  impl->owners = NULL;
+  impl->txn_ids = NULL;
+  impl->start_after_values = NULL;
+}
+
+static vectis_status vectis_consumer_service_copy_string(
+    const char *value, char **slot, const char **config_slot,
+    vectis_error *error, const char *message) {
+  if (value == NULL) {
+    *slot = NULL;
+    *config_slot = NULL;
+    return VECTIS_OK;
+  }
+  *slot = vectis_strdup(value);
+  if (*slot == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, message);
+    return VECTIS_ERR_NOMEM;
+  }
+  *config_slot = *slot;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_consumer_service_config_copy(
+    vectis_consumer_service_impl *impl,
+    const lc_consumer_service_config *config, vectis_error *error) {
+  size_t count;
+  size_t i;
+  vectis_status status;
+
+  if (impl == NULL || config == NULL || config->consumers == NULL ||
+      config->consumer_count == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "consumer service config requires at least one consumer");
+    return VECTIS_ERR_INVALID;
+  }
+  count = config->consumer_count;
+  impl->consumers = (lc_consumer_config *)calloc(count, sizeof(*impl->consumers));
+  impl->consumer_names = (char **)calloc(count, sizeof(*impl->consumer_names));
+  impl->namespace_names = (char **)calloc(count, sizeof(*impl->namespace_names));
+  impl->queues = (char **)calloc(count, sizeof(*impl->queues));
+  impl->owners = (char **)calloc(count, sizeof(*impl->owners));
+  impl->txn_ids = (char **)calloc(count, sizeof(*impl->txn_ids));
+  impl->start_after_values =
+      (char **)calloc(count, sizeof(*impl->start_after_values));
+  if (impl->consumers == NULL || impl->consumer_names == NULL ||
+      impl->namespace_names == NULL || impl->queues == NULL ||
+      impl->owners == NULL || impl->txn_ids == NULL ||
+      impl->start_after_values == NULL) {
+    vectis_consumer_service_config_cleanup(impl);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate consumer service declaration");
+    return VECTIS_ERR_NOMEM;
+  }
+
+  for (i = 0u; i < count; ++i) {
+    impl->consumers[i] = config->consumers[i];
+    status = vectis_consumer_service_copy_string(
+        config->consumers[i].name, &impl->consumer_names[i],
+        &impl->consumers[i].name, error, "failed to copy consumer name");
+    if (status != VECTIS_OK) {
+      vectis_consumer_service_config_cleanup(impl);
+      return status;
+    }
+    status = vectis_consumer_service_copy_string(
+        config->consumers[i].request.namespace_name, &impl->namespace_names[i],
+        &impl->consumers[i].request.namespace_name, error,
+        "failed to copy consumer namespace");
+    if (status != VECTIS_OK) {
+      vectis_consumer_service_config_cleanup(impl);
+      return status;
+    }
+    status = vectis_consumer_service_copy_string(
+        config->consumers[i].request.queue, &impl->queues[i],
+        &impl->consumers[i].request.queue, error,
+        "failed to copy consumer queue");
+    if (status != VECTIS_OK) {
+      vectis_consumer_service_config_cleanup(impl);
+      return status;
+    }
+    status = vectis_consumer_service_copy_string(
+        config->consumers[i].request.owner, &impl->owners[i],
+        &impl->consumers[i].request.owner, error,
+        "failed to copy consumer owner");
+    if (status != VECTIS_OK) {
+      vectis_consumer_service_config_cleanup(impl);
+      return status;
+    }
+    status = vectis_consumer_service_copy_string(
+        config->consumers[i].request.txn_id, &impl->txn_ids[i],
+        &impl->consumers[i].request.txn_id, error,
+        "failed to copy consumer transaction id");
+    if (status != VECTIS_OK) {
+      vectis_consumer_service_config_cleanup(impl);
+      return status;
+    }
+    status = vectis_consumer_service_copy_string(
+        config->consumers[i].request.start_after,
+        &impl->start_after_values[i], &impl->consumers[i].request.start_after,
+        error, "failed to copy consumer cursor");
+    if (status != VECTIS_OK) {
+      vectis_consumer_service_config_cleanup(impl);
+      return status;
+    }
+  }
+
+  impl->config.consumers = impl->consumers;
+  impl->config.consumer_count = count;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_consumer_service_materialize(
+    vectis_consumer_service_impl *impl, vectis_error *error) {
+  lc_error lcerr;
+  vectis_status status;
+  int rc;
+
+  if (impl == NULL || impl->owner == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (impl->service != NULL && impl->service_pid == getpid()) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (impl->service != NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "consumer service belongs to another process");
+    return VECTIS_ERR_STATE;
+  }
+  status = vectis_open_lockd_client(impl->owner, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+
+  lc_error_init(&lcerr);
+  rc = lc_client_new_consumer_service(impl->owner->lockd_client, &impl->config,
+                                      &impl->service, &lcerr);
+  if (rc != LC_OK) {
+    status = vectis_set_lockdc_error(error, rc, &lcerr,
+                                     "failed to create lockd consumer service");
+    lc_error_cleanup(&lcerr);
+    return status;
+  }
+  lc_error_cleanup(&lcerr);
+  impl->service_pid = getpid();
+  impl->materialized = 1;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status
+vectis_consumer_service_start_materialized(vectis_consumer_service_impl *impl,
+                                           vectis_error *error) {
+  lc_error lcerr;
+  vectis_status status;
+  int rc;
+
+  status = vectis_consumer_service_materialize(impl, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (impl->started) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  lc_error_init(&lcerr);
+  rc = impl->service->start(impl->service, &lcerr);
+  if (rc != LC_OK) {
+    (void)vectis_set_lockdc_error(error, rc, &lcerr,
+                                  "lockd consumer service start failed");
+    lc_error_cleanup(&lcerr);
+    return VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  impl->started = 1;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status
+vectis_app_start_requested_consumer_services(vectis_app_impl *impl,
+                                             vectis_error *error) {
+  vectis_consumer_service_impl *service;
+  vectis_status status;
+
+  if (impl == NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  for (service = impl->consumer_services; service != NULL;
+       service = service->next_owned) {
+    if (!service->start_requested || service->started) {
+      continue;
+    }
+    status = vectis_consumer_service_start_materialized(service, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static int vectis_app_has_requested_consumer_services(
+    const vectis_app_impl *impl) {
+  const vectis_consumer_service_impl *service;
+
+  if (impl == NULL) {
+    return 0;
+  }
+  for (service = impl->consumer_services; service != NULL;
+       service = service->next_owned) {
+    if (service->start_requested) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int vectis_app_has_materialized_consumer_services(
+    const vectis_app_impl *impl) {
+  const vectis_consumer_service_impl *service;
+
+  if (impl == NULL) {
+    return 0;
+  }
+  for (service = impl->consumer_services; service != NULL;
+       service = service->next_owned) {
+    if (service->materialized || service->started || service->service != NULL) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static void vectis_app_close_consumer_services(vectis_app_impl *impl) {
+  vectis_consumer_service_impl *service;
+  vectis_error error;
+
+  if (impl == NULL) {
+    return;
+  }
+  vectis_error_clear(&error);
+  (void)vectis_app_stop_consumer_services(impl, &error);
+  for (service = impl->consumer_services; service != NULL;
+       service = service->next_owned) {
+    if (service->service != NULL) {
+      service->service->close(service->service);
+      service->service = NULL;
+    }
+    service->materialized = 0;
+    service->service_pid = 0;
+    service->owner = NULL;
+  }
+  impl->consumer_services = NULL;
+}
+
+static void vectis_consumer_service_detach(vectis_consumer_service_impl *impl) {
+  vectis_consumer_service_impl **cursor;
+
+  if (impl == NULL || impl->owner == NULL) {
+    return;
+  }
+  (void)pthread_mutex_lock(&impl->owner->mutex);
+  cursor = &impl->owner->consumer_services;
+  while (*cursor != NULL) {
+    if (*cursor == impl) {
+      *cursor = impl->next_owned;
+      break;
+    }
+    cursor = &(*cursor)->next_owned;
+  }
+  (void)pthread_mutex_unlock(&impl->owner->mutex);
+  impl->owner = NULL;
+  impl->next_owned = NULL;
+}
+
 static void vectis_destroy_impl(vectis_app_impl *impl) {
   if (impl == NULL) {
     return;
   }
 
+  vectis_app_close_consumer_services(impl);
   vectis_close_lockd_client_for_current_process(impl);
   vectis_close_cai_client_for_current_process(impl);
 
@@ -4432,6 +4820,82 @@ vectis_validate_lockd_startable(const vectis_app_impl *impl,
 static int vectis_lockd_is_configured(const vectis_app_impl *impl) {
   return impl != NULL &&
          (impl->endpoint_count > 0u || impl->unix_socket_path != NULL);
+}
+
+static vectis_status vectis_process_thread_count(size_t *out,
+                                                 vectis_error *error) {
+#if defined(__linux__)
+  DIR *dir;
+  struct dirent *entry;
+  size_t count;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "thread count output required");
+    return VECTIS_ERR_INVALID;
+  }
+  dir = opendir("/proc/self/task");
+  if (dir == NULL) {
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "failed to inspect process thread count: %s",
+                      strerror(errno));
+    return VECTIS_ERR_STATE;
+  }
+  count = 0u;
+  while ((entry = readdir(dir)) != NULL) {
+    if (entry->d_name[0] == '.') {
+      continue;
+    }
+    ++count;
+  }
+  closedir(dir);
+  *out = count;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+#else
+  (void)out;
+  vectis_set_error(error, VECTIS_ERR_STATE,
+                   "process thread count inspection is not implemented on "
+                   "this platform");
+  return VECTIS_ERR_STATE;
+#endif
+}
+
+static vectis_status vectis_app_validate_quiescent_for_kore(
+    const vectis_app_impl *impl, vectis_error *error) {
+  size_t thread_count;
+  vectis_status status;
+
+  if (impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (impl->lockd_client != NULL || impl->owned_cai_client != NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "route-backed app cannot start after app-owned clients "
+                     "were opened; register app services before start and let "
+                     "the runtime materialize them");
+    return VECTIS_ERR_STATE;
+  }
+  if (vectis_app_has_materialized_consumer_services(impl)) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "route-backed app cannot start after a consumer service "
+                     "was materialized; declare the service before start");
+    return VECTIS_ERR_STATE;
+  }
+  status = vectis_process_thread_count(&thread_count, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (thread_count > 1u) {
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "route-backed app requires a single-threaded "
+                      "declaration process before Kore starts; observed %lu "
+                      "threads",
+                      (unsigned long)thread_count);
+    return VECTIS_ERR_STATE;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 static void
@@ -4866,6 +5330,8 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
 
   app->start = vectis_start;
   app->stop = vectis_stop;
+  app->run = vectis_run;
+  app->wait = vectis_app_wait;
   app->route = vectis_register_route;
   app->json_route = vectis_register_json_route;
   app->json_typed_route = vectis_register_json_typed_route;
@@ -4923,12 +5389,58 @@ void vectis_destroy(vectis_app *app) {
   free(app);
 }
 
+static void
+vectis_app_make_kore_runtime_config(vectis_app *app, vectis_app_impl *impl,
+                                    vectis_kore_runtime_config *kore_config) {
+  memset(kore_config, 0, sizeof(*kore_config));
+  kore_config->app = app;
+  kore_config->app_name = impl->app_name;
+  kore_config->bind = impl->bind;
+  kore_config->port = impl->port;
+  kore_config->domain = impl->domain;
+  kore_config->domains = (const char *const *)impl->domains;
+  kore_config->domain_count = impl->domain_count;
+  kore_config->tls_mode = impl->tls_mode;
+  kore_config->acme_email = impl->acme_email;
+  kore_config->acme_directory_url = impl->acme_directory_url;
+  kore_config->acme_state_dir = impl->acme_state_dir;
+  kore_config->cert_key_bundle_path = impl->cert_key_bundle_path;
+  kore_config->cert_key_bundle_pem = impl->cert_key_bundle_pem;
+  kore_config->cert_key_bundle_pem_size = impl->cert_key_bundle_pem_size;
+  kore_config->cert_key_bundle_source = impl->cert_key_bundle_source;
+  kore_config->certificate_path = impl->certificate_path;
+  kore_config->certificate_pem = impl->certificate_pem;
+  kore_config->certificate_pem_size = impl->certificate_pem_size;
+  kore_config->certificate_source = impl->certificate_source;
+  kore_config->private_key_path = impl->private_key_path;
+  kore_config->private_key_pem = impl->private_key_pem;
+  kore_config->private_key_pem_size = impl->private_key_pem_size;
+  kore_config->private_key_source = impl->private_key_source;
+  kore_config->ca_bundle_path = impl->ca_bundle_path;
+  kore_config->ca_bundle_pem = impl->ca_bundle_pem;
+  kore_config->ca_bundle_pem_size = impl->ca_bundle_pem_size;
+  kore_config->ca_bundle_source = impl->ca_bundle_source;
+  kore_config->client_ca_bundle_path = impl->client_ca_bundle_path;
+  kore_config->client_ca_bundle_pem = impl->client_ca_bundle_pem;
+  kore_config->client_ca_bundle_pem_size = impl->client_ca_bundle_pem_size;
+  kore_config->client_ca_bundle_source = impl->client_ca_bundle_source;
+  kore_config->require_client_certificate = impl->require_client_certificate;
+  kore_config->server = impl->server;
+  kore_config->server.max_request_body_bytes =
+      vectis_app_max_request_body_bytes(impl);
+  kore_config->body_disk_offload_bytes =
+      vectis_app_body_disk_offload_bytes(
+          impl, &kore_config->body_disk_offload_configured);
+  kore_config->logger = impl->logger;
+}
+
 static vectis_status vectis_app_start_impl(vectis_app *app,
                                            vectis_error *error) {
   vectis_app_impl *impl;
-  vectis_status status;
   vectis_kore_runtime_config kore_config;
+  vectis_status status;
   size_t route_count;
+  pid_t pid;
 
   if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
@@ -4958,6 +5470,10 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
     if (status != VECTIS_OK) {
       return status;
     }
+    status = vectis_app_validate_quiescent_for_kore(impl, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
   }
 
   if (route_count == 0u) {
@@ -4968,50 +5484,35 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
   }
 
   if (route_count > 0u) {
-    memset(&kore_config, 0, sizeof(kore_config));
-    kore_config.app = app;
-    kore_config.app_name = impl->app_name;
-    kore_config.bind = impl->bind;
-    kore_config.port = impl->port;
-    kore_config.domain = impl->domain;
-    kore_config.domains = (const char *const *)impl->domains;
-    kore_config.domain_count = impl->domain_count;
-    kore_config.tls_mode = impl->tls_mode;
-    kore_config.acme_email = impl->acme_email;
-    kore_config.acme_directory_url = impl->acme_directory_url;
-    kore_config.acme_state_dir = impl->acme_state_dir;
-    kore_config.cert_key_bundle_path = impl->cert_key_bundle_path;
-    kore_config.cert_key_bundle_pem = impl->cert_key_bundle_pem;
-    kore_config.cert_key_bundle_pem_size = impl->cert_key_bundle_pem_size;
-    kore_config.cert_key_bundle_source = impl->cert_key_bundle_source;
-    kore_config.certificate_path = impl->certificate_path;
-    kore_config.certificate_pem = impl->certificate_pem;
-    kore_config.certificate_pem_size = impl->certificate_pem_size;
-    kore_config.certificate_source = impl->certificate_source;
-    kore_config.private_key_path = impl->private_key_path;
-    kore_config.private_key_pem = impl->private_key_pem;
-    kore_config.private_key_pem_size = impl->private_key_pem_size;
-    kore_config.private_key_source = impl->private_key_source;
-    kore_config.ca_bundle_path = impl->ca_bundle_path;
-    kore_config.ca_bundle_pem = impl->ca_bundle_pem;
-    kore_config.ca_bundle_pem_size = impl->ca_bundle_pem_size;
-    kore_config.ca_bundle_source = impl->ca_bundle_source;
-    kore_config.client_ca_bundle_path = impl->client_ca_bundle_path;
-    kore_config.client_ca_bundle_pem = impl->client_ca_bundle_pem;
-    kore_config.client_ca_bundle_pem_size = impl->client_ca_bundle_pem_size;
-    kore_config.client_ca_bundle_source = impl->client_ca_bundle_source;
-    kore_config.require_client_certificate = impl->require_client_certificate;
-    kore_config.server = impl->server;
-    kore_config.server.max_request_body_bytes =
-        vectis_app_max_request_body_bytes(impl);
-    kore_config.body_disk_offload_bytes = vectis_app_body_disk_offload_bytes(
-        impl, &kore_config.body_disk_offload_configured);
-    kore_config.logger = impl->logger;
-    status = vectis_internal_kore_start(&kore_config, error);
+    vectis_app_make_kore_runtime_config(app, impl, &kore_config);
+    status = vectis_internal_kore_validate(&kore_config, error);
     if (status != VECTIS_OK) {
-      vectis_close_lockd_client_for_current_process(impl);
       return status;
     }
+    pid = fork();
+    if (pid < 0) {
+      vectis_set_errorf(error, VECTIS_ERR_STATE,
+                        "failed to fork Kore runtime: %s", strerror(errno));
+      return VECTIS_ERR_STATE;
+    }
+    if (pid == 0) {
+      status = vectis_internal_kore_run(&kore_config, NULL);
+      _exit(status == VECTIS_OK ? 0 : 1);
+    }
+    (void)pthread_mutex_lock(&impl->mutex);
+    impl->started = 1;
+    impl->kore_child_pid = pid;
+    (void)pthread_mutex_unlock(&impl->mutex);
+    status = vectis_app_start_requested_consumer_services(impl, error);
+    if (status != VECTIS_OK) {
+      vectis_error cleanup_error;
+
+      vectis_error_clear(&cleanup_error);
+      (void)vectis_app_stop_impl(app, &cleanup_error);
+      return status;
+    }
+    vectis_error_clear(error);
+    return VECTIS_OK;
   }
 
   (void)pthread_mutex_lock(&impl->mutex);
@@ -5022,27 +5523,23 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
     (void)pthread_mutex_lock(&impl->mutex);
     impl->started = 0;
     (void)pthread_mutex_unlock(&impl->mutex);
-    if (route_count > 0u) {
-      (void)vectis_internal_kore_stop(app, NULL);
-    }
     vectis_close_lockd_client_for_current_process(impl);
+    return status;
+  }
+  status = vectis_app_start_requested_consumer_services(impl, error);
+  if (status != VECTIS_OK) {
+    (void)vectis_app_stop_impl(app, NULL);
     return status;
   }
   vectis_error_clear(error);
   return VECTIS_OK;
 }
 
-vectis_status vectis_start(vectis_app *app, vectis_error *error) {
-  if (app == NULL || app->impl == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
-    return VECTIS_ERR_INVALID;
-  }
-  return vectis_app_start_impl(app, error);
-}
-
 static vectis_status vectis_app_stop_impl(vectis_app *app,
                                           vectis_error *error) {
   vectis_app_impl *impl;
+  pid_t child_pid;
+  int wait_status;
 
   if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
@@ -5056,12 +5553,35 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
     vectis_set_error(error, VECTIS_ERR_STATE, "app is not started");
     return VECTIS_ERR_STATE;
   }
+  child_pid = impl->kore_child_pid;
+  impl->kore_child_pid = 0;
   impl->started = 0;
   (void)pthread_mutex_unlock(&impl->mutex);
 
   vectis_metrics_worker_stop(app);
 
-  if (vectis_internal_kore_stop(app, error) != VECTIS_OK) {
+  if (child_pid > 0) {
+    if (kill(child_pid, SIGTERM) != 0 && errno != ESRCH) {
+      vectis_set_errorf(error, VECTIS_ERR_STATE,
+                        "failed to signal Kore runtime: %s", strerror(errno));
+      return VECTIS_ERR_STATE;
+    }
+    do {
+      if (waitpid(child_pid, &wait_status, 0) >= 0) {
+        break;
+      }
+      if (errno != EINTR) {
+        vectis_set_errorf(error, VECTIS_ERR_STATE,
+                          "failed to wait for Kore runtime: %s",
+                          strerror(errno));
+        return VECTIS_ERR_STATE;
+      }
+    } while (1);
+  } else if (vectis_internal_kore_stop(app, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+
+  if (vectis_app_stop_consumer_services(impl, error) != VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
 
@@ -5079,6 +5599,229 @@ vectis_status vectis_stop(vectis_app *app, vectis_error *error) {
     return VECTIS_ERR_INVALID;
   }
   return vectis_app_stop_impl(app, error);
+}
+
+vectis_status vectis_start(vectis_app *app, vectis_error *error) {
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_app_start_impl(app, error);
+}
+
+static vectis_status vectis_app_run_impl(vectis_app *app, vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_kore_runtime_config kore_config;
+  vectis_status status;
+  size_t route_count;
+
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_app_impl *)app->impl;
+
+  status = vectis_validate_lockd_startable(impl, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+
+  (void)pthread_mutex_lock(&impl->mutex);
+  if (impl->started) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_STATE, "app is already started");
+    return VECTIS_ERR_STATE;
+  }
+  route_count = impl->route_count;
+  (void)pthread_mutex_unlock(&impl->mutex);
+
+  if (route_count == 0u) {
+    status = vectis_app_start_impl(app, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    status = vectis_wait_for_process_signal(error);
+    if (status != VECTIS_OK) {
+      (void)vectis_app_stop_impl(app, NULL);
+      return status;
+    }
+    return vectis_app_stop_impl(app, error);
+  }
+
+  status = vectis_validate_startable(impl, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_app_validate_quiescent_for_kore(impl, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (vectis_app_has_requested_consumer_services(impl)) {
+    status = vectis_app_start_impl(app, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    status = vectis_wait_for_process_signal(error);
+    if (status != VECTIS_OK) {
+      (void)vectis_app_stop_impl(app, NULL);
+      return status;
+    }
+    return vectis_app_stop_impl(app, error);
+  }
+
+  vectis_app_make_kore_runtime_config(app, impl, &kore_config);
+
+  (void)pthread_mutex_lock(&impl->mutex);
+  impl->started = 1;
+  (void)pthread_mutex_unlock(&impl->mutex);
+
+  status = vectis_internal_kore_run(&kore_config, error);
+
+  (void)pthread_mutex_lock(&impl->mutex);
+  impl->started = 0;
+  impl->kore_child_pid = 0;
+  vectis_close_lockd_client_for_current_process(impl);
+  (void)pthread_mutex_unlock(&impl->mutex);
+  if (vectis_app_stop_consumer_services(impl, error) != VECTIS_OK &&
+      status == VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_run(vectis_app *app, vectis_error *error) {
+  return vectis_app_run_impl(app, error);
+}
+
+static void vectis_wait_on_signal(int signum) {
+  if (signum == SIGINT || signum == SIGTERM || signum == SIGQUIT) {
+    vectis_wait_signal = signum;
+  }
+}
+
+static int vectis_wait_sleep_ms(long delay_ms) {
+  struct timespec delay;
+  int rc;
+
+  if (delay_ms <= 0L) {
+    return 0;
+  }
+  delay.tv_sec = (time_t)(delay_ms / 1000L);
+  delay.tv_nsec = (long)(delay_ms % 1000L) * 1000000L;
+  do {
+    rc = nanosleep(&delay, &delay);
+    if (rc == 0) {
+      return 0;
+    }
+    if (errno == EINTR && vectis_wait_signal != 0) {
+      return 0;
+    }
+  } while (errno == EINTR);
+  return errno != 0 ? errno : EINVAL;
+}
+
+static vectis_status vectis_wait_for_process_signal(vectis_error *error) {
+  struct sigaction action;
+  struct sigaction old_int;
+  struct sigaction old_term;
+  struct sigaction old_quit;
+  int have_int;
+  int have_term;
+  int have_quit;
+  int err;
+
+  vectis_wait_signal = 0;
+  memset(&action, 0, sizeof(action));
+  action.sa_handler = vectis_wait_on_signal;
+  sigemptyset(&action.sa_mask);
+  action.sa_flags = 0;
+  have_int = sigaction(SIGINT, &action, &old_int) == 0;
+  have_term = sigaction(SIGTERM, &action, &old_term) == 0;
+  have_quit = sigaction(SIGQUIT, &action, &old_quit) == 0;
+  if (!have_int || !have_term || !have_quit) {
+    err = errno != 0 ? errno : EINVAL;
+    if (have_int) {
+      (void)sigaction(SIGINT, &old_int, NULL);
+    }
+    if (have_term) {
+      (void)sigaction(SIGTERM, &old_term, NULL);
+    }
+    if (have_quit) {
+      (void)sigaction(SIGQUIT, &old_quit, NULL);
+    }
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to install vectis wait signal handlers");
+    if (error != NULL) {
+      error->dependency_code = (long)err;
+      (void)snprintf(error->detail, sizeof(error->detail), "%s",
+                     strerror(err));
+    }
+    return VECTIS_ERR_STATE;
+  }
+
+  while (vectis_wait_signal == 0) {
+    err = vectis_wait_sleep_ms(100L);
+    if (err != 0) {
+      (void)sigaction(SIGINT, &old_int, NULL);
+      (void)sigaction(SIGTERM, &old_term, NULL);
+      (void)sigaction(SIGQUIT, &old_quit, NULL);
+      vectis_set_error(error, VECTIS_ERR_STATE, "vectis wait failed");
+      if (error != NULL) {
+        error->dependency_code = (long)err;
+        (void)snprintf(error->detail, sizeof(error->detail), "%s",
+                       strerror(err));
+      }
+      return VECTIS_ERR_STATE;
+    }
+  }
+
+  (void)sigaction(SIGINT, &old_int, NULL);
+  (void)sigaction(SIGTERM, &old_term, NULL);
+  (void)sigaction(SIGQUIT, &old_quit, NULL);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_app_wait_impl(vectis_app *app,
+                                          vectis_error *error) {
+  vectis_app_impl *impl;
+  pid_t child_pid;
+  int has_routes;
+  vectis_status status;
+
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  has_routes = impl->route_count > 0u;
+  child_pid = impl->kore_child_pid;
+  if (has_routes && !impl->started) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    return vectis_app_run_impl(app, error);
+  }
+  if (!impl->started) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_STATE, "app is not started");
+    return VECTIS_ERR_STATE;
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
+
+  status = (!has_routes || child_pid > 0) ? vectis_wait_for_process_signal(error)
+                                          : VECTIS_OK;
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  return vectis_app_stop_impl(app, error);
+}
+
+vectis_status vectis_app_wait(vectis_app *app, vectis_error *error) {
+  return vectis_app_wait_impl(app, error);
 }
 
 static int vectis_route_conflicts(const vectis_route_entry *existing,
@@ -5124,6 +5867,13 @@ static vectis_status vectis_app_register_route_owned_userdata(
     (void)pthread_mutex_unlock(&impl->mutex);
     vectis_set_error(error, VECTIS_ERR_STATE,
                      "routes cannot be registered after app start");
+    return VECTIS_ERR_STATE;
+  }
+  if (vectis_app_has_materialized_consumer_services(impl)) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "routes cannot be registered after consumer services "
+                     "materialize");
     return VECTIS_ERR_STATE;
   }
   (void)pthread_mutex_unlock(&impl->mutex);
@@ -5374,6 +6124,13 @@ static vectis_status vectis_app_register_upload_owned_userdata(
     (void)pthread_mutex_unlock(&impl->mutex);
     vectis_set_error(error, VECTIS_ERR_STATE,
                      "routes cannot be registered after app start");
+    return VECTIS_ERR_STATE;
+  }
+  if (vectis_app_has_materialized_consumer_services(impl)) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "routes cannot be registered after consumer services "
+                     "materialize");
     return VECTIS_ERR_STATE;
   }
   (void)pthread_mutex_unlock(&impl->mutex);
@@ -10976,6 +11733,7 @@ static vectis_status vectis_metrics_route_handler(vectis_app *app,
   title = impl->metrics->title != NULL && impl->metrics->title[0] != '\0'
               ? impl->metrics->title
               : vectis_metrics_request_title(impl, request);
+  vectis_metrics_persist_snapshot_if_due(app);
   memset(&json, 0, sizeof(json));
   memset(&html, 0, sizeof(html));
   status = vectis_metrics_snapshot_json_impl(app, &json, title, error);
@@ -11173,19 +11931,51 @@ static vectis_status vectis_metrics_persist_snapshot(vectis_app *app) {
   return VECTIS_OK;
 }
 
+static void vectis_metrics_persist_snapshot_if_due(vectis_app *app) {
+  vectis_app_impl *impl;
+  vectis_metrics_state *metrics;
+  time_t now;
+  unsigned interval;
+  int due;
+
+  if (app == NULL || app->impl == NULL) {
+    return;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  metrics = impl->metrics;
+  if (metrics == NULL) {
+    return;
+  }
+
+  now = time(NULL);
+  due = 0;
+  (void)pthread_mutex_lock(&metrics->mutex);
+  interval = metrics->snapshot_interval_seconds > 0u
+                 ? metrics->snapshot_interval_seconds
+                 : 300u;
+  if (metrics->persistence_enabled &&
+      (metrics->last_snapshot_at == 0 ||
+       now - metrics->last_snapshot_at >= (time_t)interval)) {
+    metrics->last_snapshot_at = now;
+    due = 1;
+  }
+  (void)pthread_mutex_unlock(&metrics->mutex);
+
+  if (due) {
+    (void)vectis_metrics_persist_snapshot(app);
+  }
+}
+
 static void *vectis_metrics_worker_main(void *arg) {
   vectis_app *app;
   vectis_app_impl *impl;
   vectis_metrics_state *metrics;
   struct timespec wait_until;
   time_t now;
-  time_t last_snapshot;
-  unsigned interval;
 
   app = (vectis_app *)arg;
   impl = app != NULL ? (vectis_app_impl *)app->impl : NULL;
   metrics = impl != NULL ? impl->metrics : NULL;
-  last_snapshot = 0;
   while (metrics != NULL) {
     now = time(NULL);
     (void)pthread_mutex_lock(&metrics->mutex);
@@ -11194,16 +11984,9 @@ static void *vectis_metrics_worker_main(void *arg) {
       (void)pthread_mutex_unlock(&metrics->mutex);
       break;
     }
-    interval = metrics->snapshot_interval_seconds > 0u
-                   ? metrics->snapshot_interval_seconds
-                   : 300u;
-    if (metrics->persistence_enabled &&
-        (last_snapshot == 0 || now - last_snapshot >= (time_t)interval)) {
-      last_snapshot = now;
-      (void)pthread_mutex_unlock(&metrics->mutex);
-      (void)vectis_metrics_persist_snapshot(app);
-      (void)pthread_mutex_lock(&metrics->mutex);
-    }
+    (void)pthread_mutex_unlock(&metrics->mutex);
+    vectis_metrics_persist_snapshot_if_due(app);
+    (void)pthread_mutex_lock(&metrics->mutex);
     wait_until.tv_sec = time(NULL) + 60;
     wait_until.tv_nsec = 0L;
     if (!metrics->stop_worker) {
@@ -14612,8 +15395,6 @@ vectis_status vectis_consumer_service_new(
   vectis_app_impl *impl;
   vectis_consumer_service *service;
   vectis_consumer_service_impl *service_impl;
-  lc_error lcerr;
-  int rc;
   vectis_status status;
 
   if (out == NULL) {
@@ -14643,10 +15424,6 @@ vectis_status vectis_consumer_service_new(
   if (status != VECTIS_OK) {
     return status;
   }
-  status = vectis_open_lockd_client(impl, error);
-  if (status != VECTIS_OK) {
-    return status;
-  }
 
   service = (vectis_consumer_service *)calloc(1u, sizeof(*service));
   service_impl =
@@ -14659,18 +15436,12 @@ vectis_status vectis_consumer_service_new(
     return VECTIS_ERR_NOMEM;
   }
 
-  lc_error_init(&lcerr);
-  rc = lc_client_new_consumer_service(impl->lockd_client, config,
-                                      &service_impl->service, &lcerr);
-  if (rc != LC_OK) {
+  status = vectis_consumer_service_config_copy(service_impl, config, error);
+  if (status != VECTIS_OK) {
     free(service_impl);
     free(service);
-    status = vectis_set_lockdc_error(error, rc, &lcerr,
-                                     "failed to create lockd consumer service");
-    lc_error_cleanup(&lcerr);
     return status;
   }
-  lc_error_cleanup(&lcerr);
   service->native = vectis_consumer_service_native;
   service->run = vectis_consumer_service_run;
   service->start = vectis_consumer_service_start;
@@ -14679,6 +15450,11 @@ vectis_status vectis_consumer_service_new(
   service->run_until = vectis_consumer_service_run_until;
   service->close = vectis_consumer_service_destroy;
   service->impl = service_impl;
+  service_impl->owner = impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  service_impl->next_owned = impl->consumer_services;
+  impl->consumer_services = service_impl;
+  (void)pthread_mutex_unlock(&impl->mutex);
   *out = service;
   vectis_error_clear(error);
   return VECTIS_OK;
@@ -15063,7 +15839,7 @@ vectis_consumer_service_native(vectis_consumer_service *service) {
     return NULL;
   }
   impl = (vectis_consumer_service_impl *)service->impl;
-  return impl != NULL ? impl->service : NULL;
+  return impl != NULL && impl->service_pid == getpid() ? impl->service : NULL;
 }
 
 vectis_status vectis_consumer_service_run(vectis_consumer_service *service,
@@ -15073,12 +15849,24 @@ vectis_status vectis_consumer_service_run(vectis_consumer_service *service,
   int rc;
 
   impl = service != NULL ? (vectis_consumer_service_impl *)service->impl : NULL;
-  if (impl == NULL || impl->service == NULL) {
+  if (impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
     return VECTIS_ERR_INVALID;
   }
+  if (impl->owner != NULL && impl->owner->route_count > 0u &&
+      !impl->owner->started) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "consumer service run cannot materialize before a "
+                     "route-backed app starts");
+    return VECTIS_ERR_STATE;
+  }
+  if (vectis_consumer_service_materialize(impl, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  impl->started = 1;
   lc_error_init(&lcerr);
   rc = impl->service->run(impl->service, &lcerr);
+  impl->started = 0;
   if (rc != LC_OK) {
     (void)vectis_set_lockdc_error(error, rc, &lcerr,
                                   "lockd consumer service run failed");
@@ -15093,25 +15881,18 @@ vectis_status vectis_consumer_service_run(vectis_consumer_service *service,
 vectis_status vectis_consumer_service_start(vectis_consumer_service *service,
                                             vectis_error *error) {
   vectis_consumer_service_impl *impl;
-  lc_error lcerr;
-  int rc;
 
   impl = service != NULL ? (vectis_consumer_service_impl *)service->impl : NULL;
-  if (impl == NULL || impl->service == NULL) {
+  if (impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
     return VECTIS_ERR_INVALID;
   }
-  lc_error_init(&lcerr);
-  rc = impl->service->start(impl->service, &lcerr);
-  if (rc != LC_OK) {
-    (void)vectis_set_lockdc_error(error, rc, &lcerr,
-                                  "lockd consumer service start failed");
-    lc_error_cleanup(&lcerr);
-    return VECTIS_ERR_STATE;
+  if (impl->owner != NULL && !impl->owner->started) {
+    impl->start_requested = 1;
+    vectis_error_clear(error);
+    return VECTIS_OK;
   }
-  lc_error_cleanup(&lcerr);
-  vectis_error_clear(error);
-  return VECTIS_OK;
+  return vectis_consumer_service_start_materialized(impl, error);
 }
 
 vectis_status vectis_consumer_service_stop(vectis_consumer_service *service,
@@ -15120,9 +15901,14 @@ vectis_status vectis_consumer_service_stop(vectis_consumer_service *service,
   int rc;
 
   impl = service != NULL ? (vectis_consumer_service_impl *)service->impl : NULL;
-  if (impl == NULL || impl->service == NULL) {
+  if (impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
     return VECTIS_ERR_INVALID;
+  }
+  if (impl->service == NULL || impl->service_pid != getpid()) {
+    impl->started = 0;
+    vectis_error_clear(error);
+    return VECTIS_OK;
   }
   rc = impl->service->stop(impl->service);
   if (rc != LC_OK) {
@@ -15134,6 +15920,7 @@ vectis_status vectis_consumer_service_stop(vectis_consumer_service *service,
     }
     return VECTIS_ERR_STATE;
   }
+  impl->started = 0;
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -15145,9 +15932,13 @@ vectis_status vectis_consumer_service_wait(vectis_consumer_service *service,
   int rc;
 
   impl = service != NULL ? (vectis_consumer_service_impl *)service->impl : NULL;
-  if (impl == NULL || impl->service == NULL) {
+  if (impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
     return VECTIS_ERR_INVALID;
+  }
+  if (impl->service == NULL || impl->service_pid != getpid()) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
   }
   lc_error_init(&lcerr);
   rc = impl->service->wait(impl->service, &lcerr);
@@ -15195,7 +15986,14 @@ vectis_consumer_service_run_until(vectis_consumer_service *service,
     return VECTIS_ERR_INVALID;
   }
 
-  status = vectis_consumer_service_start(service, error);
+  if (impl->owner != NULL && impl->owner->route_count > 0u &&
+      !impl->owner->started) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "consumer service run_until cannot materialize before a "
+                     "route-backed app starts");
+    return VECTIS_ERR_STATE;
+  }
+  status = vectis_consumer_service_start_materialized(impl, error);
   if (status != VECTIS_OK) {
     return status;
   }
@@ -15226,11 +16024,13 @@ void vectis_consumer_service_destroy(vectis_consumer_service *service) {
     return;
   }
   impl = (vectis_consumer_service_impl *)service->impl;
+  vectis_consumer_service_detach(impl);
   if (impl != NULL && impl->service != NULL) {
     impl->service->close(impl->service);
   }
   if (impl != NULL) {
     vectis_consumer_receiver_runtime_cleanup(impl->receivers);
+    vectis_consumer_service_config_cleanup(impl);
   }
   free(impl);
   free(service);

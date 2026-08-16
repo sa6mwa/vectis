@@ -1,4 +1,5 @@
 #include "vectis_cli.h"
+#include "vectis_internal.h"
 
 #include <arpa/inet.h>
 #include <cpkt/lua_runtime.h>
@@ -262,6 +263,7 @@ typedef struct vectis_lua_consumer_registration {
 
 struct vectis_lua_server {
   vectis_app *app;
+  int started;
   vectis_lua_server_json_route *json_routes;
   vectis_lua_server_callback_route *callback_routes;
   vectis_lua_server_dsv_route *dsv_routes;
@@ -3257,6 +3259,144 @@ static int vectis_lua_error_source_string(lua_State *lua) {
   } else {
     lua_pushstring(lua, name);
   }
+  return 1;
+}
+
+static int vectis_lua_sleep_ms_internal(long delay_ms) {
+  struct timespec delay;
+  int rc;
+
+  if (delay_ms <= 0) {
+    return 0;
+  }
+  delay.tv_sec = (time_t)(delay_ms / 1000L);
+  delay.tv_nsec = (long)(delay_ms % 1000L) * 1000000L;
+  do {
+    rc = nanosleep(&delay, &delay);
+    if (rc == 0) {
+      return 0;
+    }
+  } while (errno == EINTR);
+  return errno != 0 ? errno : EINVAL;
+}
+
+static int vectis_lua_sleep_ms(lua_State *lua) {
+  lua_Integer delay_ms;
+  int err;
+
+  delay_ms = luaL_checkinteger(lua, 1);
+  if (delay_ms < 0) {
+    return luaL_error(lua, "vectis.sleep_ms requires non-negative milliseconds");
+  }
+  if (delay_ms > LONG_MAX) {
+    return luaL_error(lua, "vectis.sleep_ms value is too large");
+  }
+  err = vectis_lua_sleep_ms_internal((long)delay_ms);
+  if (err != 0) {
+    return luaL_error(lua, "vectis.sleep_ms failed: %s", strerror(err));
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_sleep(lua_State *lua) {
+  lua_Number delay_seconds;
+  long delay_ms;
+  int err;
+
+  delay_seconds = luaL_checknumber(lua, 1);
+  if (delay_seconds < 0) {
+    return luaL_error(lua, "vectis.sleep requires non-negative seconds");
+  }
+  if (delay_seconds > ((lua_Number)LONG_MAX / 1000.0)) {
+    return luaL_error(lua, "vectis.sleep value is too large");
+  }
+  delay_ms = (long)(delay_seconds * 1000.0);
+  err = vectis_lua_sleep_ms_internal(delay_ms);
+  if (err != 0) {
+    return luaL_error(lua, "vectis.sleep failed: %s", strerror(err));
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_path_is_dir(const char *path) {
+  struct stat st;
+
+  if (stat(path, &st) != 0) {
+    return 0;
+  }
+  return S_ISDIR(st.st_mode) ? 1 : 0;
+}
+
+static int vectis_lua_mkdir_single(const char *path, mode_t mode) {
+  if (path == NULL || path[0] == '\0') {
+    return 0;
+  }
+  if (mkdir(path, mode) == 0) {
+    return 0;
+  }
+  if (errno == EEXIST && vectis_lua_path_is_dir(path)) {
+    return 0;
+  }
+  return errno != 0 ? errno : EINVAL;
+}
+
+static int vectis_lua_mkdir_p(lua_State *lua) {
+  const char *path;
+  lua_Integer mode_arg;
+  mode_t mode;
+  char *copy;
+  size_t len;
+  char *cursor;
+  int err;
+
+  path = luaL_checkstring(lua, 1);
+  mode_arg = luaL_optinteger(lua, 2, 0755);
+  if (path[0] == '\0') {
+    return luaL_error(lua, "vectis.mkdir_p path must not be empty");
+  }
+  if (mode_arg < 0 || mode_arg > 0777) {
+    return luaL_error(lua, "vectis.mkdir_p mode must be between 0 and 0777");
+  }
+  mode = (mode_t)mode_arg;
+  copy = vectis_cli_strdup(path);
+  if (copy == NULL) {
+    return luaL_error(lua, "failed to allocate vectis.mkdir_p path");
+  }
+  len = strlen(copy);
+  while (len > 1u && copy[len - 1u] == '/') {
+    copy[len - 1u] = '\0';
+    --len;
+  }
+  cursor = copy;
+  if (cursor[0] == '/') {
+    ++cursor;
+  }
+  err = 0;
+  for (; *cursor != '\0'; ++cursor) {
+    if (*cursor != '/') {
+      continue;
+    }
+    *cursor = '\0';
+    err = vectis_lua_mkdir_single(copy, mode);
+    *cursor = '/';
+    if (err != 0) {
+      break;
+    }
+    while (cursor[1] == '/') {
+      ++cursor;
+    }
+  }
+  if (err == 0) {
+    err = vectis_lua_mkdir_single(copy, mode);
+  }
+  free(copy);
+  if (err != 0) {
+    return luaL_error(lua, "vectis.mkdir_p failed for %s: %s", path,
+                      strerror(err));
+  }
+  lua_pushboolean(lua, 1);
   return 1;
 }
 
@@ -6372,6 +6512,9 @@ vectis_lua_server_native_auth_retain(vectis_lua_server *server,
   server->native_auths = auth;
 }
 
+static void
+vectis_lua_server_consumer_service_mark_stopped_all(vectis_lua_server *server);
+
 static int vectis_lua_server_close(lua_State *lua) {
   vectis_lua_server *server;
 
@@ -6381,6 +6524,7 @@ static int vectis_lua_server_close(lua_State *lua) {
     server->app->close(server->app);
     server->app = NULL;
   }
+  server->started = 0;
   vectis_lua_server_json_route_free_all(server);
   vectis_lua_server_callback_route_free_all(server);
   vectis_lua_server_dsv_route_free_all(server);
@@ -6393,31 +6537,95 @@ static int vectis_lua_server_close(lua_State *lua) {
 }
 
 static int vectis_lua_server_start(lua_State *lua) {
+  vectis_lua_server *server;
   vectis_app *app;
   vectis_error error;
   vectis_status status;
 
+  server = vectis_lua_check_server(lua, 1);
   app = vectis_lua_server_app(lua, 1);
   vectis_error_clear(&error);
   status = app->start(app, &error);
   if (status != VECTIS_OK) {
     return vectis_lua_push_error(lua, status, &error);
   }
+  server->started = 1;
   lua_pushboolean(lua, 1);
   return 1;
 }
 
-static int vectis_lua_server_stop(lua_State *lua) {
+static int vectis_lua_server_run(lua_State *lua) {
+  vectis_lua_server *server;
   vectis_app *app;
   vectis_error error;
   vectis_status status;
 
+  server = vectis_lua_check_server(lua, 1);
+  app = vectis_lua_server_app(lua, 1);
+  vectis_error_clear(&error);
+  server->started = 1;
+  status = app->run(app, &error);
+  if (status != VECTIS_OK) {
+    vectis_lua_server_consumer_service_mark_stopped_all(server);
+    server->started = 0;
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  vectis_lua_server_consumer_service_mark_stopped_all(server);
+  server->started = 0;
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static void
+vectis_lua_server_consumer_service_mark_stopped_all(vectis_lua_server *server) {
+  vectis_lua_consumer_registration *service;
+
+  if (server == NULL) {
+    return;
+  }
+  for (service = server->consumer_services; service != NULL;
+       service = service->next) {
+    service->started = 0;
+  }
+}
+
+static int vectis_lua_server_stop(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+
+  server = vectis_lua_check_server(lua, 1);
   app = vectis_lua_server_app(lua, 1);
   vectis_error_clear(&error);
   status = app->stop(app, &error);
   if (status != VECTIS_OK) {
     return vectis_lua_push_error(lua, status, &error);
   }
+  vectis_lua_server_consumer_service_mark_stopped_all(server);
+  server->started = 0;
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_server_wait(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+
+  server = vectis_lua_check_server(lua, 1);
+  app = vectis_lua_server_app(lua, 1);
+  vectis_error_clear(&error);
+  server->started = 1;
+  status = app->wait(app, &error);
+  if (status != VECTIS_OK) {
+    vectis_lua_server_consumer_service_mark_stopped_all(server);
+    server->started = 0;
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  vectis_lua_server_consumer_service_mark_stopped_all(server);
+  server->started = 0;
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -15463,8 +15671,12 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "consumer_service");
     lua_pushcfunction(lua, vectis_lua_server_start);
     lua_setfield(lua, -2, "start");
+    lua_pushcfunction(lua, vectis_lua_server_run);
+    lua_setfield(lua, -2, "run");
     lua_pushcfunction(lua, vectis_lua_server_stop);
     lua_setfield(lua, -2, "stop");
+    lua_pushcfunction(lua, vectis_lua_server_wait);
+    lua_setfield(lua, -2, "wait");
     lua_pushcfunction(lua, vectis_lua_server_close);
     lua_setfield(lua, -2, "close");
     lua_setfield(lua, -2, "__index");
@@ -15687,6 +15899,12 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "ERROR_SOURCE_CAI");
   lua_pushcfunction(lua, vectis_lua_error_source_string);
   lua_setfield(lua, -2, "error_source_string");
+  lua_pushcfunction(lua, vectis_lua_sleep);
+  lua_setfield(lua, -2, "sleep");
+  lua_pushcfunction(lua, vectis_lua_sleep_ms);
+  lua_setfield(lua, -2, "sleep_ms");
+  lua_pushcfunction(lua, vectis_lua_mkdir_p);
+  lua_setfield(lua, -2, "mkdir_p");
   lua_getglobal(lua, "require");
   lua_pushliteral(lua, "vectis.status");
   if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {

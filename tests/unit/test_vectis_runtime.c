@@ -4,6 +4,7 @@
 #include <dirent.h>
 #include <lc/lc.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +12,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 #include <vectis/auth.h>
 #include <vectis/embedded_fs.h>
@@ -27,9 +29,6 @@
 #else
 #define VECTIS_TEST_ASAN 0
 #endif
-
-extern u_int64_t http_body_disk_offload;
-extern u_int64_t worker_idle_timeout;
 
 typedef struct source_json_doc {
   lonejson_source payload;
@@ -61,6 +60,10 @@ typedef struct stream_probe_context {
   int saw_body_path;
 } stream_probe_context;
 
+typedef struct runtime_thread_probe {
+  volatile int done;
+} runtime_thread_probe;
+
 static const lonejson_field source_json_doc_fields[] = {
     LONEJSON_FIELD_STRING_SOURCE_REQ(source_json_doc, payload, "payload")};
 
@@ -88,6 +91,28 @@ static vectis_status sample_handler(vectis_app *app, vectis_request *request,
   (void)request;
   (void)userdata;
   return vectis_response_text(response, 200, "text/plain", "ok", error);
+}
+
+static int sample_consumer_handler(void *context,
+                                   lc_consumer_message *message,
+                                   lc_error *error) {
+  (void)context;
+  (void)message;
+  (void)error;
+  return LC_OK;
+}
+
+static void *runtime_probe_thread(void *userdata) {
+  runtime_thread_probe *probe;
+  struct timespec delay;
+
+  probe = (runtime_thread_probe *)userdata;
+  delay.tv_sec = 0;
+  delay.tv_nsec = 10000000L;
+  while (probe != NULL && !probe->done) {
+    (void)nanosleep(&delay, NULL);
+  }
+  return NULL;
 }
 
 static vectis_status state_error_handler(vectis_app *app,
@@ -1650,9 +1675,9 @@ static void assert_kore_smoke(void) {
       vectis_register_route(second_app, &second_route, &second_error);
   assert(second_status == VECTIS_OK);
   second_status = vectis_start(second_app, &second_error);
-  assert(second_status == VECTIS_ERR_STATE);
-  assert(strstr(second_error.message, "Kore runtime is already running") !=
-         NULL);
+  assert(second_status == VECTIS_OK);
+  second_status = vectis_stop(second_app, &second_error);
+  assert(second_status == VECTIS_OK);
   vectis_destroy(second_app);
 
   vectis_http_client_config_init(&http);
@@ -1672,8 +1697,6 @@ static void assert_kore_smoke(void) {
   assert(response.status_code == 200L);
   assert(response.body_size == 2u);
   assert(memcmp(response.body, "ok", 2u) == 0);
-  assert(http_body_disk_offload == 0u);
-  assert(worker_idle_timeout == VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS);
 
   status = vectis_http_get(&http, "http://127.0.0.1:28080/state-error",
                            &state_error_response, &error);
@@ -2513,6 +2536,80 @@ static void assert_kore_smoke(void) {
   vectis_embedded_fs_close(embedded_fs);
 }
 
+static void assert_consumer_service_declaration_before_routes(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  lc_consumer_config consumer;
+  lc_consumer_service_config service_config;
+  vectis_consumer_service *service;
+  vectis_route_config route;
+
+  vectis_app_config_init(&config);
+  config.lockd.unix_socket_path = "/tmp/vectis-runtime-missing-lockd.sock";
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  lc_consumer_config_init(&consumer);
+  lc_consumer_service_config_init(&service_config);
+  consumer.name = "runtime-declared";
+  consumer.request.queue = "runtime";
+  consumer.request.owner = "runtime-declared";
+  consumer.handle = sample_consumer_handler;
+  service_config.consumers = &consumer;
+  service_config.consumer_count = 1u;
+  service = NULL;
+  status = app->consumer_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+  assert(service != NULL);
+  assert(service->native(service) == NULL);
+
+  status = service->start(service, &error);
+  assert(status == VECTIS_OK);
+  assert(service->native(service) == NULL);
+
+  route = vectis_route(VECTIS_HTTP_GET, "/declared", sample_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+
+  service->close(service);
+  app->close(app);
+}
+
+static void assert_kore_start_rejects_extra_thread(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_route_config route;
+  runtime_thread_probe probe;
+  pthread_t thread;
+  struct timespec delay;
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = 0u;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/thread-guard", sample_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+
+  probe.done = 0;
+  assert(pthread_create(&thread, NULL, runtime_probe_thread, &probe) == 0);
+  delay.tv_sec = 0;
+  delay.tv_nsec = 50000000L;
+  (void)nanosleep(&delay, NULL);
+  status = app->start(app, &error);
+  probe.done = 1;
+  (void)pthread_join(thread, NULL);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "single-threaded") != NULL);
+  app->close(app);
+}
+
 #ifdef VECTIS_RUNTIME_HEADER_LIMIT_ONLY
 int main(void) {
   assert_default_header_limit_accepts_64k();
@@ -2531,6 +2628,8 @@ int main(void) {
   assert_server_config_validation();
   assert_route_body_policy_validation();
   assert_metrics_surface();
+  assert_consumer_service_declaration_before_routes();
+  assert_kore_start_rejects_extra_thread();
 
   vectis_app_config_init(&config);
   config.tls.mode = (vectis_tls_mode)99;

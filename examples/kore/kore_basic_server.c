@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 
 #include <pslog.h>
 #include <vectis/vectis.h>
@@ -29,12 +28,6 @@ static unsigned short env_port_or_default(const char *name,
     return fallback;
   }
   return (unsigned short)port;
-}
-
-static void serve_forever(void) {
-  for (;;) {
-    (void)sleep(3600u);
-  }
 }
 
 static int print_error(const char *operation, const vectis_error *error) {
@@ -106,13 +99,12 @@ int main(void) {
 
   logger->infof(logger, "example.kore_basic.start", "bind=%s port=%u",
                 config.tls.bind, (unsigned)config.tls.port);
-  if (app->start(app, &error) != VECTIS_OK) {
-    (void)print_error("app->start", &error);
+  if (app->run(app, &error) != VECTIS_OK) {
+    (void)print_error("app->run", &error);
     app->close(app);
     logger->destroy(logger);
     return 1;
   }
-  serve_forever();
   app->close(app);
   logger->destroy(logger);
   return 0;

@@ -5,6 +5,9 @@ liblockdc consumer services, OPC UA clients/servers, curl transfers, and other
 dependency-backed services may run in one process, but Lua state entry is never a
 background-thread side effect.
 
+The process/thread lifecycle authority for combining Kore with background
+services is [Service Runtime Lifecycle](service-runtime-lifecycle-spec.md).
+
 The DX layer provides a small mailbox primitive for cross-service handoff:
 
 - C services publish bounded, copied events into a `vectis_mailbox`.
@@ -22,6 +25,20 @@ Lua callbacks are owner-state callbacks. A Lua-created handler belongs to the
 `lua_State` that registered it, and Vectis invokes it only from an explicit pump
 on that state. Worker threads, liblockdc consumer callbacks, OPC UA background
 callbacks, and Kore worker code must not call arbitrary Lua callbacks directly.
+
+`vectis_run()` and `app->run(app, &error)` are the foreground service entry
+points for libvectis applications. `server:run()` is the Lua facade over the
+same core lifecycle. Kore-backed apps enter Kore directly from the caller's
+thread so Kore owns signal handling and parent/worker shutdown. `vectis_start()`
+and `server:start()` are process-backed starts for tests and tools that need the
+caller to continue while Kore serves in a managed child process; they must be
+paired with `wait()` or `stop()`. Lockd-only apps install temporary process
+handlers while waiting. On termination, the app shutdown sequence stops HTTP
+ingress and metrics, stops and waits app-created lockd consumer services, then
+closes app-owned lockd and CAI resources during app close. Applications that
+create additional daemon-like handles outside the app lifecycle must stop or
+close those handles explicitly or register them through the app-owned Vectis
+surfaces.
 
 The safe cross-service path is:
 

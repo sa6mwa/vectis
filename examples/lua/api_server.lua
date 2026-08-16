@@ -207,7 +207,7 @@ for _ = 1, 20 do
   if health.ok then
     break
   end
-  os.execute("sleep 0.1")
+  vectis.sleep(0.1)
 end
 assert(health.ok == true, health.error and health.error.message)
 assert(health.status == 200)
@@ -275,9 +275,8 @@ assert(uploaded.headers:lower():find("x-vectis-upload: streaming", 1, true))
 
 if serve_forever then
   print("lua api example listening on http://" .. bind .. ":" .. tostring(port))
-  while true do
-    os.execute("sleep 3600")
-  end
+  assert(server:wait() == true)
+  server:close()
 else
   assert(server:stop() == true)
   server:close()

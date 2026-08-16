@@ -33,7 +33,7 @@ for _ = 1, 20 do
   if ready.transport_ok then
     break
   end
-  os.execute("sleep 0.1")
+  vectis.sleep(0.1)
 end
 assert(ready.transport_ok == true, ready.error and ready.error.message)
 

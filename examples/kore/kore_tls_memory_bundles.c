@@ -64,7 +64,7 @@ int main(void) {
   logger->infof(logger, "example.kore_tls_memory.start",
                 "app=%s require_client_certificate=%d", config.app_name,
                 config.tls.require_client_certificate);
-  (void)app->start(app, &error);
+  (void)app->run(app, &error);
   app->close(app);
   logger->destroy(logger);
   return 0;

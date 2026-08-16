@@ -10,7 +10,7 @@ workflows.
 
 Vectis-owned Lua helpers use the same public concept names as the C SDK where
 they map cleanly to Lua. Handles use method-call syntax such as
-`server:start()`, `server:close()`, `logger:close()`, and `session:open_file()`.
+`server:run()`, `server:close()`, `logger:close()`, and `session:open_file()`.
 Configuration tables prefer explicit nouns over positional arguments when a
 workflow has credentials, paths, TLS material, retry policy, body policy, or
 ownership-sensitive handles.

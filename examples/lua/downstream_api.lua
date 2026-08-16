@@ -41,7 +41,7 @@ for _ = 1, 20 do
   if inventory.ok then
     break
   end
-  os.execute("sleep 0.1")
+  vectis.sleep(0.1)
 end
 assert(inventory.ok == true, inventory.error and inventory.error.message)
 assert(inventory.transport_ok == true)
@@ -65,9 +65,8 @@ assert(missing.error.http_status == 404)
 
 if serve_forever then
   print("lua downstream API example listening on " .. base_url)
-  while true do
-    os.execute("sleep 3600")
-  end
+  assert(server:wait() == true)
+  server:close()
 else
   assert(server:stop() == true)
   server:close()

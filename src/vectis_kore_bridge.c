@@ -51,12 +51,14 @@ const size_t kore_vectis_runtime_symbol_count =
 
 extern int skip_chroot;
 extern int skip_runas;
+extern int kore_quit;
+extern volatile sig_atomic_t sig_recv;
 extern u_int64_t worker_idle_timeout;
+extern u_int8_t worker_count;
 extern u_int32_t worker_max_connections;
 
 static pthread_mutex_t vectis_kore_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_t vectis_kore_thread;
-static int vectis_kore_thread_active = 0;
+static int vectis_kore_runtime_active = 0;
 static int vectis_kore_dh_loaded = 0;
 static vectis_kore_runtime_config vectis_kore_current;
 static char *vectis_kore_keymgr_root = NULL;
@@ -82,6 +84,35 @@ static vectis_kore_autoblock_shared_state *vectis_kore_autoblock_shared = NULL;
 static size_t vectis_kore_autoblock_shared_size = 0u;
 static vectis_kore_autoblock_entry *vectis_kore_autoblock_entries = NULL;
 static unsigned int vectis_kore_autoblock_capacity = 0u;
+
+static void vectis_kore_wake_listener(void) {
+  struct sockaddr_in addr;
+  int fd;
+  unsigned short port;
+
+  port = vectis_kore_current.port;
+  if (port == 0u) {
+    return;
+  }
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd == -1) {
+    return;
+  }
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(port);
+  if (inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr) == 1) {
+    (void)connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+  }
+  (void)close(fd);
+}
+
+static void vectis_kore_reset_runtime_state(void) {
+  kore_quit = KORE_QUIT_NONE;
+  sig_recv = 0;
+  optind = 1;
+  worker_count = 0u;
+}
 
 static const char vectis_kore_default_dhparams[] =
     "-----BEGIN DH PARAMETERS-----\n"
@@ -1520,13 +1551,13 @@ static vectis_status vectis_kore_copy_request_metadata(struct http_request *req,
   return vectis_kore_copy_query(req, request, error);
 }
 
-static void *vectis_kore_thread_main(void *userdata) {
+static int vectis_kore_run_main(void) {
   char *argv[5];
   const char *args[4];
   char *arena;
+  int result;
   int argc;
 
-  (void)userdata;
   argc = 0;
   args[argc++] = "vectis-kore";
   args[argc++] = "-f";
@@ -1534,13 +1565,13 @@ static void *vectis_kore_thread_main(void *userdata) {
   args[argc++] = "-r";
   arena = vectis_kore_argv_arena(argv, args, argc);
   if (arena == NULL) {
-    return NULL;
+    return KORE_QUIT_FATAL;
   }
   skip_chroot = 1;
   skip_runas = 1;
-  (void)vectis_kore_main(argc, argv);
+  result = vectis_kore_main(argc, argv);
   free(arena);
-  return NULL;
+  return result;
 }
 
 typedef struct vectis_kore_body_state {
@@ -2437,12 +2468,11 @@ void kore_parent_teardown(void) {
   (void)pthread_mutex_unlock(&vectis_kore_mutex);
 }
 
-vectis_status
-vectis_internal_kore_start(const vectis_kore_runtime_config *config,
-                           vectis_error *error) {
+vectis_status vectis_internal_kore_run(const vectis_kore_runtime_config *config,
+                                       vectis_error *error) {
   vectis_kore_runtime_config prepared;
   vectis_status status;
-  int rc;
+  int result;
 
   if (config == NULL || config->app == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
@@ -2481,7 +2511,7 @@ vectis_internal_kore_start(const vectis_kore_runtime_config *config,
   }
 
   (void)pthread_mutex_lock(&vectis_kore_mutex);
-  if (vectis_kore_thread_active) {
+  if (vectis_kore_runtime_active) {
     (void)pthread_mutex_unlock(&vectis_kore_mutex);
     vectis_kore_autoblock_unmap();
     vectis_kore_cleanup_local_config(&prepared);
@@ -2489,19 +2519,64 @@ vectis_internal_kore_start(const vectis_kore_runtime_config *config,
                      "Kore runtime is already running");
     return VECTIS_ERR_STATE;
   }
+  vectis_kore_reset_runtime_state();
   vectis_kore_current = prepared;
-  rc = pthread_create(&vectis_kore_thread, NULL, vectis_kore_thread_main, NULL);
-  if (rc != 0) {
+  vectis_kore_runtime_active = 1;
+  (void)pthread_mutex_unlock(&vectis_kore_mutex);
+
+  result = vectis_kore_run_main();
+
+  (void)pthread_mutex_lock(&vectis_kore_mutex);
+  vectis_kore_runtime_active = 0;
+  if (vectis_kore_current.app != NULL) {
     vectis_kore_autoblock_unmap();
     vectis_kore_cleanup_config(&vectis_kore_current);
     memset(&vectis_kore_current, 0, sizeof(vectis_kore_current));
-    (void)pthread_mutex_unlock(&vectis_kore_mutex);
-    vectis_set_error(error, VECTIS_ERR_STATE,
-                     "failed to start Kore runtime thread");
+  }
+  (void)pthread_mutex_unlock(&vectis_kore_mutex);
+  if (result == KORE_QUIT_FATAL) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "Kore runtime failed");
     return VECTIS_ERR_STATE;
   }
-  vectis_kore_thread_active = 1;
-  (void)pthread_mutex_unlock(&vectis_kore_mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status
+vectis_internal_kore_validate(const vectis_kore_runtime_config *config,
+                              vectis_error *error) {
+  vectis_kore_runtime_config prepared;
+  vectis_status status;
+
+  if (config == NULL || config->app == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "Kore runtime config is required");
+    return VECTIS_ERR_INVALID;
+  }
+  prepared = *config;
+  prepared.runtime_certfile = NULL;
+  prepared.runtime_certkey = NULL;
+  prepared.runtime_client_ca_file = NULL;
+  prepared.runtime_certfile_temporary = 0;
+  prepared.runtime_certkey_temporary = 0;
+  prepared.runtime_client_ca_temporary = 0;
+  status = vectis_kore_prepare_acme(&prepared, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_kore_prepare_tls(&prepared, error);
+  if (status != VECTIS_OK) {
+    vectis_kore_cleanup_local_config(&prepared);
+    return status;
+  }
+  if (prepared.tls_mode == VECTIS_TLS_MODE_MANUAL) {
+    status = vectis_kore_load_default_dhparams(error);
+    if (status != VECTIS_OK) {
+      vectis_kore_cleanup_local_config(&prepared);
+      return status;
+    }
+  }
+  vectis_kore_cleanup_local_config(&prepared);
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -2510,10 +2585,11 @@ vectis_status vectis_internal_kore_stop(vectis_app *app, vectis_error *error) {
   int active;
 
   (void)pthread_mutex_lock(&vectis_kore_mutex);
-  active = vectis_kore_thread_active && vectis_kore_current.app == app;
+  active = vectis_kore_runtime_active && vectis_kore_current.app == app;
   if (active) {
+    kore_quit = KORE_QUIT_NORMAL;
     kore_signal(SIGTERM);
-    (void)pthread_kill(vectis_kore_thread, SIGTERM);
+    vectis_kore_wake_listener();
   }
   (void)pthread_mutex_unlock(&vectis_kore_mutex);
 
@@ -2522,13 +2598,17 @@ vectis_status vectis_internal_kore_stop(vectis_app *app, vectis_error *error) {
     return VECTIS_OK;
   }
 
-  (void)pthread_join(vectis_kore_thread, NULL);
-  (void)pthread_mutex_lock(&vectis_kore_mutex);
-  vectis_kore_thread_active = 0;
-  vectis_kore_autoblock_unmap();
-  vectis_kore_cleanup_config(&vectis_kore_current);
-  memset(&vectis_kore_current, 0, sizeof(vectis_kore_current));
-  (void)pthread_mutex_unlock(&vectis_kore_mutex);
   vectis_error_clear(error);
   return VECTIS_OK;
+}
+
+int vectis_internal_kore_signal_requested(void) {
+  return sig_recv == SIGINT || sig_recv == SIGTERM || sig_recv == SIGQUIT;
+}
+
+int vectis_internal_kore_signal_number(void) {
+  if (vectis_internal_kore_signal_requested()) {
+    return (int)sig_recv;
+  }
+  return 0;
 }

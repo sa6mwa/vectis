@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 
 #include <lc/lc.h>
 #include <lonejson.h>
@@ -145,12 +144,6 @@ static void load_config(workflow_config *config) {
       env_or_default("VECTIS_E2E_WORKFLOW_CONTENT", "vectis e2e content");
   config->bind = env_or_default("VECTIS_KORE_BIND", "127.0.0.1");
   config->port = env_port_or_default("VECTIS_KORE_PORT", 28082u);
-}
-
-static void serve_forever(void) {
-  for (;;) {
-    (void)sleep(3600u);
-  }
 }
 
 static int print_vectis_error(const char *operation,
@@ -635,8 +628,8 @@ static int run_server(void) {
     root_logger->destroy(root_logger);
     return 1;
   }
-  if (app->start(app, &error) != VECTIS_OK) {
-    (void)print_vectis_error("app->start", &error);
+  if (app->run(app, &error) != VECTIS_OK) {
+    (void)print_vectis_error("app->run", &error);
     app->close(app);
     logger->destroy(logger);
     lockd_logger->destroy(lockd_logger);
@@ -644,7 +637,6 @@ static int run_server(void) {
     root_logger->destroy(root_logger);
     return 1;
   }
-  serve_forever();
   app->close(app);
   logger->destroy(logger);
   lockd_logger->destroy(lockd_logger);

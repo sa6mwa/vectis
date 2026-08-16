@@ -38,6 +38,15 @@ set_target_properties(vectis_pick_port PROPERTIES
   C_EXTENSIONS OFF
 )
 
+add_executable(vectis_wait_signal_harness
+  helpers/vectis_wait_signal_harness.c)
+target_link_libraries(vectis_wait_signal_harness PRIVATE ${vectis_test_link_target})
+set_target_properties(vectis_wait_signal_harness PROPERTIES
+  C_STANDARD 90
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF
+)
+
 if(TARGET vectis_bin)
   find_program(VECTIS_HOST_LUA NAMES lua5.5 lua)
 
@@ -127,6 +136,22 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_curl_contract PROPERTIES
     LABELS "lua;local"
     TIMEOUT 30)
+  add_test(NAME vectis_example_runtime_contract
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/example_runtime_contract.cmake")
+  set_tests_properties(vectis_example_runtime_contract PROPERTIES
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
+  add_test(NAME vectis_server_signal_shutdown
+           COMMAND bash
+                   "${CMAKE_SOURCE_DIR}/tests/lua/server_signal_shutdown.sh"
+                   "$<TARGET_FILE:vectis_bin>"
+                   "$<TARGET_FILE:vectis_pick_port>"
+                   "$<TARGET_FILE:vectis_wait_signal_harness>")
+  set_tests_properties(vectis_server_signal_shutdown PROPERTIES
+    LABELS "lua;smoke;local;integration"
+    TIMEOUT 45)
   add_test(NAME vectis_lua_openssl
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"

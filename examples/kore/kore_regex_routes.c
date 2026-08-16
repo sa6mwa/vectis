@@ -55,7 +55,7 @@ int main(void) {
     return 1;
   }
 
-  (void)app->start(app, &error);
+  (void)app->run(app, &error);
   app->close(app);
   logger->destroy(logger);
   return 0;

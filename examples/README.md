@@ -188,7 +188,7 @@ modules, but it must not require another file from `examples/lua/`.
 
 The examples are compiled by the normal build so the public SDK shape remains
 mechanically valid. New stateful examples should prefer handle methods such as
-`app->route(app, ...)`, `app->start(app, ...)`, `client->get(client, ...)`,
+`app->route(app, ...)`, `app->run(app, ...)`, `client->get(client, ...)`,
 `client->del(client, ...)`, `ssh->exec(ssh, ...)`, and
 `service->run(service, ...)`. App-owned accessors such as
 `app->logger(app)`, `app->lockd_client(app)`, `app->openapi(app, ...)`,

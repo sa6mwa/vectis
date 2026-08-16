@@ -1355,6 +1355,8 @@ static void assert_json_route_surface(void) {
   assert(json_runtime != NULL);
   assert(app->start != NULL);
   assert(app->stop != NULL);
+  assert(app->run != NULL);
+  assert(app->wait != NULL);
   assert(app->route != NULL);
   assert(app->json_route != NULL);
   assert(app->json_typed_route != NULL);
@@ -2048,16 +2050,17 @@ static void assert_consumer_service_surface(void) {
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   status = app->consumer_service(app, &service_config, &service, &error);
-  assert(status == VECTIS_OK || status == VECTIS_ERR_STATE);
-  if (status == VECTIS_OK) {
-    assert(service != NULL);
-    assert(vectis_consumer_service_native(service) != NULL);
-    assert(service->native(service) != NULL);
-    service->close(service);
-  } else {
-    assert(error.source == VECTIS_ERROR_SOURCE_LOCKDC);
-    assert(service == NULL);
-  }
+  assert(status == VECTIS_OK);
+  assert(service != NULL);
+  assert(vectis_consumer_service_native(service) == NULL);
+  assert(service->native(service) == NULL);
+  status = service->start(service, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_consumer_service_native(service) == NULL);
+  status = app->start(app, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(error.source == VECTIS_ERROR_SOURCE_LOCKDC);
+  service->close(service);
   app->close(app);
 }
 

@@ -48,7 +48,7 @@ for _ = 1, 20 do
   if page.ok then
     break
   end
-  os.execute("sleep 0.1")
+  vectis.sleep(0.1)
 end
 assert(page.ok == true, page.error and page.error.message)
 assert(page.status == 200)
@@ -70,9 +70,8 @@ if serve_forever then
   print("lua metrics ephemeral example listening on " .. base_url)
   print("metrics dashboard: " .. base_url .. "/.metrics")
   print("metrics JSON: " .. base_url .. "/.metrics/snapshot.json")
-  while true do
-    os.execute("sleep 3600")
-  end
+  assert(server:wait() == true)
+  server:close()
 else
   assert(server:stop() == true)
   server:close()

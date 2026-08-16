@@ -14,10 +14,14 @@ local server = assert(vectis.server.new({
   port = 8080,
 }))
 
-assert(server:start() == true)
-assert(server:stop() == true)
+assert(server:run() == true)
 server:close()
 ```
+
+`server:run()` enters the foreground server runtime and returns after `SIGINT`,
+`SIGTERM`, or `SIGQUIT`. `server:start()` starts a managed Kore child process
+for tests and tools that need the Lua parent to continue; pair it with
+`server:wait()` or `server:stop()`.
 
 `vectis.server.new({tls = ...})` accepts the same manual and ACME modes as the
 C app config. Manual TLS can use paths or in-memory PEM strings:
@@ -337,9 +341,20 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
 - `server:auth_routes(opts)` registers native login/auth/WebDAV-key routes.
 - `server:metrics(opts)` registers the opt-in C-owned metrics dashboard and
   JSON snapshot routes.
-- `server:consumer_service(opts)` registers a C-owned lockd consumer service.
+- `server:consumer_service(opts)` declares a C-owned lockd consumer service.
+  The default `start = true` means "start with the selected app runtime"; it
+  does not create a consumer pthread while the Lua script is still declaring a
+  route-backed server.
 - `server:mcp(opts)` registers a C-owned CAI Streamable HTTP MCP route with
   Lua-defined raw JSON tools.
+
+`server:wait()` waits for `SIGINT`, `SIGTERM`, or `SIGQUIT` after a
+process-backed `server:start()` and then runs the same app shutdown path as
+libvectis. If the server has not been started, `server:wait()` enters the same
+runtime as `server:run()`. Route-backed servers with declared background
+services use the supervised runtime so Kore starts from a thread-clean process
+and services materialize in the supervisor. Long-running scripts should use
+`server:run()` or `server:wait()`, not shell commands or external sleep loops.
 
 `server:upload(opts)` provides true request-body streaming through a bounded
 upload reader and Lua chunk callbacks.

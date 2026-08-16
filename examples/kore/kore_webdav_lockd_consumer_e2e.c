@@ -1,7 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#include <time.h>
+#include <errno.h>
 
 #include <lc/lc.h>
 #include <pslog.h>
@@ -24,7 +25,6 @@ typedef struct combined_context {
   lc_consumer_config consumer;
   lc_consumer_service_config service_config;
   vectis_consumer_service *service;
-  int service_started;
 } combined_context;
 
 static const lc_enqueue_res lc_enqueue_res_zero;
@@ -67,12 +67,6 @@ static void load_config(combined_config *config) {
   config->webdav_cache_dir = env_or_default("VECTIS_E2E_COMBINED_WEBDAV_CACHE",
                                             "/tmp/vectis-e2e-combined-webdav");
   config->port = env_port_or_default("VECTIS_KORE_PORT", 28085u);
-}
-
-static void serve_forever(void) {
-  for (;;) {
-    (void)sleep(3600u);
-  }
 }
 
 static int print_vectis_error(const char *operation,
@@ -151,6 +145,16 @@ static int write_marker(combined_context *context, const char *path,
   return status == VECTIS_WEBDAV_OK ? LC_OK : LC_ERR_PROTOCOL;
 }
 
+static void processing_delay(void) {
+  struct timespec delay;
+
+  delay.tv_sec = 3;
+  delay.tv_nsec = 0;
+  while (nanosleep(&delay, &delay) != 0 && errno == EINTR) {
+    continue;
+  }
+}
+
 static int handle_message(void *userdata, lc_consumer_message *delivery,
                           lc_error *error) {
   combined_context *context;
@@ -159,30 +163,13 @@ static int handle_message(void *userdata, lc_consumer_message *delivery,
   context = (combined_context *)userdata;
   rc = write_marker(context, "/consumer-processing.txt", "processing\n");
   if (rc == LC_OK) {
-    (void)sleep(3u);
+    processing_delay();
     rc = delivery->message->ack(delivery->message, error);
   }
   if (rc == LC_OK) {
     rc = write_marker(context, "/consumer-done.txt", "handled\n");
   }
   return rc;
-}
-
-static vectis_status ensure_consumer(vectis_app *app, combined_context *context,
-                                     vectis_error *error) {
-  if (context->service_started) {
-    return VECTIS_OK;
-  }
-  if (context->service == NULL &&
-      app->consumer_service(app, &context->service_config, &context->service,
-                            error) != VECTIS_OK) {
-    return error != NULL ? error->code : VECTIS_ERR_STATE;
-  }
-  if (context->service->start(context->service, error) != VECTIS_OK) {
-    return error != NULL ? error->code : VECTIS_ERR_STATE;
-  }
-  context->service_started = 1;
-  return VECTIS_OK;
 }
 
 static vectis_status enqueue_message(vectis_app *app, vectis_request *request,
@@ -217,12 +204,6 @@ static vectis_status enqueue_message(vectis_app *app, vectis_request *request,
   (void)vectis_webdav_delete(&context->webdav_storage,
                              "/consumer-processing.txt");
   (void)vectis_webdav_delete(&context->webdav_storage, "/consumer-done.txt");
-  if (ensure_consumer(app, context, error) != VECTIS_OK) {
-    return vectis_response_error_json(response, 503, "consumer_unavailable",
-                                      "failed to start lockd consumer service",
-                                      error != NULL ? error->message : "",
-                                      error);
-  }
   rc = lc_source_from_memory(id, strlen(id), &source, &lcerr);
   if (rc == LC_OK) {
     enqueue.queue = context->config.queue;
@@ -358,8 +339,13 @@ int main(void) {
     return 1;
   }
 
-  if (app->start(app, &error) != VECTIS_OK) {
-    (void)print_vectis_error("app->start", &error);
+  if (app->consumer_service(app, &context.service_config, &context.service,
+                            &error) != VECTIS_OK ||
+      context.service->start(context.service, &error) != VECTIS_OK) {
+    (void)print_vectis_error("app->consumer_service", &error);
+    if (context.service != NULL) {
+      context.service->close(context.service);
+    }
     app->close(app);
     logger->destroy(logger);
     root_logger->destroy(root_logger);
@@ -368,10 +354,19 @@ int main(void) {
     return 1;
   }
 
-  serve_forever();
+  if (app->run(app, &error) != VECTIS_OK) {
+    (void)print_vectis_error("app->run", &error);
+    if (context.service != NULL) {
+      context.service->close(context.service);
+    }
+    app->close(app);
+    logger->destroy(logger);
+    root_logger->destroy(root_logger);
+    lockd_logger->destroy(lockd_logger);
+    lockd_root_logger->destroy(lockd_root_logger);
+    return 1;
+  }
   if (context.service != NULL) {
-    (void)context.service->stop(context.service, &error);
-    (void)context.service->wait(context.service, &error);
     context.service->close(context.service);
   }
   app->close(app);

@@ -17,9 +17,7 @@ local site_id = os.getenv("VECTIS_LUA_CONSUMER_EXAMPLE_SITE_ID") or
 local serve_forever = os.getenv("VECTIS_LUA_CONSUMER_EXAMPLE_SERVE") == "1"
 local marker_root = cache_dir .. "/webdav/" .. site_id .. "/content"
 
-local mkdir_ok = os.execute("mkdir -p '" ..
-    tostring(marker_root):gsub("'", "'\\''") .. "'")
-assert(mkdir_ok == true or mkdir_ok == 0, "failed to create " .. marker_root)
+assert(vectis.mkdir_p(marker_root) == true)
 if not serve_forever then
   os.remove(marker_root .. "/consumer-processing.txt")
   os.remove(marker_root .. "/consumer-done.txt")
@@ -76,9 +74,11 @@ assert(server:consumer_service({
 assert(server:start() == true)
 
 if serve_forever then
-  while true do
-    os.execute("sleep 3600")
-  end
+  print("lua consumer service example listening on http://" .. bind .. ":" ..
+      tostring(port))
+  assert(server:wait() == true)
+  server:close()
+  return
 end
 
 local health
@@ -94,7 +94,7 @@ for _ = 1, 40 do
       health.body == '{"ok":true,"service":"lua-consumer-service-example"}\n' then
     break
   end
-  os.execute("sleep 0.25")
+  vectis.sleep(0.25)
 end
 assert(health.ok == true, health.error and health.error.message or
     "health route was not ready")
@@ -136,7 +136,7 @@ for _ = 1, 40 do
   if processing_marker.ok == true and processing_marker.body == "processing\n" then
     break
   end
-  os.execute("sleep 0.25")
+  vectis.sleep(0.25)
 end
 assert(processing_marker.ok == true, processing_marker.error and
     processing_marker.error.message or "processing marker was not written")
@@ -154,7 +154,7 @@ for _ = 1, 40 do
   if done_marker.ok == true and done_marker.body == "handled\n" then
     break
   end
-  os.execute("sleep 0.25")
+  vectis.sleep(0.25)
 end
 assert(done_marker.ok == true, done_marker.error and
     done_marker.error.message or "done marker was not written")

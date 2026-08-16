@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #include <vectis/vectis.h>
 
@@ -72,12 +71,6 @@ static int prepare_assets(const char *root_dir, const char *index_path,
   return 0;
 }
 
-static void serve_forever(void) {
-  for (;;) {
-    (void)sleep(3600u);
-  }
-}
-
 int main(void) {
   vectis_app_config app_config;
   vectis_static_file_config file;
@@ -129,12 +122,11 @@ int main(void) {
     return 1;
   }
 
-  if (app->start(app, &error) != VECTIS_OK) {
-    (void)print_error("app->start", &error);
+  if (app->run(app, &error) != VECTIS_OK) {
+    (void)print_error("app->run", &error);
     app->close(app);
     return 1;
   }
-  serve_forever();
   app->close(app);
   return 0;
 }

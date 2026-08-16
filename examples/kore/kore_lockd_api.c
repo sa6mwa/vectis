@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 #include <lonejson.h>
 #include <pslog.h>
@@ -44,12 +43,6 @@ static unsigned short env_port_or_default(const char *name,
     return fallback;
   }
   return (unsigned short)port;
-}
-
-static void serve_forever(void) {
-  for (;;) {
-    (void)sleep(3600u);
-  }
 }
 
 static int print_error(const char *operation, const vectis_error *error) {
@@ -218,8 +211,8 @@ int main(void) {
   }
   logger->infof(logger, "example.kore_lockd.start", "endpoint=%s namespace=%s",
                 endpoints[0], config.lockd.default_namespace);
-  if (app->start(app, &error) != VECTIS_OK) {
-    (void)print_error("app->start", &error);
+  if (app->run(app, &error) != VECTIS_OK) {
+    (void)print_error("app->run", &error);
     app->close(app);
     logger->destroy(logger);
     lockd_logger->destroy(lockd_logger);
@@ -227,7 +220,6 @@ int main(void) {
     root_logger->destroy(root_logger);
     return 1;
   }
-  serve_forever();
   app->close(app);
   logger->destroy(logger);
   lockd_logger->destroy(lockd_logger);

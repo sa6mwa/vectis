@@ -1106,11 +1106,19 @@ typedef struct vectis_csr_config {
  * leaves a stale handle pointer behind. Close functions accept NULL.
  */
 struct vectis_app {
-  /* Start or stop the app runtime. Apps with routes start Kore; lockd-only apps
-   * open the configured lockd client without starting Kore.
+  /* Start/stop a managed app runtime. Route-backed apps that need the caller
+   * to continue start Kore in a child process; app-owned background services
+   * materialize only after the route-backed fork boundary is closed.
    */
   vectis_status (*start)(vectis_app *self, vectis_error *error);
   vectis_status (*stop)(vectis_app *self, vectis_error *error);
+  /* Run the app until SIGINT, SIGTERM, or SIGQUIT. Route-backed apps without
+   * app-owned background services enter Kore directly. Route-backed apps with
+   * app-owned services use the supervised runtime so Kore starts from a
+   * thread-clean process and services materialize in the supervisor.
+   */
+  vectis_status (*run)(vectis_app *self, vectis_error *error);
+  vectis_status (*wait)(vectis_app *self, vectis_error *error);
 
   /* Register HTTP routes. Builder helpers such as vectis_route(),
    * vectis_json_route(), and vectis_upload_route() are intentionally still free
@@ -1210,8 +1218,11 @@ struct vectis_app {
    */
   struct lc_client *(*lockd_client)(vectis_app *self);
 
-  /* Create a Vectis-owned wrapper around a liblockdc consumer service. The
-   * lc_consumer_service_config and its callbacks remain caller-owned.
+  /* Declare a Vectis-owned liblockdc consumer service. Vectis copies the
+   * consumer config strings needed to materialize the service later; callback
+   * function pointers and callback contexts remain borrowed process-local
+   * values. The native liblockdc service is created only when the selected app
+   * runtime materializes the declaration.
    */
   vectis_status (*consumer_service)(
       vectis_app *self, const struct lc_consumer_service_config *config,
@@ -1227,8 +1238,9 @@ struct vectis_app {
 };
 
 struct vectis_consumer_service {
-  /* Native liblockdc service for APIs not covered by the Vectis facade. The
-   * returned service remains owned by this handle.
+  /* Native liblockdc service for APIs not covered by the Vectis facade. Before
+   * materialization, or from a different process than the materialized service,
+   * this returns NULL. The returned service remains owned by this handle.
    */
   struct lc_consumer_service *(*native)(vectis_consumer_service *self);
   vectis_status (*run)(vectis_consumer_service *self, vectis_error *error);
@@ -1723,6 +1735,8 @@ void vectis_app_close(vectis_app *app);
 void vectis_destroy(vectis_app *app);
 vectis_status vectis_start(vectis_app *app, vectis_error *error);
 vectis_status vectis_stop(vectis_app *app, vectis_error *error);
+vectis_status vectis_run(vectis_app *app, vectis_error *error);
+vectis_status vectis_app_wait(vectis_app *app, vectis_error *error);
 vectis_status vectis_register_route(vectis_app *app,
                                     const vectis_route_config *route,
                                     vectis_error *error);
