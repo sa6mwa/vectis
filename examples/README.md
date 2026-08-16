@@ -143,10 +143,11 @@ modules, but it must not require another file from `examples/lua/`.
   listening.
 - `lua/metrics_authenticated.lua`: simple Hello World page with
   authenticated `/.metrics` routes, native browser-flow login routes, a
-  browser/WebDAV Basic credential path, native issued Bearer credentials for
-  M2M-style access, and opt-in `pouch://` persistence. External OAuth2/OIDC
-  M2M validation is plugged in through the same callback-provider contract; it
-  is not a separate metrics-specific adapter.
+  browser/WebDAV Basic credential path issued only after username/password plus
+  TOTP, native issued Bearer credentials for M2M-style access, and opt-in
+  `pouch://` persistence. External OAuth2/OIDC M2M validation is plugged in
+  through the same callback-provider contract; it is not a separate
+  metrics-specific adapter.
 - `lua/metrics_ephemeral.lua`: simple Hello World page with unauthenticated
   `/.metrics` dashboard and JSON snapshot using in-memory metrics only.
 - `lua/downstream_api.lua`: packable Lua downstream API client example using

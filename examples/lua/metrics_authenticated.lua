@@ -13,6 +13,9 @@ local storage_dir = os.getenv("VECTIS_LUA_METRICS_AUTH_EXAMPLE_STORAGE") or
     "vectis-metrics-auth-pouch"
 local serve_forever = os.getenv("VECTIS_LUA_METRICS_AUTH_EXAMPLE_SERVE") == "1"
 local base_url = "http://" .. bind .. ":" .. tostring(port)
+local totp_secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+local totp_time = 59
+local totp_code = "287082"
 local request_opts = {
   protocols = "http",
   timeout_ms = 2000,
@@ -36,6 +39,9 @@ assert(vectis.auth.user_add({
   state_path = state_path,
   username = "metrics-admin",
   password = "metrics-password",
+  totp_secret = totp_secret,
+  totp_label = "metrics-admin",
+  totp_issuer = "Vectis Metrics Example",
 }).username == "metrics-admin")
 
 local browser_flow = vectis.auth.browser_flow({
@@ -45,6 +51,9 @@ local browser_flow = vectis.auth.browser_flow({
   realm = "metrics-example",
   purpose = "webdav",
   allowed_modes = { "basic" },
+  required_factors = { "password", "totp" },
+  time = totp_time,
+  window = 0,
 })
 
 local browser_provider = assert(browser_flow:provider())
@@ -89,9 +98,20 @@ local metrics_provider = assert(vectis.auth.provider_callback(function(request)
   }
 end))
 
+local password_only_authorization, password_only_error =
+    browser_flow:webdav_authorization({
+      username = "metrics-admin",
+      password = "metrics-password",
+    })
+assert(password_only_authorization == nil)
+assert(password_only_error.status == vectis.ERR_INVALID)
+
 local browser_authorization = assert(browser_flow:webdav_authorization({
   username = "metrics-admin",
   password = "metrics-password",
+  totp_code = totp_code,
+  time = totp_time,
+  window = 0,
 }))
 local machine_authorization = "Bearer " .. machine_credential.api_key
 
@@ -183,7 +203,7 @@ if serve_forever then
   print("login route: " .. base_url .. "/_vectis/auth/login")
   print("metrics dashboard: " .. base_url .. "/.metrics")
   print("metrics JSON: " .. base_url .. "/.metrics/snapshot.json")
-  print("browser user: metrics-admin / metrics-password")
+  print("browser user: metrics-admin / metrics-password / TOTP " .. totp_code)
   print("m2m bearer token: " .. machine_credential.api_key)
   while true do
     os.execute("sleep 3600")

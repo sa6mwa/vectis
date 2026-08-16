@@ -95,7 +95,7 @@ Runnable Lua examples are available under `examples/lua/`:
 - `metrics_persistent.lua`: unauthenticated Hello World plus persistent
   `/.metrics`;
 - `metrics_authenticated.lua`: Hello World plus authenticated metrics using
-  browser-flow routes, native Basic credentials, native issued Bearer
-  credentials, and a callback provider adapter;
+  browser-flow routes, native Basic credentials issued after password+TOTP,
+  native issued Bearer credentials, and a callback provider adapter;
 - `metrics_ephemeral.lua`: unauthenticated Hello World plus in-memory-only
   metrics.
