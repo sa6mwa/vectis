@@ -1710,6 +1710,35 @@ typedef struct vectis_csr_config {
   const char *output_csr_path;
 } vectis_csr_config;
 
+typedef struct vectis_cert_name_info {
+  char *common_name;
+  char *organization;
+  char *organizational_unit;
+  char *country;
+  char *state;
+  char *locality;
+} vectis_cert_name_info;
+
+typedef struct vectis_cert_subject_alt_names {
+  char **dns_names;
+  size_t dns_name_count;
+  char **ip_addresses;
+  size_t ip_address_count;
+} vectis_cert_subject_alt_names;
+
+typedef struct vectis_cert_info {
+  long version;
+  char *serial_hex;
+  char *not_before;
+  char *not_after;
+  int is_ca;
+  char *public_key_type;
+  unsigned public_key_bits;
+  vectis_cert_name_info subject;
+  vectis_cert_name_info issuer;
+  vectis_cert_subject_alt_names subject_alt_names;
+} vectis_cert_info;
+
 /*
  * Stateful Vectis SDK handles expose direct function-pointer method semantics
  * with an explicit `self` argument, mirroring liblockdc.
@@ -3212,6 +3241,8 @@ void vectis_cert_subject_init(vectis_cert_subject *subject);
 void vectis_cert_bundle_config_init(vectis_cert_bundle_config *config);
 void vectis_private_key_config_init(vectis_private_key_config *config);
 void vectis_csr_config_init(vectis_csr_config *config);
+void vectis_cert_info_init(vectis_cert_info *info);
+void vectis_cert_info_cleanup(vectis_cert_info *info);
 vectis_status
 vectis_cert_generate_private_key(const vectis_private_key_config *config,
                                  vectis_error *error);
@@ -3220,6 +3251,9 @@ vectis_status vectis_cert_generate_csr(const vectis_csr_config *config,
 vectis_status
 vectis_cert_generate_bundle(const vectis_cert_bundle_config *config,
                             vectis_error *error);
+vectis_status vectis_cert_inspect_bundle(const vectis_source *bundle,
+                                         vectis_cert_info *info,
+                                         vectis_error *error);
 vectis_status vectis_cert_validate_bundle(const vectis_source *bundle,
                                           vectis_error *error);
 vectis_status vectis_cert_validate_pair(const vectis_source *certificate,

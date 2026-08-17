@@ -21,6 +21,18 @@ static void make_temp_path(char *path, size_t path_size, const char *label) {
   strcpy(path, templ);
 }
 
+static int string_array_contains(char **items, size_t count,
+                                 const char *value) {
+  size_t i;
+
+  for (i = 0u; i < count; ++i) {
+    if (items[i] != NULL && strcmp(items[i], value) == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
 static void assert_generated_bundle_is_parseable(const char *path) {
   FILE *fp;
   X509 *cert;
@@ -256,6 +268,7 @@ int main(void) {
   vectis_source cert_source;
   vectis_source key_source;
   vectis_source ca_source;
+  vectis_cert_info info;
   char bundle_path[128];
   char ca_bundle_path[128];
   char signed_bundle_path[128];
@@ -267,6 +280,7 @@ int main(void) {
   char expired_path[128];
 
   vectis_error_clear(&error);
+  vectis_cert_info_init(&info);
   status = vectis_cert_generate_private_key(NULL, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "config") != NULL);
@@ -354,6 +368,30 @@ int main(void) {
   source = vectis_source_from_path(bundle_path);
   status = vectis_cert_validate_bundle(&source, &error);
   assert(status == VECTIS_OK);
+  status = vectis_cert_inspect_bundle(&source, &info, &error);
+  assert(status == VECTIS_OK);
+  assert(info.version == 3L);
+  assert(info.serial_hex != NULL && info.serial_hex[0] != '\0');
+  assert(info.not_before != NULL && info.not_before[0] != '\0');
+  assert(info.not_after != NULL && info.not_after[0] != '\0');
+  assert(info.is_ca == 0);
+  assert(strcmp(info.public_key_type, "rsa") == 0);
+  assert(info.public_key_bits >= 1024u);
+  assert(strcmp(info.subject.common_name, "api.local") == 0);
+  assert(strcmp(info.subject.organization, "Vectis") == 0);
+  assert(strcmp(info.issuer.common_name, "api.local") == 0);
+  assert(info.subject_alt_names.dns_name_count == 2u);
+  assert(string_array_contains(info.subject_alt_names.dns_names,
+                               info.subject_alt_names.dns_name_count,
+                               "api.local"));
+  assert(string_array_contains(info.subject_alt_names.dns_names,
+                               info.subject_alt_names.dns_name_count,
+                               "api.internal"));
+  assert(info.subject_alt_names.ip_address_count == 1u);
+  assert(string_array_contains(info.subject_alt_names.ip_addresses,
+                               info.subject_alt_names.ip_address_count,
+                               "127.0.0.1"));
+  vectis_cert_info_cleanup(&info);
   remove(bundle_path);
 
   make_temp_path(malformed_path, sizeof(malformed_path), "malformed-cert");
@@ -415,5 +453,6 @@ int main(void) {
   remove(signed_bundle_path);
   remove(signed_cert_path);
   remove(signed_key_path);
+  vectis_cert_info_cleanup(&info);
   return 0;
 }

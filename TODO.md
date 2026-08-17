@@ -358,6 +358,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Expand the dependency-native OpenSSL Lua facade with general EVP digest and HMAC helpers while keeping fixed SHA-256 helpers for common workflows.
 - [x] Expand the dependency-native OpenSSL Lua facade for advanced signing, verification, encoding, and key/certificate inspection operations that are not covered by `vectis.cert`.
 - [x] Expand `vectis.cert` Lua helpers to cover private key generation, CSR generation, self-signed bundles, CA bundles, CA-signed cert/key pairs, cert/key pair validation, CA validation, and inspection.
+- [x] Add source-backed C SDK certificate bundle inspection through owned `vectis_cert_info` metadata, including subject, issuer, validity, serial, CA flag, key type/bits, and DNS/IP subjectAltName arrays.
 - [x] Add certificate reload/update hooks through the explicit Vectis restart/reload lifecycle, rereading file/source-backed TLS material in the replacement Kore child.
 - [x] Add Vectis-owned Lua libssh2-backed SFTP file upload/download helpers with host-key, known-hosts, timeout, and structured error contracts where curl-backed SFTP is insufficient.
 - [x] Add one-shot Lua libssh2-backed SFTP filesystem helpers for stat, mkdir, remove, rmdir, rename, and chmod where curl-backed SFTP is insufficient.

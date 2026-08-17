@@ -51,3 +51,9 @@ top-level `common_name` for the common case.
 
 Validation helpers return `true` on success. On failure they return `nil,
 error`, where `error` is a structured Vectis status table.
+
+`inspect_bundle` returns certificate metadata: `version`, `serial_hex`,
+`not_before`, `not_after`, `is_ca`, `public_key_type`, `public_key_bits`,
+`subject`, `issuer`, and `subject_alt_names`. The C SDK exposes the same
+source-backed inspection workflow through `vectis_cert_inspect_bundle()` and
+the owned `vectis_cert_info` result.

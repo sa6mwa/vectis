@@ -1,5 +1,6 @@
 #include "vectis_internal.h"
 
+#include <arpa/inet.h>
 #include <cpkt/audio.h>
 #include <cpkt/sus.h>
 #include <ctype.h>
@@ -37436,6 +37437,58 @@ void vectis_csr_config_init(vectis_csr_config *config) {
   vectis_source_init(&config->private_key);
 }
 
+void vectis_cert_info_init(vectis_cert_info *info) {
+  if (info == NULL) {
+    return;
+  }
+  memset(info, 0, sizeof(*info));
+}
+
+static void vectis_cert_name_info_cleanup(vectis_cert_name_info *name) {
+  if (name == NULL) {
+    return;
+  }
+  free(name->common_name);
+  free(name->organization);
+  free(name->organizational_unit);
+  free(name->country);
+  free(name->state);
+  free(name->locality);
+  memset(name, 0, sizeof(*name));
+}
+
+static void
+vectis_cert_subject_alt_names_cleanup(vectis_cert_subject_alt_names *names) {
+  size_t i;
+
+  if (names == NULL) {
+    return;
+  }
+  for (i = 0u; i < names->dns_name_count; ++i) {
+    free(names->dns_names[i]);
+  }
+  for (i = 0u; i < names->ip_address_count; ++i) {
+    free(names->ip_addresses[i]);
+  }
+  free(names->dns_names);
+  free(names->ip_addresses);
+  memset(names, 0, sizeof(*names));
+}
+
+void vectis_cert_info_cleanup(vectis_cert_info *info) {
+  if (info == NULL) {
+    return;
+  }
+  free(info->serial_hex);
+  free(info->not_before);
+  free(info->not_after);
+  free(info->public_key_type);
+  vectis_cert_name_info_cleanup(&info->subject);
+  vectis_cert_name_info_cleanup(&info->issuer);
+  vectis_cert_subject_alt_names_cleanup(&info->subject_alt_names);
+  memset(info, 0, sizeof(*info));
+}
+
 static int vectis_cert_add_name_entry(X509_NAME *name, const char *field,
                                       const char *value) {
   if (value == NULL || value[0] == '\0') {
@@ -37888,6 +37941,346 @@ static EVP_PKEY *vectis_cert_read_key(const void *pem, size_t pem_size) {
   key = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
   BIO_free(bio);
   return key;
+}
+
+static vectis_status vectis_cert_copy_name_field(X509_NAME *name, int nid,
+                                                 char **out,
+                                                 vectis_error *error) {
+  X509_NAME_ENTRY *entry;
+  ASN1_STRING *string;
+  unsigned char *utf8;
+  int index;
+  int len;
+
+  if (out == NULL) {
+    return VECTIS_OK;
+  }
+  *out = NULL;
+  if (name == NULL) {
+    return VECTIS_OK;
+  }
+  index = X509_NAME_get_index_by_NID(name, nid, -1);
+  if (index < 0) {
+    return VECTIS_OK;
+  }
+  entry = X509_NAME_get_entry(name, index);
+  string = entry != NULL ? X509_NAME_ENTRY_get_data(entry) : NULL;
+  if (string == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to read certificate name field");
+    return VECTIS_ERR_STATE;
+  }
+  utf8 = NULL;
+  len = ASN1_STRING_to_UTF8(&utf8, string);
+  if (len < 0 || utf8 == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to decode certificate name field");
+    return VECTIS_ERR_STATE;
+  }
+  *out = vectis_strndup((const char *)utf8, (size_t)len);
+  OPENSSL_free(utf8);
+  if (*out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy certificate name field");
+    return VECTIS_ERR_NOMEM;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_cert_copy_name_info(X509_NAME *name,
+                                                vectis_cert_name_info *out,
+                                                vectis_error *error) {
+  vectis_status status;
+
+  if (out == NULL) {
+    return VECTIS_OK;
+  }
+  vectis_cert_name_info_cleanup(out);
+  status = vectis_cert_copy_name_field(name, NID_commonName, &out->common_name,
+                                       error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_cert_copy_name_field(name, NID_organizationName,
+                                       &out->organization, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_cert_copy_name_field(name, NID_organizationalUnitName,
+                                       &out->organizational_unit, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status =
+      vectis_cert_copy_name_field(name, NID_countryName, &out->country, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_cert_copy_name_field(name, NID_stateOrProvinceName,
+                                       &out->state, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  return vectis_cert_copy_name_field(name, NID_localityName, &out->locality,
+                                     error);
+}
+
+static char *vectis_cert_time_string(const ASN1_TIME *time,
+                                     vectis_error *error) {
+  BIO *bio;
+  char *data;
+  char *copy;
+  long len;
+
+  if (time == NULL) {
+    return NULL;
+  }
+  bio = BIO_new(BIO_s_mem());
+  if (bio == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate certificate time writer");
+    return NULL;
+  }
+  if (ASN1_TIME_print(bio, time) != 1) {
+    BIO_free(bio);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to format certificate time");
+    return NULL;
+  }
+  data = NULL;
+  len = BIO_get_mem_data(bio, &data);
+  if (len <= 0 || data == NULL) {
+    BIO_free(bio);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to read formatted certificate time");
+    return NULL;
+  }
+  copy = vectis_strndup(data, (size_t)len);
+  BIO_free(bio);
+  if (copy == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy certificate time");
+  }
+  return copy;
+}
+
+static const char *vectis_cert_public_key_type(EVP_PKEY *key) {
+  if (key == NULL) {
+    return "unknown";
+  }
+  switch (EVP_PKEY_base_id(key)) {
+  case EVP_PKEY_RSA:
+    return "rsa";
+  case EVP_PKEY_EC:
+    return "ec";
+#ifdef EVP_PKEY_ED25519
+  case EVP_PKEY_ED25519:
+    return "ed25519";
+#endif
+#ifdef EVP_PKEY_ED448
+  case EVP_PKEY_ED448:
+    return "ed448";
+#endif
+  default:
+    return "unknown";
+  }
+}
+
+static vectis_status vectis_cert_append_name(char ***items, size_t *count,
+                                             const char *value,
+                                             vectis_error *error) {
+  char **grown;
+  char *copy;
+
+  if (items == NULL || count == NULL || value == NULL) {
+    return VECTIS_OK;
+  }
+  if (*count == (size_t)-1) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "too many certificate subjectAltName values");
+    return VECTIS_ERR_NOMEM;
+  }
+  grown = (char **)realloc(*items, (*count + 1u) * sizeof((*items)[0]));
+  if (grown == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to grow certificate subjectAltName list");
+    return VECTIS_ERR_NOMEM;
+  }
+  *items = grown;
+  copy = vectis_strdup(value);
+  if (copy == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy certificate subjectAltName value");
+    return VECTIS_ERR_NOMEM;
+  }
+  (*items)[*count] = copy;
+  *count += 1u;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_cert_copy_subject_alt_names(
+    X509 *cert, vectis_cert_subject_alt_names *out, vectis_error *error) {
+  GENERAL_NAMES *names;
+  GENERAL_NAME *name;
+  const ASN1_STRING *string;
+  const unsigned char *data;
+  char ip[INET6_ADDRSTRLEN];
+  char *dns;
+  int count;
+  int i;
+  int len;
+  vectis_status status;
+
+  if (out == NULL) {
+    return VECTIS_OK;
+  }
+  vectis_cert_subject_alt_names_cleanup(out);
+  names = X509_get_ext_d2i(cert, NID_subject_alt_name, NULL, NULL);
+  if (names == NULL) {
+    return VECTIS_OK;
+  }
+  status = VECTIS_OK;
+  count = sk_GENERAL_NAME_num(names);
+  for (i = 0; i < count && status == VECTIS_OK; ++i) {
+    name = sk_GENERAL_NAME_value(names, i);
+    if (name == NULL) {
+      continue;
+    }
+    if (name->type == GEN_DNS) {
+      string = name->d.dNSName;
+      data = ASN1_STRING_get0_data(string);
+      len = ASN1_STRING_length(string);
+      if (data == NULL || len < 0) {
+        continue;
+      }
+      dns = vectis_strndup((const char *)data, (size_t)len);
+      if (dns == NULL) {
+        status = VECTIS_ERR_NOMEM;
+        vectis_set_error(error, VECTIS_ERR_NOMEM,
+                         "failed to copy certificate DNS subjectAltName");
+        break;
+      }
+      status = vectis_cert_append_name(&out->dns_names, &out->dns_name_count,
+                                       dns, error);
+      free(dns);
+    } else if (name->type == GEN_IPADD) {
+      string = name->d.iPAddress;
+      data = ASN1_STRING_get0_data(string);
+      len = ASN1_STRING_length(string);
+      if (data == NULL ||
+          ((len != 4 || inet_ntop(AF_INET, data, ip, sizeof(ip)) == NULL) &&
+           (len != 16 || inet_ntop(AF_INET6, data, ip, sizeof(ip)) == NULL))) {
+        continue;
+      }
+      status = vectis_cert_append_name(&out->ip_addresses,
+                                       &out->ip_address_count, ip, error);
+    }
+  }
+  GENERAL_NAMES_free(names);
+  if (status != VECTIS_OK) {
+    vectis_cert_subject_alt_names_cleanup(out);
+  }
+  return status;
+}
+
+vectis_status vectis_cert_inspect_bundle(const vectis_source *bundle,
+                                         vectis_cert_info *info,
+                                         vectis_error *error) {
+  void *pem;
+  size_t pem_size;
+  X509 *cert;
+  EVP_PKEY *key;
+  BASIC_CONSTRAINTS *constraints;
+  BIGNUM *serial_bn;
+  char *serial_hex;
+  vectis_status status;
+
+  if (info == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "certificate info output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_cert_info_init(info);
+  pem = NULL;
+  pem_size = 0u;
+  cert = NULL;
+  key = NULL;
+  constraints = NULL;
+  serial_bn = NULL;
+  serial_hex = NULL;
+  status = vectis_read_source_bytes(bundle, &pem, &pem_size,
+                                    "certificate bundle", error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  cert = vectis_cert_read_x509(pem, pem_size);
+  free(pem);
+  if (cert == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "failed to parse certificate from bundle");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_error_clear(error);
+  key = X509_get_pubkey(cert);
+  constraints = X509_get_ext_d2i(cert, NID_basic_constraints, NULL, NULL);
+  serial_bn = ASN1_INTEGER_to_BN(X509_get_serialNumber(cert), NULL);
+  serial_hex = serial_bn != NULL ? BN_bn2hex(serial_bn) : NULL;
+
+  info->version = X509_get_version(cert) + 1L;
+  if (serial_hex != NULL) {
+    info->serial_hex = vectis_strdup(serial_hex);
+    if (info->serial_hex == NULL) {
+      status = VECTIS_ERR_NOMEM;
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy certificate serial number");
+      goto done;
+    }
+  }
+  info->not_before = vectis_cert_time_string(X509_get0_notBefore(cert), error);
+  if (info->not_before == NULL && error != NULL && error->code != VECTIS_OK) {
+    status = error->code;
+    goto done;
+  }
+  info->not_after = vectis_cert_time_string(X509_get0_notAfter(cert), error);
+  if (info->not_after == NULL && error != NULL && error->code != VECTIS_OK) {
+    status = error->code;
+    goto done;
+  }
+  info->is_ca = constraints != NULL && constraints->ca ? 1 : 0;
+  info->public_key_type = vectis_strdup(vectis_cert_public_key_type(key));
+  if (info->public_key_type == NULL) {
+    status = VECTIS_ERR_NOMEM;
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy certificate public key type");
+    goto done;
+  }
+  info->public_key_bits = key != NULL ? (unsigned)EVP_PKEY_bits(key) : 0u;
+  status = vectis_cert_copy_name_info(X509_get_subject_name(cert),
+                                      &info->subject, error);
+  if (status != VECTIS_OK) {
+    goto done;
+  }
+  status = vectis_cert_copy_name_info(X509_get_issuer_name(cert), &info->issuer,
+                                      error);
+  if (status != VECTIS_OK) {
+    goto done;
+  }
+  status =
+      vectis_cert_copy_subject_alt_names(cert, &info->subject_alt_names, error);
+  if (status == VECTIS_OK) {
+    vectis_error_clear(error);
+  }
+
+done:
+  OPENSSL_free(serial_hex);
+  BN_free(serial_bn);
+  BASIC_CONSTRAINTS_free(constraints);
+  EVP_PKEY_free(key);
+  X509_free(cert);
+  if (status != VECTIS_OK) {
+    vectis_cert_info_cleanup(info);
+  }
+  return status;
 }
 
 static vectis_status vectis_cert_write_private_key(const char *path,
