@@ -1224,8 +1224,8 @@ static void
 vectis_metrics_shared_state_free(vectis_metrics_shared_state *shared);
 static int *vectis_app_ready_state_new(vectis_error *error);
 static void vectis_app_ready_state_free(int *ready);
-static vectis_status vectis_app_prepare_kore_ready_state(
-    vectis_app_impl *impl, vectis_error *error);
+static vectis_status vectis_app_prepare_kore_ready_state(vectis_app_impl *impl,
+                                                         vectis_error *error);
 static void vectis_app_clear_kore_ready_state(vectis_app_impl *impl);
 static void vectis_app_mark_kore_ready(vectis_app_impl *impl);
 static char *vectis_metrics_default_storage_endpoint(void);
@@ -17859,8 +17859,9 @@ static int *vectis_app_ready_state_new(vectis_error *error) {
   *(int *)memory = 0;
   return (int *)memory;
 #else
-  vectis_set_error(error, VECTIS_ERR_STATE,
-                   "shared app readiness state is not supported on this target");
+  vectis_set_error(
+      error, VECTIS_ERR_STATE,
+      "shared app readiness state is not supported on this target");
   return NULL;
 #endif
 }
@@ -17872,8 +17873,8 @@ static void vectis_app_ready_state_free(int *ready) {
   (void)munmap(ready, sizeof(*ready));
 }
 
-static vectis_status vectis_app_prepare_kore_ready_state(
-    vectis_app_impl *impl, vectis_error *error) {
+static vectis_status vectis_app_prepare_kore_ready_state(vectis_app_impl *impl,
+                                                         vectis_error *error) {
   int *ready;
 
   if (impl == NULL) {

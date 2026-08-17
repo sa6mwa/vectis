@@ -825,6 +825,12 @@ repeated auth/status, TCP-stall, and TLS-failure signals.
 The supervised Kore runtime is isolated into its own process group before
 readiness; supervisor shutdown signals target that process group so an
 unresponsive Kore parent cannot leave worker listeners behind.
+After child readiness and before the supervisor finishes starting metrics,
+managed services, and lockdc consumer services, Kore workers must fail closed
+with `503 Service Unavailable` rather than dispatching application routes. The
+app is marked route-ready only after every start-with-app service class has
+materialized and started successfully; failed startup clears that readiness state
+during rollback.
 `vectis_server_config` also owns low-level Kore worker lifecycle/resource knobs
 that affect production behavior but do not expose raw Kore configuration text:
 worker accept threshold, worker file descriptor rlimit, worker CPU affinity, and
@@ -942,6 +948,8 @@ Required semantics:
    - fork Kore child before materializing services;
    - wait for child readiness before reporting successful start;
    - supervisor starts lockdc consumer services and metrics after readiness;
+   - application routes remain fail-closed with `503` until every supervised
+     start-with-app service class has started successfully;
    - metrics persistence is written by the supervisor worker, not request
      handlers;
    - parent monitors signals and child/service exit.
@@ -1033,6 +1041,9 @@ Integration/e2e tests:
 - metrics endpoint works with persistence in supervised mode;
 - route-backed managed `start()` with no background service serves HTTP from a
   supervised child and `stop()` reaps it cleanly;
+- route-backed managed `start()` fails application routes with `503` between
+  child readiness and full service graph readiness, then serves normal route
+  responses after `start()` succeeds;
 - child death stops supervisor services and returns failure; covered by the
   runtime hardening case that terminates a ready Kore child while a monitored
   lockdc consumer service is active and verifies service monitor cleanup;

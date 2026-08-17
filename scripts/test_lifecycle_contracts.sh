@@ -151,6 +151,9 @@ assert_concurrency_mailbox_contract() {
   assert_contains "$repo_root/docs/service-runtime-lifecycle-spec.md" 'Committed Decisions Before Later Service Families'
   assert_contains "$repo_root/docs/service-runtime-lifecycle-spec.md" '`vectis\.mailbox` pump contract'
   assert_contains "$repo_root/docs/service-runtime-lifecycle-spec.md" 'supervisor control channel remains internal'
+  assert_contains "$repo_root/docs/service-runtime-lifecycle-spec.md" 'routes remain fail-closed with `503`'
+  assert_contains "$repo_root/tests/unit/test_vectis_runtime.c" \
+    'assert_supervised_routes_wait_for_full_app_readiness'
   assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'docs/lua-mailbox\.md'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'box:pump'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'pump_callback_failures'
