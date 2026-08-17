@@ -3213,6 +3213,92 @@ static void assert_supervised_wait_reports_consumer_service_exit(void) {
   remove_tree(pouch_dir);
 }
 
+static void assert_supervised_child_exit_stops_consumer_service(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_route_config route;
+  lc_consumer_config consumer;
+  lc_consumer_service_config service_config;
+  vectis_consumer_service *service;
+  vectis_consumer_service_state service_state;
+  char pouch_dir[] = "/tmp/vectis-runtime-child-exit.XXXXXX";
+  char endpoint[4096];
+  const char *endpoints[1];
+  unsigned short port;
+  pid_t child_pid;
+  int reserved_fd;
+  int written;
+
+  assert(mkdtemp(pouch_dir) != NULL);
+  written = snprintf(endpoint, sizeof(endpoint),
+                     "pouch://%s?single_writer=false", pouch_dir);
+  assert(written > 0 && (size_t)written < sizeof(endpoint));
+  endpoints[0] = endpoint;
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  reserved_fd = reserve_loopback_port(&port);
+  close(reserved_fd);
+  config.tls.port = port;
+  config.lockd.endpoints = endpoints;
+  config.lockd.endpoint_count = 1u;
+  config.shutdown_grace_ms = 500L;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  lc_consumer_config_init(&consumer);
+  lc_consumer_service_config_init(&service_config);
+  consumer.name = "runtime-child-exit";
+  consumer.request.queue = "runtime-child-exit";
+  consumer.request.owner = "runtime-child-exit-owner";
+  consumer.request.wait_seconds = 1L;
+  consumer.request.visibility_timeout_seconds = 1L;
+  consumer.handle = sample_consumer_handler;
+  service_config.consumers = &consumer;
+  service_config.consumer_count = 1u;
+  service = NULL;
+  status = app->consumer_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+  assert(service != NULL);
+
+  route = vectis_route(VECTIS_HTTP_GET, "/child-exit-after-readiness",
+                       sample_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = service->start(service, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  child_pid = vectis_internal_kore_child_pid(app);
+  assert(child_pid > 0);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.started);
+  assert(service_state.monitor_active);
+
+  assert(kill(child_pid, SIGTERM) == 0);
+  (void)alarm(10u);
+  status = app->wait(app, &error);
+  (void)alarm(0u);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "supervised Kore runtime exited") != NULL);
+
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.stop_requested);
+  assert(!service_state.started);
+  assert(!service_state.monitor_active);
+  assert(service_state.monitor_done);
+  assert(service_state.monitor_joined);
+
+  service->close(service);
+  app->close(app);
+  remove_tree(pouch_dir);
+}
+
 static void assert_service_only_wait_reports_consumer_service_exit(void) {
   vectis_app_config config;
   vectis_app *app;
@@ -3403,6 +3489,10 @@ static int run_named_runtime_test(const char *name) {
     assert_supervised_wait_reports_consumer_service_exit();
     return 1;
   }
+  if (strcmp(name, "supervised_child_exit_stops_consumer_service") == 0) {
+    assert_supervised_child_exit_stops_consumer_service();
+    return 1;
+  }
   if (strcmp(name, "service_only_wait_reports_consumer_service_exit") == 0) {
     assert_service_only_wait_reports_consumer_service_exit();
     return 1;
@@ -3443,6 +3533,7 @@ int main(void) {
   assert_kore_start_rejects_extra_thread();
   assert_supervised_start_reports_child_readiness_failure();
   assert_supervised_wait_reports_consumer_service_exit();
+  assert_supervised_child_exit_stops_consumer_service();
   assert_service_only_wait_reports_consumer_service_exit();
   assert_service_failure_continue_waits_for_signal();
 

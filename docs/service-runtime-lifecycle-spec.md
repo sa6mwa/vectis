@@ -637,7 +637,9 @@ Integration/e2e tests:
 - supervised app handles SIGINT/SIGTERM/SIGQUIT cleanly;
 - lockdc consumer and Kore route run concurrently through a safe channel;
 - metrics endpoint works with persistence in supervised mode;
-- child death stops supervisor services and returns failure;
+- child death stops supervisor services and returns failure; covered by the
+  runtime hardening case that terminates a ready Kore child while a monitored
+  lockdc consumer service is active and verifies service monitor cleanup;
 - service failure stops Kore child by default;
 - no examples use `os.execute` or shell sleep for waits;
 - direct Lua background callbacks are not invoked from service threads.

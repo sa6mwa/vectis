@@ -29536,3 +29536,18 @@ struct lc_client *vectis_internal_lockd_client(vectis_app *app) {
   impl = (vectis_app_impl *)app->impl;
   return impl->lockd_client;
 }
+
+pid_t vectis_internal_kore_child_pid(vectis_app *app) {
+  vectis_app_impl *impl;
+  pid_t child_pid;
+
+  if (app == NULL || app->impl == NULL) {
+    return (pid_t)0;
+  }
+
+  impl = (vectis_app_impl *)app->impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  child_pid = impl->kore_child_pid;
+  (void)pthread_mutex_unlock(&impl->mutex);
+  return child_pid;
+}
