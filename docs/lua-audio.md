@@ -9,6 +9,12 @@ called incrementally by the C backend, decoder URL input is pulled through
 libcurl by the decoder, and VOX/PTT segments are valid only during their Lua
 segment callback.
 
+`require("vectis.audio_worker")` adds Vectis-managed mailbox helpers for
+bounded file decode/encode work. This worker surface is intentionally
+materialized: requests and replies are copied mailbox events, and decoded PCM is
+returned as a bounded Lua numeric array. It is not the VOX/PTT streaming
+surface.
+
 ## Metadata And Constants
 
 - `audio.result_string(code)` returns a stable result string.
@@ -143,6 +149,42 @@ Playback methods:
 - `playback:drain()`
 - `playback:stop()`
 - `playback:close()`
+
+## Managed Audio Worker
+
+Use `server:audio_worker_service(opts)` to declare a C-owned managed worker
+that drains a `vectis.mailbox` request queue. The service accepts no Lua
+callbacks; Lua builds copied request events and decodes copied replies in the
+owner state.
+
+Options:
+
+- `request_mailbox` or `requests`: required borrowed mailbox.
+- `reply_broker` or `broker`: optional `vectis.mailbox.broker` used for request
+  replies.
+- `name`: optional managed-service name, defaulting to `audio-worker`.
+- `start`: whether to start with the app, defaulting to true.
+- `poll_timeout_ms`: worker mailbox poll interval.
+- `max_frames`: default decode cap, defaulting to
+  `vectis.audio_worker.DEFAULT_MAX_FRAMES`.
+
+Helpers:
+
+- `vectis.audio_worker.decode_file_request(opts)` builds a
+  `vectis.audio.decode` request. `opts.path` is required, `opts.encoding`
+  defaults to auto detection, and `opts.max_frames` can override the service
+  default for that request.
+- `vectis.audio_worker.encode_file_request(opts)` builds a
+  `vectis.audio.encode` request. `opts.path` and `opts.frames` are required;
+  `opts.format`, `opts.sample_rate`, and `opts.channels` default to WAV, 16000,
+  and mono.
+- `vectis.audio_worker.decode_reply(event)` decodes a `vectis.audio.reply`
+  event into `ok`, `status`, `source`, `dependency_code`, `operation`, `path`,
+  `sample_rate`, `channels`, `frame_count`, optional `frames`, `message`, and
+  `detail`.
+
+See `examples/lua/audio_worker_service.lua` for a self-contained worker
+example that encodes a WAV file and decodes it back through the managed service.
 
 ## Errors
 

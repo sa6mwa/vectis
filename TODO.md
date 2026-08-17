@@ -376,9 +376,10 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Implement the remaining cpkt audio/miniaudio Lua facade receiver shells from `docs/lua-sus-audio-contract.md`, including capture/playback device helpers behind opt-in tests.
 - [x] Add initial dependency-native cpkt `sus` and audio Lua modules with deterministic metadata, catalog/cache, callback decoder/encoder, VOX, PTT, preload, example, and packed execution coverage.
 - [x] Add user-facing Lua docs for the dependency-native cpkt `sus` and audio facades.
-- [ ] Add descriptor-backed `vectis_audio_worker_service` over bounded `vectis.audio.decode`, `vectis.audio.encode`, and `vectis.audio.vox` mailbox request/reply records, with runtime-domain device/decoder/encoder/VOX materialization and no managed-worker Lua callbacks.
+- [x] Add descriptor-backed `vectis_audio_worker_service` over bounded `vectis.audio.decode` and `vectis.audio.encode` mailbox request/reply records, with runtime-domain decoder/encoder materialization, C envelope helpers, Lua `vectis.audio_worker` helpers, `server:audio_worker_service()` registration, deterministic unit/example/packed coverage, and no managed-worker Lua callbacks.
+- [ ] Add the managed `vectis.audio.vox` worker contract with true segment/progress event semantics rather than a faux streaming materialized reply.
 - [ ] Add descriptor-backed `vectis_sus_worker_service` over bounded `vectis.sus.transcribe_pcm` and `vectis.sus.transcribe_file` mailbox request/reply records, with runtime-domain model/transcriber materialization, explicit materialized/file-backed output naming, and deterministic no-model plus opt-in loaded-model coverage.
-- [ ] Add Lua helpers for audio/SUS worker mailbox envelope build/decode and `server:audio_worker_service()` / `server:sus_worker_service()` registration without replacing direct `require("audio")` or `require("sus")`.
+- [ ] Add Lua helpers for SUS worker mailbox envelope build/decode and `server:sus_worker_service()` registration without replacing direct `require("sus")`.
 - [x] Add Lua helpers for libmdf/softline where Vectis-owned terminal workflows need higher-level DX; keep their direct modules available without wrapping.
 - [ ] Add Agent Smith-specific terminal helpers once the agent workflow contract exists.
 - [x] Add deterministic Lua examples for dependency-native pslog, liblql, and softline module workflows without adding redundant Vectis-owned wrappers.

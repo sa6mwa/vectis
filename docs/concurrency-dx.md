@@ -318,6 +318,11 @@ provided by the test harness, registers a C-owned CAI worker service, sends a
 deterministic no-network request through a mailbox broker, decodes the
 structured reply, and inspects copied service lifecycle state.
 
+`examples/lua/audio_worker_service.lua` is the Lua audio worker example. It
+runs in service-only mode, registers a C-owned audio worker service, sends
+bounded encode/decode file requests through a mailbox broker, decodes copied
+structured replies, and inspects copied service lifecycle state.
+
 ## Lua Surface
 
 The Lua facade mirrors the C mailbox:

@@ -77,20 +77,25 @@ Direct `require("audio")` and `require("sus")` calls are owner-state facade use.
 Background audio/SUS services belong to the Vectis managed-service lifecycle and
 must be descriptor-backed.
 
-The planned managed-worker surfaces are:
+The implemented audio managed-worker surface is:
 
 - C: `vectis_audio_worker_service` over `vectis_managed_service`
 - Lua: `server:audio_worker_service(opts)`
-- Lua helpers: `vectis.audio_worker.decode_request()`,
-  `encode_request()`, `vox_request()`, and `decode_reply()`
+- Lua helpers: `vectis.audio_worker.decode_file_request()`,
+  `encode_file_request()`, and `decode_reply()`
+
+The planned remaining managed-worker surfaces are:
+
+- C/Lua audio VOX worker helpers with true segment/progress event semantics
 - C: `vectis_sus_worker_service` over `vectis_managed_service`
 - Lua: `server:sus_worker_service(opts)`
 - Lua helpers: `vectis.sus_worker.transcribe_pcm_request()`,
   `transcribe_file_request()`, and `decode_reply()`
 
-The first deterministic audio worker request kinds are `vectis.audio.decode`,
-`vectis.audio.encode`, and `vectis.audio.vox`. The first deterministic SUS
-worker request kinds are `vectis.sus.transcribe_pcm` and
+The implemented deterministic audio worker request kinds are
+`vectis.audio.decode` and `vectis.audio.encode`; replies use
+`vectis.audio.reply`. The planned deterministic SUS worker request kinds are
+`vectis.sus.transcribe_pcm` and
 `vectis.sus.transcribe_file`; replies use `vectis.sus.reply`.
 
 Managed workers copy configuration during declaration and materialize devices,

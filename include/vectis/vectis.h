@@ -1204,6 +1204,69 @@ typedef struct vectis_cai_worker_service_config {
   long poll_timeout_ms;
 } vectis_cai_worker_service_config;
 
+#define VECTIS_AUDIO_WORKER_DECODE_KIND "vectis.audio.decode"
+#define VECTIS_AUDIO_WORKER_ENCODE_KIND "vectis.audio.encode"
+#define VECTIS_AUDIO_WORKER_REPLY_KIND "vectis.audio.reply"
+#define VECTIS_AUDIO_WORKER_DEFAULT_POLL_TIMEOUT_MS 100L
+#define VECTIS_AUDIO_WORKER_DEFAULT_MAX_FRAMES 16000u
+
+typedef struct vectis_audio_worker_decode_request {
+  size_t size;
+  unsigned abi_version;
+  const char *path;
+  const char *encoding;
+  size_t max_frames;
+} vectis_audio_worker_decode_request;
+
+typedef struct vectis_audio_worker_encode_request {
+  size_t size;
+  unsigned abi_version;
+  const char *path;
+  const char *format;
+  unsigned sample_rate;
+  unsigned channels;
+  const double *frames;
+  size_t frame_count;
+} vectis_audio_worker_encode_request;
+
+typedef struct vectis_audio_worker_event {
+  vectis_mailbox_message message;
+  vectis_mutable_bytes payload;
+} vectis_audio_worker_event;
+
+typedef struct vectis_audio_worker_response {
+  size_t size;
+  unsigned abi_version;
+  vectis_status status;
+  vectis_error_source source;
+  long dependency_code;
+  char *operation;
+  char *path;
+  double *frames;
+  size_t frame_count;
+  unsigned sample_rate;
+  unsigned channels;
+  char message[256];
+  char detail[256];
+} vectis_audio_worker_response;
+
+/* Descriptor for a Vectis-owned audio worker service. The request mailbox and
+ * optional broker are borrowed and must outlive the returned managed service.
+ * The worker drains VECTIS_AUDIO_WORKER_DECODE_KIND and
+ * VECTIS_AUDIO_WORKER_ENCODE_KIND events, executes bounded file decode/encode
+ * work in the selected runtime domain, and replies through reply_broker when
+ * the incoming mailbox event expects a reply. */
+typedef struct vectis_audio_worker_service_config {
+  size_t size;
+  unsigned abi_version;
+  const char *name;
+  vectis_mailbox *request_mailbox;
+  vectis_mailbox_broker *reply_broker;
+  int start_with_app;
+  long poll_timeout_ms;
+  size_t max_frames;
+} vectis_audio_worker_service_config;
+
 typedef struct vectis_sftp_config {
   const char *url;
   const char *username;
@@ -1454,6 +1517,9 @@ struct vectis_app {
       vectis_managed_service **out, vectis_error *error);
   vectis_status (*cai_worker_service)(
       vectis_app *self, const vectis_cai_worker_service_config *config,
+      vectis_managed_service **out, vectis_error *error);
+  vectis_status (*audio_worker_service)(
+      vectis_app *self, const vectis_audio_worker_service_config *config,
       vectis_managed_service **out, vectis_error *error);
 
   /* Declare a Vectis-owned liblockdc consumer service. Vectis copies the
@@ -1871,6 +1937,26 @@ vectis_cai_worker_response_decode(const vectis_mailbox_event *event,
                                   vectis_cai_worker_response *response,
                                   vectis_error *error);
 void vectis_cai_worker_response_cleanup(vectis_cai_worker_response *response);
+void vectis_audio_worker_service_config_init(
+    vectis_audio_worker_service_config *config);
+void vectis_audio_worker_decode_request_init(
+    vectis_audio_worker_decode_request *request);
+void vectis_audio_worker_encode_request_init(
+    vectis_audio_worker_encode_request *request);
+vectis_status vectis_audio_worker_decode_event_build(
+    const vectis_audio_worker_decode_request *request,
+    vectis_audio_worker_event *out, vectis_error *error);
+vectis_status vectis_audio_worker_encode_event_build(
+    const vectis_audio_worker_encode_request *request,
+    vectis_audio_worker_event *out, vectis_error *error);
+void vectis_audio_worker_event_cleanup(vectis_audio_worker_event *event);
+void vectis_audio_worker_response_init(vectis_audio_worker_response *response);
+vectis_status
+vectis_audio_worker_response_decode(const vectis_mailbox_event *event,
+                                    vectis_audio_worker_response *response,
+                                    vectis_error *error);
+void vectis_audio_worker_response_cleanup(
+    vectis_audio_worker_response *response);
 void vectis_opcua_monitor_event_config_init(
     vectis_opcua_monitor_event_config *config);
 void vectis_opcua_monitor_mailbox_config_init(
@@ -2130,6 +2216,9 @@ vectis_status vectis_curl_worker_service_new(
     vectis_managed_service **out, vectis_error *error);
 vectis_status vectis_cai_worker_service_new(
     vectis_app *app, const vectis_cai_worker_service_config *config,
+    vectis_managed_service **out, vectis_error *error);
+vectis_status vectis_audio_worker_service_new(
+    vectis_app *app, const vectis_audio_worker_service_config *config,
     vectis_managed_service **out, vectis_error *error);
 vectis_status vectis_managed_service_run(vectis_managed_service *service,
                                          vectis_error *error);

@@ -145,6 +145,43 @@ do
   assert(oversized_ok == false)
   assert(tostring(oversized_err):find("too large", 1, true))
 end
+assert(vectis.audio_worker == require("vectis.audio_worker"))
+assert(vectis.audio_worker.DECODE_KIND == "vectis.audio.decode")
+assert(vectis.audio_worker.ENCODE_KIND == "vectis.audio.encode")
+assert(vectis.audio_worker.REPLY_KIND == "vectis.audio.reply")
+assert(type(vectis.audio_worker.decode_file_request) == "function")
+assert(type(vectis.audio_worker.encode_file_request) == "function")
+assert(type(vectis.audio_worker.decode_reply) == "function")
+do
+  local decode_event = assert(vectis.audio_worker.decode_file_request({
+    path = "input.wav",
+    encoding = "wav",
+    max_frames = 128,
+  }))
+  assert(decode_event.kind == vectis.audio_worker.DECODE_KIND)
+  assert(decode_event.expects_reply == true)
+  assert(decode_event.payload:find('"path":"input.wav"', 1, true))
+  local encode_event = assert(vectis.audio_worker.encode_file_request({
+    path = "output.wav",
+    format = "wav",
+    frames = { 0.0, 0.25, -0.25 },
+  }))
+  assert(encode_event.kind == vectis.audio_worker.ENCODE_KIND)
+  assert(encode_event.expects_reply == true)
+  assert(encode_event.payload:find('"frames"', 1, true))
+  local audio_reply = assert(vectis.audio_worker.decode_reply({
+    kind = vectis.audio_worker.REPLY_KIND,
+    payload = '{"status":0,"source_code":0,"dependency_code":0,' ..
+        '"operation":"decode","path":"input.wav","sample_rate":16000,' ..
+        '"channels":1,"frames":[0.25,-0.25]}',
+  }))
+  assert(audio_reply.ok == true)
+  assert(audio_reply.operation == "decode")
+  assert(audio_reply.sample_rate == 16000)
+  assert(audio_reply.channels == 1)
+  assert(audio_reply.frame_count == 2)
+  assert(audio_reply.frames[1] > 0.24 and audio_reply.frames[1] < 0.26)
+end
 assert(vectis.cert == cert)
 assert(vectis.embedded == embedded)
 assert(vectis.server == server_module)
@@ -253,6 +290,7 @@ assert(package.loaded.pslog == pslog)
 assert(package.loaded["vectis.mailbox"] == mailbox)
 assert(package.loaded["vectis.curl_worker"] == vectis.curl_worker)
 assert(package.loaded["vectis.cai_worker"] == vectis.cai_worker)
+assert(package.loaded["vectis.audio_worker"] == vectis.audio_worker)
 assert(package.loaded["vectis.log"] == log)
 assert(package.loaded.libmdf == libmdf)
 assert(package.loaded.softline == softline)
