@@ -88,6 +88,17 @@ assert_lua_examples_self_contained() {
   fi
 }
 
+assert_examples_do_not_shell_for_runtime_waits() {
+  if grep -RInE \
+    --include='*.c' \
+    --include='*.lua' \
+    '(os[.]execute|io[.]popen|(^|[^A-Za-z_])system[[:space:]]*[(]|/bin/(ba)?sh|sh[[:space:]]+-c|(^|[[:space:]])sleep[[:space:]]+[0-9])' \
+    "$repo_root/examples"; then
+    echo "Examples must not shell out or use external sleep/wait commands; use Vectis runtime wait helpers such as server:run(), server:wait(), or vectis.sleep_ms()" >&2
+    exit 1
+  fi
+}
+
 assert_action_surface_contract() {
   if grep -RInE --exclude='test_lifecycle_contracts.sh' \
     '(admin-operation|--admin-operation|--subcommand|pack[ _-]v2|pack[ _-]V2|Pack V2|VECTIS_PACK_V2|VECTIS_PACK2|PACK_V2)' \
@@ -112,6 +123,7 @@ assert_lua_example_dx_contract() {
     exit 1
   fi
   assert_lua_examples_self_contained
+  assert_examples_do_not_shell_for_runtime_waits
   if grep -RInE \
     '(^|[[:space:]])local[[:space:]]+function[[:space:]]+[A-Za-z_][A-Za-z0-9_]*|^[[:space:]]*function[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(' \
     "$repo_root/examples/lua"; then
@@ -124,6 +136,7 @@ assert_lua_example_dx_contract() {
   fi
   assert_contains "$repo_root/examples/README.md" 'Lua examples follow the same rule'
   assert_contains "$repo_root/examples/README.md" 'must not require another file from `examples/lua/`'
+  assert_contains "$repo_root/examples/README.md" 'shell command wrappers for runtime waits'
 }
 
 assert_concurrency_mailbox_contract() {

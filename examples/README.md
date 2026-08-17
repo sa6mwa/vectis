@@ -96,6 +96,10 @@ scripts and keep facade calls visible at the call site. Inline callbacks are
 used where the demonstrated API requires a callback, but local helper layers are
 kept out of the examples. A Lua example may require Vectis or bundled product
 modules, but it must not require another file from `examples/lua/`.
+Examples must not call `os.execute`, `io.popen`, C `system()`, shell `sleep`,
+or shell command wrappers for runtime waits. Long-running examples use
+`server:run()`, `server:wait()`, `server:stop()`, or `vectis.sleep_ms()` so the
+same code works in scratch containers where `vectis` is the only executable.
 
 - `lua/mdf_render.lua`: libmdf Lua Markdown rendering through both
   `render()` and `render_stream()`.
