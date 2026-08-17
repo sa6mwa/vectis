@@ -450,7 +450,9 @@ than letting Kore reject a malformed low-level setting later.
 
 The same direct-runtime surface owns listener backlog, request processing
 budget, HSTS max-age, the HTTP Server header value, and process-wide WebSocket
-limits. WebSocket `websocket_max_frame_bytes` maps to Kore's inbound frame
+limits. It also exposes Kore's opt-in generated HTML bodies for bodyless 4xx/5xx
+responses as `pretty_error_pages`, defaulting off for production-minimal error
+responses. WebSocket `websocket_max_frame_bytes` maps to Kore's inbound frame
 payload ceiling, and `websocket_timeout_ms` maps to Kore's WebSocket idle timer.
 Zero values keep the Vectis defaults; invalid negative timeouts and empty
 Server-header values fail during Vectis config validation before any Kore

@@ -11070,6 +11070,8 @@ static int vectis_lua_server_new(lua_State *lua) {
       lua, 1, "websocket_timeout_ms", config.server.websocket_timeout_ms);
   config.server.server_header =
       vectis_lua_table_string(lua, 1, "server_header");
+  config.server.pretty_error_pages = vectis_lua_table_bool(
+      lua, 1, "pretty_error_pages", config.server.pretty_error_pages);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = bind != NULL ? bind : "127.0.0.1";
   config.tls.port = (unsigned short)port;

@@ -32,6 +32,7 @@
 #define VECTIS_SERVER_DEFAULT_WEBSOCKET_MAX_FRAME_BYTES 16384u
 #define VECTIS_SERVER_DEFAULT_WEBSOCKET_TIMEOUT_MS 120000L
 #define VECTIS_SERVER_DEFAULT_SERVER_HEADER "vectis"
+#define VECTIS_SERVER_DEFAULT_PRETTY_ERROR_PAGES 0
 #define VECTIS_SERVER_DEFAULT_WORKER_ACCEPT_THRESHOLD 16u
 #define VECTIS_SERVER_DEFAULT_WORKER_RLIMIT_NOFILES 768u
 #define VECTIS_SERVER_DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS 5000L
@@ -1122,6 +1123,12 @@ typedef struct vectis_server_config {
    * switch for this header.
    */
   const char *server_header;
+  /*
+   * Nonzero lets Kore synthesize simple HTML bodies for bodyless 4xx/5xx
+   * responses. Defaults off so production responses stay minimal unless the
+   * developer opts in.
+   */
+  int pretty_error_pages;
   vectis_autoblock_config autoblock;
 } vectis_server_config;
 

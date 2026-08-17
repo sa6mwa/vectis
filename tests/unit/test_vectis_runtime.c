@@ -189,6 +189,16 @@ static vectis_status sample_handler(vectis_app *app, vectis_request *request,
   return vectis_response_text(response, 200, "text/plain", "ok", error);
 }
 
+static vectis_status status_404_handler(vectis_app *app,
+                                        vectis_request *request,
+                                        vectis_response *response,
+                                        void *userdata, vectis_error *error) {
+  (void)app;
+  (void)request;
+  (void)userdata;
+  return vectis_response_status(response, 404, error);
+}
+
 static size_t reset_failing_response_source_read(void *context, void *buffer,
                                                  size_t count,
                                                  lc_error *error) {
@@ -3313,9 +3323,15 @@ static void assert_kore_smoke(void) {
   second_config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   second_config.tls.bind = "127.0.0.1";
   second_config.tls.port = second_port;
+  second_config.server.pretty_error_pages = 1;
   second_app = vectis_app_new(&second_config, &second_error);
   assert(second_app != NULL);
   second_route = vectis_route(VECTIS_HTTP_GET, "/health", sample_handler, NULL);
+  second_status =
+      vectis_register_route(second_app, &second_route, &second_error);
+  assert(second_status == VECTIS_OK);
+  second_route =
+      vectis_route(VECTIS_HTTP_GET, "/pretty-404", status_404_handler, NULL);
   second_status =
       vectis_register_route(second_app, &second_route, &second_error);
   assert(second_status == VECTIS_OK);
@@ -3323,6 +3339,29 @@ static void assert_kore_smoke(void) {
   second_reserved_fd = -1;
   second_status = vectis_start(second_app, &second_error);
   assert(second_status == VECTIS_OK);
+  vectis_http_client_config_init(&http);
+  http.timeout_ms = 5000L;
+  http.connect_timeout_ms = 200L;
+  http.follow_redirects_disabled = 1;
+  second_status = VECTIS_ERR_STATE;
+  for (attempt = 0; attempt < 100 && second_status != VECTIS_OK; ++attempt) {
+    vectis_http_response_cleanup(&response);
+    second_status = vectis_http_get(
+        &http,
+        format_loopback_http_url(url, sizeof(url), second_port, "/pretty-404"),
+        &response, &second_error);
+    if (second_status != VECTIS_OK) {
+      usleep(100000u);
+    }
+  }
+  assert(second_status == VECTIS_OK);
+  assert(response.status_code == 404L);
+  assert(response.body_size > 0u);
+  assert(bytes_contain_text((const char *)response.body, response.body_size,
+                            "<html>"));
+  assert(bytes_contain_text((const char *)response.body, response.body_size,
+                            "404"));
+  vectis_http_response_cleanup(&response);
   second_status = vectis_stop(second_app, &second_error);
   assert(second_status == VECTIS_OK);
   vectis_destroy(second_app);

@@ -40,7 +40,7 @@ Major groups:
   client CA verification, protocol version selection, and OpenSSL cipher lists;
   `vectis_server_config` covers listener backlog, processing budget, and HSTS
   controls, process-wide WebSocket frame and idle-timeout limits, and the HTTP
-  Server header value.
+  Server header value, plus opt-in pretty framework error pages.
 - WebDAV/auth routes: `vectis_webdav_mount_config`,
   `vectis_webdav_embedded_site_config`, and `vectis_auth_routes_config`.
 - Auth credentials: native users, issued credentials, OAuth2/OIDC WebDAV keys,

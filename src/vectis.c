@@ -2951,6 +2951,7 @@ void vectis_server_config_init(vectis_server_config *config) {
       VECTIS_SERVER_DEFAULT_WEBSOCKET_MAX_FRAME_BYTES;
   config->websocket_timeout_ms = VECTIS_SERVER_DEFAULT_WEBSOCKET_TIMEOUT_MS;
   config->server_header = VECTIS_SERVER_DEFAULT_SERVER_HEADER;
+  config->pretty_error_pages = VECTIS_SERVER_DEFAULT_PRETTY_ERROR_PAGES;
   vectis_autoblock_config_init(&config->autoblock);
 }
 
@@ -3160,6 +3161,7 @@ vectis_effective_server_config(const vectis_server_config *config) {
   effective.server_header = config->server_header != NULL
                                 ? config->server_header
                                 : VECTIS_SERVER_DEFAULT_SERVER_HEADER;
+  effective.pretty_error_pages = config->pretty_error_pages;
   effective.autoblock = config->autoblock;
   effective.autoblock.window_seconds =
       vectis_default_unsigned(config->autoblock.window_seconds, 1800u);

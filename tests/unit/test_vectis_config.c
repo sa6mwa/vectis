@@ -107,6 +107,8 @@ int main(void) {
          VECTIS_SERVER_DEFAULT_WEBSOCKET_TIMEOUT_MS);
   assert(strcmp(config.server.server_header,
                 VECTIS_SERVER_DEFAULT_SERVER_HEADER) == 0);
+  assert(config.server.pretty_error_pages ==
+         VECTIS_SERVER_DEFAULT_PRETTY_ERROR_PAGES);
   assert(config.lockd.timeout_ms == 30000L);
   assert(config.lockd.logger == NULL);
   assert(config.lockd.logger_disabled == 0);
@@ -184,6 +186,7 @@ int main(void) {
   config.server.websocket_max_frame_bytes = 0u;
   config.server.websocket_timeout_ms = 0L;
   config.server.server_header = NULL;
+  config.server.pretty_error_pages = 1;
   config.lockd.timeout_ms = 0L;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
