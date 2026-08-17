@@ -1,6 +1,7 @@
 #include "vectis_internal.h"
 
 #include <cpkt/audio.h>
+#include <cpkt/sus.h>
 #include <ctype.h>
 #include <curl/curl.h>
 #include <dirent.h>
@@ -549,6 +550,36 @@ typedef struct vectis_audio_worker_reply_json {
   lonejson_f64_array frames;
 } vectis_audio_worker_reply_json;
 
+typedef struct vectis_sus_worker_request_json {
+  char *path;
+  char *encoding;
+  char *language;
+  char *initial_prompt;
+  char *output;
+  char *output_path;
+  lonejson_int64 translate;
+  int has_translate;
+  lonejson_int64 timestamps;
+  int has_timestamps;
+  lonejson_int64 threads;
+  int has_threads;
+  lonejson_int64 max_text_bytes;
+  int has_max_text_bytes;
+  lonejson_f64_array frames;
+} vectis_sus_worker_request_json;
+
+typedef struct vectis_sus_worker_reply_json {
+  lonejson_int64 status;
+  lonejson_int64 source_code;
+  lonejson_int64 dependency_code;
+  char *operation;
+  char *message;
+  char *detail;
+  char *text;
+  char *path;
+  char *output_path;
+} vectis_sus_worker_reply_json;
+
 static const lonejson_field vectis_error_response_fields[] = {
     LONEJSON_FIELD_STRING_FIXED_REQ(vectis_error_response_body, code, "code",
                                     LONEJSON_OVERFLOW_TRUNCATE),
@@ -646,6 +677,57 @@ static const lonejson_field vectis_audio_worker_reply_json_fields[] = {
 LONEJSON_MAP_DEFINE(vectis_audio_worker_reply_json_map,
                     vectis_audio_worker_reply_json,
                     vectis_audio_worker_reply_json_fields);
+
+static const lonejson_field vectis_sus_worker_request_json_fields[] = {
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_sus_worker_request_json, path,
+                                           "path"),
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_sus_worker_request_json,
+                                           encoding, "encoding"),
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_sus_worker_request_json,
+                                           language, "language"),
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_sus_worker_request_json,
+                                           initial_prompt, "initial_prompt"),
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_sus_worker_request_json,
+                                           output, "output"),
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_sus_worker_request_json,
+                                           output_path, "output_path"),
+    LONEJSON_FIELD_I64_PRESENT(vectis_sus_worker_request_json, translate,
+                               has_translate, "translate"),
+    LONEJSON_FIELD_I64_PRESENT(vectis_sus_worker_request_json, timestamps,
+                               has_timestamps, "timestamps"),
+    LONEJSON_FIELD_I64_PRESENT(vectis_sus_worker_request_json, threads,
+                               has_threads, "threads"),
+    LONEJSON_FIELD_I64_PRESENT(vectis_sus_worker_request_json, max_text_bytes,
+                               has_max_text_bytes, "max_text_bytes"),
+    LONEJSON_FIELD_F64_ARRAY_OMIT_EMPTY(vectis_sus_worker_request_json, frames,
+                                        "frames", 0u)};
+
+LONEJSON_MAP_DEFINE(vectis_sus_worker_request_json_map,
+                    vectis_sus_worker_request_json,
+                    vectis_sus_worker_request_json_fields);
+
+static const lonejson_field vectis_sus_worker_reply_json_fields[] = {
+    LONEJSON_FIELD_I64_REQ(vectis_sus_worker_reply_json, status, "status"),
+    LONEJSON_FIELD_I64(vectis_sus_worker_reply_json, source_code,
+                       "source_code"),
+    LONEJSON_FIELD_I64(vectis_sus_worker_reply_json, dependency_code,
+                       "dependency_code"),
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_sus_worker_reply_json,
+                                           operation, "operation"),
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_sus_worker_reply_json,
+                                           message, "message"),
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_sus_worker_reply_json, detail,
+                                           "detail"),
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_sus_worker_reply_json, text,
+                                           "text"),
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_sus_worker_reply_json, path,
+                                           "path"),
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_sus_worker_reply_json,
+                                           output_path, "output_path")};
+
+LONEJSON_MAP_DEFINE(vectis_sus_worker_reply_json_map,
+                    vectis_sus_worker_reply_json,
+                    vectis_sus_worker_reply_json_fields);
 
 typedef struct vectis_managed_service_impl {
   char *name;
@@ -749,6 +831,25 @@ typedef struct vectis_audio_worker_service_context {
   int stopping;
   pthread_mutex_t mutex;
 } vectis_audio_worker_service_context;
+
+typedef struct vectis_sus_worker_service_context {
+  vectis_mailbox *request_mailbox;
+  vectis_mailbox_broker *reply_broker;
+  char *model_path;
+  char *cached_model;
+  char *cache_dir;
+  char *sha256;
+  char *source_url;
+  int cache_offline;
+  int cache_insecure_no_checksum;
+  int cpu_only;
+  int preserve_initial_space_after_first_transcriber;
+  long poll_timeout_ms;
+  size_t max_frames;
+  size_t max_text_bytes;
+  int stopping;
+  pthread_mutex_t mutex;
+} vectis_sus_worker_service_context;
 
 typedef struct vectis_consumer_service_impl {
   lc_consumer_service *service;
@@ -6843,6 +6944,795 @@ static void vectis_audio_worker_service_cleanup(void *context) {
   free(ctx);
 }
 
+static void vectis_sus_worker_request_json_cleanup_lonejson(
+    vectis_sus_worker_request_json *request) {
+  if (request == NULL) {
+    return;
+  }
+  lonejson_cleanup(&vectis_sus_worker_request_json_map, request);
+  memset(request, 0, sizeof(*request));
+}
+
+static void vectis_sus_worker_request_json_cleanup_malloc(
+    vectis_sus_worker_request_json *request) {
+  if (request == NULL) {
+    return;
+  }
+  free(request->path);
+  free(request->encoding);
+  free(request->language);
+  free(request->initial_prompt);
+  free(request->output);
+  free(request->output_path);
+  free(request->frames.items);
+  memset(request, 0, sizeof(*request));
+}
+
+static void vectis_sus_worker_reply_json_cleanup_malloc(
+    vectis_sus_worker_reply_json *reply) {
+  if (reply == NULL) {
+    return;
+  }
+  free(reply->operation);
+  free(reply->message);
+  free(reply->detail);
+  free(reply->text);
+  free(reply->path);
+  free(reply->output_path);
+  memset(reply, 0, sizeof(*reply));
+}
+
+static void vectis_sus_worker_reply_json_cleanup_lonejson(
+    vectis_sus_worker_reply_json *reply) {
+  if (reply == NULL) {
+    return;
+  }
+  lonejson_cleanup(&vectis_sus_worker_reply_json_map, reply);
+  memset(reply, 0, sizeof(*reply));
+}
+
+static int
+vectis_sus_worker_service_is_stopping(vectis_sus_worker_service_context *ctx) {
+  int stopping;
+
+  if (ctx == NULL) {
+    return 1;
+  }
+  (void)pthread_mutex_lock(&ctx->mutex);
+  stopping = ctx->stopping;
+  (void)pthread_mutex_unlock(&ctx->mutex);
+  return stopping;
+}
+
+static vectis_status vectis_sus_worker_cpkt_error(vectis_error *error,
+                                                  cpkt_sus_result result,
+                                                  const char *context) {
+  vectis_status status;
+  const char *dependency_message;
+
+  switch (result) {
+  case CPKT_SUS_ERR_ARG:
+  case CPKT_SUS_ERR_LOOKUP:
+  case CPKT_SUS_ERR_CHECKSUM:
+    status = VECTIS_ERR_INVALID;
+    break;
+  case CPKT_SUS_ERR_ALLOC:
+    status = VECTIS_ERR_NOMEM;
+    break;
+  case CPKT_SUS_ABORTED:
+    status = VECTIS_ERR_CONFLICT;
+    break;
+  default:
+    status = VECTIS_ERR_STATE;
+    break;
+  }
+  vectis_set_error(error, status,
+                   context != NULL ? context : "SUS worker failed");
+  if (error != NULL) {
+    error->source = VECTIS_ERROR_SOURCE_CPKT;
+    error->dependency_code = (long)result;
+    dependency_message = cpkt_sus_result_string(result);
+    if (dependency_message != NULL && dependency_message[0] != '\0') {
+      (void)snprintf(error->detail, sizeof(error->detail), "%s",
+                     dependency_message);
+    }
+  }
+  return status;
+}
+
+static size_t vectis_sus_worker_effective_max_text_bytes(
+    const vectis_sus_worker_service_context *ctx,
+    const vectis_sus_worker_request_json *request) {
+  if (request != NULL && request->has_max_text_bytes &&
+      request->max_text_bytes > 0) {
+    return (size_t)request->max_text_bytes;
+  }
+  if (ctx != NULL && ctx->max_text_bytes > 0u) {
+    return ctx->max_text_bytes;
+  }
+  return VECTIS_SUS_WORKER_DEFAULT_MAX_TEXT_BYTES;
+}
+
+static vectis_sus_worker_output_mode vectis_sus_worker_request_output_mode(
+    const vectis_sus_worker_request_json *request) {
+  if (request != NULL && request->output != NULL &&
+      strcmp(request->output, "file") == 0) {
+    return VECTIS_SUS_WORKER_OUTPUT_FILE;
+  }
+  return VECTIS_SUS_WORKER_OUTPUT_TEXT;
+}
+
+static void vectis_sus_worker_release_text(char *text, int owned_by_sus) {
+  if (text == NULL) {
+    return;
+  }
+  if (owned_by_sus) {
+    cpkt_sus_string_free(text);
+  } else {
+    free(text);
+  }
+}
+
+static vectis_status vectis_sus_worker_reply_set_text_or_file(
+    const vectis_sus_worker_request_json *request,
+    vectis_sus_worker_reply_json *reply, char *text, size_t max_text_bytes,
+    vectis_error *error) {
+  FILE *fp;
+  size_t text_size;
+  int text_owned_by_sus;
+
+  if (reply == NULL) {
+    cpkt_sus_string_free(text);
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SUS worker reply is required");
+    return VECTIS_ERR_INVALID;
+  }
+  text_owned_by_sus = text != NULL ? 1 : 0;
+  if (text == NULL) {
+    text = vectis_strdup("");
+    if (text == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to allocate empty SUS transcript");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  text_size = strlen(text);
+  if (text_size > max_text_bytes) {
+    vectis_sus_worker_release_text(text, text_owned_by_sus);
+    vectis_set_error(error, VECTIS_ERR_CONFLICT,
+                     "SUS worker transcript exceeds configured max_text_bytes");
+    return VECTIS_ERR_CONFLICT;
+  }
+  if (vectis_sus_worker_request_output_mode(request) ==
+      VECTIS_SUS_WORKER_OUTPUT_FILE) {
+    if (request == NULL || request->output_path == NULL ||
+        request->output_path[0] == '\0') {
+      vectis_sus_worker_release_text(text, text_owned_by_sus);
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "SUS worker file output requires output_path");
+      return VECTIS_ERR_INVALID;
+    }
+    fp = fopen(request->output_path, "wb");
+    if (fp == NULL) {
+      vectis_sus_worker_release_text(text, text_owned_by_sus);
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to open SUS worker output file");
+      return VECTIS_ERR_STATE;
+    }
+    if (text_size > 0u && fwrite(text, 1u, text_size, fp) != text_size) {
+      (void)fclose(fp);
+      vectis_sus_worker_release_text(text, text_owned_by_sus);
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to write SUS worker output file");
+      return VECTIS_ERR_STATE;
+    }
+    if (fclose(fp) != 0) {
+      vectis_sus_worker_release_text(text, text_owned_by_sus);
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to close SUS worker output file");
+      return VECTIS_ERR_STATE;
+    }
+    if (!vectis_cai_worker_json_copy_string(&reply->output_path,
+                                            request->output_path)) {
+      vectis_sus_worker_release_text(text, text_owned_by_sus);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy SUS worker output path");
+      return VECTIS_ERR_NOMEM;
+    }
+    vectis_sus_worker_release_text(text, text_owned_by_sus);
+  } else {
+    reply->text = vectis_strdup(text);
+    vectis_sus_worker_release_text(text, text_owned_by_sus);
+    if (reply->text == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy SUS worker transcript");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status
+vectis_sus_worker_open_model(vectis_sus_worker_service_context *ctx,
+                             cpkt_sus **out, vectis_error *error) {
+  cpkt_sus_config path_config;
+  cpkt_sus_cache_config cache_config;
+  cpkt_sus_result result;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker model output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  if (ctx == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker context is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (ctx->model_path != NULL && ctx->model_path[0] != '\0') {
+    cpkt_sus_config_default(&path_config);
+    path_config.model_path = ctx->model_path;
+    path_config.cpu_only = ctx->cpu_only;
+    path_config.preserve_initial_space_after_first_transcriber =
+        ctx->preserve_initial_space_after_first_transcriber;
+    result = cpkt_sus_open_path(out, &path_config);
+    if (result != CPKT_SUS_OK) {
+      return vectis_sus_worker_cpkt_error(error, result,
+                                          "failed to open SUS worker model");
+    }
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (ctx->cached_model != NULL && ctx->cached_model[0] != '\0') {
+    cpkt_sus_cache_config_default(&cache_config);
+    cache_config.model = ctx->cached_model;
+    cache_config.cache_dir = ctx->cache_dir;
+    cache_config.sha256 = ctx->sha256;
+    cache_config.source_url = ctx->source_url;
+    cache_config.offline = ctx->cache_offline;
+    cache_config.insecure_no_checksum = ctx->cache_insecure_no_checksum;
+    cache_config.cpu_only = ctx->cpu_only;
+    cache_config.preserve_initial_space_after_first_transcriber =
+        ctx->preserve_initial_space_after_first_transcriber;
+    result = cpkt_sus_open_cached(out, &cache_config);
+    if (result != CPKT_SUS_OK) {
+      return vectis_sus_worker_cpkt_error(
+          error, result, "failed to open cached SUS worker model");
+    }
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  vectis_set_error(error, VECTIS_ERR_INVALID,
+                   "SUS worker service requires model_path or cached_model");
+  return VECTIS_ERR_INVALID;
+}
+
+static void vectis_sus_worker_transcriber_config(
+    cpkt_sus_transcriber_config *config,
+    const vectis_sus_worker_request_json *request) {
+  cpkt_sus_transcriber_config_default(config);
+  if (request == NULL) {
+    return;
+  }
+  if (request->has_threads) {
+    config->threads = (int)request->threads;
+  }
+  if (request->language != NULL && request->language[0] != '\0' &&
+      strcmp(request->language, "auto") != 0) {
+    config->language = request->language;
+  }
+  config->translate = request->has_translate && request->translate != 0 ? 1 : 0;
+  config->timestamps =
+      request->has_timestamps && request->timestamps != 0 ? 1 : 0;
+  config->initial_prompt =
+      request->initial_prompt != NULL && request->initial_prompt[0] != '\0'
+          ? request->initial_prompt
+          : NULL;
+}
+
+static vectis_status
+vectis_sus_worker_reply_event_build(const vectis_sus_worker_reply_json *reply,
+                                    vectis_sus_worker_event *out,
+                                    vectis_error *error) {
+  lonejson *runtime;
+  lonejson_error json_error;
+  char *json;
+  size_t json_size;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker reply output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(out, 0, sizeof(*out));
+  if (reply == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "SUS worker reply is required");
+    return VECTIS_ERR_INVALID;
+  }
+  runtime = vectis_lonejson_new(error);
+  if (runtime == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  json_size = 0u;
+  json = lonejson_serialize_alloc(runtime, &vectis_sus_worker_reply_json_map,
+                                  reply, &json_size, &json_error);
+  lonejson_free(runtime);
+  if (json == NULL) {
+    return vectis_set_lonejson_error(error, LONEJSON_STATUS_INVALID_JSON,
+                                     &json_error,
+                                     "failed to serialize SUS worker reply");
+  }
+  out->payload.data = json;
+  out->payload.size = json_size;
+  out->message.kind = VECTIS_SUS_WORKER_REPLY_KIND;
+  out->message.payload = json;
+  out->message.payload_size = json_size;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_sus_worker_reply_error(
+    vectis_sus_worker_service_context *ctx, const vectis_mailbox_event *event,
+    const vectis_error *transfer_error, vectis_status fallback_status,
+    const char *fallback_message, vectis_error *error) {
+  vectis_sus_worker_reply_json reply_json;
+  vectis_sus_worker_event reply_event;
+  vectis_status status;
+
+  if (ctx == NULL || ctx->reply_broker == NULL || event == NULL ||
+      !event->expects_reply || event->correlation_id == 0u) {
+    return VECTIS_OK;
+  }
+  memset(&reply_json, 0, sizeof(reply_json));
+  reply_json.status =
+      transfer_error != NULL ? transfer_error->code : fallback_status;
+  reply_json.source_code = transfer_error != NULL ? transfer_error->source
+                                                  : VECTIS_ERROR_SOURCE_VECTIS;
+  reply_json.dependency_code =
+      transfer_error != NULL ? transfer_error->dependency_code : 0L;
+  if (!vectis_cai_worker_json_copy_string(
+          &reply_json.operation,
+          event->kind != NULL &&
+                  strcmp(event->kind, VECTIS_SUS_WORKER_TRANSCRIBE_FILE_KIND) ==
+                      0
+              ? "transcribe_file"
+              : "transcribe_pcm") ||
+      !vectis_cai_worker_json_copy_string(
+          &reply_json.message,
+          transfer_error != NULL && transfer_error->message[0] != '\0'
+              ? transfer_error->message
+              : fallback_message) ||
+      !vectis_cai_worker_json_copy_string(
+          &reply_json.detail,
+          transfer_error != NULL && transfer_error->detail[0] != '\0'
+              ? transfer_error->detail
+              : NULL)) {
+    vectis_sus_worker_reply_json_cleanup_malloc(&reply_json);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy SUS worker error reply");
+    return VECTIS_ERR_NOMEM;
+  }
+  status =
+      vectis_sus_worker_reply_event_build(&reply_json, &reply_event, error);
+  if (status != VECTIS_OK) {
+    vectis_sus_worker_reply_json_cleanup_malloc(&reply_json);
+    return status;
+  }
+  status = ctx->reply_broker->reply(ctx->reply_broker, event->correlation_id,
+                                    &reply_event.message, error);
+  vectis_sus_worker_event_cleanup(&reply_event);
+  vectis_sus_worker_reply_json_cleanup_malloc(&reply_json);
+  return status;
+}
+
+static vectis_status
+vectis_sus_worker_request_decode(const vectis_mailbox_event *event,
+                                 vectis_sus_worker_request_json *request,
+                                 vectis_error *error) {
+  lonejson *runtime;
+  lonejson_error json_error;
+  lonejson_status json_status;
+
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker request output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(request, 0, sizeof(*request));
+  if (event == NULL || event->kind == NULL ||
+      (strcmp(event->kind, VECTIS_SUS_WORKER_TRANSCRIBE_PCM_KIND) != 0 &&
+       strcmp(event->kind, VECTIS_SUS_WORKER_TRANSCRIBE_FILE_KIND) != 0) ||
+      event->payload == NULL || event->payload_size == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker request event is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  runtime = vectis_lonejson_new(error);
+  if (runtime == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  json_status = lonejson_parse_buffer(
+      runtime, &vectis_sus_worker_request_json_map, request, event->payload,
+      event->payload_size, &json_error);
+  lonejson_free(runtime);
+  if (json_status != LONEJSON_STATUS_OK) {
+    vectis_sus_worker_request_json_cleanup_lonejson(request);
+    return vectis_set_lonejson_error(error, json_status, &json_error,
+                                     "failed to parse SUS worker request");
+  }
+  if (request->output != NULL && request->output[0] != '\0' &&
+      strcmp(request->output, "text") != 0 &&
+      strcmp(request->output, "file") != 0) {
+    vectis_sus_worker_request_json_cleanup_lonejson(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker output must be text or file");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->has_threads && request->threads < 0) {
+    vectis_sus_worker_request_json_cleanup_lonejson(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker threads must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->has_max_text_bytes && request->max_text_bytes < 0) {
+    vectis_sus_worker_request_json_cleanup_lonejson(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker max_text_bytes must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+  if (strcmp(event->kind, VECTIS_SUS_WORKER_TRANSCRIBE_PCM_KIND) == 0) {
+    if (request->frames.count == 0u) {
+      vectis_sus_worker_request_json_cleanup_lonejson(request);
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "SUS worker PCM request requires frames");
+      return VECTIS_ERR_INVALID;
+    }
+  } else if (request->path == NULL || request->path[0] == '\0') {
+    vectis_sus_worker_request_json_cleanup_lonejson(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker file request requires path");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status
+vectis_sus_worker_run_pcm(vectis_sus_worker_service_context *ctx,
+                          const vectis_sus_worker_request_json *request,
+                          vectis_sus_worker_reply_json *reply,
+                          vectis_error *error) {
+  cpkt_sus *sus;
+  cpkt_sus_transcriber *transcriber;
+  cpkt_sus_transcriber_config transcriber_config;
+  cpkt_sus_result result;
+  float *frames;
+  char *text;
+  size_t i;
+  size_t max_text_bytes;
+
+  if (ctx == NULL || request == NULL || reply == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker PCM context is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->frames.count > (ctx->max_frames > 0u
+                                   ? ctx->max_frames
+                                   : VECTIS_SUS_WORKER_DEFAULT_MAX_FRAMES)) {
+    vectis_set_error(error, VECTIS_ERR_CONFLICT,
+                     "SUS worker PCM frames exceed configured max_frames");
+    return VECTIS_ERR_CONFLICT;
+  }
+  if (request->frames.count > ((size_t)-1) / sizeof(float)) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "SUS worker PCM frame buffer is too large");
+    return VECTIS_ERR_NOMEM;
+  }
+  frames = (float *)malloc(request->frames.count * sizeof(float));
+  if (frames == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate SUS worker PCM buffer");
+    return VECTIS_ERR_NOMEM;
+  }
+  for (i = 0u; i < request->frames.count; ++i) {
+    frames[i] = (float)request->frames.items[i];
+  }
+  sus = NULL;
+  if (vectis_sus_worker_open_model(ctx, &sus, error) != VECTIS_OK) {
+    free(frames);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  vectis_sus_worker_transcriber_config(&transcriber_config, request);
+  transcriber = NULL;
+  result = sus->create_transcriber(sus, &transcriber, &transcriber_config);
+  if (result != CPKT_SUS_OK) {
+    sus->destroy(sus);
+    free(frames);
+    return vectis_sus_worker_cpkt_error(
+        error, result, "failed to create SUS worker transcriber");
+  }
+  text = NULL;
+  result = transcriber->transcribe_f32_mono_16k_text(
+      transcriber, frames, (unsigned long)request->frames.count, &text);
+  transcriber->destroy(transcriber);
+  sus->destroy(sus);
+  free(frames);
+  if (result != CPKT_SUS_OK) {
+    if (text != NULL) {
+      cpkt_sus_string_free(text);
+    }
+    return vectis_sus_worker_cpkt_error(error, result,
+                                        "SUS worker PCM transcription failed");
+  }
+  if (!vectis_cai_worker_json_copy_string(&reply->operation,
+                                          "transcribe_pcm")) {
+    cpkt_sus_string_free(text);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy SUS worker PCM reply operation");
+    return VECTIS_ERR_NOMEM;
+  }
+  max_text_bytes = vectis_sus_worker_effective_max_text_bytes(ctx, request);
+  if (vectis_sus_worker_reply_set_text_or_file(
+          request, reply, text, max_text_bytes, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  reply->status = VECTIS_OK;
+  reply->source_code = VECTIS_ERROR_SOURCE_NONE;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status
+vectis_sus_worker_run_file(vectis_sus_worker_service_context *ctx,
+                           const vectis_sus_worker_request_json *request,
+                           vectis_sus_worker_reply_json *reply,
+                           vectis_error *error) {
+  cpkt_audio_decoder_config decoder_config;
+  cpkt_audio_decoder *decoder;
+  cpkt_sus *sus;
+  cpkt_sus_transcriber *transcriber;
+  cpkt_sus_transcriber_config transcriber_config;
+  cpkt_sus_segmented_config segmented_config;
+  cpkt_audio_result audio_result;
+  cpkt_sus_result sus_result;
+  char *text;
+  int encoding;
+  size_t max_text_bytes;
+
+  if (ctx == NULL || request == NULL || reply == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker file context is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!vectis_audio_worker_encoding_from_string(request->encoding, &encoding)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker file encoding is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&decoder_config, 0, sizeof(decoder_config));
+  decoder_config.encoding = encoding;
+  decoder = NULL;
+  audio_result =
+      cpkt_audio_decoder_open_file(&decoder, request->path, &decoder_config);
+  if (audio_result != CPKT_AUDIO_OK) {
+    return vectis_audio_worker_cpkt_error(
+        error, audio_result, "failed to open SUS worker audio file");
+  }
+  sus = NULL;
+  if (vectis_sus_worker_open_model(ctx, &sus, error) != VECTIS_OK) {
+    decoder->destroy(decoder);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  vectis_sus_worker_transcriber_config(&transcriber_config, request);
+  transcriber = NULL;
+  sus_result = sus->create_transcriber(sus, &transcriber, &transcriber_config);
+  if (sus_result != CPKT_SUS_OK) {
+    sus->destroy(sus);
+    decoder->destroy(decoder);
+    return vectis_sus_worker_cpkt_error(
+        error, sus_result, "failed to create SUS worker transcriber");
+  }
+  cpkt_sus_segmented_config_default(&segmented_config);
+  text = NULL;
+  sus_result = transcriber->transcribe_audio_decoder_segmented_text(
+      transcriber, decoder, &segmented_config, &text);
+  transcriber->destroy(transcriber);
+  sus->destroy(sus);
+  decoder->destroy(decoder);
+  if (sus_result != CPKT_SUS_OK) {
+    if (text != NULL) {
+      cpkt_sus_string_free(text);
+    }
+    return vectis_sus_worker_cpkt_error(error, sus_result,
+                                        "SUS worker file transcription failed");
+  }
+  if (!vectis_cai_worker_json_copy_string(&reply->operation,
+                                          "transcribe_file") ||
+      !vectis_cai_worker_json_copy_string(&reply->path, request->path)) {
+    cpkt_sus_string_free(text);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy SUS worker file reply");
+    return VECTIS_ERR_NOMEM;
+  }
+  max_text_bytes = vectis_sus_worker_effective_max_text_bytes(ctx, request);
+  if (vectis_sus_worker_reply_set_text_or_file(
+          request, reply, text, max_text_bytes, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  reply->status = VECTIS_OK;
+  reply->source_code = VECTIS_ERROR_SOURCE_NONE;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status
+vectis_sus_worker_process_event(vectis_sus_worker_service_context *ctx,
+                                const vectis_mailbox_event *event,
+                                vectis_error *error) {
+  vectis_sus_worker_request_json request;
+  vectis_sus_worker_reply_json reply_json;
+  vectis_sus_worker_event reply_event;
+  vectis_error transfer_error;
+  vectis_status status;
+  vectis_status reply_status;
+
+  if (ctx == NULL || event == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker event context is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (event->kind == NULL ||
+      (strcmp(event->kind, VECTIS_SUS_WORKER_TRANSCRIBE_PCM_KIND) != 0 &&
+       strcmp(event->kind, VECTIS_SUS_WORKER_TRANSCRIBE_FILE_KIND) != 0)) {
+    return vectis_sus_worker_reply_error(
+        ctx, event, NULL, VECTIS_ERR_INVALID,
+        "SUS worker event kind is not supported", error);
+  }
+  memset(&reply_json, 0, sizeof(reply_json));
+  vectis_error_clear(&transfer_error);
+  status = vectis_sus_worker_request_decode(event, &request, &transfer_error);
+  if (status == VECTIS_OK) {
+    if (strcmp(event->kind, VECTIS_SUS_WORKER_TRANSCRIBE_PCM_KIND) == 0) {
+      status = vectis_sus_worker_run_pcm(ctx, &request, &reply_json,
+                                         &transfer_error);
+    } else {
+      status = vectis_sus_worker_run_file(ctx, &request, &reply_json,
+                                          &transfer_error);
+    }
+  }
+  if (status != VECTIS_OK) {
+    reply_status = vectis_sus_worker_reply_error(
+        ctx, event, &transfer_error, status, transfer_error.message, error);
+    vectis_sus_worker_request_json_cleanup_lonejson(&request);
+    if (reply_status != VECTIS_OK) {
+      return reply_status;
+    }
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (event->expects_reply && ctx->reply_broker != NULL &&
+      event->correlation_id != 0u) {
+    reply_status =
+        vectis_sus_worker_reply_event_build(&reply_json, &reply_event, error);
+    if (reply_status == VECTIS_OK) {
+      reply_status =
+          ctx->reply_broker->reply(ctx->reply_broker, event->correlation_id,
+                                   &reply_event.message, error);
+      vectis_sus_worker_event_cleanup(&reply_event);
+    }
+    vectis_sus_worker_reply_json_cleanup_malloc(&reply_json);
+    vectis_sus_worker_request_json_cleanup_lonejson(&request);
+    if (reply_status != VECTIS_OK) {
+      return reply_status;
+    }
+  } else {
+    vectis_sus_worker_reply_json_cleanup_malloc(&reply_json);
+    vectis_sus_worker_request_json_cleanup_lonejson(&request);
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_sus_worker_service_start(void *context,
+                                                     vectis_error *error) {
+  vectis_sus_worker_service_context *ctx;
+
+  ctx = (vectis_sus_worker_service_context *)context;
+  if (ctx == NULL || ctx->request_mailbox == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker service requires request mailbox");
+    return VECTIS_ERR_INVALID;
+  }
+  (void)pthread_mutex_lock(&ctx->mutex);
+  ctx->stopping = 0;
+  (void)pthread_mutex_unlock(&ctx->mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_sus_worker_service_stop(void *context,
+                                                    vectis_error *error) {
+  vectis_sus_worker_service_context *ctx;
+
+  ctx = (vectis_sus_worker_service_context *)context;
+  if (ctx == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker service is required");
+    return VECTIS_ERR_INVALID;
+  }
+  (void)pthread_mutex_lock(&ctx->mutex);
+  ctx->stopping = 1;
+  (void)pthread_mutex_unlock(&ctx->mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_sus_worker_service_wait(void *context,
+                                                    vectis_error *error) {
+  vectis_sus_worker_service_context *ctx;
+  vectis_mailbox_event event;
+  vectis_error local_error;
+  vectis_status status;
+  long poll_timeout_ms;
+
+  ctx = (vectis_sus_worker_service_context *)context;
+  if (ctx == NULL || ctx->request_mailbox == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker service requires request mailbox");
+    return VECTIS_ERR_INVALID;
+  }
+  poll_timeout_ms = ctx->poll_timeout_ms > 0L
+                        ? ctx->poll_timeout_ms
+                        : VECTIS_SUS_WORKER_DEFAULT_POLL_TIMEOUT_MS;
+  while (!vectis_sus_worker_service_is_stopping(ctx)) {
+    vectis_mailbox_event_init(&event);
+    vectis_error_clear(&local_error);
+    status = ctx->request_mailbox->wait_next(ctx->request_mailbox, &event,
+                                             poll_timeout_ms, &local_error);
+    if (status == VECTIS_ERR_TIMEOUT) {
+      continue;
+    }
+    if (status != VECTIS_OK) {
+      if (vectis_sus_worker_service_is_stopping(ctx)) {
+        vectis_error_clear(error);
+        return VECTIS_OK;
+      }
+      if (error != NULL) {
+        *error = local_error;
+      }
+      return status;
+    }
+    status = vectis_sus_worker_process_event(ctx, &event, &local_error);
+    vectis_mailbox_event_cleanup(&event);
+    if (status != VECTIS_OK) {
+      if (error != NULL) {
+        *error = local_error;
+      }
+      return status;
+    }
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static void vectis_sus_worker_service_cleanup(void *context) {
+  vectis_sus_worker_service_context *ctx;
+
+  ctx = (vectis_sus_worker_service_context *)context;
+  if (ctx == NULL) {
+    return;
+  }
+  (void)vectis_sus_worker_service_stop(ctx, NULL);
+  (void)pthread_mutex_destroy(&ctx->mutex);
+  free(ctx->model_path);
+  free(ctx->cached_model);
+  free(ctx->cache_dir);
+  free(ctx->sha256);
+  free(ctx->source_url);
+  free(ctx);
+}
+
 static vectis_status vectis_app_stop_managed_services(vectis_app_impl *impl,
                                                       vectis_error *error) {
   vectis_managed_service_impl *service;
@@ -8462,6 +9352,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   app->curl_worker_service = vectis_curl_worker_service_new;
   app->cai_worker_service = vectis_cai_worker_service_new;
   app->audio_worker_service = vectis_audio_worker_service_new;
+  app->sus_worker_service = vectis_sus_worker_service_new;
   app->consumer_service = vectis_consumer_service_new;
   app->register_consumer_receiver = vectis_register_consumer_receiver;
   app->consumer_service_receiver = vectis_consumer_service_new_receiver;
@@ -20302,6 +21193,413 @@ void vectis_audio_worker_response_cleanup(
   vectis_audio_worker_response_init(response);
 }
 
+void vectis_sus_worker_service_config_init(
+    vectis_sus_worker_service_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->size = sizeof(*config);
+  config->abi_version = VECTIS_SERVICE_ABI_VERSION;
+  config->start_with_app = 1;
+  config->poll_timeout_ms = VECTIS_SUS_WORKER_DEFAULT_POLL_TIMEOUT_MS;
+  config->max_frames = VECTIS_SUS_WORKER_DEFAULT_MAX_FRAMES;
+  config->max_text_bytes = VECTIS_SUS_WORKER_DEFAULT_MAX_TEXT_BYTES;
+}
+
+void vectis_sus_worker_transcribe_pcm_request_init(
+    vectis_sus_worker_transcribe_pcm_request *request) {
+  if (request == NULL) {
+    return;
+  }
+  memset(request, 0, sizeof(*request));
+  request->size = sizeof(*request);
+  request->abi_version = VECTIS_SERVICE_ABI_VERSION;
+  request->language = "auto";
+  request->output_mode = VECTIS_SUS_WORKER_OUTPUT_TEXT;
+  request->max_text_bytes = VECTIS_SUS_WORKER_DEFAULT_MAX_TEXT_BYTES;
+}
+
+void vectis_sus_worker_transcribe_file_request_init(
+    vectis_sus_worker_transcribe_file_request *request) {
+  if (request == NULL) {
+    return;
+  }
+  memset(request, 0, sizeof(*request));
+  request->size = sizeof(*request);
+  request->abi_version = VECTIS_SERVICE_ABI_VERSION;
+  request->encoding = "auto";
+  request->language = "auto";
+  request->output_mode = VECTIS_SUS_WORKER_OUTPUT_TEXT;
+  request->max_text_bytes = VECTIS_SUS_WORKER_DEFAULT_MAX_TEXT_BYTES;
+}
+
+static vectis_status vectis_sus_worker_build_event(
+    const vectis_sus_worker_request_json *request_json, const char *kind,
+    vectis_sus_worker_event *out, vectis_error *error) {
+  lonejson *runtime;
+  lonejson_error json_error;
+  char *json;
+  size_t json_size;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker event output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(out, 0, sizeof(*out));
+  if (request_json == NULL || kind == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker request is required");
+    return VECTIS_ERR_INVALID;
+  }
+  runtime = vectis_lonejson_new(error);
+  if (runtime == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  json_size = 0u;
+  json = lonejson_serialize_alloc(runtime, &vectis_sus_worker_request_json_map,
+                                  request_json, &json_size, &json_error);
+  lonejson_free(runtime);
+  if (json == NULL) {
+    return vectis_set_lonejson_error(error, LONEJSON_STATUS_INVALID_JSON,
+                                     &json_error,
+                                     "failed to serialize SUS worker request");
+  }
+  out->payload.data = json;
+  out->payload.size = json_size;
+  out->message.kind = kind;
+  out->message.payload = json;
+  out->message.payload_size = json_size;
+  out->message.expects_reply = 1;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static const char *
+vectis_sus_worker_output_name(vectis_sus_worker_output_mode mode) {
+  return mode == VECTIS_SUS_WORKER_OUTPUT_FILE ? "file" : "text";
+}
+
+vectis_status vectis_sus_worker_transcribe_pcm_event_build(
+    const vectis_sus_worker_transcribe_pcm_request *request,
+    vectis_sus_worker_event *out, vectis_error *error) {
+  vectis_sus_worker_request_json request_json;
+  vectis_status status;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker event output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(out, 0, sizeof(*out));
+  if (request == NULL || request->frames == NULL ||
+      request->frame_count == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker PCM request requires frames");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->size != 0u && request->size < sizeof(*request)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker PCM request size is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->abi_version != 0u &&
+      request->abi_version != VECTIS_SERVICE_ABI_VERSION) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker PCM request abi_version is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->threads < 0) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker PCM request threads must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->output_mode != VECTIS_SUS_WORKER_OUTPUT_TEXT &&
+      request->output_mode != VECTIS_SUS_WORKER_OUTPUT_FILE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker PCM output mode is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->output_mode == VECTIS_SUS_WORKER_OUTPUT_FILE &&
+      (request->output_path == NULL || request->output_path[0] == '\0')) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker file output requires output_path");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&request_json, 0, sizeof(request_json));
+  if (!vectis_cai_worker_json_copy_string(&request_json.language,
+                                          request->language) ||
+      !vectis_cai_worker_json_copy_string(&request_json.initial_prompt,
+                                          request->initial_prompt) ||
+      !vectis_cai_worker_json_copy_string(
+          &request_json.output,
+          vectis_sus_worker_output_name(request->output_mode)) ||
+      !vectis_cai_worker_json_copy_string(&request_json.output_path,
+                                          request->output_path)) {
+    vectis_sus_worker_request_json_cleanup_malloc(&request_json);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy SUS worker PCM request");
+    return VECTIS_ERR_NOMEM;
+  }
+  request_json.translate = request->translate ? 1 : 0;
+  request_json.has_translate = 1;
+  request_json.timestamps = request->timestamps ? 1 : 0;
+  request_json.has_timestamps = 1;
+  if (request->threads > 0) {
+    request_json.threads = request->threads;
+    request_json.has_threads = 1;
+  }
+  if (request->max_text_bytes > 0u) {
+    request_json.max_text_bytes = (lonejson_int64)request->max_text_bytes;
+    request_json.has_max_text_bytes = 1;
+  }
+  if (request->frame_count > ((size_t)-1) / sizeof(double)) {
+    vectis_sus_worker_request_json_cleanup_malloc(&request_json);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "SUS worker PCM frame buffer is too large");
+    return VECTIS_ERR_NOMEM;
+  }
+  request_json.frames.items =
+      (double *)malloc(request->frame_count * sizeof(double));
+  if (request_json.frames.items == NULL) {
+    vectis_sus_worker_request_json_cleanup_malloc(&request_json);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy SUS worker PCM frames");
+    return VECTIS_ERR_NOMEM;
+  }
+  memcpy(request_json.frames.items, request->frames,
+         request->frame_count * sizeof(double));
+  request_json.frames.count = request->frame_count;
+  request_json.frames.capacity = request->frame_count;
+  status = vectis_sus_worker_build_event(
+      &request_json, VECTIS_SUS_WORKER_TRANSCRIBE_PCM_KIND, out, error);
+  vectis_sus_worker_request_json_cleanup_malloc(&request_json);
+  return status;
+}
+
+vectis_status vectis_sus_worker_transcribe_file_event_build(
+    const vectis_sus_worker_transcribe_file_request *request,
+    vectis_sus_worker_event *out, vectis_error *error) {
+  vectis_sus_worker_request_json request_json;
+  vectis_status status;
+  int encoding;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker event output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(out, 0, sizeof(*out));
+  if (request == NULL || request->path == NULL || request->path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker file request requires path");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->size != 0u && request->size < sizeof(*request)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker file request size is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->abi_version != 0u &&
+      request->abi_version != VECTIS_SERVICE_ABI_VERSION) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker file request abi_version is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!vectis_audio_worker_encoding_from_string(request->encoding, &encoding)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker file encoding is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  (void)encoding;
+  if (request->threads < 0) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker file request threads must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->output_mode != VECTIS_SUS_WORKER_OUTPUT_TEXT &&
+      request->output_mode != VECTIS_SUS_WORKER_OUTPUT_FILE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker file output mode is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->output_mode == VECTIS_SUS_WORKER_OUTPUT_FILE &&
+      (request->output_path == NULL || request->output_path[0] == '\0')) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker file output requires output_path");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&request_json, 0, sizeof(request_json));
+  if (!vectis_cai_worker_json_copy_string(&request_json.path, request->path) ||
+      !vectis_cai_worker_json_copy_string(&request_json.encoding,
+                                          request->encoding) ||
+      !vectis_cai_worker_json_copy_string(&request_json.language,
+                                          request->language) ||
+      !vectis_cai_worker_json_copy_string(&request_json.initial_prompt,
+                                          request->initial_prompt) ||
+      !vectis_cai_worker_json_copy_string(
+          &request_json.output,
+          vectis_sus_worker_output_name(request->output_mode)) ||
+      !vectis_cai_worker_json_copy_string(&request_json.output_path,
+                                          request->output_path)) {
+    vectis_sus_worker_request_json_cleanup_malloc(&request_json);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy SUS worker file request");
+    return VECTIS_ERR_NOMEM;
+  }
+  request_json.translate = request->translate ? 1 : 0;
+  request_json.has_translate = 1;
+  request_json.timestamps = request->timestamps ? 1 : 0;
+  request_json.has_timestamps = 1;
+  if (request->threads > 0) {
+    request_json.threads = request->threads;
+    request_json.has_threads = 1;
+  }
+  if (request->max_text_bytes > 0u) {
+    request_json.max_text_bytes = (lonejson_int64)request->max_text_bytes;
+    request_json.has_max_text_bytes = 1;
+  }
+  status = vectis_sus_worker_build_event(
+      &request_json, VECTIS_SUS_WORKER_TRANSCRIBE_FILE_KIND, out, error);
+  vectis_sus_worker_request_json_cleanup_malloc(&request_json);
+  return status;
+}
+
+void vectis_sus_worker_event_cleanup(vectis_sus_worker_event *event) {
+  if (event == NULL) {
+    return;
+  }
+  free(event->payload.data);
+  memset(event, 0, sizeof(*event));
+}
+
+void vectis_sus_worker_response_init(vectis_sus_worker_response *response) {
+  if (response == NULL) {
+    return;
+  }
+  memset(response, 0, sizeof(*response));
+  response->size = sizeof(*response);
+  response->abi_version = VECTIS_SERVICE_ABI_VERSION;
+}
+
+vectis_status
+vectis_sus_worker_response_decode(const vectis_mailbox_event *event,
+                                  vectis_sus_worker_response *response,
+                                  vectis_error *error) {
+  vectis_sus_worker_reply_json reply;
+  lonejson *runtime;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  size_t message_copy_size;
+  size_t detail_copy_size;
+
+  if (response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker response output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (response->size != sizeof(*response) ||
+      response->abi_version != VECTIS_SERVICE_ABI_VERSION) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker response output must be initialized");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_sus_worker_response_cleanup(response);
+  if (event == NULL || event->kind == NULL ||
+      strcmp(event->kind, VECTIS_SUS_WORKER_REPLY_KIND) != 0 ||
+      event->payload == NULL || event->payload_size == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker response event is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&reply, 0, sizeof(reply));
+  runtime = vectis_lonejson_new(error);
+  if (runtime == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  json_status =
+      lonejson_parse_buffer(runtime, &vectis_sus_worker_reply_json_map, &reply,
+                            event->payload, event->payload_size, &json_error);
+  lonejson_free(runtime);
+  if (json_status != LONEJSON_STATUS_OK) {
+    vectis_sus_worker_reply_json_cleanup_lonejson(&reply);
+    return vectis_set_lonejson_error(error, json_status, &json_error,
+                                     "failed to parse SUS worker response");
+  }
+  response->status = (vectis_status)reply.status;
+  response->source = (vectis_error_source)reply.source_code;
+  response->dependency_code = (long)reply.dependency_code;
+  if (reply.operation != NULL) {
+    response->operation = vectis_strdup(reply.operation);
+    if (response->operation == NULL) {
+      vectis_sus_worker_response_cleanup(response);
+      vectis_sus_worker_reply_json_cleanup_lonejson(&reply);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy SUS worker response operation");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  if (reply.text != NULL) {
+    response->text = vectis_strdup(reply.text);
+    if (response->text == NULL) {
+      vectis_sus_worker_response_cleanup(response);
+      vectis_sus_worker_reply_json_cleanup_lonejson(&reply);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy SUS worker response text");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  if (reply.path != NULL) {
+    response->path = vectis_strdup(reply.path);
+    if (response->path == NULL) {
+      vectis_sus_worker_response_cleanup(response);
+      vectis_sus_worker_reply_json_cleanup_lonejson(&reply);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy SUS worker response path");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  if (reply.output_path != NULL) {
+    response->output_path = vectis_strdup(reply.output_path);
+    if (response->output_path == NULL) {
+      vectis_sus_worker_response_cleanup(response);
+      vectis_sus_worker_reply_json_cleanup_lonejson(&reply);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy SUS worker response output path");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  if (reply.message != NULL) {
+    message_copy_size = strlen(reply.message);
+    if (message_copy_size >= sizeof(response->message)) {
+      message_copy_size = sizeof(response->message) - 1u;
+    }
+    memcpy(response->message, reply.message, message_copy_size);
+  }
+  if (reply.detail != NULL) {
+    detail_copy_size = strlen(reply.detail);
+    if (detail_copy_size >= sizeof(response->detail)) {
+      detail_copy_size = sizeof(response->detail) - 1u;
+    }
+    memcpy(response->detail, reply.detail, detail_copy_size);
+  }
+  vectis_sus_worker_reply_json_cleanup_lonejson(&reply);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+void vectis_sus_worker_response_cleanup(vectis_sus_worker_response *response) {
+  if (response == NULL) {
+    return;
+  }
+  free(response->operation);
+  free(response->text);
+  free(response->path);
+  free(response->output_path);
+  vectis_sus_worker_response_init(response);
+}
+
 void vectis_managed_service_state_init(vectis_managed_service_state *state) {
   if (state == NULL) {
     return;
@@ -20700,6 +21998,113 @@ vectis_status vectis_audio_worker_service_new(
   status = app->managed_service(app, &managed, out, error);
   if (status != VECTIS_OK) {
     vectis_audio_worker_service_cleanup(ctx);
+    return status;
+  }
+  return VECTIS_OK;
+}
+
+static int vectis_sus_worker_copy_string(char **target, const char *value) {
+  if (target == NULL) {
+    return 0;
+  }
+  *target = NULL;
+  if (value == NULL) {
+    return 1;
+  }
+  *target = vectis_strdup(value);
+  return *target != NULL;
+}
+
+vectis_status vectis_sus_worker_service_new(
+    vectis_app *app, const vectis_sus_worker_service_config *config,
+    vectis_managed_service **out, vectis_error *error) {
+  vectis_sus_worker_service_config effective;
+  vectis_sus_worker_service_context *ctx;
+  vectis_managed_service_config managed;
+  vectis_status status;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker service output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config == NULL || config->request_mailbox == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker service config requires request_mailbox");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->size != 0u && config->size < sizeof(*config)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker service config size is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->abi_version != 0u &&
+      config->abi_version != VECTIS_SERVICE_ABI_VERSION) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker service config abi_version is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_sus_worker_service_config_init(&effective);
+  effective = *config;
+  if (effective.poll_timeout_ms <= 0L) {
+    effective.poll_timeout_ms = VECTIS_SUS_WORKER_DEFAULT_POLL_TIMEOUT_MS;
+  }
+  if (effective.max_frames == 0u) {
+    effective.max_frames = VECTIS_SUS_WORKER_DEFAULT_MAX_FRAMES;
+  }
+  if (effective.max_text_bytes == 0u) {
+    effective.max_text_bytes = VECTIS_SUS_WORKER_DEFAULT_MAX_TEXT_BYTES;
+  }
+  ctx = (vectis_sus_worker_service_context *)calloc(1u, sizeof(*ctx));
+  if (ctx == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate SUS worker service");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (pthread_mutex_init(&ctx->mutex, NULL) != 0) {
+    free(ctx);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to initialize SUS worker service mutex");
+    return VECTIS_ERR_STATE;
+  }
+  ctx->request_mailbox = effective.request_mailbox;
+  ctx->reply_broker = effective.reply_broker;
+  if (!vectis_sus_worker_copy_string(&ctx->model_path, effective.model_path) ||
+      !vectis_sus_worker_copy_string(&ctx->cached_model,
+                                     effective.cached_model) ||
+      !vectis_sus_worker_copy_string(&ctx->cache_dir, effective.cache_dir) ||
+      !vectis_sus_worker_copy_string(&ctx->sha256, effective.sha256) ||
+      !vectis_sus_worker_copy_string(&ctx->source_url, effective.source_url)) {
+    vectis_sus_worker_service_cleanup(ctx);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy SUS worker service config");
+    return VECTIS_ERR_NOMEM;
+  }
+  ctx->cache_offline = effective.cache_offline ? 1 : 0;
+  ctx->cache_insecure_no_checksum =
+      effective.cache_insecure_no_checksum ? 1 : 0;
+  ctx->cpu_only = effective.cpu_only ? 1 : 0;
+  ctx->preserve_initial_space_after_first_transcriber =
+      effective.preserve_initial_space_after_first_transcriber ? 1 : 0;
+  ctx->poll_timeout_ms = effective.poll_timeout_ms;
+  ctx->max_frames = effective.max_frames;
+  ctx->max_text_bytes = effective.max_text_bytes;
+  vectis_managed_service_config_init(&managed);
+  managed.name = effective.name != NULL ? effective.name : "sus-worker";
+  managed.context = ctx;
+  managed.start = vectis_sus_worker_service_start;
+  managed.stop = vectis_sus_worker_service_stop;
+  managed.wait = vectis_sus_worker_service_wait;
+  managed.cleanup = vectis_sus_worker_service_cleanup;
+  managed.start_with_app = effective.start_with_app ? 1 : 0;
+  status = app->managed_service(app, &managed, out, error);
+  if (status != VECTIS_OK) {
+    vectis_sus_worker_service_cleanup(ctx);
     return status;
   }
   return VECTIS_OK;

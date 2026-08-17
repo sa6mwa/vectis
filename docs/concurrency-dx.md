@@ -323,6 +323,13 @@ runs in service-only mode, registers a C-owned audio worker service, sends
 bounded encode/decode file requests through a mailbox broker, decodes copied
 structured replies, and inspects copied service lifecycle state.
 
+`examples/lua/sus_worker_service.lua` is the Lua SUS worker example. It runs in
+service-only mode, registers a C-owned SUS worker service, sends a bounded PCM
+transcription request through a mailbox broker, decodes the structured reply,
+and inspects copied service lifecycle state. It runs deterministically without a
+model by asserting the structured missing-model reply and can opt into live
+model execution with environment variables.
+
 ## Lua Surface
 
 The Lua facade mirrors the C mailbox:

@@ -1,9 +1,9 @@
 # SUS Lua Facade
 
 `require("sus")` exposes the dependency-native cpkt SUS/whisper facade in the
-embedded Vectis Lua runtime. It is intentionally separate from any future
-`vectis.sus` DX helpers so dependency-native model-cache and backend behavior
-remain visible.
+embedded Vectis Lua runtime. It is intentionally separate from Vectis-owned
+workflow helpers so dependency-native model-cache and backend behavior remain
+visible.
 
 The current Lua surface covers deterministic metadata, model catalog, path and
 cache-open error paths, model handles, transcriber receiver shells, PCM
@@ -80,6 +80,58 @@ Options:
 
 Checksum validation is enabled by default. Disabling it requires
 `insecure_no_checksum = true`.
+
+## Managed SUS Worker
+
+`require("vectis.sus_worker")` exposes Vectis-owned mailbox helpers for
+runtime-domain transcription work. The native `sus` module remains the direct
+cpkt facade; `vectis.sus_worker` only builds copied mailbox events and decodes
+worker replies.
+
+`server:sus_worker_service(opts)` declares a C-owned managed service over a
+`vectis.mailbox` request queue and an optional `vectis.mailbox.broker` reply
+adapter. The service rejects Lua callbacks; model loading, transcriber
+creation, and transcription all happen inside the managed runtime domain.
+
+Service options:
+
+- `request_mailbox` or `requests`: required `vectis.mailbox`.
+- `reply_broker` or `broker`: optional `vectis.mailbox.broker`.
+- `name`: managed service name, default `sus-worker`.
+- `model_path`: explicit local model path.
+- `cached_model` or `model`: cpkt SUS catalog/cache model name.
+- `cache_dir`, `sha256`, `source_url`, `offline`,
+  `insecure_no_checksum`: cache resolver options for `cached_model`.
+- `cpu_only`
+- `preserve_initial_space_after_first_transcriber`
+- `poll_timeout_ms`, `max_frames`, `max_text_bytes`
+- `start`: defaults to true and starts with the app.
+
+Helpers:
+
+- `vectis.sus_worker.transcribe_pcm_request(opts)` builds a
+  `vectis.sus.transcribe_pcm` event from `frames` or `pcm`, a Lua array of mono
+  16 kHz float samples.
+- `vectis.sus_worker.transcribe_file_request(opts)` builds a
+  `vectis.sus.transcribe_file` event from `path`, optional `encoding`/`format`,
+  and transcription options.
+- `vectis.sus_worker.decode_reply(event)` decodes `vectis.sus.reply` into
+  `{ ok, status, status_string, source, source_code, dependency_code,
+  operation, text, path, output_path, message, detail }`.
+- `server:sus_worker_service_states()` returns copied managed-service state
+  tables for declared SUS workers.
+
+Request options include `language`, `translate`, `timestamps`, `threads`,
+`initial_prompt`, `max_text_bytes`, and `output`. `output = "text"` returns
+transcribed text in the reply. `output = "file"` writes materialized
+transcription text to `output_path` and returns that path in the reply. The
+worker does not perform an implicit model download; configure either
+`model_path` or `cached_model` when transcription should run.
+
+See `examples/lua/sus_worker_service.lua` for a self-contained worker example
+that runs deterministically without a model and can opt into live transcription
+with `VECTIS_LUA_SUS_WORKER_MODEL_PATH` or
+`VECTIS_LUA_SUS_WORKER_CACHED_MODEL`.
 
 ## Live Loaded-Model Validation
 

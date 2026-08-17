@@ -382,6 +382,13 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
   accepted by the managed worker.
 - `server:audio_worker_service_states()` returns managed-service lifecycle
   diagnostics for declared audio worker services.
+- `server:sus_worker_service(opts)` declares a C-owned SUS worker service over
+  a borrowed `vectis.mailbox` request queue and optional
+  `vectis.mailbox.broker` reply adapter. Use `vectis.sus_worker` to build and
+  decode copied bounded PCM/file transcription envelopes. Lua callbacks are not
+  accepted by the managed worker.
+- `server:sus_worker_service_states()` returns managed-service lifecycle
+  diagnostics for declared SUS worker services.
 - `server:mcp(opts)` registers a C-owned CAI Streamable HTTP MCP route with
   Lua-defined raw JSON tools.
 

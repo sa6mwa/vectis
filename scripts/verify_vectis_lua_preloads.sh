@@ -43,6 +43,7 @@ local modules = {
   "vectis.curl_worker",
   "vectis.cai_worker",
   "vectis.audio_worker",
+  "vectis.sus_worker",
   "vectis.ssh",
   "vectis",
   "lockdc.core",
@@ -98,6 +99,7 @@ assert(loaded["vectis"].server == loaded["vectis.server"])
 assert(loaded["vectis"].curl_worker == loaded["vectis.curl_worker"])
 assert(loaded["vectis"].cai_worker == loaded["vectis.cai_worker"])
 assert(loaded["vectis"].audio_worker == loaded["vectis.audio_worker"])
+assert(loaded["vectis"].sus_worker == loaded["vectis.sus_worker"])
 assert(loaded["vectis"].ssh == loaded["vectis.ssh"])
 assert(loaded["vectis"].http == loaded["vectis.http"])
 assert(loaded["vectis"].rest == loaded["vectis.rest"])
@@ -142,6 +144,9 @@ assert(type(loaded["vectis.cai_worker"].decode_reply) == "function")
 assert(type(loaded["vectis.audio_worker"].decode_file_request) == "function")
 assert(type(loaded["vectis.audio_worker"].encode_file_request) == "function")
 assert(type(loaded["vectis.audio_worker"].decode_reply) == "function")
+assert(type(loaded["vectis.sus_worker"].transcribe_pcm_request) == "function")
+assert(type(loaded["vectis.sus_worker"].transcribe_file_request) == "function")
+assert(type(loaded["vectis.sus_worker"].decode_reply) == "function")
 assert(type(loaded["vectis.ssh"].scp_upload_file) == "function")
 assert(type(loaded["vectis.rest"].route) == "function")
 assert(type(loaded["vectis.log"].new) == "function")

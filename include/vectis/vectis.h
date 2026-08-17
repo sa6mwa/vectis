@@ -1267,6 +1267,94 @@ typedef struct vectis_audio_worker_service_config {
   size_t max_frames;
 } vectis_audio_worker_service_config;
 
+#define VECTIS_SUS_WORKER_TRANSCRIBE_PCM_KIND "vectis.sus.transcribe_pcm"
+#define VECTIS_SUS_WORKER_TRANSCRIBE_FILE_KIND "vectis.sus.transcribe_file"
+#define VECTIS_SUS_WORKER_REPLY_KIND "vectis.sus.reply"
+#define VECTIS_SUS_WORKER_DEFAULT_POLL_TIMEOUT_MS 100L
+#define VECTIS_SUS_WORKER_DEFAULT_MAX_FRAMES 160000u
+#define VECTIS_SUS_WORKER_DEFAULT_MAX_TEXT_BYTES (64u * 1024u)
+
+typedef enum vectis_sus_worker_output_mode {
+  VECTIS_SUS_WORKER_OUTPUT_TEXT = 0,
+  VECTIS_SUS_WORKER_OUTPUT_FILE = 1
+} vectis_sus_worker_output_mode;
+
+typedef struct vectis_sus_worker_transcribe_pcm_request {
+  size_t size;
+  unsigned abi_version;
+  const double *frames;
+  size_t frame_count;
+  const char *language;
+  int translate;
+  int timestamps;
+  int threads;
+  const char *initial_prompt;
+  vectis_sus_worker_output_mode output_mode;
+  const char *output_path;
+  size_t max_text_bytes;
+} vectis_sus_worker_transcribe_pcm_request;
+
+typedef struct vectis_sus_worker_transcribe_file_request {
+  size_t size;
+  unsigned abi_version;
+  const char *path;
+  const char *encoding;
+  const char *language;
+  int translate;
+  int timestamps;
+  int threads;
+  const char *initial_prompt;
+  vectis_sus_worker_output_mode output_mode;
+  const char *output_path;
+  size_t max_text_bytes;
+} vectis_sus_worker_transcribe_file_request;
+
+typedef struct vectis_sus_worker_event {
+  vectis_mailbox_message message;
+  vectis_mutable_bytes payload;
+} vectis_sus_worker_event;
+
+typedef struct vectis_sus_worker_response {
+  size_t size;
+  unsigned abi_version;
+  vectis_status status;
+  vectis_error_source source;
+  long dependency_code;
+  char *operation;
+  char *text;
+  char *path;
+  char *output_path;
+  char message[256];
+  char detail[256];
+} vectis_sus_worker_response;
+
+/* Descriptor for a Vectis-owned SUS worker service. The request mailbox and
+ * optional broker are borrowed and must outlive the returned managed service.
+ * The worker opens the configured model in the selected runtime domain,
+ * creates per-request transcribers, drains bounded PCM/file transcription
+ * events, and replies through reply_broker when the incoming mailbox event
+ * expects a reply. No model is opened in the declaration domain. */
+typedef struct vectis_sus_worker_service_config {
+  size_t size;
+  unsigned abi_version;
+  const char *name;
+  vectis_mailbox *request_mailbox;
+  vectis_mailbox_broker *reply_broker;
+  const char *model_path;
+  const char *cached_model;
+  const char *cache_dir;
+  const char *sha256;
+  const char *source_url;
+  int cache_offline;
+  int cache_insecure_no_checksum;
+  int cpu_only;
+  int preserve_initial_space_after_first_transcriber;
+  int start_with_app;
+  long poll_timeout_ms;
+  size_t max_frames;
+  size_t max_text_bytes;
+} vectis_sus_worker_service_config;
+
 typedef struct vectis_sftp_config {
   const char *url;
   const char *username;
@@ -1520,6 +1608,9 @@ struct vectis_app {
       vectis_managed_service **out, vectis_error *error);
   vectis_status (*audio_worker_service)(
       vectis_app *self, const vectis_audio_worker_service_config *config,
+      vectis_managed_service **out, vectis_error *error);
+  vectis_status (*sus_worker_service)(
+      vectis_app *self, const vectis_sus_worker_service_config *config,
       vectis_managed_service **out, vectis_error *error);
 
   /* Declare a Vectis-owned liblockdc consumer service. Vectis copies the
@@ -1957,6 +2048,25 @@ vectis_audio_worker_response_decode(const vectis_mailbox_event *event,
                                     vectis_error *error);
 void vectis_audio_worker_response_cleanup(
     vectis_audio_worker_response *response);
+void vectis_sus_worker_service_config_init(
+    vectis_sus_worker_service_config *config);
+void vectis_sus_worker_transcribe_pcm_request_init(
+    vectis_sus_worker_transcribe_pcm_request *request);
+void vectis_sus_worker_transcribe_file_request_init(
+    vectis_sus_worker_transcribe_file_request *request);
+vectis_status vectis_sus_worker_transcribe_pcm_event_build(
+    const vectis_sus_worker_transcribe_pcm_request *request,
+    vectis_sus_worker_event *out, vectis_error *error);
+vectis_status vectis_sus_worker_transcribe_file_event_build(
+    const vectis_sus_worker_transcribe_file_request *request,
+    vectis_sus_worker_event *out, vectis_error *error);
+void vectis_sus_worker_event_cleanup(vectis_sus_worker_event *event);
+void vectis_sus_worker_response_init(vectis_sus_worker_response *response);
+vectis_status
+vectis_sus_worker_response_decode(const vectis_mailbox_event *event,
+                                  vectis_sus_worker_response *response,
+                                  vectis_error *error);
+void vectis_sus_worker_response_cleanup(vectis_sus_worker_response *response);
 void vectis_opcua_monitor_event_config_init(
     vectis_opcua_monitor_event_config *config);
 void vectis_opcua_monitor_mailbox_config_init(
@@ -2219,6 +2329,9 @@ vectis_status vectis_cai_worker_service_new(
     vectis_managed_service **out, vectis_error *error);
 vectis_status vectis_audio_worker_service_new(
     vectis_app *app, const vectis_audio_worker_service_config *config,
+    vectis_managed_service **out, vectis_error *error);
+vectis_status vectis_sus_worker_service_new(
+    vectis_app *app, const vectis_sus_worker_service_config *config,
     vectis_managed_service **out, vectis_error *error);
 vectis_status vectis_managed_service_run(vectis_managed_service *service,
                                          vectis_error *error);

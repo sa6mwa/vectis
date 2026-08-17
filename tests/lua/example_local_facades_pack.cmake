@@ -67,6 +67,11 @@ vectis_pack_and_run_lua_example(
   "VECTIS_LUA_AUDIO_WORKER_EXAMPLE_PATH=${WORK_DIR}/packed-audio-worker-example.wav")
 
 vectis_pack_and_run_lua_example(
+  "sus-worker-service"
+  "${VECTIS_SOURCE_DIR}/examples/lua/sus_worker_service.lua"
+  "lua SUS worker service example ok")
+
+vectis_pack_and_run_lua_example(
   "audio-sus"
   "${VECTIS_SOURCE_DIR}/examples/lua/audio_sus.lua"
   "lua audio sus example ok")

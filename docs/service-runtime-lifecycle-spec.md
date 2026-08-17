@@ -512,19 +512,21 @@ First implementation contract:
   planned because it needs a true segment/progress contract rather than a
   bounded materialized reply. Live capture/playback request kinds are not part
   of the deterministic first slice.
-- The first SUS mailbox request kinds are `vectis.sus.transcribe_pcm` and
+- The implemented SUS mailbox request kinds are `vectis.sus.transcribe_pcm` and
   `vectis.sus.transcribe_file`. They return `vectis.sus.reply` with structured
   Vectis status/source metadata, dependency diagnostics, materialized transcript
-  fields only when explicitly requested, and file/lockdc references when output
-  is not materialized.
+  text, or a caller-selected output file path. The current file-output mode
+  writes the materialized SUS text to disk; it must not be described as
+  streaming transcription output.
 - Lua callbacks registered with dependency-native `audio` or `sus` handles are
   valid only for direct owner-state facade use. Managed worker services publish
   copied segment/progress/transcript/error events into a mailbox; Lua observes
   them through `vectis.mailbox:pump()`.
-- C helpers build/decode the audio decode/encode mailbox envelopes. Lua helpers
-  under `vectis.audio_worker` are thin builders/decoders plus
-  `server:audio_worker_service()` registration. `vectis.sus_worker` remains
-  planned. These helpers do not replace direct `require("audio")` or
+- C helpers build/decode the audio decode/encode and SUS PCM/file
+  transcription mailbox envelopes. Lua helpers under `vectis.audio_worker` and
+  `vectis.sus_worker` are thin builders/decoders plus
+  `server:audio_worker_service()` / `server:sus_worker_service()`
+  registration. These helpers do not replace direct `require("audio")` or
   `require("sus")`.
 - Request names must state source behavior: `file`, `url`, `pcm`, `decoder`,
   `vox_segment`, `capture`, `callback`, `materialized`, or `file_backed`. A

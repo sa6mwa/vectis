@@ -182,6 +182,45 @@ do
   assert(audio_reply.frame_count == 2)
   assert(audio_reply.frames[1] > 0.24 and audio_reply.frames[1] < 0.26)
 end
+assert(vectis.sus_worker == require("vectis.sus_worker"))
+assert(vectis.sus_worker.TRANSCRIBE_PCM_KIND == "vectis.sus.transcribe_pcm")
+assert(vectis.sus_worker.TRANSCRIBE_FILE_KIND == "vectis.sus.transcribe_file")
+assert(vectis.sus_worker.REPLY_KIND == "vectis.sus.reply")
+assert(type(vectis.sus_worker.transcribe_pcm_request) == "function")
+assert(type(vectis.sus_worker.transcribe_file_request) == "function")
+assert(type(vectis.sus_worker.decode_reply) == "function")
+do
+  local pcm_event = assert(vectis.sus_worker.transcribe_pcm_request({
+    frames = { 0.0, 0.25, -0.25 },
+    language = "en",
+    max_text_bytes = 4096,
+  }))
+  assert(pcm_event.kind == vectis.sus_worker.TRANSCRIBE_PCM_KIND)
+  assert(pcm_event.expects_reply == true)
+  assert(pcm_event.payload:find('"frames"', 1, true))
+  assert(pcm_event.payload:find('"language":"en"', 1, true))
+  local file_event = assert(vectis.sus_worker.transcribe_file_request({
+    path = "input.wav",
+    encoding = "wav",
+    output = "file",
+    output_path = "transcript.txt",
+  }))
+  assert(file_event.kind == vectis.sus_worker.TRANSCRIBE_FILE_KIND)
+  assert(file_event.expects_reply == true)
+  assert(file_event.payload:find('"path":"input.wav"', 1, true))
+  assert(file_event.payload:find('"output":"file"', 1, true))
+  local sus_reply = assert(vectis.sus_worker.decode_reply({
+    kind = vectis.sus_worker.REPLY_KIND,
+    payload = '{"status":0,"source_code":0,"dependency_code":0,' ..
+        '"operation":"transcribe_pcm","text":"hello world",' ..
+        '"path":"input.wav","output_path":"transcript.txt"}',
+  }))
+  assert(sus_reply.ok == true)
+  assert(sus_reply.operation == "transcribe_pcm")
+  assert(sus_reply.text == "hello world")
+  assert(sus_reply.path == "input.wav")
+  assert(sus_reply.output_path == "transcript.txt")
+end
 assert(vectis.cert == cert)
 assert(vectis.embedded == embedded)
 assert(vectis.server == server_module)
@@ -291,6 +330,7 @@ assert(package.loaded["vectis.mailbox"] == mailbox)
 assert(package.loaded["vectis.curl_worker"] == vectis.curl_worker)
 assert(package.loaded["vectis.cai_worker"] == vectis.cai_worker)
 assert(package.loaded["vectis.audio_worker"] == vectis.audio_worker)
+assert(package.loaded["vectis.sus_worker"] == vectis.sus_worker)
 assert(package.loaded["vectis.log"] == log)
 assert(package.loaded.libmdf == libmdf)
 assert(package.loaded.softline == softline)

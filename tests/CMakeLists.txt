@@ -396,6 +396,12 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_example_lua_audio_worker_service PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
+  add_test(NAME vectis_example_lua_sus_worker_service
+           COMMAND "$<TARGET_FILE:vectis_bin>"
+                   "${CMAKE_SOURCE_DIR}/examples/lua/sus_worker_service.lua")
+  set_tests_properties(vectis_example_lua_sus_worker_service PROPERTIES
+    LABELS "lua;example-smoke;local"
+    TIMEOUT 30)
   add_test(NAME vectis_example_lua_cai_worker_service_supervised
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
