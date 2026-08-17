@@ -50,7 +50,8 @@ static volatile sig_atomic_t vectis_wait_signal = 0;
 
 typedef enum vectis_route_entry_kind {
   VECTIS_ROUTE_ENTRY_HANDLER = 0,
-  VECTIS_ROUTE_ENTRY_UPLOAD_STREAM = 1
+  VECTIS_ROUTE_ENTRY_UPLOAD_STREAM = 1,
+  VECTIS_ROUTE_ENTRY_WEBSOCKET = 2
 } vectis_route_entry_kind;
 
 typedef struct vectis_route_entry {
@@ -65,6 +66,9 @@ typedef struct vectis_route_entry {
   vectis_upload_write_fn upload_write;
   vectis_upload_finish_fn upload_finish;
   vectis_upload_close_fn upload_close;
+  vectis_websocket_connect_fn websocket_connect;
+  vectis_websocket_message_fn websocket_message;
+  vectis_websocket_disconnect_fn websocket_disconnect;
   void *userdata;
   int owns_userdata;
 } vectis_route_entry;
@@ -3278,6 +3282,26 @@ void vectis_upload_reader_route_config_init(
   config->path_kind = VECTIS_ROUTE_PATH_LITERAL;
   config->body = vectis_body_upload();
   config->buffer_bytes = VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES;
+}
+
+void vectis_websocket_route_config_init(vectis_websocket_route_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->path_kind = VECTIS_ROUTE_PATH_LITERAL;
+}
+
+vectis_websocket_route_config
+vectis_websocket_route(const char *path, vectis_websocket_message_fn message,
+                       void *userdata) {
+  vectis_websocket_route_config config;
+
+  vectis_websocket_route_config_init(&config);
+  config.path = path;
+  config.message = message;
+  config.userdata = userdata;
+  return config;
 }
 
 void vectis_cai_mcp_route_config_init(vectis_cai_mcp_route_config *config) {
@@ -10120,6 +10144,25 @@ vectis_validate_upload_route(const vectis_upload_route_config *route,
 }
 
 static vectis_status
+vectis_validate_websocket_route(const vectis_websocket_route_config *route,
+                                vectis_error *error) {
+  if (route == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "websocket route is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_validate_route_path(route->path, route->path_kind, error) !=
+      VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (route->message == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "websocket message callback is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status
 vectis_validate_server_config(const vectis_server_config *config,
                               vectis_error *error) {
   vectis_server_config effective;
@@ -11022,6 +11065,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   app->upload_file = vectis_register_upload_file;
   app->upload_reader = vectis_register_upload_reader;
   app->cai_mcp_route = vectis_register_cai_mcp_route;
+  app->websocket = vectis_register_websocket;
   app->prefixed_route = vectis_register_prefixed_route;
   app->prefixed_json_route = vectis_register_prefixed_json_route;
   app->prefixed_json_typed_route = vectis_register_prefixed_json_typed_route;
@@ -17054,6 +17098,96 @@ vectis_register_upload_reader(vectis_app *app,
   return status;
 }
 
+vectis_status
+vectis_register_websocket(vectis_app *app,
+                          const vectis_websocket_route_config *route,
+                          vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_route_entry *grown;
+  size_t i;
+  size_t next_capacity;
+  vectis_status status;
+
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_validate_websocket_route(route, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+
+  impl = (vectis_app_impl *)app->impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  if (impl->started) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "routes cannot be registered after app start");
+    return VECTIS_ERR_STATE;
+  }
+  if (vectis_app_has_materialized_consumer_services(impl)) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "routes cannot be registered after consumer services "
+                     "materialize");
+    return VECTIS_ERR_STATE;
+  }
+  if (vectis_app_has_materialized_managed_services(impl)) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "routes cannot be registered after managed services "
+                     "materialize");
+    return VECTIS_ERR_STATE;
+  }
+
+  for (i = 0u; i < impl->route_count; ++i) {
+    if (vectis_route_conflicts(&impl->routes[i], VECTIS_HTTP_GET,
+                               VECTIS_HTTP_METHODS_GET, route->path_kind,
+                               route->path)) {
+      (void)pthread_mutex_unlock(&impl->mutex);
+      vectis_set_errorf(error, VECTIS_ERR_CONFLICT,
+                        "duplicate route registration for %s", route->path);
+      return VECTIS_ERR_CONFLICT;
+    }
+  }
+
+  if (impl->route_count == impl->route_capacity) {
+    next_capacity = impl->route_capacity == 0u ? 4u : impl->route_capacity * 2u;
+    grown = (vectis_route_entry *)realloc(impl->routes,
+                                          next_capacity * sizeof(*grown));
+    if (grown == NULL) {
+      (void)pthread_mutex_unlock(&impl->mutex);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to grow route registry");
+      return VECTIS_ERR_NOMEM;
+    }
+    impl->routes = grown;
+    impl->route_capacity = next_capacity;
+  }
+
+  memset(&impl->routes[impl->route_count], 0,
+         sizeof(impl->routes[impl->route_count]));
+  impl->routes[impl->route_count].kind = VECTIS_ROUTE_ENTRY_WEBSOCKET;
+  impl->routes[impl->route_count].method = VECTIS_HTTP_GET;
+  impl->routes[impl->route_count].methods = VECTIS_HTTP_METHODS_GET;
+  impl->routes[impl->route_count].path_kind = route->path_kind;
+  impl->routes[impl->route_count].path = vectis_strdup(route->path);
+  impl->routes[impl->route_count].body = vectis_body_none();
+  impl->routes[impl->route_count].websocket_connect = route->connect;
+  impl->routes[impl->route_count].websocket_message = route->message;
+  impl->routes[impl->route_count].websocket_disconnect = route->disconnect;
+  impl->routes[impl->route_count].userdata = route->userdata;
+  if (impl->routes[impl->route_count].path == NULL) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy route path");
+    return VECTIS_ERR_NOMEM;
+  }
+  impl->route_count++;
+  (void)pthread_mutex_unlock(&impl->mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 static vectis_status vectis_validate_lonejson_struct(const lonejson_map *map,
                                                      size_t size,
                                                      const char *label,
@@ -22281,6 +22415,81 @@ vectis_internal_dispatch_route(vectis_app *app, vectis_http_method method,
   (void)pthread_mutex_unlock(&impl->mutex);
 
   return handler(app, request, response, userdata, error);
+}
+
+vectis_status
+vectis_internal_match_websocket(vectis_app *app, vectis_http_method method,
+                                const char *path, vectis_request *request,
+                                vectis_internal_websocket_match *match,
+                                vectis_error *error) {
+  vectis_app_impl *impl;
+  size_t i;
+  size_t saved_count;
+
+  if (match != NULL) {
+    memset(match, 0, sizeof(*match));
+  }
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (match == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "websocket match output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (method != VECTIS_HTTP_GET) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "no websocket route matched request");
+    return VECTIS_ERR_STATE;
+  }
+  if (vectis_validate_request_path(path, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (vectis_internal_request_set_path(request, path, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  vectis_internal_request_set_method(request, method);
+
+  impl = (vectis_app_impl *)app->impl;
+  saved_count = request->path_param_count;
+  vectis_error_clear(error);
+
+  (void)pthread_mutex_lock(&impl->mutex);
+  for (i = 0u; i < impl->route_count; ++i) {
+    vectis_kv_truncate(&request->path_params, &request->path_param_count,
+                       saved_count);
+    if (impl->routes[i].kind != VECTIS_ROUTE_ENTRY_WEBSOCKET) {
+      continue;
+    }
+    if (!vectis_route_method_matches(&impl->routes[i], method)) {
+      continue;
+    }
+    if (vectis_route_path_matches(&impl->routes[i], path, request, error)) {
+      match->connect = impl->routes[i].websocket_connect;
+      match->message = impl->routes[i].websocket_message;
+      match->disconnect = impl->routes[i].websocket_disconnect;
+      match->userdata = impl->routes[i].userdata;
+      (void)pthread_mutex_unlock(&impl->mutex);
+      return VECTIS_OK;
+    }
+    if (error != NULL && error->code == VECTIS_ERR_NOMEM) {
+      vectis_kv_truncate(&request->path_params, &request->path_param_count,
+                         saved_count);
+      (void)pthread_mutex_unlock(&impl->mutex);
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  vectis_kv_truncate(&request->path_params, &request->path_param_count,
+                     saved_count);
+  (void)pthread_mutex_unlock(&impl->mutex);
+  vectis_set_error(error, VECTIS_ERR_STATE,
+                   "no websocket route matched request");
+  return VECTIS_ERR_STATE;
 }
 
 vectis_status vectis_internal_route_body_policy(vectis_app *app,

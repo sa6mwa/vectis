@@ -33,6 +33,9 @@ Major groups:
   source-backed responses.
 - Static and embedded assets: `vectis_static_file_config`,
   `vectis_static_directory_config`, and `vectis_static_embedded_config`.
+- WebSocket routes: `vectis_websocket_route_config`,
+  `vectis_register_websocket()`, and callback-borrowed
+  `vectis_websocket_send_*()` helpers.
 - WebDAV/auth routes: `vectis_webdav_mount_config`,
   `vectis_webdav_embedded_site_config`, and `vectis_auth_routes_config`.
 - Auth credentials: native users, issued credentials, OAuth2/OIDC WebDAV keys,

@@ -75,6 +75,13 @@ typedef struct vectis_upload_stream_runtime {
   int opened;
 } vectis_upload_stream_runtime;
 
+typedef struct vectis_internal_websocket_match {
+  vectis_websocket_connect_fn connect;
+  vectis_websocket_message_fn message;
+  vectis_websocket_disconnect_fn disconnect;
+  void *userdata;
+} vectis_internal_websocket_match;
+
 typedef struct vectis_internal_runtime_observation {
   unsigned long child_ready_sequence;
   unsigned long metrics_start_sequence;
@@ -126,6 +133,11 @@ vectis_status
 vectis_internal_dispatch_route(vectis_app *app, vectis_http_method method,
                                const char *path, vectis_request *request,
                                vectis_response *response, vectis_error *error);
+vectis_status
+vectis_internal_match_websocket(vectis_app *app, vectis_http_method method,
+                                const char *path, vectis_request *request,
+                                vectis_internal_websocket_match *match,
+                                vectis_error *error);
 void vectis_internal_metrics_note_http_status(vectis_app *app, int status);
 void vectis_internal_metrics_note_route_miss(vectis_app *app);
 void vectis_internal_metrics_note_body_reject(vectis_app *app, int status);

@@ -1252,6 +1252,26 @@ static vectis_status param_handler(vectis_app *app, vectis_request *request,
   return vectis_response_status(response, 422, error);
 }
 
+static void runtime_websocket_echo(vectis_app *app, vectis_websocket *websocket,
+                                   vectis_websocket_opcode opcode,
+                                   const void *data, size_t size,
+                                   void *userdata) {
+  vectis_error error;
+  char reply[128];
+  int written;
+
+  (void)app;
+  (void)userdata;
+  vectis_error_clear(&error);
+  if (opcode != VECTIS_WEBSOCKET_TEXT || data == NULL) {
+    return;
+  }
+  written = snprintf(reply, sizeof(reply), "echo:%.*s", (int)size,
+                     (const char *)data);
+  assert(written > 0 && (size_t)written < sizeof(reply));
+  assert(vectis_websocket_send_text(websocket, reply, &error) == VECTIS_OK);
+}
+
 static int connect_local(unsigned short port) {
   struct sockaddr_in addr;
   int fd;
@@ -1656,6 +1676,93 @@ static ssize_t socket_recv_some(int fd, char *buffer, size_t size,
     return 0;
   }
   return recv(fd, buffer, size, 0);
+}
+
+static size_t websocket_read_exact(int fd, unsigned char *buffer, size_t size) {
+  size_t offset;
+  ssize_t nread;
+
+  offset = 0u;
+  while (offset < size) {
+    nread = recv(fd, buffer + offset, size - offset, 0);
+    assert(nread > 0);
+    offset += (size_t)nread;
+  }
+  return offset;
+}
+
+static void websocket_send_masked_text(int fd, const char *text) {
+  unsigned char frame[256];
+  static const unsigned char mask[4] = {0x11u, 0x22u, 0x33u, 0x44u};
+  size_t len;
+  size_t i;
+
+  len = strlen(text);
+  assert(len < 126u);
+  assert(2u + 4u + len <= sizeof(frame));
+  frame[0] = 0x81u;
+  frame[1] = (unsigned char)(0x80u | len);
+  memcpy(frame + 2u, mask, sizeof(mask));
+  for (i = 0u; i < len; ++i) {
+    frame[6u + i] = ((const unsigned char *)text)[i] ^ mask[i % 4u];
+  }
+  socket_send_all(fd, (const char *)frame, 6u + len);
+}
+
+static size_t websocket_recv_text(int fd, char *out, size_t out_size) {
+  unsigned char header[2];
+  unsigned char extended[8];
+  size_t len;
+
+  assert(out_size > 0u);
+  websocket_read_exact(fd, header, sizeof(header));
+  assert((header[0] & 0x80u) == 0x80u);
+  assert((header[0] & 0x0fu) == VECTIS_WEBSOCKET_TEXT);
+  assert((header[1] & 0x80u) == 0u);
+  len = (size_t)(header[1] & 0x7fu);
+  if (len == 126u) {
+    websocket_read_exact(fd, extended, 2u);
+    len = ((size_t)extended[0] << 8) | (size_t)extended[1];
+  } else if (len == 127u) {
+    websocket_read_exact(fd, extended, 8u);
+    len = ((size_t)extended[4] << 24) | ((size_t)extended[5] << 16) |
+          ((size_t)extended[6] << 8) | (size_t)extended[7];
+  }
+  assert(len + 1u <= out_size);
+  websocket_read_exact(fd, (unsigned char *)out, len);
+  out[len] = '\0';
+  return len;
+}
+
+static void assert_websocket_echo(unsigned short port) {
+  const char *request;
+  char response[2048];
+  char message[128];
+  ssize_t nread;
+  int fd;
+
+  request = "GET /ws HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+            "Sec-WebSocket-Version: 13\r\n"
+            "\r\n";
+  fd = connect_local(port);
+  socket_send_all(fd, request, strlen(request));
+  memset(response, 0, sizeof(response));
+  nread = socket_recv_some(fd, response, sizeof(response) - 1u, 2000L);
+  assert(nread > 0);
+  response[(size_t)nread] = '\0';
+  assert(strstr(response, " 101 ") != NULL);
+  assert(strstr(response, "sec-websocket-accept") != NULL ||
+         strstr(response, "Sec-WebSocket-Accept") != NULL);
+  websocket_send_masked_text(fd, "ping");
+  assert(websocket_recv_text(fd, message, sizeof(message)) ==
+         strlen("echo:ping"));
+  assert(strcmp(message, "echo:ping") == 0);
+  (void)shutdown(fd, SHUT_RDWR);
+  (void)close(fd);
 }
 
 static int count_token(const char *haystack, const char *needle) {
@@ -2716,6 +2823,7 @@ static void assert_kore_smoke(void) {
   vectis_upload_route_config stream_route;
   vectis_upload_reader_route_config stream_reader_route;
   vectis_upload_file_route_config stream_file_route;
+  vectis_websocket_route_config websocket_route;
   vectis_xml_route_config xml_route;
   vectis_dsv_route_config dsv_route;
   vectis_static_file_config static_file_mount;
@@ -2969,6 +3077,9 @@ static void assert_kore_smoke(void) {
                        param_handler, NULL);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
+  websocket_route = vectis_websocket_route("/ws", runtime_websocket_echo, NULL);
+  status = app->websocket(app, &websocket_route, &error);
+  assert(status == VECTIS_OK);
   limited_route =
       vectis_route(VECTIS_HTTP_POST, "/limited", sample_handler, NULL);
   limited_route.body = vectis_body_buffered_max(4u);
@@ -3158,6 +3269,7 @@ static void assert_kore_smoke(void) {
 
   assert_large_header_rejected(28080u);
   assert_keepalive_limit(28080u);
+  assert_websocket_echo(28080u);
 
   vectis_http_response_cleanup(&response);
   status =

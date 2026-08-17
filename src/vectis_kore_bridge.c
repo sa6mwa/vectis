@@ -40,6 +40,10 @@ int vectis_kore_route(struct http_request *req);
 int vectis_kore_body_chunk(struct http_request *req, const void *data,
                            size_t len);
 void vectis_kore_request_free(struct http_request *req);
+void vectis_kore_ws_connect(struct connection *connection);
+void vectis_kore_ws_message(struct connection *connection, u_int8_t opcode,
+                            void *data, size_t len);
+void vectis_kore_ws_disconnect(struct connection *connection);
 void kore_parent_configure(int argc, char **argv);
 void kore_parent_teardown(void);
 void vectis_kore_parent_timers(void);
@@ -50,7 +54,10 @@ const struct kore_vectis_runtime_symbol kore_vectis_runtime_symbols[] = {
     {"kore_parent_teardown", (void *)kore_parent_teardown},
     {"vectis_kore_route", (void *)vectis_kore_route},
     {"vectis_kore_body_chunk", (void *)vectis_kore_body_chunk},
-    {"vectis_kore_request_free", (void *)vectis_kore_request_free}};
+    {"vectis_kore_request_free", (void *)vectis_kore_request_free},
+    {"vectis_kore_ws_connect", (void *)vectis_kore_ws_connect},
+    {"vectis_kore_ws_message", (void *)vectis_kore_ws_message},
+    {"vectis_kore_ws_disconnect", (void *)vectis_kore_ws_disconnect}};
 const size_t kore_vectis_runtime_symbol_count =
     sizeof(kore_vectis_runtime_symbols) /
     sizeof(kore_vectis_runtime_symbols[0]);
@@ -171,6 +178,15 @@ typedef struct vectis_kore_material {
   size_t memory_size;
   lc_source *source;
 } vectis_kore_material;
+
+struct vectis_websocket {
+  struct connection *connection;
+};
+
+typedef struct vectis_kore_websocket_state {
+  vectis_app *app;
+  vectis_internal_websocket_match match;
+} vectis_kore_websocket_state;
 
 static int vectis_kore_material_present(const vectis_kore_material *material);
 static vectis_status
@@ -2512,6 +2528,108 @@ static void vectis_kore_send_response(vectis_app *app, struct http_request *req,
   http_response(req, status, body.data, body.size);
 }
 
+static int vectis_kore_websocket_opcode_valid(vectis_websocket_opcode opcode) {
+  return opcode == VECTIS_WEBSOCKET_CONTINUATION ||
+         opcode == VECTIS_WEBSOCKET_TEXT || opcode == VECTIS_WEBSOCKET_BINARY ||
+         opcode == VECTIS_WEBSOCKET_CLOSE || opcode == VECTIS_WEBSOCKET_PING ||
+         opcode == VECTIS_WEBSOCKET_PONG;
+}
+
+vectis_status vectis_websocket_send(vectis_websocket *websocket,
+                                    vectis_websocket_opcode opcode,
+                                    const void *data, size_t size,
+                                    vectis_error *error) {
+  if (websocket == NULL || websocket->connection == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "websocket connection is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!vectis_kore_websocket_opcode_valid(opcode)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "websocket opcode is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (data == NULL && size > 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "websocket payload is required");
+    return VECTIS_ERR_INVALID;
+  }
+  kore_websocket_send(websocket->connection, (u_int8_t)opcode, data, size);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_websocket_send_text(vectis_websocket *websocket,
+                                         const char *text,
+                                         vectis_error *error) {
+  if (text == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "websocket text is required");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_websocket_send(websocket, VECTIS_WEBSOCKET_TEXT, text,
+                               strlen(text), error);
+}
+
+vectis_status vectis_websocket_send_binary(vectis_websocket *websocket,
+                                           const void *data, size_t size,
+                                           vectis_error *error) {
+  return vectis_websocket_send(websocket, VECTIS_WEBSOCKET_BINARY, data, size,
+                               error);
+}
+
+vectis_status vectis_websocket_close(vectis_websocket *websocket,
+                                     vectis_error *error) {
+  return vectis_websocket_send(websocket, VECTIS_WEBSOCKET_CLOSE, NULL, 0u,
+                               error);
+}
+
+void vectis_kore_ws_connect(struct connection *connection) {
+  vectis_kore_websocket_state *state;
+  vectis_websocket websocket;
+
+  state = connection != NULL
+              ? (vectis_kore_websocket_state *)connection->hdlr_extra
+              : NULL;
+  if (state == NULL || state->match.connect == NULL) {
+    return;
+  }
+  websocket.connection = connection;
+  state->match.connect(state->app, &websocket, state->match.userdata);
+}
+
+void vectis_kore_ws_message(struct connection *connection, u_int8_t opcode,
+                            void *data, size_t len) {
+  vectis_kore_websocket_state *state;
+  vectis_websocket websocket;
+
+  state = connection != NULL
+              ? (vectis_kore_websocket_state *)connection->hdlr_extra
+              : NULL;
+  if (state == NULL || state->match.message == NULL) {
+    return;
+  }
+  websocket.connection = connection;
+  state->match.message(state->app, &websocket, (vectis_websocket_opcode)opcode,
+                       data, len, state->match.userdata);
+}
+
+void vectis_kore_ws_disconnect(struct connection *connection) {
+  vectis_kore_websocket_state *state;
+  vectis_websocket websocket;
+
+  state = connection != NULL
+              ? (vectis_kore_websocket_state *)connection->hdlr_extra
+              : NULL;
+  if (state == NULL) {
+    return;
+  }
+  websocket.connection = connection;
+  if (state->match.disconnect != NULL) {
+    state->match.disconnect(state->app, &websocket, state->match.userdata);
+  }
+  connection->hdlr_extra = NULL;
+  kore_free(state);
+}
+
 int vectis_kore_route(struct http_request *req) {
   vectis_request *request;
   vectis_response *response;
@@ -2519,6 +2637,8 @@ int vectis_kore_route(struct http_request *req) {
   vectis_app *app;
   vectis_kore_body_state *body_state;
   vectis_body_policy body_policy;
+  vectis_internal_websocket_match websocket_match;
+  vectis_kore_websocket_state *websocket_state;
   vectis_http_method method;
   vectis_status status;
   int error_status;
@@ -2591,6 +2711,38 @@ int vectis_kore_route(struct http_request *req) {
   }
   vectis_internal_request_set_method(request, method);
   status = vectis_kore_copy_request_metadata(req, request, &error);
+  if (status == VECTIS_OK) {
+    status = vectis_internal_match_websocket(app, method, req->path, request,
+                                             &websocket_match, &error);
+    if (status == VECTIS_OK) {
+      websocket_state = (vectis_kore_websocket_state *)kore_calloc(
+          1u, sizeof(*websocket_state));
+      websocket_state->app = app;
+      websocket_state->match = websocket_match;
+      req->owner->hdlr_extra = websocket_state;
+      vectis_internal_metrics_note_http_status(app, 101);
+      kore_websocket_handshake(req, "vectis_kore_ws_connect",
+                               "vectis_kore_ws_message",
+                               "vectis_kore_ws_disconnect");
+      vectis_internal_request_free(request);
+      vectis_internal_response_free(response);
+      return KORE_RESULT_OK;
+    }
+    if (status != VECTIS_ERR_STATE) {
+      if (status == VECTIS_ERR_INVALID) {
+        vectis_internal_metrics_note_http_status(app, 400);
+        http_response(req, 400, error.message, strlen(error.message));
+      } else {
+        vectis_internal_metrics_note_http_status(app, 500);
+        http_response(req, 500, error.message, strlen(error.message));
+      }
+      vectis_internal_request_free(request);
+      vectis_internal_response_free(response);
+      return KORE_RESULT_OK;
+    }
+    status = VECTIS_OK;
+    vectis_error_clear(&error);
+  }
   if (status == VECTIS_OK) {
     status = vectis_internal_route_body_policy(app, method, req->path,
                                                &body_policy, &error);

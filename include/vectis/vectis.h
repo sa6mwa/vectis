@@ -91,6 +91,7 @@ typedef struct vectis_ssh_sftp_dir vectis_ssh_sftp_dir;
 typedef struct vectis_mqtt vectis_mqtt;
 typedef struct vectis_request vectis_request;
 typedef struct vectis_response vectis_response;
+typedef struct vectis_websocket vectis_websocket;
 typedef struct vectis_json_response vectis_json_response;
 typedef struct vectis_dsv_rows vectis_dsv_rows;
 typedef struct vectis_auth_routes_config vectis_auth_routes_config;
@@ -565,6 +566,30 @@ typedef vectis_status (*vectis_upload_reader_handler_fn)(
     vectis_app *app, vectis_request *request, struct lc_source *reader,
     vectis_response *response, void *userdata, vectis_error *error);
 
+typedef enum vectis_websocket_opcode {
+  VECTIS_WEBSOCKET_CONTINUATION = 0x00,
+  VECTIS_WEBSOCKET_TEXT = 0x01,
+  VECTIS_WEBSOCKET_BINARY = 0x02,
+  VECTIS_WEBSOCKET_CLOSE = 0x08,
+  VECTIS_WEBSOCKET_PING = 0x09,
+  VECTIS_WEBSOCKET_PONG = 0x0a
+} vectis_websocket_opcode;
+
+/* WebSocket handles are borrowed and valid only for the callback invocation.
+ * Retain application state in userdata, not the connection handle.
+ */
+typedef void (*vectis_websocket_connect_fn)(vectis_app *app,
+                                            vectis_websocket *websocket,
+                                            void *userdata);
+typedef void (*vectis_websocket_message_fn)(vectis_app *app,
+                                            vectis_websocket *websocket,
+                                            vectis_websocket_opcode opcode,
+                                            const void *data, size_t size,
+                                            void *userdata);
+typedef void (*vectis_websocket_disconnect_fn)(vectis_app *app,
+                                               vectis_websocket *websocket,
+                                               void *userdata);
+
 /**
  * Callback invoked for each item decoded from a selected JSON array.
  *
@@ -658,6 +683,15 @@ typedef struct vectis_upload_reader_route_config {
   vectis_upload_reader_handler_fn handler;
   void *userdata;
 } vectis_upload_reader_route_config;
+
+typedef struct vectis_websocket_route_config {
+  const char *path;
+  vectis_route_path_kind path_kind;
+  vectis_websocket_connect_fn connect;
+  vectis_websocket_message_fn message;
+  vectis_websocket_disconnect_fn disconnect;
+  void *userdata;
+} vectis_websocket_route_config;
 
 typedef struct vectis_cai_mcp_route_config {
   /** Single-method fallback; VECTIS_HTTP_ANY means use methods. */
@@ -1643,6 +1677,9 @@ struct vectis_app {
   vectis_status (*cai_mcp_route)(vectis_app *self,
                                  const vectis_cai_mcp_route_config *route,
                                  vectis_error *error);
+  vectis_status (*websocket)(vectis_app *self,
+                             const vectis_websocket_route_config *route,
+                             vectis_error *error);
   vectis_status (*prefixed_route)(vectis_app *self, const char *prefix,
                                   const vectis_route_config *route,
                                   vectis_error *error);
@@ -2415,6 +2452,25 @@ vectis_status
 vectis_register_cai_mcp_route(vectis_app *app,
                               const vectis_cai_mcp_route_config *route,
                               vectis_error *error);
+void vectis_websocket_route_config_init(vectis_websocket_route_config *config);
+vectis_websocket_route_config
+vectis_websocket_route(const char *path, vectis_websocket_message_fn message,
+                       void *userdata);
+vectis_status
+vectis_register_websocket(vectis_app *app,
+                          const vectis_websocket_route_config *route,
+                          vectis_error *error);
+vectis_status vectis_websocket_send(vectis_websocket *websocket,
+                                    vectis_websocket_opcode opcode,
+                                    const void *data, size_t size,
+                                    vectis_error *error);
+vectis_status vectis_websocket_send_text(vectis_websocket *websocket,
+                                         const char *text, vectis_error *error);
+vectis_status vectis_websocket_send_binary(vectis_websocket *websocket,
+                                           const void *data, size_t size,
+                                           vectis_error *error);
+vectis_status vectis_websocket_close(vectis_websocket *websocket,
+                                     vectis_error *error);
 vectis_status vectis_register_json_route(vectis_app *app,
                                          const vectis_json_route_config *route,
                                          vectis_error *error);
