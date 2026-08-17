@@ -449,6 +449,14 @@ typedef struct vectis_app_impl {
   struct vectis_consumer_receiver_entry *consumer_receivers;
   struct vectis_managed_service_impl *managed_services;
   struct vectis_consumer_service_impl *consumer_services;
+  unsigned long lifecycle_sequence;
+  unsigned long child_ready_sequence;
+  unsigned long metrics_start_sequence;
+  unsigned long metrics_stop_sequence;
+  unsigned long managed_start_sequence;
+  unsigned long managed_stop_sequence;
+  unsigned long consumer_start_sequence;
+  unsigned long consumer_stop_sequence;
 } vectis_app_impl;
 
 struct vectis_request {
@@ -1109,6 +1117,8 @@ static vectis_status vectis_app_stop_kore_child(pid_t child_pid, int control_fd,
                                                 vectis_error *error);
 static int vectis_signal_kore_runtime(pid_t child_pid, int signum);
 static int vectis_wait_sleep_ms(long delay_ms);
+static void vectis_app_record_lifecycle_sequence(vectis_app_impl *impl,
+                                                 unsigned long *slot);
 static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
                                               vectis_error *error);
 static void
@@ -5132,6 +5142,10 @@ vectis_managed_service_start_materialized(vectis_managed_service_impl *service,
     return status;
   }
   vectis_managed_service_log_started(service);
+  if (service->owner != NULL) {
+    vectis_app_record_lifecycle_sequence(
+        service->owner, &service->owner->managed_start_sequence);
+  }
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -8371,6 +8385,10 @@ static vectis_status vectis_app_stop_managed_services(vectis_app_impl *impl,
     if (was_active && first_status == VECTIS_OK) {
       vectis_managed_service_log_stopped(service);
     }
+    if (was_active && service->owner != NULL) {
+      vectis_app_record_lifecycle_sequence(
+          service->owner, &service->owner->managed_stop_sequence);
+    }
   }
   return first_status;
 }
@@ -8528,6 +8546,10 @@ static vectis_status vectis_app_stop_consumer_services(vectis_app_impl *impl,
       first_status = error != NULL ? error->code : VECTIS_ERR_STATE;
     }
     service->started = 0;
+    if (service->owner != NULL) {
+      vectis_app_record_lifecycle_sequence(
+          service->owner, &service->owner->consumer_stop_sequence);
+    }
   }
   return first_status;
 }
@@ -8753,6 +8775,8 @@ vectis_consumer_service_start_materialized(vectis_consumer_service_impl *impl,
     impl->started = 0;
     return status;
   }
+  vectis_app_record_lifecycle_sequence(impl->owner,
+                                       &impl->owner->consumer_start_sequence);
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -10571,12 +10595,18 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
   pid_t child_pid;
   int child_reaped;
   int control_fd;
+  vectis_status first_status;
+  vectis_status status;
+  vectis_error first_error;
+  vectis_error local_error;
 
   if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
     return VECTIS_ERR_INVALID;
   }
   impl = (vectis_app_impl *)app->impl;
+  first_status = VECTIS_OK;
+  vectis_error_clear(&first_error);
 
   (void)pthread_mutex_lock(&impl->mutex);
   if (!impl->started) {
@@ -10596,36 +10626,51 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
   }
   (void)pthread_mutex_unlock(&impl->mutex);
 
-  vectis_metrics_worker_stop(app);
-
+  vectis_error_clear(&local_error);
   if (child_pid > 0) {
-    if (vectis_app_stop_kore_child(child_pid, control_fd,
-                                   impl->shutdown_grace_ms,
-                                   error) != VECTIS_OK) {
-      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    status = vectis_app_stop_kore_child(child_pid, control_fd,
+                                        impl->shutdown_grace_ms, &local_error);
+    if (status != VECTIS_OK && first_status == VECTIS_OK) {
+      first_status = status;
+      first_error = local_error;
     }
   } else if (!child_reaped && impl->route_count > 0u &&
-             vectis_internal_kore_stop(app, error) != VECTIS_OK) {
+             (status = vectis_internal_kore_stop(app, &local_error)) !=
+                 VECTIS_OK) {
     vectis_close_fd_if_open(&control_fd);
-    return error != NULL ? error->code : VECTIS_ERR_STATE;
+    if (first_status == VECTIS_OK) {
+      first_status = status;
+      first_error = local_error;
+    }
   } else {
     vectis_close_fd_if_open(&control_fd);
   }
 
-  if (vectis_app_stop_managed_services(impl, error) != VECTIS_OK) {
-    vectis_app_service_control_close(impl);
-    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  vectis_error_clear(&local_error);
+  status = vectis_app_stop_consumer_services(impl, &local_error);
+  if (status != VECTIS_OK && first_status == VECTIS_OK) {
+    first_status = status;
+    first_error = local_error;
   }
-  if (vectis_app_stop_consumer_services(impl, error) != VECTIS_OK) {
-    vectis_app_service_control_close(impl);
-    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  vectis_error_clear(&local_error);
+  status = vectis_app_stop_managed_services(impl, &local_error);
+  if (status != VECTIS_OK && first_status == VECTIS_OK) {
+    first_status = status;
+    first_error = local_error;
   }
+  vectis_metrics_worker_stop(app);
   vectis_app_service_control_close(impl);
 
   (void)pthread_mutex_lock(&impl->mutex);
   vectis_close_lockd_client_for_current_process(impl);
   (void)pthread_mutex_unlock(&impl->mutex);
 
+  if (first_status != VECTIS_OK) {
+    if (error != NULL) {
+      *error = first_error;
+    }
+    return first_status;
+  }
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -10777,6 +10822,22 @@ static int vectis_wait_sleep_ms(long delay_ms) {
   return errno != 0 ? errno : EINVAL;
 }
 
+static void vectis_app_record_lifecycle_sequence(vectis_app_impl *impl,
+                                                 unsigned long *slot) {
+  if (impl == NULL || slot == NULL) {
+    return;
+  }
+  (void)pthread_mutex_lock(&impl->mutex);
+  if (*slot == 0ul) {
+    impl->lifecycle_sequence++;
+    if (impl->lifecycle_sequence == 0ul) {
+      impl->lifecycle_sequence++;
+    }
+    *slot = impl->lifecycle_sequence;
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
+}
+
 static vectis_status
 vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
                                        int control_fd, vectis_error *error) {
@@ -10882,6 +10943,10 @@ vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
       }
       if (frame_type == VECTIS_RUNTIME_CONTROL_READY && payload.size == 0u) {
         vectis_mutable_bytes_cleanup(&payload);
+        if (impl != NULL) {
+          vectis_app_record_lifecycle_sequence(impl,
+                                               &impl->child_ready_sequence);
+        }
         vectis_error_clear(error);
         return VECTIS_OK;
       }
@@ -17525,6 +17590,7 @@ static vectis_status vectis_metrics_worker_start(vectis_app *app,
   (void)pthread_mutex_lock(&metrics->mutex);
   metrics->worker_started = 1;
   (void)pthread_mutex_unlock(&metrics->mutex);
+  vectis_app_record_lifecycle_sequence(impl, &impl->metrics_start_sequence);
   return VECTIS_OK;
 }
 
@@ -17553,6 +17619,8 @@ static void vectis_metrics_worker_stop(vectis_app *app) {
     (void)pthread_mutex_lock(&metrics->mutex);
     metrics->worker_started = 0;
     (void)pthread_mutex_unlock(&metrics->mutex);
+    (void)vectis_metrics_persist_snapshot(app);
+    vectis_app_record_lifecycle_sequence(impl, &impl->metrics_stop_sequence);
   }
 }
 
@@ -36099,4 +36167,27 @@ pid_t vectis_internal_kore_child_pid(vectis_app *app) {
   child_pid = impl->kore_child_pid;
   (void)pthread_mutex_unlock(&impl->mutex);
   return child_pid;
+}
+
+void vectis_internal_runtime_observe(
+    vectis_app *app, vectis_internal_runtime_observation *observation) {
+  vectis_app_impl *impl;
+
+  if (observation == NULL) {
+    return;
+  }
+  memset(observation, 0, sizeof(*observation));
+  if (app == NULL || app->impl == NULL) {
+    return;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  observation->child_ready_sequence = impl->child_ready_sequence;
+  observation->metrics_start_sequence = impl->metrics_start_sequence;
+  observation->metrics_stop_sequence = impl->metrics_stop_sequence;
+  observation->managed_start_sequence = impl->managed_start_sequence;
+  observation->managed_stop_sequence = impl->managed_stop_sequence;
+  observation->consumer_start_sequence = impl->consumer_start_sequence;
+  observation->consumer_stop_sequence = impl->consumer_stop_sequence;
+  (void)pthread_mutex_unlock(&impl->mutex);
 }

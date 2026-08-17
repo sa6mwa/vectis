@@ -255,7 +255,7 @@ Kore, lockdc, CAI, OPC UA, curl, audio, SUS, or metrics startup:
 
 The default startup order is `control`, `metrics`, `workers`,
 `lockdc_consumers`. The default stop order is the reverse service-ingress order
-after Kore ingress has been stopped: stop workers and lockdc consumers, join
+after Kore ingress has been stopped: stop lockdc consumers, stop workers, join
 their monitors, persist final metrics if configured, then close domain-local
 dependency handles. If a future service requires a different dependency order,
 it must be expressed as an explicit service dependency contract in C and Lua.

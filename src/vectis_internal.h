@@ -74,10 +74,22 @@ typedef struct vectis_upload_stream_runtime {
   int opened;
 } vectis_upload_stream_runtime;
 
+typedef struct vectis_internal_runtime_observation {
+  unsigned long child_ready_sequence;
+  unsigned long metrics_start_sequence;
+  unsigned long metrics_stop_sequence;
+  unsigned long managed_start_sequence;
+  unsigned long managed_stop_sequence;
+  unsigned long consumer_start_sequence;
+  unsigned long consumer_stop_sequence;
+} vectis_internal_runtime_observation;
+
 void vectis_set_error(vectis_error *error, vectis_status code,
                       const char *message);
 struct lc_client *vectis_internal_lockd_client(vectis_app *app);
 pid_t vectis_internal_kore_child_pid(vectis_app *app);
+void vectis_internal_runtime_observe(
+    vectis_app *app, vectis_internal_runtime_observation *observation);
 size_t vectis_internal_worker_count(vectis_app *app);
 size_t vectis_internal_max_request_body_bytes(vectis_app *app);
 size_t vectis_internal_body_disk_offload_bytes(vectis_app *app,

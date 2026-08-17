@@ -75,6 +75,8 @@ typedef struct runtime_managed_service_probe {
   int waited;
   int cleaned;
   int wait_fds[2];
+  vectis_status start_status;
+  const char *start_error;
   vectis_status wait_status;
   const char *wait_error;
 } runtime_managed_service_probe;
@@ -160,6 +162,12 @@ static vectis_status runtime_managed_service_start(void *context,
   probe = (runtime_managed_service_probe *)context;
   if (probe != NULL) {
     probe->started += 1;
+    if (probe->start_status != VECTIS_OK) {
+      vectis_set_error(error, probe->start_status,
+                       probe->start_error != NULL ? probe->start_error
+                                                  : "managed service failed");
+      return probe->start_status;
+    }
   }
   return VECTIS_OK;
 }
@@ -3773,6 +3781,272 @@ static void assert_supervised_repeated_start_stop(void) {
   app->close(app);
 }
 
+static void assert_route_backed_start_without_services_is_supervised(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_route_config route;
+  vectis_http_client_config http;
+  vectis_http_response response;
+  vectis_internal_runtime_observation observation;
+  unsigned short port;
+  char url[128];
+  pid_t child_pid;
+  int reserved_fd;
+  int written;
+
+  reserved_fd = reserve_loopback_port(&port);
+  close(reserved_fd);
+  written = snprintf(url, sizeof(url), "http://127.0.0.1:%u/no-services",
+                     (unsigned)port);
+  assert(written > 0 && (size_t)written < sizeof(url));
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = port;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/no-services", sample_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  child_pid = vectis_internal_kore_child_pid(app);
+  assert(child_pid > 0);
+  vectis_internal_runtime_observe(app, &observation);
+  assert(observation.child_ready_sequence > 0ul);
+  assert(observation.metrics_start_sequence == 0ul);
+  assert(observation.managed_start_sequence == 0ul);
+  assert(observation.consumer_start_sequence == 0ul);
+
+  vectis_http_client_config_init(&http);
+  http.timeout_ms = 2000L;
+  http.connect_timeout_ms = 1000L;
+  memset(&response, 0, sizeof(response));
+  status = vectis_http_get(&http, url, &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200);
+  vectis_http_response_cleanup(&response);
+
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_kore_child_pid(app) == 0);
+  app->close(app);
+}
+
+static void assert_runtime_phase_order_contract(void) {
+  vectis_app_config config;
+  vectis_metrics_config metrics;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_route_config route;
+  vectis_managed_service_config managed_config;
+  vectis_managed_service *managed_service;
+  runtime_managed_service_probe managed_probe;
+  lc_consumer_config consumer;
+  lc_consumer_service_config consumer_config;
+  vectis_consumer_service *consumer_service;
+  vectis_internal_runtime_observation observation;
+  char pouch_dir[] = "/tmp/vectis-runtime-order.XXXXXX";
+  char endpoint[4096];
+  const char *endpoints[1];
+  unsigned short port;
+  int reserved_fd;
+  int written;
+
+  assert(mkdtemp(pouch_dir) != NULL);
+  written = snprintf(endpoint, sizeof(endpoint),
+                     "pouch://%s?single_writer=false", pouch_dir);
+  assert(written > 0 && (size_t)written < sizeof(endpoint));
+  endpoints[0] = endpoint;
+
+  memset(&managed_probe, 0, sizeof(managed_probe));
+  assert(pipe(managed_probe.wait_fds) == 0);
+  reserved_fd = reserve_loopback_port(&port);
+  close(reserved_fd);
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = port;
+  config.lockd.endpoints = endpoints;
+  config.lockd.endpoint_count = 1u;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_metrics_config_init(&metrics);
+  metrics.path = "/.metrics";
+  metrics.json_path = "/.metrics.json";
+  metrics.title = "runtime phase order";
+  metrics.persistence_enabled = 1;
+  metrics.storage_endpoint = endpoint;
+  metrics.storage_namespace = "vectis.runtime.order.metrics";
+  metrics.storage_owner = "runtime-order";
+  status = app->metrics(app, &metrics, &error);
+  assert(status == VECTIS_OK);
+
+  vectis_managed_service_config_init(&managed_config);
+  managed_config.name = "runtime-order-managed";
+  managed_config.context = &managed_probe;
+  managed_config.start = runtime_managed_service_start;
+  managed_config.stop = runtime_managed_service_stop;
+  managed_config.wait = runtime_managed_service_wait;
+  managed_config.start_with_app = 1;
+  managed_service = NULL;
+  status = app->managed_service(app, &managed_config, &managed_service, &error);
+  assert(status == VECTIS_OK);
+
+  lc_consumer_config_init(&consumer);
+  lc_consumer_service_config_init(&consumer_config);
+  consumer.name = "runtime-order-consumer";
+  consumer.request.queue = "runtime-order";
+  consumer.request.owner = "runtime-order-owner";
+  consumer.request.wait_seconds = 1L;
+  consumer.request.visibility_timeout_seconds = 1L;
+  consumer.handle = sample_consumer_handler;
+  consumer_config.consumers = &consumer;
+  consumer_config.consumer_count = 1u;
+  consumer_service = NULL;
+  status =
+      app->consumer_service(app, &consumer_config, &consumer_service, &error);
+  assert(status == VECTIS_OK);
+  status = consumer_service->start(consumer_service, &error);
+  assert(status == VECTIS_OK);
+
+  route = vectis_route(VECTIS_HTTP_GET, "/runtime-order", sample_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  vectis_internal_runtime_observe(app, &observation);
+  assert(observation.child_ready_sequence > 0ul);
+  assert(observation.metrics_start_sequence > observation.child_ready_sequence);
+  assert(observation.managed_start_sequence >
+         observation.metrics_start_sequence);
+  assert(observation.consumer_start_sequence >
+         observation.managed_start_sequence);
+  assert(observation.metrics_stop_sequence == 0ul);
+  assert(observation.managed_stop_sequence == 0ul);
+  assert(observation.consumer_stop_sequence == 0ul);
+
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  vectis_internal_runtime_observe(app, &observation);
+  assert(observation.consumer_stop_sequence >
+         observation.consumer_start_sequence);
+  assert(observation.managed_stop_sequence >
+         observation.consumer_stop_sequence);
+  assert(observation.metrics_stop_sequence > observation.managed_stop_sequence);
+
+  consumer_service->close(consumer_service);
+  managed_service->close(managed_service);
+  app->close(app);
+  close(managed_probe.wait_fds[0]);
+  close(managed_probe.wait_fds[1]);
+  remove_tree(pouch_dir);
+}
+
+static void assert_runtime_start_failure_rolls_back_services(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_managed_service_config service_config;
+  vectis_managed_service *success_service;
+  vectis_managed_service *failing_service;
+  vectis_managed_service *unreached_service;
+  vectis_managed_service_state service_state;
+  runtime_managed_service_probe success_probe;
+  runtime_managed_service_probe failing_probe;
+  runtime_managed_service_probe unreached_probe;
+
+  memset(&success_probe, 0, sizeof(success_probe));
+  memset(&failing_probe, 0, sizeof(failing_probe));
+  memset(&unreached_probe, 0, sizeof(unreached_probe));
+  assert(pipe(success_probe.wait_fds) == 0);
+  failing_probe.wait_fds[0] = -1;
+  failing_probe.wait_fds[1] = -1;
+  unreached_probe.wait_fds[0] = -1;
+  unreached_probe.wait_fds[1] = -1;
+  failing_probe.start_status = VECTIS_ERR_STATE;
+  failing_probe.start_error = "managed service start failed intentionally";
+
+  vectis_app_config_init(&config);
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "runtime-unreached";
+  service_config.context = &unreached_probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.cleanup = runtime_managed_service_cleanup;
+  service_config.start_with_app = 1;
+  unreached_service = NULL;
+  status =
+      app->managed_service(app, &service_config, &unreached_service, &error);
+  assert(status == VECTIS_OK);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "runtime-failing";
+  service_config.context = &failing_probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.cleanup = runtime_managed_service_cleanup;
+  service_config.start_with_app = 1;
+  failing_service = NULL;
+  status = app->managed_service(app, &service_config, &failing_service, &error);
+  assert(status == VECTIS_OK);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "runtime-success";
+  service_config.context = &success_probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.stop = runtime_managed_service_stop;
+  service_config.wait = runtime_managed_service_wait;
+  service_config.cleanup = runtime_managed_service_cleanup;
+  service_config.start_with_app = 1;
+  success_service = NULL;
+  status = app->managed_service(app, &service_config, &success_service, &error);
+  assert(status == VECTIS_OK);
+
+  status = app->start(app, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "intentionally") != NULL);
+  assert(success_probe.started == 1);
+  assert(success_probe.stopped == 1);
+  assert(success_probe.waited == 1);
+  assert(failing_probe.started == 1);
+  assert(unreached_probe.started == 0);
+
+  status = success_service->state(success_service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.materialized);
+  assert(!service_state.started);
+  assert(service_state.stop_requested);
+
+  status = failing_service->state(failing_service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(!service_state.materialized);
+  assert(service_state.failed);
+  assert(service_state.terminal_status == VECTIS_ERR_STATE);
+
+  status = unreached_service->state(unreached_service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.declared);
+  assert(!service_state.materialized);
+  assert(!service_state.started);
+
+  success_service->close(success_service);
+  failing_service->close(failing_service);
+  unreached_service->close(unreached_service);
+  app->close(app);
+  close(success_probe.wait_fds[0]);
+  close(success_probe.wait_fds[1]);
+}
+
 static void assert_supervised_managed_service_lifecycle(void) {
   vectis_app_config config;
   vectis_app *app;
@@ -4528,6 +4802,18 @@ static int run_named_runtime_test(const char *name) {
     assert_supervised_repeated_start_stop();
     return 1;
   }
+  if (strcmp(name, "route_backed_start_without_services_is_supervised") == 0) {
+    assert_route_backed_start_without_services_is_supervised();
+    return 1;
+  }
+  if (strcmp(name, "runtime_phase_order_contract") == 0) {
+    assert_runtime_phase_order_contract();
+    return 1;
+  }
+  if (strcmp(name, "runtime_start_failure_rolls_back_services") == 0) {
+    assert_runtime_start_failure_rolls_back_services();
+    return 1;
+  }
   if (strcmp(name, "supervised_managed_service_lifecycle") == 0) {
     assert_supervised_managed_service_lifecycle();
     return 1;
@@ -4601,6 +4887,9 @@ int main(void) {
   assert_supervised_wait_reports_consumer_service_exit();
   assert_supervised_child_exit_stops_consumer_service();
   assert_supervised_repeated_start_stop();
+  assert_route_backed_start_without_services_is_supervised();
+  assert_runtime_phase_order_contract();
+  assert_runtime_start_failure_rolls_back_services();
   assert_supervised_managed_service_lifecycle();
   assert_managed_service_inherits_app_logger();
   assert_managed_service_logger_disabled();
