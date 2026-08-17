@@ -11016,6 +11016,8 @@ static int vectis_lua_server_new(lua_State *lua) {
                                                    config.shutdown_grace_ms);
   config.server.max_connections = vectis_lua_table_size(
       lua, 1, "max_connections", config.server.max_connections);
+  config.server.request_limit = vectis_lua_table_size(
+      lua, 1, "request_limit", config.server.request_limit);
   config.server.worker_count =
       vectis_lua_table_size(lua, 1, "worker_count", config.server.worker_count);
   config.server.worker_accept_threshold = vectis_lua_table_size(

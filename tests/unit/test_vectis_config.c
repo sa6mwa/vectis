@@ -1,5 +1,7 @@
 #include "vectis_internal.h"
 #include <assert.h>
+#include <limits.h>
+#include <stdint.h>
 #include <string.h>
 #include <vectis/vectis.h>
 
@@ -67,6 +69,7 @@ int main(void) {
   assert(config.tls.acme_state_dir == NULL);
   assert(config.server.max_connections ==
          VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS);
+  assert(config.server.request_limit == 0u);
   assert(config.server.worker_count == 0u);
   assert(config.server.worker_accept_threshold ==
          VECTIS_SERVER_DEFAULT_WORKER_ACCEPT_THRESHOLD);
@@ -171,6 +174,7 @@ int main(void) {
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.port = 0u;
   config.server.max_connections = 0u;
+  config.server.request_limit = 0u;
   config.server.worker_count = 0u;
   config.server.worker_accept_threshold = 0u;
   config.server.worker_rlimit_nofiles = 0u;
@@ -193,6 +197,8 @@ int main(void) {
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   assert(vectis_internal_worker_count(app) == 0u);
+  assert(vectis_internal_request_limit(app) ==
+         VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS);
   assert(vectis_internal_worker_accept_threshold(app) ==
          VECTIS_SERVER_DEFAULT_WORKER_ACCEPT_THRESHOLD);
   assert(vectis_internal_worker_rlimit_nofiles(app) ==
@@ -214,6 +220,8 @@ int main(void) {
   app->close(app);
 
   vectis_app_config_init(&config);
+  config.server.max_connections = 512u;
+  config.server.request_limit = 64u;
   config.server.worker_count = 1u;
   config.server.worker_accept_threshold = 8u;
   config.server.worker_rlimit_nofiles = 2048u;
@@ -223,6 +231,7 @@ int main(void) {
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   assert(vectis_internal_worker_count(app) == 1u);
+  assert(vectis_internal_request_limit(app) == 64u);
   assert(vectis_internal_worker_accept_threshold(app) == 8u);
   assert(vectis_internal_worker_rlimit_nofiles(app) == 2048u);
   assert(vectis_internal_worker_set_affinity_disabled(app) == 1);
@@ -230,6 +239,20 @@ int main(void) {
   assert(vectis_internal_worker_death_policy(app) ==
          VECTIS_WORKER_DEATH_TERMINATE);
   app->close(app);
+
+#if SIZE_MAX > UINT_MAX
+  vectis_app_config_init(&config);
+  config.server.max_connections = ((size_t)UINT_MAX) + 1u;
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "max_connections") != NULL);
+
+  vectis_app_config_init(&config);
+  config.server.request_limit = ((size_t)UINT_MAX) + 1u;
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "request_limit") != NULL);
+#endif
 
   vectis_app_config_init(&config);
   config.server.worker_count = VECTIS_SERVER_MAX_WORKER_COUNT + 1u;

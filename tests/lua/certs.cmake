@@ -7,6 +7,21 @@ set(malformed_path "${WORK_DIR}/lua-malformed-cert.pem")
 set(auth_path "${WORK_DIR}/lua-cert-auth.json")
 set(script "${WORK_DIR}/lua-certs-smoke.lua")
 
+if(NOT DEFINED VECTIS_PORT_HELPER)
+  message(FATAL_ERROR "VECTIS_PORT_HELPER is required")
+endif()
+execute_process(COMMAND "${VECTIS_PORT_HELPER}"
+                RESULT_VARIABLE port_result
+                OUTPUT_VARIABLE picked_port
+                ERROR_VARIABLE port_stderr
+                OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(NOT port_result EQUAL 0)
+  message(FATAL_ERROR "test port allocation failed: ${port_stderr}")
+endif()
+if(NOT picked_port MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR "test port helper returned invalid port: ${picked_port}")
+endif()
+
 file(REMOVE "${bundle_path}" "${cert_path}" "${key_path}" "${csr_key_path}"
             "${csr_path}" "${malformed_path}" "${auth_path}"
             "${auth_path}.lock")
@@ -23,6 +38,7 @@ local csr_key_path = assert(arg[4])
 local csr_path = assert(arg[5])
 local malformed_path = assert(arg[6])
 local auth_path = assert(arg[7])
+local port = assert(tonumber(arg[8]))
 
 local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local function base64(data)
@@ -124,7 +140,7 @@ local webdav_key = assert(vectis.auth.webdav_key({
 local basic_auth = "Basic " .. base64(webdav_key.client_id .. ":" .. webdav_key.client_secret)
 local server = assert(vectis.server.new({
   bind = "127.0.0.1",
-  port = 28383,
+  port = port,
   hsts_max_age_seconds = 31536000,
   tls = {
     mode = "manual",
@@ -150,7 +166,7 @@ assert(server:start() == true)
 local response
 for _ = 1, 20 do
   response = curl.perform({
-    url = "https://localhost:28383/probe",
+    url = "https://localhost:" .. tostring(port) .. "/probe",
     headers = {Authorization = basic_auth},
     protocols = "https",
     timeout_ms = 2000,
@@ -188,6 +204,7 @@ assert(malformed_inspect_error.message:find("parse certificate", 1, true))
 execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${bundle_path}"
                         "${cert_path}" "${key_path}" "${csr_key_path}"
                         "${csr_path}" "${malformed_path}" "${auth_path}"
+                        "${picked_port}"
                 RESULT_VARIABLE certs_result
                 OUTPUT_VARIABLE certs_stdout
                 ERROR_VARIABLE certs_stderr)

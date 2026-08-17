@@ -52,8 +52,8 @@ invalid.
 zero preserves Kore's automatic CPU-count selection; explicit values must be at
 most `253`.
 The same table can also override server guardrails and worker resource knobs:
-`max_connections`, `worker_accept_threshold`, `worker_rlimit_nofiles`,
-`worker_set_affinity`, `worker_shutdown_timeout_ms`,
+`max_connections`, `request_limit`, `worker_accept_threshold`,
+`worker_rlimit_nofiles`, `worker_set_affinity`, `worker_shutdown_timeout_ms`,
 `max_request_header_bytes`, `max_request_body_bytes`,
 `request_header_timeout_ms`, `request_body_idle_timeout_ms`,
 `response_write_idle_timeout_ms`, `request_body_min_rate_bytes_per_sec`,
@@ -63,8 +63,10 @@ The same table can also override server guardrails and worker resource knobs:
 `websocket_max_frame_bytes`, `websocket_timeout_ms`, `server_header`, and
 `pretty_error_pages`. Zero uses the C default for most guardrails,
 `hsts_max_age_seconds = 0` disables HSTS, `pretty_error_pages = false` keeps
-bodyless framework 4xx/5xx responses minimal, and `max_request_body_bytes = 0`
-keeps the route-derived global body ceiling behavior. `server_header` must be
+bodyless framework 4xx/5xx responses minimal, `request_limit = 0` keeps Kore's
+active request-object limit matched to `max_connections`, and
+`max_request_body_bytes = 0` keeps the route-derived global body ceiling
+behavior. `server_header` must be
 omitted or non-empty because Kore does not expose a true Server-header
 suppression switch. `worker_death_policy` accepts `"restart"` and
 `"terminate"`; omission keeps Kore's restart behavior.

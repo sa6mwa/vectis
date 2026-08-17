@@ -3107,6 +3107,8 @@ vectis_effective_server_config(const vectis_server_config *config) {
   }
   effective.max_connections = vectis_default_size(
       config->max_connections, VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS);
+  effective.request_limit =
+      vectis_default_size(config->request_limit, effective.max_connections);
   effective.worker_count = config->worker_count;
   effective.worker_accept_threshold =
       vectis_default_size(config->worker_accept_threshold,
@@ -10244,6 +10246,16 @@ vectis_validate_server_config(const vectis_server_config *config,
     return VECTIS_ERR_INVALID;
   }
   effective = vectis_effective_server_config(config);
+  if (effective.max_connections > (size_t)UINT_MAX) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "server max_connections exceeds Kore uint32");
+    return VECTIS_ERR_INVALID;
+  }
+  if (effective.request_limit > (size_t)UINT_MAX) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "server request_limit exceeds Kore uint32");
+    return VECTIS_ERR_INVALID;
+  }
   if (effective.worker_count > VECTIS_SERVER_MAX_WORKER_COUNT) {
     vectis_set_errorf(error, VECTIS_ERR_INVALID,
                       "server worker_count must be 0 or at most %u",
@@ -22103,6 +22115,16 @@ size_t vectis_internal_worker_count(vectis_app *app) {
   }
   impl = (vectis_app_impl *)app->impl;
   return impl->server.worker_count;
+}
+
+size_t vectis_internal_request_limit(vectis_app *app) {
+  vectis_app_impl *impl;
+
+  if (app == NULL || app->impl == NULL) {
+    return 0u;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  return impl->server.request_limit;
 }
 
 size_t vectis_internal_worker_accept_threshold(vectis_app *app) {

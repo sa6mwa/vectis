@@ -1136,6 +1136,7 @@ do
     worker_set_affinity = false,
     worker_shutdown_timeout_ms = 2500,
     max_connections = 64,
+    request_limit = 32,
     max_request_header_bytes = 2048,
     max_request_body_bytes = 4096,
     request_header_timeout_ms = 1000,

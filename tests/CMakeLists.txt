@@ -257,6 +257,7 @@ if(TARGET vectis_bin)
   add_test(NAME vectis_lua_certs
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
                    -P "${CMAKE_SOURCE_DIR}/tests/lua/certs.cmake")
   set_tests_properties(vectis_lua_certs PROPERTIES

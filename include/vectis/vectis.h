@@ -1058,6 +1058,12 @@ typedef enum vectis_worker_death_policy {
 typedef struct vectis_server_config {
   size_t max_connections;
   /*
+   * Maximum active Kore HTTP request objects per worker. Zero keeps the Vectis
+   * default of matching max_connections. Nonzero values must fit in Kore's
+   * http_request_limit runtime field.
+   */
+  size_t request_limit;
+  /*
    * Number of Kore HTTP worker processes. Zero preserves Kore's automatic
    * CPU-count selection. Nonzero values must fit in Kore's worker_count
    * runtime field and are validated against VECTIS_SERVER_MAX_WORKER_COUNT.
@@ -1105,8 +1111,8 @@ typedef struct vectis_server_config {
   /* Listener backlog passed to Kore listen(2). Zero uses the Vectis default. */
   unsigned socket_backlog;
   /*
-   * Per-loop request processing budget used by Kore before yielding. Zero uses
-   * the Vectis default.
+   * Per-loop request processing time budget used by Kore before yielding. Zero
+   * uses the Vectis default.
    */
   unsigned request_process_budget_ms;
   /*

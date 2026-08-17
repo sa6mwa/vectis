@@ -1593,7 +1593,7 @@ static void vectis_kore_apply_server_config(const vectis_server_config *server,
   worker_policy = server->worker_death_policy == VECTIS_WORKER_DEATH_TERMINATE
                       ? KORE_WORKER_POLICY_TERMINATE
                       : KORE_WORKER_POLICY_RESTART;
-  http_request_limit = vectis_kore_u32_from_size(server->max_connections);
+  http_request_limit = vectis_kore_u32_from_size(server->request_limit);
   http_header_max = server->max_request_header_bytes;
   http_body_max = server->max_request_body_bytes;
   http_body_disk_offload =
