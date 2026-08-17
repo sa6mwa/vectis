@@ -10123,6 +10123,7 @@ static vectis_status
 vectis_validate_server_config(const vectis_server_config *config,
                               vectis_error *error) {
   vectis_server_config effective;
+  size_t i;
 
   if (config == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "server config is required");
@@ -10201,6 +10202,68 @@ vectis_validate_server_config(const vectis_server_config *config,
                        "server keepalive_timeout_ms must be non-negative when "
                        "keepalive is enabled");
       return VECTIS_ERR_INVALID;
+    }
+  }
+  if (effective.autoblock.status_rule_count >
+      VECTIS_AUTOBLOCK_MAX_STATUS_RULES) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "server autoblock status_rule_count exceeds maximum");
+    return VECTIS_ERR_INVALID;
+  }
+  if (effective.autoblock.event_rule_count > VECTIS_AUTOBLOCK_MAX_EVENT_RULES) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "server autoblock event_rule_count exceeds maximum");
+    return VECTIS_ERR_INVALID;
+  }
+  if (effective.autoblock.trusted_proxy_count >
+      VECTIS_AUTOBLOCK_MAX_TRUSTED_PROXIES) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "server autoblock trusted_proxy_count exceeds maximum");
+    return VECTIS_ERR_INVALID;
+  }
+  if (effective.autoblock.trusted_proxy_count > 0u &&
+      effective.autoblock.trusted_proxies == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "server autoblock trusted_proxies is required");
+    return VECTIS_ERR_INVALID;
+  }
+  for (i = 0u; i < effective.autoblock.trusted_proxy_count; ++i) {
+    if (effective.autoblock.trusted_proxies[i] == NULL ||
+        effective.autoblock.trusted_proxies[i][0] == '\0') {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "server autoblock trusted proxy must not be empty");
+      return VECTIS_ERR_INVALID;
+    }
+  }
+  if (effective.autoblock.enabled) {
+    for (i = 0u; i < effective.autoblock.status_rule_count; ++i) {
+      if (effective.autoblock.status_rules[i].status < 100u ||
+          effective.autoblock.status_rules[i].status > 599u) {
+        vectis_set_error(error, VECTIS_ERR_INVALID,
+                         "server autoblock status rule must use HTTP status "
+                         "100..599");
+        return VECTIS_ERR_INVALID;
+      }
+      if (effective.autoblock.status_rules[i].threshold == 0u) {
+        vectis_set_error(error, VECTIS_ERR_INVALID,
+                         "server autoblock status rule threshold must be "
+                         "positive");
+        return VECTIS_ERR_INVALID;
+      }
+    }
+    for (i = 0u; i < effective.autoblock.event_rule_count; ++i) {
+      if (effective.autoblock.event_rules[i].name == NULL ||
+          effective.autoblock.event_rules[i].name[0] == '\0') {
+        vectis_set_error(error, VECTIS_ERR_INVALID,
+                         "server autoblock event rule name must not be empty");
+        return VECTIS_ERR_INVALID;
+      }
+      if (effective.autoblock.event_rules[i].threshold == 0u) {
+        vectis_set_error(error, VECTIS_ERR_INVALID,
+                         "server autoblock event rule threshold must be "
+                         "positive");
+        return VECTIS_ERR_INVALID;
+      }
     }
   }
   return VECTIS_OK;

@@ -976,11 +976,19 @@ typedef struct vectis_autoblock_config {
   unsigned int max_entries;
   unsigned int tcp_stall_threshold;
   unsigned int tls_failure_threshold;
+  /* Number of active status rules; must not exceed
+   * VECTIS_AUTOBLOCK_MAX_STATUS_RULES. Enabled rules require HTTP status
+   * 100..599 and a positive threshold. */
   vectis_autoblock_status_rule status_rules[VECTIS_AUTOBLOCK_MAX_STATUS_RULES];
   size_t status_rule_count;
+  /* Number of active event rules; must not exceed
+   * VECTIS_AUTOBLOCK_MAX_EVENT_RULES. Enabled rules require a non-empty name
+   * and a positive threshold. */
   vectis_autoblock_event_rule event_rules[VECTIS_AUTOBLOCK_MAX_EVENT_RULES];
   size_t event_rule_count;
   int proxy_enabled;
+  /* Optional borrowed trusted proxy list; count must not exceed
+   * VECTIS_AUTOBLOCK_MAX_TRUSTED_PROXIES and each entry must be non-empty. */
   const char *const *trusted_proxies;
   size_t trusted_proxy_count;
 } vectis_autoblock_config;

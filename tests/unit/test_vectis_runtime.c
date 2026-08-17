@@ -2108,6 +2108,60 @@ static void assert_server_config_validation(void) {
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.server.autoblock.status_rule_count =
+      VECTIS_AUTOBLOCK_MAX_STATUS_RULES + 1u;
+  assert_invalid_server_config(&config, "status_rule_count");
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.server.autoblock.event_rule_count =
+      VECTIS_AUTOBLOCK_MAX_EVENT_RULES + 1u;
+  assert_invalid_server_config(&config, "event_rule_count");
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.server.autoblock.trusted_proxy_count =
+      VECTIS_AUTOBLOCK_MAX_TRUSTED_PROXIES + 1u;
+  assert_invalid_server_config(&config, "trusted_proxy_count");
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.server.autoblock.trusted_proxy_count = 1u;
+  assert_invalid_server_config(&config, "trusted_proxies");
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.server.autoblock.enabled = 1;
+  config.server.autoblock.status_rule_count = 1u;
+  config.server.autoblock.status_rules[0].status = 99u;
+  config.server.autoblock.status_rules[0].threshold = 1u;
+  assert_invalid_server_config(&config, "status rule");
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.server.autoblock.enabled = 1;
+  config.server.autoblock.status_rule_count = 1u;
+  config.server.autoblock.status_rules[0].status = 401u;
+  config.server.autoblock.status_rules[0].threshold = 0u;
+  assert_invalid_server_config(&config, "threshold");
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.server.autoblock.enabled = 1;
+  config.server.autoblock.event_rule_count = 1u;
+  config.server.autoblock.event_rules[0].threshold = 1u;
+  assert_invalid_server_config(&config, "event rule name");
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.server.autoblock.enabled = 1;
+  config.server.autoblock.event_rule_count = 1u;
+  config.server.autoblock.event_rules[0].name = "login_failed";
+  config.server.autoblock.event_rules[0].threshold = 0u;
+  assert_invalid_server_config(&config, "threshold");
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.supervision_policy = (vectis_supervision_policy)99;
   assert_invalid_server_config(&config, "supervision_policy");
 
