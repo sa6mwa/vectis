@@ -31,6 +31,7 @@
 #define VECTIS_SERVER_DEFAULT_HSTS_MAX_AGE_SECONDS 0u
 #define VECTIS_SERVER_DEFAULT_WEBSOCKET_MAX_FRAME_BYTES 16384u
 #define VECTIS_SERVER_DEFAULT_WEBSOCKET_TIMEOUT_MS 120000L
+#define VECTIS_SERVER_DEFAULT_SERVER_HEADER "vectis"
 #define VECTIS_SERVER_DEFAULT_WORKER_ACCEPT_THRESHOLD 16u
 #define VECTIS_SERVER_DEFAULT_WORKER_RLIMIT_NOFILES 768u
 #define VECTIS_SERVER_DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS 5000L
@@ -1115,6 +1116,12 @@ typedef struct vectis_server_config {
    * default.
    */
   long websocket_timeout_ms;
+  /*
+   * Value emitted in the HTTP Server header. NULL uses the Vectis default.
+   * Empty strings are invalid because Kore does not expose a true suppress
+   * switch for this header.
+   */
+  const char *server_header;
   vectis_autoblock_config autoblock;
 } vectis_server_config;
 

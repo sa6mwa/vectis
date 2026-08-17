@@ -90,6 +90,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Translate the currently supported `vectis_server_config` guardrails into concrete Kore runtime/config settings.
 - [x] Implement the remaining guardrails that Kore does not expose directly yet: response-write idle timeout, minimum body transfer rate, and keepalive request count.
 - [x] Expose Kore WebSocket max-frame and idle-timeout controls through libvectis and Lua server config.
+- [x] Expose the Kore HTTP Server header value through libvectis and Lua server config, with Vectis-owned validation.
 - [x] Wire `pslog` into the Kore runtime path so Vectis server logs and Kore runtime diagnostics use the configured app logger.
 - [x] Expose low-level Kore request/runtime escape hatches where practical for C handlers.
 - [x] Expose additional direct Kore configuration hooks where the startup lifecycle can report errors cleanly: listener bind/port and request-body disk-spool preflights now report occupied, invalid, or unusable startup inputs as Vectis errors before Kore can hit fatal setup paths.

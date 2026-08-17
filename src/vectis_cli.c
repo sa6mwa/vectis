@@ -11068,6 +11068,8 @@ static int vectis_lua_server_new(lua_State *lua) {
                             config.server.websocket_max_frame_bytes);
   config.server.websocket_timeout_ms = vectis_lua_table_long(
       lua, 1, "websocket_timeout_ms", config.server.websocket_timeout_ms);
+  config.server.server_header =
+      vectis_lua_table_string(lua, 1, "server_header");
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = bind != NULL ? bind : "127.0.0.1";
   config.tls.port = (unsigned short)port;

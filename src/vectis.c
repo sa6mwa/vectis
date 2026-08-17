@@ -454,6 +454,7 @@ typedef struct vectis_app_impl {
   int require_client_certificate;
   vectis_server_config server;
   char *request_body_spool_dir;
+  char *server_header;
   pslog_logger *logger;
   vectis_route_entry *routes;
   size_t route_count;
@@ -2949,6 +2950,7 @@ void vectis_server_config_init(vectis_server_config *config) {
   config->websocket_max_frame_bytes =
       VECTIS_SERVER_DEFAULT_WEBSOCKET_MAX_FRAME_BYTES;
   config->websocket_timeout_ms = VECTIS_SERVER_DEFAULT_WEBSOCKET_TIMEOUT_MS;
+  config->server_header = VECTIS_SERVER_DEFAULT_SERVER_HEADER;
   vectis_autoblock_config_init(&config->autoblock);
 }
 
@@ -3155,6 +3157,9 @@ vectis_effective_server_config(const vectis_server_config *config) {
                           VECTIS_SERVER_DEFAULT_WEBSOCKET_MAX_FRAME_BYTES);
   effective.websocket_timeout_ms = vectis_default_long(
       config->websocket_timeout_ms, VECTIS_SERVER_DEFAULT_WEBSOCKET_TIMEOUT_MS);
+  effective.server_header = config->server_header != NULL
+                                ? config->server_header
+                                : VECTIS_SERVER_DEFAULT_SERVER_HEADER;
   effective.autoblock = config->autoblock;
   effective.autoblock.window_seconds =
       vectis_default_unsigned(config->autoblock.window_seconds, 1800u);
@@ -10092,6 +10097,7 @@ static void vectis_destroy_impl_final(vectis_app_impl *impl) {
   free(impl->acme_directory_url);
   free(impl->acme_state_dir);
   free(impl->request_body_spool_dir);
+  free(impl->server_header);
   free(impl->unix_socket_path);
   free(impl->client_bundle_pem);
   free(impl->client_bundle_path);
@@ -10270,6 +10276,12 @@ vectis_validate_server_config(const vectis_server_config *config,
       config->request_body_spool_dir[0] == '\0') {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "server request_body_spool_dir must not be empty");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config != NULL && config->server_header != NULL &&
+      config->server_header[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "server server_header must not be empty");
     return VECTIS_ERR_INVALID;
   }
   if (config->request_header_timeout_ms < 0L) {
@@ -10985,6 +10997,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
       effective_server.request_body_spool_dir != NULL
           ? vectis_strdup(effective_server.request_body_spool_dir)
           : vectis_default_request_body_spool_dir(error);
+  impl->server_header = vectis_strdup(effective_server.server_header);
   impl->unix_socket_path = vectis_strdup(effective->lockd.unix_socket_path);
   impl->client_bundle_path = vectis_strdup(vectis_source_path_or_old(
       &effective->lockd.client_bundle, effective->lockd.client_bundle_path));
@@ -11005,10 +11018,11 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   impl->require_client_certificate = effective->tls.require_client_certificate;
   impl->server = effective_server;
   impl->server.request_body_spool_dir = impl->request_body_spool_dir;
+  impl->server.server_header = impl->server_header;
   impl->server.max_request_body_bytes =
       effective->server.max_request_body_bytes;
   if (impl->app_name == NULL || impl->bind == NULL || impl->domain == NULL ||
-      impl->request_body_spool_dir == NULL ||
+      impl->request_body_spool_dir == NULL || impl->server_header == NULL ||
       (effective->tls.cipher_list != NULL && impl->tls_cipher_list == NULL)) {
     vectis_destroy_impl(impl);
     free(app);

@@ -80,6 +80,7 @@ extern u_int64_t http_hsts_enable;
 extern u_int32_t kore_socket_backlog;
 extern u_int64_t kore_websocket_maxframe;
 extern u_int64_t kore_websocket_timeout;
+extern void http_server_version(const char *version);
 
 static pthread_mutex_t vectis_kore_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int vectis_kore_runtime_active = 0;
@@ -1629,6 +1630,7 @@ static void vectis_kore_apply_server_config(const vectis_server_config *server,
   http_hsts_enable = (u_int64_t)server->hsts_max_age_seconds;
   kore_websocket_maxframe = (u_int64_t)server->websocket_max_frame_bytes;
   kore_websocket_timeout = (u_int64_t)server->websocket_timeout_ms;
+  http_server_version(server->server_header);
 }
 
 static int vectis_kore_preflight_sleep_ms(long delay_ms) {

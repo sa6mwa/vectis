@@ -3071,6 +3071,7 @@ static void assert_kore_smoke(void) {
   config.server.request_body_min_rate_grace_ms = 500L;
   config.server.keepalive_max_requests = 1u;
   config.server.websocket_max_frame_bytes = 8u;
+  config.server.server_header = "vectis-runtime";
   config.server.worker_count = 1u;
   assert(mkdtemp(body_spool_dir) != NULL);
   written = snprintf(body_spool_child_dir, sizeof(body_spool_child_dir),
@@ -3342,6 +3343,8 @@ static void assert_kore_smoke(void) {
   }
   assert(status == VECTIS_OK);
   assert(response.status_code == 200L);
+  assert(strcmp(vectis_http_response_header(&response, "server"),
+                "vectis-runtime") == 0);
   assert(response.body_size == 2u);
   assert(memcmp(response.body, "ok", 2u) == 0);
 

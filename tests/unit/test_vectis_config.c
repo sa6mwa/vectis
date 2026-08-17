@@ -105,6 +105,8 @@ int main(void) {
          VECTIS_SERVER_DEFAULT_WEBSOCKET_MAX_FRAME_BYTES);
   assert(config.server.websocket_timeout_ms ==
          VECTIS_SERVER_DEFAULT_WEBSOCKET_TIMEOUT_MS);
+  assert(strcmp(config.server.server_header,
+                VECTIS_SERVER_DEFAULT_SERVER_HEADER) == 0);
   assert(config.lockd.timeout_ms == 30000L);
   assert(config.lockd.logger == NULL);
   assert(config.lockd.logger_disabled == 0);
@@ -181,6 +183,7 @@ int main(void) {
   config.server.keepalive_max_requests = 0u;
   config.server.websocket_max_frame_bytes = 0u;
   config.server.websocket_timeout_ms = 0L;
+  config.server.server_header = NULL;
   config.lockd.timeout_ms = 0L;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
@@ -235,6 +238,12 @@ int main(void) {
   app = vectis_app_new(&config, &error);
   assert(app == NULL);
   assert(strstr(error.message, "websocket_timeout_ms") != NULL);
+
+  vectis_app_config_init(&config);
+  config.server.server_header = "";
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "server_header") != NULL);
 
   vectis_app_config_init(&config);
   config.server.request_body_spool_dir = "/tmp/vectis-config-spool";

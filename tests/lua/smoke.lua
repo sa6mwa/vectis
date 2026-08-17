@@ -1140,6 +1140,7 @@ do
     hsts_max_age_seconds = 0,
     websocket_max_frame_bytes = 8192,
     websocket_timeout_ms = 45000,
+    server_header = "vectis-lua-smoke",
   }))
   worker_count_server:close()
 end
