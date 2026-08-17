@@ -2190,6 +2190,7 @@ static void assert_kore_smoke(void) {
   config.server.request_body_min_rate_bytes_per_sec = 1024u;
   config.server.request_body_min_rate_grace_ms = 500L;
   config.server.keepalive_max_requests = 1u;
+  config.server.worker_count = 1u;
   assert(mkdtemp(body_spool_dir) != NULL);
   config.server.request_body_spool_dir = body_spool_dir;
   body_spool_expectation.path_prefix = body_spool_dir;

@@ -10585,6 +10585,8 @@ static int vectis_lua_server_new(lua_State *lua) {
   }
   config.shutdown_grace_ms = vectis_lua_table_long(lua, 1, "shutdown_grace_ms",
                                                    config.shutdown_grace_ms);
+  config.server.worker_count =
+      vectis_lua_table_size(lua, 1, "worker_count", config.server.worker_count);
   config.server.request_body_spool_dir =
       vectis_lua_table_string(lua, 1, "request_body_spool_dir");
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;

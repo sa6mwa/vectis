@@ -1465,6 +1465,7 @@ static vectis_status vectis_kore_load_default_dhparams(vectis_error *error) {
 static void vectis_kore_apply_server_config(const vectis_server_config *server,
                                             size_t body_disk_offload_bytes,
                                             int body_disk_offload_configured) {
+  worker_count = (u_int8_t)server->worker_count;
   worker_max_connections = vectis_kore_u32_from_size(server->max_connections);
   worker_idle_timeout = (u_int64_t)server->idle_timeout_ms;
   http_request_limit = vectis_kore_u32_from_size(server->max_connections);

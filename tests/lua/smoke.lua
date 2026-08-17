@@ -1066,6 +1066,27 @@ do
 end
 
 do
+  local worker_count_server = assert(vectis.server.new({
+    app_name = "lua-worker-count",
+    port = 18169,
+    worker_count = 1,
+  }))
+  worker_count_server:close()
+end
+
+do
+  local bad_worker_count_server, bad_worker_count_error = vectis.server.new({
+    app_name = "lua-bad-worker-count",
+    port = 18173,
+    worker_count = 256,
+  })
+  assert(bad_worker_count_server == nil)
+  assert(type(bad_worker_count_error) == "table")
+  assert(bad_worker_count_error.status == vectis.ERR_INVALID)
+  assert(bad_worker_count_error.message:match("worker_count"))
+end
+
+do
   local direct_policy_server = assert(vectis.server.new({
     app_name = "lua-direct-supervision-policy",
     port = 18162,

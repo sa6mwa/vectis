@@ -65,6 +65,7 @@ int main(void) {
   assert(config.tls.acme_state_dir == NULL);
   assert(config.server.max_connections ==
          VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS);
+  assert(config.server.worker_count == 0u);
   assert(config.server.max_request_header_bytes ==
          VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES);
   assert(config.server.max_request_body_bytes == 0u);
@@ -114,6 +115,7 @@ int main(void) {
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.port = 0u;
   config.server.max_connections = 0u;
+  config.server.worker_count = 0u;
   config.server.max_request_header_bytes = 0u;
   config.server.max_request_body_bytes = 0u;
   config.server.request_header_timeout_ms = 0L;
@@ -127,6 +129,7 @@ int main(void) {
   config.lockd.timeout_ms = 0L;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
+  assert(vectis_internal_worker_count(app) == 0u);
   assert(strcmp(vectis_internal_request_body_spool_dir(app),
                 VECTIS_SERVER_DEFAULT_REQUEST_BODY_SPOOL_DIR) == 0);
   route = vectis_route(VECTIS_HTTP_POST, "/zero-default-body", sample_handler,
@@ -135,6 +138,19 @@ int main(void) {
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
   app->close(app);
+
+  vectis_app_config_init(&config);
+  config.server.worker_count = 1u;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  assert(vectis_internal_worker_count(app) == 1u);
+  app->close(app);
+
+  vectis_app_config_init(&config);
+  config.server.worker_count = VECTIS_SERVER_MAX_WORKER_COUNT + 1u;
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "worker_count") != NULL);
 
   vectis_app_config_init(&config);
   config.server.request_body_spool_dir = "/tmp/vectis-config-spool";

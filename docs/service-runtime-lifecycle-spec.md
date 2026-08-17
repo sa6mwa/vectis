@@ -340,6 +340,18 @@ The metrics HTTP endpoint can render JSON and the landed-style dashboard, but it
 must be mounted behind the same Vectis auth mechanism used by ordinary routes
 when auth is configured.
 
+## Direct Kore Runtime Configuration
+
+Vectis exposes production-relevant Kore runtime knobs through validated
+Vectis-owned config fields rather than requiring users to patch Kore config
+files. `vectis_server_config.worker_count` and Lua
+`vectis.server.new({worker_count = ...})` configure Kore HTTP worker processes:
+zero preserves Kore's automatic CPU-count selection, while explicit nonzero
+values are validated against Vectis' public `VECTIS_SERVER_MAX_WORKER_COUNT`
+bound before startup. The public bound leaves room for Kore's reserved
+key-manager/ACME worker slots. Startup must fail with a Vectis error rather
+than letting Kore reject a malformed low-level setting later.
+
 ## Request Body Policy Translation
 
 Vectis route body policies are semantic/materialization limits and must never

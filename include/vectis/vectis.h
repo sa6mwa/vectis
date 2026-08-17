@@ -15,6 +15,7 @@
 #define VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION                           \
   "https://acme-v02.api.letsencrypt.org/directory"
 #define VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS 1024u
+#define VECTIS_SERVER_MAX_WORKER_COUNT 253u
 #define VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES 65536u
 #define VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES 10485760u
 #define VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS 5000L
@@ -974,6 +975,12 @@ typedef struct vectis_autoblock_config {
 
 typedef struct vectis_server_config {
   size_t max_connections;
+  /*
+   * Number of Kore HTTP worker processes. Zero preserves Kore's automatic
+   * CPU-count selection. Nonzero values must fit in Kore's worker_count
+   * runtime field and are validated against VECTIS_SERVER_MAX_WORKER_COUNT.
+   */
+  size_t worker_count;
   size_t max_request_header_bytes;
   size_t max_request_body_bytes;
   /*

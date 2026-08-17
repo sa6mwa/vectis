@@ -39,6 +39,9 @@ threads.
 `request_body_spool_dir` controls the directory Kore uses for request-body spill
 files when a route enables streaming upload disk offload. Omission uses the
 Vectis default `/tmp/vectis-http-body`; an empty string is invalid.
+`worker_count` controls the number of Kore HTTP worker processes. Omission or
+zero preserves Kore's automatic CPU-count selection; explicit values must be at
+most `253`.
 
 Managed app-owned services inherit the server/app logger for lifecycle events
 such as start, stop, and monitored failure. Lua service registration helpers

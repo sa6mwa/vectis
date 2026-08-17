@@ -2899,6 +2899,7 @@ vectis_effective_server_config(const vectis_server_config *config) {
   }
   effective.max_connections = vectis_default_size(
       config->max_connections, VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS);
+  effective.worker_count = config->worker_count;
   effective.max_request_header_bytes =
       vectis_default_size(config->max_request_header_bytes,
                           VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES);
@@ -9207,6 +9208,12 @@ vectis_validate_server_config(const vectis_server_config *config,
     return VECTIS_ERR_INVALID;
   }
   effective = vectis_effective_server_config(config);
+  if (effective.worker_count > VECTIS_SERVER_MAX_WORKER_COUNT) {
+    vectis_set_errorf(error, VECTIS_ERR_INVALID,
+                      "server worker_count must be 0 or at most %u",
+                      VECTIS_SERVER_MAX_WORKER_COUNT);
+    return VECTIS_ERR_INVALID;
+  }
   if (effective.max_request_header_bytes < 1024u) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "server max_request_header_bytes must be at least 1024");
@@ -20282,6 +20289,16 @@ const char *vectis_internal_request_body_spool_dir(vectis_app *app) {
   }
   impl = (vectis_app_impl *)app->impl;
   return impl->request_body_spool_dir;
+}
+
+size_t vectis_internal_worker_count(vectis_app *app) {
+  vectis_app_impl *impl;
+
+  if (app == NULL || app->impl == NULL) {
+    return 0u;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  return impl->server.worker_count;
 }
 
 size_t vectis_route_count(const vectis_app *app) {
