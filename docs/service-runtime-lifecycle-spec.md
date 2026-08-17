@@ -696,6 +696,10 @@ Required additions or semantic changes:
 - descriptor-backed `vectis_managed_service` for C-owned app services that
   start after supervised Kore readiness, stop during coordinated shutdown, and
   propagate monitored failures through the app service-failure policy.
+- app-owned managed service configs inherit the app logger by default for
+  lifecycle start/stop/failure diagnostics, can override it with a borrowed
+  `pslog_logger *`, and can set `logger_disabled` to suppress service lifecycle
+  logging and dependency logger inheritance.
 - descriptor-backed `vectis_opcua_server_service` for borrowed cpkt OPC UA
   servers that run under the managed-service lifecycle.
 - app-owned service registration APIs for future OPC UA/curl/audio/SUS worker
@@ -739,6 +743,8 @@ Required semantics:
 - `vectis.curl_worker.http_request()` and
   `vectis.curl_worker.decode_http_response()` build/decode the copied C HTTP
   mailbox envelopes; Lua does not construct the binary payload format directly.
+- service registration helpers accept `logger_disabled = true`; otherwise
+  app-owned services inherit the app logger for lifecycle diagnostics.
 - Direct Lua callbacks for background services remain rejected unless they are
   attached to an explicit owner-state pump.
 - Examples must not use `os.execute`, shell `sleep`, or external commands for

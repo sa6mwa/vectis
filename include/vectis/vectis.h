@@ -786,6 +786,13 @@ typedef struct vectis_managed_service_config {
   size_t size;
   unsigned abi_version;
   const char *name;
+  /* Dedicated lifecycle logger override. When NULL and logger_disabled is
+   * false, the service inherits the Vectis app logger. The logger is borrowed
+   * and must outlive the service. */
+  pslog_logger *logger;
+  /* Disable managed-service lifecycle logging and dependency logger
+   * inheritance for service families that expose dependency logging. */
+  int logger_disabled;
   void *context;
   /* Materialize and start the service in the selected app runtime domain. */
   vectis_managed_service_start_fn start;
@@ -822,6 +829,8 @@ typedef struct vectis_opcua_server_service_config {
   size_t size;
   unsigned abi_version;
   const char *name;
+  pslog_logger *logger;
+  int logger_disabled;
   cpkt_opcua_server *server;
   int start_with_app;
   int wait_internal;
@@ -1141,6 +1150,8 @@ typedef struct vectis_curl_worker_service_config {
   size_t size;
   unsigned abi_version;
   const char *name;
+  pslog_logger *logger;
+  int logger_disabled;
   vectis_mailbox *request_mailbox;
   vectis_mailbox_broker *reply_broker;
   vectis_http_client_config http;
@@ -1197,6 +1208,8 @@ typedef struct vectis_cai_worker_service_config {
   size_t size;
   unsigned abi_version;
   const char *name;
+  pslog_logger *logger;
+  int logger_disabled;
   vectis_mailbox *request_mailbox;
   vectis_mailbox_broker *reply_broker;
   cai_client_config client;
@@ -1303,6 +1316,8 @@ typedef struct vectis_audio_worker_service_config {
   size_t size;
   unsigned abi_version;
   const char *name;
+  pslog_logger *logger;
+  int logger_disabled;
   vectis_mailbox *request_mailbox;
   vectis_mailbox_broker *reply_broker;
   vectis_mailbox *event_mailbox;
@@ -1383,6 +1398,8 @@ typedef struct vectis_sus_worker_service_config {
   size_t size;
   unsigned abi_version;
   const char *name;
+  pslog_logger *logger;
+  int logger_disabled;
   vectis_mailbox *request_mailbox;
   vectis_mailbox_broker *reply_broker;
   const char *model_path;

@@ -1062,6 +1062,8 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/tests/lua/example_local_facades_pack.cmake" 'logging\.lua'
   assert_contains "$matrix" '`vectis\.log` adds JSON logger defaults'
   assert_contains "$matrix" 'workflow:logging'
+  assert_contains "$matrix" 'logger_disabled'
+  assert_contains "$repo_root/docs/lua-server.md" 'Managed app-owned services inherit the server/app logger'
   assert_contains "$repo_root/include/vectis/auth.h" 'vectis_auth_basic_authorization'
   assert_contains "$repo_root/src/vectis_auth.c" 'EVP_EncodeBlock'
   assert_contains "$repo_root/src/vectis_cli.c" 'basic_authorization'

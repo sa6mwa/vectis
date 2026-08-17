@@ -872,16 +872,62 @@ assert(type(server.sse) == "function")
 assert(type(server.metrics) == "function")
 assert(type(server.opcua_server_service) == "function")
 assert(type(server.opcua_server_service_states) == "function")
+assert(type(server.curl_worker_service) == "function")
+assert(type(server.cai_worker_service) == "function")
+assert(type(server.audio_worker_service) == "function")
+assert(type(server.sus_worker_service) == "function")
 assert(type(server.json) == "function")
 assert(type(server.text) == "function")
 assert(type(server.redirect) == "function")
 assert(type(server.auth_json) == "function")
+do
+  local requests = assert(vectis.mailbox.new({ capacity = 4 }))
+  local audio_events = assert(vectis.mailbox.new({ capacity = 4 }))
+  assert(server:curl_worker_service({
+    name = "lua-smoke-curl-worker",
+    request_mailbox = requests,
+    start = false,
+    logger_disabled = true,
+  }) == true)
+  assert(server:cai_worker_service({
+    name = "lua-smoke-cai-worker",
+    request_mailbox = requests,
+    start = false,
+    logger_disabled = true,
+  }) == true)
+  assert(server:audio_worker_service({
+    name = "lua-smoke-audio-worker",
+    request_mailbox = requests,
+    event_mailbox = audio_events,
+    start = false,
+    logger_disabled = true,
+  }) == true)
+  assert(server:sus_worker_service({
+    name = "lua-smoke-sus-worker",
+    request_mailbox = requests,
+    start = false,
+    logger_disabled = true,
+  }) == true)
+  local curl_states = server:curl_worker_service_states()
+  local cai_states = server:cai_worker_service_states()
+  local audio_states = server:audio_worker_service_states()
+  local sus_states = server:sus_worker_service_states()
+  assert(curl_states[1].name == "lua-smoke-curl-worker")
+  assert(cai_states[1].name == "lua-smoke-cai-worker")
+  assert(audio_states[1].name == "lua-smoke-audio-worker")
+  assert(sus_states[1].name == "lua-smoke-sus-worker")
+  assert(curl_states[1].start_requested == false)
+  assert(cai_states[1].start_requested == false)
+  assert(audio_states[1].start_requested == false)
+  assert(sus_states[1].start_requested == false)
+end
 do
   local lifecycle_opcua_server = assert(opcua.server({}))
   assert(server:opcua_server_service({
     name = "lua-smoke-opcua",
     server = lifecycle_opcua_server,
     start = true,
+    logger_disabled = true,
     wait_internal = false,
     max_wait_ms = 5,
   }) == true)

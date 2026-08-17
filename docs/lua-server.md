@@ -37,6 +37,12 @@ for Kore startup. `warn_unavailable` only applies on platforms without exact
 thread inspection and does not allow known unsafe services or observed extra
 threads.
 
+Managed app-owned services inherit the server/app logger for lifecycle events
+such as start, stop, and monitored failure. Lua service registration helpers
+accept `logger_disabled = true` to suppress service lifecycle logging and
+dependency logger inheritance for that service. C embedders can additionally
+provide a per-service `pslog_logger *` override on managed service configs.
+
 `vectis.server.new({tls = ...})` accepts the same manual and ACME modes as the
 C app config. Manual TLS can use paths or in-memory PEM strings:
 

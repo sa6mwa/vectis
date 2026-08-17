@@ -827,6 +827,7 @@ LONEJSON_MAP_DEFINE(vectis_sus_worker_reply_json_map,
 
 typedef struct vectis_managed_service_impl {
   char *name;
+  pslog_logger *logger;
   void *context;
   vectis_managed_service_start_fn start_fn;
   vectis_managed_service_stop_fn stop_fn;
@@ -1016,6 +1017,47 @@ typedef struct vectis_opcua_monitor_mailbox_impl {
   pthread_mutex_t mutex;
   int mutex_initialized;
 } vectis_opcua_monitor_mailbox_impl;
+
+static const char *
+vectis_managed_service_log_name(const vectis_managed_service_impl *service) {
+  if (service != NULL && service->name != NULL && service->name[0] != '\0') {
+    return service->name;
+  }
+  return "managed-service";
+}
+
+static void
+vectis_managed_service_log_started(const vectis_managed_service_impl *service) {
+  if (service != NULL && service->logger != NULL) {
+    service->logger->infof(service->logger, "vectis.managed_service.started",
+                           "name=%s", vectis_managed_service_log_name(service));
+  }
+}
+
+static void
+vectis_managed_service_log_stopped(const vectis_managed_service_impl *service) {
+  if (service != NULL && service->logger != NULL) {
+    service->logger->infof(service->logger, "vectis.managed_service.stopped",
+                           "name=%s", vectis_managed_service_log_name(service));
+  }
+}
+
+static void
+vectis_managed_service_log_failure(const vectis_managed_service_impl *service,
+                                   const char *event, vectis_status status,
+                                   const vectis_error *error) {
+  const char *message;
+  const char *detail;
+
+  if (service == NULL || service->logger == NULL) {
+    return;
+  }
+  message = error != NULL && error->message[0] != '\0' ? error->message : "";
+  detail = error != NULL && error->detail[0] != '\0' ? error->detail : "";
+  service->logger->errorf(
+      service->logger, event, "name=%s status=%d error=%s detail=%s",
+      vectis_managed_service_log_name(service), (int)status, message, detail);
+}
 
 typedef struct vectis_curl_buffer {
   char *data;
@@ -5007,6 +5049,8 @@ static void *vectis_managed_service_monitor_main(void *userdata) {
     service->started = 0;
   }
   if (service->failed) {
+    vectis_managed_service_log_failure(service, "vectis.managed_service.failed",
+                                       status, &terminal_error);
     vectis_app_notify_managed_service_failure(service, &terminal_error);
   }
   return NULL;
@@ -5064,6 +5108,8 @@ vectis_managed_service_start_materialized(vectis_managed_service_impl *service,
   if (status != VECTIS_OK) {
     service->terminal_status = status;
     service->failed = 1;
+    vectis_managed_service_log_failure(
+        service, "vectis.managed_service.start_failed", status, error);
     return status;
   }
   service->materialized = 1;
@@ -5074,8 +5120,11 @@ vectis_managed_service_start_materialized(vectis_managed_service_impl *service,
       (void)service->stop_fn(service->context, NULL);
     }
     service->started = 0;
+    vectis_managed_service_log_failure(
+        service, "vectis.managed_service.monitor_start_failed", status, error);
     return status;
   }
+  vectis_managed_service_log_started(service);
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -8267,6 +8316,7 @@ static vectis_status vectis_app_stop_managed_services(vectis_app_impl *impl,
   vectis_error local_error;
   vectis_status first_status;
   vectis_status status;
+  int was_active;
 
   if (error != NULL) {
     vectis_error_clear(error);
@@ -8277,11 +8327,15 @@ static vectis_status vectis_app_stop_managed_services(vectis_app_impl *impl,
   }
   for (service = impl->managed_services; service != NULL;
        service = service->next_owned) {
+    was_active = service->started || service->monitor_active;
     service->stop_requested = 1;
     if (service->started && service->stop_fn != NULL) {
       vectis_error_clear(&local_error);
       status = service->stop_fn(service->context, &local_error);
       if (status != VECTIS_OK && first_status == VECTIS_OK) {
+        vectis_managed_service_log_failure(service,
+                                           "vectis.managed_service.stop_failed",
+                                           status, &local_error);
         first_status = status;
         if (error != NULL) {
           *error = local_error;
@@ -8291,6 +8345,8 @@ static vectis_status vectis_app_stop_managed_services(vectis_app_impl *impl,
     vectis_error_clear(&local_error);
     status = vectis_managed_service_join_monitor(service, &local_error);
     if (status != VECTIS_OK && first_status == VECTIS_OK) {
+      vectis_managed_service_log_failure(
+          service, "vectis.managed_service.stop_failed", status, &local_error);
       first_status = status;
       if (error != NULL) {
         *error = local_error;
@@ -8305,6 +8361,9 @@ static vectis_status vectis_app_stop_managed_services(vectis_app_impl *impl,
       first_status = error != NULL ? error->code : VECTIS_ERR_STATE;
     }
     service->started = 0;
+    if (was_active && first_status == VECTIS_OK) {
+      vectis_managed_service_log_stopped(service);
+    }
   }
   return first_status;
 }
@@ -22519,6 +22578,8 @@ vectis_status vectis_opcua_server_service_new(
   ctx->max_wait_ms = effective.max_wait_ms;
   vectis_managed_service_config_init(&managed);
   managed.name = effective.name != NULL ? effective.name : "opcua-server";
+  managed.logger = effective.logger;
+  managed.logger_disabled = effective.logger_disabled;
   managed.context = ctx;
   managed.start = vectis_opcua_server_service_start;
   managed.stop = vectis_opcua_server_service_stop;
@@ -22604,6 +22665,12 @@ vectis_status vectis_curl_worker_service_new(
   ctx->request_mailbox = effective.request_mailbox;
   ctx->reply_broker = effective.reply_broker;
   ctx->http = effective.http;
+  if (effective.logger_disabled) {
+    ctx->http.logger = NULL;
+  } else if (ctx->http.logger == NULL) {
+    ctx->http.logger =
+        effective.logger != NULL ? effective.logger : vectis_logger(app);
+  }
   if (!vectis_curl_worker_copy_http_config_string(
           &ctx->base_url, &ctx->http.base_url, effective.http.base_url) ||
       !vectis_curl_worker_copy_http_config_string(
@@ -22622,6 +22689,8 @@ vectis_status vectis_curl_worker_service_new(
   ctx->poll_timeout_ms = effective.poll_timeout_ms;
   vectis_managed_service_config_init(&managed);
   managed.name = effective.name != NULL ? effective.name : "curl-worker";
+  managed.logger = effective.logger;
+  managed.logger_disabled = effective.logger_disabled;
   managed.context = ctx;
   managed.start = vectis_curl_worker_service_start;
   managed.stop = vectis_curl_worker_service_stop;
@@ -22706,6 +22775,14 @@ vectis_status vectis_cai_worker_service_new(
   ctx->request_mailbox = effective.request_mailbox;
   ctx->reply_broker = effective.reply_broker;
   ctx->client_config = effective.client;
+  if (effective.logger_disabled) {
+    ctx->client_config.logger = NULL;
+    ctx->client_config.logger_disabled = 1;
+  } else if (ctx->client_config.logger == NULL &&
+             !ctx->client_config.logger_disabled) {
+    ctx->client_config.logger =
+        effective.logger != NULL ? effective.logger : vectis_logger(app);
+  }
   if (!vectis_cai_worker_copy_client_config_string(&ctx->api_key,
                                                    &ctx->client_config.api_key,
                                                    effective.client.api_key) ||
@@ -22735,6 +22812,8 @@ vectis_status vectis_cai_worker_service_new(
   ctx->poll_timeout_ms = effective.poll_timeout_ms;
   vectis_managed_service_config_init(&managed);
   managed.name = effective.name != NULL ? effective.name : "cai-worker";
+  managed.logger = effective.logger;
+  managed.logger_disabled = effective.logger_disabled;
   managed.context = ctx;
   managed.start = vectis_cai_worker_service_start;
   managed.stop = vectis_cai_worker_service_stop;
@@ -22815,6 +22894,8 @@ vectis_status vectis_audio_worker_service_new(
   ctx->max_segment_frames = effective.max_segment_frames;
   vectis_managed_service_config_init(&managed);
   managed.name = effective.name != NULL ? effective.name : "audio-worker";
+  managed.logger = effective.logger;
+  managed.logger_disabled = effective.logger_disabled;
   managed.context = ctx;
   managed.start = vectis_audio_worker_service_start;
   managed.stop = vectis_audio_worker_service_stop;
@@ -22922,6 +23003,8 @@ vectis_status vectis_sus_worker_service_new(
   ctx->max_text_bytes = effective.max_text_bytes;
   vectis_managed_service_config_init(&managed);
   managed.name = effective.name != NULL ? effective.name : "sus-worker";
+  managed.logger = effective.logger;
+  managed.logger_disabled = effective.logger_disabled;
   managed.context = ctx;
   managed.start = vectis_sus_worker_service_start;
   managed.stop = vectis_sus_worker_service_stop;
@@ -22975,6 +23058,7 @@ vectis_managed_service_new(vectis_app *app,
                      "managed service wait callback requires stop callback");
     return VECTIS_ERR_INVALID;
   }
+  impl = (vectis_app_impl *)app->impl;
   service = (vectis_managed_service *)calloc(1u, sizeof(*service));
   service_impl =
       (vectis_managed_service_impl *)calloc(1u, sizeof(*service_impl));
@@ -22995,6 +23079,10 @@ vectis_managed_service_new(vectis_app *app,
     return VECTIS_ERR_NOMEM;
   }
   service_impl->context = config->context;
+  service_impl->logger =
+      config->logger_disabled
+          ? NULL
+          : (config->logger != NULL ? config->logger : impl->logger);
   service_impl->start_fn = config->start;
   service_impl->stop_fn = config->stop;
   service_impl->wait_fn = config->wait;
@@ -23011,7 +23099,6 @@ vectis_managed_service_new(vectis_app *app,
   service->close = vectis_managed_service_destroy;
   service->impl = service_impl;
 
-  impl = (vectis_app_impl *)app->impl;
   service_impl->owner = impl;
   (void)pthread_mutex_lock(&impl->mutex);
   service_impl->next_owned = impl->managed_services;
@@ -23043,20 +23130,33 @@ vectis_status vectis_managed_service_stop(vectis_managed_service *service,
                                           vectis_error *error) {
   vectis_managed_service_impl *impl;
   vectis_status status;
+  int was_active;
 
   impl = service != NULL ? (vectis_managed_service_impl *)service->impl : NULL;
   if (impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "managed service is required");
     return VECTIS_ERR_INVALID;
   }
+  was_active = impl->started || impl->monitor_active;
   impl->stop_requested = 1;
   if (impl->started && impl->stop_fn != NULL) {
     status = impl->stop_fn(impl->context, error);
     if (status != VECTIS_OK) {
+      vectis_managed_service_log_failure(
+          impl, "vectis.managed_service.stop_failed", status, error);
       return status;
     }
   }
-  return vectis_managed_service_join_monitor(impl, error);
+  status = vectis_managed_service_join_monitor(impl, error);
+  if (status != VECTIS_OK) {
+    vectis_managed_service_log_failure(
+        impl, "vectis.managed_service.stop_failed", status, error);
+    return status;
+  }
+  if (was_active) {
+    vectis_managed_service_log_stopped(impl);
+  }
+  return VECTIS_OK;
 }
 
 vectis_status vectis_managed_service_wait(vectis_managed_service *service,

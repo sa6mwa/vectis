@@ -75,6 +75,11 @@ typedef struct runtime_managed_service_probe {
   const char *wait_error;
 } runtime_managed_service_probe;
 
+typedef struct runtime_log_buffer {
+  char data[8192];
+  size_t size;
+} runtime_log_buffer;
+
 typedef struct runtime_http_mock_server {
   int listen_fd;
   unsigned short port;
@@ -200,6 +205,43 @@ static void runtime_managed_service_cleanup(void *context) {
   if (probe != NULL) {
     probe->cleaned += 1;
   }
+}
+
+static int runtime_log_write(void *userdata, const char *data, size_t len,
+                             size_t *written) {
+  runtime_log_buffer *buffer;
+  size_t available;
+  size_t copy_size;
+
+  buffer = (runtime_log_buffer *)userdata;
+  assert(buffer != NULL);
+  available = buffer->size < sizeof(buffer->data) - 1u
+                  ? sizeof(buffer->data) - 1u - buffer->size
+                  : 0u;
+  copy_size = len < available ? len : available;
+  if (copy_size > 0u) {
+    memcpy(buffer->data + buffer->size, data, copy_size);
+    buffer->size += copy_size;
+    buffer->data[buffer->size] = '\0';
+  }
+  if (written != NULL) {
+    *written = len;
+  }
+  return 0;
+}
+
+static pslog_logger *runtime_test_logger(runtime_log_buffer *buffer) {
+  pslog_config config;
+
+  memset(buffer, 0, sizeof(*buffer));
+  pslog_default_config(&config);
+  config.mode = PSLOG_MODE_JSON;
+  config.output.write = runtime_log_write;
+  config.output.close = NULL;
+  config.output.isatty = NULL;
+  config.output.userdata = buffer;
+  config.output.owned = 0;
+  return pslog_new(&config);
 }
 
 static void *runtime_http_mock_main(void *userdata) {
@@ -3769,6 +3811,98 @@ static void assert_supervised_managed_service_lifecycle(void) {
   close(probe.wait_fds[1]);
 }
 
+static void assert_managed_service_inherits_app_logger(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_managed_service_config service_config;
+  vectis_managed_service *service;
+  runtime_managed_service_probe probe;
+  runtime_log_buffer log_buffer;
+  pslog_logger *logger;
+
+  logger = runtime_test_logger(&log_buffer);
+  assert(logger != NULL);
+  memset(&probe, 0, sizeof(probe));
+  probe.wait_fds[0] = -1;
+  probe.wait_fds[1] = -1;
+
+  vectis_app_config_init(&config);
+  config.logger = logger;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "log-inherited-service";
+  service_config.context = &probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.stop = runtime_managed_service_stop;
+  service_config.cleanup = runtime_managed_service_cleanup;
+  service_config.start_with_app = 1;
+  service = NULL;
+  status = app->managed_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+
+  assert(strstr(log_buffer.data, "vectis.managed_service.started") != NULL);
+  assert(strstr(log_buffer.data, "vectis.managed_service.stopped") != NULL);
+  assert(strstr(log_buffer.data, "log-inherited-service") != NULL);
+
+  service->close(service);
+  app->close(app);
+  logger->destroy(logger);
+}
+
+static void assert_managed_service_logger_disabled(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_managed_service_config service_config;
+  vectis_managed_service *service;
+  runtime_managed_service_probe probe;
+  runtime_log_buffer log_buffer;
+  pslog_logger *logger;
+
+  logger = runtime_test_logger(&log_buffer);
+  assert(logger != NULL);
+  memset(&probe, 0, sizeof(probe));
+  probe.wait_fds[0] = -1;
+  probe.wait_fds[1] = -1;
+
+  vectis_app_config_init(&config);
+  config.logger = logger;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "log-disabled-service";
+  service_config.logger_disabled = 1;
+  service_config.context = &probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.stop = runtime_managed_service_stop;
+  service_config.cleanup = runtime_managed_service_cleanup;
+  service_config.start_with_app = 1;
+  service = NULL;
+  status = app->managed_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+
+  assert(strstr(log_buffer.data, "vectis.managed_service.started") == NULL);
+  assert(strstr(log_buffer.data, "log-disabled-service") == NULL);
+
+  service->close(service);
+  app->close(app);
+  logger->destroy(logger);
+}
+
 static void assert_service_only_curl_worker_mailbox_http(void) {
   vectis_app_config app_config;
   vectis_app *app;
@@ -4351,6 +4485,14 @@ static int run_named_runtime_test(const char *name) {
     assert_supervised_managed_service_lifecycle();
     return 1;
   }
+  if (strcmp(name, "managed_service_inherits_app_logger") == 0) {
+    assert_managed_service_inherits_app_logger();
+    return 1;
+  }
+  if (strcmp(name, "managed_service_logger_disabled") == 0) {
+    assert_managed_service_logger_disabled();
+    return 1;
+  }
   if (strcmp(name, "service_only_curl_worker_mailbox_http") == 0) {
     assert_service_only_curl_worker_mailbox_http();
     return 1;
@@ -4413,6 +4555,8 @@ int main(void) {
   assert_supervised_child_exit_stops_consumer_service();
   assert_supervised_repeated_start_stop();
   assert_supervised_managed_service_lifecycle();
+  assert_managed_service_inherits_app_logger();
+  assert_managed_service_logger_disabled();
   assert_service_only_curl_worker_mailbox_http();
   assert_supervised_opcua_server_service_lifecycle();
   assert_supervised_shutdown_deadline_kills_stopped_runtime();

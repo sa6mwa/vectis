@@ -7334,6 +7334,7 @@ static int vectis_lua_server_opcua_server_service(lua_State *lua) {
   config.name = service->name;
   config.server = opcua_server;
   config.start_with_app = vectis_lua_table_bool(lua, 2, "start", 1);
+  config.logger_disabled = vectis_lua_table_bool(lua, 2, "logger_disabled", 0);
   config.wait_internal = vectis_lua_table_bool(lua, 2, "wait_internal", 0);
   config.max_wait_ms =
       vectis_lua_table_long(lua, 2, "max_wait_ms", config.max_wait_ms);
@@ -7550,6 +7551,7 @@ static int vectis_lua_server_curl_worker_service(lua_State *lua) {
   config.request_mailbox = request_box->mailbox;
   config.reply_broker = reply_broker != NULL ? reply_broker->broker : NULL;
   config.start_with_app = vectis_lua_table_bool(lua, 2, "start", 1);
+  config.logger_disabled = vectis_lua_table_bool(lua, 2, "logger_disabled", 0);
   config.poll_timeout_ms =
       vectis_lua_table_long(lua, 2, "poll_timeout_ms", config.poll_timeout_ms);
   vectis_lua_curl_worker_apply_http_config(lua, 2, &config.http);
@@ -7769,6 +7771,7 @@ static int vectis_lua_server_cai_worker_service(lua_State *lua) {
   config.request_mailbox = request_box->mailbox;
   config.reply_broker = reply_broker != NULL ? reply_broker->broker : NULL;
   config.start_with_app = vectis_lua_table_bool(lua, 2, "start", 1);
+  config.logger_disabled = vectis_lua_table_bool(lua, 2, "logger_disabled", 0);
   config.poll_timeout_ms =
       vectis_lua_table_long(lua, 2, "poll_timeout_ms", config.poll_timeout_ms);
   vectis_lua_cai_worker_apply_client_config(lua, 2, &config.client);
@@ -7944,6 +7947,7 @@ static int vectis_lua_server_audio_worker_service(lua_State *lua) {
   config.reply_broker = reply_broker != NULL ? reply_broker->broker : NULL;
   config.event_mailbox = event_box != NULL ? event_box->mailbox : NULL;
   config.start_with_app = vectis_lua_table_bool(lua, 2, "start", 1);
+  config.logger_disabled = vectis_lua_table_bool(lua, 2, "logger_disabled", 0);
   config.poll_timeout_ms =
       vectis_lua_table_long(lua, 2, "poll_timeout_ms", config.poll_timeout_ms);
   config.max_frames =
@@ -8111,6 +8115,7 @@ static int vectis_lua_server_sus_worker_service(lua_State *lua) {
   config.preserve_initial_space_after_first_transcriber = vectis_lua_table_bool(
       lua, 2, "preserve_initial_space_after_first_transcriber", 0);
   config.start_with_app = vectis_lua_table_bool(lua, 2, "start", 1);
+  config.logger_disabled = vectis_lua_table_bool(lua, 2, "logger_disabled", 0);
   config.poll_timeout_ms =
       vectis_lua_table_long(lua, 2, "poll_timeout_ms", config.poll_timeout_ms);
   config.max_frames =
