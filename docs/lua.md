@@ -98,6 +98,8 @@ modules or C SDK workflows:
   [Lua lockd](lua-lockd.md).
 - `vectis.log`: logging defaults and structured Vectis error fields over pslog,
   documented in [Lua logging](lua-log.md).
+- `vectis.mailbox`: bounded in-process service handoff and owner-state Lua
+  pumping, documented in [Lua mailbox](lua-mailbox.md).
 - `vectis.mqtt`: MQTT publish helper over curl, documented in
   [Lua MQTT](lua-mqtt.md).
 - `vectis.rest`: buffered JSON REST route and client helpers, documented in

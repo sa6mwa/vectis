@@ -366,7 +366,9 @@ OPC UA has three valid ownership modes:
 
 Managed OPC UA services must be descriptor-backed and materialized in the
 supervisor domain for T2. Monitor callbacks may publish copied payloads into a
-mailbox or runtime bus. They may not enter Lua directly.
+mailbox in their runtime domain. A future public runtime bus may also be a
+target after it is deliberately specified. Monitor callbacks may not enter Lua
+directly.
 
 The existing OPC UA mailbox adapter remains valid as a C-side adapter. A future
 OPC UA service declaration should compose that adapter rather than duplicating
@@ -398,8 +400,9 @@ quiescent process at app start and fail with an actionable error.
 When audio/SUS work is triggered by HTTP, the preferred production pattern is:
 
 1. Kore route validates and accepts work.
-2. Route sends a copied request to a supervisor worker through lockdc or the
-   runtime bus.
+2. Route sends a copied request to a supervisor worker through a lockdc queue or
+   pouch-backed storage today. A future public runtime request/reply bus may
+   cover this path only after it is deliberately specified for C and Lua.
 3. Supervisor worker owns the audio/SUS handle and returns a result through the
    selected reply path.
 
@@ -413,10 +416,15 @@ Lua state ownership is process-local and thread-local by policy:
   arbitrary Lua callbacks.
 - Lua callbacks registered as policy hooks are invoked only by an explicit pump
   on the owning Lua state.
+- The committed Lua pump API is `vectis.mailbox`: service callbacks publish
+  copied events to a `vectis_mailbox`, and Lua code calls `box:pump(handler,
+  opts)` from the owner state.
 
 This means a Lua route callback and a Lua service callback are not the same
 callback surface in T2. They communicate through copied messages, lockdc, the
-runtime bus, or explicit persistent storage.
+mailbox pump in the same runtime domain, or explicit persistent storage. Across
+the T2 Kore-child/supervisor process boundary, use lockdc queues or pouch-backed
+storage until a public runtime request/reply bus exists.
 
 ## Communication Between Domains
 
@@ -426,18 +434,16 @@ contracts.
 Valid cross-domain channels:
 
 - lockdc queues and pouch storage for durable communication;
-- a Vectis runtime bus over Unix sockets/socketpairs for bounded copied control
-  and request/reply messages;
+- the private Vectis runtime bus over Unix sockets/socketpairs for bounded
+  lifecycle control frames;
 - explicit files or storage configured by the app;
 - shared memory only for narrow process-shared data structures that are
   designed and tested as process-shared, currently the metrics counter block.
 
-The runtime bus should carry:
+The private runtime bus currently carries:
 
 - child readiness and shutdown events;
 - service failure events;
-- metrics snapshots or metrics deltas;
-- optional route-to-supervisor request/reply messages when configured;
 - structured errors with Vectis status/source metadata.
 
 Current implementation commits the first layer as internal supervisor control
@@ -456,6 +462,14 @@ bounded process-shared metrics block instead. Later request/reply frames must
 use the same bounded copied-message model or a deliberately named
 spooled/chunked extension; they must not smuggle in-process pointers or
 materialize unbounded "streaming" payloads.
+
+The public application request/reply default is not the private control bus.
+Within a single runtime domain, use `vectis_mailbox` and
+`vectis_mailbox_broker`. Across the T2 Kore-child/supervisor process boundary,
+use lockdc queues or pouch-backed storage today. A future public runtime
+request/reply bus must be introduced deliberately for both C and Lua, with
+bounded copied payloads, explicit timeout semantics, and no borrowed in-process
+pointers.
 
 ## Quiescence Guard
 
@@ -613,6 +627,9 @@ Required semantics:
    - curl worker descriptors where needed;
    - audio/SUS worker descriptors;
    - CAI/MCP supervisor worker descriptors.
+   - service declarations that accept Lua policy callbacks must publish copied
+     events to `vectis_mailbox` and require an owner-state Lua pump rather than
+     invoking Lua from service threads.
 8. Hardening:
    - repeated start/stop stress;
    - child crash and service crash tests;
@@ -651,14 +668,16 @@ Standard gates:
 - project finalize/prerelease gates as appropriate for the touched surfaces;
 - lifecycle review command with actionable issues resolved before completion.
 
-## Open Decisions Before Coding Beyond Lockdc
+## Committed Decisions Before Later Service Families
 
-The lockdc service descriptor and supervised runtime can be implemented without
-external product decisions. The following choices should be committed before
-implementing later service families:
+The lockdc descriptor and supervised runtime established the shared rules for
+later service families:
 
-- exact Lua pump API for supervisor-owned Lua callbacks;
-- runtime bus public exposure level for app-level request/reply: internal only,
-  C API, Lua API, or both. The supervisor control channel itself is internal.
-- whether route-to-supervisor request/reply should prefer runtime bus or lockdc
-  by default;
+- Lua service callbacks are owner-state callbacks and use the existing
+  `vectis.mailbox` pump contract. Service threads publish copied events; the
+  owning Lua state explicitly drains them.
+- The supervisor control channel remains internal lifecycle machinery, not a
+  public app request/reply API.
+- Route-to-supervisor application request/reply uses lockdc queues or
+  pouch-backed storage by default until a public runtime bus is deliberately
+  specified and implemented for both C and Lua.

@@ -126,6 +126,27 @@ assert_lua_example_dx_contract() {
   assert_contains "$repo_root/examples/README.md" 'must not require another file from `examples/lua/`'
 }
 
+assert_concurrency_mailbox_contract() {
+  assert_contains "$repo_root/docs/lua.md" '\[Lua mailbox\]\(lua-mailbox\.md\)'
+  assert_contains "$repo_root/docs/lua-mailbox.md" 'require\("vectis\.mailbox"\)'
+  assert_contains "$repo_root/docs/lua-mailbox.md" 'box:pump'
+  assert_contains "$repo_root/docs/lua-mailbox.md" 'owner-state callbacks'
+  assert_contains "$repo_root/docs/lua-mailbox.md" 'not durable storage'
+  assert_contains "$repo_root/docs/lua-mailbox.md" 'private Vectis runtime control bus'
+  assert_contains "$repo_root/docs/concurrency-dx.md" 'T2 supervised runtimes'
+  assert_contains "$repo_root/docs/concurrency-dx.md" 'ordinary `vectis_mailbox` handles remain process-local'
+  assert_contains "$repo_root/docs/service-runtime-lifecycle-spec.md" 'Committed Decisions Before Later Service Families'
+  assert_contains "$repo_root/docs/service-runtime-lifecycle-spec.md" '`vectis\.mailbox` pump contract'
+  assert_contains "$repo_root/docs/service-runtime-lifecycle-spec.md" 'supervisor control channel remains internal'
+  assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'docs/lua-mailbox\.md'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'box:pump'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'pump_callback_failures'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'direct Lua callbacks'
+  assert_contains "$repo_root/examples/lua/mailbox_pipeline.lua" ':pump'
+  assert_not_contains "$repo_root/docs/concurrency-dx.md" 'Kore-backed apps enter Kore directly'
+  assert_not_contains "$repo_root/docs/service-runtime-lifecycle-spec.md" 'Open Decisions Before Coding Beyond Lockdc'
+}
+
 assert_kore_lonejson_contract() {
   assert_contains "$repo_root/CMakeLists.txt" 'src/ljson\.c'
   assert_contains "$repo_root/CMakeLists.txt" 'KORE_USE_LONEJSON'
@@ -1208,6 +1229,7 @@ assert_contains "$repo_root/examples/CMakeLists.txt" 'Werror'
 assert_no_landed_test_assets
 assert_action_surface_contract
 assert_lua_example_dx_contract
+assert_concurrency_mailbox_contract
 assert_kore_lonejson_contract
 assert_kore_static_runtime_contract
 assert_lockdc_lua_runtime_contract

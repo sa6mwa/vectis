@@ -28,17 +28,19 @@ callbacks, and Kore worker code must not call arbitrary Lua callbacks directly.
 
 `vectis_run()` and `app->run(app, &error)` are the foreground service entry
 points for libvectis applications. `server:run()` is the Lua facade over the
-same core lifecycle. Kore-backed apps enter Kore directly from the caller's
-thread so Kore owns signal handling and parent/worker shutdown. `vectis_start()`
-and `server:start()` are process-backed starts for tests and tools that need the
-caller to continue while Kore serves in a managed child process; they must be
-paired with `wait()` or `stop()`. Lockd-only apps install temporary process
-handlers while waiting. On termination, the app shutdown sequence stops HTTP
-ingress and metrics, stops and waits app-created lockd consumer services, then
-closes app-owned lockd and CAI resources during app close. Applications that
-create additional daemon-like handles outside the app lifecycle must stop or
-close those handles explicitly or register them through the app-owned Vectis
-surfaces.
+same core lifecycle. Route-backed apps without app-owned background services may
+run as direct T1 Kore runtimes after the quiescence guard passes. Route-backed
+apps with app-owned services, metrics persistence, or forced supervision run as
+T2 supervised runtimes: Vectis forks a thread-clean Kore child first, then starts
+supervisor-domain services. Service-only apps run as T3 runtimes with no Kore
+fork boundary. `vectis_start()` and `server:start()` are managed starts for
+tests, tools, and daemon-style Lua scripts that need the caller to continue;
+they must be paired with `wait()` or `stop()`. On termination, the app shutdown
+sequence stops HTTP ingress and metrics, stops and waits app-created lockd
+consumer services, then closes app-owned lockd and CAI resources during app
+close. Applications that create additional daemon-like handles outside the app
+lifecycle must stop or close those handles explicitly or register them through
+the app-owned Vectis surfaces.
 
 The safe cross-service path is:
 
@@ -87,6 +89,13 @@ side routing entry point. Late replies after timeout fail with
 current depth, high-water depth, publish/drain counts, full/closed/timeout
 failure counts, and request/reply correlation counters. The stats surface is
 diagnostic only and must not be used as an exclusive synchronization primitive.
+
+In supervised route runtimes, ordinary `vectis_mailbox` handles remain process-local.
+Use lockdc queues or pouch-backed storage for application
+messages between the Kore child and the supervisor unless and until a public
+runtime request/reply bus is deliberately added. The current runtime control bus
+is private and reserved for lifecycle frames such as readiness, stop, and service
+failure wakeups.
 
 ## Performance Model
 
