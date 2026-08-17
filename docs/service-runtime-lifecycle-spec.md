@@ -631,7 +631,7 @@ Required semantics:
      events to `vectis_mailbox` and require an owner-state Lua pump rather than
      invoking Lua from service threads.
 8. Hardening:
-   - repeated start/stop stress;
+   - repeated supervised start/stop stress (`supervised_repeated_start_stop`);
    - child crash and service crash tests;
    - shutdown deadline tests;
    - review command from lifecycle skill until actionable issues are clean.
