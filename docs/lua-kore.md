@@ -16,7 +16,9 @@ assert(kore.websocket.TEXT == require("vectis").websocket.TEXT)
 
 The standalone Lua rock ships a pure-Lua fallback with the same constants and
 `runtime_available = false`, because an ordinary Lua process does not contain
-the Vectis-owned Kore runtime.
+the Vectis-owned Kore runtime. A `vectis` binary built with
+`VECTIS_WITH_KORE_RUNTIME=OFF` also reports `runtime_available = false`, with
+`runtime_model = "none"`.
 
 ## Fields
 
