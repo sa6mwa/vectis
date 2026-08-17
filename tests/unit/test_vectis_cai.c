@@ -174,6 +174,128 @@ static void test_mcp_route_registration(void) {
   cai_error_cleanup(&caierr);
 }
 
+static void test_worker_envelope(void) {
+  vectis_cai_worker_request request;
+  vectis_cai_worker_event event;
+  vectis_cai_worker_response response;
+  vectis_mailbox_event reply_event;
+  vectis_error error;
+  char reply_json[] = "{\"status\":0,\"dependency_code\":0,\"http_status\":0,"
+                      "\"text\":\"worker ok\"}";
+
+  vectis_cai_worker_request_init(&request);
+  assert(request.output_mode == VECTIS_CAI_WORKER_OUTPUT_TEXT);
+  assert(request.max_response_bytes ==
+         VECTIS_CAI_WORKER_DEFAULT_MAX_RESPONSE_BYTES);
+  request.provider = "openai";
+  request.model = "gpt-test";
+  request.input = "hello";
+  request.instructions = "be brief";
+  request.max_output_tokens = 8;
+  assert(vectis_cai_worker_event_build(&request, &event, &error) == VECTIS_OK);
+  assert(strcmp(event.message.kind, VECTIS_CAI_WORKER_REQUEST_KIND) == 0);
+  assert(event.message.expects_reply);
+  assert(event.message.payload_size > 0u);
+  assert(strstr((const char *)event.message.payload,
+                "\"model\":\"gpt-test\"") != NULL);
+  assert(strstr((const char *)event.message.payload, "\"input\":\"hello\"") !=
+         NULL);
+  vectis_cai_worker_event_cleanup(&event);
+
+  vectis_cai_worker_response_init(&response);
+  vectis_mailbox_event_init(&reply_event);
+  reply_event.kind = VECTIS_CAI_WORKER_REPLY_KIND;
+  reply_event.payload = reply_json;
+  reply_event.payload_size = sizeof(reply_json) - 1u;
+  assert(vectis_cai_worker_response_decode(&reply_event, &response, &error) ==
+         VECTIS_OK);
+  assert(response.status == VECTIS_OK);
+  assert(response.text != NULL);
+  assert(strcmp(response.text, "worker ok") == 0);
+  vectis_cai_worker_response_cleanup(&response);
+}
+
+static void test_worker_service_registration_and_error_reply(void) {
+  vectis_app_config app_config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_mailbox_config mailbox_config;
+  vectis_mailbox *mailbox;
+  vectis_mailbox_broker_config broker_config;
+  vectis_mailbox_broker *broker;
+  vectis_cai_worker_service_config worker_config;
+  vectis_managed_service *service;
+  vectis_managed_service_state service_state;
+  vectis_mailbox_message bad_message;
+  vectis_mailbox_event reply_event;
+  vectis_cai_worker_response response;
+  vectis_status status;
+  unsigned long correlation_id;
+
+  vectis_mailbox_config_init(&mailbox_config);
+  mailbox_config.capacity = 4u;
+  mailbox = NULL;
+  assert(vectis_mailbox_new(&mailbox_config, &mailbox, &error) == VECTIS_OK);
+  vectis_mailbox_broker_config_init(&broker_config);
+  broker_config.request_mailbox = mailbox;
+  broker = NULL;
+  assert(vectis_mailbox_broker_new(&broker_config, &broker, &error) ==
+         VECTIS_OK);
+
+  vectis_app_config_init(&app_config);
+  app = vectis_app_new(&app_config, &error);
+  assert(app != NULL);
+  assert(app->cai_worker_service != NULL);
+  vectis_cai_worker_service_config_init(&worker_config);
+  assert(worker_config.start_with_app == 1);
+  assert(worker_config.poll_timeout_ms ==
+         VECTIS_CAI_WORKER_DEFAULT_POLL_TIMEOUT_MS);
+  worker_config.name = "cai-worker-test";
+  worker_config.request_mailbox = mailbox;
+  worker_config.reply_broker = broker;
+  worker_config.client.api_key = "test-key";
+  worker_config.poll_timeout_ms = 10L;
+  service = NULL;
+  status = app->cai_worker_service(app, &worker_config, &service, &error);
+  assert(status == VECTIS_OK);
+  assert(service != NULL);
+  assert(service->state(service, &service_state, &error) == VECTIS_OK);
+  assert(service_state.declared);
+  assert(service_state.start_requested);
+  assert(!service_state.materialized);
+
+  assert(app->start(app, &error) == VECTIS_OK);
+  assert(service->state(service, &service_state, &error) == VECTIS_OK);
+  assert(service_state.materialized);
+  assert(service_state.started);
+  assert(service_state.monitor_active);
+
+  memset(&bad_message, 0, sizeof(bad_message));
+  bad_message.kind = "vectis.cai.unsupported";
+  bad_message.expects_reply = 1;
+  vectis_mailbox_event_init(&reply_event);
+  status = broker->request(broker, &bad_message, 3000L, &reply_event,
+                           &correlation_id, &error);
+  assert(status == VECTIS_OK);
+  assert(correlation_id != 0u);
+  vectis_cai_worker_response_init(&response);
+  assert(vectis_cai_worker_response_decode(&reply_event, &response, &error) ==
+         VECTIS_OK);
+  assert(response.status == VECTIS_ERR_INVALID);
+  assert(strstr(response.message, "event kind") != NULL);
+  vectis_cai_worker_response_cleanup(&response);
+  vectis_mailbox_event_cleanup(&reply_event);
+
+  assert(app->stop(app, &error) == VECTIS_OK);
+  assert(service->state(service, &service_state, &error) == VECTIS_OK);
+  assert(service_state.stop_requested);
+  assert(!service_state.started);
+  service->close(service);
+  app->close(app);
+  broker->destroy(broker);
+  mailbox->destroy(mailbox);
+}
+
 int main(void) {
   vectis_cai_config config;
 
@@ -191,6 +313,8 @@ int main(void) {
   test_invalid_output_adapters();
   test_mcp_route_config();
   test_mcp_route_registration();
+  test_worker_envelope();
+  test_worker_service_registration_and_error_reply();
 
   return 0;
 }

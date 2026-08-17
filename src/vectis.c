@@ -499,6 +499,28 @@ typedef struct vectis_error_response_body {
   char detail[256];
 } vectis_error_response_body;
 
+typedef struct vectis_cai_worker_request_json {
+  char *provider;
+  char *model;
+  char *input;
+  char *instructions;
+  char *output;
+  lonejson_int64 max_output_tokens;
+  int has_max_output_tokens;
+  lonejson_int64 max_response_bytes;
+  int has_max_response_bytes;
+} vectis_cai_worker_request_json;
+
+typedef struct vectis_cai_worker_reply_json {
+  lonejson_int64 status;
+  lonejson_int64 dependency_code;
+  lonejson_int64 http_status;
+  char *message;
+  char *detail;
+  char *text;
+  char *raw_json;
+} vectis_cai_worker_reply_json;
+
 static const lonejson_field vectis_error_response_fields[] = {
     LONEJSON_FIELD_STRING_FIXED_REQ(vectis_error_response_body, code, "code",
                                     LONEJSON_OVERFLOW_TRUNCATE),
@@ -509,6 +531,47 @@ static const lonejson_field vectis_error_response_fields[] = {
 
 LONEJSON_MAP_DEFINE(vectis_error_response_map, vectis_error_response_body,
                     vectis_error_response_fields);
+
+static const lonejson_field vectis_cai_worker_request_json_fields[] = {
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_cai_worker_request_json,
+                                           provider, "provider"),
+    LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_cai_worker_request_json, model,
+                                    "model"),
+    LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_cai_worker_request_json, input,
+                                    "input"),
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_cai_worker_request_json,
+                                           instructions, "instructions"),
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_cai_worker_request_json,
+                                           output, "output"),
+    LONEJSON_FIELD_I64_PRESENT(vectis_cai_worker_request_json,
+                               max_output_tokens, has_max_output_tokens,
+                               "max_output_tokens"),
+    LONEJSON_FIELD_I64_PRESENT(vectis_cai_worker_request_json,
+                               max_response_bytes, has_max_response_bytes,
+                               "max_response_bytes")};
+
+LONEJSON_MAP_DEFINE(vectis_cai_worker_request_json_map,
+                    vectis_cai_worker_request_json,
+                    vectis_cai_worker_request_json_fields);
+
+static const lonejson_field vectis_cai_worker_reply_json_fields[] = {
+    LONEJSON_FIELD_I64_REQ(vectis_cai_worker_reply_json, status, "status"),
+    LONEJSON_FIELD_I64(vectis_cai_worker_reply_json, dependency_code,
+                       "dependency_code"),
+    LONEJSON_FIELD_I64(vectis_cai_worker_reply_json, http_status,
+                       "http_status"),
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_cai_worker_reply_json,
+                                           message, "message"),
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_cai_worker_reply_json, detail,
+                                           "detail"),
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_cai_worker_reply_json, text,
+                                           "text"),
+    LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_cai_worker_reply_json,
+                                           raw_json, "raw_json")};
+
+LONEJSON_MAP_DEFINE(vectis_cai_worker_reply_json_map,
+                    vectis_cai_worker_reply_json,
+                    vectis_cai_worker_reply_json_fields);
 
 typedef struct vectis_managed_service_impl {
   char *name;
@@ -587,6 +650,22 @@ typedef struct vectis_curl_worker_service_context {
   int stopping;
   pthread_mutex_t mutex;
 } vectis_curl_worker_service_context;
+
+typedef struct vectis_cai_worker_service_context {
+  vectis_mailbox *request_mailbox;
+  vectis_mailbox_broker *reply_broker;
+  cai_client_config client_config;
+  char *api_key;
+  char *api_key_env;
+  char *base_url;
+  char *organization_id;
+  char *project_id;
+  char *ca_bundle_path;
+  char *ca_path;
+  long poll_timeout_ms;
+  int stopping;
+  pthread_mutex_t mutex;
+} vectis_cai_worker_service_context;
 
 typedef struct vectis_consumer_service_impl {
   lc_consumer_service *service;
@@ -5378,6 +5457,524 @@ static void vectis_curl_worker_service_cleanup(void *context) {
   free(ctx);
 }
 
+static void vectis_cai_worker_request_json_cleanup(
+    vectis_cai_worker_request_json *request) {
+  if (request == NULL) {
+    return;
+  }
+  free(request->provider);
+  free(request->model);
+  free(request->input);
+  free(request->instructions);
+  free(request->output);
+  memset(request, 0, sizeof(*request));
+}
+
+static void
+vectis_cai_worker_reply_json_cleanup(vectis_cai_worker_reply_json *reply) {
+  if (reply == NULL) {
+    return;
+  }
+  free(reply->message);
+  free(reply->detail);
+  free(reply->text);
+  free(reply->raw_json);
+  memset(reply, 0, sizeof(*reply));
+}
+
+static int vectis_cai_worker_json_copy_string(char **target,
+                                              const char *value) {
+  if (target == NULL) {
+    return 0;
+  }
+  *target = NULL;
+  if (value == NULL) {
+    return 1;
+  }
+  *target = vectis_strdup(value);
+  return *target != NULL;
+}
+
+static int
+vectis_cai_worker_service_is_stopping(vectis_cai_worker_service_context *ctx) {
+  int stopping;
+
+  if (ctx == NULL) {
+    return 1;
+  }
+  (void)pthread_mutex_lock(&ctx->mutex);
+  stopping = ctx->stopping;
+  (void)pthread_mutex_unlock(&ctx->mutex);
+  return stopping;
+}
+
+static vectis_status
+vectis_cai_worker_reply_event_build(const vectis_cai_worker_reply_json *reply,
+                                    vectis_cai_worker_event *out,
+                                    vectis_error *error) {
+  lonejson *runtime;
+  lonejson_error json_error;
+  char *json;
+  size_t json_size;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker reply output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(out, 0, sizeof(*out));
+  if (reply == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "CAI worker reply is required");
+    return VECTIS_ERR_INVALID;
+  }
+  runtime = vectis_lonejson_new(error);
+  if (runtime == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  json_size = 0u;
+  json = lonejson_serialize_alloc(runtime, &vectis_cai_worker_reply_json_map,
+                                  reply, &json_size, &json_error);
+  lonejson_free(runtime);
+  if (json == NULL) {
+    return vectis_set_lonejson_error(error, LONEJSON_STATUS_INVALID_JSON,
+                                     &json_error,
+                                     "failed to serialize CAI worker reply");
+  }
+  out->payload.data = json;
+  out->payload.size = json_size;
+  out->message.kind = VECTIS_CAI_WORKER_REPLY_KIND;
+  out->message.payload = json;
+  out->message.payload_size = json_size;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_cai_worker_reply_error(
+    vectis_cai_worker_service_context *ctx, const vectis_mailbox_event *event,
+    const vectis_error *transfer_error, vectis_status fallback_status,
+    const char *fallback_message, vectis_error *error) {
+  vectis_cai_worker_reply_json reply_json;
+  vectis_cai_worker_event reply_event;
+  vectis_status status;
+
+  if (ctx == NULL || ctx->reply_broker == NULL || event == NULL ||
+      !event->expects_reply || event->correlation_id == 0u) {
+    return VECTIS_OK;
+  }
+  memset(&reply_json, 0, sizeof(reply_json));
+  reply_json.status =
+      transfer_error != NULL ? transfer_error->code : fallback_status;
+  reply_json.dependency_code =
+      transfer_error != NULL ? transfer_error->dependency_code : 0L;
+  reply_json.http_status =
+      transfer_error != NULL ? transfer_error->http_status : 0L;
+  if (!vectis_cai_worker_json_copy_string(
+          &reply_json.message,
+          transfer_error != NULL && transfer_error->message[0] != '\0'
+              ? transfer_error->message
+              : fallback_message) ||
+      !vectis_cai_worker_json_copy_string(
+          &reply_json.detail,
+          transfer_error != NULL && transfer_error->detail[0] != '\0'
+              ? transfer_error->detail
+              : NULL)) {
+    vectis_cai_worker_reply_json_cleanup(&reply_json);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy CAI worker error reply");
+    return VECTIS_ERR_NOMEM;
+  }
+  status =
+      vectis_cai_worker_reply_event_build(&reply_json, &reply_event, error);
+  if (status != VECTIS_OK) {
+    vectis_cai_worker_reply_json_cleanup(&reply_json);
+    return status;
+  }
+  status = ctx->reply_broker->reply(ctx->reply_broker, event->correlation_id,
+                                    &reply_event.message, error);
+  vectis_cai_worker_event_cleanup(&reply_event);
+  vectis_cai_worker_reply_json_cleanup(&reply_json);
+  return status;
+}
+
+static vectis_status
+vectis_cai_worker_request_decode(const vectis_mailbox_event *event,
+                                 vectis_cai_worker_request_json *request,
+                                 vectis_error *error) {
+  lonejson *runtime;
+  lonejson_error json_error;
+  lonejson_status json_status;
+
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker request output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(request, 0, sizeof(*request));
+  if (event == NULL || event->kind == NULL ||
+      strcmp(event->kind, VECTIS_CAI_WORKER_REQUEST_KIND) != 0 ||
+      event->payload == NULL || event->payload_size == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker request event is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  runtime = vectis_lonejson_new(error);
+  if (runtime == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  json_status = lonejson_parse_buffer(
+      runtime, &vectis_cai_worker_request_json_map, request, event->payload,
+      event->payload_size, &json_error);
+  lonejson_free(runtime);
+  if (json_status != LONEJSON_STATUS_OK) {
+    vectis_cai_worker_request_json_cleanup(request);
+    return vectis_set_lonejson_error(error, json_status, &json_error,
+                                     "failed to parse CAI worker request");
+  }
+  if (request->model == NULL || request->model[0] == '\0' ||
+      request->input == NULL || request->input[0] == '\0') {
+    vectis_cai_worker_request_json_cleanup(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker request requires model and input");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->output != NULL && request->output[0] != '\0' &&
+      strcmp(request->output, "text") != 0 &&
+      strcmp(request->output, "raw_json") != 0) {
+    vectis_cai_worker_request_json_cleanup(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker output must be text or raw_json");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->has_max_output_tokens && request->max_output_tokens < 0) {
+    vectis_cai_worker_request_json_cleanup(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker max_output_tokens must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->has_max_response_bytes && request->max_response_bytes < 0) {
+    vectis_cai_worker_request_json_cleanup(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker max_response_bytes must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static size_t vectis_cai_worker_request_response_limit(
+    const vectis_cai_worker_request_json *request) {
+  if (request != NULL && request->has_max_response_bytes &&
+      request->max_response_bytes > 0) {
+    return (size_t)request->max_response_bytes;
+  }
+  return VECTIS_CAI_WORKER_DEFAULT_MAX_RESPONSE_BYTES;
+}
+
+static vectis_status vectis_cai_worker_check_output_limit(const char *value,
+                                                          size_t limit,
+                                                          vectis_error *error) {
+  if (value != NULL && strlen(value) > limit) {
+    vectis_set_error(error, VECTIS_ERR_CONFLICT,
+                     "CAI worker response exceeds configured limit");
+    return VECTIS_ERR_CONFLICT;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static void vectis_cai_worker_client_config_copy_runtime(
+    cai_client_config *dst, const cai_client_config *src,
+    const vectis_cai_worker_request_json *request) {
+  *dst = *src;
+  if (request != NULL && request->provider != NULL &&
+      strcmp(request->provider, "openrouter") == 0) {
+    cai_client_config_use_openrouter(dst);
+    dst->api_key = src->api_key;
+    dst->api_key_env = src->api_key_env;
+    dst->timeout_ms = src->timeout_ms;
+    dst->logger = src->logger;
+    dst->logger_disabled = src->logger_disabled;
+  }
+}
+
+static vectis_status
+vectis_cai_worker_run_request(vectis_cai_worker_service_context *ctx,
+                              const vectis_cai_worker_request_json *request,
+                              vectis_cai_worker_reply_json *reply,
+                              vectis_error *error) {
+  cai_client_config client_config;
+  cai_agent_config agent_config;
+  cai_client *client;
+  cai_agent *agent;
+  cai_response *response;
+  cai_error caierr;
+  const char *output;
+  size_t response_limit;
+  int rc;
+
+  if (ctx == NULL || request == NULL || reply == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker request context is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->provider != NULL && request->provider[0] != '\0' &&
+      strcmp(request->provider, "openai") != 0 &&
+      strcmp(request->provider, "openrouter") != 0) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker provider must be openai or openrouter");
+    return VECTIS_ERR_INVALID;
+  }
+  client = NULL;
+  agent = NULL;
+  response = NULL;
+  cai_error_init(&caierr);
+  vectis_cai_worker_client_config_copy_runtime(&client_config,
+                                               &ctx->client_config, request);
+  rc = cai_client_open(&client_config, &client, &caierr);
+  if (rc != CAI_OK) {
+    (void)vectis_cai_error(error, &caierr, "failed to open CAI worker client");
+    cai_error_cleanup(&caierr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  cai_agent_config_init(&agent_config);
+  agent_config.model = request->model;
+  agent_config.developer_instructions =
+      request->instructions != NULL && request->instructions[0] != '\0'
+          ? request->instructions
+          : NULL;
+  if (request->has_max_output_tokens && request->max_output_tokens > 0) {
+    agent_config.max_output_tokens = (int)request->max_output_tokens;
+  }
+  rc = client->new_agent(client, &agent_config, &agent, &caierr);
+  if (rc != CAI_OK) {
+    (void)vectis_cai_error(error, &caierr, "failed to create CAI worker agent");
+    cai_client_close(client);
+    cai_error_cleanup(&caierr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  rc = agent->send_text(agent, request->input, &response, &caierr);
+  if (rc != CAI_OK) {
+    (void)vectis_cai_error(error, &caierr, "CAI worker request failed");
+    agent->close(agent);
+    cai_client_close(client);
+    cai_error_cleanup(&caierr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  response_limit = vectis_cai_worker_request_response_limit(request);
+  if (request->output != NULL && strcmp(request->output, "raw_json") == 0) {
+    output = response->raw_json(response);
+    if (vectis_cai_worker_check_output_limit(output, response_limit, error) !=
+        VECTIS_OK) {
+      response->close(response);
+      agent->close(agent);
+      cai_client_close(client);
+      cai_error_cleanup(&caierr);
+      return error != NULL ? error->code : VECTIS_ERR_CONFLICT;
+    }
+    reply->raw_json = output != NULL ? vectis_strdup(output) : NULL;
+    if (output != NULL && reply->raw_json == NULL) {
+      response->close(response);
+      agent->close(agent);
+      cai_client_close(client);
+      cai_error_cleanup(&caierr);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy CAI worker raw JSON");
+      return VECTIS_ERR_NOMEM;
+    }
+  } else {
+    output = response->output_text(response);
+    if (vectis_cai_worker_check_output_limit(output, response_limit, error) !=
+        VECTIS_OK) {
+      response->close(response);
+      agent->close(agent);
+      cai_client_close(client);
+      cai_error_cleanup(&caierr);
+      return error != NULL ? error->code : VECTIS_ERR_CONFLICT;
+    }
+    reply->text = output != NULL ? vectis_strdup(output) : NULL;
+    if (output != NULL && reply->text == NULL) {
+      response->close(response);
+      agent->close(agent);
+      cai_client_close(client);
+      cai_error_cleanup(&caierr);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy CAI worker text");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  response->close(response);
+  agent->close(agent);
+  cai_client_close(client);
+  cai_error_cleanup(&caierr);
+  reply->status = VECTIS_OK;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status
+vectis_cai_worker_process_event(vectis_cai_worker_service_context *ctx,
+                                const vectis_mailbox_event *event,
+                                vectis_error *error) {
+  vectis_cai_worker_request_json request;
+  vectis_cai_worker_reply_json reply_json;
+  vectis_cai_worker_event reply_event;
+  vectis_error transfer_error;
+  vectis_status status;
+  vectis_status reply_status;
+
+  if (ctx == NULL || event == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker event context is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (event->kind == NULL ||
+      strcmp(event->kind, VECTIS_CAI_WORKER_REQUEST_KIND) != 0) {
+    return vectis_cai_worker_reply_error(ctx, event, NULL, VECTIS_ERR_INVALID,
+                                         "CAI worker event kind is not "
+                                         "supported",
+                                         error);
+  }
+  memset(&reply_json, 0, sizeof(reply_json));
+  vectis_error_clear(&transfer_error);
+  status = vectis_cai_worker_request_decode(event, &request, &transfer_error);
+  if (status == VECTIS_OK) {
+    status = vectis_cai_worker_run_request(ctx, &request, &reply_json,
+                                           &transfer_error);
+  }
+  if (status != VECTIS_OK) {
+    reply_status = vectis_cai_worker_reply_error(
+        ctx, event, &transfer_error, status, transfer_error.message, error);
+    vectis_cai_worker_request_json_cleanup(&request);
+    if (reply_status != VECTIS_OK) {
+      return reply_status;
+    }
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (event->expects_reply && ctx->reply_broker != NULL &&
+      event->correlation_id != 0u) {
+    reply_status =
+        vectis_cai_worker_reply_event_build(&reply_json, &reply_event, error);
+    if (reply_status == VECTIS_OK) {
+      reply_status =
+          ctx->reply_broker->reply(ctx->reply_broker, event->correlation_id,
+                                   &reply_event.message, error);
+      vectis_cai_worker_event_cleanup(&reply_event);
+    }
+    vectis_cai_worker_reply_json_cleanup(&reply_json);
+    vectis_cai_worker_request_json_cleanup(&request);
+    if (reply_status != VECTIS_OK) {
+      return reply_status;
+    }
+  } else {
+    vectis_cai_worker_reply_json_cleanup(&reply_json);
+    vectis_cai_worker_request_json_cleanup(&request);
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_cai_worker_service_start(void *context,
+                                                     vectis_error *error) {
+  vectis_cai_worker_service_context *ctx;
+
+  ctx = (vectis_cai_worker_service_context *)context;
+  if (ctx == NULL || ctx->request_mailbox == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker service requires request mailbox");
+    return VECTIS_ERR_INVALID;
+  }
+  (void)pthread_mutex_lock(&ctx->mutex);
+  ctx->stopping = 0;
+  (void)pthread_mutex_unlock(&ctx->mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_cai_worker_service_stop(void *context,
+                                                    vectis_error *error) {
+  vectis_cai_worker_service_context *ctx;
+
+  ctx = (vectis_cai_worker_service_context *)context;
+  if (ctx == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker service is required");
+    return VECTIS_ERR_INVALID;
+  }
+  (void)pthread_mutex_lock(&ctx->mutex);
+  ctx->stopping = 1;
+  (void)pthread_mutex_unlock(&ctx->mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_cai_worker_service_wait(void *context,
+                                                    vectis_error *error) {
+  vectis_cai_worker_service_context *ctx;
+  vectis_mailbox_event event;
+  vectis_error local_error;
+  vectis_status status;
+  long poll_timeout_ms;
+
+  ctx = (vectis_cai_worker_service_context *)context;
+  if (ctx == NULL || ctx->request_mailbox == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker service requires request mailbox");
+    return VECTIS_ERR_INVALID;
+  }
+  poll_timeout_ms = ctx->poll_timeout_ms > 0L
+                        ? ctx->poll_timeout_ms
+                        : VECTIS_CAI_WORKER_DEFAULT_POLL_TIMEOUT_MS;
+  while (!vectis_cai_worker_service_is_stopping(ctx)) {
+    vectis_mailbox_event_init(&event);
+    vectis_error_clear(&local_error);
+    status = ctx->request_mailbox->wait_next(ctx->request_mailbox, &event,
+                                             poll_timeout_ms, &local_error);
+    if (status == VECTIS_ERR_TIMEOUT) {
+      continue;
+    }
+    if (status != VECTIS_OK) {
+      if (vectis_cai_worker_service_is_stopping(ctx)) {
+        vectis_error_clear(error);
+        return VECTIS_OK;
+      }
+      if (error != NULL) {
+        *error = local_error;
+      }
+      return status;
+    }
+    status = vectis_cai_worker_process_event(ctx, &event, &local_error);
+    vectis_mailbox_event_cleanup(&event);
+    if (status != VECTIS_OK) {
+      if (error != NULL) {
+        *error = local_error;
+      }
+      return status;
+    }
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static void vectis_cai_worker_service_cleanup(void *context) {
+  vectis_cai_worker_service_context *ctx;
+
+  ctx = (vectis_cai_worker_service_context *)context;
+  if (ctx == NULL) {
+    return;
+  }
+  (void)vectis_cai_worker_service_stop(ctx, NULL);
+  (void)pthread_mutex_destroy(&ctx->mutex);
+  free(ctx->api_key);
+  free(ctx->api_key_env);
+  free(ctx->base_url);
+  free(ctx->organization_id);
+  free(ctx->project_id);
+  free(ctx->ca_bundle_path);
+  free(ctx->ca_path);
+  free(ctx);
+}
+
 static vectis_status vectis_app_stop_managed_services(vectis_app_impl *impl,
                                                       vectis_error *error) {
   vectis_managed_service_impl *service;
@@ -6995,6 +7592,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   app->managed_service = vectis_managed_service_new;
   app->opcua_server_service = vectis_opcua_server_service_new;
   app->curl_worker_service = vectis_curl_worker_service_new;
+  app->cai_worker_service = vectis_cai_worker_service_new;
   app->consumer_service = vectis_consumer_service_new;
   app->register_consumer_receiver = vectis_register_consumer_receiver;
   app->consumer_service_receiver = vectis_consumer_service_new_receiver;
@@ -18228,6 +18826,237 @@ void vectis_curl_worker_http_response_cleanup(
   vectis_curl_worker_http_response_init(response);
 }
 
+void vectis_cai_worker_service_config_init(
+    vectis_cai_worker_service_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->size = sizeof(*config);
+  config->abi_version = VECTIS_SERVICE_ABI_VERSION;
+  cai_client_config_init(&config->client);
+  config->start_with_app = 1;
+  config->poll_timeout_ms = VECTIS_CAI_WORKER_DEFAULT_POLL_TIMEOUT_MS;
+}
+
+void vectis_cai_worker_request_init(vectis_cai_worker_request *request) {
+  if (request == NULL) {
+    return;
+  }
+  memset(request, 0, sizeof(*request));
+  request->size = sizeof(*request);
+  request->abi_version = VECTIS_SERVICE_ABI_VERSION;
+  request->output_mode = VECTIS_CAI_WORKER_OUTPUT_TEXT;
+  request->max_response_bytes = VECTIS_CAI_WORKER_DEFAULT_MAX_RESPONSE_BYTES;
+}
+
+vectis_status
+vectis_cai_worker_event_build(const vectis_cai_worker_request *request,
+                              vectis_cai_worker_event *out,
+                              vectis_error *error) {
+  vectis_cai_worker_request_json request_json;
+  lonejson *runtime;
+  lonejson_error json_error;
+  char *json;
+  size_t json_size;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker event output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(out, 0, sizeof(*out));
+  if (request == NULL || request->model == NULL || request->model[0] == '\0' ||
+      request->input == NULL || request->input[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker request requires model and input");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->size != 0u && request->size < sizeof(*request)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker request size is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->abi_version != 0u &&
+      request->abi_version != VECTIS_SERVICE_ABI_VERSION) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker request abi_version is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->output_mode != VECTIS_CAI_WORKER_OUTPUT_TEXT &&
+      request->output_mode != VECTIS_CAI_WORKER_OUTPUT_RAW_JSON) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker output mode is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->max_output_tokens < 0) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker max_output_tokens must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&request_json, 0, sizeof(request_json));
+  if (!vectis_cai_worker_json_copy_string(&request_json.provider,
+                                          request->provider) ||
+      !vectis_cai_worker_json_copy_string(&request_json.model,
+                                          request->model) ||
+      !vectis_cai_worker_json_copy_string(&request_json.input,
+                                          request->input) ||
+      !vectis_cai_worker_json_copy_string(&request_json.instructions,
+                                          request->instructions) ||
+      !vectis_cai_worker_json_copy_string(
+          &request_json.output,
+          request->output_mode == VECTIS_CAI_WORKER_OUTPUT_RAW_JSON ? "raw_json"
+                                                                    : "text")) {
+    vectis_cai_worker_request_json_cleanup(&request_json);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy CAI worker request");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (request->max_output_tokens > 0) {
+    request_json.max_output_tokens = request->max_output_tokens;
+    request_json.has_max_output_tokens = 1;
+  }
+  if (request->max_response_bytes > 0u) {
+    request_json.max_response_bytes =
+        (lonejson_int64)request->max_response_bytes;
+    request_json.has_max_response_bytes = 1;
+  }
+  runtime = vectis_lonejson_new(error);
+  if (runtime == NULL) {
+    vectis_cai_worker_request_json_cleanup(&request_json);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  json_size = 0u;
+  json = lonejson_serialize_alloc(runtime, &vectis_cai_worker_request_json_map,
+                                  &request_json, &json_size, &json_error);
+  lonejson_free(runtime);
+  if (json == NULL) {
+    vectis_cai_worker_request_json_cleanup(&request_json);
+    return vectis_set_lonejson_error(error, LONEJSON_STATUS_INVALID_JSON,
+                                     &json_error,
+                                     "failed to serialize CAI worker request");
+  }
+  out->payload.data = json;
+  out->payload.size = json_size;
+  out->message.kind = VECTIS_CAI_WORKER_REQUEST_KIND;
+  out->message.payload = json;
+  out->message.payload_size = json_size;
+  out->message.expects_reply = 1;
+  vectis_cai_worker_request_json_cleanup(&request_json);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+void vectis_cai_worker_event_cleanup(vectis_cai_worker_event *event) {
+  if (event == NULL) {
+    return;
+  }
+  free(event->payload.data);
+  memset(event, 0, sizeof(*event));
+}
+
+void vectis_cai_worker_response_init(vectis_cai_worker_response *response) {
+  if (response == NULL) {
+    return;
+  }
+  memset(response, 0, sizeof(*response));
+  response->size = sizeof(*response);
+  response->abi_version = VECTIS_SERVICE_ABI_VERSION;
+}
+
+vectis_status
+vectis_cai_worker_response_decode(const vectis_mailbox_event *event,
+                                  vectis_cai_worker_response *response,
+                                  vectis_error *error) {
+  vectis_cai_worker_reply_json reply;
+  lonejson *runtime;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  size_t message_copy_size;
+  size_t detail_copy_size;
+
+  if (response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker response output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (response->size != sizeof(*response) ||
+      response->abi_version != VECTIS_SERVICE_ABI_VERSION) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker response output must be initialized");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_cai_worker_response_cleanup(response);
+  if (event == NULL || event->kind == NULL ||
+      strcmp(event->kind, VECTIS_CAI_WORKER_REPLY_KIND) != 0 ||
+      event->payload == NULL || event->payload_size == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker response event is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&reply, 0, sizeof(reply));
+  runtime = vectis_lonejson_new(error);
+  if (runtime == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  json_status =
+      lonejson_parse_buffer(runtime, &vectis_cai_worker_reply_json_map, &reply,
+                            event->payload, event->payload_size, &json_error);
+  lonejson_free(runtime);
+  if (json_status != LONEJSON_STATUS_OK) {
+    vectis_cai_worker_reply_json_cleanup(&reply);
+    return vectis_set_lonejson_error(error, json_status, &json_error,
+                                     "failed to parse CAI worker response");
+  }
+  response->status = (vectis_status)reply.status;
+  response->dependency_code = (long)reply.dependency_code;
+  response->http_status = (long)reply.http_status;
+  if (reply.message != NULL) {
+    message_copy_size = strlen(reply.message);
+    if (message_copy_size >= sizeof(response->message)) {
+      message_copy_size = sizeof(response->message) - 1u;
+    }
+    memcpy(response->message, reply.message, message_copy_size);
+  }
+  if (reply.detail != NULL) {
+    detail_copy_size = strlen(reply.detail);
+    if (detail_copy_size >= sizeof(response->detail)) {
+      detail_copy_size = sizeof(response->detail) - 1u;
+    }
+    memcpy(response->detail, reply.detail, detail_copy_size);
+  }
+  if (reply.text != NULL) {
+    response->text = vectis_strdup(reply.text);
+    if (response->text == NULL) {
+      vectis_cai_worker_reply_json_cleanup(&reply);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy CAI worker response text");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  if (reply.raw_json != NULL) {
+    response->raw_json = vectis_strdup(reply.raw_json);
+    if (response->raw_json == NULL) {
+      vectis_cai_worker_reply_json_cleanup(&reply);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy CAI worker response raw JSON");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  vectis_cai_worker_reply_json_cleanup(&reply);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+void vectis_cai_worker_response_cleanup(vectis_cai_worker_response *response) {
+  if (response == NULL) {
+    return;
+  }
+  free(response->text);
+  free(response->raw_json);
+  vectis_cai_worker_response_init(response);
+}
+
 void vectis_managed_service_state_init(vectis_managed_service_state *state) {
   if (state == NULL) {
     return;
@@ -18439,6 +19268,119 @@ vectis_status vectis_curl_worker_service_new(
   status = app->managed_service(app, &managed, out, error);
   if (status != VECTIS_OK) {
     vectis_curl_worker_service_cleanup(ctx);
+    return status;
+  }
+  return VECTIS_OK;
+}
+
+static int vectis_cai_worker_copy_client_config_string(char **owned,
+                                                       const char **target,
+                                                       const char *value) {
+  *owned = NULL;
+  *target = NULL;
+  if (value == NULL) {
+    return 1;
+  }
+  *owned = vectis_strdup(value);
+  if (*owned == NULL) {
+    return 0;
+  }
+  *target = *owned;
+  return 1;
+}
+
+vectis_status vectis_cai_worker_service_new(
+    vectis_app *app, const vectis_cai_worker_service_config *config,
+    vectis_managed_service **out, vectis_error *error) {
+  vectis_cai_worker_service_config effective;
+  vectis_cai_worker_service_context *ctx;
+  vectis_managed_service_config managed;
+  vectis_status status;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker service output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config == NULL || config->request_mailbox == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker service config requires request_mailbox");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->size != 0u && config->size < sizeof(*config)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker service config size is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->abi_version != 0u &&
+      config->abi_version != VECTIS_SERVICE_ABI_VERSION) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker service config abi_version is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_cai_worker_service_config_init(&effective);
+  effective = *config;
+  if (effective.poll_timeout_ms <= 0L) {
+    effective.poll_timeout_ms = VECTIS_CAI_WORKER_DEFAULT_POLL_TIMEOUT_MS;
+  }
+  ctx = (vectis_cai_worker_service_context *)calloc(1u, sizeof(*ctx));
+  if (ctx == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate CAI worker service");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (pthread_mutex_init(&ctx->mutex, NULL) != 0) {
+    free(ctx);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to initialize CAI worker service mutex");
+    return VECTIS_ERR_STATE;
+  }
+  ctx->request_mailbox = effective.request_mailbox;
+  ctx->reply_broker = effective.reply_broker;
+  ctx->client_config = effective.client;
+  if (!vectis_cai_worker_copy_client_config_string(&ctx->api_key,
+                                                   &ctx->client_config.api_key,
+                                                   effective.client.api_key) ||
+      !vectis_cai_worker_copy_client_config_string(
+          &ctx->api_key_env, &ctx->client_config.api_key_env,
+          effective.client.api_key_env) ||
+      !vectis_cai_worker_copy_client_config_string(&ctx->base_url,
+                                                   &ctx->client_config.base_url,
+                                                   effective.client.base_url) ||
+      !vectis_cai_worker_copy_client_config_string(
+          &ctx->organization_id, &ctx->client_config.organization_id,
+          effective.client.organization_id) ||
+      !vectis_cai_worker_copy_client_config_string(
+          &ctx->project_id, &ctx->client_config.project_id,
+          effective.client.project_id) ||
+      !vectis_cai_worker_copy_client_config_string(
+          &ctx->ca_bundle_path, &ctx->client_config.ca_bundle_path,
+          effective.client.ca_bundle_path) ||
+      !vectis_cai_worker_copy_client_config_string(&ctx->ca_path,
+                                                   &ctx->client_config.ca_path,
+                                                   effective.client.ca_path)) {
+    vectis_cai_worker_service_cleanup(ctx);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy CAI worker service config");
+    return VECTIS_ERR_NOMEM;
+  }
+  ctx->poll_timeout_ms = effective.poll_timeout_ms;
+  vectis_managed_service_config_init(&managed);
+  managed.name = effective.name != NULL ? effective.name : "cai-worker";
+  managed.context = ctx;
+  managed.start = vectis_cai_worker_service_start;
+  managed.stop = vectis_cai_worker_service_stop;
+  managed.wait = vectis_cai_worker_service_wait;
+  managed.cleanup = vectis_cai_worker_service_cleanup;
+  managed.start_with_app = effective.start_with_app ? 1 : 0;
+  status = app->managed_service(app, &managed, out, error);
+  if (status != VECTIS_OK) {
+    vectis_cai_worker_service_cleanup(ctx);
     return status;
   }
   return VECTIS_OK;

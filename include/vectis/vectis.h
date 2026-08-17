@@ -1146,6 +1146,61 @@ typedef struct vectis_curl_worker_service_config {
   long poll_timeout_ms;
 } vectis_curl_worker_service_config;
 
+#define VECTIS_CAI_WORKER_REQUEST_KIND "vectis.cai.request"
+#define VECTIS_CAI_WORKER_REPLY_KIND "vectis.cai.reply"
+#define VECTIS_CAI_WORKER_DEFAULT_POLL_TIMEOUT_MS 100L
+#define VECTIS_CAI_WORKER_DEFAULT_MAX_RESPONSE_BYTES (64u * 1024u)
+
+typedef enum vectis_cai_worker_output_mode {
+  VECTIS_CAI_WORKER_OUTPUT_TEXT = 0,
+  VECTIS_CAI_WORKER_OUTPUT_RAW_JSON = 1
+} vectis_cai_worker_output_mode;
+
+typedef struct vectis_cai_worker_request {
+  size_t size;
+  unsigned abi_version;
+  const char *provider;
+  const char *model;
+  const char *input;
+  const char *instructions;
+  vectis_cai_worker_output_mode output_mode;
+  int max_output_tokens;
+  size_t max_response_bytes;
+} vectis_cai_worker_request;
+
+typedef struct vectis_cai_worker_event {
+  vectis_mailbox_message message;
+  vectis_mutable_bytes payload;
+} vectis_cai_worker_event;
+
+typedef struct vectis_cai_worker_response {
+  size_t size;
+  unsigned abi_version;
+  vectis_status status;
+  long dependency_code;
+  long http_status;
+  char *text;
+  char *raw_json;
+  char message[256];
+  char detail[256];
+} vectis_cai_worker_response;
+
+/* Descriptor for a Vectis-owned CAI worker service. The request mailbox and
+ * optional broker are borrowed and must outlive the returned managed service.
+ * The worker drains VECTIS_CAI_WORKER_REQUEST_KIND events, opens CAI
+ * client/agent handles in the selected runtime domain, and replies through
+ * reply_broker when the incoming mailbox event expects a reply. */
+typedef struct vectis_cai_worker_service_config {
+  size_t size;
+  unsigned abi_version;
+  const char *name;
+  vectis_mailbox *request_mailbox;
+  vectis_mailbox_broker *reply_broker;
+  cai_client_config client;
+  int start_with_app;
+  long poll_timeout_ms;
+} vectis_cai_worker_service_config;
+
 typedef struct vectis_sftp_config {
   const char *url;
   const char *username;
@@ -1393,6 +1448,9 @@ struct vectis_app {
       vectis_managed_service **out, vectis_error *error);
   vectis_status (*curl_worker_service)(
       vectis_app *self, const vectis_curl_worker_service_config *config,
+      vectis_managed_service **out, vectis_error *error);
+  vectis_status (*cai_worker_service)(
+      vectis_app *self, const vectis_cai_worker_service_config *config,
       vectis_managed_service **out, vectis_error *error);
 
   /* Declare a Vectis-owned liblockdc consumer service. Vectis copies the
@@ -1795,6 +1853,20 @@ vectis_status vectis_curl_worker_http_response_decode(
     vectis_curl_worker_http_response *response, vectis_error *error);
 void vectis_curl_worker_http_response_cleanup(
     vectis_curl_worker_http_response *response);
+void vectis_cai_worker_service_config_init(
+    vectis_cai_worker_service_config *config);
+void vectis_cai_worker_request_init(vectis_cai_worker_request *request);
+vectis_status
+vectis_cai_worker_event_build(const vectis_cai_worker_request *request,
+                              vectis_cai_worker_event *out,
+                              vectis_error *error);
+void vectis_cai_worker_event_cleanup(vectis_cai_worker_event *event);
+void vectis_cai_worker_response_init(vectis_cai_worker_response *response);
+vectis_status
+vectis_cai_worker_response_decode(const vectis_mailbox_event *event,
+                                  vectis_cai_worker_response *response,
+                                  vectis_error *error);
+void vectis_cai_worker_response_cleanup(vectis_cai_worker_response *response);
 void vectis_opcua_monitor_event_config_init(
     vectis_opcua_monitor_event_config *config);
 void vectis_opcua_monitor_mailbox_config_init(
@@ -2051,6 +2123,9 @@ vectis_status vectis_opcua_server_service_new(
     vectis_managed_service **out, vectis_error *error);
 vectis_status vectis_curl_worker_service_new(
     vectis_app *app, const vectis_curl_worker_service_config *config,
+    vectis_managed_service **out, vectis_error *error);
+vectis_status vectis_cai_worker_service_new(
+    vectis_app *app, const vectis_cai_worker_service_config *config,
     vectis_managed_service **out, vectis_error *error);
 vectis_status vectis_managed_service_run(vectis_managed_service *service,
                                          vectis_error *error);

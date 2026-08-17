@@ -365,33 +365,36 @@ declaration domain. Lua registration may provide mailbox names and policy
 values, but Lua tool/policy callbacks run only through an owner-state pump or a
 Kore-mounted MCP route in the Kore child domain.
 
-First implementation contract:
+Implemented first slice:
 
 - `vectis_cai_worker_service` composes `vectis_managed_service`.
 - The descriptor copies Vectis/CAI client config that is safe to use after fork
-  and borrows only C-owned ingress/egress handles such as `vectis_mailbox`,
-  `vectis_mailbox_broker`, or a named lockdc queue.
+  and borrows only C-owned ingress/egress handles: currently
+  `vectis_mailbox` for requests and optional `vectis_mailbox_broker` for
+  correlated replies.
 - The descriptor does not borrow a `cai_client`, `cai_agent`,
   `cai_tool_registry`, Lua callback, or Kore request pointer from the
   declaration domain.
-- Materialization opens the CAI client/agent in the selected runtime domain
-  after the T2 Kore readiness barrier or immediately in T3.
+- Runtime request handling opens the CAI client/agent in the selected runtime
+  domain after service start. Declaration and app-owned configuration do not
+  open CAI runtime handles.
 - The first mailbox request kind is `vectis.cai.request`. Its payload is bounded
   JSON with `provider`, `model`, `input`, optional `instructions`, optional
-  raw CAI response params JSON, and explicit output limits. It is a
-  materialized request record, not streaming.
+  `max_output_tokens`, optional `max_response_bytes`, and `output` set to
+  `text` or `raw_json`. It is a materialized request record, not streaming.
 - The first mailbox reply kind is `vectis.cai.reply`. It carries status/source
-  metadata, dependency diagnostics, and either a bounded materialized text/JSON
-  response or a named file/lockdc output reference. The field name must reflect
-  the selected behavior, for example `text`, `json`, `file_path`, or
-  `lockd_document`.
+  metadata, dependency diagnostics, and either bounded materialized `text` or
+  bounded materialized `raw_json`.
 - The worker must publish copied events only. It must not invoke Lua tool
   callbacks. Tool-using agent flows remain Kore-mounted MCP routes or direct CAI
   facade usage until a separate owner-state tool pump is specified.
-- C helpers build/decode the mailbox envelopes so Lua does not construct
-  private binary or dependency-owned payloads directly. Lua helpers under
-  `vectis.cai_worker` are thin builders/decoders plus
+- C helpers build/decode the mailbox envelopes. Planned Lua helpers under
+  `vectis.cai_worker` must stay thin builders/decoders plus
   `server:cai_worker_service()` registration.
+- Future CAI worker extensions may add lockdc queue ingress, raw response
+  parameter pass-through, file-backed output, or lockdc document output, but
+  those extensions must keep field names explicit and must not smuggle borrowed
+  runtime handles across domains.
 - MCP client support remains dependency-native CAI-owned. Vectis does not add a
   duplicate MCP client worker unless a concrete app workflow requires a
   supervised long-running client service.
@@ -779,9 +782,10 @@ Required semantics:
      deterministic file/PCM/VOX/transcription request kinds before live-device
      or network-cache variants;
    - CAI/MCP supervisor worker descriptors with runtime-domain client/agent
-     materialization and no borrowed route/Lua callback state; first
-     implementation must cover mailbox request/reply for one-shot CAI text/JSON
-     work while leaving tool-callback MCP servers in the Kore route domain.
+     materialization and no borrowed route/Lua callback state; the first C
+     mailbox request/reply slice is implemented for one-shot CAI text/JSON work
+     while Lua registration and tool-callback MCP servers remain separate from
+     the supervisor worker.
    - service declarations that accept Lua policy callbacks must publish copied
      events to `vectis_mailbox` and require an owner-state Lua pump rather than
      invoking Lua from service threads.

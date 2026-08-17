@@ -1380,6 +1380,7 @@ static void assert_json_route_surface(void) {
   assert(app->logger != NULL);
   assert(app->lockd_client != NULL);
   assert(app->consumer_service != NULL);
+  assert(app->cai_worker_service != NULL);
   assert(app->close != NULL);
   assert(app->lockd_client(app) == NULL);
   request = vectis_internal_request_new(&error);
@@ -2061,6 +2062,64 @@ static void assert_consumer_service_surface(void) {
   app->close(app);
 }
 
+static void assert_cai_worker_surface(void) {
+  vectis_app_config app_config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_mailbox_config mailbox_config;
+  vectis_mailbox *mailbox;
+  vectis_cai_worker_service_config worker_config;
+  vectis_managed_service *service;
+  vectis_managed_service_state service_state;
+  vectis_cai_worker_request request;
+  vectis_cai_worker_response response;
+
+  service = NULL;
+  status = vectis_cai_worker_service_new(NULL, NULL, &service, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(service == NULL);
+
+  vectis_cai_worker_service_config_init(&worker_config);
+  assert(worker_config.start_with_app == 1);
+  assert(worker_config.poll_timeout_ms ==
+         VECTIS_CAI_WORKER_DEFAULT_POLL_TIMEOUT_MS);
+
+  vectis_cai_worker_request_init(&request);
+  assert(request.output_mode == VECTIS_CAI_WORKER_OUTPUT_TEXT);
+  assert(request.max_response_bytes ==
+         VECTIS_CAI_WORKER_DEFAULT_MAX_RESPONSE_BYTES);
+  status = vectis_cai_worker_event_build(&request, NULL, &error);
+  assert(status == VECTIS_ERR_INVALID);
+
+  vectis_cai_worker_response_init(&response);
+  assert(response.size == sizeof(response));
+  assert(response.abi_version == VECTIS_SERVICE_ABI_VERSION);
+
+  vectis_app_config_init(&app_config);
+  app = vectis_app_new(&app_config, &error);
+  assert(app != NULL);
+  assert(app->cai_worker_service != NULL);
+  status = app->cai_worker_service(app, &worker_config, &service, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(service == NULL);
+
+  vectis_mailbox_config_init(&mailbox_config);
+  mailbox = NULL;
+  assert(vectis_mailbox_new(&mailbox_config, &mailbox, &error) == VECTIS_OK);
+  worker_config.request_mailbox = mailbox;
+  status = app->cai_worker_service(app, &worker_config, &service, &error);
+  assert(status == VECTIS_OK);
+  assert(service != NULL);
+  assert(service->state(service, &service_state, &error) == VECTIS_OK);
+  assert(service_state.declared);
+  assert(service_state.start_requested);
+  assert(!service_state.materialized);
+  service->close(service);
+  app->close(app);
+  mailbox->destroy(mailbox);
+}
+
 static void assert_dsv_surface(void) {
   const char csv[] =
       "id,count,active\r\nalpha,2,true\r\n\"beta,quoted\",3,false\r\n";
@@ -2645,6 +2704,7 @@ int main(void) {
   assert_openapi_surface();
   assert_tls_source_surface();
   assert_consumer_service_surface();
+  assert_cai_worker_surface();
   assert_dsv_surface();
   assert_xml_surface();
   return 0;

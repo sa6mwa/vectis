@@ -260,8 +260,9 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add a libvectis/Kore CAI MCP route adapter that mounts CAI's Streamable HTTP handler, streams request bodies into CAI as a `cai_source`, and names the current response side as file-backed rather than live streaming.
 - [x] Add Lua `server:mcp()` for Vectis-owned MCP servers with C-owned CAI tool registries populated from Lua raw JSON tool callbacks.
 - [x] Re-export the upstream CAI MCP client Lua binding through the existing CAI/vectis.libs surfaces and the `vectis.cai.mcp_client` alias without implementing a Vectis-owned duplicate client binding.
-- [ ] Add descriptor-backed `vectis_cai_worker_service` for supervised one-shot CAI text/JSON work over bounded mailbox request/reply records, with runtime-domain CAI client/agent materialization and no borrowed Lua/Kore callback state.
-- [ ] Add C and Lua helpers for `vectis.cai.request` and `vectis.cai.reply` mailbox envelope build/decode, plus `server:cai_worker_service()` registration and deterministic service-only/supervised tests.
+- [x] Add descriptor-backed `vectis_cai_worker_service` for supervised one-shot CAI text/JSON work over bounded mailbox request/reply records, with runtime-domain CAI client/agent materialization and no borrowed Lua/Kore callback state.
+- [x] Add C helpers for `vectis.cai.request` and `vectis.cai.reply` mailbox envelope build/decode with deterministic service-only tests.
+- [ ] Add Lua helpers for `vectis.cai.request` and `vectis.cai.reply` mailbox envelope build/decode, plus `server:cai_worker_service()` registration and deterministic service-only/supervised tests.
 
 ## Area 12: Lua Runtime and Framework
 
