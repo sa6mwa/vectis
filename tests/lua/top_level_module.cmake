@@ -73,6 +73,7 @@ local c_owned = {
   "vectis.embedded",
   "vectis.server",
   "vectis.curl_worker",
+  "vectis.cai_worker",
   "vectis.ssh",
   "vectis.dsv.core",
   "vectis.xml.core",
@@ -108,6 +109,7 @@ assert(vectis.cert == require("vectis.cert"))
 assert(vectis.embedded == require("vectis.embedded"))
 assert(vectis.server == require("vectis.server"))
 assert(vectis.curl_worker == require("vectis.curl_worker"))
+assert(vectis.cai_worker == require("vectis.cai_worker"))
 assert(vectis.ssh == require("vectis.ssh"))
 assert(vectis.log == require("vectis.log"))
 assert(vectis.http == require("vectis.http"))

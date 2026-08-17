@@ -281,6 +281,16 @@ typedef struct vectis_lua_curl_worker_registration {
   struct vectis_lua_curl_worker_registration *next;
 } vectis_lua_curl_worker_registration;
 
+typedef struct vectis_lua_cai_worker_registration {
+  lua_State *lua;
+  vectis_managed_service *service;
+  char *name;
+  int request_ref;
+  int broker_ref;
+  int started;
+  struct vectis_lua_cai_worker_registration *next;
+} vectis_lua_cai_worker_registration;
+
 struct vectis_lua_server {
   vectis_app *app;
   int started;
@@ -294,6 +304,7 @@ struct vectis_lua_server {
   vectis_lua_consumer_registration *consumer_services;
   vectis_lua_opcua_service_registration *opcua_services;
   vectis_lua_curl_worker_registration *curl_worker_services;
+  vectis_lua_cai_worker_registration *cai_worker_services;
   vectis_lua_server_openapi_schema_ref *openapi_schema_refs;
 };
 
@@ -6232,6 +6243,44 @@ vectis_lua_server_curl_worker_service_free_all(vectis_lua_server *server) {
   }
 }
 
+static void vectis_lua_server_cai_worker_service_free(
+    vectis_lua_cai_worker_registration *service) {
+  if (service == NULL) {
+    return;
+  }
+  if (service->service != NULL) {
+    service->service->close(service->service);
+    service->service = NULL;
+  }
+  if (service->lua != NULL && service->request_ref != LUA_NOREF) {
+    luaL_unref(service->lua, LUA_REGISTRYINDEX, service->request_ref);
+    service->request_ref = LUA_NOREF;
+  }
+  if (service->lua != NULL && service->broker_ref != LUA_NOREF) {
+    luaL_unref(service->lua, LUA_REGISTRYINDEX, service->broker_ref);
+    service->broker_ref = LUA_NOREF;
+  }
+  free(service->name);
+  free(service);
+}
+
+static void
+vectis_lua_server_cai_worker_service_free_all(vectis_lua_server *server) {
+  vectis_lua_cai_worker_registration *service;
+  vectis_lua_cai_worker_registration *next;
+
+  if (server == NULL) {
+    return;
+  }
+  service = server->cai_worker_services;
+  server->cai_worker_services = NULL;
+  while (service != NULL) {
+    next = service->next;
+    vectis_lua_server_cai_worker_service_free(service);
+    service = next;
+  }
+}
+
 static int vectis_lua_copy_string_field(lua_State *lua, int index,
                                         const char *field, const char *fallback,
                                         char **out) {
@@ -6621,6 +6670,8 @@ static void
 vectis_lua_server_opcua_service_mark_stopped_all(vectis_lua_server *server);
 static void vectis_lua_server_curl_worker_service_mark_stopped_all(
     vectis_lua_server *server);
+static void vectis_lua_server_cai_worker_service_mark_stopped_all(
+    vectis_lua_server *server);
 
 static int vectis_lua_server_close(lua_State *lua) {
   vectis_lua_server *server;
@@ -6629,6 +6680,7 @@ static int vectis_lua_server_close(lua_State *lua) {
   vectis_lua_server_consumer_service_free_all(server);
   vectis_lua_server_opcua_service_free_all(server);
   vectis_lua_server_curl_worker_service_free_all(server);
+  vectis_lua_server_cai_worker_service_free_all(server);
   if (server->app != NULL) {
     server->app->close(server->app);
     server->app = NULL;
@@ -6678,12 +6730,14 @@ static int vectis_lua_server_run(lua_State *lua) {
     vectis_lua_server_consumer_service_mark_stopped_all(server);
     vectis_lua_server_opcua_service_mark_stopped_all(server);
     vectis_lua_server_curl_worker_service_mark_stopped_all(server);
+    vectis_lua_server_cai_worker_service_mark_stopped_all(server);
     server->started = 0;
     return vectis_lua_push_error(lua, status, &error);
   }
   vectis_lua_server_consumer_service_mark_stopped_all(server);
   vectis_lua_server_opcua_service_mark_stopped_all(server);
   vectis_lua_server_curl_worker_service_mark_stopped_all(server);
+  vectis_lua_server_cai_worker_service_mark_stopped_all(server);
   server->started = 0;
   lua_pushboolean(lua, 1);
   return 1;
@@ -6723,6 +6777,19 @@ static void vectis_lua_server_curl_worker_service_mark_stopped_all(
     return;
   }
   for (service = server->curl_worker_services; service != NULL;
+       service = service->next) {
+    service->started = 0;
+  }
+}
+
+static void vectis_lua_server_cai_worker_service_mark_stopped_all(
+    vectis_lua_server *server) {
+  vectis_lua_cai_worker_registration *service;
+
+  if (server == NULL) {
+    return;
+  }
+  for (service = server->cai_worker_services; service != NULL;
        service = service->next) {
     service->started = 0;
   }
@@ -6815,6 +6882,7 @@ static int vectis_lua_server_stop(lua_State *lua) {
   vectis_lua_server_consumer_service_mark_stopped_all(server);
   vectis_lua_server_opcua_service_mark_stopped_all(server);
   vectis_lua_server_curl_worker_service_mark_stopped_all(server);
+  vectis_lua_server_cai_worker_service_mark_stopped_all(server);
   server->started = 0;
   lua_pushboolean(lua, 1);
   return 1;
@@ -6835,12 +6903,14 @@ static int vectis_lua_server_wait(lua_State *lua) {
     vectis_lua_server_consumer_service_mark_stopped_all(server);
     vectis_lua_server_opcua_service_mark_stopped_all(server);
     vectis_lua_server_curl_worker_service_mark_stopped_all(server);
+    vectis_lua_server_cai_worker_service_mark_stopped_all(server);
     server->started = 0;
     return vectis_lua_push_error(lua, status, &error);
   }
   vectis_lua_server_consumer_service_mark_stopped_all(server);
   vectis_lua_server_opcua_service_mark_stopped_all(server);
   vectis_lua_server_curl_worker_service_mark_stopped_all(server);
+  vectis_lua_server_cai_worker_service_mark_stopped_all(server);
   server->started = 0;
   lua_pushboolean(lua, 1);
   return 1;
@@ -7356,6 +7426,225 @@ static int vectis_lua_server_curl_worker_service(lua_State *lua) {
   service->started = start_service ? 1 : 0;
   service->next = server->curl_worker_services;
   server->curl_worker_services = service;
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static void
+vectis_lua_cai_worker_apply_client_config(lua_State *lua, int index,
+                                          cai_client_config *config) {
+  const char *value;
+  int client_index;
+
+  if (config == NULL) {
+    return;
+  }
+  index = lua_absindex(lua, index);
+  client_index = index;
+  lua_getfield(lua, index, "client");
+  if (lua_istable(lua, -1)) {
+    client_index = lua_absindex(lua, -1);
+  } else {
+    lua_pop(lua, 1);
+  }
+
+  value = vectis_lua_table_string(lua, client_index, "api_key");
+  if (value != NULL) {
+    config->api_key = value;
+  }
+  value = vectis_lua_table_string(lua, client_index, "api_key_env");
+  if (value != NULL) {
+    config->api_key_env = value;
+  }
+  value = vectis_lua_table_string(lua, client_index, "base_url");
+  if (value != NULL) {
+    config->base_url = value;
+  }
+  value = vectis_lua_table_string(lua, client_index, "organization_id");
+  if (value != NULL) {
+    config->organization_id = value;
+  }
+  value = vectis_lua_table_string(lua, client_index, "project_id");
+  if (value != NULL) {
+    config->project_id = value;
+  }
+  value = vectis_lua_table_string(lua, client_index, "ca_bundle_path");
+  if (value == NULL) {
+    value = vectis_lua_table_string(lua, client_index, "ca_file");
+  }
+  if (value != NULL) {
+    config->ca_bundle_path = value;
+  }
+  value = vectis_lua_table_string(lua, client_index, "ca_path");
+  if (value != NULL) {
+    config->ca_path = value;
+  }
+  config->timeout_ms = vectis_lua_table_long(lua, client_index, "timeout_ms",
+                                             config->timeout_ms);
+  config->http_2_disabled = vectis_lua_table_bool(
+      lua, client_index, "http_2_disabled", config->http_2_disabled);
+  config->insecure_skip_verify = vectis_lua_table_bool(
+      lua, client_index, "insecure_skip_verify", config->insecure_skip_verify);
+  config->responses_websocket_fallback_disabled = vectis_lua_table_bool(
+      lua, client_index, "responses_websocket_fallback_disabled",
+      config->responses_websocket_fallback_disabled);
+  config->json_response_limit_bytes =
+      vectis_lua_table_size(lua, client_index, "json_response_limit_bytes",
+                            config->json_response_limit_bytes);
+  config->logger_disabled = vectis_lua_table_bool(
+      lua, client_index, "logger_disabled", config->logger_disabled);
+
+  if (client_index != index) {
+    lua_pop(lua, 1);
+  }
+}
+
+static int vectis_lua_server_cai_worker_service_states(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_lua_cai_worker_registration *service;
+  vectis_managed_service_state state;
+  vectis_error error;
+  vectis_status status;
+  lua_Integer index;
+
+  server = vectis_lua_check_server(lua, 1);
+  lua_newtable(lua);
+  index = 1;
+  for (service = server->cai_worker_services; service != NULL;
+       service = service->next) {
+    vectis_error_clear(&error);
+    status = service->service->state(service->service, &state, &error);
+    if (status != VECTIS_OK) {
+      lua_pop(lua, 1);
+      return vectis_lua_push_error(lua, status, &error);
+    }
+    vectis_lua_push_managed_service_state(lua, service->name, &state);
+    lua_rawseti(lua, -2, index);
+    ++index;
+  }
+  return 1;
+}
+
+static int vectis_lua_server_cai_worker_service(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_app *app;
+  vectis_lua_cai_worker_registration *service;
+  vectis_cai_worker_service_config config;
+  vectis_lua_mailbox *request_box;
+  vectis_lua_mailbox_broker *reply_broker;
+  vectis_error error;
+  vectis_status status;
+  const char *name;
+  int base;
+  int request_index;
+  int broker_index;
+  int owner_error;
+  int start_service;
+
+  server = vectis_lua_check_server(lua, 1);
+  app = vectis_lua_server_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  base = lua_gettop(lua);
+
+  lua_getfield(lua, 2, "callback");
+  if (!lua_isnil(lua, -1)) {
+    lua_settop(lua, base);
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID,
+        "cai worker service does not accept Lua callbacks; use server:mcp() "
+        "or a mailbox pump owned by the Lua state");
+  }
+  lua_pop(lua, 1);
+
+  lua_getfield(lua, 2, "request_mailbox");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, 2, "requests");
+  }
+  if (lua_isnil(lua, -1)) {
+    lua_settop(lua, base);
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID,
+        "cai worker service request_mailbox is required");
+  }
+  request_index = lua_absindex(lua, -1);
+  request_box = vectis_lua_check_mailbox(lua, request_index);
+  owner_error = vectis_lua_mailbox_validate_owner(lua, request_box);
+  if (owner_error != 0) {
+    return owner_error;
+  }
+
+  reply_broker = NULL;
+  broker_index = 0;
+  lua_getfield(lua, 2, "reply_broker");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, 2, "broker");
+  }
+  if (!lua_isnil(lua, -1)) {
+    broker_index = lua_absindex(lua, -1);
+    reply_broker = vectis_lua_check_mailbox_broker(lua, broker_index);
+    owner_error = vectis_lua_mailbox_broker_validate_owner(lua, reply_broker);
+    if (owner_error != 0) {
+      return owner_error;
+    }
+  }
+
+  service = (vectis_lua_cai_worker_registration *)calloc(1u, sizeof(*service));
+  if (service == NULL) {
+    lua_settop(lua, base);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to allocate cai worker service");
+  }
+  service->lua = lua;
+  service->request_ref = LUA_NOREF;
+  service->broker_ref = LUA_NOREF;
+  name = vectis_lua_table_string(lua, 2, "name");
+  if (name == NULL || name[0] == '\0') {
+    name = "cai-worker";
+  }
+  service->name = vectis_cli_strdup(name);
+  if (service->name == NULL) {
+    lua_settop(lua, base);
+    vectis_lua_server_cai_worker_service_free(service);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to copy cai worker name");
+  }
+
+  lua_pushvalue(lua, request_index);
+  service->request_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  if (reply_broker != NULL) {
+    lua_pushvalue(lua, broker_index);
+    service->broker_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  }
+  lua_settop(lua, base);
+
+  vectis_cai_worker_service_config_init(&config);
+  config.name = service->name;
+  config.request_mailbox = request_box->mailbox;
+  config.reply_broker = reply_broker != NULL ? reply_broker->broker : NULL;
+  config.start_with_app = vectis_lua_table_bool(lua, 2, "start", 1);
+  config.poll_timeout_ms =
+      vectis_lua_table_long(lua, 2, "poll_timeout_ms", config.poll_timeout_ms);
+  vectis_lua_cai_worker_apply_client_config(lua, 2, &config.client);
+
+  vectis_error_clear(&error);
+  status = app->cai_worker_service(app, &config, &service->service, &error);
+  if (status != VECTIS_OK) {
+    vectis_lua_server_cai_worker_service_free(service);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  start_service = config.start_with_app;
+  if (start_service && server->started) {
+    status = service->service->start(service->service, &error);
+    if (status != VECTIS_OK) {
+      vectis_lua_server_cai_worker_service_free(service);
+      return vectis_lua_push_error(lua, status, &error);
+    }
+  }
+  service->started = start_service ? 1 : 0;
+  service->next = server->cai_worker_services;
+  server->cai_worker_services = service;
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -9943,6 +10232,7 @@ static int vectis_lua_server_new(lua_State *lua) {
   server->consumer_services = NULL;
   server->opcua_services = NULL;
   server->curl_worker_services = NULL;
+  server->cai_worker_services = NULL;
   server->openapi_schema_refs = NULL;
   vectis_error_clear(&error);
   server->app = vectis_app_new(&config, &error);
@@ -15898,6 +16188,171 @@ static void vectis_lua_push_curl_worker_table(lua_State *lua) {
   lua_setfield(lua, -2, "decode_http_response");
 }
 
+static int
+vectis_lua_cai_worker_output_mode(lua_State *lua, int index,
+                                  vectis_cai_worker_output_mode *out) {
+  const char *output;
+
+  output = vectis_lua_table_string(lua, index, "output");
+  if (output == NULL) {
+    output = vectis_lua_table_string(lua, index, "output_mode");
+  }
+  if (output == NULL || output[0] == '\0' || strcmp(output, "text") == 0) {
+    *out = VECTIS_CAI_WORKER_OUTPUT_TEXT;
+    return 1;
+  }
+  if (strcmp(output, "raw_json") == 0 || strcmp(output, "json") == 0) {
+    *out = VECTIS_CAI_WORKER_OUTPUT_RAW_JSON;
+    return 1;
+  }
+  return luaL_error(lua, "cai worker output must be text or raw_json");
+}
+
+static int vectis_lua_cai_worker_request(lua_State *lua) {
+  vectis_cai_worker_request request;
+  vectis_cai_worker_event event;
+  vectis_error error;
+  vectis_status status;
+  long max_output_tokens;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_cai_worker_request_init(&request);
+  request.provider = vectis_lua_table_string(lua, 1, "provider");
+  request.model = vectis_lua_table_string(lua, 1, "model");
+  request.input = vectis_lua_table_string(lua, 1, "input");
+  if (request.input == NULL) {
+    request.input = vectis_lua_table_string(lua, 1, "text");
+  }
+  request.instructions = vectis_lua_table_string(lua, 1, "instructions");
+  if (request.instructions == NULL) {
+    request.instructions =
+        vectis_lua_table_string(lua, 1, "developer_instructions");
+  }
+  if (!vectis_lua_cai_worker_output_mode(lua, 1, &request.output_mode)) {
+    return 1;
+  }
+  max_output_tokens = vectis_lua_table_long(lua, 1, "max_output_tokens",
+                                            request.max_output_tokens);
+  if (max_output_tokens > INT_MAX) {
+    return luaL_error(lua, "cai worker max_output_tokens is too large");
+  }
+  request.max_output_tokens = (int)max_output_tokens;
+  request.max_response_bytes = vectis_lua_table_size(
+      lua, 1, "max_response_bytes", request.max_response_bytes);
+
+  vectis_error_clear(&error);
+  status = vectis_cai_worker_event_build(&request, &event, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_newtable(lua);
+  lua_pushstring(lua, event.message.kind);
+  lua_setfield(lua, -2, "kind");
+  lua_pushlstring(lua, (const char *)event.message.payload,
+                  event.message.payload_size);
+  lua_setfield(lua, -2, "payload");
+  lua_pushboolean(lua, event.message.expects_reply);
+  lua_setfield(lua, -2, "expects_reply");
+  vectis_cai_worker_event_cleanup(&event);
+  return 1;
+}
+
+static int vectis_lua_cai_worker_decode_reply(lua_State *lua) {
+  vectis_mailbox_event event;
+  vectis_cai_worker_response response;
+  vectis_error error;
+  vectis_status status;
+  const char *kind;
+  const char *payload;
+  size_t payload_size;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_mailbox_event_init(&event);
+  kind = vectis_lua_table_string(lua, 1, "kind");
+  if (kind != NULL) {
+    event.kind = vectis_cli_strdup(kind);
+    if (event.kind == NULL) {
+      return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                        "failed to copy cai worker reply kind");
+    }
+  }
+  lua_getfield(lua, 1, "payload");
+  if (!lua_isnil(lua, -1)) {
+    payload = luaL_checklstring(lua, -1, &payload_size);
+    if (payload_size > 0u) {
+      event.payload = malloc(payload_size);
+      if (event.payload == NULL) {
+        lua_pop(lua, 1);
+        vectis_mailbox_event_cleanup(&event);
+        return vectis_lua_push_error_text(
+            lua, VECTIS_ERR_NOMEM, "failed to copy cai worker reply payload");
+      }
+      memcpy(event.payload, payload, payload_size);
+      event.payload_size = payload_size;
+    }
+  }
+  lua_pop(lua, 1);
+  vectis_cai_worker_response_init(&response);
+  vectis_error_clear(&error);
+  status = vectis_cai_worker_response_decode(&event, &response, &error);
+  vectis_mailbox_event_cleanup(&event);
+  if (status != VECTIS_OK) {
+    vectis_cai_worker_response_cleanup(&response);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+
+  lua_newtable(lua);
+  lua_pushboolean(lua, response.status == VECTIS_OK);
+  lua_setfield(lua, -2, "ok");
+  lua_pushinteger(lua, (lua_Integer)response.status);
+  lua_setfield(lua, -2, "status");
+  lua_pushstring(lua, vectis_status_string(response.status));
+  lua_setfield(lua, -2, "status_string");
+  lua_pushinteger(lua, (lua_Integer)response.source);
+  lua_setfield(lua, -2, "source_code");
+  lua_pushstring(lua, vectis_error_source_string(response.source));
+  lua_setfield(lua, -2, "source");
+  lua_pushinteger(lua, (lua_Integer)response.dependency_code);
+  lua_setfield(lua, -2, "dependency_code");
+  lua_pushinteger(lua, (lua_Integer)response.http_status);
+  lua_setfield(lua, -2, "http_status");
+  if (response.text != NULL) {
+    lua_pushstring(lua, response.text);
+    lua_setfield(lua, -2, "text");
+  }
+  if (response.raw_json != NULL) {
+    lua_pushstring(lua, response.raw_json);
+    lua_setfield(lua, -2, "raw_json");
+  }
+  if (response.message[0] != '\0') {
+    lua_pushstring(lua, response.message);
+    lua_setfield(lua, -2, "message");
+  }
+  if (response.detail[0] != '\0') {
+    lua_pushstring(lua, response.detail);
+    lua_setfield(lua, -2, "detail");
+  }
+  vectis_cai_worker_response_cleanup(&response);
+  return 1;
+}
+
+static void vectis_lua_push_cai_worker_table(lua_State *lua) {
+  lua_newtable(lua);
+  lua_pushliteral(lua, VECTIS_CAI_WORKER_REQUEST_KIND);
+  lua_setfield(lua, -2, "REQUEST_KIND");
+  lua_pushliteral(lua, VECTIS_CAI_WORKER_REPLY_KIND);
+  lua_setfield(lua, -2, "REPLY_KIND");
+  lua_pushinteger(lua, (lua_Integer)VECTIS_CAI_WORKER_DEFAULT_POLL_TIMEOUT_MS);
+  lua_setfield(lua, -2, "DEFAULT_POLL_TIMEOUT_MS");
+  lua_pushinteger(lua,
+                  (lua_Integer)VECTIS_CAI_WORKER_DEFAULT_MAX_RESPONSE_BYTES);
+  lua_setfield(lua, -2, "DEFAULT_MAX_RESPONSE_BYTES");
+  lua_pushcfunction(lua, vectis_lua_cai_worker_request);
+  lua_setfield(lua, -2, "request");
+  lua_pushcfunction(lua, vectis_lua_cai_worker_decode_reply);
+  lua_setfield(lua, -2, "decode_reply");
+}
+
 static int vectis_lua_cert_generate_bundle(lua_State *lua) {
   vectis_cert_bundle_config config;
   vectis_error error;
@@ -16662,6 +17117,10 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "curl_worker_service");
     lua_pushcfunction(lua, vectis_lua_server_curl_worker_service_states);
     lua_setfield(lua, -2, "curl_worker_service_states");
+    lua_pushcfunction(lua, vectis_lua_server_cai_worker_service);
+    lua_setfield(lua, -2, "cai_worker_service");
+    lua_pushcfunction(lua, vectis_lua_server_cai_worker_service_states);
+    lua_setfield(lua, -2, "cai_worker_service_states");
     lua_pushcfunction(lua, vectis_lua_server_start);
     lua_setfield(lua, -2, "start");
     lua_pushcfunction(lua, vectis_lua_server_run);
@@ -16915,6 +17374,7 @@ static int luaopen_vectis(lua_State *lua) {
   vectis_lua_set_required_module(lua, "server", "vectis.server");
   vectis_lua_set_required_module(lua, "mailbox", "vectis.mailbox");
   vectis_lua_set_required_module(lua, "curl_worker", "vectis.curl_worker");
+  vectis_lua_set_required_module(lua, "cai_worker", "vectis.cai_worker");
   vectis_lua_set_required_module(lua, "cert", "vectis.cert");
   vectis_lua_set_required_module(lua, "ssh", "vectis.ssh");
   vectis_lua_push_libs_table(lua);
@@ -17009,6 +17469,15 @@ static int luaopen_vectis_curl_worker(lua_State *lua) {
 
 static int vectis_luaopen_vectis_curl_worker(void *lua_state) {
   return luaopen_vectis_curl_worker((lua_State *)lua_state);
+}
+
+static int luaopen_vectis_cai_worker(lua_State *lua) {
+  vectis_lua_push_cai_worker_table(lua);
+  return 1;
+}
+
+static int vectis_luaopen_vectis_cai_worker(void *lua_state) {
+  return luaopen_vectis_cai_worker((lua_State *)lua_state);
 }
 
 static int luaopen_vectis_auth(lua_State *lua) {
@@ -18522,6 +18991,11 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   }
   status = cpkt_lua_runtime_register_c_module(
       runtime, "vectis.curl_worker", vectis_luaopen_vectis_curl_worker);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_c_module(runtime, "vectis.cai_worker",
+                                              vectis_luaopen_vectis_cai_worker);
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }

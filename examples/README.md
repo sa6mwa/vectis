@@ -131,6 +131,9 @@ modules, but it must not require another file from `examples/lua/`.
 - `lua/curl_worker_service.lua`: supervised Lua server plus C-owned curl worker
   service using `vectis.mailbox.broker` request/reply and
   `vectis.curl_worker` HTTP envelope helpers.
+- `lua/cai_worker_service.lua`: service-only or supervised Lua runtime plus
+  C-owned CAI worker service using `vectis.mailbox.broker` request/reply and
+  `vectis.cai_worker` envelope helpers without live provider calls.
 - `lua/webdav_fileserver.lua`: mutable WebDAV fileserver mount and
   `vectis.webdav` client operations against a deterministic local server.
 - `lua/api_server.lua`: packable Lua API server script using direct

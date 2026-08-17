@@ -1177,6 +1177,7 @@ typedef struct vectis_cai_worker_response {
   size_t size;
   unsigned abi_version;
   vectis_status status;
+  vectis_error_source source;
   long dependency_code;
   long http_status;
   char *text;

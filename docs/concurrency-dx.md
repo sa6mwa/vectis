@@ -188,10 +188,11 @@ The first CAI worker request kind is `vectis.cai.request`; the reply kind is
 `vectis.cai.reply`. Request payloads are bounded JSON records describing the
 provider/model/input/instructions/options needed to open a runtime-domain CAI
 client or agent and run one operation. Replies carry Vectis status/source
-metadata, CAI dependency diagnostics, and explicitly named output fields such
-as `text`, `json`, `file_path`, or `lockd_document`. Worker threads never call
-Lua tool callbacks; tool-callback MCP servers stay mounted as Kore routes, or a
-future owner-state tool pump must be specified separately.
+metadata, CAI dependency diagnostics, and explicitly named `text` or `raw_json`
+output fields. File-backed and lockdc document outputs are future extensions
+that must be named as such. Worker threads never call Lua tool callbacks;
+tool-callback MCP servers stay mounted as Kore routes, or a future owner-state
+tool pump must be specified separately.
 
 Audio/SUS workers:
 
@@ -310,6 +311,12 @@ starts a supervised Vectis server with a `/hello` JSON route, registers a
 C-owned curl worker service over a Lua-created mailbox and broker, sends an HTTP
 request through the worker, decodes the reply, and inspects copied service
 lifecycle state.
+
+`examples/lua/cai_worker_service.lua` is the Lua CAI worker example. It runs in
+service-only mode by default and in supervised route-backed mode when a port is
+provided by the test harness, registers a C-owned CAI worker service, sends a
+deterministic no-network request through a mailbox broker, decodes the
+structured reply, and inspects copied service lifecycle state.
 
 ## Lua Surface
 

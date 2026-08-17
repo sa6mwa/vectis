@@ -56,6 +56,11 @@ vectis_pack_and_run_lua_example(
   "VECTIS_LUA_CAI_EXAMPLE_DIR=${WORK_DIR}")
 
 vectis_pack_and_run_lua_example(
+  "cai-worker-service"
+  "${VECTIS_SOURCE_DIR}/examples/lua/cai_worker_service.lua"
+  "lua cai worker service example ok")
+
+vectis_pack_and_run_lua_example(
   "audio-sus"
   "${VECTIS_SOURCE_DIR}/examples/lua/audio_sus.lua"
   "lua audio sus example ok")

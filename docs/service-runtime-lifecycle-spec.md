@@ -388,9 +388,10 @@ Implemented first slice:
 - The worker must publish copied events only. It must not invoke Lua tool
   callbacks. Tool-using agent flows remain Kore-mounted MCP routes or direct CAI
   facade usage until a separate owner-state tool pump is specified.
-- C helpers build/decode the mailbox envelopes. Planned Lua helpers under
-  `vectis.cai_worker` must stay thin builders/decoders plus
-  `server:cai_worker_service()` registration.
+- C helpers build/decode the mailbox envelopes. Lua helpers under
+  `vectis.cai_worker` are thin builders/decoders, and
+  `server:cai_worker_service()` registers the C-owned worker without accepting
+  Lua callbacks.
 - Future CAI worker extensions may add lockdc queue ingress, raw response
   parameter pass-through, file-backed output, or lockdc document output, but
   those extensions must keep field names explicit and must not smuggle borrowed
@@ -782,10 +783,10 @@ Required semantics:
      deterministic file/PCM/VOX/transcription request kinds before live-device
      or network-cache variants;
    - CAI/MCP supervisor worker descriptors with runtime-domain client/agent
-     materialization and no borrowed route/Lua callback state; the first C
-     mailbox request/reply slice is implemented for one-shot CAI text/JSON work
-     while Lua registration and tool-callback MCP servers remain separate from
-     the supervisor worker.
+     materialization and no borrowed route/Lua callback state; C and Lua
+     mailbox request/reply helpers are implemented for one-shot CAI text/JSON
+     work while tool-callback MCP servers remain separate from the supervisor
+     worker.
    - service declarations that accept Lua policy callbacks must publish copied
      events to `vectis_mailbox` and require an owner-state Lua pump rather than
      invoking Lua from service threads.

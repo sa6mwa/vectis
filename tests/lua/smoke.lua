@@ -111,6 +111,40 @@ assert(vectis.curl_worker.HTTP_KIND == "vectis.curl.http")
 assert(vectis.curl_worker.HTTP_REPLY_KIND == "vectis.curl.http.reply")
 assert(type(vectis.curl_worker.http_request) == "function")
 assert(type(vectis.curl_worker.decode_http_response) == "function")
+assert(vectis.cai_worker == require("vectis.cai_worker"))
+assert(vectis.cai_worker.REQUEST_KIND == "vectis.cai.request")
+assert(vectis.cai_worker.REPLY_KIND == "vectis.cai.reply")
+assert(type(vectis.cai_worker.request) == "function")
+assert(type(vectis.cai_worker.decode_reply) == "function")
+do
+  local cai_worker_event = assert(vectis.cai_worker.request({
+    provider = "openai",
+    model = "gpt-test",
+    text = "hello",
+    developer_instructions = "be brief",
+    max_output_tokens = 4,
+  }))
+  assert(cai_worker_event.kind == vectis.cai_worker.REQUEST_KIND)
+  assert(cai_worker_event.expects_reply == true)
+  assert(cai_worker_event.payload:find('"model":"gpt-test"', 1, true))
+  local cai_worker_reply = assert(vectis.cai_worker.decode_reply({
+    kind = vectis.cai_worker.REPLY_KIND,
+    payload = '{"status":0,"source_code":0,"dependency_code":0,' ..
+        '"http_status":0,"text":"worker ok"}',
+  }))
+  assert(cai_worker_reply.ok == true)
+  assert(cai_worker_reply.status == status.OK)
+  assert(cai_worker_reply.source_code == status.ERROR_SOURCE_NONE)
+  assert(cai_worker_reply.text == "worker ok")
+  local oversized_ok, oversized_err = pcall(vectis.cai_worker.request, {
+    provider = "openai",
+    model = "gpt-test",
+    text = "hello",
+    max_output_tokens = 2147483648,
+  })
+  assert(oversized_ok == false)
+  assert(tostring(oversized_err):find("too large", 1, true))
+end
 assert(vectis.cert == cert)
 assert(vectis.embedded == embedded)
 assert(vectis.server == server_module)
@@ -218,6 +252,7 @@ assert(package.loaded["lql.core"] == lql.core)
 assert(package.loaded.pslog == pslog)
 assert(package.loaded["vectis.mailbox"] == mailbox)
 assert(package.loaded["vectis.curl_worker"] == vectis.curl_worker)
+assert(package.loaded["vectis.cai_worker"] == vectis.cai_worker)
 assert(package.loaded["vectis.log"] == log)
 assert(package.loaded.libmdf == libmdf)
 assert(package.loaded.softline == softline)

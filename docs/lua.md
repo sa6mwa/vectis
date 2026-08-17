@@ -85,6 +85,8 @@ modules or C SDK workflows:
 - `vectis.cai`: CAI service configuration, owned/borrowed client and agent
   helpers, and structured CAI error decoration, documented in
   [Lua CAI](lua-cai.md).
+- `vectis.cai_worker`: managed CAI worker mailbox envelope helpers, documented
+  in [Lua CAI](lua-cai.md).
 - `vectis.cert`: certificate/key/CSR/CA workflows, documented in
   [Lua certificates](lua-certs.md).
 - `vectis.curl_worker`: managed curl worker mailbox envelope helpers,
@@ -119,8 +121,8 @@ modules or C SDK workflows:
   [Lua WebDAV](lua-webdav.md).
 - `vectis.xml`: XML parse helpers, documented in [Lua XML](lua-xml.md).
 
-Workflow tables including `vectis.auth`, `vectis.cert`, `vectis.curl_worker`,
-`vectis.embedded`, `vectis.server`, and `vectis.ssh` are preloaded modules inside the embedded
+Workflow tables including `vectis.auth`, `vectis.cert`, `vectis.cai_worker`,
+`vectis.curl_worker`, `vectis.embedded`, `vectis.server`, and `vectis.ssh` are preloaded modules inside the embedded
 binary. `vectis.auth` re-exports the C-owned `vectis.auth.core` facade and adds Lua DX helpers. `require("vectis").auth` and
 `require("vectis.auth")` return the same table, and the same identity rule
 applies to the other workflow modules exposed through the top-level namespace.

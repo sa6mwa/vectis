@@ -368,6 +368,13 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
   decode the copied HTTP envelopes.
 - `server:curl_worker_service_states()` returns managed-service lifecycle
   diagnostics for declared curl worker services.
+- `server:cai_worker_service(opts)` declares a C-owned CAI worker service over
+  a borrowed `vectis.mailbox` request queue and optional
+  `vectis.mailbox.broker` reply adapter. Use `vectis.cai_worker` to build and
+  decode copied one-shot text/raw-JSON request envelopes. Lua callbacks are not
+  accepted by the managed worker.
+- `server:cai_worker_service_states()` returns managed-service lifecycle
+  diagnostics for declared CAI worker services.
 - `server:mcp(opts)` registers a C-owned CAI Streamable HTTP MCP route with
   Lua-defined raw JSON tools.
 

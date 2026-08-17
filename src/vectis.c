@@ -513,6 +513,7 @@ typedef struct vectis_cai_worker_request_json {
 
 typedef struct vectis_cai_worker_reply_json {
   lonejson_int64 status;
+  lonejson_int64 source_code;
   lonejson_int64 dependency_code;
   lonejson_int64 http_status;
   char *message;
@@ -556,6 +557,8 @@ LONEJSON_MAP_DEFINE(vectis_cai_worker_request_json_map,
 
 static const lonejson_field vectis_cai_worker_reply_json_fields[] = {
     LONEJSON_FIELD_I64_REQ(vectis_cai_worker_reply_json, status, "status"),
+    LONEJSON_FIELD_I64(vectis_cai_worker_reply_json, source_code,
+                       "source_code"),
     LONEJSON_FIELD_I64(vectis_cai_worker_reply_json, dependency_code,
                        "dependency_code"),
     LONEJSON_FIELD_I64(vectis_cai_worker_reply_json, http_status,
@@ -5457,7 +5460,7 @@ static void vectis_curl_worker_service_cleanup(void *context) {
   free(ctx);
 }
 
-static void vectis_cai_worker_request_json_cleanup(
+static void vectis_cai_worker_request_json_cleanup_malloc(
     vectis_cai_worker_request_json *request) {
   if (request == NULL) {
     return;
@@ -5470,8 +5473,17 @@ static void vectis_cai_worker_request_json_cleanup(
   memset(request, 0, sizeof(*request));
 }
 
-static void
-vectis_cai_worker_reply_json_cleanup(vectis_cai_worker_reply_json *reply) {
+static void vectis_cai_worker_request_json_cleanup_lonejson(
+    vectis_cai_worker_request_json *request) {
+  if (request == NULL) {
+    return;
+  }
+  lonejson_cleanup(&vectis_cai_worker_request_json_map, request);
+  memset(request, 0, sizeof(*request));
+}
+
+static void vectis_cai_worker_reply_json_cleanup_malloc(
+    vectis_cai_worker_reply_json *reply) {
   if (reply == NULL) {
     return;
   }
@@ -5479,6 +5491,15 @@ vectis_cai_worker_reply_json_cleanup(vectis_cai_worker_reply_json *reply) {
   free(reply->detail);
   free(reply->text);
   free(reply->raw_json);
+  memset(reply, 0, sizeof(*reply));
+}
+
+static void vectis_cai_worker_reply_json_cleanup_lonejson(
+    vectis_cai_worker_reply_json *reply) {
+  if (reply == NULL) {
+    return;
+  }
+  lonejson_cleanup(&vectis_cai_worker_reply_json_map, reply);
   memset(reply, 0, sizeof(*reply));
 }
 
@@ -5564,6 +5585,8 @@ static vectis_status vectis_cai_worker_reply_error(
   memset(&reply_json, 0, sizeof(reply_json));
   reply_json.status =
       transfer_error != NULL ? transfer_error->code : fallback_status;
+  reply_json.source_code = transfer_error != NULL ? transfer_error->source
+                                                  : VECTIS_ERROR_SOURCE_VECTIS;
   reply_json.dependency_code =
       transfer_error != NULL ? transfer_error->dependency_code : 0L;
   reply_json.http_status =
@@ -5578,7 +5601,7 @@ static vectis_status vectis_cai_worker_reply_error(
           transfer_error != NULL && transfer_error->detail[0] != '\0'
               ? transfer_error->detail
               : NULL)) {
-    vectis_cai_worker_reply_json_cleanup(&reply_json);
+    vectis_cai_worker_reply_json_cleanup_malloc(&reply_json);
     vectis_set_error(error, VECTIS_ERR_NOMEM,
                      "failed to copy CAI worker error reply");
     return VECTIS_ERR_NOMEM;
@@ -5586,13 +5609,13 @@ static vectis_status vectis_cai_worker_reply_error(
   status =
       vectis_cai_worker_reply_event_build(&reply_json, &reply_event, error);
   if (status != VECTIS_OK) {
-    vectis_cai_worker_reply_json_cleanup(&reply_json);
+    vectis_cai_worker_reply_json_cleanup_malloc(&reply_json);
     return status;
   }
   status = ctx->reply_broker->reply(ctx->reply_broker, event->correlation_id,
                                     &reply_event.message, error);
   vectis_cai_worker_event_cleanup(&reply_event);
-  vectis_cai_worker_reply_json_cleanup(&reply_json);
+  vectis_cai_worker_reply_json_cleanup_malloc(&reply_json);
   return status;
 }
 
@@ -5626,13 +5649,13 @@ vectis_cai_worker_request_decode(const vectis_mailbox_event *event,
       event->payload_size, &json_error);
   lonejson_free(runtime);
   if (json_status != LONEJSON_STATUS_OK) {
-    vectis_cai_worker_request_json_cleanup(request);
+    vectis_cai_worker_request_json_cleanup_lonejson(request);
     return vectis_set_lonejson_error(error, json_status, &json_error,
                                      "failed to parse CAI worker request");
   }
   if (request->model == NULL || request->model[0] == '\0' ||
       request->input == NULL || request->input[0] == '\0') {
-    vectis_cai_worker_request_json_cleanup(request);
+    vectis_cai_worker_request_json_cleanup_lonejson(request);
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "CAI worker request requires model and input");
     return VECTIS_ERR_INVALID;
@@ -5640,19 +5663,26 @@ vectis_cai_worker_request_decode(const vectis_mailbox_event *event,
   if (request->output != NULL && request->output[0] != '\0' &&
       strcmp(request->output, "text") != 0 &&
       strcmp(request->output, "raw_json") != 0) {
-    vectis_cai_worker_request_json_cleanup(request);
+    vectis_cai_worker_request_json_cleanup_lonejson(request);
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "CAI worker output must be text or raw_json");
     return VECTIS_ERR_INVALID;
   }
   if (request->has_max_output_tokens && request->max_output_tokens < 0) {
-    vectis_cai_worker_request_json_cleanup(request);
+    vectis_cai_worker_request_json_cleanup_lonejson(request);
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "CAI worker max_output_tokens must be non-negative");
     return VECTIS_ERR_INVALID;
   }
+  if (request->has_max_output_tokens &&
+      request->max_output_tokens > (lonejson_int64)INT_MAX) {
+    vectis_cai_worker_request_json_cleanup_lonejson(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker max_output_tokens is too large");
+    return VECTIS_ERR_INVALID;
+  }
   if (request->has_max_response_bytes && request->max_response_bytes < 0) {
-    vectis_cai_worker_request_json_cleanup(request);
+    vectis_cai_worker_request_json_cleanup_lonejson(request);
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "CAI worker max_response_bytes must be non-negative");
     return VECTIS_ERR_INVALID;
@@ -5807,6 +5837,7 @@ vectis_cai_worker_run_request(vectis_cai_worker_service_context *ctx,
   cai_client_close(client);
   cai_error_cleanup(&caierr);
   reply->status = VECTIS_OK;
+  reply->source_code = VECTIS_ERROR_SOURCE_NONE;
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -5844,7 +5875,7 @@ vectis_cai_worker_process_event(vectis_cai_worker_service_context *ctx,
   if (status != VECTIS_OK) {
     reply_status = vectis_cai_worker_reply_error(
         ctx, event, &transfer_error, status, transfer_error.message, error);
-    vectis_cai_worker_request_json_cleanup(&request);
+    vectis_cai_worker_request_json_cleanup_lonejson(&request);
     if (reply_status != VECTIS_OK) {
       return reply_status;
     }
@@ -5861,14 +5892,14 @@ vectis_cai_worker_process_event(vectis_cai_worker_service_context *ctx,
                                    &reply_event.message, error);
       vectis_cai_worker_event_cleanup(&reply_event);
     }
-    vectis_cai_worker_reply_json_cleanup(&reply_json);
-    vectis_cai_worker_request_json_cleanup(&request);
+    vectis_cai_worker_reply_json_cleanup_malloc(&reply_json);
+    vectis_cai_worker_request_json_cleanup_lonejson(&request);
     if (reply_status != VECTIS_OK) {
       return reply_status;
     }
   } else {
-    vectis_cai_worker_reply_json_cleanup(&reply_json);
-    vectis_cai_worker_request_json_cleanup(&request);
+    vectis_cai_worker_reply_json_cleanup_malloc(&reply_json);
+    vectis_cai_worker_request_json_cleanup_lonejson(&request);
   }
   vectis_error_clear(error);
   return VECTIS_OK;
@@ -18907,7 +18938,7 @@ vectis_cai_worker_event_build(const vectis_cai_worker_request *request,
           &request_json.output,
           request->output_mode == VECTIS_CAI_WORKER_OUTPUT_RAW_JSON ? "raw_json"
                                                                     : "text")) {
-    vectis_cai_worker_request_json_cleanup(&request_json);
+    vectis_cai_worker_request_json_cleanup_malloc(&request_json);
     vectis_set_error(error, VECTIS_ERR_NOMEM,
                      "failed to copy CAI worker request");
     return VECTIS_ERR_NOMEM;
@@ -18923,7 +18954,7 @@ vectis_cai_worker_event_build(const vectis_cai_worker_request *request,
   }
   runtime = vectis_lonejson_new(error);
   if (runtime == NULL) {
-    vectis_cai_worker_request_json_cleanup(&request_json);
+    vectis_cai_worker_request_json_cleanup_malloc(&request_json);
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
   json_size = 0u;
@@ -18931,7 +18962,7 @@ vectis_cai_worker_event_build(const vectis_cai_worker_request *request,
                                   &request_json, &json_size, &json_error);
   lonejson_free(runtime);
   if (json == NULL) {
-    vectis_cai_worker_request_json_cleanup(&request_json);
+    vectis_cai_worker_request_json_cleanup_malloc(&request_json);
     return vectis_set_lonejson_error(error, LONEJSON_STATUS_INVALID_JSON,
                                      &json_error,
                                      "failed to serialize CAI worker request");
@@ -18942,7 +18973,7 @@ vectis_cai_worker_event_build(const vectis_cai_worker_request *request,
   out->message.payload = json;
   out->message.payload_size = json_size;
   out->message.expects_reply = 1;
-  vectis_cai_worker_request_json_cleanup(&request_json);
+  vectis_cai_worker_request_json_cleanup_malloc(&request_json);
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -19004,11 +19035,12 @@ vectis_cai_worker_response_decode(const vectis_mailbox_event *event,
                             event->payload, event->payload_size, &json_error);
   lonejson_free(runtime);
   if (json_status != LONEJSON_STATUS_OK) {
-    vectis_cai_worker_reply_json_cleanup(&reply);
+    vectis_cai_worker_reply_json_cleanup_lonejson(&reply);
     return vectis_set_lonejson_error(error, json_status, &json_error,
                                      "failed to parse CAI worker response");
   }
   response->status = (vectis_status)reply.status;
+  response->source = (vectis_error_source)reply.source_code;
   response->dependency_code = (long)reply.dependency_code;
   response->http_status = (long)reply.http_status;
   if (reply.message != NULL) {
@@ -19028,7 +19060,8 @@ vectis_cai_worker_response_decode(const vectis_mailbox_event *event,
   if (reply.text != NULL) {
     response->text = vectis_strdup(reply.text);
     if (response->text == NULL) {
-      vectis_cai_worker_reply_json_cleanup(&reply);
+      vectis_cai_worker_response_cleanup(response);
+      vectis_cai_worker_reply_json_cleanup_lonejson(&reply);
       vectis_set_error(error, VECTIS_ERR_NOMEM,
                        "failed to copy CAI worker response text");
       return VECTIS_ERR_NOMEM;
@@ -19037,13 +19070,14 @@ vectis_cai_worker_response_decode(const vectis_mailbox_event *event,
   if (reply.raw_json != NULL) {
     response->raw_json = vectis_strdup(reply.raw_json);
     if (response->raw_json == NULL) {
-      vectis_cai_worker_reply_json_cleanup(&reply);
+      vectis_cai_worker_response_cleanup(response);
+      vectis_cai_worker_reply_json_cleanup_lonejson(&reply);
       vectis_set_error(error, VECTIS_ERR_NOMEM,
                        "failed to copy CAI worker response raw JSON");
       return VECTIS_ERR_NOMEM;
     }
   }
-  vectis_cai_worker_reply_json_cleanup(&reply);
+  vectis_cai_worker_reply_json_cleanup_lonejson(&reply);
   vectis_error_clear(error);
   return VECTIS_OK;
 }

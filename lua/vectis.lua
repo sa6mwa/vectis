@@ -47,6 +47,7 @@ local workflow_modules = {
   embedded = "vectis.embedded",
   server = "vectis.server",
   curl_worker = "vectis.curl_worker",
+  cai_worker = "vectis.cai_worker",
   ssh = "vectis.ssh",
   log = "vectis.log",
   http = "vectis.http",

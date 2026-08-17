@@ -210,6 +210,7 @@ static void test_worker_envelope(void) {
   assert(vectis_cai_worker_response_decode(&reply_event, &response, &error) ==
          VECTIS_OK);
   assert(response.status == VECTIS_OK);
+  assert(response.source == VECTIS_ERROR_SOURCE_NONE);
   assert(response.text != NULL);
   assert(strcmp(response.text, "worker ok") == 0);
   vectis_cai_worker_response_cleanup(&response);
@@ -282,6 +283,7 @@ static void test_worker_service_registration_and_error_reply(void) {
   assert(vectis_cai_worker_response_decode(&reply_event, &response, &error) ==
          VECTIS_OK);
   assert(response.status == VECTIS_ERR_INVALID);
+  assert(response.source == VECTIS_ERROR_SOURCE_VECTIS);
   assert(strstr(response.message, "event kind") != NULL);
   vectis_cai_worker_response_cleanup(&response);
   vectis_mailbox_event_cleanup(&reply_event);
