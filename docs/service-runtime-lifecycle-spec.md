@@ -356,6 +356,15 @@ MCP HTTP route callbacks:
 CAI clients opened through `app->cai_client()` must be domain-local. A client
 opened in one process must not be reused after fork in another process.
 
+Supervisor CAI/MCP worker descriptors must be C receiver shells over
+`vectis_managed_service`. A worker descriptor owns copied CAI client/agent
+configuration, an optional borrowed mailbox or lockdc queue name for ingress,
+bounded request limits, and explicit failure policy. It must not borrow a
+request-local Kore pointer, a Lua callback, or a CAI client opened in the
+declaration domain. Lua registration may provide mailbox names and policy
+values, but Lua tool/policy callbacks run only through an owner-state pump or a
+Kore-mounted MCP route in the Kore child domain.
+
 ## OPC UA
 
 OPC UA has three valid ownership modes:
@@ -383,6 +392,19 @@ Curl-backed worker services are app-owned daemons and must follow the descriptor
 and supervisor materialization model. They must not be started during
 declaration before Kore forks.
 
+A curl worker descriptor owns copied worker defaults such as concurrency,
+timeouts, protocol allowlist, TLS policy, proxy settings, retry policy, and a
+bounded mailbox/lockdc ingress contract. It does not own individual transfer
+payloads until the runtime domain dequeues a request. Transfer payloads are
+copied, file-backed, or explicitly source-backed according to the selected
+request schema; no API may call a fully buffered transfer "streaming".
+
+The first implemented curl worker should target a C-owned mailbox request/reply
+shape because it is the common denominator for HTTP, SMTP, MQTT, WebDAV, SFTP,
+and other libcurl protocols already exposed through the Lua curl facade. Per-
+protocol Lua helpers remain thin request builders over that generic worker
+contract.
+
 Global curl/OpenSSL initialization must not be used as a substitute for the
 quiescence guard. The guard is about active threads and long-lived handles, not
 only library initialization order.
@@ -392,6 +414,18 @@ only library initialization order.
 Audio capture/playback and SUS transcription handles can create long-lived
 backend state and dependency callbacks. When used as app services, they must be
 declared and materialized in the supervisor domain.
+
+Audio/SUS service descriptors must keep device/model handles out of the
+declaration domain. Descriptors own copied device/model/cache configuration,
+bounded ingress, and explicit output sinks. Materialization opens capture,
+playback, decoder, model, transcriber, VOX, or PTT handles only in the selected
+runtime domain. Live device and cached model network access remain opt-in gates.
+
+Lua audio/SUS callbacks are not service callbacks. A Lua app may configure a
+service to publish copied segment, transcript, progress, or error events into a
+mailbox; Lua may then pump that mailbox from the owner state. Loaded-model
+transcription workers must expose whether audio is live, file-backed, decoder-
+backed, or callback-backed, and must not re-transcribe prior segmented audio.
 
 Direct Lua facade use before starting a route-backed app is caller-owned. If it
 starts threads or leaves daemon handles active, Vectis must detect a non-
@@ -643,9 +677,12 @@ Required semantics:
    - Lua `server:opcua_server_service` registration over borrowed
      dependency-native `opcua.server` handles, with Lua callback-bearing
      servers rejected;
-   - curl worker descriptors where needed;
-   - audio/SUS worker descriptors;
-   - CAI/MCP supervisor worker descriptors.
+   - curl worker descriptors with generic mailbox/lockdc ingress and protocol-
+     neutral transfer request records;
+   - audio/SUS worker descriptors with runtime-domain device/model
+     materialization and mailbox event output;
+   - CAI/MCP supervisor worker descriptors with runtime-domain client/agent
+     materialization and no borrowed route/Lua callback state.
    - service declarations that accept Lua policy callbacks must publish copied
      events to `vectis_mailbox` and require an owner-state Lua pump rather than
      invoking Lua from service threads.

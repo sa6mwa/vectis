@@ -140,6 +140,43 @@ Kore API request to worker result:
 - Durable flow: route enqueues through liblockdc, returns accepted/pending, or
   waits only when the product explicitly wants durable queue latency.
 
+## Worker Descriptor Contracts
+
+Worker descriptors are app-owned service declarations. They copy configuration
+in the declaration domain and materialize dependency handles only after the
+selected runtime topology is safe.
+
+Curl workers:
+
+- receive copied request records through `vectis_mailbox` or lockdc queues;
+- apply generic libcurl defaults such as timeout, protocol allowlist, TLS,
+  proxy, retry, and `no_signal`;
+- represent request and response bodies as copied, file-backed, or explicitly
+  source/sink-backed values;
+- serve HTTP, SMTP, MQTT, WebDAV, SFTP, and other libcurl protocols through the
+  same worker contract, with Lua protocol helpers acting as request builders.
+
+CAI/MCP workers:
+
+- open CAI clients, agents, registries, and non-route MCP helpers in the
+  supervisor/service domain;
+- never borrow Kore request pointers or declaration-domain CAI handles;
+- publish copied output events or replies through mailbox/lockdc sinks;
+- keep Kore-mounted MCP HTTP routes in the Kore child domain.
+
+Audio/SUS workers:
+
+- open capture/playback devices, decoders, models, transcribers, VOX, and PTT
+  handles in the selected runtime domain;
+- publish copied segment, transcript, progress, and error events to a mailbox or
+  configured sink;
+- keep live-device and cached-model network access opt-in;
+- name input behavior precisely as live, file-backed, decoder-backed,
+  callback-backed, or buffered.
+
+Lua may configure these descriptors and pump their events, but the worker
+threads themselves do not call Lua callbacks.
+
 ## Typed Route Adapter
 
 The route adapter is C-side and explicit. `vectis_route_event_config` selects
