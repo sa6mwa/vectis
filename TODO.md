@@ -131,7 +131,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Extend lower-level OpenSSL Lua access only where concrete signing, verification, digest, encoding, or key-inspection workflows require it.
 - [x] Support embedding a lockd client certificate bundle into a packaged Vectis binary.
 - [x] Support ACME runtime configuration through Kore for C services.
-- [ ] Add ACME lifecycle examples/tests beyond startup validation, using a controlled ACME test server if practical.
+- [x] Add ACME lifecycle examples/tests beyond startup validation, using a controlled ACME test server.
 - [ ] Support reload/update of key material where Kore allows it.
 
 ## Area 7: JSON Surface

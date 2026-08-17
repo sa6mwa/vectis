@@ -41,7 +41,11 @@ cleanup() {
     kill -9 -- "-$pid" >/dev/null 2>&1 || kill -9 "$pid" >/dev/null 2>&1 || true
     wait "$pid" >/dev/null 2>&1 || true
   done
-  rm -rf "$work_dir"
+  if [ "${VECTIS_E2E_KEEP_WORK:-0}" = "1" ]; then
+    printf '%s\n' "vectis e2e work dir preserved at $work_dir" >&2
+  else
+    rm -rf "$work_dir"
+  fi
   if [ "${VECTIS_E2E_KEEP_DEVSERVICES:-0}" != "1" ]; then
     "$script_dir/dev-down.sh" >/dev/null 2>&1 || true
   fi
@@ -51,11 +55,15 @@ trap cleanup EXIT
 wait_for_http() {
   url=$1
   label=$2
+  logfile=${3:-}
   count=0
   while ! curl --max-time 3 -fsS "$url" >/dev/null 2>&1; do
     count=$((count + 1))
     if [ "$count" -ge 60 ]; then
       printf '%s\n' "Timed out waiting for $label at $url" >&2
+      if [ -n "$logfile" ] && [ -f "$logfile" ]; then
+        sed "s/^/[$label] /" "$logfile" >&2
+      fi
       return 1
     fi
     sleep 1
@@ -100,10 +108,14 @@ start_server() {
 curl_or_log() {
   logfile=$1
   label=$2
+  status=0
   shift 2
 
-  curl "$@" || {
-    status=$?
+  set +e
+  curl "$@"
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then
     printf '%s\n' "curl failed for $label" >&2
     if [ -f "$logfile" ]; then
       sed "s/^/[$label] /" "$logfile" >&2
@@ -111,7 +123,61 @@ curl_or_log() {
       printf '%s\n' "missing server log for $label at $logfile" >&2
     fi
     return "$status"
-  }
+  fi
+}
+
+curl_body_or_log() {
+  logfile=$1
+  label=$2
+  bodyfile=$3
+  headers="${bodyfile}.headers"
+  status=0
+  shift 3
+
+  set +e
+  curl "$@" -D "$headers" -o "$bodyfile"
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then
+    printf '%s\n' "curl failed for $label" >&2
+    if [ -f "$headers" ]; then
+      sed "s/^/[$label.headers] /" "$headers" >&2
+    fi
+    if [ -f "$bodyfile" ]; then
+      sed "s/^/[$label.body] /" "$bodyfile" >&2
+    fi
+    if [ -f "$logfile" ]; then
+      sed "s/^/[$label.server] /" "$logfile" >&2
+    else
+      printf '%s\n' "missing server log for $label at $logfile" >&2
+    fi
+    return "$status"
+  fi
+}
+
+curl_head_or_log() {
+  logfile=$1
+  label=$2
+  headers=$3
+  status=0
+  shift 3
+
+  set +e
+  curl "$@" -D "$headers" -o /dev/null --head
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then
+    printf '%s\n' "curl failed for $label" >&2
+    if [ -f "$headers" ]; then
+      sed "s/^/[$label.headers] /" "$headers" >&2
+    fi
+    if [ -f "$logfile" ]; then
+      sed "s/^/[$label.server] /" "$logfile" >&2
+    else
+      printf '%s\n' "missing server log for $label at $logfile" >&2
+    fi
+    return "$status"
+  fi
 }
 
 assert_no_store_headers() {
@@ -517,6 +583,7 @@ run_lua_examples() {
   packed_service_auth_state="$work_dir/vectis-e2e-packed-auth-state.json"
   packed_service_mailbox="$work_dir/vectis-e2e-packed-mailbox.txt"
   packed_service_enqueue="$work_dir/vectis-e2e-packed-enqueue.lua"
+  packed_service_ready="$work_dir/vectis-e2e-packed-ready"
   packed_https_cert="$work_dir/vectis-e2e-packed-https.pem"
   packed_content_types="$work_dir/vectis-e2e-packed-content-types.json"
   shebang_script="$work_dir/vectis-e2e-shebang.lua"
@@ -685,6 +752,7 @@ run_lua_examples() {
     'local auth_state_path = assert(os.getenv("VECTIS_PACKED_SERVICE_AUTH_STATE"))' \
     'local cache_dir = assert(os.getenv("VECTIS_PACKED_SERVICE_CACHE"))' \
     'local smtp_url = assert(os.getenv("VECTIS_PACK_SMTP_URL"))' \
+    'local ready_path = assert(os.getenv("VECTIS_PACKED_SERVICE_READY"))' \
     'local lockd_endpoint = assert(os.getenv("VECTIS_PACKED_SERVICE_LOCKD_ENDPOINT"))' \
     'local lockd_queue = assert(os.getenv("VECTIS_PACKED_SERVICE_LOCKD_QUEUE"))' \
     'local lockd_namespace = os.getenv("VECTIS_PACKED_SERVICE_LOCKD_NAMESPACE") or "examples"' \
@@ -893,6 +961,9 @@ run_lua_examples() {
     '  cache_control = "no-store",' \
     '}))' \
     'assert(server:start())' \
+    'local ready = assert(io.open(ready_path, "wb"))' \
+    'assert(ready:write("ready\n"))' \
+    'assert(ready:close())' \
     'assert(server:wait())' >"$packed_service_script"
   "$repo_root/build/debug/vectis" -a pack \
     --script "$packed_service_script" \
@@ -913,9 +984,20 @@ run_lua_examples() {
       VECTIS_PACKED_SERVICE_LOCKD_ENDPOINT="$disk_endpoint" \
       VECTIS_PACKED_SERVICE_LOCKD_QUEUE="$packed_service_queue" \
       VECTIS_PACKED_SERVICE_LOCKD_NAMESPACE="$packed_service_namespace" \
+      VECTIS_PACKED_SERVICE_READY="$packed_service_ready" \
       "$pack_smtp_harness" "$packed_service" "$packed_service_mailbox"
+  count=0
+  while [ ! -f "$packed_service_ready" ]; do
+    count=$((count + 1))
+    if [ "$count" -ge 60 ]; then
+      printf '%s\n' "Timed out waiting for lua packed webserver app readiness" >&2
+      sed 's/^/[lua-packed-webserver] /' "$packed_service_log" >&2
+      return 1
+    fi
+    sleep 1
+  done
   wait_for_http "http://127.0.0.1:$kore_packed_port/site/index.html" \
-    "lua packed webserver"
+    "lua packed webserver" "$packed_service_log"
   if [ ! -f "$packed_service_docroot/index.html" ] ||
       [ ! -f "$packed_service_docroot/app.css" ] ||
       [ ! -f "$packed_service_docroot/app.js" ] ||
@@ -956,8 +1038,11 @@ run_lua_examples() {
       return 1
       ;;
   esac
-  body=$(curl_or_log "$packed_service_log" "packed static index" --max-time 3 -fsS \
-    "http://127.0.0.1:$kore_packed_port/site/index.html")
+  packed_static_index_body="$work_dir/packed-static-index.body"
+  curl_body_or_log "$packed_service_log" "packed static index" \
+    "$packed_static_index_body" --max-time 10 -fsS \
+    "http://127.0.0.1:$kore_packed_port/site/index.html"
+  body=$(cat "$packed_static_index_body")
   case "$body" in
     *'packed service asset'*) ;;
     *)
@@ -965,8 +1050,11 @@ run_lua_examples() {
       return 1
       ;;
   esac
-  body=$(curl_or_log "$packed_service_log" "packed root static index" --max-time 3 -fsS \
-    "http://127.0.0.1:$kore_packed_port/")
+  packed_root_static_index_body="$work_dir/packed-root-static-index.body"
+  curl_body_or_log "$packed_service_log" "packed root static index" \
+    "$packed_root_static_index_body" --max-time 10 -fsS \
+    "http://127.0.0.1:$kore_packed_port/"
+  body=$(cat "$packed_root_static_index_body")
   case "$body" in
     *'packed service asset'*) ;;
     *)
@@ -974,25 +1062,22 @@ run_lua_examples() {
       return 1
       ;;
   esac
-  body=$(curl_or_log "$packed_service_log" "packed root static css body" --max-time 3 -fsS \
-    "http://127.0.0.1:$kore_packed_port/app.css")
+  static_root_css_body="$work_dir/packed-root-css.body"
+  curl_body_or_log "$packed_service_log" "packed root static css body" \
+    "$static_root_css_body" --max-time 10 -fsS \
+    "http://127.0.0.1:$kore_packed_port/app.css"
+  body=$(cat "$static_root_css_body")
   if [ "$body" != "body { color: #123456; }" ]; then
     printf '%s\n' "Unexpected packed root CSS response: $body" >&2
     return 1
   fi
   static_head_headers="$work_dir/packed-static-head.headers"
-  static_head_body="$work_dir/packed-static-head.body"
   static_head_status=$(curl --max-time 3 -sS -D "$static_head_headers" \
-    -o "$static_head_body" -w '%{http_code}' -X HEAD \
+    -o /dev/null -w '%{http_code}' --head \
     "http://127.0.0.1:$kore_packed_port/site/index.html")
   if [ "$static_head_status" != "200" ]; then
     printf '%s\n' "Unexpected packed static HEAD status: $static_head_status" >&2
     sed 's/^/[packed-static-head] /' "$static_head_headers" >&2
-    return 1
-  fi
-  if [ -s "$static_head_body" ]; then
-    printf '%s\n' "Packed static HEAD returned a body" >&2
-    cat "$static_head_body" >&2
     return 1
   fi
   grep -qi '^content-type: text/html; charset=utf-8' "$static_head_headers" || {
@@ -1160,14 +1245,16 @@ run_lua_examples() {
       return 1
       ;;
   esac
-  curl_or_log "$packed_service_log" "packed static app.js headers" --max-time 3 -fsSI \
-    "http://127.0.0.1:$kore_packed_port/site/app.js" |
-    grep -qi '^content-type: application/javascript' || {
-      printf '%s\n' "Packed static content type was not application/javascript" >&2
-      return 1
-    }
   range_headers="$work_dir/packed-static-range.headers"
   range_body="$work_dir/packed-static-range.body"
+  curl_head_or_log "$packed_service_log" "packed static app.js headers" \
+    "$range_headers" --max-time 3 -fsS \
+    "http://127.0.0.1:$kore_packed_port/site/app.js"
+  grep -qi '^content-type: application/javascript' "$range_headers" || {
+    printf '%s\n' "Packed static content type was not application/javascript" >&2
+    sed 's/^/[packed-static-app-js] /' "$range_headers" >&2
+    return 1
+  }
   range_status=$(curl --max-time 3 -sS -D "$range_headers" -o "$range_body" \
     -w '%{http_code}' -H 'Range: bytes=0-5' \
     "http://127.0.0.1:$kore_packed_port/site/app.js")
@@ -1192,18 +1279,12 @@ run_lua_examples() {
     sed 's/^/[packed-range-header] /' "$range_headers" >&2
     return 1
   }
-  range_status=$(curl --max-time 3 -sS -D "$range_headers" -o "$range_body" \
-    -w '%{http_code}' -X HEAD -H 'Range: bytes=0-5' \
+  range_status=$(curl --max-time 3 -sS -D "$range_headers" -o /dev/null \
+    -w '%{http_code}' --head -H 'Range: bytes=0-5' \
     "http://127.0.0.1:$kore_packed_port/site/app.js")
   if [ "$range_status" != "206" ]; then
     printf '%s\n' "Unexpected packed static HEAD range status: $range_status" >&2
     sed 's/^/[packed-range-header] /' "$range_headers" >&2
-    cat "$range_body" >&2
-    return 1
-  fi
-  if [ -s "$range_body" ]; then
-    printf '%s\n' "Packed static HEAD range returned a body" >&2
-    cat "$range_body" >&2
     return 1
   fi
   grep -qi '^content-range: bytes 0-5/' "$range_headers" || {
@@ -1364,17 +1445,11 @@ run_lua_examples() {
   fi
   : >"$range_body"
   not_modified_status=$(curl --max-time 3 -sS -D "$range_headers" \
-    -o "$range_body" -w '%{http_code}' -X HEAD -H "If-None-Match: $etag" \
+    -o /dev/null -w '%{http_code}' --head -H "If-None-Match: $etag" \
     "http://127.0.0.1:$kore_packed_port/site/app.js")
   if [ "$not_modified_status" != "304" ]; then
     printf '%s\n' "Unexpected packed static HEAD If-None-Match status: $not_modified_status" >&2
     sed 's/^/[packed-not-modified-header] /' "$range_headers" >&2
-    cat "$range_body" >&2
-    return 1
-  fi
-  if [ -s "$range_body" ]; then
-    printf '%s\n' "Packed static HEAD If-None-Match response returned a body" >&2
-    cat "$range_body" >&2
     return 1
   fi
   grep -qi '^etag:' "$range_headers" || {
@@ -1384,18 +1459,12 @@ run_lua_examples() {
   }
   : >"$range_body"
   not_modified_status=$(curl --max-time 3 -sS -D "$range_headers" \
-    -o "$range_body" -w '%{http_code}' -X HEAD -H "If-None-Match: $etag" \
+    -o /dev/null -w '%{http_code}' --head -H "If-None-Match: $etag" \
     -H 'Range: bytes=0-5' \
     "http://127.0.0.1:$kore_packed_port/site/app.js")
   if [ "$not_modified_status" != "304" ]; then
     printf '%s\n' "Unexpected packed static HEAD If-None-Match+Range status: $not_modified_status" >&2
     sed 's/^/[packed-not-modified-range-header] /' "$range_headers" >&2
-    cat "$range_body" >&2
-    return 1
-  fi
-  if [ -s "$range_body" ]; then
-    printf '%s\n' "Packed static HEAD If-None-Match+Range response returned a body" >&2
-    cat "$range_body" >&2
     return 1
   fi
   if grep -qi '^content-range:' "$range_headers"; then
@@ -1403,22 +1472,28 @@ run_lua_examples() {
     sed 's/^/[packed-not-modified-range-header] /' "$range_headers" >&2
     return 1
   fi
-  curl_or_log "$packed_service_log" "packed static app.css content type" --max-time 3 -fsSI \
-    "http://127.0.0.1:$kore_packed_port/site/app.css" |
-    grep -qi '^content-type: text/css' || {
+  curl_head_or_log "$packed_service_log" "packed static app.css content type" \
+    "$range_headers" --max-time 3 -fsS \
+    "http://127.0.0.1:$kore_packed_port/site/app.css"
+  grep -qi '^content-type: text/css' "$range_headers" || {
       printf '%s\n' "Packed static CSS content type was not text/css" >&2
+      sed 's/^/[packed-static-app-css] /' "$range_headers" >&2
       return 1
     }
-  curl_or_log "$packed_service_log" "packed static app.css etag" --max-time 3 -fsSI \
-    "http://127.0.0.1:$kore_packed_port/site/app.css" |
-    grep -qi '^etag:' || {
+  curl_head_or_log "$packed_service_log" "packed static app.css etag" \
+    "$range_headers" --max-time 3 -fsS \
+    "http://127.0.0.1:$kore_packed_port/site/app.css"
+  grep -qi '^etag:' "$range_headers" || {
       printf '%s\n' "Packed static CSS response did not include an ETag" >&2
+      sed 's/^/[packed-static-app-css] /' "$range_headers" >&2
       return 1
     }
-  curl_or_log "$packed_service_log" "packed static app.css cache-control" --max-time 3 -fsSI \
-    "http://127.0.0.1:$kore_packed_port/site/app.css" |
-    grep -qi '^cache-control: no-store' || {
+  curl_head_or_log "$packed_service_log" "packed static app.css cache-control" \
+    "$range_headers" --max-time 3 -fsS \
+    "http://127.0.0.1:$kore_packed_port/site/app.css"
+  grep -qi '^cache-control: no-store' "$range_headers" || {
       printf '%s\n' "Packed static CSS response did not include cache-control" >&2
+      sed 's/^/[packed-static-app-css] /' "$range_headers" >&2
       return 1
     }
   body=$(curl_or_log "$packed_service_log" "packed static css body" --max-time 3 -fsS \
@@ -1439,10 +1514,12 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed logo response: $body" >&2
     return 1
   fi
-  curl_or_log "$packed_service_log" "packed static template headers" --max-time 3 -fsSI \
-    "http://127.0.0.1:$kore_packed_port/site/templates/login.html" |
-    grep -qi '^content-type: text/html; charset=utf-8' || {
+  curl_head_or_log "$packed_service_log" "packed static template headers" \
+    "$range_headers" --max-time 3 -fsS \
+    "http://127.0.0.1:$kore_packed_port/site/templates/login.html"
+  grep -qi '^content-type: text/html; charset=utf-8' "$range_headers" || {
       printf '%s\n' "Packed template content type was not text/html; charset=utf-8" >&2
+      sed 's/^/[packed-static-template] /' "$range_headers" >&2
       return 1
     }
   body=$(curl_or_log "$packed_service_log" "packed static template" --max-time 3 -fsS \

@@ -381,6 +381,7 @@ typedef struct vectis_app_impl {
   pid_t kore_child_pid;
   int kore_child_reaped;
   int kore_child_control_fd;
+  int *kore_app_ready;
   int service_control_read_fd;
   int service_control_write_fd;
   int owns_logger;
@@ -1221,6 +1222,12 @@ static vectis_metrics_shared_state *
 vectis_metrics_shared_state_new(vectis_error *error);
 static void
 vectis_metrics_shared_state_free(vectis_metrics_shared_state *shared);
+static int *vectis_app_ready_state_new(vectis_error *error);
+static void vectis_app_ready_state_free(int *ready);
+static vectis_status vectis_app_prepare_kore_ready_state(
+    vectis_app_impl *impl, vectis_error *error);
+static void vectis_app_clear_kore_ready_state(vectis_app_impl *impl);
+static void vectis_app_mark_kore_ready(vectis_app_impl *impl);
 static char *vectis_metrics_default_storage_endpoint(void);
 static vectis_status vectis_metrics_route_handler(vectis_app *app,
                                                   vectis_request *request,
@@ -10038,6 +10045,7 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
   vectis_app_service_control_close(impl);
   vectis_close_lockd_client_for_current_process(impl);
   vectis_close_cai_client_for_current_process(impl);
+  vectis_app_clear_kore_ready_state(impl);
 
   (void)pthread_mutex_lock(&impl->mutex);
   defer_destroy = impl->abandoned_managed_service_monitors > 0u;
@@ -11042,6 +11050,7 @@ vectis_app_make_kore_runtime_config(vectis_app *app, vectis_app_impl *impl,
       impl, &kore_config->body_disk_offload_configured);
   kore_config->logger = impl->logger;
   kore_config->control_fd = -1;
+  kore_config->app_ready = impl->kore_app_ready;
 }
 
 static void vectis_close_fd_if_open(int *fd) {
@@ -11445,12 +11454,18 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
   if (route_count > 0u) {
     control_fds[0] = -1;
     control_fds[1] = -1;
-    vectis_app_make_kore_runtime_config(app, impl, &kore_config);
-    status = vectis_internal_kore_validate(&kore_config, error);
+    status = vectis_app_prepare_kore_ready_state(impl, error);
     if (status != VECTIS_OK) {
       return status;
     }
+    vectis_app_make_kore_runtime_config(app, impl, &kore_config);
+    status = vectis_internal_kore_validate(&kore_config, error);
+    if (status != VECTIS_OK) {
+      vectis_app_clear_kore_ready_state(impl);
+      return status;
+    }
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, control_fds) != 0) {
+      vectis_app_clear_kore_ready_state(impl);
       vectis_set_errorf(error, VECTIS_ERR_STATE,
                         "failed to create Kore control channel: %s",
                         strerror(errno));
@@ -11461,6 +11476,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
     if (pid < 0) {
       vectis_close_fd_if_open(&control_fds[0]);
       vectis_close_fd_if_open(&control_fds[1]);
+      vectis_app_clear_kore_ready_state(impl);
       vectis_set_errorf(error, VECTIS_ERR_STATE,
                         "failed to fork Kore runtime: %s", strerror(errno));
       return VECTIS_ERR_STATE;
@@ -11481,6 +11497,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
       vectis_close_fd_if_open(&control_fds[0]);
       vectis_close_fd_if_open(&control_fds[1]);
       (void)vectis_app_stop_kore_child(pid, -1, impl->shutdown_grace_ms, NULL);
+      vectis_app_clear_kore_ready_state(impl);
       vectis_set_errorf(error, VECTIS_ERR_STATE,
                         "failed to isolate Kore runtime process group: %s",
                         strerror(setpgid_errno));
@@ -11508,6 +11525,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
       } else {
         vectis_close_fd_if_open(&cleanup_control_fd);
       }
+      vectis_app_clear_kore_ready_state(impl);
       return status;
     }
     (void)pthread_mutex_lock(&impl->mutex);
@@ -11519,6 +11537,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
 
       vectis_error_clear(&cleanup_error);
       (void)vectis_app_stop_impl(app, &cleanup_error);
+      vectis_app_clear_kore_ready_state(impl);
       return status;
     }
     status = vectis_metrics_worker_start(app, error);
@@ -11527,6 +11546,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
 
       vectis_error_clear(&cleanup_error);
       (void)vectis_app_stop_impl(app, &cleanup_error);
+      vectis_app_clear_kore_ready_state(impl);
       return status;
     }
     status = vectis_app_start_requested_managed_services(impl, error);
@@ -11535,6 +11555,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
 
       vectis_error_clear(&cleanup_error);
       (void)vectis_app_stop_impl(app, &cleanup_error);
+      vectis_app_clear_kore_ready_state(impl);
       return status;
     }
     status = vectis_app_start_requested_consumer_services(impl, error);
@@ -11543,8 +11564,10 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
 
       vectis_error_clear(&cleanup_error);
       (void)vectis_app_stop_impl(app, &cleanup_error);
+      vectis_app_clear_kore_ready_state(impl);
       return status;
     }
+    vectis_app_mark_kore_ready(impl);
     vectis_error_clear(error);
     return VECTIS_OK;
   }
@@ -11659,6 +11682,7 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
   } else {
     vectis_close_fd_if_open(&control_fd);
   }
+  vectis_app_clear_kore_ready_state(impl);
 
   vectis_error_clear(&local_error);
   status =
@@ -17812,6 +17836,92 @@ vectis_metrics_shared_state_free(vectis_metrics_shared_state *shared) {
     return;
   }
   (void)munmap(shared, sizeof(*shared));
+}
+
+static int *vectis_app_ready_state_new(vectis_error *error) {
+#if defined(MAP_ANONYMOUS) || defined(MAP_ANON)
+  void *memory;
+  int flags;
+
+  flags = MAP_SHARED;
+#if defined(MAP_ANONYMOUS)
+  flags |= MAP_ANONYMOUS;
+#else
+  flags |= MAP_ANON;
+#endif
+  memory = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, flags, -1, 0);
+  if (memory == MAP_FAILED) {
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "failed to allocate shared app readiness state: %s",
+                      strerror(errno));
+    return NULL;
+  }
+  *(int *)memory = 0;
+  return (int *)memory;
+#else
+  vectis_set_error(error, VECTIS_ERR_STATE,
+                   "shared app readiness state is not supported on this target");
+  return NULL;
+#endif
+}
+
+static void vectis_app_ready_state_free(int *ready) {
+  if (ready == NULL) {
+    return;
+  }
+  (void)munmap(ready, sizeof(*ready));
+}
+
+static vectis_status vectis_app_prepare_kore_ready_state(
+    vectis_app_impl *impl, vectis_error *error) {
+  int *ready;
+
+  if (impl == NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  ready = vectis_app_ready_state_new(error);
+  if (ready == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  (void)pthread_mutex_lock(&impl->mutex);
+  if (impl->kore_app_ready != NULL) {
+    vectis_app_ready_state_free(impl->kore_app_ready);
+  }
+  impl->kore_app_ready = ready;
+  (void)pthread_mutex_unlock(&impl->mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static void vectis_app_clear_kore_ready_state(vectis_app_impl *impl) {
+  int *ready;
+
+  if (impl == NULL) {
+    return;
+  }
+  (void)pthread_mutex_lock(&impl->mutex);
+  ready = impl->kore_app_ready;
+  if (ready != NULL) {
+    (void)__sync_lock_test_and_set(ready, 0);
+  }
+  impl->kore_app_ready = NULL;
+  (void)pthread_mutex_unlock(&impl->mutex);
+  vectis_app_ready_state_free(ready);
+}
+
+static void vectis_app_mark_kore_ready(vectis_app_impl *impl) {
+  int *ready;
+
+  if (impl == NULL) {
+    return;
+  }
+  (void)pthread_mutex_lock(&impl->mutex);
+  ready = impl->kore_app_ready;
+  if (ready != NULL) {
+    (void)__sync_lock_test_and_set(ready, 1);
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
 }
 
 static void vectis_metrics_counter_increment(unsigned long long *counter) {

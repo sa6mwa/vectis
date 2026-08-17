@@ -195,6 +195,23 @@ assert_kore_static_runtime_contract() {
   fi
 }
 
+assert_acme_lifecycle_contract() {
+  assert_contains "$repo_root/TODO.md" \
+    '\[x\] Add ACME lifecycle examples/tests beyond startup validation, using a controlled ACME test server'
+  assert_contains "$repo_root/tests/CMakeLists.txt" 'vectis_acme_mock_provider'
+  assert_contains "$repo_root/tests/helpers/vectis_acme_mock_provider.c" \
+    'tls-alpn-01'
+  assert_contains "$repo_root/scripts/test-e2e.sh" 'lua acme mock issuance'
+  assert_contains "$repo_root/scripts/test-e2e.sh" \
+    'VECTIS_ACME_STATE_PROVIDER="http://127\.0\.0\.1:\$acme_mock_port/directory"'
+  assert_contains "$repo_root/scripts/test-e2e.sh" \
+    'certificates/acme\.localhost\.test/fullchain\.pem'
+  assert_contains "$repo_root/scripts/test-e2e.sh" \
+    'https://acme\.localhost\.test:\$kore_acme_port/probe'
+  assert_contains "$repo_root/docs/pack-embedded-filesystem-auth-spec.md" \
+    'deterministic e2e starts ACME mode against a'
+}
+
 assert_lockdc_lua_runtime_contract() {
   assert_contains "$repo_root/CMakeLists.txt" 'lua/vectis/lockd\.lua'
   assert_contains "$repo_root/CMakeLists.txt" 'share/lockdc-source/src/lua/lockdc_lua\.c'
@@ -1602,6 +1619,7 @@ assert_lua_example_dx_contract
 assert_concurrency_mailbox_contract
 assert_kore_lonejson_contract
 assert_kore_static_runtime_contract
+assert_acme_lifecycle_contract
 assert_lockdc_lua_runtime_contract
 assert_lql_lua_runtime_contract
 assert_opcua_lua_runtime_contract

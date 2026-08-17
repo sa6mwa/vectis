@@ -921,6 +921,16 @@ static void vectis_kore_notify_ready(void) {
                                               NULL, 0u, NULL);
 }
 
+static int vectis_kore_app_ready(void) {
+  int *ready;
+
+  ready = vectis_kore_current.app_ready;
+  if (ready == NULL) {
+    return 1;
+  }
+  return __sync_fetch_and_add(ready, 0) != 0;
+}
+
 static void vectis_kore_request_controlled_shutdown(void) {
   kore_quit = KORE_QUIT_NORMAL;
   kore_signal(SIGTERM);
@@ -2393,6 +2403,13 @@ int vectis_kore_route(struct http_request *req) {
   if (app == NULL || req == NULL || req->path == NULL) {
     vectis_internal_metrics_note_http_status(app, 503);
     http_response(req, 503, NULL, 0);
+    vectis_internal_request_free(request);
+    vectis_internal_response_free(response);
+    return KORE_RESULT_OK;
+  }
+  if (!vectis_kore_app_ready()) {
+    vectis_internal_metrics_note_http_status(app, 503);
+    http_response(req, 503, "vectis app is starting\n", 23u);
     vectis_internal_request_free(request);
     vectis_internal_response_free(response);
     return KORE_RESULT_OK;

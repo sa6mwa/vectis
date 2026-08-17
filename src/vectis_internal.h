@@ -55,6 +55,7 @@ typedef struct vectis_kore_runtime_config {
    * STOP frames; the supervisor owns the other end.
    */
   int control_fd;
+  int *app_ready;
 } vectis_kore_runtime_config;
 
 typedef enum vectis_runtime_control_type {
