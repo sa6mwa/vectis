@@ -7,6 +7,8 @@ version=${VECTIS_VERSION:-$("$script_dir/release_version.sh")}
 dist_dir=${VECTIS_DIST_DIR:-"$repo_root/dist"}
 checksums="$dist_dir/vectis-$version-CHECKSUMS"
 work_root="$repo_root/build/release-artifact-verify"
+cmake_bin=${CMAKE:-cmake}
+release_build_root=${VECTIS_RELEASE_BUILD_ROOT:-"$repo_root/build"}
 
 fail() {
   reason=$1
@@ -43,6 +45,164 @@ mkdir -p "$work_root"
 manifest_files="$work_root/manifest-files.txt"
 awk '{print $2}' "$checksums" | sort >"$manifest_files"
 lua_artifacts_validated=0
+required_linux_targets="
+x86_64-linux-gnu
+x86_64-linux-musl
+aarch64-linux-gnu
+aarch64-linux-musl
+armhf-linux-gnu
+armhf-linux-musl
+"
+
+if [ "${VECTIS_REQUIRE_LINUX_RELEASE_MATRIX:-0}" != "0" ]; then
+  for target_id in $required_linux_targets; do
+    expected_artifact="vectis-$version-$target_id.tar.gz"
+    if ! grep -Fx "$expected_artifact" "$manifest_files" >/dev/null 2>&1; then
+      fail "missing required Linux release artifact" "$expected_artifact"
+    fi
+  done
+fi
+
+linux_target_machine_pattern() {
+  case "$1" in
+    x86_64-linux-*) printf '%s\n' 'Advanced Micro Devices X86-64|X86-64|x86-64' ;;
+    aarch64-linux-*) printf '%s\n' 'AArch64|ARM aarch64' ;;
+    armhf-linux-*) printf '%s\n' 'ARM' ;;
+    *) fail "unsupported Linux target for ELF verification" "$1" ;;
+  esac
+}
+
+linux_target_class_pattern() {
+  case "$1" in
+    armhf-linux-*) printf '%s\n' 'ELF32' ;;
+    x86_64-linux-*|aarch64-linux-*) printf '%s\n' 'ELF64' ;;
+    *) fail "unsupported Linux target for ELF verification" "$1" ;;
+  esac
+}
+
+discover_linux_readelf() {
+  local target_id=$1
+  local build_dir="$release_build_root/$target_id-release"
+  local tools
+  local READELF
+
+  if [ -f "$build_dir/CMakeCache.txt" ]; then
+    if tools=$(unset VECTIS_READELF; "$script_dir/discover_target_tools.sh" \
+        --build-dir "$build_dir" --target-id "$target_id" 2>/dev/null); then
+      READELF=
+      eval "$tools"
+      if [ -n "${READELF:-}" ] && [ -x "$READELF" ]; then
+        printf '%s\n' "$READELF"
+        return 0
+      fi
+    fi
+  fi
+
+  if [ -n "${VECTIS_READELF:-}" ] && [ -x "$VECTIS_READELF" ]; then
+    printf '%s\n' "$VECTIS_READELF"
+    return 0
+  fi
+  if command -v "$target_id-readelf" >/dev/null 2>&1; then
+    command -v "$target_id-readelf"
+    return 0
+  fi
+  if command -v readelf >/dev/null 2>&1; then
+    command -v readelf
+    return 0
+  fi
+  return 1
+}
+
+verify_binary_sdk_manifest_target() {
+  root=$1
+  target_id=$2
+  artifact_name=$3
+  manifest="$root/share/c.pkt.systems/manifest.txt"
+
+  [ -f "$manifest" ] ||
+    fail "binary SDK missing c.pkt.systems target manifest" "$artifact_name"
+  manifest_target=$(sed -n 's/^target_id=//p' "$manifest" | sed -n '1p')
+  [ -n "$manifest_target" ] ||
+    fail "binary SDK c.pkt.systems target manifest missing target_id" "$artifact_name"
+  [ "$manifest_target" = "$target_id" ] ||
+    fail "binary SDK c.pkt.systems target manifest mismatch" \
+      "$artifact_name: $manifest_target != $target_id"
+}
+
+verify_linux_elf_header_target() {
+  file=$1
+  target_id=$2
+  header=$3
+  machine_pattern=$(linux_target_machine_pattern "$target_id")
+  class_pattern=$(linux_target_class_pattern "$target_id")
+  machines=$(printf '%s\n' "$header" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')
+  classes=$(printf '%s\n' "$header" | sed -n 's/^[[:space:]]*Class:[[:space:]]*//p')
+
+  [ -n "$machines" ] || fail "Linux binary SDK ELF payload missing machine metadata" "$file"
+  [ -n "$classes" ] || fail "Linux binary SDK ELF payload missing class metadata" "$file"
+  if bad_machine=$(printf '%s\n' "$machines" | grep -Ev "$machine_pattern" | sed -n '1p') &&
+     [ -n "$bad_machine" ]; then
+    fail "Linux binary SDK ELF machine target mismatch" "$file: $bad_machine != $target_id"
+  fi
+  if bad_class=$(printf '%s\n' "$classes" | grep -Ev "$class_pattern" | sed -n '1p') &&
+     [ -n "$bad_class" ]; then
+    fail "Linux binary SDK ELF class target mismatch" "$file: $bad_class != $target_id"
+  fi
+}
+
+verify_linux_required_elf_payload() {
+  file=$1
+  target_id=$2
+  label=$3
+
+  if ! header=$("$readelf_bin" -h "$file" 2>/dev/null); then
+    fail "$label is not a readable ELF payload" "$file"
+  fi
+  verify_linux_elf_header_target "$file" "$target_id" "$header"
+}
+
+verify_linux_vectis_binary_static() {
+  file=$1
+
+  if dynamic=$("$readelf_bin" -d "$file" 2>/dev/null) &&
+     printf '%s\n' "$dynamic" | grep -E '\(NEEDED\)' >/dev/null 2>&1; then
+    fail "Linux vectis binary is dynamically linked" "$file"
+  fi
+  if "$readelf_bin" -l "$file" 2>/dev/null |
+     grep -E '^[[:space:]]*INTERP[[:space:]]' >/dev/null 2>&1; then
+    fail "Linux vectis binary has an ELF interpreter" "$file"
+  fi
+}
+
+verify_linux_tree_elf_targets() {
+  root=$1
+  target_id=$2
+
+  while IFS= read -r file; do
+    if header=$("$readelf_bin" -h "$file" 2>/dev/null); then
+      verify_linux_elf_header_target "$file" "$target_id" "$header"
+    fi
+  done < <(find "$root/bin" "$root/lib" -type f -print)
+}
+
+verify_linux_sdk_consumer_build() {
+  root=$1
+  target_id=$2
+  link_mode=$3
+  toolchain="$repo_root/cmake/toolchains/$target_id.cmake"
+  build_dir="$work_root/consumer-$target_id-$link_mode"
+
+  [ -f "$toolchain" ] ||
+    fail "missing Linux target toolchain for SDK consumer smoke" "$target_id"
+  "$cmake_bin" \
+    -S "$repo_root/tests/install" \
+    -B "$build_dir" \
+    -DCMAKE_TOOLCHAIN_FILE="$toolchain" \
+    -DVECTIS_EXTERNAL_ROOT="$root" \
+    -DCMAKE_PREFIX_PATH="$root" \
+    -DVECTIS_CONSUMER_LINK="$link_mode"
+  "$cmake_bin" --build "$build_dir"
+}
 
 while IFS= read -r artifact_name; do
   artifact="$dist_dir/$artifact_name"
@@ -90,6 +250,14 @@ while IFS= read -r artifact_name; do
             vectis-"$version"-*) ;;
             *) fail "binary SDK archive root mismatch" "$artifact_name" ;;
           esac
+          [ "$root_name.tar.gz" = "$artifact_name" ] ||
+            fail "binary SDK archive/root target mismatch" "$artifact_name"
+          target_id=${root_name#"vectis-$version-"}
+          case "$target_id" in
+            x86_64-linux-gnu|x86_64-linux-musl|aarch64-linux-gnu|aarch64-linux-musl|armhf-linux-gnu|armhf-linux-musl|arm64-apple-darwin) ;;
+            *) fail "binary SDK target is not supported" "$artifact_name" ;;
+          esac
+          verify_binary_sdk_manifest_target "$root" "$target_id" "$artifact_name"
           [ -d "$root/include" ] || fail "binary SDK missing include/" "$artifact_name"
           [ -d "$root/lib" ] || fail "binary SDK missing lib/" "$artifact_name"
           [ -d "$root/share/doc/vectis" ] || fail "binary SDK missing share/doc/vectis" "$artifact_name"
@@ -101,6 +269,28 @@ while IFS= read -r artifact_name; do
           [ -f "$root/include/vectis/vectis_version.h" ] || fail "binary SDK missing generated version header" "$artifact_name"
           grep -F "#define VECTIS_VERSION \"$version\"" "$root/include/vectis/vectis_version.h" >/dev/null ||
             fail "binary SDK version header mismatch" "$artifact_name"
+          case "$target_id" in
+            *-linux-*)
+              readelf_bin=$(discover_linux_readelf "$target_id") ||
+                fail "readelf is required to verify Linux binary SDK payloads" "$artifact_name"
+              [ -x "$root/bin/vectis" ] ||
+                fail "Linux binary SDK missing executable vectis binary" "$artifact_name"
+              [ -f "$root/lib/libvectis.a" ] ||
+                fail "Linux binary SDK missing static libvectis library" "$artifact_name"
+              verify_linux_required_elf_payload "$root/bin/vectis" "$target_id" \
+                "Linux vectis binary"
+              verify_linux_vectis_binary_static "$root/bin/vectis"
+              verify_linux_required_elf_payload "$root/lib/libvectis.a" "$target_id" \
+                "Linux static libvectis archive"
+              verify_linux_tree_elf_targets "$root" "$target_id"
+              if [ "${VECTIS_REQUIRE_LINUX_RELEASE_MATRIX:-0}" != "0" ]; then
+                verify_linux_sdk_consumer_build "$root" "$target_id" static
+                if [ -f "$root/lib/libvectis.so" ]; then
+                  verify_linux_sdk_consumer_build "$root" "$target_id" shared
+                fi
+              fi
+              ;;
+          esac
           if find "$root/share" -mindepth 1 -maxdepth 1 -type d \
              \( -name '*-source' -o -name '*lua*source*' \) | grep . >/dev/null; then
             fail "binary SDK contains dependency source tree" "$artifact_name"

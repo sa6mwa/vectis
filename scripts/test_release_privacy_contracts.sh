@@ -91,7 +91,7 @@ grep -F "home file URL" "$work/lua-source.err" >/dev/null || {
 if command -v zip >/dev/null 2>&1; then
   rm -rf "$dist" "$payload"
   mkdir -p "$dist" "$payload/source-rock"
-  printf '%s\n' '/tmp/luarocks-build/vectis' >"$payload/source-rock/leak.txt"
+  printf '%s\n' "/tmp"/luarocks-build/vectis >"$payload/source-rock/leak.txt"
   (cd "$payload/source-rock" && zip -q -X "$dist/vectis-$version-1.src.rock" leak.txt)
   (cd "$dist" && sha256sum "vectis-$version-1.src.rock" >"vectis-$version-CHECKSUMS")
   if VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist \

@@ -102,7 +102,7 @@ scan_path "$repo_root" "repository path"
 scan_path "${HOME:-}" "home path"
 scan_path "$repo_root/.cache" "dependency cache path"
 scan_path "$repo_root/build" "build path"
-scan_path "/tmp/luarocks" "package-manager temporary path"
+scan_path "/tmp"/luarocks "package-manager temporary path"
 if [ -n "${TMPDIR:-}" ]; then
   scan_path "${TMPDIR:-}/luarocks" "package-manager temporary path"
 fi

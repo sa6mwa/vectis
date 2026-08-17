@@ -234,6 +234,56 @@ EOF
   exit 0
 fi
 
+patch_lockdc_lua_source() {
+  file="$lockdc_lua_source_dir/src/lua/lockdc_lua.c"
+  tmp="$file.tmp.$$"
+
+  if [ ! -f "$file" ]; then
+    echo "missing staged lockdc Lua source: $file" >&2
+    exit 1
+  fi
+  if grep -Fq 'lcdc_opt_version_field' "$file"; then
+    return 0
+  fi
+  if ! grep -Fq 'static int lcdc_opt_integer_field(lua_State *L, int index, const char *name,' "$file"; then
+    echo "unsupported lockdc Lua source layout: missing integer option helper" >&2
+    exit 1
+  fi
+
+  awk '
+    {
+      print
+      if ($0 == "static int lcdc_opt_integer_field(lua_State *L, int index, const char *name,") {
+        in_integer_helper = 1
+      } else if (in_integer_helper && $0 == "}") {
+        print ""
+        print "static int lcdc_opt_version_field(lua_State *L, int index, const char *name,"
+        print "                                  lc_version *out) {"
+        print "  if (lua_istable(L, index)) {"
+        print "    lua_getfield(L, index, name);"
+        print "    if (!lua_isnil(L, -1)) {"
+        print "      *out = (lc_version)luaL_checkinteger(L, -1);"
+        print "      lua_pop(L, 1);"
+        print "      return 1;"
+        print "    }"
+        print "    lua_pop(L, 1);"
+        print "  }"
+        print "  return 0;"
+        print "}"
+        in_integer_helper = 0
+      }
+    }
+  ' "$file" >"$tmp"
+  mv "$tmp" "$file"
+  sed -i \
+    's/lcdc_opt_integer_field(L, \([^,][^,]*\), "if_version"/lcdc_opt_version_field(L, \1, "if_version"/g' \
+    "$file"
+  if ! grep -Fq 'lcdc_opt_version_field(lua_State *L, int index, const char *name,' "$file"; then
+    echo "failed to patch lockdc Lua version helper" >&2
+    exit 1
+  fi
+}
+
 mkdir -p "$archive_cache_root" "$archive_lock_root" "$deps_root/include" "$deps_root/lib"
 
 system_version="0.9.0"
@@ -489,6 +539,7 @@ tar -xzf "$system_download" -C "$deps_root" --strip-components 1
 tar -xzf "$lockdc_download" -C "$deps_root" --strip-components 1
 mkdir -p "$lockdc_lua_source_dir"
 tar -xzf "$lockdc_lua_download" -C "$lockdc_lua_source_dir" --strip-components 1
+patch_lockdc_lua_source
 tar -xzf "$lonejson_download" -C "$deps_root" --strip-components 1
 mkdir -p "$lonejson_source_dir"
 tar -xzf "$lonejson_lua_download" -C "$lonejson_source_dir" --strip-components 1
@@ -530,6 +581,7 @@ liblockdc_sha256=$lockdc_sha256
 lockdc_lua_archive=$lockdc_lua_archive
 lockdc_lua_payload=$lockdc_lua_payload
 lockdc_lua_sha256=$lockdc_lua_sha256
+lockdc_lua_patch=lc-version-if-version-helper
 lonejson_archive=$lonejson_archive
 lonejson_version=$lonejson_version
 lonejson_sha256=$lonejson_sha256

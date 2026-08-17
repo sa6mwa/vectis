@@ -66,6 +66,17 @@ diff --git a/src/accesslog.c b/src/accesslog.c
 diff --git a/src/http.c b/src/http.c
 --- a/src/http.c
 +++ b/src/http.c
+@@ -947,7 +947,9 @@ http_header_recv(struct netbuf *nb)
+ 
+ 		if (!http_request_header_uint64(req, "content-length",
+ 		    &req->content_length)) {
+-			if (req->method == HTTP_METHOD_DELETE) {
++			if (req->method == HTTP_METHOD_DELETE ||
++			    req->method == HTTP_METHOD_PROPFIND ||
++			    req->method == HTTP_METHOD_MKCOL) {
+ 				req->flags |= HTTP_REQUEST_COMPLETE;
+ 				return (KORE_RESULT_OK);
+ 			}
 @@ -1744,6 +1744,18 @@ http_method_text(int method)
  	case HTTP_METHOD_PATCH:
  		r = "PATCH";
@@ -110,10 +121,10 @@ diff --git a/src/http.c b/src/http.c
  		flags |= HTTP_REQUEST_EXPECT_BODY;
 +	} else if (!strcasecmp(method, "propfind")) {
 +		m = HTTP_METHOD_PROPFIND;
-+		flags |= HTTP_REQUEST_COMPLETE;
++		flags |= HTTP_REQUEST_EXPECT_BODY;
 +	} else if (!strcasecmp(method, "mkcol")) {
 +		m = HTTP_METHOD_MKCOL;
-+		flags |= HTTP_REQUEST_COMPLETE;
++		flags |= HTTP_REQUEST_EXPECT_BODY;
 +	} else if (!strcasecmp(method, "copy")) {
 +		m = HTTP_METHOD_COPY;
 +		flags |= HTTP_REQUEST_COMPLETE;

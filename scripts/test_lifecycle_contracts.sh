@@ -169,6 +169,9 @@ assert_kore_lonejson_contract() {
   assert_contains "$repo_root/vendor/kore/upstream/src/acme.c" 'acme_ljson_parse\(&acme_order_map'
   assert_contains "$repo_root/vendor/kore/upstream/src/acme.c" 'acme_ljson_parse\(&acme_auth_map'
   assert_contains "$repo_root/vendor/kore/upstream/src/acme.c" 'acme_ljson_parse\(&acme_badreq_map'
+  assert_contains "$repo_root/vendor/kore/upstream/src/curl.c" 'defined\(__linux__\) && !defined\(KORE_VECTIS_NO_SECCOMP\)'
+  assert_contains "$repo_root/vendor/kore/upstream/src/acme.c" 'defined\(__linux__\) && !defined\(KORE_VECTIS_NO_SECCOMP\)'
+  assert_contains "$repo_root/vendor/kore/upstream/src/keymgr_openssl.c" 'defined\(__linux__\) && !defined\(KORE_VECTIS_NO_SECCOMP\)'
   assert_contains "$repo_root/scripts/verify-kore-patches.sh" 'S_SRC\+=src/ljson\.c'
   assert_contains "$repo_root/scripts/verify-kore-patches.sh" 'CFLAGS\+=-DKORE_USE_LONEJSON'
   assert_contains "$repo_root/scripts/verify-kore-patches.sh" 'LDFLAGS\+=-L\$\(LONEJSON_PATH\)/lib -llonejson'
@@ -1130,7 +1133,7 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/TODO.md" 'C binary SDK artifacts'
   assert_contains "$repo_root/Makefile" 'lua-rock:'
   assert_contains "$repo_root/Makefile" 'release-lua-artifacts:'
-  assert_contains "$repo_root/Makefile" 'release-matrix: package package-source release-lua-artifacts package-checksums package-verify'
+  assert_contains "$repo_root/Makefile" 'release-matrix: package package-source release-lua-artifacts package-checksums verify-release-matrix'
   assert_contains "$repo_root/Makefile" '^format-check:'
   assert_not_contains "$repo_root/Makefile" '^release-pipeline:'
   assert_contains "$repo_root/Makefile" '^prerelease:'
@@ -1162,6 +1165,9 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'validate_luarocks\.sh'
   assert_contains "$repo_root/scripts/verify_release_privacy.sh" '\*\.rockspec'
   assert_contains "$repo_root/scripts/verify_release_privacy.sh" '\*\.rock\|\*\.src\.rock'
+  assert_contains "$repo_root/vendor/kore/patches/0024-kore-vectis-webdav-methods.patch" 'req->method == HTTP_METHOD_PROPFIND'
+  assert_contains "$repo_root/vendor/kore/patches/0024-kore-vectis-webdav-methods.patch" 'req->method == HTTP_METHOD_MKCOL'
+  assert_contains "$repo_root/vendor/kore/patches/0024-kore-vectis-webdav-methods.patch" 'flags \|= HTTP_REQUEST_EXPECT_BODY'
   assert_contains "$lua_index" 'make lua-rock'
   assert_contains "$lua_index" 'vectis-lua-<version>\.tar\.gz'
   assert_contains "$repo_root/lua/vectis.lua" 'local status = require\("vectis\.status"\)'
@@ -1201,23 +1207,46 @@ assert_luarocks_artifact_rejected() {
   root="$dist/$root_name"
 
   rm -rf "$dist"
-  mkdir -p \
-    "$root/include/vectis" \
-    "$root/lib/cmake/vectis" \
-    "$root/lib/pkgconfig" \
-    "$root/share/doc/vectis" \
-    "$root/.luarocks"
+	mkdir -p "$dist/fakebin"
+  cat >"$dist/fakebin/readelf" <<'EOF'
+#!/bin/sh
+case "$1:$2" in
+  -h:*/bin/vectis|-h:*/lib/libvectis.a)
+    cat <<'HEADER'
+ELF Header:
+  Class:                             ELF64
+  Machine:                           Advanced Micro Devices X86-64
+HEADER
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+  chmod +x "$dist/fakebin/readelf"
+	mkdir -p \
+	  "$root/bin" \
+	  "$root/include/vectis" \
+	  "$root/lib/cmake/vectis" \
+	  "$root/lib/pkgconfig" \
+	  "$root/share/c.pkt.systems" \
+	  "$root/share/doc/vectis" \
+	  "$root/.luarocks"
+  printf '#!/bin/sh\nexit 0\n' >"$root/bin/vectis"
+  chmod +x "$root/bin/vectis"
+  printf '%s\n' 'fake archive' >"$root/lib/libvectis.a"
   printf '#define VECTIS_VERSION "%s"\n' "$version" >"$root/include/vectis/vectis_version.h"
   printf '%s\n' '# test config' >"$root/lib/cmake/vectis/vectisConfig.cmake"
-  printf '%s\n' '# test config version' >"$root/lib/cmake/vectis/vectisConfigVersion.cmake"
-  printf '%s\n' 'Name: vectis' >"$root/lib/pkgconfig/vectis.pc"
-  printf '%s\n' 'license' >"$root/share/doc/vectis/LICENSE"
+	printf '%s\n' '# test config version' >"$root/lib/cmake/vectis/vectisConfigVersion.cmake"
+	printf '%s\n' 'Name: vectis' >"$root/lib/pkgconfig/vectis.pc"
+	printf '%s\n' 'target_id=x86_64-linux-musl' >"$root/share/c.pkt.systems/manifest.txt"
+	printf '%s\n' 'license' >"$root/share/doc/vectis/LICENSE"
   printf '%s\n' 'readme' >"$root/share/doc/vectis/README.md"
   printf '%s\n' 'must not ship' >"$root/.luarocks/bad.rock"
   tar -C "$dist" -czf "$dist/$artifact" "$root_name"
   (cd "$dist" && sha256sum "$artifact" >"vectis-$version-CHECKSUMS")
 
-  if VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist \
+  if VECTIS_RELEASE_BUILD_ROOT="$dist/no-build" \
+       VECTIS_READELF="$dist/fakebin/readelf" \
+       VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist \
        "$repo_root/scripts/verify_release_artifacts.sh" \
        >"$dist/verify.out" 2>"$dist/verify.err"; then
     echo "release artifact verifier accepted LuaRocks artifacts" >&2
@@ -1230,6 +1259,250 @@ assert_luarocks_artifact_rejected() {
   fi
 }
 
+assert_linux_release_target_payload_checked() {
+  dist=$version_work/target-payload-dist
+  version=0.0.0
+  root_name=vectis-$version-aarch64-linux-gnu
+  artifact=$root_name.tar.gz
+  root="$dist/$root_name"
+
+  rm -rf "$dist"
+  mkdir -p "$dist/fakebin"
+  cat >"$dist/fakebin/readelf" <<'EOF'
+#!/bin/sh
+case "$1:$2" in
+  -h:*/bin/vectis|-h:*/lib/libvectis.a)
+    cat <<'HEADER'
+ELF Header:
+  Class:                             ELF64
+  Machine:                           Advanced Micro Devices X86-64
+HEADER
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+  chmod +x "$dist/fakebin/readelf"
+	mkdir -p \
+	  "$root/bin" \
+	  "$root/include/vectis" \
+	  "$root/lib/cmake/vectis" \
+	  "$root/lib/pkgconfig" \
+	  "$root/share/c.pkt.systems" \
+	  "$root/share/doc/vectis"
+  printf '#!/bin/sh\nexit 0\n' >"$root/bin/vectis"
+  chmod +x "$root/bin/vectis"
+  printf '%s\n' 'fake archive' >"$root/lib/libvectis.a"
+  printf '#define VECTIS_VERSION "%s"\n' "$version" >"$root/include/vectis/vectis_version.h"
+  printf '%s\n' '# test config' >"$root/lib/cmake/vectis/vectisConfig.cmake"
+	printf '%s\n' '# test config version' >"$root/lib/cmake/vectis/vectisConfigVersion.cmake"
+	printf '%s\n' 'Name: vectis' >"$root/lib/pkgconfig/vectis.pc"
+	printf '%s\n' 'target_id=aarch64-linux-gnu' >"$root/share/c.pkt.systems/manifest.txt"
+	printf '%s\n' 'license' >"$root/share/doc/vectis/LICENSE"
+  printf '%s\n' 'readme' >"$root/share/doc/vectis/README.md"
+  tar -C "$dist" -czf "$dist/$artifact" "$root_name"
+  (cd "$dist" && sha256sum "$artifact" >"vectis-$version-CHECKSUMS")
+
+  if VECTIS_RELEASE_BUILD_ROOT="$dist/no-build" \
+       VECTIS_READELF="$dist/fakebin/readelf" \
+       VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist \
+       "$repo_root/scripts/verify_release_artifacts.sh" \
+       >"$dist/target.out" 2>"$dist/target.err"; then
+    echo "release artifact verifier accepted a mislabeled Linux SDK payload" >&2
+    exit 1
+  fi
+  if ! grep -Fq "Linux binary SDK ELF machine target mismatch" "$dist/target.err"; then
+    echo "release artifact verifier rejected mislabeled Linux SDK payload for the wrong reason" >&2
+    cat "$dist/target.err" >&2
+    exit 1
+  fi
+}
+
+assert_linux_release_manifest_target_checked() {
+  dist=$version_work/target-manifest-dist
+  version=0.0.0
+  root_name=vectis-$version-x86_64-linux-musl
+  artifact=$root_name.tar.gz
+  root="$dist/$root_name"
+
+  rm -rf "$dist"
+  mkdir -p "$root/share/c.pkt.systems"
+  printf '%s\n' 'target_id=x86_64-linux-gnu' >"$root/share/c.pkt.systems/manifest.txt"
+  tar -C "$dist" -czf "$dist/$artifact" "$root_name"
+  (cd "$dist" && sha256sum "$artifact" >"vectis-$version-CHECKSUMS")
+
+  if VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist \
+       "$repo_root/scripts/verify_release_artifacts.sh" \
+       >"$dist/manifest.out" 2>"$dist/manifest.err"; then
+    echo "release artifact verifier accepted a mislabeled c.pkt.systems target manifest" >&2
+    exit 1
+  fi
+  if ! grep -Fq "binary SDK c.pkt.systems target manifest mismatch" "$dist/manifest.err"; then
+    echo "release artifact verifier rejected mislabeled c.pkt.systems manifest for the wrong reason" >&2
+    cat "$dist/manifest.err" >&2
+    exit 1
+  fi
+}
+
+assert_linux_release_binary_static_checked() {
+  dist=$version_work/static-binary-dist
+  version=0.0.0
+  root_name=vectis-$version-x86_64-linux-musl
+  artifact=$root_name.tar.gz
+  root="$dist/$root_name"
+
+  rm -rf "$dist"
+  mkdir -p "$dist/fakebin"
+  cat >"$dist/fakebin/readelf" <<'EOF'
+#!/bin/sh
+case "$1:$2" in
+  -h:*/bin/vectis|-h:*/lib/libvectis.a)
+    cat <<'HEADER'
+ELF Header:
+  Class:                             ELF64
+  Machine:                           Advanced Micro Devices X86-64
+HEADER
+    ;;
+  -d:*/bin/vectis)
+    printf '%s\n' ' 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]'
+    ;;
+  -l:*/bin/vectis)
+    printf '%s\n' '  INTERP         0x0000000000000318 0x0000000000400318 0x0000000000400318'
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+  chmod +x "$dist/fakebin/readelf"
+	mkdir -p \
+	  "$root/bin" \
+	  "$root/include/vectis" \
+	  "$root/lib/cmake/vectis" \
+	  "$root/lib/pkgconfig" \
+	  "$root/share/c.pkt.systems" \
+	  "$root/share/doc/vectis"
+  printf '#!/bin/sh\nexit 0\n' >"$root/bin/vectis"
+  chmod +x "$root/bin/vectis"
+  printf '%s\n' 'fake archive' >"$root/lib/libvectis.a"
+  printf '#define VECTIS_VERSION "%s"\n' "$version" >"$root/include/vectis/vectis_version.h"
+  printf '%s\n' '# test config' >"$root/lib/cmake/vectis/vectisConfig.cmake"
+	printf '%s\n' '# test config version' >"$root/lib/cmake/vectis/vectisConfigVersion.cmake"
+	printf '%s\n' 'Name: vectis' >"$root/lib/pkgconfig/vectis.pc"
+	printf '%s\n' 'target_id=x86_64-linux-musl' >"$root/share/c.pkt.systems/manifest.txt"
+	printf '%s\n' 'license' >"$root/share/doc/vectis/LICENSE"
+  printf '%s\n' 'readme' >"$root/share/doc/vectis/README.md"
+  tar -C "$dist" -czf "$dist/$artifact" "$root_name"
+  (cd "$dist" && sha256sum "$artifact" >"vectis-$version-CHECKSUMS")
+
+  if VECTIS_RELEASE_BUILD_ROOT="$dist/no-build" \
+       VECTIS_READELF="$dist/fakebin/readelf" \
+       VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist \
+       "$repo_root/scripts/verify_release_artifacts.sh" \
+       >"$dist/static.out" 2>"$dist/static.err"; then
+    echo "release artifact verifier accepted a dynamically linked Linux vectis binary" >&2
+    exit 1
+  fi
+  if ! grep -Fq "Linux vectis binary is dynamically linked" "$dist/static.err"; then
+    echo "release artifact verifier rejected dynamic Linux vectis binary for the wrong reason" >&2
+    cat "$dist/static.err" >&2
+    exit 1
+  fi
+}
+
+assert_linux_release_readelf_discovered_from_target_cache() {
+  dist=$version_work/readelf-cache-dist
+  version=0.0.0
+  root_name=vectis-$version-x86_64-linux-musl
+  artifact=$root_name.tar.gz
+  root="$dist/$root_name"
+  build_dir="$dist/build/x86_64-linux-musl-release"
+
+  rm -rf "$dist"
+  mkdir -p "$dist/fakebin" "$build_dir"
+  cat >"$dist/fakebin/readelf" <<'EOF'
+#!/bin/sh
+case "$1:$2" in
+  -h:*/bin/vectis|-h:*/lib/libvectis.a)
+    cat <<'HEADER'
+ELF Header:
+  Class:                             ELF64
+  Machine:                           Advanced Micro Devices X86-64
+HEADER
+    ;;
+  -d:*/bin/vectis)
+    exit 1
+    ;;
+  -l:*/bin/vectis)
+    exit 1
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+  chmod +x "$dist/fakebin/readelf"
+  printf '%s\n' "CMAKE_READELF:FILEPATH=$dist/fakebin/readelf" >"$build_dir/CMakeCache.txt"
+  mkdir -p \
+    "$root/bin" \
+    "$root/include/vectis" \
+    "$root/lib/cmake/vectis" \
+    "$root/lib/pkgconfig" \
+    "$root/share/c.pkt.systems" \
+    "$root/share/doc/vectis"
+  printf '#!/bin/sh\nexit 0\n' >"$root/bin/vectis"
+  chmod +x "$root/bin/vectis"
+  printf '%s\n' 'fake archive' >"$root/lib/libvectis.a"
+  printf '#define VECTIS_VERSION "%s"\n' "$version" >"$root/include/vectis/vectis_version.h"
+  printf '%s\n' '# test config' >"$root/lib/cmake/vectis/vectisConfig.cmake"
+  printf '%s\n' '# test config version' >"$root/lib/cmake/vectis/vectisConfigVersion.cmake"
+  printf '%s\n' 'Name: vectis' >"$root/lib/pkgconfig/vectis.pc"
+  printf '%s\n' 'target_id=x86_64-linux-musl' >"$root/share/c.pkt.systems/manifest.txt"
+  printf '%s\n' 'license' >"$root/share/doc/vectis/LICENSE"
+  printf '%s\n' 'readme' >"$root/share/doc/vectis/README.md"
+  tar -C "$dist" -czf "$dist/$artifact" "$root_name"
+  (cd "$dist" && sha256sum "$artifact" >"vectis-$version-CHECKSUMS")
+
+  VECTIS_RELEASE_BUILD_ROOT="$dist/build" \
+    VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist \
+    "$repo_root/scripts/verify_release_artifacts.sh" \
+    >"$dist/readelf.out" 2>"$dist/readelf.err"
+}
+
+assert_linux_release_matrix_required() {
+  dist=$version_work/matrix-dist
+  version=0.0.0
+  root_name=vectis-$version-x86_64-linux-gnu
+  artifact=$root_name.tar.gz
+  root="$dist/$root_name"
+
+  rm -rf "$dist"
+  mkdir -p \
+    "$root/bin" \
+    "$root/include/vectis" \
+    "$root/lib/cmake/vectis" \
+    "$root/lib/pkgconfig" \
+    "$root/share/doc/vectis"
+  printf '#!/bin/sh\nexit 0\n' >"$root/bin/vectis"
+  chmod +x "$root/bin/vectis"
+  printf '#define VECTIS_VERSION "%s"\n' "$version" >"$root/include/vectis/vectis_version.h"
+  printf '%s\n' '# test config' >"$root/lib/cmake/vectis/vectisConfig.cmake"
+  printf '%s\n' '# test config version' >"$root/lib/cmake/vectis/vectisConfigVersion.cmake"
+  printf '%s\n' 'Name: vectis' >"$root/lib/pkgconfig/vectis.pc"
+  printf '%s\n' 'license' >"$root/share/doc/vectis/LICENSE"
+  printf '%s\n' 'readme' >"$root/share/doc/vectis/README.md"
+  tar -C "$dist" -czf "$dist/$artifact" "$root_name"
+  (cd "$dist" && sha256sum "$artifact" >"vectis-$version-CHECKSUMS")
+
+  if VECTIS_REQUIRE_LINUX_RELEASE_MATRIX=1 \
+       VECTIS_VERSION=$version VECTIS_DIST_DIR=$dist \
+       "$repo_root/scripts/verify_release_artifacts.sh" \
+       >"$dist/matrix.out" 2>"$dist/matrix.err"; then
+    echo "release artifact verifier accepted an incomplete Linux release matrix" >&2
+    exit 1
+  fi
+  if ! grep -Fq "missing required Linux release artifact" "$dist/matrix.err"; then
+    echo "release artifact verifier rejected incomplete Linux matrix for the wrong reason" >&2
+    cat "$dist/matrix.err" >&2
+    exit 1
+  fi
+}
+
 if [ -f "$version_path" ]; then
   had_version=1
   saved_version=$(cat "$version_path")
@@ -1237,6 +1510,8 @@ fi
 
 assert_contains "$repo_root/.gitignore" '^/VERSION$'
 assert_contains "$repo_root/scripts/package.sh" 'cpkt-toolchains\.sh" ensure "\$target_id"'
+assert_contains "$repo_root/scripts/package.sh" 'rm -rf "\$build_dir"'
+assert_contains "$repo_root/scripts/package.sh" 'refusing to clean unexpected build dir'
 assert_not_contains "$repo_root/scripts/package.sh" 'run_optional_target'
 assert_contains "$repo_root/scripts/require_clean_release_worktree.sh" 'git -C "\$repo_root" diff --quiet -- \.'
 assert_contains "$repo_root/scripts/require_clean_release_worktree.sh" 'git -C "\$repo_root" ls-files --others --exclude-standard'
@@ -1256,13 +1531,44 @@ assert_contains "$repo_root/cmake/vectis.pc.in" '^Name: vectis$'
 assert_contains "$repo_root/cmake/package_archive.cmake" 'share/c\.pkt\.systems'
 assert_contains "$repo_root/cmake/package_archive.cmake" 'CMAKE_INSTALL_NAME_TOOL'
 assert_contains "$repo_root/cmake/package_archive.cmake" '@rpath/\$\{vectis_darwin_dep_name\}'
+assert_contains "$repo_root/cmake/package_archive.cmake" 'find_dependency\(CpktOpcUa CONFIG REQUIRED\)'
+assert_contains "$repo_root/cmake/package_archive.cmake" 'find_dependency\(CpktSus CONFIG REQUIRED\)'
+assert_contains "$repo_root/cmake/package_archive.cmake" 'find_dependency\(CpktAudio CONFIG REQUIRED\)'
+assert_contains "$repo_root/cmake/package_archive.cmake" 'find_package\(liblql CONFIG REQUIRED'
+assert_contains "$repo_root/cmake/package_archive.cmake" 'cpkt::opcua'
+assert_contains "$repo_root/cmake/package_archive.cmake" 'cpkt::sus'
+assert_contains "$repo_root/cmake/package_archive.cmake" 'cpkt::audio'
+assert_contains "$repo_root/cmake/package_archive.cmake" 'liblql::lql_static'
+assert_contains "$repo_root/tests/install/CMakeLists.txt" 'cpkt::opcua cpkt::sus cpkt::audio'
+assert_contains "$repo_root/tests/install/CMakeLists.txt" 'liblql::lql_static'
 assert_contains "$repo_root/cmake/package_darwin_smoke_bundle.cmake" '@executable_path/\.\./lib'
 assert_contains "$repo_root/scripts/verify_installed_sdk.sh" 'pkg-config --static --cflags --libs vectis'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK missing pkg-config metadata'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK contains dependency source tree'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK contains LuaRocks artifacts'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'VECTIS_REQUIRE_LINUX_RELEASE_MATRIX'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'missing required Linux release artifact'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'Linux binary SDK missing executable vectis binary'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK c\.pkt\.systems target manifest mismatch'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'discover_target_tools\.sh'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'VECTIS_RELEASE_BUILD_ROOT'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'Linux binary SDK ELF machine target mismatch'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'Linux static libvectis archive'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'verify_linux_vectis_binary_static'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'Linux vectis binary is dynamically linked'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'Linux vectis binary has an ELF interpreter'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'verify_linux_sdk_consumer_build'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'CMAKE_TOOLCHAIN_FILE="\$toolchain"'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'VECTIS_EXTERNAL_ROOT="\$root"'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'VECTIS_CONSUMER_LINK="\$link_mode"'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'verify_vectis_lua_preloads\.sh'
 assert_contains "$repo_root/scripts/package.sh" 'verify_vectis_lua_preloads\.sh'
+assert_contains "$repo_root/scripts/deps.sh" 'patch_lockdc_lua_source'
+assert_contains "$repo_root/scripts/deps.sh" 'lcdc_opt_version_field'
+assert_contains "$repo_root/scripts/deps.sh" 'lockdc_lua_patch=lc-version-if-version-helper'
+assert_contains "$repo_root/Makefile" '^verify-release-matrix:'
+assert_contains "$repo_root/Makefile" 'VECTIS_REQUIRE_LINUX_RELEASE_MATRIX=1 bash \./scripts/package-verify\.sh'
+assert_contains "$repo_root/TODO.md" '\[x\] Add release verification for GNU and musl deliverables'
 assert_contains "$repo_root/TODO.md" '\[x\] Statically preload every bundled dependency-native Lua facade'
 assert_contains "$repo_root/scripts/verify_vectis_lua_preloads.sh" 'LUA_PATH="/__vectis_no_lua_path__/\?\.lua"'
 assert_contains "$repo_root/scripts/verify_vectis_lua_preloads.sh" '"lockdc"'
@@ -1302,6 +1608,11 @@ assert_opcua_lua_runtime_contract
 assert_audio_sus_lua_runtime_contract
 assert_lua_coverage_matrix_contract
 assert_luarocks_artifact_rejected
+assert_linux_release_target_payload_checked
+assert_linux_release_manifest_target_checked
+assert_linux_release_binary_static_checked
+assert_linux_release_readelf_discovered_from_target_cache
+assert_linux_release_matrix_required
 
 if ! "$repo_root/scripts/target_toolchain_available.sh" x86_64-linux-gnu >/dev/null 2>&1; then
   echo "host x86_64-linux-gnu toolchain availability check failed" >&2
@@ -1458,6 +1769,7 @@ for target in \
   package-verify \
   verify-release-archives \
   verify-release-privacy \
+  verify-release-matrix \
   release-darwin-smoke-bundle \
   release-matrix \
   prerelease-live \

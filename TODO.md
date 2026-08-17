@@ -466,7 +466,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add package/archive generation for the current C SDK.
 - [x] Add optional arm64 Apple Darwin release archive and smoke-test zip generation when osxcross is available.
 - [ ] Add a GitHub Actions Darwin arm64 verification workflow using hosted `macos-15`/`macos-latest` runners to execute the smoke-test zip and codesign checks.
-- [ ] Add release verification for GNU and musl deliverables.
+- [x] Add release verification for GNU and musl deliverables.
 - [x] Run the same Codex review command mandated by the lifecycle skill and
   resolve relevant actionable findings until review comes back clean: use
   `codex review -c model=gpt-5.6-sol -c model_reasoning_effort=medium --uncommitted`

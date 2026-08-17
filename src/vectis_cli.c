@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
@@ -1791,6 +1792,24 @@ static int vectis_cli_auth_status(vectis_status status,
   return status == VECTIS_ERR_NOMEM ? 70 : 1;
 }
 
+static void vectis_cli_copy_cstr(char *dst, size_t dst_size, const char *src) {
+  size_t len;
+
+  if (dst == NULL || dst_size == 0u) {
+    return;
+  }
+  if (src == NULL) {
+    dst[0] = '\0';
+    return;
+  }
+  len = strlen(src);
+  if (len >= dst_size) {
+    len = dst_size - 1u;
+  }
+  memcpy(dst, src, len);
+  dst[len] = '\0';
+}
+
 static void vectis_cli_error_set(vectis_error *error, vectis_status status,
                                  const char *message) {
   if (error == NULL) {
@@ -1800,7 +1819,7 @@ static void vectis_cli_error_set(vectis_error *error, vectis_status status,
   error->code = status;
   error->source = VECTIS_ERROR_SOURCE_VECTIS;
   if (message != NULL) {
-    (void)snprintf(error->message, sizeof(error->message), "%s", message);
+    vectis_cli_copy_cstr(error->message, sizeof(error->message), message);
   }
 }
 
@@ -6585,8 +6604,8 @@ static vectis_status vectis_lua_server_callback_authenticate(
           "Lua auth callback www_authenticate must be a string");
       return VECTIS_ERR_INVALID;
     }
-    snprintf(response->www_authenticate, sizeof(response->www_authenticate),
-             "%s", action);
+    vectis_cli_copy_cstr(response->www_authenticate,
+                         sizeof(response->www_authenticate), action);
   }
   lua_pop(lua, 1);
 
@@ -6599,7 +6618,8 @@ static vectis_status vectis_lua_server_callback_authenticate(
                            "Lua auth callback principal must be a string");
       return VECTIS_ERR_INVALID;
     }
-    snprintf(response->principal, sizeof(response->principal), "%s", principal);
+    vectis_cli_copy_cstr(response->principal, sizeof(response->principal),
+                         principal);
   }
   lua_pop(lua, 1);
   lua_settop(lua, base);
@@ -9153,7 +9173,7 @@ static vectis_status vectis_lua_server_route_auth_gate(
     }
     if (principal != NULL && principal_size > 0u &&
         auth_response.principal[0] != '\0') {
-      snprintf(principal, principal_size, "%s", auth_response.principal);
+      vectis_cli_copy_cstr(principal, principal_size, auth_response.principal);
     }
     status =
         vectis_response_header(response, "cache-control", "no-store", error);

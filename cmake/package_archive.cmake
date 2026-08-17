@@ -194,9 +194,13 @@ set(ZLIB_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/zlib")
 set(nghttp2_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/nghttp2")
 set(Libssh2_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/libssh2")
 set(CURL_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/CURL")
+set(CpktAudio_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/CpktAudio")
+set(CpktOpcUa_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/CpktOpcUa")
+set(CpktSus_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/CpktSus")
 set(LibXml2_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/libxml2")
 set(pslog_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/pslog")
 set(lonejson_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/lonejson")
+set(liblql_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/liblql")
 set(cai_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/cai")
 set(libmdf_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/libmdf")
 set(softline_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/softline")
@@ -205,9 +209,13 @@ find_dependency(ZLIB CONFIG REQUIRED)
 find_dependency(nghttp2 CONFIG REQUIRED)
 find_dependency(Libssh2 CONFIG REQUIRED)
 find_dependency(CURL CONFIG REQUIRED)
+find_dependency(CpktAudio CONFIG REQUIRED)
+find_dependency(CpktOpcUa CONFIG REQUIRED)
+find_dependency(CpktSus CONFIG REQUIRED)
 find_package(LibXml2 CONFIG REQUIRED PATHS "${LibXml2_DIR}" NO_DEFAULT_PATH)
 find_package(pslog CONFIG REQUIRED PATHS "${pslog_DIR}" NO_DEFAULT_PATH)
 find_package(lonejson CONFIG REQUIRED PATHS "${lonejson_DIR}" NO_DEFAULT_PATH)
+find_package(liblql CONFIG REQUIRED PATHS "${liblql_DIR}" NO_DEFAULT_PATH)
 find_package(cai CONFIG REQUIRED PATHS "${cai_DIR}" NO_DEFAULT_PATH)
 find_package(libmdf CONFIG REQUIRED PATHS "${libmdf_DIR}" NO_DEFAULT_PATH)
 find_package(softline CONFIG REQUIRED PATHS "${softline_DIR}" NO_DEFAULT_PATH)
@@ -221,6 +229,9 @@ endif()
 if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/lib/libvectis.a")
   set(_vectis_static_links
     lockdc::static
+    cpkt::opcua
+    cpkt::sus
+    cpkt::audio
     cai::cai_static
     libmdf::mdf_static
     softline::softline_static
@@ -232,6 +243,7 @@ if(NOT TARGET vectis::static AND EXISTS "${PACKAGE_PREFIX_DIR}/lib/libvectis.a")
     lonejson::lonejson_static
     lonejson::openssl
     lonejson::oidc
+    liblql::lql_static
     LibXml2::LibXml2
     nghttp2::nghttp2
     ZLIB::ZLIB
@@ -248,6 +260,9 @@ endif()
 if(NOT TARGET vectis::shared)
   set(_vectis_shared_links
     lockdc::shared
+    cpkt::opcua_shared
+    cpkt::sus_shared
+    cpkt::audio_shared
     cai::cai_shared
     libmdf::mdf_shared
     softline::softline
@@ -259,6 +274,7 @@ if(NOT TARGET vectis::shared)
     lonejson::lonejson
     lonejson::openssl
     lonejson::oidc
+    liblql::lql_shared
     cpkt::libxml2_shared
     cpkt::nghttp2_shared
     cpkt::zlib_shared

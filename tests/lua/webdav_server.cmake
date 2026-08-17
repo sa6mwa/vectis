@@ -145,6 +145,17 @@ assert(open_put.ok == true, open_put.error and open_put.error.message)
 local open_read = webdav.get(request_opts("/open/public/readme.txt"))
 assert(open_read.ok == true, open_read.error and open_read.error.message)
 assert(open_read.body == "open webdav\n")
+local open_propfind_with_body = webdav.propfind(request_opts("/open/public", {
+  depth = 0,
+  body = [[<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:allprop/></D:propfind>]],
+  headers = {["Content-Type"] = "application/xml; charset=utf-8"},
+}))
+assert(open_propfind_with_body.ok == true, open_propfind_with_body.error and open_propfind_with_body.error.message)
+assert(open_propfind_with_body.status == 207)
+assert(open_propfind_with_body.body:find("/open/public", 1, true) ~= nil)
+local open_after_propfind_body = webdav.get(request_opts("/open/public/readme.txt"))
+assert(open_after_propfind_body.ok == true, open_after_propfind_body.error and open_after_propfind_body.error.message)
+assert(open_after_propfind_body.body == "open webdav\n")
 
 local disk_mkcol = webdav.mkcol(request_opts("/disk/public"))
 assert(disk_mkcol.ok == true, disk_mkcol.error and disk_mkcol.error.message)

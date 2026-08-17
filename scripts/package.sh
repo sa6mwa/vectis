@@ -148,6 +148,13 @@ run_target() {
   local tool_args=()
 
   bash "$script_dir/deps.sh" "deps-$target_id"
+  case "$build_dir" in
+    "$repo_root"/build/*-release) rm -rf "$build_dir" ;;
+    *)
+      echo "[package] refusing to clean unexpected build dir: $build_dir" >&2
+      exit 1
+      ;;
+  esac
   run_with_target_path "$target_id" "$cmake_bin" --preset "$preset"
   run_with_target_path "$target_id" "$cmake_bin" --build --preset "$preset"
   eval "$("$script_dir/discover_target_tools.sh" --build-dir "$build_dir" --target-id "$target_id")"
