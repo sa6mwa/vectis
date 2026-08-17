@@ -441,6 +441,38 @@ of `stream_source`.
 `spooled_source` is explicitly file-backed materialization, not live
 producer-to-transport streaming.
 
+## WebSocket Routes
+
+`server:websocket(opts)` registers a Kore-backed WebSocket route. The route
+callbacks receive borrowed connection handles owned by the active Kore callback;
+do not retain those handles after the callback returns.
+
+Fields:
+
+- `path`: required WebSocket route path.
+- `message(ws, opcode, payload)` or `handler(ws, opcode, payload)`: required
+  message callback.
+- `connect(ws)`: optional callback after handshake setup.
+- `disconnect(ws)`: optional callback when Kore reports disconnect.
+
+The `ws` handle exposes `send(opcode, payload)`, `send_text(text)`,
+`send_binary(data)`, and `close()`. Opcode constants are available under
+`require("vectis").websocket`: `CONTINUATION`, `TEXT`, `BINARY`, `CLOSE`,
+`PING`, and `PONG`.
+
+```lua
+local vectis = require("vectis")
+
+assert(server:websocket({
+  path = "/ws",
+  message = function(ws, opcode, payload)
+    if opcode == vectis.websocket.TEXT then
+      assert(ws:send_text("echo:" .. payload) == true)
+    end
+  end,
+}) == true)
+```
+
 ## MCP Routes
 
 `server:mcp(opts)` mounts CAI's Streamable HTTP MCP server handler through the

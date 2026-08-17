@@ -74,6 +74,7 @@
 #define VECTIS_LUA_ZLIB_FILE_CHUNK_BYTES 32768u
 #define VECTIS_PACK_MAX_DIR_STACK 1024u
 #define VECTIS_LUA_SERVER "vectis.server"
+#define VECTIS_LUA_WEBSOCKET "vectis.websocket"
 #define VECTIS_LUA_MAILBOX "vectis.mailbox"
 #define VECTIS_LUA_MAILBOX_BROKER "vectis.mailbox.broker"
 #define VECTIS_LUA_SSH_SESSION "vectis.ssh.session"
@@ -234,6 +235,18 @@ typedef struct vectis_lua_server_upload_route {
   struct vectis_lua_server_upload_route *next;
 } vectis_lua_server_upload_route;
 
+typedef struct vectis_lua_server_websocket_route {
+  lua_State *lua;
+  int connect_ref;
+  int message_ref;
+  int disconnect_ref;
+  struct vectis_lua_server_websocket_route *next;
+} vectis_lua_server_websocket_route;
+
+typedef struct vectis_lua_websocket {
+  vectis_websocket *websocket;
+} vectis_lua_websocket;
+
 typedef struct vectis_lua_server_mcp_tool {
   lua_State *lua;
   char *name;
@@ -328,6 +341,7 @@ struct vectis_lua_server {
   vectis_lua_server_callback_route *callback_routes;
   vectis_lua_server_dsv_route *dsv_routes;
   vectis_lua_server_upload_route *upload_routes;
+  vectis_lua_server_websocket_route *websocket_routes;
   vectis_lua_server_mcp_route *mcp_routes;
   vectis_lua_server_native_auth *native_auths;
   vectis_lua_server_auth_json_route *auth_json_routes;
@@ -6105,6 +6119,43 @@ static void vectis_lua_server_upload_route_free_all(vectis_lua_server *server) {
   }
 }
 
+static void vectis_lua_server_websocket_route_free(
+    vectis_lua_server_websocket_route *route) {
+  if (route == NULL) {
+    return;
+  }
+  if (route->lua != NULL && route->connect_ref != LUA_NOREF) {
+    luaL_unref(route->lua, LUA_REGISTRYINDEX, route->connect_ref);
+    route->connect_ref = LUA_NOREF;
+  }
+  if (route->lua != NULL && route->message_ref != LUA_NOREF) {
+    luaL_unref(route->lua, LUA_REGISTRYINDEX, route->message_ref);
+    route->message_ref = LUA_NOREF;
+  }
+  if (route->lua != NULL && route->disconnect_ref != LUA_NOREF) {
+    luaL_unref(route->lua, LUA_REGISTRYINDEX, route->disconnect_ref);
+    route->disconnect_ref = LUA_NOREF;
+  }
+  free(route);
+}
+
+static void
+vectis_lua_server_websocket_route_free_all(vectis_lua_server *server) {
+  vectis_lua_server_websocket_route *route;
+  vectis_lua_server_websocket_route *next;
+
+  if (server == NULL) {
+    return;
+  }
+  route = server->websocket_routes;
+  server->websocket_routes = NULL;
+  while (route != NULL) {
+    next = route->next;
+    vectis_lua_server_websocket_route_free(route);
+    route = next;
+  }
+}
+
 static void vectis_lua_server_mcp_tool_free(vectis_lua_server_mcp_tool *tool) {
   if (tool == NULL) {
     return;
@@ -6854,6 +6905,7 @@ static int vectis_lua_server_close(lua_State *lua) {
   vectis_lua_server_callback_route_free_all(server);
   vectis_lua_server_dsv_route_free_all(server);
   vectis_lua_server_upload_route_free_all(server);
+  vectis_lua_server_websocket_route_free_all(server);
   vectis_lua_server_mcp_route_free_all(server);
   vectis_lua_server_auth_json_route_free_all(server);
   vectis_lua_server_openapi_schema_refs_free_all(server);
@@ -9375,6 +9427,272 @@ static vectis_status vectis_lua_server_route_dispatch(vectis_app *app,
   return status;
 }
 
+static vectis_lua_websocket *vectis_lua_check_websocket(lua_State *lua,
+                                                        int index) {
+  return (vectis_lua_websocket *)luaL_checkudata(lua, index,
+                                                 VECTIS_LUA_WEBSOCKET);
+}
+
+static vectis_lua_websocket *
+vectis_lua_push_websocket(lua_State *lua, vectis_websocket *websocket) {
+  vectis_lua_websocket *handle;
+
+  handle = (vectis_lua_websocket *)lua_newuserdata(lua, sizeof(*handle));
+  handle->websocket = websocket;
+  luaL_getmetatable(lua, VECTIS_LUA_WEBSOCKET);
+  lua_setmetatable(lua, -2);
+  return handle;
+}
+
+static int vectis_lua_websocket_send(lua_State *lua) {
+  vectis_lua_websocket *handle;
+  vectis_websocket_opcode opcode;
+  vectis_error error;
+  const char *payload;
+  size_t payload_size;
+  vectis_status status;
+
+  handle = vectis_lua_check_websocket(lua, 1);
+  opcode = (vectis_websocket_opcode)luaL_checkinteger(lua, 2);
+  payload = NULL;
+  payload_size = 0u;
+  if (!lua_isnoneornil(lua, 3)) {
+    payload = luaL_checklstring(lua, 3, &payload_size);
+  }
+  vectis_error_clear(&error);
+  status = vectis_websocket_send(handle->websocket, opcode, payload,
+                                 payload_size, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_websocket_send_text(lua_State *lua) {
+  vectis_lua_websocket *handle;
+  vectis_error error;
+  const char *text;
+  vectis_status status;
+
+  handle = vectis_lua_check_websocket(lua, 1);
+  text = luaL_checkstring(lua, 2);
+  vectis_error_clear(&error);
+  status = vectis_websocket_send_text(handle->websocket, text, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_websocket_send_binary(lua_State *lua) {
+  vectis_lua_websocket *handle;
+  vectis_error error;
+  const char *data;
+  size_t data_size;
+  vectis_status status;
+
+  handle = vectis_lua_check_websocket(lua, 1);
+  data = luaL_checklstring(lua, 2, &data_size);
+  vectis_error_clear(&error);
+  status =
+      vectis_websocket_send_binary(handle->websocket, data, data_size, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_websocket_close(lua_State *lua) {
+  vectis_lua_websocket *handle;
+  vectis_error error;
+  vectis_status status;
+
+  handle = vectis_lua_check_websocket(lua, 1);
+  vectis_error_clear(&error);
+  status = vectis_websocket_close(handle->websocket, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static void vectis_lua_server_websocket_connect(vectis_app *app,
+                                                vectis_websocket *websocket,
+                                                void *userdata) {
+  vectis_lua_server_websocket_route *route;
+  lua_State *lua;
+  int base;
+  const char *message;
+
+  (void)app;
+  route = (vectis_lua_server_websocket_route *)userdata;
+  if (route == NULL || route->lua == NULL || route->connect_ref == LUA_NOREF) {
+    return;
+  }
+  lua = route->lua;
+  base = lua_gettop(lua);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, route->connect_ref);
+  if (lua_isfunction(lua, -1)) {
+    vectis_lua_push_websocket(lua, websocket);
+    if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
+      message = lua_tostring(lua, -1);
+      fprintf(stderr, "vectis websocket connect callback failed: %s\n",
+              message != NULL ? message : "unknown error");
+    }
+  }
+  lua_settop(lua, base);
+}
+
+static void vectis_lua_server_websocket_message(vectis_app *app,
+                                                vectis_websocket *websocket,
+                                                vectis_websocket_opcode opcode,
+                                                const void *data, size_t size,
+                                                void *userdata) {
+  vectis_lua_server_websocket_route *route;
+  lua_State *lua;
+  int base;
+  const char *message;
+
+  (void)app;
+  route = (vectis_lua_server_websocket_route *)userdata;
+  if (route == NULL || route->lua == NULL || route->message_ref == LUA_NOREF) {
+    return;
+  }
+  lua = route->lua;
+  base = lua_gettop(lua);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, route->message_ref);
+  if (lua_isfunction(lua, -1)) {
+    vectis_lua_push_websocket(lua, websocket);
+    lua_pushinteger(lua, (lua_Integer)opcode);
+    lua_pushlstring(lua, data != NULL ? (const char *)data : "", size);
+    if (lua_pcall(lua, 3, 0, 0) != LUA_OK) {
+      message = lua_tostring(lua, -1);
+      fprintf(stderr, "vectis websocket message callback failed: %s\n",
+              message != NULL ? message : "unknown error");
+    }
+  }
+  lua_settop(lua, base);
+}
+
+static void vectis_lua_server_websocket_disconnect(vectis_app *app,
+                                                   vectis_websocket *websocket,
+                                                   void *userdata) {
+  vectis_lua_server_websocket_route *route;
+  lua_State *lua;
+  int base;
+  const char *message;
+
+  (void)app;
+  route = (vectis_lua_server_websocket_route *)userdata;
+  if (route == NULL || route->lua == NULL ||
+      route->disconnect_ref == LUA_NOREF) {
+    return;
+  }
+  lua = route->lua;
+  base = lua_gettop(lua);
+  lua_rawgeti(lua, LUA_REGISTRYINDEX, route->disconnect_ref);
+  if (lua_isfunction(lua, -1)) {
+    vectis_lua_push_websocket(lua, websocket);
+    if (lua_pcall(lua, 1, 0, 0) != LUA_OK) {
+      message = lua_tostring(lua, -1);
+      fprintf(stderr, "vectis websocket disconnect callback failed: %s\n",
+              message != NULL ? message : "unknown error");
+    }
+  }
+  lua_settop(lua, base);
+}
+
+static int vectis_lua_server_websocket(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_app *app;
+  vectis_lua_server_websocket_route *route_data;
+  vectis_websocket_route_config route;
+  vectis_error error;
+  vectis_status status;
+  const char *path;
+
+  server = vectis_lua_check_server(lua, 1);
+  app = vectis_lua_server_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+  path = vectis_lua_table_string(lua, 2, "path");
+  if (path == NULL || path[0] == '\0') {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "websocket path is required");
+  }
+  lua_getfield(lua, 2, "message");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, 2, "handler");
+  }
+  if (!lua_isfunction(lua, -1)) {
+    lua_pop(lua, 1);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "websocket message handler is required");
+  }
+  route_data =
+      (vectis_lua_server_websocket_route *)calloc(1u, sizeof(*route_data));
+  if (route_data == NULL) {
+    lua_pop(lua, 1);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to allocate websocket route");
+  }
+  route_data->lua = lua;
+  route_data->connect_ref = LUA_NOREF;
+  route_data->message_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  route_data->disconnect_ref = LUA_NOREF;
+
+  lua_getfield(lua, 2, "connect");
+  if (!lua_isnil(lua, -1)) {
+    if (!lua_isfunction(lua, -1)) {
+      lua_pop(lua, 1);
+      vectis_lua_server_websocket_route_free(route_data);
+      return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                        "websocket connect must be a function");
+    }
+    route_data->connect_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  } else {
+    lua_pop(lua, 1);
+  }
+
+  lua_getfield(lua, 2, "disconnect");
+  if (!lua_isnil(lua, -1)) {
+    if (!lua_isfunction(lua, -1)) {
+      lua_pop(lua, 1);
+      vectis_lua_server_websocket_route_free(route_data);
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_INVALID, "websocket disconnect must be a function");
+    }
+    route_data->disconnect_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  } else {
+    lua_pop(lua, 1);
+  }
+
+  vectis_websocket_route_config_init(&route);
+  route.path = path;
+  route.connect = route_data->connect_ref != LUA_NOREF
+                      ? vectis_lua_server_websocket_connect
+                      : NULL;
+  route.message = vectis_lua_server_websocket_message;
+  route.disconnect = route_data->disconnect_ref != LUA_NOREF
+                         ? vectis_lua_server_websocket_disconnect
+                         : NULL;
+  route.userdata = route_data;
+  vectis_error_clear(&error);
+  status = app->websocket(app, &route, &error);
+  if (status != VECTIS_OK) {
+    vectis_lua_server_websocket_route_free(route_data);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  route_data->next = server->websocket_routes;
+  server->websocket_routes = route_data;
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
 static int vectis_lua_server_route(lua_State *lua) {
   vectis_lua_server *server;
   vectis_app *app;
@@ -10828,6 +11146,7 @@ static int vectis_lua_server_new(lua_State *lua) {
   server->callback_routes = NULL;
   server->dsv_routes = NULL;
   server->upload_routes = NULL;
+  server->websocket_routes = NULL;
   server->mcp_routes = NULL;
   server->native_auths = NULL;
   server->auth_json_routes = NULL;
@@ -18866,6 +19185,8 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "dsv");
     lua_pushcfunction(lua, vectis_lua_server_upload);
     lua_setfield(lua, -2, "upload");
+    lua_pushcfunction(lua, vectis_lua_server_websocket);
+    lua_setfield(lua, -2, "websocket");
     lua_pushcfunction(lua, vectis_lua_server_mcp);
     lua_setfield(lua, -2, "mcp");
     lua_pushcfunction(lua, vectis_lua_server_sse);
@@ -18919,6 +19240,20 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "__index");
     lua_pushcfunction(lua, vectis_lua_server_close);
     lua_setfield(lua, -2, "__gc");
+  }
+  lua_pop(lua, 1);
+
+  if (luaL_newmetatable(lua, VECTIS_LUA_WEBSOCKET)) {
+    lua_newtable(lua);
+    lua_pushcfunction(lua, vectis_lua_websocket_send);
+    lua_setfield(lua, -2, "send");
+    lua_pushcfunction(lua, vectis_lua_websocket_send_text);
+    lua_setfield(lua, -2, "send_text");
+    lua_pushcfunction(lua, vectis_lua_websocket_send_binary);
+    lua_setfield(lua, -2, "send_binary");
+    lua_pushcfunction(lua, vectis_lua_websocket_close);
+    lua_setfield(lua, -2, "close");
+    lua_setfield(lua, -2, "__index");
   }
   lua_pop(lua, 1);
 }
@@ -19087,6 +19422,22 @@ static void vectis_lua_push_libs_table(lua_State *lua) {
   vectis_lua_set_required_module(lua, "sus", "sus");
 }
 
+static void vectis_lua_push_websocket_constants(lua_State *lua) {
+  lua_newtable(lua);
+  lua_pushinteger(lua, VECTIS_WEBSOCKET_CONTINUATION);
+  lua_setfield(lua, -2, "CONTINUATION");
+  lua_pushinteger(lua, VECTIS_WEBSOCKET_TEXT);
+  lua_setfield(lua, -2, "TEXT");
+  lua_pushinteger(lua, VECTIS_WEBSOCKET_BINARY);
+  lua_setfield(lua, -2, "BINARY");
+  lua_pushinteger(lua, VECTIS_WEBSOCKET_CLOSE);
+  lua_setfield(lua, -2, "CLOSE");
+  lua_pushinteger(lua, VECTIS_WEBSOCKET_PING);
+  lua_setfield(lua, -2, "PING");
+  lua_pushinteger(lua, VECTIS_WEBSOCKET_PONG);
+  lua_setfield(lua, -2, "PONG");
+}
+
 static int luaopen_vectis(lua_State *lua) {
   vectis_lua_register_totp_qr(lua);
   vectis_lua_register_embedded_chunks(lua);
@@ -19110,6 +19461,8 @@ static int luaopen_vectis(lua_State *lua) {
   lua_setfield(lua, -2, "ERR_NOT_IMPLEMENTED");
   lua_pushinteger(lua, VECTIS_ERR_TIMEOUT);
   lua_setfield(lua, -2, "ERR_TIMEOUT");
+  vectis_lua_push_websocket_constants(lua);
+  lua_setfield(lua, -2, "websocket");
   lua_pushcfunction(lua, vectis_lua_status_string);
   lua_setfield(lua, -2, "status_string");
   lua_pushinteger(lua, VECTIS_ERROR_SOURCE_NONE);

@@ -47,6 +47,14 @@ set_target_properties(vectis_wait_signal_harness PROPERTIES
   C_EXTENSIONS OFF
 )
 
+add_executable(vectis_ws_client
+  helpers/vectis_ws_client.c)
+set_target_properties(vectis_ws_client PROPERTIES
+  C_STANDARD 99
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF
+)
+
 if(TARGET vectis_bin)
   find_program(VECTIS_HOST_LUA NAMES lua5.5 lua)
 
@@ -152,6 +160,15 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_server_signal_shutdown PROPERTIES
     LABELS "lua;smoke;local;integration"
     TIMEOUT 45)
+  add_test(NAME vectis_lua_websocket
+           COMMAND bash
+                   "${CMAKE_SOURCE_DIR}/tests/lua/server_websocket.sh"
+                   "$<TARGET_FILE:vectis_bin>"
+                   "$<TARGET_FILE:vectis_pick_port>"
+                   "$<TARGET_FILE:vectis_ws_client>")
+  set_tests_properties(vectis_lua_websocket PROPERTIES
+    LABELS "lua;smoke;local;integration"
+    TIMEOUT 30)
   add_test(NAME vectis_lua_openssl
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"

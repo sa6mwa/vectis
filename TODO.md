@@ -110,7 +110,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Expose Kore HTTP worker count through validated Vectis C and Lua server config, preserving Kore's zero-as-auto behavior.
 - [x] Expose low-level Kore worker lifecycle/resource knobs through validated C and Lua server config: accept threshold, rlimit nofiles, CPU affinity, and worker shutdown timeout.
 - [x] Add a first C-owned WebSocket route surface over Kore handshakes, callback-borrowed connection handles, send helpers, and raw loopback integration coverage.
-- [ ] Add Lua `vectis.server` WebSocket route helpers once the C surface has settled.
+- [x] Add Lua `vectis.server` WebSocket route helpers once the C surface has settled.
 - [ ] Support Kore features through Vectis where practical, including websocket, static asset, file upload, and deeper runtime configuration features.
 - [x] Define the supported one-process multi-instance behavior based on what Kore can safely provide.
 - [x] Add real HTTP integration tests.
