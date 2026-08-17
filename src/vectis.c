@@ -8929,6 +8929,13 @@ static vectis_status vectis_app_register_route_owned_userdata(
                      "materialize");
     return VECTIS_ERR_STATE;
   }
+  if (vectis_app_has_materialized_managed_services(impl)) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "routes cannot be registered after managed services "
+                     "materialize");
+    return VECTIS_ERR_STATE;
+  }
   (void)pthread_mutex_unlock(&impl->mutex);
 
   status = vectis_validate_body_policy(
@@ -9190,6 +9197,13 @@ static vectis_status vectis_app_register_upload_owned_userdata(
     (void)pthread_mutex_unlock(&impl->mutex);
     vectis_set_error(error, VECTIS_ERR_STATE,
                      "routes cannot be registered after consumer services "
+                     "materialize");
+    return VECTIS_ERR_STATE;
+  }
+  if (vectis_app_has_materialized_managed_services(impl)) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "routes cannot be registered after managed services "
                      "materialize");
     return VECTIS_ERR_STATE;
   }
@@ -19516,6 +19530,10 @@ vectis_status vectis_managed_service_start(vectis_managed_service *service,
     return VECTIS_ERR_INVALID;
   }
   impl->start_requested = 1;
+  if (impl->owner != NULL && !impl->owner->started) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
   return vectis_managed_service_start_materialized(impl, error);
 }
 

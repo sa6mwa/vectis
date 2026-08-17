@@ -3292,6 +3292,102 @@ static void assert_managed_service_declaration_before_routes(void) {
   app->close(app);
 }
 
+static void assert_managed_service_explicit_start_before_routes_defers(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_managed_service_config service_config;
+  vectis_managed_service *service;
+  vectis_managed_service_state service_state;
+  runtime_managed_service_probe probe;
+  vectis_route_config route;
+
+  memset(&probe, 0, sizeof(probe));
+  probe.wait_fds[0] = -1;
+  probe.wait_fds[1] = -1;
+  vectis_app_config_init(&config);
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "runtime-managed-explicit-start";
+  service_config.context = &probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.cleanup = runtime_managed_service_cleanup;
+  service_config.start_with_app = 0;
+  service = NULL;
+  status = app->managed_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+
+  status = service->start(service, &error);
+  assert(status == VECTIS_OK);
+  assert(probe.started == 0);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.declared);
+  assert(!service_state.materialized);
+  assert(!service_state.process_local);
+  assert(service_state.start_requested);
+  assert(!service_state.started);
+
+  route = vectis_route(VECTIS_HTTP_GET, "/managed-explicit-start",
+                       sample_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+
+  service->close(service);
+  assert(probe.cleaned == 1);
+  app->close(app);
+}
+
+static void assert_routes_reject_materialized_managed_services(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_managed_service_config service_config;
+  vectis_managed_service *service;
+  vectis_managed_service_state service_state;
+  runtime_managed_service_probe probe;
+  vectis_route_config route;
+
+  memset(&probe, 0, sizeof(probe));
+  probe.wait_fds[0] = -1;
+  probe.wait_fds[1] = -1;
+  vectis_app_config_init(&config);
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "runtime-managed-materialized";
+  service_config.context = &probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.cleanup = runtime_managed_service_cleanup;
+  service_config.start_with_app = 1;
+  service = NULL;
+  status = app->managed_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  assert(probe.started == 1);
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.materialized);
+  assert(!service_state.started);
+
+  route = vectis_route(VECTIS_HTTP_GET, "/managed-materialized", sample_handler,
+                       NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "managed services") != NULL);
+
+  service->close(service);
+  app->close(app);
+}
+
 static void assert_kore_start_rejects_extra_thread(void) {
   vectis_app_config config;
   vectis_app *app;
@@ -4222,6 +4318,15 @@ static int run_named_runtime_test(const char *name) {
     assert_managed_service_declaration_before_routes();
     return 1;
   }
+  if (strcmp(name, "managed_service_explicit_start_before_routes_defers") ==
+      0) {
+    assert_managed_service_explicit_start_before_routes_defers();
+    return 1;
+  }
+  if (strcmp(name, "routes_reject_materialized_managed_services") == 0) {
+    assert_routes_reject_materialized_managed_services();
+    return 1;
+  }
   if (strcmp(name, "kore_start_rejects_extra_thread") == 0) {
     assert_kore_start_rejects_extra_thread();
     return 1;
@@ -4300,6 +4405,8 @@ int main(void) {
   assert_direct_supervision_policy_rejects_app_services();
   assert_consumer_service_declaration_before_routes();
   assert_managed_service_declaration_before_routes();
+  assert_managed_service_explicit_start_before_routes_defers();
+  assert_routes_reject_materialized_managed_services();
   assert_kore_start_rejects_extra_thread();
   assert_supervised_start_reports_child_readiness_failure();
   assert_supervised_wait_reports_consumer_service_exit();

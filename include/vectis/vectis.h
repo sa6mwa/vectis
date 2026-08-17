@@ -787,10 +787,12 @@ typedef struct vectis_managed_service_config {
   unsigned abi_version;
   const char *name;
   void *context;
+  /* Materialize and start the service in the selected app runtime domain. */
   vectis_managed_service_start_fn start;
   vectis_managed_service_stop_fn stop;
   vectis_managed_service_wait_fn wait;
   vectis_managed_service_cleanup_fn cleanup;
+  /* Nonzero records start intent; app start/run performs materialization. */
   int start_with_app;
 } vectis_managed_service_config;
 
@@ -1475,6 +1477,7 @@ struct vectis_app {
 
 struct vectis_managed_service {
   vectis_status (*run)(vectis_managed_service *self, vectis_error *error);
+  /* Pre-app start records intent without materializing. */
   vectis_status (*start)(vectis_managed_service *self, vectis_error *error);
   vectis_status (*stop)(vectis_managed_service *self, vectis_error *error);
   vectis_status (*wait)(vectis_managed_service *self, vectis_error *error);

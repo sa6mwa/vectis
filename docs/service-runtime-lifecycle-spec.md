@@ -257,12 +257,14 @@ An app-owned service handle has two layers:
 `lc_client_new_consumer_service()` merely to register intent for an app-owned
 service.
 
-`service->start(service, error)` before app runtime start means:
-
-- in a service-only app: materialize and start immediately;
-- in a route-backed not-yet-started app: mark start intent on the descriptor;
-- in a running supervised app: materialize/start in the supervisor domain;
-- in a direct Kore child/domain: fail with an actionable lifecycle error.
+`service->start(service, error)` before app runtime start records start intent
+on the descriptor. It must not materialize immediately, even when no routes have
+been registered yet, because routes can still be added later and Vectis must not
+create the unsafe "service thread first, Kore fork later" shape. `app->start()`
+or `app->run()` materializes and starts requested services in the selected T2 or
+T3 runtime domain. In a running supervised app, `service->start()` materializes
+and starts in the supervisor domain. In a direct Kore child/domain, it fails with
+an actionable lifecycle error.
 
 `service->native(service)` returns the materialized native handle only after
 the service is materialized in the current domain. Before materialization it
@@ -601,6 +603,8 @@ Required checks:
 - no app-owned service instance is already running;
 - no app-owned service descriptor has been materialized in the declaration
   domain for a route-backed app;
+- no route or upload route can be registered after an app-owned managed service
+  has been materialized, even if the app has since been stopped;
 - process thread count is one on platforms where exact inspection is available;
 - on platforms where exact thread count is unavailable, strict mode must fail
   closed and non-strict mode must warn through the logger;
@@ -741,6 +745,10 @@ Required semantics:
    - implement thread-count inspection;
    - fail route-backed starts when unsafe app-owned services are already
      running;
+   - make explicit app-owned managed service `start()` before app runtime start
+     record intent rather than materialize;
+   - reject later route/upload registration after managed service
+     materialization;
    - add negative tests.
 3. Descriptor-backed lockdc consumer services:
    - registration copies declarations and does not open lockdc;
