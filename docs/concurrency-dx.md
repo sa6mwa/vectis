@@ -156,6 +156,15 @@ Curl workers:
 - serve HTTP, SMTP, MQTT, WebDAV, SFTP, and other libcurl protocols through the
   same worker contract, with Lua protocol helpers acting as request builders.
 
+The initial C surface is `vectis_curl_worker_service`. It drains
+`VECTIS_CURL_WORKER_HTTP_KIND` events from a borrowed request mailbox, executes
+the HTTP transfer through the existing Vectis curl-backed HTTP client, and
+returns `VECTIS_CURL_WORKER_HTTP_REPLY_KIND` through a borrowed
+`vectis_mailbox_broker` when the event expects a reply. C callers build and
+decode the copied envelopes with `vectis_curl_worker_http_event_build()` and
+`vectis_curl_worker_http_response_decode()` instead of constructing payload
+bytes themselves.
+
 CAI/MCP workers:
 
 - open CAI clients, agents, registries, and non-route MCP helpers in the

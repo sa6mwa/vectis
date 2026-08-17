@@ -542,6 +542,52 @@ typedef struct vectis_opcua_server_service_context {
   pthread_mutex_t mutex;
 } vectis_opcua_server_service_context;
 
+#define VECTIS_CURL_WORKER_HTTP_MAGIC "VCHT1"
+#define VECTIS_CURL_WORKER_HTTP_REPLY_MAGIC "VCHR1"
+
+typedef struct vectis_curl_worker_http_wire {
+  char magic[8];
+  unsigned method;
+  long timeout_ms;
+  size_t max_response_body_bytes;
+  size_t url_size;
+  size_t content_type_size;
+  size_t header_count;
+  size_t headers_size;
+  size_t body_size;
+} vectis_curl_worker_http_wire;
+
+typedef struct vectis_curl_worker_http_reply_wire {
+  char magic[8];
+  vectis_status transfer_status;
+  long dependency_code;
+  long status_code;
+  size_t content_type_size;
+  size_t message_size;
+  size_t detail_size;
+  size_t body_size;
+} vectis_curl_worker_http_reply_wire;
+
+typedef struct vectis_curl_worker_body_buffer {
+  unsigned char *data;
+  size_t size;
+  size_t capacity;
+  size_t limit;
+} vectis_curl_worker_body_buffer;
+
+typedef struct vectis_curl_worker_service_context {
+  vectis_mailbox *request_mailbox;
+  vectis_mailbox_broker *reply_broker;
+  vectis_http_client_config http;
+  char *base_url;
+  char *client_bundle_path;
+  char *ca_bundle_path;
+  char *proxy_url;
+  long poll_timeout_ms;
+  int stopping;
+  pthread_mutex_t mutex;
+} vectis_curl_worker_service_context;
+
 typedef struct vectis_consumer_service_impl {
   lc_consumer_service *service;
   lc_consumer_service_config config;
@@ -4849,6 +4895,489 @@ static void vectis_opcua_server_service_cleanup(void *context) {
   free(ctx);
 }
 
+static int vectis_curl_worker_service_is_stopping(
+    vectis_curl_worker_service_context *ctx) {
+  int stopping;
+
+  if (ctx == NULL) {
+    return 1;
+  }
+  (void)pthread_mutex_lock(&ctx->mutex);
+  stopping = ctx->stopping;
+  (void)pthread_mutex_unlock(&ctx->mutex);
+  return stopping;
+}
+
+static vectis_status
+vectis_curl_worker_body_append(vectis_curl_worker_body_buffer *buffer,
+                               const void *data, size_t size,
+                               vectis_error *error) {
+  unsigned char *next;
+  size_t next_size;
+  size_t next_capacity;
+
+  if (buffer == NULL || (data == NULL && size > 0u)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker response buffer is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (size == 0u) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (buffer->size > buffer->limit || size > buffer->limit - buffer->size) {
+    vectis_set_error(error, VECTIS_ERR_CONFLICT,
+                     "curl worker response body exceeds configured limit");
+    return VECTIS_ERR_CONFLICT;
+  }
+  next_size = buffer->size + size;
+  if (next_size > buffer->capacity) {
+    next_capacity = buffer->capacity != 0u ? buffer->capacity : 1024u;
+    while (next_capacity < next_size) {
+      if (next_capacity > ((size_t)-1) / 2u) {
+        vectis_set_error(error, VECTIS_ERR_NOMEM,
+                         "curl worker response body is too large");
+        return VECTIS_ERR_NOMEM;
+      }
+      next_capacity *= 2u;
+    }
+    next = (unsigned char *)realloc(buffer->data, next_capacity);
+    if (next == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to allocate curl worker response body");
+      return VECTIS_ERR_NOMEM;
+    }
+    buffer->data = next;
+    buffer->capacity = next_capacity;
+  }
+  memcpy(buffer->data + buffer->size, data, size);
+  buffer->size = next_size;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_curl_worker_response_body(const void *data,
+                                                      size_t size,
+                                                      void *userdata,
+                                                      vectis_error *error) {
+  return vectis_curl_worker_body_append(
+      (vectis_curl_worker_body_buffer *)userdata, data, size, error);
+}
+
+static vectis_status vectis_curl_worker_http_request_decode(
+    const vectis_mailbox_event *event, vectis_http_request *request,
+    const char ***headers_out, vectis_error *error) {
+  const vectis_curl_worker_http_wire *wire;
+  const unsigned char *cursor;
+  const unsigned char *end;
+  const unsigned char *headers_end;
+  const char **headers;
+  const void *terminator;
+  size_t i;
+  size_t remaining;
+  size_t header_len;
+
+  if (headers_out != NULL) {
+    *headers_out = NULL;
+  }
+  if (request == NULL || event == NULL || event->payload == NULL ||
+      event->payload_size < sizeof(*wire)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker HTTP request payload is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (event->kind == NULL ||
+      strcmp(event->kind, VECTIS_CURL_WORKER_HTTP_KIND) != 0) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker event kind is not supported");
+    return VECTIS_ERR_INVALID;
+  }
+  wire = (const vectis_curl_worker_http_wire *)event->payload;
+  if (memcmp(wire->magic, VECTIS_CURL_WORKER_HTTP_MAGIC,
+             sizeof(VECTIS_CURL_WORKER_HTTP_MAGIC)) != 0) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker HTTP request envelope is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (wire->method <= (unsigned)VECTIS_HTTP_ANY ||
+      wire->method > (unsigned)VECTIS_HTTP_MOVE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker HTTP method is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  remaining = event->payload_size - sizeof(*wire);
+  if (wire->url_size == 0u || wire->url_size + 1u > remaining) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker HTTP request URL is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  cursor = (const unsigned char *)event->payload + sizeof(*wire);
+  end = (const unsigned char *)event->payload + event->payload_size;
+  vectis_http_request_init(request);
+  request->method = (vectis_http_method)wire->method;
+  request->url = (const char *)cursor;
+  if (cursor[wire->url_size] != '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker HTTP request URL is not terminated");
+    return VECTIS_ERR_INVALID;
+  }
+  cursor += wire->url_size + 1u;
+  if ((size_t)(end - cursor) < wire->content_type_size + 1u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker HTTP content type is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (wire->content_type_size > 0u) {
+    request->content_type = (const char *)cursor;
+    if (cursor[wire->content_type_size] != '\0') {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "curl worker HTTP content type is not terminated");
+      return VECTIS_ERR_INVALID;
+    }
+  }
+  cursor += wire->content_type_size + 1u;
+  if ((size_t)(end - cursor) < wire->headers_size) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker HTTP headers are invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  headers_end = cursor + wire->headers_size;
+  if (wire->header_count > 0u) {
+    headers = (const char **)calloc(wire->header_count, sizeof(*headers));
+    if (headers == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to allocate curl worker header view");
+      return VECTIS_ERR_NOMEM;
+    }
+    for (i = 0u; i < wire->header_count; ++i) {
+      terminator = memchr(cursor, '\0', (size_t)(headers_end - cursor));
+      if (terminator == NULL) {
+        free(headers);
+        vectis_set_error(error, VECTIS_ERR_INVALID,
+                         "curl worker HTTP header is invalid");
+        return VECTIS_ERR_INVALID;
+      }
+      header_len = (size_t)((const unsigned char *)terminator - cursor);
+      headers[i] = (const char *)cursor;
+      cursor += header_len + 1u;
+    }
+    request->headers = (const char *const *)headers;
+    request->header_count = wire->header_count;
+    if (headers_out != NULL) {
+      *headers_out = headers;
+    }
+  }
+  if (cursor != headers_end || (size_t)(end - cursor) < wire->body_size) {
+    if (headers_out != NULL) {
+      free(*headers_out);
+      *headers_out = NULL;
+    } else {
+      free(headers);
+    }
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker HTTP request body is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (wire->body_size > 0u) {
+    request->body = cursor;
+    request->body_size = wire->body_size;
+  }
+  request->timeout_ms = wire->timeout_ms;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_curl_worker_http_reply_build(
+    const vectis_http_response *response, const vectis_error *transfer_error,
+    vectis_status transfer_status, const vectis_curl_worker_body_buffer *body,
+    vectis_curl_worker_event *out, vectis_error *error) {
+  vectis_curl_worker_http_reply_wire *wire;
+  unsigned char *payload;
+  unsigned char *cursor;
+  const char *content_type;
+  const char *message;
+  const char *detail;
+  size_t content_type_size;
+  size_t message_size;
+  size_t detail_size;
+  size_t body_size;
+  size_t payload_size;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker reply output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(out, 0, sizeof(*out));
+  content_type = response != NULL && response->content_type != NULL
+                     ? response->content_type
+                     : "";
+  message = transfer_error != NULL ? transfer_error->message : "";
+  detail = transfer_error != NULL ? transfer_error->detail : "";
+  content_type_size = strlen(content_type);
+  message_size = strlen(message);
+  detail_size = strlen(detail);
+  body_size = body != NULL ? body->size : 0u;
+  payload_size = sizeof(*wire);
+  if (content_type_size > ((size_t)-1) - payload_size - 1u) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "curl worker reply payload is too large");
+    return VECTIS_ERR_NOMEM;
+  }
+  payload_size += content_type_size + 1u;
+  if (message_size > ((size_t)-1) - payload_size - 1u) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "curl worker reply payload is too large");
+    return VECTIS_ERR_NOMEM;
+  }
+  payload_size += message_size + 1u;
+  if (detail_size > ((size_t)-1) - payload_size - 1u) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "curl worker reply payload is too large");
+    return VECTIS_ERR_NOMEM;
+  }
+  payload_size += detail_size + 1u;
+  if (body_size > ((size_t)-1) - payload_size) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "curl worker reply payload is too large");
+    return VECTIS_ERR_NOMEM;
+  }
+  payload_size += body_size;
+  payload = (unsigned char *)calloc(1u, payload_size);
+  if (payload == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate curl worker reply");
+    return VECTIS_ERR_NOMEM;
+  }
+  wire = (vectis_curl_worker_http_reply_wire *)payload;
+  memcpy(wire->magic, VECTIS_CURL_WORKER_HTTP_REPLY_MAGIC,
+         sizeof(VECTIS_CURL_WORKER_HTTP_REPLY_MAGIC));
+  wire->transfer_status = transfer_status;
+  wire->dependency_code =
+      transfer_error != NULL ? transfer_error->dependency_code : 0L;
+  wire->status_code = response != NULL ? response->status_code : 0L;
+  wire->content_type_size = content_type_size;
+  wire->message_size = message_size;
+  wire->detail_size = detail_size;
+  wire->body_size = body_size;
+  cursor = payload + sizeof(*wire);
+  memcpy(cursor, content_type, content_type_size);
+  cursor += content_type_size + 1u;
+  memcpy(cursor, message, message_size);
+  cursor += message_size + 1u;
+  memcpy(cursor, detail, detail_size);
+  cursor += detail_size + 1u;
+  if (body_size > 0u) {
+    memcpy(cursor, body->data, body_size);
+  }
+  out->payload.data = payload;
+  out->payload.size = payload_size;
+  out->message.kind = VECTIS_CURL_WORKER_HTTP_REPLY_KIND;
+  out->message.payload = payload;
+  out->message.payload_size = payload_size;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status
+vectis_curl_worker_reply_error(vectis_curl_worker_service_context *ctx,
+                               const vectis_mailbox_event *event,
+                               vectis_status status, const char *message) {
+  vectis_error transfer_error;
+  vectis_error reply_error;
+  vectis_curl_worker_event reply;
+  vectis_status build_status;
+
+  if (ctx == NULL || ctx->reply_broker == NULL || event == NULL ||
+      !event->expects_reply || event->correlation_id == 0u) {
+    return VECTIS_OK;
+  }
+  vectis_set_error(&transfer_error, status, message);
+  build_status = vectis_curl_worker_http_reply_build(
+      NULL, &transfer_error, status, NULL, &reply, &reply_error);
+  if (build_status != VECTIS_OK) {
+    return build_status;
+  }
+  build_status = ctx->reply_broker->reply(
+      ctx->reply_broker, event->correlation_id, &reply.message, &reply_error);
+  vectis_curl_worker_event_cleanup(&reply);
+  return build_status;
+}
+
+static vectis_status
+vectis_curl_worker_process_event(vectis_curl_worker_service_context *ctx,
+                                 const vectis_mailbox_event *event,
+                                 vectis_error *error) {
+  vectis_http_request request;
+  vectis_http_response response;
+  vectis_error transfer_error;
+  vectis_curl_worker_body_buffer body;
+  vectis_curl_worker_event reply;
+  const char **headers;
+  vectis_status status;
+  vectis_status reply_status;
+  size_t response_limit;
+
+  if (ctx == NULL || event == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker event context is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (event->kind == NULL ||
+      strcmp(event->kind, VECTIS_CURL_WORKER_HTTP_KIND) != 0) {
+    return vectis_curl_worker_reply_error(ctx, event, VECTIS_ERR_INVALID,
+                                          "curl worker event kind is not "
+                                          "supported");
+  }
+  memset(&request, 0, sizeof(request));
+  memset(&response, 0, sizeof(response));
+  memset(&body, 0, sizeof(body));
+  headers = NULL;
+  status =
+      vectis_curl_worker_http_request_decode(event, &request, &headers, error);
+  if (status != VECTIS_OK) {
+    reply_status = vectis_curl_worker_reply_error(
+        ctx, event, status,
+        error != NULL ? error->message : "curl worker request invalid");
+    if (reply_status != VECTIS_OK) {
+      return reply_status;
+    }
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  response_limit = ((const vectis_curl_worker_http_wire *)event->payload)
+                               ->max_response_body_bytes != 0u
+                       ? ((const vectis_curl_worker_http_wire *)event->payload)
+                             ->max_response_body_bytes
+                       : VECTIS_CURL_WORKER_DEFAULT_MAX_RESPONSE_BODY_BYTES;
+  body.limit = response_limit;
+  request.response_body = vectis_curl_worker_response_body;
+  request.response_body_userdata = &body;
+  vectis_error_clear(&transfer_error);
+  status =
+      vectis_http_execute(&ctx->http, &request, &response, &transfer_error);
+  if (event->expects_reply && ctx->reply_broker != NULL &&
+      event->correlation_id != 0u) {
+    reply_status = vectis_curl_worker_http_reply_build(
+        &response, status == VECTIS_OK ? NULL : &transfer_error, status, &body,
+        &reply, error);
+    if (reply_status == VECTIS_OK) {
+      reply_status = ctx->reply_broker->reply(
+          ctx->reply_broker, event->correlation_id, &reply.message, error);
+      vectis_curl_worker_event_cleanup(&reply);
+    }
+    if (reply_status != VECTIS_OK) {
+      free(headers);
+      free(body.data);
+      vectis_http_response_cleanup(&response);
+      return reply_status;
+    }
+  }
+  free(headers);
+  free(body.data);
+  vectis_http_response_cleanup(&response);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_curl_worker_service_start(void *context,
+                                                      vectis_error *error) {
+  vectis_curl_worker_service_context *ctx;
+
+  ctx = (vectis_curl_worker_service_context *)context;
+  if (ctx == NULL || ctx->request_mailbox == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker service requires request mailbox");
+    return VECTIS_ERR_INVALID;
+  }
+  (void)pthread_mutex_lock(&ctx->mutex);
+  ctx->stopping = 0;
+  (void)pthread_mutex_unlock(&ctx->mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_curl_worker_service_stop(void *context,
+                                                     vectis_error *error) {
+  vectis_curl_worker_service_context *ctx;
+
+  ctx = (vectis_curl_worker_service_context *)context;
+  if (ctx == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker service is required");
+    return VECTIS_ERR_INVALID;
+  }
+  (void)pthread_mutex_lock(&ctx->mutex);
+  ctx->stopping = 1;
+  (void)pthread_mutex_unlock(&ctx->mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_curl_worker_service_wait(void *context,
+                                                     vectis_error *error) {
+  vectis_curl_worker_service_context *ctx;
+  vectis_mailbox_event event;
+  vectis_error local_error;
+  vectis_status status;
+  long poll_timeout_ms;
+
+  ctx = (vectis_curl_worker_service_context *)context;
+  if (ctx == NULL || ctx->request_mailbox == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker service requires request mailbox");
+    return VECTIS_ERR_INVALID;
+  }
+  poll_timeout_ms = ctx->poll_timeout_ms > 0L
+                        ? ctx->poll_timeout_ms
+                        : VECTIS_CURL_WORKER_DEFAULT_POLL_TIMEOUT_MS;
+  while (!vectis_curl_worker_service_is_stopping(ctx)) {
+    vectis_mailbox_event_init(&event);
+    vectis_error_clear(&local_error);
+    status = ctx->request_mailbox->wait_next(ctx->request_mailbox, &event,
+                                             poll_timeout_ms, &local_error);
+    if (status == VECTIS_ERR_TIMEOUT) {
+      continue;
+    }
+    if (status != VECTIS_OK) {
+      if (vectis_curl_worker_service_is_stopping(ctx)) {
+        vectis_error_clear(error);
+        return VECTIS_OK;
+      }
+      if (error != NULL) {
+        *error = local_error;
+      }
+      return status;
+    }
+    status = vectis_curl_worker_process_event(ctx, &event, &local_error);
+    vectis_mailbox_event_cleanup(&event);
+    if (status != VECTIS_OK) {
+      if (error != NULL) {
+        *error = local_error;
+      }
+      return status;
+    }
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static void vectis_curl_worker_service_cleanup(void *context) {
+  vectis_curl_worker_service_context *ctx;
+
+  ctx = (vectis_curl_worker_service_context *)context;
+  if (ctx == NULL) {
+    return;
+  }
+  (void)vectis_curl_worker_service_stop(ctx, NULL);
+  (void)pthread_mutex_destroy(&ctx->mutex);
+  free(ctx->base_url);
+  free(ctx->client_bundle_path);
+  free(ctx->ca_bundle_path);
+  free(ctx->proxy_url);
+  free(ctx);
+}
+
 static vectis_status vectis_app_stop_managed_services(vectis_app_impl *impl,
                                                       vectis_error *error) {
   vectis_managed_service_impl *service;
@@ -6465,6 +6994,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   app->lockd_client = vectis_lockd_client;
   app->managed_service = vectis_managed_service_new;
   app->opcua_server_service = vectis_opcua_server_service_new;
+  app->curl_worker_service = vectis_curl_worker_service_new;
   app->consumer_service = vectis_consumer_service_new;
   app->register_consumer_receiver = vectis_register_consumer_receiver;
   app->consumer_service_receiver = vectis_consumer_service_new_receiver;
@@ -17420,6 +17950,284 @@ void vectis_opcua_server_service_config_init(
   config->max_wait_ms = 50L;
 }
 
+void vectis_curl_worker_service_config_init(
+    vectis_curl_worker_service_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->size = sizeof(*config);
+  config->abi_version = VECTIS_SERVICE_ABI_VERSION;
+  vectis_http_client_config_init(&config->http);
+  config->start_with_app = 1;
+  config->poll_timeout_ms = VECTIS_CURL_WORKER_DEFAULT_POLL_TIMEOUT_MS;
+}
+
+void vectis_curl_worker_http_request_init(
+    vectis_curl_worker_http_request *request) {
+  if (request == NULL) {
+    return;
+  }
+  memset(request, 0, sizeof(*request));
+  request->size = sizeof(*request);
+  request->abi_version = VECTIS_SERVICE_ABI_VERSION;
+  request->method = VECTIS_HTTP_GET;
+  request->max_response_body_bytes =
+      VECTIS_CURL_WORKER_DEFAULT_MAX_RESPONSE_BODY_BYTES;
+}
+
+vectis_status vectis_curl_worker_http_event_build(
+    const vectis_curl_worker_http_request *request,
+    vectis_curl_worker_event *out, vectis_error *error) {
+  vectis_curl_worker_http_wire *wire;
+  unsigned char *payload;
+  unsigned char *cursor;
+  size_t url_size;
+  size_t content_type_size;
+  size_t headers_size;
+  size_t payload_size;
+  size_t i;
+  size_t len;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker event output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(out, 0, sizeof(*out));
+  if (request == NULL || request->url == NULL || request->url[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker HTTP request requires url");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->size != 0u && request->size < sizeof(*request)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker HTTP request size is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->abi_version != 0u &&
+      request->abi_version != VECTIS_SERVICE_ABI_VERSION) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker HTTP request abi_version is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->method <= VECTIS_HTTP_ANY ||
+      request->method > VECTIS_HTTP_MOVE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker HTTP request method is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->header_count > 0u && request->headers == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker HTTP request headers are invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->body_size > 0u && request->body == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker HTTP request body is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  url_size = strlen(request->url);
+  content_type_size =
+      request->content_type != NULL ? strlen(request->content_type) : 0u;
+  headers_size = 0u;
+  for (i = 0u; i < request->header_count; ++i) {
+    if (request->headers[i] == NULL) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "curl worker HTTP request header is invalid");
+      return VECTIS_ERR_INVALID;
+    }
+    len = strlen(request->headers[i]);
+    if (len > ((size_t)-1) - headers_size - 1u) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "curl worker HTTP request headers are too large");
+      return VECTIS_ERR_NOMEM;
+    }
+    headers_size += len + 1u;
+  }
+  payload_size = sizeof(*wire);
+  if (url_size > ((size_t)-1) - payload_size - 1u) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "curl worker HTTP request payload is too large");
+    return VECTIS_ERR_NOMEM;
+  }
+  payload_size += url_size + 1u;
+  if (content_type_size > ((size_t)-1) - payload_size - 1u) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "curl worker HTTP request payload is too large");
+    return VECTIS_ERR_NOMEM;
+  }
+  payload_size += content_type_size + 1u;
+  if (headers_size > ((size_t)-1) - payload_size) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "curl worker HTTP request payload is too large");
+    return VECTIS_ERR_NOMEM;
+  }
+  payload_size += headers_size;
+  if (request->body_size > ((size_t)-1) - payload_size) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "curl worker HTTP request payload is too large");
+    return VECTIS_ERR_NOMEM;
+  }
+  payload_size += request->body_size;
+  payload = (unsigned char *)calloc(1u, payload_size);
+  if (payload == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate curl worker HTTP request");
+    return VECTIS_ERR_NOMEM;
+  }
+  wire = (vectis_curl_worker_http_wire *)payload;
+  memcpy(wire->magic, VECTIS_CURL_WORKER_HTTP_MAGIC,
+         sizeof(VECTIS_CURL_WORKER_HTTP_MAGIC));
+  wire->method = (unsigned)request->method;
+  wire->timeout_ms = request->timeout_ms;
+  wire->max_response_body_bytes = request->max_response_body_bytes;
+  wire->url_size = url_size;
+  wire->content_type_size = content_type_size;
+  wire->header_count = request->header_count;
+  wire->headers_size = headers_size;
+  wire->body_size = request->body_size;
+  cursor = payload + sizeof(*wire);
+  memcpy(cursor, request->url, url_size);
+  cursor += url_size + 1u;
+  if (content_type_size > 0u) {
+    memcpy(cursor, request->content_type, content_type_size);
+  }
+  cursor += content_type_size + 1u;
+  for (i = 0u; i < request->header_count; ++i) {
+    len = strlen(request->headers[i]);
+    memcpy(cursor, request->headers[i], len);
+    cursor += len + 1u;
+  }
+  if (request->body_size > 0u) {
+    memcpy(cursor, request->body, request->body_size);
+  }
+  out->payload.data = payload;
+  out->payload.size = payload_size;
+  out->message.kind = VECTIS_CURL_WORKER_HTTP_KIND;
+  out->message.payload = payload;
+  out->message.payload_size = payload_size;
+  out->message.expects_reply = 1;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+void vectis_curl_worker_event_cleanup(vectis_curl_worker_event *event) {
+  if (event == NULL) {
+    return;
+  }
+  free(event->payload.data);
+  memset(event, 0, sizeof(*event));
+}
+
+void vectis_curl_worker_http_response_init(
+    vectis_curl_worker_http_response *response) {
+  if (response == NULL) {
+    return;
+  }
+  memset(response, 0, sizeof(*response));
+  response->size = sizeof(*response);
+  response->abi_version = VECTIS_SERVICE_ABI_VERSION;
+}
+
+vectis_status vectis_curl_worker_http_response_decode(
+    const vectis_mailbox_event *event,
+    vectis_curl_worker_http_response *response, vectis_error *error) {
+  const vectis_curl_worker_http_reply_wire *wire;
+  const unsigned char *cursor;
+  const unsigned char *end;
+  size_t message_copy_size;
+  size_t detail_copy_size;
+
+  if (response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker response output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (response->size != sizeof(*response) ||
+      response->abi_version != VECTIS_SERVICE_ABI_VERSION) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker response output must be initialized");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_curl_worker_http_response_cleanup(response);
+  if (event == NULL || event->payload == NULL ||
+      event->payload_size < sizeof(*wire)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker response payload is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (event->kind == NULL ||
+      strcmp(event->kind, VECTIS_CURL_WORKER_HTTP_REPLY_KIND) != 0) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker response kind is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  wire = (const vectis_curl_worker_http_reply_wire *)event->payload;
+  if (memcmp(wire->magic, VECTIS_CURL_WORKER_HTTP_REPLY_MAGIC,
+             sizeof(VECTIS_CURL_WORKER_HTTP_REPLY_MAGIC)) != 0) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker response envelope is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  cursor = (const unsigned char *)event->payload + sizeof(*wire);
+  end = (const unsigned char *)event->payload + event->payload_size;
+  if ((size_t)(end - cursor) < wire->content_type_size + 1u +
+                                   wire->message_size + 1u + wire->detail_size +
+                                   1u + wire->body_size) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker response envelope is truncated");
+    return VECTIS_ERR_INVALID;
+  }
+  response->transfer_status = wire->transfer_status;
+  response->dependency_code = wire->dependency_code;
+  response->status_code = wire->status_code;
+  if (wire->content_type_size > 0u) {
+    response->content_type =
+        vectis_strndup((const char *)cursor, wire->content_type_size);
+    if (response->content_type == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy curl worker content type");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  cursor += wire->content_type_size + 1u;
+  message_copy_size = wire->message_size;
+  if (message_copy_size >= sizeof(response->message)) {
+    message_copy_size = sizeof(response->message) - 1u;
+  }
+  memcpy(response->message, cursor, message_copy_size);
+  cursor += wire->message_size + 1u;
+  detail_copy_size = wire->detail_size;
+  if (detail_copy_size >= sizeof(response->detail)) {
+    detail_copy_size = sizeof(response->detail) - 1u;
+  }
+  memcpy(response->detail, cursor, detail_copy_size);
+  cursor += wire->detail_size + 1u;
+  if (wire->body_size > 0u) {
+    response->body = malloc(wire->body_size);
+    if (response->body == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy curl worker response body");
+      return VECTIS_ERR_NOMEM;
+    }
+    memcpy(response->body, cursor, wire->body_size);
+    response->body_size = wire->body_size;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+void vectis_curl_worker_http_response_cleanup(
+    vectis_curl_worker_http_response *response) {
+  if (response == NULL) {
+    return;
+  }
+  free(response->content_type);
+  free(response->body);
+  vectis_curl_worker_http_response_init(response);
+}
+
 void vectis_managed_service_state_init(vectis_managed_service_state *state) {
   if (state == NULL) {
     return;
@@ -17529,6 +18337,108 @@ vectis_status vectis_opcua_server_service_new(
   if (status != VECTIS_OK) {
     (void)pthread_mutex_destroy(&ctx->mutex);
     free(ctx);
+    return status;
+  }
+  return VECTIS_OK;
+}
+
+static int vectis_curl_worker_copy_http_config_string(char **owned,
+                                                      const char **target,
+                                                      const char *value) {
+  *owned = NULL;
+  *target = NULL;
+  if (value == NULL) {
+    return 1;
+  }
+  *owned = vectis_strdup(value);
+  if (*owned == NULL) {
+    return 0;
+  }
+  *target = *owned;
+  return 1;
+}
+
+vectis_status vectis_curl_worker_service_new(
+    vectis_app *app, const vectis_curl_worker_service_config *config,
+    vectis_managed_service **out, vectis_error *error) {
+  vectis_curl_worker_service_config effective;
+  vectis_curl_worker_service_context *ctx;
+  vectis_managed_service_config managed;
+  vectis_status status;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker service output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config == NULL || config->request_mailbox == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker service config requires request_mailbox");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->size != 0u && config->size < sizeof(*config)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker service config size is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->abi_version != 0u &&
+      config->abi_version != VECTIS_SERVICE_ABI_VERSION) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker service config abi_version is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_curl_worker_service_config_init(&effective);
+  effective = *config;
+  if (effective.poll_timeout_ms <= 0L) {
+    effective.poll_timeout_ms = VECTIS_CURL_WORKER_DEFAULT_POLL_TIMEOUT_MS;
+  }
+  ctx = (vectis_curl_worker_service_context *)calloc(1u, sizeof(*ctx));
+  if (ctx == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate curl worker service");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (pthread_mutex_init(&ctx->mutex, NULL) != 0) {
+    free(ctx);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to initialize curl worker service mutex");
+    return VECTIS_ERR_STATE;
+  }
+  ctx->request_mailbox = effective.request_mailbox;
+  ctx->reply_broker = effective.reply_broker;
+  ctx->http = effective.http;
+  if (!vectis_curl_worker_copy_http_config_string(
+          &ctx->base_url, &ctx->http.base_url, effective.http.base_url) ||
+      !vectis_curl_worker_copy_http_config_string(
+          &ctx->client_bundle_path, &ctx->http.client_bundle_path,
+          effective.http.client_bundle_path) ||
+      !vectis_curl_worker_copy_http_config_string(
+          &ctx->ca_bundle_path, &ctx->http.ca_bundle_path,
+          effective.http.ca_bundle_path) ||
+      !vectis_curl_worker_copy_http_config_string(
+          &ctx->proxy_url, &ctx->http.proxy_url, effective.http.proxy_url)) {
+    vectis_curl_worker_service_cleanup(ctx);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy curl worker service config");
+    return VECTIS_ERR_NOMEM;
+  }
+  ctx->poll_timeout_ms = effective.poll_timeout_ms;
+  vectis_managed_service_config_init(&managed);
+  managed.name = effective.name != NULL ? effective.name : "curl-worker";
+  managed.context = ctx;
+  managed.start = vectis_curl_worker_service_start;
+  managed.stop = vectis_curl_worker_service_stop;
+  managed.wait = vectis_curl_worker_service_wait;
+  managed.cleanup = vectis_curl_worker_service_cleanup;
+  managed.start_with_app = effective.start_with_app ? 1 : 0;
+  status = app->managed_service(app, &managed, out, error);
+  if (status != VECTIS_OK) {
+    vectis_curl_worker_service_cleanup(ctx);
     return status;
   }
   return VECTIS_OK;

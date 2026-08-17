@@ -1094,6 +1094,58 @@ typedef struct vectis_http_response {
   size_t body_size;
 } vectis_http_response;
 
+#define VECTIS_CURL_WORKER_HTTP_KIND "vectis.curl.http"
+#define VECTIS_CURL_WORKER_HTTP_REPLY_KIND "vectis.curl.http.reply"
+#define VECTIS_CURL_WORKER_DEFAULT_POLL_TIMEOUT_MS 100L
+#define VECTIS_CURL_WORKER_DEFAULT_MAX_RESPONSE_BODY_BYTES (1024u * 1024u)
+
+typedef struct vectis_curl_worker_http_request {
+  size_t size;
+  unsigned abi_version;
+  vectis_http_method method;
+  const char *url;
+  const char *const *headers;
+  size_t header_count;
+  const void *body;
+  size_t body_size;
+  const char *content_type;
+  long timeout_ms;
+  size_t max_response_body_bytes;
+} vectis_curl_worker_http_request;
+
+typedef struct vectis_curl_worker_event {
+  vectis_mailbox_message message;
+  vectis_mutable_bytes payload;
+} vectis_curl_worker_event;
+
+typedef struct vectis_curl_worker_http_response {
+  size_t size;
+  unsigned abi_version;
+  vectis_status transfer_status;
+  long dependency_code;
+  long status_code;
+  char *content_type;
+  void *body;
+  size_t body_size;
+  char message[256];
+  char detail[256];
+} vectis_curl_worker_http_response;
+
+/* Descriptor for a Vectis-owned curl/HTTP worker service. The request mailbox
+ * and optional broker are borrowed and must outlive the returned managed
+ * service. The worker drains VECTIS_CURL_WORKER_HTTP_KIND events and replies
+ * through reply_broker when the incoming mailbox event expects a reply. */
+typedef struct vectis_curl_worker_service_config {
+  size_t size;
+  unsigned abi_version;
+  const char *name;
+  vectis_mailbox *request_mailbox;
+  vectis_mailbox_broker *reply_broker;
+  vectis_http_client_config http;
+  int start_with_app;
+  long poll_timeout_ms;
+} vectis_curl_worker_service_config;
+
 typedef struct vectis_sftp_config {
   const char *url;
   const char *username;
@@ -1338,6 +1390,9 @@ struct vectis_app {
                                    vectis_error *error);
   vectis_status (*opcua_server_service)(
       vectis_app *self, const vectis_opcua_server_service_config *config,
+      vectis_managed_service **out, vectis_error *error);
+  vectis_status (*curl_worker_service)(
+      vectis_app *self, const vectis_curl_worker_service_config *config,
       vectis_managed_service **out, vectis_error *error);
 
   /* Declare a Vectis-owned liblockdc consumer service. Vectis copies the
@@ -1725,6 +1780,21 @@ vectis_managed_service_state_get(const vectis_managed_service *service,
                                  vectis_error *error);
 void vectis_opcua_server_service_config_init(
     vectis_opcua_server_service_config *config);
+void vectis_curl_worker_service_config_init(
+    vectis_curl_worker_service_config *config);
+void vectis_curl_worker_http_request_init(
+    vectis_curl_worker_http_request *request);
+vectis_status vectis_curl_worker_http_event_build(
+    const vectis_curl_worker_http_request *request,
+    vectis_curl_worker_event *out, vectis_error *error);
+void vectis_curl_worker_event_cleanup(vectis_curl_worker_event *event);
+void vectis_curl_worker_http_response_init(
+    vectis_curl_worker_http_response *response);
+vectis_status vectis_curl_worker_http_response_decode(
+    const vectis_mailbox_event *event,
+    vectis_curl_worker_http_response *response, vectis_error *error);
+void vectis_curl_worker_http_response_cleanup(
+    vectis_curl_worker_http_response *response);
 void vectis_opcua_monitor_event_config_init(
     vectis_opcua_monitor_event_config *config);
 void vectis_opcua_monitor_mailbox_config_init(
@@ -1978,6 +2048,9 @@ vectis_managed_service_new(vectis_app *app,
                            vectis_managed_service **out, vectis_error *error);
 vectis_status vectis_opcua_server_service_new(
     vectis_app *app, const vectis_opcua_server_service_config *config,
+    vectis_managed_service **out, vectis_error *error);
+vectis_status vectis_curl_worker_service_new(
+    vectis_app *app, const vectis_curl_worker_service_config *config,
     vectis_managed_service **out, vectis_error *error);
 vectis_status vectis_managed_service_run(vectis_managed_service *service,
                                          vectis_error *error);

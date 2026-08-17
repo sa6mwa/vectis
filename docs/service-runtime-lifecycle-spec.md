@@ -405,6 +405,17 @@ and other libcurl protocols already exposed through the Lua curl facade. Per-
 protocol Lua helpers remain thin request builders over that generic worker
 contract.
 
+Implemented first slice: `vectis_curl_worker_service` composes
+`vectis_managed_service` and drains a borrowed `vectis_mailbox` for
+`vectis.curl.http` request envelopes built by
+`vectis_curl_worker_http_event_build()`. Replies are routed through an optional
+borrowed `vectis_mailbox_broker` as `vectis.curl.http.reply` envelopes decoded
+by `vectis_curl_worker_http_response_decode()`. The worker owns a copied HTTP
+client config for delayed materialization and limits buffered response bodies
+with `max_response_body_bytes`; broader libcurl protocols should use the same
+descriptor/service shape with protocol-specific request builders rather than
+new service lifecycles.
+
 Global curl/OpenSSL initialization must not be used as a substitute for the
 quiescence guard. The guard is about active threads and long-lived handles, not
 only library initialization order.
@@ -679,6 +690,8 @@ Required semantics:
      servers rejected;
    - curl worker descriptors with generic mailbox/lockdc ingress and protocol-
      neutral transfer request records;
+     first C/mailbox HTTP request/reply slice implemented as
+     `vectis_curl_worker_service`;
    - audio/SUS worker descriptors with runtime-domain device/model
      materialization and mailbox event output;
    - CAI/MCP supervisor worker descriptors with runtime-domain client/agent

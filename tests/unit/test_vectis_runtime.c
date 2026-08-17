@@ -75,6 +75,15 @@ typedef struct runtime_managed_service_probe {
   const char *wait_error;
 } runtime_managed_service_probe;
 
+typedef struct runtime_http_mock_server {
+  int listen_fd;
+  unsigned short port;
+  pthread_t thread;
+  const char *body;
+  char request[1024];
+  size_t request_size;
+} runtime_http_mock_server;
+
 static const lonejson_field source_json_doc_fields[] = {
     LONEJSON_FIELD_STRING_SOURCE_REQ(source_json_doc, payload, "payload")};
 
@@ -191,6 +200,81 @@ static void runtime_managed_service_cleanup(void *context) {
   if (probe != NULL) {
     probe->cleaned += 1;
   }
+}
+
+static void *runtime_http_mock_main(void *userdata) {
+  runtime_http_mock_server *server;
+  struct sockaddr_in peer;
+  socklen_t peer_len;
+  int client_fd;
+  ssize_t nread;
+  char response[512];
+  int written;
+  size_t body_size;
+
+  server = (runtime_http_mock_server *)userdata;
+  if (server == NULL) {
+    return NULL;
+  }
+  peer_len = sizeof(peer);
+  client_fd = accept(server->listen_fd, (struct sockaddr *)&peer, &peer_len);
+  if (client_fd < 0) {
+    return NULL;
+  }
+  nread = read(client_fd, server->request, sizeof(server->request) - 1u);
+  if (nread > 0) {
+    server->request_size = (size_t)nread;
+    server->request[server->request_size] = '\0';
+  }
+  body_size = strlen(server->body != NULL ? server->body : "");
+  written = snprintf(response, sizeof(response),
+                     "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n"
+                     "Content-Length: %lu\r\nConnection: close\r\n\r\n%s",
+                     (unsigned long)body_size,
+                     server->body != NULL ? server->body : "");
+  assert(written > 0 && (size_t)written < sizeof(response));
+  assert(write(client_fd, response, (size_t)written) == written);
+  (void)close(client_fd);
+  return NULL;
+}
+
+static void runtime_http_mock_start(runtime_http_mock_server *server,
+                                    const char *body) {
+  struct sockaddr_in addr;
+  socklen_t addr_len;
+  int enabled;
+
+  memset(server, 0, sizeof(*server));
+  server->listen_fd = -1;
+  server->body = body;
+  server->listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(server->listen_fd >= 0);
+  enabled = 1;
+  (void)setsockopt(server->listen_fd, SOL_SOCKET, SO_REUSEADDR, &enabled,
+                   sizeof(enabled));
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(0);
+  assert(inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr) == 1);
+  assert(bind(server->listen_fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  assert(listen(server->listen_fd, 1) == 0);
+  addr_len = sizeof(addr);
+  assert(getsockname(server->listen_fd, (struct sockaddr *)&addr, &addr_len) ==
+         0);
+  server->port = ntohs(addr.sin_port);
+  assert(pthread_create(&server->thread, NULL, runtime_http_mock_main,
+                        server) == 0);
+}
+
+static void runtime_http_mock_stop(runtime_http_mock_server *server) {
+  if (server == NULL) {
+    return;
+  }
+  if (server->listen_fd >= 0) {
+    (void)close(server->listen_fd);
+    server->listen_fd = -1;
+  }
+  (void)pthread_join(server->thread, NULL);
 }
 
 typedef struct runtime_enqueue_after_delay {
@@ -3589,6 +3673,155 @@ static void assert_supervised_managed_service_lifecycle(void) {
   close(probe.wait_fds[1]);
 }
 
+static void assert_service_only_curl_worker_mailbox_http(void) {
+  vectis_app_config app_config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_mailbox_config mailbox_config;
+  vectis_mailbox *mailbox;
+  vectis_mailbox_broker_config broker_config;
+  vectis_mailbox_broker *broker;
+  vectis_curl_worker_service_config worker_config;
+  vectis_managed_service *service;
+  vectis_managed_service_state service_state;
+  vectis_curl_worker_http_request request_config;
+  vectis_curl_worker_event request_event;
+  vectis_mailbox_event reply_event;
+  vectis_curl_worker_http_response worker_response;
+  runtime_http_mock_server http_server;
+  char url[128];
+  char failed_url[128];
+  unsigned long correlation_id;
+  unsigned short closed_port;
+  int reserved_fd;
+  int written;
+
+  reserved_fd = reserve_loopback_port(&closed_port);
+  close(reserved_fd);
+  written = snprintf(failed_url, sizeof(failed_url), "http://127.0.0.1:%u/",
+                     (unsigned)closed_port);
+  assert(written > 0 && (size_t)written < sizeof(failed_url));
+
+  runtime_http_mock_start(&http_server, "curl worker ok");
+  written = snprintf(url, sizeof(url), "http://127.0.0.1:%u/worker",
+                     http_server.port);
+  assert(written > 0 && (size_t)written < sizeof(url));
+
+  vectis_mailbox_config_init(&mailbox_config);
+  mailbox_config.capacity = 4u;
+  mailbox = NULL;
+  status = vectis_mailbox_new(&mailbox_config, &mailbox, &error);
+  assert(status == VECTIS_OK);
+  vectis_mailbox_broker_config_init(&broker_config);
+  broker_config.request_mailbox = mailbox;
+  broker = NULL;
+  status = vectis_mailbox_broker_new(&broker_config, &broker, &error);
+  assert(status == VECTIS_OK);
+
+  vectis_app_config_init(&app_config);
+  app = vectis_app_new(&app_config, &error);
+  assert(app != NULL);
+  vectis_curl_worker_service_config_init(&worker_config);
+  worker_config.name = "curl-worker-test";
+  worker_config.request_mailbox = mailbox;
+  worker_config.reply_broker = broker;
+  worker_config.http.timeout_ms = 2000L;
+  worker_config.http.connect_timeout_ms = 1000L;
+  worker_config.poll_timeout_ms = 10L;
+  service = NULL;
+  status = app->curl_worker_service(app, &worker_config, &service, &error);
+  assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.declared);
+  assert(service_state.start_requested);
+  assert(!service_state.materialized);
+
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.materialized);
+  assert(service_state.started);
+  assert(service_state.monitor_active);
+
+  vectis_curl_worker_http_response_init(&worker_response);
+  vectis_curl_worker_http_request_init(&request_config);
+  request_config.method = VECTIS_HTTP_GET;
+  request_config.url = failed_url;
+  request_config.timeout_ms = 500L;
+  request_config.max_response_body_bytes = 1024u;
+  status = vectis_curl_worker_http_event_build(&request_config, &request_event,
+                                               &error);
+  assert(status == VECTIS_OK);
+  vectis_mailbox_event_init(&reply_event);
+  status = broker->request(broker, &request_event.message, 3000L, &reply_event,
+                           &correlation_id, &error);
+  assert(status == VECTIS_OK);
+  assert(correlation_id != 0u);
+  status = vectis_curl_worker_http_response_decode(&reply_event,
+                                                   &worker_response, &error);
+  assert(status == VECTIS_OK);
+  assert(worker_response.transfer_status != VECTIS_OK);
+  assert(worker_response.status_code == 0L);
+  vectis_mailbox_event_cleanup(&reply_event);
+  vectis_curl_worker_event_cleanup(&request_event);
+
+  vectis_curl_worker_http_request_init(&request_config);
+  request_config.method = VECTIS_HTTP_GET;
+  request_config.url = url;
+  request_config.max_response_body_bytes = 1024u;
+  status = vectis_curl_worker_http_event_build(&request_config, &request_event,
+                                               &error);
+  assert(status == VECTIS_OK);
+  vectis_mailbox_event_init(&reply_event);
+  status = broker->request(broker, &request_event.message, 3000L, &reply_event,
+                           &correlation_id, &error);
+  assert(status == VECTIS_OK);
+  assert(correlation_id != 0u);
+  status = vectis_curl_worker_http_response_decode(&reply_event,
+                                                   &worker_response, &error);
+  assert(status == VECTIS_OK);
+  assert(worker_response.transfer_status == VECTIS_OK);
+  assert(worker_response.status_code == 200L);
+  assert(worker_response.content_type != NULL);
+  assert(strcmp(worker_response.content_type, "text/plain") == 0);
+  assert(worker_response.body_size == sizeof("curl worker ok") - 1u);
+  assert(memcmp(worker_response.body, "curl worker ok",
+                sizeof("curl worker ok") - 1u) == 0);
+  status = vectis_curl_worker_http_response_decode(&reply_event,
+                                                   &worker_response, &error);
+  assert(status == VECTIS_OK);
+  assert(worker_response.transfer_status == VECTIS_OK);
+  assert(worker_response.status_code == 200L);
+  assert(worker_response.content_type != NULL);
+  assert(strcmp(worker_response.content_type, "text/plain") == 0);
+  assert(worker_response.body_size == sizeof("curl worker ok") - 1u);
+  assert(memcmp(worker_response.body, "curl worker ok",
+                sizeof("curl worker ok") - 1u) == 0);
+  assert(strstr(http_server.request, "GET /worker HTTP/1.1") != NULL);
+
+  vectis_curl_worker_http_response_cleanup(&worker_response);
+  vectis_mailbox_event_cleanup(&reply_event);
+  vectis_curl_worker_event_cleanup(&request_event);
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.stop_requested);
+  assert(!service_state.started);
+  assert(service_state.monitor_done);
+  assert(service_state.monitor_joined);
+  assert(!service_state.failed);
+
+  service->close(service);
+  app->close(app);
+  broker->destroy(broker);
+  mailbox->destroy(mailbox);
+  runtime_http_mock_stop(&http_server);
+}
+
 static void assert_supervised_opcua_server_service_lifecycle(void) {
   vectis_app_config config;
   vectis_app *app;
@@ -4013,6 +4246,10 @@ static int run_named_runtime_test(const char *name) {
     assert_supervised_managed_service_lifecycle();
     return 1;
   }
+  if (strcmp(name, "service_only_curl_worker_mailbox_http") == 0) {
+    assert_service_only_curl_worker_mailbox_http();
+    return 1;
+  }
   if (strcmp(name, "supervised_opcua_server_service_lifecycle") == 0) {
     assert_supervised_opcua_server_service_lifecycle();
     return 1;
@@ -4069,6 +4306,7 @@ int main(void) {
   assert_supervised_child_exit_stops_consumer_service();
   assert_supervised_repeated_start_stop();
   assert_supervised_managed_service_lifecycle();
+  assert_service_only_curl_worker_mailbox_http();
   assert_supervised_opcua_server_service_lifecycle();
   assert_supervised_shutdown_deadline_kills_stopped_runtime();
   assert_service_only_wait_reports_consumer_service_exit();
