@@ -367,6 +367,9 @@ The descriptor owns:
 - copied `lc_consumer_service_config`;
 - copied consumer array;
 - copied string fields used by dequeue requests where Vectis can own them;
+- bounded `vectis_lockd_consumer_json_into()` payload decoding for C consumer
+  callbacks that want typed LoneJSON structs while keeping ack/nack/extend
+  policy explicit in the caller or in liblockdc's managed-consumer return code;
 - callback function pointers and callback contexts as borrowed process-local
   values;
 - Vectis receiver runtimes for built-in C receiver kinds such as `mailbox` and

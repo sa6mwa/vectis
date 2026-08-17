@@ -256,6 +256,13 @@ adapter copies through a bounded `lc_sink`; payloads over `max_payload_bytes`
 fail during the copy and the managed consumer receives a normal liblockdc
 callback error. This is materialized payload projection, not a streaming bridge.
 
+`vectis_lockd_consumer_json_into(message, max_payload_bytes, map, out, error)`
+is the C-side helper for typed consumer payloads. It copies the delivery payload
+through liblockdc's message writer, enforces a bounded materialization limit, and
+decodes with LoneJSON. It does not ack, nack, extend, or close the delivery;
+that policy remains explicit in the consumer callback or with liblockdc's
+managed-consumer return-code semantics.
+
 `vectis_lockd_consumer_mailbox_receiver_config` supports two target modes:
 `mailbox` for fire-and-forget delivery into a mailbox, and `broker` for
 request/reply delivery. Broker mode takes precedence and returns success only

@@ -258,6 +258,13 @@ assert_lockdc_lua_runtime_contract() {
   assert_contains "$repo_root/src/vectis.c" 'vectis_webdav_marker_receiver_create'
   assert_contains "$repo_root/src/vectis_cli.c" 'app->consumer_service_receiver'
   assert_not_contains "$repo_root/src/vectis_cli.c" 'consumer service handler.kind must be webdav_marker'
+  assert_contains "$repo_root/include/vectis/vectis.h" 'vectis_lockd_consumer_json_into'
+  assert_contains "$repo_root/src/vectis.c" 'vectis_lockd_consumer_json_into'
+  assert_contains "$repo_root/tests/unit/test_vectis_mailbox.c" 'test_lockd_consumer_json_into'
+  assert_contains "$repo_root/docs/service-runtime-lifecycle-spec.md" 'bounded `vectis_lockd_consumer_json_into\(\)` payload decoding'
+  assert_contains "$repo_root/docs/concurrency-dx.md" 'vectis_lockd_consumer_json_into\(message, max_payload_bytes, map, out, error\)'
+  assert_contains "$repo_root/docs/api.md" 'bounded consumer JSON payload'
+  assert_contains "$repo_root/TODO.md" '\[x\] Extend Vectis service-friendly lockd helpers only where they reduce real C workflow friction'
 }
 
 assert_lql_lua_runtime_contract() {

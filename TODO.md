@@ -172,11 +172,11 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 
 ## Area 8: lockd / Workflow Runtime
 
-- [ ] Extend Vectis service-friendly lockd helpers only where they reduce real C workflow friction without obscuring the public `liblockdc` 0.13.1 API.
+- [x] Extend Vectis service-friendly lockd helpers only where they reduce real C workflow friction without obscuring the public `liblockdc` 0.13.1 API: C consumers now have bounded `vectis_lockd_consumer_json_into()` payload-to-lonejson decoding, while direct `liblockdc` remains the queue/ack/nack/retry authority.
 - [x] Integrate the `lockdc` Lua binding into the Vectis Lua runtime.
 - [x] Provide first-pass C helpers for lockd-backed typed state load/save/update workflows.
 - [x] Add first Vectis-owned Lua `vectis.lockd` helper for config normalization, embedded bundle source wiring, and client cleanup.
-- [ ] Provide additional C helpers for retry-oriented queue workflow patterns only where direct `liblockdc` remains too noisy in real examples.
+- [x] Provide additional C helpers for retry-oriented queue workflow patterns only where direct `liblockdc` remains too noisy in real examples: Vectis handles bounded typed JSON payload decode for consumer callbacks and deliberately leaves attempts, visibility, ack/nack, defer/failure intent, and max-attempt behavior with `liblockdc`.
 - [x] Provide Lua helpers for document store, retrieval, query, leases, enqueue, dequeue, ack/nack, and retry-oriented workflow patterns.
 - [x] Add Lua `vectis.lockd.with_dequeued_json()` to remove dequeue/payload/cleanup boilerplate while leaving ack/nack explicit in the handler.
 - [x] Expose direct `liblockdc`/`lockdc` access for complete API coverage while making Vectis helpers the preferred workflow API.

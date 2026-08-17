@@ -19409,6 +19409,51 @@ static vectis_status vectis_lockd_consumer_event_payload(
   return VECTIS_OK;
 }
 
+vectis_status vectis_lockd_consumer_json_into(lc_consumer_message *message,
+                                              size_t max_payload_bytes,
+                                              const lonejson_map *map,
+                                              void *out, vectis_error *error) {
+  vectis_string_builder payload;
+  lonejson *runtime;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  vectis_status status;
+
+  if (message == NULL || message->message == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "lockd consumer message is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (map == NULL || out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "lockd consumer JSON map and output are required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (max_payload_bytes == 0u) {
+    max_payload_bytes = VECTIS_LOCKD_CONSUMER_EVENT_DEFAULT_MAX_PAYLOAD_BYTES;
+  }
+  memset(&payload, 0, sizeof(payload));
+  status = vectis_lockd_consumer_event_payload(
+      message->message, max_payload_bytes, &payload, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  runtime = vectis_lonejson_new(error);
+  if (runtime == NULL) {
+    vectis_string_builder_cleanup(&payload);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  json_status = lonejson_parse_buffer(runtime, map, out, payload.data,
+                                      payload.size, &json_error);
+  lonejson_free(runtime);
+  vectis_string_builder_cleanup(&payload);
+  if (json_status != LONEJSON_STATUS_OK) {
+    return vectis_set_lonejson_error(error, json_status, &json_error,
+                                     "failed to parse lockd consumer JSON");
+  }
+  return VECTIS_OK;
+}
+
 vectis_status vectis_lockd_consumer_event_from_message(
     lc_consumer_message *message,
     const vectis_lockd_consumer_event_config *config,

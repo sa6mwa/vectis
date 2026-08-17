@@ -2093,6 +2093,18 @@ vectis_status vectis_lockd_consumer_event_from_message(
     struct lc_consumer_message *message,
     const vectis_lockd_consumer_event_config *config,
     vectis_lockd_consumer_event *out, vectis_error *error);
+/*
+ * Bounded materialized JSON helper for C lockd consumer callbacks. This copies
+ * the delivery payload through liblockdc's message writer and decodes it into
+ * `out` using `map`. A zero max_payload_bytes uses
+ * VECTIS_LOCKD_CONSUMER_EVENT_DEFAULT_MAX_PAYLOAD_BYTES.
+ *
+ * Ack/nack/extend policy remains owned by liblockdc and the caller; this helper
+ * never terminalizes the delivery.
+ */
+vectis_status vectis_lockd_consumer_json_into(
+    struct lc_consumer_message *message, size_t max_payload_bytes,
+    const lonejson_map *map, void *out, vectis_error *error);
 void vectis_lockd_consumer_mailbox_receiver_config_init(
     vectis_lockd_consumer_mailbox_receiver_config *config);
 vectis_status vectis_lockd_consumer_mailbox_receiver_adapter(

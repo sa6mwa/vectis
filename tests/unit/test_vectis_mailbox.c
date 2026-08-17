@@ -9,6 +9,18 @@
 
 static int failures = 0;
 
+typedef struct lockd_job_doc {
+  char id[32];
+  lonejson_int64 attempt;
+} lockd_job_doc;
+
+static const lonejson_field lockd_job_doc_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(lockd_job_doc, id, "id",
+                                    LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_I64_REQ(lockd_job_doc, attempt, "attempt")};
+
+LONEJSON_MAP_DEFINE(lockd_job_doc_map, lockd_job_doc, lockd_job_doc_fields);
+
 static void expect(int condition, const char *message) {
   if (!condition) {
     fprintf(stderr, "failure: %s\n", message);
@@ -506,6 +518,56 @@ static void test_lockd_consumer_event_builder(void) {
                                                     &error);
   expect_status(status, VECTIS_ERR_INVALID, "lockd consumer payload limit");
   vectis_lockd_consumer_event_cleanup(&event);
+}
+
+static void test_lockd_consumer_json_into(void) {
+  lc_consumer_message consumer;
+  lc_message message;
+  fake_lockd_payload payload;
+  lockd_job_doc doc;
+  vectis_error error;
+  vectis_status status;
+
+  payload.bytes = "{\"id\":\"job-1\",\"attempt\":3}";
+  payload.size = strlen(payload.bytes);
+  fake_lockd_message_init(&consumer, &message, &payload);
+  memset(&doc, 0, sizeof(doc));
+  status = vectis_lockd_consumer_json_into(&consumer, 64u, &lockd_job_doc_map,
+                                           &doc, &error);
+  expect_status(status, VECTIS_OK, "lockd consumer JSON decode");
+  expect(strcmp(doc.id, "job-1") == 0, "lockd consumer JSON id");
+  expect(doc.attempt == 3, "lockd consumer JSON attempt");
+
+  memset(&doc, 0, sizeof(doc));
+  status = vectis_lockd_consumer_json_into(&consumer, 8u, &lockd_job_doc_map,
+                                           &doc, &error);
+  expect_status(status, VECTIS_ERR_INVALID,
+                "lockd consumer JSON payload limit");
+  expect(strstr(error.message, "payload") != NULL,
+         "lockd consumer JSON payload limit message");
+
+  payload.bytes = "{\"id\":\"job-1\"";
+  payload.size = strlen(payload.bytes);
+  memset(&doc, 0, sizeof(doc));
+  status = vectis_lockd_consumer_json_into(&consumer, 64u, &lockd_job_doc_map,
+                                           &doc, &error);
+  expect(status != VECTIS_OK, "lockd consumer JSON parse failure");
+  expect(strstr(error.message, "lockd consumer JSON") != NULL,
+         "lockd consumer JSON parse failure message");
+
+  message.write_payload = NULL;
+  status = vectis_lockd_consumer_json_into(&consumer, 64u, &lockd_job_doc_map,
+                                           &doc, &error);
+  expect_status(status, VECTIS_ERR_INVALID,
+                "lockd consumer JSON requires payload writer");
+
+  status = vectis_lockd_consumer_json_into(NULL, 64u, &lockd_job_doc_map, &doc,
+                                           &error);
+  expect_status(status, VECTIS_ERR_INVALID,
+                "lockd consumer JSON requires message");
+
+  status = vectis_lockd_consumer_json_into(&consumer, 64u, NULL, &doc, &error);
+  expect_status(status, VECTIS_ERR_INVALID, "lockd consumer JSON requires map");
 }
 
 static void test_lockd_consumer_mailbox_receiver_publish(void) {
@@ -1180,6 +1242,7 @@ int main(void) {
   test_broker_request_reply();
   test_broker_timeout_cleanup();
   test_lockd_consumer_event_builder();
+  test_lockd_consumer_json_into();
   test_lockd_consumer_mailbox_receiver_publish();
   test_lockd_consumer_mailbox_receiver_broker();
   test_opcua_monitor_mailbox_data_change();
