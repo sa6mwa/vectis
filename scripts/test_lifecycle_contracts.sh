@@ -202,6 +202,10 @@ assert_concurrency_mailbox_contract() {
   assert_contains "$repo_root/docs/lua-server.md" 'access_log_path'
   assert_contains "$repo_root/docs/lua-server.md" '`kore_curl_timeout_seconds = 0`'
   assert_contains "$repo_root/docs/lua-server.md" '`kore_quiet = true`'
+  assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'Kore-quiet'
+  assert_contains "$repo_root/docs/service-runtime-lifecycle-spec.md" \
+    '`vectis_server_config.kore_quiet`'
+  assert_contains "$repo_root/docs/api.md" 'Kore quiet mode'
   assert_contains "$repo_root/docs/lua-server.md" \
     'Vectis infers the response type'
   assert_contains "$repo_root/TODO.md" \

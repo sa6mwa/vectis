@@ -450,11 +450,14 @@ than letting Kore reject a malformed low-level setting later.
 
 The same direct-runtime surface owns listener backlog, request processing
 budget, HSTS max-age, the HTTP Server header value, Kore-owned curl timeout and
-receive-size limits, and process-wide WebSocket limits. It also exposes Kore's
-worker death policy as
-`worker_death_policy`, defaulting to restart, and Kore's opt-in generated HTML
-bodies for bodyless 4xx/5xx responses as `pretty_error_pages`, defaulting off
-for production-minimal error responses. WebSocket
+receive-size limits, Kore quiet mode, and process-wide WebSocket limits. It also
+exposes Kore's worker death policy as `worker_death_policy`, defaulting to
+restart, and Kore's opt-in generated HTML bodies for bodyless 4xx/5xx responses
+as `pretty_error_pages`, defaulting off for production-minimal error responses.
+`vectis_server_config.kore_quiet` and Lua
+`vectis.server.new({kore_quiet = true})` suppress native Kore lifecycle chatter
+without disabling Vectis-owned logging, metrics, route responses, or service
+lifecycle diagnostics. WebSocket
 `websocket_max_frame_bytes` maps to Kore's inbound frame payload ceiling, and
 `websocket_timeout_ms` maps to Kore's WebSocket idle timer. Zero values keep the
 Vectis defaults; invalid negative timeouts, invalid worker death policies, and
