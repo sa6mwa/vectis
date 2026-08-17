@@ -103,6 +103,9 @@ modules or C SDK workflows:
   [Lua embedded assets](lua-embedded.md).
 - `vectis.http`: generic downstream HTTP and file transfer helpers, documented
   in [Lua HTTP](lua-http.md).
+- `vectis.kore`: Kore runtime metadata and constants for Lua code that needs
+  to inspect the embedded runtime contract, documented in
+  [Lua Kore](lua-kore.md).
 - `vectis.lockd`: Vectis lockd client/workflow helpers, documented in
   [Lua lockd](lua-lockd.md).
 - `vectis.log`: logging defaults and structured Vectis error fields over pslog,
@@ -128,7 +131,7 @@ modules or C SDK workflows:
 
 Workflow tables including `vectis.auth`, `vectis.audio_worker`,
 `vectis.cert`, `vectis.cai_worker`, `vectis.curl_worker`, `vectis.embedded`,
-`vectis.server`, `vectis.ssh`, and `vectis.sus_worker` are preloaded modules inside the embedded
+`vectis.kore`, `vectis.server`, `vectis.ssh`, and `vectis.sus_worker` are preloaded modules inside the embedded
 binary. `vectis.auth` re-exports the C-owned `vectis.auth.core` facade and adds Lua DX helpers. `require("vectis").auth` and
 `require("vectis.auth")` return the same table, and the same identity rule
 applies to the other workflow modules exposed through the top-level namespace.

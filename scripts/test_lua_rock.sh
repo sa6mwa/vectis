@@ -231,6 +231,7 @@ local expected_modules = {
   "vectis.cai",
   "vectis.dsv",
   "vectis.http",
+  "vectis.kore",
   "vectis.lockd",
   "vectis.log",
   "vectis.mqtt",
@@ -253,6 +254,10 @@ local curl = loaded.curl
 local vectis = require("vectis")
 assert(type(vectis) == "table")
 assert(vectis.version ~= nil)
+assert(vectis.kore == loaded["vectis.kore"])
+assert(vectis.kore.runtime_available == false)
+assert(vectis.kore.runtime_model == "external")
+assert(vectis.kore.websocket.TEXT == 0x01)
 assert(type(vectis.libs) == "table")
 for _, name in ipairs(dependency_modules) do
   assert(vectis.libs[name] == package.loaded[name], "vectis.libs." .. name)

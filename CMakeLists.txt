@@ -661,6 +661,8 @@ if(VECTIS_BUILD_STATIC)
       ${vectis_lockdc_static_target}
       ${vectis_static_dependency_links}
   )
+  target_compile_definitions(vectis_static
+    PRIVATE VECTIS_WITH_KORE_RUNTIME=$<BOOL:${VECTIS_WITH_KORE_RUNTIME}>)
   if(VECTIS_WITH_KORE_RUNTIME AND UNIX AND NOT APPLE)
     target_link_options(vectis_static INTERFACE -Wl,--export-dynamic)
   endif()
@@ -692,6 +694,8 @@ if(VECTIS_BUILD_SHARED)
       ${vectis_lockdc_shared_target}
       ${vectis_shared_dependency_links}
   )
+  target_compile_definitions(vectis_shared
+    PRIVATE VECTIS_WITH_KORE_RUNTIME=$<BOOL:${VECTIS_WITH_KORE_RUNTIME}>)
   set_target_properties(vectis_shared PROPERTIES
     OUTPUT_NAME vectis
     VERSION ${PROJECT_VERSION}
@@ -1162,6 +1166,8 @@ if(VECTIS_BUILD_BINARY)
   if(UNIX OR APPLE OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
     target_compile_definitions(vectis_bin PRIVATE _POSIX_C_SOURCE=200809L)
   endif()
+  target_compile_definitions(vectis_bin
+    PRIVATE VECTIS_WITH_KORE_RUNTIME=$<BOOL:${VECTIS_WITH_KORE_RUNTIME}>)
   vectis_apply_relocatable_paths(vectis_bin)
 endif()
 

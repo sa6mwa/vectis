@@ -28,6 +28,7 @@ build = {
     ["vectis.cai"] = "lua/vectis/cai.lua",
     ["vectis.dsv"] = "lua/vectis/dsv.lua",
     ["vectis.http"] = "lua/vectis/http.lua",
+    ["vectis.kore"] = "lua/vectis/kore.lua",
     ["vectis.lockd"] = "lua/vectis/lockd.lua",
     ["vectis.log"] = "lua/vectis/log.lua",
     ["vectis.mqtt"] = "lua/vectis/mqtt.lua",

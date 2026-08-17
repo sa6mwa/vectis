@@ -409,7 +409,8 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add a pure Lua top-level `vectis` facade so ordinary Lua 5.5 environments can load the Vectis-owned Lua helper namespace without the embedded binary preloader.
 - [x] Publish a separate `vectis` Lua rock for users who want to run the Vectis facade inside their own Lua 5.5 environment.
 - [x] Keep LuaRocks out of the `vectis` binary runtime and C binary SDK artifacts.
-- [ ] Add Vectis-owned Lua modules for Kore and broader libssh2 coverage.
+- [x] Add a Vectis-owned Lua `vectis.kore` module for embedded-runtime
+  metadata and Kore-related constants without replacing `vectis.server`.
 - [x] Add a Vectis-owned Lua SSH command execution helper backed by libssh2.
 - [x] Keep the Lua framework model aligned with the C SDK model: dependency-native access plus a Vectis-owned DX layer with matching concepts and behavior.
 - [x] Support shebang execution through `#!/usr/local/bin/vectis`.

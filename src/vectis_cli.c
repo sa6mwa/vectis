@@ -81,6 +81,9 @@
 #define VECTIS_LUA_SSH_SFTP_SESSION "vectis.ssh.sftp_session"
 #define VECTIS_LUA_SSH_SFTP_FILE "vectis.ssh.sftp_file"
 #define VECTIS_LUA_SSH_SFTP_DIR "vectis.ssh.sftp_dir"
+#ifndef VECTIS_WITH_KORE_RUNTIME
+#define VECTIS_WITH_KORE_RUNTIME 0
+#endif
 
 typedef struct vectis_lua_runtime_context {
   const unsigned char *embedded_lockd_bundle;
@@ -19606,6 +19609,7 @@ static int luaopen_vectis(lua_State *lua) {
   vectis_lua_set_required_module(lua, "sus_worker", "vectis.sus_worker");
   vectis_lua_set_required_module(lua, "cert", "vectis.cert");
   vectis_lua_set_required_module(lua, "ssh", "vectis.ssh");
+  vectis_lua_set_required_module(lua, "kore", "vectis.kore");
   vectis_lua_push_libs_table(lua);
   lua_setfield(lua, -2, "libs");
   lua_getglobal(lua, "require");
@@ -19774,6 +19778,35 @@ static int luaopen_vectis_ssh(lua_State *lua) {
 
 static int vectis_luaopen_vectis_ssh(void *lua_state) {
   return luaopen_vectis_ssh((lua_State *)lua_state);
+}
+
+static int luaopen_vectis_kore(lua_State *lua) {
+  lua_newtable(lua);
+  lua_pushboolean(lua, VECTIS_WITH_KORE_RUNTIME ? 1 : 0);
+  lua_setfield(lua, -2, "runtime_available");
+#if VECTIS_WITH_KORE_RUNTIME
+  lua_pushliteral(lua, "embedded");
+#else
+  lua_pushliteral(lua, "none");
+#endif
+  lua_setfield(lua, -2, "runtime_model");
+  lua_pushinteger(lua, VECTIS_SERVER_MAX_WORKER_COUNT);
+  lua_setfield(lua, -2, "MAX_WORKER_COUNT");
+  lua_pushinteger(lua, VECTIS_SERVER_DEFAULT_WEBSOCKET_MAX_FRAME_BYTES);
+  lua_setfield(lua, -2, "DEFAULT_WEBSOCKET_MAX_FRAME_BYTES");
+  lua_pushinteger(lua, VECTIS_SERVER_DEFAULT_WEBSOCKET_TIMEOUT_MS);
+  lua_setfield(lua, -2, "DEFAULT_WEBSOCKET_TIMEOUT_MS");
+  lua_pushinteger(lua, VECTIS_WORKER_DEATH_RESTART);
+  lua_setfield(lua, -2, "WORKER_DEATH_RESTART");
+  lua_pushinteger(lua, VECTIS_WORKER_DEATH_TERMINATE);
+  lua_setfield(lua, -2, "WORKER_DEATH_TERMINATE");
+  vectis_lua_push_websocket_constants(lua);
+  lua_setfield(lua, -2, "websocket");
+  return 1;
+}
+
+static int vectis_luaopen_vectis_kore(void *lua_state) {
+  return luaopen_vectis_kore((lua_State *)lua_state);
 }
 
 static int vectis_luaopen_lockdc_core(void *lua_state) {
@@ -21273,6 +21306,11 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   }
   status = cpkt_lua_runtime_register_c_module(runtime, "vectis.ssh",
                                               vectis_luaopen_vectis_ssh);
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_c_module(runtime, "vectis.kore",
+                                              vectis_luaopen_vectis_kore);
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }

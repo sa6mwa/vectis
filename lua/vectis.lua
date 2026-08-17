@@ -62,6 +62,7 @@ local workflow_modules = {
   lockd = "vectis.lockd",
   dsv = "vectis.dsv",
   xml = "vectis.xml",
+  kore = "vectis.kore",
 }
 
 local function optional_require(name)

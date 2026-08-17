@@ -179,6 +179,7 @@ assert_lua_runtime_evidence() {
     vectis.audio_worker \
     vectis.cai_worker \
     vectis.curl_worker \
+    vectis.kore \
     vectis.mailbox \
     vectis.sus_worker
   do
