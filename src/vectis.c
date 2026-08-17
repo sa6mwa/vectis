@@ -10210,6 +10210,12 @@ vectis_validate_server_config(const vectis_server_config *config,
                      "server autoblock status_rule_count exceeds maximum");
     return VECTIS_ERR_INVALID;
   }
+  if (effective.autoblock.enabled &&
+      effective.autoblock.max_entries > VECTIS_AUTOBLOCK_MAX_ENTRIES) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "server autoblock max_entries exceeds maximum");
+    return VECTIS_ERR_INVALID;
+  }
   if (effective.autoblock.event_rule_count > VECTIS_AUTOBLOCK_MAX_EVENT_RULES) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "server autoblock event_rule_count exceeds maximum");

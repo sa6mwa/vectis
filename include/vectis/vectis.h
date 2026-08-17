@@ -42,6 +42,7 @@
 #define VECTIS_AUTOBLOCK_MAX_STATUS_RULES 16u
 #define VECTIS_AUTOBLOCK_MAX_EVENT_RULES 16u
 #define VECTIS_AUTOBLOCK_MAX_TRUSTED_PROXIES 16u
+#define VECTIS_AUTOBLOCK_MAX_ENTRIES 65536u
 #define VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES ((size_t)3221225472UL)
 #define VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES 262144u
 #define VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES                          \
@@ -973,6 +974,9 @@ typedef struct vectis_autoblock_config {
   int enabled;
   unsigned int window_seconds;
   unsigned int block_seconds;
+  /* Maximum number of peer records in the shared autoblock table. Zero uses
+   * the default. Enabled configs must not exceed VECTIS_AUTOBLOCK_MAX_ENTRIES.
+   */
   unsigned int max_entries;
   unsigned int tcp_stall_threshold;
   unsigned int tls_failure_threshold;

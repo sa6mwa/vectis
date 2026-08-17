@@ -158,8 +158,11 @@ assert_concurrency_mailbox_contract() {
   assert_contains "$repo_root/src/vectis_kore_bridge.c" 'vectis_kore_preflight_listener'
   assert_contains "$repo_root/src/vectis_kore_bridge.c" 'vectis_kore_preflight_body_spool'
   assert_contains "$repo_root/src/vectis.c" 'server autoblock status_rule_count exceeds maximum'
+  assert_contains "$repo_root/src/vectis.c" 'server autoblock max_entries exceeds maximum'
   assert_contains "$repo_root/include/vectis/vectis.h" \
     'VECTIS_AUTOBLOCK_MAX_STATUS_RULES'
+  assert_contains "$repo_root/include/vectis/vectis.h" \
+    'VECTIS_AUTOBLOCK_MAX_ENTRIES'
   assert_contains "$repo_root/tests/unit/test_vectis_runtime.c" \
     'assert_kore_start_reports_occupied_listener'
   assert_contains "$repo_root/tests/unit/test_vectis_runtime.c" \

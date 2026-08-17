@@ -2114,6 +2114,12 @@ static void assert_server_config_validation(void) {
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.server.autoblock.enabled = 1;
+  config.server.autoblock.max_entries = VECTIS_AUTOBLOCK_MAX_ENTRIES + 1u;
+  assert_invalid_server_config(&config, "max_entries");
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.server.autoblock.event_rule_count =
       VECTIS_AUTOBLOCK_MAX_EVENT_RULES + 1u;
   assert_invalid_server_config(&config, "event_rule_count");

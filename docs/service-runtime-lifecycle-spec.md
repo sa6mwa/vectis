@@ -832,9 +832,10 @@ metrics, auth, WebDAV, and TLS registration explicit, but apply strict
 quiescence, fail-closed service failures, a longer graceful shutdown deadline,
 explicit request-body guardrails, and conservative autoblock thresholds for
 repeated auth/status, TCP-stall, and TLS-failure signals.
-Autoblock rule counts, trusted proxy list shape, HTTP status ranges, event names,
-and thresholds are constructor-validated so production-profile mistakes fail
-with Vectis diagnostics before any Kore runtime state is created.
+Autoblock rule counts, shared table size, trusted proxy list shape, HTTP status
+ranges, event names, and thresholds are constructor-validated so
+production-profile mistakes fail with Vectis diagnostics before any Kore runtime
+state is created.
 The supervised Kore runtime is isolated into its own process group before
 readiness; supervisor shutdown signals target that process group so an
 unresponsive Kore parent cannot leave worker listeners behind.
@@ -1037,8 +1038,9 @@ Unit tests:
   and no Kore child process remains registered;
 - unusable request-body disk-spool paths fail during validated startup only
   when disk offload is required, with no Kore child process left registered;
-- invalid autoblock rule counts, status ranges, event names, thresholds, or
-  trusted proxy list shape fail during app construction with Vectis diagnostics;
+- invalid autoblock rule counts, shared table size, status ranges, event names,
+  thresholds, or trusted proxy list shape fail during app construction with
+  Vectis diagnostics;
 - app-owned running service blocks direct Kore start;
 - runtime phases enforce validation before materialization and T2 child
   readiness before supervisor service materialization;
