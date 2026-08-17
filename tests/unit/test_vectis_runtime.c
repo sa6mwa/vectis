@@ -864,10 +864,14 @@ static void assert_supervised_metrics_persistence_worker(void) {
   vectis_app_config config;
   vectis_metrics_config metrics;
   vectis_app *app;
+  vectis_http_client_config http;
+  vectis_http_response response;
+  vectis_mutable_bytes supervisor_snapshot;
   vectis_error error;
   vectis_status status;
   char pouch_dir[] = "/tmp/vectis-runtime-metrics.XXXXXX";
   char endpoint[4096];
+  char metrics_url[256];
   struct timespec pause_time;
   unsigned short port;
   int reserved_fd;
@@ -889,6 +893,8 @@ static void assert_supervised_metrics_persistence_worker(void) {
   config.tls.port = port;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
+  memset(&response, 0, sizeof(response));
+  memset(&supervisor_snapshot, 0, sizeof(supervisor_snapshot));
 
   vectis_metrics_config_init(&metrics);
   metrics.path = "/.metrics";
@@ -903,6 +909,23 @@ static void assert_supervised_metrics_persistence_worker(void) {
   assert(status == VECTIS_OK);
   status = app->start(app, &error);
   assert(status == VECTIS_OK);
+
+  vectis_http_client_config_init(&http);
+  http.timeout_ms = 2000L;
+  http.connect_timeout_ms = 1000L;
+  written = snprintf(metrics_url, sizeof(metrics_url),
+                     "http://127.0.0.1:%u/.metrics.json", (unsigned)port);
+  assert(written > 0 && (size_t)written < sizeof(metrics_url));
+  status = vectis_http_get(&http, metrics_url, &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200L);
+  vectis_http_response_cleanup(&response);
+  status = vectis_metrics_snapshot_json(app, &supervisor_snapshot, &error);
+  assert(status == VECTIS_OK);
+  assert(strstr((const char *)supervisor_snapshot.data,
+                "\"requests_total\":1") != NULL);
+  assert(strstr((const char *)supervisor_snapshot.data, "\"2xx\":1") != NULL);
+  vectis_mutable_bytes_cleanup(&supervisor_snapshot);
 
   pause_time.tv_sec = 0;
   pause_time.tv_nsec = 100000000L;

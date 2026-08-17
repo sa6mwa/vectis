@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/mman.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -37,6 +38,10 @@
 #include <vectis/auth.h>
 #include <vectis/embedded_fs.h>
 #include <vectis/webdav.h>
+
+#if !defined(MAP_ANONYMOUS) && defined(MAP_ANON)
+#define MAP_ANONYMOUS MAP_ANON
+#endif
 
 static volatile sig_atomic_t vectis_wait_signal = 0;
 
@@ -216,6 +221,17 @@ typedef struct vectis_openapi_doc_entry {
   vectis_openapi_route_doc doc;
 } vectis_openapi_doc_entry;
 
+typedef struct vectis_metrics_shared_state {
+  unsigned long long requests_total;
+  unsigned long long status_buckets[6];
+  unsigned long long route_misses;
+  unsigned long long body_rejects;
+  unsigned long long auth_allowed;
+  unsigned long long auth_denied;
+  unsigned long long auth_required;
+  unsigned long long auth_redirected;
+} vectis_metrics_shared_state;
+
 typedef struct vectis_metrics_state {
   pthread_mutex_t mutex;
   pthread_cond_t cond;
@@ -235,6 +251,7 @@ typedef struct vectis_metrics_state {
   char *storage_owner;
   unsigned snapshot_interval_seconds;
   int persistence_enabled;
+  vectis_metrics_shared_state *shared;
   const vectis_auth_provider *auth_provider;
   char *auth_purpose;
   unsigned allowed_auth_modes;
@@ -643,6 +660,10 @@ vectis_app_should_supervise_routes(const vectis_app_impl *impl,
 static vectis_status
 vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
                         vectis_error *error);
+static vectis_metrics_shared_state *
+vectis_metrics_shared_state_new(vectis_error *error);
+static void
+vectis_metrics_shared_state_free(vectis_metrics_shared_state *shared);
 static char *vectis_metrics_default_storage_endpoint(void);
 static vectis_status vectis_metrics_route_handler(vectis_app *app,
                                                   vectis_request *request,
@@ -7211,6 +7232,13 @@ vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
                      "failed to initialize metrics state");
     return VECTIS_ERR_STATE;
   }
+  metrics->shared = vectis_metrics_shared_state_new(error);
+  if (metrics->shared == NULL) {
+    vectis_metrics_state_destroy(metrics);
+    free(html_data);
+    free(json_data);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
   metrics->started_at = time(NULL);
   metrics->html_path = vectis_strdup(effective->path);
   metrics->json_path = vectis_strdup(effective->json_path);
@@ -12356,6 +12384,74 @@ static unsigned long long vectis_metrics_time_ms(time_t value) {
   return (unsigned long long)value * 1000ULL;
 }
 
+static vectis_metrics_shared_state *
+vectis_metrics_shared_state_new(vectis_error *error) {
+#if defined(MAP_ANONYMOUS)
+  void *memory;
+
+  memory = mmap(NULL, sizeof(vectis_metrics_shared_state),
+                PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+  if (memory == MAP_FAILED) {
+    vectis_set_errorf(error, VECTIS_ERR_STATE,
+                      "failed to allocate shared metrics counters: %s",
+                      strerror(errno));
+    return NULL;
+  }
+  memset(memory, 0, sizeof(vectis_metrics_shared_state));
+  return (vectis_metrics_shared_state *)memory;
+#else
+  vectis_set_error(error, VECTIS_ERR_STATE,
+                   "shared metrics counters are not supported on this target");
+  return NULL;
+#endif
+}
+
+static void
+vectis_metrics_shared_state_free(vectis_metrics_shared_state *shared) {
+  if (shared == NULL) {
+    return;
+  }
+  (void)munmap(shared, sizeof(*shared));
+}
+
+static void vectis_metrics_counter_increment(unsigned long long *counter) {
+  if (counter == NULL) {
+    return;
+  }
+  (void)__sync_add_and_fetch(counter, 1ULL);
+}
+
+static unsigned long long
+vectis_metrics_counter_load(unsigned long long *counter) {
+  if (counter == NULL) {
+    return 0ULL;
+  }
+  return __sync_fetch_and_add(counter, 0ULL);
+}
+
+static void vectis_metrics_merge_shared(vectis_metrics_state *snapshot,
+                                        vectis_metrics_shared_state *shared) {
+  size_t i;
+
+  if (snapshot == NULL || shared == NULL) {
+    return;
+  }
+  snapshot->requests_total +=
+      vectis_metrics_counter_load(&shared->requests_total);
+  for (i = 0u; i < 6u; ++i) {
+    snapshot->status_buckets[i] +=
+        vectis_metrics_counter_load(&shared->status_buckets[i]);
+  }
+  snapshot->route_misses += vectis_metrics_counter_load(&shared->route_misses);
+  snapshot->body_rejects += vectis_metrics_counter_load(&shared->body_rejects);
+  snapshot->auth_allowed += vectis_metrics_counter_load(&shared->auth_allowed);
+  snapshot->auth_denied += vectis_metrics_counter_load(&shared->auth_denied);
+  snapshot->auth_required +=
+      vectis_metrics_counter_load(&shared->auth_required);
+  snapshot->auth_redirected +=
+      vectis_metrics_counter_load(&shared->auth_redirected);
+}
+
 static void vectis_metrics_sample_load_locked(vectis_metrics_state *metrics,
                                               time_t now) {
   double values[3];
@@ -12390,6 +12486,7 @@ vectis_metrics_snapshot_json_impl(vectis_app *app, vectis_mutable_bytes *out,
                                   vectis_error *error) {
   vectis_app_impl *impl;
   vectis_metrics_state snapshot;
+  vectis_metrics_shared_state *shared;
   vectis_string_builder json;
   time_t now;
   const char *title;
@@ -12417,7 +12514,9 @@ vectis_metrics_snapshot_json_impl(vectis_app *app, vectis_mutable_bytes *out,
   (void)pthread_mutex_lock(&impl->metrics->mutex);
   vectis_metrics_sample_load_locked(impl->metrics, now);
   snapshot = *impl->metrics;
+  shared = impl->metrics->shared;
   (void)pthread_mutex_unlock(&impl->metrics->mutex);
+  vectis_metrics_merge_shared(&snapshot, shared);
 
   memset(&json, 0, sizeof(json));
   title = title_override != NULL && title_override[0] != '\0'
@@ -12646,6 +12745,7 @@ static vectis_status vectis_metrics_dashboard_html(vectis_app *app,
                                                    vectis_error *error) {
   vectis_app_impl *impl;
   vectis_metrics_state snapshot;
+  vectis_metrics_shared_state *shared;
   vectis_string_builder html;
   const char *title;
   unsigned long long http_2xx;
@@ -12668,7 +12768,9 @@ static vectis_status vectis_metrics_dashboard_html(vectis_app *app,
   memset(&snapshot, 0, sizeof(snapshot));
   (void)pthread_mutex_lock(&impl->metrics->mutex);
   snapshot = *impl->metrics;
+  shared = impl->metrics->shared;
   (void)pthread_mutex_unlock(&impl->metrics->mutex);
+  vectis_metrics_merge_shared(&snapshot, shared);
   title = snapshot.title != NULL && snapshot.title[0] != '\0'
               ? snapshot.title
               : vectis_metrics_request_title(impl, request);
@@ -13272,6 +13374,7 @@ static void vectis_metrics_state_destroy(vectis_metrics_state *metrics) {
   free(metrics->storage_namespace);
   free(metrics->storage_owner);
   free(metrics->auth_purpose);
+  vectis_metrics_shared_state_free(metrics->shared);
   (void)pthread_cond_destroy(&metrics->cond);
   (void)pthread_mutex_destroy(&metrics->mutex);
   free(metrics);
@@ -15997,6 +16100,14 @@ void vectis_internal_metrics_note_http_status(vectis_app *app, int status) {
   if (bucket < 1 || bucket > 5) {
     bucket = 0;
   }
+  if (metrics->shared != NULL) {
+    vectis_metrics_counter_increment(&metrics->shared->requests_total);
+    if (bucket >= 1 && bucket <= 5) {
+      vectis_metrics_counter_increment(
+          &metrics->shared->status_buckets[bucket]);
+    }
+    return;
+  }
   (void)pthread_mutex_lock(&metrics->mutex);
   metrics->requests_total++;
   if (bucket >= 1 && bucket <= 5) {
@@ -16017,6 +16128,10 @@ void vectis_internal_metrics_note_route_miss(vectis_app *app) {
   if (metrics == NULL) {
     return;
   }
+  if (metrics->shared != NULL) {
+    vectis_metrics_counter_increment(&metrics->shared->route_misses);
+    return;
+  }
   (void)pthread_mutex_lock(&metrics->mutex);
   metrics->route_misses++;
   (void)pthread_mutex_unlock(&metrics->mutex);
@@ -16032,6 +16147,11 @@ void vectis_internal_metrics_note_body_reject(vectis_app *app, int status) {
   impl = (vectis_app_impl *)app->impl;
   metrics = impl->metrics;
   if (metrics == NULL) {
+    return;
+  }
+  if (metrics->shared != NULL) {
+    vectis_metrics_counter_increment(&metrics->shared->body_rejects);
+    vectis_internal_metrics_note_http_status(app, status);
     return;
   }
   (void)pthread_mutex_lock(&metrics->mutex);
@@ -16051,6 +16171,24 @@ void vectis_internal_metrics_note_auth(vectis_app *app,
   impl = (vectis_app_impl *)app->impl;
   metrics = impl->metrics;
   if (metrics == NULL) {
+    return;
+  }
+  if (metrics->shared != NULL) {
+    switch (action) {
+    case VECTIS_AUTH_ALLOW:
+      vectis_metrics_counter_increment(&metrics->shared->auth_allowed);
+      break;
+    case VECTIS_AUTH_REQUIRED:
+      vectis_metrics_counter_increment(&metrics->shared->auth_required);
+      break;
+    case VECTIS_AUTH_REDIRECT:
+      vectis_metrics_counter_increment(&metrics->shared->auth_redirected);
+      break;
+    case VECTIS_AUTH_DENY:
+    default:
+      vectis_metrics_counter_increment(&metrics->shared->auth_denied);
+      break;
+    }
     return;
   }
   (void)pthread_mutex_lock(&metrics->mutex);

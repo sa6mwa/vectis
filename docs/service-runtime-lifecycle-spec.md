@@ -320,8 +320,12 @@ Metrics remain disabled by default.
 When enabled:
 
 - in T1, request counters and route metrics are collected in the Kore domain;
-- in T2, Kore-domain metrics are reported to the supervisor through the runtime
-  control channel or a bounded metrics channel;
+- in route-backed runtimes, hot request/auth counters live in a narrow
+  process-shared metrics block allocated during declaration before Kore forks,
+  so all Kore workers and the supervisor observe one copied counter set without
+  per-request IPC or in-process pointer sharing;
+- in T2, supervisor snapshots aggregate the process-shared Kore-domain counters
+  with supervisor-local persistence counters before writing snapshots;
 - persistent snapshots are written by the supervisor, not by a request worker;
 - route-backed metrics persistence selects T2 supervision even when no other
   background service is declared;
@@ -426,7 +430,7 @@ Valid cross-domain channels:
   and request/reply messages;
 - explicit files or storage configured by the app;
 - shared memory only for narrow process-shared data structures that are
-  designed and tested as process-shared.
+  designed and tested as process-shared, currently the metrics counter block.
 
 The runtime bus should carry:
 
@@ -445,8 +449,11 @@ keeps the existing bounded SIGTERM/SIGKILL fallback so an unresponsive child
 cannot hang shutdown. Service failure frames wake `wait()` after the service
 monitor has recorded copied terminal state; the service state/error surface
 remains the diagnostic source of truth and the configured failure policy decides
-whether the app fail-closes or continues. Later metrics and request/reply frames
-must use the same bounded copied-message model or a deliberately named
+whether the app fail-closes or continues. Metrics hot counters deliberately do
+not use control frames because multiple Kore workers would otherwise contend on
+a stream-framed control channel or perform request-path IPC; they use the
+bounded process-shared metrics block instead. Later request/reply frames must
+use the same bounded copied-message model or a deliberately named
 spooled/chunked extension; they must not smuggle in-process pointers or
 materialize unbounded "streaming" payloads.
 
@@ -594,7 +601,8 @@ Required semantics:
      fallback.
    - service failure propagation; implemented as a supervisor-local typed
      control frame that wakes `wait()` after monitor state is recorded.
-   - metrics snapshot transfer.
+   - metrics snapshot transfer; hot route counters use a process-shared counter
+     block and supervisor persistence snapshots aggregate that block.
 6. Lua lifecycle updates:
    - align `server:consumer_service`, `server:run`, `server:start`,
      `server:wait`;
