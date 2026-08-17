@@ -40,6 +40,7 @@ local modules = {
   "vectis.cert",
   "vectis.embedded",
   "vectis.server",
+  "vectis.curl_worker",
   "vectis.ssh",
   "vectis",
   "lockdc.core",
@@ -92,6 +93,7 @@ assert(loaded["vectis.auth"].core == loaded["vectis.auth.core"])
 assert(loaded["vectis"].cert == loaded["vectis.cert"])
 assert(loaded["vectis"].embedded == loaded["vectis.embedded"])
 assert(loaded["vectis"].server == loaded["vectis.server"])
+assert(loaded["vectis"].curl_worker == loaded["vectis.curl_worker"])
 assert(loaded["vectis"].ssh == loaded["vectis.ssh"])
 assert(loaded["vectis"].http == loaded["vectis.http"])
 assert(loaded["vectis"].rest == loaded["vectis.rest"])
@@ -129,6 +131,8 @@ assert(type(loaded["vectis.auth"].browser_flow) == "function")
 assert(type(loaded["vectis.cert"].generate_bundle) == "function")
 assert(type(loaded["vectis.embedded"].read) == "function")
 assert(type(loaded["vectis.server"].new) == "function")
+assert(type(loaded["vectis.curl_worker"].http_request) == "function")
+assert(type(loaded["vectis.curl_worker"].decode_http_response) == "function")
 assert(type(loaded["vectis.ssh"].scp_upload_file) == "function")
 assert(type(loaded["vectis.rest"].route) == "function")
 assert(type(loaded["vectis.log"].new) == "function")

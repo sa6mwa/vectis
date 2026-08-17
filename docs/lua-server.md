@@ -362,6 +362,12 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
 - `server:consumer_service_states()` returns diagnostic snapshots for declared
   consumer services, including whether each service is materialized,
   process-local, requested to start, running, monitored, or failed.
+- `server:curl_worker_service(opts)` declares a C-owned curl worker service over
+  a borrowed `vectis.mailbox` request queue and optional
+  `vectis.mailbox.broker` reply adapter. Use `vectis.curl_worker` to build and
+  decode the copied HTTP envelopes.
+- `server:curl_worker_service_states()` returns managed-service lifecycle
+  diagnostics for declared curl worker services.
 - `server:mcp(opts)` registers a C-owned CAI Streamable HTTP MCP route with
   Lua-defined raw JSON tools.
 

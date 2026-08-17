@@ -165,6 +165,15 @@ decode the copied envelopes with `vectis_curl_worker_http_event_build()` and
 `vectis_curl_worker_http_response_decode()` instead of constructing payload
 bytes themselves.
 
+The Lua surface mirrors that C contract without adding a callback bridge:
+`server:curl_worker_service()` registers the managed service, retaining the
+borrowed `vectis.mailbox` and optional `vectis.mailbox.broker` userdata until
+service close. `vectis.curl_worker.http_request()` builds the C HTTP request
+envelope as a normal mailbox event table, and
+`vectis.curl_worker.decode_http_response()` decodes the worker reply into Lua
+fields such as `ok`, `transfer_status`, `status`, `content_type`, `body`,
+`message`, and `detail`.
+
 CAI/MCP workers:
 
 - open CAI clients, agents, registries, and non-route MCP helpers in the
@@ -272,6 +281,12 @@ callback and draining the resulting typed event.
 publishing a request, owner-state `pump()` dispatch, correlated reply
 publication, reply draining, and stats inspection without reusable helper
 functions that would hide the facade shape.
+
+`examples/lua/curl_worker_service.lua` is the Lua managed-worker example. It
+starts a supervised Vectis server with a `/hello` JSON route, registers a
+C-owned curl worker service over a Lua-created mailbox and broker, sends an HTTP
+request through the worker, decodes the reply, and inspects copied service
+lifecycle state.
 
 ## Lua Surface
 

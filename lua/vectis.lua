@@ -46,6 +46,7 @@ local workflow_modules = {
   cert = "vectis.cert",
   embedded = "vectis.embedded",
   server = "vectis.server",
+  curl_worker = "vectis.curl_worker",
   ssh = "vectis.ssh",
   log = "vectis.log",
   http = "vectis.http",

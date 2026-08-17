@@ -642,6 +642,15 @@ Required semantics:
   rejected because managed service threads must not enter Lua directly.
 - `server:opcua_server_service_states()` returns copied managed-service
   lifecycle diagnostics for Lua-registered OPC UA services.
+- `server:curl_worker_service({ request_mailbox = box, reply_broker = broker,
+  start = true })` registers the C-owned curl worker service under the Vectis
+  managed-service lifecycle. It borrows Lua mailbox/broker userdata, retains
+  them until service close, and never invokes Lua from the worker thread.
+- `server:curl_worker_service_states()` returns copied managed-service
+  lifecycle diagnostics for Lua-registered curl worker services.
+- `vectis.curl_worker.http_request()` and
+  `vectis.curl_worker.decode_http_response()` build/decode the copied C HTTP
+  mailbox envelopes; Lua does not construct the binary payload format directly.
 - Direct Lua callbacks for background services remain rejected unless they are
   attached to an explicit owner-state pump.
 - Examples must not use `os.execute`, shell `sleep`, or external commands for
@@ -691,7 +700,9 @@ Required semantics:
    - curl worker descriptors with generic mailbox/lockdc ingress and protocol-
      neutral transfer request records;
      first C/mailbox HTTP request/reply slice implemented as
-     `vectis_curl_worker_service`;
+     `vectis_curl_worker_service`, with Lua registration exposed as
+     `server:curl_worker_service()` and HTTP envelope helpers exposed as
+     `vectis.curl_worker`;
    - audio/SUS worker descriptors with runtime-domain device/model
      materialization and mailbox event output;
    - CAI/MCP supervisor worker descriptors with runtime-domain client/agent

@@ -84,6 +84,34 @@ schemes remain libcurl runtime errors and are reported in the result table.
 Protocol-specific helpers such as `vectis.http`, `vectis.webdav`,
 `vectis.mqtt`, and `vectis.smtp` use this lower-level facade.
 
+## Managed Worker
+
+`vectis.curl_worker` exposes the Vectis managed-service curl worker helpers.
+This is separate from direct `curl.perform()`: Lua builds copied mailbox events,
+the C-owned worker service performs transfers in the managed runtime domain, and
+Lua decodes copied replies.
+
+- `server:curl_worker_service(opts)` registers the C-owned worker. `opts`
+  requires `request_mailbox` or `requests`, accepts optional `reply_broker` or
+  `broker`, `name`, `poll_timeout_ms`, `start`, and an `http` table with the
+  `vectis_http_client_config` fields supported by the C worker: `base_url`,
+  `client_bundle_path`, `ca_bundle_path`/`ca_file`, `timeout_ms`,
+  `connect_timeout_ms`, `follow_redirects`, `proxy_url`/`proxy`,
+  low-speed controls, and retry controls.
+- `server:curl_worker_service_states()` returns copied managed-service
+  lifecycle diagnostics for registered curl workers.
+- `vectis.curl_worker.http_request(opts)` returns a normal
+  `vectis.mailbox` event table with `kind`, `payload`, and `expects_reply`.
+  `opts` supports `method`, `url`, `headers`, `body`, `content_type`,
+  `timeout_ms`, and `max_response_body_bytes`.
+- `vectis.curl_worker.decode_http_response(event)` decodes a worker reply event
+  into `ok`, `transfer_status`, `transfer_status_string`, `dependency_code`,
+  `status`, `status_code`, `content_type`, `body`, `message`, and `detail`.
+
+The first worker envelope is HTTP-specific. Other libcurl protocol workers
+should add explicit copied request/reply envelopes rather than overloading the
+HTTP payload format.
+
 Retry conditions may be `"transport"`, `"429"`, `"status_429"`, `"5xx"`,
 `"status_5xx"`, `"default"`, or `"none"`, or a table combining condition
 names. Streaming JSON responses cannot be retried because the response parser is
