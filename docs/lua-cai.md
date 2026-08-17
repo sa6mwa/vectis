@@ -89,3 +89,30 @@ Each Lua tool callback receives the raw arguments JSON string and must return
 the raw JSON/text payload that CAI writes to the tool result sink. For the full
 dependency-native CAI table/schema conversion semantics, create CAI registries
 and handlers directly through `require("cai")`.
+
+## Managed Worker Contract
+
+Route-mounted MCP servers belong to the Kore child domain. Background CAI work
+belongs to the Vectis managed-service lifecycle and must be declared as a
+descriptor before runtime start.
+
+The planned managed-worker surface is:
+
+- C: `vectis_cai_worker_service` over `vectis_managed_service`
+- Lua: `server:cai_worker_service(opts)`
+- request helper: `vectis.cai_worker.request(opts)` producing
+  `vectis.cai.request`
+- reply helper: `vectis.cai_worker.decode_reply(event)` consuming
+  `vectis.cai.reply`
+
+Worker request payloads are bounded JSON records for one-shot CAI text/JSON
+work. The worker materializes its CAI client or agent in the selected runtime
+domain, never in the declaration domain. It does not borrow Lua callbacks,
+Kore request pointers, CAI clients, agents, or tool registries across the fork
+boundary. Replies carry Vectis status/source metadata, CAI dependency
+diagnostics, and explicitly named output fields such as `text`, `json`,
+`file_path`, or `lockd_document`.
+
+Lua tool-callback MCP servers stay on `server:mcp()` unless a separate
+owner-state tool pump is specified. Managed CAI workers must publish copied
+events only.

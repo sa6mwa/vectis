@@ -181,6 +181,17 @@ CAI/MCP workers:
 - never borrow Kore request pointers or declaration-domain CAI handles;
 - publish copied output events or replies through mailbox/lockdc sinks;
 - keep Kore-mounted MCP HTTP routes in the Kore child domain.
+- start with bounded mailbox request/reply records for one-shot CAI work before
+  adding any long-running MCP client service shape.
+
+The first CAI worker request kind is `vectis.cai.request`; the reply kind is
+`vectis.cai.reply`. Request payloads are bounded JSON records describing the
+provider/model/input/instructions/options needed to open a runtime-domain CAI
+client or agent and run one operation. Replies carry Vectis status/source
+metadata, CAI dependency diagnostics, and explicitly named output fields such
+as `text`, `json`, `file_path`, or `lockd_document`. Worker threads never call
+Lua tool callbacks; tool-callback MCP servers stay mounted as Kore routes, or a
+future owner-state tool pump must be specified separately.
 
 Audio/SUS workers:
 
@@ -191,6 +202,18 @@ Audio/SUS workers:
 - keep live-device and cached-model network access opt-in;
 - name input behavior precisely as live, file-backed, decoder-backed,
   callback-backed, or buffered.
+- start with deterministic file, bounded PCM, VOX, and transcription request
+  records before adding live capture/playback service request kinds.
+
+The first audio worker request kinds are `vectis.audio.decode`,
+`vectis.audio.encode`, and `vectis.audio.vox`. The first SUS worker request
+kinds are `vectis.sus.transcribe_pcm` and `vectis.sus.transcribe_file`; replies
+use `vectis.sus.reply`. Materialized transcripts, PCM chunks, or generated
+audio are returned only under explicit byte limits. Larger outputs use
+file-backed or lockdc references named as such. Dependency-native `audio` and
+`sus` callbacks remain owner-state facade callbacks; managed worker services
+publish copied events and rely on `vectis.mailbox:pump()` when Lua policy needs
+to observe them.
 
 Lua may configure these descriptors and pump their events, but the worker
 threads themselves do not call Lua callbacks.

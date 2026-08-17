@@ -71,6 +71,39 @@ Do not call a helper streaming if it buffers, downloads, spools, or concatenates
 the full input or transcript behind the API. Bounded chunk buffers and the
 upstream VOX/PTT spool caps are acceptable when documented.
 
+## Managed Worker Contract
+
+Direct `require("audio")` and `require("sus")` calls are owner-state facade use.
+Background audio/SUS services belong to the Vectis managed-service lifecycle and
+must be descriptor-backed.
+
+The planned managed-worker surfaces are:
+
+- C: `vectis_audio_worker_service` over `vectis_managed_service`
+- Lua: `server:audio_worker_service(opts)`
+- Lua helpers: `vectis.audio_worker.decode_request()`,
+  `encode_request()`, `vox_request()`, and `decode_reply()`
+- C: `vectis_sus_worker_service` over `vectis_managed_service`
+- Lua: `server:sus_worker_service(opts)`
+- Lua helpers: `vectis.sus_worker.transcribe_pcm_request()`,
+  `transcribe_file_request()`, and `decode_reply()`
+
+The first deterministic audio worker request kinds are `vectis.audio.decode`,
+`vectis.audio.encode`, and `vectis.audio.vox`. The first deterministic SUS
+worker request kinds are `vectis.sus.transcribe_pcm` and
+`vectis.sus.transcribe_file`; replies use `vectis.sus.reply`.
+
+Managed workers copy configuration during declaration and materialize devices,
+decoders, encoders, VOX/PTT handles, models, and transcribers only in the
+selected runtime domain. Worker threads must not call Lua callbacks. Segment,
+progress, transcript, and error observations are copied mailbox events that the
+owning Lua state may drain with `vectis.mailbox:pump()`.
+
+Materialized PCM, transcript, or encoded output fields require explicit byte
+limits. Larger outputs must be named as `file_path`, `lockd_document`, or
+another explicit non-materialized reference. Live capture/playback and
+network-backed model cache access remain opt-in live/hardening surfaces.
+
 ## Audio Dependency-Native Surface
 
 Initial `audio` Lua coverage should expose:

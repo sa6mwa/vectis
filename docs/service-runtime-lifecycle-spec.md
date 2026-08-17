@@ -365,6 +365,37 @@ declaration domain. Lua registration may provide mailbox names and policy
 values, but Lua tool/policy callbacks run only through an owner-state pump or a
 Kore-mounted MCP route in the Kore child domain.
 
+First implementation contract:
+
+- `vectis_cai_worker_service` composes `vectis_managed_service`.
+- The descriptor copies Vectis/CAI client config that is safe to use after fork
+  and borrows only C-owned ingress/egress handles such as `vectis_mailbox`,
+  `vectis_mailbox_broker`, or a named lockdc queue.
+- The descriptor does not borrow a `cai_client`, `cai_agent`,
+  `cai_tool_registry`, Lua callback, or Kore request pointer from the
+  declaration domain.
+- Materialization opens the CAI client/agent in the selected runtime domain
+  after the T2 Kore readiness barrier or immediately in T3.
+- The first mailbox request kind is `vectis.cai.request`. Its payload is bounded
+  JSON with `provider`, `model`, `input`, optional `instructions`, optional
+  raw CAI response params JSON, and explicit output limits. It is a
+  materialized request record, not streaming.
+- The first mailbox reply kind is `vectis.cai.reply`. It carries status/source
+  metadata, dependency diagnostics, and either a bounded materialized text/JSON
+  response or a named file/lockdc output reference. The field name must reflect
+  the selected behavior, for example `text`, `json`, `file_path`, or
+  `lockd_document`.
+- The worker must publish copied events only. It must not invoke Lua tool
+  callbacks. Tool-using agent flows remain Kore-mounted MCP routes or direct CAI
+  facade usage until a separate owner-state tool pump is specified.
+- C helpers build/decode the mailbox envelopes so Lua does not construct
+  private binary or dependency-owned payloads directly. Lua helpers under
+  `vectis.cai_worker` are thin builders/decoders plus
+  `server:cai_worker_service()` registration.
+- MCP client support remains dependency-native CAI-owned. Vectis does not add a
+  duplicate MCP client worker unless a concrete app workflow requires a
+  supervised long-running client service.
+
 ## OPC UA
 
 OPC UA has three valid ownership modes:
@@ -450,6 +481,46 @@ When audio/SUS work is triggered by HTTP, the preferred production pattern is:
    cover this path only after it is deliberately specified for C and Lua.
 3. Supervisor worker owns the audio/SUS handle and returns a result through the
    selected reply path.
+
+First implementation contract:
+
+- `vectis_audio_worker_service` composes `vectis_managed_service` for
+  deterministic file/decoder/VOX/PTT work and opt-in live capture/playback.
+- `vectis_sus_worker_service` composes `vectis_managed_service` for model-owned
+  transcription work. A combined SUS-over-audio worker may be implemented as a
+  convenience descriptor only after the separate ownership rules are covered.
+- Audio descriptors copy device, decoder, encoder, VOX, PTT, format, timeout,
+  and limit configuration. They do not open devices, decoders, encoders, or
+  callback readers in the declaration domain.
+- SUS descriptors copy model path/cache/catalog, checksum, offline/cache policy,
+  transcription options, timeout, and output limits. They do not open models or
+  transcribers in the declaration domain.
+- Live device and network-backed model cache access remain opt-in through the
+  same environment-gated live/hardening targets as the dependency-native Lua
+  facades.
+- The first audio mailbox request kinds are deliberately narrow:
+  `vectis.audio.decode` for file/URL/callback-source decode into bounded PCM or
+  an output file, `vectis.audio.encode` for bounded PCM to file, and
+  `vectis.audio.vox` for bounded PCM segmentation. Live capture/playback
+  request kinds are not part of the deterministic first slice.
+- The first SUS mailbox request kinds are `vectis.sus.transcribe_pcm` and
+  `vectis.sus.transcribe_file`. They return `vectis.sus.reply` with structured
+  Vectis status/source metadata, dependency diagnostics, materialized transcript
+  fields only when explicitly requested, and file/lockdc references when output
+  is not materialized.
+- Lua callbacks registered with dependency-native `audio` or `sus` handles are
+  valid only for direct owner-state facade use. Managed worker services publish
+  copied segment/progress/transcript/error events into a mailbox; Lua observes
+  them through `vectis.mailbox:pump()`.
+- C helpers build/decode the mailbox envelopes. Lua helpers under
+  `vectis.audio_worker` and `vectis.sus_worker` are thin builders/decoders plus
+  `server:audio_worker_service()` and `server:sus_worker_service()`
+  registration. They do not replace direct `require("audio")` or
+  `require("sus")`.
+- Request names must state source behavior: `file`, `url`, `pcm`, `decoder`,
+  `vox_segment`, `capture`, `callback`, `materialized`, or `file_backed`. A
+  helper must not call a request streaming unless it is a real producer-to-
+  consumer flow through the underlying C callback/source APIs.
 
 ## Lua State Ownership
 
@@ -704,9 +775,13 @@ Required semantics:
      `server:curl_worker_service()` and HTTP envelope helpers exposed as
      `vectis.curl_worker`;
    - audio/SUS worker descriptors with runtime-domain device/model
-     materialization and mailbox event output;
+     materialization and mailbox event output; first implementation must cover
+     deterministic file/PCM/VOX/transcription request kinds before live-device
+     or network-cache variants;
    - CAI/MCP supervisor worker descriptors with runtime-domain client/agent
-     materialization and no borrowed route/Lua callback state.
+     materialization and no borrowed route/Lua callback state; first
+     implementation must cover mailbox request/reply for one-shot CAI text/JSON
+     work while leaving tool-callback MCP servers in the Kore route domain.
    - service declarations that accept Lua policy callbacks must publish copied
      events to `vectis_mailbox` and require an owner-state Lua pump rather than
      invoking Lua from service threads.
