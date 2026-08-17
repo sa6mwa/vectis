@@ -5126,7 +5126,7 @@ static void assert_managed_services_share_shutdown_grace(void) {
   close(second_probe.wait_fds[1]);
 }
 
-static void assert_app_close_joins_timed_out_managed_service(void) {
+static void assert_app_close_does_not_join_timed_out_managed_service(void) {
   vectis_app_config config;
   vectis_app *app;
   vectis_error error;
@@ -5137,6 +5137,8 @@ static void assert_app_close_joins_timed_out_managed_service(void) {
   runtime_managed_service_probe probe;
   runtime_delayed_fd_write release;
   pthread_t release_thread;
+  long elapsed_ms;
+  long started_ms;
 
   memset(&probe, 0, sizeof(probe));
   assert(pipe(probe.wait_fds) == 0);
@@ -5162,10 +5164,13 @@ static void assert_app_close_joins_timed_out_managed_service(void) {
   assert(status == VECTIS_ERR_TIMEOUT);
 
   release.fd = probe.wait_fds[1];
-  release.delay_ms = 100L;
+  release.delay_ms = 250L;
   assert(pthread_create(&release_thread, NULL, runtime_delayed_fd_write_main,
                         &release) == 0);
+  started_ms = runtime_monotonic_millis();
   app->close(app);
+  elapsed_ms = runtime_monotonic_millis() - started_ms;
+  assert(elapsed_ms < 150L);
   assert(pthread_join(release_thread, NULL) == 0);
 
   status = service->state(service, &service_state, &error);
@@ -6377,7 +6382,7 @@ static int run_named_runtime_test(const char *name) {
     return 1;
   }
   if (strcmp(name, "app_close_joins_timed_out_managed_service") == 0) {
-    assert_app_close_joins_timed_out_managed_service();
+    assert_app_close_does_not_join_timed_out_managed_service();
     return 1;
   }
   if (strcmp(name, "managed_service_detached_after_app_close") == 0) {
@@ -6499,7 +6504,7 @@ int main(void) {
   assert_supervised_managed_service_lifecycle();
   assert_managed_service_stop_honors_shutdown_grace();
   assert_managed_services_share_shutdown_grace();
-  assert_app_close_joins_timed_out_managed_service();
+  assert_app_close_does_not_join_timed_out_managed_service();
   assert_managed_service_detached_after_app_close();
   assert_consumer_service_detached_after_app_close();
   assert_managed_service_inherits_app_logger();

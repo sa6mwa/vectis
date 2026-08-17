@@ -48,6 +48,23 @@ static void remove_tree(const char *path) {
   (void)rmdir(path);
 }
 
+static int write_test_file(const char *path, const char *body) {
+  size_t body_size;
+  size_t written_size;
+  FILE *file;
+
+  if (path == NULL || body == NULL) {
+    return 0;
+  }
+  file = fopen(path, "wb");
+  if (file == NULL) {
+    return 0;
+  }
+  body_size = strlen(body);
+  written_size = fwrite(body, 1u, body_size, file);
+  return fclose(file) == 0 && written_size == body_size;
+}
+
 typedef struct list_state {
   int files;
   int collections;
@@ -88,6 +105,12 @@ int main(void) {
   char content_dir[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   char root_dir[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   char direct_file[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char outside_dir[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char outside_file[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char outside_write[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char outside_copy[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char outside_collection[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char symlink_path[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   unsigned char *body;
   size_t body_size;
   vectis_webdav_config config;
@@ -289,6 +312,47 @@ int main(void) {
   status = vectis_webdav_lookup(&direct_config, "/moved.txt", &entry);
   expect(status == VECTIS_WEBDAV_NOT_FOUND,
          "direct root delete does not tombstone resource");
+  expect(snprintf(outside_dir, sizeof(outside_dir), "%s/outside", temp) > 0,
+         "formats outside directory path");
+  expect(snprintf(outside_file, sizeof(outside_file), "%s/secret.txt",
+                  outside_dir) > 0,
+         "formats outside file path");
+  expect(snprintf(outside_write, sizeof(outside_write), "%s/write.txt",
+                  outside_dir) > 0,
+         "formats outside write path");
+  expect(snprintf(outside_copy, sizeof(outside_copy), "%s/copy.txt",
+                  outside_dir) > 0,
+         "formats outside copy path");
+  expect(snprintf(outside_collection, sizeof(outside_collection), "%s/newdir",
+                  outside_dir) > 0,
+         "formats outside collection path");
+  expect(snprintf(symlink_path, sizeof(symlink_path), "%s/link", root_dir) > 0,
+         "formats direct root symlink path");
+  expect(mkdir(outside_dir, 0700) == 0, "creates outside directory");
+  expect(write_test_file(outside_file, "secret\n"), "creates outside file");
+  expect(symlink(outside_dir, symlink_path) == 0,
+         "creates direct root symlink");
+  body = NULL;
+  body_size = 0u;
+  status = vectis_webdav_read(&direct_config, "/link/secret.txt", &body,
+                              &body_size, &entry);
+  expect(status != VECTIS_WEBDAV_OK,
+         "rejects direct root reads through symlinked ancestors");
+  free(body);
+  status = vectis_webdav_put(&direct_config, "/link/write.txt",
+                             (const unsigned char *)"write", 5u);
+  expect(status != VECTIS_WEBDAV_OK && access(outside_write, F_OK) != 0,
+         "rejects direct root writes through symlinked ancestors");
+  status = vectis_webdav_mkcol(&direct_config, "/link/newdir");
+  expect(status != VECTIS_WEBDAV_OK && access(outside_collection, F_OK) != 0,
+         "rejects direct root collection creation through symlinked ancestors");
+  status = vectis_webdav_copy(&direct_config, "/public/readme.txt",
+                              "/link/copy.txt", 1);
+  expect(status != VECTIS_WEBDAV_OK && access(outside_copy, F_OK) != 0,
+         "rejects direct root copy destinations through symlinked ancestors");
+  status = vectis_webdav_delete(&direct_config, "/link/secret.txt");
+  expect(status != VECTIS_WEBDAV_OK && access(outside_file, F_OK) == 0,
+         "rejects direct root deletes through symlinked ancestors");
 
   limited_config = config;
   limited_config.site_id = "limited";

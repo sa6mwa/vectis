@@ -861,6 +861,7 @@ typedef struct vectis_managed_service_impl {
   int monitor_active;
   int monitor_done;
   int monitor_joined;
+  int monitor_abandoned;
   int failed;
   int detached;
   vectis_status terminal_status;
@@ -5249,6 +5250,33 @@ static vectis_status vectis_managed_service_join_monitor_deadline(
   (void)pthread_mutex_unlock(&owner->mutex);
   vectis_error_clear(error);
   return VECTIS_OK;
+}
+
+static void
+vectis_managed_service_abandon_monitor(vectis_managed_service_impl *service) {
+  vectis_app_impl *owner;
+  int should_detach;
+
+  if (service == NULL) {
+    return;
+  }
+  owner = service->owner;
+  should_detach = 0;
+  if (owner != NULL) {
+    (void)pthread_mutex_lock(&owner->mutex);
+  }
+  if (service->monitor_active && !service->monitor_done &&
+      !service->monitor_joined && !service->monitor_abandoned) {
+    service->monitor_abandoned = 1;
+    service->monitor_joined = 1;
+    should_detach = 1;
+  }
+  if (owner != NULL) {
+    (void)pthread_mutex_unlock(&owner->mutex);
+  }
+  if (should_detach) {
+    (void)pthread_detach(service->monitor_thread);
+  }
 }
 
 static vectis_status
@@ -9743,15 +9771,21 @@ static void vectis_app_close_managed_services(vectis_app_impl *impl) {
     return;
   }
   vectis_error_clear(&error);
-  (void)vectis_app_stop_managed_services(impl, NULL, &error);
+  (void)vectis_app_request_stop_managed_services(impl, &error);
   for (service = impl->managed_services; service != NULL;
        service = service->next_owned) {
     vectis_error_clear(&error);
-    (void)vectis_managed_service_join_monitor(service, &error);
+    if (service->monitor_active && !service->monitor_done) {
+      vectis_managed_service_abandon_monitor(service);
+    } else {
+      (void)vectis_managed_service_join_monitor(service, &error);
+    }
     service->owner = NULL;
     service->logger = NULL;
-    service->started = 0;
-    service->materialized = 0;
+    if (!service->monitor_active || service->monitor_done) {
+      service->started = 0;
+      service->materialized = 0;
+    }
     service->detached = 1;
   }
   impl->managed_services = NULL;
@@ -24597,6 +24631,12 @@ void vectis_managed_service_destroy(vectis_managed_service *service) {
   impl = (vectis_managed_service_impl *)service->impl;
   if (impl != NULL) {
     vectis_error_clear(&error);
+    if (impl->monitor_abandoned && impl->monitor_active &&
+        !impl->monitor_done) {
+      service->impl = NULL;
+      free(service);
+      return;
+    }
     if (impl->started || impl->monitor_active) {
       (void)vectis_managed_service_stop(service, &error);
       (void)vectis_managed_service_monitor_status(impl, &error);

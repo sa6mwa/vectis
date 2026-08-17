@@ -24,6 +24,7 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -4009,13 +4010,21 @@ static const char *vectis_lua_table_string(lua_State *lua, int index,
 
 static size_t vectis_lua_table_size(lua_State *lua, int index,
                                     const char *field, size_t fallback) {
+  lua_Integer integer_value;
   size_t value;
 
   lua_getfield(lua, index, field);
   if (lua_isnil(lua, -1)) {
     value = fallback;
   } else {
-    value = (size_t)luaL_checkinteger(lua, -1);
+    integer_value = luaL_checkinteger(lua, -1);
+    if (integer_value < 0) {
+      return (size_t)luaL_error(lua, "%s must be non-negative", field);
+    }
+    if ((uintmax_t)integer_value > (uintmax_t)SIZE_MAX) {
+      return (size_t)luaL_error(lua, "%s exceeds size_t", field);
+    }
+    value = (size_t)integer_value;
   }
   lua_pop(lua, 1);
   return value;

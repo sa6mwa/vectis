@@ -21,6 +21,17 @@ os.remove(auth_store .. ".lock")
 os.remove(auth_state)
 os.remove(auth_state .. ".lock")
 
+local bad_size_ok, bad_size_err = pcall(function()
+  vectis.auth.store_init({
+    credentials_path = auth_store,
+    state_path = auth_state,
+    max_store_bytes = -1,
+  })
+end)
+assert(bad_size_ok == false)
+assert(tostring(bad_size_err):find("max_store_bytes must be non-negative", 1,
+                                   true))
+
 local function assert_status_error(err, status, message_fragment)
   assert(type(err) == "table")
   assert(err.status == status)
