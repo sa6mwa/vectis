@@ -251,6 +251,24 @@ assert_kore_lonejson_contract() {
 }
 
 assert_kore_static_runtime_contract() {
+  assert_contains "$repo_root/TODO.md" \
+    '\[x\] Decide whether Kore remains patched in-tree'
+  assert_contains "$repo_root/README.md" \
+    '\[Kore runtime packaging\]\(docs/kore-runtime-packaging\.md\)'
+  assert_contains "$repo_root/docs/api.md" \
+    '\[Kore runtime packaging\]\(kore-runtime-packaging\.md\)'
+  assert_contains "$repo_root/docs/kore-runtime-packaging.md" \
+    'private Vectis-owned object runtime'
+  assert_contains "$repo_root/docs/kore-runtime-packaging.md" \
+    'standalone public `libkore` artifact'
+  assert_contains "$repo_root/docs/kore-runtime-packaging.md" \
+    '`vendor/kore/upstream`'
+  assert_contains "$repo_root/docs/kore-runtime-packaging.md" \
+    '`scripts/verify-kore-patches\.sh` verifies'
+  assert_contains "$repo_root/CMakeLists.txt" \
+    'add_library\(vectis_kore_runtime OBJECT'
+  assert_contains "$repo_root/CMakeLists.txt" \
+    '\$<TARGET_OBJECTS:vectis_kore_runtime>'
   assert_contains "$repo_root/CMakeLists.txt" 'KORE_VECTIS_STATIC_RUNTIME'
   assert_contains "$repo_root/src/vectis_kore_bridge.c" \
     'kore_vectis_runtime_symbols'

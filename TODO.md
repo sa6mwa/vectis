@@ -36,7 +36,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Record and pin a vetted upstream revision for the first shipping integration.
 - [x] Add actual Kore patch files for vectis-specific behavior.
 - [x] Add automated assertions that the patch stack applies cleanly after upgrade.
-- [ ] Decide whether Kore remains patched in-tree or is built as a Vectis-owned downstream runtime library for release packaging.
+- [x] Decide whether Kore remains patched in-tree or is built as a Vectis-owned downstream runtime library for release packaging.
 
 ## Area 4: C SDK Surface
 

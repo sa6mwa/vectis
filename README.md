@@ -359,6 +359,11 @@ Patch files are tracked under `vendor/kore/patches/` and applied to
 `vendor/kore/upstream/`. Vectis builds Kore as an embedded runtime dependency
 against the same provisioned SDK root as the rest of the project.
 
+The release packaging boundary is documented in
+[Kore runtime packaging](docs/kore-runtime-packaging.md): Kore is built as a
+private Vectis-owned object runtime, not shipped as a standalone public
+`libkore` artifact or external runtime dependency.
+
 ## Current Status
 
 Implemented and covered by local tests:

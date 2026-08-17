@@ -96,3 +96,7 @@ Lua docs:
 Before release, new public C SDK groups must be represented here and declared in
 `include/vectis/vectis.h`. New Lua modules or workflow helpers must be linked
 from `docs/lua.md` and represented in `docs/lua-coverage-matrix.md`.
+
+The embedded Kore runtime is a private release-packaging implementation detail,
+documented in [Kore runtime packaging](kore-runtime-packaging.md). It is not a
+standalone public `libkore` ABI shipped by the Vectis SDK.
