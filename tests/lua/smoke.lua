@@ -1138,6 +1138,8 @@ do
     socket_backlog = 128,
     request_process_budget_ms = 50,
     hsts_max_age_seconds = 0,
+    websocket_max_frame_bytes = 8192,
+    websocket_timeout_ms = 45000,
   }))
   worker_count_server:close()
 end

@@ -448,6 +448,13 @@ bound before startup. The public bound leaves room for Kore's reserved
 key-manager/ACME worker slots. Startup must fail with a Vectis error rather
 than letting Kore reject a malformed low-level setting later.
 
+The same direct-runtime surface owns listener backlog, request processing
+budget, HSTS max-age, and process-wide WebSocket limits. WebSocket
+`websocket_max_frame_bytes` maps to Kore's inbound frame payload ceiling, and
+`websocket_timeout_ms` maps to Kore's WebSocket idle timer. Zero values keep the
+Vectis defaults; invalid negative timeouts fail during Vectis config validation
+before any Kore runtime is entered.
+
 ## Request Body Policy Translation
 
 Vectis route body policies are semantic/materialization limits and must never

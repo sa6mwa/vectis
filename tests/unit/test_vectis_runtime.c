@@ -1780,6 +1780,62 @@ static void assert_websocket_echo(unsigned short port) {
   (void)close(fd);
 }
 
+static int bytes_contain_text(const char *buffer, size_t buffer_size,
+                              const char *needle) {
+  size_t needle_size;
+  size_t i;
+
+  needle_size = strlen(needle);
+  if (needle_size == 0u || needle_size > buffer_size) {
+    return 0;
+  }
+  for (i = 0u; i + needle_size <= buffer_size; ++i) {
+    if (memcmp(buffer + i, needle, needle_size) == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static void assert_websocket_frame_limit(unsigned short port) {
+  const char *request;
+  char response[2048];
+  char frame[128];
+  ssize_t nread;
+  ssize_t next_read;
+  size_t frame_size;
+  int fd;
+
+  request = "GET /ws HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+            "Sec-WebSocket-Version: 13\r\n"
+            "\r\n";
+  fd = connect_local(port);
+  socket_send_all(fd, request, strlen(request));
+  memset(response, 0, sizeof(response));
+  nread = socket_recv_some(fd, response, sizeof(response) - 1u, 2000L);
+  assert(nread > 0);
+  response[(size_t)nread] = '\0';
+  assert(strstr(response, " 101 ") != NULL);
+  websocket_send_masked_text(fd, "0123456789abcdef");
+  memset(frame, 0, sizeof(frame));
+  nread = socket_recv_some(fd, frame, sizeof(frame), 2000L);
+  if (nread > 0 && (size_t)nread < sizeof(frame)) {
+    frame_size = (size_t)nread;
+    next_read = socket_recv_some(fd, frame + frame_size,
+                                 sizeof(frame) - frame_size, 200L);
+    if (next_read > 0) {
+      frame_size += (size_t)next_read;
+    }
+    assert(!bytes_contain_text(frame, frame_size, "echo:0123456789abcdef"));
+  }
+  (void)shutdown(fd, SHUT_RDWR);
+  (void)close(fd);
+}
+
 static int count_token(const char *haystack, const char *needle) {
   const char *p;
   int count;
@@ -3014,6 +3070,7 @@ static void assert_kore_smoke(void) {
   config.server.request_body_min_rate_bytes_per_sec = 1024u;
   config.server.request_body_min_rate_grace_ms = 500L;
   config.server.keepalive_max_requests = 1u;
+  config.server.websocket_max_frame_bytes = 8u;
   config.server.worker_count = 1u;
   assert(mkdtemp(body_spool_dir) != NULL);
   written = snprintf(body_spool_child_dir, sizeof(body_spool_child_dir),
@@ -3305,6 +3362,7 @@ static void assert_kore_smoke(void) {
   assert_large_header_rejected(port);
   assert_keepalive_limit(port);
   assert_websocket_echo(port);
+  assert_websocket_frame_limit(port);
 
   vectis_http_response_cleanup(&response);
   status = vectis_http_get(

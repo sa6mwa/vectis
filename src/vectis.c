@@ -2946,6 +2946,9 @@ void vectis_server_config_init(vectis_server_config *config) {
   config->request_process_budget_ms =
       VECTIS_SERVER_DEFAULT_REQUEST_PROCESS_BUDGET_MS;
   config->hsts_max_age_seconds = VECTIS_SERVER_DEFAULT_HSTS_MAX_AGE_SECONDS;
+  config->websocket_max_frame_bytes =
+      VECTIS_SERVER_DEFAULT_WEBSOCKET_MAX_FRAME_BYTES;
+  config->websocket_timeout_ms = VECTIS_SERVER_DEFAULT_WEBSOCKET_TIMEOUT_MS;
   vectis_autoblock_config_init(&config->autoblock);
 }
 
@@ -3147,6 +3150,11 @@ vectis_effective_server_config(const vectis_server_config *config) {
       vectis_default_unsigned(config->request_process_budget_ms,
                               VECTIS_SERVER_DEFAULT_REQUEST_PROCESS_BUDGET_MS);
   effective.hsts_max_age_seconds = config->hsts_max_age_seconds;
+  effective.websocket_max_frame_bytes =
+      vectis_default_size(config->websocket_max_frame_bytes,
+                          VECTIS_SERVER_DEFAULT_WEBSOCKET_MAX_FRAME_BYTES);
+  effective.websocket_timeout_ms = vectis_default_long(
+      config->websocket_timeout_ms, VECTIS_SERVER_DEFAULT_WEBSOCKET_TIMEOUT_MS);
   effective.autoblock = config->autoblock;
   effective.autoblock.window_seconds =
       vectis_default_unsigned(config->autoblock.window_seconds, 1800u);
@@ -10299,6 +10307,11 @@ vectis_validate_server_config(const vectis_server_config *config,
                        "keepalive is enabled");
       return VECTIS_ERR_INVALID;
     }
+  }
+  if (config->websocket_timeout_ms < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "server websocket_timeout_ms must be non-negative");
+    return VECTIS_ERR_INVALID;
   }
   if (effective.autoblock.status_rule_count >
       VECTIS_AUTOBLOCK_MAX_STATUS_RULES) {

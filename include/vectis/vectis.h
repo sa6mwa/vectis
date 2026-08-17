@@ -29,6 +29,8 @@
 #define VECTIS_SERVER_DEFAULT_SOCKET_BACKLOG 5000u
 #define VECTIS_SERVER_DEFAULT_REQUEST_PROCESS_BUDGET_MS 100u
 #define VECTIS_SERVER_DEFAULT_HSTS_MAX_AGE_SECONDS 0u
+#define VECTIS_SERVER_DEFAULT_WEBSOCKET_MAX_FRAME_BYTES 16384u
+#define VECTIS_SERVER_DEFAULT_WEBSOCKET_TIMEOUT_MS 120000L
 #define VECTIS_SERVER_DEFAULT_WORKER_ACCEPT_THRESHOLD 16u
 #define VECTIS_SERVER_DEFAULT_WORKER_RLIMIT_NOFILES 768u
 #define VECTIS_SERVER_DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS 5000L
@@ -1103,6 +1105,16 @@ typedef struct vectis_server_config {
    * Strict-Transport-Security max-age for TLS responses. Zero disables HSTS.
    */
   unsigned hsts_max_age_seconds;
+  /*
+   * Process-wide WebSocket frame payload limit passed to Kore. Zero uses the
+   * Vectis default.
+   */
+  size_t websocket_max_frame_bytes;
+  /*
+   * Process-wide WebSocket idle timeout in milliseconds. Zero uses the Vectis
+   * default.
+   */
+  long websocket_timeout_ms;
   vectis_autoblock_config autoblock;
 } vectis_server_config;
 
