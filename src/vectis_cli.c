@@ -4030,6 +4030,18 @@ static size_t vectis_lua_table_size(lua_State *lua, int index,
   return value;
 }
 
+static unsigned vectis_lua_table_unsigned(lua_State *lua, int index,
+                                          const char *field,
+                                          unsigned fallback) {
+  size_t value;
+
+  value = vectis_lua_table_size(lua, index, field, (size_t)fallback);
+  if (value > (size_t)UINT_MAX) {
+    return (unsigned)luaL_error(lua, "%s exceeds unsigned int", field);
+  }
+  return (unsigned)value;
+}
+
 static int vectis_lua_table_bool(lua_State *lua, int index, const char *field,
                                  int fallback) {
   int value;
@@ -10634,10 +10646,52 @@ static int vectis_lua_server_new(lua_State *lua) {
   }
   config.shutdown_grace_ms = vectis_lua_table_long(lua, 1, "shutdown_grace_ms",
                                                    config.shutdown_grace_ms);
+  config.server.max_connections = vectis_lua_table_size(
+      lua, 1, "max_connections", config.server.max_connections);
   config.server.worker_count =
       vectis_lua_table_size(lua, 1, "worker_count", config.server.worker_count);
+  config.server.worker_accept_threshold = vectis_lua_table_size(
+      lua, 1, "worker_accept_threshold", config.server.worker_accept_threshold);
+  config.server.worker_rlimit_nofiles = vectis_lua_table_size(
+      lua, 1, "worker_rlimit_nofiles", config.server.worker_rlimit_nofiles);
+  lua_getfield(lua, 1, "worker_set_affinity");
+  if (!lua_isnil(lua, -1)) {
+    config.server.worker_set_affinity_disabled = lua_toboolean(lua, -1) ? 0 : 1;
+  }
+  lua_pop(lua, 1);
+  config.server.worker_shutdown_timeout_ms =
+      vectis_lua_table_long(lua, 1, "worker_shutdown_timeout_ms",
+                            config.server.worker_shutdown_timeout_ms);
+  config.server.max_request_header_bytes =
+      vectis_lua_table_size(lua, 1, "max_request_header_bytes",
+                            config.server.max_request_header_bytes);
+  config.server.max_request_body_bytes = vectis_lua_table_size(
+      lua, 1, "max_request_body_bytes", config.server.max_request_body_bytes);
   config.server.request_body_spool_dir =
       vectis_lua_table_string(lua, 1, "request_body_spool_dir");
+  config.server.request_header_timeout_ms =
+      vectis_lua_table_long(lua, 1, "request_header_timeout_ms",
+                            config.server.request_header_timeout_ms);
+  config.server.request_body_idle_timeout_ms =
+      vectis_lua_table_long(lua, 1, "request_body_idle_timeout_ms",
+                            config.server.request_body_idle_timeout_ms);
+  config.server.response_write_idle_timeout_ms =
+      vectis_lua_table_long(lua, 1, "response_write_idle_timeout_ms",
+                            config.server.response_write_idle_timeout_ms);
+  config.server.request_body_min_rate_bytes_per_sec =
+      vectis_lua_table_size(lua, 1, "request_body_min_rate_bytes_per_sec",
+                            config.server.request_body_min_rate_bytes_per_sec);
+  config.server.request_body_min_rate_grace_ms =
+      vectis_lua_table_long(lua, 1, "request_body_min_rate_grace_ms",
+                            config.server.request_body_min_rate_grace_ms);
+  config.server.idle_timeout_ms = vectis_lua_table_long(
+      lua, 1, "idle_timeout_ms", config.server.idle_timeout_ms);
+  config.server.keepalive_disabled = vectis_lua_table_bool(
+      lua, 1, "keepalive_disabled", config.server.keepalive_disabled);
+  config.server.keepalive_timeout_ms = vectis_lua_table_long(
+      lua, 1, "keepalive_timeout_ms", config.server.keepalive_timeout_ms);
+  config.server.keepalive_max_requests = vectis_lua_table_unsigned(
+      lua, 1, "keepalive_max_requests", config.server.keepalive_max_requests);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = bind != NULL ? bind : "127.0.0.1";
   config.tls.port = (unsigned short)port;

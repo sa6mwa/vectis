@@ -2906,6 +2906,11 @@ void vectis_server_config_init(vectis_server_config *config) {
   }
   memset(config, 0, sizeof(*config));
   config->max_connections = VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS;
+  config->worker_accept_threshold =
+      VECTIS_SERVER_DEFAULT_WORKER_ACCEPT_THRESHOLD;
+  config->worker_rlimit_nofiles = VECTIS_SERVER_DEFAULT_WORKER_RLIMIT_NOFILES;
+  config->worker_shutdown_timeout_ms =
+      VECTIS_SERVER_DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS;
   config->max_request_header_bytes =
       VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES;
   config->max_request_body_bytes = 0u;
@@ -3077,6 +3082,16 @@ vectis_effective_server_config(const vectis_server_config *config) {
   effective.max_connections = vectis_default_size(
       config->max_connections, VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS);
   effective.worker_count = config->worker_count;
+  effective.worker_accept_threshold =
+      vectis_default_size(config->worker_accept_threshold,
+                          VECTIS_SERVER_DEFAULT_WORKER_ACCEPT_THRESHOLD);
+  effective.worker_rlimit_nofiles =
+      vectis_default_size(config->worker_rlimit_nofiles,
+                          VECTIS_SERVER_DEFAULT_WORKER_RLIMIT_NOFILES);
+  effective.worker_set_affinity_disabled = config->worker_set_affinity_disabled;
+  effective.worker_shutdown_timeout_ms =
+      vectis_default_long(config->worker_shutdown_timeout_ms,
+                          VECTIS_SERVER_DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS);
   effective.max_request_header_bytes =
       vectis_default_size(config->max_request_header_bytes,
                           VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES);
@@ -10110,6 +10125,27 @@ vectis_validate_server_config(const vectis_server_config *config,
     vectis_set_errorf(error, VECTIS_ERR_INVALID,
                       "server worker_count must be 0 or at most %u",
                       VECTIS_SERVER_MAX_WORKER_COUNT);
+    return VECTIS_ERR_INVALID;
+  }
+  if (effective.worker_accept_threshold > (size_t)UINT_MAX) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "server worker_accept_threshold exceeds Kore uint32");
+    return VECTIS_ERR_INVALID;
+  }
+  if (effective.worker_rlimit_nofiles > (size_t)UINT_MAX) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "server worker_rlimit_nofiles exceeds Kore uint32");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->worker_shutdown_timeout_ms < 0L) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "server worker_shutdown_timeout_ms must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+  if ((unsigned long)effective.worker_shutdown_timeout_ms >
+      (unsigned long)UINT_MAX) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "server worker_shutdown_timeout_ms exceeds Kore uint32");
     return VECTIS_ERR_INVALID;
   }
   if (effective.max_request_header_bytes < 1024u) {
@@ -21586,6 +21622,46 @@ size_t vectis_internal_worker_count(vectis_app *app) {
   }
   impl = (vectis_app_impl *)app->impl;
   return impl->server.worker_count;
+}
+
+size_t vectis_internal_worker_accept_threshold(vectis_app *app) {
+  vectis_app_impl *impl;
+
+  if (app == NULL || app->impl == NULL) {
+    return VECTIS_SERVER_DEFAULT_WORKER_ACCEPT_THRESHOLD;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  return impl->server.worker_accept_threshold;
+}
+
+size_t vectis_internal_worker_rlimit_nofiles(vectis_app *app) {
+  vectis_app_impl *impl;
+
+  if (app == NULL || app->impl == NULL) {
+    return VECTIS_SERVER_DEFAULT_WORKER_RLIMIT_NOFILES;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  return impl->server.worker_rlimit_nofiles;
+}
+
+int vectis_internal_worker_set_affinity_disabled(vectis_app *app) {
+  vectis_app_impl *impl;
+
+  if (app == NULL || app->impl == NULL) {
+    return 0;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  return impl->server.worker_set_affinity_disabled;
+}
+
+long vectis_internal_worker_shutdown_timeout_ms(vectis_app *app) {
+  vectis_app_impl *impl;
+
+  if (app == NULL || app->impl == NULL) {
+    return VECTIS_SERVER_DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  return impl->server.worker_shutdown_timeout_ms;
 }
 
 size_t vectis_route_count(const vectis_app *app) {

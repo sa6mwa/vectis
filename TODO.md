@@ -108,6 +108,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Translate per-route body policies into concrete Kore request-body streaming and disk-offload tuning behavior without broadening the global ingress ceiling.
 - [x] Expose a Vectis-owned request-body spill directory for Kore disk offload from C and Lua, with live runtime coverage.
 - [x] Expose Kore HTTP worker count through validated Vectis C and Lua server config, preserving Kore's zero-as-auto behavior.
+- [x] Expose low-level Kore worker lifecycle/resource knobs through validated C and Lua server config: accept threshold, rlimit nofiles, CPU affinity, and worker shutdown timeout.
 - [ ] Support Kore features through Vectis where practical, including websocket, static asset, file upload, and deeper runtime configuration features.
 - [x] Define the supported one-process multi-instance behavior based on what Kore can safely provide.
 - [x] Add real HTTP integration tests.

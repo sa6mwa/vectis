@@ -66,6 +66,13 @@ int main(void) {
   assert(config.server.max_connections ==
          VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS);
   assert(config.server.worker_count == 0u);
+  assert(config.server.worker_accept_threshold ==
+         VECTIS_SERVER_DEFAULT_WORKER_ACCEPT_THRESHOLD);
+  assert(config.server.worker_rlimit_nofiles ==
+         VECTIS_SERVER_DEFAULT_WORKER_RLIMIT_NOFILES);
+  assert(config.server.worker_set_affinity_disabled == 0);
+  assert(config.server.worker_shutdown_timeout_ms ==
+         VECTIS_SERVER_DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS);
   assert(config.server.max_request_header_bytes ==
          VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES);
   assert(config.server.max_request_body_bytes == 0u);
@@ -148,6 +155,9 @@ int main(void) {
   config.tls.port = 0u;
   config.server.max_connections = 0u;
   config.server.worker_count = 0u;
+  config.server.worker_accept_threshold = 0u;
+  config.server.worker_rlimit_nofiles = 0u;
+  config.server.worker_shutdown_timeout_ms = 0L;
   config.server.max_request_header_bytes = 0u;
   config.server.max_request_body_bytes = 0u;
   config.server.request_header_timeout_ms = 0L;
@@ -162,6 +172,13 @@ int main(void) {
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   assert(vectis_internal_worker_count(app) == 0u);
+  assert(vectis_internal_worker_accept_threshold(app) ==
+         VECTIS_SERVER_DEFAULT_WORKER_ACCEPT_THRESHOLD);
+  assert(vectis_internal_worker_rlimit_nofiles(app) ==
+         VECTIS_SERVER_DEFAULT_WORKER_RLIMIT_NOFILES);
+  assert(vectis_internal_worker_set_affinity_disabled(app) == 0);
+  assert(vectis_internal_worker_shutdown_timeout_ms(app) ==
+         VECTIS_SERVER_DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS);
   assert(vectis_internal_request_body_spool_dir(app) != NULL);
   assert(vectis_internal_request_body_spool_dir(app)[0] == '/');
   assert(strstr(vectis_internal_request_body_spool_dir(app),
@@ -175,9 +192,17 @@ int main(void) {
 
   vectis_app_config_init(&config);
   config.server.worker_count = 1u;
+  config.server.worker_accept_threshold = 8u;
+  config.server.worker_rlimit_nofiles = 2048u;
+  config.server.worker_set_affinity_disabled = 1;
+  config.server.worker_shutdown_timeout_ms = 2500L;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   assert(vectis_internal_worker_count(app) == 1u);
+  assert(vectis_internal_worker_accept_threshold(app) == 8u);
+  assert(vectis_internal_worker_rlimit_nofiles(app) == 2048u);
+  assert(vectis_internal_worker_set_affinity_disabled(app) == 1);
+  assert(vectis_internal_worker_shutdown_timeout_ms(app) == 2500L);
   app->close(app);
 
   vectis_app_config_init(&config);
@@ -185,6 +210,12 @@ int main(void) {
   app = vectis_app_new(&config, &error);
   assert(app == NULL);
   assert(strstr(error.message, "worker_count") != NULL);
+
+  vectis_app_config_init(&config);
+  config.server.worker_shutdown_timeout_ms = -1L;
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "worker_shutdown_timeout_ms") != NULL);
 
   vectis_app_config_init(&config);
   config.server.request_body_spool_dir = "/tmp/vectis-config-spool";

@@ -1119,6 +1119,22 @@ do
     app_name = "lua-worker-count",
     port = 18169,
     worker_count = 1,
+    worker_accept_threshold = 4,
+    worker_rlimit_nofiles = 1024,
+    worker_set_affinity = false,
+    worker_shutdown_timeout_ms = 2500,
+    max_connections = 64,
+    max_request_header_bytes = 2048,
+    max_request_body_bytes = 4096,
+    request_header_timeout_ms = 1000,
+    request_body_idle_timeout_ms = 2000,
+    response_write_idle_timeout_ms = 3000,
+    request_body_min_rate_bytes_per_sec = 128,
+    request_body_min_rate_grace_ms = 500,
+    idle_timeout_ms = 4000,
+    keepalive_disabled = true,
+    keepalive_timeout_ms = 0,
+    keepalive_max_requests = 0,
   }))
   worker_count_server:close()
 end
@@ -1133,6 +1149,19 @@ do
   assert(type(bad_worker_count_error) == "table")
   assert(bad_worker_count_error.status == vectis.ERR_INVALID)
   assert(bad_worker_count_error.message:match("worker_count"))
+end
+
+do
+  local bad_worker_shutdown_server, bad_worker_shutdown_error =
+    vectis.server.new({
+      app_name = "lua-bad-worker-shutdown-timeout",
+      port = 18174,
+      worker_shutdown_timeout_ms = -1,
+    })
+  assert(bad_worker_shutdown_server == nil)
+  assert(type(bad_worker_shutdown_error) == "table")
+  assert(bad_worker_shutdown_error.status == vectis.ERR_INVALID)
+  assert(bad_worker_shutdown_error.message:match("worker_shutdown_timeout_ms"))
 end
 
 do

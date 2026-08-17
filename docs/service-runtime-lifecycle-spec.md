@@ -825,6 +825,12 @@ repeated auth/status, TCP-stall, and TLS-failure signals.
 The supervised Kore runtime is isolated into its own process group before
 readiness; supervisor shutdown signals target that process group so an
 unresponsive Kore parent cannot leave worker listeners behind.
+`vectis_server_config` also owns low-level Kore worker lifecycle/resource knobs
+that affect production behavior but do not expose raw Kore configuration text:
+worker accept threshold, worker file descriptor rlimit, worker CPU affinity, and
+Kore worker shutdown timeout. Lua `vectis.server.new()` exposes the same names
+with validated inputs so profile overrides remain explicit and startup failures
+carry Vectis diagnostics.
 `vectis_app_config.supervision_policy` and Lua
 `vectis.server.new({supervision_policy = ...})` configure route-backed topology:
 for blocking `run()`, `auto` chooses direct foreground Kore unless app-owned

@@ -26,6 +26,9 @@
 #define VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS 30000L
 #define VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS 5000L
 #define VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS 100u
+#define VECTIS_SERVER_DEFAULT_WORKER_ACCEPT_THRESHOLD 16u
+#define VECTIS_SERVER_DEFAULT_WORKER_RLIMIT_NOFILES 768u
+#define VECTIS_SERVER_DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS 5000L
 #define VECTIS_SERVER_DEFAULT_REQUEST_BODY_SPOOL_DIR_PREFIX                    \
   "/tmp/vectis-http-body"
 #define VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS 5000L
@@ -990,6 +993,26 @@ typedef struct vectis_server_config {
    * runtime field and are validated against VECTIS_SERVER_MAX_WORKER_COUNT.
    */
   size_t worker_count;
+  /*
+   * Maximum accepted sockets a Kore worker drains per loop iteration. Zero uses
+   * VECTIS_SERVER_DEFAULT_WORKER_ACCEPT_THRESHOLD.
+   */
+  size_t worker_accept_threshold;
+  /*
+   * Per-worker file descriptor rlimit passed to Kore. Zero uses
+   * VECTIS_SERVER_DEFAULT_WORKER_RLIMIT_NOFILES.
+   */
+  size_t worker_rlimit_nofiles;
+  /*
+   * Nonzero disables Kore's default worker CPU affinity setting. Zero preserves
+   * Kore affinity behavior.
+   */
+  int worker_set_affinity_disabled;
+  /*
+   * Deadline Kore uses while waiting for worker children to shut down. Zero
+   * uses VECTIS_SERVER_DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS.
+   */
+  long worker_shutdown_timeout_ms;
   size_t max_request_header_bytes;
   size_t max_request_body_bytes;
   /*

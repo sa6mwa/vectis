@@ -44,6 +44,16 @@ invalid.
 `worker_count` controls the number of Kore HTTP worker processes. Omission or
 zero preserves Kore's automatic CPU-count selection; explicit values must be at
 most `253`.
+The same table can also override server guardrails and worker resource knobs:
+`max_connections`, `worker_accept_threshold`, `worker_rlimit_nofiles`,
+`worker_set_affinity`, `worker_shutdown_timeout_ms`,
+`max_request_header_bytes`, `max_request_body_bytes`,
+`request_header_timeout_ms`, `request_body_idle_timeout_ms`,
+`response_write_idle_timeout_ms`, `request_body_min_rate_bytes_per_sec`,
+`request_body_min_rate_grace_ms`, `idle_timeout_ms`, `keepalive_disabled`,
+`keepalive_timeout_ms`, and `keepalive_max_requests`. Zero uses the C default for
+most guardrails; `max_request_body_bytes = 0` keeps the route-derived global
+body ceiling behavior.
 
 `profile = "production_webserver"` applies the same C-owned production webserver
 profile as `vectis_app_config_init_production_webserver()`: strict quiescence,

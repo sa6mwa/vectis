@@ -58,7 +58,11 @@ extern int kore_quit;
 extern volatile sig_atomic_t sig_recv;
 extern u_int64_t worker_idle_timeout;
 extern u_int8_t worker_count;
+extern u_int8_t worker_set_affinity;
+extern u_int32_t worker_accept_threshold;
 extern u_int32_t worker_max_connections;
+extern u_int32_t worker_rlimit_nofiles;
+extern u_int32_t worker_shutdown_timeout_ms;
 extern char *http_body_disk_path;
 
 static pthread_mutex_t vectis_kore_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -1479,8 +1483,15 @@ static void vectis_kore_apply_server_config(const vectis_server_config *server,
                                             size_t body_disk_offload_bytes,
                                             int body_disk_offload_configured) {
   worker_count = (u_int8_t)server->worker_count;
+  worker_accept_threshold =
+      vectis_kore_u32_from_size(server->worker_accept_threshold);
   worker_max_connections = vectis_kore_u32_from_size(server->max_connections);
+  worker_rlimit_nofiles =
+      vectis_kore_u32_from_size(server->worker_rlimit_nofiles);
   worker_idle_timeout = (u_int64_t)server->idle_timeout_ms;
+  worker_set_affinity = server->worker_set_affinity_disabled ? 0u : 1u;
+  worker_shutdown_timeout_ms =
+      vectis_kore_u32_from_size((size_t)server->worker_shutdown_timeout_ms);
   http_request_limit = vectis_kore_u32_from_size(server->max_connections);
   http_header_max = server->max_request_header_bytes;
   http_body_max = server->max_request_body_bytes;

@@ -91,6 +91,10 @@ pid_t vectis_internal_kore_child_pid(vectis_app *app);
 void vectis_internal_runtime_observe(
     vectis_app *app, vectis_internal_runtime_observation *observation);
 size_t vectis_internal_worker_count(vectis_app *app);
+size_t vectis_internal_worker_accept_threshold(vectis_app *app);
+size_t vectis_internal_worker_rlimit_nofiles(vectis_app *app);
+int vectis_internal_worker_set_affinity_disabled(vectis_app *app);
+long vectis_internal_worker_shutdown_timeout_ms(vectis_app *app);
 size_t vectis_internal_max_request_body_bytes(vectis_app *app);
 size_t vectis_internal_body_disk_offload_bytes(vectis_app *app,
                                                int *configured);
