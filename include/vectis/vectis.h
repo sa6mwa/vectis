@@ -1123,6 +1123,11 @@ typedef struct vectis_server_config {
    */
   unsigned kore_curl_timeout_seconds;
   size_t kore_curl_recv_max_bytes;
+  /*
+   * Nonzero enables Kore's quiet mode for native Kore lifecycle chatter.
+   * Vectis-owned logging and route responses are unaffected.
+   */
+  int kore_quiet;
   /* Listener backlog passed to Kore listen(2). Zero uses the Vectis default. */
   unsigned socket_backlog;
   /*

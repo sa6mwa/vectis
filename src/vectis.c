@@ -3153,6 +3153,7 @@ vectis_effective_server_config(const vectis_server_config *config) {
                               VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS);
   effective.kore_curl_timeout_seconds = config->kore_curl_timeout_seconds;
   effective.kore_curl_recv_max_bytes = config->kore_curl_recv_max_bytes;
+  effective.kore_quiet = config->kore_quiet;
   effective.socket_backlog = vectis_default_unsigned(
       config->socket_backlog, VECTIS_SERVER_DEFAULT_SOCKET_BACKLOG);
   effective.request_process_budget_ms =
@@ -22278,6 +22279,16 @@ size_t vectis_internal_kore_curl_recv_max_bytes(vectis_app *app) {
   }
   impl = (vectis_app_impl *)app->impl;
   return impl->server.kore_curl_recv_max_bytes;
+}
+
+int vectis_internal_kore_quiet(vectis_app *app) {
+  vectis_app_impl *impl;
+
+  if (app == NULL || app->impl == NULL) {
+    return 0;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  return impl->server.kore_quiet;
 }
 
 int vectis_internal_worker_set_affinity_disabled(vectis_app *app) {

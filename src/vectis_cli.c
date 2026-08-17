@@ -11079,6 +11079,8 @@ static int vectis_lua_server_new(lua_State *lua) {
   config.server.kore_curl_recv_max_bytes =
       vectis_lua_table_size(lua, 1, "kore_curl_recv_max_bytes",
                             config.server.kore_curl_recv_max_bytes);
+  config.server.kore_quiet =
+      vectis_lua_table_bool(lua, 1, "kore_quiet", config.server.kore_quiet);
   config.server.socket_backlog = vectis_lua_table_unsigned(
       lua, 1, "socket_backlog", config.server.socket_backlog);
   config.server.request_process_budget_ms =

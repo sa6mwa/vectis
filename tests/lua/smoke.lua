@@ -1151,6 +1151,7 @@ do
     keepalive_max_requests = 0,
     kore_curl_timeout_seconds = 7,
     kore_curl_recv_max_bytes = 65536,
+    kore_quiet = true,
     worker_death_policy = "terminate",
     socket_backlog = 128,
     request_process_budget_ms = 50,

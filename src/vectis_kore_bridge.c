@@ -65,6 +65,7 @@ const size_t kore_vectis_runtime_symbol_count =
 
 extern int skip_chroot;
 extern int skip_runas;
+extern int kore_quiet;
 extern int kore_quit;
 extern volatile sig_atomic_t sig_recv;
 extern u_int64_t worker_idle_timeout;
@@ -147,6 +148,7 @@ static void vectis_kore_reset_runtime_state(void) {
     vectis_kore_curl_defaults_set = 1;
   }
   kore_quit = KORE_QUIT_NONE;
+  kore_quiet = 0;
   sig_recv = 0;
   optind = 1;
   worker_count = 0u;
@@ -1684,6 +1686,7 @@ static void vectis_kore_apply_server_config(const vectis_server_config *server,
   if (server->kore_curl_recv_max_bytes > 0u) {
     kore_curl_recv_max = (u_int64_t)server->kore_curl_recv_max_bytes;
   }
+  kore_quiet = server->kore_quiet ? 1 : 0;
   kore_socket_backlog = vectis_kore_u32_from_size(server->socket_backlog);
   http_request_ms = (u_int32_t)server->request_process_budget_ms;
   http_hsts_enable = (u_int64_t)server->hsts_max_age_seconds;

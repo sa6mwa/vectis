@@ -24,6 +24,7 @@
 
 extern u_int16_t kore_curl_timeout;
 extern u_int64_t kore_curl_recv_max;
+extern int kore_quiet;
 
 #ifndef __has_feature
 #define __has_feature(x) 0
@@ -228,9 +229,9 @@ static vectis_status kore_curl_config_handler(vectis_app *app,
   (void)app;
   (void)request;
   (void)userdata;
-  written =
-      snprintf(body, sizeof(body), "timeout=%u\nrecv_max=%lu\n",
-               (unsigned)kore_curl_timeout, (unsigned long)kore_curl_recv_max);
+  written = snprintf(body, sizeof(body), "timeout=%u\nrecv_max=%lu\nquiet=%d\n",
+                     (unsigned)kore_curl_timeout,
+                     (unsigned long)kore_curl_recv_max, kore_quiet);
   assert(written > 0 && (size_t)written < sizeof(body));
   return vectis_response_text(response, 200, "text/plain", body, error);
 }
@@ -3125,6 +3126,7 @@ static void assert_kore_smoke(void) {
   config.server.keepalive_max_requests = 1u;
   config.server.kore_curl_timeout_seconds = 7u;
   config.server.kore_curl_recv_max_bytes = 65536u;
+  config.server.kore_quiet = 1;
   config.server.websocket_max_frame_bytes = 8u;
   config.server.server_header = "vectis-runtime";
   config.server.access_log_path = access_log_path;
@@ -3508,6 +3510,7 @@ static void assert_kore_smoke(void) {
   body.size = response.body_size;
   assert(runtime_bytes_contains(body, "timeout=7"));
   assert(runtime_bytes_contains(body, "recv_max=65536"));
+  assert(runtime_bytes_contains(body, "quiet=1"));
   vectis_http_response_cleanup(&response);
 
   status = vectis_http_head(

@@ -59,7 +59,7 @@ The same table can also override server guardrails and worker resource knobs:
 `response_write_idle_timeout_ms`, `request_body_min_rate_bytes_per_sec`,
 `request_body_min_rate_grace_ms`, `idle_timeout_ms`, `keepalive_disabled`,
 `keepalive_timeout_ms`, `keepalive_max_requests`,
-`kore_curl_timeout_seconds`, `kore_curl_recv_max_bytes`,
+`kore_curl_timeout_seconds`, `kore_curl_recv_max_bytes`, `kore_quiet`,
 `worker_death_policy`, `socket_backlog`, `request_process_budget_ms`,
 `hsts_max_age_seconds`, `websocket_max_frame_bytes`,
 `websocket_timeout_ms`, `server_header`, `access_log_path`, and
@@ -75,8 +75,10 @@ set, Vectis preflights append access and applies the same Kore access log path
 to every configured domain. `kore_curl_timeout_seconds = 0` and
 `kore_curl_recv_max_bytes = 0` preserve Kore's compiled defaults for
 Kore-owned curl operations such as ACME and do not affect Vectis application
-curl/http clients. `worker_death_policy` accepts `"restart"` and `"terminate"`;
-omission keeps Kore's restart behavior.
+curl/http clients. `kore_quiet = true` suppresses native Kore lifecycle
+chatter; Vectis logging, metrics, and route responses are unaffected.
+`worker_death_policy` accepts `"restart"` and `"terminate"`; omission keeps
+Kore's restart behavior.
 
 `profile = "production_webserver"` applies the same C-owned production webserver
 profile as `vectis_app_config_init_production_webserver()`: strict quiescence,
