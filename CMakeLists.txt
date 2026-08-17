@@ -323,8 +323,8 @@ if(VECTIS_BUILD_SHARED AND NOT TARGET lockdc::shared)
   )
 endif()
 
-if(VECTIS_BUILD_FUZZERS AND NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
-  message(FATAL_ERROR "VECTIS_BUILD_FUZZERS=ON requires Clang.")
+if(VECTIS_BUILD_FUZZERS AND NOT CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  message(FATAL_ERROR "VECTIS_BUILD_FUZZERS=ON requires Clang or GNU.")
 endif()
 
 function(vectis_apply_relocatable_paths target)
@@ -601,7 +601,7 @@ if(VECTIS_WITH_KORE_RUNTIME)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_compile_definitions(vectis_kore_runtime PRIVATE
       _GNU_SOURCE=1
-      _FORTIFY_SOURCE=2
+      "$<$<NOT:$<CONFIG:Debug>>:_FORTIFY_SOURCE=2>"
     )
   endif()
   set_target_properties(vectis_kore_runtime PROPERTIES
@@ -612,6 +612,11 @@ if(VECTIS_WITH_KORE_RUNTIME)
   )
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(vectis_kore_runtime PRIVATE -std=gnu99 -Wall -Wextra)
+    set_source_files_properties(
+      "${vectis_kore_generated_dir}/version.c"
+      "${vectis_kore_generated_dir}/assets.c"
+      PROPERTIES COMPILE_OPTIONS "-Werror"
+    )
   endif()
   vectis_apply_relocatable_paths(vectis_kore_runtime)
   list(APPEND vectis_sources src/vectis_kore_bridge.c $<TARGET_OBJECTS:vectis_kore_runtime>)

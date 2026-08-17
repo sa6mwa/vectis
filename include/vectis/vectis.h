@@ -26,7 +26,8 @@
 #define VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS 30000L
 #define VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS 5000L
 #define VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS 100u
-#define VECTIS_SERVER_DEFAULT_REQUEST_BODY_SPOOL_DIR "/tmp/vectis-http-body"
+#define VECTIS_SERVER_DEFAULT_REQUEST_BODY_SPOOL_DIR_PREFIX                    \
+  "/tmp/vectis-http-body"
 #define VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS 5000L
 #define VECTIS_AUTOBLOCK_MAX_STATUS_RULES 16u
 #define VECTIS_AUTOBLOCK_MAX_EVENT_RULES 16u
@@ -461,9 +462,10 @@ typedef struct vectis_lockd_config {
 
 typedef struct vectis_cai_config {
   /*
-   * Borrowed CAI client. When set, Vectis returns this client and never closes
-   * it. When NULL, vectis_app_cai_client() lazily opens an app-owned CAI client
-   * from client_config.
+   * Borrowed process-local CAI client. When set, Vectis returns this client in
+   * the creating process and never closes it. Access from a forked process is
+   * rejected. When NULL, vectis_app_cai_client() lazily opens an app-owned CAI
+   * client from client_config.
    */
   cai_client *client;
   /*
@@ -985,9 +987,10 @@ typedef struct vectis_server_config {
   size_t max_request_body_bytes;
   /*
    * Directory used by Kore for request-body spill files when streaming upload
-   * route policies enable disk offload. NULL uses
-   * VECTIS_SERVER_DEFAULT_REQUEST_BODY_SPOOL_DIR. The app copies this string at
-   * construction time.
+   * route policies enable disk offload. NULL uses a per-user runtime directory
+   * under XDG_RUNTIME_DIR when available, otherwise a UID-scoped path prefixed
+   * by VECTIS_SERVER_DEFAULT_REQUEST_BODY_SPOOL_DIR_PREFIX. The app copies this
+   * string at construction time.
    */
   const char *request_body_spool_dir;
   long request_header_timeout_ms;
@@ -1653,9 +1656,10 @@ struct vectis_app {
   size_t (*route_count)(const vectis_app *self);
   pslog_logger *(*logger)(vectis_app *self);
 
-  /* Return the borrowed or app-owned CAI client, opening the app-owned client
-   * lazily when necessary. The returned client remains owned by its configured
-   * owner and must not be closed by the caller.
+  /* Return the borrowed or app-owned process-local CAI client, opening the
+   * app-owned client lazily when necessary. The returned client remains owned
+   * by its configured owner and must not be closed by the caller. Borrowed CAI
+   * clients are rejected after fork.
    */
   vectis_status (*cai_client)(vectis_app *self, cai_client **out,
                               vectis_error *error);

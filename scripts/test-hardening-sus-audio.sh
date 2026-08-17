@@ -40,20 +40,6 @@ EOF
   exit 2
 fi
 
-if ! command -v perl >/dev/null 2>&1; then
-  cat >&2 <<'EOF'
-PKT_DIAGNOSTIC_BEGIN
-surface=prerelease-hardening
-phase=tool-discovery
-status=failed
-class=external-tool-unavailable
-reason=perl-missing
-next=install perl or set VECTIS_SUS_AUDIO_HARDENING_EXPECTED_TEXT explicitly
-PKT_DIAGNOSTIC_END
-EOF
-  exit 2
-fi
-
 cache_root=${VECTIS_SUS_AUDIO_HARDENING_CACHE:-"${XDG_CACHE_HOME:-"$HOME/.cache"}/vectis/hardening/sus-audio"}
 audio_url=${VECTIS_SUS_AUDIO_HARDENING_AUDIO_URL:-"https://pkt.systems/trajectory/assets/narration/intro/intro.mp3"}
 index_url=${VECTIS_SUS_AUDIO_HARDENING_INDEX_URL:-"https://pkt.systems/trajectory/index.html"}
@@ -61,6 +47,7 @@ model_name=${VECTIS_SUS_AUDIO_HARDENING_MODEL:-tiny}
 audio_path="$cache_root/intro.mp3"
 index_path="$cache_root/index.html"
 model_cache="$cache_root/models"
+expected=${VECTIS_SUS_AUDIO_HARDENING_EXPECTED_TEXT:-}
 
 download_atomic() {
   url=$1
@@ -97,11 +84,25 @@ extract_expected_text() {
   ' "$1"
 }
 
-download_atomic "$index_url" "$index_path"
+if [ -z "$expected" ]; then
+  if ! command -v perl >/dev/null 2>&1; then
+    cat >&2 <<'EOF'
+PKT_DIAGNOSTIC_BEGIN
+surface=prerelease-hardening
+phase=tool-discovery
+status=failed
+class=external-tool-unavailable
+reason=perl-missing
+next=install perl or set VECTIS_SUS_AUDIO_HARDENING_EXPECTED_TEXT explicitly
+PKT_DIAGNOSTIC_END
+EOF
+    exit 2
+  fi
+  download_atomic "$index_url" "$index_path"
+fi
 download_atomic "$audio_url" "$audio_path"
 mkdir -p "$model_cache"
 
-expected=${VECTIS_SUS_AUDIO_HARDENING_EXPECTED_TEXT:-}
 if [ -z "$expected" ]; then
   expected=$(extract_expected_text "$index_path")
 fi

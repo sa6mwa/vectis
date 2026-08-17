@@ -464,8 +464,41 @@ static void test_lockd_consumer_event_builder(void) {
                         "\"payload\":{\"included\":true"),
          "lockd consumer event payload included");
   expect(bytes_contains(event.message.payload, event.message.payload_size,
-                        "\"content\":\"{\\\"job\\\":\\\"render\\\"}\""),
-         "lockd consumer event payload content");
+                        "\"encoding\":\"base64\""),
+         "lockd consumer event payload encoding");
+  expect(bytes_contains(event.message.payload, event.message.payload_size,
+                        "\"content_base64\":\"eyJqb2IiOiJyZW5kZXIifQ==\""),
+         "lockd consumer event payload base64");
+  vectis_lockd_consumer_event_cleanup(&event);
+
+  {
+    static const char binary_payload[] = {(char)0xff, '\0', (char)0x80};
+    payload.bytes = binary_payload;
+    payload.size = sizeof(binary_payload);
+    status = vectis_lockd_consumer_event_from_message(&consumer, &config,
+                                                      &event, &error);
+    expect_status(status, VECTIS_OK, "binary lockd consumer event build");
+    expect(bytes_contains(event.message.payload, event.message.payload_size,
+                          "\"content_base64\":\"/wCA\""),
+           "binary lockd consumer event base64");
+    expect(!bytes_contains(event.message.payload, event.message.payload_size,
+                           "\xff"),
+           "binary lockd consumer event avoids raw high bytes");
+    vectis_lockd_consumer_event_cleanup(&event);
+    payload.bytes = "{\"job\":\"render\"}";
+    payload.size = strlen(payload.bytes);
+  }
+
+  config.kind = "custom.lockd.consumer";
+  status = vectis_lockd_consumer_event_from_message(&consumer, &config, &event,
+                                                    &error);
+  expect_status(status, VECTIS_OK, "custom lockd consumer event build");
+  expect(event.message.kind != NULL &&
+             strcmp(event.message.kind, "custom.lockd.consumer") == 0,
+         "custom lockd consumer event kind");
+  expect(bytes_contains(event.message.payload, event.message.payload_size,
+                        "\"type\":\"custom.lockd.consumer\""),
+         "custom lockd consumer event type");
   vectis_lockd_consumer_event_cleanup(&event);
 
   config.max_payload_bytes = 4u;
@@ -488,6 +521,7 @@ static void test_lockd_consumer_mailbox_receiver_publish(void) {
   lc_error lcerr;
   vectis_error error;
   vectis_status status;
+  char event_kind[64];
   int rc;
 
   payload.bytes = "payload";
@@ -501,10 +535,13 @@ static void test_lockd_consumer_mailbox_receiver_publish(void) {
   vectis_lockd_consumer_mailbox_receiver_config_init(&receiver_config);
   receiver_config.mailbox = mailbox;
   receiver_config.event.include_payload = 1;
+  strcpy(event_kind, "custom.lockd.mailbox");
+  receiver_config.event.kind = event_kind;
   status = vectis_lockd_consumer_mailbox_receiver_adapter(&adapter, &error);
   expect_status(status, VECTIS_OK, "lockd mailbox adapter factory");
   status = adapter.create(adapter.context, &receiver_config, &receiver, &error);
   expect_status(status, VECTIS_OK, "lockd mailbox receiver create");
+  strcpy(event_kind, "mutated.lockd.mailbox");
   lc_error_init(&lcerr);
   rc = receiver.handle(receiver.context, &consumer, &lcerr);
   expect(rc == LC_OK, "lockd mailbox receiver handle publish");
@@ -515,6 +552,12 @@ static void test_lockd_consumer_mailbox_receiver_publish(void) {
   expect(bytes_contains(queued.payload, queued.payload_size,
                         "\"payload\":{\"included\":true"),
          "lockd mailbox event has payload");
+  expect(bytes_contains(queued.payload, queued.payload_size,
+                        "\"type\":\"custom.lockd.mailbox\""),
+         "lockd mailbox owns event kind");
+  expect(!bytes_contains(queued.payload, queued.payload_size,
+                         "\"type\":\"mutated.lockd.mailbox\""),
+         "lockd mailbox ignores mutated event kind storage");
   vectis_mailbox_event_cleanup(&queued);
   lc_error_cleanup(&lcerr);
   receiver.cleanup(receiver.context);
@@ -928,7 +971,9 @@ static void *route_worker_main(void *userdata) {
       bytes_contains(request.payload, request.payload_size,
                      "\"content-type\":\"application/json\"") &&
       bytes_contains(request.payload, request.payload_size,
-                     "\"content\":\"{\\\"value\\\":42}\"")) {
+                     "\"encoding\":\"base64\"") &&
+      bytes_contains(request.payload, request.payload_size,
+                     "\"content_base64\":\"eyJ2YWx1ZSI6NDJ9\"")) {
     context->saw_event = 1;
   }
   vectis_mailbox_message_init(&reply);
@@ -991,6 +1036,42 @@ static void test_route_event_builder(void) {
   expect(bytes_contains(event.message.payload, event.message.payload_size,
                         "\"body\":{\"included\":true"),
          "route event body included");
+  expect(bytes_contains(event.message.payload, event.message.payload_size,
+                        "\"encoding\":\"base64\""),
+         "route event body encoding");
+  expect(bytes_contains(event.message.payload, event.message.payload_size,
+                        "\"content_base64\":\"eyJ2YWx1ZSI6NDJ9\""),
+         "route event body base64");
+  vectis_route_event_cleanup(&event);
+
+  {
+    static const char binary_body[] = {(char)0xff, '\0', (char)0x80};
+    status = vectis_internal_request_set_body(request, binary_body,
+                                              sizeof(binary_body), &error);
+    expect_status(status, VECTIS_OK, "route event binary body");
+    status = vectis_route_event_from_request(request, &config, &event, &error);
+    expect_status(status, VECTIS_OK, "binary route event build");
+    expect(bytes_contains(event.message.payload, event.message.payload_size,
+                          "\"content_base64\":\"/wCA\""),
+           "binary route event body base64");
+    expect(!bytes_contains(event.message.payload, event.message.payload_size,
+                           "\xff"),
+           "binary route event avoids raw high bytes");
+    vectis_route_event_cleanup(&event);
+    status = vectis_internal_request_set_body(request, body, sizeof(body) - 1u,
+                                              &error);
+    expect_status(status, VECTIS_OK, "route event restore text body");
+  }
+
+  config.kind = "custom.route";
+  status = vectis_route_event_from_request(request, &config, &event, &error);
+  expect_status(status, VECTIS_OK, "custom route event build");
+  expect(event.message.kind != NULL &&
+             strcmp(event.message.kind, "custom.route") == 0,
+         "custom route event kind");
+  expect(bytes_contains(event.message.payload, event.message.payload_size,
+                        "\"type\":\"custom.route\""),
+         "custom route event type");
   vectis_route_event_cleanup(&event);
 
   config.max_body_bytes = 4u;
@@ -1079,6 +1160,12 @@ static void test_route_mailbox_request_response(void) {
                       sizeof("route reply") - 1u) == 0,
            "route mailbox response body");
   }
+
+  status = vectis_route_mailbox_request(NULL, request, response, &route_config,
+                                        1000L, &correlation_id, &error);
+  expect_status(status, VECTIS_ERR_INVALID, "route mailbox broker required");
+  expect(strstr(error.message, "broker") != NULL,
+         "route mailbox broker error message");
 
   broker->destroy(broker);
   requests->destroy(requests);

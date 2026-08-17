@@ -92,8 +92,26 @@ EOF
 
 require_target_toolchain() {
   local target_id="$1"
-  if ! "$script_dir/target_toolchain_available.sh" "$target_id"; then
-    cat >&2 <<EOF
+  case "$target_id" in
+    x86_64-linux-gnu|x86_64-linux-musl|aarch64-linux-gnu|aarch64-linux-musl|armhf-linux-gnu|armhf-linux-musl)
+      if ! bash "$script_dir/cpkt-toolchains.sh" ensure "$target_id" >/dev/null; then
+        cat >&2 <<EOF
+PKT_DIAGNOSTIC_BEGIN
+surface=package
+phase=target-toolchain
+status=failed
+class=external-tool-unavailable
+reason=pinned target toolchain could not be provisioned
+artifact=$target_id
+next=inspect the shared c.pkt.systems toolchain cache or request a narrower package target
+PKT_DIAGNOSTIC_END
+EOF
+        exit 1
+      fi
+      ;;
+    arm64-apple-darwin)
+      if ! "$script_dir/osxcross_available.sh"; then
+        cat >&2 <<EOF
 PKT_DIAGNOSTIC_BEGIN
 surface=package
 phase=target-toolchain
@@ -101,23 +119,26 @@ status=failed
 class=external-tool-unavailable
 reason=target toolchain not available
 artifact=$target_id
-next=install the target compiler, ar, and ranlib tools or request a target available on this host
+next=configure OSXCROSS_ROOT with a complete local osxcross SDK toolchain
 PKT_DIAGNOSTIC_END
 EOF
-    exit 1
-  fi
+        exit 1
+      fi
+      ;;
+    *)
+      echo "unknown target id: $target_id" >&2
+      exit 2
+      ;;
+  esac
 }
 
-run_optional_target() {
+run_linux_target() {
   local preset="$1"
   local target_id
 
   target_id=$(target_id_for_preset "$preset")
-  if "$script_dir/target_toolchain_available.sh" "$target_id"; then
-    run_target "$preset"
-  else
-    emit_toolchain_skip "$target_id"
-  fi
+  require_target_toolchain "$target_id"
+  run_target "$preset"
 }
 
 run_target() {
@@ -168,23 +189,23 @@ run_darwin_target_if_osxcross() {
 
 case "$requested_abi" in
   all)
-    run_optional_target x86_64-linux-gnu-release
-    run_optional_target x86_64-linux-musl-release
-    run_optional_target aarch64-linux-gnu-release
-    run_optional_target aarch64-linux-musl-release
-    run_optional_target armhf-linux-gnu-release
-    run_optional_target armhf-linux-musl-release
+    run_linux_target x86_64-linux-gnu-release
+    run_linux_target x86_64-linux-musl-release
+    run_linux_target aarch64-linux-gnu-release
+    run_linux_target aarch64-linux-musl-release
+    run_linux_target armhf-linux-gnu-release
+    run_linux_target armhf-linux-musl-release
     run_darwin_target_if_osxcross
     ;;
   gnu)
-    run_optional_target x86_64-linux-gnu-release
-    run_optional_target aarch64-linux-gnu-release
-    run_optional_target armhf-linux-gnu-release
+    run_linux_target x86_64-linux-gnu-release
+    run_linux_target aarch64-linux-gnu-release
+    run_linux_target armhf-linux-gnu-release
     ;;
   musl)
-    run_optional_target x86_64-linux-musl-release
-    run_optional_target aarch64-linux-musl-release
-    run_optional_target armhf-linux-musl-release
+    run_linux_target x86_64-linux-musl-release
+    run_linux_target aarch64-linux-musl-release
+    run_linux_target armhf-linux-musl-release
     ;;
   x86_64-linux-gnu|x86_64-linux-musl|aarch64-linux-gnu|aarch64-linux-musl|armhf-linux-gnu|armhf-linux-musl)
     require_target_toolchain "$requested_abi"

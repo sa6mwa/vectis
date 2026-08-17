@@ -38,7 +38,9 @@ thread inspection and does not allow known unsafe services or observed extra
 threads.
 `request_body_spool_dir` controls the directory Kore uses for request-body spill
 files when a route enables streaming upload disk offload. Omission uses the
-Vectis default `/tmp/vectis-http-body`; an empty string is invalid.
+Vectis per-user runtime default under `XDG_RUNTIME_DIR` when available,
+otherwise a UID-scoped `/tmp/vectis-http-body-<uid>` path; an empty string is
+invalid.
 `worker_count` controls the number of Kore HTTP worker processes. Omission or
 zero preserves Kore's automatic CPU-count selection; explicit values must be at
 most `253`.
@@ -425,10 +427,11 @@ producer-to-transport streaming.
 
 `server:mcp(opts)` mounts CAI's Streamable HTTP MCP server handler through the
 Vectis/Kore route system. The default path is `/mcp`, and the default methods
-are `GET`, `POST`, and `DELETE`. Request bodies flow through the upload-reader
-path into CAI as a `cai_source`; responses are file-backed through the current
-Vectis route model because CAI writes to a sink before Kore pulls the final
-response.
+are `GET`, `POST`, and `DELETE`. Lua MCP routes use a buffered normal route so
+Lua tool callbacks execute in the Kore route domain. The C
+`vectis_register_cai_mcp_route()` adapter preserves the streaming upload-reader
+path for C-owned handlers; the Lua helper deliberately uses buffered request
+and response materialization to keep Lua state ownership simple and local.
 
 Fields:
 
@@ -436,9 +439,11 @@ Fields:
 - `methods` or `method`: optional override; normally leave the MCP default.
 - `name`, `version`: server metadata advertised by CAI.
 - `request_max_bytes`, `response_spool_memory_limit`,
-  `tool_output_max_bytes`, `enable_sessions`, `disable_origin_validation`,
-  `protocol_version`, and `require_protocol_version`: forwarded to CAI's MCP
-  handler config.
+  `tool_output_max_bytes`, `disable_origin_validation`, `protocol_version`, and
+  `require_protocol_version`: forwarded to CAI's MCP handler config.
+- `response_max_bytes`: buffered Lua-route response ceiling.
+- `enable_sessions`: rejected by the Lua helper until CAI session persistence
+  callbacks are implemented for this surface.
 - `tools`: non-empty array of Lua tool definitions.
 
 Tool fields:

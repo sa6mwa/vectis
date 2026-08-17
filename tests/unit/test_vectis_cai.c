@@ -1,8 +1,12 @@
 #include "vectis_internal.h"
 #include <assert.h>
 #include <cai/cai.h>
+#include <lc/lc.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <vectis/vectis.h>
 
 static void expect_cai_source_bytes(cai_source *source, const char *expected) {
@@ -57,6 +61,72 @@ static void test_source_from_request(void) {
   vectis_internal_request_free(request);
 }
 
+typedef struct single_pass_source {
+  const char *data;
+  size_t size;
+  size_t offset;
+} single_pass_source;
+
+static size_t single_pass_source_read(void *context, void *buffer, size_t count,
+                                      lc_error *error) {
+  single_pass_source *source;
+  size_t remaining;
+
+  source = (single_pass_source *)context;
+  assert(source != NULL);
+  if (source->offset >= source->size) {
+    return 0u;
+  }
+  remaining = source->size - source->offset;
+  if (count > remaining) {
+    count = remaining;
+  }
+  memcpy(buffer, source->data + source->offset, count);
+  source->offset += count;
+  (void)error;
+  return count;
+}
+
+static size_t single_pass_lc_source_read(lc_source *self, void *buffer,
+                                         size_t count, lc_error *error) {
+  assert(self != NULL);
+  return single_pass_source_read(self->impl, buffer, count, error);
+}
+
+static void test_source_from_single_pass_lc_source_has_no_reset(void) {
+  single_pass_source single_pass;
+  vectis_source source;
+  vectis_error error;
+  lc_source lcsrc;
+  cai_source *caisrc;
+  const char payload[] = "single pass";
+  char buffer[32];
+  cai_error caierr;
+  size_t nread;
+
+  memset(&single_pass, 0, sizeof(single_pass));
+  single_pass.data = payload;
+  single_pass.size = sizeof(payload) - 1u;
+  memset(&lcsrc, 0, sizeof(lcsrc));
+  lcsrc.read = single_pass_lc_source_read;
+  lcsrc.reset = NULL;
+  lcsrc.close = NULL;
+  lcsrc.impl = &single_pass;
+
+  source = vectis_source_from_lc(&lcsrc);
+  caisrc = NULL;
+  assert(vectis_cai_source_from_source(&source, &caisrc, &error) == VECTIS_OK);
+  assert(caisrc != NULL);
+  assert(caisrc->callbacks.reset == NULL);
+  cai_error_init(&caierr);
+  assert(cai_source_reset(caisrc, &caierr) != CAI_OK);
+  nread = cai_source_read(caisrc, buffer, sizeof(buffer), &caierr);
+  assert(nread == sizeof(payload) - 1u);
+  assert(memcmp(buffer, payload, nread) == 0);
+  cai_error_cleanup(&caierr);
+  cai_source_close(caisrc);
+}
+
 static void test_borrowed_client_contract(void) {
   vectis_app_config config;
   vectis_error error;
@@ -76,6 +146,38 @@ static void test_borrowed_client_contract(void) {
   client = NULL;
   assert(vectis_app_cai_client(app, &client, &error) == VECTIS_OK);
   assert(client == &borrowed);
+  vectis_destroy(app);
+}
+
+static void test_borrowed_client_rejected_after_fork(void) {
+  vectis_app_config config;
+  vectis_error error;
+  vectis_app *app;
+  cai_client borrowed;
+  cai_client *client;
+  pid_t child;
+  int status;
+
+  memset(&borrowed, 0, sizeof(borrowed));
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.cai.client = &borrowed;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  child = fork();
+  assert(child >= 0);
+  if (child == 0) {
+    client = NULL;
+    if (app->cai_client(app, &client, &error) == VECTIS_ERR_STATE &&
+        client == NULL) {
+      _exit(0);
+    }
+    _exit(1);
+  }
+  assert(waitpid(child, &status, 0) == child);
+  assert(WIFEXITED(status));
+  assert(WEXITSTATUS(status) == 0);
   vectis_destroy(app);
 }
 
@@ -216,6 +318,24 @@ static void test_worker_envelope(void) {
   vectis_cai_worker_response_cleanup(&response);
 }
 
+static void test_worker_rejects_unrepresentable_size_limits(void) {
+#if SIZE_MAX > INT64_MAX
+  vectis_cai_worker_request request;
+  vectis_cai_worker_event event;
+  vectis_error error;
+
+  vectis_cai_worker_request_init(&request);
+  request.provider = "test";
+  request.model = "test-model";
+  request.input = "hello";
+  request.max_response_bytes = (size_t)INT64_MAX + (size_t)1u;
+  assert(vectis_cai_worker_event_build(&request, &event, &error) ==
+         VECTIS_ERR_INVALID);
+  assert(event.message.payload == NULL);
+  assert(strstr(error.message, "max_response_bytes") != NULL);
+#endif
+}
+
 static void test_worker_service_registration_and_error_reply(void) {
   vectis_app_config app_config;
   vectis_app *app;
@@ -228,6 +348,7 @@ static void test_worker_service_registration_and_error_reply(void) {
   vectis_managed_service *service;
   vectis_managed_service_state service_state;
   vectis_mailbox_message bad_message;
+  vectis_mailbox_message late_message;
   vectis_mailbox_event reply_event;
   vectis_cai_worker_response response;
   vectis_status status;
@@ -257,6 +378,12 @@ static void test_worker_service_registration_and_error_reply(void) {
   worker_config.client.api_key = "test-key";
   worker_config.poll_timeout_ms = 10L;
   service = NULL;
+  worker_config.client.chatgpt_auth = (cai_chatgpt_auth *)0x1;
+  status = app->cai_worker_service(app, &worker_config, &service, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(service == NULL);
+  assert(strstr(error.message, "chatgpt_auth") != NULL);
+  worker_config.client.chatgpt_auth = NULL;
   status = app->cai_worker_service(app, &worker_config, &service, &error);
   assert(status == VECTIS_OK);
   assert(service != NULL);
@@ -288,6 +415,18 @@ static void test_worker_service_registration_and_error_reply(void) {
   vectis_cai_worker_response_cleanup(&response);
   vectis_mailbox_event_cleanup(&reply_event);
 
+  broker->close(broker);
+  vectis_mailbox_message_init(&late_message);
+  late_message.kind = "vectis.cai.unsupported";
+  late_message.expects_reply = 1;
+  status =
+      mailbox->publish_request(mailbox, &late_message, &correlation_id, &error);
+  assert(status == VECTIS_OK);
+  usleep(100000u);
+  assert(service->state(service, &service_state, &error) == VECTIS_OK);
+  assert(service_state.started);
+  assert(!service_state.failed);
+
   assert(app->stop(app, &error) == VECTIS_OK);
   assert(service->state(service, &service_state, &error) == VECTIS_OK);
   assert(service_state.stop_requested);
@@ -310,12 +449,15 @@ int main(void) {
 
   test_source_from_memory();
   test_source_from_request();
+  test_source_from_single_pass_lc_source_has_no_reset();
   test_borrowed_client_contract();
+  test_borrowed_client_rejected_after_fork();
   test_error_mapping();
   test_invalid_output_adapters();
   test_mcp_route_config();
   test_mcp_route_registration();
   test_worker_envelope();
+  test_worker_rejects_unrepresentable_size_limits();
   test_worker_service_registration_and_error_reply();
 
   return 0;

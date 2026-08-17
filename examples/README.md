@@ -144,9 +144,10 @@ same code works in scratch containers where `vectis` is the only executable.
   state/segment events from a separate event mailbox.
 - `lua/sus_worker_service.lua`: service-only Lua runtime plus C-owned SUS
   worker service using `vectis.mailbox.broker` request/reply and
-  `vectis.sus_worker` helpers. It is deterministic without a model and can use
-  `VECTIS_LUA_SUS_WORKER_MODEL_PATH` or `VECTIS_LUA_SUS_WORKER_CACHED_MODEL`
-  for live transcription.
+  `vectis.sus_worker` helpers. It exercises request envelopes without declaring
+  a worker when no model is configured, and can use
+  `VECTIS_LUA_SUS_WORKER_MODEL_PATH` or `VECTIS_LUA_SUS_WORKER_CACHED_MODEL` for
+  live transcription.
 - `lua/webdav_fileserver.lua`: mutable WebDAV fileserver mount and
   `vectis.webdav` client operations against a deterministic local server.
 - `lua/api_server.lua`: packable Lua API server script using direct

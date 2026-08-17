@@ -190,9 +190,9 @@ provider/model/input/instructions/options needed to open a runtime-domain CAI
 client or agent and run one operation. Replies carry Vectis status/source
 metadata, CAI dependency diagnostics, and explicitly named `text` or `raw_json`
 output fields. File-backed and lockdc document outputs are future extensions
-that must be named as such. Worker threads never call Lua tool callbacks;
-tool-callback MCP servers stay mounted as Kore routes, or a future owner-state
-tool pump must be specified separately.
+that must be named as such. Worker threads never call Lua tool callbacks.
+Lua-mounted MCP tools use the `server:mcp()` request broker and an owner-state
+mailbox pump.
 
 Audio/SUS workers:
 
@@ -330,11 +330,11 @@ bounded encode/decode file requests through a mailbox broker, decodes copied
 structured replies, and inspects copied service lifecycle state.
 
 `examples/lua/sus_worker_service.lua` is the Lua SUS worker example. It runs in
-service-only mode, registers a C-owned SUS worker service, sends a bounded PCM
+service-only mode. Without a configured model, it exercises the PCM request
+envelope and server lifecycle without declaring a worker. With a configured
+model, it registers a C-owned SUS worker service, sends a bounded PCM
 transcription request through a mailbox broker, decodes the structured reply,
-and inspects copied service lifecycle state. It runs deterministically without a
-model by asserting the structured missing-model reply and can opt into live
-model execution with environment variables.
+and inspects copied service lifecycle state.
 
 ## Lua Surface
 

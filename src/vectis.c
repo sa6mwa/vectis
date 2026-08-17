@@ -25,6 +25,7 @@
 #include <signal.h>
 #include <stdarg.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -134,6 +135,7 @@ typedef struct vectis_mailbox_impl {
   size_t head;
   size_t count;
   int closed;
+  unsigned long interrupt_generation;
   unsigned long next_correlation_id;
 } vectis_mailbox_impl;
 
@@ -232,6 +234,8 @@ typedef struct vectis_metrics_shared_state {
   unsigned long long auth_denied;
   unsigned long long auth_required;
   unsigned long long auth_redirected;
+  unsigned long long snapshot_writes;
+  unsigned long long snapshot_errors;
 } vectis_metrics_shared_state;
 
 typedef struct vectis_metrics_state {
@@ -239,6 +243,7 @@ typedef struct vectis_metrics_state {
   pthread_cond_t cond;
   pthread_t worker;
   int worker_started;
+  int worker_done;
   int stop_worker;
   time_t started_at;
   time_t last_load_sample_at;
@@ -368,6 +373,8 @@ typedef struct vectis_spill_writer {
 
 typedef struct vectis_app_impl {
   pthread_mutex_t mutex;
+  pthread_cond_t service_cond;
+  pthread_mutex_t service_control_write_mutex;
   int started;
   pid_t kore_child_pid;
   int kore_child_reaped;
@@ -414,6 +421,7 @@ typedef struct vectis_app_impl {
   pslog_logger *lockd_logger;
   int lockd_logger_disabled;
   cai_client *borrowed_cai_client;
+  pid_t borrowed_cai_client_pid;
   cai_client *owned_cai_client;
   pid_t owned_cai_client_pid;
   cai_client_config cai_client_config;
@@ -845,6 +853,7 @@ typedef struct vectis_managed_service_impl {
   vectis_app_impl *owner;
   struct vectis_managed_service_impl *next_owned;
   int materialized;
+  int materialized_once;
   int start_requested;
   int stop_requested;
   int started;
@@ -853,6 +862,7 @@ typedef struct vectis_managed_service_impl {
   int monitor_done;
   int monitor_joined;
   int failed;
+  int detached;
   vectis_status terminal_status;
   vectis_error monitor_error;
 } vectis_managed_service_impl;
@@ -904,8 +914,18 @@ typedef struct vectis_curl_worker_service_context {
   vectis_mailbox *request_mailbox;
   vectis_mailbox_broker *reply_broker;
   vectis_http_client_config http;
+  vectis_source client_bundle;
+  vectis_source ca_bundle;
   char *base_url;
+  char *client_bundle_source_path;
+  void *client_bundle_memory;
+  size_t client_bundle_memory_size;
   char *client_bundle_path;
+  void *client_bundle_pem;
+  size_t client_bundle_pem_size;
+  char *ca_bundle_source_path;
+  void *ca_bundle_memory;
+  size_t ca_bundle_memory_size;
   char *ca_bundle_path;
   char *proxy_url;
   long poll_timeout_ms;
@@ -943,6 +963,7 @@ typedef struct vectis_audio_worker_service_context {
 typedef struct vectis_sus_worker_service_context {
   vectis_mailbox *request_mailbox;
   vectis_mailbox_broker *reply_broker;
+  cpkt_sus *model;
   char *model_path;
   char *cached_model;
   char *cache_dir;
@@ -974,6 +995,7 @@ typedef struct vectis_consumer_service_impl {
   struct vectis_consumer_service_impl *next_owned;
   pid_t service_pid;
   int materialized;
+  int materialized_once;
   int start_requested;
   int stop_requested;
   int started;
@@ -982,6 +1004,7 @@ typedef struct vectis_consumer_service_impl {
   int monitor_done;
   int monitor_joined;
   int monitor_rc;
+  int detached;
   vectis_error monitor_error;
 } vectis_consumer_service_impl;
 
@@ -1012,6 +1035,7 @@ typedef struct vectis_lockd_consumer_mailbox_receiver {
   vectis_mailbox_broker *broker;
   long reply_timeout_ms;
   vectis_lockd_consumer_event_config event;
+  char *event_kind;
 } vectis_lockd_consumer_mailbox_receiver;
 
 typedef struct vectis_opcua_monitor_mailbox_impl {
@@ -1117,6 +1141,11 @@ static vectis_status vectis_app_stop_kore_child(pid_t child_pid, int control_fd,
                                                 vectis_error *error);
 static int vectis_signal_kore_runtime(pid_t child_pid, int signum);
 static int vectis_wait_sleep_ms(long delay_ms);
+static void vectis_deadline_after_ms(struct timespec *deadline, long delay_ms);
+static long vectis_deadline_remaining_ms(const struct timespec *deadline);
+static long
+vectis_shutdown_phase_timeout_ms(const vectis_app_impl *impl,
+                                 const struct timespec *shutdown_deadline);
 static void vectis_app_record_lifecycle_sequence(vectis_app_impl *impl,
                                                  unsigned long *slot);
 static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
@@ -1127,13 +1156,25 @@ static void vectis_close_cai_client_for_current_process(vectis_app_impl *impl);
 static vectis_status
 vectis_app_validate_quiescent_for_kore(const vectis_app_impl *impl,
                                        vectis_error *error);
-static vectis_status vectis_app_stop_consumer_services(vectis_app_impl *impl,
-                                                       vectis_error *error);
-static vectis_status vectis_app_stop_managed_services(vectis_app_impl *impl,
-                                                      vectis_error *error);
+static vectis_status
+vectis_app_stop_consumer_services(vectis_app_impl *impl,
+                                  const struct timespec *shutdown_deadline,
+                                  vectis_error *error);
+static vectis_status
+vectis_app_stop_managed_services(vectis_app_impl *impl,
+                                 const struct timespec *shutdown_deadline,
+                                 vectis_error *error);
+static vectis_status
+vectis_app_request_stop_consumer_services(vectis_app_impl *impl,
+                                          vectis_error *error);
+static vectis_status
+vectis_app_request_stop_managed_services(vectis_app_impl *impl,
+                                         vectis_error *error);
 static vectis_status
 vectis_app_start_requested_consumer_services(vectis_app_impl *impl,
                                              vectis_error *error);
+static void
+vectis_consumer_service_dematerialize(vectis_consumer_service_impl *impl);
 static vectis_status
 vectis_app_start_requested_managed_services(vectis_app_impl *impl,
                                             vectis_error *error);
@@ -1182,7 +1223,10 @@ static vectis_status vectis_metrics_route_handler(vectis_app *app,
 static void vectis_metrics_state_destroy(vectis_metrics_state *metrics);
 static vectis_status vectis_metrics_worker_start(vectis_app *app,
                                                  vectis_error *error);
-static void vectis_metrics_worker_stop(vectis_app *app);
+static vectis_status
+vectis_metrics_worker_stop(vectis_app *app,
+                           const struct timespec *shutdown_deadline,
+                           vectis_error *error);
 static void vectis_metrics_persist_snapshot_if_due(vectis_app *app);
 static vectis_status vectis_app_register_route_impl(
     vectis_app *app, const vectis_route_config *route, vectis_error *error);
@@ -1882,9 +1926,9 @@ vectis_status vectis_mailbox_reply(vectis_mailbox *mailbox,
   return status;
 }
 
-vectis_status vectis_mailbox_wait_next(vectis_mailbox *mailbox,
-                                       vectis_mailbox_event *out,
-                                       long timeout_ms, vectis_error *error) {
+static vectis_status vectis_mailbox_wait_next_interruptible(
+    vectis_mailbox *mailbox, vectis_mailbox_event *out, long timeout_ms,
+    unsigned long *interrupt_generation, vectis_error *error) {
   vectis_mailbox_impl *impl;
   vectis_mailbox_entry entry;
   struct timespec deadline;
@@ -1905,7 +1949,12 @@ vectis_status vectis_mailbox_wait_next(vectis_mailbox *mailbox,
   if (timeout_ms > 0L) {
     vectis_mailbox_deadline(timeout_ms, &deadline);
   }
-  while (impl->count == 0u && !impl->closed) {
+  if (interrupt_generation != NULL && *interrupt_generation == 0ul) {
+    *interrupt_generation = impl->interrupt_generation;
+  }
+  while (impl->count == 0u && !impl->closed &&
+         (interrupt_generation == NULL ||
+          *interrupt_generation == impl->interrupt_generation)) {
     if (timeout_ms == 0L) {
       impl->stats.timeout_failures++;
       (void)pthread_mutex_unlock(&impl->mutex);
@@ -1929,6 +1978,13 @@ vectis_status vectis_mailbox_wait_next(vectis_mailbox *mailbox,
       return VECTIS_ERR_STATE;
     }
   }
+  if (impl->count == 0u && !impl->closed && interrupt_generation != NULL &&
+      *interrupt_generation != impl->interrupt_generation) {
+    *interrupt_generation = impl->interrupt_generation;
+    (void)pthread_mutex_unlock(&impl->mutex);
+    vectis_set_error(error, VECTIS_ERR_TIMEOUT, "mailbox wait interrupted");
+    return VECTIS_ERR_TIMEOUT;
+  }
   if (impl->count == 0u && impl->closed) {
     impl->stats.closed_failures++;
     (void)pthread_mutex_unlock(&impl->mutex);
@@ -1951,10 +2007,30 @@ vectis_status vectis_mailbox_wait_next(vectis_mailbox *mailbox,
   return VECTIS_OK;
 }
 
+vectis_status vectis_mailbox_wait_next(vectis_mailbox *mailbox,
+                                       vectis_mailbox_event *out,
+                                       long timeout_ms, vectis_error *error) {
+  return vectis_mailbox_wait_next_interruptible(mailbox, out, timeout_ms, NULL,
+                                                error);
+}
+
 vectis_status vectis_mailbox_next(vectis_mailbox *mailbox,
                                   vectis_mailbox_event *out,
                                   vectis_error *error) {
   return vectis_mailbox_wait_next(mailbox, out, 0L, error);
+}
+
+static void vectis_mailbox_interrupt(vectis_mailbox *mailbox) {
+  vectis_mailbox_impl *impl;
+
+  if (mailbox == NULL || mailbox->impl == NULL) {
+    return;
+  }
+  impl = (vectis_mailbox_impl *)mailbox->impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  impl->interrupt_generation++;
+  (void)pthread_cond_broadcast(&impl->cond);
+  (void)pthread_mutex_unlock(&impl->mutex);
 }
 
 vectis_status vectis_mailbox_issue_correlation_id(vectis_mailbox *mailbox,
@@ -2743,6 +2819,32 @@ static const void *vectis_source_memory_or_old(const vectis_source *source,
 
 static size_t vectis_min_size(size_t a, size_t b) { return a < b ? a : b; }
 
+static int vectis_lonejson_i64_exceeds_size(lonejson_int64 value) {
+  return value > 0 && (uint64_t)value > (uint64_t)SIZE_MAX;
+}
+
+static int vectis_lonejson_i64_exceeds_ulong(lonejson_int64 value) {
+  return value > 0 && (uint64_t)value > (uint64_t)ULONG_MAX;
+}
+
+static int vectis_size_exceeds_lonejson_i64(size_t value) {
+#if SIZE_MAX > INT64_MAX
+  return value > (size_t)INT64_MAX;
+#else
+  (void)value;
+  return 0;
+#endif
+}
+
+static int vectis_ulong_exceeds_lonejson_i64(unsigned long value) {
+#if ULONG_MAX > INT64_MAX
+  return value > (unsigned long)INT64_MAX;
+#else
+  (void)value;
+  return 0;
+#endif
+}
+
 void vectis_tls_config_init(vectis_tls_config *config) {
   if (config == NULL) {
     return;
@@ -2780,7 +2882,6 @@ void vectis_server_config_init(vectis_server_config *config) {
   config->max_request_header_bytes =
       VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES;
   config->max_request_body_bytes = 0u;
-  config->request_body_spool_dir = VECTIS_SERVER_DEFAULT_REQUEST_BODY_SPOOL_DIR;
   config->request_header_timeout_ms =
       VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS;
   config->request_body_idle_timeout_ms =
@@ -2916,10 +3017,7 @@ vectis_effective_server_config(const vectis_server_config *config) {
   effective.max_request_body_bytes =
       vectis_default_size(config->max_request_body_bytes,
                           VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES);
-  effective.request_body_spool_dir =
-      config->request_body_spool_dir != NULL
-          ? config->request_body_spool_dir
-          : VECTIS_SERVER_DEFAULT_REQUEST_BODY_SPOOL_DIR;
+  effective.request_body_spool_dir = config->request_body_spool_dir;
   effective.request_header_timeout_ms =
       vectis_default_long(config->request_header_timeout_ms,
                           VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS);
@@ -2951,6 +3049,63 @@ vectis_effective_server_config(const vectis_server_config *config) {
   effective.autoblock.max_entries =
       vectis_default_unsigned(config->autoblock.max_entries, 8192u);
   return effective;
+}
+
+static char *vectis_default_request_body_spool_dir(vectis_error *error) {
+  const char *runtime_dir;
+  char *copy;
+  char path[4096];
+  int n;
+
+  runtime_dir = getenv("XDG_RUNTIME_DIR");
+  if (runtime_dir != NULL && runtime_dir[0] == '/') {
+    n = snprintf(path, sizeof(path), "%s/vectis-http-body", runtime_dir);
+  } else {
+    n = snprintf(path, sizeof(path), "%s-%lu",
+                 VECTIS_SERVER_DEFAULT_REQUEST_BODY_SPOOL_DIR_PREFIX,
+                 (unsigned long)getuid());
+  }
+  if (n <= 0 || (size_t)n >= sizeof(path)) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "default request_body_spool_dir is too large");
+    return NULL;
+  }
+  copy = (char *)malloc((size_t)n + 1u);
+  if (copy == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy default request_body_spool_dir");
+    return NULL;
+  }
+  memcpy(copy, path, (size_t)n + 1u);
+  return copy;
+}
+
+static char *vectis_metrics_default_json_path(const char *path,
+                                              vectis_error *error) {
+  size_t path_size;
+  size_t suffix_size;
+  char *json_path;
+  const char suffix[] = ".json";
+
+  if (path == NULL) {
+    path = "/.metrics";
+  }
+  path_size = strlen(path);
+  suffix_size = sizeof(suffix) - 1u;
+  if (path_size > (size_t)-1 - suffix_size - 1u) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "metrics json_path default is too large");
+    return NULL;
+  }
+  json_path = (char *)malloc(path_size + suffix_size + 1u);
+  if (json_path == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate metrics json_path default");
+    return NULL;
+  }
+  memcpy(json_path, path, path_size);
+  memcpy(json_path + path_size, suffix, suffix_size + 1u);
+  return json_path;
 }
 
 static vectis_body_policy
@@ -3057,7 +3212,6 @@ void vectis_metrics_config_init(vectis_metrics_config *config) {
   }
   memset(config, 0, sizeof(*config));
   config->path = "/.metrics";
-  config->json_path = "/.metrics.json";
   config->auth_purpose = "metrics";
   config->storage_namespace = "vectis.metrics";
   config->storage_owner = "vectis";
@@ -3864,7 +4018,14 @@ static int vectis_lockd_consumer_mailbox_receiver_handle(
 }
 
 static void vectis_lockd_consumer_mailbox_receiver_cleanup(void *context) {
-  free(context);
+  vectis_lockd_consumer_mailbox_receiver *receiver;
+
+  receiver = (vectis_lockd_consumer_mailbox_receiver *)context;
+  if (receiver == NULL) {
+    return;
+  }
+  free(receiver->event_kind);
+  free(receiver);
 }
 
 static vectis_status vectis_lockd_consumer_mailbox_receiver_create(
@@ -3906,6 +4067,14 @@ static vectis_status vectis_lockd_consumer_mailbox_receiver_create(
   if (receiver->event.kind == NULL || receiver->event.kind[0] == '\0') {
     receiver->event.kind = "vectis.lockd.consumer";
   }
+  receiver->event_kind = vectis_strdup(receiver->event.kind);
+  if (receiver->event_kind == NULL) {
+    free(receiver);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy mailbox receiver event kind");
+    return VECTIS_ERR_NOMEM;
+  }
+  receiver->event.kind = receiver->event_kind;
   if (receiver->event.max_payload_bytes == 0u) {
     receiver->event.max_payload_bytes =
         VECTIS_LOCKD_CONSUMER_EVENT_DEFAULT_MAX_PAYLOAD_BYTES;
@@ -4724,6 +4893,7 @@ static vectis_status vectis_copy_cai_config(vectis_app_impl *impl,
     return VECTIS_ERR_INVALID;
   }
   impl->borrowed_cai_client = cai->client;
+  impl->borrowed_cai_client_pid = cai->client != NULL ? getpid() : (pid_t)0;
   impl->cai_client_config = cai->client_config;
   impl->cai_logger = cai->logger;
   impl->cai_logger_disabled =
@@ -4992,7 +5162,20 @@ vectis_openapi_route_doc_deep_copy(vectis_openapi_route_doc *dst,
 static vectis_status
 vectis_managed_service_join_monitor(vectis_managed_service_impl *service,
                                     vectis_error *error) {
-  if (service == NULL || !service->monitor_active || service->monitor_joined) {
+  int should_join;
+
+  if (service == NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (service->owner != NULL) {
+    (void)pthread_mutex_lock(&service->owner->mutex);
+  }
+  should_join = service->monitor_active && !service->monitor_joined;
+  if (service->owner != NULL) {
+    (void)pthread_mutex_unlock(&service->owner->mutex);
+  }
+  if (!should_join) {
     vectis_error_clear(error);
     return VECTIS_OK;
   }
@@ -5001,8 +5184,69 @@ vectis_managed_service_join_monitor(vectis_managed_service_impl *service,
                      "failed to join managed service monitor");
     return VECTIS_ERR_STATE;
   }
+  if (service->owner != NULL) {
+    (void)pthread_mutex_lock(&service->owner->mutex);
+  }
   service->monitor_joined = 1;
   service->monitor_active = 0;
+  if (service->owner != NULL) {
+    (void)pthread_mutex_unlock(&service->owner->mutex);
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_managed_service_join_monitor_deadline(
+    vectis_managed_service_impl *service, long timeout_ms,
+    vectis_error *error) {
+  vectis_app_impl *owner;
+  struct timespec deadline;
+  int should_join;
+  int timed_out;
+  int rc;
+
+  if (service == NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  owner = service->owner;
+  if (owner == NULL) {
+    return vectis_managed_service_join_monitor(service, error);
+  }
+  vectis_deadline_after_ms(
+      &deadline,
+      timeout_ms > 0L ? timeout_ms : VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS);
+  timed_out = 0;
+  (void)pthread_mutex_lock(&owner->mutex);
+  while (service->monitor_active && !service->monitor_joined &&
+         !service->monitor_done && !timed_out) {
+    rc = pthread_cond_timedwait(&owner->service_cond, &owner->mutex, &deadline);
+    if (rc == ETIMEDOUT) {
+      timed_out = 1;
+    }
+  }
+  if (service->monitor_active && !service->monitor_joined &&
+      !service->monitor_done) {
+    (void)pthread_mutex_unlock(&owner->mutex);
+    vectis_set_error(error, VECTIS_ERR_TIMEOUT,
+                     "managed service did not stop before shutdown grace");
+    return VECTIS_ERR_TIMEOUT;
+  }
+  should_join = service->monitor_active && !service->monitor_joined;
+  (void)pthread_mutex_unlock(&owner->mutex);
+  if (!should_join) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (pthread_join(service->monitor_thread, NULL) != 0) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to join managed service monitor");
+    return VECTIS_ERR_STATE;
+  }
+  (void)pthread_mutex_lock(&owner->mutex);
+  service->monitor_joined = 1;
+  service->monitor_active = 0;
+  (void)pthread_mutex_unlock(&owner->mutex);
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -5052,6 +5296,7 @@ static void *vectis_managed_service_monitor_main(void *userdata) {
     service->monitor_error = terminal_error;
     service->monitor_done = 1;
     service->started = 0;
+    (void)pthread_cond_broadcast(&service->owner->service_cond);
     (void)pthread_mutex_unlock(&service->owner->mutex);
   } else {
     unexpected = !service->stop_requested;
@@ -5076,6 +5321,8 @@ static void *vectis_managed_service_monitor_main(void *userdata) {
 static vectis_status
 vectis_managed_service_monitor_start(vectis_managed_service_impl *service,
                                      vectis_error *error) {
+  vectis_status status;
+
   if (service == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "managed service is required");
     return VECTIS_ERR_INVALID;
@@ -5083,6 +5330,13 @@ vectis_managed_service_monitor_start(vectis_managed_service_impl *service,
   if (service->wait_fn == NULL) {
     vectis_error_clear(error);
     return VECTIS_OK;
+  }
+  if (service->monitor_active && !service->monitor_joined &&
+      service->monitor_done) {
+    status = vectis_managed_service_join_monitor(service, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
   }
   if (service->monitor_active && !service->monitor_joined) {
     vectis_error_clear(error);
@@ -5130,6 +5384,7 @@ vectis_managed_service_start_materialized(vectis_managed_service_impl *service,
     return status;
   }
   service->materialized = 1;
+  service->materialized_once = 1;
   service->started = 1;
   status = vectis_managed_service_monitor_start(service, error);
   if (status != VECTIS_OK) {
@@ -5252,7 +5507,6 @@ static vectis_status vectis_opcua_server_service_stop(void *context,
   (void)pthread_mutex_lock(&ctx->mutex);
   ctx->stopping = 1;
   do_shutdown = ctx->started && !ctx->shutdown_done;
-  ctx->shutdown_done = 1;
   (void)pthread_mutex_unlock(&ctx->mutex);
   if (!do_shutdown) {
     vectis_error_clear(error);
@@ -5266,6 +5520,7 @@ static vectis_status vectis_opcua_server_service_stop(void *context,
   }
   (void)pthread_mutex_lock(&ctx->mutex);
   ctx->started = 0;
+  ctx->shutdown_done = 1;
   (void)pthread_mutex_unlock(&ctx->mutex);
   vectis_error_clear(error);
   return VECTIS_OK;
@@ -5411,6 +5666,7 @@ static vectis_status vectis_curl_worker_http_request_decode(
   if (headers_out != NULL) {
     *headers_out = NULL;
   }
+  headers = NULL;
   if (request == NULL || event == NULL || event->payload == NULL ||
       event->payload_size < sizeof(*wire)) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
@@ -5437,7 +5693,8 @@ static vectis_status vectis_curl_worker_http_request_decode(
     return VECTIS_ERR_INVALID;
   }
   remaining = event->payload_size - sizeof(*wire);
-  if (wire->url_size == 0u || wire->url_size + 1u > remaining) {
+  if (wire->url_size == 0u || remaining == 0u ||
+      wire->url_size > remaining - 1u) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "curl worker HTTP request URL is invalid");
     return VECTIS_ERR_INVALID;
@@ -5453,7 +5710,8 @@ static vectis_status vectis_curl_worker_http_request_decode(
     return VECTIS_ERR_INVALID;
   }
   cursor += wire->url_size + 1u;
-  if ((size_t)(end - cursor) < wire->content_type_size + 1u) {
+  remaining = (size_t)(end - cursor);
+  if (remaining == 0u || wire->content_type_size > remaining - 1u) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "curl worker HTTP content type is invalid");
     return VECTIS_ERR_INVALID;
@@ -5467,7 +5725,8 @@ static vectis_status vectis_curl_worker_http_request_decode(
     }
   }
   cursor += wire->content_type_size + 1u;
-  if ((size_t)(end - cursor) < wire->headers_size) {
+  remaining = (size_t)(end - cursor);
+  if (wire->headers_size > remaining) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "curl worker HTTP headers are invalid");
     return VECTIS_ERR_INVALID;
@@ -5498,7 +5757,8 @@ static vectis_status vectis_curl_worker_http_request_decode(
       *headers_out = headers;
     }
   }
-  if (cursor != headers_end || (size_t)(end - cursor) < wire->body_size) {
+  remaining = (size_t)(end - cursor);
+  if (cursor != headers_end || wire->body_size > remaining) {
     if (headers_out != NULL) {
       free(*headers_out);
       *headers_out = NULL;
@@ -5610,6 +5870,9 @@ static vectis_status vectis_curl_worker_http_reply_build(
   return VECTIS_OK;
 }
 
+static int vectis_worker_reply_was_rejected(vectis_status status,
+                                            const vectis_error *error);
+
 static vectis_status
 vectis_curl_worker_reply_error(vectis_curl_worker_service_context *ctx,
                                const vectis_mailbox_event *event,
@@ -5632,7 +5895,19 @@ vectis_curl_worker_reply_error(vectis_curl_worker_service_context *ctx,
   build_status = ctx->reply_broker->reply(
       ctx->reply_broker, event->correlation_id, &reply.message, &reply_error);
   vectis_curl_worker_event_cleanup(&reply);
+  if (vectis_worker_reply_was_rejected(build_status, &reply_error)) {
+    return VECTIS_OK;
+  }
   return build_status;
+}
+
+static int vectis_worker_reply_was_rejected(vectis_status status,
+                                            const vectis_error *error) {
+  if (status == VECTIS_ERR_TIMEOUT) {
+    return 1;
+  }
+  return status == VECTIS_ERR_STATE && error != NULL &&
+         strcmp(error->message, "mailbox broker is closed") == 0;
 }
 
 static vectis_status
@@ -5670,6 +5945,10 @@ vectis_curl_worker_process_event(vectis_curl_worker_service_context *ctx,
     reply_status = vectis_curl_worker_reply_error(
         ctx, event, status,
         error != NULL ? error->message : "curl worker request invalid");
+    if (vectis_worker_reply_was_rejected(reply_status, error)) {
+      vectis_error_clear(error);
+      return VECTIS_OK;
+    }
     if (reply_status != VECTIS_OK) {
       return reply_status;
     }
@@ -5698,6 +5977,13 @@ vectis_curl_worker_process_event(vectis_curl_worker_service_context *ctx,
       vectis_curl_worker_event_cleanup(&reply);
     }
     if (reply_status != VECTIS_OK) {
+      if (vectis_worker_reply_was_rejected(reply_status, error)) {
+        vectis_error_clear(error);
+        free(headers);
+        free(body.data);
+        vectis_http_response_cleanup(&response);
+        return VECTIS_OK;
+      }
       free(headers);
       free(body.data);
       vectis_http_response_cleanup(&response);
@@ -5741,6 +6027,7 @@ static vectis_status vectis_curl_worker_service_stop(void *context,
   (void)pthread_mutex_lock(&ctx->mutex);
   ctx->stopping = 1;
   (void)pthread_mutex_unlock(&ctx->mutex);
+  vectis_mailbox_interrupt(ctx->request_mailbox);
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -5752,6 +6039,7 @@ static vectis_status vectis_curl_worker_service_wait(void *context,
   vectis_error local_error;
   vectis_status status;
   long poll_timeout_ms;
+  unsigned long mailbox_interrupt_generation;
 
   ctx = (vectis_curl_worker_service_context *)context;
   if (ctx == NULL || ctx->request_mailbox == NULL) {
@@ -5762,11 +6050,13 @@ static vectis_status vectis_curl_worker_service_wait(void *context,
   poll_timeout_ms = ctx->poll_timeout_ms > 0L
                         ? ctx->poll_timeout_ms
                         : VECTIS_CURL_WORKER_DEFAULT_POLL_TIMEOUT_MS;
+  mailbox_interrupt_generation = 0ul;
   while (!vectis_curl_worker_service_is_stopping(ctx)) {
     vectis_mailbox_event_init(&event);
     vectis_error_clear(&local_error);
-    status = ctx->request_mailbox->wait_next(ctx->request_mailbox, &event,
-                                             poll_timeout_ms, &local_error);
+    status = vectis_mailbox_wait_next_interruptible(
+        ctx->request_mailbox, &event, poll_timeout_ms,
+        &mailbox_interrupt_generation, &local_error);
     if (status == VECTIS_ERR_TIMEOUT) {
       continue;
     }
@@ -5803,7 +6093,12 @@ static void vectis_curl_worker_service_cleanup(void *context) {
   (void)vectis_curl_worker_service_stop(ctx, NULL);
   (void)pthread_mutex_destroy(&ctx->mutex);
   free(ctx->base_url);
+  free(ctx->client_bundle_source_path);
+  free(ctx->client_bundle_memory);
   free(ctx->client_bundle_path);
+  free(ctx->client_bundle_pem);
+  free(ctx->ca_bundle_source_path);
+  free(ctx->ca_bundle_memory);
   free(ctx->ca_bundle_path);
   free(ctx->proxy_url);
   free(ctx);
@@ -5965,6 +6260,10 @@ static vectis_status vectis_cai_worker_reply_error(
                                     &reply_event.message, error);
   vectis_cai_worker_event_cleanup(&reply_event);
   vectis_cai_worker_reply_json_cleanup_malloc(&reply_json);
+  if (vectis_worker_reply_was_rejected(status, error)) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
   return status;
 }
 
@@ -6036,6 +6335,13 @@ vectis_cai_worker_request_decode(const vectis_mailbox_event *event,
                      "CAI worker max_response_bytes must be non-negative");
     return VECTIS_ERR_INVALID;
   }
+  if (request->has_max_response_bytes &&
+      vectis_lonejson_i64_exceeds_size(request->max_response_bytes)) {
+    vectis_cai_worker_request_json_cleanup_lonejson(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker max_response_bytes is too large");
+    return VECTIS_ERR_INVALID;
+  }
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -6068,8 +6374,13 @@ static void vectis_cai_worker_client_config_copy_runtime(
   if (request != NULL && request->provider != NULL &&
       strcmp(request->provider, "openrouter") == 0) {
     cai_client_config_use_openrouter(dst);
-    dst->api_key = src->api_key;
-    dst->api_key_env = src->api_key_env;
+    if (src->api_key != NULL) {
+      dst->api_key = src->api_key;
+    }
+    if (src->api_key_env != NULL &&
+        strcmp(src->api_key_env, CAI_OPENAI_API_KEY_ENV) != 0) {
+      dst->api_key_env = src->api_key_env;
+    }
     dst->timeout_ms = src->timeout_ms;
     dst->logger = src->logger;
     dst->logger_disabled = src->logger_disabled;
@@ -6225,6 +6536,10 @@ vectis_cai_worker_process_event(vectis_cai_worker_service_context *ctx,
     reply_status = vectis_cai_worker_reply_error(
         ctx, event, &transfer_error, status, transfer_error.message, error);
     vectis_cai_worker_request_json_cleanup_lonejson(&request);
+    if (vectis_worker_reply_was_rejected(reply_status, error)) {
+      vectis_error_clear(error);
+      return VECTIS_OK;
+    }
     if (reply_status != VECTIS_OK) {
       return reply_status;
     }
@@ -6244,6 +6559,10 @@ vectis_cai_worker_process_event(vectis_cai_worker_service_context *ctx,
     vectis_cai_worker_reply_json_cleanup_malloc(&reply_json);
     vectis_cai_worker_request_json_cleanup_lonejson(&request);
     if (reply_status != VECTIS_OK) {
+      if (vectis_worker_reply_was_rejected(reply_status, error)) {
+        vectis_error_clear(error);
+        return VECTIS_OK;
+      }
       return reply_status;
     }
   } else {
@@ -6284,6 +6603,7 @@ static vectis_status vectis_cai_worker_service_stop(void *context,
   (void)pthread_mutex_lock(&ctx->mutex);
   ctx->stopping = 1;
   (void)pthread_mutex_unlock(&ctx->mutex);
+  vectis_mailbox_interrupt(ctx->request_mailbox);
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -6295,6 +6615,7 @@ static vectis_status vectis_cai_worker_service_wait(void *context,
   vectis_error local_error;
   vectis_status status;
   long poll_timeout_ms;
+  unsigned long mailbox_interrupt_generation;
 
   ctx = (vectis_cai_worker_service_context *)context;
   if (ctx == NULL || ctx->request_mailbox == NULL) {
@@ -6305,11 +6626,13 @@ static vectis_status vectis_cai_worker_service_wait(void *context,
   poll_timeout_ms = ctx->poll_timeout_ms > 0L
                         ? ctx->poll_timeout_ms
                         : VECTIS_CAI_WORKER_DEFAULT_POLL_TIMEOUT_MS;
+  mailbox_interrupt_generation = 0ul;
   while (!vectis_cai_worker_service_is_stopping(ctx)) {
     vectis_mailbox_event_init(&event);
     vectis_error_clear(&local_error);
-    status = ctx->request_mailbox->wait_next(ctx->request_mailbox, &event,
-                                             poll_timeout_ms, &local_error);
+    status = vectis_mailbox_wait_next_interruptible(
+        ctx->request_mailbox, &event, poll_timeout_ms,
+        &mailbox_interrupt_generation, &local_error);
     if (status == VECTIS_ERR_TIMEOUT) {
       continue;
     }
@@ -6795,6 +7118,10 @@ static vectis_status vectis_audio_worker_reply_error(
                                     &reply_event.message, error);
   vectis_audio_worker_event_cleanup(&reply_event);
   vectis_audio_worker_reply_json_cleanup_malloc(&reply_json);
+  if (vectis_worker_reply_was_rejected(status, error)) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
   return status;
 }
 
@@ -6845,16 +7172,37 @@ vectis_audio_worker_request_decode(const vectis_mailbox_event *event,
                      "audio worker max_frames must be non-negative");
     return VECTIS_ERR_INVALID;
   }
+  if (request->has_max_frames &&
+      vectis_lonejson_i64_exceeds_size(request->max_frames)) {
+    vectis_audio_worker_request_json_cleanup_lonejson(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker max_frames is too large");
+    return VECTIS_ERR_INVALID;
+  }
   if (request->has_sample_rate && request->sample_rate < 0) {
     vectis_audio_worker_request_json_cleanup_lonejson(request);
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "audio worker sample_rate must be non-negative");
     return VECTIS_ERR_INVALID;
   }
+  if (request->has_sample_rate &&
+      vectis_lonejson_i64_exceeds_ulong(request->sample_rate)) {
+    vectis_audio_worker_request_json_cleanup_lonejson(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker sample_rate is too large");
+    return VECTIS_ERR_INVALID;
+  }
   if (request->has_channels && request->channels < 0) {
     vectis_audio_worker_request_json_cleanup_lonejson(request);
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "audio worker channels must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->has_channels &&
+      vectis_lonejson_i64_exceeds_ulong(request->channels)) {
+    vectis_audio_worker_request_json_cleanup_lonejson(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker channels is too large");
     return VECTIS_ERR_INVALID;
   }
   if (strcmp(event->kind, VECTIS_AUDIO_WORKER_DECODE_KIND) == 0) {
@@ -6932,6 +7280,25 @@ static vectis_status vectis_audio_worker_vox_request_decode(
     vectis_audio_worker_vox_request_json_cleanup_lonejson(request);
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "audio worker VOX numeric limits must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+  if ((request->has_release_silence_ms &&
+       vectis_lonejson_i64_exceeds_ulong(request->release_silence_ms)) ||
+      (request->has_prebuffer_ms &&
+       vectis_lonejson_i64_exceeds_ulong(request->prebuffer_ms)) ||
+      (request->has_max_segment_ms &&
+       vectis_lonejson_i64_exceeds_ulong(request->max_segment_ms)) ||
+      (request->has_min_segment_ms &&
+       vectis_lonejson_i64_exceeds_ulong(request->min_segment_ms)) ||
+      (request->has_memory_spool_bytes &&
+       vectis_lonejson_i64_exceeds_ulong(request->memory_spool_bytes)) ||
+      (request->has_max_spool_bytes &&
+       vectis_lonejson_i64_exceeds_ulong(request->max_spool_bytes)) ||
+      (request->has_max_segment_frames &&
+       vectis_lonejson_i64_exceeds_size(request->max_segment_frames))) {
+    vectis_audio_worker_vox_request_json_cleanup_lonejson(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX numeric limits are too large");
     return VECTIS_ERR_INVALID;
   }
   vectis_error_clear(error);
@@ -7417,6 +7784,10 @@ vectis_audio_worker_process_event(vectis_audio_worker_service_context *ctx,
         ctx, event, &transfer_error, status, transfer_error.message, error);
     vectis_audio_worker_request_json_cleanup_lonejson(&request);
     vectis_audio_worker_vox_request_json_cleanup_lonejson(&vox_request);
+    if (vectis_worker_reply_was_rejected(reply_status, error)) {
+      vectis_error_clear(error);
+      return VECTIS_OK;
+    }
     if (reply_status != VECTIS_OK) {
       return reply_status;
     }
@@ -7437,6 +7808,10 @@ vectis_audio_worker_process_event(vectis_audio_worker_service_context *ctx,
     vectis_audio_worker_request_json_cleanup_lonejson(&request);
     vectis_audio_worker_vox_request_json_cleanup_lonejson(&vox_request);
     if (reply_status != VECTIS_OK) {
+      if (vectis_worker_reply_was_rejected(reply_status, error)) {
+        vectis_error_clear(error);
+        return VECTIS_OK;
+      }
       return reply_status;
     }
   } else {
@@ -7478,6 +7853,7 @@ static vectis_status vectis_audio_worker_service_stop(void *context,
   (void)pthread_mutex_lock(&ctx->mutex);
   ctx->stopping = 1;
   (void)pthread_mutex_unlock(&ctx->mutex);
+  vectis_mailbox_interrupt(ctx->request_mailbox);
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -7489,6 +7865,7 @@ static vectis_status vectis_audio_worker_service_wait(void *context,
   vectis_error local_error;
   vectis_status status;
   long poll_timeout_ms;
+  unsigned long mailbox_interrupt_generation;
 
   ctx = (vectis_audio_worker_service_context *)context;
   if (ctx == NULL || ctx->request_mailbox == NULL) {
@@ -7499,11 +7876,13 @@ static vectis_status vectis_audio_worker_service_wait(void *context,
   poll_timeout_ms = ctx->poll_timeout_ms > 0L
                         ? ctx->poll_timeout_ms
                         : VECTIS_AUDIO_WORKER_DEFAULT_POLL_TIMEOUT_MS;
+  mailbox_interrupt_generation = 0ul;
   while (!vectis_audio_worker_service_is_stopping(ctx)) {
     vectis_mailbox_event_init(&event);
     vectis_error_clear(&local_error);
-    status = ctx->request_mailbox->wait_next(ctx->request_mailbox, &event,
-                                             poll_timeout_ms, &local_error);
+    status = vectis_mailbox_wait_next_interruptible(
+        ctx->request_mailbox, &event, poll_timeout_ms,
+        &mailbox_interrupt_generation, &local_error);
     if (status == VECTIS_ERR_TIMEOUT) {
       continue;
     }
@@ -7921,6 +8300,10 @@ static vectis_status vectis_sus_worker_reply_error(
                                     &reply_event.message, error);
   vectis_sus_worker_event_cleanup(&reply_event);
   vectis_sus_worker_reply_json_cleanup_malloc(&reply_json);
+  if (vectis_worker_reply_was_rejected(status, error)) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
   return status;
 }
 
@@ -7973,10 +8356,23 @@ vectis_sus_worker_request_decode(const vectis_mailbox_event *event,
                      "SUS worker threads must be non-negative");
     return VECTIS_ERR_INVALID;
   }
+  if (request->has_threads && request->threads > (lonejson_int64)INT_MAX) {
+    vectis_sus_worker_request_json_cleanup_lonejson(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker threads is too large");
+    return VECTIS_ERR_INVALID;
+  }
   if (request->has_max_text_bytes && request->max_text_bytes < 0) {
     vectis_sus_worker_request_json_cleanup_lonejson(request);
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "SUS worker max_text_bytes must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->has_max_text_bytes &&
+      vectis_lonejson_i64_exceeds_size(request->max_text_bytes)) {
+    vectis_sus_worker_request_json_cleanup_lonejson(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker max_text_bytes is too large");
     return VECTIS_ERR_INVALID;
   }
   if (strcmp(event->kind, VECTIS_SUS_WORKER_TRANSCRIBE_PCM_KIND) == 0) {
@@ -8015,6 +8411,10 @@ vectis_sus_worker_run_pcm(vectis_sus_worker_service_context *ctx,
                      "SUS worker PCM context is required");
     return VECTIS_ERR_INVALID;
   }
+  if (ctx->model == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "SUS worker model is not open");
+    return VECTIS_ERR_STATE;
+  }
   if (request->frames.count > (ctx->max_frames > 0u
                                    ? ctx->max_frames
                                    : VECTIS_SUS_WORKER_DEFAULT_MAX_FRAMES)) {
@@ -8036,16 +8436,11 @@ vectis_sus_worker_run_pcm(vectis_sus_worker_service_context *ctx,
   for (i = 0u; i < request->frames.count; ++i) {
     frames[i] = (float)request->frames.items[i];
   }
-  sus = NULL;
-  if (vectis_sus_worker_open_model(ctx, &sus, error) != VECTIS_OK) {
-    free(frames);
-    return error != NULL ? error->code : VECTIS_ERR_STATE;
-  }
   vectis_sus_worker_transcriber_config(&transcriber_config, request);
   transcriber = NULL;
+  sus = ctx->model;
   result = sus->create_transcriber(sus, &transcriber, &transcriber_config);
   if (result != CPKT_SUS_OK) {
-    sus->destroy(sus);
     free(frames);
     return vectis_sus_worker_cpkt_error(
         error, result, "failed to create SUS worker transcriber");
@@ -8054,7 +8449,6 @@ vectis_sus_worker_run_pcm(vectis_sus_worker_service_context *ctx,
   result = transcriber->transcribe_f32_mono_16k_text(
       transcriber, frames, (unsigned long)request->frames.count, &text);
   transcriber->destroy(transcriber);
-  sus->destroy(sus);
   free(frames);
   if (result != CPKT_SUS_OK) {
     if (text != NULL) {
@@ -8103,6 +8497,10 @@ vectis_sus_worker_run_file(vectis_sus_worker_service_context *ctx,
                      "SUS worker file context is required");
     return VECTIS_ERR_INVALID;
   }
+  if (ctx->model == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "SUS worker model is not open");
+    return VECTIS_ERR_STATE;
+  }
   if (!vectis_audio_worker_encoding_from_string(request->encoding, &encoding)) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "SUS worker file encoding is invalid");
@@ -8117,16 +8515,11 @@ vectis_sus_worker_run_file(vectis_sus_worker_service_context *ctx,
     return vectis_audio_worker_cpkt_error(
         error, audio_result, "failed to open SUS worker audio file");
   }
-  sus = NULL;
-  if (vectis_sus_worker_open_model(ctx, &sus, error) != VECTIS_OK) {
-    decoder->destroy(decoder);
-    return error != NULL ? error->code : VECTIS_ERR_STATE;
-  }
   vectis_sus_worker_transcriber_config(&transcriber_config, request);
   transcriber = NULL;
+  sus = ctx->model;
   sus_result = sus->create_transcriber(sus, &transcriber, &transcriber_config);
   if (sus_result != CPKT_SUS_OK) {
-    sus->destroy(sus);
     decoder->destroy(decoder);
     return vectis_sus_worker_cpkt_error(
         error, sus_result, "failed to create SUS worker transcriber");
@@ -8136,7 +8529,6 @@ vectis_sus_worker_run_file(vectis_sus_worker_service_context *ctx,
   sus_result = transcriber->transcribe_audio_decoder_segmented_text(
       transcriber, decoder, &segmented_config, &text);
   transcriber->destroy(transcriber);
-  sus->destroy(sus);
   decoder->destroy(decoder);
   if (sus_result != CPKT_SUS_OK) {
     if (text != NULL) {
@@ -8203,6 +8595,10 @@ vectis_sus_worker_process_event(vectis_sus_worker_service_context *ctx,
     reply_status = vectis_sus_worker_reply_error(
         ctx, event, &transfer_error, status, transfer_error.message, error);
     vectis_sus_worker_request_json_cleanup_lonejson(&request);
+    if (vectis_worker_reply_was_rejected(reply_status, error)) {
+      vectis_error_clear(error);
+      return VECTIS_OK;
+    }
     if (reply_status != VECTIS_OK) {
       return reply_status;
     }
@@ -8222,6 +8618,10 @@ vectis_sus_worker_process_event(vectis_sus_worker_service_context *ctx,
     vectis_sus_worker_reply_json_cleanup_malloc(&reply_json);
     vectis_sus_worker_request_json_cleanup_lonejson(&request);
     if (reply_status != VECTIS_OK) {
+      if (vectis_worker_reply_was_rejected(reply_status, error)) {
+        vectis_error_clear(error);
+        return VECTIS_OK;
+      }
       return reply_status;
     }
   } else {
@@ -8235,12 +8635,22 @@ vectis_sus_worker_process_event(vectis_sus_worker_service_context *ctx,
 static vectis_status vectis_sus_worker_service_start(void *context,
                                                      vectis_error *error) {
   vectis_sus_worker_service_context *ctx;
+  cpkt_sus *model;
+  vectis_status status;
 
   ctx = (vectis_sus_worker_service_context *)context;
   if (ctx == NULL || ctx->request_mailbox == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "SUS worker service requires request mailbox");
     return VECTIS_ERR_INVALID;
+  }
+  if (ctx->model == NULL) {
+    model = NULL;
+    status = vectis_sus_worker_open_model(ctx, &model, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    ctx->model = model;
   }
   (void)pthread_mutex_lock(&ctx->mutex);
   ctx->stopping = 0;
@@ -8262,6 +8672,7 @@ static vectis_status vectis_sus_worker_service_stop(void *context,
   (void)pthread_mutex_lock(&ctx->mutex);
   ctx->stopping = 1;
   (void)pthread_mutex_unlock(&ctx->mutex);
+  vectis_mailbox_interrupt(ctx->request_mailbox);
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -8273,6 +8684,7 @@ static vectis_status vectis_sus_worker_service_wait(void *context,
   vectis_error local_error;
   vectis_status status;
   long poll_timeout_ms;
+  unsigned long mailbox_interrupt_generation;
 
   ctx = (vectis_sus_worker_service_context *)context;
   if (ctx == NULL || ctx->request_mailbox == NULL) {
@@ -8283,11 +8695,13 @@ static vectis_status vectis_sus_worker_service_wait(void *context,
   poll_timeout_ms = ctx->poll_timeout_ms > 0L
                         ? ctx->poll_timeout_ms
                         : VECTIS_SUS_WORKER_DEFAULT_POLL_TIMEOUT_MS;
+  mailbox_interrupt_generation = 0ul;
   while (!vectis_sus_worker_service_is_stopping(ctx)) {
     vectis_mailbox_event_init(&event);
     vectis_error_clear(&local_error);
-    status = ctx->request_mailbox->wait_next(ctx->request_mailbox, &event,
-                                             poll_timeout_ms, &local_error);
+    status = vectis_mailbox_wait_next_interruptible(
+        ctx->request_mailbox, &event, poll_timeout_ms,
+        &mailbox_interrupt_generation, &local_error);
     if (status == VECTIS_ERR_TIMEOUT) {
       continue;
     }
@@ -8322,6 +8736,10 @@ static void vectis_sus_worker_service_cleanup(void *context) {
     return;
   }
   (void)vectis_sus_worker_service_stop(ctx, NULL);
+  if (ctx->model != NULL) {
+    ctx->model->destroy(ctx->model);
+    ctx->model = NULL;
+  }
   (void)pthread_mutex_destroy(&ctx->mutex);
   free(ctx->model_path);
   free(ctx->cached_model);
@@ -8331,13 +8749,59 @@ static void vectis_sus_worker_service_cleanup(void *context) {
   free(ctx);
 }
 
-static vectis_status vectis_app_stop_managed_services(vectis_app_impl *impl,
-                                                      vectis_error *error) {
+static vectis_status
+vectis_app_request_stop_managed_services(vectis_app_impl *impl,
+                                         vectis_error *error) {
+  vectis_managed_service_impl *service;
+  vectis_error local_error;
+  vectis_status first_status;
+  vectis_status status;
+  int should_stop;
+
+  if (error != NULL) {
+    vectis_error_clear(error);
+  }
+  first_status = VECTIS_OK;
+  if (impl == NULL) {
+    return VECTIS_OK;
+  }
+  for (service = impl->managed_services; service != NULL;
+       service = service->next_owned) {
+    (void)pthread_mutex_lock(&impl->mutex);
+    should_stop = service->started && !service->stop_requested &&
+                  service->stop_fn != NULL;
+    service->stop_requested = 1;
+    (void)pthread_mutex_unlock(&impl->mutex);
+    if (!should_stop) {
+      continue;
+    }
+    vectis_error_clear(&local_error);
+    status = service->stop_fn(service->context, &local_error);
+    if (status != VECTIS_OK && first_status == VECTIS_OK) {
+      vectis_managed_service_log_failure(
+          service, "vectis.managed_service.stop_failed", status, &local_error);
+      first_status = status;
+      if (error != NULL) {
+        *error = local_error;
+      }
+    }
+  }
+  return first_status;
+}
+
+static vectis_status
+vectis_app_stop_managed_services(vectis_app_impl *impl,
+                                 const struct timespec *shutdown_deadline,
+                                 vectis_error *error) {
   vectis_managed_service_impl *service;
   vectis_error local_error;
   vectis_status first_status;
   vectis_status status;
   int was_active;
+  int should_stop;
+  int monitor_failed;
+  long timeout_ms;
+  vectis_error monitor_error;
 
   if (error != NULL) {
     vectis_error_clear(error);
@@ -8348,9 +8812,13 @@ static vectis_status vectis_app_stop_managed_services(vectis_app_impl *impl,
   }
   for (service = impl->managed_services; service != NULL;
        service = service->next_owned) {
+    (void)pthread_mutex_lock(&impl->mutex);
     was_active = service->started || service->monitor_active;
+    should_stop = service->started && !service->stop_requested &&
+                  service->stop_fn != NULL;
     service->stop_requested = 1;
-    if (service->started && service->stop_fn != NULL) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    if (should_stop) {
       vectis_error_clear(&local_error);
       status = service->stop_fn(service->context, &local_error);
       if (status != VECTIS_OK && first_status == VECTIS_OK) {
@@ -8364,7 +8832,9 @@ static vectis_status vectis_app_stop_managed_services(vectis_app_impl *impl,
       }
     }
     vectis_error_clear(&local_error);
-    status = vectis_managed_service_join_monitor(service, &local_error);
+    timeout_ms = vectis_shutdown_phase_timeout_ms(impl, shutdown_deadline);
+    status = vectis_managed_service_join_monitor_deadline(service, timeout_ms,
+                                                          &local_error);
     if (status != VECTIS_OK && first_status == VECTIS_OK) {
       vectis_managed_service_log_failure(
           service, "vectis.managed_service.stop_failed", status, &local_error);
@@ -8373,15 +8843,22 @@ static vectis_status vectis_app_stop_managed_services(vectis_app_impl *impl,
         *error = local_error;
       }
     }
-    if (service->monitor_done && service->failed &&
-        impl->service_failure_policy != VECTIS_SERVICE_FAILURE_CONTINUE &&
-        first_status == VECTIS_OK) {
+    (void)pthread_mutex_lock(&impl->mutex);
+    monitor_failed =
+        service->monitor_done && service->failed &&
+        impl->service_failure_policy != VECTIS_SERVICE_FAILURE_CONTINUE;
+    monitor_error = service->monitor_error;
+    if (status == VECTIS_OK || service->monitor_done) {
+      service->started = 0;
+      service->materialized = 0;
+    }
+    (void)pthread_mutex_unlock(&impl->mutex);
+    if (monitor_failed && first_status == VECTIS_OK) {
       if (error != NULL) {
-        *error = service->monitor_error;
+        *error = monitor_error;
       }
       first_status = error != NULL ? error->code : VECTIS_ERR_STATE;
     }
-    service->started = 0;
     if (was_active && first_status == VECTIS_OK) {
       vectis_managed_service_log_stopped(service);
     }
@@ -8396,7 +8873,20 @@ static vectis_status vectis_app_stop_managed_services(vectis_app_impl *impl,
 static vectis_status
 vectis_consumer_service_join_monitor(vectis_consumer_service_impl *service,
                                      vectis_error *error) {
-  if (service == NULL || !service->monitor_active || service->monitor_joined) {
+  int should_join;
+
+  if (service == NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (service->owner != NULL) {
+    (void)pthread_mutex_lock(&service->owner->mutex);
+  }
+  should_join = service->monitor_active && !service->monitor_joined;
+  if (service->owner != NULL) {
+    (void)pthread_mutex_unlock(&service->owner->mutex);
+  }
+  if (!should_join) {
     vectis_error_clear(error);
     return VECTIS_OK;
   }
@@ -8405,8 +8895,69 @@ vectis_consumer_service_join_monitor(vectis_consumer_service_impl *service,
                      "failed to join consumer service monitor");
     return VECTIS_ERR_STATE;
   }
+  if (service->owner != NULL) {
+    (void)pthread_mutex_lock(&service->owner->mutex);
+  }
   service->monitor_joined = 1;
   service->monitor_active = 0;
+  if (service->owner != NULL) {
+    (void)pthread_mutex_unlock(&service->owner->mutex);
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_consumer_service_join_monitor_deadline(
+    vectis_consumer_service_impl *service, long timeout_ms,
+    vectis_error *error) {
+  vectis_app_impl *owner;
+  struct timespec deadline;
+  int should_join;
+  int timed_out;
+  int rc;
+
+  if (service == NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  owner = service->owner;
+  if (owner == NULL) {
+    return vectis_consumer_service_join_monitor(service, error);
+  }
+  vectis_deadline_after_ms(
+      &deadline,
+      timeout_ms > 0L ? timeout_ms : VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS);
+  timed_out = 0;
+  (void)pthread_mutex_lock(&owner->mutex);
+  while (service->monitor_active && !service->monitor_joined &&
+         !service->monitor_done && !timed_out) {
+    rc = pthread_cond_timedwait(&owner->service_cond, &owner->mutex, &deadline);
+    if (rc == ETIMEDOUT) {
+      timed_out = 1;
+    }
+  }
+  if (service->monitor_active && !service->monitor_joined &&
+      !service->monitor_done) {
+    (void)pthread_mutex_unlock(&owner->mutex);
+    vectis_set_error(error, VECTIS_ERR_TIMEOUT,
+                     "consumer service did not stop before shutdown grace");
+    return VECTIS_ERR_TIMEOUT;
+  }
+  should_join = service->monitor_active && !service->monitor_joined;
+  (void)pthread_mutex_unlock(&owner->mutex);
+  if (!should_join) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (pthread_join(service->monitor_thread, NULL) != 0) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to join consumer service monitor");
+    return VECTIS_ERR_STATE;
+  }
+  (void)pthread_mutex_lock(&owner->mutex);
+  service->monitor_joined = 1;
+  service->monitor_active = 0;
+  (void)pthread_mutex_unlock(&owner->mutex);
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -8421,7 +8972,8 @@ vectis_consumer_service_monitor_status(vectis_consumer_service_impl *service,
     return status;
   }
   if (service != NULL && service->monitor_done &&
-      service->monitor_rc != LC_OK) {
+      (service->monitor_rc != LC_OK ||
+       service->monitor_error.code != VECTIS_OK)) {
     if (error != NULL) {
       *error = service->monitor_error;
     }
@@ -8436,6 +8988,7 @@ static void *vectis_consumer_service_monitor_main(void *userdata) {
   vectis_consumer_service_impl *service;
   vectis_error terminal_error;
   lc_error lcerr;
+  int unexpected;
   int rc;
 
   service = (vectis_consumer_service_impl *)userdata;
@@ -8450,20 +9003,32 @@ static void *vectis_consumer_service_monitor_main(void *userdata) {
                                   "lockd consumer service wait failed");
   }
   lc_error_cleanup(&lcerr);
+  unexpected = 0;
   if (service->owner != NULL) {
     (void)pthread_mutex_lock(&service->owner->mutex);
+    unexpected = !service->stop_requested;
+    if (unexpected && rc == LC_OK) {
+      vectis_set_error(&terminal_error, VECTIS_ERR_STATE,
+                       "consumer service exited unexpectedly");
+    }
     service->monitor_rc = rc;
     service->monitor_error = terminal_error;
     service->monitor_done = 1;
     service->started = 0;
+    (void)pthread_cond_broadcast(&service->owner->service_cond);
     (void)pthread_mutex_unlock(&service->owner->mutex);
   } else {
+    unexpected = !service->stop_requested;
+    if (unexpected && rc == LC_OK) {
+      vectis_set_error(&terminal_error, VECTIS_ERR_STATE,
+                       "consumer service exited unexpectedly");
+    }
     service->monitor_rc = rc;
     service->monitor_error = terminal_error;
     service->monitor_done = 1;
     service->started = 0;
   }
-  if (rc != LC_OK) {
+  if (unexpected) {
     vectis_app_notify_consumer_service_failure(service, &terminal_error);
   }
   return NULL;
@@ -8472,9 +9037,18 @@ static void *vectis_consumer_service_monitor_main(void *userdata) {
 static vectis_status
 vectis_consumer_service_monitor_start(vectis_consumer_service_impl *service,
                                       vectis_error *error) {
+  vectis_status status;
+
   if (service == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
     return VECTIS_ERR_INVALID;
+  }
+  if (service->monitor_active && !service->monitor_joined &&
+      service->monitor_done) {
+    status = vectis_consumer_service_join_monitor(service, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
   }
   if (service->monitor_active && !service->monitor_joined) {
     vectis_error_clear(error);
@@ -8495,13 +9069,61 @@ vectis_consumer_service_monitor_start(vectis_consumer_service_impl *service,
   return VECTIS_OK;
 }
 
-static vectis_status vectis_app_stop_consumer_services(vectis_app_impl *impl,
-                                                       vectis_error *error) {
+static vectis_status
+vectis_app_request_stop_consumer_services(vectis_app_impl *impl,
+                                          vectis_error *error) {
+  vectis_consumer_service_impl *service;
+  vectis_error local_error;
+  vectis_status first_status;
+  int should_stop;
+  int rc;
+
+  if (error != NULL) {
+    vectis_error_clear(error);
+  }
+  first_status = VECTIS_OK;
+  if (impl == NULL) {
+    return VECTIS_OK;
+  }
+  for (service = impl->consumer_services; service != NULL;
+       service = service->next_owned) {
+    (void)pthread_mutex_lock(&impl->mutex);
+    should_stop = service->started && !service->stop_requested &&
+                  service->service != NULL;
+    service->stop_requested = 1;
+    (void)pthread_mutex_unlock(&impl->mutex);
+    if (!should_stop) {
+      continue;
+    }
+    rc = service->service->stop(service->service);
+    if (rc != LC_OK && first_status == VECTIS_OK) {
+      vectis_set_error(&local_error, VECTIS_ERR_STATE,
+                       "lockd consumer service stop failed");
+      local_error.source = VECTIS_ERROR_SOURCE_LOCKDC;
+      local_error.dependency_code = (long)rc;
+      first_status = VECTIS_ERR_STATE;
+      if (error != NULL) {
+        *error = local_error;
+      }
+    }
+  }
+  return first_status;
+}
+
+static vectis_status
+vectis_app_stop_consumer_services(vectis_app_impl *impl,
+                                  const struct timespec *shutdown_deadline,
+                                  vectis_error *error) {
   vectis_consumer_service_impl *service;
   vectis_error local_error;
   vectis_status first_status;
   vectis_status status;
   int rc;
+  int should_stop;
+  int should_dematerialize;
+  int monitor_failed;
+  long timeout_ms;
+  vectis_error monitor_error;
 
   if (error != NULL) {
     vectis_error_clear(error);
@@ -8515,8 +9137,11 @@ static vectis_status vectis_app_stop_consumer_services(vectis_app_impl *impl,
     if (service->service == NULL) {
       continue;
     }
+    (void)pthread_mutex_lock(&impl->mutex);
+    should_stop = service->started && !service->stop_requested;
     service->stop_requested = 1;
-    if (service->started) {
+    (void)pthread_mutex_unlock(&impl->mutex);
+    if (should_stop) {
       rc = service->service->stop(service->service);
       if (rc != LC_OK && first_status == VECTIS_OK) {
         vectis_set_error(&local_error, VECTIS_ERR_STATE,
@@ -8530,22 +9155,36 @@ static vectis_status vectis_app_stop_consumer_services(vectis_app_impl *impl,
       }
     }
     vectis_error_clear(&local_error);
-    status = vectis_consumer_service_join_monitor(service, &local_error);
+    timeout_ms = vectis_shutdown_phase_timeout_ms(impl, shutdown_deadline);
+    status = vectis_consumer_service_join_monitor_deadline(service, timeout_ms,
+                                                           &local_error);
     if (status != VECTIS_OK && first_status == VECTIS_OK) {
       first_status = status;
       if (error != NULL) {
         *error = local_error;
       }
     }
-    if (service->monitor_done && service->monitor_rc != LC_OK &&
-        impl->service_failure_policy != VECTIS_SERVICE_FAILURE_CONTINUE &&
-        first_status == VECTIS_OK) {
+    (void)pthread_mutex_lock(&impl->mutex);
+    monitor_failed =
+        service->monitor_done &&
+        (service->monitor_rc != LC_OK ||
+         service->monitor_error.code != VECTIS_OK) &&
+        impl->service_failure_policy != VECTIS_SERVICE_FAILURE_CONTINUE;
+    monitor_error = service->monitor_error;
+    if (status == VECTIS_OK || service->monitor_done) {
+      service->started = 0;
+    }
+    should_dematerialize = !service->started && service->monitor_done;
+    (void)pthread_mutex_unlock(&impl->mutex);
+    if (should_dematerialize) {
+      vectis_consumer_service_dematerialize(service);
+    }
+    if (monitor_failed && first_status == VECTIS_OK) {
       if (error != NULL) {
-        *error = service->monitor_error;
+        *error = monitor_error;
       }
       first_status = error != NULL ? error->code : VECTIS_ERR_STATE;
     }
-    service->started = 0;
     if (service->owner != NULL) {
       vectis_app_record_lifecycle_sequence(
           service->owner, &service->owner->consumer_stop_sequence);
@@ -8736,8 +9375,22 @@ vectis_consumer_service_materialize(vectis_consumer_service_impl *impl,
   lc_error_cleanup(&lcerr);
   impl->service_pid = getpid();
   impl->materialized = 1;
+  impl->materialized_once = 1;
   vectis_error_clear(error);
   return VECTIS_OK;
+}
+
+static void
+vectis_consumer_service_dematerialize(vectis_consumer_service_impl *impl) {
+  if (impl == NULL) {
+    return;
+  }
+  if (impl->service != NULL) {
+    impl->service->close(impl->service);
+    impl->service = NULL;
+  }
+  impl->service_pid = 0;
+  impl->materialized = 0;
 }
 
 static vectis_status
@@ -8954,7 +9607,25 @@ vectis_app_has_materialized_consumer_services(const vectis_app_impl *impl) {
   }
   for (service = impl->consumer_services; service != NULL;
        service = service->next_owned) {
-    if (service->materialized || service->started || service->service != NULL) {
+    if (service->materialized_once || service->materialized ||
+        service->started || service->service != NULL) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int
+vectis_app_has_active_consumer_service_handles(const vectis_app_impl *impl) {
+  const vectis_consumer_service_impl *service;
+
+  if (impl == NULL) {
+    return 0;
+  }
+  for (service = impl->consumer_services; service != NULL;
+       service = service->next_owned) {
+    if (service->materialized || service->started || service->monitor_active ||
+        service->service != NULL) {
       return 1;
     }
   }
@@ -8970,7 +9641,24 @@ vectis_app_has_materialized_managed_services(const vectis_app_impl *impl) {
   }
   for (service = impl->managed_services; service != NULL;
        service = service->next_owned) {
-    if (service->materialized || service->started) {
+    if (service->materialized_once || service->materialized ||
+        service->started) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int
+vectis_app_has_active_managed_service_handles(const vectis_app_impl *impl) {
+  const vectis_managed_service_impl *service;
+
+  if (impl == NULL) {
+    return 0;
+  }
+  for (service = impl->managed_services; service != NULL;
+       service = service->next_owned) {
+    if (service->materialized || service->started || service->monitor_active) {
       return 1;
     }
   }
@@ -9030,9 +9718,11 @@ static void vectis_app_close_consumer_services(vectis_app_impl *impl) {
     return;
   }
   vectis_error_clear(&error);
-  (void)vectis_app_stop_consumer_services(impl, &error);
+  (void)vectis_app_stop_consumer_services(impl, NULL, &error);
   for (service = impl->consumer_services; service != NULL;
        service = service->next_owned) {
+    vectis_error_clear(&error);
+    (void)vectis_consumer_service_join_monitor(service, &error);
     if (service->service != NULL) {
       service->service->close(service->service);
       service->service = NULL;
@@ -9040,6 +9730,7 @@ static void vectis_app_close_consumer_services(vectis_app_impl *impl) {
     service->materialized = 0;
     service->service_pid = 0;
     service->owner = NULL;
+    service->detached = 1;
   }
   impl->consumer_services = NULL;
 }
@@ -9052,12 +9743,16 @@ static void vectis_app_close_managed_services(vectis_app_impl *impl) {
     return;
   }
   vectis_error_clear(&error);
-  (void)vectis_app_stop_managed_services(impl, &error);
+  (void)vectis_app_stop_managed_services(impl, NULL, &error);
   for (service = impl->managed_services; service != NULL;
        service = service->next_owned) {
+    vectis_error_clear(&error);
+    (void)vectis_managed_service_join_monitor(service, &error);
     service->owner = NULL;
+    service->logger = NULL;
     service->started = 0;
     service->materialized = 0;
+    service->detached = 1;
   }
   impl->managed_services = NULL;
 }
@@ -9158,6 +9853,8 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
     impl->logger->destroy(impl->logger);
   }
 
+  (void)pthread_mutex_destroy(&impl->service_control_write_mutex);
+  (void)pthread_cond_destroy(&impl->service_cond);
   (void)pthread_mutex_destroy(&impl->mutex);
   free(impl);
 }
@@ -9243,8 +9940,8 @@ vectis_validate_server_config(const vectis_server_config *config,
                      "server max_request_header_bytes must be at least 1024");
     return VECTIS_ERR_INVALID;
   }
-  if (effective.request_body_spool_dir == NULL ||
-      effective.request_body_spool_dir[0] == '\0') {
+  if (config != NULL && config->request_body_spool_dir != NULL &&
+      config->request_body_spool_dir[0] == '\0') {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "server request_body_spool_dir must not be empty");
     return VECTIS_ERR_INVALID;
@@ -9429,11 +10126,31 @@ static vectis_status vectis_process_thread_count(size_t *out,
 #endif
 }
 
+static int64_t vectis_monotonic_millis(void) {
+  struct timespec ts;
+
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+    return -1;
+  }
+  return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000L);
+}
+
+static void vectis_sleep_quiescence_probe(void) {
+  struct timespec delay;
+
+  delay.tv_sec = 0;
+  delay.tv_nsec = 5000000L;
+  while (nanosleep(&delay, &delay) != 0 && errno == EINTR) {
+  }
+}
+
 static vectis_status
 vectis_app_validate_quiescent_for_kore(const vectis_app_impl *impl,
                                        vectis_error *error) {
   size_t thread_count;
   vectis_status status;
+  int64_t deadline_ms;
+  int64_t now_ms;
 
   if (impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
@@ -9446,37 +10163,52 @@ vectis_app_validate_quiescent_for_kore(const vectis_app_impl *impl,
                      "the runtime materialize them");
     return VECTIS_ERR_STATE;
   }
-  if (vectis_app_has_materialized_consumer_services(impl)) {
+  if (vectis_app_has_active_consumer_service_handles(impl)) {
     vectis_set_error(error, VECTIS_ERR_STATE,
                      "route-backed app cannot start after a consumer service "
                      "was materialized; declare the service before start");
     return VECTIS_ERR_STATE;
   }
-  if (vectis_app_has_materialized_managed_services(impl)) {
+  if (vectis_app_has_active_managed_service_handles(impl)) {
     vectis_set_error(error, VECTIS_ERR_STATE,
                      "route-backed app cannot start after a managed service "
                      "was materialized; declare the service before start");
     return VECTIS_ERR_STATE;
   }
-  status = vectis_process_thread_count(&thread_count, error);
-  if (status != VECTIS_OK) {
-    if (status == VECTIS_ERR_NOT_IMPLEMENTED &&
-        impl->quiescence_policy == VECTIS_QUIESCENCE_WARN_UNAVAILABLE) {
-      if (impl->logger != NULL) {
-        impl->logger->warnf(impl->logger,
-                            "vectis quiescence thread inspection unavailable",
-                            "policy=%s", "warn_unavailable");
+  deadline_ms = vectis_monotonic_millis();
+  if (deadline_ms >= 0) {
+    deadline_ms += 250;
+  }
+  do {
+    status = vectis_process_thread_count(&thread_count, error);
+    if (status != VECTIS_OK) {
+      if (status == VECTIS_ERR_NOT_IMPLEMENTED &&
+          impl->quiescence_policy == VECTIS_QUIESCENCE_WARN_UNAVAILABLE) {
+        if (impl->logger != NULL) {
+          impl->logger->warnf(impl->logger,
+                              "vectis quiescence thread inspection unavailable",
+                              "policy=%s", "warn_unavailable");
+        }
+        vectis_error_clear(error);
+        return VECTIS_OK;
       }
+      return status;
+    }
+    if (thread_count <= 1u) {
       vectis_error_clear(error);
       return VECTIS_OK;
     }
-    return status;
-  }
+    now_ms = vectis_monotonic_millis();
+    if (deadline_ms < 0 || now_ms < 0 || now_ms >= deadline_ms) {
+      break;
+    }
+    vectis_sleep_quiescence_probe();
+  } while (1);
   if (thread_count > 1u) {
     vectis_set_errorf(error, VECTIS_ERR_STATE,
-                      "route-backed app requires a single-threaded "
+                      "route-backed app requires a quiescent single-threaded "
                       "declaration process before Kore starts; observed %lu "
-                      "threads",
+                      "threads after waiting for service teardown",
                       (unsigned long)thread_count);
     return VECTIS_ERR_STATE;
   }
@@ -9582,6 +10314,12 @@ vectis_status vectis_app_cai_client(vectis_app *app, cai_client **out,
   }
   impl = (vectis_app_impl *)app->impl;
   if (impl->borrowed_cai_client != NULL) {
+    if (impl->borrowed_cai_client_pid != getpid()) {
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "borrowed CAI client cannot be used across a process "
+                       "boundary");
+      return VECTIS_ERR_STATE;
+    }
     *out = impl->borrowed_cai_client;
     vectis_error_clear(error);
     return VECTIS_OK;
@@ -9776,6 +10514,23 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
     vectis_set_error(error, VECTIS_ERR_STATE, "failed to initialize app mutex");
     return NULL;
   }
+  if (pthread_cond_init(&impl->service_cond, NULL) != 0) {
+    (void)pthread_mutex_destroy(&impl->mutex);
+    free(app);
+    free(impl);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to initialize app service condition");
+    return NULL;
+  }
+  if (pthread_mutex_init(&impl->service_control_write_mutex, NULL) != 0) {
+    (void)pthread_cond_destroy(&impl->service_cond);
+    (void)pthread_mutex_destroy(&impl->mutex);
+    free(app);
+    free(impl);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to initialize app service control mutex");
+    return NULL;
+  }
   impl->kore_child_control_fd = -1;
   impl->service_control_read_fd = -1;
   impl->service_control_write_fd = -1;
@@ -9810,7 +10565,9 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   impl->acme_directory_url = vectis_strdup(effective->tls.acme_directory_url);
   impl->acme_state_dir = vectis_strdup(effective->tls.acme_state_dir);
   impl->request_body_spool_dir =
-      vectis_strdup(effective_server.request_body_spool_dir);
+      effective_server.request_body_spool_dir != NULL
+          ? vectis_strdup(effective_server.request_body_spool_dir)
+          : vectis_default_request_body_spool_dir(error);
   impl->unix_socket_path = vectis_strdup(effective->lockd.unix_socket_path);
   impl->client_bundle_path = vectis_strdup(vectis_source_path_or_old(
       &effective->lockd.client_bundle, effective->lockd.client_bundle_path));
@@ -10125,6 +10882,7 @@ static void vectis_app_service_control_close(vectis_app_impl *impl) {
   if (impl == NULL) {
     return;
   }
+  (void)pthread_mutex_lock(&impl->service_control_write_mutex);
   (void)pthread_mutex_lock(&impl->mutex);
   read_fd = impl->service_control_read_fd;
   write_fd = impl->service_control_write_fd;
@@ -10133,6 +10891,26 @@ static void vectis_app_service_control_close(vectis_app_impl *impl) {
   (void)pthread_mutex_unlock(&impl->mutex);
   vectis_close_fd_if_open(&read_fd);
   vectis_close_fd_if_open(&write_fd);
+  (void)pthread_mutex_unlock(&impl->service_control_write_mutex);
+}
+
+static void vectis_app_service_control_write_frame(
+    vectis_app_impl *impl, vectis_runtime_control_type frame_type,
+    const void *payload, size_t payload_size) {
+  int fd;
+
+  if (impl == NULL) {
+    return;
+  }
+  (void)pthread_mutex_lock(&impl->service_control_write_mutex);
+  (void)pthread_mutex_lock(&impl->mutex);
+  fd = impl->service_control_write_fd;
+  (void)pthread_mutex_unlock(&impl->mutex);
+  if (fd >= 0) {
+    (void)vectis_internal_runtime_control_write(fd, frame_type, payload,
+                                                payload_size, NULL);
+  }
+  (void)pthread_mutex_unlock(&impl->service_control_write_mutex);
 }
 
 static void vectis_app_notify_consumer_service_failure(
@@ -10140,7 +10918,6 @@ static void vectis_app_notify_consumer_service_failure(
   vectis_app_impl *owner;
   const char *message;
   size_t message_size;
-  int fd;
   int should_notify;
 
   if (service == NULL || service->owner == NULL) {
@@ -10156,15 +10933,14 @@ static void vectis_app_notify_consumer_service_failure(
   }
 
   (void)pthread_mutex_lock(&owner->mutex);
-  fd = owner->service_control_write_fd;
-  should_notify = fd >= 0 && service->monitor_done &&
-                  service->monitor_rc != LC_OK && !service->stop_requested;
+  should_notify = owner->service_control_write_fd >= 0 &&
+                  service->monitor_done && !service->stop_requested;
   (void)pthread_mutex_unlock(&owner->mutex);
   if (!should_notify) {
     return;
   }
-  (void)vectis_internal_runtime_control_write(
-      fd, VECTIS_RUNTIME_CONTROL_SERVICE_FAILURE, message, message_size, NULL);
+  vectis_app_service_control_write_frame(
+      owner, VECTIS_RUNTIME_CONTROL_SERVICE_FAILURE, message, message_size);
 }
 
 static void
@@ -10173,7 +10949,6 @@ vectis_app_notify_managed_service_failure(vectis_managed_service_impl *service,
   vectis_app_impl *owner;
   const char *message;
   size_t message_size;
-  int fd;
   int should_notify;
 
   if (service == NULL || service->owner == NULL) {
@@ -10189,15 +10964,15 @@ vectis_app_notify_managed_service_failure(vectis_managed_service_impl *service,
   }
 
   (void)pthread_mutex_lock(&owner->mutex);
-  fd = owner->service_control_write_fd;
-  should_notify = fd >= 0 && service->monitor_done && service->failed &&
+  should_notify = owner->service_control_write_fd >= 0 &&
+                  service->monitor_done && service->failed &&
                   !service->stop_requested;
   (void)pthread_mutex_unlock(&owner->mutex);
   if (!should_notify) {
     return;
   }
-  (void)vectis_internal_runtime_control_write(
-      fd, VECTIS_RUNTIME_CONTROL_SERVICE_FAILURE, message, message_size, NULL);
+  vectis_app_service_control_write_frame(
+      owner, VECTIS_RUNTIME_CONTROL_SERVICE_FAILURE, message, message_size);
 }
 
 static vectis_status vectis_app_read_service_control(vectis_app_impl *impl,
@@ -10477,6 +11252,7 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
         _exit(1);
       }
       vectis_close_fd_if_open(&control_fds[0]);
+      impl->started = 1;
       status = vectis_internal_kore_run(&kore_config, NULL);
       _exit(status == VECTIS_OK ? 0 : 1);
     }
@@ -10599,6 +11375,8 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
   vectis_status status;
   vectis_error first_error;
   vectis_error local_error;
+  struct timespec shutdown_deadline;
+  long phase_timeout_ms;
 
   if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
@@ -10607,6 +11385,10 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
   impl = (vectis_app_impl *)app->impl;
   first_status = VECTIS_OK;
   vectis_error_clear(&first_error);
+  vectis_deadline_after_ms(&shutdown_deadline,
+                           impl->shutdown_grace_ms > 0L
+                               ? impl->shutdown_grace_ms
+                               : VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS);
 
   (void)pthread_mutex_lock(&impl->mutex);
   if (!impl->started) {
@@ -10627,9 +11409,23 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
   (void)pthread_mutex_unlock(&impl->mutex);
 
   vectis_error_clear(&local_error);
+  status = vectis_app_request_stop_consumer_services(impl, &local_error);
+  if (status != VECTIS_OK && first_status == VECTIS_OK) {
+    first_status = status;
+    first_error = local_error;
+  }
+  vectis_error_clear(&local_error);
+  status = vectis_app_request_stop_managed_services(impl, &local_error);
+  if (status != VECTIS_OK && first_status == VECTIS_OK) {
+    first_status = status;
+    first_error = local_error;
+  }
+  vectis_error_clear(&local_error);
   if (child_pid > 0) {
-    status = vectis_app_stop_kore_child(child_pid, control_fd,
-                                        impl->shutdown_grace_ms, &local_error);
+    phase_timeout_ms =
+        vectis_shutdown_phase_timeout_ms(impl, &shutdown_deadline);
+    status = vectis_app_stop_kore_child(child_pid, control_fd, phase_timeout_ms,
+                                        &local_error);
     if (status != VECTIS_OK && first_status == VECTIS_OK) {
       first_status = status;
       first_error = local_error;
@@ -10647,18 +11443,25 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
   }
 
   vectis_error_clear(&local_error);
-  status = vectis_app_stop_consumer_services(impl, &local_error);
+  status =
+      vectis_app_stop_consumer_services(impl, &shutdown_deadline, &local_error);
   if (status != VECTIS_OK && first_status == VECTIS_OK) {
     first_status = status;
     first_error = local_error;
   }
   vectis_error_clear(&local_error);
-  status = vectis_app_stop_managed_services(impl, &local_error);
+  status =
+      vectis_app_stop_managed_services(impl, &shutdown_deadline, &local_error);
   if (status != VECTIS_OK && first_status == VECTIS_OK) {
     first_status = status;
     first_error = local_error;
   }
-  vectis_metrics_worker_stop(app);
+  vectis_error_clear(&local_error);
+  status = vectis_metrics_worker_stop(app, &shutdown_deadline, &local_error);
+  if (status != VECTIS_OK && first_status == VECTIS_OK) {
+    first_status = status;
+    first_error = local_error;
+  }
   vectis_app_service_control_close(impl);
 
   (void)pthread_mutex_lock(&impl->mutex);
@@ -10776,11 +11579,11 @@ static vectis_status vectis_app_run_impl(vectis_app *app, vectis_error *error) {
   impl->kore_child_pid = 0;
   vectis_close_lockd_client_for_current_process(impl);
   (void)pthread_mutex_unlock(&impl->mutex);
-  if (vectis_app_stop_managed_services(impl, error) != VECTIS_OK &&
+  if (vectis_app_stop_managed_services(impl, NULL, error) != VECTIS_OK &&
       status == VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
-  if (vectis_app_stop_consumer_services(impl, error) != VECTIS_OK &&
+  if (vectis_app_stop_consumer_services(impl, NULL, error) != VECTIS_OK &&
       status == VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
@@ -10820,6 +11623,67 @@ static int vectis_wait_sleep_ms(long delay_ms) {
     }
   } while (errno == EINTR);
   return errno != 0 ? errno : EINVAL;
+}
+
+static void vectis_deadline_after_ms(struct timespec *deadline, long delay_ms) {
+  long nsec;
+
+  if (deadline == NULL) {
+    return;
+  }
+  if (delay_ms < 0L) {
+    delay_ms = 0L;
+  }
+  if (clock_gettime(CLOCK_REALTIME, deadline) != 0) {
+    deadline->tv_sec = time(NULL);
+    deadline->tv_nsec = 0L;
+  }
+  deadline->tv_sec += (time_t)(delay_ms / 1000L);
+  nsec = deadline->tv_nsec + (delay_ms % 1000L) * 1000000L;
+  if (nsec >= 1000000000L) {
+    deadline->tv_sec += 1;
+    nsec -= 1000000000L;
+  }
+  deadline->tv_nsec = nsec;
+}
+
+static long vectis_deadline_remaining_ms(const struct timespec *deadline) {
+  struct timespec now;
+  time_t seconds;
+  long nanos;
+  long millis;
+
+  if (deadline == NULL) {
+    return 0L;
+  }
+  if (clock_gettime(CLOCK_REALTIME, &now) != 0) {
+    return 0L;
+  }
+  seconds = deadline->tv_sec - now.tv_sec;
+  nanos = deadline->tv_nsec - now.tv_nsec;
+  if (nanos < 0L) {
+    --seconds;
+    nanos += 1000000000L;
+  }
+  if (seconds < 0) {
+    return 0L;
+  }
+  millis = (long)seconds * 1000L + nanos / 1000000L;
+  return millis > 0L ? millis : 0L;
+}
+
+static long
+vectis_shutdown_phase_timeout_ms(const vectis_app_impl *impl,
+                                 const struct timespec *shutdown_deadline) {
+  long timeout_ms;
+
+  if (shutdown_deadline != NULL) {
+    timeout_ms = vectis_deadline_remaining_ms(shutdown_deadline);
+    return timeout_ms > 0L ? timeout_ms : 1L;
+  }
+  return impl != NULL && impl->shutdown_grace_ms > 0L
+             ? impl->shutdown_grace_ms
+             : VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS;
 }
 
 static void vectis_app_record_lifecycle_sequence(vectis_app_impl *impl,
@@ -11424,6 +12288,9 @@ vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
   vectis_metrics_route_data *json_data;
   vectis_route_config route;
   vectis_status status;
+  const char *html_path;
+  const char *json_path;
+  char *default_json_path;
 
   if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
@@ -11447,17 +12314,32 @@ vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
   }
   (void)pthread_mutex_unlock(&impl->mutex);
 
-  if (effective->path == NULL || effective->path[0] != '/') {
+  html_path = effective->path != NULL ? effective->path : "/.metrics";
+  default_json_path = NULL;
+  if (effective->json_path != NULL) {
+    json_path = effective->json_path;
+  } else {
+    default_json_path = vectis_metrics_default_json_path(html_path, error);
+    if (default_json_path == NULL) {
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+    json_path = default_json_path;
+  }
+
+  if (html_path[0] != '/') {
+    free(default_json_path);
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "metrics path must be an absolute route path");
     return VECTIS_ERR_INVALID;
   }
-  if (effective->json_path == NULL || effective->json_path[0] != '/') {
+  if (json_path[0] != '/') {
+    free(default_json_path);
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "metrics json_path must be an absolute route path");
     return VECTIS_ERR_INVALID;
   }
-  if (strcmp(effective->path, effective->json_path) == 0) {
+  if (strcmp(html_path, json_path) == 0) {
+    free(default_json_path);
     vectis_set_error(error, VECTIS_ERR_CONFLICT,
                      "metrics path and json_path must differ");
     return VECTIS_ERR_CONFLICT;
@@ -11470,6 +12352,7 @@ vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
     free(metrics);
     free(html_data);
     free(json_data);
+    free(default_json_path);
     vectis_set_error(error, VECTIS_ERR_NOMEM,
                      "failed to allocate metrics state");
     return VECTIS_ERR_NOMEM;
@@ -11479,6 +12362,7 @@ vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
     free(metrics);
     free(html_data);
     free(json_data);
+    free(default_json_path);
     vectis_set_error(error, VECTIS_ERR_STATE,
                      "failed to initialize metrics state");
     return VECTIS_ERR_STATE;
@@ -11488,11 +12372,14 @@ vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
     vectis_metrics_state_destroy(metrics);
     free(html_data);
     free(json_data);
+    free(default_json_path);
     return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
   metrics->started_at = time(NULL);
-  metrics->html_path = vectis_strdup(effective->path);
-  metrics->json_path = vectis_strdup(effective->json_path);
+  metrics->html_path = vectis_strdup(html_path);
+  metrics->json_path = vectis_strdup(json_path);
+  free(default_json_path);
+  default_json_path = NULL;
   metrics->title = vectis_strdup(effective->title);
   metrics->storage_namespace = vectis_strdup(
       effective->storage_namespace != NULL ? effective->storage_namespace
@@ -11571,6 +12458,7 @@ vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
     impl->metrics = NULL;
     (void)pthread_mutex_unlock(&impl->mutex);
     vectis_metrics_state_destroy(metrics);
+    free(json_data);
     return status;
   }
   vectis_error_clear(error);
@@ -11866,12 +12754,6 @@ static vectis_status vectis_static_response(vectis_request *request,
     if (stat(file_path, &st) != 0 || !S_ISREG(st.st_mode)) {
       return vectis_response_status(response, 404, error);
     }
-    if (content_type != NULL &&
-        vectis_response_header(response, "content-type", content_type, error) !=
-            VECTIS_OK) {
-      return error != NULL ? error->code : VECTIS_ERR_STATE;
-    }
-    return vectis_response_status(response, 200, error);
   }
   return vectis_response_file(response, 200, content_type, file_path, error);
 }
@@ -12205,7 +13087,9 @@ static vectis_status vectis_static_embedded_not_found(
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
   if (vectis_request_method(request) == VECTIS_HTTP_HEAD) {
-    return vectis_response_status(response, 404, error);
+    body.data = not_found_body;
+    body.size = body_size;
+    return vectis_response_bytes(response, 404, content_type, body, error);
   }
   body.data = not_found_body;
   body.size = body_size;
@@ -12292,7 +13176,7 @@ static vectis_status vectis_static_embedded_response(
                                         error) != VECTIS_OK) {
         return error != NULL ? error->code : VECTIS_ERR_INVALID;
       }
-      return vectis_response_status(response, 206, error);
+      return vectis_response_bytes(response, 206, content_type, body, error);
     }
     return vectis_response_bytes(response, 206, content_type, body, error);
   }
@@ -12301,7 +13185,9 @@ static vectis_status vectis_static_embedded_response(
                                       error) != VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_INVALID;
     }
-    return vectis_response_status(response, 200, error);
+    body.data = entry->data;
+    body.size = entry->size;
+    return vectis_response_bytes(response, 200, content_type, body, error);
   }
   body.data = entry->data;
   body.size = entry->size;
@@ -16618,6 +17504,44 @@ vectis_append_lonejson_string(vectis_string_builder *builder, const char *value,
                                          error);
 }
 
+static char vectis_base64_digit(unsigned value) {
+  static const char alphabet[] =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  return alphabet[value & 63u];
+}
+
+static vectis_status vectis_append_base64_string(vectis_string_builder *builder,
+                                                 const void *data, size_t size,
+                                                 vectis_error *error) {
+  const unsigned char *bytes;
+  size_t offset;
+  unsigned a;
+  unsigned b;
+  unsigned c;
+  char block[4];
+
+  if (vectis_string_builder_append(builder, "\"", error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  bytes = (const unsigned char *)data;
+  for (offset = 0u; offset < size; offset += 3u) {
+    a = bytes != NULL ? (unsigned)bytes[offset] : 0u;
+    b = offset + 1u < size ? (unsigned)bytes[offset + 1u] : 0u;
+    c = offset + 2u < size ? (unsigned)bytes[offset + 2u] : 0u;
+    block[0] = vectis_base64_digit(a >> 2u);
+    block[1] = vectis_base64_digit(((a & 3u) << 4u) | (b >> 4u));
+    block[2] = offset + 1u < size
+                   ? vectis_base64_digit(((b & 15u) << 2u) | (c >> 6u))
+                   : '=';
+    block[3] = offset + 2u < size ? vectis_base64_digit(c) : '=';
+    if (vectis_string_builder_append_n(builder, block, sizeof(block), error) !=
+        VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+  }
+  return vectis_string_builder_append(builder, "\"", error);
+}
+
 static vectis_status
 vectis_route_event_append_key(vectis_string_builder *builder, const char *key,
                               vectis_error *error) {
@@ -16708,6 +17632,10 @@ static void vectis_metrics_merge_shared(vectis_metrics_state *snapshot,
       vectis_metrics_counter_load(&shared->auth_required);
   snapshot->auth_redirected +=
       vectis_metrics_counter_load(&shared->auth_redirected);
+  snapshot->snapshot_writes +=
+      vectis_metrics_counter_load(&shared->snapshot_writes);
+  snapshot->snapshot_errors +=
+      vectis_metrics_counter_load(&shared->snapshot_errors);
 }
 
 static void vectis_metrics_sample_load_locked(vectis_metrics_state *metrics,
@@ -17181,14 +18109,19 @@ static vectis_status vectis_metrics_dashboard_html(vectis_app *app,
       vectis_string_builder_append(&html, "</style></head><body><header><h1>",
                                    error) != VECTIS_OK ||
       vectis_metrics_html_escape(&html, title, error) != VECTIS_OK ||
-      vectis_string_builder_appendf(
-          &html, error,
+      vectis_string_builder_append(
+          &html,
           "</h1></header><div class=\"toolbar\"><div class=\"summary\">Vectis "
           "runtime metrics, in-memory collection</div><div "
-          "class=\"summary\">JSON: %s</div>"
-          "</div><main class=\"dashboard\">",
-          impl->metrics->json_path != NULL ? impl->metrics->json_path : "") !=
-          VECTIS_OK ||
+          "class=\"summary\">JSON: ",
+          error) != VECTIS_OK ||
+      vectis_metrics_html_escape(
+          &html,
+          impl->metrics->json_path != NULL ? impl->metrics->json_path : "",
+          error) != VECTIS_OK ||
+      vectis_string_builder_append(&html,
+                                   "</div></div><main class=\"dashboard\">",
+                                   error) != VECTIS_OK ||
       vectis_string_builder_appendf(
           &html, error,
           "<section class=\"panel stat-panel\"><h2>HTTP requests</h2><div "
@@ -17413,21 +18346,35 @@ static void vectis_metrics_note_snapshot_error(vectis_metrics_state *metrics) {
   if (metrics == NULL) {
     return;
   }
-  (void)pthread_mutex_lock(&metrics->mutex);
-  metrics->snapshot_errors++;
-  (void)pthread_mutex_unlock(&metrics->mutex);
+  vectis_metrics_counter_increment(metrics->shared != NULL
+                                       ? &metrics->shared->snapshot_errors
+                                       : &metrics->snapshot_errors);
 }
 
 static void vectis_metrics_note_snapshot_write(vectis_metrics_state *metrics) {
   if (metrics == NULL) {
     return;
   }
-  (void)pthread_mutex_lock(&metrics->mutex);
-  metrics->snapshot_writes++;
-  (void)pthread_mutex_unlock(&metrics->mutex);
+  vectis_metrics_counter_increment(metrics->shared != NULL
+                                       ? &metrics->shared->snapshot_writes
+                                       : &metrics->snapshot_writes);
 }
 
-static vectis_status vectis_metrics_persist_snapshot(vectis_app *app) {
+static long
+vectis_metrics_background_persistence_timeout_ms(const vectis_app_impl *impl) {
+  long grace_ms;
+
+  grace_ms = impl != NULL && impl->shutdown_grace_ms > 0L
+                 ? impl->shutdown_grace_ms
+                 : VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS;
+  if (grace_ms <= 1L) {
+    return 1L;
+  }
+  return grace_ms / 2L;
+}
+
+static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
+                                                     long timeout_ms) {
   vectis_app_impl *impl;
   vectis_metrics_state *metrics;
   vectis_metrics_write_context write;
@@ -17460,7 +18407,7 @@ static vectis_status vectis_metrics_persist_snapshot(vectis_app *app) {
   config.default_namespace = metrics->storage_namespace != NULL
                                  ? metrics->storage_namespace
                                  : "vectis.metrics";
-  config.timeout_ms = 30000L;
+  config.timeout_ms = timeout_ms > 0L ? timeout_ms : 30000L;
   lc_error_init(&lcerr);
   client = NULL;
   rc = lc_client_open(&config, &client, &lcerr);
@@ -17470,7 +18417,7 @@ static vectis_status vectis_metrics_persist_snapshot(vectis_app *app) {
     req.owner =
         metrics->storage_owner != NULL ? metrics->storage_owner : "vectis";
     req.ttl_seconds = 30L;
-    req.block_seconds = 1L;
+    req.block_seconds = config.timeout_ms >= 1000L ? 1L : 0L;
     (void)snprintf(key, sizeof(key), "snapshot.%llu",
                    (unsigned long long)time(NULL));
     req.key = key;
@@ -17495,6 +18442,7 @@ static void vectis_metrics_persist_snapshot_if_due(vectis_app *app) {
   vectis_metrics_state *metrics;
   time_t now;
   unsigned interval;
+  long timeout_ms;
   int due;
 
   if (app == NULL || app->impl == NULL) {
@@ -17512,7 +18460,8 @@ static void vectis_metrics_persist_snapshot_if_due(vectis_app *app) {
   interval = metrics->snapshot_interval_seconds > 0u
                  ? metrics->snapshot_interval_seconds
                  : 300u;
-  if (metrics->persistence_enabled &&
+  timeout_ms = vectis_metrics_background_persistence_timeout_ms(impl);
+  if (!metrics->stop_worker && metrics->persistence_enabled &&
       (metrics->last_snapshot_at == 0 ||
        now - metrics->last_snapshot_at >= (time_t)interval)) {
     metrics->last_snapshot_at = now;
@@ -17521,7 +18470,7 @@ static void vectis_metrics_persist_snapshot_if_due(vectis_app *app) {
   (void)pthread_mutex_unlock(&metrics->mutex);
 
   if (due) {
-    (void)vectis_metrics_persist_snapshot(app);
+    (void)vectis_metrics_persist_snapshot(app, timeout_ms);
   }
 }
 
@@ -17558,6 +18507,10 @@ static void *vectis_metrics_worker_main(void *arg) {
     }
     (void)pthread_mutex_unlock(&metrics->mutex);
   }
+  (void)pthread_mutex_lock(&metrics->mutex);
+  metrics->worker_done = 1;
+  (void)pthread_cond_broadcast(&metrics->cond);
+  (void)pthread_mutex_unlock(&metrics->mutex);
   return NULL;
 }
 
@@ -17580,6 +18533,7 @@ static vectis_status vectis_metrics_worker_start(vectis_app *app,
     return VECTIS_OK;
   }
   metrics->stop_worker = 0;
+  metrics->worker_done = 0;
   metrics->started_at = time(NULL);
   (void)pthread_mutex_unlock(&metrics->mutex);
   if (pthread_create(&metrics->worker, NULL, vectis_metrics_worker_main, app) !=
@@ -17594,17 +18548,79 @@ static vectis_status vectis_metrics_worker_start(vectis_app *app,
   return VECTIS_OK;
 }
 
-static void vectis_metrics_worker_stop(vectis_app *app) {
+static vectis_status
+vectis_metrics_worker_stop(vectis_app *app,
+                           const struct timespec *shutdown_deadline,
+                           vectis_error *error) {
   vectis_app_impl *impl;
   vectis_metrics_state *metrics;
+  struct timespec local_deadline;
+  const struct timespec *deadline;
   pthread_t worker;
+  long remaining_ms;
+  int timed_out;
   int join;
+  int rc;
 
   if (app == NULL || app->impl == NULL) {
-    return;
+    vectis_error_clear(error);
+    return VECTIS_OK;
   }
   impl = (vectis_app_impl *)app->impl;
   metrics = impl->metrics;
+  if (metrics == NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (shutdown_deadline != NULL) {
+    deadline = shutdown_deadline;
+  } else {
+    vectis_deadline_after_ms(&local_deadline,
+                             impl->shutdown_grace_ms > 0L
+                                 ? impl->shutdown_grace_ms
+                                 : VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS);
+    deadline = &local_deadline;
+  }
+  timed_out = 0;
+  (void)pthread_mutex_lock(&metrics->mutex);
+  join = metrics->worker_started;
+  worker = metrics->worker;
+  metrics->stop_worker = 1;
+  (void)pthread_cond_broadcast(&metrics->cond);
+  while (join && !metrics->worker_done && !timed_out) {
+    rc = pthread_cond_timedwait(&metrics->cond, &metrics->mutex, deadline);
+    if (rc == ETIMEDOUT) {
+      timed_out = 1;
+    }
+  }
+  if (join && !metrics->worker_done) {
+    (void)pthread_mutex_unlock(&metrics->mutex);
+    vectis_set_error(error, VECTIS_ERR_TIMEOUT,
+                     "metrics persistence worker did not stop before "
+                     "shutdown grace");
+    return VECTIS_ERR_TIMEOUT;
+  }
+  (void)pthread_mutex_unlock(&metrics->mutex);
+  if (join) {
+    (void)pthread_join(worker, NULL);
+    (void)pthread_mutex_lock(&metrics->mutex);
+    metrics->worker_started = 0;
+    (void)pthread_mutex_unlock(&metrics->mutex);
+    remaining_ms = vectis_deadline_remaining_ms(deadline);
+    if (remaining_ms > 0L) {
+      (void)vectis_metrics_persist_snapshot(app, remaining_ms);
+    }
+    vectis_app_record_lifecycle_sequence(impl, &impl->metrics_stop_sequence);
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static void
+vectis_metrics_worker_join_before_destroy(vectis_metrics_state *metrics) {
+  pthread_t worker;
+  int join;
+
   if (metrics == NULL) {
     return;
   }
@@ -17614,20 +18630,21 @@ static void vectis_metrics_worker_stop(vectis_app *app) {
   metrics->stop_worker = 1;
   (void)pthread_cond_broadcast(&metrics->cond);
   (void)pthread_mutex_unlock(&metrics->mutex);
-  if (join) {
-    (void)pthread_join(worker, NULL);
-    (void)pthread_mutex_lock(&metrics->mutex);
-    metrics->worker_started = 0;
-    (void)pthread_mutex_unlock(&metrics->mutex);
-    (void)vectis_metrics_persist_snapshot(app);
-    vectis_app_record_lifecycle_sequence(impl, &impl->metrics_stop_sequence);
+  if (!join) {
+    return;
   }
+  (void)pthread_join(worker, NULL);
+  (void)pthread_mutex_lock(&metrics->mutex);
+  metrics->worker_started = 0;
+  metrics->worker_done = 1;
+  (void)pthread_mutex_unlock(&metrics->mutex);
 }
 
 static void vectis_metrics_state_destroy(vectis_metrics_state *metrics) {
   if (metrics == NULL) {
     return;
   }
+  vectis_metrics_worker_join_before_destroy(metrics);
   free(metrics->html_path);
   free(metrics->json_path);
   free(metrics->title);
@@ -17767,7 +18784,7 @@ vectis_route_event_from_request(vectis_request *request,
   method = vectis_http_method_string(vectis_request_method(request));
   if (vectis_string_builder_append(&builder, "{", error) != VECTIS_OK ||
       vectis_route_event_append_key(&builder, "type", error) != VECTIS_OK ||
-      vectis_append_lonejson_string(&builder, "vectis.route", error) !=
+      vectis_append_lonejson_string(&builder, effective.kind, error) !=
           VECTIS_OK ||
       vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
       vectis_route_event_append_key(&builder, "method", error) != VECTIS_OK ||
@@ -17823,12 +18840,20 @@ vectis_route_event_from_request(vectis_request *request,
       status = vectis_string_builder_append(&builder, ",", error);
     }
     if (status == VECTIS_OK) {
-      status = vectis_route_event_append_key(&builder, "content", error);
+      status = vectis_route_event_append_key(&builder, "encoding", error);
     }
     if (status == VECTIS_OK) {
-      status = vectis_append_lonejson_string_n(
-          &builder, body.data != NULL ? (const char *)body.data : "", body.size,
-          error);
+      status = vectis_append_lonejson_string(&builder, "base64", error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_string_builder_append(&builder, ",", error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_route_event_append_key(&builder, "content_base64", error);
+    }
+    if (status == VECTIS_OK) {
+      status =
+          vectis_append_base64_string(&builder, body.data, body.size, error);
     }
     if (status == VECTIS_OK) {
       status = vectis_string_builder_append(&builder, "}", error);
@@ -17870,6 +18895,11 @@ vectis_status vectis_route_mailbox_request(
   if (response == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "route mailbox response is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (broker == NULL || broker->request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "route mailbox broker is required");
     return VECTIS_ERR_INVALID;
   }
   vectis_route_event_config_init(&effective);
@@ -18101,7 +19131,7 @@ vectis_status vectis_lockd_consumer_event_from_message(
 
   if (vectis_string_builder_append(&builder, "{", error) != VECTIS_OK ||
       vectis_route_event_append_key(&builder, "type", error) != VECTIS_OK ||
-      vectis_append_lonejson_string(&builder, "vectis.lockd.consumer", error) !=
+      vectis_append_lonejson_string(&builder, effective.kind, error) !=
           VECTIS_OK ||
       vectis_string_builder_append(&builder, ",", error) != VECTIS_OK ||
       vectis_route_event_append_key(&builder, "name", error) != VECTIS_OK ||
@@ -18195,13 +19225,20 @@ vectis_status vectis_lockd_consumer_event_from_message(
       status = vectis_string_builder_append(&builder, ",", error);
     }
     if (status == VECTIS_OK) {
-      status = vectis_route_event_append_key(&builder, "content", error);
+      status = vectis_route_event_append_key(&builder, "encoding", error);
     }
     if (status == VECTIS_OK) {
-      status = vectis_append_lonejson_string_n(
-          &builder,
-          copied_payload.data != NULL ? (const char *)copied_payload.data : "",
-          copied_payload.size, error);
+      status = vectis_append_lonejson_string(&builder, "base64", error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_string_builder_append(&builder, ",", error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_route_event_append_key(&builder, "content_base64", error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_append_base64_string(&builder, copied_payload.data,
+                                           copied_payload.size, error);
     }
     if (status == VECTIS_OK) {
       status = vectis_string_builder_append(&builder, "}", error);
@@ -21226,6 +22263,7 @@ vectis_status vectis_curl_worker_http_response_decode(
   const vectis_curl_worker_http_reply_wire *wire;
   const unsigned char *cursor;
   const unsigned char *end;
+  size_t remaining;
   size_t message_copy_size;
   size_t detail_copy_size;
 
@@ -21262,9 +22300,9 @@ vectis_status vectis_curl_worker_http_response_decode(
   }
   cursor = (const unsigned char *)event->payload + sizeof(*wire);
   end = (const unsigned char *)event->payload + event->payload_size;
-  if ((size_t)(end - cursor) < wire->content_type_size + 1u +
-                                   wire->message_size + 1u + wire->detail_size +
-                                   1u + wire->body_size) {
+  remaining = (size_t)(end - cursor);
+  if (remaining == 0u || wire->content_type_size > remaining - 1u ||
+      cursor[wire->content_type_size] != '\0') {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "curl worker response envelope is truncated");
     return VECTIS_ERR_INVALID;
@@ -21282,18 +22320,41 @@ vectis_status vectis_curl_worker_http_response_decode(
     }
   }
   cursor += wire->content_type_size + 1u;
+  remaining = (size_t)(end - cursor);
+  if (remaining == 0u || wire->message_size > remaining - 1u ||
+      cursor[wire->message_size] != '\0') {
+    vectis_curl_worker_http_response_cleanup(response);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker response envelope is truncated");
+    return VECTIS_ERR_INVALID;
+  }
   message_copy_size = wire->message_size;
   if (message_copy_size >= sizeof(response->message)) {
     message_copy_size = sizeof(response->message) - 1u;
   }
   memcpy(response->message, cursor, message_copy_size);
   cursor += wire->message_size + 1u;
+  remaining = (size_t)(end - cursor);
+  if (remaining == 0u || wire->detail_size > remaining - 1u ||
+      cursor[wire->detail_size] != '\0') {
+    vectis_curl_worker_http_response_cleanup(response);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker response envelope is truncated");
+    return VECTIS_ERR_INVALID;
+  }
   detail_copy_size = wire->detail_size;
   if (detail_copy_size >= sizeof(response->detail)) {
     detail_copy_size = sizeof(response->detail) - 1u;
   }
   memcpy(response->detail, cursor, detail_copy_size);
   cursor += wire->detail_size + 1u;
+  remaining = (size_t)(end - cursor);
+  if (wire->body_size > remaining) {
+    vectis_curl_worker_http_response_cleanup(response);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker response envelope is truncated");
+    return VECTIS_ERR_INVALID;
+  }
   if (wire->body_size > 0u) {
     response->body = malloc(wire->body_size);
     if (response->body == NULL) {
@@ -21384,6 +22445,12 @@ vectis_cai_worker_event_build(const vectis_cai_worker_request *request,
   if (request->max_output_tokens < 0) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "CAI worker max_output_tokens must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->max_response_bytes > 0u &&
+      vectis_size_exceeds_lonejson_i64(request->max_response_bytes)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker max_response_bytes is too large");
     return VECTIS_ERR_INVALID;
   }
   memset(&request_json, 0, sizeof(request_json));
@@ -21723,6 +22790,12 @@ vectis_status vectis_audio_worker_decode_event_build(
                      "audio worker decode encoding is invalid");
     return VECTIS_ERR_INVALID;
   }
+  if (request->max_frames > 0u &&
+      vectis_size_exceeds_lonejson_i64(request->max_frames)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker max_frames is too large");
+    return VECTIS_ERR_INVALID;
+  }
   (void)encoding;
   memset(&request_json, 0, sizeof(request_json));
   if (!vectis_cai_worker_json_copy_string(&request_json.path, request->path) ||
@@ -21863,6 +22936,24 @@ vectis_status vectis_audio_worker_vox_event_build(
     vectis_set_error(error, VECTIS_ERR_NOMEM,
                      "audio worker VOX frame buffer is too large");
     return VECTIS_ERR_NOMEM;
+  }
+  if ((request->release_silence_ms > 0ul &&
+       vectis_ulong_exceeds_lonejson_i64(request->release_silence_ms)) ||
+      (request->prebuffer_ms > 0ul &&
+       vectis_ulong_exceeds_lonejson_i64(request->prebuffer_ms)) ||
+      (request->max_segment_ms > 0ul &&
+       vectis_ulong_exceeds_lonejson_i64(request->max_segment_ms)) ||
+      (request->min_segment_ms > 0ul &&
+       vectis_ulong_exceeds_lonejson_i64(request->min_segment_ms)) ||
+      (request->memory_spool_bytes > 0ul &&
+       vectis_ulong_exceeds_lonejson_i64(request->memory_spool_bytes)) ||
+      (request->max_spool_bytes > 0ul &&
+       vectis_ulong_exceeds_lonejson_i64(request->max_spool_bytes)) ||
+      (request->max_segment_frames > 0u &&
+       vectis_size_exceeds_lonejson_i64(request->max_segment_frames))) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX size limit is too large");
+    return VECTIS_ERR_INVALID;
   }
   memset(&request_json, 0, sizeof(request_json));
   request_json.frames.items =
@@ -22337,6 +23428,12 @@ vectis_status vectis_sus_worker_transcribe_pcm_event_build(
                      "SUS worker file output requires output_path");
     return VECTIS_ERR_INVALID;
   }
+  if (request->max_text_bytes > 0u &&
+      vectis_size_exceeds_lonejson_i64(request->max_text_bytes)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker max_text_bytes is too large");
+    return VECTIS_ERR_INVALID;
+  }
   memset(&request_json, 0, sizeof(request_json));
   if (!vectis_cai_worker_json_copy_string(&request_json.language,
                                           request->language) ||
@@ -22438,6 +23535,12 @@ vectis_status vectis_sus_worker_transcribe_file_event_build(
       (request->output_path == NULL || request->output_path[0] == '\0')) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "SUS worker file output requires output_path");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->max_text_bytes > 0u &&
+      vectis_size_exceeds_lonejson_i64(request->max_text_bytes)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SUS worker max_text_bytes is too large");
     return VECTIS_ERR_INVALID;
   }
   memset(&request_json, 0, sizeof(request_json));
@@ -22624,6 +23727,7 @@ vectis_managed_service_state_get(const vectis_managed_service *service,
                                  vectis_managed_service_state *out,
                                  vectis_error *error) {
   const vectis_managed_service_impl *impl;
+  vectis_app_impl *owner;
 
   if (out == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
@@ -22637,6 +23741,15 @@ vectis_managed_service_state_get(const vectis_managed_service *service,
     vectis_set_error(error, VECTIS_ERR_INVALID, "managed service is required");
     return VECTIS_ERR_INVALID;
   }
+  if (impl->detached) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "managed service is detached from its app");
+    return VECTIS_ERR_STATE;
+  }
+  owner = impl->owner;
+  if (owner != NULL) {
+    (void)pthread_mutex_lock(&owner->mutex);
+  }
   out->declared = 1;
   out->materialized = impl->materialized;
   out->process_local = impl->materialized;
@@ -22649,6 +23762,9 @@ vectis_managed_service_state_get(const vectis_managed_service *service,
   out->failed = impl->failed;
   out->dependency_code = impl->monitor_error.dependency_code;
   out->terminal_status = impl->terminal_status;
+  if (owner != NULL) {
+    (void)pthread_mutex_unlock(&owner->mutex);
+  }
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -22742,6 +23858,62 @@ static int vectis_curl_worker_copy_http_config_string(char **owned,
   return 1;
 }
 
+static vectis_status
+vectis_curl_worker_copy_source(vectis_source *target, char **owned_path,
+                               void **owned_memory, size_t *owned_memory_size,
+                               const vectis_source *source, const char *label,
+                               vectis_error *error) {
+  vectis_status status;
+
+  if (target == NULL || owned_path == NULL || owned_memory == NULL ||
+      owned_memory_size == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker source copy target is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(target, 0, sizeof(*target));
+  *owned_path = NULL;
+  *owned_memory = NULL;
+  *owned_memory_size = 0u;
+  if (source == NULL) {
+    return VECTIS_OK;
+  }
+  if (source->source != NULL) {
+    vectis_set_errorf(error, VECTIS_ERR_INVALID,
+                      "curl worker %s does not accept borrowed lc_source "
+                      "handles",
+                      label);
+    return VECTIS_ERR_INVALID;
+  }
+  if (source->memory == NULL && source->memory_size > 0u) {
+    vectis_set_errorf(error, VECTIS_ERR_INVALID,
+                      "curl worker %s memory is invalid", label);
+    return VECTIS_ERR_INVALID;
+  }
+  if (source->path != NULL) {
+    *owned_path = vectis_strdup(source->path);
+    if (*owned_path == NULL) {
+      vectis_set_errorf(error, VECTIS_ERR_NOMEM, "failed to copy %s path",
+                        label);
+      return VECTIS_ERR_NOMEM;
+    }
+    target->path = *owned_path;
+  }
+  if (source->memory != NULL && source->memory_size > 0u) {
+    status = vectis_copy_bytes(source->memory, source->memory_size,
+                               owned_memory, owned_memory_size, label, error);
+    if (status != VECTIS_OK) {
+      free(*owned_path);
+      *owned_path = NULL;
+      target->path = NULL;
+      return status;
+    }
+    target->memory = *owned_memory;
+    target->memory_size = *owned_memory_size;
+  }
+  return VECTIS_OK;
+}
+
 vectis_status vectis_curl_worker_service_new(
     vectis_app *app, const vectis_curl_worker_service_config *config,
     vectis_managed_service **out, vectis_error *error) {
@@ -22776,6 +23948,12 @@ vectis_status vectis_curl_worker_service_new(
                      "curl worker service config abi_version is invalid");
     return VECTIS_ERR_INVALID;
   }
+  if (config->http.client_bundle_pem == NULL &&
+      config->http.client_bundle_pem_size > 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "curl worker client_bundle_pem is invalid");
+    return VECTIS_ERR_INVALID;
+  }
   vectis_curl_worker_service_config_init(&effective);
   effective = *config;
   if (effective.poll_timeout_ms <= 0L) {
@@ -22796,6 +23974,12 @@ vectis_status vectis_curl_worker_service_new(
   ctx->request_mailbox = effective.request_mailbox;
   ctx->reply_broker = effective.reply_broker;
   ctx->http = effective.http;
+  memset(&ctx->http.client_bundle, 0, sizeof(ctx->http.client_bundle));
+  memset(&ctx->http.ca_bundle, 0, sizeof(ctx->http.ca_bundle));
+  ctx->http.client_bundle_pem = NULL;
+  ctx->http.client_bundle_pem_size = 0u;
+  ctx->http.client_bundle_path = NULL;
+  ctx->http.ca_bundle_path = NULL;
   if (effective.logger_disabled) {
     ctx->http.logger = NULL;
   } else if (ctx->http.logger == NULL) {
@@ -22817,6 +24001,34 @@ vectis_status vectis_curl_worker_service_new(
                      "failed to copy curl worker service config");
     return VECTIS_ERR_NOMEM;
   }
+  status = vectis_curl_worker_copy_source(
+      &ctx->client_bundle, &ctx->client_bundle_source_path,
+      &ctx->client_bundle_memory, &ctx->client_bundle_memory_size,
+      &effective.http.client_bundle, "curl worker client bundle source", error);
+  if (status != VECTIS_OK) {
+    vectis_curl_worker_service_cleanup(ctx);
+    return status;
+  }
+  ctx->http.client_bundle = ctx->client_bundle;
+  status = vectis_curl_worker_copy_source(
+      &ctx->ca_bundle, &ctx->ca_bundle_source_path, &ctx->ca_bundle_memory,
+      &ctx->ca_bundle_memory_size, &effective.http.ca_bundle,
+      "curl worker CA bundle source", error);
+  if (status != VECTIS_OK) {
+    vectis_curl_worker_service_cleanup(ctx);
+    return status;
+  }
+  ctx->http.ca_bundle = ctx->ca_bundle;
+  status = vectis_copy_bytes(
+      effective.http.client_bundle_pem, effective.http.client_bundle_pem_size,
+      &ctx->client_bundle_pem, &ctx->client_bundle_pem_size,
+      "curl worker client bundle PEM", error);
+  if (status != VECTIS_OK) {
+    vectis_curl_worker_service_cleanup(ctx);
+    return status;
+  }
+  ctx->http.client_bundle_pem = ctx->client_bundle_pem;
+  ctx->http.client_bundle_pem_size = ctx->client_bundle_pem_size;
   ctx->poll_timeout_ms = effective.poll_timeout_ms;
   vectis_managed_service_config_init(&managed);
   managed.name = effective.name != NULL ? effective.name : "curl-worker";
@@ -22884,6 +24096,12 @@ vectis_status vectis_cai_worker_service_new(
       config->abi_version != VECTIS_SERVICE_ABI_VERSION) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "CAI worker service config abi_version is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->client.chatgpt_auth != NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "CAI worker service does not accept borrowed "
+                     "chatgpt_auth handles");
     return VECTIS_ERR_INVALID;
   }
   vectis_cai_worker_service_config_init(&effective);
@@ -23249,6 +24467,11 @@ vectis_status vectis_managed_service_start(vectis_managed_service *service,
     vectis_set_error(error, VECTIS_ERR_INVALID, "managed service is required");
     return VECTIS_ERR_INVALID;
   }
+  if (impl->detached) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "managed service is detached from its app");
+    return VECTIS_ERR_STATE;
+  }
   impl->start_requested = 1;
   if (impl->owner != NULL && !impl->owner->started) {
     vectis_error_clear(error);
@@ -23268,21 +24491,43 @@ vectis_status vectis_managed_service_stop(vectis_managed_service *service,
     vectis_set_error(error, VECTIS_ERR_INVALID, "managed service is required");
     return VECTIS_ERR_INVALID;
   }
+  if (impl->detached) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "managed service is detached from its app");
+    return VECTIS_ERR_STATE;
+  }
+  if (impl->owner != NULL) {
+    (void)pthread_mutex_lock(&impl->owner->mutex);
+  }
   was_active = impl->started || impl->monitor_active;
+  impl->start_requested = 0;
   impl->stop_requested = 1;
   if (impl->started && impl->stop_fn != NULL) {
+    if (impl->owner != NULL) {
+      (void)pthread_mutex_unlock(&impl->owner->mutex);
+    }
     status = impl->stop_fn(impl->context, error);
     if (status != VECTIS_OK) {
       vectis_managed_service_log_failure(
           impl, "vectis.managed_service.stop_failed", status, error);
       return status;
     }
+  } else if (impl->owner != NULL) {
+    (void)pthread_mutex_unlock(&impl->owner->mutex);
   }
   status = vectis_managed_service_join_monitor(impl, error);
   if (status != VECTIS_OK) {
     vectis_managed_service_log_failure(
         impl, "vectis.managed_service.stop_failed", status, error);
     return status;
+  }
+  if (impl->owner != NULL) {
+    (void)pthread_mutex_lock(&impl->owner->mutex);
+  }
+  impl->started = 0;
+  impl->monitor_active = 0;
+  if (impl->owner != NULL) {
+    (void)pthread_mutex_unlock(&impl->owner->mutex);
   }
   if (was_active) {
     vectis_managed_service_log_stopped(impl);
@@ -23300,6 +24545,11 @@ vectis_status vectis_managed_service_wait(vectis_managed_service *service,
     vectis_set_error(error, VECTIS_ERR_INVALID, "managed service is required");
     return VECTIS_ERR_INVALID;
   }
+  if (impl->detached) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "managed service is detached from its app");
+    return VECTIS_ERR_STATE;
+  }
   status = vectis_managed_service_monitor_status(impl, error);
   if (status != VECTIS_OK) {
     return status;
@@ -23310,9 +24560,27 @@ vectis_status vectis_managed_service_wait(vectis_managed_service *service,
 
 vectis_status vectis_managed_service_run(vectis_managed_service *service,
                                          vectis_error *error) {
+  vectis_managed_service_impl *impl;
   vectis_status status;
 
-  status = vectis_managed_service_start(service, error);
+  impl = service != NULL ? (vectis_managed_service_impl *)service->impl : NULL;
+  if (impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "managed service is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (impl->detached) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "managed service is detached from its app");
+    return VECTIS_ERR_STATE;
+  }
+  if (impl->owner != NULL && impl->owner->route_count > 0u &&
+      !impl->owner->started) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "managed service run cannot materialize before a "
+                     "route-backed app starts");
+    return VECTIS_ERR_STATE;
+  }
+  status = vectis_managed_service_start_materialized(impl, error);
   if (status != VECTIS_OK) {
     return status;
   }
@@ -23455,6 +24723,11 @@ vectis_consumer_service_state_get(const vectis_consumer_service *service,
     vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
     return VECTIS_ERR_INVALID;
   }
+  if (impl->detached) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "consumer service is detached from its app");
+    return VECTIS_ERR_STATE;
+  }
   owner = impl->owner;
   if (owner != NULL) {
     (void)pthread_mutex_lock(&owner->mutex);
@@ -23468,7 +24741,8 @@ vectis_consumer_service_state_get(const vectis_consumer_service *service,
   out->monitor_active = impl->monitor_active;
   out->monitor_done = impl->monitor_done;
   out->monitor_joined = impl->monitor_joined;
-  out->failed = impl->monitor_done && impl->monitor_rc != LC_OK;
+  out->failed = impl->monitor_done && (impl->monitor_rc != LC_OK ||
+                                       impl->monitor_error.code != VECTIS_OK);
   out->dependency_code = (long)impl->monitor_rc;
   out->terminal_status = out->failed && impl->monitor_error.code != VECTIS_OK
                              ? impl->monitor_error.code
@@ -23848,7 +25122,9 @@ vectis_consumer_service_native(vectis_consumer_service *service) {
     return NULL;
   }
   impl = (vectis_consumer_service_impl *)service->impl;
-  return impl != NULL && impl->service_pid == getpid() ? impl->service : NULL;
+  return impl != NULL && !impl->detached && impl->service_pid == getpid()
+             ? impl->service
+             : NULL;
 }
 
 vectis_status vectis_consumer_service_run(vectis_consumer_service *service,
@@ -23861,6 +25137,11 @@ vectis_status vectis_consumer_service_run(vectis_consumer_service *service,
   if (impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
     return VECTIS_ERR_INVALID;
+  }
+  if (impl->detached) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "consumer service is detached from its app");
+    return VECTIS_ERR_STATE;
   }
   if (impl->owner != NULL && impl->owner->route_count > 0u &&
       !impl->owner->started) {
@@ -23896,8 +25177,13 @@ vectis_status vectis_consumer_service_start(vectis_consumer_service *service,
     vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
     return VECTIS_ERR_INVALID;
   }
+  if (impl->detached) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "consumer service is detached from its app");
+    return VECTIS_ERR_STATE;
+  }
+  impl->start_requested = 1;
   if (impl->owner != NULL && !impl->owner->started) {
-    impl->start_requested = 1;
     vectis_error_clear(error);
     return VECTIS_OK;
   }
@@ -23914,15 +25200,29 @@ vectis_status vectis_consumer_service_stop(vectis_consumer_service *service,
     vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
     return VECTIS_ERR_INVALID;
   }
+  if (impl->detached) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "consumer service is detached from its app");
+    return VECTIS_ERR_STATE;
+  }
+  if (impl->owner != NULL) {
+    (void)pthread_mutex_lock(&impl->owner->mutex);
+  }
   impl->start_requested = 0;
   if (impl->service == NULL || impl->service_pid != getpid()) {
     impl->started = 0;
     impl->stop_requested = 1;
+    if (impl->owner != NULL) {
+      (void)pthread_mutex_unlock(&impl->owner->mutex);
+    }
     vectis_error_clear(error);
     return VECTIS_OK;
   }
   impl->stop_requested = 1;
   if (impl->started) {
+    if (impl->owner != NULL) {
+      (void)pthread_mutex_unlock(&impl->owner->mutex);
+    }
     rc = impl->service->stop(impl->service);
     if (rc != LC_OK) {
       vectis_set_error(error, VECTIS_ERR_STATE,
@@ -23933,6 +25233,8 @@ vectis_status vectis_consumer_service_stop(vectis_consumer_service *service,
       }
       return VECTIS_ERR_STATE;
     }
+  } else if (impl->owner != NULL) {
+    (void)pthread_mutex_unlock(&impl->owner->mutex);
   }
   vectis_error_clear(error);
   return VECTIS_OK;
@@ -23949,6 +25251,11 @@ vectis_status vectis_consumer_service_wait(vectis_consumer_service *service,
   if (impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
     return VECTIS_ERR_INVALID;
+  }
+  if (impl->detached) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "consumer service is detached from its app");
+    return VECTIS_ERR_STATE;
   }
   if (impl->service == NULL || impl->service_pid != getpid()) {
     vectis_error_clear(error);
@@ -23992,9 +25299,14 @@ vectis_consumer_service_run_until(vectis_consumer_service *service,
   vectis_status status;
 
   impl = service != NULL ? (vectis_consumer_service_impl *)service->impl : NULL;
-  if (impl == NULL || impl->service == NULL) {
+  if (impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "consumer service is required");
     return VECTIS_ERR_INVALID;
+  }
+  if (impl->detached) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "consumer service is detached from its app");
+    return VECTIS_ERR_STATE;
   }
   if (done == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "done flag is required");
@@ -29994,7 +31306,7 @@ static vectis_status vectis_cai_source_from_lc(lc_source *source,
   context->source = source;
   context->close_source = close_source ? 1 : 0;
   callbacks.read = vectis_cai_lc_source_read;
-  callbacks.reset = vectis_cai_lc_source_reset;
+  callbacks.reset = source->reset != NULL ? vectis_cai_lc_source_reset : NULL;
   callbacks.close = vectis_cai_lc_source_close;
   callbacks.context = context;
   cai_error_init(&caierr);

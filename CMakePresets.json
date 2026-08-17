@@ -149,10 +149,16 @@
     },
     {
       "name": "fuzz",
-      "inherits": "debug",
+      "inherits": "base",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/x86_64-linux-gnu-afl.cmake",
       "cacheVariables": {
-        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_C_FLAGS_DEBUG": "-O1 -g -fno-omit-frame-pointer",
+        "VECTIS_EXTERNAL_ROOT": "${sourceDir}/.cache/deps/host-debug",
+        "VECTIS_TARGET_ID": "x86_64-linux-gnu",
+        "VECTIS_TARGET_ARCH": "x86_64",
+        "VECTIS_TARGET_OS": "linux",
+        "VECTIS_TARGET_LIBC": "gnu",
         "VECTIS_BUILD_TESTS": "OFF",
         "VECTIS_BUILD_FUZZERS": "ON"
       }

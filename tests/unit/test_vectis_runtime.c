@@ -13,6 +13,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #include <vectis/auth.h>
@@ -65,6 +66,29 @@ typedef struct spooled_upload_expectation {
   const char *path_prefix;
 } spooled_upload_expectation;
 
+typedef struct runtime_curl_worker_http_wire {
+  char magic[8];
+  unsigned method;
+  long timeout_ms;
+  size_t max_response_body_bytes;
+  size_t url_size;
+  size_t content_type_size;
+  size_t header_count;
+  size_t headers_size;
+  size_t body_size;
+} runtime_curl_worker_http_wire;
+
+typedef struct runtime_curl_worker_http_reply_wire {
+  char magic[8];
+  vectis_status transfer_status;
+  long dependency_code;
+  long status_code;
+  size_t content_type_size;
+  size_t message_size;
+  size_t detail_size;
+  size_t body_size;
+} runtime_curl_worker_http_reply_wire;
+
 typedef struct runtime_thread_probe {
   volatile int done;
 } runtime_thread_probe;
@@ -79,6 +103,9 @@ typedef struct runtime_managed_service_probe {
   const char *start_error;
   vectis_status wait_status;
   const char *wait_error;
+  int stop_signal_disabled;
+  unsigned short stop_http_port;
+  int stop_http_ok;
 } runtime_managed_service_probe;
 
 typedef struct runtime_log_buffer {
@@ -94,6 +121,42 @@ typedef struct runtime_http_mock_server {
   char request[1024];
   size_t request_size;
 } runtime_http_mock_server;
+
+typedef struct runtime_blackhole_server {
+  int listen_fd;
+  unsigned short port;
+  pid_t child_pid;
+} runtime_blackhole_server;
+
+static long runtime_monotonic_millis(void) {
+  struct timespec now;
+
+  assert(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+  return (long)now.tv_sec * 1000L + now.tv_nsec / 1000000L;
+}
+
+static int runtime_bytes_contains(vectis_bytes bytes, const char *needle) {
+  size_t needle_size;
+  size_t i;
+
+  if (bytes.data == NULL || needle == NULL) {
+    return 0;
+  }
+  needle_size = strlen(needle);
+  if (needle_size == 0u) {
+    return 1;
+  }
+  if (needle_size > bytes.size) {
+    return 0;
+  }
+  for (i = 0u; i <= bytes.size - needle_size; ++i) {
+    if (memcmp((const unsigned char *)bytes.data + i, needle, needle_size) ==
+        0) {
+      return 1;
+    }
+  }
+  return 0;
+}
 
 static const lonejson_field source_json_doc_fields[] = {
     LONEJSON_FIELD_STRING_SOURCE_REQ(source_json_doc, payload, "payload")};
@@ -122,6 +185,127 @@ static vectis_status sample_handler(vectis_app *app, vectis_request *request,
   (void)request;
   (void)userdata;
   return vectis_response_text(response, 200, "text/plain", "ok", error);
+}
+
+static size_t reset_failing_response_source_read(void *context, void *buffer,
+                                                 size_t count,
+                                                 lc_error *error) {
+  (void)context;
+  (void)buffer;
+  (void)count;
+  (void)error;
+  return 0u;
+}
+
+static int reset_failing_response_source_reset(void *context, lc_error *error) {
+  (void)context;
+  if (error != NULL) {
+    lc_error_init(error);
+    error->code = LC_ERR_INVALID;
+    error->message = strdup("response source reset failed");
+  }
+  return LC_ERR_INVALID;
+}
+
+static vectis_status reset_failing_stream_handler(vectis_app *app,
+                                                  vectis_request *request,
+                                                  vectis_response *response,
+                                                  void *userdata,
+                                                  vectis_error *error) {
+  lc_source *source;
+  lc_error lcerr;
+  int rc;
+
+  (void)app;
+  (void)request;
+  (void)userdata;
+  lc_error_init(&lcerr);
+  source = NULL;
+  rc = lc_source_from_callbacks(reset_failing_response_source_read,
+                                reset_failing_response_source_reset, NULL, NULL,
+                                &source, &lcerr);
+  if (rc != LC_OK) {
+    lc_error_cleanup(&lcerr);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to create reset-failing response source");
+    return VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  return vectis_response_stream_source(response, 200, "text/plain", source,
+                                       error);
+}
+
+typedef struct runtime_failing_after_chunk_source {
+  int reads;
+} runtime_failing_after_chunk_source;
+
+static size_t failing_after_chunk_source_read(void *context, void *buffer,
+                                              size_t count, lc_error *error) {
+  runtime_failing_after_chunk_source *state;
+  const char chunk[] = "partial";
+  size_t chunk_size;
+
+  state = (runtime_failing_after_chunk_source *)context;
+  if (state == NULL) {
+    if (error != NULL) {
+      lc_error_init(error);
+      error->code = LC_ERR_INVALID;
+      error->message = strdup("missing stream state");
+    }
+    return 0u;
+  }
+  if (state->reads == 0) {
+    ++state->reads;
+    chunk_size = sizeof(chunk) - 1u;
+    assert(count >= chunk_size);
+    memcpy(buffer, chunk, chunk_size);
+    return chunk_size;
+  }
+  if (error != NULL) {
+    lc_error_init(error);
+    error->code = LC_ERR_PROTOCOL;
+    error->message = strdup("response source read failed");
+  }
+  return 0u;
+}
+
+static int failing_after_chunk_source_reset(void *context, lc_error *error) {
+  runtime_failing_after_chunk_source *state;
+
+  (void)error;
+  state = (runtime_failing_after_chunk_source *)context;
+  if (state != NULL) {
+    state->reads = 0;
+  }
+  return LC_OK;
+}
+
+static vectis_status
+failing_after_chunk_stream_handler(vectis_app *app, vectis_request *request,
+                                   vectis_response *response, void *userdata,
+                                   vectis_error *error) {
+  runtime_failing_after_chunk_source *state;
+  lc_source *source;
+  lc_error lcerr;
+  int rc;
+
+  (void)app;
+  (void)request;
+  state = (runtime_failing_after_chunk_source *)userdata;
+  lc_error_init(&lcerr);
+  source = NULL;
+  rc = lc_source_from_callbacks(failing_after_chunk_source_read,
+                                failing_after_chunk_source_reset, NULL, state,
+                                &source, &lcerr);
+  if (rc != LC_OK) {
+    lc_error_cleanup(&lcerr);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to create failing response source");
+    return VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  return vectis_response_stream_source(response, 200, "text/plain", source,
+                                       error);
 }
 
 static int sample_consumer_handler(void *context, lc_consumer_message *message,
@@ -175,13 +359,32 @@ static vectis_status runtime_managed_service_start(void *context,
 static vectis_status runtime_managed_service_stop(void *context,
                                                   vectis_error *error) {
   runtime_managed_service_probe *probe;
+  vectis_http_client_config http;
+  vectis_http_response response;
+  vectis_status status;
+  char url[128];
   const char byte = 'x';
+  int written;
 
   (void)error;
   probe = (runtime_managed_service_probe *)context;
   if (probe != NULL) {
     probe->stopped += 1;
-    if (probe->wait_fds[1] >= 0) {
+    if (probe->stop_http_port != 0u) {
+      memset(&response, 0, sizeof(response));
+      vectis_http_client_config_init(&http);
+      http.timeout_ms = 1000L;
+      http.connect_timeout_ms = 200L;
+      written = snprintf(url, sizeof(url), "http://127.0.0.1:%u/managed",
+                         (unsigned)probe->stop_http_port);
+      assert(written > 0 && (size_t)written < sizeof(url));
+      status = vectis_http_get(&http, url, &response, error);
+      probe->stop_http_ok =
+          status == VECTIS_OK && response.status_code == 200L &&
+          response.body_size == 2u && memcmp(response.body, "ok", 2u) == 0;
+      vectis_http_response_cleanup(&response);
+    }
+    if (!probe->stop_signal_disabled && probe->wait_fds[1] >= 0) {
       assert(write(probe->wait_fds[1], &byte, 1u) == 1);
     }
   }
@@ -331,6 +534,86 @@ static void runtime_http_mock_stop(runtime_http_mock_server *server) {
   (void)pthread_join(server->thread, NULL);
 }
 
+static void runtime_blackhole_child_main(int listen_fd) {
+  struct sockaddr_in peer;
+  struct timespec pause_time;
+  socklen_t peer_len;
+  fd_set rfds;
+  struct timeval tv;
+  int client_fd;
+  int rc;
+  char buffer[256];
+
+  peer_len = sizeof(peer);
+  client_fd = accept(listen_fd, (struct sockaddr *)&peer, &peer_len);
+  if (client_fd < 0) {
+    _exit(0);
+  }
+  for (;;) {
+    FD_ZERO(&rfds);
+    FD_SET(client_fd, &rfds);
+    tv.tv_sec = 0;
+    tv.tv_usec = 50000;
+    rc = select(client_fd + 1, &rfds, NULL, NULL, &tv);
+    if (rc > 0) {
+      (void)recv(client_fd, buffer, sizeof(buffer), 0);
+      break;
+    }
+  }
+  pause_time.tv_sec = 0;
+  pause_time.tv_nsec = 10000000L;
+  for (;;) {
+    (void)nanosleep(&pause_time, NULL);
+  }
+}
+
+static void runtime_blackhole_start(runtime_blackhole_server *server) {
+  struct sockaddr_in addr;
+  socklen_t addr_len;
+  int enabled;
+
+  memset(server, 0, sizeof(*server));
+  server->listen_fd = -1;
+  server->listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(server->listen_fd >= 0);
+  enabled = 1;
+  (void)setsockopt(server->listen_fd, SOL_SOCKET, SO_REUSEADDR, &enabled,
+                   sizeof(enabled));
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(0);
+  assert(inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr) == 1);
+  assert(bind(server->listen_fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  assert(listen(server->listen_fd, 4) == 0);
+  addr_len = sizeof(addr);
+  assert(getsockname(server->listen_fd, (struct sockaddr *)&addr, &addr_len) ==
+         0);
+  server->port = ntohs(addr.sin_port);
+  server->child_pid = fork();
+  assert(server->child_pid >= 0);
+  if (server->child_pid == 0) {
+    runtime_blackhole_child_main(server->listen_fd);
+    _exit(0);
+  }
+  (void)close(server->listen_fd);
+  server->listen_fd = -1;
+}
+
+static void runtime_blackhole_stop(runtime_blackhole_server *server) {
+  if (server == NULL) {
+    return;
+  }
+  if (server->listen_fd >= 0) {
+    (void)close(server->listen_fd);
+    server->listen_fd = -1;
+  }
+  if (server->child_pid > 0) {
+    (void)kill(server->child_pid, SIGTERM);
+    (void)waitpid(server->child_pid, NULL, 0);
+    server->child_pid = 0;
+  }
+}
+
 typedef struct runtime_enqueue_after_delay {
   const char *endpoint;
   const char *queue;
@@ -339,7 +622,28 @@ typedef struct runtime_enqueue_after_delay {
   int signal_after_failure;
 } runtime_enqueue_after_delay;
 
+typedef struct runtime_delayed_fd_write {
+  int fd;
+  long delay_ms;
+} runtime_delayed_fd_write;
+
 static void enqueue_lockd_test_message(const char *endpoint, const char *queue);
+
+static void *runtime_delayed_fd_write_main(void *userdata) {
+  runtime_delayed_fd_write *task;
+  struct timespec delay;
+  const char byte = 'x';
+
+  task = (runtime_delayed_fd_write *)userdata;
+  if (task == NULL || task->fd < 0) {
+    return NULL;
+  }
+  delay.tv_sec = task->delay_ms / 1000L;
+  delay.tv_nsec = (task->delay_ms % 1000L) * 1000000L;
+  (void)nanosleep(&delay, NULL);
+  assert(write(task->fd, &byte, 1u) == 1);
+  return NULL;
+}
 
 static void *runtime_enqueue_after_delay_main(void *userdata) {
   runtime_enqueue_after_delay *task;
@@ -517,6 +821,16 @@ static void *runtime_probe_thread(void *userdata) {
   while (probe != NULL && !probe->done) {
     (void)nanosleep(&delay, NULL);
   }
+  return NULL;
+}
+
+static void *runtime_transient_thread(void *userdata) {
+  struct timespec delay;
+
+  (void)userdata;
+  delay.tv_sec = 0;
+  delay.tv_nsec = 50000000L;
+  (void)nanosleep(&delay, NULL);
   return NULL;
 }
 
@@ -1001,6 +1315,7 @@ static void assert_metrics_surface(void) {
   assert(snapshot.data == NULL);
 
   vectis_metrics_config_init(&metrics);
+  assert(metrics.json_path == NULL);
   metrics.path = "/metrics";
   metrics.json_path = "/metrics.json";
   metrics.title = "runtime metrics";
@@ -1025,8 +1340,7 @@ static void assert_metrics_surface(void) {
   assert(strcmp(vectis_internal_response_content_type(response),
                 "application/json") == 0);
   body = vectis_internal_response_body(response);
-  assert(body.data != NULL &&
-         strstr((const char *)body.data, "\"route_count\":2") != NULL);
+  assert(runtime_bytes_contains(body, "\"route_count\":2"));
   vectis_internal_response_free(response);
   vectis_internal_request_free(request);
 
@@ -1040,8 +1354,48 @@ static void assert_metrics_surface(void) {
   assert(strcmp(vectis_internal_response_content_type(response),
                 "text/html; charset=utf-8") == 0);
   body = vectis_internal_response_body(response);
-  assert(body.data != NULL &&
-         strstr((const char *)body.data, "runtime metrics") != NULL);
+  assert(runtime_bytes_contains(body, "runtime metrics"));
+  vectis_internal_response_free(response);
+  vectis_internal_request_free(request);
+  app->close(app);
+
+  app = vectis_app_new(NULL, &error);
+  assert(app != NULL);
+  vectis_metrics_config_init(&metrics);
+  metrics.path = "/custom-metrics";
+  status = app->metrics(app, &metrics, &error);
+  assert(status == VECTIS_OK);
+  request = vectis_internal_request_new(&error);
+  response = vectis_internal_response_new(&error);
+  assert(request != NULL && response != NULL);
+  status = vectis_internal_dispatch_route(
+      app, VECTIS_HTTP_GET, "/custom-metrics.json", request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 200);
+  assert(strcmp(vectis_internal_response_content_type(response),
+                "application/json") == 0);
+  vectis_internal_response_free(response);
+  vectis_internal_request_free(request);
+  app->close(app);
+
+  app = vectis_app_new(NULL, &error);
+  assert(app != NULL);
+  vectis_metrics_config_init(&metrics);
+  metrics.path = "/metrics-escaped";
+  metrics.json_path = "/<json>&\"";
+  metrics.title = "escaped metrics";
+  status = app->metrics(app, &metrics, &error);
+  assert(status == VECTIS_OK);
+  request = vectis_internal_request_new(&error);
+  response = vectis_internal_response_new(&error);
+  assert(request != NULL && response != NULL);
+  status = vectis_internal_dispatch_route(
+      app, VECTIS_HTTP_GET, "/metrics-escaped", request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 200);
+  body = vectis_internal_response_body(response);
+  assert(runtime_bytes_contains(body, "JSON: /&lt;json&gt;&amp;&quot;"));
+  assert(!runtime_bytes_contains(body, "JSON: /<json>"));
   vectis_internal_response_free(response);
   vectis_internal_request_free(request);
   app->close(app);
@@ -1067,8 +1421,7 @@ static void assert_metrics_surface(void) {
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 401);
   body = vectis_internal_response_body(response);
-  assert(body.data != NULL &&
-         strstr((const char *)body.data, "metrics auth required") != NULL);
+  assert(runtime_bytes_contains(body, "metrics auth required"));
   vectis_internal_response_free(response);
   vectis_internal_request_free(request);
   status = vectis_metrics_snapshot_json(app, &snapshot, &error);
@@ -1085,11 +1438,13 @@ static void assert_supervised_metrics_persistence_worker(void) {
   vectis_http_client_config http;
   vectis_http_response response;
   vectis_mutable_bytes supervisor_snapshot;
+  vectis_route_config route;
   vectis_error error;
   vectis_status status;
   char pouch_dir[] = "/tmp/vectis-runtime-metrics.XXXXXX";
   char endpoint[4096];
   char metrics_url[256];
+  char stream_url[256];
   struct timespec pause_time;
   unsigned short port;
   int reserved_fd;
@@ -1125,24 +1480,41 @@ static void assert_supervised_metrics_persistence_worker(void) {
   metrics.snapshot_interval_seconds = 300u;
   status = app->metrics(app, &metrics, &error);
   assert(status == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/stream-reset",
+                       reset_failing_stream_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
   status = app->start(app, &error);
   assert(status == VECTIS_OK);
 
   vectis_http_client_config_init(&http);
   http.timeout_ms = 2000L;
   http.connect_timeout_ms = 1000L;
+  written = snprintf(stream_url, sizeof(stream_url),
+                     "http://127.0.0.1:%u/stream-reset", (unsigned)port);
+  assert(written > 0 && (size_t)written < sizeof(stream_url));
   written = snprintf(metrics_url, sizeof(metrics_url),
                      "http://127.0.0.1:%u/.metrics.json", (unsigned)port);
   assert(written > 0 && (size_t)written < sizeof(metrics_url));
+  status = vectis_http_get(&http, stream_url, &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 500L);
+  vectis_http_response_cleanup(&response);
   status = vectis_http_get(&http, metrics_url, &response, &error);
   assert(status == VECTIS_OK);
   assert(response.status_code == 200L);
+  assert(response.body != NULL);
+  assert(strstr((const char *)response.body, "\"lifecycle\":\"started\"") !=
+         NULL);
+  assert(strstr((const char *)response.body, "\"requests_total\":1") != NULL);
+  assert(strstr((const char *)response.body, "\"5xx\":1") != NULL);
   vectis_http_response_cleanup(&response);
   status = vectis_metrics_snapshot_json(app, &supervisor_snapshot, &error);
   assert(status == VECTIS_OK);
   assert(strstr((const char *)supervisor_snapshot.data,
-                "\"requests_total\":1") != NULL);
+                "\"requests_total\":2") != NULL);
   assert(strstr((const char *)supervisor_snapshot.data, "\"2xx\":1") != NULL);
+  assert(strstr((const char *)supervisor_snapshot.data, "\"5xx\":1") != NULL);
   vectis_mutable_bytes_cleanup(&supervisor_snapshot);
 
   pause_time.tv_sec = 0;
@@ -1162,6 +1534,12 @@ static void assert_supervised_metrics_persistence_worker(void) {
     }
   }
   assert(wrote);
+  status = vectis_http_get(&http, metrics_url, &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200L);
+  assert(response.body != NULL);
+  assert(strstr((const char *)response.body, "\"writes\":1") != NULL);
+  vectis_http_response_cleanup(&response);
   found = metrics_pouch_snapshot_contains_text(
       endpoint, "vectis.runtime.metrics",
       "\"service\":\"supervised metrics worker\"");
@@ -1171,6 +1549,60 @@ static void assert_supervised_metrics_persistence_worker(void) {
   assert(status == VECTIS_OK);
   app->close(app);
   remove_tree(pouch_dir);
+}
+
+static void assert_metrics_persistence_stop_honors_shutdown_grace(void) {
+  vectis_app_config config;
+  vectis_metrics_config metrics;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  runtime_blackhole_server blackhole;
+  struct timespec pause_time;
+  char endpoint[128];
+  long started_ms;
+  long elapsed_ms;
+  unsigned short port;
+  int reserved_fd;
+  int written;
+
+  runtime_blackhole_start(&blackhole);
+  written = snprintf(endpoint, sizeof(endpoint), "http://127.0.0.1:%u",
+                     (unsigned)blackhole.port);
+  assert(written > 0 && (size_t)written < sizeof(endpoint));
+
+  vectis_app_config_init(&config);
+  reserved_fd = reserve_loopback_port(&port);
+  close(reserved_fd);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = port;
+  config.shutdown_grace_ms = 1000L;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_metrics_config_init(&metrics);
+  metrics.path = "/.metrics";
+  metrics.persistence_enabled = 1;
+  metrics.storage_endpoint = endpoint;
+  metrics.storage_namespace = "vectis.runtime.metrics";
+  metrics.storage_owner = "runtime-test";
+  status = app->metrics(app, &metrics, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+
+  pause_time.tv_sec = 0;
+  pause_time.tv_nsec = 100000000L;
+  (void)nanosleep(&pause_time, NULL);
+  started_ms = runtime_monotonic_millis();
+  status = app->stop(app, &error);
+  elapsed_ms = runtime_monotonic_millis() - started_ms;
+  assert(status == VECTIS_OK);
+  assert(elapsed_ms < 2000L);
+
+  app->close(app);
+  runtime_blackhole_stop(&blackhole);
 }
 
 static void socket_send_all(int fd, const char *data, size_t size) {
@@ -1848,6 +2280,169 @@ static void assert_route_body_policy_validation(void) {
   app->close(app);
 }
 
+static void assert_get_only_server_does_not_create_spool_dir(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_route_config route;
+  vectis_http_client_config http;
+  vectis_http_response response;
+  vectis_error error;
+  vectis_status status;
+  unsigned short port;
+  char url[128];
+  int reserved_fd;
+  int written;
+  int attempt;
+
+  memset(&response, 0, sizeof(response));
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  reserved_fd = reserve_loopback_port(&port);
+  close(reserved_fd);
+  config.tls.port = port;
+  config.server.request_body_spool_dir = "/proc/vectis-spool-unavailable";
+
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/health", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+
+  written =
+      snprintf(url, sizeof(url), "http://127.0.0.1:%u/health", (unsigned)port);
+  assert(written > 0 && (size_t)written < sizeof(url));
+  vectis_http_client_config_init(&http);
+  http.timeout_ms = 1000L;
+  http.connect_timeout_ms = 200L;
+  status = VECTIS_ERR_STATE;
+  for (attempt = 0; attempt < 100 && status != VECTIS_OK; ++attempt) {
+    vectis_http_response_cleanup(&response);
+    status = vectis_http_get(&http, url, &response, &error);
+    if (status != VECTIS_OK) {
+      usleep(100000u);
+    }
+  }
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200L);
+  assert(response.body_size == 2u);
+  assert(memcmp(response.body, "ok", 2u) == 0);
+  vectis_http_response_cleanup(&response);
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  app->close(app);
+}
+
+static void run_upload_server_with_file_spool_path(const char *spool_path) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_route_config route;
+  vectis_error error;
+  vectis_status status;
+  unsigned short port;
+  int reserved_fd;
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  reserved_fd = reserve_loopback_port(&port);
+  close(reserved_fd);
+  config.tls.port = port;
+  config.server.request_body_spool_dir = spool_path;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_upload_route_max(VECTIS_HTTP_POST, "/upload", 4096u,
+                                  sample_handler, NULL);
+  route.body.memory_buffer_limit_bytes = 4u;
+  route.body.disk_spool_disabled = 0;
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  if (status == VECTIS_OK) {
+    (void)app->stop(app, &error);
+    app->close(app);
+    _exit(2);
+  }
+  app->close(app);
+  _exit(0);
+}
+
+static void assert_upload_server_rejects_file_spool_path(void) {
+  char template_path[] = "/tmp/vectis-spool-file-XXXXXX";
+  int fd;
+  pid_t child;
+  int status;
+
+  fd = mkstemp(template_path);
+  assert(fd >= 0);
+  assert(write(fd, "x", 1u) == 1);
+  close(fd);
+
+  child = fork();
+  assert(child >= 0);
+  if (child == 0) {
+    run_upload_server_with_file_spool_path(template_path);
+  }
+  assert(waitpid(child, &status, 0) == child);
+  assert(unlink(template_path) == 0);
+  assert(WIFEXITED(status));
+  assert(WEXITSTATUS(status) == 0);
+}
+
+static void assert_upload_server_rejects_unsafe_spool_dir(void) {
+  char template_path[] = "/tmp/vectis-spool-dir-XXXXXX";
+  pid_t child;
+  int status;
+
+  assert(mkdtemp(template_path) != NULL);
+  assert(chmod(template_path, 0755) == 0);
+
+  child = fork();
+  assert(child >= 0);
+  if (child == 0) {
+    run_upload_server_with_file_spool_path(template_path);
+  }
+  assert(waitpid(child, &status, 0) == child);
+  assert(chmod(template_path, 0700) == 0);
+  remove_tree(template_path);
+  assert(WIFEXITED(status));
+  assert(WEXITSTATUS(status) == 0);
+}
+
+static void assert_acme_state_dir_allows_existing_group_private_dir(void) {
+  vectis_app_config app_config;
+  vectis_app *app;
+  vectis_kore_runtime_config kore_config;
+  vectis_error error;
+  const char *domains[1];
+  char template_path[] = "/tmp/vectis-acme-state-XXXXXX";
+
+  assert(mkdtemp(template_path) != NULL);
+  assert(chmod(template_path, 0750) == 0);
+
+  vectis_app_config_init(&app_config);
+  app = vectis_app_new(&app_config, &error);
+  assert(app != NULL);
+
+  domains[0] = "example.test";
+  memset(&kore_config, 0, sizeof(kore_config));
+  vectis_server_config_init(&kore_config.server);
+  kore_config.app = app;
+  kore_config.tls_mode = VECTIS_TLS_MODE_ACME;
+  kore_config.domains = domains;
+  kore_config.domain_count = sizeof(domains) / sizeof(domains[0]);
+  kore_config.acme_email = "admin@example.test";
+  kore_config.acme_state_dir = template_path;
+
+  assert(vectis_internal_kore_validate(&kore_config, &error) == VECTIS_OK);
+
+  app->close(app);
+  assert(chmod(template_path, 0700) == 0);
+  remove_tree(template_path);
+}
+
 static void assert_large_header_rejected(unsigned short port) {
   const char *prefix;
   const char *suffix;
@@ -2007,14 +2602,17 @@ static void assert_kore_smoke(void) {
   vectis_http_response spooled_upload_response;
   vectis_http_response default_spooled_upload_response;
   vectis_http_response stream_response;
+  vectis_http_response failing_stream_response;
   vectis_http_response stream_reader_response;
   vectis_http_response stream_file_response;
   vectis_http_response xml_route_response;
   vectis_http_response dsv_route_response;
+  vectis_http_response static_file_head_response;
   vectis_http_response embedded_response;
   vectis_http_response embedded_not_modified_response;
   vectis_http_response embedded_if_none_match_miss_response;
   vectis_http_response embedded_range_response;
+  vectis_http_response embedded_range_head_response;
   vectis_http_response embedded_if_range_response;
   vectis_http_response embedded_if_range_miss_response;
   vectis_http_response embedded_suffix_range_response;
@@ -2035,6 +2633,7 @@ static void assert_kore_smoke(void) {
   vectis_http_response native_webdav_get_response;
   source_json_doc json_source_doc;
   stream_probe_context stream_context;
+  runtime_failing_after_chunk_source failing_stream_source;
   runtime_dsv_summary dsv_summary;
   vectis_route_config route;
   vectis_route_config limited_route;
@@ -2047,6 +2646,7 @@ static void assert_kore_smoke(void) {
   vectis_upload_file_route_config stream_file_route;
   vectis_xml_route_config xml_route;
   vectis_dsv_route_config dsv_route;
+  vectis_static_file_config static_file_mount;
   vectis_static_embedded_config embedded_mount;
   vectis_embedded_fs_config embedded_fs_config;
   vectis_webdav_embedded_site_config embedded_webdav_mount;
@@ -2101,6 +2701,7 @@ static void assert_kore_smoke(void) {
       "\"content_type\":\"text/plain\"}]}";
   char webdav_cache_dir[] = "/tmp/vectis-runtime-webdav.XXXXXX";
   char body_spool_dir[] = "/tmp/vectis-runtime-body-spool.XXXXXX";
+  char body_spool_child_dir[4096];
   const char *webdav_headers[] = {"x-vectis-webdav-auth: ok"};
   const char *webdav_required_headers[] = {"x-vectis-webdav-auth: required"};
   const char *webdav_deny_headers[] = {"x-vectis-webdav-auth: deny"};
@@ -2151,18 +2752,27 @@ static void assert_kore_smoke(void) {
   memset(&default_spooled_upload_response, 0,
          sizeof(default_spooled_upload_response));
   memset(&stream_response, 0, sizeof(stream_response));
+  memset(&failing_stream_response, 0, sizeof(failing_stream_response));
   memset(&stream_reader_response, 0, sizeof(stream_reader_response));
   memset(&stream_file_response, 0, sizeof(stream_file_response));
   memset(&xml_route_response, 0, sizeof(xml_route_response));
   memset(&dsv_route_response, 0, sizeof(dsv_route_response));
+  memset(&static_file_head_response, 0, sizeof(static_file_head_response));
   memset(&embedded_response, 0, sizeof(embedded_response));
   memset(&embedded_not_modified_response, 0,
          sizeof(embedded_not_modified_response));
   memset(&embedded_if_none_match_miss_response, 0,
          sizeof(embedded_if_none_match_miss_response));
+  memset(&embedded_range_response, 0, sizeof(embedded_range_response));
+  memset(&embedded_range_head_response, 0,
+         sizeof(embedded_range_head_response));
   memset(&embedded_if_range_response, 0, sizeof(embedded_if_range_response));
   memset(&embedded_if_range_miss_response, 0,
          sizeof(embedded_if_range_miss_response));
+  memset(&embedded_suffix_range_response, 0,
+         sizeof(embedded_suffix_range_response));
+  memset(&embedded_invalid_range_response, 0,
+         sizeof(embedded_invalid_range_response));
   memset(&embedded_head_response, 0, sizeof(embedded_head_response));
   memset(&embedded_missing_response, 0, sizeof(embedded_missing_response));
   memset(&embedded_method_response, 0, sizeof(embedded_method_response));
@@ -2179,6 +2789,7 @@ static void assert_kore_smoke(void) {
   memset(&native_webdav_response, 0, sizeof(native_webdav_response));
   memset(&native_webdav_get_response, 0, sizeof(native_webdav_get_response));
   memset(&stream_context, 0, sizeof(stream_context));
+  memset(&failing_stream_source, 0, sizeof(failing_stream_source));
   memset(&dsv_summary, 0, sizeof(dsv_summary));
   memset(&json_source_request, 0, sizeof(json_source_request));
   memset(&no_body_request, 0, sizeof(no_body_request));
@@ -2200,8 +2811,11 @@ static void assert_kore_smoke(void) {
   config.server.keepalive_max_requests = 1u;
   config.server.worker_count = 1u;
   assert(mkdtemp(body_spool_dir) != NULL);
-  config.server.request_body_spool_dir = body_spool_dir;
-  body_spool_expectation.path_prefix = body_spool_dir;
+  written = snprintf(body_spool_child_dir, sizeof(body_spool_child_dir),
+                     "%s/kore-spool", body_spool_dir);
+  assert(written > 0 && (size_t)written < sizeof(body_spool_child_dir));
+  config.server.request_body_spool_dir = body_spool_child_dir;
+  body_spool_expectation.path_prefix = body_spool_child_dir;
   fp = fopen(response_file_path, "wb");
   assert(fp != NULL);
   assert(fwrite(response_file_body, 1u, sizeof(response_file_body) - 1u, fp) ==
@@ -2250,6 +2864,11 @@ static void assert_kore_smoke(void) {
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/health", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  route =
+      vectis_route(VECTIS_HTTP_GET, "/failing-stream",
+                   failing_after_chunk_stream_handler, &failing_stream_source);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
   route = vectis_route(VECTIS_HTTP_GET, "/metadata", metadata_handler, NULL);
@@ -2348,6 +2967,12 @@ static void assert_kore_smoke(void) {
   file_route = vectis_route(VECTIS_HTTP_GET, "/file", file_handler,
                             (void *)response_file_path);
   status = vectis_register_route(app, &file_route, &error);
+  assert(status == VECTIS_OK);
+  vectis_static_file_config_init(&static_file_mount);
+  static_file_mount.path = "/static-file";
+  static_file_mount.file_path = response_file_path;
+  static_file_mount.content_type = "text/plain";
+  status = app->static_file(app, &static_file_mount, &error);
   assert(status == VECTIS_OK);
   vectis_static_embedded_config_init(&embedded_mount);
   embedded_mount.path_prefix = "/embedded";
@@ -2448,6 +3073,11 @@ static void assert_kore_smoke(void) {
   assert(response.body_size == 2u);
   assert(memcmp(response.body, "ok", 2u) == 0);
 
+  status = vectis_http_get(&http, "http://127.0.0.1:28080/failing-stream",
+                           &failing_stream_response, &error);
+  assert(status != VECTIS_OK);
+  vectis_http_response_cleanup(&failing_stream_response);
+
   status = vectis_http_get(&http, "http://127.0.0.1:28080/state-error",
                            &state_error_response, &error);
   assert(status == VECTIS_OK);
@@ -2469,6 +3099,18 @@ static void assert_kore_smoke(void) {
   assert_repeated_file_responses_do_not_leak_fds(
       &http, "http://127.0.0.1:28080/file", response_file_body,
       sizeof(response_file_body) - 1u, &error);
+
+  status = vectis_http_head(&http, "http://127.0.0.1:28080/static-file",
+                            &static_file_head_response, &error);
+  assert(status == VECTIS_OK);
+  assert(static_file_head_response.status_code == 200L);
+  assert(static_file_head_response.content_type != NULL);
+  assert(strcmp(static_file_head_response.content_type, "text/plain") == 0);
+  assert(strcmp(vectis_http_response_header(&static_file_head_response,
+                                            "content-length"),
+                "13") == 0);
+  assert(static_file_head_response.body_size == 0u);
+  vectis_http_response_cleanup(&static_file_head_response);
 
   status = vectis_http_get(&http, "http://127.0.0.1:28080/embedded",
                            &embedded_response, &error);
@@ -2560,6 +3202,24 @@ static void assert_kore_smoke(void) {
   vectis_http_response_cleanup(&embedded_range_response);
 
   vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_HEAD;
+  request.url = "http://127.0.0.1:28080/embedded/assets/app.txt";
+  request.headers = embedded_range_headers;
+  request.header_count = 1u;
+  status = vectis_http_execute(&http, &request, &embedded_range_head_response,
+                               &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_range_head_response.status_code == 206L);
+  assert(strcmp(vectis_http_response_header(&embedded_range_head_response,
+                                            "content-range"),
+                "bytes 1-2/4") == 0);
+  assert(strcmp(vectis_http_response_header(&embedded_range_head_response,
+                                            "content-length"),
+                "2") == 0);
+  assert(embedded_range_head_response.body_size == 0u);
+  vectis_http_response_cleanup(&embedded_range_head_response);
+
+  vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
   request.url = "http://127.0.0.1:28080/embedded/assets/app.txt";
   request.headers = embedded_if_range_headers;
@@ -2634,6 +3294,9 @@ static void assert_kore_smoke(void) {
   assert(strcmp(vectis_http_response_header(&embedded_head_response, "etag"),
                 "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d07887"
                 "5901\"") == 0);
+  assert(strcmp(vectis_http_response_header(&embedded_head_response,
+                                            "content-length"),
+                "4") == 0);
   assert(embedded_head_response.body_size == 0u);
   vectis_http_response_cleanup(&embedded_head_response);
 
@@ -3472,7 +4135,7 @@ static void assert_routes_reject_materialized_managed_services(void) {
   assert(status == VECTIS_OK);
   status = service->state(service, &service_state, &error);
   assert(status == VECTIS_OK);
-  assert(service_state.materialized);
+  assert(!service_state.materialized);
   assert(!service_state.started);
 
   route = vectis_route(VECTIS_HTTP_GET, "/managed-materialized", sample_handler,
@@ -3515,6 +4178,41 @@ static void assert_kore_start_rejects_extra_thread(void) {
   (void)pthread_join(thread, NULL);
   assert(status == VECTIS_ERR_STATE);
   assert(strstr(error.message, "single-threaded") != NULL);
+  app->close(app);
+}
+
+static void assert_kore_start_waits_for_transient_thread_teardown(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_route_config route;
+  pthread_t thread;
+  struct timespec delay;
+  unsigned short port;
+  int reserved_fd;
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  reserved_fd = reserve_loopback_port(&port);
+  close(reserved_fd);
+  config.tls.port = port;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/thread-drain", sample_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+
+  assert(pthread_create(&thread, NULL, runtime_transient_thread, NULL) == 0);
+  delay.tv_sec = 0;
+  delay.tv_nsec = 10000000L;
+  (void)nanosleep(&delay, NULL);
+  status = app->start(app, &error);
+  assert(pthread_join(thread, NULL) == 0);
+  assert(status == VECTIS_OK);
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
   app->close(app);
 }
 
@@ -3635,6 +4333,170 @@ static void assert_supervised_wait_reports_consumer_service_exit(void) {
   remove_tree(pouch_dir);
 }
 
+static void assert_supervised_wait_reports_consumer_service_clean_exit(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_route_config route;
+  lc_consumer_config consumer;
+  lc_consumer_service_config service_config;
+  vectis_consumer_service *service;
+  vectis_consumer_service_state service_state;
+  lc_consumer_service *native;
+  char pouch_dir[] = "/tmp/vectis-runtime-consumer-clean.XXXXXX";
+  char endpoint[4096];
+  const char *endpoints[1];
+  int reserved_fd;
+  int written;
+  unsigned short port;
+
+  assert(mkdtemp(pouch_dir) != NULL);
+  written = snprintf(endpoint, sizeof(endpoint),
+                     "pouch://%s?single_writer=false", pouch_dir);
+  assert(written > 0 && (size_t)written < sizeof(endpoint));
+  endpoints[0] = endpoint;
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  reserved_fd = reserve_loopback_port(&port);
+  close(reserved_fd);
+  config.tls.port = port;
+  config.lockd.endpoints = endpoints;
+  config.lockd.endpoint_count = 1u;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  lc_consumer_config_init(&consumer);
+  lc_consumer_service_config_init(&service_config);
+  consumer.name = "runtime-clean-exit";
+  consumer.request.queue = "runtime-clean-exit";
+  consumer.request.owner = "runtime-clean-exit-owner";
+  consumer.request.wait_seconds = 1L;
+  consumer.request.visibility_timeout_seconds = 1L;
+  consumer.handle = sample_consumer_handler;
+  service_config.consumers = &consumer;
+  service_config.consumer_count = 1u;
+  service = NULL;
+  status = app->consumer_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+  assert(service != NULL);
+
+  route = vectis_route(VECTIS_HTTP_GET, "/consumer-service-clean-exit",
+                       sample_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = service->start(service, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  native = service->native(service);
+  assert(native != NULL);
+  assert(native->stop(native) == LC_OK);
+
+  (void)alarm(10u);
+  status = app->wait(app, &error);
+  (void)alarm(0u);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "consumer service exited unexpectedly") != NULL);
+
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.failed);
+  assert(service_state.dependency_code == (long)LC_OK);
+  assert(service_state.terminal_status == VECTIS_ERR_STATE);
+
+  service->close(service);
+  app->close(app);
+  remove_tree(pouch_dir);
+}
+
+static void assert_active_consumer_start_preserves_restart_request(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_route_config route;
+  lc_consumer_config consumer;
+  lc_consumer_service_config service_config;
+  vectis_consumer_service *service;
+  vectis_consumer_service_state service_state;
+  char pouch_dir[] = "/tmp/vectis-runtime-consumer-active.XXXXXX";
+  char endpoint[4096];
+  const char *endpoints[1];
+  int reserved_fd;
+  int written;
+  unsigned short port;
+
+  assert(mkdtemp(pouch_dir) != NULL);
+  written = snprintf(endpoint, sizeof(endpoint),
+                     "pouch://%s?single_writer=false", pouch_dir);
+  assert(written > 0 && (size_t)written < sizeof(endpoint));
+  endpoints[0] = endpoint;
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  reserved_fd = reserve_loopback_port(&port);
+  close(reserved_fd);
+  config.tls.port = port;
+  config.lockd.endpoints = endpoints;
+  config.lockd.endpoint_count = 1u;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  lc_consumer_config_init(&consumer);
+  lc_consumer_service_config_init(&service_config);
+  consumer.name = "runtime-active-consumer";
+  consumer.request.queue = "runtime-active-consumer";
+  consumer.request.owner = "runtime-active-owner";
+  consumer.request.wait_seconds = 1L;
+  consumer.request.visibility_timeout_seconds = 1L;
+  consumer.handle = sample_consumer_handler;
+  service_config.consumers = &consumer;
+  service_config.consumer_count = 1u;
+  service = NULL;
+  status = app->consumer_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+
+  route =
+      vectis_route(VECTIS_HTTP_GET, "/active-consumer", sample_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+
+  status = service->start(service, &error);
+  assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.start_requested);
+  assert(service_state.started);
+  assert(service_state.monitor_active);
+
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.start_requested);
+  assert(!service_state.started);
+
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.start_requested);
+  assert(service_state.started);
+  assert(service_state.monitor_active);
+
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  service->close(service);
+  app->close(app);
+  remove_tree(pouch_dir);
+}
+
 static void assert_supervised_child_exit_stops_consumer_service(void) {
   vectis_app_config config;
   vectis_app *app;
@@ -3667,7 +4529,7 @@ static void assert_supervised_child_exit_stops_consumer_service(void) {
   config.tls.port = port;
   config.lockd.endpoints = endpoints;
   config.lockd.endpoint_count = 1u;
-  config.shutdown_grace_ms = 500L;
+  config.shutdown_grace_ms = 2000L;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
 
@@ -4023,7 +4885,7 @@ static void assert_runtime_start_failure_rolls_back_services(void) {
 
   status = success_service->state(success_service, &service_state, &error);
   assert(status == VECTIS_OK);
-  assert(service_state.materialized);
+  assert(!service_state.materialized);
   assert(!service_state.started);
   assert(service_state.stop_requested);
 
@@ -4072,6 +4934,7 @@ static void assert_supervised_managed_service_lifecycle(void) {
   reserved_fd = reserve_loopback_port(&port);
   close(reserved_fd);
   config.tls.port = port;
+  probe.stop_http_port = port;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
 
@@ -4124,12 +4987,282 @@ static void assert_supervised_managed_service_lifecycle(void) {
   assert(service_state.monitor_joined);
   assert(!service_state.failed);
   assert(probe.stopped == 1);
+  assert(probe.stop_http_ok == 1);
   assert(probe.waited == 1);
 
   service->close(service);
   app->close(app);
   close(probe.wait_fds[0]);
   close(probe.wait_fds[1]);
+}
+
+static void assert_managed_service_stop_honors_shutdown_grace(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_managed_service_config service_config;
+  vectis_managed_service *service;
+  vectis_managed_service_state service_state;
+  runtime_managed_service_probe probe;
+  const char byte = 'x';
+
+  memset(&probe, 0, sizeof(probe));
+  assert(pipe(probe.wait_fds) == 0);
+  probe.stop_signal_disabled = 1;
+  vectis_app_config_init(&config);
+  config.shutdown_grace_ms = 50L;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "shutdown-grace-managed";
+  service_config.context = &probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.stop = runtime_managed_service_stop;
+  service_config.wait = runtime_managed_service_wait;
+  service_config.start_with_app = 1;
+  service = NULL;
+  status = app->managed_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  status = app->stop(app, &error);
+  assert(status == VECTIS_ERR_TIMEOUT);
+  assert(strstr(error.message, "shutdown grace") != NULL);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.started);
+  assert(service_state.monitor_active);
+  assert(!service_state.monitor_done);
+  assert(!service_state.monitor_joined);
+
+  assert(write(probe.wait_fds[1], &byte, 1u) == 1);
+  status = service->wait(service, &error);
+  assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(!service_state.started);
+  assert(!service_state.monitor_active);
+  assert(service_state.monitor_done);
+  assert(service_state.monitor_joined);
+
+  service->close(service);
+  app->close(app);
+  close(probe.wait_fds[0]);
+  close(probe.wait_fds[1]);
+}
+
+static void assert_managed_services_share_shutdown_grace(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_managed_service_config service_config;
+  vectis_managed_service *first_service;
+  vectis_managed_service *second_service;
+  runtime_managed_service_probe first_probe;
+  runtime_managed_service_probe second_probe;
+  long started_ms;
+  long elapsed_ms;
+  const char byte = 'x';
+
+  memset(&first_probe, 0, sizeof(first_probe));
+  memset(&second_probe, 0, sizeof(second_probe));
+  assert(pipe(first_probe.wait_fds) == 0);
+  assert(pipe(second_probe.wait_fds) == 0);
+  first_probe.stop_signal_disabled = 1;
+  second_probe.stop_signal_disabled = 1;
+
+  vectis_app_config_init(&config);
+  config.shutdown_grace_ms = 250L;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "shared-grace-first";
+  service_config.context = &first_probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.stop = runtime_managed_service_stop;
+  service_config.wait = runtime_managed_service_wait;
+  service_config.start_with_app = 1;
+  first_service = NULL;
+  status = app->managed_service(app, &service_config, &first_service, &error);
+  assert(status == VECTIS_OK);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "shared-grace-second";
+  service_config.context = &second_probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.stop = runtime_managed_service_stop;
+  service_config.wait = runtime_managed_service_wait;
+  service_config.start_with_app = 1;
+  second_service = NULL;
+  status = app->managed_service(app, &service_config, &second_service, &error);
+  assert(status == VECTIS_OK);
+
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  started_ms = runtime_monotonic_millis();
+  status = app->stop(app, &error);
+  elapsed_ms = runtime_monotonic_millis() - started_ms;
+  assert(status == VECTIS_ERR_TIMEOUT);
+  assert(elapsed_ms < 400L);
+
+  assert(write(first_probe.wait_fds[1], &byte, 1u) == 1);
+  assert(write(second_probe.wait_fds[1], &byte, 1u) == 1);
+  status = first_service->wait(first_service, &error);
+  assert(status == VECTIS_OK);
+  status = second_service->wait(second_service, &error);
+  assert(status == VECTIS_OK);
+
+  first_service->close(first_service);
+  second_service->close(second_service);
+  app->close(app);
+  close(first_probe.wait_fds[0]);
+  close(first_probe.wait_fds[1]);
+  close(second_probe.wait_fds[0]);
+  close(second_probe.wait_fds[1]);
+}
+
+static void assert_app_close_joins_timed_out_managed_service(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_managed_service_config service_config;
+  vectis_managed_service *service;
+  vectis_managed_service_state service_state;
+  runtime_managed_service_probe probe;
+  runtime_delayed_fd_write release;
+  pthread_t release_thread;
+
+  memset(&probe, 0, sizeof(probe));
+  assert(pipe(probe.wait_fds) == 0);
+  probe.stop_signal_disabled = 1;
+  vectis_app_config_init(&config);
+  config.shutdown_grace_ms = 50L;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "close-timeout-managed";
+  service_config.context = &probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.stop = runtime_managed_service_stop;
+  service_config.wait = runtime_managed_service_wait;
+  service_config.start_with_app = 1;
+  service = NULL;
+  status = app->managed_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  status = app->stop(app, &error);
+  assert(status == VECTIS_ERR_TIMEOUT);
+
+  release.fd = probe.wait_fds[1];
+  release.delay_ms = 100L;
+  assert(pthread_create(&release_thread, NULL, runtime_delayed_fd_write_main,
+                        &release) == 0);
+  app->close(app);
+  assert(pthread_join(release_thread, NULL) == 0);
+
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "detached") != NULL);
+  service->close(service);
+  close(probe.wait_fds[0]);
+  close(probe.wait_fds[1]);
+}
+
+static void assert_managed_service_detached_after_app_close(void) {
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_managed_service_config service_config;
+  vectis_managed_service *service;
+  vectis_managed_service_state service_state;
+  runtime_managed_service_probe probe;
+
+  memset(&probe, 0, sizeof(probe));
+  probe.wait_fds[0] = -1;
+  probe.wait_fds[1] = -1;
+  app = vectis_app_new(NULL, &error);
+  assert(app != NULL);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "detached-managed";
+  service_config.context = &probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.cleanup = runtime_managed_service_cleanup;
+  service = NULL;
+  status = app->managed_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+
+  app->close(app);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "detached") != NULL);
+  status = service->start(service, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "detached") != NULL);
+
+  service->close(service);
+  assert(probe.cleaned == 1);
+}
+
+static void assert_consumer_service_detached_after_app_close(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  lc_consumer_config consumer;
+  lc_consumer_service_config service_config;
+  vectis_consumer_service *service;
+  vectis_consumer_service_state service_state;
+  char pouch_dir[] = "/tmp/vectis-runtime-consumer-detached.XXXXXX";
+  char endpoint[4096];
+  const char *endpoints[1];
+  int written;
+
+  assert(mkdtemp(pouch_dir) != NULL);
+  written = snprintf(endpoint, sizeof(endpoint),
+                     "pouch://%s?single_writer=false", pouch_dir);
+  assert(written > 0 && (size_t)written < sizeof(endpoint));
+  endpoints[0] = endpoint;
+
+  vectis_app_config_init(&config);
+  config.lockd.endpoints = endpoints;
+  config.lockd.endpoint_count = 1u;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  lc_consumer_config_init(&consumer);
+  lc_consumer_service_config_init(&service_config);
+  consumer.name = "detached-consumer";
+  consumer.request.queue = "detached-consumer";
+  consumer.request.owner = "detached-consumer-owner";
+  consumer.request.wait_seconds = 1L;
+  consumer.request.visibility_timeout_seconds = 1L;
+  consumer.handle = sample_consumer_handler;
+  service_config.consumers = &consumer;
+  service_config.consumer_count = 1u;
+  service = NULL;
+  status = app->consumer_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+
+  app->close(app);
+  assert(service->native(service) == NULL);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "detached") != NULL);
+  status = service->start(service, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "detached") != NULL);
+
+  service->close(service);
+  remove_tree(pouch_dir);
 }
 
 static void assert_managed_service_inherits_app_logger(void) {
@@ -4224,6 +5357,140 @@ static void assert_managed_service_logger_disabled(void) {
   logger->destroy(logger);
 }
 
+static void assert_managed_service_direct_stop_clears_started(void) {
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_managed_service_config service_config;
+  vectis_managed_service *service;
+  vectis_managed_service_state service_state;
+  runtime_managed_service_probe probe;
+
+  memset(&probe, 0, sizeof(probe));
+  probe.wait_fds[0] = -1;
+  probe.wait_fds[1] = -1;
+  app = vectis_app_new(NULL, &error);
+  assert(app != NULL);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "direct-stop-service";
+  service_config.context = &probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.stop = runtime_managed_service_stop;
+  service_config.start_with_app = 1;
+  service = NULL;
+  status = app->managed_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  assert(probe.started == 1);
+
+  status = service->stop(service, &error);
+  assert(status == VECTIS_OK);
+  assert(probe.stopped == 1);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(!service_state.started);
+
+  status = service->start(service, &error);
+  assert(status == VECTIS_OK);
+  assert(probe.started == 2);
+  status = service->stop(service, &error);
+  assert(status == VECTIS_OK);
+  assert(probe.stopped == 2);
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  assert(probe.stopped == 2);
+
+  service->close(service);
+  app->close(app);
+}
+
+static void assert_managed_service_stop_cancels_pending_start(void) {
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_managed_service_config service_config;
+  vectis_managed_service *service;
+  vectis_managed_service_state service_state;
+  runtime_managed_service_probe probe;
+
+  memset(&probe, 0, sizeof(probe));
+  probe.wait_fds[0] = -1;
+  probe.wait_fds[1] = -1;
+  app = vectis_app_new(NULL, &error);
+  assert(app != NULL);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "pending-start-cancel";
+  service_config.context = &probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.stop = runtime_managed_service_stop;
+  service_config.start_with_app = 1;
+  service = NULL;
+  status = app->managed_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.start_requested);
+
+  status = service->stop(service, &error);
+  assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(!service_state.start_requested);
+  assert(service_state.stop_requested);
+  assert(!service_state.started);
+
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  assert(probe.started == 0);
+
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  service->close(service);
+  app->close(app);
+}
+
+static void assert_managed_service_run_materializes_service_only(void) {
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_managed_service_config service_config;
+  vectis_managed_service *service;
+  vectis_managed_service_state service_state;
+  runtime_managed_service_probe probe;
+
+  memset(&probe, 0, sizeof(probe));
+  probe.wait_fds[0] = -1;
+  probe.wait_fds[1] = -1;
+  app = vectis_app_new(NULL, &error);
+  assert(app != NULL);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "service-only-run";
+  service_config.context = &probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.stop = runtime_managed_service_stop;
+  service = NULL;
+  status = app->managed_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+
+  status = service->run(service, &error);
+  assert(status == VECTIS_OK);
+  assert(probe.started == 1);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.materialized);
+  assert(service_state.started);
+
+  status = service->stop(service, &error);
+  assert(status == VECTIS_OK);
+  assert(probe.stopped == 1);
+  service->close(service);
+  app->close(app);
+}
+
 static void assert_service_only_curl_worker_mailbox_http(void) {
   vectis_app_config app_config;
   vectis_app *app;
@@ -4240,9 +5507,14 @@ static void assert_service_only_curl_worker_mailbox_http(void) {
   vectis_curl_worker_event request_event;
   vectis_mailbox_event reply_event;
   vectis_curl_worker_http_response worker_response;
+  runtime_curl_worker_http_wire *request_wire;
+  runtime_curl_worker_http_reply_wire *reply_wire;
   runtime_http_mock_server http_server;
+  vectis_mailbox_message late_message;
   char url[128];
   char failed_url[128];
+  char ca_bundle_memory[] = "curl worker copied CA source";
+  char client_bundle_pem[] = "curl worker copied legacy client PEM";
   unsigned long correlation_id;
   unsigned short closed_port;
   int reserved_fd;
@@ -4274,15 +5546,30 @@ static void assert_service_only_curl_worker_mailbox_http(void) {
   app = vectis_app_new(&app_config, &error);
   assert(app != NULL);
   vectis_curl_worker_service_config_init(&worker_config);
+  worker_config.request_mailbox = mailbox;
+  worker_config.http.ca_bundle = vectis_source_from_lc((lc_source *)0x1);
+  service = NULL;
+  status = app->curl_worker_service(app, &worker_config, &service, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(service == NULL);
+  assert(strstr(error.message, "lc_source") != NULL);
+
+  vectis_curl_worker_service_config_init(&worker_config);
   worker_config.name = "curl-worker-test";
   worker_config.request_mailbox = mailbox;
   worker_config.reply_broker = broker;
   worker_config.http.timeout_ms = 2000L;
   worker_config.http.connect_timeout_ms = 1000L;
+  worker_config.http.ca_bundle = vectis_source_from_memory(
+      ca_bundle_memory, sizeof(ca_bundle_memory) - 1u);
+  worker_config.http.client_bundle_pem = client_bundle_pem;
+  worker_config.http.client_bundle_pem_size = sizeof(client_bundle_pem) - 1u;
   worker_config.poll_timeout_ms = 10L;
   service = NULL;
   status = app->curl_worker_service(app, &worker_config, &service, &error);
   assert(status == VECTIS_OK);
+  memset(ca_bundle_memory, 'x', sizeof(ca_bundle_memory));
+  memset(client_bundle_pem, 'y', sizeof(client_bundle_pem));
   status = service->state(service, &service_state, &error);
   assert(status == VECTIS_OK);
   assert(service_state.declared);
@@ -4298,6 +5585,29 @@ static void assert_service_only_curl_worker_mailbox_http(void) {
   assert(service_state.monitor_active);
 
   vectis_curl_worker_http_response_init(&worker_response);
+
+  vectis_curl_worker_http_request_init(&request_config);
+  request_config.method = VECTIS_HTTP_GET;
+  request_config.url = url;
+  request_config.max_response_body_bytes = 1024u;
+  status = vectis_curl_worker_http_event_build(&request_config, &request_event,
+                                               &error);
+  assert(status == VECTIS_OK);
+  request_wire = (runtime_curl_worker_http_wire *)request_event.payload.data;
+  request_wire->url_size = (size_t)-1;
+  vectis_mailbox_event_init(&reply_event);
+  status = broker->request(broker, &request_event.message, 3000L, &reply_event,
+                           &correlation_id, &error);
+  assert(status == VECTIS_OK);
+  assert(correlation_id != 0u);
+  status = vectis_curl_worker_http_response_decode(&reply_event,
+                                                   &worker_response, &error);
+  assert(status == VECTIS_OK);
+  assert(worker_response.transfer_status == VECTIS_ERR_INVALID);
+  assert(strstr(worker_response.message, "URL") != NULL);
+  vectis_mailbox_event_cleanup(&reply_event);
+  vectis_curl_worker_event_cleanup(&request_event);
+
   vectis_curl_worker_http_request_init(&request_config);
   request_config.method = VECTIS_HTTP_GET;
   request_config.url = failed_url;
@@ -4351,11 +5661,30 @@ static void assert_service_only_curl_worker_mailbox_http(void) {
   assert(worker_response.body_size == sizeof("curl worker ok") - 1u);
   assert(memcmp(worker_response.body, "curl worker ok",
                 sizeof("curl worker ok") - 1u) == 0);
+  reply_wire = (runtime_curl_worker_http_reply_wire *)reply_event.payload;
+  reply_wire->message_size = (size_t)-1;
+  status = vectis_curl_worker_http_response_decode(&reply_event,
+                                                   &worker_response, &error);
+  assert(status == VECTIS_ERR_INVALID);
   assert(strstr(http_server.request, "GET /worker HTTP/1.1") != NULL);
 
   vectis_curl_worker_http_response_cleanup(&worker_response);
   vectis_mailbox_event_cleanup(&reply_event);
   vectis_curl_worker_event_cleanup(&request_event);
+
+  broker->close(broker);
+  vectis_mailbox_message_init(&late_message);
+  late_message.kind = VECTIS_CURL_WORKER_HTTP_KIND;
+  late_message.expects_reply = 1;
+  status =
+      mailbox->publish_request(mailbox, &late_message, &correlation_id, &error);
+  assert(status == VECTIS_OK);
+  usleep(100000u);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.started);
+  assert(!service_state.failed);
+
   status = app->stop(app, &error);
   assert(status == VECTIS_OK);
   status = service->state(service, &service_state, &error);
@@ -4371,6 +5700,66 @@ static void assert_service_only_curl_worker_mailbox_http(void) {
   broker->destroy(broker);
   mailbox->destroy(mailbox);
   runtime_http_mock_stop(&http_server);
+}
+
+static void assert_curl_worker_stop_wakes_idle_mailbox_wait(void) {
+  vectis_app_config app_config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_mailbox_config mailbox_config;
+  vectis_mailbox *mailbox;
+  vectis_curl_worker_service_config worker_config;
+  vectis_managed_service *service;
+  vectis_managed_service_state service_state;
+  vectis_mailbox_message message;
+  vectis_mailbox_event event;
+
+  vectis_mailbox_config_init(&mailbox_config);
+  mailbox_config.capacity = 2u;
+  mailbox = NULL;
+  status = vectis_mailbox_new(&mailbox_config, &mailbox, &error);
+  assert(status == VECTIS_OK);
+
+  vectis_app_config_init(&app_config);
+  app_config.shutdown_grace_ms = 50L;
+  app = vectis_app_new(&app_config, &error);
+  assert(app != NULL);
+
+  vectis_curl_worker_service_config_init(&worker_config);
+  worker_config.name = "curl-worker-stop-wakeup";
+  worker_config.request_mailbox = mailbox;
+  worker_config.poll_timeout_ms = 5000L;
+  service = NULL;
+  status = app->curl_worker_service(app, &worker_config, &service, &error);
+  assert(status == VECTIS_OK);
+  assert(service != NULL);
+
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.stop_requested);
+  assert(!service_state.started);
+  assert(service_state.monitor_done);
+  assert(service_state.monitor_joined);
+  assert(!service_state.failed);
+
+  vectis_mailbox_message_init(&message);
+  message.kind = "after-stop";
+  status = mailbox->publish(mailbox, &message, &error);
+  assert(status == VECTIS_OK);
+  vectis_mailbox_event_init(&event);
+  status = mailbox->next(mailbox, &event, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(event.kind, "after-stop") == 0);
+  vectis_mailbox_event_cleanup(&event);
+
+  service->close(service);
+  app->close(app);
+  mailbox->destroy(mailbox);
 }
 
 static void assert_supervised_opcua_server_service_lifecycle(void) {
@@ -4592,6 +5981,64 @@ static void assert_service_only_wait_reports_consumer_service_exit(void) {
   remove_tree(pouch_dir);
 }
 
+static void assert_consumer_service_run_until_materializes_descriptor(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  lc_consumer_config consumer;
+  lc_consumer_service_config service_config;
+  vectis_consumer_service *service;
+  vectis_consumer_service_state service_state;
+  char pouch_dir[] = "/tmp/vectis-runtime-run-until.XXXXXX";
+  char endpoint[4096];
+  const char *endpoints[1];
+  volatile int done;
+  int written;
+
+  assert(mkdtemp(pouch_dir) != NULL);
+  written = snprintf(endpoint, sizeof(endpoint),
+                     "pouch://%s?single_writer=false", pouch_dir);
+  assert(written > 0 && (size_t)written < sizeof(endpoint));
+  endpoints[0] = endpoint;
+
+  vectis_app_config_init(&config);
+  config.lockd.endpoints = endpoints;
+  config.lockd.endpoint_count = 1u;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  lc_consumer_config_init(&consumer);
+  lc_consumer_service_config_init(&service_config);
+  consumer.name = "service-only-run-until";
+  consumer.request.queue = "service-only-run-until";
+  consumer.request.owner = "service-only-run-until-owner";
+  consumer.request.wait_seconds = 1L;
+  consumer.request.visibility_timeout_seconds = 1L;
+  consumer.handle = sample_consumer_handler;
+  service_config.consumers = &consumer;
+  service_config.consumer_count = 1u;
+  service = NULL;
+  status = app->consumer_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+  assert(service != NULL);
+  assert(service->native(service) == NULL);
+
+  done = 1;
+  status = service->run_until(service, &done, 1000L, &error);
+  assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.materialized);
+  assert(service_state.process_local);
+  assert(service_state.stop_requested);
+  assert(!service_state.started);
+
+  service->close(service);
+  app->close(app);
+  remove_tree(pouch_dir);
+}
+
 static void assert_service_failure_continue_waits_for_signal(void) {
   vectis_app_config config;
   vectis_app *app;
@@ -4666,6 +6113,80 @@ static void assert_service_failure_continue_waits_for_signal(void) {
   service->close(service);
   app->close(app);
   remove_tree(pouch_dir);
+}
+
+static void assert_managed_service_restart_replaces_done_monitor(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_managed_service_config service_config;
+  vectis_managed_service *service;
+  vectis_managed_service_state service_state;
+  runtime_managed_service_probe probe;
+  struct timespec pause_time;
+  int i;
+
+  memset(&probe, 0, sizeof(probe));
+  assert(pipe(probe.wait_fds) == 0);
+  probe.wait_status = VECTIS_ERR_STATE;
+  probe.wait_error = "managed service first failure";
+
+  vectis_app_config_init(&config);
+  config.service_failure_policy = VECTIS_SERVICE_FAILURE_CONTINUE;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "runtime-managed-restart";
+  service_config.context = &probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.stop = runtime_managed_service_stop;
+  service_config.wait = runtime_managed_service_wait;
+  service = NULL;
+  status = app->managed_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+  status = service->start(service, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+
+  pause_time.tv_sec = 0;
+  pause_time.tv_nsec = 10000000L;
+  for (i = 0; i < 100; ++i) {
+    status = service->state(service, &service_state, &error);
+    assert(status == VECTIS_OK);
+    if (service_state.monitor_done) {
+      break;
+    }
+    (void)nanosleep(&pause_time, NULL);
+  }
+  assert(service_state.monitor_done);
+  assert(service_state.failed);
+  assert(probe.started == 1);
+  assert(probe.waited == 1);
+
+  probe.wait_status = VECTIS_OK;
+  probe.wait_error = NULL;
+  status = service->start(service, &error);
+  assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.started);
+  assert(service_state.monitor_active);
+  assert(!service_state.monitor_done);
+  assert(!service_state.failed);
+  assert(probe.started == 2);
+
+  status = service->stop(service, &error);
+  assert(status == VECTIS_OK);
+  assert(probe.stopped == 1);
+  assert(probe.waited == 2);
+
+  service->close(service);
+  app->close(app);
+  close(probe.wait_fds[0]);
+  close(probe.wait_fds[1]);
 }
 
 static void assert_supervised_wait_reports_managed_service_exit(void) {
@@ -4753,12 +6274,32 @@ static int run_named_runtime_test(const char *name) {
     assert_route_body_policy_validation();
     return 1;
   }
+  if (strcmp(name, "get_only_server_does_not_create_spool_dir") == 0) {
+    assert_get_only_server_does_not_create_spool_dir();
+    return 1;
+  }
+  if (strcmp(name, "upload_server_rejects_file_spool_path") == 0) {
+    assert_upload_server_rejects_file_spool_path();
+    return 1;
+  }
+  if (strcmp(name, "upload_server_rejects_unsafe_spool_dir") == 0) {
+    assert_upload_server_rejects_unsafe_spool_dir();
+    return 1;
+  }
+  if (strcmp(name, "acme_state_dir_allows_existing_group_private_dir") == 0) {
+    assert_acme_state_dir_allows_existing_group_private_dir();
+    return 1;
+  }
   if (strcmp(name, "metrics_surface") == 0) {
     assert_metrics_surface();
     return 1;
   }
   if (strcmp(name, "supervised_metrics_persistence_worker") == 0) {
     assert_supervised_metrics_persistence_worker();
+    return 1;
+  }
+  if (strcmp(name, "metrics_persistence_stop_honors_shutdown_grace") == 0) {
+    assert_metrics_persistence_stop_honors_shutdown_grace();
     return 1;
   }
   if (strcmp(name, "direct_supervision_policy_rejects_app_services") == 0) {
@@ -4794,6 +6335,15 @@ static int run_named_runtime_test(const char *name) {
     assert_supervised_wait_reports_consumer_service_exit();
     return 1;
   }
+  if (strcmp(name, "supervised_wait_reports_consumer_service_clean_exit") ==
+      0) {
+    assert_supervised_wait_reports_consumer_service_clean_exit();
+    return 1;
+  }
+  if (strcmp(name, "active_consumer_start_preserves_restart_request") == 0) {
+    assert_active_consumer_start_preserves_restart_request();
+    return 1;
+  }
   if (strcmp(name, "supervised_child_exit_stops_consumer_service") == 0) {
     assert_supervised_child_exit_stops_consumer_service();
     return 1;
@@ -4818,6 +6368,26 @@ static int run_named_runtime_test(const char *name) {
     assert_supervised_managed_service_lifecycle();
     return 1;
   }
+  if (strcmp(name, "managed_service_stop_honors_shutdown_grace") == 0) {
+    assert_managed_service_stop_honors_shutdown_grace();
+    return 1;
+  }
+  if (strcmp(name, "managed_services_share_shutdown_grace") == 0) {
+    assert_managed_services_share_shutdown_grace();
+    return 1;
+  }
+  if (strcmp(name, "app_close_joins_timed_out_managed_service") == 0) {
+    assert_app_close_joins_timed_out_managed_service();
+    return 1;
+  }
+  if (strcmp(name, "managed_service_detached_after_app_close") == 0) {
+    assert_managed_service_detached_after_app_close();
+    return 1;
+  }
+  if (strcmp(name, "consumer_service_detached_after_app_close") == 0) {
+    assert_consumer_service_detached_after_app_close();
+    return 1;
+  }
   if (strcmp(name, "managed_service_inherits_app_logger") == 0) {
     assert_managed_service_inherits_app_logger();
     return 1;
@@ -4826,8 +6396,28 @@ static int run_named_runtime_test(const char *name) {
     assert_managed_service_logger_disabled();
     return 1;
   }
+  if (strcmp(name, "managed_service_direct_stop_clears_started") == 0) {
+    assert_managed_service_direct_stop_clears_started();
+    return 1;
+  }
+  if (strcmp(name, "managed_service_stop_cancels_pending_start") == 0) {
+    assert_managed_service_stop_cancels_pending_start();
+    return 1;
+  }
+  if (strcmp(name, "managed_service_run_materializes_service_only") == 0) {
+    assert_managed_service_run_materializes_service_only();
+    return 1;
+  }
+  if (strcmp(name, "kore_start_waits_for_transient_thread_teardown") == 0) {
+    assert_kore_start_waits_for_transient_thread_teardown();
+    return 1;
+  }
   if (strcmp(name, "service_only_curl_worker_mailbox_http") == 0) {
     assert_service_only_curl_worker_mailbox_http();
+    return 1;
+  }
+  if (strcmp(name, "curl_worker_stop_wakes_idle_mailbox_wait") == 0) {
+    assert_curl_worker_stop_wakes_idle_mailbox_wait();
     return 1;
   }
   if (strcmp(name, "supervised_opcua_server_service_lifecycle") == 0) {
@@ -4842,8 +6432,16 @@ static int run_named_runtime_test(const char *name) {
     assert_service_only_wait_reports_consumer_service_exit();
     return 1;
   }
+  if (strcmp(name, "consumer_service_run_until_materializes_descriptor") == 0) {
+    assert_consumer_service_run_until_materializes_descriptor();
+    return 1;
+  }
   if (strcmp(name, "service_failure_continue_waits_for_signal") == 0) {
     assert_service_failure_continue_waits_for_signal();
+    return 1;
+  }
+  if (strcmp(name, "managed_service_restart_replaces_done_monitor") == 0) {
+    assert_managed_service_restart_replaces_done_monitor();
     return 1;
   }
   if (strcmp(name, "supervised_wait_reports_managed_service_exit") == 0) {
@@ -4875,29 +6473,48 @@ int main(void) {
   assert_server_config_validation();
   assert_runtime_control_frame_contract();
   assert_route_body_policy_validation();
+  assert_get_only_server_does_not_create_spool_dir();
+  assert_upload_server_rejects_file_spool_path();
+  assert_upload_server_rejects_unsafe_spool_dir();
+  assert_acme_state_dir_allows_existing_group_private_dir();
   assert_metrics_surface();
   assert_supervised_metrics_persistence_worker();
+  assert_metrics_persistence_stop_honors_shutdown_grace();
   assert_direct_supervision_policy_rejects_app_services();
   assert_consumer_service_declaration_before_routes();
   assert_managed_service_declaration_before_routes();
   assert_managed_service_explicit_start_before_routes_defers();
   assert_routes_reject_materialized_managed_services();
   assert_kore_start_rejects_extra_thread();
+  assert_kore_start_waits_for_transient_thread_teardown();
   assert_supervised_start_reports_child_readiness_failure();
   assert_supervised_wait_reports_consumer_service_exit();
+  assert_supervised_wait_reports_consumer_service_clean_exit();
+  assert_active_consumer_start_preserves_restart_request();
   assert_supervised_child_exit_stops_consumer_service();
   assert_supervised_repeated_start_stop();
   assert_route_backed_start_without_services_is_supervised();
   assert_runtime_phase_order_contract();
   assert_runtime_start_failure_rolls_back_services();
   assert_supervised_managed_service_lifecycle();
+  assert_managed_service_stop_honors_shutdown_grace();
+  assert_managed_services_share_shutdown_grace();
+  assert_app_close_joins_timed_out_managed_service();
+  assert_managed_service_detached_after_app_close();
+  assert_consumer_service_detached_after_app_close();
   assert_managed_service_inherits_app_logger();
   assert_managed_service_logger_disabled();
+  assert_managed_service_direct_stop_clears_started();
+  assert_managed_service_stop_cancels_pending_start();
+  assert_managed_service_run_materializes_service_only();
   assert_service_only_curl_worker_mailbox_http();
+  assert_curl_worker_stop_wakes_idle_mailbox_wait();
   assert_supervised_opcua_server_service_lifecycle();
   assert_supervised_shutdown_deadline_kills_stopped_runtime();
   assert_service_only_wait_reports_consumer_service_exit();
+  assert_consumer_service_run_until_materializes_descriptor();
   assert_service_failure_continue_waits_for_signal();
+  assert_managed_service_restart_replaces_done_monitor();
   assert_supervised_wait_reports_managed_service_exit();
 
   vectis_app_config_init(&config);

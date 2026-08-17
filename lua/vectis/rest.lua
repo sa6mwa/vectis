@@ -56,7 +56,70 @@ local function with_json_content_type(headers)
   return headers
 end
 
+local function validate_json_value(value, seen)
+  local value_type = type(value)
+  if value == lonejson.json_null or value == nil or value_type == "boolean" or
+      value_type == "string" then
+    return true
+  end
+  if value_type == "number" then
+    if value ~= value or value == math.huge or value == -math.huge then
+      return nil, "JSON numbers must be finite"
+    end
+    return true
+  end
+  if value_type ~= "table" then
+    return nil, "unsupported Lua type for JSON value"
+  end
+  if seen[value] then
+    return nil, "cyclic Lua tables cannot be encoded as JSON"
+  end
+  seen[value] = true
+
+  local count = 0
+  local n = #value
+  local array_keys = true
+  for key in pairs(value) do
+    count = count + 1
+    if type(key) ~= "number" or key < 1 or key > n or key % 1 ~= 0 then
+      array_keys = false
+    end
+  end
+  if count ~= 0 and count == n and array_keys then
+    for i = 1, n do
+      local ok, err = validate_json_value(value[i], seen)
+      if not ok then
+        seen[value] = nil
+        return nil, err
+      end
+    end
+  else
+    for key, item in pairs(value) do
+      if type(key) ~= "string" then
+        seen[value] = nil
+        return nil, "JSON object keys must be strings"
+      end
+      local ok, err = validate_json_value(item, seen)
+      if not ok then
+        seen[value] = nil
+        return nil, err
+      end
+    end
+  end
+  seen[value] = nil
+  return true
+end
+
 local function encode_json(value)
+  local valid, validation_error = validate_json_value(value, {})
+  if not valid then
+    return nil, vstatus.error({
+      kind = "json_encode",
+      message = validation_error,
+      status = vstatus.ERR_INVALID,
+      source_code = vstatus.ERROR_SOURCE_LONEJSON,
+    })
+  end
   local ok, encoded = pcall(lonejson.encode_json, value)
   if ok then
     return encoded

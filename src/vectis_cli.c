@@ -117,6 +117,7 @@ typedef struct vectis_lua_dsv_route_context {
 typedef struct vectis_lua_mailbox {
   lua_State *owner;
   vectis_mailbox *mailbox;
+  int closed;
   unsigned long pump_calls;
   unsigned long pump_events;
   unsigned long pump_callback_failures;
@@ -125,6 +126,7 @@ typedef struct vectis_lua_mailbox {
 typedef struct vectis_lua_mailbox_broker {
   lua_State *owner;
   vectis_mailbox_broker *broker;
+  int closed;
   int request_ref;
 } vectis_lua_mailbox_broker;
 
@@ -234,13 +236,18 @@ typedef struct vectis_lua_server_mcp_tool {
   lua_State *lua;
   char *name;
   int callback_ref;
+  pthread_mutex_t *lua_mutex;
   struct vectis_lua_server_mcp_tool *next;
 } vectis_lua_server_mcp_tool;
 
 typedef struct vectis_lua_server_mcp_route {
   cai_tool_registry *registry;
+  cai_mcp_handler *handler;
   vectis_lua_server_mcp_tool *tools;
   char *path;
+  size_t response_max_bytes;
+  pthread_mutex_t lua_mutex;
+  int lua_mutex_initialized;
   struct vectis_lua_server_mcp_route *next;
 } vectis_lua_server_mcp_route;
 
@@ -6078,6 +6085,10 @@ vectis_lua_server_mcp_route_free(vectis_lua_server_mcp_route *route) {
   if (route == NULL) {
     return;
   }
+  if (route->handler != NULL) {
+    route->handler->destroy(route->handler);
+    route->handler = NULL;
+  }
   if (route->registry != NULL) {
     cai_tool_registry_destroy(route->registry);
     route->registry = NULL;
@@ -6088,6 +6099,9 @@ vectis_lua_server_mcp_route_free(vectis_lua_server_mcp_route *route) {
     next_tool = tool->next;
     vectis_lua_server_mcp_tool_free(tool);
     tool = next_tool;
+  }
+  if (route->lua_mutex_initialized) {
+    (void)pthread_mutex_destroy(&route->lua_mutex);
   }
   free(route->path);
   free(route);
@@ -8476,9 +8490,6 @@ static int vectis_lua_server_metrics(lua_State *lua) {
   config.json_path = vectis_lua_table_string(lua, 2, "json_path");
   if (config.json_path == NULL) {
     config.json_path = vectis_lua_table_string(lua, 2, "snapshot_path");
-  }
-  if (config.json_path == NULL) {
-    config.json_path = "/.metrics.json";
   }
   config.title = vectis_lua_table_string(lua, 2, "title");
   config.persistence_enabled =
@@ -12123,12 +12134,27 @@ static int vectis_lua_server_mcp_set_error(cai_error *error, int code,
   return code;
 }
 
+static int vectis_lua_server_mcp_set_error_owned(cai_error *error, int code,
+                                                 char *message) {
+  if (error != NULL) {
+    error->code = code;
+    if (error->message == NULL && message != NULL) {
+      error->message = message;
+      return code;
+    }
+  }
+  free(message);
+  return code;
+}
+
 static int vectis_lua_server_mcp_tool_call(void *context,
                                            const char *arguments_json,
                                            cai_sink *output, cai_error *error) {
   vectis_lua_server_mcp_tool *tool;
   lua_State *lua;
   const char *result;
+  const char *message;
+  char *message_copy;
   size_t result_size;
   int rc;
 
@@ -12139,31 +12165,58 @@ static int vectis_lua_server_mcp_tool_call(void *context,
                                            "Lua MCP tool is not configured");
   }
   lua = tool->lua;
+  if (tool->lua_mutex != NULL) {
+    (void)pthread_mutex_lock(tool->lua_mutex);
+  }
   lua_rawgeti(lua, LUA_REGISTRYINDEX, tool->callback_ref);
   lua_pushstring(lua, arguments_json != NULL ? arguments_json : "{}");
   rc = lua_pcall(lua, 1, 2, 0);
   if (rc != LUA_OK) {
+    message = lua_tostring(lua, -1);
+    message_copy = cai_tool_result_strdup(
+        message != NULL ? message : "Lua MCP tool callback failed", NULL);
     lua_pop(lua, 1);
+    if (tool->lua_mutex != NULL) {
+      (void)pthread_mutex_unlock(tool->lua_mutex);
+    }
+    if (message_copy != NULL) {
+      return vectis_lua_server_mcp_set_error_owned(error, CAI_ERR_INVALID,
+                                                   message_copy);
+    }
     return vectis_lua_server_mcp_set_error(error, CAI_ERR_INVALID,
                                            "Lua MCP tool callback failed");
   }
   if (lua_isnil(lua, -2)) {
-    result = lua_isnil(lua, -1) ? "Lua MCP tool callback returned nil"
-                                : lua_tostring(lua, -1);
+    message = lua_isnil(lua, -1) ? "Lua MCP tool callback returned nil"
+                                 : lua_tostring(lua, -1);
+    message_copy = cai_tool_result_strdup(
+        message != NULL ? message : "Lua MCP tool callback failed", NULL);
     lua_pop(lua, 2);
-    return vectis_lua_server_mcp_set_error(
-        error, CAI_ERR_INVALID,
-        result != NULL ? result : "Lua MCP tool callback failed");
+    if (tool->lua_mutex != NULL) {
+      (void)pthread_mutex_unlock(tool->lua_mutex);
+    }
+    if (message_copy != NULL) {
+      return vectis_lua_server_mcp_set_error_owned(error, CAI_ERR_INVALID,
+                                                   message_copy);
+    }
+    return vectis_lua_server_mcp_set_error(error, CAI_ERR_INVALID,
+                                           "Lua MCP tool callback failed");
   }
   result = lua_tolstring(lua, -2, &result_size);
   if (result == NULL) {
     lua_pop(lua, 2);
+    if (tool->lua_mutex != NULL) {
+      (void)pthread_mutex_unlock(tool->lua_mutex);
+    }
     return vectis_lua_server_mcp_set_error(
         error, CAI_ERR_INVALID,
         "Lua MCP tool callback must return a JSON string");
   }
   rc = cai_sink_write(output, result, result_size, error);
   lua_pop(lua, 2);
+  if (tool->lua_mutex != NULL) {
+    (void)pthread_mutex_unlock(tool->lua_mutex);
+  }
   return rc;
 }
 
@@ -12207,6 +12260,7 @@ static int vectis_lua_server_mcp_add_tool(lua_State *lua,
   }
   tool->lua = lua;
   tool->callback_ref = LUA_NOREF;
+  tool->lua_mutex = route != NULL ? &route->lua_mutex : NULL;
   tool->name = vectis_cli_strdup(name);
   if (tool->name == NULL) {
     vectis_lua_server_mcp_tool_free(tool);
@@ -12284,11 +12338,212 @@ static int vectis_lua_server_mcp_tools(lua_State *lua,
   return 1;
 }
 
+typedef struct vectis_lua_server_mcp_response_buffer {
+  unsigned char *data;
+  size_t size;
+  size_t capacity;
+  size_t max_bytes;
+} vectis_lua_server_mcp_response_buffer;
+
+typedef struct vectis_lua_server_mcp_response_headers {
+  vectis_response *response;
+  char *content_type;
+} vectis_lua_server_mcp_response_headers;
+
+static int vectis_lua_server_mcp_response_write(void *context,
+                                                const void *bytes, size_t count,
+                                                cai_error *error) {
+  vectis_lua_server_mcp_response_buffer *buffer;
+  unsigned char *next;
+  size_t next_size;
+  size_t next_capacity;
+
+  buffer = (vectis_lua_server_mcp_response_buffer *)context;
+  if (buffer == NULL || (bytes == NULL && count > 0u)) {
+    return vectis_lua_server_mcp_set_error(error, CAI_ERR_INVALID,
+                                           "MCP response sink is invalid");
+  }
+  if (count == 0u) {
+    return CAI_OK;
+  }
+  if (buffer->max_bytes > 0u && (buffer->size > buffer->max_bytes ||
+                                 count > buffer->max_bytes - buffer->size)) {
+    return vectis_lua_server_mcp_set_error(error, CAI_ERR_INVALID,
+                                           "MCP response exceeds configured "
+                                           "buffer limit");
+  }
+  next_size = buffer->size + count;
+  if (next_size > buffer->capacity) {
+    next_capacity = buffer->capacity != 0u ? buffer->capacity : 4096u;
+    while (next_capacity < next_size) {
+      if (next_capacity > ((size_t)-1) / 2u) {
+        return vectis_lua_server_mcp_set_error(
+            error, CAI_ERR_NOMEM, "MCP response buffer is too large");
+      }
+      next_capacity *= 2u;
+    }
+    next = (unsigned char *)realloc(buffer->data, next_capacity);
+    if (next == NULL) {
+      return vectis_lua_server_mcp_set_error(
+          error, CAI_ERR_NOMEM, "failed to allocate MCP response buffer");
+    }
+    buffer->data = next;
+    buffer->capacity = next_capacity;
+  }
+  memcpy(buffer->data + buffer->size, bytes, count);
+  buffer->size = next_size;
+  return CAI_OK;
+}
+
+static void vectis_lua_server_mcp_response_close(void *context) {
+  (void)context;
+}
+
+static const char *vectis_lua_server_mcp_request_header(void *context,
+                                                        const char *name) {
+  return vectis_request_header((vectis_request *)context, name);
+}
+
+static int vectis_lua_server_mcp_response_header(void *context,
+                                                 const char *name,
+                                                 const char *value,
+                                                 cai_error *error) {
+  vectis_lua_server_mcp_response_headers *headers;
+  vectis_error verr;
+  vectis_status status;
+  char *copy;
+
+  headers = (vectis_lua_server_mcp_response_headers *)context;
+  if (headers == NULL || headers->response == NULL || name == NULL ||
+      value == NULL) {
+    return vectis_lua_server_mcp_set_error(error, CAI_ERR_INVALID,
+                                           "MCP response header is invalid");
+  }
+  if (strcasecmp(name, "content-type") == 0) {
+    copy = vectis_cli_strdup(value);
+    if (copy == NULL) {
+      return vectis_lua_server_mcp_set_error(
+          error, CAI_ERR_NOMEM, "failed to copy MCP response content type");
+    }
+    free(headers->content_type);
+    headers->content_type = copy;
+    return CAI_OK;
+  }
+  vectis_error_clear(&verr);
+  status = vectis_response_header(headers->response, name, value, &verr);
+  if (status != VECTIS_OK) {
+    return vectis_lua_server_mcp_set_error(
+        error, CAI_ERR_INVALID,
+        verr.message[0] != '\0' ? verr.message : "failed to set MCP header");
+  }
+  return CAI_OK;
+}
+
+static vectis_status
+vectis_lua_server_mcp_route_dispatch(vectis_app *app, vectis_request *request,
+                                     vectis_response *response, void *userdata,
+                                     vectis_error *error) {
+  vectis_lua_server_mcp_route *route;
+  vectis_lua_server_mcp_response_buffer buffer;
+  vectis_lua_server_mcp_response_headers headers;
+  cai_mcp_http_request mcp_request;
+  cai_mcp_http_response mcp_response;
+  cai_sink_callbacks callbacks;
+  cai_source *body;
+  cai_sink *sink;
+  cai_error caierr;
+  vectis_source source;
+  vectis_bytes request_body;
+  vectis_bytes response_body;
+  static const char empty_body[] = "";
+  const char *content_type;
+  vectis_status status;
+  int rc;
+
+  (void)app;
+  route = (vectis_lua_server_mcp_route *)userdata;
+  if (route == NULL || route->handler == NULL || request == NULL ||
+      response == NULL) {
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "Lua MCP route is not configured");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_request_body_bytes(request, &request_body, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  source = vectis_source_from_memory(
+      request_body.data != NULL ? request_body.data : empty_body,
+      request_body.size);
+  body = NULL;
+  status = vectis_cai_source_from_source(&source, &body, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+
+  memset(&buffer, 0, sizeof(buffer));
+  buffer.max_bytes = route->response_max_bytes;
+  memset(&headers, 0, sizeof(headers));
+  headers.response = response;
+  callbacks.write = vectis_lua_server_mcp_response_write;
+  callbacks.close = vectis_lua_server_mcp_response_close;
+  callbacks.context = &buffer;
+  sink = NULL;
+  cai_error_init(&caierr);
+  rc = cai_sink_from_callbacks(&callbacks, &sink, &caierr);
+  if (rc != CAI_OK) {
+    cai_source_close(body);
+    status = vectis_cai_error(error, &caierr,
+                              "failed to create MCP response "
+                              "buffer");
+    cai_error_cleanup(&caierr);
+    return status;
+  }
+
+  memset(&mcp_request, 0, sizeof(mcp_request));
+  memset(&mcp_response, 0, sizeof(mcp_response));
+  mcp_request.method =
+      vectis_http_method_string(vectis_request_method(request));
+  mcp_request.body = body;
+  mcp_request.header = vectis_lua_server_mcp_request_header;
+  mcp_request.header_context = request;
+  mcp_response.body = sink;
+  mcp_response.set_header = vectis_lua_server_mcp_response_header;
+  mcp_response.header_context = &headers;
+
+  rc = route->handler->handle_http(route->handler, &mcp_request, &mcp_response,
+                                   &caierr);
+  cai_sink_close(sink);
+  cai_source_close(body);
+  if (rc != CAI_OK) {
+    free(buffer.data);
+    free(headers.content_type);
+    status = vectis_cai_error(error, &caierr, "CAI MCP request failed");
+    cai_error_cleanup(&caierr);
+    return status;
+  }
+  cai_error_cleanup(&caierr);
+  content_type =
+      headers.content_type != NULL ? headers.content_type : "application/json";
+  response_body.data = buffer.data;
+  response_body.size = buffer.size;
+  status = vectis_response_bytes(response,
+                                 mcp_response.status >= 100 &&
+                                         mcp_response.status <= 599
+                                     ? mcp_response.status
+                                     : 200,
+                                 content_type, response_body, error);
+  free(buffer.data);
+  free(headers.content_type);
+  return status;
+}
+
 static int vectis_lua_server_mcp(lua_State *lua) {
   vectis_lua_server *server;
   vectis_app *app;
   vectis_lua_server_mcp_route *route_data;
-  vectis_cai_mcp_route_config route;
+  vectis_cai_mcp_route_config mcp;
+  vectis_route_config route;
   vectis_http_methods methods;
   const char *path;
   const char *name;
@@ -12296,7 +12551,10 @@ static int vectis_lua_server_mcp(lua_State *lua) {
   cai_error caierr;
   vectis_error error;
   vectis_status status;
+  size_t body_max_bytes;
+  size_t response_max_bytes;
   int openapi_result;
+  int rc;
 
   server = vectis_lua_check_server(lua, 1);
   app = vectis_lua_server_app(lua, 1);
@@ -12322,6 +12580,12 @@ static int vectis_lua_server_mcp(lua_State *lua) {
     return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
                                       "failed to copy MCP route path");
   }
+  if (pthread_mutex_init(&route_data->lua_mutex, NULL) != 0) {
+    vectis_lua_server_mcp_route_free(route_data);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_INVALID,
+                                      "failed to initialize MCP route mutex");
+  }
+  route_data->lua_mutex_initialized = 1;
 
   cai_error_init(&caierr);
   if (cai_tool_registry_new(&route_data->registry, &caierr) != CAI_OK) {
@@ -12340,38 +12604,69 @@ static int vectis_lua_server_mcp(lua_State *lua) {
         lua, error.code != VECTIS_OK ? error.code : VECTIS_ERR_INVALID, &error);
   }
 
-  route = vectis_cai_mcp_route_configured(route_data->path, NULL);
-  route.methods = methods;
+  mcp = vectis_cai_mcp_route_configured(route_data->path, NULL);
+  mcp.methods = methods;
   name = vectis_lua_table_string(lua, 2, "name");
   version = vectis_lua_table_string(lua, 2, "version");
-  route.handler_config.name = name != NULL ? name : "vectis";
-  route.handler_config.version = version != NULL ? version : VECTIS_VERSION;
-  route.handler_config.tools = route_data->registry;
-  route.handler_config.request_max_bytes = vectis_lua_table_size(
-      lua, 2, "request_max_bytes", route.handler_config.request_max_bytes);
-  route.handler_config.response_spool_memory_limit =
+  mcp.handler_config.name = name != NULL ? name : "vectis";
+  mcp.handler_config.version = version != NULL ? version : VECTIS_VERSION;
+  mcp.handler_config.tools = route_data->registry;
+  mcp.handler_config.request_max_bytes = vectis_lua_table_size(
+      lua, 2, "request_max_bytes", mcp.handler_config.request_max_bytes);
+  mcp.handler_config.response_spool_memory_limit =
       vectis_lua_table_size(lua, 2, "response_spool_memory_limit",
-                            route.handler_config.response_spool_memory_limit);
-  route.handler_config.tool_output_max_bytes =
+                            mcp.handler_config.response_spool_memory_limit);
+  mcp.handler_config.tool_output_max_bytes =
       vectis_lua_table_size(lua, 2, "tool_output_max_bytes",
-                            route.handler_config.tool_output_max_bytes);
-  route.handler_config.enable_sessions = vectis_lua_table_bool(
-      lua, 2, "enable_sessions", route.handler_config.enable_sessions);
-  route.handler_config.disable_origin_validation =
+                            mcp.handler_config.tool_output_max_bytes);
+  if (vectis_lua_table_bool(lua, 2, "enable_sessions", 0)) {
+    vectis_lua_server_mcp_route_free(route_data);
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID,
+        "MCP route enable_sessions requires CAI session persistence callbacks "
+        "and is not available through the Lua facade yet");
+  }
+  mcp.handler_config.disable_origin_validation =
       vectis_lua_table_bool(lua, 2, "disable_origin_validation",
-                            route.handler_config.disable_origin_validation);
-  route.handler_config.protocol_version =
+                            mcp.handler_config.disable_origin_validation);
+  mcp.handler_config.protocol_version =
       vectis_lua_table_string(lua, 2, "protocol_version");
-  route.handler_config.require_protocol_version =
+  mcp.handler_config.require_protocol_version =
       vectis_lua_table_bool(lua, 2, "require_protocol_version",
-                            route.handler_config.require_protocol_version);
-  route.buffer_bytes = vectis_lua_table_size(
-      lua, 2, "buffer_bytes", VECTIS_BODY_DEFAULT_UPLOAD_MEMORY_LIMIT_BYTES);
-  route.body = vectis_body_upload_max(
-      vectis_lua_table_size(lua, 2, "max_body_bytes", 0u));
+                            mcp.handler_config.require_protocol_version);
+  response_max_bytes =
+      mcp.handler_config.tool_output_max_bytes != CAI_MCP_TOOL_OUTPUT_UNLIMITED
+          ? mcp.handler_config.tool_output_max_bytes
+          : CAI_MCP_TOOL_OUTPUT_UNLIMITED;
+  if (response_max_bytes != CAI_MCP_TOOL_OUTPUT_UNLIMITED) {
+    response_max_bytes = response_max_bytes > ((size_t)-1) - 65536u
+                             ? (size_t)-1
+                             : response_max_bytes + 65536u;
+  }
+  route_data->response_max_bytes =
+      vectis_lua_table_size(lua, 2, "response_max_bytes", response_max_bytes);
+  cai_error_init(&caierr);
+  rc = cai_mcp_handler_new(&mcp.handler_config, &route_data->handler, &caierr);
+  if (rc != CAI_OK) {
+    vectis_error_clear(&error);
+    (void)vectis_cai_error(&error, &caierr, "failed to create MCP handler");
+    cai_error_cleanup(&caierr);
+    vectis_lua_server_mcp_route_free(route_data);
+    return vectis_lua_push_error(lua, error.code, &error);
+  }
+  cai_error_cleanup(&caierr);
+
+  body_max_bytes = vectis_lua_table_size(lua, 2, "max_body_bytes",
+                                         mcp.handler_config.request_max_bytes);
+  vectis_route_config_init(&route);
+  route.methods = methods;
+  route.path = route_data->path;
+  route.body = vectis_body_buffered_max(body_max_bytes);
+  route.handler = vectis_lua_server_mcp_route_dispatch;
+  route.userdata = route_data;
 
   vectis_error_clear(&error);
-  status = app->cai_mcp_route(app, &route, &error);
+  status = app->route(app, &route, &error);
   if (status != VECTIS_OK) {
     vectis_lua_server_mcp_route_free(route_data);
     return vectis_lua_push_error(lua, status, &error);
@@ -13170,6 +13465,61 @@ static int vectis_lua_curl_apply_mail_rcpt(lua_State *lua, CURL *curl,
   return 0;
 }
 
+static int vectis_lua_curl_validate_smtp(lua_State *lua, int option_index,
+                                         const char *upload_path) {
+  const char *body;
+  size_t body_size;
+  int smtp_index;
+  int has_recipient;
+
+  lua_getfield(lua, option_index, "smtp");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return 0;
+  }
+  if (!lua_istable(lua, -1)) {
+    return luaL_error(lua, "curl smtp must be a table");
+  }
+  smtp_index = lua_gettop(lua);
+  lua_getfield(lua, smtp_index, "mail_from");
+  if (!lua_isstring(lua, -1) || lua_tostring(lua, -1)[0] == '\0') {
+    return luaL_error(lua, "curl smtp.mail_from string is required");
+  }
+  lua_pop(lua, 1);
+
+  lua_getfield(lua, smtp_index, "rcpt");
+  if (!lua_istable(lua, -1)) {
+    return luaL_error(lua, "curl smtp.rcpt table is required");
+  }
+  has_recipient = 0;
+  lua_pushnil(lua);
+  while (lua_next(lua, -2) != 0) {
+    if (!lua_isstring(lua, -1) || lua_tostring(lua, -1)[0] == '\0') {
+      return luaL_error(lua, "curl smtp.rcpt values must be strings");
+    }
+    has_recipient = 1;
+    lua_pop(lua, 1);
+  }
+  if (!has_recipient) {
+    return luaL_error(lua, "curl smtp.rcpt requires at least one recipient");
+  }
+  lua_pop(lua, 1);
+
+  if (!vectis_lua_table_bool(lua, smtp_index, "probe", 0)) {
+    lua_getfield(lua, option_index, "body");
+    body = lua_tolstring(lua, -1, &body_size);
+    (void)body_size;
+    if (body == NULL && upload_path == NULL) {
+      return luaL_error(lua,
+                        "curl body, body_path, or upload_path is required for "
+                        "SMTP upload");
+    }
+    lua_pop(lua, 1);
+  }
+  lua_pop(lua, 1);
+  return 0;
+}
+
 static int vectis_lua_curl_apply_smtp(lua_State *lua, CURL *curl,
                                       int option_index,
                                       vectis_lua_curl_buffer *upload,
@@ -13250,6 +13600,94 @@ static int vectis_lua_curl_has_table_field(lua_State *lua, int index,
   has_field = !lua_isnil(lua, -1);
   lua_pop(lua, 1);
   return has_field;
+}
+
+static int vectis_lua_curl_validate_multipart_part(lua_State *lua,
+                                                   int part_index,
+                                                   const char *fallback_name) {
+  const char *name;
+  const char *path;
+
+  if (!lua_istable(lua, part_index)) {
+    return luaL_error(lua, "curl multipart parts must be tables");
+  }
+  name = vectis_lua_table_string(lua, part_index, "name");
+  if (name == NULL) {
+    name = fallback_name;
+  }
+  if (name == NULL || name[0] == '\0') {
+    return luaL_error(lua, "curl multipart part name is required");
+  }
+  path = vectis_lua_table_string(lua, part_index, "path");
+  if (path == NULL) {
+    path = vectis_lua_table_string(lua, part_index, "file_path");
+  }
+  if (path != NULL && path[0] == '\0') {
+    return luaL_error(lua, "curl multipart file path must not be empty");
+  }
+  (void)vectis_lua_table_string(lua, part_index, "filename");
+  (void)vectis_lua_table_string(lua, part_index, "content_type");
+  return 0;
+}
+
+static int vectis_lua_curl_validate_multipart(lua_State *lua,
+                                              int option_index) {
+  const char *name;
+  const char *value;
+  size_t value_size;
+  size_t count;
+  size_t part_count;
+  size_t i;
+  int multipart_index;
+
+  lua_getfield(lua, option_index, "multipart");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return 0;
+  }
+  if (!lua_istable(lua, -1)) {
+    return luaL_error(lua, "curl multipart must be a table");
+  }
+  multipart_index = lua_gettop(lua);
+  count = lua_rawlen(lua, multipart_index);
+  part_count = 0u;
+  for (i = 0u; i < count; ++i) {
+    lua_rawgeti(lua, multipart_index, (lua_Integer)i + 1);
+    if (vectis_lua_curl_validate_multipart_part(lua, lua_gettop(lua), NULL) !=
+        0) {
+      return 1;
+    }
+    part_count++;
+    lua_pop(lua, 1);
+  }
+
+  lua_pushnil(lua);
+  while (lua_next(lua, multipart_index) != 0) {
+    if (lua_type(lua, -2) == LUA_TSTRING) {
+      name = lua_tostring(lua, -2);
+      if (lua_istable(lua, -1)) {
+        if (vectis_lua_curl_validate_multipart_part(lua, lua_gettop(lua),
+                                                    name) != 0) {
+          return 1;
+        }
+        part_count++;
+      } else {
+        value = lua_tolstring(lua, -1, &value_size);
+        (void)value_size;
+        if (value == NULL) {
+          return luaL_error(lua,
+                            "curl multipart shorthand values must be strings");
+        }
+        part_count++;
+      }
+    }
+    lua_pop(lua, 1);
+  }
+  lua_pop(lua, 1);
+  if (part_count == 0u) {
+    return luaL_error(lua, "curl multipart requires at least one part");
+  }
+  return 0;
 }
 
 static int vectis_lua_curl_apply_multipart_part(lua_State *lua, curl_mime *mime,
@@ -13956,9 +14394,15 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   if (has_multipart && vectis_lua_curl_has_table_field(lua, 1, "smtp")) {
     return luaL_error(lua, "curl multipart cannot be used with smtp");
   }
+  if (vectis_lua_curl_validate_multipart(lua, 1) != 0) {
+    return 1;
+  }
   upload_path = vectis_lua_table_string(lua, 1, "upload_path");
   if (upload_path == NULL) {
     upload_path = vectis_lua_table_string(lua, 1, "body_path");
+  }
+  if (vectis_lua_curl_validate_smtp(lua, 1, upload_path) != 0) {
+    return 1;
   }
   if (upload_path != NULL) {
     if (has_multipart) {
@@ -15738,7 +16182,7 @@ static vectis_lua_mailbox *vectis_lua_check_mailbox(lua_State *lua, int index) {
 
 static int vectis_lua_mailbox_validate_owner(lua_State *lua,
                                              vectis_lua_mailbox *box) {
-  if (box == NULL || box->mailbox == NULL) {
+  if (box == NULL || box->mailbox == NULL || box->closed) {
     return vectis_lua_push_error_text(lua, VECTIS_ERR_STATE,
                                       "mailbox is closed");
   }
@@ -15824,6 +16268,7 @@ static int vectis_lua_mailbox_new(lua_State *lua) {
   box = (vectis_lua_mailbox *)lua_newuserdata(lua, sizeof(*box));
   box->owner = lua;
   box->mailbox = NULL;
+  box->closed = 0;
   box->pump_calls = 0UL;
   box->pump_events = 0UL;
   box->pump_callback_failures = 0UL;
@@ -15842,11 +16287,23 @@ static int vectis_lua_mailbox_close(lua_State *lua) {
 
   box = vectis_lua_check_mailbox(lua, 1);
   if (box->mailbox != NULL) {
+    box->mailbox->close(box->mailbox);
+  }
+  box->closed = 1;
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_mailbox_gc(lua_State *lua) {
+  vectis_lua_mailbox *box;
+
+  box = vectis_lua_check_mailbox(lua, 1);
+  if (box->mailbox != NULL) {
     box->mailbox->destroy(box->mailbox);
     box->mailbox = NULL;
   }
-  lua_pushboolean(lua, 1);
-  return 1;
+  box->closed = 1;
+  return 0;
 }
 
 static int vectis_lua_mailbox_publish(lua_State *lua) {
@@ -16117,6 +16574,10 @@ vectis_lua_mailbox_broker_validate_owner(lua_State *lua,
     return vectis_lua_push_error_text(lua, VECTIS_ERR_STATE,
                                       "mailbox broker is closed");
   }
+  if (broker->closed) {
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_STATE,
+                                      "mailbox broker is closed");
+  }
   if (broker->owner != lua) {
     return vectis_lua_push_error_text(
         lua, VECTIS_ERR_STATE, "mailbox broker belongs to another Lua state");
@@ -16183,6 +16644,7 @@ static int vectis_lua_mailbox_broker_new(lua_State *lua) {
   broker = (vectis_lua_mailbox_broker *)lua_newuserdata(lua, sizeof(*broker));
   broker->owner = lua;
   broker->broker = NULL;
+  broker->closed = 0;
   broker->request_ref = LUA_NOREF;
   luaL_getmetatable(lua, VECTIS_LUA_MAILBOX_BROKER);
   lua_setmetatable(lua, -2);
@@ -16204,15 +16666,27 @@ static int vectis_lua_mailbox_broker_close(lua_State *lua) {
 
   broker = vectis_lua_check_mailbox_broker(lua, 1);
   if (broker->broker != NULL) {
+    broker->broker->close(broker->broker);
+  }
+  broker->closed = 1;
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static int vectis_lua_mailbox_broker_gc(lua_State *lua) {
+  vectis_lua_mailbox_broker *broker;
+
+  broker = vectis_lua_check_mailbox_broker(lua, 1);
+  if (broker->broker != NULL) {
     broker->broker->destroy(broker->broker);
     broker->broker = NULL;
   }
+  broker->closed = 1;
   if (broker->request_ref != LUA_NOREF) {
     luaL_unref(lua, LUA_REGISTRYINDEX, broker->request_ref);
     broker->request_ref = LUA_NOREF;
   }
-  lua_pushboolean(lua, 1);
-  return 1;
+  return 0;
 }
 
 static int vectis_lua_mailbox_broker_request(lua_State *lua) {
@@ -16297,7 +16771,7 @@ static void vectis_lua_register_mailbox(lua_State *lua) {
     lua_pushcfunction(lua, vectis_lua_mailbox_close);
     lua_setfield(lua, -2, "close");
     lua_setfield(lua, -2, "__index");
-    lua_pushcfunction(lua, vectis_lua_mailbox_close);
+    lua_pushcfunction(lua, vectis_lua_mailbox_gc);
     lua_setfield(lua, -2, "__gc");
   }
   lua_pop(lua, 1);
@@ -16310,7 +16784,7 @@ static void vectis_lua_register_mailbox(lua_State *lua) {
     lua_pushcfunction(lua, vectis_lua_mailbox_broker_close);
     lua_setfield(lua, -2, "close");
     lua_setfield(lua, -2, "__index");
-    lua_pushcfunction(lua, vectis_lua_mailbox_broker_close);
+    lua_pushcfunction(lua, vectis_lua_mailbox_broker_gc);
     lua_setfield(lua, -2, "__gc");
   }
   lua_pop(lua, 1);

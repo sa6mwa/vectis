@@ -64,6 +64,29 @@ typedef struct sample_xml_blob_doc {
   lonejson_spooled body;
 } sample_xml_blob_doc;
 
+static int sample_bytes_contains(vectis_bytes bytes, const char *needle) {
+  size_t needle_size;
+  size_t i;
+
+  if (bytes.data == NULL || needle == NULL) {
+    return 0;
+  }
+  needle_size = strlen(needle);
+  if (needle_size == 0u) {
+    return 1;
+  }
+  if (needle_size > bytes.size) {
+    return 0;
+  }
+  for (i = 0u; i <= bytes.size - needle_size; ++i) {
+    if (memcmp((const unsigned char *)bytes.data + i, needle, needle_size) ==
+        0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
 static const lonejson_field sample_doc_fields[] = {
     LONEJSON_FIELD_STRING_FIXED_REQ(sample_doc, id, "id",
                                     LONEJSON_OVERFLOW_FAIL)};
@@ -1260,7 +1283,7 @@ static void assert_request_response_surface(void) {
   assert(strcmp(vectis_internal_response_content_type(response),
                 "application/json") == 0);
   assert(body.size > 0u);
-  assert(strstr((const char *)body.data, "\"abc\"") != NULL);
+  assert(sample_bytes_contains(body, "\"abc\""));
   status = vectis_response_json_generated(response, 200, &sample_doc_map, &doc,
                                           &error);
   assert(status == VECTIS_OK);
@@ -1302,10 +1325,9 @@ static void assert_request_response_surface(void) {
   assert(vectis_internal_response_status_code(response) == 422);
   assert(strcmp(vectis_internal_response_content_type(response),
                 "application/json") == 0);
-  assert(strstr((const char *)body.data, "\"code\":\"invalid_order\"") != NULL);
-  assert(strstr((const char *)body.data, "\"message\":\"order is invalid\"") !=
-         NULL);
-  assert(strstr((const char *)body.data, "\"detail\":\"missing id\"") != NULL);
+  assert(sample_bytes_contains(body, "\"code\":\"invalid_order\""));
+  assert(sample_bytes_contains(body, "\"message\":\"order is invalid\""));
+  assert(sample_bytes_contains(body, "\"detail\":\"missing id\""));
 
   vectis_internal_request_free(request);
   vectis_internal_response_free(response);

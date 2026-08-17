@@ -3443,6 +3443,7 @@ static int vectis_opcua_lua_client_monitor_event_fields(lua_State *lua) {
   node_id = vectis_opcua_lua_node_id_at(lua, 3);
   sampling_interval_ms = luaL_checknumber(lua, 4);
   luaL_checktype(lua, 6, LUA_TFUNCTION);
+  field_count = 0u;
   field_names = vectis_opcua_lua_event_field_names(lua, 5, &field_count);
   callback =
       vectis_opcua_lua_monitor_callback_new(lua, client_ud, 6, subscription_id);

@@ -42,7 +42,8 @@ testable.
 - Do not make every dependency fork-safe by trying to maintain an at-fork list.
   That approach does not scale with curl, OpenSSL, Lua, allocators, OPC UA, CAI,
   audio backends, SUS, and future dependencies.
-- Do not call a background-thread Lua callback directly.
+- Do not call a background-thread Lua callback directly. Threaded request paths
+  such as Lua-mounted MCP tools must use an owner-state mailbox/broker handoff.
 - Do not hide full-message buffering behind a streaming-looking API.
 - Do not require users to hand-order `fork()`, `pthread_create()`, or Kore
   internals.
@@ -455,9 +456,13 @@ When disk spooling is enabled, Vectis also owns the request-body spill directory
 used by both Kore's body offload path and Vectis' streaming receiver spooler
 through `vectis_server_config.request_body_spool_dir` and Lua
 `vectis.server.new({request_body_spool_dir = ...})`. Omission uses
-`/tmp/vectis-http-body`; an empty effective path is invalid. Tests must prove
-that live Kore uploads spill under the configured directory, not merely that
-Kore reports a file-backed body.
+a per-user runtime path under `XDG_RUNTIME_DIR` when available, otherwise a
+UID-scoped `/tmp/vectis-http-body-<uid>` path; an empty effective path is
+invalid. If the final spill directory already exists, Vectis rejects symlinks,
+wrong-owner directories, and non-private permissions; newly created spill
+directories are private to the effective user. Tests must prove that live Kore
+uploads spill under the configured directory, not merely that Kore reports a
+file-backed body.
 
 ## CAI And MCP
 
@@ -733,19 +738,24 @@ Required checks:
   domain for a route-backed app;
 - no route or upload route can be registered after an app-owned managed service
   has been materialized, even if the app has since been stopped;
-- process thread count is one on platforms where exact inspection is available;
+- process thread count becomes one within the bounded quiescence-drain window on
+  platforms where exact inspection is available;
 - on platforms where exact thread count is unavailable, strict mode must fail
   closed and non-strict mode must warn through the logger;
 - known Vectis-managed dependency services are not active outside the selected
   runtime domain.
 
-On Linux, exact thread count can be checked through `/proc/self/task`. Darwin
-needs a platform-specific implementation or strict-mode failure until it exists.
+On Linux, exact thread count can be checked through `/proc/self/task`. The guard
+may wait briefly for already-stopping service or dependency threads to disappear
+from the process thread table before Kore forks, but it must fail closed when
+threads remain observable at the deadline. Darwin needs a platform-specific
+implementation or strict-mode failure until it exists.
 `vectis_app_config.quiescence_policy` and Lua
 `vectis.server.new({quiescence_policy = ...})` configure only the unavailable
 inspection case: `strict` is the default and fails closed; `warn_unavailable`
 logs and continues when exact inspection is not implemented. It does not permit
-known active app-owned services or observable extra threads.
+known active app-owned services or observable extra threads that outlive the
+bounded drain window.
 
 Error messages must identify the unsafe condition and tell the developer to
 register the work as an app service or start the app before creating
@@ -781,12 +791,30 @@ app-owned service failures. `fail_closed` is the default and stops the app;
 `continue` keeps the app running while preserving failed service diagnostics
 through the service state surface.
 
-Supervised child termination must be bounded. The supervisor first requests a
-graceful Kore shutdown with `SIGTERM`, reaps with nonblocking observation until
-the configured shutdown deadline, then escalates to `SIGKILL` and reaps the
-child so `stop()` cannot hang indefinitely. `vectis_app_config.shutdown_grace_ms`
-and Lua `vectis.server.new({shutdown_grace_ms = ...})` configure this grace
-period; zero or omission uses `VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS`.
+Supervised child and service termination must be bounded. The supervisor first
+requests a graceful Kore shutdown with `SIGTERM`, reaps with nonblocking
+observation until the configured shutdown deadline, then escalates to `SIGKILL`
+and reaps the child so `stop()` cannot hang indefinitely. App-owned managed
+services and lockdc consumer services use the same deadline for monitor-thread
+joins after their stop callbacks/native stop requests run. If a service monitor
+does not complete before the deadline, `stop()` returns `VECTIS_ERR_TIMEOUT` and
+the service state remains observable as active until the monitor actually
+finishes; Vectis must not report a clean stopped state while a service thread is
+still running. Metrics persistence participates in the same shutdown envelope:
+background snapshot lockdc requests are capped by the effective app shutdown
+grace, the metrics worker reports completion before it is joined, and the
+optional final stop snapshot is attempted only with deadline time remaining.
+The shutdown grace is one app-level deadline shared across the Kore child,
+consumer services, managed services, metrics, and later daemon-style workers;
+Vectis must not grant a fresh full grace period to each phase or each service.
+After a clean app-owned service stop, current native/runtime handles may be
+dematerialized so the next route-backed app start can materialize them in the
+new runtime domain. Historical materialization still closes route declaration:
+routes and upload routes remain rejected after any app-owned service has ever
+materialized, even if the current handle was released during stop.
+`vectis_app_config.shutdown_grace_ms` and Lua
+`vectis.server.new({shutdown_grace_ms = ...})` configure this grace period; zero
+or omission uses `VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS`.
 The supervised Kore runtime is isolated into its own process group before
 readiness; supervisor shutdown signals target that process group so an
 unresponsive Kore parent cannot leave worker listeners behind.
@@ -818,6 +846,10 @@ Required additions or semantic changes:
 - descriptor-backed `vectis_managed_service` for C-owned app services that
   start after supervised Kore readiness, stop during coordinated shutdown, and
   propagate monitored failures through the app service-failure policy.
+- app-owned managed and lockdc consumer service receiver handles become
+  detached after their owning app closes; subsequent public receiver operations
+  fail closed with `VECTIS_ERR_STATE` instead of touching app-owned logger,
+  lockd, or lifecycle state.
 - app-owned managed service configs inherit the app logger by default for
   lifecycle start/stop/failure diagnostics, can override it with a borrowed
   `pslog_logger *`, and can set `logger_disabled` to suppress service lifecycle
@@ -932,8 +964,8 @@ Required semantics:
    - CAI/MCP supervisor worker descriptors with runtime-domain client/agent
      materialization and no borrowed route/Lua callback state; C and Lua
      mailbox request/reply helpers are implemented for one-shot CAI text/JSON
-     work while tool-callback MCP servers remain separate from the supervisor
-     worker.
+     work while Lua-mounted MCP tool execution uses an owner-state mailbox
+     broker.
    - service declarations that accept Lua policy callbacks must publish copied
      events to `vectis_mailbox` and require an owner-state Lua pump rather than
      invoking Lua from service threads.
@@ -965,6 +997,8 @@ Unit tests:
 - `service->native()` is `NULL` before materialization;
 - `service->start()` before route-backed app start records intent;
 - quiescence guard rejects a known extra thread;
+- quiescence guard tolerates only bounded teardown races, not live background
+  services;
 - app-owned running service blocks direct Kore start;
 - runtime phases enforce validation before materialization and T2 child
   readiness before supervisor service materialization;

@@ -21,7 +21,7 @@ FUZZ_PRESET := fuzz
 	dev-up dev-down dev-reset dev-ps dev-logs \
 	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy release-darwin-smoke-bundle release-matrix prerelease-live prerelease-hardening lifecycle-version-contract release print-release-version clean-dist finalize-slice prerelease \
 	build-kore verify-kore-patches \
-	format clean \
+	format format-check clean \
 	vendor-kore vendor-kore-apply vendor-kore-status vendor-kore-upgrade
 
 help:
@@ -193,8 +193,9 @@ release:
 		printf '%s\n' 'make release requires an exact lightweight vX.Y.Z tag on HEAD or an explicit VECTIS_VERSION_OVERRIDE for a non-publishable rehearsal.' >&2; \
 		exit 2; \
 	fi
+	$(TIMED) release-worktree-clean bash ./scripts/require_clean_release_worktree.sh
 	$(MAKE) clean
-	$(MAKE) release-matrix
+	$(TIMED) release-pipeline bash ./scripts/release_pipeline.sh
 
 print-release-version:
 	@bash ./scripts/release_version.sh
@@ -216,14 +217,13 @@ build-coverage: deps-debug
 coverage: test-coverage
 
 build-fuzz: deps-debug
-	$(TIMED) build-fuzz $(CMAKE) --preset $(FUZZ_PRESET)
+	$(TIMED) build-fuzz bash ./scripts/configure_fuzz.sh $(FUZZ_PRESET)
 	$(TIMED) build-fuzz-compile $(CMAKE) --build --preset $(FUZZ_PRESET)
 
 fuzz: build-fuzz
 
 fuzz-smoke: build-fuzz
-	$(TIMED) fuzz-json-validate build/$(FUZZ_PRESET)/tests/fuzz/vectis_fuzz_json_validate -runs=64
-	$(TIMED) fuzz-kore-bridge build/$(FUZZ_PRESET)/tests/fuzz/vectis_fuzz_kore_bridge tests/fuzz/corpus/kore_bridge -runs=0
+	$(TIMED) fuzz-smoke bash ./scripts/test_fuzz_smoke.sh build/$(FUZZ_PRESET)
 
 finalize-slice: format test-lifecycle test-target-tools test-cpkt-toolchains test
 
@@ -255,7 +255,8 @@ lua-env: build-debug
 	@printf '%s\n' 'eval "$$(luarocks path --tree "$(ROOT)/build/luarocks/tree")"'
 	@printf '%s\n' '# Example: "$$VECTIS_BIN" examples/lua/mdf_render.lua'
 
-prerelease: format test-lifecycle test-target-tools test-cpkt-toolchains lua-test test-all asan fuzz-smoke test-install-tree package-source-smoke release-lua-artifacts package-checksums package-verify
+prerelease:
+	$(TIMED) prerelease bash ./scripts/release_pipeline.sh
 
 test-debug: build-debug
 	$(TIMED) test-debug $(CTEST) --preset $(DEBUG_PRESET)
@@ -293,6 +294,9 @@ test-install-tree:
 
 format:
 	rg --files -g '*.c' -g '*.h' | xargs clang-format -i
+
+format-check:
+	bash ./scripts/check_format.sh
 
 vendor-kore:
 	$(TIMED) vendor-kore bash ./scripts/vendor-kore.sh sync

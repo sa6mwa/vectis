@@ -63,9 +63,10 @@ model because CAI writes to a sink while Kore pulls route responses after the
 handler returns; it is intentionally not described as live response streaming.
 
 Lua applications can mount MCP servers through `server:mcp()` from
-`require("vectis.server")` or `require("vectis").server`. That helper builds a
-CAI tool registry in C from Lua callbacks and registers the handler with
-libvectis:
+`require("vectis.server")` or `require("vectis").server`. Unlike the C
+`vectis_register_cai_mcp_route()` adapter, the Lua helper uses a buffered normal
+Kore route so CAI and Lua tool callbacks execute in the same Kore route domain.
+This avoids both the upload-reader pthread and cross-process mailbox handoff:
 
 ```lua
 assert(server:mcp({
@@ -86,9 +87,11 @@ assert(server:mcp({
 ```
 
 Each Lua tool callback receives the raw arguments JSON string and must return
-the raw JSON/text payload that CAI writes to the tool result sink. For the full
-dependency-native CAI table/schema conversion semantics, create CAI registries
-and handlers directly through `require("cai")`.
+the raw JSON/text payload that CAI writes to the tool result sink. Lua
+`enable_sessions=true` is rejected until Vectis ships CAI session persistence
+callbacks for the Lua facade. For the full dependency-native CAI table/schema
+conversion semantics, create CAI registries and handlers directly through
+`require("cai")`.
 
 ## Managed Worker Contract
 
@@ -118,10 +121,6 @@ diagnostics, and explicitly named `text` or `raw_json` output.
 `reply_broker`, optional `name`, optional `poll_timeout_ms`, optional `start`,
 and a `client` table with copied CAI client defaults such as `api_key`,
 `api_key_env`, `base_url`, `timeout_ms`, `ca_bundle_path`, `ca_path`, and
-`logger_disabled`. Lua callbacks are deliberately rejected by this service;
-tool-callback MCP flows belong to `server:mcp()` or an owner-state mailbox
-pump.
-
-Lua tool-callback MCP servers stay on `server:mcp()` unless a separate
-owner-state tool pump is specified. Managed CAI workers must publish copied
-events only.
+`logger_disabled`. Lua callbacks are deliberately rejected by this service; MCP
+tool implementation uses the `server:mcp()` request broker and an owner-state
+mailbox pump. Managed CAI workers must publish copied events only.

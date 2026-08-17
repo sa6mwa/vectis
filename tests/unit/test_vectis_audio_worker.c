@@ -2,6 +2,8 @@
 
 #include "vectis_internal.h"
 #include <assert.h>
+#include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -113,6 +115,47 @@ static void test_audio_worker_envelopes(void) {
   vectis_audio_worker_vox_segment_cleanup(&segment);
 }
 
+static void test_audio_worker_rejects_unrepresentable_size_limits(void) {
+  vectis_audio_worker_decode_request decode;
+  vectis_audio_worker_vox_request vox;
+  vectis_audio_worker_event event;
+  vectis_error error;
+  double frames[2];
+
+  frames[0] = 0.0;
+  frames[1] = 0.25;
+
+#if SIZE_MAX > INT64_MAX
+  vectis_audio_worker_decode_request_init(&decode);
+  decode.path = "input.wav";
+  decode.max_frames = (size_t)INT64_MAX + (size_t)1u;
+  assert(vectis_audio_worker_decode_event_build(&decode, &event, &error) ==
+         VECTIS_ERR_INVALID);
+  assert(event.message.payload == NULL);
+  assert(strstr(error.message, "max_frames") != NULL);
+
+  vectis_audio_worker_vox_request_init(&vox);
+  vox.frames = frames;
+  vox.frame_count = sizeof(frames) / sizeof(frames[0]);
+  vox.max_segment_frames = (size_t)INT64_MAX + (size_t)1u;
+  assert(vectis_audio_worker_vox_event_build(&vox, &event, &error) ==
+         VECTIS_ERR_INVALID);
+  assert(event.message.payload == NULL);
+  assert(strstr(error.message, "size limit") != NULL);
+#endif
+
+#if ULONG_MAX > INT64_MAX
+  vectis_audio_worker_vox_request_init(&vox);
+  vox.frames = frames;
+  vox.frame_count = sizeof(frames) / sizeof(frames[0]);
+  vox.memory_spool_bytes = (unsigned long)INT64_MAX + 1ul;
+  assert(vectis_audio_worker_vox_event_build(&vox, &event, &error) ==
+         VECTIS_ERR_INVALID);
+  assert(event.message.payload == NULL);
+  assert(strstr(error.message, "size limit") != NULL);
+#endif
+}
+
 static void test_audio_worker_service_roundtrip(void) {
   vectis_app_config app_config;
   vectis_app *app;
@@ -134,6 +177,7 @@ static void test_audio_worker_service_roundtrip(void) {
   vectis_audio_worker_response response;
   vectis_audio_worker_vox_state state;
   vectis_audio_worker_vox_segment segment;
+  vectis_mailbox_message late_message;
   vectis_status status;
   unsigned long correlation_id;
   double frames[160];
@@ -295,6 +339,18 @@ static void test_audio_worker_service_roundtrip(void) {
   assert(saw_state);
   assert(saw_segment);
 
+  broker->close(broker);
+  vectis_mailbox_message_init(&late_message);
+  late_message.kind = "vectis.audio.unsupported";
+  late_message.expects_reply = 1;
+  status =
+      mailbox->publish_request(mailbox, &late_message, &correlation_id, &error);
+  assert(status == VECTIS_OK);
+  usleep(100000u);
+  assert(service->state(service, &service_state, &error) == VECTIS_OK);
+  assert(service_state.started);
+  assert(!service_state.failed);
+
   assert(app->stop(app, &error) == VECTIS_OK);
   service->close(service);
   app->close(app);
@@ -306,6 +362,7 @@ static void test_audio_worker_service_roundtrip(void) {
 
 int main(void) {
   test_audio_worker_envelopes();
+  test_audio_worker_rejects_unrepresentable_size_limits();
   test_audio_worker_service_roundtrip();
   return 0;
 }

@@ -58,11 +58,6 @@ if cached_model ~= nil and cached_model ~= "" then
       os.getenv("VECTIS_LUA_SUS_WORKER_INSECURE_NO_CHECKSUM") == "1"
 end
 
-assert(server:sus_worker_service(service_config) == true)
-
-local started, start_err = server:start()
-assert(started == true, start_err and start_err.message or tostring(start_err))
-
 local event = assert(sus_worker.transcribe_pcm_request({
   frames = frames,
   language = "en",
@@ -70,6 +65,31 @@ local event = assert(sus_worker.transcribe_pcm_request({
 }))
 assert(event.kind == sus_worker.TRANSCRIBE_PCM_KIND)
 assert(event.expects_reply == true)
+
+if service_config.model_path == nil and service_config.cached_model == nil then
+  local started, start_err = server:start()
+  assert(started == true, start_err and start_err.message or tostring(start_err))
+
+  local states, states_err = server:sus_worker_service_states()
+  if states == nil then
+    error(states_err and states_err.message or tostring(states_err))
+  end
+  assert(#states == 0)
+
+  local stopped, stop_err = server:stop()
+  assert(stopped == true, stop_err and stop_err.message or tostring(stop_err))
+  server:close()
+  broker:close()
+  requests:close()
+
+  print("lua SUS worker service example ok")
+  return
+end
+
+assert(server:sus_worker_service(service_config) == true)
+
+local started, start_err = server:start()
+assert(started == true, start_err and start_err.message or tostring(start_err))
 
 local reply, request_err = broker:request(event, { timeout_ms = 3000 })
 if reply == nil then
@@ -81,16 +101,9 @@ if decoded == nil then
   error(decode_err and decode_err.message or tostring(decode_err))
 end
 
-if service_config.model_path ~= nil or service_config.cached_model ~= nil then
-  assert(decoded.ok == true, decoded.message or "SUS transcription failed")
-  assert(decoded.operation == "transcribe_pcm")
-  assert(type(decoded.text) == "string")
-else
-  assert(decoded.ok == false)
-  assert(decoded.status == vectis.status.ERR_INVALID)
-  assert(decoded.operation == "transcribe_pcm")
-  assert(decoded.message:find("model_path or cached_model", 1, true))
-end
+assert(decoded.ok == true, decoded.message or "SUS transcription failed")
+assert(decoded.operation == "transcribe_pcm")
+assert(type(decoded.text) == "string")
 
 local states, states_err = server:sus_worker_service_states()
 if states == nil then

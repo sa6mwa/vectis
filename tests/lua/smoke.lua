@@ -478,7 +478,10 @@ box_stats = box:stats()
 assert(box_stats.pump_calls == 2)
 assert(box_stats.pump_events == 3)
 assert(box_stats.pump_callback_failures == 1)
-box:close()
+assert(box:close() == true)
+event, timeout_error = box:next(0)
+assert(event == nil)
+assert(timeout_error.status == vectis.ERR_STATE)
 
 local broker_requests = mailbox.new({capacity = 2, max_payload_bytes = 64})
 local broker = assert(mailbox.broker({
@@ -501,8 +504,14 @@ local late_ok, late_error = broker:reply(broker_request.correlation_id, {
 })
 assert(late_ok == nil)
 assert(late_error.status == vectis.ERR_TIMEOUT)
-broker:close()
-broker_requests:close()
+assert(broker:close() == true)
+broker_reply, broker_error = broker:request({
+  kind = "route.worker",
+  payload = "after-close",
+}, {timeout_ms = 0})
+assert(broker_reply == nil)
+assert(broker_error.status == vectis.ERR_STATE)
+assert(broker_requests:close() == true)
 
 assert(type(dsv.parse) == "function")
 assert(type(dsv.parse_json) == "function")
@@ -954,14 +963,16 @@ do
   assert(callback_opcua_server:close() == true)
   _G.__vectis_smoke_lifecycle_opcua_server = lifecycle_opcua_server
 end
-local mcp_bad, mcp_bad_err = server:mcp({ path = "/mcp-bad", tools = {} })
+local mcp_bad, mcp_bad_err = server:mcp({
+  path = "/mcp-bad",
+  tools = {},
+})
 assert(mcp_bad == nil)
 assert(type(mcp_bad_err) == "table")
 assert(mcp_bad_err.status == vectis.ERR_INVALID)
 assert(mcp_bad_err.message:match("tools"))
 assert(server:metrics({
-  path = "/.metrics",
-  json_path = "/.metrics.json",
+  path = "/lua-smoke-metrics",
   title = "lua smoke metrics",
 }) == true)
 assert(server:mcp({
@@ -979,6 +990,23 @@ assert(server:mcp({
     },
   },
 }) == true)
+_G.__vectis_mcp_session_bad, _G.__vectis_mcp_session_bad_err = server:mcp({
+  path = "/mcp-session-bad",
+  enable_sessions = true,
+  tools = {
+    {
+      name = "session_bad",
+      schema_json = '{"type":"object"}',
+      callback = function()
+        return '{"content":[]}'
+      end,
+    },
+  },
+})
+assert(_G.__vectis_mcp_session_bad == nil)
+assert(type(_G.__vectis_mcp_session_bad_err) == "table")
+assert(_G.__vectis_mcp_session_bad_err.status == vectis.ERR_INVALID)
+assert(_G.__vectis_mcp_session_bad_err.message:match("session"))
 local route_auth_path = os.tmpname()
 os.remove(route_auth_path)
 local route_auth_state_path = os.tmpname()

@@ -1131,6 +1131,14 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/Makefile" 'lua-rock:'
   assert_contains "$repo_root/Makefile" 'release-lua-artifacts:'
   assert_contains "$repo_root/Makefile" 'release-matrix: package package-source release-lua-artifacts package-checksums package-verify'
+  assert_contains "$repo_root/Makefile" '^format-check:'
+  assert_not_contains "$repo_root/Makefile" '^release-pipeline:'
+  assert_contains "$repo_root/Makefile" '^prerelease:'
+  assert_contains "$repo_root/Makefile" '\$\(TIMED\) prerelease bash \./scripts/release_pipeline\.sh'
+  assert_contains "$repo_root/Makefile" '\$\(TIMED\) release-worktree-clean bash \./scripts/require_clean_release_worktree\.sh'
+  assert_contains "$repo_root/Makefile" '\$\(TIMED\) release-pipeline bash \./scripts/release_pipeline\.sh'
+  assert_contains "$repo_root/scripts/release_pipeline.sh" 'format-check'
+  assert_contains "$repo_root/scripts/release_pipeline.sh" 'release-matrix'
   assert_contains "$repo_root/Makefile" 'scripts/build_lua_rock\.sh'
   assert_contains "$repo_root/Makefile" 'scripts/stage_lua_rock_sources\.sh'
   assert_contains "$repo_root/vectis.rockspec.in" 'package = "vectis"'
@@ -1228,7 +1236,20 @@ if [ -f "$version_path" ]; then
 fi
 
 assert_contains "$repo_root/.gitignore" '^/VERSION$'
-assert_contains "$repo_root/scripts/package.sh" 'target_toolchain_available\.sh'
+assert_contains "$repo_root/scripts/package.sh" 'cpkt-toolchains\.sh" ensure "\$target_id"'
+assert_not_contains "$repo_root/scripts/package.sh" 'run_optional_target'
+assert_contains "$repo_root/scripts/require_clean_release_worktree.sh" 'git -C "\$repo_root" diff --quiet -- \.'
+assert_contains "$repo_root/scripts/require_clean_release_worktree.sh" 'git -C "\$repo_root" ls-files --others --exclude-standard'
+assert_contains "$repo_root/scripts/check_format.sh" 'clang-format --dry-run --Werror'
+assert_contains "$repo_root/CMakePresets.json" 'x86_64-linux-gnu-afl\.cmake'
+assert_contains "$repo_root/cmake/toolchains/x86_64-linux-gnu-afl.cmake" 'scripts/cpkt-toolchains\.sh'
+assert_contains "$repo_root/cmake/toolchains/x86_64-linux-gnu-afl.cmake" 'discover x86_64-linux-gnu'
+assert_contains "$repo_root/cmake/toolchains/x86_64-linux-gnu-afl.cmake" 'scripts/cpkt-aflpp\.sh'
+assert_contains "$repo_root/tests/fuzz/CMakeLists.txt" 'VECTIS_AFL_FUZZER'
+assert_contains "$repo_root/Makefile" 'scripts/configure_fuzz\.sh \$\(FUZZ_PRESET\)'
+assert_contains "$repo_root/scripts/configure_fuzz.sh" 'x86_64-linux-gnu-afl\.cmake'
+assert_contains "$repo_root/scripts/configure_fuzz.sh" 'cpkt-afl-gcc'
+assert_contains "$repo_root/scripts/test_fuzz_smoke.sh" 'afl_showmap'
 assert_contains "$repo_root/CMakeLists.txt" 'generated/pkgconfig/vectis\.pc'
 assert_contains "$repo_root/CMakeLists.txt" 'pkgconfig"\)'
 assert_contains "$repo_root/cmake/vectis.pc.in" '^Name: vectis$'
@@ -1428,6 +1449,7 @@ done
 
 for target in \
   print-release-version \
+  format-check \
   asan \
   fuzz-smoke \
   package-source \

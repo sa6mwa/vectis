@@ -57,6 +57,14 @@ vectis_add_unit_test(vectis_unit_config test_vectis_config.c)
 vectis_add_unit_test(vectis_unit_cai test_vectis_cai.c)
 vectis_add_unit_test(vectis_unit_audio_worker test_vectis_audio_worker.c)
 vectis_add_unit_test(vectis_unit_sus_worker test_vectis_sus_worker.c)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_compile_definitions(vectis_unit_sus_worker PRIVATE
+    VECTIS_TEST_WRAP_SUS=1)
+  target_link_options(vectis_unit_sus_worker PRIVATE
+    -Wl,--wrap=cpkt_sus_open_path
+    -Wl,--wrap=cpkt_sus_open_cached
+    -Wl,--wrap=cpkt_sus_string_free)
+endif()
 vectis_add_unit_test(vectis_unit_certs test_vectis_certs.c)
 vectis_add_unit_test(vectis_unit_auth test_vectis_auth.c)
 vectis_add_unit_test(vectis_unit_totp_qr test_vectis_totp_qr.c)

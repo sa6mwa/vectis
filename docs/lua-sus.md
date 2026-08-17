@@ -90,8 +90,10 @@ worker replies.
 
 `server:sus_worker_service(opts)` declares a C-owned managed service over a
 `vectis.mailbox` request queue and an optional `vectis.mailbox.broker` reply
-adapter. The service rejects Lua callbacks; model loading, transcriber
-creation, and transcription all happen inside the managed runtime domain.
+adapter. The service rejects Lua callbacks; model loading happens when the
+service starts, the model is retained for the service lifetime, and request
+handling creates only request-scoped transcribers inside the managed runtime
+domain.
 
 Service options:
 
@@ -126,11 +128,12 @@ Request options include `language`, `translate`, `timestamps`, `threads`,
 transcribed text in the reply. `output = "file"` writes materialized
 transcription text to `output_path` and returns that path in the reply. The
 worker does not perform an implicit model download; configure either
-`model_path` or `cached_model` when transcription should run.
+`model_path` or `cached_model` before service start.
 
 See `examples/lua/sus_worker_service.lua` for a self-contained worker example
-that runs deterministically without a model and can opt into live transcription
-with `VECTIS_LUA_SUS_WORKER_MODEL_PATH` or
+that runs deterministically without declaring a worker when no model is
+configured and can opt into live transcription with
+`VECTIS_LUA_SUS_WORKER_MODEL_PATH` or
 `VECTIS_LUA_SUS_WORKER_CACHED_MODEL`.
 
 ## Live Loaded-Model Validation
