@@ -93,6 +93,14 @@ callbacks for the Lua facade. For the full dependency-native CAI table/schema
 conversion semantics, create CAI registries and handlers directly through
 `require("cai")`.
 
+`examples/lua/cai_live_service_adapter.lua` is the self-contained Vectis-binary
+example for this boundary. It registers a supervised HTTP server with `/ready`
+and `/mcp`, mounts a Lua-owned CAI MCP tool callback, and then optionally runs a
+live provider probe through `vectis.cai.send_text`. The provider probe is
+disabled unless `VECTIS_LUA_CAI_LIVE=1` is set. OpenAI uses `OPENAI_API_KEY` by
+default, OpenRouter uses `OPENROUTER_API_KEY`, and both may be overridden with
+`VECTIS_LUA_CAI_API_KEY` or `VECTIS_LUA_CAI_API_KEY_ENV`.
+
 ## Managed Worker Contract
 
 Route-mounted MCP servers belong to the Kore child domain. Background CAI work

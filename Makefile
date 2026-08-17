@@ -17,7 +17,7 @@ FUZZ_PRESET := fuzz
 	deps-debug deps-release deps-cross \
 	build build-debug build-release build-asan build-coverage build-fuzz \
 	test test-debug test-lifecycle test-service-runtime-lifecycle test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
-	lua-env lua-rock lua-test test-opcua-lua-surface test-opcua-pubsub-live test-sus-audio-live test-sus-audio-hardening release-lua-artifacts \
+	lua-env lua-rock lua-test test-opcua-lua-surface test-opcua-pubsub-live test-cai-live test-sus-audio-live test-sus-audio-hardening release-lua-artifacts \
 	dev-up dev-down dev-reset dev-ps dev-logs \
 	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy verify-release-matrix release-darwin-smoke-bundle release-matrix prerelease-live prerelease-hardening lifecycle-version-contract release print-release-version clean-dist finalize-slice prerelease \
 	build-kore verify-kore-patches \
@@ -41,6 +41,7 @@ help:
 		'make test-e2e           Reset and run the local compose-backed lockd e2e smoke tests.' \
 		'make test-all           Run unit tests and local e2e smoke tests.' \
 		'make test-opcua-pubsub-live Run opt-in live OPC UA PubSub/MQTT broker validation.' \
+		'make test-cai-live       Run opt-in live CAI provider validation.' \
 		'make test-sus-audio-live Run opt-in live SUS/audio loaded-model validation.' \
 		'make test-sus-audio-hardening Run hardening-only cached SUS/audio model transcription validation.' \
 		'make asan               Build and run the ASan/UBSan preset.' \
@@ -76,7 +77,7 @@ help:
 		'make verify-release-matrix Verify release artifacts include all required Linux GNU/musl SDKs.' \
 		'make release-darwin-smoke-bundle Build the Darwin SDK and smoke bundle when osxcross is available.' \
 		'make release-matrix     Build, checksum, and verify release artifacts for supported targets.' \
-		'make prerelease-live    Run opt-in live checks with VECTIS_LIVE_OAUTH2_ENABLE=1, VECTIS_OPCUA_PUBSUB_LIVE=1, and/or VECTIS_LUA_SUS_MODEL_PATH.' \
+		'make prerelease-live    Run opt-in live checks with VECTIS_LIVE_OAUTH2_ENABLE=1, VECTIS_OPCUA_PUBSUB_LIVE=1, VECTIS_LUA_CAI_LIVE=1, and/or VECTIS_LUA_SUS_MODEL_PATH.' \
 		'make prerelease-hardening Run expensive deterministic hardening gates plus release matrix.' \
 		'make lifecycle-version-contract Verify exact lightweight tag version behavior for release.' \
 		'make release            Clean final tagged release artifact pipeline; refuses untagged 0.0.0.' \
@@ -189,6 +190,7 @@ release-matrix: package package-source release-lua-artifacts package-checksums v
 prerelease-live:
 	$(TIMED) prerelease-live-oauth2 bash ./scripts/test-live-oauth2.sh
 	$(TIMED) prerelease-live-opcua-pubsub bash ./scripts/test-live-opcua-pubsub.sh
+	$(TIMED) prerelease-live-cai bash ./scripts/test-live-cai.sh
 	$(TIMED) prerelease-live-sus-audio bash ./scripts/test-live-sus-audio.sh
 
 prerelease-hardening: prerelease test-sus-audio-hardening prerelease-live release-matrix
@@ -244,6 +246,9 @@ test-opcua-lua-surface: deps-debug
 
 test-opcua-pubsub-live:
 	$(TIMED) test-opcua-pubsub-live bash ./scripts/test-live-opcua-pubsub.sh
+
+test-cai-live: build-debug
+	$(TIMED) test-cai-live bash ./scripts/test-live-cai.sh
 
 test-sus-audio-live: build-debug
 	$(TIMED) test-sus-audio-live bash ./scripts/test-live-sus-audio.sh
