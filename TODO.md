@@ -184,6 +184,8 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Expose lockd consumer service startup/configuration directly, then layer Vectis-owned worker DX on top.
 - [x] Complete support for one Vectis process to run a Kore-backed API/WebDAV server and an app-owned liblockdc `startconsumer` service simultaneously, with receiver-shell C APIs and Lua registration hooks; Kore serving and consumer service startup are concurrent capabilities, not mutually exclusive runtime modes.
 - [x] Add a same-process scenario test that serves an API/WebDAV mount while receiving lockd messages through `startconsumer`, proving HTTP/WebDAV responsiveness during active consumer work and covering the production shape of a web/API fileserver plus lockd consumer in one Vectis process.
+- [ ] Implement the documented runtime phase/order contract: validation before materialization, T2 child readiness before supervisor service materialization, service class start/stop ordering, rollback on partial startup failure, and explicit route-backed managed `start()` supervision semantics.
+- [ ] Add focused C runtime tests for the phase/order contract across metrics, generic managed workers, lockdc consumer services, and route-backed no-service managed starts.
 - [x] Define Lua consumer-service runner behavior for the combined server-plus-consumer process model.
 - [x] Add the C-owned concurrency DX mailbox for in-process service handoff, bounded backpressure, and request/reply correlation.
 - [x] Add the Lua mailbox facade with owner-state `pump()` semantics so Lua callbacks are explicit drains rather than background-thread entry.

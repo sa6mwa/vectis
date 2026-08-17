@@ -165,8 +165,9 @@ the app declares services that require supervisor materialization.
 
 ### T2: Supervised Kore Runtime
 
-Used when the app has routes and at least one app-owned background service, or
-when runtime policy explicitly requests supervision.
+Used when the app has routes and at least one app-owned background service,
+when runtime policy explicitly requests supervision, or when a route-backed
+managed `start()` must return while Kore continues serving.
 
 Flow:
 
@@ -198,6 +199,90 @@ Flow:
 
 No Kore fork boundary exists in this topology.
 
+## Runtime Phase State Machine
+
+Every app runtime moves through explicit phases. The phases are public behavior
+even when their implementation details stay private:
+
+- `declaring`: routes, mounts, auth providers, service descriptors, and
+  mailboxes may be registered. No app-owned service instance may be
+  materialized for a future route-backed runtime.
+- `validated`: configuration, route body policy translation, TLS/ACME material,
+  lockd startability, process quiescence, and topology policy have been checked.
+- `forking`: only T2 enters this phase. Vectis has not started supervisor
+  service threads or opened supervisor-domain daemon handles. The only allowed
+  side effects are creation of the bounded child control channel and the Kore
+  child fork.
+- `child_ready`: only T2 enters this phase. The Kore child has reported that it
+  configured listeners, domains, routes, body policy, TLS/ACME, and request
+  runtime successfully. `start()` may not return before this phase.
+- `materializing_services`: Vectis creates runtime-domain service instances
+  from copied descriptors. For T2 this occurs only in the supervisor after
+  `child_ready`; for T3 it occurs in the current process after validation.
+- `starting_services`: Vectis starts requested app-owned service instances and
+  starts monitor threads where the dependency has blocking wait semantics.
+- `running`: requests and services may execute concurrently according to their
+  topology domain rules.
+- `stopping`: Vectis stops ingress first, then services, then persistence and
+  domain-local dependency handles according to the shutdown sequence.
+- `stopped`: no Vectis-owned service thread, Kore child, metrics worker, or
+  app-owned dependency daemon handle remains active.
+- `failed`: startup, child, service, or shutdown failure has been recorded.
+  Cleanup still transitions through `stopping` to `stopped` where possible.
+
+No phase may be skipped if it owns externally observable behavior. For example,
+T2 may not materialize services before `child_ready`, and T3 may not open
+long-lived lockd/CAI/OPC UA/audio/SUS/curl service handles before validation.
+All phase transitions that can fail must produce Vectis status/source
+diagnostics. Tests must assert the observable ordering for each service family,
+not only that the final state is successful.
+
+## Service Classes And Startup Order
+
+App-owned services are declared independently but started in lifecycle classes.
+The class model is intentionally small so developers do not have to hand-order
+Kore, lockdc, CAI, OPC UA, curl, audio, SUS, or metrics startup:
+
+- `control`: private supervisor control channel and service-failure wakeups.
+  This class is internal and is created before any service instance starts.
+- `metrics`: process-shared counters and optional supervisor snapshot worker.
+  Metrics persistence starts after T2 readiness because it is a supervisor
+  service and must never force a pre-fork thread.
+- `workers`: generic `vectis_managed_service` descriptors, including CAI, curl,
+  audio, SUS, and OPC UA services that do not require lockdc consumer services
+  to be started first.
+- `lockdc_consumers`: liblockdc `startconsumer` descriptors.
+
+The default startup order is `control`, `metrics`, `workers`,
+`lockdc_consumers`. The default stop order is the reverse service-ingress order
+after Kore ingress has been stopped: stop workers and lockdc consumers, join
+their monitors, persist final metrics if configured, then close domain-local
+dependency handles. If a future service requires a different dependency order,
+it must be expressed as an explicit service dependency contract in C and Lua.
+Implicit ordering by registration position is not a production contract.
+
+Startup failure is fail-closed by default. If any requested service fails to
+materialize, start, or start its monitor, Vectis stops all already-started
+service classes, stops the Kore child if one exists, and returns the first
+actionable Vectis diagnostic. Services that were declared but not reached during
+startup remain declared and not materialized.
+
+## Managed Start Semantics
+
+`app->start()` and `server:start()` are nonblocking managed starts. A
+route-backed app cannot be served by direct foreground Kore and return to the
+caller at the same time, so managed starts use a supervised child process for
+route-backed apps even when no background service is declared. The
+`supervision_policy = direct` setting means "fail if supervision is required by
+app-owned services"; it does not turn `start()` into a blocking direct Kore run.
+
+`app->run()` and `server:run()` are blocking production runs. For route-backed
+apps without app-owned services, `run()` uses T1 direct Kore runtime unless
+`supervision_policy = supervised` forces T2. For route-backed apps with
+app-owned services or metrics persistence, `run()` uses T2 unless
+`supervision_policy = direct` fails closed. Service-only apps use T3 for both
+`start()` and `run()`.
+
 ## App Lifecycle Semantics
 
 `app->run(app, error)` and `server:run()` are production entry points:
@@ -208,8 +293,8 @@ No Kore fork boundary exists in this topology.
 
 `app->start(app, error)` and `server:start()` are managed starts:
 
-- route-backed with no services: T2 may still be used when the caller must
-  continue while Kore serves;
+- route-backed with no services: T2 so the caller can continue while Kore
+  serves;
 - route-backed with services: T2;
 - service-only: T3 without blocking.
 
@@ -707,9 +792,12 @@ readiness; supervisor shutdown signals target that process group so an
 unresponsive Kore parent cannot leave worker listeners behind.
 `vectis_app_config.supervision_policy` and Lua
 `vectis.server.new({supervision_policy = ...})` configure route-backed topology:
-`auto` chooses direct foreground Kore unless app-owned services require
-supervision, `direct` fails closed when such services are declared, and
-`supervised` forces the managed supervisor topology.
+for blocking `run()`, `auto` chooses direct foreground Kore unless app-owned
+services require supervision, `direct` fails closed when such services are
+declared, and `supervised` forces the managed supervisor topology. For
+nonblocking managed `start()`, route-backed serving is always process-backed so
+Kore can continue after the call returns; `direct` still fails closed only when
+app-owned services or metrics persistence require supervisor-owned services.
 
 ## C API Surface Changes
 
@@ -749,7 +837,9 @@ or runs a service.
 Required semantics:
 
 - `server:run()` selects T1, T2, or T3 automatically from app declarations.
-- `server:start()` starts the selected managed runtime and returns.
+- `server:start()` starts the selected managed runtime and returns; for
+  route-backed apps this is a supervised child process because foreground Kore
+  cannot both serve and return to the caller.
 - `server:wait()` waits for the selected runtime and shuts it down.
 - `server.new({supervision_policy = "auto" | "direct" | "supervised"})`
   mirrors the C topology policy.
@@ -853,6 +943,19 @@ Required semantics:
    - shutdown deadline tests
      (`supervised_shutdown_deadline_kills_stopped_runtime`);
    - review command from lifecycle skill until actionable issues are clean.
+9. Lifecycle phase/order contract:
+   - expose internal test observations for runtime phase ordering without
+     making the private control channel public;
+   - prove route-backed managed `start()` reaches child readiness before
+     service materialization;
+   - prove T3 service-only startup validates before service materialization;
+   - prove service class startup and stop ordering for metrics, generic
+     managed workers, and lockdc consumer services;
+   - prove startup failure stops already-started classes and leaves unreached
+     descriptors declared but not materialized;
+   - prove `supervision_policy = direct` rejects service-required supervision
+     while route-backed managed `start()` remains a supervised nonblocking
+     start.
 
 ## Verification Requirements
 
@@ -863,6 +966,15 @@ Unit tests:
 - `service->start()` before route-backed app start records intent;
 - quiescence guard rejects a known extra thread;
 - app-owned running service blocks direct Kore start;
+- runtime phases enforce validation before materialization and T2 child
+  readiness before supervisor service materialization;
+- service classes start and stop in the documented order, independent of
+  registration order;
+- startup failure rolls back previously started classes and does not materialize
+  unreached descriptors;
+- route-backed `start()` has explicit nonblocking supervised semantics, while
+  route-backed `run()` without services remains direct unless policy forces
+  supervision;
 - shutdown state transitions are idempotent where promised and errors where not.
 
 Integration/e2e tests:
@@ -872,6 +984,8 @@ Integration/e2e tests:
 - supervised app handles SIGINT/SIGTERM/SIGQUIT cleanly;
 - lockdc consumer and Kore route run concurrently through a safe channel;
 - metrics endpoint works with persistence in supervised mode;
+- route-backed managed `start()` with no background service serves HTTP from a
+  supervised child and `stop()` reaps it cleanly;
 - child death stops supervisor services and returns failure; covered by the
   runtime hardening case that terminates a ready Kore child while a monitored
   lockdc consumer service is active and verifies service monitor cleanup;
