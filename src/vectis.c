@@ -444,6 +444,7 @@ typedef struct vectis_app_impl {
   struct lc_client *lockd_client;
   pid_t lockd_client_pid;
   struct vectis_consumer_receiver_entry *consumer_receivers;
+  struct vectis_managed_service_impl *managed_services;
   struct vectis_consumer_service_impl *consumer_services;
 } vectis_app_impl;
 
@@ -508,6 +509,28 @@ static const lonejson_field vectis_error_response_fields[] = {
 
 LONEJSON_MAP_DEFINE(vectis_error_response_map, vectis_error_response_body,
                     vectis_error_response_fields);
+
+typedef struct vectis_managed_service_impl {
+  char *name;
+  void *context;
+  vectis_managed_service_start_fn start_fn;
+  vectis_managed_service_stop_fn stop_fn;
+  vectis_managed_service_wait_fn wait_fn;
+  vectis_managed_service_cleanup_fn cleanup_fn;
+  vectis_app_impl *owner;
+  struct vectis_managed_service_impl *next_owned;
+  int materialized;
+  int start_requested;
+  int stop_requested;
+  int started;
+  pthread_t monitor_thread;
+  int monitor_active;
+  int monitor_done;
+  int monitor_joined;
+  int failed;
+  vectis_status terminal_status;
+  vectis_error monitor_error;
+} vectis_managed_service_impl;
 
 typedef struct vectis_consumer_service_impl {
   lc_consumer_service *service;
@@ -636,23 +659,38 @@ vectis_app_validate_quiescent_for_kore(const vectis_app_impl *impl,
                                        vectis_error *error);
 static vectis_status vectis_app_stop_consumer_services(vectis_app_impl *impl,
                                                        vectis_error *error);
+static vectis_status vectis_app_stop_managed_services(vectis_app_impl *impl,
+                                                      vectis_error *error);
 static vectis_status
 vectis_app_start_requested_consumer_services(vectis_app_impl *impl,
                                              vectis_error *error);
 static vectis_status
+vectis_app_start_requested_managed_services(vectis_app_impl *impl,
+                                            vectis_error *error);
+static vectis_status
 vectis_app_check_consumer_service_exit(vectis_app_impl *impl,
                                        vectis_error *error);
+static vectis_status
+vectis_app_check_managed_service_exit(vectis_app_impl *impl,
+                                      vectis_error *error);
 static vectis_status vectis_app_service_control_open(vectis_app_impl *impl,
                                                      vectis_error *error);
 static void vectis_app_service_control_close(vectis_app_impl *impl);
 static void vectis_app_notify_consumer_service_failure(
     vectis_consumer_service_impl *service, const vectis_error *terminal_error);
+static void
+vectis_app_notify_managed_service_failure(vectis_managed_service_impl *service,
+                                          const vectis_error *terminal_error);
 static vectis_status vectis_app_read_service_control(vectis_app_impl *impl,
                                                      vectis_error *error);
 static int
 vectis_app_has_requested_consumer_services(const vectis_app_impl *impl);
 static int
+vectis_app_has_requested_managed_services(const vectis_app_impl *impl);
+static int
 vectis_app_has_materialized_consumer_services(const vectis_app_impl *impl);
+static int
+vectis_app_has_materialized_managed_services(const vectis_app_impl *impl);
 static int vectis_app_has_metrics_persistence(const vectis_app_impl *impl);
 static int vectis_app_needs_supervised_runtime(const vectis_app_impl *impl);
 static vectis_status
@@ -4476,6 +4514,204 @@ vectis_openapi_route_doc_deep_copy(vectis_openapi_route_doc *dst,
 }
 
 static vectis_status
+vectis_managed_service_join_monitor(vectis_managed_service_impl *service,
+                                    vectis_error *error) {
+  if (service == NULL || !service->monitor_active || service->monitor_joined) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (pthread_join(service->monitor_thread, NULL) != 0) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to join managed service monitor");
+    return VECTIS_ERR_STATE;
+  }
+  service->monitor_joined = 1;
+  service->monitor_active = 0;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status
+vectis_managed_service_monitor_status(vectis_managed_service_impl *service,
+                                      vectis_error *error) {
+  vectis_status status;
+
+  status = vectis_managed_service_join_monitor(service, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (service != NULL && service->monitor_done && service->failed) {
+    if (error != NULL) {
+      *error = service->monitor_error;
+    }
+    return error != NULL && error->code != VECTIS_OK ? error->code
+                                                     : VECTIS_ERR_STATE;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static void *vectis_managed_service_monitor_main(void *userdata) {
+  vectis_managed_service_impl *service;
+  vectis_error terminal_error;
+  vectis_status status;
+  int unexpected;
+
+  service = (vectis_managed_service_impl *)userdata;
+  vectis_error_clear(&terminal_error);
+  if (service == NULL || service->wait_fn == NULL) {
+    return NULL;
+  }
+  status = service->wait_fn(service->context, &terminal_error);
+  unexpected = 0;
+  if (service->owner != NULL) {
+    (void)pthread_mutex_lock(&service->owner->mutex);
+    unexpected = !service->stop_requested;
+    service->terminal_status = status;
+    service->failed = status != VECTIS_OK || unexpected;
+    if (service->failed && terminal_error.code == VECTIS_OK) {
+      vectis_set_error(&terminal_error, VECTIS_ERR_STATE,
+                       "managed service exited unexpectedly");
+    }
+    service->monitor_error = terminal_error;
+    service->monitor_done = 1;
+    service->started = 0;
+    (void)pthread_mutex_unlock(&service->owner->mutex);
+  } else {
+    unexpected = !service->stop_requested;
+    service->terminal_status = status;
+    service->failed = status != VECTIS_OK || unexpected;
+    if (service->failed && terminal_error.code == VECTIS_OK) {
+      vectis_set_error(&terminal_error, VECTIS_ERR_STATE,
+                       "managed service exited unexpectedly");
+    }
+    service->monitor_error = terminal_error;
+    service->monitor_done = 1;
+    service->started = 0;
+  }
+  if (service->failed) {
+    vectis_app_notify_managed_service_failure(service, &terminal_error);
+  }
+  return NULL;
+}
+
+static vectis_status
+vectis_managed_service_monitor_start(vectis_managed_service_impl *service,
+                                     vectis_error *error) {
+  if (service == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "managed service is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (service->wait_fn == NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (service->monitor_active && !service->monitor_joined) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  service->monitor_done = 0;
+  service->monitor_joined = 0;
+  service->failed = 0;
+  service->terminal_status = VECTIS_OK;
+  vectis_error_clear(&service->monitor_error);
+  if (pthread_create(&service->monitor_thread, NULL,
+                     vectis_managed_service_monitor_main, service) != 0) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to start managed service monitor");
+    return VECTIS_ERR_STATE;
+  }
+  service->monitor_active = 1;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status
+vectis_managed_service_start_materialized(vectis_managed_service_impl *service,
+                                          vectis_error *error) {
+  vectis_status status;
+
+  if (service == NULL || service->start_fn == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "managed service is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (service->started) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  service->stop_requested = 0;
+  service->failed = 0;
+  service->terminal_status = VECTIS_OK;
+  vectis_error_clear(&service->monitor_error);
+  status = service->start_fn(service->context, error);
+  if (status != VECTIS_OK) {
+    service->terminal_status = status;
+    service->failed = 1;
+    return status;
+  }
+  service->materialized = 1;
+  service->started = 1;
+  status = vectis_managed_service_monitor_start(service, error);
+  if (status != VECTIS_OK) {
+    if (service->stop_fn != NULL) {
+      (void)service->stop_fn(service->context, NULL);
+    }
+    service->started = 0;
+    return status;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_app_stop_managed_services(vectis_app_impl *impl,
+                                                      vectis_error *error) {
+  vectis_managed_service_impl *service;
+  vectis_error local_error;
+  vectis_status first_status;
+  vectis_status status;
+
+  if (error != NULL) {
+    vectis_error_clear(error);
+  }
+  first_status = VECTIS_OK;
+  if (impl == NULL) {
+    return first_status;
+  }
+  for (service = impl->managed_services; service != NULL;
+       service = service->next_owned) {
+    service->stop_requested = 1;
+    if (service->started && service->stop_fn != NULL) {
+      vectis_error_clear(&local_error);
+      status = service->stop_fn(service->context, &local_error);
+      if (status != VECTIS_OK && first_status == VECTIS_OK) {
+        first_status = status;
+        if (error != NULL) {
+          *error = local_error;
+        }
+      }
+    }
+    vectis_error_clear(&local_error);
+    status = vectis_managed_service_join_monitor(service, &local_error);
+    if (status != VECTIS_OK && first_status == VECTIS_OK) {
+      first_status = status;
+      if (error != NULL) {
+        *error = local_error;
+      }
+    }
+    if (service->monitor_done && service->failed &&
+        impl->service_failure_policy != VECTIS_SERVICE_FAILURE_CONTINUE &&
+        first_status == VECTIS_OK) {
+      if (error != NULL) {
+        *error = service->monitor_error;
+      }
+      first_status = error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    service->started = 0;
+  }
+  return first_status;
+}
+
+static vectis_status
 vectis_consumer_service_join_monitor(vectis_consumer_service_impl *service,
                                      vectis_error *error) {
   if (service == NULL || !service->monitor_active || service->monitor_joined) {
@@ -4881,6 +5117,30 @@ vectis_app_start_requested_consumer_services(vectis_app_impl *impl,
   return VECTIS_OK;
 }
 
+static vectis_status
+vectis_app_start_requested_managed_services(vectis_app_impl *impl,
+                                            vectis_error *error) {
+  vectis_managed_service_impl *service;
+  vectis_status status;
+
+  if (impl == NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  for (service = impl->managed_services; service != NULL;
+       service = service->next_owned) {
+    if (!service->start_requested || service->started) {
+      continue;
+    }
+    status = vectis_managed_service_start_materialized(service, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 static int
 vectis_app_has_requested_consumer_services(const vectis_app_impl *impl) {
   const vectis_consumer_service_impl *service;
@@ -4889,6 +5149,22 @@ vectis_app_has_requested_consumer_services(const vectis_app_impl *impl) {
     return 0;
   }
   for (service = impl->consumer_services; service != NULL;
+       service = service->next_owned) {
+    if (service->start_requested) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int
+vectis_app_has_requested_managed_services(const vectis_app_impl *impl) {
+  const vectis_managed_service_impl *service;
+
+  if (impl == NULL) {
+    return 0;
+  }
+  for (service = impl->managed_services; service != NULL;
        service = service->next_owned) {
     if (service->start_requested) {
       return 1;
@@ -4939,6 +5215,48 @@ vectis_app_check_consumer_service_exit(vectis_app_impl *impl,
                                                    : VECTIS_ERR_STATE;
 }
 
+static vectis_status
+vectis_app_check_managed_service_exit(vectis_app_impl *impl,
+                                      vectis_error *error) {
+  vectis_managed_service_impl *service;
+  vectis_error monitor_error;
+  int failed;
+
+  if (impl == NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  failed = 0;
+  vectis_error_clear(&monitor_error);
+  (void)pthread_mutex_lock(&impl->mutex);
+  for (service = impl->managed_services; service != NULL;
+       service = service->next_owned) {
+    if (service->monitor_done && service->failed && !service->stop_requested) {
+      failed = 1;
+      monitor_error = service->monitor_error;
+      if (monitor_error.code == VECTIS_OK) {
+        vectis_set_error(&monitor_error, VECTIS_ERR_STATE,
+                         "managed service exited unexpectedly");
+      }
+      break;
+    }
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
+  if (!failed) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (impl->service_failure_policy == VECTIS_SERVICE_FAILURE_CONTINUE) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (error != NULL) {
+    *error = monitor_error;
+  }
+  return error != NULL && error->code != VECTIS_OK ? error->code
+                                                   : VECTIS_ERR_STATE;
+}
+
 static int
 vectis_app_has_materialized_consumer_services(const vectis_app_impl *impl) {
   const vectis_consumer_service_impl *service;
@@ -4955,6 +5273,22 @@ vectis_app_has_materialized_consumer_services(const vectis_app_impl *impl) {
   return 0;
 }
 
+static int
+vectis_app_has_materialized_managed_services(const vectis_app_impl *impl) {
+  const vectis_managed_service_impl *service;
+
+  if (impl == NULL) {
+    return 0;
+  }
+  for (service = impl->managed_services; service != NULL;
+       service = service->next_owned) {
+    if (service->materialized || service->started) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
 static int vectis_app_has_metrics_persistence(const vectis_app_impl *impl) {
   return impl != NULL && impl->metrics != NULL &&
          impl->metrics->persistence_enabled;
@@ -4962,6 +5296,7 @@ static int vectis_app_has_metrics_persistence(const vectis_app_impl *impl) {
 
 static int vectis_app_needs_supervised_runtime(const vectis_app_impl *impl) {
   return vectis_app_has_requested_consumer_services(impl) ||
+         vectis_app_has_requested_managed_services(impl) ||
          vectis_app_has_metrics_persistence(impl);
 }
 
@@ -5021,6 +5356,44 @@ static void vectis_app_close_consumer_services(vectis_app_impl *impl) {
   impl->consumer_services = NULL;
 }
 
+static void vectis_app_close_managed_services(vectis_app_impl *impl) {
+  vectis_managed_service_impl *service;
+  vectis_error error;
+
+  if (impl == NULL) {
+    return;
+  }
+  vectis_error_clear(&error);
+  (void)vectis_app_stop_managed_services(impl, &error);
+  for (service = impl->managed_services; service != NULL;
+       service = service->next_owned) {
+    service->owner = NULL;
+    service->started = 0;
+    service->materialized = 0;
+  }
+  impl->managed_services = NULL;
+}
+
+static void vectis_managed_service_detach(vectis_managed_service_impl *impl) {
+  vectis_managed_service_impl **cursor;
+
+  if (impl == NULL || impl->owner == NULL) {
+    return;
+  }
+  (void)pthread_mutex_lock(&impl->owner->mutex);
+  cursor = &impl->owner->managed_services;
+  while (*cursor != NULL) {
+    if (*cursor == impl) {
+      *cursor = impl->next_owned;
+      break;
+    }
+    cursor = &(*cursor)->next_owned;
+  }
+  (void)pthread_mutex_unlock(&impl->owner->mutex);
+  impl->owner = NULL;
+  impl->next_owned = NULL;
+}
+
 static void vectis_consumer_service_detach(vectis_consumer_service_impl *impl) {
   vectis_consumer_service_impl **cursor;
 
@@ -5050,6 +5423,7 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
     (void)close(impl->kore_child_control_fd);
     impl->kore_child_control_fd = -1;
   }
+  vectis_app_close_managed_services(impl);
   vectis_app_close_consumer_services(impl);
   vectis_app_service_control_close(impl);
   vectis_close_lockd_client_for_current_process(impl);
@@ -5374,6 +5748,12 @@ vectis_app_validate_quiescent_for_kore(const vectis_app_impl *impl,
   if (vectis_app_has_materialized_consumer_services(impl)) {
     vectis_set_error(error, VECTIS_ERR_STATE,
                      "route-backed app cannot start after a consumer service "
+                     "was materialized; declare the service before start");
+    return VECTIS_ERR_STATE;
+  }
+  if (vectis_app_has_materialized_managed_services(impl)) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "route-backed app cannot start after a managed service "
                      "was materialized; declare the service before start");
     return VECTIS_ERR_STATE;
   }
@@ -5897,6 +6277,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   app->logger = vectis_logger;
   app->cai_client = vectis_app_cai_client;
   app->lockd_client = vectis_lockd_client;
+  app->managed_service = vectis_managed_service_new;
   app->consumer_service = vectis_consumer_service_new;
   app->register_consumer_receiver = vectis_register_consumer_receiver;
   app->consumer_service_receiver = vectis_consumer_service_new_receiver;
@@ -6069,6 +6450,39 @@ static void vectis_app_notify_consumer_service_failure(
       fd, VECTIS_RUNTIME_CONTROL_SERVICE_FAILURE, message, message_size, NULL);
 }
 
+static void
+vectis_app_notify_managed_service_failure(vectis_managed_service_impl *service,
+                                          const vectis_error *terminal_error) {
+  vectis_app_impl *owner;
+  const char *message;
+  size_t message_size;
+  int fd;
+  int should_notify;
+
+  if (service == NULL || service->owner == NULL) {
+    return;
+  }
+  owner = service->owner;
+  message = terminal_error != NULL && terminal_error->message[0] != '\0'
+                ? terminal_error->message
+                : "managed service failed";
+  message_size = strlen(message);
+  if (message_size > 65535u) {
+    message_size = 65535u;
+  }
+
+  (void)pthread_mutex_lock(&owner->mutex);
+  fd = owner->service_control_write_fd;
+  should_notify = fd >= 0 && service->monitor_done && service->failed &&
+                  !service->stop_requested;
+  (void)pthread_mutex_unlock(&owner->mutex);
+  if (!should_notify) {
+    return;
+  }
+  (void)vectis_internal_runtime_control_write(
+      fd, VECTIS_RUNTIME_CONTROL_SERVICE_FAILURE, message, message_size, NULL);
+}
+
 static vectis_status vectis_app_read_service_control(vectis_app_impl *impl,
                                                      vectis_error *error) {
   vectis_runtime_control_type frame_type;
@@ -6099,6 +6513,10 @@ static vectis_status vectis_app_read_service_control(vectis_app_impl *impl,
     vectis_set_error(error, VECTIS_ERR_STATE,
                      "service control channel returned an unexpected frame");
     return VECTIS_ERR_STATE;
+  }
+  status = vectis_app_check_managed_service_exit(impl, error);
+  if (status != VECTIS_OK) {
+    return status;
   }
   return vectis_app_check_consumer_service_exit(impl, error);
 }
@@ -6400,6 +6818,14 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
       (void)vectis_app_stop_impl(app, &cleanup_error);
       return status;
     }
+    status = vectis_app_start_requested_managed_services(impl, error);
+    if (status != VECTIS_OK) {
+      vectis_error cleanup_error;
+
+      vectis_error_clear(&cleanup_error);
+      (void)vectis_app_stop_impl(app, &cleanup_error);
+      return status;
+    }
     status = vectis_app_start_requested_consumer_services(impl, error);
     if (status != VECTIS_OK) {
       vectis_error cleanup_error;
@@ -6430,6 +6856,11 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
     (void)pthread_mutex_unlock(&impl->mutex);
     vectis_app_service_control_close(impl);
     vectis_close_lockd_client_for_current_process(impl);
+    return status;
+  }
+  status = vectis_app_start_requested_managed_services(impl, error);
+  if (status != VECTIS_OK) {
+    (void)vectis_app_stop_impl(app, NULL);
     return status;
   }
   status = vectis_app_start_requested_consumer_services(impl, error);
@@ -6488,6 +6919,10 @@ static vectis_status vectis_app_stop_impl(vectis_app *app,
     vectis_close_fd_if_open(&control_fd);
   }
 
+  if (vectis_app_stop_managed_services(impl, error) != VECTIS_OK) {
+    vectis_app_service_control_close(impl);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
   if (vectis_app_stop_consumer_services(impl, error) != VECTIS_OK) {
     vectis_app_service_control_close(impl);
     return error != NULL ? error->code : VECTIS_ERR_STATE;
@@ -6603,6 +7038,10 @@ static vectis_status vectis_app_run_impl(vectis_app *app, vectis_error *error) {
   impl->kore_child_pid = 0;
   vectis_close_lockd_client_for_current_process(impl);
   (void)pthread_mutex_unlock(&impl->mutex);
+  if (vectis_app_stop_managed_services(impl, error) != VECTIS_OK &&
+      status == VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
   if (vectis_app_stop_consumer_services(impl, error) != VECTIS_OK &&
       status == VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_STATE;
@@ -6819,6 +7258,13 @@ static vectis_status vectis_app_wait_for_process_signal(vectis_app_impl *impl,
 
   while (vectis_wait_signal == 0) {
     if (impl != NULL &&
+        vectis_app_check_managed_service_exit(impl, error) != VECTIS_OK) {
+      (void)sigaction(SIGINT, &old_int, NULL);
+      (void)sigaction(SIGTERM, &old_term, NULL);
+      (void)sigaction(SIGQUIT, &old_quit, NULL);
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    if (impl != NULL &&
         vectis_app_check_consumer_service_exit(impl, error) != VECTIS_OK) {
       (void)sigaction(SIGINT, &old_int, NULL);
       (void)sigaction(SIGTERM, &old_term, NULL);
@@ -6970,6 +7416,12 @@ static vectis_status vectis_app_wait_supervised_child(vectis_app_impl *impl,
                         "failed to wait for supervised Kore runtime: %s",
                         strerror(err));
       return VECTIS_ERR_STATE;
+    }
+    if (vectis_app_check_managed_service_exit(impl, error) != VECTIS_OK) {
+      (void)sigaction(SIGINT, &old_int, NULL);
+      (void)sigaction(SIGTERM, &old_term, NULL);
+      (void)sigaction(SIGQUIT, &old_quit, NULL);
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
     }
     if (vectis_app_check_consumer_service_exit(impl, error) != VECTIS_OK) {
       (void)sigaction(SIGINT, &old_int, NULL);
@@ -16758,6 +17210,230 @@ struct lc_client *vectis_lockd_client(vectis_app *app) {
   }
   (void)pthread_mutex_unlock(&impl->mutex);
   return impl->lockd_client;
+}
+
+void vectis_managed_service_config_init(vectis_managed_service_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->size = sizeof(*config);
+  config->abi_version = VECTIS_SERVICE_ABI_VERSION;
+}
+
+void vectis_managed_service_state_init(vectis_managed_service_state *state) {
+  if (state == NULL) {
+    return;
+  }
+  memset(state, 0, sizeof(*state));
+  state->size = sizeof(*state);
+  state->abi_version = VECTIS_SERVICE_ABI_VERSION;
+}
+
+vectis_status
+vectis_managed_service_state_get(const vectis_managed_service *service,
+                                 vectis_managed_service_state *out,
+                                 vectis_error *error) {
+  const vectis_managed_service_impl *impl;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "managed service state output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_managed_service_state_init(out);
+  impl = service != NULL ? (const vectis_managed_service_impl *)service->impl
+                         : NULL;
+  if (impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "managed service is required");
+    return VECTIS_ERR_INVALID;
+  }
+  out->declared = 1;
+  out->materialized = impl->materialized;
+  out->process_local = impl->materialized;
+  out->start_requested = impl->start_requested;
+  out->stop_requested = impl->stop_requested;
+  out->started = impl->started;
+  out->monitor_active = impl->monitor_active;
+  out->monitor_done = impl->monitor_done;
+  out->monitor_joined = impl->monitor_joined;
+  out->failed = impl->failed;
+  out->dependency_code = impl->monitor_error.dependency_code;
+  out->terminal_status = impl->terminal_status;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status
+vectis_managed_service_new(vectis_app *app,
+                           const vectis_managed_service_config *config,
+                           vectis_managed_service **out, vectis_error *error) {
+  vectis_app_impl *impl;
+  vectis_managed_service *service;
+  vectis_managed_service_impl *service_impl;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "managed service output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config == NULL || config->start == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "managed service config requires start callback");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->size != 0u && config->size < sizeof(*config)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "managed service config size is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->abi_version != 0u &&
+      config->abi_version != VECTIS_SERVICE_ABI_VERSION) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "managed service config abi_version is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->wait != NULL && config->stop == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "managed service wait callback requires stop callback");
+    return VECTIS_ERR_INVALID;
+  }
+  service = (vectis_managed_service *)calloc(1u, sizeof(*service));
+  service_impl =
+      (vectis_managed_service_impl *)calloc(1u, sizeof(*service_impl));
+  if (service == NULL || service_impl == NULL) {
+    free(service);
+    free(service_impl);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate managed service");
+    return VECTIS_ERR_NOMEM;
+  }
+  service_impl->name =
+      config->name != NULL ? vectis_strdup(config->name) : NULL;
+  if (config->name != NULL && service_impl->name == NULL) {
+    free(service);
+    free(service_impl);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy managed service name");
+    return VECTIS_ERR_NOMEM;
+  }
+  service_impl->context = config->context;
+  service_impl->start_fn = config->start;
+  service_impl->stop_fn = config->stop;
+  service_impl->wait_fn = config->wait;
+  service_impl->cleanup_fn = config->cleanup;
+  service_impl->start_requested = config->start_with_app ? 1 : 0;
+  service_impl->terminal_status = VECTIS_OK;
+  vectis_error_clear(&service_impl->monitor_error);
+
+  service->run = vectis_managed_service_run;
+  service->start = vectis_managed_service_start;
+  service->stop = vectis_managed_service_stop;
+  service->wait = vectis_managed_service_wait;
+  service->state = vectis_managed_service_state_get;
+  service->close = vectis_managed_service_destroy;
+  service->impl = service_impl;
+
+  impl = (vectis_app_impl *)app->impl;
+  service_impl->owner = impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  service_impl->next_owned = impl->managed_services;
+  impl->managed_services = service_impl;
+  (void)pthread_mutex_unlock(&impl->mutex);
+  *out = service;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_managed_service_start(vectis_managed_service *service,
+                                           vectis_error *error) {
+  vectis_managed_service_impl *impl;
+
+  impl = service != NULL ? (vectis_managed_service_impl *)service->impl : NULL;
+  if (impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "managed service is required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl->start_requested = 1;
+  return vectis_managed_service_start_materialized(impl, error);
+}
+
+vectis_status vectis_managed_service_stop(vectis_managed_service *service,
+                                          vectis_error *error) {
+  vectis_managed_service_impl *impl;
+  vectis_status status;
+
+  impl = service != NULL ? (vectis_managed_service_impl *)service->impl : NULL;
+  if (impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "managed service is required");
+    return VECTIS_ERR_INVALID;
+  }
+  impl->stop_requested = 1;
+  if (impl->started && impl->stop_fn != NULL) {
+    status = impl->stop_fn(impl->context, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
+  return vectis_managed_service_join_monitor(impl, error);
+}
+
+vectis_status vectis_managed_service_wait(vectis_managed_service *service,
+                                          vectis_error *error) {
+  vectis_managed_service_impl *impl;
+  vectis_status status;
+
+  impl = service != NULL ? (vectis_managed_service_impl *)service->impl : NULL;
+  if (impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "managed service is required");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_managed_service_monitor_status(impl, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_managed_service_run(vectis_managed_service *service,
+                                         vectis_error *error) {
+  vectis_status status;
+
+  status = vectis_managed_service_start(service, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  return vectis_managed_service_wait(service, error);
+}
+
+void vectis_managed_service_destroy(vectis_managed_service *service) {
+  vectis_managed_service_impl *impl;
+  vectis_error error;
+
+  if (service == NULL) {
+    return;
+  }
+  impl = (vectis_managed_service_impl *)service->impl;
+  if (impl != NULL) {
+    vectis_error_clear(&error);
+    if (impl->started || impl->monitor_active) {
+      (void)vectis_managed_service_stop(service, &error);
+      (void)vectis_managed_service_monitor_status(impl, &error);
+    }
+    vectis_managed_service_detach(impl);
+    if (impl->cleanup_fn != NULL) {
+      impl->cleanup_fn(impl->context);
+    }
+    free(impl->name);
+    free(impl);
+  }
+  free(service);
 }
 
 vectis_status vectis_consumer_service_new(

@@ -560,6 +560,9 @@ Required additions or semantic changes:
 - `vectis_app_config.quiescence_policy` for strict default behavior and
   opt-in warning behavior when exact thread inspection is unavailable.
 - descriptor-backed `vectis_consumer_service`.
+- descriptor-backed `vectis_managed_service` for C-owned app services that
+  start after supervised Kore readiness, stop during coordinated shutdown, and
+  propagate monitored failures through the app service-failure policy.
 - app-owned service registration APIs for future OPC UA/curl/audio/SUS worker
   declarations.
 - documented narrow internal runtime control channel for supervisor child
@@ -626,6 +629,7 @@ Required semantics:
    - remove example shell sleeps;
    - document callback ownership.
 7. Extend service declarations:
+   - generic managed service descriptors (`vectis_managed_service`);
    - OPC UA managed service descriptors;
    - curl worker descriptors where needed;
    - audio/SUS worker descriptors;

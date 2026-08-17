@@ -65,6 +65,16 @@ typedef struct runtime_thread_probe {
   volatile int done;
 } runtime_thread_probe;
 
+typedef struct runtime_managed_service_probe {
+  int started;
+  int stopped;
+  int waited;
+  int cleaned;
+  int wait_fds[2];
+  vectis_status wait_status;
+  const char *wait_error;
+} runtime_managed_service_probe;
+
 static const lonejson_field source_json_doc_fields[] = {
     LONEJSON_FIELD_STRING_SOURCE_REQ(source_json_doc, payload, "payload")};
 
@@ -122,6 +132,65 @@ static int failing_consumer_on_error(void *context,
   (void)event;
   (void)error;
   return LC_ERR_PROTOCOL;
+}
+
+static vectis_status runtime_managed_service_start(void *context,
+                                                   vectis_error *error) {
+  runtime_managed_service_probe *probe;
+
+  (void)error;
+  probe = (runtime_managed_service_probe *)context;
+  if (probe != NULL) {
+    probe->started += 1;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status runtime_managed_service_stop(void *context,
+                                                  vectis_error *error) {
+  runtime_managed_service_probe *probe;
+  const char byte = 'x';
+
+  (void)error;
+  probe = (runtime_managed_service_probe *)context;
+  if (probe != NULL) {
+    probe->stopped += 1;
+    if (probe->wait_fds[1] >= 0) {
+      assert(write(probe->wait_fds[1], &byte, 1u) == 1);
+    }
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status runtime_managed_service_wait(void *context,
+                                                  vectis_error *error) {
+  runtime_managed_service_probe *probe;
+  char byte;
+
+  probe = (runtime_managed_service_probe *)context;
+  if (probe == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "managed service probe is required");
+    return VECTIS_ERR_INVALID;
+  }
+  probe->waited += 1;
+  if (probe->wait_status != VECTIS_OK) {
+    vectis_set_error(error, probe->wait_status,
+                     probe->wait_error != NULL ? probe->wait_error
+                                               : "managed service failed");
+    return probe->wait_status;
+  }
+  assert(read(probe->wait_fds[0], &byte, 1u) == 1);
+  return VECTIS_OK;
+}
+
+static void runtime_managed_service_cleanup(void *context) {
+  runtime_managed_service_probe *probe;
+
+  probe = (runtime_managed_service_probe *)context;
+  if (probe != NULL) {
+    probe->cleaned += 1;
+  }
 }
 
 typedef struct runtime_enqueue_after_delay {
@@ -1467,6 +1536,9 @@ static void assert_direct_supervision_policy_rejects_app_services(void) {
   vectis_app_config config;
   vectis_metrics_config metrics;
   vectis_route_config route;
+  vectis_managed_service_config service_config;
+  vectis_managed_service *service;
+  runtime_managed_service_probe probe;
   vectis_app *app;
   vectis_error error;
   vectis_status status;
@@ -1494,6 +1566,32 @@ static void assert_direct_supervision_policy_rejects_app_services(void) {
   status = app->run(app, &error);
   assert(status == VECTIS_ERR_STATE);
   assert(strstr(error.message, "direct supervision_policy") != NULL);
+  app->close(app);
+
+  memset(&probe, 0, sizeof(probe));
+  probe.wait_fds[0] = -1;
+  probe.wait_fds[1] = -1;
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.supervision_policy = VECTIS_SUPERVISION_DIRECT;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "direct-policy-managed";
+  service_config.context = &probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.start_with_app = 1;
+  service = NULL;
+  status = app->managed_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/direct-policy-managed",
+                       sample_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "direct supervision_policy") != NULL);
+  service->close(service);
   app->close(app);
 }
 
@@ -3063,6 +3161,53 @@ static void assert_consumer_service_declaration_before_routes(void) {
   app->close(app);
 }
 
+static void assert_managed_service_declaration_before_routes(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_managed_service_config service_config;
+  vectis_managed_service *service;
+  vectis_managed_service_state service_state;
+  runtime_managed_service_probe probe;
+  vectis_route_config route;
+
+  memset(&probe, 0, sizeof(probe));
+  probe.wait_fds[0] = -1;
+  probe.wait_fds[1] = -1;
+  vectis_app_config_init(&config);
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "runtime-managed";
+  service_config.context = &probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.cleanup = runtime_managed_service_cleanup;
+  service_config.start_with_app = 1;
+  service = NULL;
+  status = app->managed_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+  assert(service != NULL);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.declared);
+  assert(!service_state.materialized);
+  assert(!service_state.process_local);
+  assert(service_state.start_requested);
+  assert(!service_state.started);
+  assert(!service_state.failed);
+
+  route =
+      vectis_route(VECTIS_HTTP_GET, "/managed-declared", sample_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+
+  service->close(service);
+  assert(probe.cleaned == 1);
+  app->close(app);
+}
+
 static void assert_kore_start_rejects_extra_thread(void) {
   vectis_app_config config;
   vectis_app *app;
@@ -3359,6 +3504,91 @@ static void assert_supervised_repeated_start_stop(void) {
   app->close(app);
 }
 
+static void assert_supervised_managed_service_lifecycle(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_route_config route;
+  vectis_http_client_config http;
+  vectis_http_response response;
+  vectis_managed_service_config service_config;
+  vectis_managed_service *service;
+  vectis_managed_service_state service_state;
+  runtime_managed_service_probe probe;
+  unsigned short port;
+  char url[128];
+  int reserved_fd;
+  int written;
+
+  memset(&probe, 0, sizeof(probe));
+  assert(pipe(probe.wait_fds) == 0);
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  reserved_fd = reserve_loopback_port(&port);
+  close(reserved_fd);
+  config.tls.port = port;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "supervised-managed";
+  service_config.context = &probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.stop = runtime_managed_service_stop;
+  service_config.wait = runtime_managed_service_wait;
+  service_config.start_with_app = 1;
+  service = NULL;
+  status = app->managed_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+
+  route = vectis_route(VECTIS_HTTP_GET, "/managed", sample_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.materialized);
+  assert(service_state.process_local);
+  assert(service_state.start_requested);
+  assert(service_state.started);
+  assert(service_state.monitor_active);
+  assert(!service_state.failed);
+  assert(probe.started == 1);
+
+  vectis_http_client_config_init(&http);
+  http.timeout_ms = 2000L;
+  http.connect_timeout_ms = 1000L;
+  written =
+      snprintf(url, sizeof(url), "http://127.0.0.1:%u/managed", (unsigned)port);
+  assert(written > 0 && (size_t)written < sizeof(url));
+  memset(&response, 0, sizeof(response));
+  status = vectis_http_get(&http, url, &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200);
+  vectis_http_response_cleanup(&response);
+
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.stop_requested);
+  assert(!service_state.started);
+  assert(!service_state.monitor_active);
+  assert(service_state.monitor_done);
+  assert(service_state.monitor_joined);
+  assert(!service_state.failed);
+  assert(probe.stopped == 1);
+  assert(probe.waited == 1);
+
+  service->close(service);
+  app->close(app);
+  close(probe.wait_fds[0]);
+  close(probe.wait_fds[1]);
+}
+
 static void assert_supervised_shutdown_deadline_kills_stopped_runtime(void) {
   vectis_app_config config;
   vectis_app *app;
@@ -3567,6 +3797,69 @@ static void assert_service_failure_continue_waits_for_signal(void) {
   remove_tree(pouch_dir);
 }
 
+static void assert_supervised_wait_reports_managed_service_exit(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_route_config route;
+  vectis_managed_service_config service_config;
+  vectis_managed_service *service;
+  vectis_managed_service_state service_state;
+  runtime_managed_service_probe probe;
+  unsigned short port;
+  int reserved_fd;
+
+  memset(&probe, 0, sizeof(probe));
+  probe.wait_fds[0] = -1;
+  probe.wait_fds[1] = -1;
+  probe.wait_status = VECTIS_ERR_STATE;
+  probe.wait_error = "managed service wait failed";
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  reserved_fd = reserve_loopback_port(&port);
+  close(reserved_fd);
+  config.tls.port = port;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_managed_service_config_init(&service_config);
+  service_config.name = "runtime-managed-failing";
+  service_config.context = &probe;
+  service_config.start = runtime_managed_service_start;
+  service_config.stop = runtime_managed_service_stop;
+  service_config.wait = runtime_managed_service_wait;
+  service_config.start_with_app = 1;
+  service = NULL;
+  status = app->managed_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/managed-service-exit", sample_handler,
+                       NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  (void)alarm(10u);
+  status = app->wait(app, &error);
+  (void)alarm(0u);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "managed service wait failed") != NULL);
+  assert(probe.started == 1);
+  assert(probe.waited == 1);
+
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.failed);
+  assert(service_state.terminal_status == VECTIS_ERR_STATE);
+  assert(!service_state.started);
+
+  service->close(service);
+  app->close(app);
+}
+
 #ifdef VECTIS_RUNTIME_HEADER_LIMIT_ONLY
 int main(void) {
   assert_default_header_limit_accepts_64k();
@@ -3605,6 +3898,10 @@ static int run_named_runtime_test(const char *name) {
     assert_consumer_service_declaration_before_routes();
     return 1;
   }
+  if (strcmp(name, "managed_service_declaration_before_routes") == 0) {
+    assert_managed_service_declaration_before_routes();
+    return 1;
+  }
   if (strcmp(name, "kore_start_rejects_extra_thread") == 0) {
     assert_kore_start_rejects_extra_thread();
     return 1;
@@ -3625,6 +3922,10 @@ static int run_named_runtime_test(const char *name) {
     assert_supervised_repeated_start_stop();
     return 1;
   }
+  if (strcmp(name, "supervised_managed_service_lifecycle") == 0) {
+    assert_supervised_managed_service_lifecycle();
+    return 1;
+  }
   if (strcmp(name, "supervised_shutdown_deadline_kills_stopped_runtime") == 0) {
     assert_supervised_shutdown_deadline_kills_stopped_runtime();
     return 1;
@@ -3635,6 +3936,10 @@ static int run_named_runtime_test(const char *name) {
   }
   if (strcmp(name, "service_failure_continue_waits_for_signal") == 0) {
     assert_service_failure_continue_waits_for_signal();
+    return 1;
+  }
+  if (strcmp(name, "supervised_wait_reports_managed_service_exit") == 0) {
+    assert_supervised_wait_reports_managed_service_exit();
     return 1;
   }
   if (strcmp(name, "kore_smoke") == 0) {
@@ -3666,14 +3971,17 @@ int main(void) {
   assert_supervised_metrics_persistence_worker();
   assert_direct_supervision_policy_rejects_app_services();
   assert_consumer_service_declaration_before_routes();
+  assert_managed_service_declaration_before_routes();
   assert_kore_start_rejects_extra_thread();
   assert_supervised_start_reports_child_readiness_failure();
   assert_supervised_wait_reports_consumer_service_exit();
   assert_supervised_child_exit_stops_consumer_service();
   assert_supervised_repeated_start_stop();
+  assert_supervised_managed_service_lifecycle();
   assert_supervised_shutdown_deadline_kills_stopped_runtime();
   assert_service_only_wait_reports_consumer_service_exit();
   assert_service_failure_continue_waits_for_signal();
+  assert_supervised_wait_reports_managed_service_exit();
 
   vectis_app_config_init(&config);
   config.tls.mode = (vectis_tls_mode)99;

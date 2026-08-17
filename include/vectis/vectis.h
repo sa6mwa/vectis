@@ -39,6 +39,7 @@
 #define VECTIS_ROUTE_EVENT_DEFAULT_MAX_BODY_BYTES 65536u
 #define VECTIS_LOCKD_CONSUMER_EVENT_DEFAULT_MAX_PAYLOAD_BYTES 65536u
 #define VECTIS_OPCUA_MONITOR_EVENT_DEFAULT_MAX_PAYLOAD_BYTES 65536u
+#define VECTIS_SERVICE_ABI_VERSION 1u
 #define VECTIS_SSH_SFTP_OPEN_READ 0x01u
 #define VECTIS_SSH_SFTP_OPEN_WRITE 0x02u
 #define VECTIS_SSH_SFTP_OPEN_CREATE 0x04u
@@ -62,6 +63,7 @@ struct lc_error;
 
 typedef struct vectis_app vectis_app;
 typedef struct vectis_consumer_service vectis_consumer_service;
+typedef struct vectis_managed_service vectis_managed_service;
 typedef struct vectis_http_client vectis_http_client;
 typedef struct vectis_mailbox vectis_mailbox;
 typedef struct vectis_mailbox_broker vectis_mailbox_broker;
@@ -772,6 +774,43 @@ typedef struct vectis_consumer_service_state {
   vectis_status terminal_status;
 } vectis_consumer_service_state;
 
+typedef vectis_status (*vectis_managed_service_start_fn)(void *context,
+                                                         vectis_error *error);
+typedef vectis_status (*vectis_managed_service_stop_fn)(void *context,
+                                                        vectis_error *error);
+typedef vectis_status (*vectis_managed_service_wait_fn)(void *context,
+                                                        vectis_error *error);
+typedef void (*vectis_managed_service_cleanup_fn)(void *context);
+
+typedef struct vectis_managed_service_config {
+  size_t size;
+  unsigned abi_version;
+  const char *name;
+  void *context;
+  vectis_managed_service_start_fn start;
+  vectis_managed_service_stop_fn stop;
+  vectis_managed_service_wait_fn wait;
+  vectis_managed_service_cleanup_fn cleanup;
+  int start_with_app;
+} vectis_managed_service_config;
+
+typedef struct vectis_managed_service_state {
+  size_t size;
+  unsigned abi_version;
+  int declared;
+  int materialized;
+  int process_local;
+  int start_requested;
+  int stop_requested;
+  int started;
+  int monitor_active;
+  int monitor_done;
+  int monitor_joined;
+  int failed;
+  long dependency_code;
+  vectis_status terminal_status;
+} vectis_managed_service_state;
+
 typedef struct vectis_webdav_marker_receiver_config {
   const char *cache_dir;
   const char *site_id;
@@ -1274,6 +1313,15 @@ struct vectis_app {
    */
   struct lc_client *(*lockd_client)(vectis_app *self);
 
+  /* Declare a Vectis-owned app service backed by C callbacks. Vectis copies the
+   * service name, borrows the callback context, and starts services marked
+   * start_with_app after the selected app runtime is ready.
+   */
+  vectis_status (*managed_service)(vectis_app *self,
+                                   const vectis_managed_service_config *config,
+                                   vectis_managed_service **out,
+                                   vectis_error *error);
+
   /* Declare a Vectis-owned liblockdc consumer service. Vectis copies the
    * consumer config strings needed to materialize the service later; callback
    * function pointers and callback contexts remain borrowed process-local
@@ -1290,6 +1338,19 @@ struct vectis_app {
       vectis_app *self, const vectis_consumer_service_receiver_config *config,
       vectis_consumer_service **out, vectis_error *error);
   void (*close)(vectis_app *self);
+  void *impl;
+};
+
+struct vectis_managed_service {
+  vectis_status (*run)(vectis_managed_service *self, vectis_error *error);
+  vectis_status (*start)(vectis_managed_service *self, vectis_error *error);
+  vectis_status (*stop)(vectis_managed_service *self, vectis_error *error);
+  vectis_status (*wait)(vectis_managed_service *self, vectis_error *error);
+  /* Copy process-local lifecycle diagnostics without invoking callbacks. */
+  vectis_status (*state)(const vectis_managed_service *self,
+                         vectis_managed_service_state *out,
+                         vectis_error *error);
+  void (*close)(vectis_managed_service *self);
   void *impl;
 };
 
@@ -1638,6 +1699,12 @@ vectis_status
 vectis_consumer_service_state_get(const vectis_consumer_service *service,
                                   vectis_consumer_service_state *out,
                                   vectis_error *error);
+void vectis_managed_service_config_init(vectis_managed_service_config *config);
+void vectis_managed_service_state_init(vectis_managed_service_state *state);
+vectis_status
+vectis_managed_service_state_get(const vectis_managed_service *service,
+                                 vectis_managed_service_state *out,
+                                 vectis_error *error);
 void vectis_opcua_monitor_event_config_init(
     vectis_opcua_monitor_event_config *config);
 void vectis_opcua_monitor_mailbox_config_init(
@@ -1885,6 +1952,19 @@ vectis_status vectis_app_cai_client(vectis_app *app, cai_client **out,
  * NULL is reserved for invalid apps or pre-start lifecycle inspection.
  */
 struct lc_client *vectis_lockd_client(vectis_app *app);
+vectis_status
+vectis_managed_service_new(vectis_app *app,
+                           const vectis_managed_service_config *config,
+                           vectis_managed_service **out, vectis_error *error);
+vectis_status vectis_managed_service_run(vectis_managed_service *service,
+                                         vectis_error *error);
+vectis_status vectis_managed_service_start(vectis_managed_service *service,
+                                           vectis_error *error);
+vectis_status vectis_managed_service_stop(vectis_managed_service *service,
+                                          vectis_error *error);
+vectis_status vectis_managed_service_wait(vectis_managed_service *service,
+                                          vectis_error *error);
+void vectis_managed_service_destroy(vectis_managed_service *service);
 vectis_status
 vectis_consumer_service_new(vectis_app *app,
                             const struct lc_consumer_service_config *config,
