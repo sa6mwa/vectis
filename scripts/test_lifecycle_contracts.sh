@@ -1824,6 +1824,7 @@ for target in \
   release \
   finalize-slice \
   prerelease \
+  test-service-runtime-lifecycle \
   lua-test \
   lua-env \
   clean-dist \
@@ -1833,6 +1834,9 @@ for target in \
 do
   assert_contains "$repo_root/Makefile" "^$target:"
 done
+assert_contains "$repo_root/Makefile" 'scripts/test_service_runtime_lifecycle_audit\.sh'
+assert_contains "$repo_root/scripts/test_service_runtime_lifecycle_audit.sh" \
+  'service runtime lifecycle audit ok'
 assert_contains "$repo_root/Makefile" 'VECTIS_LIVE_OAUTH2_ENABLE=1'
 assert_contains "$repo_root/Makefile" 'VECTIS_OPCUA_PUBSUB_LIVE=1'
 assert_contains "$repo_root/scripts/test-live-oauth2.sh" 'VECTIS_LIVE_OAUTH2_ENABLE'

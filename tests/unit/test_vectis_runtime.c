@@ -2547,20 +2547,26 @@ static void assert_default_header_limit_accepts_64k(void) {
   const char *prefix;
   const char *suffix;
   char reply[1024];
+  char url[128];
   char *request;
   ssize_t nread;
   size_t request_size;
   size_t prefix_size;
   size_t suffix_size;
   size_t value_size;
+  unsigned short port;
+  int reserved_fd;
   int fd;
   int attempt;
+  int written;
 
   memset(&response, 0, sizeof(response));
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
-  config.tls.port = 28082u;
+  reserved_fd = reserve_loopback_port(&port);
+  close(reserved_fd);
+  config.tls.port = port;
   config.server.keepalive_disabled = 1;
   config.server.keepalive_timeout_ms = 0L;
   config.server.keepalive_max_requests = 0u;
@@ -2578,11 +2584,13 @@ static void assert_default_header_limit_accepts_64k(void) {
   vectis_http_client_config_init(&http);
   http.timeout_ms = 1000L;
   http.connect_timeout_ms = 200L;
+  written =
+      snprintf(url, sizeof(url), "http://127.0.0.1:%u/health", (unsigned)port);
+  assert(written > 0 && (size_t)written < sizeof(url));
   status = VECTIS_ERR_STATE;
   for (attempt = 0; attempt < 100 && status != VECTIS_OK; ++attempt) {
     vectis_http_response_cleanup(&response);
-    status = vectis_http_get(&http, "http://127.0.0.1:28082/health", &response,
-                             &error);
+    status = vectis_http_get(&http, url, &response, &error);
     if (status != VECTIS_OK) {
       usleep(100000u);
     }
@@ -2606,7 +2614,7 @@ static void assert_default_header_limit_accepts_64k(void) {
   memset(request + prefix_size, 'a', value_size);
   memcpy(request + prefix_size + value_size, suffix, suffix_size);
 
-  fd = connect_local(28082u);
+  fd = connect_local(port);
   socket_send_all(fd, request, request_size);
   free(request);
   memset(reply, 0, sizeof(reply));

@@ -16,7 +16,7 @@ FUZZ_PRESET := fuzz
 	help \
 	deps-debug deps-release deps-cross \
 	build build-debug build-release build-asan build-coverage build-fuzz \
-	test test-debug test-lifecycle test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
+	test test-debug test-lifecycle test-service-runtime-lifecycle test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
 	lua-env lua-rock lua-test test-opcua-lua-surface test-opcua-pubsub-live test-sus-audio-live test-sus-audio-hardening release-lua-artifacts \
 	dev-up dev-down dev-reset dev-ps dev-logs \
 	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy verify-release-matrix release-darwin-smoke-bundle release-matrix prerelease-live prerelease-hardening lifecycle-version-contract release print-release-version clean-dist finalize-slice prerelease \
@@ -29,6 +29,7 @@ help:
 		'make build              Configure and build the debug preset.' \
 		'make test               Run the debug unit test preset.' \
 		'make test-lifecycle     Run lifecycle command/version/preset/privacy contract tests.' \
+		'make test-service-runtime-lifecycle Run service runtime lifecycle evidence audit.' \
 		'make test-target-tools  Run target tool discovery regression tests.' \
 		'make test-cpkt-toolchains Run pinned Bootlin/AFL++ resolver contract tests.' \
 		'make test-darwin-linker-route Run osxcross Darwin linker-route regression tests.' \
@@ -93,7 +94,11 @@ test: test-debug
 
 test-lifecycle:
 	$(TIMED) test-lifecycle bash ./scripts/test_lifecycle_contracts.sh
+	$(TIMED) test-service-runtime-lifecycle bash ./scripts/test_service_runtime_lifecycle_audit.sh
 	$(TIMED) test-release-privacy-contracts bash ./scripts/test_release_privacy_contracts.sh
+
+test-service-runtime-lifecycle:
+	$(TIMED) test-service-runtime-lifecycle bash ./scripts/test_service_runtime_lifecycle_audit.sh
 
 test-release-privacy-contracts:
 	$(TIMED) test-release-privacy-contracts bash ./scripts/test_release_privacy_contracts.sh
