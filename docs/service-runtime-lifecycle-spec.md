@@ -535,6 +535,9 @@ the configured shutdown deadline, then escalates to `SIGKILL` and reaps the
 child so `stop()` cannot hang indefinitely. `vectis_app_config.shutdown_grace_ms`
 and Lua `vectis.server.new({shutdown_grace_ms = ...})` configure this grace
 period; zero or omission uses `VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS`.
+The supervised Kore runtime is isolated into its own process group before
+readiness; supervisor shutdown signals target that process group so an
+unresponsive Kore parent cannot leave worker listeners behind.
 `vectis_app_config.supervision_policy` and Lua
 `vectis.server.new({supervision_policy = ...})` configure route-backed topology:
 `auto` chooses direct foreground Kore unless app-owned services require
@@ -633,7 +636,8 @@ Required semantics:
 8. Hardening:
    - repeated supervised start/stop stress (`supervised_repeated_start_stop`);
    - child crash and service crash tests;
-   - shutdown deadline tests;
+   - shutdown deadline tests
+     (`supervised_shutdown_deadline_kills_stopped_runtime`);
    - review command from lifecycle skill until actionable issues are clean.
 
 ## Verification Requirements

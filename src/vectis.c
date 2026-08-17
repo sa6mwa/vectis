@@ -624,6 +624,7 @@ vectis_app_wait_supervised_child_ready(vectis_app_impl *impl, pid_t child_pid,
 static vectis_status vectis_app_stop_kore_child(pid_t child_pid, int control_fd,
                                                 long shutdown_grace_ms,
                                                 vectis_error *error);
+static int vectis_signal_kore_runtime(pid_t child_pid, int signum);
 static int vectis_wait_sleep_ms(long delay_ms);
 static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
                                               vectis_error *error);
@@ -6102,6 +6103,24 @@ static vectis_status vectis_app_read_service_control(vectis_app_impl *impl,
   return vectis_app_check_consumer_service_exit(impl, error);
 }
 
+static int vectis_signal_kore_runtime(pid_t child_pid, int signum) {
+  int saved_errno;
+
+  if (child_pid <= 0) {
+    errno = ESRCH;
+    return -1;
+  }
+  if (kill(-child_pid, signum) == 0) {
+    return 0;
+  }
+  saved_errno = errno;
+  if (saved_errno == ESRCH && kill(child_pid, signum) == 0) {
+    return 0;
+  }
+  errno = saved_errno;
+  return -1;
+}
+
 static vectis_status vectis_app_stop_kore_child(pid_t child_pid, int control_fd,
                                                 long shutdown_grace_ms,
                                                 vectis_error *error) {
@@ -6163,7 +6182,7 @@ static vectis_status vectis_app_stop_kore_child(pid_t child_pid, int control_fd,
       remaining_ms -= sleep_ms;
     }
   }
-  if (kill(child_pid, SIGTERM) != 0) {
+  if (vectis_signal_kore_runtime(child_pid, SIGTERM) != 0) {
     vectis_close_fd_if_open(&control_fd);
     if (errno == ESRCH) {
       vectis_error_clear(error);
@@ -6215,7 +6234,7 @@ static vectis_status vectis_app_stop_kore_child(pid_t child_pid, int control_fd,
     remaining_ms -= sleep_ms;
   }
 
-  if (kill(child_pid, SIGKILL) != 0 && errno != ESRCH) {
+  if (vectis_signal_kore_runtime(child_pid, SIGKILL) != 0 && errno != ESRCH) {
     vectis_close_fd_if_open(&control_fd);
     vectis_set_errorf(error, VECTIS_ERR_STATE,
                       "failed to kill unresponsive Kore runtime: %s",
@@ -6319,9 +6338,24 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
       return VECTIS_ERR_STATE;
     }
     if (pid == 0) {
+      if (setpgid(0, 0) != 0) {
+        _exit(1);
+      }
       vectis_close_fd_if_open(&control_fds[0]);
       status = vectis_internal_kore_run(&kore_config, NULL);
       _exit(status == VECTIS_OK ? 0 : 1);
+    }
+    if (setpgid(pid, pid) != 0 && errno != EACCES) {
+      int setpgid_errno;
+
+      setpgid_errno = errno != 0 ? errno : EINVAL;
+      vectis_close_fd_if_open(&control_fds[0]);
+      vectis_close_fd_if_open(&control_fds[1]);
+      (void)vectis_app_stop_kore_child(pid, -1, impl->shutdown_grace_ms, NULL);
+      vectis_set_errorf(error, VECTIS_ERR_STATE,
+                        "failed to isolate Kore runtime process group: %s",
+                        strerror(setpgid_errno));
+      return VECTIS_ERR_STATE;
     }
     vectis_close_fd_if_open(&control_fds[1]);
     (void)pthread_mutex_lock(&impl->mutex);

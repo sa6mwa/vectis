@@ -3359,6 +3359,74 @@ static void assert_supervised_repeated_start_stop(void) {
   app->close(app);
 }
 
+static void assert_supervised_shutdown_deadline_kills_stopped_runtime(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_route_config route;
+  vectis_http_client_config http;
+  vectis_http_response response;
+  unsigned short port;
+  char url[128];
+  pid_t child_pid;
+  int reserved_fd;
+  int written;
+
+  reserved_fd = reserve_loopback_port(&port);
+  close(reserved_fd);
+  written = snprintf(url, sizeof(url), "http://127.0.0.1:%u/deadline",
+                     (unsigned)port);
+  assert(written > 0 && (size_t)written < sizeof(url));
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = port;
+  config.supervision_policy = VECTIS_SUPERVISION_SUPERVISED;
+  config.shutdown_grace_ms = 100L;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  route = vectis_route(VECTIS_HTTP_GET, "/deadline", sample_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  vectis_http_client_config_init(&http);
+  http.timeout_ms = 2000L;
+  http.connect_timeout_ms = 1000L;
+
+  memset(&response, 0, sizeof(response));
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  child_pid = vectis_internal_kore_child_pid(app);
+  assert(child_pid > 0);
+  assert(kill(-child_pid, 0) == 0);
+  status = vectis_http_get(&http, url, &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200);
+  vectis_http_response_cleanup(&response);
+
+  assert(kill(-child_pid, SIGSTOP) == 0);
+  status = app->stop(app, &error);
+  if (status != VECTIS_OK) {
+    (void)kill(-child_pid, SIGKILL);
+  }
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_kore_child_pid(app) == 0);
+
+  memset(&response, 0, sizeof(response));
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  status = vectis_http_get(&http, url, &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200);
+  vectis_http_response_cleanup(&response);
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+
+  app->close(app);
+}
+
 static void assert_service_only_wait_reports_consumer_service_exit(void) {
   vectis_app_config config;
   vectis_app *app;
@@ -3557,6 +3625,10 @@ static int run_named_runtime_test(const char *name) {
     assert_supervised_repeated_start_stop();
     return 1;
   }
+  if (strcmp(name, "supervised_shutdown_deadline_kills_stopped_runtime") == 0) {
+    assert_supervised_shutdown_deadline_kills_stopped_runtime();
+    return 1;
+  }
   if (strcmp(name, "service_only_wait_reports_consumer_service_exit") == 0) {
     assert_service_only_wait_reports_consumer_service_exit();
     return 1;
@@ -3599,6 +3671,7 @@ int main(void) {
   assert_supervised_wait_reports_consumer_service_exit();
   assert_supervised_child_exit_stops_consumer_service();
   assert_supervised_repeated_start_stop();
+  assert_supervised_shutdown_deadline_kills_stopped_runtime();
   assert_service_only_wait_reports_consumer_service_exit();
   assert_service_failure_continue_waits_for_signal();
 
