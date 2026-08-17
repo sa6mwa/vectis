@@ -739,6 +739,9 @@ typedef struct vectis_cai_mcp_route_config {
 typedef struct vectis_static_file_config {
   const char *path;
   const char *file_path;
+  /* NULL infers from file_path extension; unknown extensions fall back to
+   * application/octet-stream. Non-NULL overrides inference.
+   */
   const char *content_type;
   vectis_http_methods methods;
 } vectis_static_file_config;
@@ -746,6 +749,10 @@ typedef struct vectis_static_file_config {
 typedef struct vectis_static_directory_config {
   const char *path_prefix;
   const char *root_dir;
+  /* NULL infers from the selected disk file extension; unknown extensions fall
+   * back to application/octet-stream. Non-NULL overrides inference for all
+   * files in the mount.
+   */
   const char *content_type;
   const char *index_file;
   vectis_http_methods methods;

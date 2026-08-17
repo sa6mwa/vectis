@@ -398,6 +398,14 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
 ## Mounts
 
 - `server:static_directory(opts)` serves a disk directory.
+  - `content_type` is optional. When omitted, Vectis infers the response type
+    from the selected disk file extension and falls back to
+    `application/octet-stream` for unknown extensions. When provided, it
+    overrides inference for every file in the mount.
+- `server:static_file(opts)` serves one disk file.
+  - `content_type` is optional. When omitted, Vectis infers the response type
+    from `file_path` and falls back to `application/octet-stream` for unknown
+    extensions.
 - `server:static_embedded(opts)` serves packed embedded assets read-only.
 - `server:webdav(opts)` serves mutable WebDAV storage, either Vectis-managed
   storage or a direct disk `root_dir`.

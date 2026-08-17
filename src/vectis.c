@@ -3953,7 +3953,6 @@ void vectis_static_file_config_init(vectis_static_file_config *config) {
     return;
   }
   memset(config, 0, sizeof(*config));
-  config->content_type = "application/octet-stream";
   config->methods = VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD;
 }
 
@@ -3963,7 +3962,6 @@ void vectis_static_directory_config_init(
     return;
   }
   memset(config, 0, sizeof(*config));
-  config->content_type = "application/octet-stream";
   config->index_file = "index.html";
   config->methods = VECTIS_HTTP_METHODS_GET | VECTIS_HTTP_METHODS_HEAD;
 }
@@ -13232,19 +13230,115 @@ static vectis_static_route_data *vectis_static_route_data_new(
   return data;
 }
 
+static int vectis_extension_is(const char *ext, const char *expected) {
+  if (ext == NULL || expected == NULL) {
+    return 0;
+  }
+  while (*ext != '\0' && *expected != '\0') {
+    if (tolower((unsigned char)*ext) != tolower((unsigned char)*expected)) {
+      return 0;
+    }
+    ext++;
+    expected++;
+  }
+  return *ext == '\0' && *expected == '\0';
+}
+
+static const char *vectis_static_inferred_content_type(const char *path) {
+  const char *base;
+  const char *dot;
+  const char *p;
+
+  if (path == NULL) {
+    return "application/octet-stream";
+  }
+  base = path;
+  dot = NULL;
+  for (p = path; *p != '\0'; p++) {
+    if (*p == '/' || *p == '\\') {
+      base = p + 1;
+      dot = NULL;
+    } else if (*p == '.') {
+      dot = p;
+    }
+  }
+  if (dot == NULL || dot == base || dot[1] == '\0') {
+    return "application/octet-stream";
+  }
+  dot++;
+  if (vectis_extension_is(dot, "html") || vectis_extension_is(dot, "htm")) {
+    return "text/html; charset=utf-8";
+  }
+  if (vectis_extension_is(dot, "css")) {
+    return "text/css; charset=utf-8";
+  }
+  if (vectis_extension_is(dot, "js") || vectis_extension_is(dot, "mjs")) {
+    return "text/javascript; charset=utf-8";
+  }
+  if (vectis_extension_is(dot, "json") || vectis_extension_is(dot, "map")) {
+    return "application/json";
+  }
+  if (vectis_extension_is(dot, "txt") || vectis_extension_is(dot, "text") ||
+      vectis_extension_is(dot, "log")) {
+    return "text/plain; charset=utf-8";
+  }
+  if (vectis_extension_is(dot, "csv")) {
+    return "text/csv; charset=utf-8";
+  }
+  if (vectis_extension_is(dot, "xml")) {
+    return "application/xml";
+  }
+  if (vectis_extension_is(dot, "svg")) {
+    return "image/svg+xml";
+  }
+  if (vectis_extension_is(dot, "png")) {
+    return "image/png";
+  }
+  if (vectis_extension_is(dot, "jpg") || vectis_extension_is(dot, "jpeg")) {
+    return "image/jpeg";
+  }
+  if (vectis_extension_is(dot, "gif")) {
+    return "image/gif";
+  }
+  if (vectis_extension_is(dot, "webp")) {
+    return "image/webp";
+  }
+  if (vectis_extension_is(dot, "ico")) {
+    return "image/x-icon";
+  }
+  if (vectis_extension_is(dot, "wasm")) {
+    return "application/wasm";
+  }
+  if (vectis_extension_is(dot, "pdf")) {
+    return "application/pdf";
+  }
+  if (vectis_extension_is(dot, "woff")) {
+    return "font/woff";
+  }
+  if (vectis_extension_is(dot, "woff2")) {
+    return "font/woff2";
+  }
+  return "application/octet-stream";
+}
+
 static vectis_status vectis_static_response(vectis_request *request,
                                             vectis_response *response,
                                             const char *content_type,
                                             const char *file_path,
                                             vectis_error *error) {
   struct stat st;
+  const char *effective_content_type;
 
   if (vectis_request_method(request) == VECTIS_HTTP_HEAD) {
     if (stat(file_path, &st) != 0 || !S_ISREG(st.st_mode)) {
       return vectis_response_status(response, 404, error);
     }
   }
-  return vectis_response_file(response, 200, content_type, file_path, error);
+  effective_content_type = content_type != NULL
+                               ? content_type
+                               : vectis_static_inferred_content_type(file_path);
+  return vectis_response_file(response, 200, effective_content_type, file_path,
+                              error);
 }
 
 static vectis_status vectis_static_file_dispatch(vectis_app *app,
@@ -13837,10 +13931,8 @@ vectis_register_static_file(vectis_app *app,
     return VECTIS_ERR_INVALID;
   }
   data = vectis_static_route_data_new(
-      0, NULL, config->file_path, NULL,
-      config->content_type != NULL ? config->content_type
-                                   : "application/octet-stream",
-      NULL, NULL, NULL, NULL, NULL, VECTIS_HTTP_METHODS_NONE, error);
+      0, NULL, config->file_path, NULL, config->content_type, NULL, NULL, NULL,
+      NULL, NULL, VECTIS_HTTP_METHODS_NONE, error);
   if (data == NULL) {
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
@@ -13891,9 +13983,7 @@ vectis_register_static_directory(vectis_app *app,
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
   data = vectis_static_route_data_new(
-      1, path_prefix, NULL, config->root_dir,
-      config->content_type != NULL ? config->content_type
-                                   : "application/octet-stream",
+      1, path_prefix, NULL, config->root_dir, config->content_type,
       config->index_file != NULL ? config->index_file : "index.html", NULL,
       NULL, NULL, NULL, VECTIS_HTTP_METHODS_NONE, error);
   if (data == NULL) {

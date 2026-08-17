@@ -2868,6 +2868,7 @@ static void assert_kore_smoke(void) {
   vectis_http_response xml_route_response;
   vectis_http_response dsv_route_response;
   vectis_http_response static_file_head_response;
+  vectis_http_response static_module_response;
   vectis_http_response embedded_response;
   vectis_http_response embedded_not_modified_response;
   vectis_http_response embedded_if_none_match_miss_response;
@@ -2908,6 +2909,7 @@ static void assert_kore_smoke(void) {
   vectis_xml_route_config xml_route;
   vectis_dsv_route_config dsv_route;
   vectis_static_file_config static_file_mount;
+  vectis_static_file_config static_module_mount;
   vectis_static_embedded_config embedded_mount;
   vectis_embedded_fs_config embedded_fs_config;
   vectis_webdav_embedded_site_config embedded_webdav_mount;
@@ -2947,8 +2949,10 @@ static void assert_kore_smoke(void) {
   const char dsv_upload_path[] = "/tmp/vectis-runtime-upload.csv";
   const char json_source_path[] = "/tmp/vectis-runtime-json-source.txt";
   const char response_file_path[] = "/tmp/vectis-runtime-response.txt";
+  const char static_module_path[] = "/tmp/vectis-runtime-module.mjs";
   const char auth_store_path[] = "/tmp/vectis-runtime-auth.json";
   const char response_file_body[] = "file-response";
+  const char static_module_body[] = "export const ok = true;\n";
   static const unsigned char embedded_payload[] = "hello\napp\n";
   static const char embedded_manifest[] =
       "{\"format\":\"vectis-pack\",\"assets\":["
@@ -3026,6 +3030,7 @@ static void assert_kore_smoke(void) {
   memset(&xml_route_response, 0, sizeof(xml_route_response));
   memset(&dsv_route_response, 0, sizeof(dsv_route_response));
   memset(&static_file_head_response, 0, sizeof(static_file_head_response));
+  memset(&static_module_response, 0, sizeof(static_module_response));
   memset(&embedded_response, 0, sizeof(embedded_response));
   memset(&embedded_not_modified_response, 0,
          sizeof(embedded_not_modified_response));
@@ -3093,6 +3098,11 @@ static void assert_kore_smoke(void) {
   assert(fp != NULL);
   assert(fwrite(response_file_body, 1u, sizeof(response_file_body) - 1u, fp) ==
          sizeof(response_file_body) - 1u);
+  assert(fclose(fp) == 0);
+  fp = fopen(static_module_path, "wb");
+  assert(fp != NULL);
+  assert(fwrite(static_module_body, 1u, sizeof(static_module_body) - 1u, fp) ==
+         sizeof(static_module_body) - 1u);
   assert(fclose(fp) == 0);
   assert(mkdtemp(webdav_cache_dir) != NULL);
   (void)remove(auth_store_path);
@@ -3249,6 +3259,11 @@ static void assert_kore_smoke(void) {
   static_file_mount.file_path = response_file_path;
   static_file_mount.content_type = "text/plain";
   status = app->static_file(app, &static_file_mount, &error);
+  assert(status == VECTIS_OK);
+  vectis_static_file_config_init(&static_module_mount);
+  static_module_mount.path = "/static-module";
+  static_module_mount.file_path = static_module_path;
+  status = app->static_file(app, &static_module_mount, &error);
   assert(status == VECTIS_OK);
   vectis_static_embedded_config_init(&embedded_mount);
   embedded_mount.path_prefix = "/embedded";
@@ -3449,6 +3464,19 @@ static void assert_kore_smoke(void) {
                 "13") == 0);
   assert(static_file_head_response.body_size == 0u);
   vectis_http_response_cleanup(&static_file_head_response);
+
+  status = vectis_http_get(
+      &http, format_loopback_http_url(url, sizeof(url), port, "/static-module"),
+      &static_module_response, &error);
+  assert(status == VECTIS_OK);
+  assert(static_module_response.status_code == 200L);
+  assert(static_module_response.content_type != NULL);
+  assert(strcmp(static_module_response.content_type,
+                "text/javascript; charset=utf-8") == 0);
+  assert(static_module_response.body_size == sizeof(static_module_body) - 1u);
+  assert(memcmp(static_module_response.body, static_module_body,
+                sizeof(static_module_body) - 1u) == 0);
+  vectis_http_response_cleanup(&static_module_response);
 
   status = vectis_http_get(
       &http, format_loopback_http_url(url, sizeof(url), port, "/embedded"),
@@ -4335,6 +4363,7 @@ static void assert_kore_smoke(void) {
   remove(xml_upload_path);
   remove(dsv_upload_path);
   remove(response_file_path);
+  remove(static_module_path);
   remove_tree(webdav_cache_dir);
   remove_tree(body_spool_dir);
   (void)remove(auth_store_path);

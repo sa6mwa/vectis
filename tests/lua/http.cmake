@@ -14,6 +14,8 @@ file(WRITE "${upload_source}" "uploaded through curl file source\n")
 file(MAKE_DIRECTORY "${static_dir}/assets")
 file(WRITE "${static_dir}/index.html" "static directory index\n")
 file(WRITE "${static_dir}/assets/app.txt" "static directory asset\n")
+file(WRITE "${static_dir}/assets/app.css" "body { color: #123456; }\n")
+file(WRITE "${static_dir}/assets/blob.vct" "opaque static asset\n")
 file(REMOVE "${download_target}" "${upload_target}" "${auth_path}"
             "${auth_path}.lock")
 file(REMOVE_RECURSE "${metrics_storage_dir}")
@@ -725,6 +727,11 @@ assert(api_server:static_directory({
   content_type = "text/plain",
   index_file = "index.html",
 }) == true)
+assert(api_server:static_directory({
+  path_prefix = "/site",
+  root_dir = static_dir,
+  index_file = "index.html",
+}) == true)
 assert(api_server:metrics({
   path = "/.metrics",
   json_path = "/.metrics.json",
@@ -1274,6 +1281,8 @@ assert(static_index.ok == true,
        static_index.error and static_index.error.message)
 assert(static_index.status == 200)
 assert(static_index.body == "static directory index\n")
+assert(static_index.headers:lower():find("content-type: text/plain", 1, true),
+       static_index.headers)
 local static_asset = vectis.http.request({
   url = "http://127.0.0.1:28484/files/assets/app.txt",
   protocols = "http",
@@ -1285,6 +1294,50 @@ assert(static_asset.ok == true,
        static_asset.error and static_asset.error.message)
 assert(static_asset.status == 200)
 assert(static_asset.body == "static directory asset\n")
+assert(static_asset.headers:lower():find("content-type: text/plain", 1, true),
+       static_asset.headers)
+local inferred_static_index = vectis.http.request({
+  url = "http://127.0.0.1:28484/site",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(inferred_static_index.ok == true,
+       inferred_static_index.error and inferred_static_index.error.message)
+assert(inferred_static_index.status == 200)
+assert(inferred_static_index.body == "static directory index\n")
+assert(inferred_static_index.headers:lower():find(
+    "content-type: text/html; charset=utf-8", 1, true),
+    inferred_static_index.headers)
+local inferred_static_css = vectis.http.request({
+  url = "http://127.0.0.1:28484/site/assets/app.css",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(inferred_static_css.ok == true,
+       inferred_static_css.error and inferred_static_css.error.message)
+assert(inferred_static_css.status == 200)
+assert(inferred_static_css.body == "body { color: #123456; }\n")
+assert(inferred_static_css.headers:lower():find(
+    "content-type: text/css; charset=utf-8", 1, true),
+    inferred_static_css.headers)
+local inferred_static_unknown = vectis.http.request({
+  url = "http://127.0.0.1:28484/site/assets/blob.vct",
+  protocols = "http",
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(inferred_static_unknown.ok == true,
+       inferred_static_unknown.error and inferred_static_unknown.error.message)
+assert(inferred_static_unknown.status == 200)
+assert(inferred_static_unknown.body == "opaque static asset\n")
+assert(inferred_static_unknown.headers:lower():find(
+    "content-type: application/octet-stream", 1, true),
+    inferred_static_unknown.headers)
 local static_traversal = vectis.http.request({
   url = "http://127.0.0.1:28484/files/../vectis-http-response.json",
   protocols = "http",

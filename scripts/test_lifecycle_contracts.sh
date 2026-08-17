@@ -164,12 +164,23 @@ assert_concurrency_mailbox_contract() {
   assert_contains "$repo_root/src/vectis_cli.c" '"request_limit"'
   assert_contains "$repo_root/src/vectis_kore_bridge.c" \
     'http_request_limit = vectis_kore_u32_from_size\(server->request_limit\)'
+  assert_contains "$repo_root/src/vectis.c" 'vectis_static_inferred_content_type'
   assert_contains "$repo_root/tests/unit/test_vectis_config.c" \
     'vectis_internal_request_limit'
+  assert_contains "$repo_root/tests/unit/test_vectis_runtime.c" \
+    'text/javascript; charset=utf-8'
+  assert_contains "$repo_root/tests/lua/http.cmake" \
+    'content-type: text/css; charset=utf-8'
+  assert_contains "$repo_root/tests/lua/http.cmake" \
+    'content-type: application/octet-stream'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'request_limit = 32'
   assert_contains "$repo_root/docs/lua-server.md" '`request_limit = 0`'
+  assert_contains "$repo_root/docs/lua-server.md" \
+    'Vectis infers the response type'
   assert_contains "$repo_root/TODO.md" \
     '\[x\] Expose Kore'"'"'s active HTTP request-object limit as validated C and Lua `request_limit`'
+  assert_contains "$repo_root/TODO.md" \
+    '\[x\] Add extension-based content-type inference'
   assert_contains "$repo_root/include/vectis/vectis.h" \
     'VECTIS_AUTOBLOCK_MAX_STATUS_RULES'
   assert_contains "$repo_root/include/vectis/vectis.h" \
@@ -205,6 +216,12 @@ assert_kore_lonejson_contract() {
   assert_contains "$repo_root/vendor/kore/upstream/src/curl.c" 'defined\(__linux__\) && !defined\(KORE_VECTIS_NO_SECCOMP\)'
   assert_contains "$repo_root/vendor/kore/upstream/src/acme.c" 'defined\(__linux__\) && !defined\(KORE_VECTIS_NO_SECCOMP\)'
   assert_contains "$repo_root/vendor/kore/upstream/src/keymgr_openssl.c" 'defined\(__linux__\) && !defined\(KORE_VECTIS_NO_SECCOMP\)'
+  assert_contains "$repo_root/vendor/kore/upstream/src/http.c" \
+    '!has_content_type && media_type'
+  assert_contains "$repo_root/vendor/kore/patches/series" \
+    '0025-kore-vectis-preserve-fileref-content-type\.patch'
+  assert_contains "$repo_root/vendor/kore/patches/0025-kore-vectis-preserve-fileref-content-type.patch" \
+    '!has_content_type && media_type'
   assert_contains "$repo_root/scripts/verify-kore-patches.sh" 'S_SRC\+=src/ljson\.c'
   assert_contains "$repo_root/scripts/verify-kore-patches.sh" 'CFLAGS\+=-DKORE_USE_LONEJSON'
   assert_contains "$repo_root/scripts/verify-kore-patches.sh" 'LDFLAGS\+=-L\$\(LONEJSON_PATH\)/lib -llonejson'

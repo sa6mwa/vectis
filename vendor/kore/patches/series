@@ -22,3 +22,4 @@
 0022-kore-vectis-parent-timers.patch
 0023-kore-vectis-reject-unknown-tls-sni.patch
 0024-kore-vectis-webdav-methods.patch
+0025-kore-vectis-preserve-fileref-content-type.patch
