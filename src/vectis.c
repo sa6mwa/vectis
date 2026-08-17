@@ -532,6 +532,16 @@ typedef struct vectis_managed_service_impl {
   vectis_error monitor_error;
 } vectis_managed_service_impl;
 
+typedef struct vectis_opcua_server_service_context {
+  cpkt_opcua_server *server;
+  int wait_internal;
+  long max_wait_ms;
+  int started;
+  int stopping;
+  int shutdown_done;
+  pthread_mutex_t mutex;
+} vectis_opcua_server_service_context;
+
 typedef struct vectis_consumer_service_impl {
   lc_consumer_service *service;
   lc_consumer_service_config config;
@@ -4663,6 +4673,182 @@ vectis_managed_service_start_materialized(vectis_managed_service_impl *service,
   return VECTIS_OK;
 }
 
+static vectis_status vectis_set_opcua_error(vectis_error *error,
+                                            cpkt_opcua_result result,
+                                            cpkt_opcua_status opcua_status,
+                                            const char *context) {
+  vectis_status code;
+  const char *result_string;
+  const char *status_name;
+
+  result_string = cpkt_opcua_result_string(result);
+  status_name = cpkt_opcua_status_name(opcua_status);
+  switch (result) {
+  case CPKT_OPCUA_ERR_ARG:
+  case CPKT_OPCUA_ERR_TYPE:
+  case CPKT_OPCUA_ERR_RANGE:
+    code = VECTIS_ERR_INVALID;
+    break;
+  case CPKT_OPCUA_ERR_ALLOC:
+    code = VECTIS_ERR_NOMEM;
+    break;
+  default:
+    code = VECTIS_ERR_STATE;
+    break;
+  }
+  if (context != NULL && context[0] != '\0') {
+    vectis_set_errorf(error, code, "%s: %s%s%s", context,
+                      result_string != NULL ? result_string : "opcua error",
+                      opcua_status != 0u ? " / " : "",
+                      opcua_status != 0u && status_name != NULL ? status_name
+                                                                : "");
+  } else {
+    vectis_set_error(error, code,
+                     result_string != NULL ? result_string : "opcua error");
+  }
+  if (error != NULL) {
+    error->source = VECTIS_ERROR_SOURCE_CPKT;
+    error->dependency_code = (long)result;
+    if (opcua_status != 0u) {
+      (void)snprintf(error->detail, sizeof(error->detail),
+                     "opcua_status=%lu%s%s", (unsigned long)opcua_status,
+                     status_name != NULL ? " " : "",
+                     status_name != NULL ? status_name : "");
+    }
+  }
+  return code;
+}
+
+static int vectis_opcua_server_service_is_stopping(
+    vectis_opcua_server_service_context *ctx) {
+  int stopping;
+
+  if (ctx == NULL) {
+    return 1;
+  }
+  (void)pthread_mutex_lock(&ctx->mutex);
+  stopping = ctx->stopping;
+  (void)pthread_mutex_unlock(&ctx->mutex);
+  return stopping;
+}
+
+static vectis_status vectis_opcua_server_service_start(void *context,
+                                                       vectis_error *error) {
+  vectis_opcua_server_service_context *ctx;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+
+  ctx = (vectis_opcua_server_service_context *)context;
+  if (ctx == NULL || ctx->server == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OPC UA server service requires server");
+    return VECTIS_ERR_INVALID;
+  }
+  status = 0u;
+  result = cpkt_opcua_server_startup(ctx->server, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_set_opcua_error(error, result, status,
+                                  "opcua server service startup");
+  }
+  (void)pthread_mutex_lock(&ctx->mutex);
+  ctx->started = 1;
+  ctx->stopping = 0;
+  ctx->shutdown_done = 0;
+  (void)pthread_mutex_unlock(&ctx->mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_opcua_server_service_stop(void *context,
+                                                      vectis_error *error) {
+  vectis_opcua_server_service_context *ctx;
+  cpkt_opcua_status status;
+  cpkt_opcua_result result;
+  int do_shutdown;
+
+  ctx = (vectis_opcua_server_service_context *)context;
+  if (ctx == NULL || ctx->server == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OPC UA server service requires server");
+    return VECTIS_ERR_INVALID;
+  }
+  (void)pthread_mutex_lock(&ctx->mutex);
+  ctx->stopping = 1;
+  do_shutdown = ctx->started && !ctx->shutdown_done;
+  ctx->shutdown_done = 1;
+  (void)pthread_mutex_unlock(&ctx->mutex);
+  if (!do_shutdown) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  status = 0u;
+  result = cpkt_opcua_server_shutdown(ctx->server, &status);
+  if (result != CPKT_OPCUA_OK) {
+    return vectis_set_opcua_error(error, result, status,
+                                  "opcua server service shutdown");
+  }
+  (void)pthread_mutex_lock(&ctx->mutex);
+  ctx->started = 0;
+  (void)pthread_mutex_unlock(&ctx->mutex);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_opcua_server_service_wait(void *context,
+                                                      vectis_error *error) {
+  vectis_opcua_server_service_context *ctx;
+  cpkt_opcua_result result;
+  unsigned short wait_ms;
+  long sleep_ms;
+  int stopping;
+
+  ctx = (vectis_opcua_server_service_context *)context;
+  if (ctx == NULL || ctx->server == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OPC UA server service requires server");
+    return VECTIS_ERR_INVALID;
+  }
+  while (!vectis_opcua_server_service_is_stopping(ctx)) {
+    wait_ms = 0u;
+    result =
+        cpkt_opcua_server_iterate(ctx->server, ctx->wait_internal, &wait_ms);
+    if (result != CPKT_OPCUA_OK) {
+      stopping = vectis_opcua_server_service_is_stopping(ctx);
+      if (stopping) {
+        vectis_error_clear(error);
+        return VECTIS_OK;
+      }
+      return vectis_set_opcua_error(error, result, 0u,
+                                    "opcua server service iterate");
+    }
+    sleep_ms = (long)wait_ms;
+    if (ctx->max_wait_ms > 0L && sleep_ms > ctx->max_wait_ms) {
+      sleep_ms = ctx->max_wait_ms;
+    }
+    if (sleep_ms > 0L && !ctx->wait_internal) {
+      if (vectis_wait_sleep_ms(sleep_ms) != 0) {
+        vectis_set_error(error, VECTIS_ERR_STATE,
+                         "opcua server service wait interrupted");
+        return VECTIS_ERR_STATE;
+      }
+    }
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static void vectis_opcua_server_service_cleanup(void *context) {
+  vectis_opcua_server_service_context *ctx;
+
+  ctx = (vectis_opcua_server_service_context *)context;
+  if (ctx == NULL) {
+    return;
+  }
+  (void)vectis_opcua_server_service_stop(ctx, NULL);
+  (void)pthread_mutex_destroy(&ctx->mutex);
+  free(ctx);
+}
+
 static vectis_status vectis_app_stop_managed_services(vectis_app_impl *impl,
                                                       vectis_error *error) {
   vectis_managed_service_impl *service;
@@ -6278,6 +6464,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   app->cai_client = vectis_app_cai_client;
   app->lockd_client = vectis_lockd_client;
   app->managed_service = vectis_managed_service_new;
+  app->opcua_server_service = vectis_opcua_server_service_new;
   app->consumer_service = vectis_consumer_service_new;
   app->register_consumer_receiver = vectis_register_consumer_receiver;
   app->consumer_service_receiver = vectis_consumer_service_new_receiver;
@@ -17221,6 +17408,18 @@ void vectis_managed_service_config_init(vectis_managed_service_config *config) {
   config->abi_version = VECTIS_SERVICE_ABI_VERSION;
 }
 
+void vectis_opcua_server_service_config_init(
+    vectis_opcua_server_service_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->size = sizeof(*config);
+  config->abi_version = VECTIS_SERVICE_ABI_VERSION;
+  config->start_with_app = 1;
+  config->max_wait_ms = 50L;
+}
+
 void vectis_managed_service_state_init(vectis_managed_service_state *state) {
   if (state == NULL) {
     return;
@@ -17261,6 +17460,77 @@ vectis_managed_service_state_get(const vectis_managed_service *service,
   out->dependency_code = impl->monitor_error.dependency_code;
   out->terminal_status = impl->terminal_status;
   vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_opcua_server_service_new(
+    vectis_app *app, const vectis_opcua_server_service_config *config,
+    vectis_managed_service **out, vectis_error *error) {
+  vectis_opcua_server_service_config effective;
+  vectis_opcua_server_service_context *ctx;
+  vectis_managed_service_config managed;
+  vectis_status status;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OPC UA server service output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config == NULL || config->server == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OPC UA server service config requires server");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->size != 0u && config->size < sizeof(*config)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OPC UA server service config size is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->abi_version != 0u &&
+      config->abi_version != VECTIS_SERVICE_ABI_VERSION) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "OPC UA server service config abi_version is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_opcua_server_service_config_init(&effective);
+  effective = *config;
+  if (effective.max_wait_ms <= 0L) {
+    effective.max_wait_ms = 50L;
+  }
+  ctx = (vectis_opcua_server_service_context *)calloc(1u, sizeof(*ctx));
+  if (ctx == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate OPC UA server service");
+    return VECTIS_ERR_NOMEM;
+  }
+  if (pthread_mutex_init(&ctx->mutex, NULL) != 0) {
+    free(ctx);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to initialize OPC UA server service mutex");
+    return VECTIS_ERR_STATE;
+  }
+  ctx->server = effective.server;
+  ctx->wait_internal = effective.wait_internal ? 1 : 0;
+  ctx->max_wait_ms = effective.max_wait_ms;
+  vectis_managed_service_config_init(&managed);
+  managed.name = effective.name != NULL ? effective.name : "opcua-server";
+  managed.context = ctx;
+  managed.start = vectis_opcua_server_service_start;
+  managed.stop = vectis_opcua_server_service_stop;
+  managed.wait = vectis_opcua_server_service_wait;
+  managed.cleanup = vectis_opcua_server_service_cleanup;
+  managed.start_with_app = effective.start_with_app ? 1 : 0;
+  status = app->managed_service(app, &managed, out, error);
+  if (status != VECTIS_OK) {
+    (void)pthread_mutex_destroy(&ctx->mutex);
+    free(ctx);
+    return status;
+  }
   return VECTIS_OK;
 }
 

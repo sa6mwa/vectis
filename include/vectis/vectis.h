@@ -811,6 +811,21 @@ typedef struct vectis_managed_service_state {
   vectis_status terminal_status;
 } vectis_managed_service_state;
 
+/* Descriptor for running a caller-owned cpkt OPC UA server as a managed
+ * Vectis background service. The server pointer is borrowed and must remain
+ * valid until the returned managed service is closed. Use
+ * vectis_opcua_server_service_config_init() to set size, abi_version,
+ * start_with_app=1, and a bounded non-blocking wait interval. */
+typedef struct vectis_opcua_server_service_config {
+  size_t size;
+  unsigned abi_version;
+  const char *name;
+  cpkt_opcua_server *server;
+  int start_with_app;
+  int wait_internal;
+  long max_wait_ms;
+} vectis_opcua_server_service_config;
+
 typedef struct vectis_webdav_marker_receiver_config {
   const char *cache_dir;
   const char *site_id;
@@ -1321,6 +1336,9 @@ struct vectis_app {
                                    const vectis_managed_service_config *config,
                                    vectis_managed_service **out,
                                    vectis_error *error);
+  vectis_status (*opcua_server_service)(
+      vectis_app *self, const vectis_opcua_server_service_config *config,
+      vectis_managed_service **out, vectis_error *error);
 
   /* Declare a Vectis-owned liblockdc consumer service. Vectis copies the
    * consumer config strings needed to materialize the service later; callback
@@ -1705,6 +1723,8 @@ vectis_status
 vectis_managed_service_state_get(const vectis_managed_service *service,
                                  vectis_managed_service_state *out,
                                  vectis_error *error);
+void vectis_opcua_server_service_config_init(
+    vectis_opcua_server_service_config *config);
 void vectis_opcua_monitor_event_config_init(
     vectis_opcua_monitor_event_config *config);
 void vectis_opcua_monitor_mailbox_config_init(
@@ -1956,6 +1976,9 @@ vectis_status
 vectis_managed_service_new(vectis_app *app,
                            const vectis_managed_service_config *config,
                            vectis_managed_service **out, vectis_error *error);
+vectis_status vectis_opcua_server_service_new(
+    vectis_app *app, const vectis_opcua_server_service_config *config,
+    vectis_managed_service **out, vectis_error *error);
 vectis_status vectis_managed_service_run(vectis_managed_service *service,
                                          vectis_error *error);
 vectis_status vectis_managed_service_start(vectis_managed_service *service,

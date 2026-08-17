@@ -563,6 +563,8 @@ Required additions or semantic changes:
 - descriptor-backed `vectis_managed_service` for C-owned app services that
   start after supervised Kore readiness, stop during coordinated shutdown, and
   propagate monitored failures through the app service-failure policy.
+- descriptor-backed `vectis_opcua_server_service` for borrowed cpkt OPC UA
+  servers that run under the managed-service lifecycle.
 - app-owned service registration APIs for future OPC UA/curl/audio/SUS worker
   declarations.
 - documented narrow internal runtime control channel for supervisor child
@@ -630,7 +632,7 @@ Required semantics:
    - document callback ownership.
 7. Extend service declarations:
    - generic managed service descriptors (`vectis_managed_service`);
-   - OPC UA managed service descriptors;
+   - OPC UA managed service descriptors (`vectis_opcua_server_service`);
    - curl worker descriptors where needed;
    - audio/SUS worker descriptors;
    - CAI/MCP supervisor worker descriptors.

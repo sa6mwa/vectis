@@ -3589,6 +3589,93 @@ static void assert_supervised_managed_service_lifecycle(void) {
   close(probe.wait_fds[1]);
 }
 
+static void assert_supervised_opcua_server_service_lifecycle(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_route_config route;
+  vectis_http_client_config http;
+  vectis_http_response response;
+  vectis_opcua_server_service_config service_config;
+  vectis_managed_service *service;
+  vectis_managed_service_state service_state;
+  cpkt_opcua_server *opcua_server;
+  cpkt_opcua_result opcua_result;
+  unsigned short port;
+  char url[128];
+  int reserved_fd;
+  int written;
+
+  opcua_server = NULL;
+  opcua_result = cpkt_opcua_server_new(&opcua_server, 0u);
+  assert(opcua_result == CPKT_OPCUA_OK);
+  assert(opcua_server != NULL);
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  reserved_fd = reserve_loopback_port(&port);
+  close(reserved_fd);
+  config.tls.port = port;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+
+  vectis_opcua_server_service_config_init(&service_config);
+  service_config.name = "runtime-opcua-server";
+  service_config.server = opcua_server;
+  service_config.start_with_app = 1;
+  service = NULL;
+  status = app->opcua_server_service(app, &service_config, &service, &error);
+  assert(status == VECTIS_OK);
+  assert(service != NULL);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.declared);
+  assert(!service_state.materialized);
+  assert(service_state.start_requested);
+
+  route = vectis_route(VECTIS_HTTP_GET, "/opcua-service", sample_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.materialized);
+  assert(service_state.process_local);
+  assert(service_state.started);
+  assert(service_state.monitor_active);
+  assert(!service_state.failed);
+
+  vectis_http_client_config_init(&http);
+  http.timeout_ms = 2000L;
+  http.connect_timeout_ms = 1000L;
+  written = snprintf(url, sizeof(url), "http://127.0.0.1:%u/opcua-service",
+                     (unsigned)port);
+  assert(written > 0 && (size_t)written < sizeof(url));
+  memset(&response, 0, sizeof(response));
+  status = vectis_http_get(&http, url, &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200);
+  vectis_http_response_cleanup(&response);
+
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  status = service->state(service, &service_state, &error);
+  assert(status == VECTIS_OK);
+  assert(service_state.stop_requested);
+  assert(!service_state.started);
+  assert(!service_state.monitor_active);
+  assert(service_state.monitor_done);
+  assert(service_state.monitor_joined);
+  assert(!service_state.failed);
+
+  service->close(service);
+  app->close(app);
+  cpkt_opcua_server_free(opcua_server);
+}
+
 static void assert_supervised_shutdown_deadline_kills_stopped_runtime(void) {
   vectis_app_config config;
   vectis_app *app;
@@ -3926,6 +4013,10 @@ static int run_named_runtime_test(const char *name) {
     assert_supervised_managed_service_lifecycle();
     return 1;
   }
+  if (strcmp(name, "supervised_opcua_server_service_lifecycle") == 0) {
+    assert_supervised_opcua_server_service_lifecycle();
+    return 1;
+  }
   if (strcmp(name, "supervised_shutdown_deadline_kills_stopped_runtime") == 0) {
     assert_supervised_shutdown_deadline_kills_stopped_runtime();
     return 1;
@@ -3978,6 +4069,7 @@ int main(void) {
   assert_supervised_child_exit_stops_consumer_service();
   assert_supervised_repeated_start_stop();
   assert_supervised_managed_service_lifecycle();
+  assert_supervised_opcua_server_service_lifecycle();
   assert_supervised_shutdown_deadline_kills_stopped_runtime();
   assert_service_only_wait_reports_consumer_service_exit();
   assert_service_failure_continue_waits_for_signal();
