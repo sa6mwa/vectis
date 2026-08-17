@@ -455,6 +455,7 @@ typedef struct vectis_app_impl {
   vectis_server_config server;
   char *request_body_spool_dir;
   char *server_header;
+  char *access_log_path;
   pslog_logger *logger;
   vectis_route_entry *routes;
   size_t route_count;
@@ -3164,6 +3165,7 @@ vectis_effective_server_config(const vectis_server_config *config) {
   effective.server_header = config->server_header != NULL
                                 ? config->server_header
                                 : VECTIS_SERVER_DEFAULT_SERVER_HEADER;
+  effective.access_log_path = config->access_log_path;
   effective.pretty_error_pages = config->pretty_error_pages;
   effective.worker_death_policy = config->worker_death_policy;
   effective.autoblock = config->autoblock;
@@ -10102,6 +10104,7 @@ static void vectis_destroy_impl_final(vectis_app_impl *impl) {
   free(impl->acme_state_dir);
   free(impl->request_body_spool_dir);
   free(impl->server_header);
+  free(impl->access_log_path);
   free(impl->unix_socket_path);
   free(impl->client_bundle_pem);
   free(impl->client_bundle_path);
@@ -10296,6 +10299,12 @@ vectis_validate_server_config(const vectis_server_config *config,
       config->server_header[0] == '\0') {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "server server_header must not be empty");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config != NULL && config->access_log_path != NULL &&
+      config->access_log_path[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "server access_log_path must not be empty");
     return VECTIS_ERR_INVALID;
   }
   if (config->request_header_timeout_ms < 0L) {
@@ -11018,6 +11027,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
           ? vectis_strdup(effective_server.request_body_spool_dir)
           : vectis_default_request_body_spool_dir(error);
   impl->server_header = vectis_strdup(effective_server.server_header);
+  impl->access_log_path = vectis_strdup(effective_server.access_log_path);
   impl->unix_socket_path = vectis_strdup(effective->lockd.unix_socket_path);
   impl->client_bundle_path = vectis_strdup(vectis_source_path_or_old(
       &effective->lockd.client_bundle, effective->lockd.client_bundle_path));
@@ -11039,10 +11049,13 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   impl->server = effective_server;
   impl->server.request_body_spool_dir = impl->request_body_spool_dir;
   impl->server.server_header = impl->server_header;
+  impl->server.access_log_path = impl->access_log_path;
   impl->server.max_request_body_bytes =
       effective->server.max_request_body_bytes;
   if (impl->app_name == NULL || impl->bind == NULL || impl->domain == NULL ||
       impl->request_body_spool_dir == NULL || impl->server_header == NULL ||
+      (effective_server.access_log_path != NULL &&
+       impl->access_log_path == NULL) ||
       (effective->tls.cipher_list != NULL && impl->tls_cipher_list == NULL)) {
     vectis_destroy_impl(impl);
     free(app);

@@ -11087,6 +11087,8 @@ static int vectis_lua_server_new(lua_State *lua) {
       lua, 1, "websocket_timeout_ms", config.server.websocket_timeout_ms);
   config.server.server_header =
       vectis_lua_table_string(lua, 1, "server_header");
+  config.server.access_log_path =
+      vectis_lua_table_string(lua, 1, "access_log_path");
   config.server.pretty_error_pages = vectis_lua_table_bool(
       lua, 1, "pretty_error_pages", config.server.pretty_error_pages);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;

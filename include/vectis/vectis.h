@@ -1143,6 +1143,12 @@ typedef struct vectis_server_config {
    */
   const char *server_header;
   /*
+   * Optional Kore access-log file path. NULL disables file access logging.
+   * When set, Vectis preflights append access before starting Kore and applies
+   * the path to every configured Kore domain. The caller owns the string.
+   */
+  const char *access_log_path;
+  /*
    * Nonzero lets Kore synthesize simple HTML bodies for bodyless 4xx/5xx
    * responses. Defaults off so production responses stay minimal unless the
    * developer opts in.

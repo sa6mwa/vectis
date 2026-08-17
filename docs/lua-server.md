@@ -60,15 +60,18 @@ The same table can also override server guardrails and worker resource knobs:
 `request_body_min_rate_grace_ms`, `idle_timeout_ms`, `keepalive_disabled`,
 `keepalive_timeout_ms`, `keepalive_max_requests`, `worker_death_policy`,
 `socket_backlog`, `request_process_budget_ms`, `hsts_max_age_seconds`,
-`websocket_max_frame_bytes`, `websocket_timeout_ms`, `server_header`, and
-`pretty_error_pages`. Zero uses the C default for most guardrails,
+`websocket_max_frame_bytes`, `websocket_timeout_ms`, `server_header`,
+`access_log_path`, and `pretty_error_pages`. Zero uses the C default for most
+guardrails,
 `hsts_max_age_seconds = 0` disables HSTS, `pretty_error_pages = false` keeps
 bodyless framework 4xx/5xx responses minimal, `request_limit = 0` keeps Kore's
 active request-object limit matched to `max_connections`, and
 `max_request_body_bytes = 0` keeps the route-derived global body ceiling
 behavior. `server_header` must be
 omitted or non-empty because Kore does not expose a true Server-header
-suppression switch. `worker_death_policy` accepts `"restart"` and
+suppression switch. `access_log_path` is optional and disabled by default; when
+set, Vectis preflights append access and applies the same Kore access log path
+to every configured domain. `worker_death_policy` accepts `"restart"` and
 `"terminate"`; omission keeps Kore's restart behavior.
 
 `profile = "production_webserver"` applies the same C-owned production webserver

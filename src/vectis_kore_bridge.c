@@ -892,6 +892,42 @@ vectis_kore_preflight_body_spool(const vectis_kore_runtime_config *config,
 }
 
 static vectis_status
+vectis_kore_preflight_access_log(const vectis_kore_runtime_config *config,
+                                 vectis_error *error) {
+  const char *path;
+  int fd;
+  int saved_errno;
+
+  if (config == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "Kore runtime config is required");
+    return VECTIS_ERR_INVALID;
+  }
+  path = config->server.access_log_path;
+  if (path == NULL || path[0] == '\0') {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  fd = open(path, O_CREAT | O_APPEND | O_WRONLY, 0644);
+  if (fd == -1) {
+    saved_errno = errno;
+    vectis_kore_set_errorf(error, VECTIS_ERR_STATE,
+                           "failed to open Kore access_log_path '%s': %s", path,
+                           strerror(saved_errno));
+    return VECTIS_ERR_STATE;
+  }
+  if (close(fd) != 0) {
+    saved_errno = errno;
+    vectis_kore_set_errorf(error, VECTIS_ERR_STATE,
+                           "failed to close Kore access_log_path '%s': %s",
+                           path, strerror(saved_errno));
+    return VECTIS_ERR_STATE;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status
 vectis_kore_prepare_acme(vectis_kore_runtime_config *config,
                          vectis_error *error) {
   if (config->tls_mode != VECTIS_TLS_MODE_ACME) {
@@ -2952,6 +2988,14 @@ void kore_parent_configure(int argc, char **argv) {
         vectis_kore_setup_domain_tls(domain);
       }
     }
+    if (vectis_kore_current.server.access_log_path != NULL &&
+        vectis_kore_current.server.access_log_path[0] != '\0') {
+      domain->accesslog = open(vectis_kore_current.server.access_log_path,
+                               O_CREAT | O_APPEND | O_WRONLY, 0644);
+      if (domain->accesslog == -1) {
+        fatal("failed to open Vectis Kore access log");
+      }
+    }
     if (!kore_domain_attach(domain, server)) {
       fatal("failed to attach Vectis Kore domain");
     }
@@ -3007,6 +3051,10 @@ vectis_status vectis_internal_kore_run(const vectis_kore_runtime_config *config,
     return status;
   }
   status = vectis_kore_preflight_body_spool(&prepared, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_kore_preflight_access_log(&prepared, error);
   if (status != VECTIS_OK) {
     return status;
   }
@@ -3090,6 +3138,10 @@ vectis_internal_kore_validate(const vectis_kore_runtime_config *config,
     return status;
   }
   status = vectis_kore_preflight_body_spool(&prepared, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_kore_preflight_access_log(&prepared, error);
   if (status != VECTIS_OK) {
     return status;
   }

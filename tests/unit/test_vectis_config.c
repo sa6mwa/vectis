@@ -110,6 +110,7 @@ int main(void) {
          VECTIS_SERVER_DEFAULT_WEBSOCKET_TIMEOUT_MS);
   assert(strcmp(config.server.server_header,
                 VECTIS_SERVER_DEFAULT_SERVER_HEADER) == 0);
+  assert(config.server.access_log_path == NULL);
   assert(config.server.pretty_error_pages ==
          VECTIS_SERVER_DEFAULT_PRETTY_ERROR_PAGES);
   assert(config.server.worker_death_policy ==
@@ -283,6 +284,12 @@ int main(void) {
   app = vectis_app_new(&config, &error);
   assert(app == NULL);
   assert(strstr(error.message, "server_header") != NULL);
+
+  vectis_app_config_init(&config);
+  config.server.access_log_path = "";
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "access_log_path") != NULL);
 
   vectis_app_config_init(&config);
   config.server.request_body_spool_dir = "/tmp/vectis-config-spool";

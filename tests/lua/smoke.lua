@@ -1155,6 +1155,7 @@ do
     websocket_max_frame_bytes = 8192,
     websocket_timeout_ms = 45000,
     server_header = "vectis-lua-smoke",
+    access_log_path = "/tmp/vectis-lua-smoke-access.log",
     pretty_error_pages = true,
   }))
   worker_count_server:close()

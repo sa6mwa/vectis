@@ -160,27 +160,38 @@ assert_concurrency_mailbox_contract() {
   assert_contains "$repo_root/src/vectis.c" 'server autoblock status_rule_count exceeds maximum'
   assert_contains "$repo_root/src/vectis.c" 'server autoblock max_entries exceeds maximum'
   assert_contains "$repo_root/include/vectis/vectis.h" 'size_t request_limit'
+  assert_contains "$repo_root/include/vectis/vectis.h" 'access_log_path'
   assert_contains "$repo_root/src/vectis.c" 'server request_limit exceeds Kore uint32'
+  assert_contains "$repo_root/src/vectis.c" 'server access_log_path must not be empty'
   assert_contains "$repo_root/src/vectis_cli.c" '"request_limit"'
+  assert_contains "$repo_root/src/vectis_cli.c" '"access_log_path"'
   assert_contains "$repo_root/src/vectis_kore_bridge.c" \
     'http_request_limit = vectis_kore_u32_from_size\(server->request_limit\)'
+  assert_contains "$repo_root/src/vectis_kore_bridge.c" \
+    'vectis_kore_preflight_access_log'
   assert_contains "$repo_root/src/vectis.c" 'vectis_static_inferred_content_type'
   assert_contains "$repo_root/tests/unit/test_vectis_config.c" \
     'vectis_internal_request_limit'
   assert_contains "$repo_root/tests/unit/test_vectis_runtime.c" \
     'text/javascript; charset=utf-8'
+  assert_contains "$repo_root/tests/unit/test_vectis_runtime.c" \
+    'vectis-runtime-access.log'
   assert_contains "$repo_root/tests/lua/http.cmake" \
     'content-type: text/css; charset=utf-8'
   assert_contains "$repo_root/tests/lua/http.cmake" \
     'content-type: application/octet-stream'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'request_limit = 32'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'access_log_path'
   assert_contains "$repo_root/docs/lua-server.md" '`request_limit = 0`'
+  assert_contains "$repo_root/docs/lua-server.md" 'access_log_path'
   assert_contains "$repo_root/docs/lua-server.md" \
     'Vectis infers the response type'
   assert_contains "$repo_root/TODO.md" \
     '\[x\] Expose Kore'"'"'s active HTTP request-object limit as validated C and Lua `request_limit`'
   assert_contains "$repo_root/TODO.md" \
     '\[x\] Add extension-based content-type inference'
+  assert_contains "$repo_root/TODO.md" \
+    '\[x\] Expose an explicit C and Lua `access_log_path`'
   assert_contains "$repo_root/include/vectis/vectis.h" \
     'VECTIS_AUTOBLOCK_MAX_STATUS_RULES'
   assert_contains "$repo_root/include/vectis/vectis.h" \

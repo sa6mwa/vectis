@@ -160,6 +160,21 @@ static int runtime_bytes_contains(vectis_bytes bytes, const char *needle) {
   return 0;
 }
 
+static int runtime_file_contains(const char *path, const char *needle) {
+  FILE *fp;
+  char buffer[8192];
+  size_t nread;
+
+  fp = fopen(path, "rb");
+  if (fp == NULL) {
+    return 0;
+  }
+  nread = fread(buffer, 1u, sizeof(buffer) - 1u, fp);
+  buffer[nread] = '\0';
+  (void)fclose(fp);
+  return strstr(buffer, needle) != NULL;
+}
+
 static const lonejson_field source_json_doc_fields[] = {
     LONEJSON_FIELD_STRING_SOURCE_REQ(source_json_doc, payload, "payload")};
 
@@ -2950,6 +2965,7 @@ static void assert_kore_smoke(void) {
   const char json_source_path[] = "/tmp/vectis-runtime-json-source.txt";
   const char response_file_path[] = "/tmp/vectis-runtime-response.txt";
   const char static_module_path[] = "/tmp/vectis-runtime-module.mjs";
+  const char access_log_path[] = "/tmp/vectis-runtime-access.log";
   const char auth_store_path[] = "/tmp/vectis-runtime-auth.json";
   const char response_file_body[] = "file-response";
   const char static_module_body[] = "export const ok = true;\n";
@@ -3087,6 +3103,7 @@ static void assert_kore_smoke(void) {
   config.server.keepalive_max_requests = 1u;
   config.server.websocket_max_frame_bytes = 8u;
   config.server.server_header = "vectis-runtime";
+  config.server.access_log_path = access_log_path;
   config.server.worker_count = 1u;
   assert(mkdtemp(body_spool_dir) != NULL);
   written = snprintf(body_spool_child_dir, sizeof(body_spool_child_dir),
@@ -3106,6 +3123,7 @@ static void assert_kore_smoke(void) {
   assert(fclose(fp) == 0);
   assert(mkdtemp(webdav_cache_dir) != NULL);
   (void)remove(auth_store_path);
+  (void)remove(access_log_path);
   vectis_auth_store_config_init(&auth_store);
   auth_store.credentials_path = auth_store_path;
   status = vectis_auth_store_init(&auth_store, &error);
@@ -4357,6 +4375,11 @@ static void assert_kore_smoke(void) {
   vectis_http_response_cleanup(&stream_file_response);
   free(stream_body);
 
+  status = vectis_stop(app, &error);
+  assert(status == VECTIS_OK);
+  assert(runtime_file_contains(access_log_path, "\"GET /health HTTP/1.1\""));
+  assert(runtime_file_contains(access_log_path, " 200 "));
+
   remove(upload_path);
   remove(stream_upload_path);
   remove(stream_file_path);
@@ -4364,12 +4387,10 @@ static void assert_kore_smoke(void) {
   remove(dsv_upload_path);
   remove(response_file_path);
   remove(static_module_path);
+  remove(access_log_path);
   remove_tree(webdav_cache_dir);
   remove_tree(body_spool_dir);
   (void)remove(auth_store_path);
-
-  status = vectis_stop(app, &error);
-  assert(status == VECTIS_OK);
   app->close(app);
   vectis_embedded_fs_close(embedded_fs);
 }
