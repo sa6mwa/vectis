@@ -148,10 +148,16 @@ end
 assert(vectis.audio_worker == require("vectis.audio_worker"))
 assert(vectis.audio_worker.DECODE_KIND == "vectis.audio.decode")
 assert(vectis.audio_worker.ENCODE_KIND == "vectis.audio.encode")
+assert(vectis.audio_worker.VOX_KIND == "vectis.audio.vox")
 assert(vectis.audio_worker.REPLY_KIND == "vectis.audio.reply")
+assert(vectis.audio_worker.VOX_STATE_KIND == "vectis.audio.vox.state")
+assert(vectis.audio_worker.VOX_SEGMENT_KIND == "vectis.audio.vox.segment")
 assert(type(vectis.audio_worker.decode_file_request) == "function")
 assert(type(vectis.audio_worker.encode_file_request) == "function")
+assert(type(vectis.audio_worker.vox_request) == "function")
 assert(type(vectis.audio_worker.decode_reply) == "function")
+assert(type(vectis.audio_worker.decode_vox_state) == "function")
+assert(type(vectis.audio_worker.decode_vox_segment) == "function")
 do
   local decode_event = assert(vectis.audio_worker.decode_file_request({
     path = "input.wav",
@@ -181,6 +187,32 @@ do
   assert(audio_reply.channels == 1)
   assert(audio_reply.frame_count == 2)
   assert(audio_reply.frames[1] > 0.24 and audio_reply.frames[1] < 0.26)
+  local vox_event = assert(vectis.audio_worker.vox_request({
+    frames = { 0.0, 0.25, -0.25 },
+    threshold = 0.01,
+    release_silence_ms = 1,
+    min_segment_ms = 1,
+    max_segment_frames = 128,
+  }))
+  assert(vox_event.kind == vectis.audio_worker.VOX_KIND)
+  assert(vox_event.expects_reply == true)
+  assert(vox_event.payload:find('"frames"', 1, true))
+  local vox_state = assert(vectis.audio_worker.decode_vox_state({
+    kind = vectis.audio_worker.VOX_STATE_KIND,
+    payload = '{"state":1,"segment_index":2,"threshold":0.25}',
+  }))
+  assert(vox_state.state == 1)
+  assert(vox_state.segment_index == 2)
+  assert(vox_state.threshold > 0.24 and vox_state.threshold < 0.26)
+  local vox_segment = assert(vectis.audio_worker.decode_vox_segment({
+    kind = vectis.audio_worker.VOX_SEGMENT_KIND,
+    payload = '{"segment_index":2,"t0":0,"t1":10,"hard_cut":0,' ..
+        '"is_final":1,"frames":[0.5,-0.5]}',
+  }))
+  assert(vox_segment.segment_index == 2)
+  assert(vox_segment.is_final == true)
+  assert(vox_segment.frame_count == 2)
+  assert(vox_segment.frames[1] > 0.49 and vox_segment.frames[1] < 0.51)
 end
 assert(vectis.sus_worker == require("vectis.sus_worker"))
 assert(vectis.sus_worker.TRANSCRIBE_PCM_KIND == "vectis.sus.transcribe_pcm")

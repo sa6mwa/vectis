@@ -491,15 +491,15 @@ When audio/SUS work is triggered by HTTP, the preferred production pattern is:
 First implementation contract:
 
 - `vectis_audio_worker_service` composes `vectis_managed_service`. The
-  implemented first slice covers deterministic bounded file decode/encode work;
-  VOX/PTT worker segmentation and opt-in live capture/playback remain separate
-  contracts.
+  implemented bounded surfaces are file decode, file encode, and VOX
+  segmentation over request-provided PCM. PTT worker segmentation and opt-in
+  live capture/playback remain separate contracts.
 - `vectis_sus_worker_service` composes `vectis_managed_service` for model-owned
   transcription work. A combined SUS-over-audio worker may be implemented as a
   convenience descriptor only after the separate ownership rules are covered.
-- Audio descriptors copy path, format, timeout, and limit configuration for the
-  implemented file decode/encode worker. They do not open decoders or encoders
-  in the declaration domain.
+- Audio descriptors copy path, format, timeout, event-mailbox, and limit
+  configuration for file decode/encode plus VOX worker requests. They do not
+  open decoders, encoders, VOX, or PTT handles in the declaration domain.
 - SUS descriptors copy model path/cache/catalog, checksum, offline/cache policy,
   transcription options, timeout, and output limits. They do not open models or
   transcribers in the declaration domain.
@@ -507,11 +507,15 @@ First implementation contract:
   same environment-gated live/hardening targets as the dependency-native Lua
   facades.
 - The implemented audio mailbox request kinds are deliberately narrow:
-  `vectis.audio.decode` for file decode into bounded PCM and
-  `vectis.audio.encode` for bounded PCM to file. `vectis.audio.vox` remains
-  planned because it needs a true segment/progress contract rather than a
-  bounded materialized reply. Live capture/playback request kinds are not part
-  of the deterministic first slice.
+  `vectis.audio.decode` for file decode into bounded PCM,
+  `vectis.audio.encode` for bounded PCM to file, and `vectis.audio.vox` for
+  VOX segmentation over request-provided mono 16 kHz PCM. VOX publishes copied
+  state events as `vectis.audio.vox.state` and copied segment events as
+  `vectis.audio.vox.segment` to the service-level `event_mailbox`. It returns
+  `vectis.audio.reply` only for final completion/error status, so the segment
+  path is a real producer-to-mailbox flow rather than a materialized reply
+  disguised as streaming. Live capture/playback request kinds are not part of
+  the deterministic first slice.
 - The implemented SUS mailbox request kinds are `vectis.sus.transcribe_pcm` and
   `vectis.sus.transcribe_file`. They return `vectis.sus.reply` with structured
   Vectis status/source metadata, dependency diagnostics, materialized transcript
@@ -522,7 +526,7 @@ First implementation contract:
   valid only for direct owner-state facade use. Managed worker services publish
   copied segment/progress/transcript/error events into a mailbox; Lua observes
   them through `vectis.mailbox:pump()`.
-- C helpers build/decode the audio decode/encode and SUS PCM/file
+- C helpers build/decode the audio decode/encode/VOX and SUS PCM/file
   transcription mailbox envelopes. Lua helpers under `vectis.audio_worker` and
   `vectis.sus_worker` are thin builders/decoders plus
   `server:audio_worker_service()` / `server:sus_worker_service()`

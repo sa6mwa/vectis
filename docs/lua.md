@@ -83,7 +83,7 @@ modules or C SDK workflows:
   OAuth2/OIDC, and WebDAV key facade, documented in
   [Lua auth](lua-auth.md).
 - `vectis.audio_worker`: managed audio worker mailbox envelope helpers for
-  bounded file decode/encode work, documented in
+  bounded file decode/encode work and VOX state/segment events, documented in
   [Lua audio](lua-audio.md).
 - `vectis.cai`: CAI service configuration, owned/borrowed client and agent
   helpers, and structured CAI error decoration, documented in

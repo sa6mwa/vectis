@@ -136,7 +136,8 @@ modules, but it must not require another file from `examples/lua/`.
   `vectis.cai_worker` envelope helpers without live provider calls.
 - `lua/audio_worker_service.lua`: service-only Lua runtime plus C-owned audio
   worker service using `vectis.mailbox.broker` request/reply and
-  `vectis.audio_worker` helpers to encode and decode a WAV file.
+  `vectis.audio_worker` helpers to encode/decode a WAV file and drain VOX
+  state/segment events from a separate event mailbox.
 - `lua/sus_worker_service.lua`: service-only Lua runtime plus C-owned SUS
   worker service using `vectis.mailbox.broker` request/reply and
   `vectis.sus_worker` helpers. It is deterministic without a model and can use

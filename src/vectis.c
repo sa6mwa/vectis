@@ -550,6 +550,43 @@ typedef struct vectis_audio_worker_reply_json {
   lonejson_f64_array frames;
 } vectis_audio_worker_reply_json;
 
+typedef struct vectis_audio_worker_vox_request_json {
+  lonejson_f64_array frames;
+  double threshold;
+  int has_threshold;
+  lonejson_int64 release_silence_ms;
+  int has_release_silence_ms;
+  lonejson_int64 prebuffer_ms;
+  int has_prebuffer_ms;
+  lonejson_int64 max_segment_ms;
+  int has_max_segment_ms;
+  lonejson_int64 min_segment_ms;
+  int has_min_segment_ms;
+  lonejson_int64 memory_spool_bytes;
+  int has_memory_spool_bytes;
+  lonejson_int64 max_spool_bytes;
+  int has_max_spool_bytes;
+  lonejson_int64 max_segment_frames;
+  int has_max_segment_frames;
+  lonejson_int64 flush;
+  int has_flush;
+} vectis_audio_worker_vox_request_json;
+
+typedef struct vectis_audio_worker_vox_state_json {
+  lonejson_int64 state;
+  lonejson_int64 segment_index;
+  double threshold;
+} vectis_audio_worker_vox_state_json;
+
+typedef struct vectis_audio_worker_vox_segment_json {
+  lonejson_int64 segment_index;
+  lonejson_int64 t0;
+  lonejson_int64 t1;
+  lonejson_int64 hard_cut;
+  lonejson_int64 is_final;
+  lonejson_f64_array frames;
+} vectis_audio_worker_vox_segment_json;
+
 typedef struct vectis_sus_worker_request_json {
   char *path;
   char *encoding;
@@ -677,6 +714,65 @@ static const lonejson_field vectis_audio_worker_reply_json_fields[] = {
 LONEJSON_MAP_DEFINE(vectis_audio_worker_reply_json_map,
                     vectis_audio_worker_reply_json,
                     vectis_audio_worker_reply_json_fields);
+
+static const lonejson_field vectis_audio_worker_vox_request_json_fields[] = {
+    LONEJSON_FIELD_F64_ARRAY_OMIT_EMPTY(vectis_audio_worker_vox_request_json,
+                                        frames, "frames", 0u),
+    LONEJSON_FIELD_F64_PRESENT(vectis_audio_worker_vox_request_json, threshold,
+                               has_threshold, "threshold"),
+    LONEJSON_FIELD_I64_PRESENT(vectis_audio_worker_vox_request_json,
+                               release_silence_ms, has_release_silence_ms,
+                               "release_silence_ms"),
+    LONEJSON_FIELD_I64_PRESENT(vectis_audio_worker_vox_request_json,
+                               prebuffer_ms, has_prebuffer_ms, "prebuffer_ms"),
+    LONEJSON_FIELD_I64_PRESENT(vectis_audio_worker_vox_request_json,
+                               max_segment_ms, has_max_segment_ms,
+                               "max_segment_ms"),
+    LONEJSON_FIELD_I64_PRESENT(vectis_audio_worker_vox_request_json,
+                               min_segment_ms, has_min_segment_ms,
+                               "min_segment_ms"),
+    LONEJSON_FIELD_I64_PRESENT(vectis_audio_worker_vox_request_json,
+                               memory_spool_bytes, has_memory_spool_bytes,
+                               "memory_spool_bytes"),
+    LONEJSON_FIELD_I64_PRESENT(vectis_audio_worker_vox_request_json,
+                               max_spool_bytes, has_max_spool_bytes,
+                               "max_spool_bytes"),
+    LONEJSON_FIELD_I64_PRESENT(vectis_audio_worker_vox_request_json,
+                               max_segment_frames, has_max_segment_frames,
+                               "max_segment_frames"),
+    LONEJSON_FIELD_I64_PRESENT(vectis_audio_worker_vox_request_json, flush,
+                               has_flush, "flush")};
+
+LONEJSON_MAP_DEFINE(vectis_audio_worker_vox_request_json_map,
+                    vectis_audio_worker_vox_request_json,
+                    vectis_audio_worker_vox_request_json_fields);
+
+static const lonejson_field vectis_audio_worker_vox_state_json_fields[] = {
+    LONEJSON_FIELD_I64_REQ(vectis_audio_worker_vox_state_json, state, "state"),
+    LONEJSON_FIELD_I64(vectis_audio_worker_vox_state_json, segment_index,
+                       "segment_index"),
+    LONEJSON_FIELD_F64(vectis_audio_worker_vox_state_json, threshold,
+                       "threshold")};
+
+LONEJSON_MAP_DEFINE(vectis_audio_worker_vox_state_json_map,
+                    vectis_audio_worker_vox_state_json,
+                    vectis_audio_worker_vox_state_json_fields);
+
+static const lonejson_field vectis_audio_worker_vox_segment_json_fields[] = {
+    LONEJSON_FIELD_I64_REQ(vectis_audio_worker_vox_segment_json, segment_index,
+                           "segment_index"),
+    LONEJSON_FIELD_I64(vectis_audio_worker_vox_segment_json, t0, "t0"),
+    LONEJSON_FIELD_I64(vectis_audio_worker_vox_segment_json, t1, "t1"),
+    LONEJSON_FIELD_I64(vectis_audio_worker_vox_segment_json, hard_cut,
+                       "hard_cut"),
+    LONEJSON_FIELD_I64(vectis_audio_worker_vox_segment_json, is_final,
+                       "is_final"),
+    LONEJSON_FIELD_F64_ARRAY_OMIT_EMPTY(vectis_audio_worker_vox_segment_json,
+                                        frames, "frames", 0u)};
+
+LONEJSON_MAP_DEFINE(vectis_audio_worker_vox_segment_json_map,
+                    vectis_audio_worker_vox_segment_json,
+                    vectis_audio_worker_vox_segment_json_fields);
 
 static const lonejson_field vectis_sus_worker_request_json_fields[] = {
     LONEJSON_FIELD_STRING_ALLOC_OMIT_EMPTY(vectis_sus_worker_request_json, path,
@@ -826,8 +922,10 @@ typedef struct vectis_cai_worker_service_context {
 typedef struct vectis_audio_worker_service_context {
   vectis_mailbox *request_mailbox;
   vectis_mailbox_broker *reply_broker;
+  vectis_mailbox *event_mailbox;
   long poll_timeout_ms;
   size_t max_frames;
+  size_t max_segment_frames;
   int stopping;
   pthread_mutex_t mutex;
 } vectis_audio_worker_service_context;
@@ -6230,6 +6328,42 @@ static void vectis_audio_worker_reply_json_cleanup_lonejson(
   memset(reply, 0, sizeof(*reply));
 }
 
+static void vectis_audio_worker_vox_request_json_cleanup_lonejson(
+    vectis_audio_worker_vox_request_json *request) {
+  if (request == NULL) {
+    return;
+  }
+  lonejson_cleanup(&vectis_audio_worker_vox_request_json_map, request);
+  memset(request, 0, sizeof(*request));
+}
+
+static void vectis_audio_worker_vox_request_json_cleanup_malloc(
+    vectis_audio_worker_vox_request_json *request) {
+  if (request == NULL) {
+    return;
+  }
+  free(request->frames.items);
+  memset(request, 0, sizeof(*request));
+}
+
+static void vectis_audio_worker_vox_segment_json_cleanup_malloc(
+    vectis_audio_worker_vox_segment_json *segment) {
+  if (segment == NULL) {
+    return;
+  }
+  free(segment->frames.items);
+  memset(segment, 0, sizeof(*segment));
+}
+
+static void vectis_audio_worker_vox_segment_json_cleanup_lonejson(
+    vectis_audio_worker_vox_segment_json *segment) {
+  if (segment == NULL) {
+    return;
+  }
+  lonejson_cleanup(&vectis_audio_worker_vox_segment_json_map, segment);
+  memset(segment, 0, sizeof(*segment));
+}
+
 static int vectis_audio_worker_service_is_stopping(
     vectis_audio_worker_service_context *ctx) {
   int stopping;
@@ -6349,6 +6483,19 @@ static size_t vectis_audio_worker_request_max_frames(
   return VECTIS_AUDIO_WORKER_DEFAULT_MAX_FRAMES;
 }
 
+static size_t vectis_audio_worker_vox_request_max_segment_frames(
+    const vectis_audio_worker_service_context *ctx,
+    const vectis_audio_worker_vox_request_json *request) {
+  if (request != NULL && request->has_max_segment_frames &&
+      request->max_segment_frames > 0) {
+    return (size_t)request->max_segment_frames;
+  }
+  if (ctx != NULL && ctx->max_segment_frames > 0u) {
+    return ctx->max_segment_frames;
+  }
+  return VECTIS_AUDIO_WORKER_DEFAULT_MAX_SEGMENT_FRAMES;
+}
+
 static vectis_status vectis_audio_worker_frames_append(
     double **frames, size_t *count, size_t *capacity, const float *chunk,
     size_t chunk_count, size_t max_frames, vectis_error *error) {
@@ -6441,6 +6588,90 @@ static vectis_status vectis_audio_worker_reply_event_build(
   return VECTIS_OK;
 }
 
+static vectis_status vectis_audio_worker_vox_state_event_build(
+    const vectis_audio_worker_vox_state_json *state,
+    vectis_audio_worker_event *out, vectis_error *error) {
+  lonejson *runtime;
+  lonejson_error json_error;
+  char *json;
+  size_t json_size;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX state output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(out, 0, sizeof(*out));
+  if (state == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX state is required");
+    return VECTIS_ERR_INVALID;
+  }
+  runtime = vectis_lonejson_new(error);
+  if (runtime == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  json_size = 0u;
+  json =
+      lonejson_serialize_alloc(runtime, &vectis_audio_worker_vox_state_json_map,
+                               state, &json_size, &json_error);
+  lonejson_free(runtime);
+  if (json == NULL) {
+    return vectis_set_lonejson_error(
+        error, LONEJSON_STATUS_INVALID_JSON, &json_error,
+        "failed to serialize audio worker VOX state event");
+  }
+  out->payload.data = json;
+  out->payload.size = json_size;
+  out->message.kind = VECTIS_AUDIO_WORKER_VOX_STATE_KIND;
+  out->message.payload = json;
+  out->message.payload_size = json_size;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_audio_worker_vox_segment_event_build(
+    const vectis_audio_worker_vox_segment_json *segment,
+    vectis_audio_worker_event *out, vectis_error *error) {
+  lonejson *runtime;
+  lonejson_error json_error;
+  char *json;
+  size_t json_size;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX segment output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(out, 0, sizeof(*out));
+  if (segment == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX segment is required");
+    return VECTIS_ERR_INVALID;
+  }
+  runtime = vectis_lonejson_new(error);
+  if (runtime == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  json_size = 0u;
+  json = lonejson_serialize_alloc(runtime,
+                                  &vectis_audio_worker_vox_segment_json_map,
+                                  segment, &json_size, &json_error);
+  lonejson_free(runtime);
+  if (json == NULL) {
+    return vectis_set_lonejson_error(
+        error, LONEJSON_STATUS_INVALID_JSON, &json_error,
+        "failed to serialize audio worker VOX segment event");
+  }
+  out->payload.data = json;
+  out->payload.size = json_size;
+  out->message.kind = VECTIS_AUDIO_WORKER_VOX_SEGMENT_KIND;
+  out->message.payload = json;
+  out->message.payload_size = json_size;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 static vectis_status vectis_audio_worker_reply_error(
     vectis_audio_worker_service_context *ctx, const vectis_mailbox_event *event,
     const vectis_error *transfer_error, vectis_status fallback_status,
@@ -6465,7 +6696,10 @@ static vectis_status vectis_audio_worker_reply_error(
           event->kind != NULL &&
                   strcmp(event->kind, VECTIS_AUDIO_WORKER_ENCODE_KIND) == 0
               ? "encode"
-              : "decode") ||
+              : (event->kind != NULL &&
+                         strcmp(event->kind, VECTIS_AUDIO_WORKER_VOX_KIND) == 0
+                     ? "vox"
+                     : "decode")) ||
       !vectis_cai_worker_json_copy_string(
           &reply_json.message,
           transfer_error != NULL && transfer_error->message[0] != '\0'
@@ -6573,6 +6807,62 @@ vectis_audio_worker_request_decode(const vectis_mailbox_event *event,
                        "audio worker encode request requires frames");
       return VECTIS_ERR_INVALID;
     }
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_audio_worker_vox_request_decode(
+    const vectis_mailbox_event *event,
+    vectis_audio_worker_vox_request_json *request, vectis_error *error) {
+  lonejson *runtime;
+  lonejson_error json_error;
+  lonejson_status json_status;
+
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX request output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(request, 0, sizeof(*request));
+  if (event == NULL || event->kind == NULL ||
+      strcmp(event->kind, VECTIS_AUDIO_WORKER_VOX_KIND) != 0 ||
+      event->payload == NULL || event->payload_size == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX request event is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  runtime = vectis_lonejson_new(error);
+  if (runtime == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  json_status = lonejson_parse_buffer(
+      runtime, &vectis_audio_worker_vox_request_json_map, request,
+      event->payload, event->payload_size, &json_error);
+  lonejson_free(runtime);
+  if (json_status != LONEJSON_STATUS_OK) {
+    vectis_audio_worker_vox_request_json_cleanup_lonejson(request);
+    return vectis_set_lonejson_error(
+        error, json_status, &json_error,
+        "failed to parse audio worker VOX request");
+  }
+  if (request->frames.count == 0u) {
+    vectis_audio_worker_vox_request_json_cleanup_lonejson(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX request requires frames");
+    return VECTIS_ERR_INVALID;
+  }
+  if ((request->has_release_silence_ms && request->release_silence_ms < 0) ||
+      (request->has_prebuffer_ms && request->prebuffer_ms < 0) ||
+      (request->has_max_segment_ms && request->max_segment_ms < 0) ||
+      (request->has_min_segment_ms && request->min_segment_ms < 0) ||
+      (request->has_memory_spool_bytes && request->memory_spool_bytes < 0) ||
+      (request->has_max_spool_bytes && request->max_spool_bytes < 0) ||
+      (request->has_max_segment_frames && request->max_segment_frames < 0)) {
+    vectis_audio_worker_vox_request_json_cleanup_lonejson(request);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX numeric limits must be non-negative");
+    return VECTIS_ERR_INVALID;
   }
   vectis_error_clear(error);
   return VECTIS_OK;
@@ -6781,11 +7071,233 @@ vectis_audio_worker_run_encode(vectis_audio_worker_service_context *ctx,
   return VECTIS_OK;
 }
 
+typedef struct vectis_audio_worker_vox_sink_context {
+  vectis_audio_worker_service_context *service;
+  size_t max_segment_frames;
+  vectis_error error;
+  unsigned long state_count;
+  unsigned long segment_count;
+} vectis_audio_worker_vox_sink_context;
+
+static int
+vectis_audio_worker_vox_state_sink(const cpkt_audio_vox_state_event *event,
+                                   void *user) {
+  vectis_audio_worker_vox_sink_context *sink;
+  vectis_audio_worker_vox_state_json state_json;
+  vectis_audio_worker_event out_event;
+  vectis_status status;
+
+  sink = (vectis_audio_worker_vox_sink_context *)user;
+  if (sink == NULL || sink->service == NULL ||
+      sink->service->event_mailbox == NULL || event == NULL) {
+    return 1;
+  }
+  memset(&state_json, 0, sizeof(state_json));
+  state_json.state = event->state;
+  state_json.segment_index = (lonejson_int64)event->segment_index;
+  state_json.threshold = (double)event->threshold;
+  status = vectis_audio_worker_vox_state_event_build(&state_json, &out_event,
+                                                     &sink->error);
+  if (status != VECTIS_OK) {
+    return 1;
+  }
+  status = sink->service->event_mailbox->publish(
+      sink->service->event_mailbox, &out_event.message, &sink->error);
+  vectis_audio_worker_event_cleanup(&out_event);
+  if (status != VECTIS_OK) {
+    return 1;
+  }
+  sink->state_count++;
+  return 0;
+}
+
+static int vectis_audio_worker_vox_segment_sink(cpkt_audio_vox_segment *segment,
+                                                void *user) {
+  vectis_audio_worker_vox_sink_context *sink;
+  vectis_audio_worker_vox_segment_json segment_json;
+  vectis_audio_worker_event out_event;
+  cpkt_audio_result result;
+  vectis_status status;
+  float chunk[1024];
+  size_t frames_read;
+  size_t frame_count;
+  size_t capacity;
+  size_t max_frames;
+
+  sink = (vectis_audio_worker_vox_sink_context *)user;
+  if (sink == NULL || sink->service == NULL ||
+      sink->service->event_mailbox == NULL || segment == NULL) {
+    return 1;
+  }
+  memset(&segment_json, 0, sizeof(segment_json));
+  segment_json.segment_index = (lonejson_int64)segment->segment_index;
+  segment_json.t0 = (lonejson_int64)segment->t0;
+  segment_json.t1 = (lonejson_int64)segment->t1;
+  segment_json.hard_cut = segment->hard_cut ? 1 : 0;
+  segment_json.is_final = segment->is_final ? 1 : 0;
+  frame_count = 0u;
+  capacity = 0u;
+  max_frames = sink->max_segment_frames > 0u
+                   ? sink->max_segment_frames
+                   : VECTIS_AUDIO_WORKER_DEFAULT_MAX_SEGMENT_FRAMES;
+  for (;;) {
+    frames_read = 0u;
+    result = segment->read_f32_mono_16k(
+        segment, chunk, sizeof(chunk) / sizeof(chunk[0]), &frames_read);
+    if (result == CPKT_AUDIO_AT_END) {
+      break;
+    }
+    if (result != CPKT_AUDIO_OK) {
+      (void)vectis_audio_worker_cpkt_error(&sink->error, result,
+                                           "failed to read VOX segment frames");
+      vectis_audio_worker_vox_segment_json_cleanup_malloc(&segment_json);
+      return 1;
+    }
+    if (frames_read == 0u) {
+      break;
+    }
+    if (vectis_audio_worker_frames_append(
+            &segment_json.frames.items, &frame_count, &capacity, chunk,
+            frames_read, max_frames, &sink->error) != VECTIS_OK) {
+      vectis_audio_worker_vox_segment_json_cleanup_malloc(&segment_json);
+      return 1;
+    }
+  }
+  segment_json.frames.count = frame_count;
+  segment_json.frames.capacity = capacity;
+  status = vectis_audio_worker_vox_segment_event_build(
+      &segment_json, &out_event, &sink->error);
+  if (status != VECTIS_OK) {
+    vectis_audio_worker_vox_segment_json_cleanup_malloc(&segment_json);
+    return 1;
+  }
+  status = sink->service->event_mailbox->publish(
+      sink->service->event_mailbox, &out_event.message, &sink->error);
+  vectis_audio_worker_event_cleanup(&out_event);
+  vectis_audio_worker_vox_segment_json_cleanup_malloc(&segment_json);
+  if (status != VECTIS_OK) {
+    return 1;
+  }
+  sink->segment_count++;
+  return 0;
+}
+
+static vectis_status
+vectis_audio_worker_run_vox(vectis_audio_worker_service_context *ctx,
+                            const vectis_audio_worker_vox_request_json *request,
+                            vectis_audio_worker_reply_json *reply,
+                            vectis_error *error) {
+  cpkt_audio_vox_config config;
+  cpkt_audio_vox *vox;
+  cpkt_audio_result result;
+  vectis_audio_worker_vox_sink_context sink;
+  float *frames;
+  size_t sample_count;
+  size_t i;
+
+  if (ctx == NULL || request == NULL || reply == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX context is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (ctx->event_mailbox == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX requires event_mailbox");
+    return VECTIS_ERR_INVALID;
+  }
+  sample_count = request->frames.count;
+  if (sample_count == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX request requires frames");
+    return VECTIS_ERR_INVALID;
+  }
+  if (sample_count > ((size_t)-1) / sizeof(float)) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "audio worker VOX frame buffer is too large");
+    return VECTIS_ERR_NOMEM;
+  }
+  frames = (float *)malloc(sample_count * sizeof(float));
+  if (frames == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate audio worker VOX buffer");
+    return VECTIS_ERR_NOMEM;
+  }
+  for (i = 0u; i < sample_count; ++i) {
+    frames[i] = (float)request->frames.items[i];
+  }
+  memset(&sink, 0, sizeof(sink));
+  sink.service = ctx;
+  sink.max_segment_frames =
+      vectis_audio_worker_vox_request_max_segment_frames(ctx, request);
+  vectis_error_clear(&sink.error);
+  memset(&config, 0, sizeof(config));
+  config.segment_sink = vectis_audio_worker_vox_segment_sink;
+  config.segment_user = &sink;
+  config.state_sink = vectis_audio_worker_vox_state_sink;
+  config.state_user = &sink;
+  if (request->has_threshold) {
+    config.threshold = (float)request->threshold;
+  }
+  if (request->has_release_silence_ms && request->release_silence_ms > 0) {
+    config.release_silence_ms = (unsigned long)request->release_silence_ms;
+  }
+  if (request->has_prebuffer_ms && request->prebuffer_ms > 0) {
+    config.prebuffer_ms = (unsigned long)request->prebuffer_ms;
+  }
+  if (request->has_max_segment_ms && request->max_segment_ms > 0) {
+    config.max_segment_ms = (unsigned long)request->max_segment_ms;
+  }
+  if (request->has_min_segment_ms && request->min_segment_ms > 0) {
+    config.min_segment_ms = (unsigned long)request->min_segment_ms;
+  }
+  if (request->has_memory_spool_bytes && request->memory_spool_bytes > 0) {
+    config.memory_spool_bytes = (unsigned long)request->memory_spool_bytes;
+  }
+  if (request->has_max_spool_bytes && request->max_spool_bytes > 0) {
+    config.max_spool_bytes = (unsigned long)request->max_spool_bytes;
+  }
+  vox = NULL;
+  result = cpkt_audio_vox_open(&vox, &config);
+  if (result != CPKT_AUDIO_OK) {
+    free(frames);
+    return vectis_audio_worker_cpkt_error(error, result,
+                                          "failed to open audio VOX");
+  }
+  result = vox->push_f32_mono_16k(vox, frames, sample_count);
+  free(frames);
+  if (result == CPKT_AUDIO_OK && (!request->has_flush || request->flush != 0)) {
+    result = vox->flush(vox);
+  }
+  vox->destroy(vox);
+  if (result != CPKT_AUDIO_OK) {
+    if (sink.error.code != VECTIS_OK) {
+      if (error != NULL) {
+        *error = sink.error;
+      }
+      return sink.error.code;
+    }
+    return vectis_audio_worker_cpkt_error(error, result,
+                                          "audio VOX segmentation failed");
+  }
+  if (!vectis_cai_worker_json_copy_string(&reply->operation, "vox")) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy audio worker VOX reply");
+    return VECTIS_ERR_NOMEM;
+  }
+  reply->status = VECTIS_OK;
+  reply->source_code = VECTIS_ERROR_SOURCE_NONE;
+  reply->sample_rate = 16000;
+  reply->channels = 1;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
 static vectis_status
 vectis_audio_worker_process_event(vectis_audio_worker_service_context *ctx,
                                   const vectis_mailbox_event *event,
                                   vectis_error *error) {
   vectis_audio_worker_request_json request;
+  vectis_audio_worker_vox_request_json vox_request;
   vectis_audio_worker_reply_json reply_json;
   vectis_audio_worker_event reply_event;
   vectis_error transfer_error;
@@ -6799,28 +7311,42 @@ vectis_audio_worker_process_event(vectis_audio_worker_service_context *ctx,
   }
   if (event->kind == NULL ||
       (strcmp(event->kind, VECTIS_AUDIO_WORKER_DECODE_KIND) != 0 &&
-       strcmp(event->kind, VECTIS_AUDIO_WORKER_ENCODE_KIND) != 0)) {
+       strcmp(event->kind, VECTIS_AUDIO_WORKER_ENCODE_KIND) != 0 &&
+       strcmp(event->kind, VECTIS_AUDIO_WORKER_VOX_KIND) != 0)) {
     return vectis_audio_worker_reply_error(ctx, event, NULL, VECTIS_ERR_INVALID,
                                            "audio worker event kind is not "
                                            "supported",
                                            error);
   }
   memset(&reply_json, 0, sizeof(reply_json));
+  memset(&request, 0, sizeof(request));
+  memset(&vox_request, 0, sizeof(vox_request));
   vectis_error_clear(&transfer_error);
-  status = vectis_audio_worker_request_decode(event, &request, &transfer_error);
-  if (status == VECTIS_OK) {
-    if (strcmp(event->kind, VECTIS_AUDIO_WORKER_DECODE_KIND) == 0) {
-      status = vectis_audio_worker_run_decode(ctx, &request, &reply_json,
-                                              &transfer_error);
-    } else {
-      status = vectis_audio_worker_run_encode(ctx, &request, &reply_json,
-                                              &transfer_error);
+  if (strcmp(event->kind, VECTIS_AUDIO_WORKER_VOX_KIND) == 0) {
+    status = vectis_audio_worker_vox_request_decode(event, &vox_request,
+                                                    &transfer_error);
+    if (status == VECTIS_OK) {
+      status = vectis_audio_worker_run_vox(ctx, &vox_request, &reply_json,
+                                           &transfer_error);
+    }
+  } else {
+    status =
+        vectis_audio_worker_request_decode(event, &request, &transfer_error);
+    if (status == VECTIS_OK) {
+      if (strcmp(event->kind, VECTIS_AUDIO_WORKER_DECODE_KIND) == 0) {
+        status = vectis_audio_worker_run_decode(ctx, &request, &reply_json,
+                                                &transfer_error);
+      } else {
+        status = vectis_audio_worker_run_encode(ctx, &request, &reply_json,
+                                                &transfer_error);
+      }
     }
   }
   if (status != VECTIS_OK) {
     reply_status = vectis_audio_worker_reply_error(
         ctx, event, &transfer_error, status, transfer_error.message, error);
     vectis_audio_worker_request_json_cleanup_lonejson(&request);
+    vectis_audio_worker_vox_request_json_cleanup_lonejson(&vox_request);
     if (reply_status != VECTIS_OK) {
       return reply_status;
     }
@@ -6839,12 +7365,14 @@ vectis_audio_worker_process_event(vectis_audio_worker_service_context *ctx,
     }
     vectis_audio_worker_reply_json_cleanup_malloc(&reply_json);
     vectis_audio_worker_request_json_cleanup_lonejson(&request);
+    vectis_audio_worker_vox_request_json_cleanup_lonejson(&vox_request);
     if (reply_status != VECTIS_OK) {
       return reply_status;
     }
   } else {
     vectis_audio_worker_reply_json_cleanup_malloc(&reply_json);
     vectis_audio_worker_request_json_cleanup_lonejson(&request);
+    vectis_audio_worker_vox_request_json_cleanup_lonejson(&vox_request);
   }
   vectis_error_clear(error);
   return VECTIS_OK;
@@ -20845,6 +21373,7 @@ void vectis_audio_worker_service_config_init(
   config->start_with_app = 1;
   config->poll_timeout_ms = VECTIS_AUDIO_WORKER_DEFAULT_POLL_TIMEOUT_MS;
   config->max_frames = VECTIS_AUDIO_WORKER_DEFAULT_MAX_FRAMES;
+  config->max_segment_frames = VECTIS_AUDIO_WORKER_DEFAULT_MAX_SEGMENT_FRAMES;
 }
 
 void vectis_audio_worker_decode_request_init(
@@ -20870,6 +21399,18 @@ void vectis_audio_worker_encode_request_init(
   request->format = "wav";
   request->sample_rate = 16000u;
   request->channels = 1u;
+}
+
+void vectis_audio_worker_vox_request_init(
+    vectis_audio_worker_vox_request *request) {
+  if (request == NULL) {
+    return;
+  }
+  memset(request, 0, sizeof(*request));
+  request->size = sizeof(*request);
+  request->abi_version = VECTIS_SERVICE_ABI_VERSION;
+  request->max_segment_frames = VECTIS_AUDIO_WORKER_DEFAULT_MAX_SEGMENT_FRAMES;
+  request->flush = 1;
 }
 
 static vectis_status vectis_audio_worker_build_event(
@@ -20908,6 +21449,49 @@ static vectis_status vectis_audio_worker_build_event(
   out->payload.data = json;
   out->payload.size = json_size;
   out->message.kind = kind;
+  out->message.payload = json;
+  out->message.payload_size = json_size;
+  out->message.expects_reply = 1;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_audio_worker_build_vox_event(
+    const vectis_audio_worker_vox_request_json *request_json,
+    vectis_audio_worker_event *out, vectis_error *error) {
+  lonejson *runtime;
+  lonejson_error json_error;
+  char *json;
+  size_t json_size;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX event output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(out, 0, sizeof(*out));
+  if (request_json == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX request is required");
+    return VECTIS_ERR_INVALID;
+  }
+  runtime = vectis_lonejson_new(error);
+  if (runtime == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  json_size = 0u;
+  json = lonejson_serialize_alloc(runtime,
+                                  &vectis_audio_worker_vox_request_json_map,
+                                  request_json, &json_size, &json_error);
+  lonejson_free(runtime);
+  if (json == NULL) {
+    return vectis_set_lonejson_error(
+        error, LONEJSON_STATUS_INVALID_JSON, &json_error,
+        "failed to serialize audio worker VOX request");
+  }
+  out->payload.data = json;
+  out->payload.size = json_size;
+  out->message.kind = VECTIS_AUDIO_WORKER_VOX_KIND;
   out->message.payload = json;
   out->message.payload_size = json_size;
   out->message.expects_reply = 1;
@@ -21056,6 +21640,94 @@ vectis_status vectis_audio_worker_encode_event_build(
   return status;
 }
 
+vectis_status vectis_audio_worker_vox_event_build(
+    const vectis_audio_worker_vox_request *request,
+    vectis_audio_worker_event *out, vectis_error *error) {
+  vectis_audio_worker_vox_request_json request_json;
+  vectis_status status;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX event output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(out, 0, sizeof(*out));
+  if (request == NULL || request->frames == NULL ||
+      request->frame_count == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX request requires frames");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->size != 0u && request->size < sizeof(*request)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX request size is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->abi_version != 0u &&
+      request->abi_version != VECTIS_SERVICE_ABI_VERSION) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX request abi_version is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (request->frame_count > ((size_t)-1) / sizeof(double)) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "audio worker VOX frame buffer is too large");
+    return VECTIS_ERR_NOMEM;
+  }
+  memset(&request_json, 0, sizeof(request_json));
+  request_json.frames.items =
+      (double *)malloc(request->frame_count * sizeof(double));
+  if (request_json.frames.items == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy audio worker VOX frames");
+    return VECTIS_ERR_NOMEM;
+  }
+  memcpy(request_json.frames.items, request->frames,
+         request->frame_count * sizeof(double));
+  request_json.frames.count = request->frame_count;
+  request_json.frames.capacity = request->frame_count;
+  if (request->threshold > 0.0f) {
+    request_json.threshold = (double)request->threshold;
+    request_json.has_threshold = 1;
+  }
+  if (request->release_silence_ms > 0ul) {
+    request_json.release_silence_ms =
+        (lonejson_int64)request->release_silence_ms;
+    request_json.has_release_silence_ms = 1;
+  }
+  if (request->prebuffer_ms > 0ul) {
+    request_json.prebuffer_ms = (lonejson_int64)request->prebuffer_ms;
+    request_json.has_prebuffer_ms = 1;
+  }
+  if (request->max_segment_ms > 0ul) {
+    request_json.max_segment_ms = (lonejson_int64)request->max_segment_ms;
+    request_json.has_max_segment_ms = 1;
+  }
+  if (request->min_segment_ms > 0ul) {
+    request_json.min_segment_ms = (lonejson_int64)request->min_segment_ms;
+    request_json.has_min_segment_ms = 1;
+  }
+  if (request->memory_spool_bytes > 0ul) {
+    request_json.memory_spool_bytes =
+        (lonejson_int64)request->memory_spool_bytes;
+    request_json.has_memory_spool_bytes = 1;
+  }
+  if (request->max_spool_bytes > 0ul) {
+    request_json.max_spool_bytes = (lonejson_int64)request->max_spool_bytes;
+    request_json.has_max_spool_bytes = 1;
+  }
+  if (request->max_segment_frames > 0u) {
+    request_json.max_segment_frames =
+        (lonejson_int64)request->max_segment_frames;
+    request_json.has_max_segment_frames = 1;
+  }
+  request_json.flush = request->flush ? 1 : 0;
+  request_json.has_flush = 1;
+  status = vectis_audio_worker_build_vox_event(&request_json, out, error);
+  vectis_audio_worker_vox_request_json_cleanup_malloc(&request_json);
+  return status;
+}
+
 void vectis_audio_worker_event_cleanup(vectis_audio_worker_event *event) {
   if (event == NULL) {
     return;
@@ -21191,6 +21863,154 @@ void vectis_audio_worker_response_cleanup(
   free(response->path);
   free(response->frames);
   vectis_audio_worker_response_init(response);
+}
+
+void vectis_audio_worker_vox_state_init(vectis_audio_worker_vox_state *state) {
+  if (state == NULL) {
+    return;
+  }
+  memset(state, 0, sizeof(*state));
+  state->size = sizeof(*state);
+  state->abi_version = VECTIS_SERVICE_ABI_VERSION;
+}
+
+vectis_status
+vectis_audio_worker_vox_state_decode(const vectis_mailbox_event *event,
+                                     vectis_audio_worker_vox_state *state,
+                                     vectis_error *error) {
+  vectis_audio_worker_vox_state_json state_json;
+  lonejson *runtime;
+  lonejson_error json_error;
+  lonejson_status json_status;
+
+  if (state == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX state output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (state->size != sizeof(*state) ||
+      state->abi_version != VECTIS_SERVICE_ABI_VERSION) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX state output must be initialized");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_audio_worker_vox_state_init(state);
+  if (event == NULL || event->kind == NULL ||
+      strcmp(event->kind, VECTIS_AUDIO_WORKER_VOX_STATE_KIND) != 0 ||
+      event->payload == NULL || event->payload_size == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX state event is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&state_json, 0, sizeof(state_json));
+  runtime = vectis_lonejson_new(error);
+  if (runtime == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  json_status = lonejson_parse_buffer(
+      runtime, &vectis_audio_worker_vox_state_json_map, &state_json,
+      event->payload, event->payload_size, &json_error);
+  lonejson_free(runtime);
+  if (json_status != LONEJSON_STATUS_OK) {
+    return vectis_set_lonejson_error(error, json_status, &json_error,
+                                     "failed to parse audio worker VOX state");
+  }
+  state->state = (int)state_json.state;
+  state->segment_index = (unsigned long)state_json.segment_index;
+  state->threshold = (float)state_json.threshold;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+void vectis_audio_worker_vox_segment_init(
+    vectis_audio_worker_vox_segment *segment) {
+  if (segment == NULL) {
+    return;
+  }
+  memset(segment, 0, sizeof(*segment));
+  segment->size = sizeof(*segment);
+  segment->abi_version = VECTIS_SERVICE_ABI_VERSION;
+}
+
+vectis_status
+vectis_audio_worker_vox_segment_decode(const vectis_mailbox_event *event,
+                                       vectis_audio_worker_vox_segment *segment,
+                                       vectis_error *error) {
+  vectis_audio_worker_vox_segment_json segment_json;
+  lonejson *runtime;
+  lonejson_error json_error;
+  lonejson_status json_status;
+
+  if (segment == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX segment output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (segment->size != sizeof(*segment) ||
+      segment->abi_version != VECTIS_SERVICE_ABI_VERSION) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX segment output must be initialized");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_audio_worker_vox_segment_cleanup(segment);
+  if (event == NULL || event->kind == NULL ||
+      strcmp(event->kind, VECTIS_AUDIO_WORKER_VOX_SEGMENT_KIND) != 0 ||
+      event->payload == NULL || event->payload_size == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "audio worker VOX segment event is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&segment_json, 0, sizeof(segment_json));
+  runtime = vectis_lonejson_new(error);
+  if (runtime == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  json_status = lonejson_parse_buffer(
+      runtime, &vectis_audio_worker_vox_segment_json_map, &segment_json,
+      event->payload, event->payload_size, &json_error);
+  lonejson_free(runtime);
+  if (json_status != LONEJSON_STATUS_OK) {
+    vectis_audio_worker_vox_segment_json_cleanup_lonejson(&segment_json);
+    return vectis_set_lonejson_error(
+        error, json_status, &json_error,
+        "failed to parse audio worker VOX segment");
+  }
+  segment->segment_index = (unsigned long)segment_json.segment_index;
+  segment->t0 = (long)segment_json.t0;
+  segment->t1 = (long)segment_json.t1;
+  segment->hard_cut = segment_json.hard_cut ? 1 : 0;
+  segment->is_final = segment_json.is_final ? 1 : 0;
+  if (segment_json.frames.count > 0u) {
+    if (segment_json.frames.count > ((size_t)-1) / sizeof(double)) {
+      vectis_audio_worker_vox_segment_json_cleanup_lonejson(&segment_json);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "audio worker VOX segment frames are too large");
+      return VECTIS_ERR_NOMEM;
+    }
+    segment->frames =
+        (double *)malloc(segment_json.frames.count * sizeof(double));
+    if (segment->frames == NULL) {
+      vectis_audio_worker_vox_segment_json_cleanup_lonejson(&segment_json);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy audio worker VOX segment frames");
+      return VECTIS_ERR_NOMEM;
+    }
+    memcpy(segment->frames, segment_json.frames.items,
+           segment_json.frames.count * sizeof(double));
+    segment->frame_count = segment_json.frames.count;
+  }
+  vectis_audio_worker_vox_segment_json_cleanup_lonejson(&segment_json);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+void vectis_audio_worker_vox_segment_cleanup(
+    vectis_audio_worker_vox_segment *segment) {
+  if (segment == NULL) {
+    return;
+  }
+  free(segment->frames);
+  vectis_audio_worker_vox_segment_init(segment);
 }
 
 void vectis_sus_worker_service_config_init(
@@ -21971,6 +22791,10 @@ vectis_status vectis_audio_worker_service_new(
   if (effective.max_frames == 0u) {
     effective.max_frames = VECTIS_AUDIO_WORKER_DEFAULT_MAX_FRAMES;
   }
+  if (effective.max_segment_frames == 0u) {
+    effective.max_segment_frames =
+        VECTIS_AUDIO_WORKER_DEFAULT_MAX_SEGMENT_FRAMES;
+  }
   ctx = (vectis_audio_worker_service_context *)calloc(1u, sizeof(*ctx));
   if (ctx == NULL) {
     vectis_set_error(error, VECTIS_ERR_NOMEM,
@@ -21985,8 +22809,10 @@ vectis_status vectis_audio_worker_service_new(
   }
   ctx->request_mailbox = effective.request_mailbox;
   ctx->reply_broker = effective.reply_broker;
+  ctx->event_mailbox = effective.event_mailbox;
   ctx->poll_timeout_ms = effective.poll_timeout_ms;
   ctx->max_frames = effective.max_frames;
+  ctx->max_segment_frames = effective.max_segment_frames;
   vectis_managed_service_config_init(&managed);
   managed.name = effective.name != NULL ? effective.name : "audio-worker";
   managed.context = ctx;

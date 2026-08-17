@@ -207,14 +207,20 @@ Audio/SUS workers:
   records before adding live capture/playback service request kinds.
 
 The first audio worker request kinds are `vectis.audio.decode`,
-`vectis.audio.encode`, and `vectis.audio.vox`. The first SUS worker request
-kinds are `vectis.sus.transcribe_pcm` and `vectis.sus.transcribe_file`; replies
-use `vectis.sus.reply`. Materialized transcripts, PCM chunks, or generated
-audio are returned only under explicit byte limits. Larger outputs use
-file-backed or lockdc references named as such. Dependency-native `audio` and
-`sus` callbacks remain owner-state facade callbacks; managed worker services
-publish copied events and rely on `vectis.mailbox:pump()` when Lua policy needs
-to observe them.
+`vectis.audio.encode`, and `vectis.audio.vox`. Decode/encode requests use
+`vectis.audio.reply` for a single bounded result. VOX requests use
+`vectis.audio.vox.state` and `vectis.audio.vox.segment` events published to the
+service's `event_mailbox`; `vectis.audio.reply` is only the final
+completion/error reply for the request. Segment frames are copied out of the
+upstream pullable segment during the cpkt callback and published as bounded
+event payloads. The first SUS worker request kinds are
+`vectis.sus.transcribe_pcm` and `vectis.sus.transcribe_file`; replies use
+`vectis.sus.reply`. Materialized transcripts, PCM chunks, or generated audio
+are returned only under explicit byte limits. Larger outputs use file-backed or
+lockdc references named as such. Dependency-native `audio` and `sus` callbacks
+remain owner-state facade callbacks; managed worker services publish copied
+events and rely on `vectis.mailbox:pump()` when Lua policy needs to observe
+them.
 
 Lua may configure these descriptors and pump their events, but the worker
 threads themselves do not call Lua callbacks.

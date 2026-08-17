@@ -154,19 +154,23 @@ Playback methods:
 
 Use `server:audio_worker_service(opts)` to declare a C-owned managed worker
 that drains a `vectis.mailbox` request queue. The service accepts no Lua
-callbacks; Lua builds copied request events and decodes copied replies in the
-owner state.
+callbacks; Lua builds copied request events, decodes copied replies, and drains
+copied VOX state/segment events in the owner state.
 
 Options:
 
 - `request_mailbox` or `requests`: required borrowed mailbox.
 - `reply_broker` or `broker`: optional `vectis.mailbox.broker` used for request
   replies.
+- `event_mailbox` or `events`: optional `vectis.mailbox` used for VOX state and
+  segment events. It is required for `vectis.audio.vox` requests.
 - `name`: optional managed-service name, defaulting to `audio-worker`.
 - `start`: whether to start with the app, defaulting to true.
 - `poll_timeout_ms`: worker mailbox poll interval.
 - `max_frames`: default decode cap, defaulting to
   `vectis.audio_worker.DEFAULT_MAX_FRAMES`.
+- `max_segment_frames`: default VOX segment PCM cap, defaulting to
+  `vectis.audio_worker.DEFAULT_MAX_SEGMENT_FRAMES`.
 
 Helpers:
 
@@ -178,13 +182,24 @@ Helpers:
   `vectis.audio.encode` request. `opts.path` and `opts.frames` are required;
   `opts.format`, `opts.sample_rate`, and `opts.channels` default to WAV, 16000,
   and mono.
+- `vectis.audio_worker.vox_request(opts)` builds a `vectis.audio.vox` request.
+  `opts.frames` is required and must be mono 16 kHz PCM. Options map to cpkt
+  VOX configuration: `threshold`, `release_silence_ms`, `prebuffer_ms`,
+  `max_segment_ms`, `min_segment_ms`, `memory_spool_bytes`, `max_spool_bytes`,
+  `max_segment_frames`, and `flush`.
 - `vectis.audio_worker.decode_reply(event)` decodes a `vectis.audio.reply`
   event into `ok`, `status`, `source`, `dependency_code`, `operation`, `path`,
   `sample_rate`, `channels`, `frame_count`, optional `frames`, `message`, and
   `detail`.
+- `vectis.audio_worker.decode_vox_state(event)` decodes
+  `vectis.audio.vox.state` into `state`, `segment_index`, and `threshold`.
+- `vectis.audio_worker.decode_vox_segment(event)` decodes
+  `vectis.audio.vox.segment` into `segment_index`, `t0`, `t1`, `hard_cut`,
+  `is_final`, `frame_count`, and copied `frames`.
 
 See `examples/lua/audio_worker_service.lua` for a self-contained worker
-example that encodes a WAV file and decodes it back through the managed service.
+example that encodes a WAV file, decodes it back, and drains VOX state/segment
+events through a separate event mailbox.
 
 ## Errors
 

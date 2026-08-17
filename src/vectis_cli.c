@@ -297,6 +297,7 @@ typedef struct vectis_lua_audio_worker_registration {
   char *name;
   int request_ref;
   int broker_ref;
+  int event_ref;
   int started;
   struct vectis_lua_audio_worker_registration *next;
 } vectis_lua_audio_worker_registration;
@@ -6320,6 +6321,10 @@ static void vectis_lua_server_audio_worker_service_free(
     luaL_unref(service->lua, LUA_REGISTRYINDEX, service->broker_ref);
     service->broker_ref = LUA_NOREF;
   }
+  if (service->lua != NULL && service->event_ref != LUA_NOREF) {
+    luaL_unref(service->lua, LUA_REGISTRYINDEX, service->event_ref);
+    service->event_ref = LUA_NOREF;
+  }
   free(service->name);
   free(service);
 }
@@ -7821,6 +7826,7 @@ static int vectis_lua_server_audio_worker_service(lua_State *lua) {
   vectis_lua_audio_worker_registration *service;
   vectis_audio_worker_service_config config;
   vectis_lua_mailbox *request_box;
+  vectis_lua_mailbox *event_box;
   vectis_lua_mailbox_broker *reply_broker;
   vectis_error error;
   vectis_status status;
@@ -7828,6 +7834,7 @@ static int vectis_lua_server_audio_worker_service(lua_State *lua) {
   int base;
   int request_index;
   int broker_index;
+  int event_index;
   int owner_error;
   int start_service;
 
@@ -7880,6 +7887,22 @@ static int vectis_lua_server_audio_worker_service(lua_State *lua) {
     }
   }
 
+  event_box = NULL;
+  event_index = 0;
+  lua_getfield(lua, 2, "event_mailbox");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, 2, "events");
+  }
+  if (!lua_isnil(lua, -1)) {
+    event_index = lua_absindex(lua, -1);
+    event_box = vectis_lua_check_mailbox(lua, event_index);
+    owner_error = vectis_lua_mailbox_validate_owner(lua, event_box);
+    if (owner_error != 0) {
+      return owner_error;
+    }
+  }
+
   service =
       (vectis_lua_audio_worker_registration *)calloc(1u, sizeof(*service));
   if (service == NULL) {
@@ -7890,6 +7913,7 @@ static int vectis_lua_server_audio_worker_service(lua_State *lua) {
   service->lua = lua;
   service->request_ref = LUA_NOREF;
   service->broker_ref = LUA_NOREF;
+  service->event_ref = LUA_NOREF;
   name = vectis_lua_table_string(lua, 2, "name");
   if (name == NULL || name[0] == '\0') {
     name = "audio-worker";
@@ -7908,17 +7932,24 @@ static int vectis_lua_server_audio_worker_service(lua_State *lua) {
     lua_pushvalue(lua, broker_index);
     service->broker_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
   }
+  if (event_box != NULL) {
+    lua_pushvalue(lua, event_index);
+    service->event_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  }
   lua_settop(lua, base);
 
   vectis_audio_worker_service_config_init(&config);
   config.name = service->name;
   config.request_mailbox = request_box->mailbox;
   config.reply_broker = reply_broker != NULL ? reply_broker->broker : NULL;
+  config.event_mailbox = event_box != NULL ? event_box->mailbox : NULL;
   config.start_with_app = vectis_lua_table_bool(lua, 2, "start", 1);
   config.poll_timeout_ms =
       vectis_lua_table_long(lua, 2, "poll_timeout_ms", config.poll_timeout_ms);
   config.max_frames =
       vectis_lua_table_size(lua, 2, "max_frames", config.max_frames);
+  config.max_segment_frames = vectis_lua_table_size(
+      lua, 2, "max_segment_frames", config.max_segment_frames);
 
   vectis_error_clear(&error);
   status = app->audio_worker_service(app, &config, &service->service, &error);
@@ -16936,6 +16967,75 @@ static int vectis_lua_audio_worker_encode_file_request(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_audio_worker_vox_request(lua_State *lua) {
+  vectis_audio_worker_vox_request request;
+  vectis_audio_worker_event event;
+  vectis_error error;
+  vectis_status status;
+  double *frames;
+  size_t frame_count;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  frames = NULL;
+  frame_count = 0u;
+  lua_getfield(lua, 1, "frames");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, 1, "pcm");
+  }
+  if (lua_isnil(lua, -1)) {
+    return luaL_error(lua, "audio worker VOX request requires frames");
+  }
+  if (vectis_lua_audio_worker_frames_from_table(lua, lua_absindex(lua, -1),
+                                                &frames, &frame_count) != 0) {
+    lua_pop(lua, 1);
+    return 1;
+  }
+  lua_pop(lua, 1);
+
+  vectis_audio_worker_vox_request_init(&request);
+  request.frames = frames;
+  request.frame_count = frame_count;
+  request.threshold = (float)luaL_optnumber(lua, 2, 0.0);
+  lua_getfield(lua, 1, "threshold");
+  if (!lua_isnil(lua, -1)) {
+    request.threshold = (float)luaL_checknumber(lua, -1);
+  }
+  lua_pop(lua, 1);
+  request.release_silence_ms =
+      (unsigned long)vectis_lua_table_size(lua, 1, "release_silence_ms", 0u);
+  request.prebuffer_ms =
+      (unsigned long)vectis_lua_table_size(lua, 1, "prebuffer_ms", 0u);
+  request.max_segment_ms =
+      (unsigned long)vectis_lua_table_size(lua, 1, "max_segment_ms", 0u);
+  request.min_segment_ms =
+      (unsigned long)vectis_lua_table_size(lua, 1, "min_segment_ms", 0u);
+  request.memory_spool_bytes =
+      (unsigned long)vectis_lua_table_size(lua, 1, "memory_spool_bytes", 0u);
+  request.max_spool_bytes =
+      (unsigned long)vectis_lua_table_size(lua, 1, "max_spool_bytes", 0u);
+  request.max_segment_frames = vectis_lua_table_size(
+      lua, 1, "max_segment_frames", request.max_segment_frames);
+  request.flush = vectis_lua_table_bool(lua, 1, "flush", 1);
+
+  vectis_error_clear(&error);
+  status = vectis_audio_worker_vox_event_build(&request, &event, &error);
+  free(frames);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_newtable(lua);
+  lua_pushstring(lua, event.message.kind);
+  lua_setfield(lua, -2, "kind");
+  lua_pushlstring(lua, (const char *)event.message.payload,
+                  event.message.payload_size);
+  lua_setfield(lua, -2, "payload");
+  lua_pushboolean(lua, event.message.expects_reply);
+  lua_setfield(lua, -2, "expects_reply");
+  vectis_audio_worker_event_cleanup(&event);
+  return 1;
+}
+
 static int vectis_lua_audio_worker_decode_reply(lua_State *lua) {
   vectis_mailbox_event event;
   vectis_audio_worker_response response;
@@ -17031,25 +17131,164 @@ static int vectis_lua_audio_worker_decode_reply(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_audio_worker_decode_vox_state(lua_State *lua) {
+  vectis_mailbox_event event;
+  vectis_audio_worker_vox_state state;
+  vectis_error error;
+  vectis_status status;
+  const char *kind;
+  const char *payload;
+  size_t payload_size;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_mailbox_event_init(&event);
+  kind = vectis_lua_table_string(lua, 1, "kind");
+  if (kind != NULL) {
+    event.kind = vectis_cli_strdup(kind);
+    if (event.kind == NULL) {
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_NOMEM, "failed to copy audio worker VOX state kind");
+    }
+  }
+  lua_getfield(lua, 1, "payload");
+  if (!lua_isnil(lua, -1)) {
+    payload = luaL_checklstring(lua, -1, &payload_size);
+    if (payload_size > 0u) {
+      event.payload = malloc(payload_size);
+      if (event.payload == NULL) {
+        lua_pop(lua, 1);
+        vectis_mailbox_event_cleanup(&event);
+        return vectis_lua_push_error_text(
+            lua, VECTIS_ERR_NOMEM,
+            "failed to copy audio worker VOX state payload");
+      }
+      memcpy(event.payload, payload, payload_size);
+      event.payload_size = payload_size;
+    }
+  }
+  lua_pop(lua, 1);
+  vectis_audio_worker_vox_state_init(&state);
+  vectis_error_clear(&error);
+  status = vectis_audio_worker_vox_state_decode(&event, &state, &error);
+  vectis_mailbox_event_cleanup(&event);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_newtable(lua);
+  lua_pushinteger(lua, (lua_Integer)state.state);
+  lua_setfield(lua, -2, "state");
+  lua_pushinteger(lua, (lua_Integer)state.segment_index);
+  lua_setfield(lua, -2, "segment_index");
+  lua_pushnumber(lua, state.threshold);
+  lua_setfield(lua, -2, "threshold");
+  return 1;
+}
+
+static int vectis_lua_audio_worker_decode_vox_segment(lua_State *lua) {
+  vectis_mailbox_event event;
+  vectis_audio_worker_vox_segment segment;
+  vectis_error error;
+  vectis_status status;
+  const char *kind;
+  const char *payload;
+  size_t payload_size;
+  size_t i;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  vectis_mailbox_event_init(&event);
+  kind = vectis_lua_table_string(lua, 1, "kind");
+  if (kind != NULL) {
+    event.kind = vectis_cli_strdup(kind);
+    if (event.kind == NULL) {
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_NOMEM,
+          "failed to copy audio worker VOX segment kind");
+    }
+  }
+  lua_getfield(lua, 1, "payload");
+  if (!lua_isnil(lua, -1)) {
+    payload = luaL_checklstring(lua, -1, &payload_size);
+    if (payload_size > 0u) {
+      event.payload = malloc(payload_size);
+      if (event.payload == NULL) {
+        lua_pop(lua, 1);
+        vectis_mailbox_event_cleanup(&event);
+        return vectis_lua_push_error_text(
+            lua, VECTIS_ERR_NOMEM,
+            "failed to copy audio worker VOX segment payload");
+      }
+      memcpy(event.payload, payload, payload_size);
+      event.payload_size = payload_size;
+    }
+  }
+  lua_pop(lua, 1);
+  vectis_audio_worker_vox_segment_init(&segment);
+  vectis_error_clear(&error);
+  status = vectis_audio_worker_vox_segment_decode(&event, &segment, &error);
+  vectis_mailbox_event_cleanup(&event);
+  if (status != VECTIS_OK) {
+    vectis_audio_worker_vox_segment_cleanup(&segment);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_newtable(lua);
+  lua_pushinteger(lua, (lua_Integer)segment.segment_index);
+  lua_setfield(lua, -2, "segment_index");
+  lua_pushinteger(lua, (lua_Integer)segment.t0);
+  lua_setfield(lua, -2, "t0");
+  lua_pushinteger(lua, (lua_Integer)segment.t1);
+  lua_setfield(lua, -2, "t1");
+  lua_pushboolean(lua, segment.hard_cut);
+  lua_setfield(lua, -2, "hard_cut");
+  lua_pushboolean(lua, segment.is_final);
+  lua_setfield(lua, -2, "is_final");
+  lua_pushinteger(lua, (lua_Integer)segment.frame_count);
+  lua_setfield(lua, -2, "frame_count");
+  if (segment.frame_count > 0u) {
+    lua_newtable(lua);
+    for (i = 0u; i < segment.frame_count; ++i) {
+      lua_pushnumber(lua, segment.frames[i]);
+      lua_rawseti(lua, -2, (lua_Integer)i + 1);
+    }
+    lua_setfield(lua, -2, "frames");
+  }
+  vectis_audio_worker_vox_segment_cleanup(&segment);
+  return 1;
+}
+
 static void vectis_lua_push_audio_worker_table(lua_State *lua) {
   lua_newtable(lua);
   lua_pushliteral(lua, VECTIS_AUDIO_WORKER_DECODE_KIND);
   lua_setfield(lua, -2, "DECODE_KIND");
   lua_pushliteral(lua, VECTIS_AUDIO_WORKER_ENCODE_KIND);
   lua_setfield(lua, -2, "ENCODE_KIND");
+  lua_pushliteral(lua, VECTIS_AUDIO_WORKER_VOX_KIND);
+  lua_setfield(lua, -2, "VOX_KIND");
   lua_pushliteral(lua, VECTIS_AUDIO_WORKER_REPLY_KIND);
   lua_setfield(lua, -2, "REPLY_KIND");
+  lua_pushliteral(lua, VECTIS_AUDIO_WORKER_VOX_STATE_KIND);
+  lua_setfield(lua, -2, "VOX_STATE_KIND");
+  lua_pushliteral(lua, VECTIS_AUDIO_WORKER_VOX_SEGMENT_KIND);
+  lua_setfield(lua, -2, "VOX_SEGMENT_KIND");
   lua_pushinteger(lua,
                   (lua_Integer)VECTIS_AUDIO_WORKER_DEFAULT_POLL_TIMEOUT_MS);
   lua_setfield(lua, -2, "DEFAULT_POLL_TIMEOUT_MS");
   lua_pushinteger(lua, (lua_Integer)VECTIS_AUDIO_WORKER_DEFAULT_MAX_FRAMES);
   lua_setfield(lua, -2, "DEFAULT_MAX_FRAMES");
+  lua_pushinteger(lua,
+                  (lua_Integer)VECTIS_AUDIO_WORKER_DEFAULT_MAX_SEGMENT_FRAMES);
+  lua_setfield(lua, -2, "DEFAULT_MAX_SEGMENT_FRAMES");
   lua_pushcfunction(lua, vectis_lua_audio_worker_decode_file_request);
   lua_setfield(lua, -2, "decode_file_request");
   lua_pushcfunction(lua, vectis_lua_audio_worker_encode_file_request);
   lua_setfield(lua, -2, "encode_file_request");
+  lua_pushcfunction(lua, vectis_lua_audio_worker_vox_request);
+  lua_setfield(lua, -2, "vox_request");
   lua_pushcfunction(lua, vectis_lua_audio_worker_decode_reply);
   lua_setfield(lua, -2, "decode_reply");
+  lua_pushcfunction(lua, vectis_lua_audio_worker_decode_vox_state);
+  lua_setfield(lua, -2, "decode_vox_state");
+  lua_pushcfunction(lua, vectis_lua_audio_worker_decode_vox_segment);
+  lua_setfield(lua, -2, "decode_vox_segment");
 }
 
 static int vectis_lua_sus_worker_frames_from_table(lua_State *lua, int index,

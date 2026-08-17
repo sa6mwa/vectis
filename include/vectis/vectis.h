@@ -1206,9 +1206,13 @@ typedef struct vectis_cai_worker_service_config {
 
 #define VECTIS_AUDIO_WORKER_DECODE_KIND "vectis.audio.decode"
 #define VECTIS_AUDIO_WORKER_ENCODE_KIND "vectis.audio.encode"
+#define VECTIS_AUDIO_WORKER_VOX_KIND "vectis.audio.vox"
 #define VECTIS_AUDIO_WORKER_REPLY_KIND "vectis.audio.reply"
+#define VECTIS_AUDIO_WORKER_VOX_STATE_KIND "vectis.audio.vox.state"
+#define VECTIS_AUDIO_WORKER_VOX_SEGMENT_KIND "vectis.audio.vox.segment"
 #define VECTIS_AUDIO_WORKER_DEFAULT_POLL_TIMEOUT_MS 100L
 #define VECTIS_AUDIO_WORKER_DEFAULT_MAX_FRAMES 16000u
+#define VECTIS_AUDIO_WORKER_DEFAULT_MAX_SEGMENT_FRAMES 16000u
 
 typedef struct vectis_audio_worker_decode_request {
   size_t size;
@@ -1228,6 +1232,22 @@ typedef struct vectis_audio_worker_encode_request {
   const double *frames;
   size_t frame_count;
 } vectis_audio_worker_encode_request;
+
+typedef struct vectis_audio_worker_vox_request {
+  size_t size;
+  unsigned abi_version;
+  const double *frames;
+  size_t frame_count;
+  float threshold;
+  unsigned long release_silence_ms;
+  unsigned long prebuffer_ms;
+  unsigned long max_segment_ms;
+  unsigned long min_segment_ms;
+  unsigned long memory_spool_bytes;
+  unsigned long max_spool_bytes;
+  size_t max_segment_frames;
+  int flush;
+} vectis_audio_worker_vox_request;
 
 typedef struct vectis_audio_worker_event {
   vectis_mailbox_message message;
@@ -1250,21 +1270,46 @@ typedef struct vectis_audio_worker_response {
   char detail[256];
 } vectis_audio_worker_response;
 
+typedef struct vectis_audio_worker_vox_state {
+  size_t size;
+  unsigned abi_version;
+  int state;
+  unsigned long segment_index;
+  float threshold;
+} vectis_audio_worker_vox_state;
+
+typedef struct vectis_audio_worker_vox_segment {
+  size_t size;
+  unsigned abi_version;
+  unsigned long segment_index;
+  long t0;
+  long t1;
+  int hard_cut;
+  int is_final;
+  double *frames;
+  size_t frame_count;
+} vectis_audio_worker_vox_segment;
+
 /* Descriptor for a Vectis-owned audio worker service. The request mailbox and
- * optional broker are borrowed and must outlive the returned managed service.
- * The worker drains VECTIS_AUDIO_WORKER_DECODE_KIND and
- * VECTIS_AUDIO_WORKER_ENCODE_KIND events, executes bounded file decode/encode
- * work in the selected runtime domain, and replies through reply_broker when
- * the incoming mailbox event expects a reply. */
+ * optional broker/event mailbox are borrowed and must outlive the returned
+ * managed service. The worker drains VECTIS_AUDIO_WORKER_DECODE_KIND,
+ * VECTIS_AUDIO_WORKER_ENCODE_KIND, and VECTIS_AUDIO_WORKER_VOX_KIND events.
+ * Decode/encode work replies through reply_broker when the incoming mailbox
+ * event expects a reply. VOX state and segment observations are copied into
+ * event_mailbox as VECTIS_AUDIO_WORKER_VOX_STATE_KIND and
+ * VECTIS_AUDIO_WORKER_VOX_SEGMENT_KIND; the final
+ * VECTIS_AUDIO_WORKER_REPLY_KIND reply is completion/error status only. */
 typedef struct vectis_audio_worker_service_config {
   size_t size;
   unsigned abi_version;
   const char *name;
   vectis_mailbox *request_mailbox;
   vectis_mailbox_broker *reply_broker;
+  vectis_mailbox *event_mailbox;
   int start_with_app;
   long poll_timeout_ms;
   size_t max_frames;
+  size_t max_segment_frames;
 } vectis_audio_worker_service_config;
 
 #define VECTIS_SUS_WORKER_TRANSCRIBE_PCM_KIND "vectis.sus.transcribe_pcm"
@@ -2034,11 +2079,16 @@ void vectis_audio_worker_decode_request_init(
     vectis_audio_worker_decode_request *request);
 void vectis_audio_worker_encode_request_init(
     vectis_audio_worker_encode_request *request);
+void vectis_audio_worker_vox_request_init(
+    vectis_audio_worker_vox_request *request);
 vectis_status vectis_audio_worker_decode_event_build(
     const vectis_audio_worker_decode_request *request,
     vectis_audio_worker_event *out, vectis_error *error);
 vectis_status vectis_audio_worker_encode_event_build(
     const vectis_audio_worker_encode_request *request,
+    vectis_audio_worker_event *out, vectis_error *error);
+vectis_status vectis_audio_worker_vox_event_build(
+    const vectis_audio_worker_vox_request *request,
     vectis_audio_worker_event *out, vectis_error *error);
 void vectis_audio_worker_event_cleanup(vectis_audio_worker_event *event);
 void vectis_audio_worker_response_init(vectis_audio_worker_response *response);
@@ -2048,6 +2098,19 @@ vectis_audio_worker_response_decode(const vectis_mailbox_event *event,
                                     vectis_error *error);
 void vectis_audio_worker_response_cleanup(
     vectis_audio_worker_response *response);
+void vectis_audio_worker_vox_state_init(vectis_audio_worker_vox_state *state);
+vectis_status
+vectis_audio_worker_vox_state_decode(const vectis_mailbox_event *event,
+                                     vectis_audio_worker_vox_state *state,
+                                     vectis_error *error);
+void vectis_audio_worker_vox_segment_init(
+    vectis_audio_worker_vox_segment *segment);
+vectis_status
+vectis_audio_worker_vox_segment_decode(const vectis_mailbox_event *event,
+                                       vectis_audio_worker_vox_segment *segment,
+                                       vectis_error *error);
+void vectis_audio_worker_vox_segment_cleanup(
+    vectis_audio_worker_vox_segment *segment);
 void vectis_sus_worker_service_config_init(
     vectis_sus_worker_service_config *config);
 void vectis_sus_worker_transcribe_pcm_request_init(

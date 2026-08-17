@@ -377,9 +377,10 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
   diagnostics for declared CAI worker services.
 - `server:audio_worker_service(opts)` declares a C-owned audio worker service
   over a borrowed `vectis.mailbox` request queue and optional
-  `vectis.mailbox.broker` reply adapter. Use `vectis.audio_worker` to build and
-  decode copied bounded file decode/encode envelopes. Lua callbacks are not
-  accepted by the managed worker.
+  `vectis.mailbox.broker` reply adapter plus optional `event_mailbox` for VOX
+  observations. Use `vectis.audio_worker` to build and decode copied bounded
+  file decode/encode envelopes and VOX state/segment events. Lua callbacks are
+  not accepted by the managed worker.
 - `server:audio_worker_service_states()` returns managed-service lifecycle
   diagnostics for declared audio worker services.
 - `server:sus_worker_service(opts)` declares a C-owned SUS worker service over

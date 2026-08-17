@@ -82,20 +82,20 @@ The implemented audio managed-worker surface is:
 - C: `vectis_audio_worker_service` over `vectis_managed_service`
 - Lua: `server:audio_worker_service(opts)`
 - Lua helpers: `vectis.audio_worker.decode_file_request()`,
-  `encode_file_request()`, and `decode_reply()`
+  `encode_file_request()`, `vox_request()`, `decode_reply()`,
+  `decode_vox_state()`, and `decode_vox_segment()`
 - C: `vectis_sus_worker_service` over `vectis_managed_service`
 - Lua: `server:sus_worker_service(opts)`
 - Lua helpers: `vectis.sus_worker.transcribe_pcm_request()`,
   `transcribe_file_request()`, and `decode_reply()`
 
-The planned remaining managed-worker surface is C/Lua audio VOX worker helpers
-with true segment/progress event semantics.
-
 The implemented deterministic audio worker request kinds are
-`vectis.audio.decode` and `vectis.audio.encode`; replies use
-`vectis.audio.reply`. The implemented deterministic SUS worker request kinds
-are `vectis.sus.transcribe_pcm` and `vectis.sus.transcribe_file`; replies use
-`vectis.sus.reply`.
+`vectis.audio.decode`, `vectis.audio.encode`, and `vectis.audio.vox`; replies
+use `vectis.audio.reply` for decode/encode results and VOX completion/error
+status. VOX state and segment observations are separate copied mailbox events:
+`vectis.audio.vox.state` and `vectis.audio.vox.segment`. The implemented
+deterministic SUS worker request kinds are `vectis.sus.transcribe_pcm` and
+`vectis.sus.transcribe_file`; replies use `vectis.sus.reply`.
 
 Managed workers copy configuration during declaration and materialize devices,
 decoders, encoders, VOX/PTT handles, models, and transcribers only in the
