@@ -91,6 +91,11 @@ C app config. Manual TLS can use paths or in-memory PEM strings:
 - `client_ca_bundle_pem`, `client_ca_pem`
 - `require_client_certificate`
 
+TLS servers also accept `version = "default" | "both" | "1.2" | "1.3"` and
+`cipher_list` (or `cipher`) for Kore/OpenSSL protocol and cipher selection.
+`default` and `both` use TLS 1.2 plus TLS 1.3. Invalid cipher lists fail before
+Kore starts.
+
 ## Fixed Routes
 
 - `server:json(opts)` registers a fixed JSON response.

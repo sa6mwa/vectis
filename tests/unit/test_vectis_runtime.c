@@ -6903,6 +6903,33 @@ int main(void) {
   app->close(app);
 
   vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.version = (vectis_tls_version)99;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/invalid-tls-version", sample_handler,
+                       NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "tls.version") != NULL);
+  app->close(app);
+
+  vectis_app_config_init(&config);
+  config.tls.cipher_list = "VECTIS-DOES-NOT-EXIST";
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/invalid-tls-cipher", sample_handler,
+                       NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "tls.cipher_list") != NULL);
+  app->close(app);
+
+  vectis_app_config_init(&config);
 
   app = vectis_app_new(&config, &error);
   assert(app != NULL);

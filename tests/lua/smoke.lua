@@ -1241,6 +1241,7 @@ local tls_bundle_pem_server = assert(vectis.server.new({
   port = 18170,
   tls = {
     mode = "manual",
+    version = "both",
     cert_key_bundle_pem = "-----BEGIN CERTIFICATE-----\nplaceholder\n" ..
         "-----END CERTIFICATE-----\n-----BEGIN PRIVATE KEY-----\n" ..
         "placeholder\n-----END PRIVATE KEY-----\n",
@@ -1277,6 +1278,21 @@ local tls_client_ca_pem_server = assert(vectis.server.new({
   },
 }))
 tls_client_ca_pem_server:close()
+
+do
+  local ok, err = pcall(function()
+    return vectis.server.new({
+      app_name = "lua-bad-tls-version",
+      port = 18175,
+      tls = {
+        mode = "manual",
+        version = "ssl3",
+      },
+    })
+  end)
+  assert(ok == false)
+  assert(tostring(err):match("tls%.version"))
+end
 
 local acme_auth_path = os.tmpname()
 os.remove(acme_auth_path)

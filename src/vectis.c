@@ -18,6 +18,7 @@
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
+#include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 #include <pthread.h>
@@ -448,6 +449,8 @@ typedef struct vectis_app_impl {
   vectis_quiescence_policy quiescence_policy;
   unsigned short port;
   vectis_tls_mode tls_mode;
+  vectis_tls_version tls_version;
+  char *tls_cipher_list;
   int require_client_certificate;
   vectis_server_config server;
   char *request_body_spool_dir;
@@ -2889,6 +2892,7 @@ void vectis_tls_config_init(vectis_tls_config *config) {
   }
   memset(config, 0, sizeof(*config));
   config->mode = VECTIS_TLS_MODE_MANUAL;
+  config->version = VECTIS_TLS_VERSION_DEFAULT;
   config->bind = "0.0.0.0";
   config->port = 8443u;
   config->domain = "*";
@@ -4594,6 +4598,44 @@ static vectis_status vectis_copy_bytes(const void *bytes, size_t size,
 static int vectis_tls_material_present(const char *path, const void *pem,
                                        struct lc_source *source) {
   return path != NULL || pem != NULL || source != NULL;
+}
+
+static vectis_status vectis_validate_tls_cipher_list(const char *cipher_list,
+                                                     vectis_error *error) {
+  SSL_CTX *ctx;
+  vectis_status status;
+
+  if (cipher_list == NULL) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (cipher_list[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "tls.cipher_list must not be empty");
+    return VECTIS_ERR_INVALID;
+  }
+  ctx = SSL_CTX_new(TLS_server_method());
+  if (ctx == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to create TLS validation context");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_OPENSSL;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  if (SSL_CTX_set_cipher_list(ctx, cipher_list) != 1) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "tls.cipher_list is not accepted by OpenSSL");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_OPENSSL;
+    }
+    status = VECTIS_ERR_INVALID;
+  } else {
+    vectis_error_clear(error);
+    status = VECTIS_OK;
+  }
+  SSL_CTX_free(ctx);
+  return status;
 }
 
 static vectis_status
@@ -10027,6 +10069,7 @@ static void vectis_destroy_impl_final(vectis_app_impl *impl) {
   free(impl->ca_bundle_pem);
   free(impl->client_ca_bundle_path);
   free(impl->client_ca_bundle_pem);
+  free(impl->tls_cipher_list);
   free(impl->acme_email);
   free(impl->acme_directory_url);
   free(impl->acme_state_dir);
@@ -10330,6 +10373,18 @@ static vectis_status vectis_validate_startable(const vectis_app_impl *impl,
       impl->tls_mode != VECTIS_TLS_MODE_ACME) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "tls.mode is invalid");
     return VECTIS_ERR_INVALID;
+  }
+  if (impl->tls_version != VECTIS_TLS_VERSION_DEFAULT &&
+      impl->tls_version != VECTIS_TLS_VERSION_BOTH &&
+      impl->tls_version != VECTIS_TLS_VERSION_1_2 &&
+      impl->tls_version != VECTIS_TLS_VERSION_1_3) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "tls.version is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (impl->tls_mode != VECTIS_TLS_MODE_DISABLED &&
+      vectis_validate_tls_cipher_list(impl->tls_cipher_list, error) !=
+          VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
   if (impl->tls_mode == VECTIS_TLS_MODE_MANUAL) {
     has_cert_key_bundle = vectis_tls_material_present(
@@ -10899,6 +10954,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
       &effective->tls.client_ca_bundle, effective->tls.client_ca_bundle_path));
   impl->client_ca_bundle_source = vectis_source_lc_or_old(
       &effective->tls.client_ca_bundle, effective->tls.client_ca_bundle_source);
+  impl->tls_cipher_list = vectis_strdup(effective->tls.cipher_list);
   impl->acme_email = vectis_strdup(effective->tls.acme_email);
   impl->acme_directory_url = vectis_strdup(effective->tls.acme_directory_url);
   impl->acme_state_dir = vectis_strdup(effective->tls.acme_state_dir);
@@ -10922,13 +10978,15 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   impl->quiescence_policy = effective->quiescence_policy;
   impl->port = vectis_default_ushort(effective->tls.port, 8443u);
   impl->tls_mode = effective->tls.mode;
+  impl->tls_version = effective->tls.version;
   impl->require_client_certificate = effective->tls.require_client_certificate;
   impl->server = effective_server;
   impl->server.request_body_spool_dir = impl->request_body_spool_dir;
   impl->server.max_request_body_bytes =
       effective->server.max_request_body_bytes;
   if (impl->app_name == NULL || impl->bind == NULL || impl->domain == NULL ||
-      impl->request_body_spool_dir == NULL) {
+      impl->request_body_spool_dir == NULL ||
+      (effective->tls.cipher_list != NULL && impl->tls_cipher_list == NULL)) {
     vectis_destroy_impl(impl);
     free(app);
     vectis_set_error(error, VECTIS_ERR_NOMEM,
@@ -11133,6 +11191,8 @@ vectis_app_make_kore_runtime_config(vectis_app *app, vectis_app_impl *impl,
   kore_config->domains = (const char *const *)impl->domains;
   kore_config->domain_count = impl->domain_count;
   kore_config->tls_mode = impl->tls_mode;
+  kore_config->tls_version = impl->tls_version;
+  kore_config->tls_cipher_list = impl->tls_cipher_list;
   kore_config->acme_email = impl->acme_email;
   kore_config->acme_directory_url = impl->acme_directory_url;
   kore_config->acme_state_dir = impl->acme_state_dir;

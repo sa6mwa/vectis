@@ -1544,6 +1544,31 @@ static vectis_status vectis_kore_load_default_dhparams(vectis_error *error) {
   return VECTIS_OK;
 }
 
+static int vectis_kore_tls_version(vectis_tls_version version) {
+  switch (version) {
+  case VECTIS_TLS_VERSION_1_2:
+    return KORE_TLS_VERSION_1_2;
+  case VECTIS_TLS_VERSION_1_3:
+    return KORE_TLS_VERSION_1_3;
+  case VECTIS_TLS_VERSION_DEFAULT:
+  case VECTIS_TLS_VERSION_BOTH:
+  default:
+    return KORE_TLS_VERSION_BOTH;
+  }
+}
+
+static void
+vectis_kore_apply_tls_config(const vectis_kore_runtime_config *config) {
+  if (config == NULL || config->tls_mode == VECTIS_TLS_MODE_DISABLED) {
+    return;
+  }
+  kore_tls_version_set(vectis_kore_tls_version(config->tls_version));
+  if (config->tls_cipher_list != NULL &&
+      !kore_tls_ciphersuite_set(config->tls_cipher_list)) {
+    fatal("failed to configure Vectis TLS cipher list");
+  }
+}
+
 static void vectis_kore_apply_server_config(const vectis_server_config *server,
                                             size_t body_disk_offload_bytes,
                                             int body_disk_offload_configured) {
@@ -2844,6 +2869,7 @@ void kore_parent_configure(int argc, char **argv) {
   vectis_kore_apply_server_config(
       &vectis_kore_current.server, vectis_kore_current.body_disk_offload_bytes,
       vectis_kore_current.body_disk_offload_configured);
+  vectis_kore_apply_tls_config(&vectis_kore_current);
   vectis_kore_clear_installed_acme_roots();
   if (vectis_kore_current.tls_mode == VECTIS_TLS_MODE_ACME &&
       vectis_kore_current.acme_state_dir != NULL) {

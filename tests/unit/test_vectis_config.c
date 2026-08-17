@@ -56,6 +56,8 @@ int main(void) {
   vectis_app_config_init(&config);
   assert(strcmp(config.app_name, "vectis") == 0);
   assert(config.tls.mode == VECTIS_TLS_MODE_MANUAL);
+  assert(config.tls.version == VECTIS_TLS_VERSION_DEFAULT);
+  assert(config.tls.cipher_list == NULL);
   assert(config.tls.port == 8443u);
   assert(strcmp(config.tls.domain, "*") == 0);
   assert(config.tls.domains == NULL);

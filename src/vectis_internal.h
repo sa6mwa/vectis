@@ -17,6 +17,8 @@ typedef struct vectis_kore_runtime_config {
   const char *const *domains;
   size_t domain_count;
   vectis_tls_mode tls_mode;
+  vectis_tls_version tls_version;
+  const char *tls_cipher_list;
   const char *acme_email;
   const char *acme_directory_url;
   const char *acme_state_dir;

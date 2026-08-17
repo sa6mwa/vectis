@@ -119,6 +119,14 @@ typedef enum vectis_tls_mode {
   VECTIS_TLS_MODE_ACME = 2
 } vectis_tls_mode;
 
+typedef enum vectis_tls_version {
+  /* Use the embedded Kore/OpenSSL default, currently TLS 1.2 and TLS 1.3. */
+  VECTIS_TLS_VERSION_DEFAULT = 0,
+  VECTIS_TLS_VERSION_BOTH = 1,
+  VECTIS_TLS_VERSION_1_2 = 2,
+  VECTIS_TLS_VERSION_1_3 = 3
+} vectis_tls_version;
+
 typedef enum vectis_http_method {
   VECTIS_HTTP_ANY = 0,
   VECTIS_HTTP_GET,
@@ -496,6 +504,9 @@ typedef struct vectis_cai_config {
 
 typedef struct vectis_tls_config {
   vectis_tls_mode mode;
+  vectis_tls_version version;
+  /* Optional OpenSSL cipher-list string applied to the Kore TLS context. */
+  const char *cipher_list;
   const char *bind;
   unsigned short port;
   const char *const *domains;

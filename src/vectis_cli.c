@@ -5824,6 +5824,34 @@ static int vectis_lua_tls_mode(const char *mode, vectis_tls_mode *out) {
   return 0;
 }
 
+static int vectis_lua_tls_version(const char *version,
+                                  vectis_tls_version *out) {
+  if (out == NULL) {
+    return 0;
+  }
+  if (version == NULL || version[0] == '\0' ||
+      strcmp(version, "default") == 0) {
+    *out = VECTIS_TLS_VERSION_DEFAULT;
+    return 1;
+  }
+  if (strcmp(version, "both") == 0 || strcmp(version, "1.2+1.3") == 0 ||
+      strcmp(version, "1.3+1.2") == 0) {
+    *out = VECTIS_TLS_VERSION_BOTH;
+    return 1;
+  }
+  if (strcmp(version, "1.2") == 0 || strcmp(version, "tls1.2") == 0 ||
+      strcmp(version, "tlsv1.2") == 0) {
+    *out = VECTIS_TLS_VERSION_1_2;
+    return 1;
+  }
+  if (strcmp(version, "1.3") == 0 || strcmp(version, "tls1.3") == 0 ||
+      strcmp(version, "tlsv1.3") == 0) {
+    *out = VECTIS_TLS_VERSION_1_3;
+    return 1;
+  }
+  return 0;
+}
+
 static void vectis_lua_parse_lockd_config(lua_State *lua, int index,
                                           vectis_lockd_config *lockd,
                                           const char ***endpoints_alloc_out) {
@@ -11041,6 +11069,17 @@ static int vectis_lua_server_new(lua_State *lua) {
     if (!vectis_lua_tls_mode(mode, &config.tls.mode)) {
       return luaL_error(lua,
                         "server tls.mode must be disabled, manual, or acme");
+    }
+    mode = vectis_lua_table_string(lua, tls_index, "version");
+    if (!vectis_lua_tls_version(mode, &config.tls.version)) {
+      return luaL_error(
+          lua, "server tls.version must be default, both, 1.2, or 1.3");
+    }
+    config.tls.cipher_list =
+        vectis_lua_table_string(lua, tls_index, "cipher_list");
+    if (config.tls.cipher_list == NULL) {
+      config.tls.cipher_list =
+          vectis_lua_table_string(lua, tls_index, "cipher");
     }
     bind = vectis_lua_table_string(lua, tls_index, "bind");
     if (bind != NULL) {
