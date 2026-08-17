@@ -11464,6 +11464,93 @@ static int vectis_lua_xml_parse_record(lua_State *lua) {
   return vectis_lua_xml_parse_common(lua, 1);
 }
 
+static int vectis_lua_xml_serialize(lua_State *lua) {
+  lonejson_schema_view schema;
+  lonejson_record_view record;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  vectis_xml_config config;
+  vectis_mutable_bytes out;
+  vectis_error error;
+  vectis_status status;
+  int original_top;
+  int schema_index;
+  int record_index;
+  int value_index;
+  int has_record;
+
+  luaL_checktype(lua, 1, LUA_TTABLE);
+  original_top = lua_gettop(lua);
+  lua_getfield(lua, 1, "schema");
+  if (lua_isnil(lua, -1)) {
+    return luaL_error(lua, "vectis.xml serialize requires schema");
+  }
+  schema_index = lua_gettop(lua);
+  (void)vectis_lua_lonejson_check_schema(lua, schema_index, &schema,
+                                         "vectis.xml schema");
+  vectis_lua_xml_parse_config(lua, 1, &config);
+
+  has_record = 0;
+  lua_getfield(lua, 1, "record");
+  if (!lua_isnil(lua, -1)) {
+    has_record = 1;
+    record_index = lua_gettop(lua);
+    vectis_lua_lonejson_record_view_init(&record);
+    memset(&json_error, 0, sizeof(json_error));
+    json_status = lonejson_lua_check_record(lua, record_index, &schema, &record,
+                                            &json_error);
+    if (json_status != LONEJSON_STATUS_OK) {
+      lua_settop(lua, original_top);
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_INVALID,
+          json_error.message[0] != '\0' ? json_error.message
+                                        : "lonejson record validation failed");
+    }
+  } else {
+    lua_pop(lua, 1);
+  }
+
+  if (!has_record) {
+    lua_getfield(lua, 1, "value");
+    if (lua_isnil(lua, -1)) {
+      lua_pop(lua, 1);
+      lua_getfield(lua, 1, "table");
+    }
+    if (lua_isnil(lua, -1)) {
+      lua_settop(lua, original_top);
+      return luaL_error(lua, "vectis.xml serialize requires record or value");
+    }
+    value_index = lua_gettop(lua);
+    memset(&json_error, 0, sizeof(json_error));
+    vectis_lua_lonejson_record_view_init(&record);
+    json_status = lonejson_lua_new_record(lua, schema_index, &record_index,
+                                          &record, &json_error);
+    if (json_status != LONEJSON_STATUS_OK) {
+      lua_settop(lua, original_top);
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_INVALID,
+          json_error.message[0] != '\0' ? json_error.message
+                                        : "lonejson record allocation failed");
+    }
+    if (vectis_lua_lonejson_assign_table(lua, schema_index, record_index,
+                                         value_index) != 0) {
+      return 1;
+    }
+  }
+
+  vectis_error_clear(&error);
+  status = vectis_xml_lonejson_to_bytes(schema.map, &config, record.record,
+                                        &out, &error);
+  if (status != VECTIS_OK) {
+    lua_settop(lua, original_top);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  lua_settop(lua, original_top);
+  lua_pushlstring(lua, (const char *)out.data, out.size);
+  vectis_mutable_bytes_cleanup(&out);
+  return 1;
+}
+
 static int vectis_lua_dsv_char_option(lua_State *lua, int index,
                                       const char *field, int fallback) {
   const char *value;
@@ -19837,6 +19924,8 @@ static int luaopen_vectis_xml_core(lua_State *lua) {
   lua_setfield(lua, -2, "parse");
   lua_pushcfunction(lua, vectis_lua_xml_parse_record);
   lua_setfield(lua, -2, "parse_record");
+  lua_pushcfunction(lua, vectis_lua_xml_serialize);
+  lua_setfield(lua, -2, "serialize");
   return 1;
 }
 

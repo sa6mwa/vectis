@@ -29,6 +29,15 @@ function M.parse_record(first, second)
   return core.parse_record(opts_from(first, second))
 end
 
+function M.serialize(first, second)
+  if second ~= nil then
+    local opts = copy_table(second)
+    opts.value = first
+    return core.serialize(opts)
+  end
+  return core.serialize(first)
+end
+
 M.core = core
 
 return M

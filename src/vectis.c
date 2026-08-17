@@ -11,6 +11,7 @@
 #include <libssh2.h>
 #include <libssh2_sftp.h>
 #include <libxml/parser.h>
+#include <libxml/tree.h>
 #include <libxml/xmlreader.h>
 #include <limits.h>
 #include <lonejson.h>
@@ -30290,6 +30291,754 @@ vectis_status vectis_xml_parse_lonejson(struct lc_source *source,
   wrapped_source = vectis_source_from_lc(source);
   return vectis_xml_parse_lonejson_source(&wrapped_source, map, config, out,
                                           error);
+}
+
+static vectis_status vectis_xml_sink_write(lc_sink *sink, const void *data,
+                                           size_t size, vectis_error *error) {
+  lc_error lcerr;
+  int rc;
+
+  if (size == 0u) {
+    return VECTIS_OK;
+  }
+  if (sink == NULL || sink->write == NULL || data == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML output sink is required");
+    return VECTIS_ERR_INVALID;
+  }
+  lc_error_init(&lcerr);
+  rc = sink->write(sink, data, size, &lcerr);
+  if (!rc) {
+    (void)vectis_source_error(
+        error, lcerr.code != LC_OK ? lcerr.code : LC_ERR_TRANSPORT, &lcerr,
+        "failed to write XML output");
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_xml_sink_write_cstr(lc_sink *sink,
+                                                const char *value,
+                                                vectis_error *error) {
+  return vectis_xml_sink_write(sink, value, value != NULL ? strlen(value) : 0u,
+                               error);
+}
+
+static vectis_status vectis_xml_validate_output_name(const char *name,
+                                                     const char *kind,
+                                                     vectis_error *error) {
+  if (name == NULL || name[0] == '\0') {
+    vectis_set_errorf(error, VECTIS_ERR_INVALID,
+                      "XML %s name must not be empty", kind);
+    return VECTIS_ERR_INVALID;
+  }
+  if (xmlValidateName((const xmlChar *)name, 0) != 0) {
+    vectis_set_errorf(error, VECTIS_ERR_INVALID, "XML %s name is invalid: %s",
+                      kind, name);
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_xml_write_escaped(lc_sink *sink, const char *data,
+                                              size_t size, int attribute,
+                                              vectis_error *error) {
+  const char *replacement;
+  size_t start;
+  size_t i;
+
+  if (data == NULL && size > 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML text data is required");
+    return VECTIS_ERR_INVALID;
+  }
+  start = 0u;
+  for (i = 0u; i < size; ++i) {
+    replacement = NULL;
+    switch ((unsigned char)data[i]) {
+    case '&':
+      replacement = "&amp;";
+      break;
+    case '<':
+      replacement = "&lt;";
+      break;
+    case '>':
+      replacement = "&gt;";
+      break;
+    case '"':
+      replacement = attribute ? "&quot;" : NULL;
+      break;
+    case '\'':
+      replacement = attribute ? "&apos;" : NULL;
+      break;
+    default:
+      if (((unsigned char)data[i] < 0x20u) && data[i] != '\t' &&
+          data[i] != '\n' && data[i] != '\r') {
+        vectis_set_error(error, VECTIS_ERR_INVALID,
+                         "XML text contains a control character");
+        return VECTIS_ERR_INVALID;
+      }
+      break;
+    }
+    if (replacement == NULL) {
+      continue;
+    }
+    if (i > start && vectis_xml_sink_write(sink, data + start, i - start,
+                                           error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    if (vectis_xml_sink_write_cstr(sink, replacement, error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    start = i + 1u;
+  }
+  if (size > start) {
+    return vectis_xml_sink_write(sink, data + start, size - start, error);
+  }
+  return VECTIS_OK;
+}
+
+static const char *vectis_xml_string_field_value(const lonejson_field *field,
+                                                 const void *value,
+                                                 int *present) {
+  const char *base;
+  const char *const *dynamic_value;
+
+  if (present != NULL) {
+    *present = 1;
+  }
+  base = (const char *)value + field->struct_offset;
+  if (field->storage == LONEJSON_STORAGE_DYNAMIC) {
+    dynamic_value = (const char *const *)base;
+    if (*dynamic_value == NULL) {
+      if (present != NULL) {
+        *present = 0;
+      }
+      return "";
+    }
+    return *dynamic_value;
+  }
+  return base;
+}
+
+static int vectis_xml_scalar_field_present(const lonejson_field *field,
+                                           const void *value) {
+  if (field != NULL && (field->flags & LONEJSON_FIELD_HAS_PRESENCE) != 0u) {
+    return *(const int *)((const char *)value + field->presence_offset) != 0;
+  }
+  return 1;
+}
+
+static int vectis_xml_attribute_name(const lonejson_field *field,
+                                     const vectis_xml_config *config,
+                                     const char **out) {
+  size_t prefix_len;
+
+  if (out != NULL) {
+    *out = NULL;
+  }
+  if (field == NULL || config == NULL || config->attribute_prefix == NULL ||
+      config->attribute_prefix[0] == '\0' || field->json_key == NULL) {
+    return 0;
+  }
+  prefix_len = strlen(config->attribute_prefix);
+  if (strncmp(field->json_key, config->attribute_prefix, prefix_len) != 0 ||
+      field->json_key[prefix_len] == '\0') {
+    return 0;
+  }
+  if (out != NULL) {
+    *out = field->json_key + prefix_len;
+  }
+  return 1;
+}
+
+static int vectis_xml_field_is_text(const lonejson_field *field,
+                                    const vectis_xml_config *config) {
+  return field != NULL && config != NULL && config->text_key != NULL &&
+         config->text_key[0] != '\0' && field->json_key != NULL &&
+         strcmp(field->json_key, config->text_key) == 0;
+}
+
+static int vectis_xml_field_should_emit(const lonejson_field *field,
+                                        const void *value) {
+  const lonejson_string_array *strings;
+  const lonejson_i64_array *i64s;
+  const lonejson_u64_array *u64s;
+  const lonejson_f64_array *f64s;
+  const lonejson_bool_array *bools;
+  const lonejson_object_array *objects;
+  const lonejson_spooled *spooled;
+  int present;
+
+  if (field == NULL || value == NULL ||
+      !vectis_xml_scalar_field_present(field, value)) {
+    return 0;
+  }
+  switch (field->kind) {
+  case LONEJSON_FIELD_KIND_STRING:
+    (void)vectis_xml_string_field_value(field, value, &present);
+    return present || ((field->flags & LONEJSON_FIELD_REQUIRED) != 0u);
+  case LONEJSON_FIELD_KIND_STRING_STREAM:
+  case LONEJSON_FIELD_KIND_BASE64_STREAM:
+    spooled =
+        (const lonejson_spooled *)((const char *)value + field->struct_offset);
+    return lonejson_spooled_size(spooled) > 0u ||
+           ((field->flags & LONEJSON_FIELD_REQUIRED) != 0u);
+  case LONEJSON_FIELD_KIND_STRING_ARRAY:
+    strings = (const lonejson_string_array *)((const char *)value +
+                                              field->struct_offset);
+    return strings->count > 0u;
+  case LONEJSON_FIELD_KIND_I64_ARRAY:
+    i64s = (const lonejson_i64_array *)((const char *)value +
+                                        field->struct_offset);
+    return i64s->count > 0u;
+  case LONEJSON_FIELD_KIND_U64_ARRAY:
+    u64s = (const lonejson_u64_array *)((const char *)value +
+                                        field->struct_offset);
+    return u64s->count > 0u;
+  case LONEJSON_FIELD_KIND_F64_ARRAY:
+    f64s = (const lonejson_f64_array *)((const char *)value +
+                                        field->struct_offset);
+    return f64s->count > 0u;
+  case LONEJSON_FIELD_KIND_BOOL_ARRAY:
+    bools = (const lonejson_bool_array *)((const char *)value +
+                                          field->struct_offset);
+    return bools->count > 0u;
+  case LONEJSON_FIELD_KIND_OBJECT_ARRAY:
+    objects = (const lonejson_object_array *)((const char *)value +
+                                              field->struct_offset);
+    return objects->count > 0u;
+  default:
+    return 1;
+  }
+}
+
+static vectis_status vectis_xml_write_scalar_text(lc_sink *sink,
+                                                  const lonejson_field *field,
+                                                  const void *value,
+                                                  vectis_error *error);
+
+typedef struct vectis_xml_spooled_sink {
+  lc_sink *sink;
+  vectis_error *error;
+} vectis_xml_spooled_sink;
+
+static lonejson_status
+vectis_xml_spooled_write_escaped(void *user, const void *data, size_t size,
+                                 lonejson_error *json_error) {
+  vectis_xml_spooled_sink *state;
+  vectis_status status;
+
+  state = (vectis_xml_spooled_sink *)user;
+  if (state == NULL || state->sink == NULL) {
+    if (json_error != NULL) {
+      lonejson_error_init(json_error);
+      json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
+      vectis_copy_cstr(json_error->message, sizeof(json_error->message),
+                       "XML spooled sink is required");
+    }
+    return LONEJSON_STATUS_CALLBACK_FAILED;
+  }
+  status = vectis_xml_write_escaped(state->sink, (const char *)data, size, 0,
+                                    state->error);
+  if (status != VECTIS_OK) {
+    if (json_error != NULL) {
+      lonejson_error_init(json_error);
+      json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
+      vectis_copy_cstr(json_error->message, sizeof(json_error->message),
+                       state->error != NULL && state->error->message[0] != '\0'
+                           ? state->error->message
+                           : "failed to write XML spooled text");
+    }
+    return LONEJSON_STATUS_CALLBACK_FAILED;
+  }
+  return LONEJSON_STATUS_OK;
+}
+
+static vectis_status
+vectis_xml_write_spooled_text(lc_sink *sink, const lonejson_spooled *spooled,
+                              vectis_error *error) {
+  vectis_xml_spooled_sink state;
+  lonejson_error json_error;
+  lonejson_status json_status;
+
+  state.sink = sink;
+  state.error = error;
+  lonejson_error_init(&json_error);
+  json_status = lonejson_spooled_write_to_sink(
+      spooled, vectis_xml_spooled_write_escaped, &state, &json_error);
+  if (json_status != LONEJSON_STATUS_OK) {
+    return vectis_xml_lonejson_error(error, json_status, &json_error,
+                                     "failed to write XML spooled text");
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_xml_write_scalar_text(lc_sink *sink,
+                                                  const lonejson_field *field,
+                                                  const void *value,
+                                                  vectis_error *error) {
+  const char *base;
+  const char *text;
+  const lonejson_spooled *spooled;
+  char number[64];
+  int written;
+  int present;
+
+  base = (const char *)value + field->struct_offset;
+  switch (field->kind) {
+  case LONEJSON_FIELD_KIND_STRING:
+    text = vectis_xml_string_field_value(field, value, &present);
+    if (!present && (field->flags & LONEJSON_FIELD_REQUIRED) == 0u) {
+      return VECTIS_OK;
+    }
+    return vectis_xml_write_escaped(sink, text, strlen(text), 0, error);
+  case LONEJSON_FIELD_KIND_STRING_STREAM:
+    spooled = (const lonejson_spooled *)base;
+    return vectis_xml_write_spooled_text(sink, spooled, error);
+  case LONEJSON_FIELD_KIND_I64:
+    written = snprintf(number, sizeof(number), "%lld",
+                       (long long)*(const lonejson_int64 *)base);
+    break;
+  case LONEJSON_FIELD_KIND_U64:
+    written = snprintf(number, sizeof(number), "%llu",
+                       (unsigned long long)*(const lonejson_uint64 *)base);
+    break;
+  case LONEJSON_FIELD_KIND_F64:
+    written = snprintf(number, sizeof(number), "%.17g", *(const double *)base);
+    break;
+  case LONEJSON_FIELD_KIND_BOOL:
+    text = *(const int *)base ? "true" : "false";
+    return vectis_xml_sink_write_cstr(sink, text, error);
+  default:
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "XML scalar field kind is not supported");
+    return VECTIS_ERR_INVALID;
+  }
+  if (written < 0 || (size_t)written >= sizeof(number)) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to format XML scalar field");
+    return VECTIS_ERR_STATE;
+  }
+  return vectis_xml_sink_write(sink, number, (size_t)written, error);
+}
+
+static vectis_status vectis_xml_write_attribute(lc_sink *sink, const char *name,
+                                                const lonejson_field *field,
+                                                const void *value,
+                                                vectis_error *error) {
+  const char *base;
+  const char *text;
+  char number[64];
+  int written;
+  int present;
+
+  if (vectis_xml_validate_output_name(name, "attribute", error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (vectis_xml_sink_write_cstr(sink, " ", error) != VECTIS_OK ||
+      vectis_xml_sink_write_cstr(sink, name, error) != VECTIS_OK ||
+      vectis_xml_sink_write_cstr(sink, "=\"", error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  base = (const char *)value + field->struct_offset;
+  switch (field->kind) {
+  case LONEJSON_FIELD_KIND_STRING:
+    text = vectis_xml_string_field_value(field, value, &present);
+    if (!present && (field->flags & LONEJSON_FIELD_REQUIRED) == 0u) {
+      text = "";
+    }
+    if (vectis_xml_write_escaped(sink, text, strlen(text), 1, error) !=
+        VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    break;
+  case LONEJSON_FIELD_KIND_I64:
+    written = snprintf(number, sizeof(number), "%lld",
+                       (long long)*(const lonejson_int64 *)base);
+    goto write_number;
+  case LONEJSON_FIELD_KIND_U64:
+    written = snprintf(number, sizeof(number), "%llu",
+                       (unsigned long long)*(const lonejson_uint64 *)base);
+    goto write_number;
+  case LONEJSON_FIELD_KIND_F64:
+    written = snprintf(number, sizeof(number), "%.17g", *(const double *)base);
+  write_number:
+    if (written < 0 || (size_t)written >= sizeof(number)) {
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to format XML attribute value");
+      return VECTIS_ERR_STATE;
+    }
+    if (vectis_xml_sink_write(sink, number, (size_t)written, error) !=
+        VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    break;
+  case LONEJSON_FIELD_KIND_BOOL:
+    text = *(const int *)base ? "true" : "false";
+    if (vectis_xml_sink_write_cstr(sink, text, error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    break;
+  default:
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "XML attribute field kind is not supported");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_xml_sink_write_cstr(sink, "\"", error);
+}
+
+static vectis_status vectis_xml_write_element_start(lc_sink *sink,
+                                                    const char *name,
+                                                    vectis_error *error) {
+  if (vectis_xml_validate_output_name(name, "element", error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (vectis_xml_sink_write_cstr(sink, "<", error) != VECTIS_OK ||
+      vectis_xml_sink_write_cstr(sink, name, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_xml_write_element_end(lc_sink *sink,
+                                                  const char *name,
+                                                  vectis_error *error) {
+  if (vectis_xml_sink_write_cstr(sink, "</", error) != VECTIS_OK ||
+      vectis_xml_sink_write_cstr(sink, name, error) != VECTIS_OK ||
+      vectis_xml_sink_write_cstr(sink, ">", error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_xml_write_object(lc_sink *sink, const char *name,
+                                             const lonejson_map *map,
+                                             const vectis_xml_config *config,
+                                             const void *value, size_t depth,
+                                             vectis_error *error);
+
+static vectis_status
+vectis_xml_write_scalar_element(lc_sink *sink, const char *name,
+                                const lonejson_field *field, const void *value,
+                                const vectis_xml_config *config, size_t depth,
+                                vectis_error *error) {
+  (void)config;
+  (void)depth;
+  if (vectis_xml_write_element_start(sink, name, error) != VECTIS_OK ||
+      vectis_xml_sink_write_cstr(sink, ">", error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  if (vectis_xml_write_scalar_text(sink, field, value, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  return vectis_xml_write_element_end(sink, name, error);
+}
+
+static vectis_status vectis_xml_write_array_elements(
+    lc_sink *sink, const lonejson_field *field, const vectis_xml_config *config,
+    const void *value, size_t depth, vectis_error *error) {
+  const lonejson_string_array *strings;
+  const lonejson_i64_array *i64s;
+  const lonejson_u64_array *u64s;
+  const lonejson_f64_array *f64s;
+  const lonejson_bool_array *bools;
+  const lonejson_object_array *objects;
+  lonejson_field item_field;
+  const unsigned char *items;
+  size_t elem_size;
+  size_t i;
+  vectis_status status;
+  int bool_value;
+
+  item_field = *field;
+  item_field.struct_offset = 0u;
+  item_field.flags = LONEJSON_FIELD_REQUIRED;
+  item_field.fixed_capacity = 0u;
+  item_field.storage = LONEJSON_STORAGE_FIXED;
+  item_field.submap = NULL;
+  switch (field->kind) {
+  case LONEJSON_FIELD_KIND_STRING_ARRAY:
+    strings = (const lonejson_string_array *)((const char *)value +
+                                              field->struct_offset);
+    item_field.kind = LONEJSON_FIELD_KIND_STRING;
+    item_field.storage = LONEJSON_STORAGE_DYNAMIC;
+    for (i = 0u; i < strings->count; ++i) {
+      status = vectis_xml_write_scalar_element(sink, field->json_key,
+                                               &item_field, &strings->items[i],
+                                               config, depth, error);
+      if (status != VECTIS_OK) {
+        return status;
+      }
+    }
+    return VECTIS_OK;
+  case LONEJSON_FIELD_KIND_I64_ARRAY:
+    i64s = (const lonejson_i64_array *)((const char *)value +
+                                        field->struct_offset);
+    item_field.kind = LONEJSON_FIELD_KIND_I64;
+    for (i = 0u; i < i64s->count; ++i) {
+      status = vectis_xml_write_scalar_element(sink, field->json_key,
+                                               &item_field, &i64s->items[i],
+                                               config, depth, error);
+      if (status != VECTIS_OK) {
+        return status;
+      }
+    }
+    return VECTIS_OK;
+  case LONEJSON_FIELD_KIND_U64_ARRAY:
+    u64s = (const lonejson_u64_array *)((const char *)value +
+                                        field->struct_offset);
+    item_field.kind = LONEJSON_FIELD_KIND_U64;
+    for (i = 0u; i < u64s->count; ++i) {
+      status = vectis_xml_write_scalar_element(sink, field->json_key,
+                                               &item_field, &u64s->items[i],
+                                               config, depth, error);
+      if (status != VECTIS_OK) {
+        return status;
+      }
+    }
+    return VECTIS_OK;
+  case LONEJSON_FIELD_KIND_F64_ARRAY:
+    f64s = (const lonejson_f64_array *)((const char *)value +
+                                        field->struct_offset);
+    item_field.kind = LONEJSON_FIELD_KIND_F64;
+    for (i = 0u; i < f64s->count; ++i) {
+      status = vectis_xml_write_scalar_element(sink, field->json_key,
+                                               &item_field, &f64s->items[i],
+                                               config, depth, error);
+      if (status != VECTIS_OK) {
+        return status;
+      }
+    }
+    return VECTIS_OK;
+  case LONEJSON_FIELD_KIND_BOOL_ARRAY:
+    bools = (const lonejson_bool_array *)((const char *)value +
+                                          field->struct_offset);
+    item_field.kind = LONEJSON_FIELD_KIND_BOOL;
+    for (i = 0u; i < bools->count; ++i) {
+      bool_value = bools->items[i] ? 1 : 0;
+      status =
+          vectis_xml_write_scalar_element(sink, field->json_key, &item_field,
+                                          &bool_value, config, depth, error);
+      if (status != VECTIS_OK) {
+        return status;
+      }
+    }
+    return VECTIS_OK;
+  case LONEJSON_FIELD_KIND_OBJECT_ARRAY:
+    objects = (const lonejson_object_array *)((const char *)value +
+                                              field->struct_offset);
+    elem_size =
+        field->elem_size != 0u ? field->elem_size : field->submap->struct_size;
+    items = (const unsigned char *)objects->items;
+    for (i = 0u; i < objects->count; ++i) {
+      status =
+          vectis_xml_write_object(sink, field->json_key, field->submap, config,
+                                  items + i * elem_size, depth + 1u, error);
+      if (status != VECTIS_OK) {
+        return status;
+      }
+    }
+    return VECTIS_OK;
+  default:
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "XML array field kind is not supported");
+    return VECTIS_ERR_INVALID;
+  }
+}
+
+static vectis_status vectis_xml_write_field(lc_sink *sink,
+                                            const lonejson_field *field,
+                                            const vectis_xml_config *config,
+                                            const void *value, size_t depth,
+                                            vectis_error *error) {
+  const void *field_value;
+
+  if (!vectis_xml_field_should_emit(field, value)) {
+    return VECTIS_OK;
+  }
+  field_value = (const char *)value + field->struct_offset;
+  if (vectis_xml_field_is_array(field)) {
+    return vectis_xml_write_array_elements(sink, field, config, value, depth,
+                                           error);
+  }
+  if (field->kind == LONEJSON_FIELD_KIND_OBJECT) {
+    return vectis_xml_write_object(sink, field->json_key, field->submap, config,
+                                   field_value, depth + 1u, error);
+  }
+  return vectis_xml_write_scalar_element(sink, field->json_key, field, value,
+                                         config, depth, error);
+}
+
+static vectis_status vectis_xml_write_object(lc_sink *sink, const char *name,
+                                             const lonejson_map *map,
+                                             const vectis_xml_config *config,
+                                             const void *value, size_t depth,
+                                             vectis_error *error) {
+  const lonejson_field *field;
+  const char *attribute_name;
+  size_t i;
+  vectis_status status;
+
+  if (map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML lonejson map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (value == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "XML lonejson value is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (depth > config->max_depth) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "XML output nesting exceeds max_depth");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_xml_write_element_start(sink, name, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  for (i = 0u; i < map->field_count; ++i) {
+    field = &map->fields[i];
+    if (!vectis_xml_field_should_emit(field, value) ||
+        !vectis_xml_attribute_name(field, config, &attribute_name)) {
+      continue;
+    }
+    if (vectis_xml_field_is_array(field) ||
+        field->kind == LONEJSON_FIELD_KIND_OBJECT ||
+        field->kind == LONEJSON_FIELD_KIND_OBJECT_ARRAY ||
+        field->kind == LONEJSON_FIELD_KIND_STRING_STREAM ||
+        field->kind == LONEJSON_FIELD_KIND_BASE64_STREAM) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "XML attributes must be scalar fields");
+      return VECTIS_ERR_INVALID;
+    }
+    status =
+        vectis_xml_write_attribute(sink, attribute_name, field, value, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
+  if (vectis_xml_sink_write_cstr(sink, ">", error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  for (i = 0u; i < map->field_count; ++i) {
+    field = &map->fields[i];
+    if (!vectis_xml_field_should_emit(field, value) ||
+        vectis_xml_attribute_name(field, config, NULL)) {
+      continue;
+    }
+    if (vectis_xml_field_is_text(field, config)) {
+      status = vectis_xml_write_scalar_text(sink, field, value, error);
+    } else {
+      status = vectis_xml_write_field(sink, field, config, value, depth, error);
+    }
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
+  return vectis_xml_write_element_end(sink, name, error);
+}
+
+vectis_status vectis_xml_write_lonejson(struct lc_sink *sink,
+                                        const lonejson_map *map,
+                                        const vectis_xml_config *config,
+                                        const void *value,
+                                        vectis_error *error) {
+  vectis_xml_config effective;
+  const char *root_name;
+  vectis_status status;
+
+  if (sink == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML output sink is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (map == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML lonejson map is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (value == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "XML lonejson value is required");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_xml_effective_config(config, &effective, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  root_name =
+      effective.root_element != NULL ? effective.root_element : map->name;
+  status = vectis_xml_write_object(sink, root_name, map, &effective, value, 1u,
+                                   error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_xml_lonejson_to_bytes(const lonejson_map *map,
+                                           const vectis_xml_config *config,
+                                           const void *value,
+                                           vectis_mutable_bytes *out,
+                                           vectis_error *error) {
+  lc_sink *sink;
+  lc_error lcerr;
+  const void *bytes;
+  size_t size;
+  vectis_status status;
+  int rc;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "XML byte output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  out->data = NULL;
+  out->size = 0u;
+  lc_error_init(&lcerr);
+  sink = NULL;
+  rc = lc_sink_to_memory(&sink, &lcerr);
+  if (rc != LC_OK) {
+    (void)vectis_source_error(error, rc, &lcerr,
+                              "failed to create XML memory sink");
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  lc_error_cleanup(&lcerr);
+  status = vectis_xml_write_lonejson(sink, map, config, value, error);
+  if (status != VECTIS_OK) {
+    lc_sink_close(sink);
+    return status;
+  }
+  lc_error_init(&lcerr);
+  rc = lc_sink_memory_bytes(sink, &bytes, &size, &lcerr);
+  if (rc != LC_OK) {
+    (void)vectis_source_error(error, rc, &lcerr,
+                              "failed to read XML memory sink");
+    lc_sink_close(sink);
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  if (size == (size_t)-1) {
+    lc_sink_close(sink);
+    lc_error_cleanup(&lcerr);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "XML output is too large");
+    return VECTIS_ERR_NOMEM;
+  }
+  out->data = malloc(size + 1u);
+  if (out->data == NULL) {
+    lc_sink_close(sink);
+    lc_error_cleanup(&lcerr);
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate XML bytes");
+    return VECTIS_ERR_NOMEM;
+  }
+  memcpy(out->data, bytes, size);
+  ((char *)out->data)[size] = '\0';
+  out->size = size;
+  lc_sink_close(sink);
+  lc_error_cleanup(&lcerr);
+  vectis_error_clear(error);
+  return VECTIS_OK;
 }
 
 vectis_status vectis_format_key(char *out, size_t out_size, vectis_error *error,

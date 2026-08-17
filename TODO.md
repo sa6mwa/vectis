@@ -345,7 +345,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Resolve OPC UA Lua client PubSub scope: current cpkt C89 exposes no client PubSub symbols, the lifecycle surface audit fails if such symbols appear unbound, and client subscription/event/async callback lifetime and error semantics have deterministic direct and packed e2e coverage.
 - [x] Add opt-in live OPC UA server PubSub/MQTT broker validation against the local MQTT integration service without weakening deterministic local Lua coverage.
 - [x] Add a Lua facade for XML parsing backed by the existing libxml2/lonejson C helpers, including memory/path XML-to-lonejson mapped-record workflows and deterministic tests.
-- [ ] Add XML serialization coverage once the C SDK has an XML writer contract; keep the behavior explicit as serialization, not hidden JSON/string conversion.
+- [x] Add XML serialization coverage once the C SDK has an XML writer contract; keep the behavior explicit as serialization, not hidden JSON/string conversion.
 - [x] Add Lua facades for DSV/CSV/TSV materialized parsing and serialization backed by the existing C helpers, including typed row callbacks through Lua-owned LoneJSON records, custom delimiter, strict/permissive width, comments, and spill-to-disk behavior.
 - [x] Extend DSV typed Lua parsing to support dynamic string fields without violating LoneJSON Lua record ownership/cleanup invariants.
 - [x] Add packed scenario coverage for DSV Lua workflows.

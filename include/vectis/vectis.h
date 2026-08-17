@@ -2838,6 +2838,31 @@ vectis_status vectis_xml_parse_lonejson_source(const vectis_source *source,
                                                const lonejson_map *map,
                                                const vectis_xml_config *config,
                                                void *out, vectis_error *error);
+/**
+ * Serialize one LoneJSON-mapped record as XML into an `lc_sink`.
+ *
+ * `root_element` defaults to the LoneJSON map name. Fields whose JSON key
+ * equals `text_key` are emitted as element text. When `attribute_prefix` is
+ * non-empty, fields whose key starts with that prefix are emitted as
+ * attributes with the prefix stripped. Arrays are emitted as repeated
+ * elements. Spooled string fields are copied incrementally to the sink.
+ */
+vectis_status vectis_xml_write_lonejson(struct lc_sink *sink,
+                                        const lonejson_map *map,
+                                        const vectis_xml_config *config,
+                                        const void *value, vectis_error *error);
+/**
+ * Materialize one LoneJSON-mapped record as owned XML bytes.
+ *
+ * On success `out->data` is NUL-terminated for convenience and must be released
+ * with `vectis_mutable_bytes_cleanup()`. The terminator is not included in
+ * `out->size`.
+ */
+vectis_status vectis_xml_lonejson_to_bytes(const lonejson_map *map,
+                                           const vectis_xml_config *config,
+                                           const void *value,
+                                           vectis_mutable_bytes *out,
+                                           vectis_error *error);
 vectis_status vectis_format_key(char *out, size_t out_size, vectis_error *error,
                                 const char *format, ...);
 vectis_status vectis_lockd_state_load(struct lc_client *client, const char *key,

@@ -532,6 +532,7 @@ assert(type(dsv.each) == "function")
 assert(type(dsv.to_string) == "function")
 assert(type(xml.parse) == "function")
 assert(type(xml.parse_record) == "function")
+assert(type(xml.serialize) == "function")
 assert(type(rest.route) == "function")
 assert(type(rest.client) == "function")
 local smoke_rest_client = rest.client({base_url = "http://127.0.0.1"})
@@ -622,6 +623,51 @@ assert(xml_doc.line[1].sku == "A-1")
 assert(xml_doc.line[2].quantity == 5)
 assert(xml_doc.tag[2] == "priority")
 assert(xml_doc.active == true)
+xml_serialized = assert(xml.serialize({
+  schema = xml_schema,
+  value = {
+    id = "inv-&-1",
+    amount = {currency = "EUR", text = 12.5},
+    line = {
+      {sku = "A-1", quantity = 2},
+      {sku = "B-2", quantity = 5},
+    },
+    tag = {"paid", "priority"},
+    active = true,
+  },
+  root_element = "invoice",
+  trim_text = true,
+}))
+assert(xml_serialized:find("<invoice>", 1, true))
+assert(xml_serialized:find("<id>inv-&amp;-1</id>", 1, true))
+assert(xml_serialized:find("<line><sku>A-1</sku><quantity>2</quantity></line>", 1, true))
+xml_roundtrip = assert(xml.parse({
+  schema = xml_schema,
+  xml = xml_serialized,
+  root_element = "invoice",
+  trim_text = true,
+}))
+assert(xml_roundtrip.id == "inv-&-1")
+assert(xml_roundtrip.line[2].quantity == 5)
+xml_attr_schema = lonejson.schema("item", {
+  lonejson.field("@id", lonejson.string({required = true})),
+  lonejson.field("text", lonejson.string({required = true})),
+})
+xml_attr_serialized = assert(xml.serialize({
+  schema = xml_attr_schema,
+  value = {["@id"] = "a&b", text = "hello <xml>"},
+  root_element = "item",
+  attribute_prefix = "@",
+}))
+assert(xml_attr_serialized == "<item id=\"a&amp;b\">hello &lt;xml&gt;</item>")
+xml_attr_roundtrip = assert(xml.parse({
+  schema = xml_attr_schema,
+  xml = xml_attr_serialized,
+  root_element = "item",
+  attribute_prefix = "@",
+}))
+assert(xml_attr_roundtrip["@id"] == "a&b")
+assert(xml_attr_roundtrip.text == "hello <xml>")
 local xml_path = os.tmpname()
 local xml_file = assert(io.open(xml_path, "wb"))
 xml_file:write(xml_payload)

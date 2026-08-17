@@ -161,7 +161,9 @@ XML is parsed with libxml2 tokens and LoneJSON maps. Elements map by key,
 attributes map by name or configured prefix, nested objects recurse through
 submaps, repeated contiguous elements fill LoneJSON arrays, and large text
 fields can use LoneJSON spooled stream fields. Non-contiguous repeated array
-elements are rejected rather than buffered and reordered.
+elements are rejected rather than buffered and reordered. The matching XML
+writer serializes LoneJSON-mapped records to an `lc_sink` or owned byte buffer
+without building an XML DOM.
 
 DSV covers CSV, TSV, and configurable delimiter-separated values. Row-only input
 can infer column order from a map; headered input can infer names from the first

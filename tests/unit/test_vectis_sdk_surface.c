@@ -64,6 +64,11 @@ typedef struct sample_xml_blob_doc {
   lonejson_spooled body;
 } sample_xml_blob_doc;
 
+typedef struct sample_xml_attr_doc {
+  char attr_id[16];
+  char text[32];
+} sample_xml_attr_doc;
+
 static int sample_bytes_contains(vectis_bytes bytes, const char *needle) {
   size_t needle_size;
   size_t i;
@@ -132,6 +137,12 @@ static const lonejson_field sample_xml_doc_fields[] = {
 static const lonejson_field sample_xml_blob_doc_fields[] = {
     LONEJSON_FIELD_STRING_STREAM_REQ(sample_xml_blob_doc, body, "body")};
 
+static const lonejson_field sample_xml_attr_doc_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(sample_xml_attr_doc, attr_id, "@id",
+                                    LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(sample_xml_attr_doc, text, "text",
+                                    LONEJSON_OVERFLOW_FAIL)};
+
 LONEJSON_MAP_DEFINE(sample_doc_map, sample_doc, sample_doc_fields);
 LONEJSON_MAP_DEFINE(sample_error_doc_map, sample_error_doc,
                     sample_error_doc_fields);
@@ -139,6 +150,8 @@ LONEJSON_MAP_DEFINE(sample_dsv_doc_map, sample_dsv_doc, sample_dsv_doc_fields);
 LONEJSON_MAP_DEFINE(sample_xml_doc_map, sample_xml_doc, sample_xml_doc_fields);
 LONEJSON_MAP_DEFINE(sample_xml_blob_doc_map, sample_xml_blob_doc,
                     sample_xml_blob_doc_fields);
+LONEJSON_MAP_DEFINE(sample_xml_attr_doc_map, sample_xml_attr_doc,
+                    sample_xml_attr_doc_fields);
 
 static vectis_status sample_json_handler(vectis_app *app,
                                          vectis_request *request, void *input,
@@ -2633,14 +2646,21 @@ static void assert_xml_surface(void) {
   vectis_error error;
   vectis_status status;
   sample_xml_doc doc;
+  sample_xml_doc roundtrip_doc;
   sample_xml_blob_doc blob_doc;
+  sample_xml_attr_doc attr_doc;
+  sample_xml_attr_doc parsed_attr_doc;
   sample_xml_line *lines;
   char *large_xml;
   size_t large_body_size;
+  vectis_mutable_bytes serialized;
+  vectis_bytes serialized_view;
 
   config = vectis_xml_default();
   config.root_element = "invoice";
   memset(&doc, 0, sizeof(doc));
+  memset(&roundtrip_doc, 0, sizeof(roundtrip_doc));
+  memset(&serialized, 0, sizeof(serialized));
   xml_source = vectis_source_from_memory(xml, sizeof(xml) - 1u);
   status = vectis_xml_parse_lonejson_source(&xml_source, &sample_xml_doc_map,
                                             &config, &doc, &error);
@@ -2658,8 +2678,51 @@ static void assert_xml_surface(void) {
   assert(strcmp(doc.tag.items[0], "finance") == 0);
   assert(strcmp(doc.tag.items[1], "xml") == 0);
   assert(doc.active == 1);
+  strcpy(doc.id, " inv & 001 ");
+  status = vectis_xml_lonejson_to_bytes(&sample_xml_doc_map, &config, &doc,
+                                        &serialized, &error);
+  assert(status == VECTIS_OK);
+  serialized_view.data = serialized.data;
+  serialized_view.size = serialized.size;
+  assert(sample_bytes_contains(serialized_view, "<invoice>"));
+  assert(sample_bytes_contains(serialized_view, " inv &amp; 001 "));
+  assert(sample_bytes_contains(serialized_view, "<line>"));
+  xml_source = vectis_source_from_memory(serialized.data, serialized.size);
+  status = vectis_xml_parse_lonejson_source(&xml_source, &sample_xml_doc_map,
+                                            &config, &roundtrip_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(roundtrip_doc.id, " inv & 001 ") == 0);
+  assert(roundtrip_doc.line.count == 2u);
+  assert(roundtrip_doc.tag.count == 2u);
+  assert(roundtrip_doc.active == 1);
+  lonejson_cleanup(&sample_xml_doc_map, &roundtrip_doc);
+  vectis_mutable_bytes_cleanup(&serialized);
   lonejson_cleanup(&sample_xml_doc_map, &doc);
 
+  memset(&attr_doc, 0, sizeof(attr_doc));
+  memset(&parsed_attr_doc, 0, sizeof(parsed_attr_doc));
+  strcpy(attr_doc.attr_id, "a&b");
+  strcpy(attr_doc.text, "hello <xml>");
+  config = vectis_xml_default();
+  config.root_element = "item";
+  config.attribute_prefix = "@";
+  status = vectis_xml_lonejson_to_bytes(&sample_xml_attr_doc_map, &config,
+                                        &attr_doc, &serialized, &error);
+  assert(status == VECTIS_OK);
+  serialized_view.data = serialized.data;
+  serialized_view.size = serialized.size;
+  assert(sample_bytes_contains(
+      serialized_view, "<item id=\"a&amp;b\">hello &lt;xml&gt;</item>"));
+  xml_source = vectis_source_from_memory(serialized.data, serialized.size);
+  status = vectis_xml_parse_lonejson_source(
+      &xml_source, &sample_xml_attr_doc_map, &config, &parsed_attr_doc, &error);
+  assert(status == VECTIS_OK);
+  assert(strcmp(parsed_attr_doc.attr_id, "a&b") == 0);
+  assert(strcmp(parsed_attr_doc.text, "hello <xml>") == 0);
+  vectis_mutable_bytes_cleanup(&serialized);
+
+  config = vectis_xml_default();
+  config.root_element = "invoice";
   xml_source = vectis_source_from_memory(bad_root, sizeof(bad_root) - 1u);
   status = vectis_xml_parse_lonejson_source(&xml_source, &sample_xml_doc_map,
                                             &config, &doc, &error);
@@ -2708,6 +2771,12 @@ static void assert_xml_surface(void) {
   assert(status == VECTIS_OK);
   assert(lonejson_spooled_size(&blob_doc.body) == large_body_size);
   assert(lonejson_spooled_spilled(&blob_doc.body));
+  status = vectis_xml_lonejson_to_bytes(&sample_xml_blob_doc_map, &config,
+                                        &blob_doc, &serialized, &error);
+  assert(status == VECTIS_OK);
+  assert(serialized.size ==
+         large_body_size + strlen("<doc><body></body></doc>"));
+  vectis_mutable_bytes_cleanup(&serialized);
   lonejson_cleanup(&sample_xml_blob_doc_map, &blob_doc);
   config.trim_text = 1;
   status = vectis_xml_parse_lonejson_source(

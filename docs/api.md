@@ -52,7 +52,7 @@ Major groups:
   service registration, consumer receivers, and bounded consumer JSON payload
   decoding with `vectis_lockd_consumer_json_into()`.
 - DSV/XML/JSON: DSV parse/write/spill helpers, JSON array rewrite/iteration,
-  XML-to-LoneJSON parsing, and request JSON helpers.
+  XML-to-LoneJSON parsing, LoneJSON-to-XML writing, and request JSON helpers.
 - HTTP/curl workflows: `vectis_http_client_config`, `vectis_http_request`,
   `vectis_http_response`, client execute methods, JSON helpers, file upload,
   and file download.
