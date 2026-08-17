@@ -375,6 +375,8 @@ typedef struct vectis_app_impl {
   pthread_mutex_t mutex;
   pthread_cond_t service_cond;
   pthread_mutex_t service_control_write_mutex;
+  size_t abandoned_managed_service_monitors;
+  int destroy_deferred;
   int started;
   pid_t kore_child_pid;
   int kore_child_reaped;
@@ -843,6 +845,7 @@ LONEJSON_MAP_DEFINE(vectis_sus_worker_reply_json_map,
                     vectis_sus_worker_reply_json_fields);
 
 typedef struct vectis_managed_service_impl {
+  pthread_mutex_t lifecycle_mutex;
   char *name;
   pslog_logger *logger;
   void *context;
@@ -862,11 +865,14 @@ typedef struct vectis_managed_service_impl {
   int monitor_done;
   int monitor_joined;
   int monitor_abandoned;
+  int destroy_after_monitor;
   int failed;
   int detached;
   vectis_status terminal_status;
   vectis_error monitor_error;
 } vectis_managed_service_impl;
+
+static void vectis_destroy_impl_final(vectis_app_impl *impl);
 
 typedef struct vectis_opcua_server_service_context {
   cpkt_opcua_server *server;
@@ -5253,30 +5259,49 @@ static vectis_status vectis_managed_service_join_monitor_deadline(
 }
 
 static void
+vectis_managed_service_impl_destroy(vectis_managed_service_impl *impl) {
+  if (impl == NULL) {
+    return;
+  }
+  if (impl->cleanup_fn != NULL) {
+    impl->cleanup_fn(impl->context);
+  }
+  (void)pthread_mutex_destroy(&impl->lifecycle_mutex);
+  free(impl->name);
+  free(impl);
+}
+
+static int
 vectis_managed_service_abandon_monitor(vectis_managed_service_impl *service) {
   vectis_app_impl *owner;
   int should_detach;
 
   if (service == NULL) {
-    return;
+    return 0;
   }
   owner = service->owner;
   should_detach = 0;
   if (owner != NULL) {
     (void)pthread_mutex_lock(&owner->mutex);
   }
+  (void)pthread_mutex_lock(&service->lifecycle_mutex);
   if (service->monitor_active && !service->monitor_done &&
       !service->monitor_joined && !service->monitor_abandoned) {
     service->monitor_abandoned = 1;
     service->monitor_joined = 1;
+    if (owner != NULL) {
+      owner->abandoned_managed_service_monitors++;
+    }
     should_detach = 1;
   }
+  (void)pthread_mutex_unlock(&service->lifecycle_mutex);
   if (owner != NULL) {
     (void)pthread_mutex_unlock(&owner->mutex);
   }
   if (should_detach) {
     (void)pthread_detach(service->monitor_thread);
   }
+  return should_detach;
 }
 
 static vectis_status
@@ -5301,8 +5326,12 @@ vectis_managed_service_monitor_status(vectis_managed_service_impl *service,
 
 static void *vectis_managed_service_monitor_main(void *userdata) {
   vectis_managed_service_impl *service;
+  vectis_app_impl *owner;
   vectis_error terminal_error;
   vectis_status status;
+  int abandoned;
+  int finalize_owner;
+  int destroy_service;
   int unexpected;
 
   service = (vectis_managed_service_impl *)userdata;
@@ -5311,9 +5340,15 @@ static void *vectis_managed_service_monitor_main(void *userdata) {
     return NULL;
   }
   status = service->wait_fn(service->context, &terminal_error);
+  abandoned = 0;
+  finalize_owner = 0;
+  destroy_service = 0;
   unexpected = 0;
-  if (service->owner != NULL) {
-    (void)pthread_mutex_lock(&service->owner->mutex);
+  owner = service->owner;
+  if (owner != NULL) {
+    (void)pthread_mutex_lock(&owner->mutex);
+    (void)pthread_mutex_lock(&service->lifecycle_mutex);
+    abandoned = service->monitor_abandoned;
     unexpected = !service->stop_requested;
     service->terminal_status = status;
     service->failed = status != VECTIS_OK || unexpected;
@@ -5324,9 +5359,26 @@ static void *vectis_managed_service_monitor_main(void *userdata) {
     service->monitor_error = terminal_error;
     service->monitor_done = 1;
     service->started = 0;
-    (void)pthread_cond_broadcast(&service->owner->service_cond);
-    (void)pthread_mutex_unlock(&service->owner->mutex);
+    if (abandoned) {
+      destroy_service = service->destroy_after_monitor;
+      service->monitor_active = 0;
+      service->materialized = 0;
+      service->owner = NULL;
+      service->logger = NULL;
+      if (owner->abandoned_managed_service_monitors > 0u) {
+        owner->abandoned_managed_service_monitors--;
+      }
+      finalize_owner = owner->destroy_deferred &&
+                       owner->abandoned_managed_service_monitors == 0u;
+      if (finalize_owner) {
+        owner->destroy_deferred = 0;
+      }
+    }
+    (void)pthread_mutex_unlock(&service->lifecycle_mutex);
+    (void)pthread_cond_broadcast(&owner->service_cond);
+    (void)pthread_mutex_unlock(&owner->mutex);
   } else {
+    (void)pthread_mutex_lock(&service->lifecycle_mutex);
     unexpected = !service->stop_requested;
     service->terminal_status = status;
     service->failed = status != VECTIS_OK || unexpected;
@@ -5337,11 +5389,19 @@ static void *vectis_managed_service_monitor_main(void *userdata) {
     service->monitor_error = terminal_error;
     service->monitor_done = 1;
     service->started = 0;
+    service->monitor_active = 0;
+    (void)pthread_mutex_unlock(&service->lifecycle_mutex);
   }
-  if (service->failed) {
+  if (!abandoned && service->failed) {
     vectis_managed_service_log_failure(service, "vectis.managed_service.failed",
                                        status, &terminal_error);
     vectis_app_notify_managed_service_failure(service, &terminal_error);
+  }
+  if (destroy_service) {
+    vectis_managed_service_impl_destroy(service);
+  }
+  if (finalize_owner) {
+    vectis_destroy_impl_final(owner);
   }
   return NULL;
 }
@@ -9766,6 +9826,7 @@ static void vectis_app_close_consumer_services(vectis_app_impl *impl) {
 static void vectis_app_close_managed_services(vectis_app_impl *impl) {
   vectis_managed_service_impl *service;
   vectis_error error;
+  int abandoned;
 
   if (impl == NULL) {
     return;
@@ -9775,14 +9836,18 @@ static void vectis_app_close_managed_services(vectis_app_impl *impl) {
   for (service = impl->managed_services; service != NULL;
        service = service->next_owned) {
     vectis_error_clear(&error);
+    abandoned = 0;
     if (service->monitor_active && !service->monitor_done) {
-      vectis_managed_service_abandon_monitor(service);
+      if (!vectis_managed_service_abandon_monitor(service)) {
+        (void)vectis_managed_service_join_monitor(service, &error);
+      }
+      abandoned = service->monitor_abandoned && !service->monitor_done;
     } else {
       (void)vectis_managed_service_join_monitor(service, &error);
     }
-    service->owner = NULL;
-    service->logger = NULL;
-    if (!service->monitor_active || service->monitor_done) {
+    if (!abandoned) {
+      service->owner = NULL;
+      service->logger = NULL;
       service->started = 0;
       service->materialized = 0;
     }
@@ -9831,20 +9896,10 @@ static void vectis_consumer_service_detach(vectis_consumer_service_impl *impl) {
   impl->next_owned = NULL;
 }
 
-static void vectis_destroy_impl(vectis_app_impl *impl) {
+static void vectis_destroy_impl_final(vectis_app_impl *impl) {
   if (impl == NULL) {
     return;
   }
-
-  if (impl->kore_child_control_fd >= 0) {
-    (void)close(impl->kore_child_control_fd);
-    impl->kore_child_control_fd = -1;
-  }
-  vectis_app_close_managed_services(impl);
-  vectis_app_close_consumer_services(impl);
-  vectis_app_service_control_close(impl);
-  vectis_close_lockd_client_for_current_process(impl);
-  vectis_close_cai_client_for_current_process(impl);
 
   vectis_metrics_state_destroy(impl->metrics);
   impl->metrics = NULL;
@@ -9891,6 +9946,35 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
   (void)pthread_cond_destroy(&impl->service_cond);
   (void)pthread_mutex_destroy(&impl->mutex);
   free(impl);
+}
+
+static void vectis_destroy_impl(vectis_app_impl *impl) {
+  int defer_destroy;
+
+  if (impl == NULL) {
+    return;
+  }
+
+  if (impl->kore_child_control_fd >= 0) {
+    (void)close(impl->kore_child_control_fd);
+    impl->kore_child_control_fd = -1;
+  }
+  vectis_app_close_managed_services(impl);
+  vectis_app_close_consumer_services(impl);
+  vectis_app_service_control_close(impl);
+  vectis_close_lockd_client_for_current_process(impl);
+  vectis_close_cai_client_for_current_process(impl);
+
+  (void)pthread_mutex_lock(&impl->mutex);
+  defer_destroy = impl->abandoned_managed_service_monitors > 0u;
+  if (defer_destroy) {
+    impl->destroy_deferred = 1;
+  }
+  (void)pthread_mutex_unlock(&impl->mutex);
+  if (defer_destroy) {
+    return;
+  }
+  vectis_destroy_impl_final(impl);
 }
 
 static vectis_status vectis_validate_route(const vectis_route_config *route,
@@ -24461,6 +24545,14 @@ vectis_managed_service_new(vectis_app *app,
                      "failed to copy managed service name");
     return VECTIS_ERR_NOMEM;
   }
+  if (pthread_mutex_init(&service_impl->lifecycle_mutex, NULL) != 0) {
+    free(service_impl->name);
+    free(service);
+    free(service_impl);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to initialize managed service lifecycle mutex");
+    return VECTIS_ERR_STATE;
+  }
   service_impl->context = config->context;
   service_impl->logger =
       config->logger_disabled
@@ -24624,6 +24716,7 @@ vectis_status vectis_managed_service_run(vectis_managed_service *service,
 void vectis_managed_service_destroy(vectis_managed_service *service) {
   vectis_managed_service_impl *impl;
   vectis_error error;
+  int destroy_later;
 
   if (service == NULL) {
     return;
@@ -24631,8 +24724,15 @@ void vectis_managed_service_destroy(vectis_managed_service *service) {
   impl = (vectis_managed_service_impl *)service->impl;
   if (impl != NULL) {
     vectis_error_clear(&error);
+    destroy_later = 0;
+    (void)pthread_mutex_lock(&impl->lifecycle_mutex);
     if (impl->monitor_abandoned && impl->monitor_active &&
         !impl->monitor_done) {
+      impl->destroy_after_monitor = 1;
+      destroy_later = 1;
+    }
+    (void)pthread_mutex_unlock(&impl->lifecycle_mutex);
+    if (destroy_later) {
       service->impl = NULL;
       free(service);
       return;
@@ -24642,11 +24742,7 @@ void vectis_managed_service_destroy(vectis_managed_service *service) {
       (void)vectis_managed_service_monitor_status(impl, &error);
     }
     vectis_managed_service_detach(impl);
-    if (impl->cleanup_fn != NULL) {
-      impl->cleanup_fn(impl->context);
-    }
-    free(impl->name);
-    free(impl);
+    vectis_managed_service_impl_destroy(impl);
   }
   free(service);
 }

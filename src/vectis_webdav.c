@@ -427,7 +427,8 @@ static int vectis_webdav_clear_tombstones(const vectis_webdav_config *config,
 }
 
 static int vectis_webdav_usage_path(const char *path, uint64_t *total,
-                                    uint64_t *resources) {
+                                    uint64_t *resources,
+                                    int ignore_unsupported) {
   DIR *directory;
   struct dirent *entry;
   struct stat st;
@@ -465,10 +466,13 @@ static int vectis_webdav_usage_path(const char *path, uint64_t *total,
         return 0;
       }
       (*resources)++;
-      if (!vectis_webdav_usage_path(child, total, resources)) {
+      if (!vectis_webdav_usage_path(child, total, resources,
+                                    ignore_unsupported)) {
         (void)closedir(directory);
         return 0;
       }
+    } else if (ignore_unsupported) {
+      continue;
     } else {
       (void)closedir(directory);
       return 0;
@@ -490,13 +494,13 @@ static int vectis_webdav_usage(const vectis_webdav_config *config,
   *total = 0u;
   *resources = 0u;
   if (vectis_webdav_direct_root(config)) {
-    return vectis_webdav_usage_path(content, total, resources);
+    return vectis_webdav_usage_path(content, total, resources, 1);
   }
   if (!vectis_webdav_disk_path(config, "tombstones", "/", tombstones)) {
     return 0;
   }
-  return vectis_webdav_usage_path(content, total, resources) &&
-         vectis_webdav_usage_path(tombstones, total, resources);
+  return vectis_webdav_usage_path(content, total, resources, 0) &&
+         vectis_webdav_usage_path(tombstones, total, resources, 0);
 }
 
 static int
@@ -779,7 +783,7 @@ vectis_webdav_direct_open_existing(const vectis_webdav_config *config,
   return fd;
 }
 
-static int vectis_webdav_read_fd(int fd, unsigned char **body,
+static int vectis_webdav_read_fd(int fd, size_t max_bytes, unsigned char **body,
                                  size_t *body_size,
                                  char etag[VECTIS_WEBDAV_ETAG_LENGTH + 1u]) {
   struct stat st;
@@ -789,7 +793,8 @@ static int vectis_webdav_read_fd(int fd, unsigned char **body,
 
   if (fd < 0 || body == NULL || body_size == NULL || fstat(fd, &st) != 0 ||
       !S_ISREG(st.st_mode) || st.st_size < 0 ||
-      (uint64_t)st.st_size > (uint64_t)SIZE_MAX) {
+      (uint64_t)st.st_size > (uint64_t)SIZE_MAX ||
+      (uint64_t)st.st_size > (uint64_t)max_bytes) {
     return 0;
   }
   out = NULL;
@@ -826,7 +831,7 @@ vectis_webdav_direct_read_file(const vectis_webdav_config *config,
   if (fd < 0) {
     return 0;
   }
-  ok = vectis_webdav_read_fd(fd, body, body_size, etag);
+  ok = vectis_webdav_read_fd(fd, config->max_file_bytes, body, body_size, etag);
   vectis_webdav_fd_close(&fd);
   return ok;
 }
@@ -927,6 +932,31 @@ static int vectis_webdav_direct_remove_tree_at(int parent_fd,
   return unlinkat(parent_fd, name, AT_REMOVEDIR) == 0;
 }
 
+static int
+vectis_webdav_direct_reserve_dir_at(int parent_fd, const char *prefix,
+                                    char out[VECTIS_WEBDAV_PATH_MAX + 1u]) {
+  int i;
+  int written;
+
+  if (parent_fd < 0 || prefix == NULL || prefix[0] == '\0' || out == NULL) {
+    return 0;
+  }
+  for (i = 0; i < 1000; ++i) {
+    written = snprintf(out, VECTIS_WEBDAV_PATH_MAX + 1u, "%s-%lu-%d", prefix,
+                       (unsigned long)getpid(), i);
+    if (written <= 0 || (size_t)written >= VECTIS_WEBDAV_PATH_MAX + 1u) {
+      return 0;
+    }
+    if (mkdirat(parent_fd, out, 0700) == 0) {
+      return 1;
+    }
+    if (errno != EEXIST) {
+      return 0;
+    }
+  }
+  return 0;
+}
+
 static vectis_webdav_status
 vectis_webdav_direct_remove(const vectis_webdav_config *config,
                             const char *normalized) {
@@ -974,7 +1004,8 @@ vectis_webdav_direct_mkcol(const vectis_webdav_config *config,
 static int vectis_webdav_direct_copy_file_at(int source_parent_fd,
                                              const char *source_name,
                                              int destination_parent_fd,
-                                             const char *destination_name) {
+                                             const char *destination_name,
+                                             size_t max_file_bytes) {
   unsigned char *body;
   char etag[VECTIS_WEBDAV_ETAG_LENGTH + 1u];
   size_t body_size;
@@ -988,7 +1019,8 @@ static int vectis_webdav_direct_copy_file_at(int source_parent_fd,
   if (source_fd < 0) {
     return 0;
   }
-  ok = vectis_webdav_read_fd(source_fd, &body, &body_size, etag);
+  ok =
+      vectis_webdav_read_fd(source_fd, max_file_bytes, &body, &body_size, etag);
   vectis_webdav_fd_close(&source_fd);
   if (!ok) {
     free(body);
@@ -1003,7 +1035,8 @@ static int vectis_webdav_direct_copy_file_at(int source_parent_fd,
 static int vectis_webdav_direct_copy_tree_at(int source_parent_fd,
                                              const char *source_name,
                                              int destination_parent_fd,
-                                             const char *destination_name) {
+                                             const char *destination_name,
+                                             size_t max_file_bytes) {
   DIR *directory;
   struct dirent *item;
   struct stat st;
@@ -1015,8 +1048,9 @@ static int vectis_webdav_direct_copy_tree_at(int source_parent_fd,
     return 0;
   }
   if (S_ISREG(st.st_mode)) {
-    return vectis_webdav_direct_copy_file_at(
-        source_parent_fd, source_name, destination_parent_fd, destination_name);
+    return vectis_webdav_direct_copy_file_at(source_parent_fd, source_name,
+                                             destination_parent_fd,
+                                             destination_name, max_file_bytes);
   }
   if (!S_ISDIR(st.st_mode) ||
       mkdirat(destination_parent_fd, destination_name, 0700) != 0) {
@@ -1057,7 +1091,8 @@ static int vectis_webdav_direct_copy_tree_at(int source_parent_fd,
       continue;
     }
     if (!vectis_webdav_direct_copy_tree_at(source_fd, item->d_name,
-                                           destination_fd, item->d_name)) {
+                                           destination_fd, item->d_name,
+                                           max_file_bytes)) {
       (void)closedir(directory);
       vectis_webdav_fd_close(&source_fd);
       vectis_webdav_fd_close(&destination_fd);
@@ -1075,12 +1110,18 @@ static int vectis_webdav_direct_copy_tree_at(int source_parent_fd,
 static vectis_webdav_status vectis_webdav_direct_copy_or_move_fs(
     const vectis_webdav_config *config, const char *normalized_source,
     const char *normalized_destination, int overwrite, int remove_source) {
+  char backup_leaf[VECTIS_WEBDAV_PATH_MAX + 1u];
   char destination_leaf[VECTIS_WEBDAV_PATH_MAX + 1u];
   char source_leaf[VECTIS_WEBDAV_PATH_MAX + 1u];
+  char stage_leaf[VECTIS_WEBDAV_PATH_MAX + 1u];
+  char txn_leaf[VECTIS_WEBDAV_PATH_MAX + 1u];
   struct stat st;
+  int backup_created;
   int destination_exists;
   int destination_parent_fd;
   int source_parent_fd;
+  int staged;
+  int txn_fd;
   int ok;
 
   source_parent_fd =
@@ -1110,26 +1151,107 @@ static vectis_webdav_status vectis_webdav_direct_copy_or_move_fs(
       vectis_webdav_fd_close(&destination_parent_fd);
       return VECTIS_WEBDAV_EXISTS;
     }
-    if (!vectis_webdav_direct_remove_tree_at(destination_parent_fd,
-                                             destination_leaf)) {
-      vectis_webdav_fd_close(&source_parent_fd);
-      vectis_webdav_fd_close(&destination_parent_fd);
-      return VECTIS_WEBDAV_IO;
-    }
   } else if (errno != ENOENT) {
     vectis_webdav_fd_close(&source_parent_fd);
     vectis_webdav_fd_close(&destination_parent_fd);
     return VECTIS_WEBDAV_IO;
   }
-  ok = vectis_webdav_direct_copy_tree_at(
-      source_parent_fd, source_leaf, destination_parent_fd, destination_leaf);
+  if (!overwrite && !destination_exists) {
+    ok = vectis_webdav_direct_copy_tree_at(
+        source_parent_fd, source_leaf, destination_parent_fd, destination_leaf,
+        config->max_file_bytes);
+    if (ok && remove_source) {
+      ok = vectis_webdav_direct_remove_tree_at(source_parent_fd, source_leaf);
+      if (!ok) {
+        (void)vectis_webdav_direct_remove_tree_at(destination_parent_fd,
+                                                  destination_leaf);
+      }
+    } else if (!ok) {
+      (void)vectis_webdav_direct_remove_tree_at(destination_parent_fd,
+                                                destination_leaf);
+    }
+    vectis_webdav_fd_close(&source_parent_fd);
+    vectis_webdav_fd_close(&destination_parent_fd);
+    return ok ? VECTIS_WEBDAV_OK : VECTIS_WEBDAV_IO;
+  }
+
+  if (!vectis_webdav_direct_reserve_dir_at(destination_parent_fd, ".vectis-txn",
+                                           txn_leaf)) {
+    vectis_webdav_fd_close(&source_parent_fd);
+    vectis_webdav_fd_close(&destination_parent_fd);
+    return VECTIS_WEBDAV_IO;
+  }
+  txn_fd = vectis_webdav_open_child_dir(destination_parent_fd, txn_leaf);
+  if (txn_fd < 0) {
+    (void)vectis_webdav_direct_remove_tree_at(destination_parent_fd, txn_leaf);
+    vectis_webdav_fd_close(&source_parent_fd);
+    vectis_webdav_fd_close(&destination_parent_fd);
+    return VECTIS_WEBDAV_IO;
+  }
+  (void)snprintf(stage_leaf, sizeof(stage_leaf), "stage");
+  (void)snprintf(backup_leaf, sizeof(backup_leaf), "backup");
+  backup_created = 0;
+  staged = 0;
+  ok = vectis_webdav_direct_copy_tree_at(source_parent_fd, source_leaf, txn_fd,
+                                         stage_leaf, config->max_file_bytes);
+  if (!ok) {
+    (void)vectis_webdav_direct_remove_tree_at(destination_parent_fd, txn_leaf);
+    vectis_webdav_fd_close(&txn_fd);
+    vectis_webdav_fd_close(&source_parent_fd);
+    vectis_webdav_fd_close(&destination_parent_fd);
+    return VECTIS_WEBDAV_IO;
+  }
+  staged = 1;
+  if (destination_exists) {
+    if (renameat(destination_parent_fd, destination_leaf, txn_fd,
+                 backup_leaf) != 0) {
+      (void)vectis_webdav_direct_remove_tree_at(destination_parent_fd,
+                                                txn_leaf);
+      vectis_webdav_fd_close(&txn_fd);
+      vectis_webdav_fd_close(&source_parent_fd);
+      vectis_webdav_fd_close(&destination_parent_fd);
+      return VECTIS_WEBDAV_IO;
+    }
+    backup_created = 1;
+  }
+  if (renameat(txn_fd, stage_leaf, destination_parent_fd, destination_leaf) !=
+      0) {
+    if (backup_created) {
+      (void)renameat(txn_fd, backup_leaf, destination_parent_fd,
+                     destination_leaf);
+    }
+    (void)vectis_webdav_direct_remove_tree_at(destination_parent_fd, txn_leaf);
+    vectis_webdav_fd_close(&txn_fd);
+    vectis_webdav_fd_close(&source_parent_fd);
+    vectis_webdav_fd_close(&destination_parent_fd);
+    return VECTIS_WEBDAV_IO;
+  }
+  staged = 0;
   if (ok && remove_source) {
     ok = vectis_webdav_direct_remove_tree_at(source_parent_fd, source_leaf);
+    if (!ok) {
+      (void)vectis_webdav_direct_remove_tree_at(destination_parent_fd,
+                                                destination_leaf);
+      if (backup_created) {
+        (void)renameat(txn_fd, backup_leaf, destination_parent_fd,
+                       destination_leaf);
+        backup_created = 0;
+      }
+    }
   }
-  if (!ok) {
-    (void)vectis_webdav_direct_remove_tree_at(destination_parent_fd,
-                                              destination_leaf);
+  if (backup_created) {
+    if (ok) {
+      (void)vectis_webdav_direct_remove_tree_at(txn_fd, backup_leaf);
+    } else {
+      (void)renameat(txn_fd, backup_leaf, destination_parent_fd,
+                     destination_leaf);
+    }
   }
+  if (staged) {
+    (void)vectis_webdav_direct_remove_tree_at(txn_fd, stage_leaf);
+  }
+  vectis_webdav_fd_close(&txn_fd);
+  (void)vectis_webdav_direct_remove_tree_at(destination_parent_fd, txn_leaf);
   vectis_webdav_fd_close(&source_parent_fd);
   vectis_webdav_fd_close(&destination_parent_fd);
   return ok ? VECTIS_WEBDAV_OK : VECTIS_WEBDAV_IO;
@@ -1487,7 +1609,7 @@ static int vectis_webdav_disk_usage(const char *path, uint64_t *total,
       return 0;
     }
     (*resources)++;
-    return vectis_webdav_usage_path(path, total, resources);
+    return vectis_webdav_usage_path(path, total, resources, 0);
   }
   return 0;
 }

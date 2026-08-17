@@ -105,12 +105,14 @@ int main(void) {
   char content_dir[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   char root_dir[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   char direct_file[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char large_file[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   char outside_dir[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   char outside_file[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   char outside_write[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   char outside_copy[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   char outside_collection[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   char symlink_path[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char txn_dir[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   unsigned char *body;
   size_t body_size;
   vectis_webdav_config config;
@@ -127,6 +129,7 @@ int main(void) {
   vectis_app *app;
   vectis_embedded_fs fake_fs;
   list_state listed;
+  int i;
 
   if (mkdtemp(temp) == NULL) {
     perror("mkdtemp");
@@ -299,6 +302,17 @@ int main(void) {
              memcmp(body, "direct", 6u) == 0,
          "reads direct root file");
   free(body);
+  expect(snprintf(large_file, sizeof(large_file), "%s/large.txt", root_dir) > 0,
+         "formats external oversized direct root file");
+  expect(write_test_file(large_file, "0123456789abcdef!"),
+         "writes external oversized direct root file");
+  body = NULL;
+  body_size = 0u;
+  status = vectis_webdav_read(&direct_config, "/large.txt", &body, &body_size,
+                              &entry);
+  expect(status != VECTIS_WEBDAV_OK,
+         "rejects external oversized direct root reads");
+  free(body);
   status =
       vectis_webdav_copy(&direct_config, "/public/readme.txt", "/copy.txt", 0);
   expect(status == VECTIS_WEBDAV_OK, "copies direct root file");
@@ -330,8 +344,36 @@ int main(void) {
          "formats direct root symlink path");
   expect(mkdir(outside_dir, 0700) == 0, "creates outside directory");
   expect(write_test_file(outside_file, "secret\n"), "creates outside file");
+  status = vectis_webdav_mkcol(&direct_config, "/preserve");
+  expect(status == VECTIS_WEBDAV_OK, "creates overwrite rollback destination");
+  status = vectis_webdav_put(&direct_config, "/preserve/old.txt",
+                             (const unsigned char *)"old", 3u);
+  expect(status == VECTIS_WEBDAV_OK, "writes overwrite rollback destination");
+  for (i = 0; i < 1000; ++i) {
+    expect(snprintf(txn_dir, sizeof(txn_dir), "%s/preserve/.vectis-txn-%lu-%d",
+                    root_dir, (unsigned long)getpid(), i) > 0,
+           "formats direct root transaction collision");
+    expect(mkdir(txn_dir, 0700) == 0,
+           "creates direct root transaction collision");
+  }
+  status = vectis_webdav_copy(&direct_config, "/public/readme.txt",
+                              "/preserve/old.txt", 1);
+  expect(status != VECTIS_WEBDAV_OK,
+         "rejects direct root overwrite when staged copy fails");
+  body = NULL;
+  body_size = 0u;
+  status = vectis_webdav_read(&direct_config, "/preserve/old.txt", &body,
+                              &body_size, &entry);
+  expect(status == VECTIS_WEBDAV_OK && body_size == 3u &&
+             memcmp(body, "old", 3u) == 0,
+         "preserves direct root overwrite destination on copy failure");
+  free(body);
   expect(symlink(outside_dir, symlink_path) == 0,
          "creates direct root symlink");
+  status = vectis_webdav_put(&direct_config, "/public/after-link.txt",
+                             (const unsigned char *)"ok", 2u);
+  expect(status == VECTIS_WEBDAV_OK,
+         "allows unrelated direct root mutation with symlink present");
   body = NULL;
   body_size = 0u;
   status = vectis_webdav_read(&direct_config, "/link/secret.txt", &body,
