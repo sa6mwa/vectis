@@ -1135,6 +1135,9 @@ do
     keepalive_disabled = true,
     keepalive_timeout_ms = 0,
     keepalive_max_requests = 0,
+    socket_backlog = 128,
+    request_process_budget_ms = 50,
+    hsts_max_age_seconds = 0,
   }))
   worker_count_server:close()
 end

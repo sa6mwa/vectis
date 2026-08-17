@@ -2942,6 +2942,10 @@ void vectis_server_config_init(vectis_server_config *config) {
   config->idle_timeout_ms = VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS;
   config->keepalive_timeout_ms = VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS;
   config->keepalive_max_requests = VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS;
+  config->socket_backlog = VECTIS_SERVER_DEFAULT_SOCKET_BACKLOG;
+  config->request_process_budget_ms =
+      VECTIS_SERVER_DEFAULT_REQUEST_PROCESS_BUDGET_MS;
+  config->hsts_max_age_seconds = VECTIS_SERVER_DEFAULT_HSTS_MAX_AGE_SECONDS;
   vectis_autoblock_config_init(&config->autoblock);
 }
 
@@ -3137,6 +3141,12 @@ vectis_effective_server_config(const vectis_server_config *config) {
   effective.keepalive_max_requests =
       vectis_default_unsigned(config->keepalive_max_requests,
                               VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS);
+  effective.socket_backlog = vectis_default_unsigned(
+      config->socket_backlog, VECTIS_SERVER_DEFAULT_SOCKET_BACKLOG);
+  effective.request_process_budget_ms =
+      vectis_default_unsigned(config->request_process_budget_ms,
+                              VECTIS_SERVER_DEFAULT_REQUEST_PROCESS_BUDGET_MS);
+  effective.hsts_max_age_seconds = config->hsts_max_age_seconds;
   effective.autoblock = config->autoblock;
   effective.autoblock.window_seconds =
       vectis_default_unsigned(config->autoblock.window_seconds, 1800u);

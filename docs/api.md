@@ -37,7 +37,9 @@ Major groups:
   `vectis_register_websocket()`, and callback-borrowed
   `vectis_websocket_send_*()` helpers.
 - TLS/server hardening: `vectis_tls_config` supports manual/ACME material,
-  client CA verification, protocol version selection, and OpenSSL cipher lists.
+  client CA verification, protocol version selection, and OpenSSL cipher lists;
+  `vectis_server_config` covers listener backlog, processing budget, and HSTS
+  controls.
 - WebDAV/auth routes: `vectis_webdav_mount_config`,
   `vectis_webdav_embedded_site_config`, and `vectis_auth_routes_config`.
 - Auth credentials: native users, issued credentials, OAuth2/OIDC WebDAV keys,

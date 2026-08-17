@@ -125,6 +125,7 @@ local basic_auth = "Basic " .. base64(webdav_key.client_id .. ":" .. webdav_key.
 local server = assert(vectis.server.new({
   bind = "127.0.0.1",
   port = 28383,
+  hsts_max_age_seconds = 31536000,
   tls = {
     mode = "manual",
     version = "1.2",
@@ -164,6 +165,8 @@ end
 assert(response.ok == true, response.error)
 assert(response.status == 200)
 assert(response.body == '{"ok":true,"tls":"split"}\n')
+assert(response.headers:lower():find(
+  "strict-transport-security: max-age=31536000; includesubdomains", 1, true))
 assert(server:stop() == true)
 server:close()
 

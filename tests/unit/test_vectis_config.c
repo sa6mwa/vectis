@@ -96,6 +96,11 @@ int main(void) {
          VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS);
   assert(config.server.keepalive_max_requests ==
          VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS);
+  assert(config.server.socket_backlog == VECTIS_SERVER_DEFAULT_SOCKET_BACKLOG);
+  assert(config.server.request_process_budget_ms ==
+         VECTIS_SERVER_DEFAULT_REQUEST_PROCESS_BUDGET_MS);
+  assert(config.server.hsts_max_age_seconds ==
+         VECTIS_SERVER_DEFAULT_HSTS_MAX_AGE_SECONDS);
   assert(config.lockd.timeout_ms == 30000L);
   assert(config.lockd.logger == NULL);
   assert(config.lockd.logger_disabled == 0);

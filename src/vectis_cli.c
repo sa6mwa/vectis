@@ -11056,6 +11056,13 @@ static int vectis_lua_server_new(lua_State *lua) {
       lua, 1, "keepalive_timeout_ms", config.server.keepalive_timeout_ms);
   config.server.keepalive_max_requests = vectis_lua_table_unsigned(
       lua, 1, "keepalive_max_requests", config.server.keepalive_max_requests);
+  config.server.socket_backlog = vectis_lua_table_unsigned(
+      lua, 1, "socket_backlog", config.server.socket_backlog);
+  config.server.request_process_budget_ms =
+      vectis_lua_table_unsigned(lua, 1, "request_process_budget_ms",
+                                config.server.request_process_budget_ms);
+  config.server.hsts_max_age_seconds = vectis_lua_table_unsigned(
+      lua, 1, "hsts_max_age_seconds", config.server.hsts_max_age_seconds);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = bind != NULL ? bind : "127.0.0.1";
   config.tls.port = (unsigned short)port;

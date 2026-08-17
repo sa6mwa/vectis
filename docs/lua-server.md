@@ -58,9 +58,11 @@ The same table can also override server guardrails and worker resource knobs:
 `request_header_timeout_ms`, `request_body_idle_timeout_ms`,
 `response_write_idle_timeout_ms`, `request_body_min_rate_bytes_per_sec`,
 `request_body_min_rate_grace_ms`, `idle_timeout_ms`, `keepalive_disabled`,
-`keepalive_timeout_ms`, and `keepalive_max_requests`. Zero uses the C default for
-most guardrails; `max_request_body_bytes = 0` keeps the route-derived global
-body ceiling behavior.
+`keepalive_timeout_ms`, `keepalive_max_requests`, `socket_backlog`,
+`request_process_budget_ms`, and `hsts_max_age_seconds`. Zero uses the C default
+for most guardrails; `hsts_max_age_seconds = 0` disables HSTS, and
+`max_request_body_bytes = 0` keeps the route-derived global body ceiling
+behavior.
 
 `profile = "production_webserver"` applies the same C-owned production webserver
 profile as `vectis_app_config_init_production_webserver()`: strict quiescence,

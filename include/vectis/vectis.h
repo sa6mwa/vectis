@@ -26,6 +26,9 @@
 #define VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS 30000L
 #define VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS 5000L
 #define VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS 100u
+#define VECTIS_SERVER_DEFAULT_SOCKET_BACKLOG 5000u
+#define VECTIS_SERVER_DEFAULT_REQUEST_PROCESS_BUDGET_MS 100u
+#define VECTIS_SERVER_DEFAULT_HSTS_MAX_AGE_SECONDS 0u
 #define VECTIS_SERVER_DEFAULT_WORKER_ACCEPT_THRESHOLD 16u
 #define VECTIS_SERVER_DEFAULT_WORKER_RLIMIT_NOFILES 768u
 #define VECTIS_SERVER_DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS 5000L
@@ -1089,6 +1092,17 @@ typedef struct vectis_server_config {
   int keepalive_disabled;
   long keepalive_timeout_ms;
   unsigned keepalive_max_requests;
+  /* Listener backlog passed to Kore listen(2). Zero uses the Vectis default. */
+  unsigned socket_backlog;
+  /*
+   * Per-loop request processing budget used by Kore before yielding. Zero uses
+   * the Vectis default.
+   */
+  unsigned request_process_budget_ms;
+  /*
+   * Strict-Transport-Security max-age for TLS responses. Zero disables HSTS.
+   */
+  unsigned hsts_max_age_seconds;
   vectis_autoblock_config autoblock;
 } vectis_server_config;
 

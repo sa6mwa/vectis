@@ -136,6 +136,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add ACME lifecycle examples/tests beyond startup validation, using a controlled ACME test server.
 - [x] Support key-material refresh through explicit Vectis app restart/reload semantics where the embedded Kore runtime cannot perform an in-place TLS context mutation.
 - [x] Expose Kore/OpenSSL TLS protocol version and cipher-list controls through libvectis and Lua server config with pre-start validation.
+- [x] Expose Kore listener backlog, HTTP request processing budget, and HSTS max-age controls through libvectis and Lua server config.
 
 ## Area 7: JSON Surface
 
