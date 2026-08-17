@@ -11,6 +11,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <netdb.h>
+#include <netinet/in.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -19,8 +21,10 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/select.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "vectis_kore_hooks.h"
@@ -172,6 +176,10 @@ static int vectis_kore_material_present(const vectis_kore_material *material);
 static vectis_status
 vectis_kore_material_bytes(const vectis_kore_material *material, void **out,
                            size_t *out_size, vectis_error *error);
+static vectis_status
+vectis_kore_preflight_listener(const vectis_kore_runtime_config *config,
+                               vectis_error *error);
+static int vectis_kore_preflight_sleep_ms(long delay_ms);
 
 static size_t vectis_kore_environment_size(void) {
   size_t total;
@@ -1540,6 +1548,113 @@ static void vectis_kore_apply_server_config(const vectis_server_config *server,
                                     : (u_int32_t)server->keepalive_max_requests;
 }
 
+static int vectis_kore_preflight_sleep_ms(long delay_ms) {
+  struct timespec request;
+  struct timespec remaining;
+
+  if (delay_ms <= 0L) {
+    return 0;
+  }
+  request.tv_sec = delay_ms / 1000L;
+  request.tv_nsec = (delay_ms % 1000L) * 1000000L;
+  while (nanosleep(&request, &remaining) != 0) {
+    if (errno != EINTR) {
+      return errno != 0 ? errno : EINVAL;
+    }
+    request = remaining;
+  }
+  return 0;
+}
+
+static vectis_status
+vectis_kore_preflight_listener(const vectis_kore_runtime_config *config,
+                               vectis_error *error) {
+  struct addrinfo hints;
+  struct addrinfo *results;
+  struct addrinfo *item;
+  const char *bind_addr;
+  char service[16];
+  char detail[128];
+  int gai;
+  int fd;
+  int option;
+  int last_errno;
+  int written;
+  long remaining_ms;
+  long sleep_ms;
+
+  if (config == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "Kore runtime config is required");
+    return VECTIS_ERR_INVALID;
+  }
+  bind_addr = config->bind != NULL ? config->bind : "0.0.0.0";
+  written = snprintf(service, sizeof(service), "%u", (unsigned)config->port);
+  if (written <= 0 || (size_t)written >= sizeof(service)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "Kore listener port is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_flags = AI_PASSIVE;
+  results = NULL;
+  gai = getaddrinfo(bind_addr, service, &hints, &results);
+  if (gai != 0) {
+    snprintf(detail, sizeof(detail),
+             "Kore listener bind address is invalid: %s", gai_strerror(gai));
+    vectis_set_error(error, VECTIS_ERR_INVALID, detail);
+    return VECTIS_ERR_INVALID;
+  }
+
+  remaining_ms = 500L;
+  for (;;) {
+    last_errno = 0;
+    for (item = results; item != NULL; item = item->ai_next) {
+      fd = socket(item->ai_family, item->ai_socktype, item->ai_protocol);
+      if (fd < 0) {
+        last_errno = errno;
+        continue;
+      }
+      option = 1;
+      (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &option,
+                       (socklen_t)sizeof(option));
+      if (bind(fd, item->ai_addr, item->ai_addrlen) == 0) {
+        (void)close(fd);
+        freeaddrinfo(results);
+        vectis_error_clear(error);
+        return VECTIS_OK;
+      }
+      last_errno = errno;
+      (void)close(fd);
+    }
+    if (last_errno != EADDRINUSE || remaining_ms <= 0L) {
+      break;
+    }
+    sleep_ms = remaining_ms < 25L ? remaining_ms : 25L;
+    last_errno = vectis_kore_preflight_sleep_ms(sleep_ms);
+    if (last_errno != 0) {
+      break;
+    }
+    remaining_ms -= sleep_ms;
+  }
+  freeaddrinfo(results);
+
+  if (last_errno == EADDRINUSE) {
+    snprintf(detail, sizeof(detail), "Kore listener %s:%u is already in use",
+             bind_addr, (unsigned)config->port);
+    vectis_set_error(error, VECTIS_ERR_CONFLICT, detail);
+    return VECTIS_ERR_CONFLICT;
+  }
+  snprintf(detail, sizeof(detail), "Kore listener %s:%u is unavailable: %s",
+           bind_addr, (unsigned)config->port,
+           last_errno != 0 ? strerror(last_errno) : "no usable address");
+  vectis_set_error(error, VECTIS_ERR_STATE, detail);
+  return VECTIS_ERR_STATE;
+}
+
 static void vectis_kore_setup_domain_tls(struct kore_domain *domain) {
   vectis_error error;
   void *cert_pem;
@@ -2659,6 +2774,10 @@ vectis_status vectis_internal_kore_run(const vectis_kore_runtime_config *config,
   prepared.runtime_certfile_temporary = 0;
   prepared.runtime_certkey_temporary = 0;
   prepared.runtime_client_ca_temporary = 0;
+  status = vectis_kore_preflight_listener(&prepared, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
   status = vectis_kore_prepare_acme(&prepared, error);
   if (status != VECTIS_OK) {
     return status;
@@ -2734,6 +2853,10 @@ vectis_internal_kore_validate(const vectis_kore_runtime_config *config,
   prepared.runtime_certfile_temporary = 0;
   prepared.runtime_certkey_temporary = 0;
   prepared.runtime_client_ca_temporary = 0;
+  status = vectis_kore_preflight_listener(&prepared, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
   status = vectis_kore_prepare_acme(&prepared, error);
   if (status != VECTIS_OK) {
     return status;

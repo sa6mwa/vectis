@@ -4204,6 +4204,34 @@ static void assert_kore_start_rejects_extra_thread(void) {
   app->close(app);
 }
 
+static void assert_kore_start_reports_occupied_listener(void) {
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  vectis_route_config route;
+  unsigned short port;
+  int reserved_fd;
+
+  reserved_fd = reserve_loopback_port(&port);
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = port;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route =
+      vectis_route(VECTIS_HTTP_GET, "/occupied-listener", sample_handler, NULL);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_ERR_CONFLICT);
+  assert(strstr(error.message, "already in use") != NULL);
+  assert(vectis_internal_kore_child_pid(app) == 0);
+  app->close(app);
+  close(reserved_fd);
+}
+
 static void assert_kore_start_waits_for_transient_thread_teardown(void) {
   vectis_app_config config;
   vectis_app *app;
@@ -4237,36 +4265,6 @@ static void assert_kore_start_waits_for_transient_thread_teardown(void) {
   status = app->stop(app, &error);
   assert(status == VECTIS_OK);
   app->close(app);
-}
-
-static void assert_supervised_start_reports_child_readiness_failure(void) {
-  vectis_app_config config;
-  vectis_app *app;
-  vectis_error error;
-  vectis_status status;
-  vectis_route_config route;
-  unsigned short port;
-  int reserved_fd;
-
-  reserved_fd = reserve_loopback_port(&port);
-  vectis_app_config_init(&config);
-  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
-  config.tls.bind = "127.0.0.1";
-  config.tls.port = port;
-  config.shutdown_grace_ms = 250L;
-  app = vectis_app_new(&config, &error);
-  assert(app != NULL);
-  route = vectis_route(VECTIS_HTTP_GET, "/child-exit", sample_handler, NULL);
-  status = app->route(app, &route, &error);
-  assert(status == VECTIS_OK);
-  status = app->start(app, &error);
-  assert(status == VECTIS_ERR_STATE);
-  assert(strstr(error.message, "before readiness") != NULL);
-  status = app->stop(app, &error);
-  assert(status == VECTIS_ERR_STATE);
-  assert(strstr(error.message, "app is not started") != NULL);
-  app->close(app);
-  close(reserved_fd);
 }
 
 static void assert_supervised_wait_reports_consumer_service_exit(void) {
@@ -6424,8 +6422,8 @@ static int run_named_runtime_test(const char *name) {
     assert_kore_start_rejects_extra_thread();
     return 1;
   }
-  if (strcmp(name, "supervised_start_reports_child_readiness_failure") == 0) {
-    assert_supervised_start_reports_child_readiness_failure();
+  if (strcmp(name, "kore_start_reports_occupied_listener") == 0) {
+    assert_kore_start_reports_occupied_listener();
     return 1;
   }
   if (strcmp(name, "supervised_wait_reports_consumer_service_exit") == 0) {
@@ -6587,8 +6585,8 @@ int main(void) {
   assert_managed_service_explicit_start_before_routes_defers();
   assert_routes_reject_materialized_managed_services();
   assert_kore_start_rejects_extra_thread();
+  assert_kore_start_reports_occupied_listener();
   assert_kore_start_waits_for_transient_thread_teardown();
-  assert_supervised_start_reports_child_readiness_failure();
   assert_supervised_wait_reports_consumer_service_exit();
   assert_supervised_wait_reports_consumer_service_clean_exit();
   assert_active_consumer_start_preserves_restart_request();

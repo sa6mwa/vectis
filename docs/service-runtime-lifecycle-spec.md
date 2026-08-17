@@ -209,7 +209,11 @@ even when their implementation details stay private:
   mailboxes may be registered. No app-owned service instance may be
   materialized for a future route-backed runtime.
 - `validated`: configuration, route body policy translation, TLS/ACME material,
-  lockd startability, process quiescence, and topology policy have been checked.
+  Kore listener preflight, lockd startability, process quiescence, and topology
+  policy have been checked. Listener preflight must report occupied or invalid
+  bind/port inputs as Vectis errors before Kore can reach its fatal bind path.
+  `EADDRINUSE` checks may retry briefly to tolerate kernel teardown after a
+  supervised hard shutdown, but must remain bounded.
 - `forking`: only T2 enters this phase. Vectis has not started supervisor
   service threads or opened supervisor-domain daemon handles. The only allowed
   side effects are creation of the bounded child control channel and the Kore
@@ -1023,6 +1027,8 @@ Unit tests:
 - quiescence guard rejects a known extra thread;
 - quiescence guard tolerates only bounded teardown races, not live background
   services;
+- occupied Kore listener startup fails with a structured Vectis conflict error
+  and no Kore child process remains registered;
 - app-owned running service blocks direct Kore start;
 - runtime phases enforce validation before materialization and T2 child
   readiness before supervisor service materialization;
