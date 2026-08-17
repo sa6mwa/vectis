@@ -20238,6 +20238,18 @@ size_t vectis_internal_max_request_body_bytes(vectis_app *app) {
   return vectis_app_max_request_body_bytes((vectis_app_impl *)app->impl);
 }
 
+size_t vectis_internal_body_disk_offload_bytes(vectis_app *app,
+                                               int *configured) {
+  if (configured != NULL) {
+    *configured = 0;
+  }
+  if (app == NULL || app->impl == NULL) {
+    return 0u;
+  }
+  return vectis_app_body_disk_offload_bytes((vectis_app_impl *)app->impl,
+                                            configured);
+}
+
 size_t vectis_route_count(const vectis_app *app) {
   if (app == NULL || app->impl == NULL) {
     return 0u;

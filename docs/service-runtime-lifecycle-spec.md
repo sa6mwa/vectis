@@ -340,6 +340,20 @@ The metrics HTTP endpoint can render JSON and the landed-style dashboard, but it
 must be mounted behind the same Vectis auth mechanism used by ordinary routes
 when auth is configured.
 
+## Request Body Policy Translation
+
+Vectis route body policies are semantic/materialization limits and must never
+increase the server-global request-body ceiling. The effective Kore
+`http_body_max` is the configured server maximum or the largest registered
+non-`none` route body maximum when the server maximum is omitted.
+
+Streaming-upload routes with disk spooling enabled also configure Kore's
+`http_body_disk_offload` threshold from the smallest registered nonzero
+`memory_buffer_limit_bytes` for those routes, defaulting to Vectis'
+upload-memory limit when a route leaves the field at zero. If all registered
+streaming-upload routes disable disk spooling, the threshold remains zero so
+Kore does not create request-body spill files.
+
 ## CAI And MCP
 
 Two CAI/MCP shapes exist:

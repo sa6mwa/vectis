@@ -1454,14 +1454,13 @@ static vectis_status vectis_kore_load_default_dhparams(vectis_error *error) {
 static void vectis_kore_apply_server_config(const vectis_server_config *server,
                                             size_t body_disk_offload_bytes,
                                             int body_disk_offload_configured) {
-  (void)body_disk_offload_bytes;
-  (void)body_disk_offload_configured;
   worker_max_connections = vectis_kore_u32_from_size(server->max_connections);
   worker_idle_timeout = (u_int64_t)server->idle_timeout_ms;
   http_request_limit = vectis_kore_u32_from_size(server->max_connections);
   http_header_max = server->max_request_header_bytes;
   http_body_max = server->max_request_body_bytes;
-  http_body_disk_offload = 0u;
+  http_body_disk_offload =
+      body_disk_offload_configured ? (u_int64_t)body_disk_offload_bytes : 0u;
   http_header_timeout =
       vectis_kore_seconds_from_ms(server->request_header_timeout_ms);
   http_body_timeout =

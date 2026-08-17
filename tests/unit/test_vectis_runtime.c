@@ -1727,6 +1727,7 @@ static void assert_route_body_policy_validation(void) {
   vectis_error error;
   vectis_status status;
   vectis_app *app;
+  int disk_offload_configured;
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
@@ -1734,6 +1735,9 @@ static void assert_route_body_policy_validation(void) {
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   assert(vectis_internal_max_request_body_bytes(app) == 64u);
+  assert(vectis_internal_body_disk_offload_bytes(
+             app, &disk_offload_configured) == 0u);
+  assert(disk_offload_configured == 0);
 
   route =
       vectis_route(VECTIS_HTTP_POST, "/json-too-large", sample_handler, NULL);
@@ -1764,6 +1768,9 @@ static void assert_route_body_policy_validation(void) {
   route.body.memory_buffer_limit_bytes = 8u;
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
+  assert(vectis_internal_body_disk_offload_bytes(
+             app, &disk_offload_configured) == 8u);
+  assert(disk_offload_configured == 1);
 
   vectis_route_config_init(&route);
   route.method = VECTIS_HTTP_POST;
@@ -1799,6 +1806,22 @@ static void assert_route_body_policy_validation(void) {
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "memory_buffer_limit_bytes") != NULL);
 
+  app->close(app);
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.server.max_request_body_bytes = 64u;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_upload_route_max(VECTIS_HTTP_POST, "/memory-only-upload", 64u,
+                                  sample_handler, NULL);
+  route.body.disk_spool_disabled = 1;
+  route.body.memory_buffer_limit_bytes = 0u;
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_body_disk_offload_bytes(
+             app, &disk_offload_configured) == 0u);
+  assert(disk_offload_configured == 1);
   app->close(app);
 }
 

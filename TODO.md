@@ -105,7 +105,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Add transparent body materialization for fixed buffers, memory caps, and automatic spill-to-disk when the body does not fit.
 - [x] Add static file and directory route helpers with traversal-safe path handling.
 - [x] Document and enforce Kore's server-global request-body ceiling: Vectis route body policies are semantic/materialization limits and must fit under `vectis_server_config.max_request_body_bytes`.
-- [ ] Translate per-route body policies into any remaining concrete Kore request-body streaming and disk-offload tuning behavior that does not broaden the global ingress ceiling.
+- [x] Translate per-route body policies into concrete Kore request-body streaming and disk-offload tuning behavior without broadening the global ingress ceiling.
 - [ ] Support Kore features through Vectis where practical, including websocket, static asset, file upload, and deeper runtime configuration features.
 - [x] Define the supported one-process multi-instance behavior based on what Kore can safely provide.
 - [x] Add real HTTP integration tests.
