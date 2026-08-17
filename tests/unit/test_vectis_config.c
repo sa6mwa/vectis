@@ -110,6 +110,39 @@ int main(void) {
   assert(config.server.autoblock.block_seconds == 3600u);
   assert(config.server.autoblock.max_entries == 8192u);
 
+  vectis_server_config_init_production_webserver(&config.server);
+  assert(config.server.max_request_body_bytes ==
+         VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES);
+  assert(config.server.autoblock.enabled == 1);
+  assert(config.server.autoblock.tcp_stall_threshold ==
+         VECTIS_SERVER_PRODUCTION_AUTOBLOCK_TCP_STALL_THRESHOLD);
+  assert(config.server.autoblock.tls_failure_threshold ==
+         VECTIS_SERVER_PRODUCTION_AUTOBLOCK_TLS_FAILURE_THRESHOLD);
+  assert(config.server.autoblock.status_rule_count == 4u);
+  assert(config.server.autoblock.status_rules[0].status == 401u);
+  assert(config.server.autoblock.status_rules[0].threshold ==
+         VECTIS_SERVER_PRODUCTION_AUTOBLOCK_401_THRESHOLD);
+  assert(config.server.autoblock.status_rules[1].status == 403u);
+  assert(config.server.autoblock.status_rules[1].threshold ==
+         VECTIS_SERVER_PRODUCTION_AUTOBLOCK_403_THRESHOLD);
+  assert(config.server.autoblock.status_rules[2].status == 404u);
+  assert(config.server.autoblock.status_rules[2].threshold ==
+         VECTIS_SERVER_PRODUCTION_AUTOBLOCK_404_THRESHOLD);
+  assert(config.server.autoblock.status_rules[3].status == 429u);
+  assert(config.server.autoblock.status_rules[3].threshold ==
+         VECTIS_SERVER_PRODUCTION_AUTOBLOCK_429_THRESHOLD);
+
+  vectis_app_config_init_production_webserver(&config);
+  assert(config.supervision_policy == VECTIS_SUPERVISION_AUTO);
+  assert(config.service_failure_policy == VECTIS_SERVICE_FAILURE_FAIL_CLOSED);
+  assert(config.quiescence_policy == VECTIS_QUIESCENCE_STRICT);
+  assert(config.shutdown_grace_ms ==
+         VECTIS_APP_PRODUCTION_WEBSERVER_SHUTDOWN_GRACE_MS);
+  assert(config.server.autoblock.enabled == 1);
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  app->close(app);
+
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.port = 0u;

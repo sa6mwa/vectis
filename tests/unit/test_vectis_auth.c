@@ -432,6 +432,8 @@ int main(void) {
   char temp[] = "/tmp/vectis-auth-unit.XXXXXX";
   char credentials_path[4096];
   char state_path[4096];
+  char predictable_temp_path[4096];
+  char symlink_victim_path[4096];
   char bearer_header[1024];
   char basic_clear[1024];
   char basic_token[1400];
@@ -444,6 +446,7 @@ int main(void) {
   char oauth_basic_header[1500];
   char smtp_url[128];
   char totp_code[VECTIS_TOTP_CODE_LENGTH + 1u];
+  FILE *victim_fp;
   int written;
   int user_exists;
   vectis_auth_store_config store;
@@ -557,17 +560,62 @@ int main(void) {
     remove_tree(temp);
     return 1;
   }
+  written = snprintf(symlink_victim_path, sizeof(symlink_victim_path),
+                     "%s/auth-temp-victim.txt", temp);
+  if (written < 0 || (size_t)written >= sizeof(symlink_victim_path)) {
+    remove_tree(temp);
+    return 1;
+  }
+  victim_fp = fopen(symlink_victim_path, "wb");
+  if (victim_fp == NULL) {
+    remove_tree(temp);
+    return 1;
+  }
+  if (fputs("preserve\n", victim_fp) < 0) {
+    (void)fclose(victim_fp);
+    remove_tree(temp);
+    return 1;
+  }
+  if (fclose(victim_fp) != 0) {
+    remove_tree(temp);
+    return 1;
+  }
+  written = snprintf(predictable_temp_path, sizeof(predictable_temp_path),
+                     "%s.tmp.%ld", credentials_path, (long)getpid());
+  if (written < 0 || (size_t)written >= sizeof(predictable_temp_path)) {
+    remove_tree(temp);
+    return 1;
+  }
+  if (symlink(symlink_victim_path, predictable_temp_path) != 0) {
+    remove_tree(temp);
+    return 1;
+  }
 
   vectis_auth_store_config_init(&store);
   store.credentials_path = credentials_path;
   store.state_path = state_path;
   status = vectis_auth_store_init(&store, &error);
   expect_ok(status, &error, "initializes credentials store");
+  expect(file_contains(symlink_victim_path, "preserve\n"),
+         "auth store initialization does not follow predictable temp symlink");
+  (void)unlink(predictable_temp_path);
   user_exists = 1;
   status = vectis_auth_user_exists(&store, "dav-user@example.com", &user_exists,
                                    &error);
   expect_ok(status, &error, "checks absent auth user");
   expect(!user_exists, "absent auth user is reported missing");
+  if (geteuid() != 0) {
+    expect(chmod(temp, 0500) == 0, "makes auth store directory non-writable");
+    vectis_error_clear(&error);
+    user_exists = 1;
+    status = vectis_auth_user_exists(&store, "dav-user@example.com",
+                                     &user_exists, &error);
+    expect(chmod(temp, 0700) == 0, "restores auth store directory permissions");
+    expect(status == VECTIS_ERR_STATE,
+           "unwritable auth store directory reports state failure");
+    expect(strstr(error.message, "failed to create auth temp store") != NULL,
+           "auth rewrite preserves filesystem diagnostic");
+  }
 
   vectis_auth_email_token_issue_config_init(&email_issue);
   email_issue.store = store;

@@ -1351,6 +1351,26 @@ void vectis_error_clear(vectis_error *error) {
   error->detail[0] = '\0';
 }
 
+static void vectis_copy_cstr(char *dest, size_t dest_size, const char *src) {
+  size_t copy_size;
+
+  if (dest == NULL || dest_size == 0u) {
+    return;
+  }
+  if (src == NULL) {
+    dest[0] = '\0';
+    return;
+  }
+  copy_size = strlen(src);
+  if (copy_size >= dest_size) {
+    copy_size = dest_size - 1u;
+  }
+  if (copy_size > 0u) {
+    memcpy(dest, src, copy_size);
+  }
+  dest[copy_size] = '\0';
+}
+
 void vectis_set_error(vectis_error *error, vectis_status code,
                       const char *message) {
   vectis_error_clear(error);
@@ -1362,7 +1382,7 @@ void vectis_set_error(vectis_error *error, vectis_status code,
   if (message == NULL) {
     return;
   }
-  (void)snprintf(error->message, sizeof(error->message), "%s", message);
+  vectis_copy_cstr(error->message, sizeof(error->message), message);
 }
 
 static void vectis_set_errorf(vectis_error *error, vectis_status code,
@@ -2611,8 +2631,8 @@ vectis_lonejson_builder_sink_write(void *user, const void *data, size_t size,
     if (json_error != NULL) {
       lonejson_error_init(json_error);
       json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
-      (void)snprintf(json_error->message, sizeof(json_error->message), "%s",
-                     "JSON builder sink is required");
+      vectis_copy_cstr(json_error->message, sizeof(json_error->message),
+                       "JSON builder sink is required");
     }
     return LONEJSON_STATUS_CALLBACK_FAILED;
   }
@@ -2625,8 +2645,8 @@ vectis_lonejson_builder_sink_write(void *user, const void *data, size_t size,
       message = sink->error != NULL && sink->error->message[0] != '\0'
                     ? sink->error->message
                     : "JSON builder sink write failed";
-      strncpy(json_error->message, message, sizeof(json_error->message) - 1u);
-      json_error->message[sizeof(json_error->message) - 1u] = '\0';
+      vectis_copy_cstr(json_error->message, sizeof(json_error->message),
+                       message);
     }
     return LONEJSON_STATUS_CALLBACK_FAILED;
   }
@@ -2905,6 +2925,33 @@ void vectis_server_config_init(vectis_server_config *config) {
   vectis_autoblock_config_init(&config->autoblock);
 }
 
+void vectis_server_config_init_production_webserver(
+    vectis_server_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  vectis_server_config_init(config);
+  config->max_request_body_bytes = VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES;
+  config->autoblock.enabled = 1;
+  config->autoblock.tcp_stall_threshold =
+      VECTIS_SERVER_PRODUCTION_AUTOBLOCK_TCP_STALL_THRESHOLD;
+  config->autoblock.tls_failure_threshold =
+      VECTIS_SERVER_PRODUCTION_AUTOBLOCK_TLS_FAILURE_THRESHOLD;
+  config->autoblock.status_rule_count = 4u;
+  config->autoblock.status_rules[0].status = 401u;
+  config->autoblock.status_rules[0].threshold =
+      VECTIS_SERVER_PRODUCTION_AUTOBLOCK_401_THRESHOLD;
+  config->autoblock.status_rules[1].status = 403u;
+  config->autoblock.status_rules[1].threshold =
+      VECTIS_SERVER_PRODUCTION_AUTOBLOCK_403_THRESHOLD;
+  config->autoblock.status_rules[2].status = 404u;
+  config->autoblock.status_rules[2].threshold =
+      VECTIS_SERVER_PRODUCTION_AUTOBLOCK_404_THRESHOLD;
+  config->autoblock.status_rules[3].status = 429u;
+  config->autoblock.status_rules[3].threshold =
+      VECTIS_SERVER_PRODUCTION_AUTOBLOCK_429_THRESHOLD;
+}
+
 void vectis_autoblock_config_init(vectis_autoblock_config *config) {
   if (config == NULL) {
     return;
@@ -2931,6 +2978,18 @@ void vectis_app_config_init(vectis_app_config *config) {
   vectis_tls_config_init(&config->tls);
   vectis_lockd_config_init(&config->lockd);
   vectis_cai_config_init(&config->cai);
+}
+
+void vectis_app_config_init_production_webserver(vectis_app_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  vectis_app_config_init(config);
+  vectis_server_config_init_production_webserver(&config->server);
+  config->supervision_policy = VECTIS_SUPERVISION_AUTO;
+  config->service_failure_policy = VECTIS_SERVICE_FAILURE_FAIL_CLOSED;
+  config->quiescence_policy = VECTIS_QUIESCENCE_STRICT;
+  config->shutdown_grace_ms = VECTIS_APP_PRODUCTION_WEBSERVER_SHUTDOWN_GRACE_MS;
 }
 
 void vectis_body_policy_init(vectis_body_policy *policy) {
@@ -10151,6 +10210,11 @@ static vectis_status vectis_validate_startable(const vectis_app_impl *impl,
     if (impl->domain_count == 0u) {
       vectis_set_error(error, VECTIS_ERR_INVALID,
                        "ACME mode requires tls.domains");
+      return VECTIS_ERR_INVALID;
+    }
+    if (impl->acme_state_dir == NULL || impl->acme_state_dir[0] == '\0') {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "ACME mode requires acme_state_dir");
       return VECTIS_ERR_INVALID;
     }
   }
@@ -19431,8 +19495,8 @@ static lonejson_status vectis_lonejson_bounded_builder_sink_write(
     if (json_error != NULL) {
       lonejson_error_init(json_error);
       json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
-      (void)snprintf(json_error->message, sizeof(json_error->message), "%s",
-                     "bounded JSON sink is invalid");
+      vectis_copy_cstr(json_error->message, sizeof(json_error->message),
+                       "bounded JSON sink is invalid");
     }
     return LONEJSON_STATUS_CALLBACK_FAILED;
   }
@@ -19442,10 +19506,10 @@ static lonejson_status vectis_lonejson_bounded_builder_sink_write(
     if (json_error != NULL) {
       lonejson_error_init(json_error);
       json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
-      (void)snprintf(json_error->message, sizeof(json_error->message), "%s",
-                     sink->error != NULL && sink->error->message[0] != '\0'
-                         ? sink->error->message
-                         : "bounded JSON sink failed");
+      vectis_copy_cstr(json_error->message, sizeof(json_error->message),
+                       sink->error != NULL && sink->error->message[0] != '\0'
+                           ? sink->error->message
+                           : "bounded JSON sink failed");
     }
     return LONEJSON_STATUS_CALLBACK_FAILED;
   }
@@ -20573,8 +20637,8 @@ vectis_openapi_writer_schema(lonejson_writer *writer,
   if (map == NULL) {
     lonejson_error_init(error);
     error->code = LONEJSON_STATUS_INVALID_ARGUMENT;
-    (void)snprintf(error->message, sizeof(error->message), "%s",
-                   "OpenAPI schema map is required");
+    vectis_copy_cstr(error->message, sizeof(error->message),
+                     "OpenAPI schema map is required");
     return LONEJSON_STATUS_INVALID_ARGUMENT;
   }
   if (lonejson_writer_begin_object(writer, error) != LONEJSON_STATUS_OK ||
@@ -28064,8 +28128,8 @@ vectis_lonejson_lc_sink_write(void *user, const void *data, size_t size,
     if (json_error != NULL) {
       lonejson_error_init(json_error);
       json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
-      (void)snprintf(json_error->message, sizeof(json_error->message), "%s",
-                     "JSON rewrite sink is required");
+      vectis_copy_cstr(json_error->message, sizeof(json_error->message),
+                       "JSON rewrite sink is required");
     }
     return LONEJSON_STATUS_CALLBACK_FAILED;
   }
@@ -28080,9 +28144,10 @@ vectis_lonejson_lc_sink_write(void *user, const void *data, size_t size,
       lonejson_error_init(json_error);
       json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
       json_error->system_errno = writer->last_error;
-      (void)snprintf(json_error->message, sizeof(json_error->message), "%s",
-                     lcerr.message != NULL ? lcerr.message
-                                           : "JSON rewrite sink write failed");
+      vectis_copy_cstr(json_error->message, sizeof(json_error->message),
+                       lcerr.message != NULL
+                           ? lcerr.message
+                           : "JSON rewrite sink write failed");
     }
     lc_error_cleanup(&lcerr);
     return LONEJSON_STATUS_CALLBACK_FAILED;
@@ -31298,13 +31363,13 @@ vectis_status vectis_response_error_json(vectis_response *response,
     vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP status code is invalid");
     return VECTIS_ERR_INVALID;
   }
-  (void)snprintf(body.code, sizeof(body.code), "%s",
-                 code != NULL && code[0] != '\0' ? code : "error");
-  (void)snprintf(body.message, sizeof(body.message), "%s",
-                 message != NULL && message[0] != '\0' ? message
-                                                       : "request failed");
+  vectis_copy_cstr(body.code, sizeof(body.code),
+                   code != NULL && code[0] != '\0' ? code : "error");
+  vectis_copy_cstr(body.message, sizeof(body.message),
+                   message != NULL && message[0] != '\0' ? message
+                                                         : "request failed");
   if (detail != NULL) {
-    (void)snprintf(body.detail, sizeof(body.detail), "%s", detail);
+    vectis_copy_cstr(body.detail, sizeof(body.detail), detail);
   }
   return vectis_response_json(response, status_code, &vectis_error_response_map,
                               &body, error);

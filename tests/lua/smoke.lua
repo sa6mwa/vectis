@@ -1094,6 +1094,27 @@ do
 end
 
 do
+  local production_profile_server = assert(vectis.server.new({
+    app_name = "lua-production-profile",
+    profile = "production_webserver",
+    port = 18168,
+  }))
+  production_profile_server:close()
+end
+
+do
+  local ok, err = pcall(function()
+    return vectis.server.new({
+      app_name = "lua-bad-profile",
+      profile = "debug-ish",
+      port = 18167,
+    })
+  end)
+  assert(ok == false)
+  assert(tostring(err):match("profile"))
+end
+
+do
   local worker_count_server = assert(vectis.server.new({
     app_name = "lua-worker-count",
     port = 18169,

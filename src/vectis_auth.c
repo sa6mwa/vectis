@@ -31,6 +31,9 @@
 #define VECTIS_AUTH_RANDOM_TOTP_BYTES 20u
 #define VECTIS_AUTH_RANDOM_OIDC_BYTES 16u
 #define VECTIS_AUTH_RANDOM_EMAIL_TOKEN_BYTES 16u
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 0
+#endif
 
 typedef struct vectis_auth_store_lock {
   int fd;
@@ -507,25 +510,61 @@ vectis_auth_read_store_locked(const vectis_auth_store_config *config,
 }
 
 static vectis_status
+vectis_auth_create_temp_for_path(const char *target_path, const char *label,
+                                 char *temp_path, size_t temp_path_size,
+                                 int *out_fd, vectis_error *error) {
+  int fd;
+  int written;
+
+  if (target_path == NULL || target_path[0] == '\0' || label == NULL ||
+      label[0] == '\0' || temp_path == NULL || temp_path_size == 0u ||
+      out_fd == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth temp path input is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out_fd = -1;
+  written =
+      snprintf(temp_path, temp_path_size, "%s.%s.XXXXXX", target_path, label);
+  if (written < 0 || (size_t)written >= temp_path_size) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth temp path is too long");
+    return VECTIS_ERR_INVALID;
+  }
+  fd = mkstemp(temp_path);
+  if (fd < 0) {
+    return vectis_auth_set_errno(error, "failed to create auth temp store",
+                                 temp_path);
+  }
+  (void)fcntl(fd, F_SETFD, FD_CLOEXEC);
+  if (fchmod(fd, 0600) != 0) {
+    (void)close(fd);
+    (void)unlink(temp_path);
+    return vectis_auth_set_errno(error, "failed to protect auth temp store",
+                                 temp_path);
+  }
+  *out_fd = fd;
+  return VECTIS_OK;
+}
+
+static void vectis_auth_unlink_temp_path(const char *temp_path) {
+  if (temp_path != NULL && temp_path[0] != '\0') {
+    (void)unlink(temp_path);
+  }
+}
+
+static vectis_status
 vectis_auth_write_store_locked(const vectis_auth_store_config *config,
                                const char *data, size_t len,
                                vectis_error *error) {
   char temp_path[4096];
   int fd;
-  int written;
   size_t offset;
   ssize_t nwrite;
 
-  written = snprintf(temp_path, sizeof(temp_path), "%s.tmp.%ld",
-                     config->credentials_path, (long)getpid());
-  if (written < 0 || (size_t)written >= sizeof(temp_path)) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "auth temp path is too long");
-    return VECTIS_ERR_INVALID;
-  }
-  fd = open(temp_path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
-  if (fd < 0) {
-    return vectis_auth_set_errno(error, "failed to create auth temp store",
-                                 temp_path);
+  if (vectis_auth_create_temp_for_path(config->credentials_path, "tmp",
+                                       temp_path, sizeof(temp_path), &fd,
+                                       error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
   offset = 0u;
   while (offset < len) {
@@ -538,7 +577,15 @@ vectis_auth_write_store_locked(const vectis_auth_store_config *config,
     }
     offset += (size_t)nwrite;
   }
-  if (fsync(fd) != 0 || close(fd) != 0) {
+  if (fsync(fd) != 0) {
+    int saved_errno = errno;
+    (void)close(fd);
+    (void)unlink(temp_path);
+    errno = saved_errno;
+    return vectis_auth_set_errno(error, "failed to flush auth temp store",
+                                 temp_path);
+  }
+  if (close(fd) != 0) {
     (void)unlink(temp_path);
     return vectis_auth_set_errno(error, "failed to flush auth temp store",
                                  temp_path);
@@ -547,6 +594,89 @@ vectis_auth_write_store_locked(const vectis_auth_store_config *config,
     (void)unlink(temp_path);
     return vectis_auth_set_errno(error, "failed to replace auth store",
                                  config->credentials_path);
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_rewrite_array_to_temp_locked(
+    lonejson *runtime, const char *selector, const char *input_path,
+    const char *label, char *temp_path, size_t temp_path_size,
+    const lonejson_array_rewrite_options *options, lonejson_error *json_error,
+    vectis_error *error) {
+  lonejson_error local_json_error;
+  lonejson_status json_status;
+  vectis_status status;
+  int input_fd;
+  int output_fd;
+  int saved_errno;
+
+  if (json_error == NULL) {
+    json_error = &local_json_error;
+  }
+  lonejson_error_init(json_error);
+  input_fd = -1;
+  output_fd = -1;
+  status = vectis_auth_create_temp_for_path(input_path, label, temp_path,
+                                            temp_path_size, &output_fd, error);
+  if (status != VECTIS_OK) {
+    json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
+    vectis_auth_copy_fixed(json_error->message, sizeof(json_error->message),
+                           error != NULL && error->message[0] != '\0'
+                               ? error->message
+                               : "failed to create auth rewrite temp file");
+    return status;
+  }
+  input_fd = open(input_path, O_RDONLY | O_CLOEXEC);
+  if (input_fd < 0) {
+    saved_errno = errno;
+    (void)close(output_fd);
+    (void)unlink(temp_path);
+    errno = saved_errno;
+    status =
+        vectis_auth_set_errno(error, "failed to read auth store", input_path);
+    json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
+    vectis_auth_copy_fixed(json_error->message, sizeof(json_error->message),
+                           error != NULL && error->message[0] != '\0'
+                               ? error->message
+                               : "failed to read auth store");
+    return status;
+  }
+  json_status = lonejson_array_rewrite_fd_to_fd(runtime, selector, input_fd,
+                                                output_fd, options, json_error);
+  saved_errno = errno;
+  (void)close(input_fd);
+  if (json_status != LONEJSON_STATUS_OK) {
+    (void)close(output_fd);
+    (void)unlink(temp_path);
+    errno = saved_errno;
+    return VECTIS_ERR_INVALID;
+  }
+  if (fsync(output_fd) != 0) {
+    saved_errno = errno;
+    (void)close(output_fd);
+    (void)unlink(temp_path);
+    errno = saved_errno;
+    status = vectis_auth_set_errno(error, "failed to flush auth temp store",
+                                   temp_path);
+    json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
+    vectis_auth_copy_fixed(json_error->message, sizeof(json_error->message),
+                           error != NULL && error->message[0] != '\0'
+                               ? error->message
+                               : "failed to flush auth temp store");
+    return status;
+  }
+  if (close(output_fd) != 0) {
+    saved_errno = errno;
+    (void)unlink(temp_path);
+    errno = saved_errno;
+    status = vectis_auth_set_errno(error, "failed to flush auth temp store",
+                                   temp_path);
+    json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
+    vectis_auth_copy_fixed(json_error->message, sizeof(json_error->message),
+                           error != NULL && error->message[0] != '\0'
+                               ? error->message
+                               : "failed to flush auth temp store");
+    return status;
   }
   return VECTIS_OK;
 }
@@ -2628,7 +2758,7 @@ static void vectis_auth_oauth2_lonejson_error(lonejson_error *error,
   lonejson_error_init(error);
   error->code = status;
   if (message != NULL) {
-    (void)snprintf(error->message, sizeof(error->message), "%s", message);
+    vectis_auth_copy_fixed(error->message, sizeof(error->message), message);
   }
 }
 
@@ -3813,14 +3943,10 @@ static vectis_status vectis_auth_drop_oauth2_flow_to_temp_locked(
   vectis_auth_oauth2_flow_drop_state state;
   lonejson_error json_error;
   lonejson_status json_status;
-  int written;
+  vectis_status status;
 
-  written = snprintf(temp_path, temp_path_size, "%s.oauth2.%ld",
-                     store_config->credentials_path, (long)getpid());
-  if (written < 0 || (size_t)written >= temp_path_size) {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "OAuth2 token flow temp path is too long");
-    return VECTIS_ERR_INVALID;
+  if (temp_path != NULL && temp_path_size > 0u) {
+    temp_path[0] = '\0';
   }
   memset(&state, 0, sizeof(state));
   state.runtime = runtime;
@@ -3834,13 +3960,21 @@ static vectis_status vectis_auth_drop_oauth2_flow_to_temp_locked(
     options.item_value = &item_value;
     options.item = vectis_auth_oauth2_flow_drop_item;
     options.user = &state;
-    json_status = lonejson_array_rewrite_path(runtime, "oauth2_flows",
-                                              store_config->credentials_path,
-                                              temp_path, &options, &json_error);
+    status = vectis_auth_rewrite_array_to_temp_locked(
+        runtime, "oauth2_flows", store_config->credentials_path, "oauth2",
+        temp_path, temp_path_size, &options, &json_error, error);
+    if (status == VECTIS_OK) {
+      json_status = LONEJSON_STATUS_OK;
+    } else if (status != VECTIS_ERR_INVALID) {
+      lonejson_json_value_cleanup(&item_value);
+      return status;
+    } else {
+      json_status = json_error.code;
+    }
   }
   lonejson_json_value_cleanup(&item_value);
   if (json_status != LONEJSON_STATUS_OK) {
-    (void)unlink(temp_path);
+    vectis_auth_unlink_temp_path(temp_path);
     return vectis_auth_lonejson_error(error, json_status, &json_error,
                                       "failed to rewrite OAuth2 token flows");
   }
@@ -3856,22 +3990,16 @@ static vectis_status vectis_auth_find_oauth2_flow_locked(
   vectis_auth_oauth2_flow_find_state state;
   lonejson_error json_error;
   lonejson_status json_status;
+  vectis_status status;
   char temp_path[4096];
-  int written;
 
+  temp_path[0] = '\0';
   if (out == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "OAuth2 token flow output is required");
     return VECTIS_ERR_INVALID;
   }
   vectis_auth_oauth2_flow_record_init(out);
-  written = snprintf(temp_path, sizeof(temp_path), "%s.oauth2.find.%ld",
-                     store_config->credentials_path, (long)getpid());
-  if (written < 0 || (size_t)written >= sizeof(temp_path)) {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "OAuth2 token flow lookup temp path is too long");
-    return VECTIS_ERR_INVALID;
-  }
   memset(&state, 0, sizeof(state));
   state.runtime = runtime;
   state.flow_id = flow_id;
@@ -3885,12 +4013,21 @@ static vectis_status vectis_auth_find_oauth2_flow_locked(
     options.item_value = &item_value;
     options.item = vectis_auth_oauth2_flow_find_item;
     options.user = &state;
-    json_status = lonejson_array_rewrite_path(runtime, "oauth2_flows",
-                                              store_config->credentials_path,
-                                              temp_path, &options, &json_error);
+    status = vectis_auth_rewrite_array_to_temp_locked(
+        runtime, "oauth2_flows", store_config->credentials_path, "oauth2-find",
+        temp_path, sizeof(temp_path), &options, &json_error, error);
+    if (status == VECTIS_OK) {
+      json_status = LONEJSON_STATUS_OK;
+    } else if (status != VECTIS_ERR_INVALID) {
+      lonejson_json_value_cleanup(&item_value);
+      vectis_auth_oauth2_flow_record_cleanup(&state.record);
+      return status;
+    } else {
+      json_status = json_error.code;
+    }
   }
   lonejson_json_value_cleanup(&item_value);
-  (void)unlink(temp_path);
+  vectis_auth_unlink_temp_path(temp_path);
   if (json_status != LONEJSON_STATUS_OK) {
     vectis_auth_oauth2_flow_record_cleanup(&state.record);
     return vectis_auth_lonejson_error(error, json_status, &json_error,
@@ -3908,16 +4045,10 @@ static vectis_status vectis_auth_revoke_oauth2_flow_credentials_locked(
   vectis_auth_oauth2_webdav_revoke_state state;
   lonejson_error json_error;
   lonejson_status json_status;
+  vectis_status status;
   char temp_path[4096];
-  int written;
 
-  written = snprintf(temp_path, sizeof(temp_path), "%s.oauth2.revoke.%ld",
-                     store_config->credentials_path, (long)getpid());
-  if (written < 0 || (size_t)written >= sizeof(temp_path)) {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "OAuth2 credential revoke temp path is too long");
-    return VECTIS_ERR_INVALID;
-  }
+  temp_path[0] = '\0';
   memset(&state, 0, sizeof(state));
   state.runtime = runtime;
   state.flow_id = flow_id;
@@ -3930,22 +4061,30 @@ static vectis_status vectis_auth_revoke_oauth2_flow_credentials_locked(
     options.item_value = &item_value;
     options.item = vectis_auth_oauth2_webdav_revoke_item;
     options.user = &state;
-    json_status = lonejson_array_rewrite_path(runtime, "credentials",
-                                              store_config->credentials_path,
-                                              temp_path, &options, &json_error);
+    status = vectis_auth_rewrite_array_to_temp_locked(
+        runtime, "credentials", store_config->credentials_path, "oauth2-revoke",
+        temp_path, sizeof(temp_path), &options, &json_error, error);
+    if (status == VECTIS_OK) {
+      json_status = LONEJSON_STATUS_OK;
+    } else if (status != VECTIS_ERR_INVALID) {
+      lonejson_json_value_cleanup(&item_value);
+      return status;
+    } else {
+      json_status = json_error.code;
+    }
   }
   lonejson_json_value_cleanup(&item_value);
   if (json_status != LONEJSON_STATUS_OK) {
-    (void)unlink(temp_path);
+    vectis_auth_unlink_temp_path(temp_path);
     return vectis_auth_lonejson_error(error, json_status, &json_error,
                                       "failed to revoke OAuth2 credentials");
   }
   if (!state.matched) {
-    (void)unlink(temp_path);
+    vectis_auth_unlink_temp_path(temp_path);
     return VECTIS_OK;
   }
   if (rename(temp_path, store_config->credentials_path) != 0) {
-    (void)unlink(temp_path);
+    vectis_auth_unlink_temp_path(temp_path);
     return vectis_auth_set_errno(error, "failed to replace auth store",
                                  store_config->credentials_path);
   }
@@ -3961,14 +4100,10 @@ static vectis_status vectis_auth_drop_email_token_to_temp_locked(
   vectis_auth_email_token_drop_state state;
   lonejson_error json_error;
   lonejson_status json_status;
-  int written;
+  vectis_status status;
 
-  written = snprintf(temp_path, temp_path_size, "%s.email_tokens.%ld",
-                     store_config->credentials_path, (long)getpid());
-  if (written < 0 || (size_t)written >= temp_path_size) {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "auth email-token temp path is too long");
-    return VECTIS_ERR_INVALID;
+  if (temp_path != NULL && temp_path_size > 0u) {
+    temp_path[0] = '\0';
   }
   memset(&state, 0, sizeof(state));
   state.runtime = runtime;
@@ -3982,13 +4117,21 @@ static vectis_status vectis_auth_drop_email_token_to_temp_locked(
     options.item_value = &item_value;
     options.item = vectis_auth_email_token_drop_item;
     options.user = &state;
-    json_status = lonejson_array_rewrite_path(runtime, "email_tokens",
-                                              store_config->credentials_path,
-                                              temp_path, &options, &json_error);
+    status = vectis_auth_rewrite_array_to_temp_locked(
+        runtime, "email_tokens", store_config->credentials_path, "email-tokens",
+        temp_path, temp_path_size, &options, &json_error, error);
+    if (status == VECTIS_OK) {
+      json_status = LONEJSON_STATUS_OK;
+    } else if (status != VECTIS_ERR_INVALID) {
+      lonejson_json_value_cleanup(&item_value);
+      return status;
+    } else {
+      json_status = json_error.code;
+    }
   }
   lonejson_json_value_cleanup(&item_value);
   if (json_status != LONEJSON_STATUS_OK) {
-    (void)unlink(temp_path);
+    vectis_auth_unlink_temp_path(temp_path);
     return vectis_auth_lonejson_error(error, json_status, &json_error,
                                       "failed to rewrite auth email tokens");
   }
@@ -4004,22 +4147,16 @@ static vectis_status vectis_auth_find_email_token_locked(
   vectis_auth_email_token_find_state state;
   lonejson_error json_error;
   lonejson_status json_status;
+  vectis_status status;
   char temp_path[4096];
-  int written;
 
+  temp_path[0] = '\0';
   if (out == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "auth email-token output is required");
     return VECTIS_ERR_INVALID;
   }
   memset(out, 0, sizeof(*out));
-  written = snprintf(temp_path, sizeof(temp_path), "%s.email_tokens.find.%ld",
-                     store_config->credentials_path, (long)getpid());
-  if (written < 0 || (size_t)written >= sizeof(temp_path)) {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "auth email-token lookup temp path is too long");
-    return VECTIS_ERR_INVALID;
-  }
   memset(&state, 0, sizeof(state));
   state.runtime = runtime;
   state.transaction_id = transaction_id;
@@ -4032,12 +4169,21 @@ static vectis_status vectis_auth_find_email_token_locked(
     options.item_value = &item_value;
     options.item = vectis_auth_email_token_find_item;
     options.user = &state;
-    json_status = lonejson_array_rewrite_path(runtime, "email_tokens",
-                                              store_config->credentials_path,
-                                              temp_path, &options, &json_error);
+    status = vectis_auth_rewrite_array_to_temp_locked(
+        runtime, "email_tokens", store_config->credentials_path,
+        "email-tokens-find", temp_path, sizeof(temp_path), &options,
+        &json_error, error);
+    if (status == VECTIS_OK) {
+      json_status = LONEJSON_STATUS_OK;
+    } else if (status != VECTIS_ERR_INVALID) {
+      lonejson_json_value_cleanup(&item_value);
+      return status;
+    } else {
+      json_status = json_error.code;
+    }
   }
   lonejson_json_value_cleanup(&item_value);
-  (void)unlink(temp_path);
+  vectis_auth_unlink_temp_path(temp_path);
   if (json_status != LONEJSON_STATUS_OK) {
     return vectis_auth_lonejson_error(error, json_status, &json_error,
                                       "failed to read auth email tokens");
@@ -4055,14 +4201,10 @@ static vectis_status vectis_auth_drop_pending_login_to_temp_locked(
   vectis_auth_pending_login_drop_state state;
   lonejson_error json_error;
   lonejson_status json_status;
-  int written;
+  vectis_status status;
 
-  written = snprintf(temp_path, temp_path_size, "%s.pending_logins.%ld",
-                     store_config->credentials_path, (long)getpid());
-  if (written < 0 || (size_t)written >= temp_path_size) {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "auth pending-login temp path is too long");
-    return VECTIS_ERR_INVALID;
+  if (temp_path != NULL && temp_path_size > 0u) {
+    temp_path[0] = '\0';
   }
   memset(&state, 0, sizeof(state));
   state.runtime = runtime;
@@ -4076,13 +4218,22 @@ static vectis_status vectis_auth_drop_pending_login_to_temp_locked(
     options.item_value = &item_value;
     options.item = vectis_auth_pending_login_drop_item;
     options.user = &state;
-    json_status = lonejson_array_rewrite_path(runtime, "pending_logins",
-                                              store_config->credentials_path,
-                                              temp_path, &options, &json_error);
+    status = vectis_auth_rewrite_array_to_temp_locked(
+        runtime, "pending_logins", store_config->credentials_path,
+        "pending-logins", temp_path, temp_path_size, &options, &json_error,
+        error);
+    if (status == VECTIS_OK) {
+      json_status = LONEJSON_STATUS_OK;
+    } else if (status != VECTIS_ERR_INVALID) {
+      lonejson_json_value_cleanup(&item_value);
+      return status;
+    } else {
+      json_status = json_error.code;
+    }
   }
   lonejson_json_value_cleanup(&item_value);
   if (json_status != LONEJSON_STATUS_OK) {
-    (void)unlink(temp_path);
+    vectis_auth_unlink_temp_path(temp_path);
     return vectis_auth_lonejson_error(error, json_status, &json_error,
                                       "failed to rewrite auth pending logins");
   }
@@ -4098,22 +4249,16 @@ static vectis_status vectis_auth_find_pending_login_locked(
   vectis_auth_pending_login_find_state state;
   lonejson_error json_error;
   lonejson_status json_status;
+  vectis_status status;
   char temp_path[4096];
-  int written;
 
+  temp_path[0] = '\0';
   if (out == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "auth pending-login output is required");
     return VECTIS_ERR_INVALID;
   }
   memset(out, 0, sizeof(*out));
-  written = snprintf(temp_path, sizeof(temp_path), "%s.pending_logins.find.%ld",
-                     store_config->credentials_path, (long)getpid());
-  if (written < 0 || (size_t)written >= sizeof(temp_path)) {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "auth pending-login lookup temp path is too long");
-    return VECTIS_ERR_INVALID;
-  }
   memset(&state, 0, sizeof(state));
   state.runtime = runtime;
   state.transaction_id = transaction_id;
@@ -4126,12 +4271,21 @@ static vectis_status vectis_auth_find_pending_login_locked(
     options.item_value = &item_value;
     options.item = vectis_auth_pending_login_find_item;
     options.user = &state;
-    json_status = lonejson_array_rewrite_path(runtime, "pending_logins",
-                                              store_config->credentials_path,
-                                              temp_path, &options, &json_error);
+    status = vectis_auth_rewrite_array_to_temp_locked(
+        runtime, "pending_logins", store_config->credentials_path,
+        "pending-logins-find", temp_path, sizeof(temp_path), &options,
+        &json_error, error);
+    if (status == VECTIS_OK) {
+      json_status = LONEJSON_STATUS_OK;
+    } else if (status != VECTIS_ERR_INVALID) {
+      lonejson_json_value_cleanup(&item_value);
+      return status;
+    } else {
+      json_status = json_error.code;
+    }
   }
   lonejson_json_value_cleanup(&item_value);
-  (void)unlink(temp_path);
+  vectis_auth_unlink_temp_path(temp_path);
   if (json_status != LONEJSON_STATUS_OK) {
     return vectis_auth_lonejson_error(error, json_status, &json_error,
                                       "failed to read auth pending logins");
@@ -4466,14 +4620,10 @@ static vectis_status vectis_auth_drop_user_to_temp_locked(
   vectis_auth_user_drop_state state;
   lonejson_error json_error;
   lonejson_status json_status;
-  int written;
+  vectis_status status;
 
-  written = snprintf(temp_path, temp_path_size, "%s.users.%ld",
-                     store_config->credentials_path, (long)getpid());
-  if (written < 0 || (size_t)written >= temp_path_size) {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "auth users temp path is too long");
-    return VECTIS_ERR_INVALID;
+  if (temp_path != NULL && temp_path_size > 0u) {
+    temp_path[0] = '\0';
   }
   memset(&state, 0, sizeof(state));
   state.runtime = runtime;
@@ -4487,13 +4637,21 @@ static vectis_status vectis_auth_drop_user_to_temp_locked(
     options.item_value = &item_value;
     options.item = vectis_auth_user_drop_item;
     options.user = &state;
-    json_status = lonejson_array_rewrite_path(runtime, "users",
-                                              store_config->credentials_path,
-                                              temp_path, &options, &json_error);
+    status = vectis_auth_rewrite_array_to_temp_locked(
+        runtime, "users", store_config->credentials_path, "users", temp_path,
+        temp_path_size, &options, &json_error, error);
+    if (status == VECTIS_OK) {
+      json_status = LONEJSON_STATUS_OK;
+    } else if (status != VECTIS_ERR_INVALID) {
+      lonejson_json_value_cleanup(&item_value);
+      return status;
+    } else {
+      json_status = json_error.code;
+    }
   }
   lonejson_json_value_cleanup(&item_value);
   if (json_status != LONEJSON_STATUS_OK) {
-    (void)unlink(temp_path);
+    vectis_auth_unlink_temp_path(temp_path);
     return vectis_auth_lonejson_error(error, json_status, &json_error,
                                       "failed to rewrite auth users");
   }
@@ -4508,21 +4666,15 @@ static vectis_status vectis_auth_find_user_locked(
   vectis_auth_user_find_state state;
   lonejson_error json_error;
   lonejson_status json_status;
+  vectis_status status;
   char temp_path[4096];
-  int written;
 
+  temp_path[0] = '\0';
   if (out == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "auth user output is required");
     return VECTIS_ERR_INVALID;
   }
   memset(out, 0, sizeof(*out));
-  written = snprintf(temp_path, sizeof(temp_path), "%s.find.%ld",
-                     store_config->credentials_path, (long)getpid());
-  if (written < 0 || (size_t)written >= sizeof(temp_path)) {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "auth user lookup temp path is too long");
-    return VECTIS_ERR_INVALID;
-  }
   memset(&state, 0, sizeof(state));
   state.runtime = runtime;
   state.username = username;
@@ -4535,12 +4687,20 @@ static vectis_status vectis_auth_find_user_locked(
     options.item_value = &item_value;
     options.item = vectis_auth_user_find_item;
     options.user = &state;
-    json_status = lonejson_array_rewrite_path(runtime, "users",
-                                              store_config->credentials_path,
-                                              temp_path, &options, &json_error);
+    status = vectis_auth_rewrite_array_to_temp_locked(
+        runtime, "users", store_config->credentials_path, "users-find",
+        temp_path, sizeof(temp_path), &options, &json_error, error);
+    if (status == VECTIS_OK) {
+      json_status = LONEJSON_STATUS_OK;
+    } else if (status != VECTIS_ERR_INVALID) {
+      lonejson_json_value_cleanup(&item_value);
+      return status;
+    } else {
+      json_status = json_error.code;
+    }
   }
   lonejson_json_value_cleanup(&item_value);
-  (void)unlink(temp_path);
+  vectis_auth_unlink_temp_path(temp_path);
   if (json_status != LONEJSON_STATUS_OK) {
     return vectis_auth_lonejson_error(error, json_status, &json_error,
                                       "failed to read auth users");
@@ -5883,7 +6043,6 @@ vectis_auth_revoke_client(const vectis_auth_store_config *store_config,
   lonejson_status json_status;
   vectis_status status;
   char temp_path[4096];
-  int written;
 
   if (client_id == NULL || client_id[0] == '\0') {
     vectis_set_error(error, VECTIS_ERR_INVALID,
@@ -5900,18 +6059,10 @@ vectis_auth_revoke_client(const vectis_auth_store_config *store_config,
     vectis_auth_lock_close(&lock);
     return status;
   }
-  written = snprintf(temp_path, sizeof(temp_path), "%s.revoke.%ld",
-                     store_config->credentials_path, (long)getpid());
-  if (written < 0 || (size_t)written >= sizeof(temp_path)) {
-    lonejson_free(runtime);
-    vectis_auth_lock_close(&lock);
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "auth revoke temp path is too long");
-    return VECTIS_ERR_INVALID;
-  }
   memset(&state, 0, sizeof(state));
   state.runtime = runtime;
   state.client_id = client_id;
+  temp_path[0] = '\0';
   memset(&options, 0, sizeof(options));
   lonejson_json_value_init(runtime, &item_value);
   lonejson_error_init(&json_error);
@@ -5921,26 +6072,36 @@ vectis_auth_revoke_client(const vectis_auth_store_config *store_config,
     options.item_value = &item_value;
     options.item = vectis_auth_revoke_item;
     options.user = &state;
-    json_status = lonejson_array_rewrite_path(runtime, "credentials",
-                                              store_config->credentials_path,
-                                              temp_path, &options, &json_error);
+    status = vectis_auth_rewrite_array_to_temp_locked(
+        runtime, "credentials", store_config->credentials_path, "revoke",
+        temp_path, sizeof(temp_path), &options, &json_error, error);
+    if (status == VECTIS_OK) {
+      json_status = LONEJSON_STATUS_OK;
+    } else if (status != VECTIS_ERR_INVALID) {
+      lonejson_json_value_cleanup(&item_value);
+      lonejson_free(runtime);
+      vectis_auth_lock_close(&lock);
+      return status;
+    } else {
+      json_status = json_error.code;
+    }
   }
   lonejson_json_value_cleanup(&item_value);
   if (json_status != LONEJSON_STATUS_OK) {
-    (void)unlink(temp_path);
+    vectis_auth_unlink_temp_path(temp_path);
     lonejson_free(runtime);
     vectis_auth_lock_close(&lock);
     return vectis_auth_lonejson_error(error, json_status, &json_error,
                                       "failed to revoke auth credential");
   }
   if (!state.matched) {
-    (void)unlink(temp_path);
+    vectis_auth_unlink_temp_path(temp_path);
     lonejson_free(runtime);
     vectis_auth_lock_close(&lock);
     return VECTIS_OK;
   }
   if (rename(temp_path, store_config->credentials_path) != 0) {
-    (void)unlink(temp_path);
+    vectis_auth_unlink_temp_path(temp_path);
     lonejson_free(runtime);
     vectis_auth_lock_close(&lock);
     return vectis_auth_set_errno(error, "failed to replace auth store",

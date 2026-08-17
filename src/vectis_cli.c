@@ -10566,6 +10566,7 @@ static int vectis_lua_server_new(lua_State *lua) {
   const char *app_name;
   const char *bind;
   const char *mode;
+  const char *profile;
   const char *supervision_policy;
   const char *service_failure_policy;
   const char *quiescence_policy;
@@ -10585,7 +10586,15 @@ static int vectis_lua_server_new(lua_State *lua) {
   }
   app_name = vectis_lua_table_string(lua, 1, "app_name");
   bind = vectis_lua_table_string(lua, 1, "bind");
-  vectis_app_config_init(&config);
+  profile = vectis_lua_table_string(lua, 1, "profile");
+  if (profile == NULL || strcmp(profile, "default") == 0) {
+    vectis_app_config_init(&config);
+  } else if (strcmp(profile, "production_webserver") == 0) {
+    vectis_app_config_init_production_webserver(&config);
+  } else {
+    return luaL_error(lua,
+                      "server profile must be default or production_webserver");
+  }
   config.app_name = app_name != NULL ? app_name : "vectis-lua";
   supervision_policy = vectis_lua_table_string(lua, 1, "supervision_policy");
   if (supervision_policy != NULL) {

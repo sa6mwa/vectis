@@ -45,6 +45,14 @@ invalid.
 zero preserves Kore's automatic CPU-count selection; explicit values must be at
 most `253`.
 
+`profile = "production_webserver"` applies the same C-owned production webserver
+profile as `vectis_app_config_init_production_webserver()`: strict quiescence,
+fail-closed service failure handling, a longer graceful shutdown window,
+explicit request-body guardrails, and conservative autoblock rules for repeated
+401, 403, 404, 429, TCP-stall, and TLS-failure events. Explicit fields in
+`vectis.server.new()` still override the profile. Metrics, auth routes, WebDAV
+mounts, static mounts, and TLS material remain separate opt-in registrations.
+
 Managed app-owned services inherit the server/app logger for lifecycle events
 such as start, stop, and monitored failure. Lua service registration helpers
 accept `logger_disabled = true` to suppress service lifecycle logging and

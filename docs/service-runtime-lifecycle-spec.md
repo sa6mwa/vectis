@@ -815,6 +815,13 @@ materialized, even if the current handle was released during stop.
 `vectis_app_config.shutdown_grace_ms` and Lua
 `vectis.server.new({shutdown_grace_ms = ...})` configure this grace period; zero
 or omission uses `VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS`.
+`vectis_app_config_init_production_webserver()` and Lua
+`vectis.server.new({profile = "production_webserver"})` are opt-in production
+webserver profiles over the same C-owned runtime surface. They keep route,
+metrics, auth, WebDAV, and TLS registration explicit, but apply strict
+quiescence, fail-closed service failures, a longer graceful shutdown deadline,
+explicit request-body guardrails, and conservative autoblock thresholds for
+repeated auth/status, TCP-stall, and TLS-failure signals.
 The supervised Kore runtime is isolated into its own process group before
 readiness; supervisor shutdown signals target that process group so an
 unresponsive Kore parent cannot leave worker listeners behind.

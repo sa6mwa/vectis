@@ -29,6 +29,13 @@
 #define VECTIS_SERVER_DEFAULT_REQUEST_BODY_SPOOL_DIR_PREFIX                    \
   "/tmp/vectis-http-body"
 #define VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS 5000L
+#define VECTIS_APP_PRODUCTION_WEBSERVER_SHUTDOWN_GRACE_MS 10000L
+#define VECTIS_SERVER_PRODUCTION_AUTOBLOCK_TCP_STALL_THRESHOLD 20u
+#define VECTIS_SERVER_PRODUCTION_AUTOBLOCK_TLS_FAILURE_THRESHOLD 10u
+#define VECTIS_SERVER_PRODUCTION_AUTOBLOCK_401_THRESHOLD 10u
+#define VECTIS_SERVER_PRODUCTION_AUTOBLOCK_403_THRESHOLD 10u
+#define VECTIS_SERVER_PRODUCTION_AUTOBLOCK_404_THRESHOLD 50u
+#define VECTIS_SERVER_PRODUCTION_AUTOBLOCK_429_THRESHOLD 5u
 #define VECTIS_AUTOBLOCK_MAX_STATUS_RULES 16u
 #define VECTIS_AUTOBLOCK_MAX_EVENT_RULES 16u
 #define VECTIS_AUTOBLOCK_MAX_TRUSTED_PROXIES 16u
@@ -2182,6 +2189,17 @@ void vectis_opcua_monitor_mailbox_destroy(
     vectis_opcua_monitor_mailbox *adapter);
 void vectis_app_config_init(vectis_app_config *config);
 void vectis_server_config_init(vectis_server_config *config);
+/* Initialize an opt-in production webserver server profile. It keeps metrics,
+ * auth, routes, WebDAV mounts, and TLS material explicit, while making the
+ * server guardrails concrete and enabling conservative autoblock rules.
+ */
+void vectis_server_config_init_production_webserver(
+    vectis_server_config *config);
+/* Initialize an opt-in production webserver app profile. This applies
+ * vectis_server_config_init_production_webserver(), keeps strict quiescence and
+ * fail-closed service behavior, and uses a longer graceful shutdown window.
+ */
+void vectis_app_config_init_production_webserver(vectis_app_config *config);
 void vectis_autoblock_config_init(vectis_autoblock_config *config);
 void vectis_tls_config_init(vectis_tls_config *config);
 void vectis_lockd_config_init(vectis_lockd_config *config);
