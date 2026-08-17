@@ -354,6 +354,14 @@ upload-memory limit when a route leaves the field at zero. If all registered
 streaming-upload routes disable disk spooling, the threshold remains zero so
 Kore does not create request-body spill files.
 
+When disk spooling is enabled, Vectis also owns the request-body spill directory
+used by both Kore's body offload path and Vectis' streaming receiver spooler
+through `vectis_server_config.request_body_spool_dir` and Lua
+`vectis.server.new({request_body_spool_dir = ...})`. Omission uses
+`/tmp/vectis-http-body`; an empty effective path is invalid. Tests must prove
+that live Kore uploads spill under the configured directory, not merely that
+Kore reports a file-backed body.
+
 ## CAI And MCP
 
 Two CAI/MCP shapes exist:

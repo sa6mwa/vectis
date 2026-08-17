@@ -61,6 +61,10 @@ typedef struct stream_probe_context {
   int saw_body_path;
 } stream_probe_context;
 
+typedef struct spooled_upload_expectation {
+  const char *path_prefix;
+} spooled_upload_expectation;
+
 typedef struct runtime_thread_probe {
   volatile int done;
 } runtime_thread_probe;
@@ -602,14 +606,25 @@ static vectis_status spooled_upload_handler(vectis_app *app,
                                             vectis_error *error) {
   vectis_body_materialized body;
   vectis_body_materialize_config config;
+  const spooled_upload_expectation *expectation;
+  const char *body_path;
   vectis_status status;
+  size_t prefix_len;
 
   (void)app;
-  (void)userdata;
-  if (!vectis_request_body_is_spooled(request) ||
-      vectis_request_body_path(request) == NULL) {
+  expectation = (const spooled_upload_expectation *)userdata;
+  body_path = vectis_request_body_path(request);
+  if (!vectis_request_body_is_spooled(request) || body_path == NULL) {
     return vectis_response_text(response, 422, "text/plain", "not spooled",
                                 error);
+  }
+  if (expectation != NULL && expectation->path_prefix != NULL) {
+    prefix_len = strlen(expectation->path_prefix);
+    if (strncmp(body_path, expectation->path_prefix, prefix_len) != 0 ||
+        body_path[prefix_len] != '/') {
+      return vectis_response_text(response, 422, "text/plain",
+                                  "wrong spool dir", error);
+    }
   }
   vectis_body_materialize_config_init(&config);
   config.memory_limit_bytes = 4u;
@@ -2077,6 +2092,7 @@ static void assert_kore_smoke(void) {
       "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\","
       "\"content_type\":\"text/plain\"}]}";
   char webdav_cache_dir[] = "/tmp/vectis-runtime-webdav.XXXXXX";
+  char body_spool_dir[] = "/tmp/vectis-runtime-body-spool.XXXXXX";
   const char *webdav_headers[] = {"x-vectis-webdav-auth: ok"};
   const char *webdav_required_headers[] = {"x-vectis-webdav-auth: required"};
   const char *webdav_deny_headers[] = {"x-vectis-webdav-auth: deny"};
@@ -2112,6 +2128,7 @@ static void assert_kore_smoke(void) {
   int i;
   int written;
   vectis_totp auth_totp;
+  spooled_upload_expectation body_spool_expectation;
 
   memset(&response, 0, sizeof(response));
   memset(&metadata_response, 0, sizeof(metadata_response));
@@ -2158,6 +2175,7 @@ static void assert_kore_smoke(void) {
   memset(&json_source_request, 0, sizeof(json_source_request));
   memset(&no_body_request, 0, sizeof(no_body_request));
   memset(&json_source_doc, 0, sizeof(json_source_doc));
+  memset(&body_spool_expectation, 0, sizeof(body_spool_expectation));
   embedded_fs = NULL;
   vectis_auth_user_enrollment_init(&auth_enrollment);
   vectis_auth_provider_init(&native_auth_provider);
@@ -2172,6 +2190,9 @@ static void assert_kore_smoke(void) {
   config.server.request_body_min_rate_bytes_per_sec = 1024u;
   config.server.request_body_min_rate_grace_ms = 500L;
   config.server.keepalive_max_requests = 1u;
+  assert(mkdtemp(body_spool_dir) != NULL);
+  config.server.request_body_spool_dir = body_spool_dir;
+  body_spool_expectation.path_prefix = body_spool_dir;
   fp = fopen(response_file_path, "wb");
   assert(fp != NULL);
   assert(fwrite(response_file_body, 1u, sizeof(response_file_body) - 1u, fp) ==
@@ -2259,8 +2280,9 @@ static void assert_kore_smoke(void) {
   upload_route.body.disk_spool_disabled = 1;
   status = vectis_register_route(app, &upload_route, &error);
   assert(status == VECTIS_OK);
-  spooled_upload_route = vectis_upload_route_max(
-      VECTIS_HTTP_POST, "/upload-spooled", 4096u, spooled_upload_handler, NULL);
+  spooled_upload_route =
+      vectis_upload_route_max(VECTIS_HTTP_POST, "/upload-spooled", 4096u,
+                              spooled_upload_handler, &body_spool_expectation);
   spooled_upload_route.body.memory_buffer_limit_bytes = 4u;
   spooled_upload_route.body.disk_spool_disabled = 0;
   status = vectis_register_route(app, &spooled_upload_route, &error);
@@ -3247,6 +3269,7 @@ static void assert_kore_smoke(void) {
   remove(dsv_upload_path);
   remove(response_file_path);
   remove_tree(webdav_cache_dir);
+  remove_tree(body_spool_dir);
   (void)remove(auth_store_path);
 
   status = vectis_stop(app, &error);

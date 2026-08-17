@@ -81,6 +81,7 @@ pid_t vectis_internal_kore_child_pid(vectis_app *app);
 size_t vectis_internal_max_request_body_bytes(vectis_app *app);
 size_t vectis_internal_body_disk_offload_bytes(vectis_app *app,
                                                int *configured);
+const char *vectis_internal_request_body_spool_dir(vectis_app *app);
 vectis_status vectis_internal_kore_run(const vectis_kore_runtime_config *config,
                                        vectis_error *error);
 vectis_status

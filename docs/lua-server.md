@@ -36,6 +36,9 @@ supervisor topology, `direct` fails if such services are declared, and
 for Kore startup. `warn_unavailable` only applies on platforms without exact
 thread inspection and does not allow known unsafe services or observed extra
 threads.
+`request_body_spool_dir` controls the directory Kore uses for request-body spill
+files when a route enables streaming upload disk offload. Omission uses the
+Vectis default `/tmp/vectis-http-body`; an empty string is invalid.
 
 Managed app-owned services inherit the server/app logger for lifecycle events
 such as start, stop, and monitored failure. Lua service registration helpers

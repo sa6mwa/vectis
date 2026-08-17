@@ -435,6 +435,7 @@ typedef struct vectis_app_impl {
   vectis_tls_mode tls_mode;
   int require_client_certificate;
   vectis_server_config server;
+  char *request_body_spool_dir;
   pslog_logger *logger;
   vectis_route_entry *routes;
   size_t route_count;
@@ -2769,6 +2770,7 @@ void vectis_server_config_init(vectis_server_config *config) {
   config->max_request_header_bytes =
       VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES;
   config->max_request_body_bytes = 0u;
+  config->request_body_spool_dir = VECTIS_SERVER_DEFAULT_REQUEST_BODY_SPOOL_DIR;
   config->request_header_timeout_ms =
       VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS;
   config->request_body_idle_timeout_ms =
@@ -2903,6 +2905,10 @@ vectis_effective_server_config(const vectis_server_config *config) {
   effective.max_request_body_bytes =
       vectis_default_size(config->max_request_body_bytes,
                           VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES);
+  effective.request_body_spool_dir =
+      config->request_body_spool_dir != NULL
+          ? config->request_body_spool_dir
+          : VECTIS_SERVER_DEFAULT_REQUEST_BODY_SPOOL_DIR;
   effective.request_header_timeout_ms =
       vectis_default_long(config->request_header_timeout_ms,
                           VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS);
@@ -9110,6 +9116,7 @@ static void vectis_destroy_impl(vectis_app_impl *impl) {
   free(impl->acme_email);
   free(impl->acme_directory_url);
   free(impl->acme_state_dir);
+  free(impl->request_body_spool_dir);
   free(impl->unix_socket_path);
   free(impl->client_bundle_pem);
   free(impl->client_bundle_path);
@@ -9203,6 +9210,12 @@ vectis_validate_server_config(const vectis_server_config *config,
   if (effective.max_request_header_bytes < 1024u) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "server max_request_header_bytes must be at least 1024");
+    return VECTIS_ERR_INVALID;
+  }
+  if (effective.request_body_spool_dir == NULL ||
+      effective.request_body_spool_dir[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "server request_body_spool_dir must not be empty");
     return VECTIS_ERR_INVALID;
   }
   if (config->request_header_timeout_ms < 0L) {
@@ -9765,6 +9778,8 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   impl->acme_email = vectis_strdup(effective->tls.acme_email);
   impl->acme_directory_url = vectis_strdup(effective->tls.acme_directory_url);
   impl->acme_state_dir = vectis_strdup(effective->tls.acme_state_dir);
+  impl->request_body_spool_dir =
+      vectis_strdup(effective_server.request_body_spool_dir);
   impl->unix_socket_path = vectis_strdup(effective->lockd.unix_socket_path);
   impl->client_bundle_path = vectis_strdup(vectis_source_path_or_old(
       &effective->lockd.client_bundle, effective->lockd.client_bundle_path));
@@ -9783,8 +9798,17 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   impl->tls_mode = effective->tls.mode;
   impl->require_client_certificate = effective->tls.require_client_certificate;
   impl->server = effective_server;
+  impl->server.request_body_spool_dir = impl->request_body_spool_dir;
   impl->server.max_request_body_bytes =
       effective->server.max_request_body_bytes;
+  if (impl->app_name == NULL || impl->bind == NULL || impl->domain == NULL ||
+      impl->request_body_spool_dir == NULL) {
+    vectis_destroy_impl(impl);
+    free(app);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to copy required app configuration");
+    return NULL;
+  }
 
   status = vectis_copy_source_bytes(
       &effective->tls.cert_key_bundle, effective->tls.cert_key_bundle_pem,
@@ -20248,6 +20272,16 @@ size_t vectis_internal_body_disk_offload_bytes(vectis_app *app,
   }
   return vectis_app_body_disk_offload_bytes((vectis_app_impl *)app->impl,
                                             configured);
+}
+
+const char *vectis_internal_request_body_spool_dir(vectis_app *app) {
+  vectis_app_impl *impl;
+
+  if (app == NULL || app->impl == NULL) {
+    return NULL;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  return impl->request_body_spool_dir;
 }
 
 size_t vectis_route_count(const vectis_app *app) {

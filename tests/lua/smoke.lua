@@ -1054,9 +1054,21 @@ do
 end
 
 do
+  local bad_spool_server, bad_spool_error = vectis.server.new({
+    app_name = "lua-bad-request-body-spool-dir",
+    port = 18161,
+    request_body_spool_dir = "",
+  })
+  assert(bad_spool_server == nil)
+  assert(type(bad_spool_error) == "table")
+  assert(bad_spool_error.status == vectis.ERR_INVALID)
+  assert(bad_spool_error.message:match("request_body_spool_dir"))
+end
+
+do
   local direct_policy_server = assert(vectis.server.new({
     app_name = "lua-direct-supervision-policy",
-    port = 18161,
+    port = 18162,
     supervision_policy = "direct",
   }))
   direct_policy_server:close()
@@ -1065,7 +1077,7 @@ end
 do
   local supervised_policy_server = assert(vectis.server.new({
     app_name = "lua-supervised-supervision-policy",
-    port = 18162,
+    port = 18163,
     supervision_policy = "supervised",
   }))
   supervised_policy_server:close()
@@ -1075,7 +1087,7 @@ do
   local ok, err = pcall(function()
     return vectis.server.new({
       app_name = "lua-bad-supervision-policy",
-      port = 18163,
+      port = 18168,
       supervision_policy = "invalid",
     })
   end)

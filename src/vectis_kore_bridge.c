@@ -59,6 +59,7 @@ extern volatile sig_atomic_t sig_recv;
 extern u_int64_t worker_idle_timeout;
 extern u_int8_t worker_count;
 extern u_int32_t worker_max_connections;
+extern char *http_body_disk_path;
 
 static pthread_mutex_t vectis_kore_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int vectis_kore_runtime_active = 0;
@@ -66,6 +67,7 @@ static int vectis_kore_dh_loaded = 0;
 static vectis_kore_runtime_config vectis_kore_current;
 static char *vectis_kore_keymgr_root = NULL;
 static char *vectis_kore_acme_root = NULL;
+static char *vectis_kore_body_disk_path = NULL;
 
 typedef struct vectis_kore_autoblock_entry {
   int used;
@@ -853,6 +855,15 @@ static void vectis_kore_clear_installed_acme_roots(void) {
   vectis_kore_acme_root = NULL;
 }
 
+static void vectis_kore_clear_installed_body_disk_path(void) {
+  if (vectis_kore_body_disk_path != NULL &&
+      http_body_disk_path == vectis_kore_body_disk_path) {
+    kore_free(http_body_disk_path);
+    http_body_disk_path = NULL;
+  }
+  vectis_kore_body_disk_path = NULL;
+}
+
 static void
 vectis_kore_cleanup_local_config(vectis_kore_runtime_config *config) {
   vectis_kore_cleanup_config(config);
@@ -1461,6 +1472,15 @@ static void vectis_kore_apply_server_config(const vectis_server_config *server,
   http_body_max = server->max_request_body_bytes;
   http_body_disk_offload =
       body_disk_offload_configured ? (u_int64_t)body_disk_offload_bytes : 0u;
+  vectis_kore_clear_installed_body_disk_path();
+  if (server->request_body_spool_dir != NULL &&
+      server->request_body_spool_dir[0] != '\0') {
+    vectis_kore_body_disk_path = kore_strdup(server->request_body_spool_dir);
+    if (vectis_kore_body_disk_path == NULL) {
+      fatal("failed to copy Vectis request body spool directory");
+    }
+    http_body_disk_path = vectis_kore_body_disk_path;
+  }
   http_header_timeout =
       vectis_kore_seconds_from_ms(server->request_header_timeout_ms);
   http_body_timeout =
@@ -1664,10 +1684,12 @@ typedef struct vectis_kore_body_state {
 static int vectis_kore_tmp_template(char *buffer, size_t buffer_size) {
   int n;
 
-  if (buffer == NULL || buffer_size == 0u) {
+  if (buffer == NULL || buffer_size == 0u || http_body_disk_path == NULL ||
+      http_body_disk_path[0] == '\0') {
     return 0;
   }
-  n = snprintf(buffer, buffer_size, "/tmp/vectis-kore-body-XXXXXX");
+  n = snprintf(buffer, buffer_size, "%s/vectis-kore-body-XXXXXX",
+               http_body_disk_path);
   return n > 0 && (size_t)n < buffer_size;
 }
 
@@ -2534,6 +2556,7 @@ void kore_parent_teardown(void) {
   (void)pthread_mutex_lock(&vectis_kore_mutex);
   vectis_kore_autoblock_unmap();
   vectis_kore_clear_installed_acme_roots();
+  vectis_kore_clear_installed_body_disk_path();
   vectis_kore_cleanup_config(&vectis_kore_current);
   memset(&vectis_kore_current, 0, sizeof(vectis_kore_current));
   (void)pthread_mutex_unlock(&vectis_kore_mutex);
@@ -2601,6 +2624,7 @@ vectis_status vectis_internal_kore_run(const vectis_kore_runtime_config *config,
   vectis_kore_runtime_active = 0;
   if (vectis_kore_current.app != NULL) {
     vectis_kore_autoblock_unmap();
+    vectis_kore_clear_installed_body_disk_path();
     vectis_kore_cleanup_config(&vectis_kore_current);
     memset(&vectis_kore_current, 0, sizeof(vectis_kore_current));
   }

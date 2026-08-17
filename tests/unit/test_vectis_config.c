@@ -68,6 +68,8 @@ int main(void) {
   assert(config.server.max_request_header_bytes ==
          VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES);
   assert(config.server.max_request_body_bytes == 0u);
+  assert(strcmp(config.server.request_body_spool_dir,
+                VECTIS_SERVER_DEFAULT_REQUEST_BODY_SPOOL_DIR) == 0);
   assert(config.server.request_header_timeout_ms ==
          VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS);
   assert(config.server.request_body_idle_timeout_ms ==
@@ -125,12 +127,28 @@ int main(void) {
   config.lockd.timeout_ms = 0L;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
+  assert(strcmp(vectis_internal_request_body_spool_dir(app),
+                VECTIS_SERVER_DEFAULT_REQUEST_BODY_SPOOL_DIR) == 0);
   route = vectis_route(VECTIS_HTTP_POST, "/zero-default-body", sample_handler,
                        NULL);
   route.body = vectis_body_buffered_max(0u);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
   app->close(app);
+
+  vectis_app_config_init(&config);
+  config.server.request_body_spool_dir = "/tmp/vectis-config-spool";
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  assert(strcmp(vectis_internal_request_body_spool_dir(app),
+                "/tmp/vectis-config-spool") == 0);
+  app->close(app);
+
+  vectis_app_config_init(&config);
+  config.server.request_body_spool_dir = "";
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "request_body_spool_dir") != NULL);
 
   vectis_app_config_init(&config);
   app = vectis_app_new(&config, &error);

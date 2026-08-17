@@ -25,6 +25,7 @@
 #define VECTIS_SERVER_DEFAULT_IDLE_TIMEOUT_MS 30000L
 #define VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS 5000L
 #define VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS 100u
+#define VECTIS_SERVER_DEFAULT_REQUEST_BODY_SPOOL_DIR "/tmp/vectis-http-body"
 #define VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS 5000L
 #define VECTIS_AUTOBLOCK_MAX_STATUS_RULES 16u
 #define VECTIS_AUTOBLOCK_MAX_EVENT_RULES 16u
@@ -975,6 +976,13 @@ typedef struct vectis_server_config {
   size_t max_connections;
   size_t max_request_header_bytes;
   size_t max_request_body_bytes;
+  /*
+   * Directory used by Kore for request-body spill files when streaming upload
+   * route policies enable disk offload. NULL uses
+   * VECTIS_SERVER_DEFAULT_REQUEST_BODY_SPOOL_DIR. The app copies this string at
+   * construction time.
+   */
+  const char *request_body_spool_dir;
   long request_header_timeout_ms;
   long request_body_idle_timeout_ms;
   long response_write_idle_timeout_ms;
