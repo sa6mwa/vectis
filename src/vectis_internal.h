@@ -105,6 +105,7 @@ size_t vectis_internal_worker_accept_threshold(vectis_app *app);
 size_t vectis_internal_worker_rlimit_nofiles(vectis_app *app);
 int vectis_internal_worker_set_affinity_disabled(vectis_app *app);
 long vectis_internal_worker_shutdown_timeout_ms(vectis_app *app);
+vectis_worker_death_policy vectis_internal_worker_death_policy(vectis_app *app);
 size_t vectis_internal_max_request_body_bytes(vectis_app *app);
 size_t vectis_internal_body_disk_offload_bytes(vectis_app *app,
                                                int *configured);

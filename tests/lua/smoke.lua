@@ -1135,6 +1135,7 @@ do
     keepalive_disabled = true,
     keepalive_timeout_ms = 0,
     keepalive_max_requests = 0,
+    worker_death_policy = "terminate",
     socket_backlog = 128,
     request_process_budget_ms = 50,
     hsts_max_age_seconds = 0,
@@ -1169,6 +1170,18 @@ do
   assert(type(bad_worker_shutdown_error) == "table")
   assert(bad_worker_shutdown_error.status == vectis.ERR_INVALID)
   assert(bad_worker_shutdown_error.message:match("worker_shutdown_timeout_ms"))
+end
+
+do
+  local ok, err = pcall(function()
+    return vectis.server.new({
+      app_name = "lua-bad-worker-death-policy",
+      port = 18175,
+      worker_death_policy = "replace",
+    })
+  end)
+  assert(ok == false)
+  assert(tostring(err):match("worker_death_policy"))
 end
 
 do

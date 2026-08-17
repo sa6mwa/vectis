@@ -74,6 +74,7 @@ extern u_int32_t worker_accept_threshold;
 extern u_int32_t worker_max_connections;
 extern u_int32_t worker_rlimit_nofiles;
 extern u_int32_t worker_shutdown_timeout_ms;
+extern int worker_policy;
 extern char *http_body_disk_path;
 extern u_int32_t http_request_ms;
 extern u_int64_t http_hsts_enable;
@@ -1589,6 +1590,9 @@ static void vectis_kore_apply_server_config(const vectis_server_config *server,
   worker_set_affinity = server->worker_set_affinity_disabled ? 0u : 1u;
   worker_shutdown_timeout_ms =
       vectis_kore_u32_from_size((size_t)server->worker_shutdown_timeout_ms);
+  worker_policy = server->worker_death_policy == VECTIS_WORKER_DEATH_TERMINATE
+                      ? KORE_WORKER_POLICY_TERMINATE
+                      : KORE_WORKER_POLICY_RESTART;
   http_request_limit = vectis_kore_u32_from_size(server->max_connections);
   http_header_max = server->max_request_header_bytes;
   http_body_max = server->max_request_body_bytes;

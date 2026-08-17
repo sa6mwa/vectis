@@ -2952,6 +2952,7 @@ void vectis_server_config_init(vectis_server_config *config) {
   config->websocket_timeout_ms = VECTIS_SERVER_DEFAULT_WEBSOCKET_TIMEOUT_MS;
   config->server_header = VECTIS_SERVER_DEFAULT_SERVER_HEADER;
   config->pretty_error_pages = VECTIS_SERVER_DEFAULT_PRETTY_ERROR_PAGES;
+  config->worker_death_policy = VECTIS_SERVER_DEFAULT_WORKER_DEATH_POLICY;
   vectis_autoblock_config_init(&config->autoblock);
 }
 
@@ -3162,6 +3163,7 @@ vectis_effective_server_config(const vectis_server_config *config) {
                                 ? config->server_header
                                 : VECTIS_SERVER_DEFAULT_SERVER_HEADER;
   effective.pretty_error_pages = config->pretty_error_pages;
+  effective.worker_death_policy = config->worker_death_policy;
   effective.autoblock = config->autoblock;
   effective.autoblock.window_seconds =
       vectis_default_unsigned(config->autoblock.window_seconds, 1800u);
@@ -10325,6 +10327,12 @@ vectis_validate_server_config(const vectis_server_config *config,
   if (config->websocket_timeout_ms < 0L) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "server websocket_timeout_ms must be non-negative");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->worker_death_policy != VECTIS_WORKER_DEATH_RESTART &&
+      config->worker_death_policy != VECTIS_WORKER_DEATH_TERMINATE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "server worker_death_policy must be restart or terminate");
     return VECTIS_ERR_INVALID;
   }
   if (effective.autoblock.status_rule_count >
@@ -22135,6 +22143,17 @@ long vectis_internal_worker_shutdown_timeout_ms(vectis_app *app) {
   }
   impl = (vectis_app_impl *)app->impl;
   return impl->server.worker_shutdown_timeout_ms;
+}
+
+vectis_worker_death_policy
+vectis_internal_worker_death_policy(vectis_app *app) {
+  vectis_app_impl *impl;
+
+  if (app == NULL || app->impl == NULL) {
+    return VECTIS_SERVER_DEFAULT_WORKER_DEATH_POLICY;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  return impl->server.worker_death_policy;
 }
 
 size_t vectis_route_count(const vectis_app *app) {

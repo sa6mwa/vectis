@@ -10946,6 +10946,7 @@ static int vectis_lua_server_new(lua_State *lua) {
   const char *supervision_policy;
   const char *service_failure_policy;
   const char *quiescence_policy;
+  const char *worker_death_policy;
   const char **lockd_endpoints;
   const char **tls_domains;
   const char *pem;
@@ -11026,6 +11027,17 @@ static int vectis_lua_server_new(lua_State *lua) {
   config.server.worker_shutdown_timeout_ms =
       vectis_lua_table_long(lua, 1, "worker_shutdown_timeout_ms",
                             config.server.worker_shutdown_timeout_ms);
+  worker_death_policy = vectis_lua_table_string(lua, 1, "worker_death_policy");
+  if (worker_death_policy != NULL) {
+    if (strcmp(worker_death_policy, "restart") == 0) {
+      config.server.worker_death_policy = VECTIS_WORKER_DEATH_RESTART;
+    } else if (strcmp(worker_death_policy, "terminate") == 0) {
+      config.server.worker_death_policy = VECTIS_WORKER_DEATH_TERMINATE;
+    } else {
+      return luaL_error(lua, "server worker_death_policy must be restart or "
+                             "terminate");
+    }
+  }
   config.server.max_request_header_bytes =
       vectis_lua_table_size(lua, 1, "max_request_header_bytes",
                             config.server.max_request_header_bytes);

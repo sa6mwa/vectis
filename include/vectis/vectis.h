@@ -33,6 +33,7 @@
 #define VECTIS_SERVER_DEFAULT_WEBSOCKET_TIMEOUT_MS 120000L
 #define VECTIS_SERVER_DEFAULT_SERVER_HEADER "vectis"
 #define VECTIS_SERVER_DEFAULT_PRETTY_ERROR_PAGES 0
+#define VECTIS_SERVER_DEFAULT_WORKER_DEATH_POLICY VECTIS_WORKER_DEATH_RESTART
 #define VECTIS_SERVER_DEFAULT_WORKER_ACCEPT_THRESHOLD 16u
 #define VECTIS_SERVER_DEFAULT_WORKER_RLIMIT_NOFILES 768u
 #define VECTIS_SERVER_DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS 5000L
@@ -1049,6 +1050,11 @@ typedef struct vectis_autoblock_config {
   size_t trusted_proxy_count;
 } vectis_autoblock_config;
 
+typedef enum vectis_worker_death_policy {
+  VECTIS_WORKER_DEATH_RESTART = 0,
+  VECTIS_WORKER_DEATH_TERMINATE = 1
+} vectis_worker_death_policy;
+
 typedef struct vectis_server_config {
   size_t max_connections;
   /*
@@ -1129,6 +1135,11 @@ typedef struct vectis_server_config {
    * developer opts in.
    */
   int pretty_error_pages;
+  /*
+   * Kore worker child death behavior. Restart is the default; terminate makes a
+   * worker death stop the runtime instead of replacing the worker.
+   */
+  vectis_worker_death_policy worker_death_policy;
   vectis_autoblock_config autoblock;
 } vectis_server_config;
 

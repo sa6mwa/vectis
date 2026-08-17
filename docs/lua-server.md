@@ -58,15 +58,16 @@ The same table can also override server guardrails and worker resource knobs:
 `request_header_timeout_ms`, `request_body_idle_timeout_ms`,
 `response_write_idle_timeout_ms`, `request_body_min_rate_bytes_per_sec`,
 `request_body_min_rate_grace_ms`, `idle_timeout_ms`, `keepalive_disabled`,
-`keepalive_timeout_ms`, `keepalive_max_requests`, `socket_backlog`,
-`request_process_budget_ms`, `hsts_max_age_seconds`,
+`keepalive_timeout_ms`, `keepalive_max_requests`, `worker_death_policy`,
+`socket_backlog`, `request_process_budget_ms`, `hsts_max_age_seconds`,
 `websocket_max_frame_bytes`, `websocket_timeout_ms`, `server_header`, and
 `pretty_error_pages`. Zero uses the C default for most guardrails,
 `hsts_max_age_seconds = 0` disables HSTS, `pretty_error_pages = false` keeps
 bodyless framework 4xx/5xx responses minimal, and `max_request_body_bytes = 0`
 keeps the route-derived global body ceiling behavior. `server_header` must be
 omitted or non-empty because Kore does not expose a true Server-header
-suppression switch.
+suppression switch. `worker_death_policy` accepts `"restart"` and
+`"terminate"`; omission keeps Kore's restart behavior.
 
 `profile = "production_webserver"` applies the same C-owned production webserver
 profile as `vectis_app_config_init_production_webserver()`: strict quiescence,

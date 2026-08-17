@@ -109,6 +109,8 @@ int main(void) {
                 VECTIS_SERVER_DEFAULT_SERVER_HEADER) == 0);
   assert(config.server.pretty_error_pages ==
          VECTIS_SERVER_DEFAULT_PRETTY_ERROR_PAGES);
+  assert(config.server.worker_death_policy ==
+         VECTIS_SERVER_DEFAULT_WORKER_DEATH_POLICY);
   assert(config.lockd.timeout_ms == 30000L);
   assert(config.lockd.logger == NULL);
   assert(config.lockd.logger_disabled == 0);
@@ -198,6 +200,8 @@ int main(void) {
   assert(vectis_internal_worker_set_affinity_disabled(app) == 0);
   assert(vectis_internal_worker_shutdown_timeout_ms(app) ==
          VECTIS_SERVER_DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS);
+  assert(vectis_internal_worker_death_policy(app) ==
+         VECTIS_SERVER_DEFAULT_WORKER_DEATH_POLICY);
   assert(vectis_internal_request_body_spool_dir(app) != NULL);
   assert(vectis_internal_request_body_spool_dir(app)[0] == '/');
   assert(strstr(vectis_internal_request_body_spool_dir(app),
@@ -215,6 +219,7 @@ int main(void) {
   config.server.worker_rlimit_nofiles = 2048u;
   config.server.worker_set_affinity_disabled = 1;
   config.server.worker_shutdown_timeout_ms = 2500L;
+  config.server.worker_death_policy = VECTIS_WORKER_DEATH_TERMINATE;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   assert(vectis_internal_worker_count(app) == 1u);
@@ -222,6 +227,8 @@ int main(void) {
   assert(vectis_internal_worker_rlimit_nofiles(app) == 2048u);
   assert(vectis_internal_worker_set_affinity_disabled(app) == 1);
   assert(vectis_internal_worker_shutdown_timeout_ms(app) == 2500L);
+  assert(vectis_internal_worker_death_policy(app) ==
+         VECTIS_WORKER_DEATH_TERMINATE);
   app->close(app);
 
   vectis_app_config_init(&config);
@@ -235,6 +242,12 @@ int main(void) {
   app = vectis_app_new(&config, &error);
   assert(app == NULL);
   assert(strstr(error.message, "worker_shutdown_timeout_ms") != NULL);
+
+  vectis_app_config_init(&config);
+  config.server.worker_death_policy = (vectis_worker_death_policy)99;
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "worker_death_policy") != NULL);
 
   vectis_app_config_init(&config);
   config.server.websocket_timeout_ms = -1L;
