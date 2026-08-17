@@ -153,9 +153,13 @@ assert_concurrency_mailbox_contract() {
   assert_contains "$repo_root/docs/service-runtime-lifecycle-spec.md" 'supervisor control channel remains internal'
   assert_contains "$repo_root/docs/service-runtime-lifecycle-spec.md" 'routes remain fail-closed with `503`'
   assert_contains "$repo_root/docs/service-runtime-lifecycle-spec.md" 'Kore listener preflight'
+  assert_contains "$repo_root/docs/service-runtime-lifecycle-spec.md" 'request-body disk-spool preflight'
   assert_contains "$repo_root/src/vectis_kore_bridge.c" 'vectis_kore_preflight_listener'
+  assert_contains "$repo_root/src/vectis_kore_bridge.c" 'vectis_kore_preflight_body_spool'
   assert_contains "$repo_root/tests/unit/test_vectis_runtime.c" \
     'assert_kore_start_reports_occupied_listener'
+  assert_contains "$repo_root/tests/unit/test_vectis_runtime.c" \
+    'assert_upload_server_rejects_spool_path'
   assert_contains "$repo_root/TODO.md" \
     '\[x\] Expose additional direct Kore configuration hooks where the startup lifecycle can report errors cleanly'
   assert_contains "$repo_root/tests/unit/test_vectis_runtime.c" \

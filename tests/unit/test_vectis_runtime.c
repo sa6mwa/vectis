@@ -2358,7 +2358,8 @@ static void assert_get_only_server_does_not_create_spool_dir(void) {
   app->close(app);
 }
 
-static void run_upload_server_with_file_spool_path(const char *spool_path) {
+static void assert_upload_server_rejects_spool_path(const char *spool_path,
+                                                    const char *expected) {
   vectis_app_config config;
   vectis_app *app;
   vectis_route_config route;
@@ -2383,55 +2384,35 @@ static void run_upload_server_with_file_spool_path(const char *spool_path) {
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
   status = app->start(app, &error);
-  if (status == VECTIS_OK) {
-    (void)app->stop(app, &error);
-    app->close(app);
-    _exit(2);
-  }
+  assert(status == VECTIS_ERR_STATE);
+  assert(strstr(error.message, "request body spool directory") != NULL);
+  assert(strstr(error.message, expected) != NULL);
+  assert(vectis_internal_kore_child_pid(app) == 0);
   app->close(app);
-  _exit(0);
 }
 
 static void assert_upload_server_rejects_file_spool_path(void) {
   char template_path[] = "/tmp/vectis-spool-file-XXXXXX";
   int fd;
-  pid_t child;
-  int status;
 
   fd = mkstemp(template_path);
   assert(fd >= 0);
   assert(write(fd, "x", 1u) == 1);
   close(fd);
 
-  child = fork();
-  assert(child >= 0);
-  if (child == 0) {
-    run_upload_server_with_file_spool_path(template_path);
-  }
-  assert(waitpid(child, &status, 0) == child);
+  assert_upload_server_rejects_spool_path(template_path, "owner-only writable");
   assert(unlink(template_path) == 0);
-  assert(WIFEXITED(status));
-  assert(WEXITSTATUS(status) == 0);
 }
 
 static void assert_upload_server_rejects_unsafe_spool_dir(void) {
   char template_path[] = "/tmp/vectis-spool-dir-XXXXXX";
-  pid_t child;
-  int status;
 
   assert(mkdtemp(template_path) != NULL);
   assert(chmod(template_path, 0755) == 0);
 
-  child = fork();
-  assert(child >= 0);
-  if (child == 0) {
-    run_upload_server_with_file_spool_path(template_path);
-  }
-  assert(waitpid(child, &status, 0) == child);
+  assert_upload_server_rejects_spool_path(template_path, "owner-only writable");
   assert(chmod(template_path, 0700) == 0);
   remove_tree(template_path);
-  assert(WIFEXITED(status));
-  assert(WEXITSTATUS(status) == 0);
 }
 
 static void assert_acme_state_dir_allows_existing_group_private_dir(void) {

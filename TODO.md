@@ -91,7 +91,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Implement the remaining guardrails that Kore does not expose directly yet: response-write idle timeout, minimum body transfer rate, and keepalive request count.
 - [x] Wire `pslog` into the Kore runtime path so Vectis server logs and Kore runtime diagnostics use the configured app logger.
 - [x] Expose low-level Kore request/runtime escape hatches where practical for C handlers.
-- [x] Expose additional direct Kore configuration hooks where the startup lifecycle can report errors cleanly: listener bind/port preflight now reports occupied or invalid listeners as Vectis startup errors before Kore can hit its fatal bind path.
+- [x] Expose additional direct Kore configuration hooks where the startup lifecycle can report errors cleanly: listener bind/port and request-body disk-spool preflights now report occupied, invalid, or unusable startup inputs as Vectis errors before Kore can hit fatal setup paths.
 - [x] Register Vectis C routes as Kore handlers.
 - [x] Support method-specific handlers and router-style dispatch.
 - [x] Draft route path classification for literal paths, named path parameters, and explicit POSIX regex routes.

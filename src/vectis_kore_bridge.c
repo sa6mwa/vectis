@@ -823,17 +823,48 @@ static int vectis_kore_mkdir_p(const char *path) {
   return ok;
 }
 
-static int vectis_kore_prepare_body_spool_dir(const char *path) {
+static vectis_status vectis_kore_prepare_body_spool_dir(const char *path,
+                                                        vectis_error *error) {
   struct stat st;
+  char detail[256];
 
   if (!vectis_kore_mkdir_p(path)) {
-    return 0;
+    snprintf(detail, sizeof(detail),
+             "failed to create Vectis request body spool directory: %s",
+             path != NULL ? path : "(null)");
+    vectis_set_error(error, VECTIS_ERR_STATE, detail);
+    return VECTIS_ERR_STATE;
   }
   if (lstat(path, &st) != 0 || !S_ISDIR(st.st_mode) || st.st_uid != geteuid() ||
       (st.st_mode & 0777u) != 0700u || access(path, W_OK | X_OK) != 0) {
-    return 0;
+    snprintf(detail, sizeof(detail),
+             "Vectis request body spool directory must be an owner-only "
+             "writable directory: %s",
+             path != NULL ? path : "(null)");
+    vectis_set_error(error, VECTIS_ERR_STATE, detail);
+    return VECTIS_ERR_STATE;
   }
-  return 1;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status
+vectis_kore_preflight_body_spool(const vectis_kore_runtime_config *config,
+                                 vectis_error *error) {
+  if (config == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "Kore runtime config is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!config->body_disk_offload_configured ||
+      config->body_disk_offload_bytes == 0u ||
+      config->server.request_body_spool_dir == NULL ||
+      config->server.request_body_spool_dir[0] == '\0') {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  return vectis_kore_prepare_body_spool_dir(
+      config->server.request_body_spool_dir, error);
 }
 
 static vectis_status
@@ -1522,7 +1553,8 @@ static void vectis_kore_apply_server_config(const vectis_server_config *server,
     if (vectis_kore_body_disk_path == NULL) {
       fatal("failed to copy Vectis request body spool directory");
     }
-    if (!vectis_kore_prepare_body_spool_dir(vectis_kore_body_disk_path)) {
+    if (vectis_kore_prepare_body_spool_dir(vectis_kore_body_disk_path, NULL) !=
+        VECTIS_OK) {
       fatal("failed to create Vectis request body spool directory: %s",
             vectis_kore_body_disk_path);
     }
@@ -2778,6 +2810,10 @@ vectis_status vectis_internal_kore_run(const vectis_kore_runtime_config *config,
   if (status != VECTIS_OK) {
     return status;
   }
+  status = vectis_kore_preflight_body_spool(&prepared, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
   status = vectis_kore_prepare_acme(&prepared, error);
   if (status != VECTIS_OK) {
     return status;
@@ -2854,6 +2890,10 @@ vectis_internal_kore_validate(const vectis_kore_runtime_config *config,
   prepared.runtime_certkey_temporary = 0;
   prepared.runtime_client_ca_temporary = 0;
   status = vectis_kore_preflight_listener(&prepared, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_kore_preflight_body_spool(&prepared, error);
   if (status != VECTIS_OK) {
     return status;
   }
