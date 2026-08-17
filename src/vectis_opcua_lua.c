@@ -1,6 +1,8 @@
 #include <cpkt/opcua.h>
 #include <vectis/vectis.h>
 
+#include "vectis_opcua_lua.h"
+
 #include <lauxlib.h>
 #include <limits.h>
 #include <lua.h>
@@ -4201,6 +4203,31 @@ static cpkt_opcua_server *vectis_opcua_lua_server_handle(lua_State *lua,
     (void)luaL_error(lua, "opcua server is closed");
   }
   return server;
+}
+
+int vectis_opcua_lua_borrow_server(lua_State *lua, int index,
+                                   cpkt_opcua_server **out,
+                                   int *has_lua_callbacks_out) {
+  vectis_opcua_lua_server *server;
+
+  if (out == NULL) {
+    return 0;
+  }
+  *out = NULL;
+  if (has_lua_callbacks_out != NULL) {
+    *has_lua_callbacks_out = 0;
+  }
+  server = (vectis_opcua_lua_server *)luaL_testudata(lua, index,
+                                                     VECTIS_OPCUA_SERVER);
+  if (server == NULL || server->server == NULL || server->owner != lua) {
+    return 0;
+  }
+  *out = server->server;
+  if (has_lua_callbacks_out != NULL) {
+    *has_lua_callbacks_out =
+        server->access_control_ref != LUA_NOREF || server->methods != NULL;
+  }
+  return 1;
 }
 
 static cpkt_opcua_node_id vectis_opcua_lua_node_id_field(lua_State *lua,

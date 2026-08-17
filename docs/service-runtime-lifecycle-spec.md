@@ -590,6 +590,13 @@ Required semantics:
   not start a pthread during declaration for route-backed apps.
 - `server:consumer_service_states()` returns copied lifecycle diagnostics for
   declared C-owned consumer services.
+- `server:opcua_server_service({ server = opcua_server, start = true })`
+  registers a Lua-created OPC UA server as a Vectis managed service by
+  borrowing the dependency-native server handle and retaining the Lua userdata
+  until service close. Servers with Lua access-control or method callbacks are
+  rejected because managed service threads must not enter Lua directly.
+- `server:opcua_server_service_states()` returns copied managed-service
+  lifecycle diagnostics for Lua-registered OPC UA services.
 - Direct Lua callbacks for background services remain rejected unless they are
   attached to an explicit owner-state pump.
 - Examples must not use `os.execute`, shell `sleep`, or external commands for
@@ -633,6 +640,9 @@ Required semantics:
 7. Extend service declarations:
    - generic managed service descriptors (`vectis_managed_service`);
    - OPC UA managed service descriptors (`vectis_opcua_server_service`);
+   - Lua `server:opcua_server_service` registration over borrowed
+     dependency-native `opcua.server` handles, with Lua callback-bearing
+     servers rejected;
    - curl worker descriptors where needed;
    - audio/SUS worker descriptors;
    - CAI/MCP supervisor worker descriptors.

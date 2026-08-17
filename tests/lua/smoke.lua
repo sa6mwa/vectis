@@ -719,10 +719,44 @@ assert(type(server.upload) == "function")
 assert(type(server.mcp) == "function")
 assert(type(server.sse) == "function")
 assert(type(server.metrics) == "function")
+assert(type(server.opcua_server_service) == "function")
+assert(type(server.opcua_server_service_states) == "function")
 assert(type(server.json) == "function")
 assert(type(server.text) == "function")
 assert(type(server.redirect) == "function")
 assert(type(server.auth_json) == "function")
+do
+  local lifecycle_opcua_server = assert(opcua.server({}))
+  assert(server:opcua_server_service({
+    name = "lua-smoke-opcua",
+    server = lifecycle_opcua_server,
+    start = true,
+    wait_internal = false,
+    max_wait_ms = 5,
+  }) == true)
+  local lifecycle_opcua_states = server:opcua_server_service_states()
+  assert(#lifecycle_opcua_states == 1)
+  assert(lifecycle_opcua_states[1].name == "lua-smoke-opcua")
+  assert(lifecycle_opcua_states[1].declared == true)
+  assert(lifecycle_opcua_states[1].start_requested == true)
+  assert(lifecycle_opcua_states[1].materialized == false)
+  local callback_opcua_server = assert(opcua.server({}))
+  assert(callback_opcua_server:set_access_control({
+    callback = function()
+      return true
+    end,
+  }) == true)
+  local callback_service, callback_service_err = server:opcua_server_service({
+    name = "lua-callback-opcua",
+    server = callback_opcua_server,
+  })
+  assert(callback_service == nil)
+  assert(type(callback_service_err) == "table")
+  assert(callback_service_err.status == vectis.ERR_INVALID)
+  assert(callback_service_err.message:match("Lua callbacks"))
+  assert(callback_opcua_server:close() == true)
+  _G.__vectis_smoke_lifecycle_opcua_server = lifecycle_opcua_server
+end
 local mcp_bad, mcp_bad_err = server:mcp({ path = "/mcp-bad", tools = {} })
 assert(mcp_bad == nil)
 assert(type(mcp_bad_err) == "table")
@@ -807,6 +841,8 @@ assert(type(consumer_service_error) == "table")
 assert(consumer_service_error.status == vectis.ERR_INVALID)
 assert(consumer_service_error.message:match("receiver_kind"))
 server:close()
+assert(_G.__vectis_smoke_lifecycle_opcua_server:close() == true)
+_G.__vectis_smoke_lifecycle_opcua_server = nil
 
 do
   local bad_shutdown_server, bad_shutdown_error = vectis.server.new({

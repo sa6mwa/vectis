@@ -53,6 +53,7 @@
 #include "vectis_lockdc_lua_init.h"
 #include "vectis_log_lua_init.h"
 #include "vectis_mqtt_lua_init.h"
+#include "vectis_opcua_lua.h"
 #include "vectis_pslog_lua_init.h"
 #include "vectis_rest_lua_init.h"
 #include "vectis_smtp_lua_init.h"
@@ -261,6 +262,15 @@ typedef struct vectis_lua_consumer_registration {
   struct vectis_lua_consumer_registration *next;
 } vectis_lua_consumer_registration;
 
+typedef struct vectis_lua_opcua_service_registration {
+  lua_State *lua;
+  vectis_managed_service *service;
+  char *name;
+  int server_ref;
+  int started;
+  struct vectis_lua_opcua_service_registration *next;
+} vectis_lua_opcua_service_registration;
+
 struct vectis_lua_server {
   vectis_app *app;
   int started;
@@ -272,6 +282,7 @@ struct vectis_lua_server {
   vectis_lua_server_native_auth *native_auths;
   vectis_lua_server_auth_json_route *auth_json_routes;
   vectis_lua_consumer_registration *consumer_services;
+  vectis_lua_opcua_service_registration *opcua_services;
   vectis_lua_server_openapi_schema_ref *openapi_schema_refs;
 };
 
@@ -6129,6 +6140,40 @@ vectis_lua_server_consumer_service_free_all(vectis_lua_server *server) {
   }
 }
 
+static void vectis_lua_server_opcua_service_free(
+    vectis_lua_opcua_service_registration *service) {
+  if (service == NULL) {
+    return;
+  }
+  if (service->service != NULL) {
+    service->service->close(service->service);
+    service->service = NULL;
+  }
+  if (service->lua != NULL && service->server_ref != LUA_NOREF) {
+    luaL_unref(service->lua, LUA_REGISTRYINDEX, service->server_ref);
+    service->server_ref = LUA_NOREF;
+  }
+  free(service->name);
+  free(service);
+}
+
+static void
+vectis_lua_server_opcua_service_free_all(vectis_lua_server *server) {
+  vectis_lua_opcua_service_registration *service;
+  vectis_lua_opcua_service_registration *next;
+
+  if (server == NULL) {
+    return;
+  }
+  service = server->opcua_services;
+  server->opcua_services = NULL;
+  while (service != NULL) {
+    next = service->next;
+    vectis_lua_server_opcua_service_free(service);
+    service = next;
+  }
+}
+
 static int vectis_lua_copy_string_field(lua_State *lua, int index,
                                         const char *field, const char *fallback,
                                         char **out) {
@@ -6514,12 +6559,15 @@ vectis_lua_server_native_auth_retain(vectis_lua_server *server,
 
 static void
 vectis_lua_server_consumer_service_mark_stopped_all(vectis_lua_server *server);
+static void
+vectis_lua_server_opcua_service_mark_stopped_all(vectis_lua_server *server);
 
 static int vectis_lua_server_close(lua_State *lua) {
   vectis_lua_server *server;
 
   server = vectis_lua_check_server(lua, 1);
   vectis_lua_server_consumer_service_free_all(server);
+  vectis_lua_server_opcua_service_free_all(server);
   if (server->app != NULL) {
     server->app->close(server->app);
     server->app = NULL;
@@ -6567,10 +6615,12 @@ static int vectis_lua_server_run(lua_State *lua) {
   status = app->run(app, &error);
   if (status != VECTIS_OK) {
     vectis_lua_server_consumer_service_mark_stopped_all(server);
+    vectis_lua_server_opcua_service_mark_stopped_all(server);
     server->started = 0;
     return vectis_lua_push_error(lua, status, &error);
   }
   vectis_lua_server_consumer_service_mark_stopped_all(server);
+  vectis_lua_server_opcua_service_mark_stopped_all(server);
   server->started = 0;
   lua_pushboolean(lua, 1);
   return 1;
@@ -6584,6 +6634,19 @@ vectis_lua_server_consumer_service_mark_stopped_all(vectis_lua_server *server) {
     return;
   }
   for (service = server->consumer_services; service != NULL;
+       service = service->next) {
+    service->started = 0;
+  }
+}
+
+static void
+vectis_lua_server_opcua_service_mark_stopped_all(vectis_lua_server *server) {
+  vectis_lua_opcua_service_registration *service;
+
+  if (server == NULL) {
+    return;
+  }
+  for (service = server->opcua_services; service != NULL;
        service = service->next) {
     service->started = 0;
   }
@@ -6674,6 +6737,7 @@ static int vectis_lua_server_stop(lua_State *lua) {
     return vectis_lua_push_error(lua, status, &error);
   }
   vectis_lua_server_consumer_service_mark_stopped_all(server);
+  vectis_lua_server_opcua_service_mark_stopped_all(server);
   server->started = 0;
   lua_pushboolean(lua, 1);
   return 1;
@@ -6692,10 +6756,12 @@ static int vectis_lua_server_wait(lua_State *lua) {
   status = app->wait(app, &error);
   if (status != VECTIS_OK) {
     vectis_lua_server_consumer_service_mark_stopped_all(server);
+    vectis_lua_server_opcua_service_mark_stopped_all(server);
     server->started = 0;
     return vectis_lua_push_error(lua, status, &error);
   }
   vectis_lua_server_consumer_service_mark_stopped_all(server);
+  vectis_lua_server_opcua_service_mark_stopped_all(server);
   server->started = 0;
   lua_pushboolean(lua, 1);
   return 1;
@@ -6846,6 +6912,155 @@ static int vectis_lua_server_consumer_service(lua_State *lua) {
 
   service->next = server->consumer_services;
   server->consumer_services = service;
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
+static void vectis_lua_push_managed_service_state(
+    lua_State *lua, const char *name,
+    const vectis_managed_service_state *state) {
+  lua_newtable(lua);
+  if (name != NULL) {
+    lua_pushstring(lua, name);
+    lua_setfield(lua, -2, "name");
+  }
+  vectis_lua_consumer_state_set_bool(lua, "declared", state->declared);
+  vectis_lua_consumer_state_set_bool(lua, "materialized", state->materialized);
+  vectis_lua_consumer_state_set_bool(lua, "process_local",
+                                     state->process_local);
+  vectis_lua_consumer_state_set_bool(lua, "start_requested",
+                                     state->start_requested);
+  vectis_lua_consumer_state_set_bool(lua, "stop_requested",
+                                     state->stop_requested);
+  vectis_lua_consumer_state_set_bool(lua, "started", state->started);
+  vectis_lua_consumer_state_set_bool(lua, "monitor_active",
+                                     state->monitor_active);
+  vectis_lua_consumer_state_set_bool(lua, "monitor_done", state->monitor_done);
+  vectis_lua_consumer_state_set_bool(lua, "monitor_joined",
+                                     state->monitor_joined);
+  vectis_lua_consumer_state_set_bool(lua, "failed", state->failed);
+  lua_pushinteger(lua, (lua_Integer)state->dependency_code);
+  lua_setfield(lua, -2, "dependency_code");
+  lua_pushinteger(lua, (lua_Integer)state->terminal_status);
+  lua_setfield(lua, -2, "terminal_status");
+  lua_pushstring(lua, vectis_status_string(state->terminal_status));
+  lua_setfield(lua, -2, "terminal_status_string");
+}
+
+static int vectis_lua_server_opcua_server_service_states(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_lua_opcua_service_registration *service;
+  vectis_managed_service_state state;
+  vectis_error error;
+  vectis_status status;
+  lua_Integer index;
+
+  server = vectis_lua_check_server(lua, 1);
+  lua_newtable(lua);
+  index = 1;
+  for (service = server->opcua_services; service != NULL;
+       service = service->next) {
+    vectis_error_clear(&error);
+    status = service->service->state(service->service, &state, &error);
+    if (status != VECTIS_OK) {
+      lua_pop(lua, 1);
+      return vectis_lua_push_error(lua, status, &error);
+    }
+    vectis_lua_push_managed_service_state(lua, service->name, &state);
+    lua_rawseti(lua, -2, index);
+    ++index;
+  }
+  return 1;
+}
+
+static int vectis_lua_server_opcua_server_service(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_app *app;
+  vectis_lua_opcua_service_registration *service;
+  vectis_opcua_server_service_config config;
+  vectis_error error;
+  vectis_status status;
+  cpkt_opcua_server *opcua_server;
+  const char *name;
+  int server_index;
+  int has_lua_callbacks;
+  int start_service;
+
+  server = vectis_lua_check_server(lua, 1);
+  app = vectis_lua_server_app(lua, 1);
+  luaL_checktype(lua, 2, LUA_TTABLE);
+
+  lua_getfield(lua, 2, "server");
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    lua_getfield(lua, 2, "opcua_server");
+  }
+  server_index = lua_absindex(lua, -1);
+  if (!vectis_opcua_lua_borrow_server(lua, server_index, &opcua_server,
+                                      &has_lua_callbacks)) {
+    lua_pop(lua, 1);
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID,
+        "opcua server service requires server=opcua.server");
+  }
+  if (has_lua_callbacks) {
+    lua_pop(lua, 1);
+    return vectis_lua_push_error_text(
+        lua, VECTIS_ERR_INVALID,
+        "opcua server service cannot manage OPC UA servers with Lua callbacks; "
+        "publish copied events to a mailbox and pump them from Lua instead");
+  }
+
+  service =
+      (vectis_lua_opcua_service_registration *)calloc(1u, sizeof(*service));
+  if (service == NULL) {
+    lua_pop(lua, 1);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to allocate OPC UA service");
+  }
+  service->lua = lua;
+  service->server_ref = LUA_NOREF;
+  name = vectis_lua_table_string(lua, 2, "name");
+  if (name == NULL || name[0] == '\0') {
+    name = "opcua-server";
+  }
+  service->name = vectis_cli_strdup(name);
+  if (service->name == NULL) {
+    lua_pop(lua, 1);
+    vectis_lua_server_opcua_service_free(service);
+    return vectis_lua_push_error_text(lua, VECTIS_ERR_NOMEM,
+                                      "failed to copy OPC UA service name");
+  }
+
+  lua_pushvalue(lua, server_index);
+  service->server_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  lua_pop(lua, 1);
+
+  vectis_opcua_server_service_config_init(&config);
+  config.name = service->name;
+  config.server = opcua_server;
+  config.start_with_app = vectis_lua_table_bool(lua, 2, "start", 1);
+  config.wait_internal = vectis_lua_table_bool(lua, 2, "wait_internal", 0);
+  config.max_wait_ms =
+      vectis_lua_table_long(lua, 2, "max_wait_ms", config.max_wait_ms);
+
+  vectis_error_clear(&error);
+  status = app->opcua_server_service(app, &config, &service->service, &error);
+  if (status != VECTIS_OK) {
+    vectis_lua_server_opcua_service_free(service);
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  start_service = config.start_with_app;
+  if (start_service && server->started) {
+    status = service->service->start(service->service, &error);
+    if (status != VECTIS_OK) {
+      vectis_lua_server_opcua_service_free(service);
+      return vectis_lua_push_error(lua, status, &error);
+    }
+  }
+  service->started = start_service ? 1 : 0;
+  service->next = server->opcua_services;
+  server->opcua_services = service;
   lua_pushboolean(lua, 1);
   return 1;
 }
@@ -9430,6 +9645,7 @@ static int vectis_lua_server_new(lua_State *lua) {
   server->native_auths = NULL;
   server->auth_json_routes = NULL;
   server->consumer_services = NULL;
+  server->opcua_services = NULL;
   server->openapi_schema_refs = NULL;
   vectis_error_clear(&error);
   server->app = vectis_app_new(&config, &error);
@@ -15776,6 +15992,10 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "consumer_service");
     lua_pushcfunction(lua, vectis_lua_server_consumer_service_states);
     lua_setfield(lua, -2, "consumer_service_states");
+    lua_pushcfunction(lua, vectis_lua_server_opcua_server_service);
+    lua_setfield(lua, -2, "opcua_server_service");
+    lua_pushcfunction(lua, vectis_lua_server_opcua_server_service_states);
+    lua_setfield(lua, -2, "opcua_server_service_states");
     lua_pushcfunction(lua, vectis_lua_server_start);
     lua_setfield(lua, -2, "start");
     lua_pushcfunction(lua, vectis_lua_server_run);
