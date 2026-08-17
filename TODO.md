@@ -386,7 +386,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add descriptor-backed `vectis_sus_worker_service` over bounded `vectis.sus.transcribe_pcm` and `vectis.sus.transcribe_file` mailbox request/reply records, with runtime-domain model/transcriber materialization, explicit materialized/file-backed output naming, and deterministic no-model plus opt-in loaded-model coverage.
 - [x] Add Lua helpers for SUS worker mailbox envelope build/decode and `server:sus_worker_service()` registration without replacing direct `require("sus")`.
 - [x] Add Lua helpers for libmdf/softline where Vectis-owned terminal workflows need higher-level DX; keep their direct modules available without wrapping.
-- [ ] Add Agent Smith-specific terminal helpers once the agent workflow contract exists.
+- [ ] Integrate CAI agent mode with Vectis host adapters once CAI exposes stable agent tool/state/callback contracts; keep Agent Smith mechanics CAI-owned rather than adding a parallel Vectis agent runtime.
 - [x] Add deterministic Lua examples for dependency-native pslog, liblql, and softline module workflows without adding redundant Vectis-owned wrappers.
 - [x] Add packed execution coverage for dependency-native pslog, liblql, and softline Lua module workflows.
 - [x] Add a narrow Vectis-owned Lua logging helper over pslog for JSON logger defaults, default fields, and structured Vectis error metadata without replacing direct pslog access.

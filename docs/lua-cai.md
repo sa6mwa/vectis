@@ -124,3 +124,9 @@ and a `client` table with copied CAI client defaults such as `api_key`,
 `logger_disabled`. Lua callbacks are deliberately rejected by this service; MCP
 tool implementation uses the `server:mcp()` request broker and an owner-state
 mailbox pump. Managed CAI workers must publish copied events only.
+
+Agent-mode ownership is documented in
+[CAI Agent And Vectis Integration](cai-agent-vectis-integration.md). The short
+version is that CAI owns agent orchestration, tool/session contracts, and model
+behavior; Vectis supplies host adapters for lockdc/pouch state, routes,
+services, auth, and dependency-backed tools.
