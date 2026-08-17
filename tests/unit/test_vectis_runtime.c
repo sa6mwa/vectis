@@ -1316,6 +1316,21 @@ static int reserve_loopback_port(unsigned short *out) {
   return fd;
 }
 
+static const char *format_loopback_http_url(char *out, size_t out_size,
+                                            unsigned short port,
+                                            const char *path) {
+  int written;
+
+  assert(out != NULL);
+  assert(out_size > 0u);
+  assert(path != NULL);
+  assert(path[0] == '/');
+  written =
+      snprintf(out, out_size, "http://127.0.0.1:%u%s", (unsigned)port, path);
+  assert(written > 0 && (size_t)written < out_size);
+  return out;
+}
+
 static vectis_status
 metrics_required_provider(const vectis_auth_provider_request *request,
                           vectis_auth_provider_response *response,
@@ -2906,6 +2921,9 @@ static void assert_kore_smoke(void) {
   char auth_pending_transaction_id[128];
   char auth_totp_code[VECTIS_TOTP_CODE_LENGTH + 1u];
   char auth_totp_form[256];
+  char url[512];
+  unsigned short port;
+  unsigned short second_port;
   size_t default_spooled_body_size;
   size_t stream_body_size;
   size_t xml_body_size;
@@ -2915,6 +2933,8 @@ static void assert_kore_smoke(void) {
   long stream_file_size;
   int attempt;
   int i;
+  int reserved_fd;
+  int second_reserved_fd;
   int written;
   vectis_totp auth_totp;
   spooled_upload_expectation body_spool_expectation;
@@ -2978,10 +2998,13 @@ static void assert_kore_smoke(void) {
   embedded_fs = NULL;
   vectis_auth_user_enrollment_init(&auth_enrollment);
   vectis_auth_provider_init(&native_auth_provider);
+  reserved_fd = reserve_loopback_port(&port);
+  assert(reserved_fd >= 0);
+  second_reserved_fd = -1;
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
-  config.tls.port = 28080u;
+  config.tls.port = port;
   config.server.max_request_header_bytes = 1024u;
   config.server.max_request_body_bytes = 2097152u;
   config.server.request_header_timeout_ms = 1000L;
@@ -3219,19 +3242,25 @@ static void assert_kore_smoke(void) {
   native_webdav_mount.auth_userdata = &native_webdav_auth;
   status = app->webdav(app, &native_webdav_mount, &error);
   assert(status == VECTIS_OK);
+  close(reserved_fd);
+  reserved_fd = -1;
   status = app->start(app, &error);
   assert(status == VECTIS_OK);
+  second_reserved_fd = reserve_loopback_port(&second_port);
+  assert(second_reserved_fd >= 0);
 
   vectis_app_config_init(&second_config);
   second_config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   second_config.tls.bind = "127.0.0.1";
-  second_config.tls.port = 28081u;
+  second_config.tls.port = second_port;
   second_app = vectis_app_new(&second_config, &second_error);
   assert(second_app != NULL);
   second_route = vectis_route(VECTIS_HTTP_GET, "/health", sample_handler, NULL);
   second_status =
       vectis_register_route(second_app, &second_route, &second_error);
   assert(second_status == VECTIS_OK);
+  close(second_reserved_fd);
+  second_reserved_fd = -1;
   second_status = vectis_start(second_app, &second_error);
   assert(second_status == VECTIS_OK);
   second_status = vectis_stop(second_app, &second_error);
@@ -3245,8 +3274,9 @@ static void assert_kore_smoke(void) {
   status = VECTIS_ERR_STATE;
   for (attempt = 0; attempt < 100 && status != VECTIS_OK; ++attempt) {
     vectis_http_response_cleanup(&response);
-    status = vectis_http_get(&http, "http://127.0.0.1:28080/health", &response,
-                             &error);
+    status = vectis_http_get(
+        &http, format_loopback_http_url(url, sizeof(url), port, "/health"),
+        &response, &error);
     if (status != VECTIS_OK) {
       usleep(100000u);
     }
@@ -3256,24 +3286,28 @@ static void assert_kore_smoke(void) {
   assert(response.body_size == 2u);
   assert(memcmp(response.body, "ok", 2u) == 0);
 
-  status = vectis_http_get(&http, "http://127.0.0.1:28080/failing-stream",
-                           &failing_stream_response, &error);
+  status = vectis_http_get(
+      &http,
+      format_loopback_http_url(url, sizeof(url), port, "/failing-stream"),
+      &failing_stream_response, &error);
   assert(status != VECTIS_OK);
   vectis_http_response_cleanup(&failing_stream_response);
 
-  status = vectis_http_get(&http, "http://127.0.0.1:28080/state-error",
-                           &state_error_response, &error);
+  status = vectis_http_get(
+      &http, format_loopback_http_url(url, sizeof(url), port, "/state-error"),
+      &state_error_response, &error);
   assert(status == VECTIS_OK);
   assert(state_error_response.status_code == 500L);
   vectis_http_response_cleanup(&state_error_response);
 
-  assert_large_header_rejected(28080u);
-  assert_keepalive_limit(28080u);
-  assert_websocket_echo(28080u);
+  assert_large_header_rejected(port);
+  assert_keepalive_limit(port);
+  assert_websocket_echo(port);
 
   vectis_http_response_cleanup(&response);
-  status =
-      vectis_http_get(&http, "http://127.0.0.1:28080/file", &response, &error);
+  status = vectis_http_get(
+      &http, format_loopback_http_url(url, sizeof(url), port, "/file"),
+      &response, &error);
   assert(status == VECTIS_OK);
   assert(response.status_code == 200L);
   assert(response.body_size == sizeof(response_file_body) - 1u);
@@ -3281,11 +3315,12 @@ static void assert_kore_smoke(void) {
                 sizeof(response_file_body) - 1u) == 0);
   vectis_http_response_cleanup(&response);
   assert_repeated_file_responses_do_not_leak_fds(
-      &http, "http://127.0.0.1:28080/file", response_file_body,
-      sizeof(response_file_body) - 1u, &error);
+      &http, format_loopback_http_url(url, sizeof(url), port, "/file"),
+      response_file_body, sizeof(response_file_body) - 1u, &error);
 
-  status = vectis_http_head(&http, "http://127.0.0.1:28080/static-file",
-                            &static_file_head_response, &error);
+  status = vectis_http_head(
+      &http, format_loopback_http_url(url, sizeof(url), port, "/static-file"),
+      &static_file_head_response, &error);
   assert(status == VECTIS_OK);
   assert(static_file_head_response.status_code == 200L);
   assert(static_file_head_response.content_type != NULL);
@@ -3296,8 +3331,9 @@ static void assert_kore_smoke(void) {
   assert(static_file_head_response.body_size == 0u);
   vectis_http_response_cleanup(&static_file_head_response);
 
-  status = vectis_http_get(&http, "http://127.0.0.1:28080/embedded",
-                           &embedded_response, &error);
+  status = vectis_http_get(
+      &http, format_loopback_http_url(url, sizeof(url), port, "/embedded"),
+      &embedded_response, &error);
   assert(status == VECTIS_OK);
   assert(embedded_response.status_code == 200L);
   assert(embedded_response.content_type != NULL);
@@ -3312,9 +3348,10 @@ static void assert_kore_smoke(void) {
   assert(memcmp(embedded_response.body, "hello\n", 6u) == 0);
   vectis_http_response_cleanup(&embedded_response);
 
-  status =
-      vectis_http_get(&http, "http://127.0.0.1:28080/embedded/assets/app.txt",
-                      &embedded_response, &error);
+  status = vectis_http_get(&http,
+                           format_loopback_http_url(url, sizeof(url), port,
+                                                    "/embedded/assets/app.txt"),
+                           &embedded_response, &error);
   assert(status == VECTIS_OK);
   assert(embedded_response.status_code == 200L);
   assert(embedded_response.content_type != NULL);
@@ -3331,7 +3368,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
-  request.url = "http://127.0.0.1:28080/embedded/assets/app.txt";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/embedded/assets/app.txt");
   request.headers = embedded_if_none_match_headers;
   request.header_count = 1u;
   status = vectis_http_execute(&http, &request, &embedded_not_modified_response,
@@ -3350,7 +3388,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
-  request.url = "http://127.0.0.1:28080/embedded/assets/app.txt";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/embedded/assets/app.txt");
   request.headers = embedded_if_none_match_miss_headers;
   request.header_count = 2u;
   status = vectis_http_execute(&http, &request,
@@ -3366,7 +3405,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
-  request.url = "http://127.0.0.1:28080/embedded/assets/app.txt";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/embedded/assets/app.txt");
   request.headers = embedded_range_headers;
   request.header_count = 1u;
   status =
@@ -3387,7 +3427,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_HEAD;
-  request.url = "http://127.0.0.1:28080/embedded/assets/app.txt";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/embedded/assets/app.txt");
   request.headers = embedded_range_headers;
   request.header_count = 1u;
   status = vectis_http_execute(&http, &request, &embedded_range_head_response,
@@ -3405,7 +3446,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
-  request.url = "http://127.0.0.1:28080/embedded/assets/app.txt";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/embedded/assets/app.txt");
   request.headers = embedded_if_range_headers;
   request.header_count = 2u;
   status =
@@ -3421,7 +3463,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
-  request.url = "http://127.0.0.1:28080/embedded/assets/app.txt";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/embedded/assets/app.txt");
   request.headers = embedded_if_range_miss_headers;
   request.header_count = 2u;
   status = vectis_http_execute(&http, &request,
@@ -3436,7 +3479,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
-  request.url = "http://127.0.0.1:28080/embedded/assets/app.txt";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/embedded/assets/app.txt");
   request.headers = embedded_suffix_range_headers;
   request.header_count = 1u;
   status = vectis_http_execute(&http, &request, &embedded_suffix_range_response,
@@ -3452,7 +3496,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
-  request.url = "http://127.0.0.1:28080/embedded/assets/app.txt";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/embedded/assets/app.txt");
   request.headers = embedded_invalid_range_headers;
   request.header_count = 1u;
   status = vectis_http_execute(&http, &request,
@@ -3469,7 +3514,9 @@ static void assert_kore_smoke(void) {
   vectis_http_response_cleanup(&embedded_invalid_range_response);
 
   status =
-      vectis_http_head(&http, "http://127.0.0.1:28080/embedded/assets/app.txt",
+      vectis_http_head(&http,
+                       format_loopback_http_url(url, sizeof(url), port,
+                                                "/embedded/assets/app.txt"),
                        &embedded_head_response, &error);
   assert(status == VECTIS_OK);
   assert(embedded_head_response.status_code == 200L);
@@ -3484,8 +3531,10 @@ static void assert_kore_smoke(void) {
   assert(embedded_head_response.body_size == 0u);
   vectis_http_response_cleanup(&embedded_head_response);
 
-  status = vectis_http_get(&http, "http://127.0.0.1:28080/embedded/missing",
-                           &embedded_missing_response, &error);
+  status = vectis_http_get(
+      &http,
+      format_loopback_http_url(url, sizeof(url), port, "/embedded/missing"),
+      &embedded_missing_response, &error);
   assert(status == VECTIS_OK);
   assert(embedded_missing_response.status_code == 404L);
   assert(embedded_missing_response.content_type != NULL);
@@ -3501,7 +3550,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_DELETE;
-  request.url = "http://127.0.0.1:28080/embedded/assets/app.txt";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/embedded/assets/app.txt");
   status =
       vectis_http_execute(&http, &request, &embedded_method_response, &error);
   assert(status == VECTIS_OK);
@@ -3513,7 +3563,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
-  request.url = "http://127.0.0.1:28080/dav-embedded/assets/app.txt";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/dav-embedded/assets/app.txt");
   request.headers = webdav_headers;
   request.header_count = 1u;
   status = vectis_http_execute(&http, &request, &embedded_webdav_get_response,
@@ -3526,7 +3577,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_PUT;
-  request.url = "http://127.0.0.1:28080/dav-embedded/assets/app.txt";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/dav-embedded/assets/app.txt");
   request.headers = webdav_headers;
   request.header_count = 1u;
   request.body = "mutated webdav asset\n";
@@ -3539,7 +3591,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
-  request.url = "http://127.0.0.1:28080/dav-embedded/assets/app.txt";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/dav-embedded/assets/app.txt");
   request.headers = webdav_headers;
   request.header_count = 1u;
   status = vectis_http_execute(&http, &request, &embedded_webdav_get_response,
@@ -3552,24 +3605,28 @@ static void assert_kore_smoke(void) {
                 strlen("mutated webdav asset\n")) == 0);
   vectis_http_response_cleanup(&embedded_webdav_get_response);
 
-  status =
-      vectis_http_get(&http, "http://127.0.0.1:28080/embedded/assets/app.txt",
-                      &embedded_response, &error);
+  status = vectis_http_get(&http,
+                           format_loopback_http_url(url, sizeof(url), port,
+                                                    "/embedded/assets/app.txt"),
+                           &embedded_response, &error);
   assert(status == VECTIS_OK);
   assert(embedded_response.status_code == 200L);
   assert(embedded_response.body_size == 4u);
   assert(memcmp(embedded_response.body, "app\n", 4u) == 0);
   vectis_http_response_cleanup(&embedded_response);
 
-  status = vectis_http_get(&http, "http://127.0.0.1:28080/dav/runtime.txt",
-                           &webdav_get_response, &error);
+  status = vectis_http_get(
+      &http,
+      format_loopback_http_url(url, sizeof(url), port, "/dav/runtime.txt"),
+      &webdav_get_response, &error);
   assert(status == VECTIS_OK);
   assert(webdav_get_response.status_code == 302L);
   vectis_http_response_cleanup(&webdav_get_response);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
-  request.url = "http://127.0.0.1:28080/dav/runtime.txt";
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/dav/runtime.txt");
   request.headers = webdav_required_headers;
   request.header_count = 1u;
   status = vectis_http_execute(&http, &request, &webdav_get_response, &error);
@@ -3584,7 +3641,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
-  request.url = "http://127.0.0.1:28080/dav/runtime.txt";
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/dav/runtime.txt");
   request.headers = webdav_deny_headers;
   request.header_count = 1u;
   status = vectis_http_execute(&http, &request, &webdav_get_response, &error);
@@ -3594,7 +3652,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_PUT;
-  request.url = "http://127.0.0.1:28080/dav/runtime.txt";
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/dav/runtime.txt");
   request.headers = webdav_headers;
   request.header_count = 1u;
   request.body = "webdav-body";
@@ -3606,7 +3665,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
-  request.url = "http://127.0.0.1:28080/dav/runtime.txt";
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/dav/runtime.txt");
   request.headers = webdav_headers;
   request.header_count = 1u;
   status = vectis_http_execute(&http, &request, &webdav_get_response, &error);
@@ -3618,7 +3678,7 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_PROPFIND;
-  request.url = "http://127.0.0.1:28080/dav";
+  request.url = format_loopback_http_url(url, sizeof(url), port, "/dav");
   request.headers = webdav_headers;
   request.header_count = 1u;
   status =
@@ -3632,8 +3692,9 @@ static void assert_kore_smoke(void) {
                        webdav_propfind_response.body_size, "/dav/runtime.txt"));
   vectis_http_response_cleanup(&webdav_propfind_response);
 
-  status = vectis_http_get(&http, "http://127.0.0.1:28080/auth/login",
-                           &auth_login_response, &error);
+  status = vectis_http_get(
+      &http, format_loopback_http_url(url, sizeof(url), port, "/auth/login"),
+      &auth_login_response, &error);
   assert(status == VECTIS_OK);
   assert(auth_login_response.status_code == 200L);
   assert(auth_login_response.content_type != NULL);
@@ -3647,7 +3708,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = "http://127.0.0.1:28080/auth/continue";
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/auth/continue");
   request.content_type = "application/x-www-form-urlencoded";
   request.body = "username=runtime-user&password=wrong";
   request.body_size = strlen("username=runtime-user&password=wrong");
@@ -3660,7 +3722,7 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = "http://127.0.0.1:28080/auth/login";
+  request.url = format_loopback_http_url(url, sizeof(url), port, "/auth/login");
   request.content_type = "application/x-www-form-urlencoded";
   request.body = "username=runtime-user&password=runtime-password";
   request.body_size = strlen("username=runtime-user&password=runtime-password");
@@ -3681,7 +3743,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = "http://127.0.0.1:28080/auth/continue";
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/auth/continue");
   request.content_type = "application/x-www-form-urlencoded";
   request.body = "username=runtime-totp&password=runtime-totp-password";
   request.body_size =
@@ -3704,7 +3767,8 @@ static void assert_kore_smoke(void) {
   assert(written > 0 && (size_t)written < sizeof(auth_totp_form));
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = "http://127.0.0.1:28080/auth/continue";
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/auth/continue");
   request.content_type = "application/x-www-form-urlencoded";
   request.body = auth_totp_form;
   request.body_size = strlen(auth_totp_form);
@@ -3725,7 +3789,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = "http://127.0.0.1:28080/auth-totp-required/login";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/auth-totp-required/login");
   request.content_type = "application/x-www-form-urlencoded";
   request.body = "username=runtime-user&password=runtime-password&"
                  "totp_code=287082";
@@ -3740,7 +3805,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = "http://127.0.0.1:28080/auth-totp-required/login";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/auth-totp-required/login");
   request.content_type = "application/x-www-form-urlencoded";
   request.body = "username=runtime-totp&password=runtime-totp-password";
   request.body_size =
@@ -3763,7 +3829,8 @@ static void assert_kore_smoke(void) {
   assert(written > 0 && (size_t)written < sizeof(auth_totp_form));
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = "http://127.0.0.1:28080/auth-totp-required/continue";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/auth-totp-required/continue");
   request.content_type = "application/x-www-form-urlencoded";
   request.body = auth_totp_form;
   request.body_size = strlen(auth_totp_form);
@@ -3791,7 +3858,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_PUT;
-  request.url = "http://127.0.0.1:28080/dav-native/from-auth.txt";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/dav-native/from-auth.txt");
   request.headers = native_webdav_headers;
   request.header_count = 1u;
   request.body = "native-webdav-body";
@@ -3804,7 +3872,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
-  request.url = "http://127.0.0.1:28080/dav-native/from-auth.txt";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/dav-native/from-auth.txt");
   request.headers = native_webdav_headers;
   request.header_count = 1u;
   status =
@@ -3818,7 +3887,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = "http://127.0.0.1:28080/auth/logout";
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/auth/logout");
   request.headers = native_webdav_headers;
   request.header_count = 1u;
   request.content_type = "application/x-www-form-urlencoded";
@@ -3833,7 +3903,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
-  request.url = "http://127.0.0.1:28080/dav-native/from-auth.txt";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/dav-native/from-auth.txt");
   request.headers = native_webdav_headers;
   request.header_count = 1u;
   status =
@@ -3844,7 +3915,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
-  request.url = "http://127.0.0.1:28080/metadata?expand=items+and+logs";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/metadata?expand=items+and+logs");
   request.headers = headers;
   request.header_count = 1u;
   status = vectis_http_execute(&http, &request, &metadata_response, &error);
@@ -3863,7 +3935,8 @@ static void assert_kore_smoke(void) {
                                   NULL) == LONEJSON_STATUS_OK);
   vectis_http_request_init(&json_source_request);
   json_source_request.method = VECTIS_HTTP_POST;
-  json_source_request.url = "http://127.0.0.1:28080/json-source";
+  json_source_request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/json-source");
   json_source_request.json_map = &source_json_doc_map;
   json_source_request.json_value = &json_source_doc;
   status = vectis_http_execute(&http, &json_source_request,
@@ -3876,28 +3949,32 @@ static void assert_kore_smoke(void) {
   lonejson_source_cleanup(&json_source_doc.payload);
   remove(json_source_path);
 
-  status = vectis_http_head(&http, "http://127.0.0.1:28080/methods",
-                            &method_response, &error);
+  status = vectis_http_head(
+      &http, format_loopback_http_url(url, sizeof(url), port, "/methods"),
+      &method_response, &error);
   assert(status == VECTIS_OK);
   assert(method_response.status_code == 200L);
   assert(method_response.body_size == 0u);
   vectis_http_response_cleanup(&method_response);
 
-  status = vectis_http_options(&http, "http://127.0.0.1:28080/methods",
-                               &method_response, &error);
+  status = vectis_http_options(
+      &http, format_loopback_http_url(url, sizeof(url), port, "/methods"),
+      &method_response, &error);
   assert(status == VECTIS_OK);
   assert(method_response.status_code == 200L);
   vectis_http_response_cleanup(&method_response);
 
-  status = vectis_http_delete(&http, "http://127.0.0.1:28080/methods",
-                              &method_response, &error);
+  status = vectis_http_delete(
+      &http, format_loopback_http_url(url, sizeof(url), port, "/methods"),
+      &method_response, &error);
   assert(status == VECTIS_OK);
   assert(method_response.status_code == 404L);
   vectis_http_response_cleanup(&method_response);
 
   vectis_http_request_init(&no_body_request);
   no_body_request.method = VECTIS_HTTP_POST;
-  no_body_request.url = "http://127.0.0.1:28080/no-body";
+  no_body_request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/no-body");
   no_body_request.body = "not allowed";
   no_body_request.body_size = 11u;
   status =
@@ -3906,24 +3983,30 @@ static void assert_kore_smoke(void) {
   assert(no_body_response.status_code == 413L);
   vectis_http_response_cleanup(&no_body_response);
 
-  status = vectis_http_get(&http, "http://127.0.0.1:28080/orders/123/items/abc",
-                           &param_response, &error);
+  status = vectis_http_get(
+      &http,
+      format_loopback_http_url(url, sizeof(url), port, "/orders/123/items/abc"),
+      &param_response, &error);
   assert(status == VECTIS_OK);
   assert(param_response.status_code == 200L);
   assert(param_response.body_size == 3u);
   assert(memcmp(param_response.body, "abc", 3u) == 0);
   vectis_http_response_cleanup(&param_response);
 
-  status = vectis_http_get(&http, "http://127.0.0.1:28080/orders/123/items",
-                           &param_response, &error);
+  status = vectis_http_get(
+      &http,
+      format_loopback_http_url(url, sizeof(url), port, "/orders/123/items"),
+      &param_response, &error);
   assert(status == VECTIS_OK);
   assert(param_response.status_code == 200L);
   assert(param_response.body_size == 3u);
   assert(memcmp(param_response.body, "123", 3u) == 0);
   vectis_http_response_cleanup(&param_response);
 
-  status = vectis_http_get(&http, "http://127.0.0.1:28080/orders/../items",
-                           &param_response, &error);
+  status = vectis_http_get(
+      &http,
+      format_loopback_http_url(url, sizeof(url), port, "/orders/../items"),
+      &param_response, &error);
   assert(status == VECTIS_OK);
   assert(param_response.status_code == 400L ||
          param_response.status_code == 404L);
@@ -3931,7 +4014,7 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&oversized);
   oversized.method = VECTIS_HTTP_POST;
-  oversized.url = "http://127.0.0.1:28080/limited";
+  oversized.url = format_loopback_http_url(url, sizeof(url), port, "/limited");
   oversized.body = "12345";
   oversized.body_size = 5u;
   status = vectis_http_execute(&http, &oversized, &oversized_response, &error);
@@ -3946,7 +4029,8 @@ static void assert_kore_smoke(void) {
   }
   assert(fclose(fp) == 0);
   status = vectis_http_upload_file(
-      &http, VECTIS_HTTP_POST, "http://127.0.0.1:28080/upload", upload_path,
+      &http, VECTIS_HTTP_POST,
+      format_loopback_http_url(url, sizeof(url), port, "/upload"), upload_path,
       "application/octet-stream", &upload_response, &error);
   assert(status == VECTIS_OK);
   assert(upload_response.status_code == 200L);
@@ -3956,7 +4040,8 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = "http://127.0.0.1:28080/upload-spooled";
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/upload-spooled");
   request.body = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
   request.body_size = 32u;
   status =
@@ -3974,7 +4059,8 @@ static void assert_kore_smoke(void) {
   memset(default_spooled_body, 'x', default_spooled_body_size);
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = "http://127.0.0.1:28080/upload-default-spooled";
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/upload-default-spooled");
   request.body = default_spooled_body;
   request.body_size = default_spooled_body_size;
   status = vectis_http_execute(&http, &request,
@@ -4001,7 +4087,8 @@ static void assert_kore_smoke(void) {
                  (unsigned long)stream_body_size);
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = "http://127.0.0.1:28080/stream-upload";
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/stream-upload");
   request.body = stream_body;
   request.body_size = stream_body_size;
   status = vectis_http_execute(&http, &request, &stream_response, &error);
@@ -4019,7 +4106,8 @@ static void assert_kore_smoke(void) {
   if (!VECTIS_TEST_ASAN) {
     vectis_http_request_init(&request);
     request.method = VECTIS_HTTP_POST;
-    request.url = "http://127.0.0.1:28080/stream-reader";
+    request.url =
+        format_loopback_http_url(url, sizeof(url), port, "/stream-reader");
     request.body = stream_body;
     request.body_size = stream_body_size;
     status =
@@ -4032,7 +4120,8 @@ static void assert_kore_smoke(void) {
     vectis_http_response_cleanup(&stream_reader_response);
 
     status = vectis_http_upload_file(
-        &http, VECTIS_HTTP_POST, "http://127.0.0.1:28080/stream-reader",
+        &http, VECTIS_HTTP_POST,
+        format_loopback_http_url(url, sizeof(url), port, "/stream-reader"),
         stream_upload_path, "application/octet-stream", &stream_reader_response,
         &error);
     assert(status == VECTIS_OK);
@@ -4054,7 +4143,8 @@ static void assert_kore_smoke(void) {
     (void)snprintf(size_text, sizeof(size_text), "%lu",
                    (unsigned long)xml_body_size);
     status = vectis_http_upload_file(
-        &http, VECTIS_HTTP_POST, "http://127.0.0.1:28080/xml-upload",
+        &http, VECTIS_HTTP_POST,
+        format_loopback_http_url(url, sizeof(url), port, "/xml-upload"),
         xml_upload_path, "application/xml", &xml_route_response, &error);
     assert(status == VECTIS_OK);
     assert(xml_route_response.status_code == 200L);
@@ -4088,7 +4178,8 @@ static void assert_kore_smoke(void) {
                    (unsigned long)dsv_rows, dsv_total,
                    (unsigned long)dsv_active);
     status = vectis_http_upload_file(
-        &http, VECTIS_HTTP_POST, "http://127.0.0.1:28080/dsv-upload",
+        &http, VECTIS_HTTP_POST,
+        format_loopback_http_url(url, sizeof(url), port, "/dsv-upload"),
         dsv_upload_path, "text/csv", &dsv_route_response, &error);
     assert(status == VECTIS_OK);
     assert(dsv_route_response.status_code == 200L);
@@ -4101,7 +4192,8 @@ static void assert_kore_smoke(void) {
                  (unsigned long)stream_body_size);
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = "http://127.0.0.1:28080/stream-file";
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/stream-file");
   request.body = stream_body;
   request.body_size = stream_body_size;
   status = vectis_http_execute(&http, &request, &stream_file_response, &error);

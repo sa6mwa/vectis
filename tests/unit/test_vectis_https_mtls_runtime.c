@@ -1,7 +1,10 @@
+#include <arpa/inet.h>
 #include <assert.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include <lc/lc.h>
@@ -62,6 +65,33 @@ static unsigned short test_port_from_env(const char *name,
     assert(0);
   }
   return (unsigned short)parsed;
+}
+
+static int reserve_loopback_port(unsigned short *out) {
+  struct sockaddr_in addr;
+  socklen_t addr_len;
+  int fd;
+  int opt;
+  int rc;
+
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  opt = 1;
+  (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, (socklen_t)sizeof(opt));
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(0u);
+  rc = inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+  assert(rc == 1);
+  rc = bind(fd, (const struct sockaddr *)&addr, (socklen_t)sizeof(addr));
+  assert(rc == 0);
+  rc = listen(fd, 1);
+  assert(rc == 0);
+  addr_len = (socklen_t)sizeof(addr);
+  rc = getsockname(fd, (struct sockaddr *)&addr, &addr_len);
+  assert(rc == 0);
+  *out = ntohs(addr.sin_port);
+  return fd;
 }
 
 static void format_secure_url(char *out, size_t out_size, const char *host,
@@ -206,6 +236,7 @@ int main(void) {
   size_t client_bundle_pem_size;
   lc_source *client_bundle_source;
   unsigned short port;
+  int reserved_fd;
   char localhost_url[128];
   char loopback_url[128];
 
@@ -213,7 +244,12 @@ int main(void) {
   client_bundle_pem = NULL;
   client_bundle_pem_size = 0u;
   client_bundle_source = NULL;
-  port = test_port_from_env("VECTIS_TEST_HTTPS_MTLS_PORT", 28444u);
+  reserved_fd = -1;
+  port = test_port_from_env("VECTIS_TEST_HTTPS_MTLS_PORT", 0u);
+  if (port == 0u) {
+    reserved_fd = reserve_loopback_port(&port);
+    assert(reserved_fd >= 0);
+  }
   format_secure_url(localhost_url, sizeof(localhost_url), "localhost", port);
   format_secure_url(loopback_url, sizeof(loopback_url), "127.0.0.1", port);
   vectis_cert_bundle_config_init(&certs);
@@ -285,6 +321,10 @@ int main(void) {
   route = vectis_route(VECTIS_HTTP_GET, "/secure", sample_handler, NULL);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
+  if (reserved_fd >= 0) {
+    close(reserved_fd);
+    reserved_fd = -1;
+  }
   status = app->start(app, &error);
   assert(status == VECTIS_OK);
 
