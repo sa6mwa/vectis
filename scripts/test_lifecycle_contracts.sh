@@ -161,14 +161,20 @@ assert_concurrency_mailbox_contract() {
   assert_contains "$repo_root/src/vectis.c" 'server autoblock max_entries exceeds maximum'
   assert_contains "$repo_root/include/vectis/vectis.h" 'size_t request_limit'
   assert_contains "$repo_root/include/vectis/vectis.h" 'access_log_path'
+  assert_contains "$repo_root/include/vectis/vectis.h" 'kore_curl_timeout_seconds'
+  assert_contains "$repo_root/include/vectis/vectis.h" 'kore_curl_recv_max_bytes'
   assert_contains "$repo_root/src/vectis.c" 'server request_limit exceeds Kore uint32'
   assert_contains "$repo_root/src/vectis.c" 'server access_log_path must not be empty'
+  assert_contains "$repo_root/src/vectis.c" 'server kore_curl_timeout_seconds must be 0 or at most'
   assert_contains "$repo_root/src/vectis_cli.c" '"request_limit"'
   assert_contains "$repo_root/src/vectis_cli.c" '"access_log_path"'
+  assert_contains "$repo_root/src/vectis_cli.c" '"kore_curl_timeout_seconds"'
+  assert_contains "$repo_root/src/vectis_cli.c" '"kore_curl_recv_max_bytes"'
   assert_contains "$repo_root/src/vectis_kore_bridge.c" \
     'http_request_limit = vectis_kore_u32_from_size\(server->request_limit\)'
   assert_contains "$repo_root/src/vectis_kore_bridge.c" \
     'vectis_kore_preflight_access_log'
+  assert_contains "$repo_root/src/vectis_kore_bridge.c" 'kore_curl_timeout'
   assert_contains "$repo_root/src/vectis.c" 'vectis_static_inferred_content_type'
   assert_contains "$repo_root/tests/unit/test_vectis_config.c" \
     'vectis_internal_request_limit'
@@ -182,8 +188,11 @@ assert_concurrency_mailbox_contract() {
     'content-type: application/octet-stream'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'request_limit = 32'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'access_log_path'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'kore_curl_timeout_seconds = 7'
+  assert_contains "$repo_root/tests/lua/smoke.lua" 'kore_curl_recv_max_bytes = 65536'
   assert_contains "$repo_root/docs/lua-server.md" '`request_limit = 0`'
   assert_contains "$repo_root/docs/lua-server.md" 'access_log_path'
+  assert_contains "$repo_root/docs/lua-server.md" '`kore_curl_timeout_seconds = 0`'
   assert_contains "$repo_root/docs/lua-server.md" \
     'Vectis infers the response type'
   assert_contains "$repo_root/TODO.md" \
@@ -192,6 +201,9 @@ assert_concurrency_mailbox_contract() {
     '\[x\] Add extension-based content-type inference'
   assert_contains "$repo_root/TODO.md" \
     '\[x\] Expose an explicit C and Lua `access_log_path`'
+  assert_contains "$repo_root/TODO.md" \
+    '\[x\] Expose bounded C and Lua `kore_curl_timeout_seconds`'
+  assert_contains "$repo_root/TODO.md" 'kore_curl_recv_max_bytes'
   assert_contains "$repo_root/include/vectis/vectis.h" \
     'VECTIS_AUTOBLOCK_MAX_STATUS_RULES'
   assert_contains "$repo_root/include/vectis/vectis.h" \

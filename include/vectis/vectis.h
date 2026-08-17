@@ -16,6 +16,7 @@
   "https://acme-v02.api.letsencrypt.org/directory"
 #define VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS 1024u
 #define VECTIS_SERVER_MAX_WORKER_COUNT 253u
+#define VECTIS_SERVER_MAX_KORE_CURL_TIMEOUT_SECONDS 65535u
 #define VECTIS_SERVER_DEFAULT_MAX_REQUEST_HEADER_BYTES 65536u
 #define VECTIS_SERVER_DEFAULT_MAX_REQUEST_BODY_BYTES 10485760u
 #define VECTIS_SERVER_DEFAULT_REQUEST_HEADER_TIMEOUT_MS 5000L
@@ -1115,6 +1116,13 @@ typedef struct vectis_server_config {
   int keepalive_disabled;
   long keepalive_timeout_ms;
   unsigned keepalive_max_requests;
+  /*
+   * Low-level Kore internal curl settings used by Kore-owned HTTP workflows
+   * such as ACME. Zero preserves Kore's compiled defaults. These do not affect
+   * Vectis application curl/http clients.
+   */
+  unsigned kore_curl_timeout_seconds;
+  size_t kore_curl_recv_max_bytes;
   /* Listener backlog passed to Kore listen(2). Zero uses the Vectis default. */
   unsigned socket_backlog;
   /*

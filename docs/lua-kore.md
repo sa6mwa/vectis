@@ -28,6 +28,8 @@ the Vectis-owned Kore runtime. A `vectis` binary built with
   standalone Lua fallback.
 - `MAX_WORKER_COUNT`: maximum explicit worker count accepted by Vectis server
   config.
+- `MAX_KORE_CURL_TIMEOUT_SECONDS`: maximum explicit timeout accepted for
+  Kore-owned curl operations such as ACME.
 - `DEFAULT_WEBSOCKET_MAX_FRAME_BYTES`: default Vectis WebSocket frame ceiling.
 - `DEFAULT_WEBSOCKET_TIMEOUT_MS`: default Vectis WebSocket idle timeout.
 - `WORKER_DEATH_RESTART` and `WORKER_DEATH_TERMINATE`: worker death policy

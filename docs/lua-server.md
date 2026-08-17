@@ -58,11 +58,12 @@ The same table can also override server guardrails and worker resource knobs:
 `request_header_timeout_ms`, `request_body_idle_timeout_ms`,
 `response_write_idle_timeout_ms`, `request_body_min_rate_bytes_per_sec`,
 `request_body_min_rate_grace_ms`, `idle_timeout_ms`, `keepalive_disabled`,
-`keepalive_timeout_ms`, `keepalive_max_requests`, `worker_death_policy`,
-`socket_backlog`, `request_process_budget_ms`, `hsts_max_age_seconds`,
-`websocket_max_frame_bytes`, `websocket_timeout_ms`, `server_header`,
-`access_log_path`, and `pretty_error_pages`. Zero uses the C default for most
-guardrails,
+`keepalive_timeout_ms`, `keepalive_max_requests`,
+`kore_curl_timeout_seconds`, `kore_curl_recv_max_bytes`,
+`worker_death_policy`, `socket_backlog`, `request_process_budget_ms`,
+`hsts_max_age_seconds`, `websocket_max_frame_bytes`,
+`websocket_timeout_ms`, `server_header`, `access_log_path`, and
+`pretty_error_pages`. Zero uses the C default for most guardrails,
 `hsts_max_age_seconds = 0` disables HSTS, `pretty_error_pages = false` keeps
 bodyless framework 4xx/5xx responses minimal, `request_limit = 0` keeps Kore's
 active request-object limit matched to `max_connections`, and
@@ -71,8 +72,11 @@ behavior. `server_header` must be
 omitted or non-empty because Kore does not expose a true Server-header
 suppression switch. `access_log_path` is optional and disabled by default; when
 set, Vectis preflights append access and applies the same Kore access log path
-to every configured domain. `worker_death_policy` accepts `"restart"` and
-`"terminate"`; omission keeps Kore's restart behavior.
+to every configured domain. `kore_curl_timeout_seconds = 0` and
+`kore_curl_recv_max_bytes = 0` preserve Kore's compiled defaults for
+Kore-owned curl operations such as ACME and do not affect Vectis application
+curl/http clients. `worker_death_policy` accepts `"restart"` and `"terminate"`;
+omission keeps Kore's restart behavior.
 
 `profile = "production_webserver"` applies the same C-owned production webserver
 profile as `vectis_app_config_init_production_webserver()`: strict quiescence,

@@ -11073,6 +11073,12 @@ static int vectis_lua_server_new(lua_State *lua) {
       lua, 1, "keepalive_timeout_ms", config.server.keepalive_timeout_ms);
   config.server.keepalive_max_requests = vectis_lua_table_unsigned(
       lua, 1, "keepalive_max_requests", config.server.keepalive_max_requests);
+  config.server.kore_curl_timeout_seconds =
+      vectis_lua_table_unsigned(lua, 1, "kore_curl_timeout_seconds",
+                                config.server.kore_curl_timeout_seconds);
+  config.server.kore_curl_recv_max_bytes =
+      vectis_lua_table_size(lua, 1, "kore_curl_recv_max_bytes",
+                            config.server.kore_curl_recv_max_bytes);
   config.server.socket_backlog = vectis_lua_table_unsigned(
       lua, 1, "socket_backlog", config.server.socket_backlog);
   config.server.request_process_budget_ms =
@@ -19796,6 +19802,8 @@ static int luaopen_vectis_kore(lua_State *lua) {
   lua_setfield(lua, -2, "runtime_model");
   lua_pushinteger(lua, VECTIS_SERVER_MAX_WORKER_COUNT);
   lua_setfield(lua, -2, "MAX_WORKER_COUNT");
+  lua_pushinteger(lua, VECTIS_SERVER_MAX_KORE_CURL_TIMEOUT_SECONDS);
+  lua_setfield(lua, -2, "MAX_KORE_CURL_TIMEOUT_SECONDS");
   lua_pushinteger(lua, VECTIS_SERVER_DEFAULT_WEBSOCKET_MAX_FRAME_BYTES);
   lua_setfield(lua, -2, "DEFAULT_WEBSOCKET_MAX_FRAME_BYTES");
   lua_pushinteger(lua, VECTIS_SERVER_DEFAULT_WEBSOCKET_TIMEOUT_MS);

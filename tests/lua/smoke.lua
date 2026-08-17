@@ -262,6 +262,7 @@ assert(vectis.kore == package.loaded["vectis.kore"])
 assert(vectis.kore.runtime_available == true)
 assert(vectis.kore.runtime_model == "embedded")
 assert(vectis.kore.MAX_WORKER_COUNT == 253)
+assert(vectis.kore.MAX_KORE_CURL_TIMEOUT_SECONDS == 65535)
 assert(vectis.kore.DEFAULT_WEBSOCKET_MAX_FRAME_BYTES == 16384)
 assert(vectis.kore.DEFAULT_WEBSOCKET_TIMEOUT_MS == 120000)
 assert(vectis.kore.WORKER_DEATH_RESTART == 0)
@@ -1148,6 +1149,8 @@ do
     keepalive_disabled = true,
     keepalive_timeout_ms = 0,
     keepalive_max_requests = 0,
+    kore_curl_timeout_seconds = 7,
+    kore_curl_recv_max_bytes = 65536,
     worker_death_policy = "terminate",
     socket_backlog = 128,
     request_process_budget_ms = 50,
@@ -1171,6 +1174,18 @@ do
   assert(type(bad_worker_count_error) == "table")
   assert(bad_worker_count_error.status == vectis.ERR_INVALID)
   assert(bad_worker_count_error.message:match("worker_count"))
+end
+
+do
+  local bad_kore_curl_server, bad_kore_curl_error = vectis.server.new({
+    app_name = "lua-bad-kore-curl-timeout",
+    port = 18174,
+    kore_curl_timeout_seconds = vectis.kore.MAX_KORE_CURL_TIMEOUT_SECONDS + 1,
+  })
+  assert(bad_kore_curl_server == nil)
+  assert(type(bad_kore_curl_error) == "table")
+  assert(bad_kore_curl_error.status == vectis.ERR_INVALID)
+  assert(bad_kore_curl_error.message:match("kore_curl_timeout_seconds"))
 end
 
 do

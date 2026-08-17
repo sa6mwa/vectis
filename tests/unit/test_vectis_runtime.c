@@ -22,6 +22,9 @@
 #include <vectis/vectis.h>
 #include <vectis/webdav.h>
 
+extern u_int16_t kore_curl_timeout;
+extern u_int64_t kore_curl_recv_max;
+
 #ifndef __has_feature
 #define __has_feature(x) 0
 #endif
@@ -212,6 +215,24 @@ static vectis_status status_404_handler(vectis_app *app,
   (void)request;
   (void)userdata;
   return vectis_response_status(response, 404, error);
+}
+
+static vectis_status kore_curl_config_handler(vectis_app *app,
+                                              vectis_request *request,
+                                              vectis_response *response,
+                                              void *userdata,
+                                              vectis_error *error) {
+  char body[96];
+  int written;
+
+  (void)app;
+  (void)request;
+  (void)userdata;
+  written =
+      snprintf(body, sizeof(body), "timeout=%u\nrecv_max=%lu\n",
+               (unsigned)kore_curl_timeout, (unsigned long)kore_curl_recv_max);
+  assert(written > 0 && (size_t)written < sizeof(body));
+  return vectis_response_text(response, 200, "text/plain", body, error);
 }
 
 static size_t reset_failing_response_source_read(void *context, void *buffer,
@@ -2938,6 +2959,7 @@ static void assert_kore_smoke(void) {
   vectis_auth_provider native_auth_provider;
   vectis_webdav_auth_provider_config native_webdav_auth;
   vectis_webdav_mount_config native_webdav_mount;
+  vectis_bytes body;
   vectis_xml_config xml_config;
   vectis_dsv_config dsv_config;
   vectis_app_config second_config;
@@ -3101,6 +3123,8 @@ static void assert_kore_smoke(void) {
   config.server.request_body_min_rate_bytes_per_sec = 1024u;
   config.server.request_body_min_rate_grace_ms = 500L;
   config.server.keepalive_max_requests = 1u;
+  config.server.kore_curl_timeout_seconds = 7u;
+  config.server.kore_curl_recv_max_bytes = 65536u;
   config.server.websocket_max_frame_bytes = 8u;
   config.server.server_header = "vectis-runtime";
   config.server.access_log_path = access_log_path;
@@ -3165,6 +3189,10 @@ static void assert_kore_smoke(void) {
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/health", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/kore-curl-config",
+                       kore_curl_config_handler, NULL);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
   route =
@@ -3468,6 +3496,18 @@ static void assert_kore_smoke(void) {
   assert(response.status_code == 200L);
   assert(response.body_size == 2u);
   assert(memcmp(response.body, "ok", 2u) == 0);
+  vectis_http_response_cleanup(&response);
+
+  status = vectis_http_get(
+      &http,
+      format_loopback_http_url(url, sizeof(url), port, "/kore-curl-config"),
+      &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200L);
+  body.data = response.body;
+  body.size = response.body_size;
+  assert(runtime_bytes_contains(body, "timeout=7"));
+  assert(runtime_bytes_contains(body, "recv_max=65536"));
   vectis_http_response_cleanup(&response);
 
   status = vectis_http_head(

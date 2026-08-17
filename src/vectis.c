@@ -3151,6 +3151,8 @@ vectis_effective_server_config(const vectis_server_config *config) {
   effective.keepalive_max_requests =
       vectis_default_unsigned(config->keepalive_max_requests,
                               VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS);
+  effective.kore_curl_timeout_seconds = config->kore_curl_timeout_seconds;
+  effective.kore_curl_recv_max_bytes = config->kore_curl_recv_max_bytes;
   effective.socket_backlog = vectis_default_unsigned(
       config->socket_backlog, VECTIS_SERVER_DEFAULT_SOCKET_BACKLOG);
   effective.request_process_budget_ms =
@@ -10266,6 +10268,14 @@ vectis_validate_server_config(const vectis_server_config *config,
   if (effective.worker_accept_threshold > (size_t)UINT_MAX) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "server worker_accept_threshold exceeds Kore uint32");
+    return VECTIS_ERR_INVALID;
+  }
+  if (effective.kore_curl_timeout_seconds >
+      VECTIS_SERVER_MAX_KORE_CURL_TIMEOUT_SECONDS) {
+    vectis_set_errorf(
+        error, VECTIS_ERR_INVALID,
+        "server kore_curl_timeout_seconds must be 0 or at most %u",
+        VECTIS_SERVER_MAX_KORE_CURL_TIMEOUT_SECONDS);
     return VECTIS_ERR_INVALID;
   }
   if (effective.worker_rlimit_nofiles > (size_t)UINT_MAX) {
@@ -22248,6 +22258,26 @@ size_t vectis_internal_worker_rlimit_nofiles(vectis_app *app) {
   }
   impl = (vectis_app_impl *)app->impl;
   return impl->server.worker_rlimit_nofiles;
+}
+
+unsigned vectis_internal_kore_curl_timeout_seconds(vectis_app *app) {
+  vectis_app_impl *impl;
+
+  if (app == NULL || app->impl == NULL) {
+    return 0u;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  return impl->server.kore_curl_timeout_seconds;
+}
+
+size_t vectis_internal_kore_curl_recv_max_bytes(vectis_app *app) {
+  vectis_app_impl *impl;
+
+  if (app == NULL || app->impl == NULL) {
+    return 0u;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  return impl->server.kore_curl_recv_max_bytes;
 }
 
 int vectis_internal_worker_set_affinity_disabled(vectis_app *app) {

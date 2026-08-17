@@ -449,8 +449,9 @@ key-manager/ACME worker slots. Startup must fail with a Vectis error rather
 than letting Kore reject a malformed low-level setting later.
 
 The same direct-runtime surface owns listener backlog, request processing
-budget, HSTS max-age, the HTTP Server header value, and process-wide WebSocket
-limits. It also exposes Kore's worker death policy as
+budget, HSTS max-age, the HTTP Server header value, Kore-owned curl timeout and
+receive-size limits, and process-wide WebSocket limits. It also exposes Kore's
+worker death policy as
 `worker_death_policy`, defaulting to restart, and Kore's opt-in generated HTML
 bodies for bodyless 4xx/5xx responses as `pretty_error_pages`, defaulting off
 for production-minimal error responses. WebSocket

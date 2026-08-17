@@ -99,6 +99,8 @@ int main(void) {
          VECTIS_SERVER_DEFAULT_KEEPALIVE_TIMEOUT_MS);
   assert(config.server.keepalive_max_requests ==
          VECTIS_SERVER_DEFAULT_KEEPALIVE_MAX_REQUESTS);
+  assert(config.server.kore_curl_timeout_seconds == 0u);
+  assert(config.server.kore_curl_recv_max_bytes == 0u);
   assert(config.server.socket_backlog == VECTIS_SERVER_DEFAULT_SOCKET_BACKLOG);
   assert(config.server.request_process_budget_ms ==
          VECTIS_SERVER_DEFAULT_REQUEST_PROCESS_BUDGET_MS);
@@ -190,6 +192,8 @@ int main(void) {
   config.server.idle_timeout_ms = 0L;
   config.server.keepalive_timeout_ms = 0L;
   config.server.keepalive_max_requests = 0u;
+  config.server.kore_curl_timeout_seconds = 0u;
+  config.server.kore_curl_recv_max_bytes = 0u;
   config.server.websocket_max_frame_bytes = 0u;
   config.server.websocket_timeout_ms = 0L;
   config.server.server_header = NULL;
@@ -207,6 +211,8 @@ int main(void) {
   assert(vectis_internal_worker_set_affinity_disabled(app) == 0);
   assert(vectis_internal_worker_shutdown_timeout_ms(app) ==
          VECTIS_SERVER_DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS);
+  assert(vectis_internal_kore_curl_timeout_seconds(app) == 0u);
+  assert(vectis_internal_kore_curl_recv_max_bytes(app) == 0u);
   assert(vectis_internal_worker_death_policy(app) ==
          VECTIS_SERVER_DEFAULT_WORKER_DEATH_POLICY);
   assert(vectis_internal_request_body_spool_dir(app) != NULL);
@@ -228,6 +234,8 @@ int main(void) {
   config.server.worker_rlimit_nofiles = 2048u;
   config.server.worker_set_affinity_disabled = 1;
   config.server.worker_shutdown_timeout_ms = 2500L;
+  config.server.kore_curl_timeout_seconds = 7u;
+  config.server.kore_curl_recv_max_bytes = 65536u;
   config.server.worker_death_policy = VECTIS_WORKER_DEATH_TERMINATE;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
@@ -237,6 +245,8 @@ int main(void) {
   assert(vectis_internal_worker_rlimit_nofiles(app) == 2048u);
   assert(vectis_internal_worker_set_affinity_disabled(app) == 1);
   assert(vectis_internal_worker_shutdown_timeout_ms(app) == 2500L);
+  assert(vectis_internal_kore_curl_timeout_seconds(app) == 7u);
+  assert(vectis_internal_kore_curl_recv_max_bytes(app) == 65536u);
   assert(vectis_internal_worker_death_policy(app) ==
          VECTIS_WORKER_DEATH_TERMINATE);
   app->close(app);
@@ -260,6 +270,13 @@ int main(void) {
   app = vectis_app_new(&config, &error);
   assert(app == NULL);
   assert(strstr(error.message, "worker_count") != NULL);
+
+  vectis_app_config_init(&config);
+  config.server.kore_curl_timeout_seconds =
+      VECTIS_SERVER_MAX_KORE_CURL_TIMEOUT_SECONDS + 1u;
+  app = vectis_app_new(&config, &error);
+  assert(app == NULL);
+  assert(strstr(error.message, "kore_curl_timeout_seconds") != NULL);
 
   vectis_app_config_init(&config);
   config.server.worker_shutdown_timeout_ms = -1L;

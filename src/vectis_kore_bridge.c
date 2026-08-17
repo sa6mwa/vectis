@@ -81,12 +81,17 @@ extern u_int64_t http_hsts_enable;
 extern u_int32_t kore_socket_backlog;
 extern u_int64_t kore_websocket_maxframe;
 extern u_int64_t kore_websocket_timeout;
+extern u_int16_t kore_curl_timeout;
+extern u_int64_t kore_curl_recv_max;
 extern void http_server_version(const char *version);
 extern int http_pretty_error;
 
 static pthread_mutex_t vectis_kore_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int vectis_kore_runtime_active = 0;
 static int vectis_kore_dh_loaded = 0;
+static int vectis_kore_curl_defaults_set = 0;
+static u_int16_t vectis_kore_curl_timeout_default = 0u;
+static u_int64_t vectis_kore_curl_recv_max_default = 0u;
 static vectis_kore_runtime_config vectis_kore_current;
 static char *vectis_kore_keymgr_root = NULL;
 static char *vectis_kore_acme_root = NULL;
@@ -136,10 +141,17 @@ static void vectis_kore_wake_listener(void) {
 }
 
 static void vectis_kore_reset_runtime_state(void) {
+  if (!vectis_kore_curl_defaults_set) {
+    vectis_kore_curl_timeout_default = kore_curl_timeout;
+    vectis_kore_curl_recv_max_default = kore_curl_recv_max;
+    vectis_kore_curl_defaults_set = 1;
+  }
   kore_quit = KORE_QUIT_NONE;
   sig_recv = 0;
   optind = 1;
   worker_count = 0u;
+  kore_curl_timeout = vectis_kore_curl_timeout_default;
+  kore_curl_recv_max = vectis_kore_curl_recv_max_default;
 }
 
 static const char vectis_kore_default_dhparams[] =
@@ -1666,6 +1678,12 @@ static void vectis_kore_apply_server_config(const vectis_server_config *server,
   http_keepalive_max_requests = server->keepalive_disabled
                                     ? 0u
                                     : (u_int32_t)server->keepalive_max_requests;
+  if (server->kore_curl_timeout_seconds > 0u) {
+    kore_curl_timeout = (u_int16_t)server->kore_curl_timeout_seconds;
+  }
+  if (server->kore_curl_recv_max_bytes > 0u) {
+    kore_curl_recv_max = (u_int64_t)server->kore_curl_recv_max_bytes;
+  }
   kore_socket_backlog = vectis_kore_u32_from_size(server->socket_backlog);
   http_request_ms = (u_int32_t)server->request_process_budget_ms;
   http_hsts_enable = (u_int64_t)server->hsts_max_age_seconds;

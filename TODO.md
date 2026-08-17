@@ -58,6 +58,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Complete dependency-backed behavior for CA-signed certificate generation and manual/ACME Kore TLS startup.
 - [ ] Complete the remaining full Kore runtime configuration surface, including low-level escape hatches where useful.
 - [x] Expose an explicit C and Lua `access_log_path` server option for Kore file access logs, including startup preflight and runtime coverage.
+- [x] Expose bounded C and Lua `kore_curl_timeout_seconds` and `kore_curl_recv_max_bytes` server options for Kore-owned curl workflows such as ACME, while preserving compiled defaults when unset.
 - [x] Expose dependency headers and low-level handles/APIs as explicit escape hatches without making them the primary DX.
 - [x] Define the first C pass of one Vectis-owned naming, source, error, timeout, ownership, and cleanup convention.
 - [x] Add stable string helpers for status, error source, HTTP method, and body mode names.
