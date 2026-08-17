@@ -134,7 +134,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Support embedding a lockd client certificate bundle into a packaged Vectis binary.
 - [x] Support ACME runtime configuration through Kore for C services.
 - [x] Add ACME lifecycle examples/tests beyond startup validation, using a controlled ACME test server.
-- [ ] Support reload/update of key material where Kore allows it.
+- [x] Support key-material refresh through explicit Vectis app restart/reload semantics where the embedded Kore runtime cannot perform an in-place TLS context mutation.
 
 ## Area 7: JSON Surface
 
@@ -348,7 +348,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Expand the dependency-native OpenSSL Lua facade with general EVP digest and HMAC helpers while keeping fixed SHA-256 helpers for common workflows.
 - [x] Expand the dependency-native OpenSSL Lua facade for advanced signing, verification, encoding, and key/certificate inspection operations that are not covered by `vectis.cert`.
 - [x] Expand `vectis.cert` Lua helpers to cover private key generation, CSR generation, self-signed bundles, CA bundles, CA-signed cert/key pairs, cert/key pair validation, CA validation, and inspection.
-- [ ] Add certificate reload/update hooks where Kore can support them.
+- [x] Add certificate reload/update hooks through the explicit Vectis restart/reload lifecycle, rereading file/source-backed TLS material in the replacement Kore child.
 - [x] Add Vectis-owned Lua libssh2-backed SFTP file upload/download helpers with host-key, known-hosts, timeout, and structured error contracts where curl-backed SFTP is insufficient.
 - [x] Add one-shot Lua libssh2-backed SFTP filesystem helpers for stat, mkdir, remove, rmdir, rename, and chmod where curl-backed SFTP is insufficient.
 - [x] Add broader Lua libssh2-backed SFTP session, file open/read/write/stat, and directory iteration handles where curl-backed SFTP is insufficient.

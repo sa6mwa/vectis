@@ -35,7 +35,10 @@ T2 supervised runtimes: Vectis forks a thread-clean Kore child first, then start
 supervisor-domain services. Service-only apps run as T3 runtimes with no Kore
 fork boundary. `vectis_start()` and `server:start()` are managed starts for
 tests, tools, and daemon-style Lua scripts that need the caller to continue;
-they must be paired with `wait()` or `stop()`. On termination, the app shutdown
+they must be paired with `wait()` or `stop()`. `vectis_restart()` and
+`server:restart()` are managed stop/start cycles for the whole app lifecycle;
+they replace the Kore child and restart app-owned daemon services instead of
+attempting an in-place TLS or worker mutation. On termination, the app shutdown
 sequence stops HTTP ingress and metrics, stops and waits app-created lockd
 consumer services, then closes app-owned lockd and CAI resources during app
 close. Applications that create additional daemon-like handles outside the app

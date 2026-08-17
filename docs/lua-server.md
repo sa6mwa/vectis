@@ -21,9 +21,16 @@ server:close()
 `server:run()` enters the foreground server runtime and returns after `SIGINT`,
 `SIGTERM`, or `SIGQUIT`. `server:start()` starts a managed Kore child process
 for tests and tools that need the Lua parent to continue; pair it with
-`server:wait()` or `server:stop()`. `shutdown_grace_ms` controls the managed
-runtime grace period before forced child termination; zero or omission uses the
-Vectis default. `supervision_policy` accepts `auto`, `direct`, or `supervised`:
+`server:wait()` or `server:stop()`. `server:restart()` runs the same graceful
+stop/start sequence for the whole Vectis app, including Kore and app-owned
+daemon services. `server:reload()` is an alias for `server:restart()`. This is
+the supported certificate rotation primitive for file-backed or source-backed
+TLS material: the next managed Kore child rereads the configured certificate,
+key, chain, and client CA material. Existing connections can be closed during
+the restart. In-memory PEM values are immutable after server construction.
+`shutdown_grace_ms` controls the managed runtime grace period before forced
+child termination; zero or omission uses the Vectis default. `supervision_policy`
+accepts `auto`, `direct`, or `supervised`:
 `auto` uses direct foreground Kore unless app-owned services require the managed
 supervisor topology, `direct` fails if such services are declared, and
 `supervised` forces the managed supervisor topology for route-backed apps.

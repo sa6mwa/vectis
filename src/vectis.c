@@ -11054,6 +11054,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
 
   app->start = vectis_start;
   app->stop = vectis_stop;
+  app->restart = vectis_restart;
   app->run = vectis_run;
   app->wait = vectis_app_wait;
   app->route = vectis_register_route;
@@ -11845,6 +11846,20 @@ vectis_status vectis_start(vectis_app *app, vectis_error *error) {
   if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
     return VECTIS_ERR_INVALID;
+  }
+  return vectis_app_start_impl(app, error);
+}
+
+vectis_status vectis_restart(vectis_app *app, vectis_error *error) {
+  vectis_status status;
+
+  if (app == NULL || app->impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_app_stop_impl(app, error);
+  if (status != VECTIS_OK) {
+    return status;
   }
   return vectis_app_start_impl(app, error);
 }

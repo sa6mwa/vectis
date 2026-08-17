@@ -1639,6 +1639,7 @@ struct vectis_app {
    */
   vectis_status (*start)(vectis_app *self, vectis_error *error);
   vectis_status (*stop)(vectis_app *self, vectis_error *error);
+  vectis_status (*restart)(vectis_app *self, vectis_error *error);
   /* Run the app until SIGINT, SIGTERM, or SIGQUIT. Route-backed apps without
    * app-owned background services enter Kore directly. Route-backed apps with
    * app-owned services use the supervised runtime so Kore starts from a
@@ -2431,6 +2432,7 @@ void vectis_app_close(vectis_app *app);
 void vectis_destroy(vectis_app *app);
 vectis_status vectis_start(vectis_app *app, vectis_error *error);
 vectis_status vectis_stop(vectis_app *app, vectis_error *error);
+vectis_status vectis_restart(vectis_app *app, vectis_error *error);
 vectis_status vectis_run(vectis_app *app, vectis_error *error);
 vectis_status vectis_app_wait(vectis_app *app, vectis_error *error);
 vectis_status vectis_register_route(vectis_app *app,

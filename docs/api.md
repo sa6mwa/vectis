@@ -27,7 +27,7 @@ Major groups:
 
 - Runtime/server: `vectis_app`, `vectis_server_config`,
   `vectis_register_route()`, foreground `vectis_run()`, process-backed
-  `vectis_start()`, and `vectis_stop()`.
+  `vectis_start()`, `vectis_stop()`, and `vectis_restart()`.
 - Requests/responses: `vectis_request_*`, `vectis_response_*`,
   materialized/spilled body helpers, JSON replies, file responses, and
   source-backed responses.

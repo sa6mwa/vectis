@@ -169,6 +169,16 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_websocket PROPERTIES
     LABELS "lua;smoke;local;integration"
     TIMEOUT 30)
+  add_test(NAME vectis_lua_server_restart
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                   "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
+                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/server_restart.cmake")
+  set_tests_properties(vectis_lua_server_restart PROPERTIES
+    LABELS "lua;smoke;local;integration"
+    TIMEOUT 30)
   add_test(NAME vectis_lua_openssl
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"

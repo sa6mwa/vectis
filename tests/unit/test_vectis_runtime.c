@@ -2924,6 +2924,8 @@ static void assert_kore_smoke(void) {
   char url[512];
   unsigned short port;
   unsigned short second_port;
+  pid_t restart_child_before;
+  pid_t restart_child_after;
   size_t default_spooled_body_size;
   size_t stream_body_size;
   size_t xml_body_size;
@@ -3317,6 +3319,23 @@ static void assert_kore_smoke(void) {
   assert_repeated_file_responses_do_not_leak_fds(
       &http, format_loopback_http_url(url, sizeof(url), port, "/file"),
       response_file_body, sizeof(response_file_body) - 1u, &error);
+
+  restart_child_before = vectis_internal_kore_child_pid(app);
+  assert(restart_child_before > 0);
+  status = vectis_restart(app, &error);
+  assert(status == VECTIS_OK);
+  restart_child_after = vectis_internal_kore_child_pid(app);
+  assert(restart_child_after > 0);
+  assert(restart_child_after != restart_child_before);
+  vectis_http_response_cleanup(&response);
+  status = vectis_http_get(
+      &http, format_loopback_http_url(url, sizeof(url), port, "/health"),
+      &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200L);
+  assert(response.body_size == 2u);
+  assert(memcmp(response.body, "ok", 2u) == 0);
+  vectis_http_response_cleanup(&response);
 
   status = vectis_http_head(
       &http, format_loopback_http_url(url, sizeof(url), port, "/static-file"),

@@ -6931,6 +6931,24 @@ static int vectis_lua_server_start(lua_State *lua) {
   return 1;
 }
 
+static int vectis_lua_server_restart(lua_State *lua) {
+  vectis_lua_server *server;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+
+  server = vectis_lua_check_server(lua, 1);
+  app = vectis_lua_server_app(lua, 1);
+  vectis_error_clear(&error);
+  status = app->restart(app, &error);
+  if (status != VECTIS_OK) {
+    return vectis_lua_push_error(lua, status, &error);
+  }
+  server->started = 1;
+  lua_pushboolean(lua, 1);
+  return 1;
+}
+
 static int vectis_lua_server_run(lua_State *lua) {
   vectis_lua_server *server;
   vectis_app *app;
@@ -19229,6 +19247,10 @@ static void vectis_lua_register_server(lua_State *lua) {
     lua_setfield(lua, -2, "sus_worker_service_states");
     lua_pushcfunction(lua, vectis_lua_server_start);
     lua_setfield(lua, -2, "start");
+    lua_pushcfunction(lua, vectis_lua_server_restart);
+    lua_setfield(lua, -2, "restart");
+    lua_pushcfunction(lua, vectis_lua_server_restart);
+    lua_setfield(lua, -2, "reload");
     lua_pushcfunction(lua, vectis_lua_server_run);
     lua_setfield(lua, -2, "run");
     lua_pushcfunction(lua, vectis_lua_server_stop);
