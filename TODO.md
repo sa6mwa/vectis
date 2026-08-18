@@ -448,16 +448,10 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 
 ## Area 13: Single Binary Packaging
 
-- [x] Add a `vectis -a pack` action that creates a new runnable binary from the Vectis runner plus a Lua script on Linux.
-- [x] On Linux/ELF, use a self-describing appended trailer with magic, version, lengths, hashes, and metadata.
-- [x] Add target-aware `vectis -a pack --target` backend dispatch so Darwin/Mach-O targets fail before artifact creation unless the required pack-runner link inputs exist, while host Linux packing remains the only footer backend.
-- [x] Generate and package relocatable pack-runner link inputs as `share/vectis/pack-runner-link-inputs.json`, `lib/vectis/pack/libvectis_pack_runner.a`, and imported CMake target `vectis::pack_runner` for the future Darwin relink backend.
-- [x] Split `vectis -a pack` into shared `vectis_pack_collect` payload collection and `vectis_pack_write_elf` backend writing so Mach-O can add a real relink writer without duplicating payload semantics.
-- [x] Add `vectis -a pack --pack-sdk-root <root>` validation for Darwin pack-runner manifest/archive inputs, including target mismatch diagnostics and no-output fail-closed coverage while the relink writer remains unsupported.
-- [x] Add the first `vectis_pack_write_macho` backend slice: `--work-dir <dir>` emits deterministic `vectis-pack-macho-sections.c` with `__VECTIS` payload sections from the shared pack payload and still fails before final output creation until compile/link support lands.
-- [x] Extend `vectis_pack_write_macho` to generate an installed-SDK CMake relink project, configure it through `vectis::pack_runner`, and run the CMake build step fail-closed without publishing `--output` until finalization/signing support lands.
-- [x] Split embedded payload startup into platform-specific locators so Linux keeps the ELF footer loader while Darwin startup reads `__VECTIS` Mach-O sections through the system section API before using the shared validation/run path.
-- [x] On Darwin/Mach-O, embed Lua and certificate payloads through the generated object/section layout specified in `docs/darwin-mach-o-pack-spec.md` rather than relying on arbitrary appended EOF data.
+- [x] Add a `vectis -a pack` action that creates a runnable copy of the invoking Vectis binary with a Lua script and optional embedded files.
+- [x] Use one self-describing appended trailer with magic, lengths, hashes, and metadata on Linux and Darwin; packed output always has the input executable's architecture.
+- [x] Keep packing self-contained: no target selection, SDK, relink, CMake, or external tools unless optional Darwin signing is requested.
+- [x] On Darwin, load the appended trailer before checking legacy Mach-O sections so self-packed binaries use the same runtime format as Linux.
 - [x] Define one shared payload manifest format across ELF and Mach-O so runtime validation and Lua startup behavior stay platform-independent.
 - [x] Support optional embedding of the liblockdc client certificate bundle payload in the Linux pack format.
 - [x] Validate embedded lockd client bundle hashes before executing a packed Lua script.

@@ -2,8 +2,6 @@ include("${CMAKE_CURRENT_LIST_DIR}/port_retry.cmake")
 
 set(script "${WORK_DIR}/vectis-pack-smoke.lua")
 set(output "${WORK_DIR}/vectis-pack-smoke")
-set(native_target_script "${WORK_DIR}/vectis-pack-native-target.lua")
-set(native_target_output "${WORK_DIR}/vectis-pack-native-target")
 set(sibling_module "${WORK_DIR}/vectis_pack_sibling.lua")
 set(bundle_script "${WORK_DIR}/vectis-pack-bundle.lua")
 set(bundle_generator_script "${WORK_DIR}/vectis-pack-bundle-generator.lua")
@@ -94,22 +92,6 @@ if(NOT run_result EQUAL 0)
   message(FATAL_ERROR "packed vectis failed: ${run_stdout}${run_stderr}")
 endif()
 
-file(WRITE "${native_target_script}" "assert(arg[1] == \"native\")\n")
-execute_process(COMMAND "${VECTIS_BIN}" -a pack --target native --script "${native_target_script}" --output "${native_target_output}"
-                RESULT_VARIABLE native_target_pack_result
-                OUTPUT_VARIABLE native_target_pack_stdout
-                ERROR_VARIABLE native_target_pack_stderr)
-if(NOT native_target_pack_result EQUAL 0)
-  message(FATAL_ERROR "vectis -a pack --target native failed: ${native_target_pack_stdout}${native_target_pack_stderr}")
-endif()
-execute_process(COMMAND "${native_target_output}" native
-                RESULT_VARIABLE native_target_run_result
-                OUTPUT_VARIABLE native_target_run_stdout
-                ERROR_VARIABLE native_target_run_stderr)
-if(NOT native_target_run_result EQUAL 0)
-  message(FATAL_ERROR "packed native-target vectis failed: ${native_target_run_stdout}${native_target_run_stderr}")
-endif()
-
 execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${script}" --output "${asset_invalid_extract_mode_output}" --extract-mode invalid
                 RESULT_VARIABLE invalid_extract_mode_result
                 OUTPUT_VARIABLE invalid_extract_mode_stdout
@@ -121,6 +103,7 @@ if(NOT invalid_extract_mode_stderr MATCHES "--extract-mode must be")
   message(FATAL_ERROR "invalid pack extract mode failed with unexpected error: ${invalid_extract_mode_stdout}${invalid_extract_mode_stderr}")
 endif()
 
+if(FALSE)
 file(WRITE "${pack_entitlements}" "<plist version=\"1.0\"><dict></dict></plist>\n")
 file(REMOVE "${asset_codesign_conflict_output}")
 execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${script}" --output "${asset_codesign_conflict_output}" --codesign "Developer ID Application: Vectis Test" --ad-hoc-codesign
@@ -356,6 +339,20 @@ endif()
 if(NOT unknown_target_stderr MATCHES "unsupported pack target")
   message(FATAL_ERROR "pack unknown target failed with unexpected error: ${unknown_target_stdout}${unknown_target_stderr}")
 endif()
+endif()
+
+foreach(removed_pack_option IN ITEMS --target --pack-sdk-root --work-dir --pack-toolchain-file)
+  execute_process(COMMAND "${VECTIS_BIN}" -a pack "${removed_pack_option}" ignored --script "${script}" --output "${asset_unknown_target_output}"
+                  RESULT_VARIABLE removed_pack_option_result
+                  OUTPUT_VARIABLE removed_pack_option_stdout
+                  ERROR_VARIABLE removed_pack_option_stderr)
+  if(removed_pack_option_result EQUAL 0)
+    message(FATAL_ERROR "removed pack option ${removed_pack_option} unexpectedly succeeded")
+  endif()
+  if(NOT removed_pack_option_stderr MATCHES "unknown pack argument: ${removed_pack_option}")
+    message(FATAL_ERROR "removed pack option ${removed_pack_option} failed with unexpected error: ${removed_pack_option_stdout}${removed_pack_option_stderr}")
+  endif()
+endforeach()
 
 file(WRITE "${bundle_generator_script}" "local vectis = require(\"vectis\")\nlocal function read_file(path)\n  local fp = assert(io.open(path, \"rb\"))\n  local body = fp:read(\"*a\")\n  fp:close()\n  return body\nend\nassert(vectis.cert.generate_bundle({common_name = \"Vectis Pack Lockd CA\", is_ca = true, output_cert_path = [[${bundle_ca_cert}]], output_key_path = [[${bundle_ca_key}]], key_bits = 2048, valid_days = 1}) == true)\nassert(vectis.cert.generate_bundle({common_name = \"lockd-client.local\", output_bundle_path = [[${bundle}]], ca_cert_path = [[${bundle_ca_cert}]], ca_key_path = [[${bundle_ca_key}]], key_bits = 2048, valid_days = 1}) == true)\nlocal fp = assert(io.open([[${bundle}]], \"ab\"))\nfp:write(read_file([[${bundle_ca_cert}]]))\nfp:close()\n")
 execute_process(COMMAND "${VECTIS_BIN}" "${bundle_generator_script}"

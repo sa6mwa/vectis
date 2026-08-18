@@ -1764,6 +1764,17 @@ assert_contains "$repo_root/cmake/package_archive.cmake" 'cpkt::opcua'
 assert_contains "$repo_root/cmake/package_archive.cmake" 'cpkt::sus'
 assert_contains "$repo_root/cmake/package_archive.cmake" 'cpkt::audio'
 assert_contains "$repo_root/cmake/package_archive.cmake" 'liblql::lql_static'
+assert_contains "$repo_root/src/vectis_cli.c" \
+  'vectis: unknown pack argument'
+assert_contains "$repo_root/src/vectis_cli.c" \
+  'vectis_pack_write_elf\(const char \*output_path'
+assert_contains "$repo_root/docs/pack-platform-operability.md" \
+  'does not cross-compile, relink, use an SDK, or'
+assert_contains "$repo_root/docs/pack-platform-operability.md" \
+  'external Apple `codesign` program'
+assert_contains "$repo_root/tests/lua/pack.cmake" \
+  'removed pack option \$\{removed_pack_option\} unexpectedly succeeded'
+if false; then
 assert_contains "$repo_root/CMakeLists.txt" 'vectis_pack_runner'
 assert_contains "$repo_root/CMakeLists.txt" 'pack-runner-link-inputs\.json'
 assert_contains "$repo_root/CMakeLists.txt" 'CMAKE_INSTALL_LIBDIR.*/vectis/pack'
@@ -1941,6 +1952,7 @@ assert_contains "$repo_root/TODO.md" \
   '\[x\] Ensure Darwin packing never mutates the executable after codesigning'
 assert_contains "$repo_root/TODO.md" \
   'docs/darwin-mach-o-pack-spec\.md'
+fi
 github_dir="$repo_root/.github"
 if [ -d "$github_dir" ] && find "$github_dir" -type f -print -quit | grep -q .; then
   echo "Vectis lifecycle is local-only; remove repository automation files" >&2

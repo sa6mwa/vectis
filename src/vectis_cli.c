@@ -693,9 +693,7 @@ static const char vectis_lonejson_lua_init[] =
 static void vectis_cli_usage(FILE *stream) {
   fputs("usage: vectis [--version] [--help] [-x] script.lua [args...]\n"
         "       -x traces Lua line execution to stderr\n"
-        "       vectis -a|--action pack [--target target-id] "
-        "[--pack-sdk-root root] [--work-dir dir] "
-        "[--pack-toolchain-file file] --script script.lua --output output "
+        "       vectis -a|--action pack --script script.lua --output output "
         "[--lockd-bundle bundle.pem] "
         "[--asset source=/path] "
         "[--asset-dir /mount:dir] [--asset-manifest assets.json] "
@@ -3086,6 +3084,7 @@ static int vectis_pack_footer_valid(const unsigned char *footer) {
   return memcmp(footer, VECTIS_PACK_MAGIC, VECTIS_PACK_MAGIC_SIZE) == 0;
 }
 
+#if 0
 static int vectis_pack_target_is_darwin(const char *target, int *out) {
   if (out == NULL) {
     return 0;
@@ -3128,6 +3127,8 @@ static const char *vectis_pack_effective_target_id(const char *target) {
   return "host";
 #endif
 }
+
+#endif
 
 static int vectis_pack_write_elf(const char *output_path,
                                  const unsigned char *runner,
@@ -3191,6 +3192,7 @@ static int vectis_pack_write_elf(const char *output_path,
   return 0;
 }
 
+#if 0
 static void
 vectis_pack_make_macho_header(unsigned char *header,
                               const vectis_pack_payload *payload,
@@ -3353,6 +3355,9 @@ static int vectis_pack_mkdir_if_missing(const char *path) {
   return mkdir(path, 0775) == 0 ? 0 : -1;
 }
 
+#endif
+
+#ifdef __APPLE__
 static int vectis_pack_run_command(char *const argv[], const char *label) {
   pid_t pid;
   int status;
@@ -3393,7 +3398,9 @@ static int vectis_pack_run_command(char *const argv[], const char *label) {
   }
   return 1;
 }
+#endif
 
+#if 0
 static int vectis_pack_copy_executable(const char *source_path,
                                        const char *output_path) {
   FILE *in;
@@ -3442,6 +3449,9 @@ static int vectis_pack_copy_executable(const char *source_path,
   return 0;
 }
 
+#endif
+
+#ifdef __APPLE__
 static int vectis_pack_copy_command_arg(char *out, size_t out_size,
                                         const char *value, const char *label) {
   int written;
@@ -3459,40 +3469,17 @@ static int vectis_pack_darwin_tool(char *out, size_t out_size,
                                    const char *default_name,
                                    const char *prefixed_suffix) {
   const char *override;
-  const char *osxcross_root;
-  const char *host;
-  char candidate[4096];
-  int written;
 
+  (void)prefixed_suffix;
   override = getenv(env_name);
   if (override != NULL && override[0] != '\0') {
     return vectis_pack_copy_command_arg(out, out_size, override, env_name);
-  }
-  osxcross_root = getenv("OSXCROSS_ROOT");
-  if (osxcross_root != NULL && osxcross_root[0] != '\0' &&
-      prefixed_suffix != NULL) {
-    host = getenv("VECTIS_OSXCROSS_HOST");
-    if (host == NULL || host[0] == '\0') {
-      host = getenv("CPKT_OSXCROSS_HOST");
-    }
-    if (host == NULL || host[0] == '\0') {
-      host = "arm64-apple-darwin25";
-    }
-    written = snprintf(candidate, sizeof(candidate), "%s/bin/%s-%s",
-                       osxcross_root, host, prefixed_suffix);
-    if (written < 0 || (size_t)written >= sizeof(candidate)) {
-      fputs("vectis: Darwin tool path is too long\n", stderr);
-      return 1;
-    }
-    if (vectis_pack_regular_file_exists(candidate)) {
-      return vectis_pack_copy_command_arg(out, out_size, candidate,
-                                          prefixed_suffix);
-    }
   }
   return vectis_pack_copy_command_arg(out, out_size, default_name,
                                       default_name);
 }
 
+#if 0
 static int vectis_pack_verify_macho_artifact(const char *binary_path) {
   char otool[4096];
   char binary_arg[4096];
@@ -3511,6 +3498,7 @@ static int vectis_pack_verify_macho_artifact(const char *binary_path) {
   argv[3] = NULL;
   return vectis_pack_run_command(argv, "Mach-O pack artifact inspection");
 }
+#endif
 
 static int vectis_pack_sign_macho_artifact(
     const char *binary_path, const vectis_pack_macho_sign_config *sign_config) {
@@ -3586,7 +3574,9 @@ static int vectis_pack_sign_macho_artifact(
   verify_argv[5] = NULL;
   return vectis_pack_run_command(verify_argv, "Mach-O pack codesign verify");
 }
+#endif
 
+#if 0
 static int vectis_pack_fputs_cmake_quoted(FILE *out, const char *value) {
   const unsigned char *p;
 
@@ -3908,6 +3898,8 @@ vectis_pack_write_macho(const char *output_path, const char *work_dir,
   return 0;
 }
 
+#endif
+
 static int vectis_self_path(const char *argv0, char *path, size_t path_size) {
 #ifdef __linux__
   ssize_t nread;
@@ -3950,6 +3942,7 @@ vectis_pack_command_cleanup(vectis_pack_asset_list *assets,
   vectis_pack_content_type_map_cleanup(content_types);
 }
 
+#ifdef __APPLE__
 static int vectis_pack_validate_entitlements_path(const char *path) {
   struct stat st;
   FILE *file;
@@ -3980,7 +3973,9 @@ static int vectis_pack_validate_entitlements_path(const char *path) {
   }
   return 0;
 }
+#endif
 
+#if 0
 static int vectis_pack_join_relative(char *out, size_t out_size,
                                      const char *root, const char *relative) {
   int written;
@@ -4135,16 +4130,13 @@ static int vectis_pack_darwin_requires_link_inputs(void) {
         stderr);
   return 64;
 }
+#endif
 
 static int vectis_pack_command(int argc, char **argv, int index) {
   const char *script_path;
   const char *output_path;
   const char *bundle_path;
   const char *extract_mode;
-  const char *target_id;
-  const char *pack_sdk_root;
-  const char *work_dir;
-  const char *pack_toolchain_file;
   const char *codesign_identity;
   const char *entitlements_path;
   const char *asset_arg;
@@ -4162,7 +4154,6 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   int i;
   int result;
   int follow_symlinks;
-  int darwin_target;
   int ad_hoc_codesign;
   int hardened_runtime;
   int timestamp;
@@ -4171,14 +4162,9 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   output_path = NULL;
   bundle_path = NULL;
   extract_mode = NULL;
-  target_id = NULL;
-  pack_sdk_root = NULL;
-  work_dir = NULL;
-  pack_toolchain_file = NULL;
   codesign_identity = NULL;
   entitlements_path = NULL;
   follow_symlinks = 0;
-  darwin_target = 0;
   ad_hoc_codesign = 0;
   hardened_runtime = 0;
   timestamp = 0;
@@ -4190,14 +4176,6 @@ static int vectis_pack_command(int argc, char **argv, int index) {
       script_path = argv[++i];
     } else if (strcmp(argv[i], "--output") == 0 && i + 1 < argc) {
       output_path = argv[++i];
-    } else if (strcmp(argv[i], "--target") == 0 && i + 1 < argc) {
-      target_id = argv[++i];
-    } else if (strcmp(argv[i], "--pack-sdk-root") == 0 && i + 1 < argc) {
-      pack_sdk_root = argv[++i];
-    } else if (strcmp(argv[i], "--work-dir") == 0 && i + 1 < argc) {
-      work_dir = argv[++i];
-    } else if (strcmp(argv[i], "--pack-toolchain-file") == 0 && i + 1 < argc) {
-      pack_toolchain_file = argv[++i];
     } else if (strcmp(argv[i], "--lockd-bundle") == 0 && i + 1 < argc) {
       bundle_path = argv[++i];
     } else if (strcmp(argv[i], "--extract-mode") == 0 && i + 1 < argc) {
@@ -4236,10 +4214,6 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   }
   for (i = index; i < argc; ++i) {
     if ((strcmp(argv[i], "--script") == 0 || strcmp(argv[i], "--output") == 0 ||
-         strcmp(argv[i], "--target") == 0 ||
-         strcmp(argv[i], "--pack-sdk-root") == 0 ||
-         strcmp(argv[i], "--work-dir") == 0 ||
-         strcmp(argv[i], "--pack-toolchain-file") == 0 ||
          strcmp(argv[i], "--lockd-bundle") == 0 ||
          strcmp(argv[i], "--extract-mode") == 0 ||
          strcmp(argv[i], "--content-type-map") == 0 ||
@@ -4324,11 +4298,6 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     vectis_pack_command_cleanup(&assets, &content_types);
     return 64;
   }
-  if (!vectis_pack_target_is_darwin(target_id, &darwin_target)) {
-    fprintf(stderr, "vectis: unsupported pack target: %s\n", target_id);
-    vectis_pack_command_cleanup(&assets, &content_types);
-    return 64;
-  }
   if (codesign_identity != NULL && ad_hoc_codesign) {
     fputs("vectis: --codesign and --ad-hoc-codesign are mutually exclusive\n",
           stderr);
@@ -4343,68 +4312,22 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     vectis_pack_command_cleanup(&assets, &content_types);
     return 64;
   }
-  if (vectis_pack_validate_entitlements_path(entitlements_path) != 0) {
-    vectis_pack_command_cleanup(&assets, &content_types);
-    return 64;
-  }
-  if (darwin_target) {
-    vectis_pack_runner_inputs runner_inputs;
-    vectis_pack_macho_sign_config sign_config;
-    const char *effective_target_id;
-
-    effective_target_id = vectis_pack_effective_target_id(target_id);
-    if (pack_sdk_root != NULL) {
-      if (!vectis_pack_validate_runner_inputs_root(
-              pack_sdk_root, effective_target_id, &runner_inputs, 1)) {
-        vectis_pack_command_cleanup(&assets, &content_types);
-        return 64;
-      }
-    } else {
-      if (vectis_self_path(argv[0], self_path, sizeof(self_path)) != 0 ||
-          !vectis_pack_find_runner_inputs(NULL, self_path, effective_target_id,
-                                          &runner_inputs)) {
-        vectis_pack_command_cleanup(&assets, &content_types);
-        return vectis_pack_darwin_requires_link_inputs();
-      }
-    }
-    if (work_dir != NULL) {
-      if (vectis_pack_collect(&payload, script_path, bundle_path, &assets,
-                              extract_mode) != 0) {
-        vectis_pack_command_cleanup(&assets, &content_types);
-        return 1;
-      }
-      sign_config.codesign_identity = codesign_identity;
-      sign_config.entitlements_path = entitlements_path;
-      sign_config.ad_hoc_codesign = ad_hoc_codesign;
-      sign_config.hardened_runtime = hardened_runtime;
-      sign_config.timestamp = timestamp;
-      result = vectis_pack_write_macho(output_path, work_dir,
-                                       pack_toolchain_file, &sign_config,
-                                       &payload, &assets, &runner_inputs);
-      vectis_pack_payload_cleanup(&payload);
-      vectis_pack_command_cleanup(&assets, &content_types);
-      return result;
-    }
-    fprintf(stderr,
-            "vectis: Darwin/Mach-O relink backend is not implemented after "
-            "validating pack-runner link inputs: %s\n",
-            runner_inputs.manifest_path);
-    vectis_pack_command_cleanup(&assets, &content_types);
-    return 64;
-  }
   if (codesign_identity != NULL || ad_hoc_codesign || hardened_runtime ||
       timestamp || entitlements_path != NULL) {
 #ifdef __APPLE__
-    fputs("vectis: Darwin pack signing requires Mach-O pack support, which is "
-          "not implemented\n",
-          stderr);
+    if (vectis_pack_validate_entitlements_path(entitlements_path) != 0) {
+      vectis_pack_command_cleanup(&assets, &content_types);
+      return 64;
+    }
 #else
     fputs("vectis: Darwin pack signing options require a Darwin/Mach-O pack "
           "output\n",
           stderr);
 #endif
+#ifndef __APPLE__
     vectis_pack_command_cleanup(&assets, &content_types);
     return 64;
+#endif
   }
   if (vectis_self_path(argv[0], self_path, sizeof(self_path)) != 0) {
     fputs("vectis: failed to resolve current executable path\n", stderr);
@@ -4426,6 +4349,23 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   }
   result =
       vectis_pack_write_elf(output_path, self, self_size, &payload, &assets);
+#ifdef __APPLE__
+  if (result == 0 &&
+      (codesign_identity != NULL || ad_hoc_codesign || hardened_runtime ||
+       timestamp || entitlements_path != NULL)) {
+    vectis_pack_macho_sign_config sign_config;
+
+    sign_config.codesign_identity = codesign_identity;
+    sign_config.entitlements_path = entitlements_path;
+    sign_config.ad_hoc_codesign = ad_hoc_codesign;
+    sign_config.hardened_runtime = hardened_runtime;
+    sign_config.timestamp = timestamp;
+    result = vectis_pack_sign_macho_artifact(output_path, &sign_config);
+    if (result != 0) {
+      (void)unlink(output_path);
+    }
+  }
+#endif
   vectis_pack_payload_cleanup(&payload);
   free(self);
   vectis_pack_command_cleanup(&assets, &content_types);
@@ -23072,7 +23012,12 @@ static int
 vectis_lua_load_embedded_payload(const char *self_path,
                                  vectis_pack_embedded_payload *payload) {
 #ifdef __APPLE__
-  (void)self_path;
+  int result;
+
+  result = vectis_lua_load_embedded_from_elf_footer(self_path, payload);
+  if (result != -1) {
+    return result;
+  }
   return vectis_lua_load_embedded_from_macho(payload);
 #else
   return vectis_lua_load_embedded_from_elf_footer(self_path, payload);
