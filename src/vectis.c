@@ -10626,6 +10626,21 @@ static int vectis_lockd_endpoints_are_pouch_only(const vectis_app_impl *impl) {
   return 1;
 }
 
+static const char *
+vectis_lockd_first_pouch_endpoint(const vectis_app_impl *impl) {
+  size_t i;
+
+  if (impl == NULL) {
+    return NULL;
+  }
+  for (i = 0u; i < impl->endpoint_count; ++i) {
+    if (vectis_endpoint_is_pouch(impl->endpoints[i])) {
+      return impl->endpoints[i];
+    }
+  }
+  return NULL;
+}
+
 static vectis_status
 vectis_validate_lockd_startable(const vectis_app_impl *impl,
                                 vectis_error *error) {
@@ -10937,6 +10952,7 @@ static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
   lc_client_config config;
   lc_source *memory_source;
   char *default_key_file;
+  const char *pouch_endpoint;
   lc_error lcerr;
   int rc;
 
@@ -10968,8 +10984,9 @@ static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
       impl->lockd_logger_disabled
           ? NULL
           : (impl->lockd_logger != NULL ? impl->lockd_logger : impl->logger);
-  if (impl->endpoint_count == 1u) {
-    if (vectis_configure_pouch_client(&config, impl->endpoints[0], impl,
+  pouch_endpoint = vectis_lockd_first_pouch_endpoint(impl);
+  if (pouch_endpoint != NULL) {
+    if (vectis_configure_pouch_client(&config, pouch_endpoint, impl,
                                       &default_key_file, error) != VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_STATE;
     }

@@ -3078,9 +3078,15 @@ int vectis_kore_http_redirect_route(struct http_request *req) {
   query = req->query_string != NULL && req->query_string[0] != '\0'
               ? req->query_string
               : NULL;
-  written =
-      snprintf(location, sizeof(location), "https://%s%s%s%s", authority, path,
-               query != NULL ? "?" : "", query != NULL ? query : "");
+  if (vectis_kore_current.port == 443u) {
+    written =
+        snprintf(location, sizeof(location), "https://%s%s%s%s", authority,
+                 path, query != NULL ? "?" : "", query != NULL ? query : "");
+  } else {
+    written = snprintf(location, sizeof(location), "https://%s:%u%s%s%s",
+                       authority, (unsigned)vectis_kore_current.port, path,
+                       query != NULL ? "?" : "", query != NULL ? query : "");
+  }
   if (written <= 0 || (size_t)written >= sizeof(location)) {
     http_response(req, 414, NULL, 0);
     return KORE_RESULT_OK;

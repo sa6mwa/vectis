@@ -74,8 +74,18 @@ static void format_secure_url(char *out, size_t out_size, const char *host,
   assert(written > 0 && (size_t)written < out_size);
 }
 
-static void assert_http_redirect(unsigned short port) {
+static void format_clear_url(char *out, size_t out_size, const char *host,
+                             unsigned short port) {
+  int written;
+
+  written = snprintf(out, out_size, "http://%s:%u/secure?from=http", host,
+                     (unsigned)port);
+  assert(written > 0 && (size_t)written < out_size);
+}
+
+static void assert_http_redirect(unsigned short port, unsigned short tls_port) {
   struct sockaddr_in address;
+  char location[256];
   char request[256];
   char response[2048];
   ssize_t received;
@@ -108,8 +118,11 @@ static void assert_http_redirect(unsigned short port) {
   response[received] = '\0';
   (void)close(fd);
   assert(strstr(response, " 308 ") != NULL);
-  assert(strstr(response, "location: https://localhost/secure?from=http\r\n") !=
-         NULL);
+  written = snprintf(location, sizeof(location),
+                     "location: https://localhost:%u/secure?from=http\r\n",
+                     (unsigned)tls_port);
+  assert(written > 0 && (size_t)written < sizeof(location));
+  assert(strstr(response, location) != NULL);
 }
 
 static int read_file(const char *path, char **out, size_t *out_size) {
@@ -244,6 +257,7 @@ int main(void) {
   unsigned short redirect_port;
   char localhost_url[128];
   char loopback_url[128];
+  char redirect_url[128];
 
   app = NULL;
   root_cert_pem = NULL;
@@ -254,6 +268,8 @@ int main(void) {
   assert(redirect_port != port);
   format_secure_url(localhost_url, sizeof(localhost_url), "localhost", port);
   format_secure_url(loopback_url, sizeof(loopback_url), "127.0.0.1", port);
+  format_clear_url(redirect_url, sizeof(redirect_url), "localhost",
+                   redirect_port);
   vectis_cert_bundle_config_init(&certs);
   certs.subject.common_name = "Vectis Runtime Root CA";
   certs.output_bundle_path = root_bundle_path;
@@ -320,7 +336,8 @@ int main(void) {
   assert(status == VECTIS_OK);
 
   assert_https_ok(localhost_url, root_cert_path, NULL);
-  assert_http_redirect(redirect_port);
+  assert_http_redirect(redirect_port, port);
+  assert_https_ok(redirect_url, root_cert_path, NULL);
   assert(read_file(root_cert_path, &root_cert_pem, &root_cert_pem_size));
   assert_https_ca_source_ok(
       localhost_url,

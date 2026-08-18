@@ -60,7 +60,8 @@ end
 assert(response.ok == true, response.error)
 assert(response.status == 308)
 assert(response.headers:lower():find(
-  "location: https://localhost/keep?source=lua", 1, true))
+  "location: https://localhost:" .. tostring(https_port) .. "/keep?source=lua",
+  1, true), response.headers)
 
 assert(server:stop() == true)
 server:close()
