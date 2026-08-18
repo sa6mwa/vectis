@@ -1941,20 +1941,13 @@ assert_contains "$repo_root/TODO.md" \
   '\[x\] Ensure Darwin packing never mutates the executable after codesigning'
 assert_contains "$repo_root/TODO.md" \
   'docs/darwin-mach-o-pack-spec\.md'
-assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
-  'macos-15'
-assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
-  'GH_TOKEN: \${{ github\.token }}'
-assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
-  'macos-latest'
-assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
-  'gh release download'
-assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
-  'curl -fsSL "\$SMOKE_ZIP_URL"'
-assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
-  'shasum -a 256 "\$VECTIS_SMOKE_ZIP"'
-assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
-  'scripts/verify_darwin_smoke_bundle\.sh'
+github_dir="$repo_root/.github"
+if [ -d "$github_dir" ] && find "$github_dir" -type f -print -quit | grep -q .; then
+  echo "Vectis lifecycle is local-only; remove repository automation files" >&2
+  exit 1
+fi
+assert_contains "$repo_root/Makefile" '^release-matrix:'
+assert_contains "$repo_root/Makefile" '^release-darwin-smoke-bundle:'
 assert_contains "$repo_root/scripts/verify_darwin_smoke_bundle.sh" \
   'Mach-O \.\*arm64'
 assert_contains "$repo_root/scripts/verify_darwin_smoke_bundle.sh" \
@@ -1972,37 +1965,19 @@ assert_contains "$repo_root/scripts/test_darwin_smoke_bundle_verifier.sh" \
 assert_contains "$repo_root/scripts/test_darwin_smoke_bundle_verifier.sh" \
   'Darwin smoke bundle verifier accepted missing required spctl'
 assert_contains "$repo_root/docs/pack-platform-operability.md" \
-  '\.github/workflows/darwin-arm64-smoke\.yml'
+  'scripts/verify_darwin_smoke_bundle\.sh'
 assert_contains "$repo_root/TODO.md" \
   '\[x\] Add verification commands/tests for packed Darwin binaries using `codesign --verify --strict --verbose=4`'
 assert_contains "$repo_root/TODO.md" \
-  '\[x\] Add a GitHub Actions Darwin arm64 verification workflow using hosted `macos-15`/`macos-latest` runners'
-assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
-  'ubuntu-24\.04'
-assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
-  'pull_request:'
-assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
-  'push:'
-assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
-  'VECTIS_REQUIRE_LINUX_RELEASE_MATRIX: "1"'
-assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
-  '~/.cache/c\.pkt\.systems/deps'
-assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
-  '~/.cache/c\.pkt\.systems/toolchains'
-assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
-  'luarocks'
-assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
+  '\[x\] Keep Darwin arm64 smoke verification as a local/on-device lifecycle gate'
+assert_contains "$repo_root/docs/release-matrix.md" \
   'make release-matrix'
-assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
-  'actions/upload-artifact@v4'
-assert_contains "$repo_root/docs/ci-release-matrix.md" \
-  'make release-matrix'
-assert_contains "$repo_root/docs/ci-release-matrix.md" \
+assert_contains "$repo_root/docs/release-matrix.md" \
   'VECTIS_REQUIRE_LINUX_RELEASE_MATRIX=1'
-assert_contains "$repo_root/docs/ci-release-matrix.md" \
-  'local lifecycle release flow'
+assert_contains "$repo_root/docs/release-matrix.md" \
+  'local lifecycle model'
 assert_contains "$repo_root/TODO.md" \
-  '\[x\] Verify musl and cross targets against the full release matrix in CI'
+  '\[x\] Verify musl and cross targets against the full local release matrix'
 assert_contains "$repo_root/scripts/verify_installed_sdk.sh" 'pkg-config --static --cflags --libs vectis'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK missing pkg-config metadata'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK contains dependency source tree'

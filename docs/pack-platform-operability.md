@@ -92,15 +92,11 @@ after verification and fails if either verification command mutates the file.
 The command verifies final bytes only; it must run after every payload,
 loader-metadata, strip, and signing step.
 
-`.github/workflows/darwin-arm64-smoke.yml` is the hosted Apple Silicon smoke
+`scripts/verify_darwin_smoke_bundle.sh` is the on-device Apple Silicon smoke
 surface for artifacts that have already been produced by the local release
-pipeline. It is manual-only, runs on `macos-15` and `macos-latest`, downloads a
-smoke-test zip either from a release asset or from an explicit HTTPS URL,
-optionally checks its SHA-256, verifies extracted Mach-O signatures with
+pipeline. It verifies extracted Mach-O signatures with
 `codesign --verify --strict --verbose=4`, optionally requires
-`spctl --assess --type execute`, and executes the bundle's `run-smoke.sh`
-through `scripts/verify_darwin_smoke_bundle.sh`. The same verifier is the
-on-device command for a real Mac:
+`spctl --assess --type execute`, and executes the bundle's `run-smoke.sh`:
 
 ```sh
 scripts/verify_darwin_smoke_bundle.sh \
@@ -108,10 +104,10 @@ scripts/verify_darwin_smoke_bundle.sh \
   --require-spctl
 ```
 
-This verifies a packaged Darwin smoke zip; it does not replace the local
-`make release-darwin-smoke-bundle` package generation gate. The on-device TODO
-is complete only after this command has been run on real Apple Silicon hardware
-against the candidate smoke zip.
+This verifies a packaged Darwin smoke zip; it does not replace
+`make release-darwin-smoke-bundle`, which remains the local package generation
+gate. The on-device TODO is complete only after this command has been run on
+real Apple Silicon hardware against the candidate smoke zip.
 
 ## Signing Order
 

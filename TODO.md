@@ -25,7 +25,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Support host debug and Linux release matrix roots.
 - [x] Add explicit dependency manifest validation in CMake, including expected dependency versions.
 - [x] Add optional arm64 Apple Darwin dependency provisioning from the split SDK archive set.
-- [x] Verify musl and cross targets against the full release matrix in CI.
+- [x] Verify musl and cross targets against the full local release matrix.
 - [ ] Verify Darwin arm64 packages on real Apple Silicon hardware.
 - [x] Add release packaging checks that prove downstream C consumers can include Vectis headers and all dependency headers from the installed SDK.
 
@@ -491,7 +491,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add package/archive generation for the C SDK and Vectis binary.
 - [x] Add package/archive generation for the current C SDK.
 - [x] Add optional arm64 Apple Darwin release archive and smoke-test zip generation when osxcross is available.
-- [x] Add a GitHub Actions Darwin arm64 verification workflow using hosted `macos-15`/`macos-latest` runners to execute the smoke-test zip and codesign checks.
+- [x] Keep Darwin arm64 smoke verification as a local/on-device lifecycle gate.
 - [x] Add release verification for GNU and musl deliverables.
 - [x] Run the same Codex review command mandated by the lifecycle skill and
   resolve relevant actionable findings until review comes back clean: use

@@ -196,7 +196,7 @@ Local deterministic gates should include:
   failure before publish;
 - an extracted-artifact privacy test that fails on local Mach-O load paths and
   signature-invalidating post-sign mutation risks;
-- hosted Apple Silicon smoke using `.github/workflows/darwin-arm64-smoke.yml`
+- on-device Apple Silicon smoke using `scripts/verify_darwin_smoke_bundle.sh`
   after a smoke zip exists.
 
 The existing `scripts/verify_darwin_pack_signature.sh` remains the final-byte
