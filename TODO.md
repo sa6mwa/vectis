@@ -450,7 +450,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 
 - [x] Add a `vectis -a pack` action that creates a new runnable binary from the Vectis runner plus a Lua script on Linux.
 - [x] On Linux/ELF, use a self-describing appended trailer with magic, version, lengths, hashes, and metadata.
-- [ ] On Darwin/Mach-O, embed Lua and certificate payloads through a generated object/section layout rather than relying on arbitrary appended EOF data.
+- [ ] On Darwin/Mach-O, embed Lua and certificate payloads through the generated object/section layout specified in `docs/darwin-mach-o-pack-spec.md` rather than relying on arbitrary appended EOF data.
 - [x] Define one shared payload manifest format across ELF and Mach-O so runtime validation and Lua startup behavior stay platform-independent.
 - [x] Support optional embedding of the liblockdc client certificate bundle payload in the Linux pack format.
 - [x] Validate embedded lockd client bundle hashes before executing a packed Lua script.

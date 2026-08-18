@@ -41,6 +41,11 @@ ELF currently stores that manifest before the fixed footer. Darwin must expose
 the same manifest bytes to the runtime, even if the bytes live in a generated
 Mach-O section instead of appended executable data.
 
+The detailed implementation contract is defined in
+[Darwin Mach-O Pack Spec](darwin-mach-o-pack-spec.md). That spec recommends a
+relink-based Darwin backend with Vectis-provided pack-runner link inputs rather
+than an in-place Mach-O editor.
+
 ## Darwin Requirements
 
 Darwin/Mach-O packed services are not supported until Vectis has a dedicated

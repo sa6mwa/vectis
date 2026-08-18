@@ -1767,6 +1767,26 @@ assert_contains "$repo_root/docs/pack-platform-operability.md" \
   'spctl --assess --type execute'
 assert_contains "$repo_root/docs/pack-platform-operability.md" \
   'fails if either verification command mutates the file'
+assert_contains "$repo_root/docs/pack-platform-operability.md" \
+  'darwin-mach-o-pack-spec\.md'
+assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
+  '__VECTIS,__pack_header'
+assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
+  '__VECTIS,__pack_script'
+assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
+  '__VECTIS,__pack_assets'
+assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
+  'Darwin should use a relink-based pack backend'
+assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
+  'pack-runner link inputs'
+assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
+  'No command may mutate the output after step 5'
+assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
+  'scripts/discover_target_tools\.sh'
+assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
+  'self-contained like Linux'
+assert_contains "$repo_root/TODO.md" \
+  'docs/darwin-mach-o-pack-spec\.md'
 assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
   'macos-15'
 assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
