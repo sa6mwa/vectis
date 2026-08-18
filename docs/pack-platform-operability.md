@@ -69,6 +69,16 @@ after verification and fails if either verification command mutates the file.
 The command verifies final bytes only; it must run after every payload,
 loader-metadata, strip, and signing step.
 
+`.github/workflows/darwin-arm64-smoke.yml` is the hosted Apple Silicon smoke
+surface for artifacts that have already been produced by the local release
+pipeline. It is manual-only, runs on `macos-15` and `macos-latest`, downloads a
+smoke-test zip either from a release asset or from an explicit HTTPS URL,
+optionally checks its SHA-256, verifies extracted Mach-O signatures with
+`codesign --verify --strict --verbose=4`, optionally requires
+`spctl --assess --type execute`, and executes the bundle's `run-smoke.sh`.
+This workflow verifies a packaged Darwin smoke zip; it does not replace the
+local `make release-darwin-smoke-bundle` package generation gate.
+
 ## Signing Order
 
 Signing is a finalization step. The pack pipeline must complete all payload

@@ -1767,8 +1767,32 @@ assert_contains "$repo_root/docs/pack-platform-operability.md" \
   'spctl --assess --type execute'
 assert_contains "$repo_root/docs/pack-platform-operability.md" \
   'fails if either verification command mutates the file'
+assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
+  'macos-15'
+assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
+  'macos-latest'
+assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
+  'gh release download'
+assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
+  'curl -fsSL "\$SMOKE_ZIP_URL"'
+assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
+  'shasum -a 256 "\$VECTIS_SMOKE_ZIP"'
+assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
+  'Mach-O \.\*arm64'
+assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
+  'codesign --verify --strict --verbose=4'
+assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
+  'spctl --assess --type execute'
+assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
+  'spctl assessment mutated'
+assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
+  'run-smoke\.sh'
+assert_contains "$repo_root/docs/pack-platform-operability.md" \
+  '\.github/workflows/darwin-arm64-smoke\.yml'
 assert_contains "$repo_root/TODO.md" \
   '\[x\] Add verification commands/tests for packed Darwin binaries using `codesign --verify --strict --verbose=4`'
+assert_contains "$repo_root/TODO.md" \
+  '\[x\] Add a GitHub Actions Darwin arm64 verification workflow using hosted `macos-15`/`macos-latest` runners'
 assert_contains "$repo_root/scripts/verify_installed_sdk.sh" 'pkg-config --static --cflags --libs vectis'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK missing pkg-config metadata'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK contains dependency source tree'

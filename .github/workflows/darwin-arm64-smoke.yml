@@ -1,0 +1,168 @@
+name: Darwin arm64 smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag that contains the smoke-test zip asset."
+        required: false
+        type: string
+      smoke_zip_name:
+        description: "Smoke-test zip asset name when downloading from a release."
+        required: false
+        type: string
+      smoke_zip_url:
+        description: "Direct HTTPS URL for a smoke-test zip. Used instead of release_tag."
+        required: false
+        type: string
+      smoke_zip_sha256:
+        description: "Optional expected SHA-256 for the smoke-test zip."
+        required: false
+        type: string
+      require_spctl:
+        description: "Require Gatekeeper spctl assessment to pass."
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - macos-15
+          - macos-latest
+
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      SMOKE_ZIP_NAME: ${{ inputs.smoke_zip_name }}
+      SMOKE_ZIP_URL: ${{ inputs.smoke_zip_url }}
+      SMOKE_ZIP_SHA256: ${{ inputs.smoke_zip_sha256 }}
+      REQUIRE_SPCTL: ${{ inputs.require_spctl }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download smoke-test zip
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+          if [ -n "$SMOKE_ZIP_URL" ]; then
+            case "$SMOKE_ZIP_URL" in
+              https://*) ;;
+              *)
+                echo "smoke_zip_url must be an HTTPS URL" >&2
+                exit 64
+                ;;
+            esac
+            curl -fsSL "$SMOKE_ZIP_URL" -o dist/vectis-darwin-smoke.zip
+            echo "VECTIS_SMOKE_ZIP=dist/vectis-darwin-smoke.zip" >>"$GITHUB_ENV"
+          else
+            if [ -z "$RELEASE_TAG" ] || [ -z "$SMOKE_ZIP_NAME" ]; then
+              echo "release_tag and smoke_zip_name are required without smoke_zip_url" >&2
+              exit 64
+            fi
+            gh release download "$RELEASE_TAG" \
+              --pattern "$SMOKE_ZIP_NAME" \
+              --dir dist \
+              --clobber
+            if [ ! -f "dist/$SMOKE_ZIP_NAME" ]; then
+              echo "release asset was not downloaded: $SMOKE_ZIP_NAME" >&2
+              exit 1
+            fi
+            echo "VECTIS_SMOKE_ZIP=dist/$SMOKE_ZIP_NAME" >>"$GITHUB_ENV"
+          fi
+
+      - name: Verify smoke-test zip checksum
+        if: ${{ inputs.smoke_zip_sha256 != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          actual=$(shasum -a 256 "$VECTIS_SMOKE_ZIP" | awk '{print $1}')
+          if [ "$actual" != "$SMOKE_ZIP_SHA256" ]; then
+            echo "smoke-test zip checksum mismatch" >&2
+            echo "expected: $SMOKE_ZIP_SHA256" >&2
+            echo "actual:   $actual" >&2
+            exit 1
+          fi
+
+      - name: Extract smoke-test zip
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf work
+          mkdir -p work
+          unzip -q "$VECTIS_SMOKE_ZIP" -d work
+          root_count=$(find work -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+          if [ "$root_count" != "1" ]; then
+            echo "smoke-test zip must contain exactly one root directory" >&2
+            find work -mindepth 1 -maxdepth 1 -print >&2
+            exit 1
+          fi
+          root=$(find work -mindepth 1 -maxdepth 1 -type d -print)
+          if [ ! -x "$root/run-smoke.sh" ]; then
+            echo "smoke bundle missing executable run-smoke.sh" >&2
+            exit 1
+          fi
+          if [ ! -x "$root/bin/vectis_static_smoke" ]; then
+            echo "smoke bundle missing executable bin/vectis_static_smoke" >&2
+            exit 1
+          fi
+          echo "VECTIS_SMOKE_ROOT=$root" >>"$GITHUB_ENV"
+
+      - name: Verify Mach-O architecture and signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          file "$VECTIS_SMOKE_ROOT/bin/vectis_static_smoke" |
+            grep -E 'Mach-O .*arm64' >/dev/null
+
+          find "$VECTIS_SMOKE_ROOT/bin" "$VECTIS_SMOKE_ROOT/lib" \
+            -type f \( -perm -111 -o -name '*.dylib' \) -print |
+            sort > work/macho-files.txt
+          if [ ! -s work/macho-files.txt ]; then
+            echo "smoke bundle does not contain executable Mach-O files" >&2
+            exit 1
+          fi
+
+          while IFS= read -r binary; do
+            before=$(shasum -a 256 "$binary" | awk '{print $1}')
+            codesign --verify --strict --verbose=4 "$binary"
+            after=$(shasum -a 256 "$binary" | awk '{print $1}')
+            if [ "$before" != "$after" ]; then
+              echo "codesign verification mutated $binary" >&2
+              exit 1
+            fi
+
+            if [ -x "$binary" ]; then
+              before_spctl=$(shasum -a 256 "$binary" | awk '{print $1}')
+              if [ "$REQUIRE_SPCTL" = "true" ]; then
+                spctl --assess --type execute "$binary"
+              elif ! spctl --assess --type execute "$binary"; then
+                echo "spctl assessment did not pass for $binary; continuing because require_spctl is false" >&2
+              fi
+              after_spctl=$(shasum -a 256 "$binary" | awk '{print $1}')
+              if [ "$before_spctl" != "$after_spctl" ]; then
+                echo "spctl assessment mutated $binary" >&2
+                exit 1
+              fi
+            fi
+          done < work/macho-files.txt
+
+      - name: Run smoke bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$VECTIS_SMOKE_ROOT/run-smoke.sh"
