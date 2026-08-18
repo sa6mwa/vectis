@@ -26,6 +26,7 @@ local session_opts = {
   username = username,
   password = password,
   known_hosts_path = known_hosts,
+  host_key_sha256 = os.getenv("VECTIS_LUA_SFTP_HOST_KEY_SHA256"),
   timeout_ms = 10000,
 }
 if private_key_path ~= nil and private_key_path ~= "" then

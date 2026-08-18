@@ -35956,6 +35956,157 @@ static int vectis_ssh_knownhost_key_type(int hostkey_type) {
   }
 }
 
+static int vectis_ssh_hex_digit(int ch) {
+  if (ch >= '0' && ch <= '9') {
+    return ch - '0';
+  }
+  if (ch >= 'a' && ch <= 'f') {
+    return ch - 'a' + 10;
+  }
+  if (ch >= 'A' && ch <= 'F') {
+    return ch - 'A' + 10;
+  }
+  return -1;
+}
+
+static int vectis_ssh_parse_sha256_hex(const char *text, size_t size,
+                                       unsigned char out[32]) {
+  unsigned char parsed[32];
+  size_t count;
+  size_t i;
+  int digit;
+  int high;
+
+  count = 0u;
+  high = -1;
+  memset(parsed, 0, sizeof(parsed));
+  for (i = 0u; i < size; ++i) {
+    if (text[i] == ':' || text[i] == '-') {
+      continue;
+    }
+    digit = vectis_ssh_hex_digit((unsigned char)text[i]);
+    if (digit < 0 || count >= 64u) {
+      return 0;
+    }
+    if (high < 0) {
+      high = digit;
+    } else {
+      parsed[count / 2u] = (unsigned char)((high << 4) | digit);
+      high = -1;
+    }
+    ++count;
+  }
+  if (count != 64u || high >= 0) {
+    return 0;
+  }
+  memcpy(out, parsed, sizeof(parsed));
+  return 1;
+}
+
+static int vectis_ssh_base64_sha256_matches(const unsigned char digest[32],
+                                            const char *text, size_t size) {
+  unsigned char encoded[45];
+  size_t encoded_size;
+
+  if (EVP_EncodeBlock(encoded, digest, 32) <= 0) {
+    return 0;
+  }
+  encoded[sizeof(encoded) - 1u] = '\0';
+  encoded_size = strlen((const char *)encoded);
+  while (encoded_size > 0u && encoded[encoded_size - 1u] == '=') {
+    --encoded_size;
+  }
+  return size == encoded_size && memcmp(text, encoded, encoded_size) == 0;
+}
+
+static int vectis_ssh_sha256_pin_matches(const unsigned char digest[32],
+                                         const char *text, size_t size,
+                                         int *invalid) {
+  unsigned char expected[32];
+
+  if (size > 7u && strncasecmp(text, "SHA256:", 7u) == 0) {
+    return vectis_ssh_base64_sha256_matches(digest, text + 7u, size - 7u);
+  }
+  if (vectis_ssh_parse_sha256_hex(text, size, expected)) {
+    return memcmp(digest, expected, sizeof(expected)) == 0;
+  }
+  *invalid = 1;
+  return 0;
+}
+
+static vectis_status
+vectis_ssh_verify_host_key_sha256(LIBSSH2_SESSION *session,
+                                  const vectis_ssh_config *config,
+                                  vectis_error *error) {
+  const char *pins;
+  const char *cursor;
+  const char *start;
+  const char *host_key;
+  size_t host_key_size;
+  size_t pin_size;
+  unsigned char digest[32];
+  unsigned int digest_size;
+  int host_key_type;
+  int invalid;
+
+  pins = config->host_key_sha256;
+  if (pins == NULL || pins[0] == '\0') {
+    return VECTIS_OK;
+  }
+  host_key = libssh2_session_hostkey(session, &host_key_size, &host_key_type);
+  (void)host_key_type;
+  if (host_key == NULL || host_key_size == 0u) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to read SSH server host key");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+    }
+    return VECTIS_ERR_STATE;
+  }
+  digest_size = 0u;
+  if (EVP_Digest((const unsigned char *)host_key, host_key_size, digest,
+                 &digest_size, EVP_sha256(), NULL) != 1 ||
+      digest_size != sizeof(digest)) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to hash SSH server host key");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_OPENSSL;
+    }
+    return VECTIS_ERR_STATE;
+  }
+
+  invalid = 0;
+  cursor = pins;
+  while (*cursor != '\0') {
+    while (*cursor == ',' || isspace((unsigned char)*cursor)) {
+      ++cursor;
+    }
+    start = cursor;
+    while (*cursor != '\0' && *cursor != ',' &&
+           !isspace((unsigned char)*cursor)) {
+      ++cursor;
+    }
+    pin_size = (size_t)(cursor - start);
+    if (pin_size > 0u &&
+        vectis_ssh_sha256_pin_matches(digest, start, pin_size, &invalid)) {
+      vectis_error_clear(error);
+      return VECTIS_OK;
+    }
+  }
+  if (invalid) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SSH host_key_sha256 must contain SHA256:<base64> or "
+                     "64-hex SHA-256 fingerprints");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_set_error(error, VECTIS_ERR_STATE,
+                   "SSH host key SHA-256 fingerprint verification failed");
+  if (error != NULL) {
+    error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+  }
+  return VECTIS_ERR_STATE;
+}
+
 static vectis_status
 vectis_ssh_verify_known_host(LIBSSH2_SESSION *session,
                              const vectis_ssh_config *config,
@@ -36179,6 +36330,13 @@ vectis_status vectis_ssh_exec(const vectis_ssh_config *config,
     return VECTIS_ERR_STATE;
   }
   status = vectis_ssh_verify_known_host(session, config, error);
+  if (status != VECTIS_OK) {
+    libssh2_session_disconnect(session, "vectis shutdown");
+    libssh2_session_free(session);
+    (void)close(fd);
+    return status;
+  }
+  status = vectis_ssh_verify_host_key_sha256(session, config, error);
   if (status != VECTIS_OK) {
     libssh2_session_disconnect(session, "vectis shutdown");
     libssh2_session_free(session);
@@ -36607,6 +36765,11 @@ vectis_ssh_authenticated_session(const vectis_ssh_config *config,
     return VECTIS_ERR_STATE;
   }
   status = vectis_ssh_verify_known_host(session, config, error);
+  if (status != VECTIS_OK) {
+    vectis_ssh_session_close(session, fd);
+    return status;
+  }
+  status = vectis_ssh_verify_host_key_sha256(session, config, error);
   if (status != VECTIS_OK) {
     vectis_ssh_session_close(session, fd);
     return status;

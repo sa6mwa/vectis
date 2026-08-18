@@ -30,6 +30,8 @@ ssh_memory_key="$work_dir/vectis-e2e-ssh-key"
 ssh_bad_host_key="$work_dir/vectis-e2e-bad-host-key"
 ssh_known_hosts="$work_dir/vectis-e2e-known-hosts"
 ssh_bad_known_hosts="$work_dir/vectis-e2e-bad-known-hosts"
+ssh_host_key_sha256=""
+ssh_bad_host_key_sha256="SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 server_pids=""
 
 cleanup() {
@@ -386,7 +388,28 @@ run_service_examples() {
     VECTIS_SSH_USERNAME="vectis" \
     VECTIS_SSH_PASSWORD="vectispass" \
     VECTIS_SSH_KNOWN_HOSTS="$ssh_known_hosts" \
+    VECTIS_SSH_HOST_KEY_SHA256="$ssh_host_key_sha256" \
     "$repo_root/build/debug/examples/vectis_example_ssh"
+
+  printf '[e2e] ssh command accepts SHA-256 host-key fingerprint pin\n'
+  env VECTIS_SSH_HOST="127.0.0.1" \
+    VECTIS_SSH_PORT="$ssh_port" \
+    VECTIS_SSH_USERNAME="vectis" \
+    VECTIS_SSH_PASSWORD="vectispass" \
+    VECTIS_SSH_HOST_KEY_SHA256="$ssh_host_key_sha256" \
+    "$repo_root/build/debug/examples/vectis_example_ssh"
+
+  printf '[e2e] ssh command rejects wrong SHA-256 host-key fingerprint pin\n'
+  if env VECTIS_SSH_HOST="127.0.0.1" \
+      VECTIS_SSH_PORT="$ssh_port" \
+      VECTIS_SSH_USERNAME="vectis" \
+      VECTIS_SSH_PASSWORD="vectispass" \
+      VECTIS_SSH_HOST_KEY_SHA256="$ssh_bad_host_key_sha256" \
+      "$repo_root/build/debug/examples/vectis_example_ssh"; then
+    printf '%s\n' \
+      "libssh2 SSH unexpectedly accepted mismatched host-key fingerprint" >&2
+    return 1
+  fi
 
   printf '[e2e] ssh command rejects wrong known_hosts pin\n'
   if env VECTIS_SSH_HOST="127.0.0.1" \
@@ -413,6 +436,7 @@ run_service_examples() {
     VECTIS_LUA_SSH_USERNAME="vectis" \
     VECTIS_LUA_SSH_PASSWORD="vectispass" \
     VECTIS_LUA_SSH_KNOWN_HOSTS="$ssh_known_hosts" \
+    VECTIS_LUA_SSH_HOST_KEY_SHA256="$ssh_host_key_sha256" \
     "$repo_root/build/debug/vectis" "$repo_root/examples/lua/ssh_command.lua"
 
   lua_ssh_pack="$work_dir/vectis-lua-ssh-command-pack"
@@ -426,7 +450,20 @@ run_service_examples() {
     VECTIS_LUA_SSH_USERNAME="vectis" \
     VECTIS_LUA_SSH_PASSWORD="vectispass" \
     VECTIS_LUA_SSH_KNOWN_HOSTS="$ssh_known_hosts" \
+    VECTIS_LUA_SSH_HOST_KEY_SHA256="$ssh_host_key_sha256" \
     "$lua_ssh_pack"
+
+  printf '[e2e] lua ssh command rejects wrong SHA-256 host-key fingerprint pin\n'
+  if env VECTIS_LUA_SSH_HOST="127.0.0.1" \
+      VECTIS_LUA_SSH_PORT="$ssh_port" \
+      VECTIS_LUA_SSH_USERNAME="vectis" \
+      VECTIS_LUA_SSH_PASSWORD="vectispass" \
+      VECTIS_LUA_SSH_HOST_KEY_SHA256="$ssh_bad_host_key_sha256" \
+      "$repo_root/build/debug/vectis" "$repo_root/examples/lua/ssh_command.lua"; then
+    printf '%s\n' \
+      "Lua libssh2 SSH unexpectedly accepted mismatched host-key fingerprint" >&2
+    return 1
+  fi
 
   printf '[e2e] lua ssh command rejects wrong known_hosts pin\n'
   if env VECTIS_LUA_SSH_HOST="127.0.0.1" \
@@ -457,6 +494,7 @@ run_service_examples() {
     VECTIS_SSH_USERNAME="vectis" \
     VECTIS_SSH_PASSWORD="vectispass" \
     VECTIS_SSH_KNOWN_HOSTS="$ssh_known_hosts" \
+    VECTIS_SSH_HOST_KEY_SHA256="$ssh_host_key_sha256" \
     "$repo_root/build/debug/examples/vectis_example_ssh_sftp"
 
   printf '[e2e] libssh2 sftp rejects wrong known_hosts pin\n'
@@ -492,6 +530,7 @@ run_service_examples() {
     VECTIS_LUA_SFTP_USERNAME="vectis" \
     VECTIS_LUA_SFTP_PASSWORD="vectispass" \
     VECTIS_LUA_SFTP_KNOWN_HOSTS="$ssh_known_hosts" \
+    VECTIS_LUA_SFTP_HOST_KEY_SHA256="$ssh_host_key_sha256" \
     VECTIS_LUA_SFTP_REMOTE_FILE="/config/lua-sftp-handles-$$.txt" \
     "$repo_root/build/debug/vectis" "$repo_root/examples/lua/sftp_handles.lua"
 
@@ -3299,6 +3338,15 @@ provision_ssh_known_hosts() {
     return 1
   fi
   printf '[127.0.0.1]:%s %s\n' "$ssh_port" "$(cat "$ssh_bad_host_key.pub")" >"$ssh_bad_known_hosts"
+  ssh_host_key_sha256=$(
+    ssh-keygen -lf "$ssh_known_hosts" -E sha256 |
+      awk '{print $2}' |
+      paste -sd, -
+  )
+  if [ -z "$ssh_host_key_sha256" ]; then
+    printf '%s\n' "failed to derive SSH host-key SHA-256 fingerprints" >&2
+    return 1
+  fi
 }
 
 "$script_dir/dev-reset.sh"

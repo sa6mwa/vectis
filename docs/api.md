@@ -58,8 +58,9 @@ Major groups:
   and file download.
 - SSH/SFTP/SCP: `vectis_ssh_config`, `vectis_sftp_config`,
   `vectis_ssh_exec()`, SFTP file upload/download, SFTP filesystem operations
-  (`stat`, `mkdir`, `remove`, `rmdir`, `rename`, `chmod`), and SCP file
-  upload/download.
+  (`stat`, `mkdir`, `remove`, `rmdir`, `rename`, `chmod`), SCP file
+  upload/download, known_hosts verification, and optional SHA-256 host-key
+  fingerprint pinning through `host_key_sha256`.
 - MQTT: `vectis_mqtt_config`, publish, and JSON publish helpers.
 - Certificates: key, CSR, bundle, CA, validation, and inspection workflows.
 

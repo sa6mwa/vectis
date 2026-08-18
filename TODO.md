@@ -239,16 +239,16 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 ## Area 10: SSH / libssh2
 
 - [x] Add a Lua Vectis facade for libssh2-backed command execution with authentication, stdout/stderr capture, exit status, timeout handling, and structured error handling.
-- [ ] Add lower-level Lua bindings for dependency-native libssh2 session/channel control if real service workflows require them.
+- [x] Decide the lower-level Lua libssh2 boundary: current required workflows are covered by Vectis-owned receivers, so raw session/channel handles remain intentionally outside the public service surface.
 - [x] Add C Vectis helpers for connecting to SSH servers and running commands with captured stdout, stderr, exit status, timeout, and structured error handling.
 - [x] Add Lua Vectis helpers for connecting to SSH servers and running commands with captured stdout, stderr, exit status, timeout, and structured error handling.
 - [x] Draft the C helper API for libssh2 command execution with captured stdout/stderr, exit status, and SFTP upload/download.
 - [x] Implement libssh2-backed C SSH command execution with captured stdout/stderr and exit status.
 - [x] Implement libssh2-backed C SFTP upload/download helpers for cases where curl-backed SFTP is not enough.
 - [x] Implement stateful libssh2-backed C SFTP session, file read/write/stat, and directory iteration receiver shells.
-- [ ] Expose dependency-native libssh2 sessions/channels for advanced control.
+- [x] Keep dependency-native libssh2 sessions/channels private; expose advanced control through opaque Vectis-owned SSH/SFTP receivers, stateful SFTP handles, and host-key pinning.
 - [x] Decide and expose lower-level SFTP operations needed beyond curl-backed file transfer: one-shot filesystem operations plus stateful session/file/directory handles.
-- [ ] Add C helpers only where they support the Vectis service model rather than exposing libssh2 wholesale.
+- [x] Add C helpers only where they support the Vectis service model rather than exposing libssh2 wholesale.
 - [x] Add integration tests for remote command execution against a controlled test SSH server.
 - [x] Add integration tests proving Lua SSH command execution honors known_hosts pinning.
 
@@ -366,7 +366,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Expose Lua SFTP open flag constants for stateful libssh2 file handles so advanced file modes do not require hard-coded numeric flags.
 - [x] Add a reusable Lua SSH receiver over the public C `vectis_ssh` receiver so command, SFTP, and SCP workflows can share a Vectis-managed SSH connection.
 - [x] Add packed e2e coverage for Lua SSH command execution and known_hosts rejection.
-- [ ] Add broader Lua libssh2 facades for dependency-native SSH sessions/channels and advanced host-key verification workflows where Vectis service workflows require them.
+- [x] Add broader Lua libssh2 facades for dependency-native SSH sessions/channels and advanced host-key verification workflows where Vectis service workflows require them; advanced host-key verification is exposed as SHA-256 fingerprint pinning, while raw session/channel handles remain intentionally outside the Vectis-owned service surface.
 - [x] Add Vectis-owned Lua SSH/SCP workflow helpers on top of the dependency-native libssh2 facade for common service operations, while preserving `vectis.http.sftp_*` for curl-backed transfers.
 - [x] Add Lua MQTT publish helpers/tests where the generic `curl.perform()` facade is sufficient but workflow defaults improve DX.
 - [x] Add other libcurl protocol examples/tests where the generic `curl.perform()` facade is sufficient but workflow defaults improve DX.

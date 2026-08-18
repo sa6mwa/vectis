@@ -19,7 +19,14 @@ Optional fields:
 
 - `port`, defaulting to `22`
 - `known_hosts_path` or `known_hosts`
+- `host_key_sha256`, `host_key_sha256_hex`, or `host_key_fingerprint`
 - `timeout_ms`
+
+`host_key_sha256` pins the server host key by SHA-256 fingerprint. It accepts
+OpenSSH-style `SHA256:<base64>` fingerprints, 64-character hex SHA-256
+fingerprints, colon-separated hex, or a comma/whitespace-separated allowlist.
+When both `known_hosts_path` and `host_key_sha256` are set, both checks must
+match before authentication is attempted.
 
 `vectis.ssh.open(opts)` opens a reusable SSH receiver with the same connection
 and authentication fields. Close it with `session:close()` when done; it also
@@ -100,8 +107,9 @@ Directory methods:
   `nil` at EOF.
 - `dir:close()` closes the remote directory handle.
 
-Lower-level dependency-native libssh2 channel control and advanced host-key
-workflows remain outside this helper surface.
+Lower-level dependency-native libssh2 channel control remains outside this
+helper surface. Advanced host-key pinning is exposed through the Vectis-owned
+`host_key_sha256` verification field rather than raw libssh2 session access.
 
 ```lua
 local vectis = require("vectis")

@@ -1624,6 +1624,7 @@ typedef struct vectis_ssh_config {
   vectis_source private_key;
   const char *private_key_path;
   const char *known_hosts_path;
+  const char *host_key_sha256;
   long timeout_ms;
   pslog_logger *logger;
 } vectis_ssh_config;

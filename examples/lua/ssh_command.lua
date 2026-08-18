@@ -17,6 +17,7 @@ local opts = {
   username = username,
   password = password,
   known_hosts = os.getenv("VECTIS_LUA_SSH_KNOWN_HOSTS"),
+  host_key_sha256 = os.getenv("VECTIS_LUA_SSH_HOST_KEY_SHA256"),
   command = command,
   timeout_ms = timeout_ms,
 }

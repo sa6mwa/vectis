@@ -981,6 +981,7 @@ static void assert_io_surface(void) {
   ssh.host = "127.0.0.1";
   ssh.username = "vectis";
   ssh.password = "secret";
+  ssh.host_key_sha256 = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
   status = vectis_ssh_new(&ssh, &ssh_handle, &error);
   assert(status == VECTIS_OK);
   assert(ssh_handle != NULL);
@@ -998,6 +999,8 @@ static void assert_io_surface(void) {
   assert(ssh_handle->sftp_open != NULL);
   assert(ssh_handle->close != NULL);
   assert(strcmp(ssh_handle->config.host, "127.0.0.1") == 0);
+  assert(strcmp(ssh_handle->config.host_key_sha256,
+                "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") == 0);
   assert(ssh_handle->config.port == 22u);
   assert(ssh_handle->config.timeout_ms == 30000L);
   status = ssh_handle->exec(NULL, "uptime", &result, &error);

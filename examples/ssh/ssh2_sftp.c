@@ -96,6 +96,7 @@ int main(void) {
   config.password = env_or_default("VECTIS_SSH_PASSWORD", "vectispass");
   config.private_key_path = getenv("VECTIS_SSH_PRIVATE_KEY");
   config.known_hosts_path = getenv("VECTIS_SSH_KNOWN_HOSTS");
+  config.host_key_sha256 = getenv("VECTIS_SSH_HOST_KEY_SHA256");
   config.timeout_ms = 30000L;
 
   local_upload =

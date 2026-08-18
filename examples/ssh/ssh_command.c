@@ -118,6 +118,7 @@ int main(void) {
     }
   }
   config.known_hosts_path = getenv("VECTIS_SSH_KNOWN_HOSTS");
+  config.host_key_sha256 = getenv("VECTIS_SSH_HOST_KEY_SHA256");
   config.timeout_ms = 10000L;
   command = env_or_default("VECTIS_SSH_COMMAND", "printf vectis-ssh-ok");
 

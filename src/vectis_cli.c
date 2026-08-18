@@ -4358,6 +4358,16 @@ static const char *vectis_lua_ssh_config_from_table(lua_State *lua, int index,
     config->known_hosts_path =
         vectis_lua_table_string(lua, index, "known_hosts");
   }
+  config->host_key_sha256 =
+      vectis_lua_table_string(lua, index, "host_key_sha256");
+  if (config->host_key_sha256 == NULL) {
+    config->host_key_sha256 =
+        vectis_lua_table_string(lua, index, "host_key_sha256_hex");
+  }
+  if (config->host_key_sha256 == NULL) {
+    config->host_key_sha256 =
+        vectis_lua_table_string(lua, index, "host_key_fingerprint");
+  }
   config->timeout_ms =
       vectis_lua_table_long(lua, index, "timeout_ms", config->timeout_ms);
   port = vectis_lua_table_long(lua, index, "port", (long)config->port);
