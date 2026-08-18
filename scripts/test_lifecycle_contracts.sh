@@ -1759,8 +1759,15 @@ assert_contains "$repo_root/scripts/test_darwin_pack_signature_verifier.sh" \
 assert_contains "$repo_root/Makefile" '^test-darwin-pack-signature:'
 assert_contains "$repo_root/Makefile" \
   'scripts/test_darwin_pack_signature_verifier\.sh'
+assert_contains "$repo_root/Makefile" '^test-darwin-smoke-bundle:'
+assert_contains "$repo_root/Makefile" \
+  'scripts/test_darwin_smoke_bundle_verifier\.sh'
+assert_contains "$repo_root/Makefile" \
+  'test-darwin-smoke-bundle bash \./scripts/test_darwin_smoke_bundle_verifier\.sh'
 assert_contains "$repo_root/docs/pack-platform-operability.md" \
   'scripts/verify_darwin_pack_signature\.sh --binary <path>'
+assert_contains "$repo_root/docs/pack-platform-operability.md" \
+  'scripts/verify_darwin_smoke_bundle\.sh'
 assert_contains "$repo_root/docs/pack-platform-operability.md" \
   'codesign --verify --strict --verbose=4'
 assert_contains "$repo_root/docs/pack-platform-operability.md" \
@@ -1808,15 +1815,23 @@ assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
 assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
   'shasum -a 256 "\$VECTIS_SMOKE_ZIP"'
 assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
+  'scripts/verify_darwin_smoke_bundle\.sh'
+assert_contains "$repo_root/scripts/verify_darwin_smoke_bundle.sh" \
   'Mach-O \.\*arm64'
-assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
-  'codesign --verify --strict --verbose=4'
-assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
-  'spctl --assess --type execute'
-assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
-  'spctl assessment mutated'
-assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
+assert_contains "$repo_root/scripts/verify_darwin_smoke_bundle.sh" \
+  '\-\-verify \-\-strict \-\-verbose=4'
+assert_contains "$repo_root/scripts/verify_darwin_smoke_bundle.sh" \
+  '\-\-assess \-\-type execute'
+assert_contains "$repo_root/scripts/verify_darwin_smoke_bundle.sh" \
+  'binary changed during %s'
+assert_contains "$repo_root/scripts/verify_darwin_smoke_bundle.sh" \
   'run-smoke\.sh'
+assert_contains "$repo_root/scripts/test_darwin_smoke_bundle_verifier.sh" \
+  'Darwin smoke bundle verifier accepted codesign mutation'
+assert_contains "$repo_root/scripts/test_darwin_smoke_bundle_verifier.sh" \
+  'Darwin smoke bundle verifier accepted spctl mutation'
+assert_contains "$repo_root/scripts/test_darwin_smoke_bundle_verifier.sh" \
+  'Darwin smoke bundle verifier accepted missing required spctl'
 assert_contains "$repo_root/docs/pack-platform-operability.md" \
   '\.github/workflows/darwin-arm64-smoke\.yml'
 assert_contains "$repo_root/TODO.md" \

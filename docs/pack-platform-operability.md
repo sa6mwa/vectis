@@ -80,9 +80,20 @@ pipeline. It is manual-only, runs on `macos-15` and `macos-latest`, downloads a
 smoke-test zip either from a release asset or from an explicit HTTPS URL,
 optionally checks its SHA-256, verifies extracted Mach-O signatures with
 `codesign --verify --strict --verbose=4`, optionally requires
-`spctl --assess --type execute`, and executes the bundle's `run-smoke.sh`.
-This workflow verifies a packaged Darwin smoke zip; it does not replace the
-local `make release-darwin-smoke-bundle` package generation gate.
+`spctl --assess --type execute`, and executes the bundle's `run-smoke.sh`
+through `scripts/verify_darwin_smoke_bundle.sh`. The same verifier is the
+on-device command for a real Mac:
+
+```sh
+scripts/verify_darwin_smoke_bundle.sh \
+  --zip dist/vectis-<version>-arm64-apple-darwin-smoke-test.zip \
+  --require-spctl
+```
+
+This verifies a packaged Darwin smoke zip; it does not replace the local
+`make release-darwin-smoke-bundle` package generation gate. The on-device TODO
+is complete only after this command has been run on real Apple Silicon hardware
+against the candidate smoke zip.
 
 ## Signing Order
 

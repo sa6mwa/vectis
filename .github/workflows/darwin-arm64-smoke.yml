@@ -96,73 +96,12 @@ jobs:
             exit 1
           fi
 
-      - name: Extract smoke-test zip
+      - name: Verify and run smoke-test zip
         shell: bash
         run: |
           set -euo pipefail
-
-          rm -rf work
-          mkdir -p work
-          unzip -q "$VECTIS_SMOKE_ZIP" -d work
-          root_count=$(find work -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
-          if [ "$root_count" != "1" ]; then
-            echo "smoke-test zip must contain exactly one root directory" >&2
-            find work -mindepth 1 -maxdepth 1 -print >&2
-            exit 1
+          args=(--zip "$VECTIS_SMOKE_ZIP")
+          if [ "$REQUIRE_SPCTL" = "true" ]; then
+            args+=(--require-spctl)
           fi
-          root=$(find work -mindepth 1 -maxdepth 1 -type d -print)
-          if [ ! -x "$root/run-smoke.sh" ]; then
-            echo "smoke bundle missing executable run-smoke.sh" >&2
-            exit 1
-          fi
-          if [ ! -x "$root/bin/vectis_static_smoke" ]; then
-            echo "smoke bundle missing executable bin/vectis_static_smoke" >&2
-            exit 1
-          fi
-          echo "VECTIS_SMOKE_ROOT=$root" >>"$GITHUB_ENV"
-
-      - name: Verify Mach-O architecture and signatures
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          file "$VECTIS_SMOKE_ROOT/bin/vectis_static_smoke" |
-            grep -E 'Mach-O .*arm64' >/dev/null
-
-          find "$VECTIS_SMOKE_ROOT/bin" "$VECTIS_SMOKE_ROOT/lib" \
-            -type f \( -perm -111 -o -name '*.dylib' \) -print |
-            sort > work/macho-files.txt
-          if [ ! -s work/macho-files.txt ]; then
-            echo "smoke bundle does not contain executable Mach-O files" >&2
-            exit 1
-          fi
-
-          while IFS= read -r binary; do
-            before=$(shasum -a 256 "$binary" | awk '{print $1}')
-            codesign --verify --strict --verbose=4 "$binary"
-            after=$(shasum -a 256 "$binary" | awk '{print $1}')
-            if [ "$before" != "$after" ]; then
-              echo "codesign verification mutated $binary" >&2
-              exit 1
-            fi
-
-            if [ -x "$binary" ]; then
-              before_spctl=$(shasum -a 256 "$binary" | awk '{print $1}')
-              if [ "$REQUIRE_SPCTL" = "true" ]; then
-                spctl --assess --type execute "$binary"
-              elif ! spctl --assess --type execute "$binary"; then
-                echo "spctl assessment did not pass for $binary; continuing because require_spctl is false" >&2
-              fi
-              after_spctl=$(shasum -a 256 "$binary" | awk '{print $1}')
-              if [ "$before_spctl" != "$after_spctl" ]; then
-                echo "spctl assessment mutated $binary" >&2
-                exit 1
-              fi
-            fi
-          done < work/macho-files.txt
-
-      - name: Run smoke bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-          "$VECTIS_SMOKE_ROOT/run-smoke.sh"
+          scripts/verify_darwin_smoke_bundle.sh "${args[@]}"
