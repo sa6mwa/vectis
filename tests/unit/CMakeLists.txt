@@ -54,6 +54,7 @@ function(vectis_add_cpp_header_test target_name)
 endfunction()
 
 vectis_add_unit_test(vectis_unit_config test_vectis_config.c)
+vectis_add_unit_test(vectis_unit_acme_state test_vectis_acme_state.c)
 vectis_add_unit_test(vectis_unit_cai test_vectis_cai.c)
 vectis_add_unit_test(vectis_unit_audio_worker test_vectis_audio_worker.c)
 vectis_add_unit_test(vectis_unit_sus_worker test_vectis_sus_worker.c)

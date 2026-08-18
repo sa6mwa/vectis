@@ -23,3 +23,4 @@
 0023-kore-vectis-reject-unknown-tls-sni.patch
 0024-kore-vectis-webdav-methods.patch
 0025-kore-vectis-preserve-fileref-content-type.patch
+0026-kore-vectis-acme-state-hook.patch

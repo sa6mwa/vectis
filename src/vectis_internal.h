@@ -21,7 +21,13 @@ typedef struct vectis_kore_runtime_config {
   const char *tls_cipher_list;
   const char *acme_email;
   const char *acme_directory_url;
+  const char *acme_storage_endpoint;
+  const char *acme_storage_namespace;
+  const char *acme_storage_key;
   const char *acme_state_dir;
+  const char *lockd_client_bundle_path;
+  const void *lockd_client_bundle_pem;
+  size_t lockd_client_bundle_pem_size;
   const char *cert_key_bundle_path;
   const void *cert_key_bundle_pem;
   size_t cert_key_bundle_pem_size;

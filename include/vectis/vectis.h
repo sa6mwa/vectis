@@ -549,6 +549,16 @@ typedef struct vectis_tls_config {
   int require_client_certificate;
   const char *acme_email;
   const char *acme_directory_url;
+  /*
+   * Canonical ACME state storage. When omitted, Vectis uses the first app
+   * lockd endpoint or a local pouch:// store under XDG state. Kore receives a
+   * private derived runtime directory; it is never the durable authority.
+   */
+  const char *acme_storage_endpoint;
+  const char *acme_storage_namespace;
+  const char *acme_storage_key;
+  /* Optional private runtime directory for Kore. When omitted, Vectis creates
+   * an isolated 0700 directory under XDG cache for each runtime start. */
   const char *acme_state_dir;
 } vectis_tls_config;
 

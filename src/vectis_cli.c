@@ -12334,6 +12334,12 @@ static int vectis_lua_server_new(lua_State *lua) {
       config.tls.acme_directory_url =
           vectis_lua_table_string(lua, tls_index, "provider");
     }
+    config.tls.acme_storage_endpoint =
+        vectis_lua_table_string(lua, tls_index, "acme_storage_endpoint");
+    config.tls.acme_storage_namespace =
+        vectis_lua_table_string(lua, tls_index, "acme_storage_namespace");
+    config.tls.acme_storage_key =
+        vectis_lua_table_string(lua, tls_index, "acme_storage_key");
     config.tls.acme_state_dir =
         vectis_lua_table_string(lua, tls_index, "acme_state_dir");
     if (config.tls.acme_state_dir == NULL) {

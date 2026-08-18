@@ -117,6 +117,15 @@ TLS servers also accept `version = "default" | "both" | "1.2" | "1.3"` and
 `default` and `both` use TLS 1.2 plus TLS 1.3. Invalid cipher lists fail before
 Kore starts.
 
+ACME uses `domains`, `email` (or `acme_email`), and `provider` (or
+`acme_directory_url`). Its durable account and certificate state is a lockd
+object with attachments. By default it uses `pouch://` under XDG state; an app
+lockd endpoint is used when configured. `acme_storage_endpoint`,
+`acme_storage_namespace`, and `acme_storage_key` select an explicit store.
+`acme_state_dir` (or the compatibility alias `cache_dir`) is only Kore's
+private derived runtime directory; omission creates an isolated mode-0700
+directory under XDG cache.
+
 ## Fixed Routes
 
 - `server:json(opts)` registers a fixed JSON response.

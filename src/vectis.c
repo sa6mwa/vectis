@@ -1,4 +1,5 @@
 #include "vectis_internal.h"
+#include "vectis_acme_state.h"
 
 #include <arpa/inet.h>
 #include <cpkt/audio.h>
@@ -419,6 +420,9 @@ typedef struct vectis_app_impl {
   struct lc_source *client_ca_bundle_source;
   char *acme_email;
   char *acme_directory_url;
+  char *acme_storage_endpoint;
+  char *acme_storage_namespace;
+  char *acme_storage_key;
   char *acme_state_dir;
   char *unix_socket_path;
   void *client_bundle_pem;
@@ -1238,6 +1242,8 @@ static void vectis_app_ready_state_free(int *ready);
 static vectis_status vectis_app_prepare_kore_ready_state(vectis_app_impl *impl,
                                                          vectis_error *error);
 static void vectis_app_clear_kore_ready_state(vectis_app_impl *impl);
+static vectis_status vectis_app_prepare_acme_state(vectis_app_impl *impl,
+                                                   vectis_error *error);
 static void vectis_app_mark_kore_ready(vectis_app_impl *impl);
 static char *vectis_metrics_default_storage_endpoint(void);
 static vectis_status vectis_metrics_route_handler(vectis_app *app,
@@ -10122,6 +10128,9 @@ static void vectis_destroy_impl_final(vectis_app_impl *impl) {
   free(impl->tls_cipher_list);
   free(impl->acme_email);
   free(impl->acme_directory_url);
+  free(impl->acme_storage_endpoint);
+  free(impl->acme_storage_namespace);
+  free(impl->acme_storage_key);
   free(impl->acme_state_dir);
   free(impl->request_body_spool_dir);
   free(impl->server_header);
@@ -10514,11 +10523,6 @@ static vectis_status vectis_validate_startable(const vectis_app_impl *impl,
     if (impl->domain_count == 0u) {
       vectis_set_error(error, VECTIS_ERR_INVALID,
                        "ACME mode requires tls.domains");
-      return VECTIS_ERR_INVALID;
-    }
-    if (impl->acme_state_dir == NULL || impl->acme_state_dir[0] == '\0') {
-      vectis_set_error(error, VECTIS_ERR_INVALID,
-                       "ACME mode requires acme_state_dir");
       return VECTIS_ERR_INVALID;
     }
   }
@@ -11050,6 +11054,11 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   impl->tls_cipher_list = vectis_strdup(effective->tls.cipher_list);
   impl->acme_email = vectis_strdup(effective->tls.acme_email);
   impl->acme_directory_url = vectis_strdup(effective->tls.acme_directory_url);
+  impl->acme_storage_endpoint =
+      vectis_strdup(effective->tls.acme_storage_endpoint);
+  impl->acme_storage_namespace =
+      vectis_strdup(effective->tls.acme_storage_namespace);
+  impl->acme_storage_key = vectis_strdup(effective->tls.acme_storage_key);
   impl->acme_state_dir = vectis_strdup(effective->tls.acme_state_dir);
   impl->request_body_spool_dir =
       effective_server.request_body_spool_dir != NULL
@@ -11085,7 +11094,13 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
       impl->request_body_spool_dir == NULL || impl->server_header == NULL ||
       (effective_server.access_log_path != NULL &&
        impl->access_log_path == NULL) ||
-      (effective->tls.cipher_list != NULL && impl->tls_cipher_list == NULL)) {
+      (effective->tls.cipher_list != NULL && impl->tls_cipher_list == NULL) ||
+      (effective->tls.acme_storage_endpoint != NULL &&
+       impl->acme_storage_endpoint == NULL) ||
+      (effective->tls.acme_storage_namespace != NULL &&
+       impl->acme_storage_namespace == NULL) ||
+      (effective->tls.acme_storage_key != NULL &&
+       impl->acme_storage_key == NULL)) {
     vectis_destroy_impl(impl);
     free(app);
     vectis_set_error(error, VECTIS_ERR_NOMEM,
@@ -11294,7 +11309,13 @@ vectis_app_make_kore_runtime_config(vectis_app *app, vectis_app_impl *impl,
   kore_config->tls_cipher_list = impl->tls_cipher_list;
   kore_config->acme_email = impl->acme_email;
   kore_config->acme_directory_url = impl->acme_directory_url;
+  kore_config->acme_storage_endpoint = impl->acme_storage_endpoint;
+  kore_config->acme_storage_namespace = impl->acme_storage_namespace;
+  kore_config->acme_storage_key = impl->acme_storage_key;
   kore_config->acme_state_dir = impl->acme_state_dir;
+  kore_config->lockd_client_bundle_path = impl->client_bundle_path;
+  kore_config->lockd_client_bundle_pem = impl->client_bundle_pem;
+  kore_config->lockd_client_bundle_pem_size = impl->client_bundle_pem_size;
   kore_config->cert_key_bundle_path = impl->cert_key_bundle_path;
   kore_config->cert_key_bundle_pem = impl->cert_key_bundle_pem;
   kore_config->cert_key_bundle_pem_size = impl->cert_key_bundle_pem_size;
@@ -11727,6 +11748,10 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
   if (route_count > 0u) {
     control_fds[0] = -1;
     control_fds[1] = -1;
+    status = vectis_app_prepare_acme_state(impl, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
     status = vectis_app_prepare_kore_ready_state(impl, error);
     if (status != VECTIS_OK) {
       return status;
@@ -12095,6 +12120,10 @@ static vectis_status vectis_app_run_impl(vectis_app *app, vectis_error *error) {
     return vectis_app_stop_impl(app, error);
   }
 
+  status = vectis_app_prepare_acme_state(impl, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
   vectis_app_make_kore_runtime_config(app, impl, &kore_config);
 
   (void)pthread_mutex_lock(&impl->mutex);
@@ -18340,6 +18369,69 @@ static void vectis_app_ready_state_free(int *ready) {
     return;
   }
   (void)munmap(ready, sizeof(*ready));
+}
+
+static vectis_status vectis_app_prepare_acme_state(vectis_app_impl *impl,
+                                                   vectis_error *error) {
+  vectis_acme_state_config config;
+  char *value;
+  int hydrated;
+
+  if (impl == NULL || impl->tls_mode != VECTIS_TLS_MODE_ACME) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (impl->acme_storage_endpoint == NULL) {
+    if (impl->endpoint_count > 0u && impl->endpoints[0] != NULL) {
+      value = vectis_strdup(impl->endpoints[0]);
+    } else {
+      value = vectis_acme_state_default_endpoint(error);
+    }
+    if (value == NULL) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    impl->acme_storage_endpoint = value;
+  }
+  if (impl->acme_storage_endpoint[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "ACME storage endpoint must not be empty");
+    return VECTIS_ERR_INVALID;
+  }
+  if (impl->acme_storage_namespace == NULL) {
+    impl->acme_storage_namespace = vectis_strdup("vectis.acme");
+    if (impl->acme_storage_namespace == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to allocate ACME storage namespace");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  if (impl->acme_storage_key == NULL) {
+    impl->acme_storage_key = vectis_acme_state_default_key(
+        (const char *const *)impl->domains, impl->domain_count, error);
+    if (impl->acme_storage_key == NULL) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+  }
+  if (impl->acme_state_dir == NULL) {
+    impl->acme_state_dir = vectis_acme_state_runtime_dir_new(error);
+    if (impl->acme_state_dir == NULL) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+  }
+  memset(&config, 0, sizeof(config));
+  config.endpoint = impl->acme_storage_endpoint;
+  config.namespace_name = impl->acme_storage_namespace;
+  config.key = impl->acme_storage_key;
+  config.owner = "vectis-acme";
+  config.runtime_dir = impl->acme_state_dir;
+  config.client_bundle_path = impl->client_bundle_path;
+  config.client_bundle_pem = impl->client_bundle_pem;
+  config.client_bundle_pem_size = impl->client_bundle_pem_size;
+  config.domains = (const char *const *)impl->domains;
+  config.domain_count = impl->domain_count;
+  config.timeout_ms = impl->timeout_ms;
+  hydrated = 0;
+  return vectis_acme_state_hydrate(&config, &hydrated, error);
 }
 
 static vectis_status vectis_app_prepare_kore_ready_state(vectis_app_impl *impl,

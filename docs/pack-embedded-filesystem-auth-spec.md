@@ -228,7 +228,7 @@ Required Lua concepts:
   cert_path=..., key_path=..., ca_path=..., domain=...}})`
 - `vectis.server.new({bind=..., port=..., tls={mode="acme",
   domains={"example.com", "www.example.com"}, email=...,
-  provider=..., cache_dir=...}})`
+  provider=..., acme_storage_endpoint=...}})`
 - `server:static_directory({path_prefix=..., root_dir=..., index_file=...})`
 - `server:static_embedded({path_prefix=..., cache_control=...})`
 - `server:webdav_embedded_site({path_prefix=..., cache_dir=..., site_id=...,
@@ -618,19 +618,20 @@ packaging. Native auth route smoke coverage proves custom login
 templates can be loaded from the filesystem and from packed embedded assets, and
 that supported login-template placeholders are expanded through escaped
 substitution before serving.
-Lua smoke coverage validates ACME-mode server config parsing, Landed-style
-`tls.domains`, `tls.email`, `tls.provider`, and `tls.cache_dir` spellings,
-duplicate and invalid DNS-domain rejection, non-empty state-dir validation, and
-native startup diagnostics for missing domains or email without contacting a
-live ACME provider. ACME `cache_dir` is accepted into Vectis runtime config as
-`acme_state_dir`, is required for ACME startup, and is wired into Kore's keymgr
-and ACME process roots so account keys and certificate state are created under
-the configured directory. The deterministic e2e starts ACME mode against a
-local mock ACMEv2 provider, drives directory, nonce, account, order,
+Lua smoke coverage validates ACME-mode server config parsing, including the
+legacy `tls.domains`, `tls.email`, `tls.provider`, and `tls.cache_dir`
+spellings, plus duplicate and invalid DNS-domain rejection and native startup
+diagnostics for missing domains or email without contacting a live ACME
+provider. ACME account keys and certificate chains are stored transactionally
+as attachments on a lockd state object. The default is local `pouch://` state
+under XDG state; an explicit lockd endpoint can be selected with
+`acme_storage_endpoint`. Kore is hydrated from that object into a private
+runtime directory before startup, and commits the updated object before it
+activates an issued certificate. The deterministic e2e starts ACME mode against
+a local mock ACMEv2 provider, drives directory, nonce, account, order,
 authorization, tls-alpn-01 challenge, finalize, and certificate endpoints,
-signs Kore's generated CSR with a test CA, verifies the issued PEM fullchain is
-stored under the configured `cache_dir`, and reaches an HTTPS probe through the
-ACME-issued certificate without requiring live Let's Encrypt access.
+signs Kore's generated CSR with a test CA, and reaches an HTTPS probe through
+the ACME-issued certificate without requiring live Let's Encrypt access.
 
 Email-token e2e coverage:
 

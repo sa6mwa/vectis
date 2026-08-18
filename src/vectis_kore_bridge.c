@@ -1,4 +1,5 @@
 #include "vectis_internal.h"
+#include "vectis_acme_state.h"
 
 #include <kore/acme.h>
 #include <kore/http.h>
@@ -97,6 +98,31 @@ static vectis_kore_runtime_config vectis_kore_current;
 static char *vectis_kore_keymgr_root = NULL;
 static char *vectis_kore_acme_root = NULL;
 static char *vectis_kore_body_disk_path = NULL;
+
+int vectis_kore_acme_state_persist(const char *domain) {
+  vectis_acme_state_config config;
+  vectis_error error;
+
+  (void)domain;
+  if (vectis_kore_current.tls_mode != VECTIS_TLS_MODE_ACME) {
+    return 1;
+  }
+  memset(&config, 0, sizeof(config));
+  config.endpoint = vectis_kore_current.acme_storage_endpoint;
+  config.namespace_name = vectis_kore_current.acme_storage_namespace;
+  config.key = vectis_kore_current.acme_storage_key;
+  config.owner = "vectis-acme";
+  config.runtime_dir = vectis_kore_current.acme_state_dir;
+  config.client_bundle_path = vectis_kore_current.lockd_client_bundle_path;
+  config.client_bundle_pem = vectis_kore_current.lockd_client_bundle_pem;
+  config.client_bundle_pem_size =
+      vectis_kore_current.lockd_client_bundle_pem_size;
+  config.domains = vectis_kore_current.domains;
+  config.domain_count = vectis_kore_current.domain_count;
+  config.timeout_ms = 30000L;
+  vectis_error_clear(&error);
+  return vectis_acme_state_persist(&config, &error) == VECTIS_OK;
+}
 
 typedef struct vectis_kore_autoblock_entry {
   int used;
@@ -959,7 +985,16 @@ vectis_kore_prepare_acme(vectis_kore_runtime_config *config,
   }
   if (config->acme_state_dir == NULL || config->acme_state_dir[0] == '\0') {
     vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "ACME mode requires acme_state_dir");
+                     "ACME mode requires a prepared ACME runtime directory");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->acme_storage_endpoint == NULL ||
+      config->acme_storage_endpoint[0] == '\0' ||
+      config->acme_storage_namespace == NULL ||
+      config->acme_storage_namespace[0] == '\0' ||
+      config->acme_storage_key == NULL || config->acme_storage_key[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "ACME mode requires prepared durable state storage");
     return VECTIS_ERR_INVALID;
   }
   if (!vectis_kore_mkdir_p(config->acme_state_dir)) {

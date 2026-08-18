@@ -2723,6 +2723,9 @@ static void assert_acme_state_dir_allows_existing_group_private_dir(void) {
   kore_config.domains = domains;
   kore_config.domain_count = sizeof(domains) / sizeof(domains[0]);
   kore_config.acme_email = "admin@example.test";
+  kore_config.acme_storage_endpoint = "pouch:///tmp/vectis-acme-state-test";
+  kore_config.acme_storage_namespace = "vectis.acme";
+  kore_config.acme_storage_key = "test";
   kore_config.acme_state_dir = template_path;
 
   assert(vectis_internal_kore_validate(&kore_config, &error) == VECTIS_OK);
