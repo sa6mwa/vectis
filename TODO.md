@@ -453,6 +453,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add target-aware `vectis -a pack --target` backend dispatch so Darwin/Mach-O targets fail before artifact creation unless the required pack-runner link inputs exist, while host Linux packing remains the only footer backend.
 - [x] Generate and package relocatable pack-runner link inputs as `share/vectis/pack-runner-link-inputs.json`, `lib/vectis/pack/libvectis_pack_runner.a`, and imported CMake target `vectis::pack_runner` for the future Darwin relink backend.
 - [x] Split `vectis -a pack` into shared `vectis_pack_collect` payload collection and `vectis_pack_write_elf` backend writing so Mach-O can add a real relink writer without duplicating payload semantics.
+- [x] Add `vectis -a pack --pack-sdk-root <root>` validation for Darwin pack-runner manifest/archive inputs, including target mismatch diagnostics and no-output fail-closed coverage while the relink writer remains unsupported.
 - [ ] On Darwin/Mach-O, embed Lua and certificate payloads through the generated object/section layout specified in `docs/darwin-mach-o-pack-spec.md` rather than relying on arbitrary appended EOF data.
 - [x] Define one shared payload manifest format across ELF and Mach-O so runtime validation and Lua startup behavior stay platform-independent.
 - [x] Support optional embedding of the liblockdc client certificate bundle payload in the Linux pack format.

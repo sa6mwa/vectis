@@ -44,7 +44,11 @@ set(asset_codesign_mode_required_output "${WORK_DIR}/vectis-pack-codesign-mode-r
 set(asset_codesign_missing_entitlements_output "${WORK_DIR}/vectis-pack-codesign-missing-entitlements")
 set(asset_codesign_unsupported_output "${WORK_DIR}/vectis-pack-codesign-unsupported")
 set(asset_darwin_target_output "${WORK_DIR}/vectis-pack-darwin-target")
+set(asset_darwin_sdk_output "${WORK_DIR}/vectis-pack-darwin-sdk")
+set(asset_darwin_sdk_mismatch_output "${WORK_DIR}/vectis-pack-darwin-sdk-mismatch")
 set(asset_unknown_target_output "${WORK_DIR}/vectis-pack-unknown-target")
+set(pack_darwin_sdk_root "${WORK_DIR}/darwin-pack-sdk")
+set(pack_darwin_sdk_mismatch_root "${WORK_DIR}/darwin-pack-sdk-mismatch")
 set(pack_entitlements "${WORK_DIR}/pack-entitlements.plist")
 set(missing_pack_entitlements "${WORK_DIR}/missing-pack-entitlements.plist")
 set(no_asset_extract_dir "${WORK_DIR}/no-assets-extract")
@@ -179,6 +183,56 @@ if(EXISTS "${asset_darwin_target_output}")
 endif()
 if(NOT darwin_target_stderr MATCHES "Darwin pack requires pack-runner link inputs")
   message(FATAL_ERROR "pack Darwin target failed with unexpected error: ${darwin_target_stdout}${darwin_target_stderr}")
+endif()
+
+file(MAKE_DIRECTORY "${pack_darwin_sdk_root}/share/vectis" "${pack_darwin_sdk_root}/lib/vectis/pack")
+file(WRITE "${pack_darwin_sdk_root}/share/vectis/pack-runner-link-inputs.json" [=[
+{
+  "format": "vectis-pack-runner-link-inputs",
+  "version": 1,
+  "target_id": "arm64-apple-darwin",
+  "runner_archive": "lib/vectis/pack/libvectis_pack_runner.a"
+}
+]=])
+file(WRITE "${pack_darwin_sdk_root}/lib/vectis/pack/libvectis_pack_runner.a" "fake archive\n")
+file(REMOVE "${asset_darwin_sdk_output}")
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --target arm64-apple-darwin --pack-sdk-root "${pack_darwin_sdk_root}" --script "${script}" --output "${asset_darwin_sdk_output}"
+                RESULT_VARIABLE darwin_sdk_result
+                OUTPUT_VARIABLE darwin_sdk_stdout
+                ERROR_VARIABLE darwin_sdk_stderr)
+if(darwin_sdk_result EQUAL 0)
+  message(FATAL_ERROR "pack Darwin target unexpectedly succeeded with fake link inputs")
+endif()
+if(EXISTS "${asset_darwin_sdk_output}")
+  message(FATAL_ERROR "pack Darwin target with link inputs created an output artifact before Mach-O relink support")
+endif()
+if(NOT darwin_sdk_stderr MATCHES "Darwin/Mach-O relink backend is not implemented after validating pack-runner link inputs")
+  message(FATAL_ERROR "pack Darwin target with link inputs failed with unexpected error: ${darwin_sdk_stdout}${darwin_sdk_stderr}")
+endif()
+
+file(MAKE_DIRECTORY "${pack_darwin_sdk_mismatch_root}/share/vectis" "${pack_darwin_sdk_mismatch_root}/lib/vectis/pack")
+file(WRITE "${pack_darwin_sdk_mismatch_root}/share/vectis/pack-runner-link-inputs.json" [=[
+{
+  "format": "vectis-pack-runner-link-inputs",
+  "version": 1,
+  "target_id": "x86_64-linux-gnu",
+  "runner_archive": "lib/vectis/pack/libvectis_pack_runner.a"
+}
+]=])
+file(WRITE "${pack_darwin_sdk_mismatch_root}/lib/vectis/pack/libvectis_pack_runner.a" "fake archive\n")
+file(REMOVE "${asset_darwin_sdk_mismatch_output}")
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --target arm64-apple-darwin --pack-sdk-root "${pack_darwin_sdk_mismatch_root}" --script "${script}" --output "${asset_darwin_sdk_mismatch_output}"
+                RESULT_VARIABLE darwin_sdk_mismatch_result
+                OUTPUT_VARIABLE darwin_sdk_mismatch_stdout
+                ERROR_VARIABLE darwin_sdk_mismatch_stderr)
+if(darwin_sdk_mismatch_result EQUAL 0)
+  message(FATAL_ERROR "pack Darwin target unexpectedly accepted mismatched link inputs")
+endif()
+if(EXISTS "${asset_darwin_sdk_mismatch_output}")
+  message(FATAL_ERROR "pack Darwin target with mismatched link inputs created an output artifact")
+endif()
+if(NOT darwin_sdk_mismatch_stderr MATCHES "pack SDK manifest does not match target arm64-apple-darwin")
+  message(FATAL_ERROR "pack Darwin target mismatch failed with unexpected error: ${darwin_sdk_mismatch_stdout}${darwin_sdk_mismatch_stderr}")
 endif()
 
 file(REMOVE "${asset_unknown_target_output}")

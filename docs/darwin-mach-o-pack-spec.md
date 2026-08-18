@@ -101,8 +101,10 @@ backend that compiles the generated section object, links it with
 `vectis::pack_runner`, signs final bytes, and verifies the result.
 
 `vectis -a pack` on Darwin should discover those inputs from the installed SDK
-or configured build tree. If they are unavailable, it must fail before creating
-an output artifact with an actionable diagnostic such as:
+layout next to the running `vectis` binary, or from an explicit
+`--pack-sdk-root <root>` that contains the same installed SDK layout. If they
+are unavailable, it must fail before creating an output artifact with an
+actionable diagnostic such as:
 
 ```text
 vectis: Darwin pack requires pack-runner link inputs; build or install the
@@ -113,6 +115,11 @@ This means Darwin packing is not fully self-contained in the same way as Linux.
 It requires target-correct link tools and Vectis-provided runner link inputs at
 pack time. That is the recommended product contract because it avoids an
 in-place Mach-O editor and keeps code signing order deterministic.
+
+Until `vectis_pack_write_macho` is implemented, valid SDK inputs are treated as
+a validated precondition and the command still fails before output creation with
+an explicit unsupported-backend diagnostic. Target mismatches in
+`pack-runner-link-inputs.json` fail before reaching the backend.
 
 ## Signing Contract
 

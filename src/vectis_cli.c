@@ -469,6 +469,11 @@ typedef struct vectis_pack_payload {
   unsigned char manifest_sha[SHA256_DIGEST_LENGTH];
 } vectis_pack_payload;
 
+typedef struct vectis_pack_runner_inputs {
+  char manifest_path[4096];
+  char archive_path[4096];
+} vectis_pack_runner_inputs;
+
 static const lonejson_field vectis_pack_content_type_map_doc_item_fields[] = {
     LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_pack_content_type_map_doc_item,
                                     extension, "extension"),
@@ -659,7 +664,8 @@ static void vectis_cli_usage(FILE *stream) {
   fputs("usage: vectis [--version] [--help] [-x] script.lua [args...]\n"
         "       -x traces Lua line execution to stderr\n"
         "       vectis -a|--action pack [--target target-id] "
-        "--script script.lua --output output [--lockd-bundle bundle.pem] "
+        "[--pack-sdk-root root] --script script.lua --output output "
+        "[--lockd-bundle bundle.pem] "
         "[--asset source=/path] "
         "[--asset-dir /mount:dir] [--asset-manifest assets.json] "
         "[--content-type-map types.json] [--extract-mode mode] "
@@ -3070,6 +3076,24 @@ static int vectis_pack_target_is_darwin(const char *target, int *out) {
   return 0;
 }
 
+static const char *vectis_pack_effective_target_id(const char *target) {
+  if (target != NULL && strcmp(target, "host") != 0 &&
+      strcmp(target, "native") != 0) {
+    return target;
+  }
+#ifdef __APPLE__
+#if defined(__aarch64__) || defined(__arm64__)
+  return "arm64-apple-darwin";
+#elif defined(__x86_64__)
+  return "x86_64-apple-darwin";
+#else
+  return "unknown-apple-darwin";
+#endif
+#else
+  return "host";
+#endif
+}
+
 static int vectis_pack_write_elf(const char *output_path,
                                  const unsigned char *runner,
                                  size_t runner_size,
@@ -3187,6 +3211,150 @@ static int vectis_pack_validate_entitlements_path(const char *path) {
   return 0;
 }
 
+static int vectis_pack_join_relative(char *out, size_t out_size,
+                                     const char *root, const char *relative) {
+  int written;
+
+  if (root == NULL || root[0] == '\0' || relative == NULL ||
+      relative[0] == '\0') {
+    return -1;
+  }
+  written = snprintf(out, out_size, "%s/%s", root, relative);
+  if (written < 0 || (size_t)written >= out_size) {
+    return -1;
+  }
+  return 0;
+}
+
+static int vectis_pack_regular_file_exists(const char *path) {
+  struct stat st;
+
+  return path != NULL && stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+static int vectis_pack_manifest_matches_target(const char *manifest_path,
+                                               const char *target_id) {
+  unsigned char *data;
+  char *text;
+  char target_needle[256];
+  int result;
+  size_t size;
+
+  data = NULL;
+  if (vectis_read_all(manifest_path, &data, &size) != 0) {
+    return 0;
+  }
+  text = (char *)malloc(size + 1u);
+  if (text == NULL) {
+    free(data);
+    return 0;
+  }
+  if (size > 0u) {
+    memcpy(text, data, size);
+  }
+  text[size] = '\0';
+  free(data);
+  result = snprintf(target_needle, sizeof(target_needle),
+                    "\"target_id\": \"%s\"", target_id);
+  if (result < 0 || (size_t)result >= sizeof(target_needle)) {
+    free(text);
+    return 0;
+  }
+  result =
+      strstr(text, "\"format\": \"vectis-pack-runner-link-inputs\"") != NULL &&
+      strstr(text, target_needle) != NULL &&
+      strstr(text, "\"runner_archive\": \"lib/vectis/pack/"
+                   "libvectis_pack_runner.a\"") != NULL;
+  free(text);
+  return result;
+}
+
+static int
+vectis_pack_validate_runner_inputs_root(const char *root, const char *target_id,
+                                        vectis_pack_runner_inputs *inputs,
+                                        int report_errors) {
+  char manifest_path[4096];
+  char archive_path[4096];
+
+  if (vectis_pack_join_relative(manifest_path, sizeof(manifest_path), root,
+                                "share/vectis/"
+                                "pack-runner-link-inputs.json") != 0 ||
+      vectis_pack_join_relative(archive_path, sizeof(archive_path), root,
+                                "lib/vectis/pack/"
+                                "libvectis_pack_runner.a") != 0) {
+    if (report_errors) {
+      fprintf(stderr, "vectis: pack SDK root path is too long: %s\n", root);
+    }
+    return 0;
+  }
+  if (!vectis_pack_regular_file_exists(manifest_path)) {
+    if (report_errors) {
+      fprintf(stderr, "vectis: pack SDK is missing manifest: %s\n",
+              manifest_path);
+    }
+    return 0;
+  }
+  if (!vectis_pack_regular_file_exists(archive_path)) {
+    if (report_errors) {
+      fprintf(stderr, "vectis: pack SDK is missing runner archive: %s\n",
+              archive_path);
+    }
+    return 0;
+  }
+  if (!vectis_pack_manifest_matches_target(manifest_path, target_id)) {
+    if (report_errors) {
+      fprintf(stderr,
+              "vectis: pack SDK manifest does not match target %s: %s\n",
+              target_id, manifest_path);
+    }
+    return 0;
+  }
+  memcpy(inputs->manifest_path, manifest_path, strlen(manifest_path) + 1u);
+  memcpy(inputs->archive_path, archive_path, strlen(archive_path) + 1u);
+  return 1;
+}
+
+static int vectis_pack_installed_root_from_self(const char *self_path,
+                                                char *root, size_t root_size) {
+  const char *bin;
+  size_t root_len;
+
+  if (self_path == NULL) {
+    return 0;
+  }
+  bin = strstr(self_path, "/bin/");
+  if (bin == NULL || bin == self_path) {
+    return 0;
+  }
+  root_len = (size_t)(bin - self_path);
+  if (root_len == 0u || root_len + 1u > root_size) {
+    return 0;
+  }
+  memcpy(root, self_path, root_len);
+  root[root_len] = '\0';
+  return 1;
+}
+
+static int vectis_pack_find_runner_inputs(const char *explicit_root,
+                                          const char *self_path,
+                                          const char *target_id,
+                                          vectis_pack_runner_inputs *inputs) {
+  char installed_root[4096];
+
+  memset(inputs, 0, sizeof(*inputs));
+  if (explicit_root != NULL) {
+    return vectis_pack_validate_runner_inputs_root(explicit_root, target_id,
+                                                   inputs, 1);
+  }
+  if (vectis_pack_installed_root_from_self(self_path, installed_root,
+                                           sizeof(installed_root)) &&
+      vectis_pack_validate_runner_inputs_root(installed_root, target_id, inputs,
+                                              0)) {
+    return 1;
+  }
+  return 0;
+}
+
 static int vectis_pack_darwin_requires_link_inputs(void) {
   fputs("vectis: Darwin pack requires pack-runner link inputs; build or "
         "install the arm64-apple-darwin pack SDK with "
@@ -3203,6 +3371,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   const char *bundle_path;
   const char *extract_mode;
   const char *target_id;
+  const char *pack_sdk_root;
   const char *codesign_identity;
   const char *entitlements_path;
   const char *asset_arg;
@@ -3230,6 +3399,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   bundle_path = NULL;
   extract_mode = NULL;
   target_id = NULL;
+  pack_sdk_root = NULL;
   codesign_identity = NULL;
   entitlements_path = NULL;
   follow_symlinks = 0;
@@ -3247,6 +3417,8 @@ static int vectis_pack_command(int argc, char **argv, int index) {
       output_path = argv[++i];
     } else if (strcmp(argv[i], "--target") == 0 && i + 1 < argc) {
       target_id = argv[++i];
+    } else if (strcmp(argv[i], "--pack-sdk-root") == 0 && i + 1 < argc) {
+      pack_sdk_root = argv[++i];
     } else if (strcmp(argv[i], "--lockd-bundle") == 0 && i + 1 < argc) {
       bundle_path = argv[++i];
     } else if (strcmp(argv[i], "--extract-mode") == 0 && i + 1 < argc) {
@@ -3286,6 +3458,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   for (i = index; i < argc; ++i) {
     if ((strcmp(argv[i], "--script") == 0 || strcmp(argv[i], "--output") == 0 ||
          strcmp(argv[i], "--target") == 0 ||
+         strcmp(argv[i], "--pack-sdk-root") == 0 ||
          strcmp(argv[i], "--lockd-bundle") == 0 ||
          strcmp(argv[i], "--extract-mode") == 0 ||
          strcmp(argv[i], "--content-type-map") == 0 ||
@@ -3394,8 +3567,30 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     return 64;
   }
   if (darwin_target) {
+    vectis_pack_runner_inputs runner_inputs;
+    const char *effective_target_id;
+
+    effective_target_id = vectis_pack_effective_target_id(target_id);
+    if (pack_sdk_root != NULL) {
+      if (!vectis_pack_validate_runner_inputs_root(
+              pack_sdk_root, effective_target_id, &runner_inputs, 1)) {
+        vectis_pack_command_cleanup(&assets, &content_types);
+        return 64;
+      }
+    } else {
+      if (vectis_self_path(argv[0], self_path, sizeof(self_path)) != 0 ||
+          !vectis_pack_find_runner_inputs(NULL, self_path, effective_target_id,
+                                          &runner_inputs)) {
+        vectis_pack_command_cleanup(&assets, &content_types);
+        return vectis_pack_darwin_requires_link_inputs();
+      }
+    }
+    fprintf(stderr,
+            "vectis: Darwin/Mach-O relink backend is not implemented after "
+            "validating pack-runner link inputs: %s\n",
+            runner_inputs.manifest_path);
     vectis_pack_command_cleanup(&assets, &content_types);
-    return vectis_pack_darwin_requires_link_inputs();
+    return 64;
   }
   if (codesign_identity != NULL || ad_hoc_codesign || hardened_runtime ||
       timestamp || entitlements_path != NULL) {

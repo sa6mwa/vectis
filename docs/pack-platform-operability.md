@@ -60,7 +60,9 @@ vectis::pack_runner
 
 The manifest names the package-relative archive, CMake target, Mach-O section
 contract, and finalization order. It must not contain source, build, cache, or
-other workstation-local paths.
+other workstation-local paths. `vectis -a pack --target arm64-apple-darwin`
+looks for this installed SDK layout next to the running `vectis` binary or
+under an explicit `--pack-sdk-root <root>`.
 
 ## Darwin Requirements
 
@@ -147,11 +149,13 @@ unsupported targets rather than being ignored. `--entitlements <path>` must be
 a readable regular file.
 
 `vectis -a pack --target arm64-apple-darwin` is routed to the Darwin/Mach-O
-backend contract. Until the relink backend consumes the packaged pack-runner
-inputs, that command fails before creating the output artifact with the
-documented `Darwin pack requires pack-runner link inputs` diagnostic. This is
-deliberate: Darwin payloads must not be produced by appending the Linux footer
-layout to a Mach-O executable.
+backend contract. Without a valid pack SDK, that command fails before creating
+the output artifact with the documented `Darwin pack requires pack-runner link
+inputs` diagnostic. With a valid `--pack-sdk-root`, the command validates the
+manifest/archive pair and target id, then still fails before output creation
+until `vectis_pack_write_macho` is implemented. This is deliberate: Darwin
+payloads must not be produced by appending the Linux footer layout to a Mach-O
+executable.
 
 ## Notarization Limits
 
