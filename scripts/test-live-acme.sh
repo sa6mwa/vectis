@@ -54,6 +54,20 @@ local namespace = os.getenv("VECTIS_LIVE_ACME_STORAGE_NAMESPACE")
 local key = os.getenv("VECTIS_LIVE_ACME_STORAGE_KEY")
 local probe_url = assert(os.getenv("VECTIS_LIVE_ACME_PROBE_URL"))
 
+local function require_ok(value, err, phase)
+  if value == true then return end
+  if type(err) == "table" then
+    error(phase .. ": " .. tostring(err.message) .. ": " ..
+          tostring(err.detail))
+  end
+  error(phase .. ": " .. tostring(err))
+end
+
+local function require_value(value, err, phase)
+  if value ~= nil then return value end
+  require_ok(false, err, phase)
+end
+
 local function new_server(name)
   local tls = {
     mode = "acme",
@@ -66,12 +80,13 @@ local function new_server(name)
   if endpoint then tls.acme_storage_endpoint = endpoint end
   if namespace then tls.acme_storage_namespace = namespace end
   if key then tls.acme_storage_key = key end
-  local server = assert(vectis.server.new({
+  local server, new_error = vectis.server.new({
     app_name = name,
     bind = bind,
     port = port,
     tls = tls,
-  }))
+  })
+  server = require_value(server, new_error, "construct " .. name)
   assert(server:json({
     path = "/.vectis-live-acme",
     body = "{\"service\":\"vectis-live-acme\"}",
@@ -103,15 +118,19 @@ local function wait_for_public_https(phase)
 end
 
 local first = new_server("vectis-live-acme-issue")
-assert(first:start() == true)
+local started, start_error = first:start()
+require_ok(started, start_error, "initial ACME start")
 wait_for_public_https("issue")
-assert(first:stop() == true)
+local stopped, stop_error = first:stop()
+require_ok(stopped, stop_error, "initial ACME stop")
 first:close()
 
 local restored = new_server("vectis-live-acme-restore")
-assert(restored:start() == true)
+started, start_error = restored:start()
+require_ok(started, start_error, "restored ACME start")
 wait_for_public_https("restore")
-assert(restored:stop() == true)
+stopped, stop_error = restored:stop()
+require_ok(stopped, stop_error, "restored ACME stop")
 restored:close()
 
 print("live_acme=ok")
