@@ -439,6 +439,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add a self-contained Lua example for loaded-model SUS/whisper transcription with deterministic skip behavior and packed execution coverage.
 - [ ] Add Lua unit and end-to-end tests for every Lua facade, including preload smoke, method-call DX, ownership/finalizer cleanup, structured error objects, packed execution, large-value streaming/spooling, and local deterministic protocol scenarios.
   - [x] Add an executable Lua facade matrix contract that keeps the Lua index, coverage matrix, module docs, embedded preload smoke identities, and `vectis.libs` aliases in sync for every declared dependency-native and Vectis-owned module.
+  - [x] Add an executable Lua facade behavior coverage audit that maps every declared dependency-native and Vectis-owned module to local behavior tests, packed execution evidence where applicable, ownership/finalizer coverage, structured errors, streaming/spooling, worker replies, and deterministic protocol scenarios.
 - [x] Add release/package verification that the `vectis` binary includes all statically preloaded Lua modules while C binary SDK artifacts do not accidentally ship Lua source/runtime/package-manager state.
 - [x] Add a checked Lua facade documentation index that links dependency-native modules, Vectis-owned workflow modules, the coverage matrix, and module-level docs.
 - [x] Expose the full public Vectis status enum in Lua and cover structured DSV callback-stop errors with `status`, `status_string`, and `message`.

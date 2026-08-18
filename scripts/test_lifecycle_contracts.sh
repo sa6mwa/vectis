@@ -844,12 +844,23 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/TODO.md" '\[x\] Expose the full public Vectis status enum in Lua'
   assert_contains "$repo_root/TODO.md" '\[x\] Add checked Lua facade conventions'
   assert_contains "$repo_root/TODO.md" 'executable Lua facade matrix contract'
+  assert_contains "$repo_root/TODO.md" 'executable Lua facade behavior coverage audit'
   assert_contains "$repo_root/Makefile" '^test-lua-facade-matrix:'
   assert_contains "$repo_root/Makefile" 'scripts/test_lua_facade_matrix_contracts\.sh'
+  assert_contains "$repo_root/Makefile" '^test-lua-facade-behavior:'
+  assert_contains "$repo_root/Makefile" 'scripts/test_lua_facade_behavior_coverage\.sh'
   assert_contains "$repo_root/scripts/test_lua_facade_matrix_contracts.sh" \
     'lua facade matrix contracts ok'
   assert_contains "$repo_root/scripts/test_lua_facade_matrix_contracts.sh" \
     'vectis.libs'
+  assert_contains "$repo_root/scripts/test_lua_facade_behavior_coverage.sh" \
+    'local_behavior=\('
+  assert_contains "$repo_root/scripts/test_lua_facade_behavior_coverage.sh" \
+    'packed_behavior=\('
+  assert_contains "$repo_root/scripts/test_lua_facade_behavior_coverage.sh" \
+    'streaming responses cannot be retried safely'
+  assert_contains "$repo_root/tests/CMakeLists.txt" \
+    'vectis_lua_facade_behavior_coverage'
   assert_contains "$repo_root/tests/lua/smoke.lua" \
     'package.loaded\["vectis.cai"\] == vcai'
   assert_contains "$repo_root/TODO.md" '\[x\] Add Lua OpenAPI route metadata'
