@@ -149,6 +149,7 @@ typedef struct vectis_kore_autoblock_entry {
 
 typedef struct vectis_kore_autoblock_shared_state {
   pthread_mutex_t mutex;
+  int lock_fd;
   vectis_kore_autoblock_entry entries[1];
 } vectis_kore_autoblock_shared_state;
 
@@ -156,6 +157,10 @@ static vectis_kore_autoblock_shared_state *vectis_kore_autoblock_shared = NULL;
 static size_t vectis_kore_autoblock_shared_size = 0u;
 static vectis_kore_autoblock_entry *vectis_kore_autoblock_entries = NULL;
 static unsigned int vectis_kore_autoblock_capacity = 0u;
+#if !defined(__linux__)
+static pthread_mutex_t vectis_kore_autoblock_process_mutex =
+    PTHREAD_MUTEX_INITIALIZER;
+#endif
 
 static void vectis_kore_wake_listener(void) {
   struct sockaddr_in addr;
@@ -391,6 +396,9 @@ static int vectis_kore_autoblock_enabled(void) {
 static void vectis_kore_autoblock_unmap(void) {
   if (vectis_kore_autoblock_shared != NULL &&
       vectis_kore_autoblock_shared_size > 0u) {
+    if (vectis_kore_autoblock_shared->lock_fd >= 0) {
+      (void)close(vectis_kore_autoblock_shared->lock_fd);
+    }
     (void)munmap(vectis_kore_autoblock_shared,
                  vectis_kore_autoblock_shared_size);
   }
@@ -400,10 +408,32 @@ static void vectis_kore_autoblock_unmap(void) {
   vectis_kore_autoblock_capacity = 0u;
 }
 
+#if !defined(__linux__)
+static int vectis_kore_autoblock_open_lock_file(void) {
+  char path[] = "/tmp/vectis-autoblock-XXXXXX";
+  int fd;
+
+  fd = mkstemp(path);
+  if (fd < 0) {
+    return -1;
+  }
+  if (unlink(path) != 0) {
+    (void)close(fd);
+    return -1;
+  }
+  return fd;
+}
+#endif
+
 static int vectis_kore_autoblock_map(unsigned int capacity) {
+#if defined(__linux__)
   pthread_mutexattr_t attr;
-  size_t size;
   int ok;
+#endif
+  size_t size;
+#if !defined(__linux__)
+  int lock_fd;
+#endif
 
   if (capacity == 0u) {
     return 0;
@@ -417,18 +447,16 @@ static int vectis_kore_autoblock_map(unsigned int capacity) {
     return 0;
   }
   memset(vectis_kore_autoblock_shared, 0, size);
+  vectis_kore_autoblock_shared->lock_fd = -1;
   vectis_kore_autoblock_shared_size = size;
+#if defined(__linux__)
   ok = pthread_mutexattr_init(&attr) == 0;
   if (ok) {
     ok = pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED) == 0;
   }
-#if defined(__linux__)
   if (ok) {
     ok = pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST) == 0;
   }
-#else
-  ok = 0;
-#endif
   if (ok) {
     ok = pthread_mutex_init(&vectis_kore_autoblock_shared->mutex, &attr) == 0;
   }
@@ -437,12 +465,39 @@ static int vectis_kore_autoblock_map(unsigned int capacity) {
     vectis_kore_autoblock_unmap();
     return 0;
   }
+#else
+  lock_fd = vectis_kore_autoblock_open_lock_file();
+  if (lock_fd < 0) {
+    vectis_kore_autoblock_unmap();
+    return 0;
+  }
+  vectis_kore_autoblock_shared->lock_fd = lock_fd;
+#endif
   vectis_kore_autoblock_entries = vectis_kore_autoblock_shared->entries;
   vectis_kore_autoblock_capacity = capacity;
   return 1;
 }
 
+#if !defined(__linux__)
+static int vectis_kore_autoblock_file_lock(int fd, short type) {
+  struct flock lock;
+  int rc;
+
+  if (fd < 0) {
+    return 0;
+  }
+  memset(&lock, 0, sizeof(lock));
+  lock.l_type = type;
+  lock.l_whence = SEEK_SET;
+  do {
+    rc = fcntl(fd, F_SETLKW, &lock);
+  } while (rc != 0 && errno == EINTR);
+  return rc == 0;
+}
+#endif
+
 static int vectis_kore_autoblock_lock(void) {
+#if defined(__linux__)
   int rc;
 
   if (vectis_kore_autoblock_shared == NULL) {
@@ -452,7 +507,6 @@ static int vectis_kore_autoblock_lock(void) {
   if (rc == 0) {
     return 1;
   }
-#if defined(__linux__)
   if (rc == EOWNERDEAD) {
     memset(vectis_kore_autoblock_entries, 0,
            (size_t)vectis_kore_autoblock_capacity *
@@ -462,18 +516,36 @@ static int vectis_kore_autoblock_lock(void) {
     }
     (void)pthread_mutex_unlock(&vectis_kore_autoblock_shared->mutex);
   }
-#endif
   return 0;
+#else
+  if (vectis_kore_autoblock_shared == NULL ||
+      pthread_mutex_lock(&vectis_kore_autoblock_process_mutex) != 0) {
+    return 0;
+  }
+  if (!vectis_kore_autoblock_file_lock(vectis_kore_autoblock_shared->lock_fd,
+                                       F_WRLCK)) {
+    (void)pthread_mutex_unlock(&vectis_kore_autoblock_process_mutex);
+    return 0;
+  }
+  return 1;
+#endif
 }
 
 static void vectis_kore_autoblock_unlock(void) {
+#if defined(__linux__)
   if (vectis_kore_autoblock_shared != NULL) {
     (void)pthread_mutex_unlock(&vectis_kore_autoblock_shared->mutex);
   }
+#else
+  if (vectis_kore_autoblock_shared != NULL) {
+    (void)vectis_kore_autoblock_file_lock(vectis_kore_autoblock_shared->lock_fd,
+                                          F_UNLCK);
+    (void)pthread_mutex_unlock(&vectis_kore_autoblock_process_mutex);
+  }
+#endif
 }
 
 int vectis_internal_kore_autoblock_mutex_recovers_worker_death(void) {
-#if defined(__linux__)
   pid_t child;
   int child_status;
   int recovered;
@@ -503,9 +575,6 @@ int vectis_internal_kore_autoblock_mutex_recovers_worker_death(void) {
   }
   vectis_kore_autoblock_unmap();
   return recovered;
-#else
-  return 1;
-#endif
 }
 
 static void
@@ -3131,16 +3200,16 @@ static int vectis_kore_redirect_authority_allowed(const char *authority) {
   if (vectis_kore_current.tls_mode == VECTIS_TLS_MODE_ACME) {
     for (i = 0u; i < vectis_kore_current.domain_count; ++i) {
       domain = vectis_kore_current.domains[i];
-      if (domain != NULL && domain[0] != '\0' && strcmp(domain, "*") != 0 &&
-          strcasecmp(authority, domain) == 0) {
+      if (domain != NULL && domain[0] != '\0' &&
+          (strcmp(domain, "*") == 0 || strcasecmp(authority, domain) == 0)) {
         return 1;
       }
     }
     return 0;
   }
   domain = vectis_kore_current.domain;
-  return domain != NULL && domain[0] != '\0' && strcmp(domain, "*") != 0 &&
-         strcasecmp(authority, domain) == 0;
+  return domain != NULL && domain[0] != '\0' &&
+         (strcmp(domain, "*") == 0 || strcasecmp(authority, domain) == 0);
 }
 
 int vectis_kore_http_redirect_route(struct http_request *req) {

@@ -85,7 +85,8 @@ static void format_clear_url(char *out, size_t out_size, const char *host,
   assert(written > 0 && (size_t)written < out_size);
 }
 
-static void assert_http_redirect(unsigned short port, unsigned short tls_port) {
+static void assert_http_redirect(unsigned short port, unsigned short tls_port,
+                                 const char *host) {
   struct sockaddr_in address;
   char location[256];
   char request[256];
@@ -101,8 +102,8 @@ static void assert_http_redirect(unsigned short port, unsigned short tls_port) {
   assert(inet_pton(AF_INET, "127.0.0.1", &address.sin_addr) == 1);
   written = snprintf(request, sizeof(request),
                      "GET /secure?from=http HTTP/1.1\r\n"
-                     "Host: localhost:%u\r\nConnection: close\r\n\r\n",
-                     (unsigned)port);
+                     "Host: %s:%u\r\nConnection: close\r\n\r\n",
+                     host, (unsigned)port);
   assert(written > 0 && (size_t)written < sizeof(request));
   for (attempt = 0; attempt < 100; ++attempt) {
     fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -121,7 +122,7 @@ static void assert_http_redirect(unsigned short port, unsigned short tls_port) {
   (void)close(fd);
   assert(strstr(response, " 308 ") != NULL);
   written = snprintf(location, sizeof(location),
-                     "location: https://localhost:%u/secure?from=http\r\n",
+                     "location: https://%s:%u/secure?from=http\r\n", host,
                      (unsigned)tls_port);
   assert(written > 0 && (size_t)written < sizeof(location));
   assert(strstr(response, location) != NULL);
@@ -373,7 +374,7 @@ int main(void) {
   assert(status == VECTIS_OK);
 
   assert_https_ok(localhost_url, root_cert_path, NULL);
-  assert_http_redirect(redirect_port, port);
+  assert_http_redirect(redirect_port, port, "localhost");
   assert_http_redirect_rejected(redirect_port);
   assert_https_ok(redirect_url, root_cert_path, NULL);
   assert(read_file(root_cert_path, &root_cert_pem, &root_cert_pem_size));
@@ -392,6 +393,27 @@ int main(void) {
   assert_https_fails(localhost_url, wrong_root_cert_path, NULL);
   assert_https_fails(loopback_url, root_cert_path, NULL);
 
+  status = vectis_stop(app, &error);
+  assert(status == VECTIS_OK);
+  app->close(app);
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_MANUAL;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = port;
+  config.tls.http_redirect_enabled = 1;
+  config.tls.http_redirect_port = redirect_port;
+  config.tls.certificate_path = server_cert_path;
+  config.tls.private_key_path = server_key_path;
+  config.tls.ca_bundle_path = intermediate_cert_path;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/secure", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  assert_http_redirect(redirect_port, port, "attacker.example");
   status = vectis_stop(app, &error);
   assert(status == VECTIS_OK);
   app->close(app);

@@ -533,7 +533,9 @@ typedef struct vectis_tls_config {
   /*
    * When enabled, Vectis also listens for cleartext HTTP and returns a 308
    * redirect to the HTTPS URL. The listener defaults to tls.bind and 8080;
-   * set http_redirect_bind and http_redirect_port to override either.
+   * set http_redirect_bind and http_redirect_port to override either. The
+   * Host must match tls.domain in manual mode or tls.domains in ACME mode;
+   * the manual default "*" intentionally accepts any valid Host.
    */
   int http_redirect_enabled;
   const char *http_redirect_bind;
