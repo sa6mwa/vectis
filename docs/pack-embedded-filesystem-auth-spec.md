@@ -627,8 +627,8 @@ as attachments on a lockd state object. The default is local `pouch://` state
 under XDG state; an explicit lockd endpoint can be selected with
 `acme_storage_endpoint`. Kore is hydrated from that object into a private
 runtime directory before startup, and commits the updated object before it
-activates an issued certificate. The deterministic e2e starts ACME mode against
-a local mock ACMEv2 provider, drives directory, nonce, account, order,
+activates an issued certificate. The deterministic e2e starts ACME mode against a
+local mock ACMEv2 provider, drives directory, nonce, account, order,
 authorization, tls-alpn-01 challenge, finalize, and certificate endpoints,
 signs Kore's generated CSR with a test CA, and reaches an HTTPS probe through
 the ACME-issued certificate without requiring live Let's Encrypt access.
