@@ -457,15 +457,15 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add the first `vectis_pack_write_macho` backend slice: `--work-dir <dir>` emits deterministic `vectis-pack-macho-sections.c` with `__VECTIS` payload sections from the shared pack payload and still fails before final output creation until compile/link support lands.
 - [x] Extend `vectis_pack_write_macho` to generate an installed-SDK CMake relink project, configure it through `vectis::pack_runner`, and run the CMake build step fail-closed without publishing `--output` until finalization/signing support lands.
 - [x] Split embedded payload startup into platform-specific locators so Linux keeps the ELF footer loader while Darwin startup reads `__VECTIS` Mach-O sections through the system section API before using the shared validation/run path.
-- [ ] On Darwin/Mach-O, embed Lua and certificate payloads through the generated object/section layout specified in `docs/darwin-mach-o-pack-spec.md` rather than relying on arbitrary appended EOF data.
+- [x] On Darwin/Mach-O, embed Lua and certificate payloads through the generated object/section layout specified in `docs/darwin-mach-o-pack-spec.md` rather than relying on arbitrary appended EOF data.
 - [x] Define one shared payload manifest format across ELF and Mach-O so runtime validation and Lua startup behavior stay platform-independent.
 - [x] Support optional embedding of the liblockdc client certificate bundle payload in the Linux pack format.
 - [x] Validate embedded lockd client bundle hashes before executing a packed Lua script.
 - [x] Wire embedded lockd client bundles into the statically registered lockdc Lua module through flexible bundle sources (`lc_source` memory/callback sources) without writing private runtime files.
 - [x] Validate payload bounds and hashes before executing embedded Lua.
 - [x] Preserve normal `vectis script.lua` execution when no embedded payload exists.
-- [ ] Add Darwin packing flags for automatic codesigning after the final Mach-O artifact is produced, including `--codesign <identity>`, `--ad-hoc-codesign`, `--hardened-runtime`, `--timestamp`, and `--entitlements <path>`.
-- [ ] Ensure Darwin packing never mutates the executable after codesigning.
+- [x] Add Darwin packing flags for automatic codesigning after the final Mach-O artifact is produced, including `--codesign <identity>`, `--ad-hoc-codesign`, `--hardened-runtime`, `--timestamp`, and `--entitlements <path>`.
+- [x] Ensure Darwin packing never mutates the executable after codesigning.
 - [x] Add verification commands/tests for packed Darwin binaries using `codesign --verify --strict --verbose=4` and, when available, `spctl --assess --type execute`.
 - [x] Document operational limits around signing, notarization, stripping, hardening tools, and platform-specific executable formats.
 - [x] Add first smoke test that packages and executes a Lua script artifact.

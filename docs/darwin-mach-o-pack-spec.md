@@ -127,10 +127,13 @@ in-place Mach-O editor and keeps code signing order deterministic.
 explicit `--work-dir <dir>`, the backend writes
 `vectis-pack-macho-sections.c` containing the `__VECTIS` section payloads from
 the shared `vectis_pack_payload`, generates an installed-SDK CMake relink
-project that links `vectis::pack_runner`, and runs CMake configure/build. It
-still fails before final output publication until finalization, signing, and
-runtime Mach-O section loading exist. Target mismatches in
-`pack-runner-link-inputs.json` fail before reaching the backend.
+project that links `vectis::pack_runner`, runs CMake configure/build, inspects
+the linked artifact with a Darwin-capable `otool -hv`, optionally signs and
+strictly verifies the linked binary, and publishes final bytes to `--output`.
+Target mismatches in `pack-runner-link-inputs.json` fail before reaching the
+backend. Real Darwin artifact verification still belongs to the Darwin smoke
+lane because local Linux gates use fake tools for deterministic ordering
+coverage.
 
 ## Signing Contract
 
@@ -159,7 +162,7 @@ The only valid signing order is:
 5. sign or ad-hoc sign the final bytes;
 6. run signature verification;
 7. optionally run Gatekeeper assessment;
-8. publish the output path.
+8. publish the output path by copying the already verified final bytes.
 
 No command may mutate the output after step 5 unless it repeats signing and
 verification before returning success.

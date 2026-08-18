@@ -1860,6 +1860,12 @@ assert_contains "$repo_root/src/vectis_cli.c" \
 assert_contains "$repo_root/src/vectis_cli.c" \
   '__pack_header'
 assert_contains "$repo_root/src/vectis_cli.c" \
+  'vectis_pack_verify_macho_artifact'
+assert_contains "$repo_root/src/vectis_cli.c" \
+  'Mach-O pack codesign verify'
+assert_contains "$repo_root/src/vectis_cli.c" \
+  'Mach-O pack artifact inspection'
+assert_contains "$repo_root/src/vectis_cli.c" \
   '\-\-pack-sdk-root'
 assert_contains "$repo_root/src/vectis_cli.c" \
   '\-\-work-dir'
@@ -1888,6 +1894,10 @@ assert_contains "$repo_root/tests/lua/pack.cmake" \
 assert_contains "$repo_root/tests/lua/pack.cmake" \
   'vectis::pack_runner'
 assert_contains "$repo_root/tests/lua/pack.cmake" \
+  'pack Darwin target with fake relink/sign tools'
+assert_contains "$repo_root/tests/lua/pack.cmake" \
+  'codesign:--verify --strict --verbose=4'
+assert_contains "$repo_root/tests/lua/pack.cmake" \
   'pack Darwin target with mismatched link inputs created an output artifact'
 assert_contains "$repo_root/tests/lua/pack.cmake" \
   'pack unknown target created an output artifact'
@@ -1901,6 +1911,8 @@ assert_contains "$repo_root/docs/pack-platform-operability.md" \
   '\-\-work-dir <dir>'
 assert_contains "$repo_root/docs/pack-platform-operability.md" \
   'installed-SDK CMake relink project'
+assert_contains "$repo_root/docs/pack-platform-operability.md" \
+  'Darwin-capable `otool -hv`'
 assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
   'Darwin startup uses the system Mach-O section API'
 assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
@@ -1919,6 +1931,10 @@ assert_contains "$repo_root/TODO.md" \
   '\[x\] Extend `vectis_pack_write_macho` to generate an installed-SDK CMake relink project'
 assert_contains "$repo_root/TODO.md" \
   '\[x\] Split embedded payload startup into platform-specific locators'
+assert_contains "$repo_root/TODO.md" \
+  '\[x\] Add Darwin packing flags for automatic codesigning'
+assert_contains "$repo_root/TODO.md" \
+  '\[x\] Ensure Darwin packing never mutates the executable after codesigning'
 assert_contains "$repo_root/TODO.md" \
   'docs/darwin-mach-o-pack-spec\.md'
 assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \

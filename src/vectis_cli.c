@@ -495,6 +495,14 @@ typedef struct vectis_pack_runner_inputs {
   char archive_path[4096];
 } vectis_pack_runner_inputs;
 
+typedef struct vectis_pack_macho_sign_config {
+  const char *codesign_identity;
+  const char *entitlements_path;
+  int ad_hoc_codesign;
+  int hardened_runtime;
+  int timestamp;
+} vectis_pack_macho_sign_config;
+
 static const lonejson_field vectis_pack_content_type_map_doc_item_fields[] = {
     LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_pack_content_type_map_doc_item,
                                     extension, "extension"),
@@ -3385,6 +3393,199 @@ static int vectis_pack_run_command(char *const argv[], const char *label) {
   return 1;
 }
 
+static int vectis_pack_copy_executable(const char *source_path,
+                                       const char *output_path) {
+  FILE *in;
+  FILE *out;
+  unsigned char buffer[65536];
+  size_t nread;
+
+  in = fopen(source_path, "rb");
+  if (in == NULL) {
+    fprintf(stderr, "vectis: failed to read linked Mach-O pack output: %s\n",
+            source_path);
+    return 1;
+  }
+  out = fopen(output_path, "wb");
+  if (out == NULL) {
+    fprintf(stderr, "vectis: failed to create packed output: %s\n",
+            output_path);
+    (void)fclose(in);
+    return 1;
+  }
+  while ((nread = fread(buffer, 1u, sizeof(buffer), in)) > 0u) {
+    if (vectis_write_all(out, buffer, nread) != 0) {
+      fprintf(stderr, "vectis: failed to write packed output: %s\n",
+              output_path);
+      (void)fclose(in);
+      (void)fclose(out);
+      return 1;
+    }
+  }
+  if (ferror(in)) {
+    fprintf(stderr, "vectis: failed to read linked Mach-O pack output: %s\n",
+            source_path);
+    (void)fclose(in);
+    (void)fclose(out);
+    return 1;
+  }
+  if (fclose(in) != 0 || fclose(out) != 0) {
+    fprintf(stderr, "vectis: failed to finalize packed output: %s\n",
+            output_path);
+    return 1;
+  }
+  if (chmod(output_path, 0755) != 0) {
+    fprintf(stderr, "vectis: failed to chmod packed output: %s\n", output_path);
+    return 1;
+  }
+  return 0;
+}
+
+static int vectis_pack_copy_command_arg(char *out, size_t out_size,
+                                        const char *value, const char *label) {
+  int written;
+
+  written = snprintf(out, out_size, "%s", value != NULL ? value : "");
+  if (written < 0 || (size_t)written >= out_size) {
+    fprintf(stderr, "vectis: %s is too long\n", label);
+    return 1;
+  }
+  return 0;
+}
+
+static int vectis_pack_darwin_tool(char *out, size_t out_size,
+                                   const char *env_name,
+                                   const char *default_name,
+                                   const char *prefixed_suffix) {
+  const char *override;
+  const char *osxcross_root;
+  const char *host;
+  char candidate[4096];
+  int written;
+
+  override = getenv(env_name);
+  if (override != NULL && override[0] != '\0') {
+    return vectis_pack_copy_command_arg(out, out_size, override, env_name);
+  }
+  osxcross_root = getenv("OSXCROSS_ROOT");
+  if (osxcross_root != NULL && osxcross_root[0] != '\0' &&
+      prefixed_suffix != NULL) {
+    host = getenv("VECTIS_OSXCROSS_HOST");
+    if (host == NULL || host[0] == '\0') {
+      host = getenv("CPKT_OSXCROSS_HOST");
+    }
+    if (host == NULL || host[0] == '\0') {
+      host = "arm64-apple-darwin25";
+    }
+    written = snprintf(candidate, sizeof(candidate), "%s/bin/%s-%s",
+                       osxcross_root, host, prefixed_suffix);
+    if (written < 0 || (size_t)written >= sizeof(candidate)) {
+      fputs("vectis: Darwin tool path is too long\n", stderr);
+      return 1;
+    }
+    if (vectis_pack_regular_file_exists(candidate)) {
+      return vectis_pack_copy_command_arg(out, out_size, candidate,
+                                          prefixed_suffix);
+    }
+  }
+  return vectis_pack_copy_command_arg(out, out_size, default_name,
+                                      default_name);
+}
+
+static int vectis_pack_verify_macho_artifact(const char *binary_path) {
+  char otool[4096];
+  char binary_arg[4096];
+  char header_arg[] = "-hv";
+  char *argv[4];
+
+  if (vectis_pack_darwin_tool(otool, sizeof(otool), "VECTIS_OTOOL", "otool",
+                              "otool") != 0 ||
+      vectis_pack_copy_command_arg(binary_arg, sizeof(binary_arg), binary_path,
+                                   "Mach-O binary path") != 0) {
+    return 1;
+  }
+  argv[0] = otool;
+  argv[1] = header_arg;
+  argv[2] = binary_arg;
+  argv[3] = NULL;
+  return vectis_pack_run_command(argv, "Mach-O pack artifact inspection");
+}
+
+static int vectis_pack_sign_macho_artifact(
+    const char *binary_path, const vectis_pack_macho_sign_config *sign_config) {
+  char codesign[4096];
+  char identity[4096];
+  char entitlements[4096];
+  char binary_arg[4096];
+  char force_arg[] = "--force";
+  char sign_arg[] = "--sign";
+  char adhoc_identity[] = "-";
+  char options_arg[] = "--options";
+  char runtime_arg[] = "runtime";
+  char timestamp_arg[] = "--timestamp";
+  char entitlements_arg[] = "--entitlements";
+  char verify_arg[] = "--verify";
+  char strict_arg[] = "--strict";
+  char verbose_arg[] = "--verbose=4";
+  char *sign_argv[12];
+  char *verify_argv[6];
+  size_t argc;
+
+  if (sign_config == NULL || (sign_config->codesign_identity == NULL &&
+                              !sign_config->ad_hoc_codesign)) {
+    return 0;
+  }
+  if (vectis_pack_darwin_tool(codesign, sizeof(codesign), "VECTIS_CODESIGN",
+                              "codesign", NULL) != 0 ||
+      vectis_pack_copy_command_arg(binary_arg, sizeof(binary_arg), binary_path,
+                                   "Mach-O binary path") != 0) {
+    return 1;
+  }
+  if (sign_config->ad_hoc_codesign) {
+    if (vectis_pack_copy_command_arg(identity, sizeof(identity), adhoc_identity,
+                                     "codesign identity") != 0) {
+      return 1;
+    }
+  } else if (vectis_pack_copy_command_arg(identity, sizeof(identity),
+                                          sign_config->codesign_identity,
+                                          "codesign identity") != 0) {
+    return 1;
+  }
+  argc = 0u;
+  sign_argv[argc++] = codesign;
+  sign_argv[argc++] = force_arg;
+  sign_argv[argc++] = sign_arg;
+  sign_argv[argc++] = identity;
+  if (sign_config->hardened_runtime) {
+    sign_argv[argc++] = options_arg;
+    sign_argv[argc++] = runtime_arg;
+  }
+  if (sign_config->timestamp) {
+    sign_argv[argc++] = timestamp_arg;
+  }
+  if (sign_config->entitlements_path != NULL) {
+    if (vectis_pack_copy_command_arg(entitlements, sizeof(entitlements),
+                                     sign_config->entitlements_path,
+                                     "entitlements path") != 0) {
+      return 1;
+    }
+    sign_argv[argc++] = entitlements_arg;
+    sign_argv[argc++] = entitlements;
+  }
+  sign_argv[argc++] = binary_arg;
+  sign_argv[argc] = NULL;
+  if (vectis_pack_run_command(sign_argv, "Mach-O pack codesign") != 0) {
+    return 1;
+  }
+  verify_argv[0] = codesign;
+  verify_argv[1] = verify_arg;
+  verify_argv[2] = strict_arg;
+  verify_argv[3] = verbose_arg;
+  verify_argv[4] = binary_arg;
+  verify_argv[5] = NULL;
+  return vectis_pack_run_command(verify_argv, "Mach-O pack codesign verify");
+}
+
 static int vectis_pack_fputs_cmake_quoted(FILE *out, const char *value) {
   const unsigned char *p;
 
@@ -3559,16 +3760,18 @@ static int vectis_pack_write_macho_toolchain(const char *toolchain_path,
   return 0;
 }
 
-static int vectis_pack_write_macho(const char *output_path,
-                                   const char *work_dir,
-                                   const char *pack_toolchain_file,
-                                   const vectis_pack_payload *payload,
-                                   const vectis_pack_asset_list *assets,
-                                   const vectis_pack_runner_inputs *inputs) {
+static int
+vectis_pack_write_macho(const char *output_path, const char *work_dir,
+                        const char *pack_toolchain_file,
+                        const vectis_pack_macho_sign_config *sign_config,
+                        const vectis_pack_payload *payload,
+                        const vectis_pack_asset_list *assets,
+                        const vectis_pack_runner_inputs *inputs) {
   char source_path[4096];
   char project_dir[4096];
   char build_dir[4096];
   char binary_dir[4096];
+  char linked_binary_path[4096];
   char cmake_path[4096];
   char generated_toolchain_path[4096];
   char vectis_dir[4096];
@@ -3610,6 +3813,8 @@ static int vectis_pack_write_macho(const char *output_path,
                                 "macho-relink-build") != 0 ||
       vectis_pack_join_relative(binary_dir, sizeof(binary_dir), work_dir,
                                 "macho-relink-bin") != 0 ||
+      vectis_pack_join_relative(linked_binary_path, sizeof(linked_binary_path),
+                                binary_dir, "vectis-packed") != 0 ||
       vectis_pack_join_relative(cmake_path, sizeof(cmake_path), project_dir,
                                 "CMakeLists.txt") != 0 ||
       vectis_pack_join_relative(generated_toolchain_path,
@@ -3689,11 +3894,17 @@ static int vectis_pack_write_macho(const char *output_path,
   if (vectis_pack_run_command(build_argv, "Mach-O pack CMake build") != 0) {
     return 1;
   }
-  fprintf(stderr,
-          "vectis: Darwin/Mach-O final publish/sign backend is not "
-          "implemented after linking unsigned runner in: %s\n",
-          binary_dir);
-  return 64;
+  if (!vectis_pack_regular_file_exists(linked_binary_path)) {
+    fprintf(stderr, "vectis: Mach-O pack relink did not produce: %s\n",
+            linked_binary_path);
+    return 1;
+  }
+  if (vectis_pack_verify_macho_artifact(linked_binary_path) != 0 ||
+      vectis_pack_sign_macho_artifact(linked_binary_path, sign_config) != 0 ||
+      vectis_pack_copy_executable(linked_binary_path, output_path) != 0) {
+    return 1;
+  }
+  return 0;
 }
 
 static int vectis_self_path(const char *argv0, char *path, size_t path_size) {
@@ -4119,6 +4330,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   }
   if (darwin_target) {
     vectis_pack_runner_inputs runner_inputs;
+    vectis_pack_macho_sign_config sign_config;
     const char *effective_target_id;
 
     effective_target_id = vectis_pack_effective_target_id(target_id);
@@ -4142,9 +4354,14 @@ static int vectis_pack_command(int argc, char **argv, int index) {
         vectis_pack_command_cleanup(&assets, &content_types);
         return 1;
       }
-      result =
-          vectis_pack_write_macho(output_path, work_dir, pack_toolchain_file,
-                                  &payload, &assets, &runner_inputs);
+      sign_config.codesign_identity = codesign_identity;
+      sign_config.entitlements_path = entitlements_path;
+      sign_config.ad_hoc_codesign = ad_hoc_codesign;
+      sign_config.hardened_runtime = hardened_runtime;
+      sign_config.timestamp = timestamp;
+      result = vectis_pack_write_macho(output_path, work_dir,
+                                       pack_toolchain_file, &sign_config,
+                                       &payload, &assets, &runner_inputs);
       vectis_pack_payload_cleanup(&payload);
       vectis_pack_command_cleanup(&assets, &content_types);
       return result;

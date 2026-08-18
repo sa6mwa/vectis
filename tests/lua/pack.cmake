@@ -46,13 +46,21 @@ set(asset_codesign_unsupported_output "${WORK_DIR}/vectis-pack-codesign-unsuppor
 set(asset_darwin_target_output "${WORK_DIR}/vectis-pack-darwin-target")
 set(asset_darwin_sdk_output "${WORK_DIR}/vectis-pack-darwin-sdk")
 set(asset_darwin_sdk_work_output "${WORK_DIR}/vectis-pack-darwin-sdk-work")
+set(asset_darwin_final_output "${WORK_DIR}/vectis-pack-darwin-final")
 set(asset_darwin_sdk_mismatch_output "${WORK_DIR}/vectis-pack-darwin-sdk-mismatch")
 set(asset_unknown_target_output "${WORK_DIR}/vectis-pack-unknown-target")
 set(pack_darwin_sdk_root "${WORK_DIR}/darwin-pack-sdk")
 set(pack_darwin_work_dir "${WORK_DIR}/darwin-pack-work")
+set(pack_darwin_final_work_dir "${WORK_DIR}/darwin-pack-final-work")
 set(pack_darwin_sdk_mismatch_root "${WORK_DIR}/darwin-pack-sdk-mismatch")
 set(pack_darwin_asset "${WORK_DIR}/darwin-pack-asset.txt")
 set(pack_darwin_toolchain "${WORK_DIR}/darwin-pack-toolchain.cmake")
+set(pack_darwin_fake_tools "${WORK_DIR}/darwin-pack-fake-tools")
+set(pack_darwin_fake_cmake "${pack_darwin_fake_tools}/cmake")
+set(pack_darwin_fake_otool "${pack_darwin_fake_tools}/otool")
+set(pack_darwin_fake_codesign "${pack_darwin_fake_tools}/codesign")
+set(pack_darwin_fake_log "${WORK_DIR}/darwin-pack-final.log")
+set(pack_darwin_fake_binary "${pack_darwin_final_work_dir}/macho-relink-bin/vectis-packed")
 set(pack_entitlements "${WORK_DIR}/pack-entitlements.plist")
 set(missing_pack_entitlements "${WORK_DIR}/missing-pack-entitlements.plist")
 set(no_asset_extract_dir "${WORK_DIR}/no-assets-extract")
@@ -261,6 +269,53 @@ foreach(required_cmake_fragment IN ITEMS
     message(FATAL_ERROR "Mach-O relink CMake project is missing ${required_cmake_fragment}")
   endif()
 endforeach()
+
+file(MAKE_DIRECTORY "${pack_darwin_final_work_dir}" "${pack_darwin_fake_tools}")
+file(WRITE "${pack_darwin_fake_cmake}" "#!/bin/sh\nprintf 'cmake:%s\\n' \"$*\" >> \"$VECTIS_FAKE_PACK_LOG\"\nif [ \"x$1\" = \"x--build\" ]; then\n  printf '#!/bin/sh\\necho fake-darwin-packed\\n' > \"$VECTIS_FAKE_PACKED_BINARY\"\n  chmod +x \"$VECTIS_FAKE_PACKED_BINARY\"\nfi\nexit 0\n")
+file(WRITE "${pack_darwin_fake_otool}" "#!/bin/sh\nprintf 'otool:%s\\n' \"$*\" >> \"$VECTIS_FAKE_PACK_LOG\"\nexit 0\n")
+file(WRITE "${pack_darwin_fake_codesign}" "#!/bin/sh\nprintf 'codesign:%s\\n' \"$*\" >> \"$VECTIS_FAKE_PACK_LOG\"\nexit 0\n")
+file(CHMOD "${pack_darwin_fake_cmake}" "${pack_darwin_fake_otool}" "${pack_darwin_fake_codesign}"
+     FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+file(REMOVE "${asset_darwin_final_output}" "${pack_darwin_fake_log}" "${pack_darwin_fake_binary}")
+execute_process(COMMAND "${CMAKE_COMMAND}" -E env "PATH=${pack_darwin_fake_tools}:$ENV{PATH}" "VECTIS_OTOOL=${pack_darwin_fake_otool}" "VECTIS_CODESIGN=${pack_darwin_fake_codesign}" "VECTIS_FAKE_PACK_LOG=${pack_darwin_fake_log}" "VECTIS_FAKE_PACKED_BINARY=${pack_darwin_fake_binary}" "${VECTIS_BIN}" -a pack --target arm64-apple-darwin --pack-sdk-root "${pack_darwin_sdk_root}" --work-dir "${pack_darwin_final_work_dir}" --pack-toolchain-file "${pack_darwin_toolchain}" --script "${script}" --asset "${pack_darwin_asset}=/darwin-section-asset.txt" --output "${asset_darwin_final_output}" --ad-hoc-codesign --hardened-runtime --timestamp --entitlements "${pack_entitlements}"
+                RESULT_VARIABLE darwin_final_result
+                OUTPUT_VARIABLE darwin_final_stdout
+                ERROR_VARIABLE darwin_final_stderr)
+if(NOT darwin_final_result EQUAL 0)
+  message(FATAL_ERROR "pack Darwin target with fake relink/sign tools failed: ${darwin_final_stdout}${darwin_final_stderr}")
+endif()
+if(NOT EXISTS "${asset_darwin_final_output}")
+  message(FATAL_ERROR "pack Darwin target with fake relink/sign tools did not publish output")
+endif()
+file(READ "${asset_darwin_final_output}" darwin_final_output_body)
+if(NOT darwin_final_output_body MATCHES "fake-darwin-packed")
+  message(FATAL_ERROR "pack Darwin target published unexpected fake relink output")
+endif()
+file(READ "${pack_darwin_fake_log}" darwin_final_log)
+foreach(required_final_fragment IN ITEMS
+    "cmake:-S"
+    "cmake:--build"
+    "otool:-hv"
+    "codesign:--force --sign - --options runtime --timestamp --entitlements"
+    "codesign:--verify --strict --verbose=4")
+  if(NOT darwin_final_log MATCHES "${required_final_fragment}")
+    message(FATAL_ERROR "Darwin fake relink/sign log missing ${required_final_fragment}: ${darwin_final_log}")
+  endif()
+endforeach()
+string(FIND "${darwin_final_log}" "cmake:-S" darwin_final_config_index)
+string(FIND "${darwin_final_log}" "cmake:--build" darwin_final_build_index)
+string(FIND "${darwin_final_log}" "otool:-hv" darwin_final_otool_index)
+string(FIND "${darwin_final_log}" "codesign:--force --sign -" darwin_final_sign_index)
+string(FIND "${darwin_final_log}" "codesign:--verify --strict --verbose=4" darwin_final_verify_index)
+if(darwin_final_config_index LESS 0 OR darwin_final_build_index LESS 0 OR
+   darwin_final_otool_index LESS 0 OR darwin_final_sign_index LESS 0 OR
+   darwin_final_verify_index LESS 0 OR
+   NOT darwin_final_config_index LESS darwin_final_build_index OR
+   NOT darwin_final_build_index LESS darwin_final_otool_index OR
+   NOT darwin_final_otool_index LESS darwin_final_sign_index OR
+   NOT darwin_final_sign_index LESS darwin_final_verify_index)
+  message(FATAL_ERROR "Darwin fake relink/sign order is invalid: ${darwin_final_log}")
+endif()
 
 file(MAKE_DIRECTORY "${pack_darwin_sdk_mismatch_root}/share/vectis" "${pack_darwin_sdk_mismatch_root}/lib/vectis/pack")
 file(WRITE "${pack_darwin_sdk_mismatch_root}/share/vectis/pack-runner-link-inputs.json" [=[
