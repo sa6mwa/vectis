@@ -31,6 +31,7 @@
 #include <strings.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #include <vectis/auth.h>
@@ -471,6 +472,7 @@ typedef struct vectis_pack_payload {
 } vectis_pack_payload;
 
 typedef struct vectis_pack_runner_inputs {
+  char sdk_root[4096];
   char manifest_path[4096];
   char archive_path[4096];
 } vectis_pack_runner_inputs;
@@ -665,8 +667,9 @@ static void vectis_cli_usage(FILE *stream) {
   fputs("usage: vectis [--version] [--help] [-x] script.lua [args...]\n"
         "       -x traces Lua line execution to stderr\n"
         "       vectis -a|--action pack [--target target-id] "
-        "[--pack-sdk-root root] [--work-dir dir] --script script.lua "
-        "--output output [--lockd-bundle bundle.pem] "
+        "[--pack-sdk-root root] [--work-dir dir] "
+        "[--pack-toolchain-file file] --script script.lua --output output "
+        "[--lockd-bundle bundle.pem] "
         "[--asset source=/path] "
         "[--asset-dir /mount:dir] [--asset-manifest assets.json] "
         "[--content-type-map types.json] [--extract-mode mode] "
@@ -3079,6 +3082,7 @@ static int vectis_pack_target_is_darwin(const char *target, int *out) {
 
 static int vectis_pack_join_relative(char *out, size_t out_size,
                                      const char *root, const char *relative);
+static int vectis_pack_regular_file_exists(const char *path);
 
 static const char *vectis_pack_effective_target_id(const char *target) {
   if (target != NULL && strcmp(target, "host") != 0 &&
@@ -3310,16 +3314,263 @@ vectis_pack_write_macho_section_source(const char *source_path,
   return 0;
 }
 
+static int vectis_pack_mkdir_if_missing(const char *path) {
+  struct stat st;
+
+  if (stat(path, &st) == 0) {
+    return S_ISDIR(st.st_mode) ? 0 : -1;
+  }
+  if (errno != ENOENT) {
+    return -1;
+  }
+  return mkdir(path, 0775) == 0 ? 0 : -1;
+}
+
+static int vectis_pack_run_command(char *const argv[], const char *label) {
+  pid_t pid;
+  int status;
+
+  pid = fork();
+  if (pid < 0) {
+    fprintf(stderr, "vectis: failed to start %s: %s\n", label, strerror(errno));
+    return 1;
+  }
+  if (pid == 0) {
+    execvp(argv[0], argv);
+    fprintf(stderr, "vectis: failed to exec %s: %s\n", argv[0],
+            strerror(errno));
+    _exit(127);
+  }
+  do {
+    if (waitpid(pid, &status, 0) < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      fprintf(stderr, "vectis: failed while waiting for %s: %s\n", label,
+              strerror(errno));
+      return 1;
+    }
+    break;
+  } while (1);
+  if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+    return 0;
+  }
+  if (WIFEXITED(status)) {
+    fprintf(stderr, "vectis: %s failed with exit status %d\n", label,
+            WEXITSTATUS(status));
+  } else if (WIFSIGNALED(status)) {
+    fprintf(stderr, "vectis: %s terminated by signal %d\n", label,
+            WTERMSIG(status));
+  } else {
+    fprintf(stderr, "vectis: %s failed\n", label);
+  }
+  return 1;
+}
+
+static int vectis_pack_fputs_cmake_quoted(FILE *out, const char *value) {
+  const unsigned char *p;
+
+  if (fputc('"', out) == EOF) {
+    return -1;
+  }
+  for (p = (const unsigned char *)value; p != NULL && *p != '\0'; ++p) {
+    if (*p == '"' || *p == '\\') {
+      if (fputc('\\', out) == EOF) {
+        return -1;
+      }
+    }
+    if (fputc((int)*p, out) == EOF) {
+      return -1;
+    }
+  }
+  return fputc('"', out) == EOF ? -1 : 0;
+}
+
+static int
+vectis_pack_write_macho_cmake_project(const char *cmake_path,
+                                      const char *section_source,
+                                      const char *runtime_output_dir) {
+  FILE *out;
+
+  out = fopen(cmake_path, "wb");
+  if (out == NULL) {
+    fprintf(stderr, "vectis: failed to create Mach-O pack CMake project: %s\n",
+            cmake_path);
+    return 1;
+  }
+  if (fputs("cmake_minimum_required(VERSION 3.21)\n"
+            "project(vectis_pack_relink C)\n"
+            "find_package(vectis CONFIG REQUIRED)\n"
+            "if(NOT TARGET vectis::pack_runner)\n"
+            "  message(FATAL_ERROR \"vectis::pack_runner is unavailable\")\n"
+            "endif()\n"
+            "add_executable(vectis_pack_relinked ",
+            out) == EOF ||
+      vectis_pack_fputs_cmake_quoted(out, section_source) != 0 ||
+      fputs(")\n"
+            "target_link_libraries(vectis_pack_relinked PRIVATE "
+            "vectis::pack_runner)\n"
+            "set_target_properties(vectis_pack_relinked PROPERTIES\n"
+            "  OUTPUT_NAME \"vectis-packed\"\n"
+            "  RUNTIME_OUTPUT_DIRECTORY ",
+            out) == EOF ||
+      vectis_pack_fputs_cmake_quoted(out, runtime_output_dir) != 0 ||
+      fputs("\n)\n", out) == EOF || fclose(out) != 0) {
+    fprintf(stderr, "vectis: failed to write Mach-O pack CMake project: %s\n",
+            cmake_path);
+    return 1;
+  }
+  return 0;
+}
+
+static int vectis_pack_write_macho_toolchain(const char *toolchain_path,
+                                             const char *target_id) {
+  const char *osxcross_root;
+  const char *home;
+  const char *host;
+  char default_root[4096];
+  char bin_dir[4096];
+  char cc[4096];
+  char cxx[4096];
+  char ar[4096];
+  char ranlib[4096];
+  char linker[4096];
+  FILE *out;
+  int written;
+
+  (void)target_id;
+  osxcross_root = getenv("OSXCROSS_ROOT");
+  if (osxcross_root == NULL || osxcross_root[0] == '\0') {
+    home = getenv("HOME");
+    written = snprintf(default_root, sizeof(default_root),
+                       "%s/.local/cross/osxcross", home != NULL ? home : "");
+    if (home == NULL || home[0] == '\0' || written < 0 ||
+        (size_t)written >= sizeof(default_root)) {
+      fputs("vectis: OSXCROSS_ROOT is required for Darwin/Mach-O relink\n",
+            stderr);
+      return 1;
+    }
+    osxcross_root = default_root;
+  }
+  host = getenv("VECTIS_OSXCROSS_HOST");
+  if (host == NULL || host[0] == '\0') {
+    host = getenv("CPKT_OSXCROSS_HOST");
+  }
+  if (host == NULL || host[0] == '\0') {
+    host = "arm64-apple-darwin25";
+  }
+  written = snprintf(bin_dir, sizeof(bin_dir), "%s/bin", osxcross_root);
+  if (written < 0 || (size_t)written >= sizeof(bin_dir)) {
+    fputs("vectis: Darwin/Mach-O tool path is too long\n", stderr);
+    return 1;
+  }
+  written = snprintf(cc, sizeof(cc), "%s/%s-clang", bin_dir, host);
+  if (written < 0 || (size_t)written >= sizeof(cc)) {
+    fputs("vectis: Darwin/Mach-O tool path is too long\n", stderr);
+    return 1;
+  }
+  written = snprintf(cxx, sizeof(cxx), "%s/%s-clang++", bin_dir, host);
+  if (written < 0 || (size_t)written >= sizeof(cxx)) {
+    fputs("vectis: Darwin/Mach-O tool path is too long\n", stderr);
+    return 1;
+  }
+  written = snprintf(ar, sizeof(ar), "%s/%s-ar", bin_dir, host);
+  if (written < 0 || (size_t)written >= sizeof(ar)) {
+    fputs("vectis: Darwin/Mach-O tool path is too long\n", stderr);
+    return 1;
+  }
+  written = snprintf(ranlib, sizeof(ranlib), "%s/%s-ranlib", bin_dir, host);
+  if (written < 0 || (size_t)written >= sizeof(ranlib)) {
+    fputs("vectis: Darwin/Mach-O tool path is too long\n", stderr);
+    return 1;
+  }
+  written = snprintf(linker, sizeof(linker), "%s/%s-ld", bin_dir, host);
+  if (written < 0 || (size_t)written >= sizeof(linker)) {
+    fputs("vectis: Darwin/Mach-O tool path is too long\n", stderr);
+    return 1;
+  }
+  if (!vectis_pack_regular_file_exists(cc) ||
+      !vectis_pack_regular_file_exists(cxx) ||
+      !vectis_pack_regular_file_exists(ar) ||
+      !vectis_pack_regular_file_exists(ranlib) ||
+      !vectis_pack_regular_file_exists(linker)) {
+    fprintf(stderr,
+            "vectis: Darwin/Mach-O relink requires a complete osxcross "
+            "toolchain under %s/bin\n",
+            osxcross_root);
+    return 1;
+  }
+  out = fopen(toolchain_path, "wb");
+  if (out == NULL) {
+    fprintf(stderr, "vectis: failed to create Mach-O pack toolchain file: %s\n",
+            toolchain_path);
+    return 1;
+  }
+  if (fputs("set(CMAKE_SYSTEM_NAME Darwin)\n"
+            "set(CMAKE_SYSTEM_PROCESSOR arm64)\n"
+            "set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)\n"
+            "set(CMAKE_C_COMPILER ",
+            out) == EOF ||
+      vectis_pack_fputs_cmake_quoted(out, cc) != 0 ||
+      fputs(" CACHE FILEPATH \"\" FORCE)\n"
+            "set(CMAKE_CXX_COMPILER ",
+            out) == EOF ||
+      vectis_pack_fputs_cmake_quoted(out, cxx) != 0 ||
+      fputs(" CACHE FILEPATH \"\" FORCE)\n"
+            "set(CMAKE_AR ",
+            out) == EOF ||
+      vectis_pack_fputs_cmake_quoted(out, ar) != 0 ||
+      fputs(" CACHE FILEPATH \"\" FORCE)\n"
+            "set(CMAKE_RANLIB ",
+            out) == EOF ||
+      vectis_pack_fputs_cmake_quoted(out, ranlib) != 0 ||
+      fputs(" CACHE FILEPATH \"\" FORCE)\n"
+            "set(CMAKE_LINKER ",
+            out) == EOF ||
+      vectis_pack_fputs_cmake_quoted(out, linker) != 0 ||
+      fputs(" CACHE FILEPATH \"\" FORCE)\n"
+            "set(CMAKE_EXE_LINKER_FLAGS "
+            "\"--ld-path=${CMAKE_LINKER} ${CMAKE_EXE_LINKER_FLAGS}\" "
+            "CACHE STRING \"\" FORCE)\n",
+            out) == EOF ||
+      fclose(out) != 0) {
+    fprintf(stderr, "vectis: failed to write Mach-O pack toolchain file: %s\n",
+            toolchain_path);
+    return 1;
+  }
+  return 0;
+}
+
 static int vectis_pack_write_macho(const char *output_path,
                                    const char *work_dir,
+                                   const char *pack_toolchain_file,
                                    const vectis_pack_payload *payload,
                                    const vectis_pack_asset_list *assets,
                                    const vectis_pack_runner_inputs *inputs) {
   char source_path[4096];
+  char project_dir[4096];
+  char build_dir[4096];
+  char binary_dir[4096];
+  char cmake_path[4096];
+  char generated_toolchain_path[4096];
+  char vectis_dir[4096];
+  char cmake_toolchain_arg[4096];
+  char cmake_prefix_arg[4096];
+  char vectis_dir_arg[4096];
+  char cmake_cmd[] = "cmake";
+  char cmake_source_arg[] = "-S";
+  char cmake_build_dir_arg[] = "-B";
+  char cmake_build_arg[] = "--build";
+  char cmake_target_arg[] = "--target";
+  char relink_target[] = "vectis_pack_relinked";
+  char build_type_arg[] = "-DCMAKE_BUILD_TYPE=Release";
+  char *configure_argv[10];
+  char *build_argv[6];
+  const char *toolchain_path;
   struct stat st;
+  int written;
 
   (void)output_path;
-  (void)inputs;
   if (work_dir == NULL || work_dir[0] == '\0') {
     fputs("vectis: Darwin/Mach-O pack requires --work-dir until the relink "
           "backend can own temporary intermediates\n",
@@ -3335,14 +3586,95 @@ static int vectis_pack_write_macho(const char *output_path,
     fprintf(stderr, "vectis: pack work dir path is too long: %s\n", work_dir);
     return 64;
   }
+  if (vectis_pack_join_relative(project_dir, sizeof(project_dir), work_dir,
+                                "macho-relink-src") != 0 ||
+      vectis_pack_join_relative(build_dir, sizeof(build_dir), work_dir,
+                                "macho-relink-build") != 0 ||
+      vectis_pack_join_relative(binary_dir, sizeof(binary_dir), work_dir,
+                                "macho-relink-bin") != 0 ||
+      vectis_pack_join_relative(cmake_path, sizeof(cmake_path), project_dir,
+                                "CMakeLists.txt") != 0 ||
+      vectis_pack_join_relative(generated_toolchain_path,
+                                sizeof(generated_toolchain_path), work_dir,
+                                "vectis-pack-macho-toolchain.cmake") != 0 ||
+      vectis_pack_join_relative(vectis_dir, sizeof(vectis_dir),
+                                inputs->sdk_root, "lib/cmake/vectis") != 0) {
+    fprintf(stderr, "vectis: pack work dir or SDK path is too long\n");
+    return 64;
+  }
+  if (vectis_pack_mkdir_if_missing(project_dir) != 0 ||
+      vectis_pack_mkdir_if_missing(build_dir) != 0 ||
+      vectis_pack_mkdir_if_missing(binary_dir) != 0) {
+    fprintf(stderr, "vectis: failed to create Mach-O pack work directories\n");
+    return 1;
+  }
   if (vectis_pack_write_macho_section_source(source_path, payload, assets) !=
       0) {
     return 1;
   }
+  if (pack_toolchain_file != NULL) {
+    if (!vectis_pack_regular_file_exists(pack_toolchain_file)) {
+      fprintf(stderr, "vectis: pack toolchain file is not readable: %s\n",
+              pack_toolchain_file);
+      return 64;
+    }
+    toolchain_path = pack_toolchain_file;
+  } else {
+    if (vectis_pack_write_macho_toolchain(generated_toolchain_path,
+                                          "arm64-apple-darwin") != 0) {
+      return 1;
+    }
+    toolchain_path = generated_toolchain_path;
+  }
+  if (vectis_pack_write_macho_cmake_project(cmake_path, source_path,
+                                            binary_dir) != 0) {
+    return 1;
+  }
+  written = snprintf(cmake_toolchain_arg, sizeof(cmake_toolchain_arg),
+                     "-DCMAKE_TOOLCHAIN_FILE=%s", toolchain_path);
+  if (written < 0 || (size_t)written >= sizeof(cmake_toolchain_arg)) {
+    fputs("vectis: pack toolchain file path is too long\n", stderr);
+    return 64;
+  }
+  written = snprintf(cmake_prefix_arg, sizeof(cmake_prefix_arg),
+                     "-DCMAKE_PREFIX_PATH=%s", inputs->sdk_root);
+  if (written < 0 || (size_t)written >= sizeof(cmake_prefix_arg)) {
+    fputs("vectis: pack SDK root path is too long\n", stderr);
+    return 64;
+  }
+  written = snprintf(vectis_dir_arg, sizeof(vectis_dir_arg), "-Dvectis_DIR=%s",
+                     vectis_dir);
+  if (written < 0 || (size_t)written >= sizeof(vectis_dir_arg)) {
+    fputs("vectis: pack SDK CMake path is too long\n", stderr);
+    return 64;
+  }
+  configure_argv[0] = cmake_cmd;
+  configure_argv[1] = cmake_source_arg;
+  configure_argv[2] = project_dir;
+  configure_argv[3] = cmake_build_dir_arg;
+  configure_argv[4] = build_dir;
+  configure_argv[5] = cmake_toolchain_arg;
+  configure_argv[6] = cmake_prefix_arg;
+  configure_argv[7] = vectis_dir_arg;
+  configure_argv[8] = build_type_arg;
+  configure_argv[9] = NULL;
+  if (vectis_pack_run_command(configure_argv, "Mach-O pack CMake configure") !=
+      0) {
+    return 1;
+  }
+  build_argv[0] = cmake_cmd;
+  build_argv[1] = cmake_build_arg;
+  build_argv[2] = build_dir;
+  build_argv[3] = cmake_target_arg;
+  build_argv[4] = relink_target;
+  build_argv[5] = NULL;
+  if (vectis_pack_run_command(build_argv, "Mach-O pack CMake build") != 0) {
+    return 1;
+  }
   fprintf(stderr,
-          "vectis: Darwin/Mach-O compile/link backend is not implemented "
-          "after writing section source: %s\n",
-          source_path);
+          "vectis: Darwin/Mach-O final publish/sign backend is not "
+          "implemented after linking unsigned runner in: %s\n",
+          binary_dir);
   return 64;
 }
 
@@ -3499,6 +3831,7 @@ vectis_pack_validate_runner_inputs_root(const char *root, const char *target_id,
     }
     return 0;
   }
+  memcpy(inputs->sdk_root, root, strlen(root) + 1u);
   memcpy(inputs->manifest_path, manifest_path, strlen(manifest_path) + 1u);
   memcpy(inputs->archive_path, archive_path, strlen(archive_path) + 1u);
   return 1;
@@ -3563,6 +3896,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   const char *target_id;
   const char *pack_sdk_root;
   const char *work_dir;
+  const char *pack_toolchain_file;
   const char *codesign_identity;
   const char *entitlements_path;
   const char *asset_arg;
@@ -3592,6 +3926,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   target_id = NULL;
   pack_sdk_root = NULL;
   work_dir = NULL;
+  pack_toolchain_file = NULL;
   codesign_identity = NULL;
   entitlements_path = NULL;
   follow_symlinks = 0;
@@ -3613,6 +3948,8 @@ static int vectis_pack_command(int argc, char **argv, int index) {
       pack_sdk_root = argv[++i];
     } else if (strcmp(argv[i], "--work-dir") == 0 && i + 1 < argc) {
       work_dir = argv[++i];
+    } else if (strcmp(argv[i], "--pack-toolchain-file") == 0 && i + 1 < argc) {
+      pack_toolchain_file = argv[++i];
     } else if (strcmp(argv[i], "--lockd-bundle") == 0 && i + 1 < argc) {
       bundle_path = argv[++i];
     } else if (strcmp(argv[i], "--extract-mode") == 0 && i + 1 < argc) {
@@ -3654,6 +3991,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
          strcmp(argv[i], "--target") == 0 ||
          strcmp(argv[i], "--pack-sdk-root") == 0 ||
          strcmp(argv[i], "--work-dir") == 0 ||
+         strcmp(argv[i], "--pack-toolchain-file") == 0 ||
          strcmp(argv[i], "--lockd-bundle") == 0 ||
          strcmp(argv[i], "--extract-mode") == 0 ||
          strcmp(argv[i], "--content-type-map") == 0 ||
@@ -3786,8 +4124,9 @@ static int vectis_pack_command(int argc, char **argv, int index) {
         vectis_pack_command_cleanup(&assets, &content_types);
         return 1;
       }
-      result = vectis_pack_write_macho(output_path, work_dir, &payload, &assets,
-                                       &runner_inputs);
+      result =
+          vectis_pack_write_macho(output_path, work_dir, pack_toolchain_file,
+                                  &payload, &assets, &runner_inputs);
       vectis_pack_payload_cleanup(&payload);
       vectis_pack_command_cleanup(&assets, &content_types);
       return result;

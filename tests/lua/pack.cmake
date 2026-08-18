@@ -52,6 +52,7 @@ set(pack_darwin_sdk_root "${WORK_DIR}/darwin-pack-sdk")
 set(pack_darwin_work_dir "${WORK_DIR}/darwin-pack-work")
 set(pack_darwin_sdk_mismatch_root "${WORK_DIR}/darwin-pack-sdk-mismatch")
 set(pack_darwin_asset "${WORK_DIR}/darwin-pack-asset.txt")
+set(pack_darwin_toolchain "${WORK_DIR}/darwin-pack-toolchain.cmake")
 set(pack_entitlements "${WORK_DIR}/pack-entitlements.plist")
 set(missing_pack_entitlements "${WORK_DIR}/missing-pack-entitlements.plist")
 set(no_asset_extract_dir "${WORK_DIR}/no-assets-extract")
@@ -215,8 +216,9 @@ endif()
 
 file(MAKE_DIRECTORY "${pack_darwin_work_dir}")
 file(WRITE "${pack_darwin_asset}" "darwin section asset\n")
+file(WRITE "${pack_darwin_toolchain}" "set(CMAKE_SYSTEM_NAME Darwin)\nset(CMAKE_SYSTEM_PROCESSOR arm64)\nset(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)\nset(CMAKE_C_COMPILER \"${CMAKE_C_COMPILER}\")\n")
 file(REMOVE "${asset_darwin_sdk_work_output}" "${pack_darwin_work_dir}/vectis-pack-macho-sections.c")
-execute_process(COMMAND "${VECTIS_BIN}" -a pack --target arm64-apple-darwin --pack-sdk-root "${pack_darwin_sdk_root}" --work-dir "${pack_darwin_work_dir}" --script "${script}" --asset "${pack_darwin_asset}=/darwin-section-asset.txt" --output "${asset_darwin_sdk_work_output}"
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --target arm64-apple-darwin --pack-sdk-root "${pack_darwin_sdk_root}" --work-dir "${pack_darwin_work_dir}" --pack-toolchain-file "${pack_darwin_toolchain}" --script "${script}" --asset "${pack_darwin_asset}=/darwin-section-asset.txt" --output "${asset_darwin_sdk_work_output}"
                 RESULT_VARIABLE darwin_sdk_work_result
                 OUTPUT_VARIABLE darwin_sdk_work_stdout
                 ERROR_VARIABLE darwin_sdk_work_stderr)
@@ -229,7 +231,10 @@ endif()
 if(NOT EXISTS "${pack_darwin_work_dir}/vectis-pack-macho-sections.c")
   message(FATAL_ERROR "pack Darwin target did not write the Mach-O section source")
 endif()
-if(NOT darwin_sdk_work_stderr MATCHES "Darwin/Mach-O compile/link backend is not implemented after writing section source")
+if(NOT EXISTS "${pack_darwin_work_dir}/macho-relink-src/CMakeLists.txt")
+  message(FATAL_ERROR "pack Darwin target did not write the Mach-O relink CMake project")
+endif()
+if(NOT darwin_sdk_work_stderr MATCHES "Mach-O pack CMake configure failed")
   message(FATAL_ERROR "pack Darwin target with work dir failed with unexpected error: ${darwin_sdk_work_stdout}${darwin_sdk_work_stderr}")
 endif()
 file(READ "${pack_darwin_work_dir}/vectis-pack-macho-sections.c" darwin_section_source)
@@ -244,6 +249,16 @@ foreach(required_source_fragment IN ITEMS
     "0x56, 0x45, 0x43, 0x54, 0x49, 0x53, 0x5f, 0x50, 0x41, 0x43, 0x4b")
   if(NOT darwin_section_source MATCHES "${required_source_fragment}")
     message(FATAL_ERROR "Mach-O section source is missing ${required_source_fragment}")
+  endif()
+endforeach()
+file(READ "${pack_darwin_work_dir}/macho-relink-src/CMakeLists.txt" darwin_relink_cmake)
+foreach(required_cmake_fragment IN ITEMS
+    "find_package\\(vectis CONFIG REQUIRED\\)"
+    "vectis::pack_runner"
+    "vectis_pack_relinked"
+    "RUNTIME_OUTPUT_DIRECTORY")
+  if(NOT darwin_relink_cmake MATCHES "${required_cmake_fragment}")
+    message(FATAL_ERROR "Mach-O relink CMake project is missing ${required_cmake_fragment}")
   endif()
 endforeach()
 

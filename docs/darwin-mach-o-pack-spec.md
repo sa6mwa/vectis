@@ -119,8 +119,10 @@ in-place Mach-O editor and keeps code signing order deterministic.
 `vectis_pack_write_macho` is landing in slices. With valid SDK inputs and an
 explicit `--work-dir <dir>`, the backend writes
 `vectis-pack-macho-sections.c` containing the `__VECTIS` section payloads from
-the shared `vectis_pack_payload`. It still fails before final output creation
-until the target-correct compile/link/sign steps exist. Target mismatches in
+the shared `vectis_pack_payload`, generates an installed-SDK CMake relink
+project that links `vectis::pack_runner`, and runs CMake configure/build. It
+still fails before final output publication until finalization, signing, and
+runtime Mach-O section loading exist. Target mismatches in
 `pack-runner-link-inputs.json` fail before reaching the backend.
 
 ## Signing Contract
