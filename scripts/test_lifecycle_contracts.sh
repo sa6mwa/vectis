@@ -1785,6 +1785,10 @@ assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
   'scripts/discover_target_tools\.sh'
 assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
   'self-contained like Linux'
+assert_contains "$repo_root/src/vectis_cli.c" \
+  'hardened-runtime, --timestamp, and --entitlements'
+assert_contains "$repo_root/tests/lua/pack.cmake" \
+  'pack signing option without signing mode'
 assert_contains "$repo_root/TODO.md" \
   'docs/darwin-mach-o-pack-spec\.md'
 assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \

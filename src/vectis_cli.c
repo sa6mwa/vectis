@@ -3165,6 +3165,14 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     vectis_pack_command_cleanup(&assets, &content_types);
     return 64;
   }
+  if ((hardened_runtime || timestamp || entitlements_path != NULL) &&
+      codesign_identity == NULL && !ad_hoc_codesign) {
+    fputs("vectis: --hardened-runtime, --timestamp, and --entitlements "
+          "require --codesign or --ad-hoc-codesign\n",
+          stderr);
+    vectis_pack_command_cleanup(&assets, &content_types);
+    return 64;
+  }
   if (codesign_identity != NULL || ad_hoc_codesign || hardened_runtime ||
       timestamp || entitlements_path != NULL) {
 #ifdef __APPLE__
