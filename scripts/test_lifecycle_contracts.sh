@@ -1713,6 +1713,25 @@ assert_contains "$repo_root/cmake/package_archive.cmake" 'liblql::lql_static'
 assert_contains "$repo_root/tests/install/CMakeLists.txt" 'cpkt::opcua cpkt::sus cpkt::audio'
 assert_contains "$repo_root/tests/install/CMakeLists.txt" 'liblql::lql_static'
 assert_contains "$repo_root/cmake/package_darwin_smoke_bundle.cmake" '@executable_path/\.\./lib'
+assert_contains "$repo_root/scripts/verify_darwin_pack_signature.sh" \
+  '\-\-verify \-\-strict \-\-verbose=4'
+assert_contains "$repo_root/scripts/verify_darwin_pack_signature.sh" \
+  '\-\-assess \-\-type execute'
+assert_contains "$repo_root/scripts/verify_darwin_pack_signature.sh" \
+  '\-\-require-spctl'
+assert_contains "$repo_root/scripts/test_darwin_pack_signature_verifier.sh" \
+  'Darwin signature verifier accepted codesign failure'
+assert_contains "$repo_root/Makefile" '^test-darwin-pack-signature:'
+assert_contains "$repo_root/Makefile" \
+  'scripts/test_darwin_pack_signature_verifier\.sh'
+assert_contains "$repo_root/docs/pack-platform-operability.md" \
+  'scripts/verify_darwin_pack_signature\.sh --binary <path>'
+assert_contains "$repo_root/docs/pack-platform-operability.md" \
+  'codesign --verify --strict --verbose=4'
+assert_contains "$repo_root/docs/pack-platform-operability.md" \
+  'spctl --assess --type execute'
+assert_contains "$repo_root/TODO.md" \
+  '\[x\] Add verification commands/tests for packed Darwin binaries using `codesign --verify --strict --verbose=4`'
 assert_contains "$repo_root/scripts/verify_installed_sdk.sh" 'pkg-config --static --cflags --libs vectis'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK missing pkg-config metadata'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK contains dependency source tree'
@@ -1950,6 +1969,7 @@ for target in \
   finalize-slice \
   prerelease \
   test-service-runtime-lifecycle \
+  test-darwin-pack-signature \
   lua-test \
   lua-env \
   clean-dist \

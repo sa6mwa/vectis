@@ -16,7 +16,7 @@ FUZZ_PRESET := fuzz
 	help \
 	deps-debug deps-release deps-cross \
 	build build-debug build-release build-asan build-coverage build-fuzz \
-	test test-debug test-lifecycle test-service-runtime-lifecycle test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
+	test test-debug test-lifecycle test-service-runtime-lifecycle test-target-tools test-cpkt-toolchains test-darwin-linker-route test-darwin-pack-signature test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
 	lua-env lua-rock lua-test test-opcua-lua-surface test-opcua-pubsub-live test-cai-live test-sus-audio-live test-sus-audio-hardening release-lua-artifacts \
 	dev-up dev-down dev-reset dev-ps dev-logs \
 	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy verify-release-matrix release-darwin-smoke-bundle release-matrix prerelease-live prerelease-hardening lifecycle-version-contract release print-release-version clean-dist finalize-slice prerelease \
@@ -33,6 +33,7 @@ help:
 		'make test-target-tools  Run target tool discovery regression tests.' \
 		'make test-cpkt-toolchains Run pinned Bootlin/AFL++ resolver contract tests.' \
 		'make test-darwin-linker-route Run osxcross Darwin linker-route regression tests.' \
+		'make test-darwin-pack-signature Run Darwin pack signature verifier regression tests.' \
 		'make lua-rock           Build and install the pure Lua Vectis rock under build/luarocks.' \
 		'make lua-test           Run Lua runner/facade smoke tests plus the installed Lua rock smoke.' \
 		'make test-opcua-lua-surface Verify OPC UA Lua covers all non-native cpkt C89 client/server symbols.' \
@@ -107,6 +108,7 @@ test-release-privacy-contracts:
 test-target-tools:
 	$(TIMED) test-target-tools bash ./scripts/test_discover_target_tools.sh
 	$(TIMED) test-darwin-linker-route bash ./scripts/test_darwin_linker_route.sh
+	$(TIMED) test-darwin-pack-signature bash ./scripts/test_darwin_pack_signature_verifier.sh
 
 test-cpkt-toolchains:
 	$(TIMED) test-cpkt-toolchain-resolvers bash ./scripts/test-cpkt-toolchain-resolvers.sh
@@ -114,6 +116,9 @@ test-cpkt-toolchains:
 
 test-darwin-linker-route:
 	$(TIMED) test-darwin-linker-route bash ./scripts/test_darwin_linker_route.sh
+
+test-darwin-pack-signature:
+	$(TIMED) test-darwin-pack-signature bash ./scripts/test_darwin_pack_signature_verifier.sh
 
 deps-debug:
 	$(TIMED) deps-debug bash ./scripts/deps.sh deps-host-debug

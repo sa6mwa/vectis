@@ -60,6 +60,13 @@ Required Darwin behavior:
 - run `spctl --assess --type execute` when that tool is available and the
   artifact is intended for Gatekeeper assessment.
 
+`scripts/verify_darwin_pack_signature.sh --binary <path>` is the reusable
+verification command for a final signed Darwin packed executable. It runs
+`codesign --verify --strict --verbose=4`, runs
+`spctl --assess --type execute` when `spctl` is available, and can make `spctl`
+mandatory with `--require-spctl`. The command verifies final bytes only; it
+must run after every payload, loader-metadata, strip, and signing step.
+
 ## Signing Order
 
 Signing is a finalization step. The pack pipeline must complete all payload

@@ -457,7 +457,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Preserve normal `vectis script.lua` execution when no embedded payload exists.
 - [ ] Add Darwin packing flags for automatic codesigning after the final Mach-O artifact is produced, including `--codesign <identity>`, `--ad-hoc-codesign`, `--hardened-runtime`, `--timestamp`, and `--entitlements <path>`.
 - [ ] Ensure Darwin packing never mutates the executable after codesigning.
-- [ ] Add verification commands/tests for packed Darwin binaries using `codesign --verify --strict --verbose=4` and, when available, `spctl --assess --type execute`.
+- [x] Add verification commands/tests for packed Darwin binaries using `codesign --verify --strict --verbose=4` and, when available, `spctl --assess --type execute`.
 - [x] Document operational limits around signing, notarization, stripping, hardening tools, and platform-specific executable formats.
 - [x] Add first smoke test that packages and executes a Lua script artifact.
 - [x] Add deterministic e2e coverage for a packed Lua webserver with generated embedded assets, native auth routes, SMTP-delivered email-token login, auth-guarded JSON API route, WebDAV key issuance, authenticated embedded WebDAV reads, mutable WebDAV writes, WebDAV list/copy/move/delete, traversal denial, and embedded-versus-WebDAV mutation isolation.
