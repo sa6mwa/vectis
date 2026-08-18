@@ -843,6 +843,15 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/TODO.md" '\[x\] Add a checked Lua facade documentation index'
   assert_contains "$repo_root/TODO.md" '\[x\] Expose the full public Vectis status enum in Lua'
   assert_contains "$repo_root/TODO.md" '\[x\] Add checked Lua facade conventions'
+  assert_contains "$repo_root/TODO.md" 'executable Lua facade matrix contract'
+  assert_contains "$repo_root/Makefile" '^test-lua-facade-matrix:'
+  assert_contains "$repo_root/Makefile" 'scripts/test_lua_facade_matrix_contracts\.sh'
+  assert_contains "$repo_root/scripts/test_lua_facade_matrix_contracts.sh" \
+    'lua facade matrix contracts ok'
+  assert_contains "$repo_root/scripts/test_lua_facade_matrix_contracts.sh" \
+    'vectis.libs'
+  assert_contains "$repo_root/tests/lua/smoke.lua" \
+    'package.loaded\["vectis.cai"\] == vcai'
   assert_contains "$repo_root/TODO.md" '\[x\] Add Lua OpenAPI route metadata'
   assert_contains "$repo_root/TODO.md" '\[x\] Add explicit file-backed Lua `spooled_source` route responses'
   assert_contains "$repo_root/TODO.md" '\[x\] Add Lua request-body streaming policies through a dedicated `server:upload\(\)` helper'
@@ -1977,6 +1986,7 @@ for target in \
   finalize-slice \
   prerelease \
   test-service-runtime-lifecycle \
+  test-lua-facade-matrix \
   test-darwin-pack-signature \
   lua-test \
   lua-env \
