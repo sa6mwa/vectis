@@ -2,6 +2,8 @@ include("${CMAKE_CURRENT_LIST_DIR}/port_retry.cmake")
 
 set(script "${WORK_DIR}/vectis-pack-smoke.lua")
 set(output "${WORK_DIR}/vectis-pack-smoke")
+set(native_target_script "${WORK_DIR}/vectis-pack-native-target.lua")
+set(native_target_output "${WORK_DIR}/vectis-pack-native-target")
 set(sibling_module "${WORK_DIR}/vectis_pack_sibling.lua")
 set(bundle_script "${WORK_DIR}/vectis-pack-bundle.lua")
 set(bundle_generator_script "${WORK_DIR}/vectis-pack-bundle-generator.lua")
@@ -41,6 +43,8 @@ set(asset_codesign_conflict_output "${WORK_DIR}/vectis-pack-codesign-conflict")
 set(asset_codesign_mode_required_output "${WORK_DIR}/vectis-pack-codesign-mode-required")
 set(asset_codesign_missing_entitlements_output "${WORK_DIR}/vectis-pack-codesign-missing-entitlements")
 set(asset_codesign_unsupported_output "${WORK_DIR}/vectis-pack-codesign-unsupported")
+set(asset_darwin_target_output "${WORK_DIR}/vectis-pack-darwin-target")
+set(asset_unknown_target_output "${WORK_DIR}/vectis-pack-unknown-target")
 set(pack_entitlements "${WORK_DIR}/pack-entitlements.plist")
 set(missing_pack_entitlements "${WORK_DIR}/missing-pack-entitlements.plist")
 set(no_asset_extract_dir "${WORK_DIR}/no-assets-extract")
@@ -72,6 +76,22 @@ execute_process(COMMAND "${output}" first second
                 ERROR_VARIABLE run_stderr)
 if(NOT run_result EQUAL 0)
   message(FATAL_ERROR "packed vectis failed: ${run_stdout}${run_stderr}")
+endif()
+
+file(WRITE "${native_target_script}" "assert(arg[1] == \"native\")\n")
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --target native --script "${native_target_script}" --output "${native_target_output}"
+                RESULT_VARIABLE native_target_pack_result
+                OUTPUT_VARIABLE native_target_pack_stdout
+                ERROR_VARIABLE native_target_pack_stderr)
+if(NOT native_target_pack_result EQUAL 0)
+  message(FATAL_ERROR "vectis -a pack --target native failed: ${native_target_pack_stdout}${native_target_pack_stderr}")
+endif()
+execute_process(COMMAND "${native_target_output}" native
+                RESULT_VARIABLE native_target_run_result
+                OUTPUT_VARIABLE native_target_run_stdout
+                ERROR_VARIABLE native_target_run_stderr)
+if(NOT native_target_run_result EQUAL 0)
+  message(FATAL_ERROR "packed native-target vectis failed: ${native_target_run_stdout}${native_target_run_stderr}")
 endif()
 
 execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${script}" --output "${asset_invalid_extract_mode_output}" --extract-mode invalid
@@ -144,6 +164,36 @@ if(EXISTS "${asset_codesign_unsupported_output}")
 endif()
 if(NOT codesign_unsupported_stderr MATCHES "Darwin pack signing")
   message(FATAL_ERROR "pack unsupported codesign options failed with unexpected error: ${codesign_unsupported_stdout}${codesign_unsupported_stderr}")
+endif()
+
+file(REMOVE "${asset_darwin_target_output}")
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --target arm64-apple-darwin --script "${script}" --output "${asset_darwin_target_output}"
+                RESULT_VARIABLE darwin_target_result
+                OUTPUT_VARIABLE darwin_target_stdout
+                ERROR_VARIABLE darwin_target_stderr)
+if(darwin_target_result EQUAL 0)
+  message(FATAL_ERROR "pack Darwin target unexpectedly succeeded without link inputs")
+endif()
+if(EXISTS "${asset_darwin_target_output}")
+  message(FATAL_ERROR "pack Darwin target created an output artifact without link inputs")
+endif()
+if(NOT darwin_target_stderr MATCHES "Darwin pack requires pack-runner link inputs")
+  message(FATAL_ERROR "pack Darwin target failed with unexpected error: ${darwin_target_stdout}${darwin_target_stderr}")
+endif()
+
+file(REMOVE "${asset_unknown_target_output}")
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --target aarch64-linux-gnu --script "${script}" --output "${asset_unknown_target_output}"
+                RESULT_VARIABLE unknown_target_result
+                OUTPUT_VARIABLE unknown_target_stdout
+                ERROR_VARIABLE unknown_target_stderr)
+if(unknown_target_result EQUAL 0)
+  message(FATAL_ERROR "pack unknown target unexpectedly succeeded")
+endif()
+if(EXISTS "${asset_unknown_target_output}")
+  message(FATAL_ERROR "pack unknown target created an output artifact")
+endif()
+if(NOT unknown_target_stderr MATCHES "unsupported pack target")
+  message(FATAL_ERROR "pack unknown target failed with unexpected error: ${unknown_target_stdout}${unknown_target_stderr}")
 endif()
 
 file(WRITE "${bundle_generator_script}" "local vectis = require(\"vectis\")\nlocal function read_file(path)\n  local fp = assert(io.open(path, \"rb\"))\n  local body = fp:read(\"*a\")\n  fp:close()\n  return body\nend\nassert(vectis.cert.generate_bundle({common_name = \"Vectis Pack Lockd CA\", is_ca = true, output_cert_path = [[${bundle_ca_cert}]], output_key_path = [[${bundle_ca_key}]], key_bits = 2048, valid_days = 1}) == true)\nassert(vectis.cert.generate_bundle({common_name = \"lockd-client.local\", output_bundle_path = [[${bundle}]], ca_cert_path = [[${bundle_ca_cert}]], ca_key_path = [[${bundle_ca_key}]], key_bits = 2048, valid_days = 1}) == true)\nlocal fp = assert(io.open([[${bundle}]], \"ab\"))\nfp:write(read_file([[${bundle_ca_cert}]]))\nfp:close()\n")

@@ -22,7 +22,10 @@ Linux packed binaries may contain:
 The Linux implementation does not codesign packed binaries and does not rely on
 post-pack binary patching after the footer is written. Release privacy and
 relocatability checks still apply to any packed artifact that becomes part of a
-release.
+release. `vectis -a pack` accepts `--target host` and `--target native` as
+explicit names for the current executable backend. Other Linux target IDs are
+not accepted because the current ELF backend copies the running `vectis`
+binary; it does not cross-pack a different Linux target from a host binary.
 
 ## Shared Manifest
 
@@ -116,7 +119,8 @@ actionable error.
 
 ## Signing Options
 
-Future Darwin pack flags must be explicit:
+Darwin pack flags are explicit and validated before any output artifact is
+created:
 
 - `--codesign <identity>` signs with a named identity,
 - `--ad-hoc-codesign` signs with an ad-hoc identity,
@@ -126,7 +130,15 @@ Future Darwin pack flags must be explicit:
 
 `--codesign` and `--ad-hoc-codesign` are mutually exclusive. Hardened runtime,
 timestamps, and entitlements are Darwin-only options and must fail clearly on
-unsupported targets rather than being ignored.
+unsupported targets rather than being ignored. `--entitlements <path>` must be
+a readable regular file.
+
+`vectis -a pack --target arm64-apple-darwin` is routed to the Darwin/Mach-O
+backend contract. Until the relink backend and pack-runner link inputs exist,
+that command fails before creating the output artifact with the documented
+`Darwin pack requires pack-runner link inputs` diagnostic. This is deliberate:
+Darwin payloads must not be produced by appending the Linux footer layout to a
+Mach-O executable.
 
 ## Notarization Limits
 

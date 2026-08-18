@@ -644,8 +644,9 @@ static const char vectis_lonejson_lua_init[] =
 static void vectis_cli_usage(FILE *stream) {
   fputs("usage: vectis [--version] [--help] [-x] script.lua [args...]\n"
         "       -x traces Lua line execution to stderr\n"
-        "       vectis -a|--action pack --script script.lua --output output "
-        "[--lockd-bundle bundle.pem] [--asset source=/path] "
+        "       vectis -a|--action pack [--target target-id] "
+        "--script script.lua --output output [--lockd-bundle bundle.pem] "
+        "[--asset source=/path] "
         "[--asset-dir /mount:dir] [--asset-manifest assets.json] "
         "[--content-type-map types.json] [--extract-mode mode] "
         "[--follow-symlinks] [--codesign identity | --ad-hoc-codesign] "
@@ -2957,6 +2958,27 @@ static int vectis_pack_footer_valid(const unsigned char *footer) {
   return memcmp(footer, VECTIS_PACK_MAGIC, VECTIS_PACK_MAGIC_SIZE) == 0;
 }
 
+static int vectis_pack_target_is_darwin(const char *target, int *out) {
+  if (out == NULL) {
+    return 0;
+  }
+  if (target == NULL || strcmp(target, "host") == 0 ||
+      strcmp(target, "native") == 0) {
+#ifdef __APPLE__
+    *out = 1;
+#else
+    *out = 0;
+#endif
+    return 1;
+  }
+  if (strstr(target, "darwin") != NULL || strstr(target, "apple") != NULL ||
+      strcmp(target, "arm64-apple-darwin") == 0) {
+    *out = 1;
+    return 1;
+  }
+  return 0;
+}
+
 static int vectis_self_path(const char *argv0, char *path, size_t path_size) {
 #ifdef __linux__
   ssize_t nread;
@@ -3012,11 +3034,20 @@ static int vectis_pack_validate_entitlements_path(const char *path) {
   return 0;
 }
 
+static int vectis_pack_darwin_requires_link_inputs(void) {
+  fputs("vectis: Darwin pack requires pack-runner link inputs; build or "
+        "install the arm64-apple-darwin pack SDK before using Mach-O "
+        "packing or signing options\n",
+        stderr);
+  return 64;
+}
+
 static int vectis_pack_command(int argc, char **argv, int index) {
   const char *script_path;
   const char *output_path;
   const char *bundle_path;
   const char *extract_mode;
+  const char *target_id;
   const char *codesign_identity;
   const char *entitlements_path;
   const char *asset_arg;
@@ -3046,6 +3077,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   FILE *out;
   int i;
   int follow_symlinks;
+  int darwin_target;
   int ad_hoc_codesign;
   int hardened_runtime;
   int timestamp;
@@ -3054,9 +3086,11 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   output_path = NULL;
   bundle_path = NULL;
   extract_mode = NULL;
+  target_id = NULL;
   codesign_identity = NULL;
   entitlements_path = NULL;
   follow_symlinks = 0;
+  darwin_target = 0;
   ad_hoc_codesign = 0;
   hardened_runtime = 0;
   timestamp = 0;
@@ -3068,6 +3102,8 @@ static int vectis_pack_command(int argc, char **argv, int index) {
       script_path = argv[++i];
     } else if (strcmp(argv[i], "--output") == 0 && i + 1 < argc) {
       output_path = argv[++i];
+    } else if (strcmp(argv[i], "--target") == 0 && i + 1 < argc) {
+      target_id = argv[++i];
     } else if (strcmp(argv[i], "--lockd-bundle") == 0 && i + 1 < argc) {
       bundle_path = argv[++i];
     } else if (strcmp(argv[i], "--extract-mode") == 0 && i + 1 < argc) {
@@ -3106,6 +3142,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   }
   for (i = index; i < argc; ++i) {
     if ((strcmp(argv[i], "--script") == 0 || strcmp(argv[i], "--output") == 0 ||
+         strcmp(argv[i], "--target") == 0 ||
          strcmp(argv[i], "--lockd-bundle") == 0 ||
          strcmp(argv[i], "--extract-mode") == 0 ||
          strcmp(argv[i], "--content-type-map") == 0 ||
@@ -3190,6 +3227,11 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     vectis_pack_command_cleanup(&assets, &content_types);
     return 64;
   }
+  if (!vectis_pack_target_is_darwin(target_id, &darwin_target)) {
+    fprintf(stderr, "vectis: unsupported pack target: %s\n", target_id);
+    vectis_pack_command_cleanup(&assets, &content_types);
+    return 64;
+  }
   if (codesign_identity != NULL && ad_hoc_codesign) {
     fputs("vectis: --codesign and --ad-hoc-codesign are mutually exclusive\n",
           stderr);
@@ -3207,6 +3249,10 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   if (vectis_pack_validate_entitlements_path(entitlements_path) != 0) {
     vectis_pack_command_cleanup(&assets, &content_types);
     return 64;
+  }
+  if (darwin_target) {
+    vectis_pack_command_cleanup(&assets, &content_types);
+    return vectis_pack_darwin_requires_link_inputs();
   }
   if (codesign_identity != NULL || ad_hoc_codesign || hardened_runtime ||
       timestamp || entitlements_path != NULL) {

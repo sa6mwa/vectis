@@ -1796,10 +1796,24 @@ assert_contains "$repo_root/src/vectis_cli.c" \
   'hardened-runtime, --timestamp, and --entitlements'
 assert_contains "$repo_root/src/vectis_cli.c" \
   'entitlements path is not a regular file'
+assert_contains "$repo_root/src/vectis_cli.c" \
+  'unsupported pack target'
+assert_contains "$repo_root/src/vectis_cli.c" \
+  'Darwin pack requires pack-runner link inputs'
 assert_contains "$repo_root/tests/lua/pack.cmake" \
   'pack signing option without signing mode'
 assert_contains "$repo_root/tests/lua/pack.cmake" \
   'pack missing entitlements'
+assert_contains "$repo_root/tests/lua/pack.cmake" \
+  'vectis -a pack --target native failed'
+assert_contains "$repo_root/tests/lua/pack.cmake" \
+  'pack Darwin target created an output artifact without link inputs'
+assert_contains "$repo_root/tests/lua/pack.cmake" \
+  'pack unknown target created an output artifact'
+assert_contains "$repo_root/docs/pack-platform-operability.md" \
+  'vectis -a pack --target arm64-apple-darwin'
+assert_contains "$repo_root/docs/pack-platform-operability.md" \
+  'Darwin pack requires pack-runner link inputs'
 assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
   'readable regular file'
 assert_contains "$repo_root/TODO.md" \
