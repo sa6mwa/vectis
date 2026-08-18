@@ -1844,7 +1844,13 @@ assert_contains "$repo_root/src/vectis_cli.c" \
 assert_contains "$repo_root/src/vectis_cli.c" \
   'vectis_pack_write_elf\(const char \*output_path'
 assert_contains "$repo_root/src/vectis_cli.c" \
+  'vectis_pack_write_macho\(const char \*output_path'
+assert_contains "$repo_root/src/vectis_cli.c" \
+  'vectis-pack-macho-sections\.c'
+assert_contains "$repo_root/src/vectis_cli.c" \
   '\-\-pack-sdk-root'
+assert_contains "$repo_root/src/vectis_cli.c" \
+  '\-\-work-dir'
 assert_contains "$repo_root/src/vectis_cli.c" \
   'pack SDK manifest does not match target'
 assert_contains "$repo_root/src/vectis_cli.c" \
@@ -1860,6 +1866,10 @@ assert_contains "$repo_root/tests/lua/pack.cmake" \
 assert_contains "$repo_root/tests/lua/pack.cmake" \
   'pack Darwin target with link inputs created an output artifact before Mach-O relink support'
 assert_contains "$repo_root/tests/lua/pack.cmake" \
+  'pack Darwin target did not write the Mach-O section source'
+assert_contains "$repo_root/tests/lua/pack.cmake" \
+  'Vectis Mach-O pack sections must be compiled for Darwin'
+assert_contains "$repo_root/tests/lua/pack.cmake" \
   'pack Darwin target with mismatched link inputs created an output artifact'
 assert_contains "$repo_root/tests/lua/pack.cmake" \
   'pack unknown target created an output artifact'
@@ -1869,6 +1879,8 @@ assert_contains "$repo_root/docs/pack-platform-operability.md" \
   'Darwin pack requires pack-runner link'
 assert_contains "$repo_root/docs/pack-platform-operability.md" \
   '\-\-pack-sdk-root <root>'
+assert_contains "$repo_root/docs/pack-platform-operability.md" \
+  '\-\-work-dir <dir>'
 assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
   'lib/vectis/pack/libvectis_pack_runner.a'
 assert_contains "$repo_root/docs/pack-platform-operability.md" \
@@ -1879,6 +1891,8 @@ assert_contains "$repo_root/TODO.md" \
   '\[x\] Split `vectis -a pack` into shared `vectis_pack_collect`'
 assert_contains "$repo_root/TODO.md" \
   '\[x\] Add `vectis -a pack --pack-sdk-root <root>` validation'
+assert_contains "$repo_root/TODO.md" \
+  '\[x\] Add the first `vectis_pack_write_macho` backend slice'
 assert_contains "$repo_root/TODO.md" \
   'docs/darwin-mach-o-pack-spec\.md'
 assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \

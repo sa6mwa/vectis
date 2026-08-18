@@ -45,10 +45,13 @@ set(asset_codesign_missing_entitlements_output "${WORK_DIR}/vectis-pack-codesign
 set(asset_codesign_unsupported_output "${WORK_DIR}/vectis-pack-codesign-unsupported")
 set(asset_darwin_target_output "${WORK_DIR}/vectis-pack-darwin-target")
 set(asset_darwin_sdk_output "${WORK_DIR}/vectis-pack-darwin-sdk")
+set(asset_darwin_sdk_work_output "${WORK_DIR}/vectis-pack-darwin-sdk-work")
 set(asset_darwin_sdk_mismatch_output "${WORK_DIR}/vectis-pack-darwin-sdk-mismatch")
 set(asset_unknown_target_output "${WORK_DIR}/vectis-pack-unknown-target")
 set(pack_darwin_sdk_root "${WORK_DIR}/darwin-pack-sdk")
+set(pack_darwin_work_dir "${WORK_DIR}/darwin-pack-work")
 set(pack_darwin_sdk_mismatch_root "${WORK_DIR}/darwin-pack-sdk-mismatch")
+set(pack_darwin_asset "${WORK_DIR}/darwin-pack-asset.txt")
 set(pack_entitlements "${WORK_DIR}/pack-entitlements.plist")
 set(missing_pack_entitlements "${WORK_DIR}/missing-pack-entitlements.plist")
 set(no_asset_extract_dir "${WORK_DIR}/no-assets-extract")
@@ -209,6 +212,40 @@ endif()
 if(NOT darwin_sdk_stderr MATCHES "Darwin/Mach-O relink backend is not implemented after validating pack-runner link inputs")
   message(FATAL_ERROR "pack Darwin target with link inputs failed with unexpected error: ${darwin_sdk_stdout}${darwin_sdk_stderr}")
 endif()
+
+file(MAKE_DIRECTORY "${pack_darwin_work_dir}")
+file(WRITE "${pack_darwin_asset}" "darwin section asset\n")
+file(REMOVE "${asset_darwin_sdk_work_output}" "${pack_darwin_work_dir}/vectis-pack-macho-sections.c")
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --target arm64-apple-darwin --pack-sdk-root "${pack_darwin_sdk_root}" --work-dir "${pack_darwin_work_dir}" --script "${script}" --asset "${pack_darwin_asset}=/darwin-section-asset.txt" --output "${asset_darwin_sdk_work_output}"
+                RESULT_VARIABLE darwin_sdk_work_result
+                OUTPUT_VARIABLE darwin_sdk_work_stdout
+                ERROR_VARIABLE darwin_sdk_work_stderr)
+if(darwin_sdk_work_result EQUAL 0)
+  message(FATAL_ERROR "pack Darwin target unexpectedly succeeded after writing section source")
+endif()
+if(EXISTS "${asset_darwin_sdk_work_output}")
+  message(FATAL_ERROR "pack Darwin target with work dir created an output artifact before Mach-O relink support")
+endif()
+if(NOT EXISTS "${pack_darwin_work_dir}/vectis-pack-macho-sections.c")
+  message(FATAL_ERROR "pack Darwin target did not write the Mach-O section source")
+endif()
+if(NOT darwin_sdk_work_stderr MATCHES "Darwin/Mach-O compile/link backend is not implemented after writing section source")
+  message(FATAL_ERROR "pack Darwin target with work dir failed with unexpected error: ${darwin_sdk_work_stdout}${darwin_sdk_work_stderr}")
+endif()
+file(READ "${pack_darwin_work_dir}/vectis-pack-macho-sections.c" darwin_section_source)
+foreach(required_source_fragment IN ITEMS
+    "__VECTIS,"
+    "__pack_header"
+    "__pack_script"
+    "__pack_assets"
+    "__pack_manifest"
+    "Vectis Mach-O pack sections must be compiled for Darwin"
+    "vectis_pack_assets_size"
+    "0x56, 0x45, 0x43, 0x54, 0x49, 0x53, 0x5f, 0x50, 0x41, 0x43, 0x4b")
+  if(NOT darwin_section_source MATCHES "${required_source_fragment}")
+    message(FATAL_ERROR "Mach-O section source is missing ${required_source_fragment}")
+  endif()
+endforeach()
 
 file(MAKE_DIRECTORY "${pack_darwin_sdk_mismatch_root}/share/vectis" "${pack_darwin_sdk_mismatch_root}/lib/vectis/pack")
 file(WRITE "${pack_darwin_sdk_mismatch_root}/share/vectis/pack-runner-link-inputs.json" [=[

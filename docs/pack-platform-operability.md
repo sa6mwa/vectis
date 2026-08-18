@@ -152,8 +152,10 @@ a readable regular file.
 backend contract. Without a valid pack SDK, that command fails before creating
 the output artifact with the documented `Darwin pack requires pack-runner link
 inputs` diagnostic. With a valid `--pack-sdk-root`, the command validates the
-manifest/archive pair and target id, then still fails before output creation
-until `vectis_pack_write_macho` is implemented. This is deliberate: Darwin
+manifest/archive pair and target id. If `--work-dir <dir>` is also supplied,
+the current backend writes `vectis-pack-macho-sections.c` with `__VECTIS`
+payload sections, then still fails before final output creation until
+target-correct compile/link/sign support lands. This is deliberate: Darwin
 payloads must not be produced by appending the Linux footer layout to a Mach-O
 executable.
 

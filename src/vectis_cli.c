@@ -65,6 +65,7 @@
 #include "vectis_xml_lua_init.h"
 
 #define VECTIS_PACK_FOOTER_SIZE 256u
+#define VECTIS_PACK_MACHO_HEADER_SIZE 256u
 #define VECTIS_PACK_MAGIC "VECTIS_PACK"
 #define VECTIS_PACK_MAGIC_SIZE 11u
 #define VECTIS_LUA_CURL_RESPONSE_BODY_LIMIT (8u * 1024u * 1024u)
@@ -664,8 +665,8 @@ static void vectis_cli_usage(FILE *stream) {
   fputs("usage: vectis [--version] [--help] [-x] script.lua [args...]\n"
         "       -x traces Lua line execution to stderr\n"
         "       vectis -a|--action pack [--target target-id] "
-        "[--pack-sdk-root root] --script script.lua --output output "
-        "[--lockd-bundle bundle.pem] "
+        "[--pack-sdk-root root] [--work-dir dir] --script script.lua "
+        "--output output [--lockd-bundle bundle.pem] "
         "[--asset source=/path] "
         "[--asset-dir /mount:dir] [--asset-manifest assets.json] "
         "[--content-type-map types.json] [--extract-mode mode] "
@@ -3076,6 +3077,9 @@ static int vectis_pack_target_is_darwin(const char *target, int *out) {
   return 0;
 }
 
+static int vectis_pack_join_relative(char *out, size_t out_size,
+                                     const char *root, const char *relative);
+
 static const char *vectis_pack_effective_target_id(const char *target) {
   if (target != NULL && strcmp(target, "host") != 0 &&
       strcmp(target, "native") != 0) {
@@ -3154,6 +3158,192 @@ static int vectis_pack_write_elf(const char *output_path,
     return 1;
   }
   return 0;
+}
+
+static void
+vectis_pack_make_macho_header(unsigned char *header,
+                              const vectis_pack_payload *payload,
+                              const vectis_pack_asset_list *assets) {
+  memset(header, 0, VECTIS_PACK_MACHO_HEADER_SIZE);
+  memcpy(header, VECTIS_PACK_MAGIC, VECTIS_PACK_MAGIC_SIZE);
+  vectis_pack_write_u64(header + 16u, 1u);
+  vectis_pack_write_u64(header + 24u, (unsigned long long)payload->script_size);
+  vectis_pack_write_u64(header + 32u, (unsigned long long)payload->bundle_size);
+  vectis_pack_write_u64(header + 40u, (unsigned long long)payload->asset_size);
+  vectis_pack_write_u64(header + 48u,
+                        (unsigned long long)payload->manifest_size);
+  vectis_pack_write_u64(header + 56u, (unsigned long long)assets->count);
+  vectis_pack_write_u64(header + 64u, 1u);
+  memcpy(header + 80u, payload->script_sha, SHA256_DIGEST_LENGTH);
+  if (payload->bundle != NULL) {
+    memcpy(header + 112u, payload->bundle_sha, SHA256_DIGEST_LENGTH);
+  }
+  if (assets->count > 0u) {
+    memcpy(header + 144u, payload->asset_sha, SHA256_DIGEST_LENGTH);
+  }
+  if (payload->manifest != NULL) {
+    memcpy(header + 176u, payload->manifest_sha, SHA256_DIGEST_LENGTH);
+  }
+}
+
+static int vectis_pack_write_c_bytes(FILE *out, const unsigned char *data,
+                                     size_t size) {
+  size_t i;
+
+  for (i = 0u; i < size; ++i) {
+    if (i % 12u == 0u && fputs("\n  ", out) == EOF) {
+      return -1;
+    }
+    if (fprintf(out, "0x%02x%s", (unsigned int)data[i],
+                i + 1u == size ? "" : ", ") < 0) {
+      return -1;
+    }
+  }
+  return fputs("\n", out) == EOF ? -1 : 0;
+}
+
+static int vectis_pack_write_c_section(FILE *out, const char *symbol,
+                                       const char *section,
+                                       const unsigned char *data, size_t size) {
+  if (size == 0u) {
+    return fprintf(out,
+                   "/* %s omitted because payload size is zero. */\n"
+                   "const unsigned long long %s_size = 0ULL;\n\n",
+                   section, symbol) < 0
+               ? -1
+               : 0;
+  }
+  if (fprintf(out,
+              "const unsigned char %s[] "
+              "VECTIS_PACK_SECTION(\"%s\") = {",
+              symbol, section) < 0 ||
+      vectis_pack_write_c_bytes(out, data, size) != 0 ||
+      fprintf(out,
+              "};\n"
+              "const unsigned long long %s_size = "
+              "(unsigned long long)sizeof(%s);\n\n",
+              symbol, symbol) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+static int vectis_pack_write_assets_section(
+    FILE *out, const vectis_pack_asset_list *assets, size_t asset_size) {
+  size_t written;
+  size_t i;
+  size_t j;
+
+  if (asset_size == 0u) {
+    return vectis_pack_write_c_section(out, "vectis_pack_assets",
+                                       "__pack_assets", NULL, 0u);
+  }
+  if (fputs("const unsigned char vectis_pack_assets[] "
+            "VECTIS_PACK_SECTION(\"__pack_assets\") = {",
+            out) == EOF) {
+    return -1;
+  }
+  written = 0u;
+  for (i = 0u; i < assets->count; ++i) {
+    if (assets->items[i].kind != VECTIS_PACK_ASSET_FILE) {
+      continue;
+    }
+    for (j = 0u; j < assets->items[i].size; ++j) {
+      if (written % 12u == 0u && fputs("\n  ", out) == EOF) {
+        return -1;
+      }
+      if (fprintf(out, "0x%02x%s", (unsigned int)assets->items[i].data[j],
+                  written + 1u == asset_size ? "" : ", ") < 0) {
+        return -1;
+      }
+      written++;
+    }
+  }
+  if (written != asset_size) {
+    return -1;
+  }
+  return fputs("\n};\n"
+               "const unsigned long long vectis_pack_assets_size = "
+               "(unsigned long long)sizeof(vectis_pack_assets);\n\n",
+               out) == EOF
+             ? -1
+             : 0;
+}
+
+static int
+vectis_pack_write_macho_section_source(const char *source_path,
+                                       const vectis_pack_payload *payload,
+                                       const vectis_pack_asset_list *assets) {
+  unsigned char header[VECTIS_PACK_MACHO_HEADER_SIZE];
+  FILE *out;
+
+  vectis_pack_make_macho_header(header, payload, assets);
+  out = fopen(source_path, "wb");
+  if (out == NULL) {
+    fprintf(stderr, "vectis: failed to create Mach-O pack section source: %s\n",
+            source_path);
+    return 1;
+  }
+  if (fputs("/* Generated by vectis -a pack. Do not edit. */\n"
+            "#if !defined(__APPLE__)\n"
+            "#error \"Vectis Mach-O pack sections must be compiled for "
+            "Darwin\"\n"
+            "#endif\n"
+            "#define VECTIS_PACK_SECTION(name) "
+            "__attribute__((used, section(\"__VECTIS,\" name)))\n\n",
+            out) == EOF ||
+      vectis_pack_write_c_section(out, "vectis_pack_header", "__pack_header",
+                                  header, sizeof(header)) != 0 ||
+      vectis_pack_write_c_section(out, "vectis_pack_script", "__pack_script",
+                                  payload->script, payload->script_size) != 0 ||
+      vectis_pack_write_c_section(out, "vectis_pack_bundle", "__pack_bundle",
+                                  payload->bundle, payload->bundle_size) != 0 ||
+      vectis_pack_write_assets_section(out, assets, payload->asset_size) != 0 ||
+      vectis_pack_write_c_section(out, "vectis_pack_manifest",
+                                  "__pack_manifest", payload->manifest,
+                                  payload->manifest_size) != 0 ||
+      fclose(out) != 0) {
+    fprintf(stderr, "vectis: failed to write Mach-O pack section source: %s\n",
+            source_path);
+    return 1;
+  }
+  return 0;
+}
+
+static int vectis_pack_write_macho(const char *output_path,
+                                   const char *work_dir,
+                                   const vectis_pack_payload *payload,
+                                   const vectis_pack_asset_list *assets,
+                                   const vectis_pack_runner_inputs *inputs) {
+  char source_path[4096];
+  struct stat st;
+
+  (void)output_path;
+  (void)inputs;
+  if (work_dir == NULL || work_dir[0] == '\0') {
+    fputs("vectis: Darwin/Mach-O pack requires --work-dir until the relink "
+          "backend can own temporary intermediates\n",
+          stderr);
+    return 64;
+  }
+  if (stat(work_dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    fprintf(stderr, "vectis: pack work dir is not a directory: %s\n", work_dir);
+    return 64;
+  }
+  if (vectis_pack_join_relative(source_path, sizeof(source_path), work_dir,
+                                "vectis-pack-macho-sections.c") != 0) {
+    fprintf(stderr, "vectis: pack work dir path is too long: %s\n", work_dir);
+    return 64;
+  }
+  if (vectis_pack_write_macho_section_source(source_path, payload, assets) !=
+      0) {
+    return 1;
+  }
+  fprintf(stderr,
+          "vectis: Darwin/Mach-O compile/link backend is not implemented "
+          "after writing section source: %s\n",
+          source_path);
+  return 64;
 }
 
 static int vectis_self_path(const char *argv0, char *path, size_t path_size) {
@@ -3372,6 +3562,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   const char *extract_mode;
   const char *target_id;
   const char *pack_sdk_root;
+  const char *work_dir;
   const char *codesign_identity;
   const char *entitlements_path;
   const char *asset_arg;
@@ -3400,6 +3591,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   extract_mode = NULL;
   target_id = NULL;
   pack_sdk_root = NULL;
+  work_dir = NULL;
   codesign_identity = NULL;
   entitlements_path = NULL;
   follow_symlinks = 0;
@@ -3419,6 +3611,8 @@ static int vectis_pack_command(int argc, char **argv, int index) {
       target_id = argv[++i];
     } else if (strcmp(argv[i], "--pack-sdk-root") == 0 && i + 1 < argc) {
       pack_sdk_root = argv[++i];
+    } else if (strcmp(argv[i], "--work-dir") == 0 && i + 1 < argc) {
+      work_dir = argv[++i];
     } else if (strcmp(argv[i], "--lockd-bundle") == 0 && i + 1 < argc) {
       bundle_path = argv[++i];
     } else if (strcmp(argv[i], "--extract-mode") == 0 && i + 1 < argc) {
@@ -3459,6 +3653,7 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     if ((strcmp(argv[i], "--script") == 0 || strcmp(argv[i], "--output") == 0 ||
          strcmp(argv[i], "--target") == 0 ||
          strcmp(argv[i], "--pack-sdk-root") == 0 ||
+         strcmp(argv[i], "--work-dir") == 0 ||
          strcmp(argv[i], "--lockd-bundle") == 0 ||
          strcmp(argv[i], "--extract-mode") == 0 ||
          strcmp(argv[i], "--content-type-map") == 0 ||
@@ -3584,6 +3779,18 @@ static int vectis_pack_command(int argc, char **argv, int index) {
         vectis_pack_command_cleanup(&assets, &content_types);
         return vectis_pack_darwin_requires_link_inputs();
       }
+    }
+    if (work_dir != NULL) {
+      if (vectis_pack_collect(&payload, script_path, bundle_path, &assets,
+                              extract_mode) != 0) {
+        vectis_pack_command_cleanup(&assets, &content_types);
+        return 1;
+      }
+      result = vectis_pack_write_macho(output_path, work_dir, &payload, &assets,
+                                       &runner_inputs);
+      vectis_pack_payload_cleanup(&payload);
+      vectis_pack_command_cleanup(&assets, &content_types);
+      return result;
     }
     fprintf(stderr,
             "vectis: Darwin/Mach-O relink backend is not implemented after "

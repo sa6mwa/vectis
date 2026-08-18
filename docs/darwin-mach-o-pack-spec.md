@@ -116,9 +116,11 @@ It requires target-correct link tools and Vectis-provided runner link inputs at
 pack time. That is the recommended product contract because it avoids an
 in-place Mach-O editor and keeps code signing order deterministic.
 
-Until `vectis_pack_write_macho` is implemented, valid SDK inputs are treated as
-a validated precondition and the command still fails before output creation with
-an explicit unsupported-backend diagnostic. Target mismatches in
+`vectis_pack_write_macho` is landing in slices. With valid SDK inputs and an
+explicit `--work-dir <dir>`, the backend writes
+`vectis-pack-macho-sections.c` containing the `__VECTIS` section payloads from
+the shared `vectis_pack_payload`. It still fails before final output creation
+until the target-correct compile/link/sign steps exist. Target mismatches in
 `pack-runner-link-inputs.json` fail before reaching the backend.
 
 ## Signing Contract
