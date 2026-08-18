@@ -1,5 +1,5 @@
-#include "vectis_internal.h"
 #include "vectis_acme_state.h"
+#include "vectis_internal.h"
 
 #include <kore/acme.h>
 #include <kore/http.h>
@@ -9,6 +9,7 @@
 #include <kore/seccomp.h>
 #endif
 
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -38,6 +39,7 @@ extern char **environ;
 
 int vectis_kore_main(int argc, char **argv);
 int vectis_kore_route(struct http_request *req);
+int vectis_kore_http_redirect_route(struct http_request *req);
 int vectis_kore_body_chunk(struct http_request *req, const void *data,
                            size_t len);
 void vectis_kore_request_free(struct http_request *req);
@@ -54,6 +56,8 @@ const struct kore_vectis_runtime_symbol kore_vectis_runtime_symbols[] = {
     {"kore_parent_configure", (void *)kore_parent_configure},
     {"kore_parent_teardown", (void *)kore_parent_teardown},
     {"vectis_kore_route", (void *)vectis_kore_route},
+    {"vectis_kore_http_redirect_route",
+     (void *)vectis_kore_http_redirect_route},
     {"vectis_kore_body_chunk", (void *)vectis_kore_body_chunk},
     {"vectis_kore_request_free", (void *)vectis_kore_request_free},
     {"vectis_kore_ws_connect", (void *)vectis_kore_ws_connect},
@@ -243,6 +247,8 @@ vectis_kore_material_bytes(const vectis_kore_material *material, void **out,
 static vectis_status
 vectis_kore_preflight_listener(const vectis_kore_runtime_config *config,
                                vectis_error *error);
+static vectis_status vectis_kore_preflight_http_redirect_listener(
+    const vectis_kore_runtime_config *config, vectis_error *error);
 static int vectis_kore_preflight_sleep_ms(long delay_ms);
 
 static size_t vectis_kore_environment_size(void) {
@@ -1838,6 +1844,34 @@ vectis_kore_preflight_listener(const vectis_kore_runtime_config *config,
   return VECTIS_ERR_STATE;
 }
 
+static vectis_status vectis_kore_preflight_http_redirect_listener(
+    const vectis_kore_runtime_config *config, vectis_error *error) {
+  vectis_kore_runtime_config redirect;
+
+  if (config == NULL || !config->http_redirect_enabled) {
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  if (config->tls_mode == VECTIS_TLS_MODE_DISABLED) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "HTTP to HTTPS redirect requires TLS");
+    return VECTIS_ERR_INVALID;
+  }
+  redirect = *config;
+  redirect.bind = config->http_redirect_bind != NULL
+                      ? config->http_redirect_bind
+                      : config->bind;
+  redirect.port = config->http_redirect_port != 0u
+                      ? config->http_redirect_port
+                      : VECTIS_TLS_HTTP_REDIRECT_DEFAULT_PORT;
+  if (redirect.port == config->port) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "HTTP redirect listener must use a different port");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_kore_preflight_listener(&redirect, error);
+}
+
 static void vectis_kore_setup_domain_tls(struct kore_domain *domain) {
   vectis_error error;
   void *cert_pem;
@@ -2960,11 +2994,103 @@ int vectis_kore_route(struct http_request *req) {
   return KORE_RESULT_OK;
 }
 
+static int vectis_kore_redirect_authority(const char *host, char *out,
+                                          size_t out_size) {
+  const char *colon;
+  const char *closing_bracket;
+  const char *cursor;
+  size_t length;
+
+  if (host == NULL || host[0] == '\0' || out == NULL || out_size == 0u) {
+    return 0;
+  }
+  length = strlen(host);
+  if (length == 0u || length >= out_size) {
+    return 0;
+  }
+  for (cursor = host; *cursor != '\0'; ++cursor) {
+    if ((unsigned char)*cursor <= 0x20u || (unsigned char)*cursor >= 0x7fu ||
+        *cursor == '/' || *cursor == '\\' || *cursor == '@' || *cursor == '?' ||
+        *cursor == '#') {
+      return 0;
+    }
+  }
+  if (host[0] == '[') {
+    closing_bracket = strchr(host, ']');
+    if (closing_bracket == NULL || closing_bracket == host + 1) {
+      return 0;
+    }
+    if (closing_bracket[1] != '\0') {
+      if (closing_bracket[1] != ':' || closing_bracket[2] == '\0') {
+        return 0;
+      }
+      for (cursor = closing_bracket + 2; *cursor != '\0'; ++cursor) {
+        if (!isdigit((unsigned char)*cursor)) {
+          return 0;
+        }
+      }
+    }
+    length = (size_t)(closing_bracket - host) + 1u;
+  } else {
+    colon = strchr(host, ':');
+    if (colon != NULL) {
+      if (strchr(colon + 1, ':') != NULL || colon == host || colon[1] == '\0') {
+        return 0;
+      }
+      for (cursor = colon + 1; *cursor != '\0'; ++cursor) {
+        if (!isdigit((unsigned char)*cursor)) {
+          return 0;
+        }
+      }
+      length = (size_t)(colon - host);
+    }
+  }
+  if (length == 0u || length >= out_size) {
+    return 0;
+  }
+  memcpy(out, host, length);
+  out[length] = '\0';
+  return 1;
+}
+
+int vectis_kore_http_redirect_route(struct http_request *req) {
+  char authority[512];
+  char location[8192];
+  const char *path;
+  const char *query;
+  int written;
+
+  if (req == NULL || !vectis_kore_redirect_authority(req->host, authority,
+                                                     sizeof(authority))) {
+    if (req != NULL) {
+      http_response(req, 400, NULL, 0);
+    }
+    return KORE_RESULT_OK;
+  }
+  path = req->path != NULL && req->path[0] == '/' ? req->path : "/";
+  query = req->query_string != NULL && req->query_string[0] != '\0'
+              ? req->query_string
+              : NULL;
+  written =
+      snprintf(location, sizeof(location), "https://%s%s%s%s", authority, path,
+               query != NULL ? "?" : "", query != NULL ? query : "");
+  if (written <= 0 || (size_t)written >= sizeof(location)) {
+    http_response(req, 414, NULL, 0);
+    return KORE_RESULT_OK;
+  }
+  http_response_header(req, "location", location);
+  http_response(req, 308, NULL, 0);
+  vectis_internal_metrics_note_http_status(vectis_kore_current.app, 308);
+  return KORE_RESULT_OK;
+}
+
 void kore_parent_configure(int argc, char **argv) {
   struct kore_server *server;
+  struct kore_server *redirect_server;
   struct kore_domain *domain;
   struct kore_route *route;
   char port[16];
+  char redirect_port[16];
   size_t domain_count;
   size_t i;
   const char *domain_name;
@@ -3070,6 +3196,31 @@ void kore_parent_configure(int argc, char **argv) {
     }
   }
   kore_server_finalize(server);
+  if (vectis_kore_current.http_redirect_enabled) {
+    redirect_server = kore_server_create("vectis-http-redirect");
+    redirect_server->tls = 0;
+    (void)snprintf(redirect_port, sizeof(redirect_port), "%u",
+                   (unsigned)vectis_kore_current.http_redirect_port);
+    if (!kore_server_bind(redirect_server,
+                          vectis_kore_current.http_redirect_bind != NULL
+                              ? vectis_kore_current.http_redirect_bind
+                              : (vectis_kore_current.bind != NULL
+                                     ? vectis_kore_current.bind
+                                     : "0.0.0.0"),
+                          redirect_port, NULL)) {
+      fatal("failed to bind Vectis HTTP redirect listener");
+    }
+    domain = kore_domain_new("*");
+    if (!kore_domain_attach(domain, redirect_server)) {
+      fatal("failed to attach Vectis HTTP redirect domain");
+    }
+    route = kore_route_create(domain, "^/.*$", HANDLER_TYPE_DYNAMIC);
+    if (route == NULL) {
+      fatal("failed to create Vectis HTTP redirect route");
+    }
+    kore_route_callback(route, "vectis_kore_http_redirect_route");
+    kore_server_finalize(redirect_server);
+  }
   vectis_kore_notify_ready();
   (void)pthread_mutex_unlock(&vectis_kore_mutex);
 }
@@ -3103,6 +3254,10 @@ vectis_status vectis_internal_kore_run(const vectis_kore_runtime_config *config,
   prepared.runtime_certkey_temporary = 0;
   prepared.runtime_client_ca_temporary = 0;
   status = vectis_kore_preflight_listener(&prepared, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_kore_preflight_http_redirect_listener(&prepared, error);
   if (status != VECTIS_OK) {
     return status;
   }
@@ -3190,6 +3345,10 @@ vectis_internal_kore_validate(const vectis_kore_runtime_config *config,
   prepared.runtime_certkey_temporary = 0;
   prepared.runtime_client_ca_temporary = 0;
   status = vectis_kore_preflight_listener(&prepared, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_kore_preflight_http_redirect_listener(&prepared, error);
   if (status != VECTIS_OK) {
     return status;
   }

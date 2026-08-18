@@ -126,6 +126,47 @@ lockd endpoint is used when configured. `acme_storage_endpoint`,
 private derived runtime directory; omission creates an isolated mode-0700
 directory under XDG cache.
 
+To add a canonical cleartext-to-HTTPS redirect listener without registering a
+route, enable it explicitly inside `tls`. `http_redirect` defaults to false;
+when enabled it binds the TLS address and local port `8080` unless overridden.
+It always uses a `308` response and preserves the request path and query while
+removing the cleartext listener port from `Host`.
+
+```lua
+local server = assert(vectis.server.new({
+  bind = "0.0.0.0",
+  port = 8443,
+  tls = {
+    mode = "acme",
+    domains = {"api.example.com"},
+    email = "ops@example.com",
+    http_redirect = true,
+    http_redirect_port = 8080,
+  },
+}))
+```
+
+The redirect listener is independent of ACME validation. In particular, the
+live ACME gate does not enable it: its existing public `:80` forwarding is not
+treated as a redirect endpoint.
+
+`make test-acme-live` is an explicit production Let's Encrypt E2E gate. It
+defaults to `vectis_demo.c89.systems`, binds `0.0.0.0:8443`, probes the public
+HTTPS URL, then starts a fresh Vectis app to prove hydration from the same
+durable state. Run it only after the public `:443 -> :8443` forwarding is in
+place:
+
+```sh
+VECTIS_LIVE_ACME_ENABLE=1 VECTIS_LIVE_ACME_EMAIL=ops@example.com \
+  make test-acme-live
+```
+
+By default the test intentionally leaves storage selection to Vectis, so the
+certificate state is retained in its default XDG-state Pouch store across test
+runs. `VECTIS_LIVE_ACME_STORAGE_ENDPOINT`,
+`VECTIS_LIVE_ACME_STORAGE_NAMESPACE`, and `VECTIS_LIVE_ACME_STORAGE_KEY` can
+select another lockd endpoint or object.
+
 ## Fixed Routes
 
 - `server:json(opts)` registers a fixed JSON response.

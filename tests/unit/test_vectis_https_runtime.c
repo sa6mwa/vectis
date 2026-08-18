@@ -1,7 +1,10 @@
+#include <arpa/inet.h>
 #include <assert.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include <lc/lc.h>
@@ -69,6 +72,44 @@ static void format_secure_url(char *out, size_t out_size, const char *host,
   written =
       snprintf(out, out_size, "https://%s:%u/secure", host, (unsigned)port);
   assert(written > 0 && (size_t)written < out_size);
+}
+
+static void assert_http_redirect(unsigned short port) {
+  struct sockaddr_in address;
+  char request[256];
+  char response[2048];
+  ssize_t received;
+  int fd;
+  int attempt;
+  int written;
+
+  memset(&address, 0, sizeof(address));
+  address.sin_family = AF_INET;
+  address.sin_port = htons(port);
+  assert(inet_pton(AF_INET, "127.0.0.1", &address.sin_addr) == 1);
+  written = snprintf(request, sizeof(request),
+                     "GET /secure?from=http HTTP/1.1\r\n"
+                     "Host: localhost:%u\r\nConnection: close\r\n\r\n",
+                     (unsigned)port);
+  assert(written > 0 && (size_t)written < sizeof(request));
+  for (attempt = 0; attempt < 100; ++attempt) {
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    assert(fd >= 0);
+    if (connect(fd, (struct sockaddr *)&address, sizeof(address)) == 0) {
+      break;
+    }
+    (void)close(fd);
+    usleep(100000u);
+  }
+  assert(attempt < 100);
+  assert(send(fd, request, (size_t)written, 0) == written);
+  received = recv(fd, response, sizeof(response) - 1u, 0);
+  assert(received > 0);
+  response[received] = '\0';
+  (void)close(fd);
+  assert(strstr(response, " 308 ") != NULL);
+  assert(strstr(response, "location: https://localhost/secure?from=http\r\n") !=
+         NULL);
 }
 
 static int read_file(const char *path, char **out, size_t *out_size) {
@@ -200,6 +241,7 @@ int main(void) {
   size_t root_cert_pem_size;
   lc_source *root_cert_source;
   unsigned short port;
+  unsigned short redirect_port;
   char localhost_url[128];
   char loopback_url[128];
 
@@ -208,6 +250,8 @@ int main(void) {
   root_cert_pem_size = 0u;
   root_cert_source = NULL;
   port = test_port_from_env("VECTIS_TEST_HTTPS_PORT", 28443u);
+  redirect_port = test_port_from_env("VECTIS_TEST_HTTPS_REDIRECT_PORT", 28080u);
+  assert(redirect_port != port);
   format_secure_url(localhost_url, sizeof(localhost_url), "localhost", port);
   format_secure_url(loopback_url, sizeof(loopback_url), "127.0.0.1", port);
   vectis_cert_bundle_config_init(&certs);
@@ -261,6 +305,8 @@ int main(void) {
   config.tls.mode = VECTIS_TLS_MODE_MANUAL;
   config.tls.bind = "127.0.0.1";
   config.tls.port = port;
+  config.tls.http_redirect_enabled = 1;
+  config.tls.http_redirect_port = redirect_port;
   config.tls.domain = "localhost";
   config.tls.certificate_path = server_cert_path;
   config.tls.private_key_path = server_key_path;
@@ -274,6 +320,7 @@ int main(void) {
   assert(status == VECTIS_OK);
 
   assert_https_ok(localhost_url, root_cert_path, NULL);
+  assert_http_redirect(redirect_port);
   assert(read_file(root_cert_path, &root_cert_pem, &root_cert_pem_size));
   assert_https_ca_source_ok(
       localhost_url,

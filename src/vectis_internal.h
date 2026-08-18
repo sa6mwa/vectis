@@ -13,6 +13,9 @@ typedef struct vectis_kore_runtime_config {
   const char *app_name;
   const char *bind;
   unsigned short port;
+  int http_redirect_enabled;
+  const char *http_redirect_bind;
+  unsigned short http_redirect_port;
   const char *domain;
   const char *const *domains;
   size_t domain_count;

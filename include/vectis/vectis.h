@@ -14,6 +14,9 @@
 
 #define VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION                           \
   "https://acme-v02.api.letsencrypt.org/directory"
+#define VECTIS_TLS_DEFAULT_PORT 8443u
+/* Opt-in cleartext listener used solely to redirect to the TLS listener. */
+#define VECTIS_TLS_HTTP_REDIRECT_DEFAULT_PORT 8080u
 #define VECTIS_SERVER_DEFAULT_MAX_CONNECTIONS 1024u
 #define VECTIS_SERVER_MAX_WORKER_COUNT 253u
 #define VECTIS_SERVER_MAX_KORE_CURL_TIMEOUT_SECONDS 65535u
@@ -518,6 +521,14 @@ typedef struct vectis_tls_config {
   const char *cipher_list;
   const char *bind;
   unsigned short port;
+  /*
+   * When enabled, Vectis also listens for cleartext HTTP and returns a 308
+   * redirect to the HTTPS URL. The listener defaults to tls.bind and 8080;
+   * set http_redirect_bind and http_redirect_port to override either.
+   */
+  int http_redirect_enabled;
+  const char *http_redirect_bind;
+  unsigned short http_redirect_port;
   const char *const *domains;
   size_t domain_count;
   const char *domain;

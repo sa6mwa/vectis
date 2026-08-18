@@ -12237,6 +12237,16 @@ static int vectis_lua_server_new(lua_State *lua) {
       return luaL_error(lua, "server tls.port must be between 1 and 65535");
     }
     config.tls.port = (unsigned short)port;
+    config.tls.http_redirect_enabled = vectis_lua_table_bool(
+        lua, tls_index, "http_redirect", config.tls.http_redirect_enabled);
+    config.tls.http_redirect_bind =
+        vectis_lua_table_string(lua, tls_index, "http_redirect_bind");
+    port = vectis_lua_table_size(lua, tls_index, "http_redirect_port", 0u);
+    if (port > 65535u) {
+      return luaL_error(lua,
+                        "server tls.http_redirect_port must be at most 65535");
+    }
+    config.tls.http_redirect_port = (unsigned short)port;
     tls_domains = vectis_lua_string_array_field(lua, tls_index, "domains",
                                                 &config.tls.domain_count);
     config.tls.domains = tls_domains;

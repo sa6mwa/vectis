@@ -34,6 +34,8 @@ int main(void) {
   acme.tls.mode = VECTIS_TLS_MODE_ACME;
   acme.tls.bind = "0.0.0.0";
   acme.tls.port = 443u;
+  acme.tls.http_redirect_enabled = 1;
+  acme.tls.http_redirect_port = 8080u;
   acme_domains[0] = "api.example.com";
   acme_domains[1] = "www.example.com";
   acme.tls.domains = acme_domains;

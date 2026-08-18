@@ -208,6 +208,7 @@ release-darwin-smoke-bundle:
 release-matrix: package package-source release-lua-artifacts package-checksums verify-release-matrix
 
 prerelease-live:
+	$(TIMED) prerelease-live-acme bash ./scripts/test-live-acme.sh
 	$(TIMED) prerelease-live-oauth2 bash ./scripts/test-live-oauth2.sh
 	$(TIMED) prerelease-live-opcua-pubsub bash ./scripts/test-live-opcua-pubsub.sh
 	$(TIMED) prerelease-live-cai bash ./scripts/test-live-cai.sh
@@ -266,6 +267,9 @@ test-opcua-lua-surface: deps-debug
 
 test-opcua-pubsub-live:
 	$(TIMED) test-opcua-pubsub-live bash ./scripts/test-live-opcua-pubsub.sh
+
+test-acme-live: build-debug
+	$(TIMED) test-acme-live bash ./scripts/test-live-acme.sh
 
 test-cai-live: build-debug
 	$(TIMED) test-cai-live bash ./scripts/test-live-cai.sh

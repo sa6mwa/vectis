@@ -1,5 +1,5 @@
-#include "vectis_internal.h"
 #include "vectis_acme_state.h"
+#include "vectis_internal.h"
 
 #include <arpa/inet.h>
 #include <cpkt/audio.h>
@@ -395,6 +395,7 @@ typedef struct vectis_app_impl {
   int owns_logger;
   char *app_name;
   char *bind;
+  char *http_redirect_bind;
   char *domain;
   char **domains;
   size_t domain_count;
@@ -454,6 +455,8 @@ typedef struct vectis_app_impl {
   vectis_service_failure_policy service_failure_policy;
   vectis_quiescence_policy quiescence_policy;
   unsigned short port;
+  unsigned short http_redirect_port;
+  int http_redirect_enabled;
   vectis_tls_mode tls_mode;
   vectis_tls_version tls_version;
   char *tls_cipher_list;
@@ -2916,7 +2919,7 @@ void vectis_tls_config_init(vectis_tls_config *config) {
   config->mode = VECTIS_TLS_MODE_MANUAL;
   config->version = VECTIS_TLS_VERSION_DEFAULT;
   config->bind = "0.0.0.0";
-  config->port = 8443u;
+  config->port = VECTIS_TLS_DEFAULT_PORT;
   config->domain = "*";
   config->acme_directory_url = VECTIS_ACME_DIRECTORY_LETSENCRYPT_PRODUCTION;
 }
@@ -10114,6 +10117,7 @@ static void vectis_destroy_impl_final(vectis_app_impl *impl) {
 
   free(impl->app_name);
   free(impl->bind);
+  free(impl->http_redirect_bind);
   free(impl->domain);
   free(impl->cert_key_bundle_path);
   free(impl->cert_key_bundle_pem);
@@ -10475,6 +10479,18 @@ static vectis_status vectis_validate_startable(const vectis_app_impl *impl,
       impl->tls_mode != VECTIS_TLS_MODE_ACME) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "tls.mode is invalid");
     return VECTIS_ERR_INVALID;
+  }
+  if (impl->http_redirect_enabled) {
+    if (impl->tls_mode == VECTIS_TLS_MODE_DISABLED) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "HTTP to HTTPS redirect requires TLS");
+      return VECTIS_ERR_INVALID;
+    }
+    if (impl->http_redirect_port == impl->port) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "HTTP redirect listener must use a different port");
+      return VECTIS_ERR_INVALID;
+    }
   }
   if (impl->tls_version != VECTIS_TLS_VERSION_DEFAULT &&
       impl->tls_version != VECTIS_TLS_VERSION_BOTH &&
@@ -11029,6 +11045,7 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
       effective->app_name != NULL ? effective->app_name : "vectis");
   impl->bind = vectis_strdup(effective->tls.bind != NULL ? effective->tls.bind
                                                          : "0.0.0.0");
+  impl->http_redirect_bind = vectis_strdup(effective->tls.http_redirect_bind);
   impl->domain = vectis_strdup(
       effective->tls.domain != NULL ? effective->tls.domain : "*");
   impl->cert_key_bundle_path = vectis_strdup(vectis_source_path_or_old(
@@ -11080,7 +11097,14 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   impl->supervision_policy = effective->supervision_policy;
   impl->service_failure_policy = effective->service_failure_policy;
   impl->quiescence_policy = effective->quiescence_policy;
-  impl->port = vectis_default_ushort(effective->tls.port, 8443u);
+  impl->port =
+      vectis_default_ushort(effective->tls.port, VECTIS_TLS_DEFAULT_PORT);
+  impl->http_redirect_enabled = effective->tls.http_redirect_enabled;
+  impl->http_redirect_port =
+      effective->tls.http_redirect_enabled
+          ? vectis_default_ushort(effective->tls.http_redirect_port,
+                                  VECTIS_TLS_HTTP_REDIRECT_DEFAULT_PORT)
+          : 0u;
   impl->tls_mode = effective->tls.mode;
   impl->tls_version = effective->tls.version;
   impl->require_client_certificate = effective->tls.require_client_certificate;
@@ -11091,6 +11115,8 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   impl->server.max_request_body_bytes =
       effective->server.max_request_body_bytes;
   if (impl->app_name == NULL || impl->bind == NULL || impl->domain == NULL ||
+      (effective->tls.http_redirect_bind != NULL &&
+       impl->http_redirect_bind == NULL) ||
       impl->request_body_spool_dir == NULL || impl->server_header == NULL ||
       (effective_server.access_log_path != NULL &&
        impl->access_log_path == NULL) ||
@@ -11301,6 +11327,9 @@ vectis_app_make_kore_runtime_config(vectis_app *app, vectis_app_impl *impl,
   kore_config->app_name = impl->app_name;
   kore_config->bind = impl->bind;
   kore_config->port = impl->port;
+  kore_config->http_redirect_enabled = impl->http_redirect_enabled;
+  kore_config->http_redirect_bind = impl->http_redirect_bind;
+  kore_config->http_redirect_port = impl->http_redirect_port;
   kore_config->domain = impl->domain;
   kore_config->domains = (const char *const *)impl->domains;
   kore_config->domain_count = impl->domain_count;
