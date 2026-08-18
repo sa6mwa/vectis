@@ -151,7 +151,7 @@ live ACME gate does not enable it: its existing public `:80` forwarding is not
 treated as a redirect endpoint.
 
 `make test-acme-live` is an explicit production Let's Encrypt E2E gate. It
-defaults to `vectis_demo.c89.systems`, binds `0.0.0.0:8443`, probes the public
+defaults to `vectisdemo.c89.systems`, binds `0.0.0.0:8443`, probes the public
 HTTPS URL, then starts a fresh Vectis app to prove hydration from the same
 durable state. Run it only after the public `:443 -> :8443` forwarding is in
 place:

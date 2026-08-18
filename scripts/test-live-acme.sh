@@ -21,7 +21,7 @@ if [ -z "${VECTIS_LIVE_ACME_EMAIL:-}" ]; then
   exit 2
 fi
 
-domain=${VECTIS_LIVE_ACME_DOMAIN:-vectis_demo.c89.systems}
+domain=${VECTIS_LIVE_ACME_DOMAIN:-vectisdemo.c89.systems}
 bind=${VECTIS_LIVE_ACME_BIND:-0.0.0.0}
 port=${VECTIS_LIVE_ACME_PORT:-8443}
 directory_url=${VECTIS_LIVE_ACME_DIRECTORY_URL:-https://acme-v02.api.letsencrypt.org/directory}
