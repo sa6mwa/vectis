@@ -86,6 +86,20 @@ The implementation should provide one of these repository-owned link inputs:
   libraries, frameworks, rpaths, install-name policy, and linker flags needed
   to link the `vectis` executable.
 
+Vectis now packages the first form as an installed SDK contract:
+
+```text
+share/vectis/pack-runner-link-inputs.json
+lib/vectis/pack/libvectis_pack_runner.a
+lib/cmake/vectis/vectisConfig.cmake target vectis::pack_runner
+```
+
+The JSON manifest is relocatable and records the target id, runner archive,
+CMake target name, required Mach-O section names, and finalization order. It is
+not a full Darwin pack implementation by itself; the pack command still needs a
+backend that compiles the generated section object, links it with
+`vectis::pack_runner`, signs final bytes, and verifies the result.
+
 `vectis -a pack` on Darwin should discover those inputs from the installed SDK
 or configured build tree. If they are unavailable, it must fail before creating
 an output artifact with an actionable diagnostic such as:

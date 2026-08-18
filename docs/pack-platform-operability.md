@@ -49,6 +49,19 @@ The detailed implementation contract is defined in
 relink-based Darwin backend with Vectis-provided pack-runner link inputs rather
 than an in-place Mach-O editor.
 
+Binary SDKs now include the relocatable pack-runner input contract for that
+future backend:
+
+```text
+share/vectis/pack-runner-link-inputs.json
+lib/vectis/pack/libvectis_pack_runner.a
+vectis::pack_runner
+```
+
+The manifest names the package-relative archive, CMake target, Mach-O section
+contract, and finalization order. It must not contain source, build, cache, or
+other workstation-local paths.
+
 ## Darwin Requirements
 
 Darwin/Mach-O packed services are not supported until Vectis has a dedicated
@@ -134,11 +147,11 @@ unsupported targets rather than being ignored. `--entitlements <path>` must be
 a readable regular file.
 
 `vectis -a pack --target arm64-apple-darwin` is routed to the Darwin/Mach-O
-backend contract. Until the relink backend and pack-runner link inputs exist,
-that command fails before creating the output artifact with the documented
-`Darwin pack requires pack-runner link inputs` diagnostic. This is deliberate:
-Darwin payloads must not be produced by appending the Linux footer layout to a
-Mach-O executable.
+backend contract. Until the relink backend consumes the packaged pack-runner
+inputs, that command fails before creating the output artifact with the
+documented `Darwin pack requires pack-runner link inputs` diagnostic. This is
+deliberate: Darwin payloads must not be produced by appending the Linux footer
+layout to a Mach-O executable.
 
 ## Notarization Limits
 

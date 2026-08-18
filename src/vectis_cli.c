@@ -3036,7 +3036,9 @@ static int vectis_pack_validate_entitlements_path(const char *path) {
 
 static int vectis_pack_darwin_requires_link_inputs(void) {
   fputs("vectis: Darwin pack requires pack-runner link inputs; build or "
-        "install the arm64-apple-darwin pack SDK before using Mach-O "
+        "install the arm64-apple-darwin pack SDK with "
+        "share/vectis/pack-runner-link-inputs.json and "
+        "lib/vectis/pack/libvectis_pack_runner.a before using Mach-O "
         "packing or signing options\n",
         stderr);
   return 64;

@@ -194,6 +194,7 @@ set(ZLIB_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/zlib")
 set(nghttp2_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/nghttp2")
 set(Libssh2_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/libssh2")
 set(CURL_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/CURL")
+set(CpktLuaRuntime_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/CpktLuaRuntime")
 set(CpktAudio_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/CpktAudio")
 set(CpktOpcUa_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/CpktOpcUa")
 set(CpktSus_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/CpktSus")
@@ -209,6 +210,7 @@ find_dependency(ZLIB CONFIG REQUIRED)
 find_dependency(nghttp2 CONFIG REQUIRED)
 find_dependency(Libssh2 CONFIG REQUIRED)
 find_dependency(CURL CONFIG REQUIRED)
+find_dependency(CpktLuaRuntime CONFIG REQUIRED)
 find_dependency(CpktAudio CONFIG REQUIRED)
 find_dependency(CpktOpcUa CONFIG REQUIRED)
 find_dependency(CpktSus CONFIG REQUIRED)
@@ -304,6 +306,32 @@ if(NOT TARGET vectis::vectis)
   elseif(TARGET vectis::shared)
     add_library(vectis::vectis ALIAS vectis::shared)
   endif()
+endif()
+
+if(TARGET vectis::static
+   AND NOT TARGET vectis::pack_runner
+   AND EXISTS "${PACKAGE_PREFIX_DIR}/lib/vectis/pack/libvectis_pack_runner.a")
+  set(_vectis_pack_runner_links
+    vectis::static
+    cpkt::lua_runtime
+    cpkt::opcua
+    cpkt::audio
+    cpkt::sus
+    cai::cai_static
+    libmdf::mdf_static
+    pslog::pslog_static
+    softline::softline_static
+  )
+  if(UNIX AND NOT APPLE)
+    list(APPEND _vectis_pack_runner_links m)
+  endif()
+  add_library(vectis::pack_runner STATIC IMPORTED)
+  set_target_properties(vectis::pack_runner PROPERTIES
+    IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/vectis/pack/libvectis_pack_runner.a"
+    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include;${PACKAGE_PREFIX_DIR}/include/libxml2"
+    INTERFACE_LINK_DIRECTORIES "${PACKAGE_PREFIX_DIR}/lib"
+    INTERFACE_LINK_LIBRARIES "${_vectis_pack_runner_links}"
+  )
 endif()
 ]=])
 

@@ -1399,6 +1399,26 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/scripts/verify_vectis_lua_preloads.sh" '"zlib"'
 }
 
+write_fake_pack_runner_inputs() {
+  root=$1
+  target_id=$2
+
+  mkdir -p "$root/share/vectis" "$root/lib/vectis/pack"
+  printf '%s\n' 'fake pack runner archive' \
+    >"$root/lib/vectis/pack/libvectis_pack_runner.a"
+  cat >"$root/share/vectis/pack-runner-link-inputs.json" <<EOF
+{
+  "format": "vectis-pack-runner-link-inputs",
+  "version": 1,
+  "vectis_version": "0.0.0",
+  "target_id": "$target_id",
+  "runner_archive": "lib/vectis/pack/libvectis_pack_runner.a",
+  "cmake_target": "vectis::pack_runner",
+  "payload_sections": ["__VECTIS,__pack_header"]
+}
+EOF
+}
+
 assert_luarocks_artifact_rejected() {
   dist=$luarocks_dist
   version=0.0.0
@@ -1440,6 +1460,7 @@ EOF
 	printf '%s\n' 'target_id=x86_64-linux-musl' >"$root/share/c.pkt.systems/manifest.txt"
 	printf '%s\n' 'license' >"$root/share/doc/vectis/LICENSE"
   printf '%s\n' 'readme' >"$root/share/doc/vectis/README.md"
+  write_fake_pack_runner_inputs "$root" x86_64-linux-musl
   printf '%s\n' 'must not ship' >"$root/.luarocks/bad.rock"
   tar -C "$dist" -czf "$dist/$artifact" "$root_name"
   (cd "$dist" && sha256sum "$artifact" >"vectis-$version-CHECKSUMS")
@@ -1499,6 +1520,7 @@ EOF
 	printf '%s\n' 'target_id=aarch64-linux-gnu' >"$root/share/c.pkt.systems/manifest.txt"
 	printf '%s\n' 'license' >"$root/share/doc/vectis/LICENSE"
   printf '%s\n' 'readme' >"$root/share/doc/vectis/README.md"
+  write_fake_pack_runner_inputs "$root" aarch64-linux-gnu
   tar -C "$dist" -czf "$dist/$artifact" "$root_name"
   (cd "$dist" && sha256sum "$artifact" >"vectis-$version-CHECKSUMS")
 
@@ -1589,6 +1611,7 @@ EOF
 	printf '%s\n' 'target_id=x86_64-linux-musl' >"$root/share/c.pkt.systems/manifest.txt"
 	printf '%s\n' 'license' >"$root/share/doc/vectis/LICENSE"
   printf '%s\n' 'readme' >"$root/share/doc/vectis/README.md"
+  write_fake_pack_runner_inputs "$root" x86_64-linux-musl
   tar -C "$dist" -czf "$dist/$artifact" "$root_name"
   (cd "$dist" && sha256sum "$artifact" >"vectis-$version-CHECKSUMS")
 
@@ -1655,6 +1678,7 @@ EOF
   printf '%s\n' 'target_id=x86_64-linux-musl' >"$root/share/c.pkt.systems/manifest.txt"
   printf '%s\n' 'license' >"$root/share/doc/vectis/LICENSE"
   printf '%s\n' 'readme' >"$root/share/doc/vectis/README.md"
+  write_fake_pack_runner_inputs "$root" x86_64-linux-musl
   tar -C "$dist" -czf "$dist/$artifact" "$root_name"
   (cd "$dist" && sha256sum "$artifact" >"vectis-$version-CHECKSUMS")
 
@@ -1732,6 +1756,7 @@ assert_contains "$repo_root/cmake/package_archive.cmake" 'share/c\.pkt\.systems'
 assert_contains "$repo_root/cmake/package_archive.cmake" 'CMAKE_INSTALL_NAME_TOOL'
 assert_contains "$repo_root/cmake/package_archive.cmake" '@rpath/\$\{vectis_darwin_dep_name\}'
 assert_contains "$repo_root/cmake/package_archive.cmake" 'find_dependency\(CpktOpcUa CONFIG REQUIRED\)'
+assert_contains "$repo_root/cmake/package_archive.cmake" 'find_dependency\(CpktLuaRuntime CONFIG REQUIRED\)'
 assert_contains "$repo_root/cmake/package_archive.cmake" 'find_dependency\(CpktSus CONFIG REQUIRED\)'
 assert_contains "$repo_root/cmake/package_archive.cmake" 'find_dependency\(CpktAudio CONFIG REQUIRED\)'
 assert_contains "$repo_root/cmake/package_archive.cmake" 'find_package\(liblql CONFIG REQUIRED'
@@ -1739,8 +1764,20 @@ assert_contains "$repo_root/cmake/package_archive.cmake" 'cpkt::opcua'
 assert_contains "$repo_root/cmake/package_archive.cmake" 'cpkt::sus'
 assert_contains "$repo_root/cmake/package_archive.cmake" 'cpkt::audio'
 assert_contains "$repo_root/cmake/package_archive.cmake" 'liblql::lql_static'
+assert_contains "$repo_root/CMakeLists.txt" 'vectis_pack_runner'
+assert_contains "$repo_root/CMakeLists.txt" 'pack-runner-link-inputs\.json'
+assert_contains "$repo_root/CMakeLists.txt" 'CMAKE_INSTALL_LIBDIR.*/vectis/pack'
+assert_contains "$repo_root/cmake/pack-runner-link-inputs.json.in" \
+  '"format": "vectis-pack-runner-link-inputs"'
+assert_contains "$repo_root/cmake/pack-runner-link-inputs.json.in" \
+  '"runner_archive": "lib/vectis/pack/libvectis_pack_runner.a"'
+assert_contains "$repo_root/cmake/pack-runner-link-inputs.json.in" \
+  '__VECTIS,__pack_header'
+assert_contains "$repo_root/cmake/vectisConfig.cmake.in" 'vectis::pack_runner'
+assert_contains "$repo_root/cmake/package_archive.cmake" 'vectis::pack_runner'
 assert_contains "$repo_root/tests/install/CMakeLists.txt" 'cpkt::opcua cpkt::sus cpkt::audio'
 assert_contains "$repo_root/tests/install/CMakeLists.txt" 'liblql::lql_static'
+assert_contains "$repo_root/tests/install/CMakeLists.txt" 'vectis::pack_runner'
 assert_contains "$repo_root/cmake/package_darwin_smoke_bundle.cmake" '@executable_path/\.\./lib'
 assert_contains "$repo_root/scripts/verify_darwin_pack_signature.sh" \
   '\-\-verify \-\-strict \-\-verbose=4'
@@ -1800,6 +1837,8 @@ assert_contains "$repo_root/src/vectis_cli.c" \
   'unsupported pack target'
 assert_contains "$repo_root/src/vectis_cli.c" \
   'Darwin pack requires pack-runner link inputs'
+assert_contains "$repo_root/src/vectis_cli.c" \
+  'share/vectis/pack-runner-link-inputs\.json'
 assert_contains "$repo_root/tests/lua/pack.cmake" \
   'pack signing option without signing mode'
 assert_contains "$repo_root/tests/lua/pack.cmake" \
@@ -1814,6 +1853,10 @@ assert_contains "$repo_root/docs/pack-platform-operability.md" \
   'vectis -a pack --target arm64-apple-darwin'
 assert_contains "$repo_root/docs/pack-platform-operability.md" \
   'Darwin pack requires pack-runner link inputs'
+assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
+  'lib/vectis/pack/libvectis_pack_runner.a'
+assert_contains "$repo_root/docs/pack-platform-operability.md" \
+  'vectis::pack_runner'
 assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
   'readable regular file'
 assert_contains "$repo_root/TODO.md" \
@@ -1890,6 +1933,8 @@ assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'discover_targe
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'VECTIS_RELEASE_BUILD_ROOT'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'Linux binary SDK ELF machine target mismatch'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'Linux static libvectis archive'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK missing pack-runner link input manifest'
+assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'lib/vectis/pack/libvectis_pack_runner.a'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'verify_linux_vectis_binary_static'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'Linux vectis binary is dynamically linked'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'Linux vectis binary has an ELF interpreter'

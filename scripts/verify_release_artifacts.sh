@@ -113,6 +113,29 @@ discover_linux_readelf() {
   return 1
 }
 
+verify_pack_runner_inputs() {
+  local root=$1
+  local target_id=$2
+  local artifact_name=$3
+  local manifest="$root/share/vectis/pack-runner-link-inputs.json"
+  local runner="$root/lib/vectis/pack/libvectis_pack_runner.a"
+
+  [ -f "$manifest" ] ||
+    fail "binary SDK missing pack-runner link input manifest" "$artifact_name"
+  [ -f "$runner" ] ||
+    fail "binary SDK missing pack-runner archive" "$artifact_name"
+  grep -F '"format": "vectis-pack-runner-link-inputs"' "$manifest" >/dev/null ||
+    fail "binary SDK pack-runner manifest format mismatch" "$artifact_name"
+  grep -F "\"target_id\": \"$target_id\"" "$manifest" >/dev/null ||
+    fail "binary SDK pack-runner manifest target mismatch" "$artifact_name"
+  grep -F '"runner_archive": "lib/vectis/pack/libvectis_pack_runner.a"' "$manifest" >/dev/null ||
+    fail "binary SDK pack-runner manifest archive path mismatch" "$artifact_name"
+  grep -F '"cmake_target": "vectis::pack_runner"' "$manifest" >/dev/null ||
+    fail "binary SDK pack-runner manifest target name mismatch" "$artifact_name"
+  grep -F '__VECTIS,__pack_header' "$manifest" >/dev/null ||
+    fail "binary SDK pack-runner manifest missing Mach-O section contract" "$artifact_name"
+}
+
 verify_binary_sdk_manifest_target() {
   root=$1
   target_id=$2
@@ -258,6 +281,7 @@ while IFS= read -r artifact_name; do
             *) fail "binary SDK target is not supported" "$artifact_name" ;;
           esac
           verify_binary_sdk_manifest_target "$root" "$target_id" "$artifact_name"
+          verify_pack_runner_inputs "$root" "$target_id" "$artifact_name"
           [ -d "$root/include" ] || fail "binary SDK missing include/" "$artifact_name"
           [ -d "$root/lib" ] || fail "binary SDK missing lib/" "$artifact_name"
           [ -d "$root/share/doc/vectis" ] || fail "binary SDK missing share/doc/vectis" "$artifact_name"

@@ -8,6 +8,7 @@ find_dependency(ZLIB CONFIG REQUIRED)
 find_dependency(nghttp2 CONFIG REQUIRED)
 find_dependency(Libssh2 CONFIG REQUIRED)
 find_dependency(CURL CONFIG REQUIRED)
+find_dependency(CpktLuaRuntime CONFIG REQUIRED)
 find_dependency(CpktAudio CONFIG REQUIRED)
 find_dependency(CpktOpcUa CONFIG REQUIRED)
 find_dependency(CpktSus CONFIG REQUIRED)
@@ -160,7 +161,34 @@ if(NOT TARGET vectis::vectis)
   endif()
 endif()
 
+if(TARGET vectis::static
+   AND NOT TARGET vectis::pack_runner
+   AND EXISTS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/vectis/pack/libvectis_pack_runner.a")
+  set(_vectis_pack_runner_links
+    vectis::static
+    cpkt::lua_runtime
+    cpkt::opcua
+    cpkt::audio
+    cpkt::sus
+    cai::cai_static
+    libmdf::mdf_static
+    pslog::pslog_static
+    softline::softline_static
+  )
+  if(UNIX AND NOT APPLE)
+    list(APPEND _vectis_pack_runner_links m)
+  endif()
+  add_library(vectis::pack_runner STATIC IMPORTED)
+  set_target_properties(vectis::pack_runner PROPERTIES
+    IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/vectis/pack/libvectis_pack_runner.a"
+    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@"
+    INTERFACE_LINK_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@;${_vectis_dependency_link_dirs}"
+    INTERFACE_LINK_LIBRARIES "${_vectis_pack_runner_links}"
+  )
+endif()
+
 unset(_vectis_dependency_link_dir)
 unset(_vectis_dependency_link_dirs)
 unset(_vectis_dependency_location)
 unset(_vectis_dependency_target)
+unset(_vectis_pack_runner_links)
