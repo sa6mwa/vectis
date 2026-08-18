@@ -1854,6 +1854,12 @@ assert_contains "$repo_root/src/vectis_cli.c" \
 assert_contains "$repo_root/src/vectis_cli.c" \
   'Mach-O pack CMake configure'
 assert_contains "$repo_root/src/vectis_cli.c" \
+  'vectis_lua_load_embedded_from_macho'
+assert_contains "$repo_root/src/vectis_cli.c" \
+  'getsectiondata'
+assert_contains "$repo_root/src/vectis_cli.c" \
+  '__pack_header'
+assert_contains "$repo_root/src/vectis_cli.c" \
   '\-\-pack-sdk-root'
 assert_contains "$repo_root/src/vectis_cli.c" \
   '\-\-work-dir'
@@ -1896,6 +1902,8 @@ assert_contains "$repo_root/docs/pack-platform-operability.md" \
 assert_contains "$repo_root/docs/pack-platform-operability.md" \
   'installed-SDK CMake relink project'
 assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
+  'Darwin startup uses the system Mach-O section API'
+assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
   'lib/vectis/pack/libvectis_pack_runner.a'
 assert_contains "$repo_root/docs/pack-platform-operability.md" \
   'vectis::pack_runner'
@@ -1909,6 +1917,8 @@ assert_contains "$repo_root/TODO.md" \
   '\[x\] Add the first `vectis_pack_write_macho` backend slice'
 assert_contains "$repo_root/TODO.md" \
   '\[x\] Extend `vectis_pack_write_macho` to generate an installed-SDK CMake relink project'
+assert_contains "$repo_root/TODO.md" \
+  '\[x\] Split embedded payload startup into platform-specific locators'
 assert_contains "$repo_root/TODO.md" \
   'docs/darwin-mach-o-pack-spec\.md'
 assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \

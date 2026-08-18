@@ -34,6 +34,11 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <mach-o/getsect.h>
+#include <mach-o/ldsyms.h>
+#include <mach-o/loader.h>
+#endif
 #include <vectis/auth.h>
 #include <vectis/embedded_fs.h>
 #include <vectis/totp_qr.h>
@@ -69,6 +74,19 @@
 #define VECTIS_PACK_MACHO_HEADER_SIZE 256u
 #define VECTIS_PACK_MAGIC "VECTIS_PACK"
 #define VECTIS_PACK_MAGIC_SIZE 11u
+
+typedef struct vectis_pack_embedded_payload {
+  unsigned char *owned_bytes;
+  const unsigned char *header;
+  const unsigned char *script;
+  size_t script_size;
+  const unsigned char *bundle;
+  size_t bundle_size;
+  const unsigned char *asset_payload;
+  size_t asset_payload_size;
+  const unsigned char *manifest;
+  size_t manifest_size;
+} vectis_pack_embedded_payload;
 #define VECTIS_LUA_CURL_RESPONSE_BODY_LIMIT (8u * 1024u * 1024u)
 #define VECTIS_LUA_CURL_RESPONSE_HEADER_LIMIT (64u * 1024u)
 #define VECTIS_LUA_OPENSSL_MAX_BYTES (1024u * 1024u)
@@ -22580,14 +22598,22 @@ static int vectis_lua_run_script(int argc, char **argv, int script_index,
   return rc;
 }
 
-static int vectis_lua_run_embedded(int argc, char **argv) {
+static void
+vectis_pack_embedded_payload_init(vectis_pack_embedded_payload *payload) {
+  memset(payload, 0, sizeof(*payload));
+}
+
+static void
+vectis_pack_embedded_payload_cleanup(vectis_pack_embedded_payload *payload) {
+  if (payload != NULL) {
+    free(payload->owned_bytes);
+    vectis_pack_embedded_payload_init(payload);
+  }
+}
+
+static int vectis_lua_load_embedded_from_elf_footer(
+    const char *self_path, vectis_pack_embedded_payload *payload) {
   unsigned char *self;
-  unsigned char *script;
-  unsigned char *bundle;
-  unsigned char *asset_payload;
-  unsigned char *manifest;
-  unsigned char footer[VECTIS_PACK_FOOTER_SIZE];
-  unsigned char actual_sha[SHA256_DIGEST_LENGTH];
   size_t self_size;
   size_t footer_offset;
   size_t script_offset;
@@ -22598,12 +22624,7 @@ static int vectis_lua_run_embedded(int argc, char **argv) {
   size_t asset_size;
   size_t manifest_offset;
   size_t manifest_size;
-  char self_path[4096];
-  int rc;
 
-  if (vectis_self_path(argv[0], self_path, sizeof(self_path)) != 0) {
-    return -1;
-  }
   self = NULL;
   if (vectis_read_all(self_path, &self, &self_size) != 0) {
     return -1;
@@ -22612,21 +22633,20 @@ static int vectis_lua_run_embedded(int argc, char **argv) {
     free(self);
     return -1;
   }
-  memcpy(footer, self + self_size - VECTIS_PACK_FOOTER_SIZE,
-         VECTIS_PACK_FOOTER_SIZE);
-  if (!vectis_pack_footer_valid(footer)) {
+  payload->header = self + self_size - VECTIS_PACK_FOOTER_SIZE;
+  if (!vectis_pack_footer_valid(payload->header)) {
     free(self);
     return -1;
   }
   footer_offset = self_size - VECTIS_PACK_FOOTER_SIZE;
-  script_offset = (size_t)vectis_pack_read_u64(footer + 16u);
-  script_size = (size_t)vectis_pack_read_u64(footer + 24u);
-  bundle_offset = (size_t)vectis_pack_read_u64(footer + 32u);
-  bundle_size = (size_t)vectis_pack_read_u64(footer + 40u);
-  asset_offset = (size_t)vectis_pack_read_u64(footer + 48u);
-  asset_size = (size_t)vectis_pack_read_u64(footer + 56u);
-  manifest_offset = (size_t)vectis_pack_read_u64(footer + 64u);
-  manifest_size = (size_t)vectis_pack_read_u64(footer + 72u);
+  script_offset = (size_t)vectis_pack_read_u64(payload->header + 16u);
+  script_size = (size_t)vectis_pack_read_u64(payload->header + 24u);
+  bundle_offset = (size_t)vectis_pack_read_u64(payload->header + 32u);
+  bundle_size = (size_t)vectis_pack_read_u64(payload->header + 40u);
+  asset_offset = (size_t)vectis_pack_read_u64(payload->header + 48u);
+  asset_size = (size_t)vectis_pack_read_u64(payload->header + 56u);
+  manifest_offset = (size_t)vectis_pack_read_u64(payload->header + 64u);
+  manifest_size = (size_t)vectis_pack_read_u64(payload->header + 72u);
   if (script_size == 0u || script_offset > footer_offset ||
       script_size > footer_offset - script_offset ||
       bundle_offset > footer_offset ||
@@ -22643,45 +22663,166 @@ static int vectis_lua_run_embedded(int argc, char **argv) {
     fputs("vectis: embedded payload is invalid\n", stderr);
     return 1;
   }
-  script = self + script_offset;
-  bundle = self + bundle_offset;
-  asset_payload = self + asset_offset;
-  manifest = self + manifest_offset;
-  SHA256(script, script_size, actual_sha);
-  if (memcmp(actual_sha, footer + 80u, SHA256_DIGEST_LENGTH) != 0) {
-    free(self);
+  payload->owned_bytes = self;
+  payload->script = self + script_offset;
+  payload->script_size = script_size;
+  payload->bundle = self + bundle_offset;
+  payload->bundle_size = bundle_size;
+  payload->asset_payload = self + asset_offset;
+  payload->asset_payload_size = asset_size;
+  payload->manifest = self + manifest_offset;
+  payload->manifest_size = manifest_size;
+  return 0;
+}
+
+static int vectis_lua_validate_embedded_payload(
+    const vectis_pack_embedded_payload *payload) {
+  unsigned char actual_sha[SHA256_DIGEST_LENGTH];
+
+  if (payload == NULL || payload->header == NULL || payload->script == NULL ||
+      payload->script_size == 0u ||
+      !vectis_pack_footer_valid(payload->header)) {
+    fputs("vectis: embedded payload is invalid\n", stderr);
+    return 1;
+  }
+  SHA256(payload->script, payload->script_size, actual_sha);
+  if (memcmp(actual_sha, payload->header + 80u, SHA256_DIGEST_LENGTH) != 0) {
     fputs("vectis: embedded Lua script hash mismatch\n", stderr);
     return 1;
   }
-  if (bundle_size > 0u) {
-    SHA256(bundle, bundle_size, actual_sha);
-    if (memcmp(actual_sha, footer + 112u, SHA256_DIGEST_LENGTH) != 0) {
-      free(self);
+  if (payload->bundle_size > 0u) {
+    SHA256(payload->bundle, payload->bundle_size, actual_sha);
+    if (memcmp(actual_sha, payload->header + 112u, SHA256_DIGEST_LENGTH) != 0) {
       fputs("vectis: embedded lockd bundle hash mismatch\n", stderr);
       return 1;
     }
   }
-  if (asset_size > 0u) {
-    SHA256(asset_payload, asset_size, actual_sha);
-    if (memcmp(actual_sha, footer + 144u, SHA256_DIGEST_LENGTH) != 0) {
-      free(self);
+  if (payload->asset_payload_size > 0u) {
+    SHA256(payload->asset_payload, payload->asset_payload_size, actual_sha);
+    if (memcmp(actual_sha, payload->header + 144u, SHA256_DIGEST_LENGTH) != 0) {
       fputs("vectis: embedded asset payload hash mismatch\n", stderr);
       return 1;
     }
   }
-  if (manifest_size > 0u) {
-    SHA256(manifest, manifest_size, actual_sha);
-    if (memcmp(actual_sha, footer + 176u, SHA256_DIGEST_LENGTH) != 0) {
-      free(self);
+  if (payload->manifest_size > 0u) {
+    SHA256(payload->manifest, payload->manifest_size, actual_sha);
+    if (memcmp(actual_sha, payload->header + 176u, SHA256_DIGEST_LENGTH) != 0) {
       fputs("vectis: embedded asset manifest hash mismatch\n", stderr);
       return 1;
     }
   }
+  return 0;
+}
+
+#ifdef __APPLE__
+static const unsigned char *vectis_lua_macho_section(const char *section_name,
+                                                     size_t *out_size) {
+  unsigned long section_size;
+  const unsigned char *data;
+
+  section_size = 0ul;
+#if defined(__LP64__)
+  data = getsectiondata((const struct mach_header_64 *)&_mh_execute_header,
+                        "__VECTIS", section_name, &section_size);
+#else
+  data = getsectiondata(&_mh_execute_header, "__VECTIS", section_name,
+                        &section_size);
+#endif
+  if (data == NULL) {
+    return NULL;
+  }
+  *out_size = (size_t)section_size;
+  return data;
+}
+
+static int
+vectis_lua_load_embedded_from_macho(vectis_pack_embedded_payload *payload) {
+  size_t header_size;
+  size_t script_size;
+  size_t bundle_size;
+  size_t asset_size;
+  size_t manifest_size;
+  unsigned long long header_version;
+
+  payload->header = vectis_lua_macho_section("__pack_header", &header_size);
+  if (payload->header == NULL) {
+    return -1;
+  }
+  if (header_size < VECTIS_PACK_MACHO_HEADER_SIZE ||
+      !vectis_pack_footer_valid(payload->header)) {
+    fputs("vectis: embedded Mach-O payload header is invalid\n", stderr);
+    return 1;
+  }
+  header_version = vectis_pack_read_u64(payload->header + 16u);
+  if (header_version != 1u) {
+    fputs("vectis: embedded Mach-O payload version is unsupported\n", stderr);
+    return 1;
+  }
+  payload->script = vectis_lua_macho_section("__pack_script", &script_size);
+  payload->bundle = vectis_lua_macho_section("__pack_bundle", &bundle_size);
+  payload->asset_payload =
+      vectis_lua_macho_section("__pack_assets", &asset_size);
+  payload->manifest =
+      vectis_lua_macho_section("__pack_manifest", &manifest_size);
+  if (payload->script == NULL || script_size == 0u || payload->bundle == NULL ||
+      payload->asset_payload == NULL || payload->manifest == NULL) {
+    fputs("vectis: embedded Mach-O payload sections are incomplete\n", stderr);
+    return 1;
+  }
+  if (script_size != (size_t)vectis_pack_read_u64(payload->header + 24u) ||
+      bundle_size != (size_t)vectis_pack_read_u64(payload->header + 32u) ||
+      asset_size != (size_t)vectis_pack_read_u64(payload->header + 40u) ||
+      manifest_size != (size_t)vectis_pack_read_u64(payload->header + 48u)) {
+    fputs("vectis: embedded Mach-O payload section sizes are invalid\n",
+          stderr);
+    return 1;
+  }
+  payload->script_size = script_size;
+  payload->bundle_size = bundle_size;
+  payload->asset_payload_size = asset_size;
+  payload->manifest_size = manifest_size;
+  return 0;
+}
+#endif
+
+static int
+vectis_lua_load_embedded_payload(const char *self_path,
+                                 vectis_pack_embedded_payload *payload) {
+#ifdef __APPLE__
+  (void)self_path;
+  return vectis_lua_load_embedded_from_macho(payload);
+#else
+  return vectis_lua_load_embedded_from_elf_footer(self_path, payload);
+#endif
+}
+
+static int vectis_lua_run_embedded(int argc, char **argv) {
+  vectis_pack_embedded_payload payload;
+  char self_path[4096];
+  int rc;
+
+  if (vectis_self_path(argv[0], self_path, sizeof(self_path)) != 0) {
+    return -1;
+  }
+  vectis_pack_embedded_payload_init(&payload);
+  rc = vectis_lua_load_embedded_payload(self_path, &payload);
+  if (rc != 0) {
+    vectis_pack_embedded_payload_cleanup(&payload);
+    return rc;
+  }
+  rc = vectis_lua_validate_embedded_payload(&payload);
+  if (rc != 0) {
+    vectis_pack_embedded_payload_cleanup(&payload);
+    return rc;
+  }
   rc = vectis_lua_run_buffer(
-      argv[0], script, script_size, bundle_size > 0u ? bundle : NULL,
-      bundle_size, asset_size > 0u ? asset_payload : NULL, asset_size,
-      manifest_size > 0u ? manifest : NULL, manifest_size, argc, argv, 0);
-  free(self);
+      argv[0], payload.script, payload.script_size,
+      payload.bundle_size > 0u ? payload.bundle : NULL, payload.bundle_size,
+      payload.asset_payload_size > 0u ? payload.asset_payload : NULL,
+      payload.asset_payload_size,
+      payload.manifest_size > 0u ? payload.manifest : NULL,
+      payload.manifest_size, argc, argv, 0);
+  vectis_pack_embedded_payload_cleanup(&payload);
   return rc;
 }
 

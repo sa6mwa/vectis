@@ -72,6 +72,13 @@ Linux. On Darwin, this should use the system Mach-O APIs from the running main
 image, normally anchored from `_mh_execute_header`, rather than scanning
 arbitrary files on disk.
 
+Darwin startup uses the system Mach-O section API to look up
+`__VECTIS,__pack_header`, `__pack_script`, `__pack_bundle`, `__pack_assets`,
+and `__pack_manifest`. The section locator performs Darwin-specific header
+version and section-size checks, then hands the borrowed ranges to the same
+hash validation and Lua startup path used by the Linux footer loader. Linux
+startup remains footer-based and does not attempt to scan Mach-O sections.
+
 ## Relink Backend Contract
 
 A final Mach-O executable cannot be safely transformed into a packed executable
