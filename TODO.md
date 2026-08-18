@@ -25,7 +25,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Support host debug and Linux release matrix roots.
 - [x] Add explicit dependency manifest validation in CMake, including expected dependency versions.
 - [x] Add optional arm64 Apple Darwin dependency provisioning from the split SDK archive set.
-- [ ] Verify musl and cross targets against the full release matrix in CI.
+- [x] Verify musl and cross targets against the full release matrix in CI.
 - [ ] Verify Darwin arm64 packages on real Apple Silicon hardware.
 - [x] Add release packaging checks that prove downstream C consumers can include Vectis headers and all dependency headers from the installed SDK.
 

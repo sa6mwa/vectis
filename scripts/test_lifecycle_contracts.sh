@@ -1793,6 +1793,32 @@ assert_contains "$repo_root/TODO.md" \
   '\[x\] Add verification commands/tests for packed Darwin binaries using `codesign --verify --strict --verbose=4`'
 assert_contains "$repo_root/TODO.md" \
   '\[x\] Add a GitHub Actions Darwin arm64 verification workflow using hosted `macos-15`/`macos-latest` runners'
+assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
+  'ubuntu-24\.04'
+assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
+  'pull_request:'
+assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
+  'push:'
+assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
+  'VECTIS_REQUIRE_LINUX_RELEASE_MATRIX: "1"'
+assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
+  '~/.cache/c\.pkt\.systems/deps'
+assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
+  '~/.cache/c\.pkt\.systems/toolchains'
+assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
+  'luarocks'
+assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
+  'make release-matrix'
+assert_contains "$repo_root/.github/workflows/linux-release-matrix.yml" \
+  'actions/upload-artifact@v4'
+assert_contains "$repo_root/docs/ci-release-matrix.md" \
+  'make release-matrix'
+assert_contains "$repo_root/docs/ci-release-matrix.md" \
+  'VECTIS_REQUIRE_LINUX_RELEASE_MATRIX=1'
+assert_contains "$repo_root/docs/ci-release-matrix.md" \
+  'local lifecycle release flow'
+assert_contains "$repo_root/TODO.md" \
+  '\[x\] Verify musl and cross targets against the full release matrix in CI'
 assert_contains "$repo_root/scripts/verify_installed_sdk.sh" 'pkg-config --static --cflags --libs vectis'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK missing pkg-config metadata'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK contains dependency source tree'
