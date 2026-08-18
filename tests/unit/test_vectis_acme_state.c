@@ -114,7 +114,7 @@ int main(void) {
   assert(snprintf(default_storage, sizeof(default_storage), "%s/default-storage", root) > 0);
   assert(snprintf(default_endpoint, sizeof(default_endpoint), "pouch://%s", default_storage) > 0);
   assert(snprintf(default_config, sizeof(default_config), "%s/default-config", root) > 0);
-  assert(snprintf(default_key, sizeof(default_key), "%s/liblockdc/pouch.key", default_config) > 0);
+  assert(snprintf(default_key, sizeof(default_key), "%s/vectis/pouch.key", default_config) > 0);
   assert(snprintf(key_file, sizeof(key_file), "%s/pouch.key", root) > 0);
   assert(snprintf(wrong_key_file, sizeof(wrong_key_file), "%s/wrong.key", root) > 0);
   generate_key_file(key_file);

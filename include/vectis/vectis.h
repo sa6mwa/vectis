@@ -493,7 +493,7 @@ typedef struct vectis_lockd_config {
   /* Local pouch:// storage is encrypted by default. These fields mirror the
    * liblockdc Pouch key provisioning controls; they are ignored by remote
    * lockd endpoints. When neither key field is supplied for a Pouch endpoint,
-   * Vectis uses liblockdc's default key file and creates it securely. */
+   * Vectis uses its own XDG configuration key file and creates it securely. */
   const char *pouch_crypto_key;
   const char *pouch_crypto_key_file;
   int pouch_crypto_generate_key_file;

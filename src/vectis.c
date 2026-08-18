@@ -10575,9 +10575,6 @@ static vectis_status vectis_configure_pouch_client(
     lc_client_config *config, const char *endpoint,
     const vectis_app_impl *impl, char **default_key_file,
     vectis_error *error) {
-  lc_error lcerr;
-  int rc;
-
   if (default_key_file != NULL) {
     *default_key_file = NULL;
   }
@@ -10603,17 +10600,12 @@ static vectis_status vectis_configure_pouch_client(
                      "Pouch key-file output is required");
     return VECTIS_ERR_STATE;
   }
-  lc_error_init(&lcerr);
-  rc = lc_pouch_crypto_default_key_file(default_key_file, &lcerr);
-  if (rc != LC_OK) {
-    vectis_set_errorf(error, VECTIS_ERR_STATE,
-                      "failed to resolve default Pouch key file: %s",
-                      lcerr.message != NULL ? lcerr.message
-                                            : "unknown lockdc error");
-    lc_error_cleanup(&lcerr);
+  *default_key_file = vectis_persistence_default_pouch_key_file();
+  if (*default_key_file == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to create private Vectis Pouch key directory");
     return VECTIS_ERR_STATE;
   }
-  lc_error_cleanup(&lcerr);
   config->pouch_crypto_key_file = *default_key_file;
   config->pouch_crypto_generate_key_file = 1;
   config->pouch_crypto_generate_key_file_set = 1;
@@ -11003,7 +10995,7 @@ static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
       }
       lc_error_cleanup(&lcerr);
       if (default_key_file != NULL) {
-        lc_pouch_crypto_key_string_free(default_key_file);
+        free(default_key_file);
       }
       return VECTIS_ERR_STATE;
     }
@@ -11018,7 +11010,7 @@ static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
     lc_source_close(memory_source);
   }
   if (default_key_file != NULL) {
-    lc_pouch_crypto_key_string_free(default_key_file);
+    free(default_key_file);
   }
   if (rc != LC_OK) {
     vectis_set_errorf(
@@ -19505,7 +19497,7 @@ static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
     client->close(client);
   }
   if (default_key_file != NULL) {
-    lc_pouch_crypto_key_string_free(default_key_file);
+    free(default_key_file);
   }
   lc_error_cleanup(&lcerr);
   vectis_mutable_bytes_cleanup(&write.json);

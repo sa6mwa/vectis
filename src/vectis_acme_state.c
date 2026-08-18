@@ -172,6 +172,37 @@ char *vectis_acme_state_runtime_dir_new(vectis_error *error) {
   return result;
 }
 
+char *vectis_persistence_default_pouch_key_file(void) {
+  const char *config_home;
+  const char *home;
+  char directory[4096];
+  char path[4096];
+  struct stat st;
+  int written;
+
+  config_home = getenv("XDG_CONFIG_HOME");
+  if (config_home != NULL && config_home[0] == '/') {
+    written = snprintf(directory, sizeof(directory), "%s/vectis", config_home);
+  } else {
+    home = getenv("HOME");
+    if (home == NULL || home[0] != '/') {
+      return NULL;
+    }
+    written = snprintf(directory, sizeof(directory), "%s/.config/vectis", home);
+  }
+  if (written <= 0 || (size_t)written >= sizeof(directory) ||
+      !vectis_acme_state_mkdirs(directory) || stat(directory, &st) != 0 ||
+      !S_ISDIR(st.st_mode) || st.st_uid != getuid() ||
+      chmod(directory, 0700) != 0) {
+    return NULL;
+  }
+  written = snprintf(path, sizeof(path), "%s/pouch.key", directory);
+  if (written <= 0 || (size_t)written >= sizeof(path)) {
+    return NULL;
+  }
+  return vectis_acme_state_strdup(path);
+}
+
 static int vectis_acme_state_remove_tree(const char *path) {
   DIR *directory;
   struct dirent *entry;
@@ -309,9 +340,12 @@ static int vectis_acme_state_client_open(const vectis_acme_state_config *config,
     if (client_config.pouch_crypto_key == NULL &&
         client_config.pouch_crypto_key_file == NULL &&
         !vectis_acme_state_endpoint_has_pouch_crypto_option(config->endpoint)) {
-      rc = lc_pouch_crypto_default_key_file(&default_key_file, lcerr);
-      if (rc != LC_OK) {
-        return rc;
+      default_key_file = vectis_persistence_default_pouch_key_file();
+      if (default_key_file == NULL) {
+        lcerr->code = LC_ERR_TRANSPORT;
+        lcerr->message = vectis_acme_state_strdup(
+            "failed to create private Vectis Pouch key directory");
+        return LC_ERR_TRANSPORT;
       }
       client_config.pouch_crypto_key_file = default_key_file;
       client_config.pouch_crypto_generate_key_file = 1;
@@ -323,7 +357,7 @@ static int vectis_acme_state_client_open(const vectis_acme_state_config *config,
                                config->client_bundle_pem_size, memory, lcerr);
     if (rc != LC_OK) {
       if (default_key_file != NULL) {
-        lc_pouch_crypto_key_string_free(default_key_file);
+        free(default_key_file);
       }
       return rc;
     }
@@ -335,7 +369,7 @@ static int vectis_acme_state_client_open(const vectis_acme_state_config *config,
     *memory = NULL;
   }
   if (default_key_file != NULL) {
-    lc_pouch_crypto_key_string_free(default_key_file);
+    free(default_key_file);
   }
   return rc;
 }

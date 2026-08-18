@@ -23,6 +23,7 @@ typedef struct vectis_acme_state_config {
 } vectis_acme_state_config;
 
 char *vectis_acme_state_default_endpoint(vectis_error *error);
+char *vectis_persistence_default_pouch_key_file(void);
 char *vectis_acme_state_default_key(const char *const *domains,
                                     size_t domain_count,
                                     vectis_error *error);

@@ -180,7 +180,7 @@ if ! env "${live_env[@]}" "$vectis_bin" "$work/live-acme.lua"; then
   exit 1
 fi
 
-key_file="$config_home/liblockdc/pouch.key"
+key_file="$config_home/vectis/pouch.key"
 if [ ! -f "$key_file" ]; then
   printf '%s\n' "missing generated Pouch key file: $key_file" >&2
   exit 1

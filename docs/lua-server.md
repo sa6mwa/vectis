@@ -139,8 +139,10 @@ lockd = {
 }
 ```
 
-With no key setting, Vectis resolves liblockdc's default key file and creates
-it with mode 0600. Existing plaintext Pouch roots are deliberately not opened
+With no key setting, Vectis creates `${XDG_CONFIG_HOME:-$HOME/.config}/vectis/pouch.key`
+with mode 0600. This is a Vectis key used only by Vectis-owned local Pouch
+persistence; separate liblockdc clients retain their own configuration.
+Existing plaintext Pouch roots are deliberately not opened
 with the new encrypted configuration: current liblockdc has no lossless
 whole-root migration API for state, attachment, transaction, and queue data.
 Keep the old root intact and migrate it with a future liblockdc Pouch migration
