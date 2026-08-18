@@ -48,7 +48,8 @@ Major groups:
   and `vectis_auth_basic_authorization()`.
 - OpenAPI: `vectis_openapi_document`, route docs, request/response schemas, and
   generation helpers.
-- Lockd workflows: `vectis_lockd_config`, state helpers, queue/consumer
+- Lockd workflows: `vectis_lockd_config` (including encrypted local Pouch key
+  provisioning), state helpers, queue/consumer
   service registration, consumer receivers, and bounded consumer JSON payload
   decoding with `vectis_lockd_consumer_json_into()`.
 - DSV/XML/JSON: DSV parse/write/spill helpers, JSON array rewrite/iteration,

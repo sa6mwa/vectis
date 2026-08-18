@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <dirent.h>
+#include <lc/lc.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -33,6 +34,15 @@ static void assert_file(const char *path, const char *contents) {
   assert((st.st_mode & 0777) == 0600);
 }
 
+static void assert_private_file(const char *path) {
+  struct stat st;
+
+  assert(stat(path, &st) == 0);
+  assert(S_ISREG(st.st_mode));
+  assert((st.st_mode & 0777) == 0600);
+  assert(st.st_size > 0);
+}
+
 static void remove_tree(const char *path) {
   DIR *dir;
   struct dirent *entry;
@@ -59,10 +69,28 @@ static void remove_tree(const char *path) {
   assert(rmdir(path) == 0);
 }
 
+static void generate_key_file(const char *path) {
+  char *key;
+  lc_error error;
+
+  key = NULL;
+  lc_error_init(&error);
+  assert(lc_pouch_crypto_generate_key_file(path, 0, &key, &error) == LC_OK);
+  assert(key != NULL);
+  lc_pouch_crypto_key_string_free(key);
+  lc_error_cleanup(&error);
+}
+
 int main(void) {
   char root[] = "/tmp/vectis-acme-state-XXXXXX";
   char endpoint[4096];
   char storage[4096];
+  char default_storage[4096];
+  char default_endpoint[4096];
+  char default_config[4096];
+  char default_key[4096];
+  char key_file[4096];
+  char wrong_key_file[4096];
   char runtime_one[4096];
   char runtime_two[4096];
   char certificates_one[4096];
@@ -83,6 +111,14 @@ int main(void) {
   assert(mkdtemp(root) != NULL);
   assert(snprintf(storage, sizeof(storage), "%s/storage", root) > 0);
   assert(snprintf(endpoint, sizeof(endpoint), "pouch://%s", storage) > 0);
+  assert(snprintf(default_storage, sizeof(default_storage), "%s/default-storage", root) > 0);
+  assert(snprintf(default_endpoint, sizeof(default_endpoint), "pouch://%s", default_storage) > 0);
+  assert(snprintf(default_config, sizeof(default_config), "%s/default-config", root) > 0);
+  assert(snprintf(default_key, sizeof(default_key), "%s/liblockdc/pouch.key", default_config) > 0);
+  assert(snprintf(key_file, sizeof(key_file), "%s/pouch.key", root) > 0);
+  assert(snprintf(wrong_key_file, sizeof(wrong_key_file), "%s/wrong.key", root) > 0);
+  generate_key_file(key_file);
+  generate_key_file(wrong_key_file);
   assert(snprintf(runtime_one, sizeof(runtime_one), "%s/runtime-one", root) > 0);
   assert(snprintf(runtime_two, sizeof(runtime_two), "%s/runtime-two", root) > 0);
   assert(mkdir(runtime_one, 0700) == 0);
@@ -110,6 +146,9 @@ int main(void) {
   config.key = "round-trip";
   config.owner = "test";
   config.runtime_dir = runtime_one;
+  config.pouch_crypto_key_file = key_file;
+  config.pouch_crypto_generate_key_file = 0;
+  config.pouch_crypto_generate_key_file_set = 1;
   config.domains = domains;
   config.domain_count = 1u;
   config.timeout_ms = 30000L;
@@ -128,6 +167,23 @@ int main(void) {
   assert_file(account_two, "account-key");
   assert_file(chain_two, "certificate-chain");
   assert_file(key_two, "certificate-key");
+
+  assert(setenv("XDG_CONFIG_HOME", default_config, 1) == 0);
+  config.endpoint = default_endpoint;
+  config.key = "default-key";
+  config.runtime_dir = runtime_two;
+  config.pouch_crypto_key_file = NULL;
+  config.pouch_crypto_generate_key_file = 0;
+  config.pouch_crypto_generate_key_file_set = 0;
+  assert(vectis_acme_state_persist(&config, &error) == VECTIS_OK);
+  assert_private_file(default_key);
+
+  config.endpoint = endpoint;
+  config.key = "round-trip";
+  config.pouch_crypto_key_file = wrong_key_file;
+  hydrated = 0;
+  assert(vectis_acme_state_hydrate(&config, &hydrated, &error) ==
+         VECTIS_ERR_STATE);
 
   remove_tree(root);
   return 0;

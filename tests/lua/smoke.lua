@@ -928,6 +928,8 @@ do
     port = 18080,
     lockd = {
       endpoints = {"pouch://" .. smoke_lockd_dir},
+      pouch_crypto_generate_key_file = false,
+      pouch_compression = "zlib",
     },
   }))
 end

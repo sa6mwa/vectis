@@ -31,6 +31,11 @@ typedef struct vectis_kore_runtime_config {
   const char *lockd_client_bundle_path;
   const void *lockd_client_bundle_pem;
   size_t lockd_client_bundle_pem_size;
+  const char *pouch_crypto_key;
+  const char *pouch_crypto_key_file;
+  int pouch_crypto_generate_key_file;
+  int pouch_crypto_generate_key_file_set;
+  const char *pouch_compression;
   const char *cert_key_bundle_path;
   const void *cert_key_bundle_pem;
   size_t cert_key_bundle_pem_size;

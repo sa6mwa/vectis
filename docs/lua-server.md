@@ -124,7 +124,27 @@ lockd endpoint is used when configured. `acme_storage_endpoint`,
 `acme_storage_namespace`, and `acme_storage_key` select an explicit store.
 `acme_state_dir` (or the compatibility alias `cache_dir`) is only Kore's
 private derived runtime directory; omission creates an isolated mode-0700
-directory under XDG cache.
+directory under XDG cache. Vectis removes that generated runtime directory
+after Kore stops; a caller-provided `acme_state_dir` remains caller-owned.
+
+Every local Pouch client uses encrypted at-rest storage by default. Configure
+the normal liblockdc key controls on the app `lockd` table when a specific key
+file or provisioned key is required; remote lockd endpoints ignore them.
+
+```lua
+lockd = {
+  endpoints = {"pouch:///srv/vectis/state"},
+  pouch_crypto_key_file = "/etc/vectis/pouch.key",
+  pouch_crypto_generate_key_file = false,
+}
+```
+
+With no key setting, Vectis resolves liblockdc's default key file and creates
+it with mode 0600. Existing plaintext Pouch roots are deliberately not opened
+with the new encrypted configuration: current liblockdc has no lossless
+whole-root migration API for state, attachment, transaction, and queue data.
+Keep the old root intact and migrate it with a future liblockdc Pouch migration
+operation rather than copying only Vectis-visible objects.
 
 To add a canonical cleartext-to-HTTPS redirect listener without registering a
 route, enable it explicitly inside `tls`. `http_redirect` defaults to false;
@@ -725,7 +745,8 @@ assert(server:metrics({
 `auth` is optional and uses the same native/callback auth provider contract as
 ordinary routes and WebDAV. Persistence is also optional; when enabled, Vectis
 writes snapshots through lockdc and defaults to a local `pouch://` store under
-XDG state. See [metrics.md](metrics.md) for the full contract.
+XDG state. Local Pouch snapshots use the same encrypted default and `lockd`
+key settings as ACME. See [metrics.md](metrics.md) for the full contract.
 
 See [lua-auth.md](lua-auth.md) for native and callback auth providers,
 OAuth2/OIDC helpers, email-token flows, and WebDAV-key issuance.

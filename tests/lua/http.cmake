@@ -1422,16 +1422,18 @@ file(GLOB metrics_segments
 if(NOT metrics_segments)
   message(FATAL_ERROR "vectis HTTP Lua metrics persistence wrote no pouch segments")
 endif()
-set(metrics_persisted 0)
+file(READ "${metrics_storage_dir}/manifest" metrics_manifest_content)
+string(FIND "${metrics_manifest_content}" "crypto=encrypted"
+       metrics_crypto_offset)
+if(metrics_crypto_offset EQUAL -1)
+  message(FATAL_ERROR "vectis HTTP Lua metrics Pouch root is not encrypted")
+endif()
 foreach(metrics_segment IN LISTS metrics_segments)
   file(READ "${metrics_segment}" metrics_segment_content)
   string(FIND "${metrics_segment_content}" "\"service\":\"lua http metrics\""
          metrics_payload_offset)
   if(NOT metrics_payload_offset EQUAL -1)
-    set(metrics_persisted 1)
+    message(FATAL_ERROR
+            "vectis HTTP Lua metrics snapshot is exposed in plaintext")
   endif()
 endforeach()
-if(NOT metrics_persisted)
-  message(FATAL_ERROR
-          "vectis HTTP Lua metrics persistence wrote no snapshot payload")
-endif()

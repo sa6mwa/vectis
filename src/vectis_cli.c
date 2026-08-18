@@ -7021,6 +7021,18 @@ static void vectis_lua_parse_lockd_config(lua_State *lua, int index,
   }
   lockd->timeout_ms =
       vectis_lua_table_long(lua, index, "timeout_ms", lockd->timeout_ms);
+  lockd->pouch_crypto_key =
+      vectis_lua_table_string(lua, index, "pouch_crypto_key");
+  lockd->pouch_crypto_key_file =
+      vectis_lua_table_string(lua, index, "pouch_crypto_key_file");
+  lua_getfield(lua, index, "pouch_crypto_generate_key_file");
+  if (!lua_isnil(lua, -1)) {
+    lockd->pouch_crypto_generate_key_file = lua_toboolean(lua, -1);
+    lockd->pouch_crypto_generate_key_file_set = 1;
+  }
+  lua_pop(lua, 1);
+  lockd->pouch_compression =
+      vectis_lua_table_string(lua, index, "pouch_compression");
   lua_pop(lua, 1);
 }
 

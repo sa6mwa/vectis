@@ -121,6 +121,13 @@ int vectis_kore_acme_state_persist(const char *domain) {
   config.client_bundle_pem = vectis_kore_current.lockd_client_bundle_pem;
   config.client_bundle_pem_size =
       vectis_kore_current.lockd_client_bundle_pem_size;
+  config.pouch_crypto_key = vectis_kore_current.pouch_crypto_key;
+  config.pouch_crypto_key_file = vectis_kore_current.pouch_crypto_key_file;
+  config.pouch_crypto_generate_key_file =
+      vectis_kore_current.pouch_crypto_generate_key_file;
+  config.pouch_crypto_generate_key_file_set =
+      vectis_kore_current.pouch_crypto_generate_key_file_set;
+  config.pouch_compression = vectis_kore_current.pouch_compression;
   config.domains = vectis_kore_current.domains;
   config.domain_count = vectis_kore_current.domain_count;
   config.timeout_ms = 30000L;

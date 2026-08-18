@@ -12,6 +12,11 @@ typedef struct vectis_acme_state_config {
   const char *client_bundle_path;
   const void *client_bundle_pem;
   size_t client_bundle_pem_size;
+  const char *pouch_crypto_key;
+  const char *pouch_crypto_key_file;
+  int pouch_crypto_generate_key_file;
+  int pouch_crypto_generate_key_file_set;
+  const char *pouch_compression;
   const char *const *domains;
   size_t domain_count;
   long timeout_ms;
@@ -22,6 +27,7 @@ char *vectis_acme_state_default_key(const char *const *domains,
                                     size_t domain_count,
                                     vectis_error *error);
 char *vectis_acme_state_runtime_dir_new(vectis_error *error);
+int vectis_acme_state_runtime_dir_remove(const char *path);
 vectis_status vectis_acme_state_hydrate(const vectis_acme_state_config *config,
                                         int *hydrated,
                                         vectis_error *error);

@@ -1,5 +1,6 @@
 #include "vectis_acme_state.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <limits.h>
 #include <lc/lc.h>
@@ -171,6 +172,41 @@ char *vectis_acme_state_runtime_dir_new(vectis_error *error) {
   return result;
 }
 
+static int vectis_acme_state_remove_tree(const char *path) {
+  DIR *directory;
+  struct dirent *entry;
+  struct stat st;
+  char child[4096];
+  int written;
+
+  if (path == NULL || lstat(path, &st) != 0) {
+    return path != NULL && errno == ENOENT;
+  }
+  if (!S_ISDIR(st.st_mode)) {
+    return unlink(path) == 0;
+  }
+  directory = opendir(path);
+  if (directory == NULL) {
+    return 0;
+  }
+  while ((entry = readdir(directory)) != NULL) {
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+      continue;
+    }
+    written = snprintf(child, sizeof(child), "%s/%s", path, entry->d_name);
+    if (written <= 0 || (size_t)written >= sizeof(child) ||
+        !vectis_acme_state_remove_tree(child)) {
+      (void)closedir(directory);
+      return 0;
+    }
+  }
+  return closedir(directory) == 0 && rmdir(path) == 0;
+}
+
+int vectis_acme_state_runtime_dir_remove(const char *path) {
+  return path != NULL && path[0] == '/' && vectis_acme_state_remove_tree(path);
+}
+
 static int vectis_acme_state_domain_valid(const char *domain) {
   return domain != NULL && domain[0] != '\0' && strchr(domain, '/') == NULL &&
          strstr(domain, "..") == NULL;
@@ -235,24 +271,60 @@ static void vectis_acme_state_set_lockd_error(vectis_error *error,
                                                             : operation);
 }
 
+static int vectis_acme_state_endpoint_is_pouch(const char *endpoint) {
+  return endpoint != NULL && strncmp(endpoint, "pouch://", 8u) == 0;
+}
+
+static int vectis_acme_state_endpoint_has_pouch_crypto_option(
+    const char *endpoint) {
+  return endpoint != NULL &&
+         (strstr(endpoint, "pouch_crypto_key=") != NULL ||
+          strstr(endpoint, "pouch_crypto_key_file=") != NULL);
+}
+
 static int vectis_acme_state_client_open(const vectis_acme_state_config *config,
                                          lc_client **client, lc_source **memory,
                                          lc_error *lcerr) {
   lc_client_config client_config;
+  char *default_key_file;
   int rc;
 
   *client = NULL;
   *memory = NULL;
+  default_key_file = NULL;
   lc_client_config_init(&client_config);
   client_config.endpoints = &config->endpoint;
   client_config.endpoint_count = 1u;
   client_config.default_namespace = config->namespace_name;
   client_config.timeout_ms = config->timeout_ms > 0L ? config->timeout_ms : 30000L;
   client_config.client_bundle_path = config->client_bundle_path;
+  if (vectis_acme_state_endpoint_is_pouch(config->endpoint)) {
+    client_config.pouch_crypto_key = config->pouch_crypto_key;
+    client_config.pouch_crypto_key_file = config->pouch_crypto_key_file;
+    client_config.pouch_crypto_generate_key_file =
+        config->pouch_crypto_generate_key_file;
+    client_config.pouch_crypto_generate_key_file_set =
+        config->pouch_crypto_generate_key_file_set;
+    client_config.pouch_compression = config->pouch_compression;
+    if (client_config.pouch_crypto_key == NULL &&
+        client_config.pouch_crypto_key_file == NULL &&
+        !vectis_acme_state_endpoint_has_pouch_crypto_option(config->endpoint)) {
+      rc = lc_pouch_crypto_default_key_file(&default_key_file, lcerr);
+      if (rc != LC_OK) {
+        return rc;
+      }
+      client_config.pouch_crypto_key_file = default_key_file;
+      client_config.pouch_crypto_generate_key_file = 1;
+      client_config.pouch_crypto_generate_key_file_set = 1;
+    }
+  }
   if (config->client_bundle_pem != NULL && config->client_bundle_pem_size > 0u) {
     rc = lc_source_from_memory(config->client_bundle_pem,
                                config->client_bundle_pem_size, memory, lcerr);
     if (rc != LC_OK) {
+      if (default_key_file != NULL) {
+        lc_pouch_crypto_key_string_free(default_key_file);
+      }
       return rc;
     }
     client_config.client_bundle_source = *memory;
@@ -261,6 +333,9 @@ static int vectis_acme_state_client_open(const vectis_acme_state_config *config,
   if (*memory != NULL) {
     (*memory)->close(*memory);
     *memory = NULL;
+  }
+  if (default_key_file != NULL) {
+    lc_pouch_crypto_key_string_free(default_key_file);
   }
   return rc;
 }
