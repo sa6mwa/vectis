@@ -43,7 +43,7 @@ require_fixed "$todo" "Add an executable Lua facade behavior coverage audit" \
 local_behavior=(
   "lockdc|vectis_lua_lockd_helpers|tests/lua/lockd_helpers.cmake|with_dequeued_json"
   "lonejson|vectis_lua_facade_contracts|tests/lua/facade_contracts.cmake|lonejson.schema"
-  "pslog|vectis_example_lua_logging|examples/lua/logging.lua|log.log_error"
+  "pslog|vectis_example_lua_local_data_pipeline|examples/lua/local_data_pipeline.lua|pslog.new_json"
   "lql|vectis_example_lua_local_data_pipeline|examples/lua/local_data_pipeline.lua|lql.new"
   "cai|vectis_example_lua_cai_local|examples/lua/cai_local.lua|cai.mcp_client"
   "libmdf|vectis_example_lua_mdf_render|examples/lua/mdf_render.lua|libmdf"
@@ -54,26 +54,44 @@ local_behavior=(
   "opcua|vectis_lua_opcua_e2e|examples/lua/opcua_client.lua|opcua.client"
   "audio|vectis_lua_audio_sus|tests/lua/audio_sus.cmake|audio.vox.open"
   "sus|vectis_lua_audio_sus|tests/lua/audio_sus.cmake|sus.open_cached"
-  "auth|vectis_cli_admin_credentials|tests/lua/admin_credentials.cmake|webdav_key"
-  "cert|vectis_lua_certs|tests/lua/certs.cmake|generate_bundle"
-  "dsv|vectis_lua_dsv|tests/lua/dsv.cmake|parse_spill"
-  "embedded|vectis_lua_pack|tests/lua/pack.cmake|vectis.embedded"
-  "http|vectis_lua_http|tests/lua/http.cmake|vectis.http.stream_json"
-  "mailbox|vectis_example_lua_mailbox_pipeline|examples/lua/mailbox_pipeline.lua|mailbox.new"
-  "mqtt|vectis_lua_mqtt|tests/lua/mqtt.cmake|mqtt.publish"
-  "rest|vectis_lua_facade_contracts|tests/lua/facade_contracts.cmake|rest.error_response"
-  "server|vectis_lua_http|tests/lua/http.cmake|server:upload"
-  "smtp|vectis_lua_curl|tests/lua/curl.cmake|smtp.send"
-  "ssh|vectis_lua_ssh_sftp|tests/lua/ssh_sftp.cmake|vectis.ssh.open"
-  "terminal|vectis_example_lua_terminal_tools|examples/lua/terminal_tools.lua|terminal.editor"
-  "webdav|vectis_lua_webdav|tests/lua/webdav.cmake|webdav.propfind"
-  "xml|vectis_lua_smoke|tests/lua/smoke.lua|vectis.xml"
 )
 
 for entry in "${local_behavior[@]}"; do
   IFS='|' read -r surface test_name evidence snippet <<<"$entry"
   require_ctest "$test_name"
   require_fixed "$repo_root/$evidence" "$snippet" "$surface behavior evidence"
+done
+
+workflow_behavior=(
+  "vectis.auth|vectis_cli_admin_credentials|tests/lua/admin_credentials.cmake|webdav_key"
+  "vectis.audio_worker|vectis_example_lua_audio_worker_service|examples/lua/audio_worker_service.lua|audio_worker.vox_request"
+  "vectis.cai|vectis_example_lua_cai_local|examples/lua/cai_local.lua|cai.mcp_client"
+  "vectis.cai_worker|vectis_example_lua_cai_worker_service|examples/lua/cai_worker_service.lua|cai_worker.decode_reply"
+  "vectis.cert|vectis_lua_certs|tests/lua/certs.cmake|generate_bundle"
+  "vectis.curl_worker|vectis_example_lua_curl_worker_service|examples/lua/curl_worker_service.lua|curl_worker.decode_http_response"
+  "vectis.dsv|vectis_lua_dsv|tests/lua/dsv.cmake|parse_spill"
+  "vectis.embedded|vectis_lua_pack|tests/lua/pack.cmake|vectis.embedded"
+  "vectis.http|vectis_lua_http|tests/lua/http.cmake|vectis.http.stream_json"
+  "vectis.kore|vectis_lua_smoke|tests/lua/smoke.lua|runtime_model"
+  "vectis.lockd|vectis_lua_lockd_helpers|tests/lua/lockd_helpers.cmake|with_dequeued_json"
+  "vectis.log|vectis_example_lua_logging|examples/lua/logging.lua|log.log_error"
+  "vectis.mailbox|vectis_example_lua_mailbox_pipeline|examples/lua/mailbox_pipeline.lua|mailbox.new"
+  "vectis.mqtt|vectis_lua_mqtt|tests/lua/mqtt.cmake|mqtt.publish"
+  "vectis.rest|vectis_lua_facade_contracts|tests/lua/facade_contracts.cmake|rest.error_response"
+  "vectis.server|vectis_lua_http|tests/lua/http.cmake|server:upload"
+  "vectis.smtp|vectis_lua_curl|tests/lua/curl.cmake|smtp.send"
+  "vectis.ssh|vectis_lua_ssh_sftp|tests/lua/ssh_sftp.cmake|vectis.ssh.open"
+  "vectis.status|vectis_lua_smoke|tests/lua/smoke.lua|status.status_string"
+  "vectis.sus_worker|vectis_example_lua_sus_worker_service|examples/lua/sus_worker_service.lua|sus_worker.decode_reply"
+  "vectis.terminal|vectis_example_lua_terminal_tools|examples/lua/terminal_tools.lua|terminal.editor"
+  "vectis.webdav|vectis_lua_webdav|tests/lua/webdav.cmake|webdav.propfind"
+  "vectis.xml|vectis_lua_smoke|tests/lua/smoke.lua|vectis.xml"
+)
+
+for entry in "${workflow_behavior[@]}"; do
+  IFS='|' read -r surface test_name evidence snippet <<<"$entry"
+  require_ctest "$test_name"
+  require_fixed "$repo_root/$evidence" "$snippet" "$surface workflow evidence"
 done
 
 packed_behavior=(

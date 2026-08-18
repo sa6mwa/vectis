@@ -856,6 +856,8 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/scripts/test_lua_facade_behavior_coverage.sh" \
     'local_behavior=\('
   assert_contains "$repo_root/scripts/test_lua_facade_behavior_coverage.sh" \
+    'workflow_behavior=\('
+  assert_contains "$repo_root/scripts/test_lua_facade_behavior_coverage.sh" \
     'packed_behavior=\('
   assert_contains "$repo_root/scripts/test_lua_facade_behavior_coverage.sh" \
     'streaming responses cannot be retried safely'
