@@ -23,6 +23,9 @@ cat >"$codesign_tool" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'codesign:%s\n' "$*" >>"${VECTIS_FAKE_TOOL_LOG:?}"
+if [ "${VECTIS_FAKE_CODESIGN_MUTATE:-0}" = "1" ]; then
+  printf 'mutated-by-codesign\n' >>"${*: -1}"
+fi
 if [ "${VECTIS_FAKE_CODESIGN_FAIL:-0}" = "1" ]; then
   exit 1
 fi
@@ -34,6 +37,9 @@ cat >"$spctl_tool" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'spctl:%s\n' "$*" >>"${VECTIS_FAKE_TOOL_LOG:?}"
+if [ "${VECTIS_FAKE_SPCTL_MUTATE:-0}" = "1" ]; then
+  printf 'mutated-by-spctl\n' >>"${*: -1}"
+fi
 if [ "${VECTIS_FAKE_SPCTL_FAIL:-0}" = "1" ]; then
   exit 1
 fi
@@ -72,6 +78,30 @@ if VECTIS_FAKE_CODESIGN_FAIL=1 VECTIS_FAKE_TOOL_LOG="$log" "$script" \
   echo "Darwin signature verifier accepted codesign failure" >&2
   exit 1
 fi
+
+printf '%s\n' '#!/bin/sh' 'exit 0' >"$binary"
+chmod +x "$binary"
+if VECTIS_FAKE_CODESIGN_MUTATE=1 VECTIS_FAKE_TOOL_LOG="$log" "$script" \
+  --binary "$binary" --codesign-tool "$codesign_tool" \
+  --spctl-tool "$spctl_tool" >"$work/codesign-mutate.out" \
+  2>"$work/codesign-mutate.err"; then
+  echo "Darwin signature verifier accepted codesign verification mutation" >&2
+  exit 1
+fi
+grep -F "binary changed during codesign verification" \
+  "$work/codesign-mutate.err" >/dev/null
+
+printf '%s\n' '#!/bin/sh' 'exit 0' >"$binary"
+chmod +x "$binary"
+if VECTIS_FAKE_SPCTL_MUTATE=1 VECTIS_FAKE_TOOL_LOG="$log" "$script" \
+  --binary "$binary" --codesign-tool "$codesign_tool" \
+  --spctl-tool "$spctl_tool" >"$work/spctl-mutate.out" \
+  2>"$work/spctl-mutate.err"; then
+  echo "Darwin signature verifier accepted spctl assessment mutation" >&2
+  exit 1
+fi
+grep -F "binary changed during spctl assessment" "$work/spctl-mutate.err" \
+  >/dev/null
 
 if "$script" --binary "$work/missing-binary" --codesign-tool "$codesign_tool" \
   --spctl-tool "$spctl_tool" >"$work/missing-binary.out" \

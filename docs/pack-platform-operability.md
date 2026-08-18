@@ -64,8 +64,10 @@ Required Darwin behavior:
 verification command for a final signed Darwin packed executable. It runs
 `codesign --verify --strict --verbose=4`, runs
 `spctl --assess --type execute` when `spctl` is available, and can make `spctl`
-mandatory with `--require-spctl`. The command verifies final bytes only; it
-must run after every payload, loader-metadata, strip, and signing step.
+mandatory with `--require-spctl`. The command hashes the binary before and
+after verification and fails if either verification command mutates the file.
+The command verifies final bytes only; it must run after every payload,
+loader-metadata, strip, and signing step.
 
 ## Signing Order
 

@@ -1719,8 +1719,14 @@ assert_contains "$repo_root/scripts/verify_darwin_pack_signature.sh" \
   '\-\-assess \-\-type execute'
 assert_contains "$repo_root/scripts/verify_darwin_pack_signature.sh" \
   '\-\-require-spctl'
+assert_contains "$repo_root/scripts/verify_darwin_pack_signature.sh" \
+  'binary changed during %s'
 assert_contains "$repo_root/scripts/test_darwin_pack_signature_verifier.sh" \
   'Darwin signature verifier accepted codesign failure'
+assert_contains "$repo_root/scripts/test_darwin_pack_signature_verifier.sh" \
+  'Darwin signature verifier accepted codesign verification mutation'
+assert_contains "$repo_root/scripts/test_darwin_pack_signature_verifier.sh" \
+  'Darwin signature verifier accepted spctl assessment mutation'
 assert_contains "$repo_root/Makefile" '^test-darwin-pack-signature:'
 assert_contains "$repo_root/Makefile" \
   'scripts/test_darwin_pack_signature_verifier\.sh'
@@ -1730,6 +1736,8 @@ assert_contains "$repo_root/docs/pack-platform-operability.md" \
   'codesign --verify --strict --verbose=4'
 assert_contains "$repo_root/docs/pack-platform-operability.md" \
   'spctl --assess --type execute'
+assert_contains "$repo_root/docs/pack-platform-operability.md" \
+  'fails if either verification command mutates the file'
 assert_contains "$repo_root/TODO.md" \
   '\[x\] Add verification commands/tests for packed Darwin binaries using `codesign --verify --strict --verbose=4`'
 assert_contains "$repo_root/scripts/verify_installed_sdk.sh" 'pkg-config --static --cflags --libs vectis'
