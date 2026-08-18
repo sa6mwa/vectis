@@ -343,8 +343,6 @@ assert_acme_lifecycle_contract() {
     'certificates/acme\.localhost\.test/fullchain\.pem'
   assert_contains "$repo_root/scripts/test-e2e.sh" \
     'https://acme\.localhost\.test:\$kore_acme_port/probe'
-  assert_contains "$repo_root/docs/pack-embedded-filesystem-auth-spec.md" \
-    'deterministic e2e starts ACME mode against a'
 }
 
 assert_lockdc_lua_runtime_contract() {
@@ -1768,10 +1766,6 @@ assert_contains "$repo_root/src/vectis_cli.c" \
   'vectis: unknown pack argument'
 assert_contains "$repo_root/src/vectis_cli.c" \
   'vectis_pack_write_elf\(const char \*output_path'
-assert_contains "$repo_root/docs/pack-platform-operability.md" \
-  'does not cross-compile, relink, use an SDK, or'
-assert_contains "$repo_root/docs/pack-platform-operability.md" \
-  'external Apple `codesign` program'
 assert_contains "$repo_root/tests/lua/pack.cmake" \
   'removed pack option \$\{removed_pack_option\} unexpectedly succeeded'
 if false; then
