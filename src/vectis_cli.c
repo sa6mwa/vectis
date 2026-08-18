@@ -2981,6 +2981,37 @@ vectis_pack_command_cleanup(vectis_pack_asset_list *assets,
   vectis_pack_content_type_map_cleanup(content_types);
 }
 
+static int vectis_pack_validate_entitlements_path(const char *path) {
+  struct stat st;
+  FILE *file;
+
+  if (path == NULL) {
+    return 0;
+  }
+  if (stat(path, &st) != 0) {
+    fprintf(stderr, "vectis: failed to read entitlements file: %s\n",
+            strerror(errno));
+    return -1;
+  }
+  if (!S_ISREG(st.st_mode)) {
+    fprintf(stderr, "vectis: entitlements path is not a regular file: %s\n",
+            path);
+    return -1;
+  }
+  file = fopen(path, "rb");
+  if (file == NULL) {
+    fprintf(stderr, "vectis: failed to read entitlements file: %s\n",
+            strerror(errno));
+    return -1;
+  }
+  if (fclose(file) != 0) {
+    fprintf(stderr, "vectis: failed to read entitlements file: %s\n",
+            strerror(errno));
+    return -1;
+  }
+  return 0;
+}
+
 static int vectis_pack_command(int argc, char **argv, int index) {
   const char *script_path;
   const char *output_path;
@@ -3170,6 +3201,10 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     fputs("vectis: --hardened-runtime, --timestamp, and --entitlements "
           "require --codesign or --ad-hoc-codesign\n",
           stderr);
+    vectis_pack_command_cleanup(&assets, &content_types);
+    return 64;
+  }
+  if (vectis_pack_validate_entitlements_path(entitlements_path) != 0) {
     vectis_pack_command_cleanup(&assets, &content_types);
     return 64;
   }

@@ -114,6 +114,9 @@ The Darwin pack command should accept:
 timestamp, and entitlements are only meaningful when signing is requested.
 If any signing-only option is present without `--codesign` or
 `--ad-hoc-codesign`, the command should fail with a usage diagnostic.
+`--entitlements <path>` must name a readable regular file and should be
+validated before backend selection so missing files are reported as input
+errors rather than as generic unsupported-platform failures.
 
 The only valid signing order is:
 
