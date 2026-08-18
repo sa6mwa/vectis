@@ -1839,6 +1839,10 @@ assert_contains "$repo_root/src/vectis_cli.c" \
   'Darwin pack requires pack-runner link inputs'
 assert_contains "$repo_root/src/vectis_cli.c" \
   'share/vectis/pack-runner-link-inputs\.json'
+assert_contains "$repo_root/src/vectis_cli.c" \
+  'vectis_pack_collect\(vectis_pack_payload \*payload'
+assert_contains "$repo_root/src/vectis_cli.c" \
+  'vectis_pack_write_elf\(const char \*output_path'
 assert_contains "$repo_root/tests/lua/pack.cmake" \
   'pack signing option without signing mode'
 assert_contains "$repo_root/tests/lua/pack.cmake" \
@@ -1859,6 +1863,8 @@ assert_contains "$repo_root/docs/pack-platform-operability.md" \
   'vectis::pack_runner'
 assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
   'readable regular file'
+assert_contains "$repo_root/TODO.md" \
+  '\[x\] Split `vectis -a pack` into shared `vectis_pack_collect`'
 assert_contains "$repo_root/TODO.md" \
   'docs/darwin-mach-o-pack-spec\.md'
 assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \

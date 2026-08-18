@@ -41,12 +41,12 @@ described here exist.
 Darwin should use a relink-based pack backend rather than an in-place Mach-O
 editor.
 
-The pack command should split into three layers:
+The pack command is being split into three layers:
 
 - `vectis_pack_collect`: shared C collection logic that reads the Lua script,
   lockd bundle, assets, content-type map, extract policy, and manifest into a
   platform-neutral `vectis_pack_payload`.
-- `vectis_pack_write_elf`: the existing Linux writer, moved behind a backend
+- `vectis_pack_write_elf`: the existing Linux writer, now behind a backend
   boundary and still responsible for the copied executable plus footer layout.
 - `vectis_pack_write_macho`: a Darwin backend that writes a generated source or
   object containing named sections and links a final executable from the

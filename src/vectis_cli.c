@@ -455,6 +455,20 @@ typedef struct vectis_pack_dir_stack {
   size_t count;
 } vectis_pack_dir_stack;
 
+typedef struct vectis_pack_payload {
+  unsigned char *script;
+  unsigned char *bundle;
+  unsigned char *manifest;
+  size_t script_size;
+  size_t bundle_size;
+  size_t manifest_size;
+  size_t asset_size;
+  unsigned char script_sha[SHA256_DIGEST_LENGTH];
+  unsigned char bundle_sha[SHA256_DIGEST_LENGTH];
+  unsigned char asset_sha[SHA256_DIGEST_LENGTH];
+  unsigned char manifest_sha[SHA256_DIGEST_LENGTH];
+} vectis_pack_payload;
+
 static const lonejson_field vectis_pack_content_type_map_doc_item_fields[] = {
     LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_pack_content_type_map_doc_item,
                                     extension, "extension"),
@@ -1767,6 +1781,83 @@ static int vectis_pack_hash_assets(vectis_pack_asset_list *assets,
   return 0;
 }
 
+static void vectis_pack_payload_init(vectis_pack_payload *payload) {
+  memset(payload, 0, sizeof(*payload));
+}
+
+static void vectis_pack_payload_cleanup(vectis_pack_payload *payload) {
+  free(payload->manifest);
+  free(payload->bundle);
+  free(payload->script);
+  vectis_pack_payload_init(payload);
+}
+
+static int vectis_pack_collect(vectis_pack_payload *payload,
+                               const char *script_path, const char *bundle_path,
+                               vectis_pack_asset_list *assets,
+                               const char *extract_mode) {
+  size_t i;
+
+  vectis_pack_payload_init(payload);
+  if (vectis_read_all(script_path, &payload->script, &payload->script_size) !=
+      0) {
+    fprintf(stderr, "vectis: failed to read pack input: %s\n", strerror(errno));
+    vectis_pack_payload_cleanup(payload);
+    return 1;
+  }
+  if (bundle_path != NULL && vectis_read_all(bundle_path, &payload->bundle,
+                                             &payload->bundle_size) != 0) {
+    fprintf(stderr, "vectis: failed to read lockd bundle: %s\n",
+            strerror(errno));
+    vectis_pack_payload_cleanup(payload);
+    return 1;
+  }
+  if (assets->count > 1u) {
+    qsort(assets->items, assets->count, sizeof(assets->items[0]),
+          vectis_pack_asset_compare);
+    for (i = 1u; i < assets->count; ++i) {
+      if (strcmp(assets->items[i - 1u].logical_path,
+                 assets->items[i].logical_path) == 0) {
+        fprintf(stderr, "vectis: duplicate embedded asset path: %s\n",
+                assets->items[i].logical_path);
+        vectis_pack_payload_cleanup(payload);
+        return 1;
+      }
+    }
+  }
+  payload->asset_size = 0u;
+  for (i = 0u; i < assets->count; ++i) {
+    assets->items[i].offset = payload->asset_size;
+    if (assets->items[i].size > ((size_t)-1) - payload->asset_size) {
+      fputs("vectis: embedded assets are too large\n", stderr);
+      vectis_pack_payload_cleanup(payload);
+      return 1;
+    }
+    payload->asset_size += assets->items[i].size;
+  }
+  if (vectis_pack_hash_assets(assets, payload->asset_sha) != 0) {
+    fputs("vectis: failed to hash embedded assets\n", stderr);
+    vectis_pack_payload_cleanup(payload);
+    return 1;
+  }
+  if (vectis_pack_build_manifest(assets, extract_mode, &payload->manifest,
+                                 &payload->manifest_size) != 0) {
+    fprintf(stderr, "vectis: failed to build embedded asset manifest\n");
+    vectis_pack_payload_cleanup(payload);
+    return 1;
+  }
+  SHA256(payload->script, payload->script_size, payload->script_sha);
+  memset(payload->bundle_sha, 0, sizeof(payload->bundle_sha));
+  if (payload->bundle != NULL) {
+    SHA256(payload->bundle, payload->bundle_size, payload->bundle_sha);
+  }
+  memset(payload->manifest_sha, 0, sizeof(payload->manifest_sha));
+  if (payload->manifest != NULL) {
+    SHA256(payload->manifest, payload->manifest_size, payload->manifest_sha);
+  }
+  return 0;
+}
+
 static const char *vectis_cli_auth_mode_name(unsigned mode) {
   if ((mode & VECTIS_AUTH_MODE_BASIC) != 0u) {
     return "basic";
@@ -2979,6 +3070,68 @@ static int vectis_pack_target_is_darwin(const char *target, int *out) {
   return 0;
 }
 
+static int vectis_pack_write_elf(const char *output_path,
+                                 const unsigned char *runner,
+                                 size_t runner_size,
+                                 const vectis_pack_payload *payload,
+                                 const vectis_pack_asset_list *assets) {
+  unsigned char footer[VECTIS_PACK_FOOTER_SIZE];
+  size_t offset;
+  size_t i;
+  FILE *out;
+
+  offset = runner_size;
+  vectis_pack_make_footer(
+      footer, (unsigned long long)offset,
+      (unsigned long long)payload->script_size, payload->script_sha,
+      (unsigned long long)(offset + payload->script_size),
+      (unsigned long long)payload->bundle_size,
+      payload->bundle != NULL ? payload->bundle_sha : NULL,
+      (unsigned long long)(offset + payload->script_size +
+                           payload->bundle_size),
+      (unsigned long long)payload->asset_size,
+      assets->count > 0u ? payload->asset_sha : NULL,
+      (unsigned long long)(offset + payload->script_size +
+                           payload->bundle_size + payload->asset_size),
+      (unsigned long long)payload->manifest_size,
+      payload->manifest != NULL ? payload->manifest_sha : NULL);
+  out = fopen(output_path, "wb");
+  if (out == NULL) {
+    fprintf(stderr, "vectis: failed to create packed output: %s\n",
+            output_path);
+    return 1;
+  }
+  if (vectis_write_all(out, runner, runner_size) != 0 ||
+      vectis_write_all(out, payload->script, payload->script_size) != 0 ||
+      vectis_write_all(out, payload->bundle, payload->bundle_size) != 0) {
+    fprintf(stderr, "vectis: failed to write packed output: %s\n", output_path);
+    (void)fclose(out);
+    return 1;
+  }
+  for (i = 0u; i < assets->count; ++i) {
+    if (assets->items[i].kind != VECTIS_PACK_ASSET_FILE) {
+      continue;
+    }
+    if (vectis_write_all(out, assets->items[i].data, assets->items[i].size) !=
+        0) {
+      fprintf(stderr, "vectis: failed to write packed output: %s\n",
+              output_path);
+      (void)fclose(out);
+      return 1;
+    }
+  }
+  if (vectis_write_all(out, payload->manifest, payload->manifest_size) != 0 ||
+      vectis_write_all(out, footer, sizeof(footer)) != 0 || fclose(out) != 0) {
+    fprintf(stderr, "vectis: failed to write packed output: %s\n", output_path);
+    return 1;
+  }
+  if (chmod(output_path, 0755) != 0) {
+    fprintf(stderr, "vectis: failed to chmod packed output: %s\n", output_path);
+    return 1;
+  }
+  return 0;
+}
+
 static int vectis_self_path(const char *argv0, char *path, size_t path_size) {
 #ifdef __linux__
   ssize_t nread;
@@ -3057,27 +3210,15 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   char *asset_source;
   char *asset_logical;
   unsigned char *self;
-  unsigned char *script;
-  unsigned char *bundle;
-  unsigned char *manifest;
   size_t self_size;
-  size_t script_size;
-  size_t bundle_size;
-  size_t manifest_size;
-  size_t asset_size;
-  size_t offset;
-  unsigned char script_sha[SHA256_DIGEST_LENGTH];
-  unsigned char bundle_sha[SHA256_DIGEST_LENGTH];
-  unsigned char asset_sha[SHA256_DIGEST_LENGTH];
-  unsigned char manifest_sha[SHA256_DIGEST_LENGTH];
-  unsigned char footer[VECTIS_PACK_FOOTER_SIZE];
+  vectis_pack_payload payload;
   vectis_pack_asset_list assets;
   vectis_pack_content_type_map content_types;
   vectis_pack_dir_stack dir_stack;
   vectis_embedded_fs_extract_policy extract_policy;
   char self_path[4096];
-  FILE *out;
   int i;
+  int result;
   int follow_symlinks;
   int darwin_target;
   int ad_hoc_codesign;
@@ -3276,157 +3417,24 @@ static int vectis_pack_command(int argc, char **argv, int index) {
     return 1;
   }
   self = NULL;
-  script = NULL;
-  bundle = NULL;
-  manifest = NULL;
-  bundle_size = 0u;
-  if (vectis_read_all(self_path, &self, &self_size) != 0 ||
-      vectis_read_all(script_path, &script, &script_size) != 0) {
+  if (vectis_read_all(self_path, &self, &self_size) != 0) {
     fprintf(stderr, "vectis: failed to read pack input: %s\n", strerror(errno));
     free(self);
-    free(script);
     vectis_pack_command_cleanup(&assets, &content_types);
     return 1;
   }
-  if (bundle_path != NULL &&
-      vectis_read_all(bundle_path, &bundle, &bundle_size) != 0) {
-    fprintf(stderr, "vectis: failed to read lockd bundle: %s\n",
-            strerror(errno));
-    free(self);
-    free(script);
-    vectis_pack_command_cleanup(&assets, &content_types);
-    return 1;
-  }
-  if (assets.count > 1u) {
-    qsort(assets.items, assets.count, sizeof(assets.items[0]),
-          vectis_pack_asset_compare);
-    for (i = 1; i < (int)assets.count; ++i) {
-      if (strcmp(assets.items[i - 1].logical_path,
-                 assets.items[i].logical_path) == 0) {
-        fprintf(stderr, "vectis: duplicate embedded asset path: %s\n",
-                assets.items[i].logical_path);
-        free(bundle);
-        free(script);
-        free(self);
-        vectis_pack_command_cleanup(&assets, &content_types);
-        return 1;
-      }
-    }
-  }
-  asset_size = 0u;
-  for (i = 0; i < (int)assets.count; ++i) {
-    assets.items[i].offset = asset_size;
-    if (assets.items[i].size > ((size_t)-1) - asset_size) {
-      fputs("vectis: embedded assets are too large\n", stderr);
-      free(bundle);
-      free(script);
-      free(self);
-      vectis_pack_command_cleanup(&assets, &content_types);
-      return 1;
-    }
-    asset_size += assets.items[i].size;
-  }
-  if (vectis_pack_hash_assets(&assets, asset_sha) != 0) {
-    fputs("vectis: failed to hash embedded assets\n", stderr);
-    free(bundle);
-    free(script);
+  if (vectis_pack_collect(&payload, script_path, bundle_path, &assets,
+                          extract_mode) != 0) {
     free(self);
     vectis_pack_command_cleanup(&assets, &content_types);
     return 1;
   }
-  if (vectis_pack_build_manifest(&assets, extract_mode, &manifest,
-                                 &manifest_size) != 0) {
-    fprintf(stderr, "vectis: failed to build embedded asset manifest\n");
-    free(bundle);
-    free(script);
-    free(self);
-    vectis_pack_command_cleanup(&assets, &content_types);
-    return 1;
-  }
-  SHA256(script, script_size, script_sha);
-  memset(bundle_sha, 0, sizeof(bundle_sha));
-  if (bundle != NULL) {
-    SHA256(bundle, bundle_size, bundle_sha);
-  }
-  memset(manifest_sha, 0, sizeof(manifest_sha));
-  if (manifest != NULL) {
-    SHA256(manifest, manifest_size, manifest_sha);
-  }
-  offset = self_size;
-  vectis_pack_make_footer(
-      footer, (unsigned long long)offset, (unsigned long long)script_size,
-      script_sha, (unsigned long long)(offset + script_size),
-      (unsigned long long)bundle_size, bundle != NULL ? bundle_sha : NULL,
-      (unsigned long long)(offset + script_size + bundle_size),
-      (unsigned long long)asset_size, assets.count > 0u ? asset_sha : NULL,
-      (unsigned long long)(offset + script_size + bundle_size + asset_size),
-      (unsigned long long)manifest_size,
-      manifest != NULL ? manifest_sha : NULL);
-  out = fopen(output_path, "wb");
-  if (out == NULL) {
-    fprintf(stderr, "vectis: failed to create packed output: %s\n",
-            output_path);
-    free(manifest);
-    free(bundle);
-    free(script);
-    free(self);
-    vectis_pack_command_cleanup(&assets, &content_types);
-    return 1;
-  }
-  if (vectis_write_all(out, self, self_size) != 0 ||
-      vectis_write_all(out, script, script_size) != 0 ||
-      vectis_write_all(out, bundle, bundle_size) != 0) {
-    fprintf(stderr, "vectis: failed to write packed output: %s\n", output_path);
-    (void)fclose(out);
-    free(manifest);
-    free(bundle);
-    free(script);
-    free(self);
-    vectis_pack_command_cleanup(&assets, &content_types);
-    return 1;
-  }
-  for (i = 0; i < (int)assets.count; ++i) {
-    if (assets.items[i].kind != VECTIS_PACK_ASSET_FILE) {
-      continue;
-    }
-    if (vectis_write_all(out, assets.items[i].data, assets.items[i].size) !=
-        0) {
-      fprintf(stderr, "vectis: failed to write packed output: %s\n",
-              output_path);
-      (void)fclose(out);
-      free(manifest);
-      free(bundle);
-      free(script);
-      free(self);
-      vectis_pack_command_cleanup(&assets, &content_types);
-      return 1;
-    }
-  }
-  if (vectis_write_all(out, manifest, manifest_size) != 0 ||
-      vectis_write_all(out, footer, sizeof(footer)) != 0 || fclose(out) != 0) {
-    fprintf(stderr, "vectis: failed to write packed output: %s\n", output_path);
-    free(manifest);
-    free(bundle);
-    free(script);
-    free(self);
-    vectis_pack_command_cleanup(&assets, &content_types);
-    return 1;
-  }
-  if (chmod(output_path, 0755) != 0) {
-    fprintf(stderr, "vectis: failed to chmod packed output: %s\n", output_path);
-    free(manifest);
-    free(bundle);
-    free(script);
-    free(self);
-    vectis_pack_command_cleanup(&assets, &content_types);
-    return 1;
-  }
-  free(manifest);
-  free(bundle);
-  free(script);
+  result =
+      vectis_pack_write_elf(output_path, self, self_size, &payload, &assets);
+  vectis_pack_payload_cleanup(&payload);
   free(self);
   vectis_pack_command_cleanup(&assets, &content_types);
-  return 0;
+  return result;
 }
 
 static int vectis_lua_push_error(lua_State *lua, vectis_status status,
