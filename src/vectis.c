@@ -1994,9 +1994,6 @@ static vectis_status vectis_mailbox_wait_next_interruptible(
   if (timeout_ms > 0L) {
     vectis_mailbox_deadline(timeout_ms, &deadline);
   }
-  if (interrupt_generation != NULL && *interrupt_generation == 0ul) {
-    *interrupt_generation = impl->interrupt_generation;
-  }
   while (impl->count == 0u && !impl->closed &&
          (interrupt_generation == NULL ||
           *interrupt_generation == impl->interrupt_generation)) {
@@ -2076,6 +2073,21 @@ static void vectis_mailbox_interrupt(vectis_mailbox *mailbox) {
   impl->interrupt_generation++;
   (void)pthread_cond_broadcast(&impl->cond);
   (void)pthread_mutex_unlock(&impl->mutex);
+}
+
+static unsigned long
+vectis_mailbox_interrupt_generation(vectis_mailbox *mailbox) {
+  vectis_mailbox_impl *impl;
+  unsigned long generation;
+
+  if (mailbox == NULL || mailbox->impl == NULL) {
+    return 0ul;
+  }
+  impl = (vectis_mailbox_impl *)mailbox->impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  generation = impl->interrupt_generation;
+  (void)pthread_mutex_unlock(&impl->mutex);
+  return generation;
 }
 
 vectis_status vectis_mailbox_issue_correlation_id(vectis_mailbox *mailbox,
@@ -6319,7 +6331,8 @@ static vectis_status vectis_curl_worker_service_wait(void *context,
   poll_timeout_ms = ctx->poll_timeout_ms > 0L
                         ? ctx->poll_timeout_ms
                         : VECTIS_CURL_WORKER_DEFAULT_POLL_TIMEOUT_MS;
-  mailbox_interrupt_generation = 0ul;
+  mailbox_interrupt_generation =
+      vectis_mailbox_interrupt_generation(ctx->request_mailbox);
   while (!vectis_curl_worker_service_is_stopping(ctx)) {
     vectis_mailbox_event_init(&event);
     vectis_error_clear(&local_error);
@@ -6895,7 +6908,8 @@ static vectis_status vectis_cai_worker_service_wait(void *context,
   poll_timeout_ms = ctx->poll_timeout_ms > 0L
                         ? ctx->poll_timeout_ms
                         : VECTIS_CAI_WORKER_DEFAULT_POLL_TIMEOUT_MS;
-  mailbox_interrupt_generation = 0ul;
+  mailbox_interrupt_generation =
+      vectis_mailbox_interrupt_generation(ctx->request_mailbox);
   while (!vectis_cai_worker_service_is_stopping(ctx)) {
     vectis_mailbox_event_init(&event);
     vectis_error_clear(&local_error);
@@ -8145,7 +8159,8 @@ static vectis_status vectis_audio_worker_service_wait(void *context,
   poll_timeout_ms = ctx->poll_timeout_ms > 0L
                         ? ctx->poll_timeout_ms
                         : VECTIS_AUDIO_WORKER_DEFAULT_POLL_TIMEOUT_MS;
-  mailbox_interrupt_generation = 0ul;
+  mailbox_interrupt_generation =
+      vectis_mailbox_interrupt_generation(ctx->request_mailbox);
   while (!vectis_audio_worker_service_is_stopping(ctx)) {
     vectis_mailbox_event_init(&event);
     vectis_error_clear(&local_error);
@@ -8964,7 +8979,8 @@ static vectis_status vectis_sus_worker_service_wait(void *context,
   poll_timeout_ms = ctx->poll_timeout_ms > 0L
                         ? ctx->poll_timeout_ms
                         : VECTIS_SUS_WORKER_DEFAULT_POLL_TIMEOUT_MS;
-  mailbox_interrupt_generation = 0ul;
+  mailbox_interrupt_generation =
+      vectis_mailbox_interrupt_generation(ctx->request_mailbox);
   while (!vectis_sus_worker_service_is_stopping(ctx)) {
     vectis_mailbox_event_init(&event);
     vectis_error_clear(&local_error);

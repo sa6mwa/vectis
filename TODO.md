@@ -56,7 +56,7 @@ moving toward, not just the next patch. Keep items observable and testable.
 - [x] Implement dependency-backed C helpers for curl, SSH exec/SFTP, self-signed certificate bundles, request/response JSON parse/serialize, and JSON route auto-wiring.
 - [x] Translate manual Kore TLS material from path, memory, and `lc_source` inputs into runtime server cert/key configuration.
 - [x] Complete dependency-backed behavior for CA-signed certificate generation and manual/ACME Kore TLS startup.
-- [ ] Complete the remaining full Kore runtime configuration surface, including low-level escape hatches where useful.
+- [x] Complete the remaining full Kore runtime configuration surface, including low-level escape hatches where useful.
 - [x] Expose an explicit C and Lua `access_log_path` server option for Kore file access logs, including startup preflight and runtime coverage.
 - [x] Expose bounded C and Lua `kore_curl_timeout_seconds` and `kore_curl_recv_max_bytes` server options for Kore-owned curl workflows such as ACME, while preserving compiled defaults when unset.
 - [x] Expose C and Lua `kore_quiet` as a low-level opt-in for suppressing native Kore lifecycle chatter without changing Vectis-owned logging.
@@ -119,7 +119,7 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Expose Kore's active HTTP request-object limit as validated C and Lua `request_limit`, preserving the default behavior of matching `max_connections`.
 - [x] Add a first C-owned WebSocket route surface over Kore handshakes, callback-borrowed connection handles, send helpers, and raw loopback integration coverage.
 - [x] Add Lua `vectis.server` WebSocket route helpers once the C surface has settled.
-- [ ] Support Kore features through Vectis where practical, including websocket, static asset, file upload, and deeper runtime configuration features.
+- [x] Support Kore features through Vectis where practical, including websocket, static asset, file upload, and deeper runtime configuration features.
 - [x] Define the supported one-process multi-instance behavior based on what Kore can safely provide.
 - [x] Add real HTTP integration tests.
 - [x] Add real HTTPS integration tests.

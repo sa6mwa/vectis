@@ -205,6 +205,32 @@ assert_concurrency_mailbox_contract() {
   assert_contains "$repo_root/docs/lua-coverage-matrix.md" 'Kore-quiet'
   assert_contains "$repo_root/docs/service-runtime-lifecycle-spec.md" \
     '`vectis_server_config.kore_quiet`'
+  assert_contains "$repo_root/docs/kore-runtime-surface-audit.md" \
+    'vectis_server_config'
+  assert_contains "$repo_root/docs/kore-runtime-surface-audit.md" \
+    'server:upload'
+  assert_contains "$repo_root/docs/kore-runtime-surface-audit.md" \
+    'server:websocket'
+  assert_contains "$repo_root/docs/kore-runtime-surface-audit.md" \
+    'server:static_directory'
+  assert_contains "$repo_root/docs/kore-runtime-surface-audit.md" \
+    'vectis_register_static_file'
+  assert_contains "$repo_root/docs/kore-runtime-surface-audit.md" \
+    'vectis_register_websocket'
+  assert_contains "$repo_root/docs/kore-runtime-surface-audit.md" \
+    'vectis_request_kore'
+  assert_contains "$repo_root/docs/kore-runtime-surface-audit.md" \
+    'request_limit'
+  assert_contains "$repo_root/docs/kore-runtime-surface-audit.md" \
+    'worker_cpu_affinity'
+  assert_contains "$repo_root/docs/kore-runtime-surface-audit.md" \
+    'kore_quiet'
+  assert_contains "$repo_root/docs/kore-runtime-surface-audit.md" \
+    'pretty_error_pages'
+  assert_contains "$repo_root/docs/kore-runtime-surface-audit.md" \
+    'worker_death_policy'
+  assert_contains "$repo_root/docs/lua-server.md" \
+    'kore-runtime-surface-audit\.md'
   assert_contains "$repo_root/docs/api.md" 'Kore quiet mode'
   assert_contains "$repo_root/docs/lua-server.md" \
     'Vectis infers the response type'
@@ -218,6 +244,10 @@ assert_concurrency_mailbox_contract() {
     '\[x\] Expose bounded C and Lua `kore_curl_timeout_seconds`'
   assert_contains "$repo_root/TODO.md" 'kore_curl_recv_max_bytes'
   assert_contains "$repo_root/TODO.md" '\[x\] Expose C and Lua `kore_quiet`'
+  assert_contains "$repo_root/TODO.md" \
+    '\[x\] Complete the remaining full Kore runtime configuration surface'
+  assert_contains "$repo_root/TODO.md" \
+    '\[x\] Support Kore features through Vectis where practical'
   assert_contains "$repo_root/include/vectis/vectis.h" \
     'VECTIS_AUTOBLOCK_MAX_STATUS_RULES'
   assert_contains "$repo_root/include/vectis/vectis.h" \
