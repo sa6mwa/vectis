@@ -26,6 +26,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -421,6 +422,13 @@ static int vectis_kore_autoblock_map(unsigned int capacity) {
   if (ok) {
     ok = pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED) == 0;
   }
+#if defined(__linux__)
+  if (ok) {
+    ok = pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST) == 0;
+  }
+#else
+  ok = 0;
+#endif
   if (ok) {
     ok = pthread_mutex_init(&vectis_kore_autoblock_shared->mutex, &attr) == 0;
   }
@@ -435,16 +443,69 @@ static int vectis_kore_autoblock_map(unsigned int capacity) {
 }
 
 static int vectis_kore_autoblock_lock(void) {
+  int rc;
+
   if (vectis_kore_autoblock_shared == NULL) {
     return 0;
   }
-  return pthread_mutex_lock(&vectis_kore_autoblock_shared->mutex) == 0;
+  rc = pthread_mutex_lock(&vectis_kore_autoblock_shared->mutex);
+  if (rc == 0) {
+    return 1;
+  }
+#if defined(__linux__)
+  if (rc == EOWNERDEAD) {
+    memset(vectis_kore_autoblock_entries, 0,
+           (size_t)vectis_kore_autoblock_capacity *
+               sizeof(*vectis_kore_autoblock_entries));
+    if (pthread_mutex_consistent(&vectis_kore_autoblock_shared->mutex) == 0) {
+      return 1;
+    }
+    (void)pthread_mutex_unlock(&vectis_kore_autoblock_shared->mutex);
+  }
+#endif
+  return 0;
 }
 
 static void vectis_kore_autoblock_unlock(void) {
   if (vectis_kore_autoblock_shared != NULL) {
     (void)pthread_mutex_unlock(&vectis_kore_autoblock_shared->mutex);
   }
+}
+
+int vectis_internal_kore_autoblock_mutex_recovers_worker_death(void) {
+#if defined(__linux__)
+  pid_t child;
+  int child_status;
+  int recovered;
+
+  if (vectis_kore_autoblock_shared != NULL || !vectis_kore_autoblock_map(1u)) {
+    return 0;
+  }
+  child = fork();
+  if (child == 0) {
+    if (vectis_kore_autoblock_lock()) {
+      _exit(0);
+    }
+    _exit(1);
+  }
+  if (child < 0) {
+    vectis_kore_autoblock_unmap();
+    return 0;
+  }
+  if (waitpid(child, &child_status, 0) != child || !WIFEXITED(child_status) ||
+      WEXITSTATUS(child_status) != 0) {
+    vectis_kore_autoblock_unmap();
+    return 0;
+  }
+  recovered = vectis_kore_autoblock_lock();
+  if (recovered) {
+    vectis_kore_autoblock_unlock();
+  }
+  vectis_kore_autoblock_unmap();
+  return recovered;
+#else
+  return 1;
+#endif
 }
 
 static void
@@ -3060,6 +3121,28 @@ static int vectis_kore_redirect_authority(const char *host, char *out,
   return 1;
 }
 
+static int vectis_kore_redirect_authority_allowed(const char *authority) {
+  const char *domain;
+  size_t i;
+
+  if (authority == NULL || authority[0] == '\0') {
+    return 0;
+  }
+  if (vectis_kore_current.tls_mode == VECTIS_TLS_MODE_ACME) {
+    for (i = 0u; i < vectis_kore_current.domain_count; ++i) {
+      domain = vectis_kore_current.domains[i];
+      if (domain != NULL && domain[0] != '\0' && strcmp(domain, "*") != 0 &&
+          strcasecmp(authority, domain) == 0) {
+        return 1;
+      }
+    }
+    return 0;
+  }
+  domain = vectis_kore_current.domain;
+  return domain != NULL && domain[0] != '\0' && strcmp(domain, "*") != 0 &&
+         strcasecmp(authority, domain) == 0;
+}
+
 int vectis_kore_http_redirect_route(struct http_request *req) {
   char authority[512];
   char location[8192];
@@ -3072,6 +3155,10 @@ int vectis_kore_http_redirect_route(struct http_request *req) {
     if (req != NULL) {
       http_response(req, 400, NULL, 0);
     }
+    return KORE_RESULT_OK;
+  }
+  if (!vectis_kore_redirect_authority_allowed(authority)) {
+    http_response(req, 400, NULL, 0);
     return KORE_RESULT_OK;
   }
   path = req->path != NULL && req->path[0] == '/' ? req->path : "/";

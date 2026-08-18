@@ -7,6 +7,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "vectis_internal.h"
+
 #include <lc/lc.h>
 #include <vectis/vectis.h>
 
@@ -123,6 +125,40 @@ static void assert_http_redirect(unsigned short port, unsigned short tls_port) {
                      (unsigned)tls_port);
   assert(written > 0 && (size_t)written < sizeof(location));
   assert(strstr(response, location) != NULL);
+}
+
+static void assert_http_redirect_rejected(unsigned short port) {
+  struct sockaddr_in address;
+  const char request[] = "GET /secure HTTP/1.1\r\n"
+                         "Host: attacker.example\r\n"
+                         "Connection: close\r\n\r\n";
+  char response[2048];
+  ssize_t received;
+  int fd;
+  int attempt;
+
+  memset(&address, 0, sizeof(address));
+  address.sin_family = AF_INET;
+  address.sin_port = htons(port);
+  assert(inet_pton(AF_INET, "127.0.0.1", &address.sin_addr) == 1);
+  for (attempt = 0; attempt < 100; ++attempt) {
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    assert(fd >= 0);
+    if (connect(fd, (struct sockaddr *)&address, sizeof(address)) == 0) {
+      break;
+    }
+    (void)close(fd);
+    usleep(100000u);
+  }
+  assert(attempt < 100);
+  assert(send(fd, request, sizeof(request) - 1u, 0) ==
+         (ssize_t)(sizeof(request) - 1u));
+  received = recv(fd, response, sizeof(response) - 1u, 0);
+  assert(received > 0);
+  response[received] = '\0';
+  (void)close(fd);
+  assert(strstr(response, " 400 ") != NULL);
+  assert(strstr(response, "location:") == NULL);
 }
 
 static int read_file(const char *path, char **out, size_t *out_size) {
@@ -260,6 +296,7 @@ int main(void) {
   char redirect_url[128];
 
   app = NULL;
+  assert(vectis_internal_kore_autoblock_mutex_recovers_worker_death());
   root_cert_pem = NULL;
   root_cert_pem_size = 0u;
   root_cert_source = NULL;
@@ -337,6 +374,7 @@ int main(void) {
 
   assert_https_ok(localhost_url, root_cert_path, NULL);
   assert_http_redirect(redirect_port, port);
+  assert_http_redirect_rejected(redirect_port);
   assert_https_ok(redirect_url, root_cert_path, NULL);
   assert(read_file(root_cert_path, &root_cert_pem, &root_cert_pem_size));
   assert_https_ca_source_ok(

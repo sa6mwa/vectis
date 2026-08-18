@@ -111,6 +111,7 @@ typedef struct vectis_internal_runtime_observation {
 void vectis_set_error(vectis_error *error, vectis_status code,
                       const char *message);
 struct lc_client *vectis_internal_lockd_client(vectis_app *app);
+int vectis_internal_kore_autoblock_mutex_recovers_worker_death(void);
 pid_t vectis_internal_kore_child_pid(vectis_app *app);
 void vectis_internal_runtime_observe(
     vectis_app *app, vectis_internal_runtime_observation *observation);
