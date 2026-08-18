@@ -1866,6 +1866,10 @@ assert_contains "$repo_root/src/vectis_cli.c" \
 assert_contains "$repo_root/src/vectis_cli.c" \
   'Mach-O pack artifact inspection'
 assert_contains "$repo_root/src/vectis_cli.c" \
+  '_NSGetExecutablePath'
+assert_contains "$repo_root/src/vectis_cli.c" \
+  'expected_bundle_size > 0u'
+assert_contains "$repo_root/src/vectis_cli.c" \
   '\-\-pack-sdk-root'
 assert_contains "$repo_root/src/vectis_cli.c" \
   '\-\-work-dir'
@@ -1939,6 +1943,8 @@ assert_contains "$repo_root/TODO.md" \
   'docs/darwin-mach-o-pack-spec\.md'
 assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
   'macos-15'
+assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
+  'GH_TOKEN: \${{ github\.token }}'
 assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \
   'macos-latest'
 assert_contains "$repo_root/.github/workflows/darwin-arm64-smoke.yml" \

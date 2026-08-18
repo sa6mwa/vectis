@@ -35,6 +35,7 @@
 #include <time.h>
 #include <unistd.h>
 #ifdef __APPLE__
+#include <mach-o/dyld.h>
 #include <mach-o/getsect.h>
 #include <mach-o/ldsyms.h>
 #include <mach-o/loader.h>
@@ -3915,6 +3916,24 @@ static int vectis_self_path(const char *argv0, char *path, size_t path_size) {
   if (nread > 0 && (size_t)nread < path_size) {
     path[nread] = '\0';
     return 0;
+  }
+#endif
+#ifdef __APPLE__
+  {
+    char resolved[PATH_MAX];
+    uint32_t nread;
+
+    nread = (uint32_t)path_size;
+    if (_NSGetExecutablePath(path, &nread) == 0) {
+      if (realpath(path, resolved) != NULL &&
+          strlen(resolved) + 1u <= path_size) {
+        memcpy(path, resolved, strlen(resolved) + 1u);
+        return 0;
+      }
+      if (path[0] == '/') {
+        return 0;
+      }
+    }
   }
 #endif
   if (argv0 == NULL || strlen(argv0) + 1u > path_size) {
@@ -22959,6 +22978,10 @@ vectis_lua_load_embedded_from_macho(vectis_pack_embedded_payload *payload) {
   size_t bundle_size;
   size_t asset_size;
   size_t manifest_size;
+  size_t expected_script_size;
+  size_t expected_bundle_size;
+  size_t expected_asset_size;
+  size_t expected_manifest_size;
   unsigned long long header_version;
 
   payload->header = vectis_lua_macho_section("__pack_header", &header_size);
@@ -22975,21 +22998,36 @@ vectis_lua_load_embedded_from_macho(vectis_pack_embedded_payload *payload) {
     fputs("vectis: embedded Mach-O payload version is unsupported\n", stderr);
     return 1;
   }
+  expected_script_size = (size_t)vectis_pack_read_u64(payload->header + 24u);
+  expected_bundle_size = (size_t)vectis_pack_read_u64(payload->header + 32u);
+  expected_asset_size = (size_t)vectis_pack_read_u64(payload->header + 40u);
+  expected_manifest_size = (size_t)vectis_pack_read_u64(payload->header + 48u);
   payload->script = vectis_lua_macho_section("__pack_script", &script_size);
   payload->bundle = vectis_lua_macho_section("__pack_bundle", &bundle_size);
   payload->asset_payload =
       vectis_lua_macho_section("__pack_assets", &asset_size);
   payload->manifest =
       vectis_lua_macho_section("__pack_manifest", &manifest_size);
-  if (payload->script == NULL || script_size == 0u || payload->bundle == NULL ||
-      payload->asset_payload == NULL || payload->manifest == NULL) {
+  if (payload->script == NULL || script_size == 0u ||
+      (payload->bundle == NULL && expected_bundle_size > 0u) ||
+      (payload->asset_payload == NULL && expected_asset_size > 0u) ||
+      (payload->manifest == NULL && expected_manifest_size > 0u)) {
     fputs("vectis: embedded Mach-O payload sections are incomplete\n", stderr);
     return 1;
   }
-  if (script_size != (size_t)vectis_pack_read_u64(payload->header + 24u) ||
-      bundle_size != (size_t)vectis_pack_read_u64(payload->header + 32u) ||
-      asset_size != (size_t)vectis_pack_read_u64(payload->header + 40u) ||
-      manifest_size != (size_t)vectis_pack_read_u64(payload->header + 48u)) {
+  if (payload->bundle == NULL) {
+    bundle_size = 0u;
+  }
+  if (payload->asset_payload == NULL) {
+    asset_size = 0u;
+  }
+  if (payload->manifest == NULL) {
+    manifest_size = 0u;
+  }
+  if (script_size != expected_script_size ||
+      bundle_size != expected_bundle_size ||
+      asset_size != expected_asset_size ||
+      manifest_size != expected_manifest_size) {
     fputs("vectis: embedded Mach-O payload section sizes are invalid\n",
           stderr);
     return 1;
