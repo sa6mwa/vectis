@@ -399,8 +399,8 @@ Still active or planned:
 - Deeper CAI/Vectis/libmdf/softline facade integration beyond bundled
   dependency/runtime registration.
 - MTConnect protocol support.
-- Darwin packed services use the same unsigned, tool-free copy-and-append
-  format as Linux; its operational limits are documented in
+- `vectis -a pack` is unavailable on Darwin because appending content
+  invalidates the Mach-O code signature; the platform boundary is documented in
   [docs/pack-platform-operability.md](docs/pack-platform-operability.md).
 - Additional protocol examples and long-running hardening gates.
 

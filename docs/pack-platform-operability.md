@@ -1,15 +1,15 @@
 # Vectis Pack Platform Operability
 
-`vectis -a pack` creates a runnable copy of the `vectis` executable that
-invoked it. It appends one Lua script, an optional lockd client bundle,
+On Linux, `vectis -a pack` creates a runnable copy of the `vectis` executable
+that invoked it. It appends one Lua script, an optional lockd client bundle,
 optional embedded assets, the shared JSON manifest, and a fixed `VECTIS_PACK`
-footer. The packed executable therefore has the same operating system,
-architecture, and linked runtime as its input executable.
+footer. The packed executable therefore has the same architecture and linked
+runtime as its input executable.
 
 Packing is self-contained: it does not cross-compile, relink, use an SDK, or
 invoke CMake. There is no target-selection option. To make an artifact for a
-different platform or architecture, run `vectis -a pack` using a Vectis binary
-for that platform or architecture.
+different Linux architecture, run `vectis -a pack` using a Vectis binary for
+that architecture.
 
 ## Runtime Format
 
@@ -18,17 +18,18 @@ bundle, assets, and manifest. At startup Vectis reads its own executable,
 validates the footer, bounds, and hashes, and only then exposes the embedded
 payloads or executes the embedded script.
 
-This format is used on Linux and Darwin. On Darwin the runtime reads the same
-appended footer and payload; packing never requires a target SDK or relink
-step.
+This format is supported on Linux.
 
 ## Darwin
 
-Darwin packing uses the same tool-free copy-and-append format as Linux. It does
-not invoke `codesign`, CMake, a linker, an SDK, or any platform inspection
-tool. Pack deliberately has no signing, notarization, entitlement, or
-Gatekeeper options: it produces a local runnable artifact for the executable
-that invoked it.
+`vectis -a pack` is unavailable on Darwin. Apple Silicon requires executable
+code signatures, and appending a payload to the linked Mach-O invalidates its
+embedded signature. Vectis deliberately does not invoke `codesign` or expose
+signing, notarization, entitlement, or Gatekeeper options, so it refuses the
+operation before reading inputs or creating an output artifact. Apple
+documents both the Apple Silicon signing requirement and the need to re-sign
+executables modified after linking in the
+[macOS Big Sur 11.0.1 Universal Apps release notes](https://developer.apple.com/documentation/macos-release-notes/macos-big-sur-11_0_1-universal-apps-release-notes/).
 
 ## Supported Payloads
 

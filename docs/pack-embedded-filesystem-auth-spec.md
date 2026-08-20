@@ -41,6 +41,8 @@ messages, and scenario coverage must keep proving that behavior.
 
 Use a clean current `VECTIS_PACK` format. Vectis has not shipped, so the packed
 executable format can be finalized without compatibility branches.
+The format and pack action are supported on Linux; Darwin rejects pack before
+creating an artifact.
 
 The packed executable layout is:
 
@@ -172,9 +174,9 @@ Optional:
 normalize under `/`. Collisions are errors.
 
 Platform-specific pack limits and operational requirements are defined in
-[pack-platform-operability.md](pack-platform-operability.md). Packaging always
-uses the same tool-free copy-and-append format; it does not invoke signing or
-produce a Darwin-specific executable layout.
+[pack-platform-operability.md](pack-platform-operability.md). Linux packaging
+uses the tool-free copy-and-append format. Pack is unavailable on Darwin
+because modifying the Mach-O would invalidate its required code signature.
 
 ## Runtime Embedded Filesystem
 

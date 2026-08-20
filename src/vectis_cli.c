@@ -70,6 +70,11 @@
 #define VECTIS_PACK_FOOTER_SIZE 256u
 #define VECTIS_PACK_MAGIC "VECTIS_PACK"
 #define VECTIS_PACK_MAGIC_SIZE 11u
+#ifdef __APPLE__
+#define VECTIS_PACK_PLATFORM_SUPPORTED 0
+#else
+#define VECTIS_PACK_PLATFORM_SUPPORTED 1
+#endif
 
 typedef struct vectis_pack_embedded_payload {
   unsigned char *owned_bytes;
@@ -673,14 +678,18 @@ static const char vectis_lonejson_lua_init[] =
 
 static void vectis_cli_usage(FILE *stream) {
   fputs("usage: vectis [--version] [--help] [-x] script.lua [args...]\n"
-        "       -x traces Lua line execution to stderr\n"
-        "       vectis -a|--action pack --script script.lua --output output "
+        "       -x traces Lua line execution to stderr\n",
+        stream);
+#ifndef __APPLE__
+  fputs("       vectis -a|--action pack --script script.lua --output output "
         "[--lockd-bundle bundle.pem] "
         "[--asset source=/path] "
         "[--asset-dir /mount:dir] [--asset-manifest assets.json] "
         "[--content-type-map types.json] [--extract-mode mode] "
-        "[--follow-symlinks]\n"
-        "       vectis -a|--action credentials [--store credentials.json] "
+        "[--follow-symlinks]\n",
+        stream);
+#endif
+  fputs("       vectis -a|--action credentials [--store credentials.json] "
         "(--init | --issue --subject user [--purpose name] "
         "[--basic] [--bearer] | --verify authorization | "
         "--revoke client_id)\n"
@@ -3188,6 +3197,13 @@ static int vectis_pack_command(int argc, char **argv, int index) {
   int i;
   int result;
   int follow_symlinks;
+
+  if (!VECTIS_PACK_PLATFORM_SUPPORTED) {
+    fputs("vectis: pack is not supported on Darwin because modifying a Mach-O "
+          "executable invalidates its required code signature\n",
+          stderr);
+    return 69;
+  }
 
   script_path = NULL;
   output_path = NULL;
@@ -21885,6 +21901,9 @@ static int vectis_lua_validate_embedded_payload(
 static int
 vectis_lua_load_embedded_payload(const char *self_path,
                                  vectis_pack_embedded_payload *payload) {
+  if (!VECTIS_PACK_PLATFORM_SUPPORTED) {
+    return -1;
+  }
   return vectis_lua_load_embedded_from_footer(self_path, payload);
 }
 

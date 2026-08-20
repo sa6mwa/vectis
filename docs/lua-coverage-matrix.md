@@ -80,7 +80,7 @@ Columns:
 | workflow:sus | Whisper/transcription workflows | yes | partial | yes | yes | yes | Catalog, cache-control paths, model-created transcribers, PCM transcription methods, audio decoder/VOX segmented methods, callback registration, packed example coverage, opt-in live/local loaded-model tests, and hardening-only cached model/audio transcript validation are exposed. Managed worker coverage for `vectis.sus.transcribe_pcm` and `vectis.sus.transcribe_file` plus `server:sus_worker_service()` is implemented for copied mailbox events and runtime-domain model/transcriber ownership; loaded-model worker execution remains opt-in because deterministic tests do not commit a Whisper model fixture. |
 | workflow:audio | Audio capture/playback/processing workflows | yes | partial | yes | yes | yes | File/callback decode/encode, VOX/PTT, capture/playback receiver shells, packed example coverage, opt-in live device validation, and opt-in SUS loaded-model audio path validation are exposed. Managed worker coverage for `vectis.audio.decode`, `vectis.audio.encode`, and `vectis.audio.vox` plus `server:audio_worker_service()` is implemented for bounded copied mailbox events and runtime-domain audio work; VOX emits copied `vectis.audio.vox.state` and `vectis.audio.vox.segment` events through a service event mailbox rather than a faux streaming materialized reply. |
 | workflow:terminal-agent | libmdf/softline terminal and Agent Smith workflows | yes | partial | yes | yes | n/a | `vectis.terminal` covers Markdown render and editor construction DX; Agent Smith-specific workflows remain future work. |
-| workflow:pack | Pack/self-contained binary workflows | n/a | yes | yes | yes | n/a | `vectis -a pack` and packed Lua e2e exist. |
+| workflow:pack | Pack/self-contained binary workflows | n/a | yes | yes | yes | n/a | Linux `vectis -a pack` and packed Lua e2e exist; Darwin rejects pack before creating an artifact because Mach-O modification invalidates its required code signature. |
 | workflow:totp-qr | TOTP and QR helpers | n/a | yes | yes | yes | n/a | Exposed under `vectis.auth.totp` and `vectis.auth.qr`. |
 | workflow:openapi | OpenAPI generation | n/a | yes | yes | yes | n/a | `server:openapi_doc()` attaches route metadata, route helpers accept `openapi` metadata tables, and `server:openapi()` generates JSON/YAML using LoneJSON schemas retained by the server; the packable Lua API example serves `/openapi.json`. |
 
@@ -96,4 +96,4 @@ Columns:
   `partial` or `yes`, unless the Notes cell documents why the surface is
   live-provider-only.
 - Packed tests are required for workflow helpers intended to work in
-  self-contained `vectis -a pack` applications.
+  self-contained Linux `vectis -a pack` applications.

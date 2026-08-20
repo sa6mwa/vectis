@@ -1742,8 +1742,18 @@ assert_contains "$repo_root/src/vectis_cli.c" \
   'vectis: unknown pack argument'
 assert_contains "$repo_root/src/vectis_cli.c" \
   'vectis_pack_write_appended\(const char \*output_path'
+assert_contains "$repo_root/src/vectis_cli.c" \
+  'VECTIS_PACK_PLATFORM_SUPPORTED 0'
+assert_contains "$repo_root/src/vectis_cli.c" \
+  'pack is not supported on Darwin because modifying a Mach-O'
 assert_contains "$repo_root/tests/lua/pack.cmake" \
   'invalid pack option unexpectedly succeeded'
+assert_contains "$repo_root/tests/CMakeLists.txt" \
+  'if\(APPLE\)'
+assert_contains "$repo_root/tests/CMakeLists.txt" \
+  'pack_unsupported\.cmake'
+assert_contains "$repo_root/tests/lua/pack_unsupported.cmake" \
+  'Darwin pack unexpectedly created an output artifact'
 github_dir="$repo_root/.github"
 if [ -d "$github_dir" ] && find "$github_dir" -type f -print -quit | grep -q .; then
   echo "Vectis lifecycle is local-only; remove repository automation files" >&2

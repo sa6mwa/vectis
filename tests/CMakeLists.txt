@@ -6,16 +6,18 @@ if(VECTIS_BUILD_FUZZERS)
   add_subdirectory(fuzz)
 endif()
 
-add_executable(vectis_pack_smtp_harness
-  helpers/vectis_pack_smtp_harness.c)
-target_link_libraries(vectis_pack_smtp_harness PRIVATE Threads::Threads)
-set_target_properties(vectis_pack_smtp_harness PROPERTIES
-  C_STANDARD 90
-  C_STANDARD_REQUIRED ON
-  C_EXTENSIONS OFF
-)
-if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(vectis_pack_smtp_harness PRIVATE -UNDEBUG)
+if(NOT APPLE)
+  add_executable(vectis_pack_smtp_harness
+    helpers/vectis_pack_smtp_harness.c)
+  target_link_libraries(vectis_pack_smtp_harness PRIVATE Threads::Threads)
+  set_target_properties(vectis_pack_smtp_harness PROPERTIES
+    C_STANDARD 90
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+  )
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(vectis_pack_smtp_harness PRIVATE -UNDEBUG)
+  endif()
 endif()
 
 add_executable(vectis_acme_mock_provider
@@ -310,16 +312,27 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_sus_audio_live PROPERTIES
     LABELS "lua;live"
     TIMEOUT 300)
-  add_test(NAME vectis_lua_pack
-           COMMAND "${CMAKE_COMMAND}"
-                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
-                   "-DVECTIS_PACK_SMTP_HARNESS=$<TARGET_FILE:vectis_pack_smtp_harness>"
-                   "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
-                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
-                   -P "${CMAKE_SOURCE_DIR}/tests/lua/pack.cmake")
-  set_tests_properties(vectis_lua_pack PROPERTIES
-    LABELS "lua;smoke;local"
-    TIMEOUT 30)
+  if(APPLE)
+    add_test(NAME vectis_cli_pack_unsupported
+             COMMAND "${CMAKE_COMMAND}"
+                     "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                     "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                     -P "${CMAKE_SOURCE_DIR}/tests/lua/pack_unsupported.cmake")
+    set_tests_properties(vectis_cli_pack_unsupported PROPERTIES
+      LABELS "cli;local"
+      TIMEOUT 30)
+  else()
+    add_test(NAME vectis_lua_pack
+             COMMAND "${CMAKE_COMMAND}"
+                     "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                     "-DVECTIS_PACK_SMTP_HARNESS=$<TARGET_FILE:vectis_pack_smtp_harness>"
+                     "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
+                     "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                     -P "${CMAKE_SOURCE_DIR}/tests/lua/pack.cmake")
+    set_tests_properties(vectis_lua_pack PROPERTIES
+      LABELS "lua;smoke;local"
+      TIMEOUT 30)
+  endif()
   add_test(NAME vectis_cli_admin_credentials
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
@@ -473,25 +486,27 @@ if(TARGET vectis_bin)
     PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
-  add_test(NAME vectis_example_lua_local_data_pipeline_pack
-           COMMAND "${CMAKE_COMMAND}"
-                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
-                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
-                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
-                   -P "${CMAKE_SOURCE_DIR}/tests/lua/example_local_data_pipeline_pack.cmake")
-  set_tests_properties(vectis_example_lua_local_data_pipeline_pack PROPERTIES
-    LABELS "lua;example-smoke;local"
-    TIMEOUT 30)
-  add_test(NAME vectis_example_lua_local_facades_pack
-           COMMAND "${CMAKE_COMMAND}"
-                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
-                   "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
-                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
-                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
-                   -P "${CMAKE_SOURCE_DIR}/tests/lua/example_local_facades_pack.cmake")
-  set_tests_properties(vectis_example_lua_local_facades_pack PROPERTIES
-    LABELS "lua;example-smoke;local"
-    TIMEOUT 30)
+  if(NOT APPLE)
+    add_test(NAME vectis_example_lua_local_data_pipeline_pack
+             COMMAND "${CMAKE_COMMAND}"
+                     "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                     "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                     "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                     -P "${CMAKE_SOURCE_DIR}/tests/lua/example_local_data_pipeline_pack.cmake")
+    set_tests_properties(vectis_example_lua_local_data_pipeline_pack PROPERTIES
+      LABELS "lua;example-smoke;local"
+      TIMEOUT 30)
+    add_test(NAME vectis_example_lua_local_facades_pack
+             COMMAND "${CMAKE_COMMAND}"
+                     "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                     "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
+                     "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                     "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                     -P "${CMAKE_SOURCE_DIR}/tests/lua/example_local_facades_pack.cmake")
+    set_tests_properties(vectis_example_lua_local_facades_pack PROPERTIES
+      LABELS "lua;example-smoke;local"
+      TIMEOUT 30)
+  endif()
   add_test(NAME vectis_example_lua_webdav_fileserver
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
@@ -506,16 +521,18 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_example_lua_webdav_fileserver PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
-  add_test(NAME vectis_example_lua_webdav_fileserver_pack
-           COMMAND "${CMAKE_COMMAND}"
-                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
-                   "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
-                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
-                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
-                   -P "${CMAKE_SOURCE_DIR}/tests/lua/example_webdav_fileserver_pack.cmake")
-  set_tests_properties(vectis_example_lua_webdav_fileserver_pack PROPERTIES
-    LABELS "lua;example-smoke;local"
-    TIMEOUT 30)
+  if(NOT APPLE)
+    add_test(NAME vectis_example_lua_webdav_fileserver_pack
+             COMMAND "${CMAKE_COMMAND}"
+                     "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                     "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
+                     "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                     "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                     -P "${CMAKE_SOURCE_DIR}/tests/lua/example_webdav_fileserver_pack.cmake")
+    set_tests_properties(vectis_example_lua_webdav_fileserver_pack PROPERTIES
+      LABELS "lua;example-smoke;local"
+      TIMEOUT 30)
+  endif()
   add_test(NAME vectis_example_lua_api_server
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
@@ -530,16 +547,18 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_example_lua_api_server PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
-  add_test(NAME vectis_example_lua_api_server_pack
-           COMMAND "${CMAKE_COMMAND}"
-                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
-                   "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
-                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
-                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
-                   -P "${CMAKE_SOURCE_DIR}/tests/lua/example_api_pack.cmake")
-  set_tests_properties(vectis_example_lua_api_server_pack PROPERTIES
-    LABELS "lua;example-smoke;local"
-    TIMEOUT 30)
+  if(NOT APPLE)
+    add_test(NAME vectis_example_lua_api_server_pack
+             COMMAND "${CMAKE_COMMAND}"
+                     "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                     "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
+                     "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                     "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                     -P "${CMAKE_SOURCE_DIR}/tests/lua/example_api_pack.cmake")
+    set_tests_properties(vectis_example_lua_api_server_pack PROPERTIES
+      LABELS "lua;example-smoke;local"
+      TIMEOUT 30)
+  endif()
   add_test(NAME vectis_example_lua_metrics_persistent
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
@@ -590,14 +609,16 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_example_lua_downstream_api PROPERTIES
     LABELS "lua;example-smoke;local"
     TIMEOUT 30)
-  add_test(NAME vectis_example_lua_downstream_api_pack
-           COMMAND "${CMAKE_COMMAND}"
-                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
-                   "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
-                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
-                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
-                   -P "${CMAKE_SOURCE_DIR}/tests/lua/example_downstream_api_pack.cmake")
-  set_tests_properties(vectis_example_lua_downstream_api_pack PROPERTIES
-    LABELS "lua;example-smoke;local"
-    TIMEOUT 30)
+  if(NOT APPLE)
+    add_test(NAME vectis_example_lua_downstream_api_pack
+             COMMAND "${CMAKE_COMMAND}"
+                     "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                     "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
+                     "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                     "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                     -P "${CMAKE_SOURCE_DIR}/tests/lua/example_downstream_api_pack.cmake")
+    set_tests_properties(vectis_example_lua_downstream_api_pack PROPERTIES
+      LABELS "lua;example-smoke;local"
+      TIMEOUT 30)
+  endif()
 endif()
