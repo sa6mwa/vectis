@@ -18,9 +18,9 @@ bundle, assets, and manifest. At startup Vectis reads its own executable,
 validates the footer, bounds, and hashes, and only then exposes the embedded
 payloads or executes the embedded script.
 
-This format is used on Linux and Darwin. Darwin first reads the footer; this
-allows a packed artifact to remain the original Mach-O executable plus its
-payload, rather than requiring a target SDK or a relink step.
+This format is used on Linux and Darwin. On Darwin the runtime reads the same
+appended footer and payload; packing never requires a target SDK or relink
+step.
 
 ## Darwin
 

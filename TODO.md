@@ -451,9 +451,9 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add a `vectis -a pack` action that creates a runnable copy of the invoking Vectis binary with a Lua script and optional embedded files.
 - [x] Use one self-describing appended trailer with magic, lengths, hashes, and metadata on Linux and Darwin; packed output always has the input executable's architecture.
 - [x] Keep packing self-contained: no target selection, SDK, relink, CMake, signing, or external tools.
-- [x] On Darwin, load the appended trailer before checking legacy Mach-O sections so self-packed binaries use the same runtime format as Linux.
-- [x] Define one shared payload manifest format across ELF and Mach-O so runtime validation and Lua startup behavior stay platform-independent.
-- [x] Support optional embedding of the liblockdc client certificate bundle payload in the Linux pack format.
+- [x] On Darwin, load the appended trailer directly so self-packed binaries use the same runtime format as Linux.
+- [x] Define one shared payload manifest format across supported platforms so runtime validation and Lua startup behavior stay platform-independent.
+- [x] Support optional embedding of the liblockdc client certificate bundle payload in the pack format.
 - [x] Validate embedded lockd client bundle hashes before executing a packed Lua script.
 - [x] Wire embedded lockd client bundles into the statically registered lockdc Lua module through flexible bundle sources (`lc_source` memory/callback sources) without writing private runtime files.
 - [x] Validate payload bounds and hashes before executing embedded Lua.

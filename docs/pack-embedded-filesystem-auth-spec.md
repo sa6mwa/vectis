@@ -171,8 +171,10 @@ Optional:
 `--asset-dir` and `--asset` may be repeated. Logical asset destinations must
 normalize under `/`. Collisions are errors.
 
-Platform-specific pack limits, signing order, and Darwin/Mach-O requirements
-are defined in [pack-platform-operability.md](pack-platform-operability.md).
+Platform-specific pack limits and operational requirements are defined in
+[pack-platform-operability.md](pack-platform-operability.md). Packaging always
+uses the same tool-free copy-and-append format; it does not invoke signing or
+produce a Darwin-specific executable layout.
 
 ## Runtime Embedded Filesystem
 

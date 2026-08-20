@@ -723,12 +723,6 @@ configure_file(
   "${CMAKE_BINARY_DIR}/package-metadata.cmake"
   @ONLY
 )
-file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated/share/vectis")
-configure_file(
-  "${CMAKE_SOURCE_DIR}/cmake/pack-runner-link-inputs.json.in"
-  "${CMAKE_BINARY_DIR}/generated/share/vectis/pack-runner-link-inputs.json"
-  @ONLY
-)
 configure_package_config_file(
   "${CMAKE_SOURCE_DIR}/cmake/vectisConfig.cmake.in"
   "${CMAKE_BINARY_DIR}/generated/cmake/vectisConfig.cmake"
@@ -1179,45 +1173,6 @@ if(VECTIS_BUILD_BINARY)
     PRIVATE VECTIS_WITH_KORE_RUNTIME=$<BOOL:${VECTIS_WITH_KORE_RUNTIME}>)
   vectis_apply_relocatable_paths(vectis_bin)
 
-  if(VECTIS_BUILD_STATIC)
-    add_library(vectis_pack_runner STATIC
-      ${vectis_binary_runner_sources}
-      "${vectis_lonejson_lua_private_object}")
-    target_include_directories(vectis_pack_runner PRIVATE
-      "${CMAKE_SOURCE_DIR}/include"
-      "${CMAKE_SOURCE_DIR}/src"
-      "${CMAKE_BINARY_DIR}/generated/include"
-      "${vectis_external_include_dir}"
-      "${vectis_lonejson_lua_source_dir}/src/lua"
-    )
-    target_compile_definitions(vectis_pack_runner
-      PRIVATE VECTIS_WITH_KORE_RUNTIME=$<BOOL:${VECTIS_WITH_KORE_RUNTIME}>)
-    set_target_properties(vectis_pack_runner PROPERTIES
-      OUTPUT_NAME vectis_pack_runner
-      C_STANDARD 99
-      C_STANDARD_REQUIRED ON
-      C_EXTENSIONS OFF
-    )
-    if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-      target_compile_options(vectis_pack_runner PRIVATE
-        -std=c99
-        -Wall
-        -Wextra
-        -Werror
-        -Wpedantic
-        -Wstrict-prototypes
-        -Wmissing-prototypes
-        -Wshadow
-        -Wpointer-arith
-        -Wcast-qual
-        -Wwrite-strings
-      )
-    endif()
-    if(UNIX OR APPLE OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
-      target_compile_definitions(vectis_pack_runner PRIVATE _POSIX_C_SOURCE=200809L)
-    endif()
-    vectis_apply_relocatable_paths(vectis_pack_runner)
-  endif()
 endif()
 
 if(VECTIS_BUILD_TESTS OR VECTIS_BUILD_FUZZERS)
@@ -1241,13 +1196,6 @@ if(VECTIS_INSTALL)
   endif()
   if(VECTIS_BUILD_BINARY)
     install(TARGETS vectis_bin RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
-  endif()
-  if(VECTIS_BUILD_BINARY AND VECTIS_BUILD_STATIC)
-    install(TARGETS vectis_pack_runner
-            ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}/vectis/pack")
-    install(FILES
-            "${CMAKE_BINARY_DIR}/generated/share/vectis/pack-runner-link-inputs.json"
-            DESTINATION "${CMAKE_INSTALL_DATADIR}/vectis")
   endif()
   install(FILES ${vectis_public_headers} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/vectis")
   install(FILES

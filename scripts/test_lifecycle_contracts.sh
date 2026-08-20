@@ -1397,26 +1397,6 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/scripts/verify_vectis_lua_preloads.sh" '"zlib"'
 }
 
-write_fake_pack_runner_inputs() {
-  root=$1
-  target_id=$2
-
-  mkdir -p "$root/share/vectis" "$root/lib/vectis/pack"
-  printf '%s\n' 'fake pack runner archive' \
-    >"$root/lib/vectis/pack/libvectis_pack_runner.a"
-  cat >"$root/share/vectis/pack-runner-link-inputs.json" <<EOF
-{
-  "format": "vectis-pack-runner-link-inputs",
-  "version": 1,
-  "vectis_version": "0.0.0",
-  "target_id": "$target_id",
-  "runner_archive": "lib/vectis/pack/libvectis_pack_runner.a",
-  "cmake_target": "vectis::pack_runner",
-  "payload_sections": ["__VECTIS,__pack_header"]
-}
-EOF
-}
-
 assert_luarocks_artifact_rejected() {
   dist=$luarocks_dist
   version=0.0.0
@@ -1458,7 +1438,6 @@ EOF
 	printf '%s\n' 'target_id=x86_64-linux-musl' >"$root/share/c.pkt.systems/manifest.txt"
 	printf '%s\n' 'license' >"$root/share/doc/vectis/LICENSE"
   printf '%s\n' 'readme' >"$root/share/doc/vectis/README.md"
-  write_fake_pack_runner_inputs "$root" x86_64-linux-musl
   printf '%s\n' 'must not ship' >"$root/.luarocks/bad.rock"
   tar -C "$dist" -czf "$dist/$artifact" "$root_name"
   (cd "$dist" && sha256sum "$artifact" >"vectis-$version-CHECKSUMS")
@@ -1518,7 +1497,6 @@ EOF
 	printf '%s\n' 'target_id=aarch64-linux-gnu' >"$root/share/c.pkt.systems/manifest.txt"
 	printf '%s\n' 'license' >"$root/share/doc/vectis/LICENSE"
   printf '%s\n' 'readme' >"$root/share/doc/vectis/README.md"
-  write_fake_pack_runner_inputs "$root" aarch64-linux-gnu
   tar -C "$dist" -czf "$dist/$artifact" "$root_name"
   (cd "$dist" && sha256sum "$artifact" >"vectis-$version-CHECKSUMS")
 
@@ -1609,7 +1587,6 @@ EOF
 	printf '%s\n' 'target_id=x86_64-linux-musl' >"$root/share/c.pkt.systems/manifest.txt"
 	printf '%s\n' 'license' >"$root/share/doc/vectis/LICENSE"
   printf '%s\n' 'readme' >"$root/share/doc/vectis/README.md"
-  write_fake_pack_runner_inputs "$root" x86_64-linux-musl
   tar -C "$dist" -czf "$dist/$artifact" "$root_name"
   (cd "$dist" && sha256sum "$artifact" >"vectis-$version-CHECKSUMS")
 
@@ -1676,7 +1653,6 @@ EOF
   printf '%s\n' 'target_id=x86_64-linux-musl' >"$root/share/c.pkt.systems/manifest.txt"
   printf '%s\n' 'license' >"$root/share/doc/vectis/LICENSE"
   printf '%s\n' 'readme' >"$root/share/doc/vectis/README.md"
-  write_fake_pack_runner_inputs "$root" x86_64-linux-musl
   tar -C "$dist" -czf "$dist/$artifact" "$root_name"
   (cd "$dist" && sha256sum "$artifact" >"vectis-$version-CHECKSUMS")
 
@@ -1765,188 +1741,9 @@ assert_contains "$repo_root/cmake/package_archive.cmake" 'liblql::lql_static'
 assert_contains "$repo_root/src/vectis_cli.c" \
   'vectis: unknown pack argument'
 assert_contains "$repo_root/src/vectis_cli.c" \
-  'vectis_pack_write_elf\(const char \*output_path'
+  'vectis_pack_write_appended\(const char \*output_path'
 assert_contains "$repo_root/tests/lua/pack.cmake" \
-  'removed pack option \$\{removed_pack_option\} unexpectedly succeeded'
-if false; then
-assert_contains "$repo_root/CMakeLists.txt" 'vectis_pack_runner'
-assert_contains "$repo_root/CMakeLists.txt" 'pack-runner-link-inputs\.json'
-assert_contains "$repo_root/CMakeLists.txt" 'CMAKE_INSTALL_LIBDIR.*/vectis/pack'
-assert_contains "$repo_root/cmake/pack-runner-link-inputs.json.in" \
-  '"format": "vectis-pack-runner-link-inputs"'
-assert_contains "$repo_root/cmake/pack-runner-link-inputs.json.in" \
-  '"runner_archive": "lib/vectis/pack/libvectis_pack_runner.a"'
-assert_contains "$repo_root/cmake/pack-runner-link-inputs.json.in" \
-  '__VECTIS,__pack_header'
-assert_contains "$repo_root/cmake/vectisConfig.cmake.in" 'vectis::pack_runner'
-assert_contains "$repo_root/cmake/package_archive.cmake" 'vectis::pack_runner'
-assert_contains "$repo_root/tests/install/CMakeLists.txt" 'cpkt::opcua cpkt::sus cpkt::audio'
-assert_contains "$repo_root/tests/install/CMakeLists.txt" 'liblql::lql_static'
-assert_contains "$repo_root/tests/install/CMakeLists.txt" 'vectis::pack_runner'
-assert_contains "$repo_root/cmake/package_darwin_smoke_bundle.cmake" '@executable_path/\.\./lib'
-assert_contains "$repo_root/scripts/verify_darwin_pack_signature.sh" \
-  '\-\-verify \-\-strict \-\-verbose=4'
-assert_contains "$repo_root/scripts/verify_darwin_pack_signature.sh" \
-  '\-\-assess \-\-type execute'
-assert_contains "$repo_root/scripts/verify_darwin_pack_signature.sh" \
-  '\-\-require-spctl'
-assert_contains "$repo_root/scripts/verify_darwin_pack_signature.sh" \
-  'binary changed during %s'
-assert_contains "$repo_root/scripts/test_darwin_pack_signature_verifier.sh" \
-  'Darwin signature verifier accepted codesign failure'
-assert_contains "$repo_root/scripts/test_darwin_pack_signature_verifier.sh" \
-  'Darwin signature verifier accepted codesign verification mutation'
-assert_contains "$repo_root/scripts/test_darwin_pack_signature_verifier.sh" \
-  'Darwin signature verifier accepted spctl assessment mutation'
-assert_contains "$repo_root/Makefile" '^test-darwin-pack-signature:'
-assert_contains "$repo_root/Makefile" \
-  'scripts/test_darwin_pack_signature_verifier\.sh'
-assert_contains "$repo_root/Makefile" '^test-darwin-smoke-bundle:'
-assert_contains "$repo_root/Makefile" \
-  'scripts/test_darwin_smoke_bundle_verifier\.sh'
-assert_contains "$repo_root/Makefile" \
-  'test-darwin-smoke-bundle bash \./scripts/test_darwin_smoke_bundle_verifier\.sh'
-assert_contains "$repo_root/docs/pack-platform-operability.md" \
-  'scripts/verify_darwin_pack_signature\.sh --binary <path>'
-assert_contains "$repo_root/docs/pack-platform-operability.md" \
-  'scripts/verify_darwin_smoke_bundle\.sh'
-assert_contains "$repo_root/docs/pack-platform-operability.md" \
-  'codesign --verify --strict --verbose=4'
-assert_contains "$repo_root/docs/pack-platform-operability.md" \
-  'spctl --assess --type execute'
-assert_contains "$repo_root/docs/pack-platform-operability.md" \
-  'fails if either verification command mutates the file'
-assert_contains "$repo_root/docs/pack-platform-operability.md" \
-  'darwin-mach-o-pack-spec\.md'
-assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
-  '__VECTIS,__pack_header'
-assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
-  '__VECTIS,__pack_script'
-assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
-  '__VECTIS,__pack_assets'
-assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
-  'Darwin should use a relink-based pack backend'
-assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
-  'pack-runner link inputs'
-assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
-  'No command may mutate the output after step 5'
-assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
-  'scripts/discover_target_tools\.sh'
-assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
-  'self-contained like Linux'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'hardened-runtime, --timestamp, and --entitlements'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'entitlements path is not a regular file'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'unsupported pack target'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'Darwin pack requires pack-runner link inputs'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'share/vectis/pack-runner-link-inputs\.json'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'vectis_pack_collect\(vectis_pack_payload \*payload'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'vectis_pack_write_elf\(const char \*output_path'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'vectis_pack_write_macho\(const char \*output_path'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'vectis-pack-macho-sections\.c'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'vectis_pack_run_command'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'find_package\(vectis CONFIG REQUIRED\)'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'Mach-O pack CMake configure'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'vectis_lua_load_embedded_from_macho'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'getsectiondata'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  '__pack_header'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'vectis_pack_verify_macho_artifact'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'Mach-O pack codesign verify'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'Mach-O pack artifact inspection'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  '_NSGetExecutablePath'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'expected_bundle_size > 0u'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  '\-\-pack-sdk-root'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  '\-\-work-dir'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  '\-\-pack-toolchain-file'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'pack SDK manifest does not match target'
-assert_contains "$repo_root/src/vectis_cli.c" \
-  'validating pack-runner link inputs'
-assert_contains "$repo_root/tests/lua/pack.cmake" \
-  'pack signing option without signing mode'
-assert_contains "$repo_root/tests/lua/pack.cmake" \
-  'pack missing entitlements'
-assert_contains "$repo_root/tests/lua/pack.cmake" \
-  'vectis -a pack --target native failed'
-assert_contains "$repo_root/tests/lua/pack.cmake" \
-  'pack Darwin target created an output artifact without link inputs'
-assert_contains "$repo_root/tests/lua/pack.cmake" \
-  'pack Darwin target with link inputs created an output artifact before Mach-O relink support'
-assert_contains "$repo_root/tests/lua/pack.cmake" \
-  'pack Darwin target did not write the Mach-O section source'
-assert_contains "$repo_root/tests/lua/pack.cmake" \
-  'pack Darwin target did not write the Mach-O relink CMake project'
-assert_contains "$repo_root/tests/lua/pack.cmake" \
-  'Vectis Mach-O pack sections must be compiled for Darwin'
-assert_contains "$repo_root/tests/lua/pack.cmake" \
-  'vectis::pack_runner'
-assert_contains "$repo_root/tests/lua/pack.cmake" \
-  'pack Darwin target with fake relink/sign tools'
-assert_contains "$repo_root/tests/lua/pack.cmake" \
-  'codesign:--verify --strict --verbose=4'
-assert_contains "$repo_root/tests/lua/pack.cmake" \
-  'pack Darwin target with mismatched link inputs created an output artifact'
-assert_contains "$repo_root/tests/lua/pack.cmake" \
-  'pack unknown target created an output artifact'
-assert_contains "$repo_root/docs/pack-platform-operability.md" \
-  'vectis -a pack --target arm64-apple-darwin'
-assert_contains "$repo_root/docs/pack-platform-operability.md" \
-  'Darwin pack requires pack-runner link'
-assert_contains "$repo_root/docs/pack-platform-operability.md" \
-  '\-\-pack-sdk-root <root>'
-assert_contains "$repo_root/docs/pack-platform-operability.md" \
-  '\-\-work-dir <dir>'
-assert_contains "$repo_root/docs/pack-platform-operability.md" \
-  'installed-SDK CMake relink project'
-assert_contains "$repo_root/docs/pack-platform-operability.md" \
-  'Darwin-capable `otool -hv`'
-assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
-  'Darwin startup uses the system Mach-O section API'
-assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
-  'lib/vectis/pack/libvectis_pack_runner.a'
-assert_contains "$repo_root/docs/pack-platform-operability.md" \
-  'vectis::pack_runner'
-assert_contains "$repo_root/docs/darwin-mach-o-pack-spec.md" \
-  'readable regular file'
-assert_contains "$repo_root/TODO.md" \
-  '\[x\] Split `vectis -a pack` into shared `vectis_pack_collect`'
-assert_contains "$repo_root/TODO.md" \
-  '\[x\] Add `vectis -a pack --pack-sdk-root <root>` validation'
-assert_contains "$repo_root/TODO.md" \
-  '\[x\] Add the first `vectis_pack_write_macho` backend slice'
-assert_contains "$repo_root/TODO.md" \
-  '\[x\] Extend `vectis_pack_write_macho` to generate an installed-SDK CMake relink project'
-assert_contains "$repo_root/TODO.md" \
-  '\[x\] Split embedded payload startup into platform-specific locators'
-assert_contains "$repo_root/TODO.md" \
-  '\[x\] Add Darwin packing flags for automatic codesigning'
-assert_contains "$repo_root/TODO.md" \
-  '\[x\] Ensure Darwin packing never mutates the executable after codesigning'
-assert_contains "$repo_root/TODO.md" \
-  'docs/darwin-mach-o-pack-spec\.md'
-fi
+  'invalid pack option unexpectedly succeeded'
 github_dir="$repo_root/.github"
 if [ -d "$github_dir" ] && find "$github_dir" -type f -print -quit | grep -q .; then
   echo "Vectis lifecycle is local-only; remove repository automation files" >&2
@@ -1975,8 +1772,6 @@ assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'discover_targe
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'VECTIS_RELEASE_BUILD_ROOT'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'Linux binary SDK ELF machine target mismatch'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'Linux static libvectis archive'
-assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'binary SDK missing pack-runner link input manifest'
-assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'lib/vectis/pack/libvectis_pack_runner.a'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'verify_linux_vectis_binary_static'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'Linux vectis binary is dynamically linked'
 assert_contains "$repo_root/scripts/verify_release_artifacts.sh" 'Linux vectis binary has an ELF interpreter'
