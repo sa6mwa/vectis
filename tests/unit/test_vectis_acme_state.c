@@ -111,16 +111,23 @@ int main(void) {
   assert(mkdtemp(root) != NULL);
   assert(snprintf(storage, sizeof(storage), "%s/storage", root) > 0);
   assert(snprintf(endpoint, sizeof(endpoint), "pouch://%s", storage) > 0);
-  assert(snprintf(default_storage, sizeof(default_storage), "%s/default-storage", root) > 0);
-  assert(snprintf(default_endpoint, sizeof(default_endpoint), "pouch://%s", default_storage) > 0);
-  assert(snprintf(default_config, sizeof(default_config), "%s/default-config", root) > 0);
-  assert(snprintf(default_key, sizeof(default_key), "%s/vectis/pouch.key", default_config) > 0);
+  assert(snprintf(default_storage, sizeof(default_storage),
+                  "%s/default-storage", root) > 0);
+  assert(snprintf(default_endpoint, sizeof(default_endpoint), "pouch://%s",
+                  default_storage) > 0);
+  assert(snprintf(default_config, sizeof(default_config), "%s/default-config",
+                  root) > 0);
+  assert(snprintf(default_key, sizeof(default_key), "%s/vectis/pouch.key",
+                  default_config) > 0);
   assert(snprintf(key_file, sizeof(key_file), "%s/pouch.key", root) > 0);
-  assert(snprintf(wrong_key_file, sizeof(wrong_key_file), "%s/wrong.key", root) > 0);
+  assert(snprintf(wrong_key_file, sizeof(wrong_key_file), "%s/wrong.key",
+                  root) > 0);
   generate_key_file(key_file);
   generate_key_file(wrong_key_file);
-  assert(snprintf(runtime_one, sizeof(runtime_one), "%s/runtime-one", root) > 0);
-  assert(snprintf(runtime_two, sizeof(runtime_two), "%s/runtime-two", root) > 0);
+  assert(snprintf(runtime_one, sizeof(runtime_one), "%s/runtime-one", root) >
+         0);
+  assert(snprintf(runtime_two, sizeof(runtime_two), "%s/runtime-two", root) >
+         0);
   assert(mkdir(runtime_one, 0700) == 0);
   assert(mkdir(runtime_two, 0700) == 0);
   assert(snprintf(certificates_one, sizeof(certificates_one), "%s/certificates",
@@ -133,7 +140,8 @@ int main(void) {
   assert(mkdir(domain_one, 0700) == 0);
   assert(snprintf(account_one, sizeof(account_one), "%s/account-key.pem",
                   runtime_one) > 0);
-  assert(snprintf(chain_one, sizeof(chain_one), "%s/fullchain.pem", domain_one) > 0);
+  assert(snprintf(chain_one, sizeof(chain_one), "%s/fullchain.pem",
+                  domain_one) > 0);
   assert(snprintf(key_one, sizeof(key_one), "%s/key.pem", domain_one) > 0);
   write_file(account_one, "account-key");
   write_file(chain_one, "certificate-chain");
@@ -162,7 +170,8 @@ int main(void) {
                   runtime_two) > 0);
   assert(snprintf(domain_two, sizeof(domain_two), "%s/example.test",
                   certificates_two) > 0);
-  assert(snprintf(chain_two, sizeof(chain_two), "%s/fullchain.pem", domain_two) > 0);
+  assert(snprintf(chain_two, sizeof(chain_two), "%s/fullchain.pem",
+                  domain_two) > 0);
   assert(snprintf(key_two, sizeof(key_two), "%s/key.pem", domain_two) > 0);
   assert_file(account_two, "account-key");
   assert_file(chain_two, "certificate-chain");

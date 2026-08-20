@@ -1,3 +1,5 @@
+include("${VECTIS_SOURCE_DIR}/tests/lua/port_retry.cmake")
+
 function(vectis_pack_and_run_lua_example name script marker)
   set(output "${WORK_DIR}/vectis-example-${name}-pack")
   set(run_env ${ARGN})
@@ -60,10 +62,12 @@ vectis_pack_and_run_lua_example(
   "${VECTIS_SOURCE_DIR}/examples/lua/cai_worker_service.lua"
   "lua cai worker service example ok")
 
+vectis_pick_test_port(cai_adapter_port)
 vectis_pack_and_run_lua_example(
   "cai-live-service-adapter"
   "${VECTIS_SOURCE_DIR}/examples/lua/cai_live_service_adapter.lua"
-  "lua cai live service adapter example ok")
+  "lua cai live service adapter example ok"
+  "VECTIS_LUA_CAI_ADAPTER_EXAMPLE_PORT=${cai_adapter_port}")
 
 vectis_pack_and_run_lua_example(
   "audio-worker-service"

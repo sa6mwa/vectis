@@ -1,3 +1,4 @@
+#include "vectis_acme_state.h"
 #include "vectis_internal.h"
 #include <arpa/inet.h>
 #include <assert.h>
@@ -854,6 +855,7 @@ static void enqueue_lockd_test_message(const char *endpoint,
   lc_enqueue_req enqueue_req;
   lc_enqueue_res enqueue_res;
   lc_source *source;
+  char *pouch_crypto_key_file;
   const char payload[] = "{\"ok\":true}";
   int rc;
 
@@ -862,6 +864,11 @@ static void enqueue_lockd_test_message(const char *endpoint,
   lc_client_config_init(&client_config);
   client_config.endpoints = endpoints;
   client_config.endpoint_count = 1u;
+  pouch_crypto_key_file = vectis_persistence_default_pouch_key_file();
+  assert(pouch_crypto_key_file != NULL);
+  client_config.pouch_crypto_key_file = pouch_crypto_key_file;
+  client_config.pouch_crypto_generate_key_file = 1;
+  client_config.pouch_crypto_generate_key_file_set = 1;
   client = NULL;
   rc = lc_client_open(&client_config, &client, &lcerr);
   assert(rc == LC_OK);
@@ -878,6 +885,7 @@ static void enqueue_lockd_test_message(const char *endpoint,
   lc_source_close(source);
   lc_enqueue_res_cleanup(&enqueue_res);
   lc_client_close(client);
+  free(pouch_crypto_key_file);
   lc_error_cleanup(&lcerr);
 }
 
@@ -1397,6 +1405,7 @@ metrics_required_provider(const vectis_auth_provider_request *request,
 
 static int metrics_pouch_snapshot_contains_text(const char *endpoint,
                                                 const char *namespace_name,
+                                                const char *pouch_crypto_key,
                                                 const char *needle);
 static void remove_tree(const char *path);
 
@@ -1546,7 +1555,9 @@ static void assert_supervised_metrics_persistence_worker(void) {
   vectis_route_config route;
   vectis_error error;
   vectis_status status;
+  lc_error lcerr;
   char pouch_dir[] = "/tmp/vectis-runtime-metrics.XXXXXX";
+  char *pouch_crypto_key;
   char endpoint[4096];
   char metrics_url[256];
   char stream_url[256];
@@ -1559,6 +1570,11 @@ static void assert_supervised_metrics_persistence_worker(void) {
   int i;
 
   assert(mkdtemp(pouch_dir) != NULL);
+  pouch_crypto_key = NULL;
+  lc_error_init(&lcerr);
+  assert(lc_pouch_crypto_generate_key_string(&pouch_crypto_key, &lcerr) ==
+         LC_OK);
+  lc_error_cleanup(&lcerr);
   written = snprintf(endpoint, sizeof(endpoint),
                      "pouch://%s?single_writer=false", pouch_dir);
   assert(written > 0 && (size_t)written < sizeof(endpoint));
@@ -1569,6 +1585,7 @@ static void assert_supervised_metrics_persistence_worker(void) {
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
   config.tls.port = port;
+  config.lockd.pouch_crypto_key = pouch_crypto_key;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   memset(&response, 0, sizeof(response));
@@ -1646,13 +1663,14 @@ static void assert_supervised_metrics_persistence_worker(void) {
   assert(strstr((const char *)response.body, "\"writes\":1") != NULL);
   vectis_http_response_cleanup(&response);
   found = metrics_pouch_snapshot_contains_text(
-      endpoint, "vectis.runtime.metrics",
+      endpoint, "vectis.runtime.metrics", pouch_crypto_key,
       "\"service\":\"supervised metrics worker\"");
   assert(found);
 
   status = app->stop(app, &error);
   assert(status == VECTIS_OK);
   app->close(app);
+  lc_pouch_crypto_key_string_free(pouch_crypto_key);
   remove_tree(pouch_dir);
 }
 
@@ -2060,6 +2078,7 @@ static void remove_tree(const char *path) {
 
 static int metrics_pouch_snapshot_contains_text(const char *endpoint,
                                                 const char *namespace_name,
+                                                const char *pouch_crypto_key,
                                                 const char *needle) {
   const char *endpoints[1];
   lc_client_config client_config;
@@ -2071,7 +2090,8 @@ static int metrics_pouch_snapshot_contains_text(const char *endpoint,
   int found;
   int rc;
 
-  if (endpoint == NULL || namespace_name == NULL || needle == NULL) {
+  if (endpoint == NULL || namespace_name == NULL || pouch_crypto_key == NULL ||
+      needle == NULL) {
     return 0;
   }
   endpoints[0] = endpoint;
@@ -2080,6 +2100,7 @@ static int metrics_pouch_snapshot_contains_text(const char *endpoint,
   client_config.endpoints = endpoints;
   client_config.endpoint_count = 1u;
   client_config.default_namespace = namespace_name;
+  client_config.pouch_crypto_key = pouch_crypto_key;
   client = NULL;
   rc = lc_client_open(&client_config, &client, &lcerr);
   if (rc != LC_OK) {

@@ -77,5 +77,5 @@ work tracked elsewhere is not part of this closure:
 - broader Kore feature expansion such as WebSocket and deeper runtime config;
 - certificate/key reload hooks where Kore supports them;
 - broader Lua facade coverage audits;
-- Darwin/Mach-O pack and codesign support;
+- on-device validation of Darwin's unsigned, copy-and-append pack output;
 - full cross-target release matrix verification.

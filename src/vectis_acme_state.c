@@ -2,10 +2,10 @@
 
 #include <dirent.h>
 #include <errno.h>
-#include <limits.h>
 #include <lc/lc.h>
-#include <stdio.h>
+#include <limits.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -75,8 +75,8 @@ char *vectis_acme_state_default_endpoint(vectis_error *error) {
                        "XDG_STATE_HOME or HOME is required for ACME state");
       return NULL;
     }
-    written = snprintf(path, sizeof(path), "%s/.local/state/vectis/storage",
-                       home);
+    written =
+        snprintf(path, sizeof(path), "%s/.local/state/vectis/storage", home);
   }
   if (written <= 0 || (size_t)written >= sizeof(path) ||
       !vectis_acme_state_mkdirs(path)) {
@@ -94,8 +94,7 @@ char *vectis_acme_state_default_endpoint(vectis_error *error) {
 }
 
 char *vectis_acme_state_default_key(const char *const *domains,
-                                    size_t domain_count,
-                                    vectis_error *error) {
+                                    size_t domain_count, vectis_error *error) {
   uint32_t hash;
   const unsigned char *cursor;
   char key[64];
@@ -244,8 +243,7 @@ static int vectis_acme_state_domain_valid(const char *domain) {
 }
 
 static int vectis_acme_state_attachment_path(const char *domain,
-                                             const char *leaf,
-                                             char out[4096]) {
+                                             const char *leaf, char out[4096]) {
   int written;
 
   if (domain == NULL) {
@@ -258,9 +256,9 @@ static int vectis_acme_state_attachment_path(const char *domain,
   return written > 0 && (size_t)written < 4096u;
 }
 
-static int vectis_acme_state_runtime_path(const vectis_acme_state_config *config,
-                                          const char *attachment,
-                                          char out[4096]) {
+static int
+vectis_acme_state_runtime_path(const vectis_acme_state_config *config,
+                               const char *attachment, char out[4096]) {
   int written;
 
   if (config == NULL || config->runtime_dir == NULL || attachment == NULL ||
@@ -299,15 +297,15 @@ static void vectis_acme_state_set_lockd_error(vectis_error *error,
                                               const lc_error *lcerr) {
   vectis_set_error(error, VECTIS_ERR_STATE,
                    lcerr != NULL && lcerr->message != NULL ? lcerr->message
-                                                            : operation);
+                                                           : operation);
 }
 
 static int vectis_acme_state_endpoint_is_pouch(const char *endpoint) {
   return endpoint != NULL && strncmp(endpoint, "pouch://", 8u) == 0;
 }
 
-static int vectis_acme_state_endpoint_has_pouch_crypto_option(
-    const char *endpoint) {
+static int
+vectis_acme_state_endpoint_has_pouch_crypto_option(const char *endpoint) {
   return endpoint != NULL &&
          (strstr(endpoint, "pouch_crypto_key=") != NULL ||
           strstr(endpoint, "pouch_crypto_key_file=") != NULL);
@@ -327,7 +325,8 @@ static int vectis_acme_state_client_open(const vectis_acme_state_config *config,
   client_config.endpoints = &config->endpoint;
   client_config.endpoint_count = 1u;
   client_config.default_namespace = config->namespace_name;
-  client_config.timeout_ms = config->timeout_ms > 0L ? config->timeout_ms : 30000L;
+  client_config.timeout_ms =
+      config->timeout_ms > 0L ? config->timeout_ms : 30000L;
   client_config.client_bundle_path = config->client_bundle_path;
   if (vectis_acme_state_endpoint_is_pouch(config->endpoint)) {
     client_config.pouch_crypto_key = config->pouch_crypto_key;
@@ -352,7 +351,8 @@ static int vectis_acme_state_client_open(const vectis_acme_state_config *config,
       client_config.pouch_crypto_generate_key_file_set = 1;
     }
   }
-  if (config->client_bundle_pem != NULL && config->client_bundle_pem_size > 0u) {
+  if (config->client_bundle_pem != NULL &&
+      config->client_bundle_pem_size > 0u) {
     rc = lc_source_from_memory(config->client_bundle_pem,
                                config->client_bundle_pem_size, memory, lcerr);
     if (rc != LC_OK) {
@@ -443,7 +443,7 @@ static int vectis_acme_state_hydrate_all(lc_lease *lease,
   int rc;
 
   rc = vectis_acme_state_hydrate_attachment(lease, config, list,
-                                             "account-key.pem", lcerr);
+                                            "account-key.pem", lcerr);
   if (rc != LC_OK) {
     return rc;
   }
@@ -453,7 +453,7 @@ static int vectis_acme_state_hydrate_all(lc_lease *lease,
       return LC_ERR_INVALID;
     }
     rc = vectis_acme_state_hydrate_attachment(lease, config, list, attachment,
-                                               lcerr);
+                                              lcerr);
     if (rc != LC_OK) {
       return rc;
     }
@@ -462,7 +462,7 @@ static int vectis_acme_state_hydrate_all(lc_lease *lease,
       return LC_ERR_INVALID;
     }
     rc = vectis_acme_state_hydrate_attachment(lease, config, list, attachment,
-                                               lcerr);
+                                              lcerr);
     if (rc != LC_OK) {
       return rc;
     }
@@ -471,8 +471,7 @@ static int vectis_acme_state_hydrate_all(lc_lease *lease,
 }
 
 vectis_status vectis_acme_state_hydrate(const vectis_acme_state_config *config,
-                                        int *hydrated,
-                                        vectis_error *error) {
+                                        int *hydrated, vectis_error *error) {
   lc_client *client;
   lc_source *memory;
   lc_lease *lease;
@@ -486,7 +485,8 @@ vectis_status vectis_acme_state_hydrate(const vectis_acme_state_config *config,
     *hydrated = 0;
   }
   if (config == NULL || config->endpoint == NULL || config->key == NULL ||
-      config->runtime_dir == NULL || !vectis_acme_state_mkdirs(config->runtime_dir)) {
+      config->runtime_dir == NULL ||
+      !vectis_acme_state_mkdirs(config->runtime_dir)) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "ACME state hydration configuration is invalid");
     return VECTIS_ERR_INVALID;
@@ -529,7 +529,8 @@ vectis_status vectis_acme_state_hydrate(const vectis_acme_state_config *config,
     client->close(client);
   }
   if (rc != LC_OK) {
-    vectis_acme_state_set_lockd_error(error, "failed to hydrate ACME state", &lcerr);
+    vectis_acme_state_set_lockd_error(error, "failed to hydrate ACME state",
+                                      &lcerr);
     lc_error_cleanup(&lcerr);
     return VECTIS_ERR_STATE;
   }
@@ -542,9 +543,10 @@ typedef struct vectis_acme_state_persist_context {
   const vectis_acme_state_config *config;
 } vectis_acme_state_persist_context;
 
-static int vectis_acme_state_persist_attachment(
-    lc_lease *lease, const vectis_acme_state_config *config,
-    const char *attachment, lc_error *lcerr) {
+static int
+vectis_acme_state_persist_attachment(lc_lease *lease,
+                                     const vectis_acme_state_config *config,
+                                     const char *attachment, lc_error *lcerr) {
   lc_attach_req attach;
   lc_attach_res result;
   lc_source *source;
@@ -572,9 +574,8 @@ static int vectis_acme_state_persist_attachment(
   return rc;
 }
 
-static int vectis_acme_state_persist_update(void *context,
-                                             lc_acquire_for_update_context *update,
-                                             lc_error *lcerr) {
+static int vectis_acme_state_persist_update(
+    void *context, lc_acquire_for_update_context *update, lc_error *lcerr) {
   vectis_acme_state_persist_context *persist;
   lc_source *manifest;
   lc_update_opts options;
@@ -588,7 +589,7 @@ static int vectis_acme_state_persist_update(void *context,
     return LC_ERR_INVALID;
   }
   rc = vectis_acme_state_persist_attachment(update->lease, persist->config,
-                                             "account-key.pem", lcerr);
+                                            "account-key.pem", lcerr);
   if (rc != LC_OK) {
     return rc;
   }
@@ -598,7 +599,7 @@ static int vectis_acme_state_persist_update(void *context,
       return LC_ERR_INVALID;
     }
     rc = vectis_acme_state_persist_attachment(update->lease, persist->config,
-                                               attachment, lcerr);
+                                              attachment, lcerr);
     if (rc != LC_OK) {
       return rc;
     }
@@ -607,7 +608,7 @@ static int vectis_acme_state_persist_update(void *context,
       return LC_ERR_INVALID;
     }
     rc = vectis_acme_state_persist_attachment(update->lease, persist->config,
-                                               attachment, lcerr);
+                                              attachment, lcerr);
     if (rc != LC_OK) {
       return rc;
     }
@@ -653,15 +654,15 @@ vectis_status vectis_acme_state_persist(const vectis_acme_state_config *config,
     acquire.ttl_seconds = 30L;
     acquire.block_seconds = 1L;
     context.config = config;
-    rc = client->acquire_for_update(client, &acquire,
-                                    vectis_acme_state_persist_update, &context,
-                                    &lcerr);
+    rc = client->acquire_for_update(
+        client, &acquire, vectis_acme_state_persist_update, &context, &lcerr);
   }
   if (client != NULL) {
     client->close(client);
   }
   if (rc != LC_OK) {
-    vectis_acme_state_set_lockd_error(error, "failed to persist ACME state", &lcerr);
+    vectis_acme_state_set_lockd_error(error, "failed to persist ACME state",
+                                      &lcerr);
     lc_error_cleanup(&lcerr);
     return VECTIS_ERR_STATE;
   }

@@ -1253,9 +1253,8 @@ static vectis_status vectis_app_prepare_kore_ready_state(vectis_app_impl *impl,
 static void vectis_app_clear_kore_ready_state(vectis_app_impl *impl);
 static vectis_status vectis_app_prepare_acme_state(vectis_app_impl *impl,
                                                    vectis_error *error);
-static vectis_status
-vectis_app_discard_owned_acme_state(vectis_app_impl *impl,
-                                    vectis_error *error);
+static vectis_status vectis_app_discard_owned_acme_state(vectis_app_impl *impl,
+                                                         vectis_error *error);
 static void vectis_app_mark_kore_ready(vectis_app_impl *impl);
 static char *vectis_metrics_default_storage_endpoint(void);
 static vectis_status vectis_metrics_route_handler(vectis_app *app,
@@ -10571,10 +10570,11 @@ static int vectis_endpoint_has_pouch_crypto_option(const char *endpoint) {
           strstr(endpoint, "pouch_crypto_key_file=") != NULL);
 }
 
-static vectis_status vectis_configure_pouch_client(
-    lc_client_config *config, const char *endpoint,
-    const vectis_app_impl *impl, char **default_key_file,
-    vectis_error *error) {
+static vectis_status vectis_configure_pouch_client(lc_client_config *config,
+                                                   const char *endpoint,
+                                                   const vectis_app_impl *impl,
+                                                   char **default_key_file,
+                                                   vectis_error *error) {
   if (default_key_file != NULL) {
     *default_key_file = NULL;
   }
@@ -18586,8 +18586,7 @@ static vectis_status vectis_app_prepare_acme_state(vectis_app_impl *impl,
   config.client_bundle_pem_size = impl->client_bundle_pem_size;
   config.pouch_crypto_key = impl->pouch_crypto_key;
   config.pouch_crypto_key_file = impl->pouch_crypto_key_file;
-  config.pouch_crypto_generate_key_file =
-      impl->pouch_crypto_generate_key_file;
+  config.pouch_crypto_generate_key_file = impl->pouch_crypto_generate_key_file;
   config.pouch_crypto_generate_key_file_set =
       impl->pouch_crypto_generate_key_file_set;
   config.pouch_compression = impl->pouch_compression;
@@ -18636,9 +18635,8 @@ static void vectis_app_clear_kore_ready_state(vectis_app_impl *impl) {
   vectis_app_ready_state_free(ready);
 }
 
-static vectis_status
-vectis_app_discard_owned_acme_state(vectis_app_impl *impl,
-                                    vectis_error *error) {
+static vectis_status vectis_app_discard_owned_acme_state(vectis_app_impl *impl,
+                                                         vectis_error *error) {
   char *runtime_dir;
 
   if (impl == NULL || !impl->acme_state_dir_owned ||
@@ -19488,8 +19486,8 @@ static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
                                  ? metrics->storage_namespace
                                  : "vectis.metrics";
   config.timeout_ms = timeout_ms > 0L ? timeout_ms : 30000L;
-  if (vectis_configure_pouch_client(&config, endpoint, impl,
-                                    &default_key_file, NULL) != VECTIS_OK) {
+  if (vectis_configure_pouch_client(&config, endpoint, impl, &default_key_file,
+                                    NULL) != VECTIS_OK) {
     vectis_mutable_bytes_cleanup(&write.json);
     vectis_metrics_note_snapshot_error(metrics);
     return VECTIS_ERR_STATE;

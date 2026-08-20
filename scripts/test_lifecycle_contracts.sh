@@ -1953,27 +1953,6 @@ if [ -d "$github_dir" ] && find "$github_dir" -type f -print -quit | grep -q .; 
   exit 1
 fi
 assert_contains "$repo_root/Makefile" '^release-matrix:'
-assert_contains "$repo_root/Makefile" '^release-darwin-smoke-bundle:'
-assert_contains "$repo_root/scripts/verify_darwin_smoke_bundle.sh" \
-  'Mach-O \.\*arm64'
-assert_contains "$repo_root/scripts/verify_darwin_smoke_bundle.sh" \
-  '\-\-verify \-\-strict \-\-verbose=4'
-assert_contains "$repo_root/scripts/verify_darwin_smoke_bundle.sh" \
-  '\-\-assess \-\-type execute'
-assert_contains "$repo_root/scripts/verify_darwin_smoke_bundle.sh" \
-  'binary changed during %s'
-assert_contains "$repo_root/scripts/verify_darwin_smoke_bundle.sh" \
-  'run-smoke\.sh'
-assert_contains "$repo_root/scripts/test_darwin_smoke_bundle_verifier.sh" \
-  'Darwin smoke bundle verifier accepted codesign mutation'
-assert_contains "$repo_root/scripts/test_darwin_smoke_bundle_verifier.sh" \
-  'Darwin smoke bundle verifier accepted spctl mutation'
-assert_contains "$repo_root/scripts/test_darwin_smoke_bundle_verifier.sh" \
-  'Darwin smoke bundle verifier accepted missing required spctl'
-assert_contains "$repo_root/docs/pack-platform-operability.md" \
-  'scripts/verify_darwin_smoke_bundle\.sh'
-assert_contains "$repo_root/TODO.md" \
-  '\[x\] Add verification commands/tests for packed Darwin binaries using `codesign --verify --strict --verbose=4`'
 assert_contains "$repo_root/TODO.md" \
   '\[x\] Keep Darwin arm64 smoke verification as a local/on-device lifecycle gate'
 assert_contains "$repo_root/docs/release-matrix.md" \
@@ -2224,7 +2203,6 @@ for target in \
   prerelease \
   test-service-runtime-lifecycle \
   test-lua-facade-matrix \
-  test-darwin-pack-signature \
   lua-test \
   lua-env \
   clean-dist \

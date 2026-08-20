@@ -341,7 +341,16 @@ if(NOT unknown_target_stderr MATCHES "unsupported pack target")
 endif()
 endif()
 
-foreach(removed_pack_option IN ITEMS --target --pack-sdk-root --work-dir --pack-toolchain-file)
+foreach(removed_pack_option IN ITEMS
+    --target
+    --pack-sdk-root
+    --work-dir
+    --pack-toolchain-file
+    --codesign
+    --ad-hoc-codesign
+    --hardened-runtime
+    --timestamp
+    --entitlements)
   execute_process(COMMAND "${VECTIS_BIN}" -a pack "${removed_pack_option}" ignored --script "${script}" --output "${asset_unknown_target_output}"
                   RESULT_VARIABLE removed_pack_option_result
                   OUTPUT_VARIABLE removed_pack_option_stdout

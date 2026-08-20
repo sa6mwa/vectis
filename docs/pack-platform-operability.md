@@ -22,30 +22,13 @@ This format is used on Linux and Darwin. Darwin first reads the footer; this
 allows a packed artifact to remain the original Mach-O executable plus its
 payload, rather than requiring a target SDK or a relink step.
 
-## Darwin Signing
+## Darwin
 
-Appending a payload changes executable bytes and invalidates an existing Mach-O
-signature. Unsigned local packed artifacts do not need signing. When a signed
-Darwin artifact is required, request signing during the final pack operation:
-
-```sh
-vectis -a pack --script app.lua --output app \
-  --codesign "Developer ID Application: Example"
-```
-
-`--ad-hoc-codesign` is available for ad-hoc signatures. `--hardened-runtime`,
-`--timestamp`, and `--entitlements <path>` require either signing option.
-Vectis invokes the external Apple `codesign` program and verifies the final
-artifact with `codesign --verify --strict --verbose=4`. The tool may be
-overridden with `VECTIS_CODESIGN` for controlled build environments.
-If signing or verification fails, Vectis removes the newly packed output rather
-than leaving an unsigned artifact at the requested path.
-
-Signing options are Darwin-only. Notarization and Gatekeeper assessment remain
-separate release decisions and are not implicit side effects of packing.
-For release verification, use
-`scripts/verify_darwin_pack_signature.sh --binary <path>` and the packaged
-Darwin smoke gate `scripts/verify_darwin_smoke_bundle.sh`.
+Darwin packing uses the same tool-free copy-and-append format as Linux. It does
+not invoke `codesign`, CMake, a linker, an SDK, or any platform inspection
+tool. Pack deliberately has no signing, notarization, entitlement, or
+Gatekeeper options: it produces a local runnable artifact for the executable
+that invoked it.
 
 ## Supported Payloads
 

@@ -450,7 +450,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 
 - [x] Add a `vectis -a pack` action that creates a runnable copy of the invoking Vectis binary with a Lua script and optional embedded files.
 - [x] Use one self-describing appended trailer with magic, lengths, hashes, and metadata on Linux and Darwin; packed output always has the input executable's architecture.
-- [x] Keep packing self-contained: no target selection, SDK, relink, CMake, or external tools unless optional Darwin signing is requested.
+- [x] Keep packing self-contained: no target selection, SDK, relink, CMake, signing, or external tools.
 - [x] On Darwin, load the appended trailer before checking legacy Mach-O sections so self-packed binaries use the same runtime format as Linux.
 - [x] Define one shared payload manifest format across ELF and Mach-O so runtime validation and Lua startup behavior stay platform-independent.
 - [x] Support optional embedding of the liblockdc client certificate bundle payload in the Linux pack format.
@@ -458,9 +458,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Wire embedded lockd client bundles into the statically registered lockdc Lua module through flexible bundle sources (`lc_source` memory/callback sources) without writing private runtime files.
 - [x] Validate payload bounds and hashes before executing embedded Lua.
 - [x] Preserve normal `vectis script.lua` execution when no embedded payload exists.
-- [x] Add Darwin packing flags for automatic codesigning after the final Mach-O artifact is produced, including `--codesign <identity>`, `--ad-hoc-codesign`, `--hardened-runtime`, `--timestamp`, and `--entitlements <path>`.
-- [x] Ensure Darwin packing never mutates the executable after codesigning.
-- [x] Add verification commands/tests for packed Darwin binaries using `codesign --verify --strict --verbose=4` and, when available, `spctl --assess --type execute`.
+- [x] Keep Darwin packing tool-free: it uses the same copy-and-append format as Linux and deliberately offers no signing, notarization, entitlement, or Gatekeeper workflow.
 - [x] Document operational limits around signing, notarization, stripping, hardening tools, and platform-specific executable formats.
 - [x] Add first smoke test that packages and executes a Lua script artifact.
 - [x] Add deterministic e2e coverage for a packed Lua webserver with generated embedded assets, native auth routes, SMTP-delivered email-token login, auth-guarded JSON API route, WebDAV key issuance, authenticated embedded WebDAV reads, mutable WebDAV writes, WebDAV list/copy/move/delete, traversal denial, and embedded-versus-WebDAV mutation isolation.

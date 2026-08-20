@@ -25,13 +25,11 @@ typedef struct vectis_acme_state_config {
 char *vectis_acme_state_default_endpoint(vectis_error *error);
 char *vectis_persistence_default_pouch_key_file(void);
 char *vectis_acme_state_default_key(const char *const *domains,
-                                    size_t domain_count,
-                                    vectis_error *error);
+                                    size_t domain_count, vectis_error *error);
 char *vectis_acme_state_runtime_dir_new(vectis_error *error);
 int vectis_acme_state_runtime_dir_remove(const char *path);
 vectis_status vectis_acme_state_hydrate(const vectis_acme_state_config *config,
-                                        int *hydrated,
-                                        vectis_error *error);
+                                        int *hydrated, vectis_error *error);
 vectis_status vectis_acme_state_persist(const vectis_acme_state_config *config,
                                         vectis_error *error);
 
