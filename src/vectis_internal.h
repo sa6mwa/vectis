@@ -165,6 +165,10 @@ void vectis_internal_metrics_note_route_miss(vectis_app *app);
 void vectis_internal_metrics_note_body_reject(vectis_app *app, int status);
 void vectis_internal_metrics_note_auth(vectis_app *app,
                                        vectis_auth_action action);
+#define VECTIS_INTERNAL_METRICS_SNAPSHOT_KEY_SIZE 77u
+vectis_status vectis_internal_metrics_snapshot_key(
+    const char *storage_owner, const char *app_name, char *key,
+    size_t key_size, vectis_error *error);
 vectis_status vectis_internal_route_body_policy(vectis_app *app,
                                                 vectis_http_method method,
                                                 const char *path,

@@ -86,7 +86,7 @@ assert_runtime_unit_evidence() {
     upload_server_rejects_unsafe_spool_dir \
     metrics_surface \
     supervised_metrics_persistence_worker \
-    metrics_persistence_stop_honors_shutdown_grace \
+    metrics_persistence_restore_honors_startup_grace \
     direct_supervision_policy_rejects_app_services \
     consumer_service_declaration_before_routes \
     managed_service_declaration_before_routes \

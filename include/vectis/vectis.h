@@ -690,14 +690,17 @@ typedef struct vectis_metrics_config {
   const char *auth_purpose;
   unsigned allowed_auth_modes;
   /*
-   * Snapshot persistence is opt-in. When enabled, a background worker writes
-   * JSON snapshots through liblockdc. storage_endpoint may be any lockdc
-   * endpoint, including pouch://. When NULL, Vectis uses a local pouch under
+   * Snapshot persistence is opt-in and requires an explicit, non-default
+   * vectis_app_config.app_name. Vectis restores cumulative counters for that
+   * logical app before startup and writes its current checkpoint through
+   * liblockdc. storage_endpoint may be any lockdc endpoint, including pouch://.
+   * When NULL, Vectis uses a local pouch under
    * ${XDG_STATE_HOME:-$HOME/.local/state}/vectis/storage.
    */
   int persistence_enabled;
   const char *storage_endpoint;
   const char *storage_namespace;
+  /* Combined with app_name to identify one logical app checkpoint. */
   const char *storage_owner;
   unsigned snapshot_interval_seconds;
 } vectis_metrics_config;

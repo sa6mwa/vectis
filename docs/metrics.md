@@ -18,6 +18,9 @@ metrics.persistence_enabled = 1;   /* optional */
 app->metrics(app, &metrics, &error);
 ```
 
+The `vectis_app_config` used to construct `app` must set an explicit
+`app_name` when persistence is enabled.
+
 `vectis_metrics_snapshot_json(app, &out, &error)` returns the current in-memory
 snapshot as JSON. It fails with `VECTIS_ERR_STATE` when metrics were not
 registered.
@@ -67,10 +70,23 @@ handling only updates cheap in-memory counters when metrics is enabled.
 
 ## Persistence
 
-Persistence is opt-in. When enabled, the metrics worker writes JSON snapshots at
-least five minutes apart through the public liblockdc client. `storage_endpoint`
-may point at a remote lockd endpoint or a local `pouch://` endpoint. When it is
-not set, Vectis uses:
+Persistence is opt-in and requires an explicit, non-default `app_name` in the
+app configuration. Vectis derives one deterministic current-checkpoint key from
+`storage_owner` and `app_name` inside the configured namespace. Apps sharing a
+storage endpoint and namespace must therefore use distinct names unless they
+intentionally represent the same logical app.
+
+On startup, Vectis reads that exact checkpoint before making the app available.
+The HTML metrics URL, JSON metrics endpoint, and in-process JSON snapshots all
+immediately include restored cumulative HTTP, auth, and persistence counters.
+PID, uptime, lifecycle, route count, and load samples describe the new process
+and are not restored. Missing checkpoints are treated as a first start; an
+unreadable or invalid checkpoint fails startup rather than silently publishing
+zeroed history.
+
+The metrics worker updates the checkpoint at least five minutes apart through
+the public liblockdc client. `storage_endpoint` may point at a remote lockd
+endpoint or a local `pouch://` endpoint. When it is not set, Vectis uses:
 
 ```text
 ${XDG_STATE_HOME:-$HOME/.local/state}/vectis/storage
@@ -83,8 +99,8 @@ as other Vectis persistence. With no key setting, Vectis securely generates
 `${XDG_CONFIG_HOME:-$HOME/.config}/vectis/pouch.key`. Remote endpoints and
 separate liblockdc clients do not use these fields.
 
-Snapshots are written under the `vectis.metrics` namespace by default. Write
-failures increment the persistence error counter and do not block request
+Snapshots are written under the `vectis.metrics` namespace by default. Runtime
+write failures increment the persistence error counter and do not block request
 processing.
 
 ## Dashboard

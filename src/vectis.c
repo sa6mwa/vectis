@@ -253,6 +253,7 @@ typedef struct vectis_metrics_state {
   int worker_started;
   int worker_done;
   int stop_worker;
+  int snapshot_restored;
   time_t started_at;
   time_t last_load_sample_at;
   time_t last_snapshot_at;
@@ -1265,6 +1266,10 @@ static vectis_status vectis_metrics_route_handler(vectis_app *app,
 static void vectis_metrics_state_destroy(vectis_metrics_state *metrics);
 static vectis_status vectis_metrics_worker_start(vectis_app *app,
                                                  vectis_error *error);
+static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
+                                                     long timeout_ms);
+static long vectis_metrics_background_persistence_timeout_ms(
+    const vectis_app_impl *impl);
 static vectis_status
 vectis_metrics_worker_stop(vectis_app *app,
                            const struct timespec *shutdown_deadline,
@@ -11882,10 +11887,31 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
   }
 
   if (route_count == 0u) {
+    if (vectis_app_has_metrics_persistence(impl)) {
+      status = vectis_metrics_persist_snapshot(
+          app, vectis_metrics_background_persistence_timeout_ms(impl));
+      if (status != VECTIS_OK) {
+        vectis_set_error(error, VECTIS_ERR_STATE,
+                         "failed to restore persistent metrics snapshot");
+        return status;
+      }
+      impl->metrics->last_snapshot_at = time(NULL);
+    }
     status = vectis_open_lockd_client(impl, error);
     if (status != VECTIS_OK) {
       return status;
     }
+  }
+
+  if (route_count > 0u && vectis_app_has_metrics_persistence(impl)) {
+    status = vectis_metrics_persist_snapshot(
+        app, vectis_metrics_background_persistence_timeout_ms(impl));
+    if (status != VECTIS_OK) {
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to restore persistent metrics snapshot");
+      return status;
+    }
+    impl->metrics->last_snapshot_at = time(NULL);
   }
 
   if (route_count > 0u) {
@@ -13013,6 +13039,15 @@ vectis_register_metrics(vectis_app *app, const vectis_metrics_config *config,
   vectis_metrics_config_init(&defaults);
   effective = config != NULL ? config : &defaults;
   impl = (vectis_app_impl *)app->impl;
+  if (effective->persistence_enabled &&
+      (impl->app_name == NULL || impl->app_name[0] == '\0' ||
+       strcmp(impl->app_name, "vectis") == 0 ||
+       strcmp(impl->app_name, "vectis-lua") == 0)) {
+    vectis_set_error(
+        error, VECTIS_ERR_INVALID,
+        "persistent metrics require an explicit non-default app_name");
+    return VECTIS_ERR_INVALID;
+  }
   (void)pthread_mutex_lock(&impl->mutex);
   if (impl->started) {
     (void)pthread_mutex_unlock(&impl->mutex);
@@ -18791,7 +18826,14 @@ vectis_metrics_snapshot_json_impl(vectis_app *app, vectis_mutable_bytes *out,
   uptime = snapshot.started_at > 0 && now >= snapshot.started_at
                ? (unsigned long long)(now - snapshot.started_at)
                : 0ULL;
-  if (vectis_string_builder_append(&json, "{", error) != VECTIS_OK ||
+  if (vectis_string_builder_append(
+          &json, "{\"format\":\"vectis-metrics-snapshot\",\"version\":1,",
+          error) != VECTIS_OK ||
+      vectis_route_event_append_key(&json, "app_name", error) != VECTIS_OK ||
+      vectis_append_lonejson_string(
+          &json, impl->app_name != NULL ? impl->app_name : "", error) !=
+          VECTIS_OK ||
+      vectis_string_builder_append(&json, ",", error) != VECTIS_OK ||
       vectis_route_event_append_key(&json, "service", error) != VECTIS_OK ||
       vectis_append_lonejson_string(&json, title, error) != VECTIS_OK ||
       vectis_string_builder_append(&json, ",", error) != VECTIS_OK ||
@@ -19385,8 +19427,279 @@ static char *vectis_metrics_default_storage_endpoint(void) {
 }
 
 typedef struct vectis_metrics_write_context {
+  vectis_app *app;
   vectis_mutable_bytes json;
 } vectis_metrics_write_context;
+
+typedef struct vectis_metrics_snapshot_status_json {
+  lonejson_uint64 status_1xx;
+  lonejson_uint64 status_2xx;
+  lonejson_uint64 status_3xx;
+  lonejson_uint64 status_4xx;
+  lonejson_uint64 status_5xx;
+} vectis_metrics_snapshot_status_json;
+
+typedef struct vectis_metrics_snapshot_http_json {
+  lonejson_uint64 requests_total;
+  vectis_metrics_snapshot_status_json status;
+  lonejson_uint64 route_misses;
+  lonejson_uint64 body_rejects;
+} vectis_metrics_snapshot_http_json;
+
+typedef struct vectis_metrics_snapshot_auth_json {
+  lonejson_uint64 allowed;
+  lonejson_uint64 denied;
+  lonejson_uint64 required;
+  lonejson_uint64 redirected;
+} vectis_metrics_snapshot_auth_json;
+
+typedef struct vectis_metrics_snapshot_persistence_json {
+  lonejson_uint64 writes;
+  lonejson_uint64 errors;
+} vectis_metrics_snapshot_persistence_json;
+
+typedef struct vectis_metrics_snapshot_document {
+  char *format;
+  lonejson_uint64 version;
+  char *app_name;
+  vectis_metrics_snapshot_http_json http;
+  vectis_metrics_snapshot_auth_json auth;
+  vectis_metrics_snapshot_persistence_json persistence;
+} vectis_metrics_snapshot_document;
+
+static const lonejson_field vectis_metrics_snapshot_status_json_fields[] = {
+    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_status_json, status_1xx,
+                           "1xx"),
+    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_status_json, status_2xx,
+                           "2xx"),
+    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_status_json, status_3xx,
+                           "3xx"),
+    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_status_json, status_4xx,
+                           "4xx"),
+    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_status_json, status_5xx,
+                           "5xx")};
+
+LONEJSON_MAP_DEFINE(vectis_metrics_snapshot_status_json_map,
+                    vectis_metrics_snapshot_status_json,
+                    vectis_metrics_snapshot_status_json_fields);
+
+static const lonejson_field vectis_metrics_snapshot_http_json_fields[] = {
+    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_http_json, requests_total,
+                           "requests_total"),
+    LONEJSON_FIELD_OBJECT_REQ(vectis_metrics_snapshot_http_json, status,
+                              "status",
+                              &vectis_metrics_snapshot_status_json_map),
+    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_http_json, route_misses,
+                           "route_misses"),
+    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_http_json, body_rejects,
+                           "body_rejects")};
+
+LONEJSON_MAP_DEFINE(vectis_metrics_snapshot_http_json_map,
+                    vectis_metrics_snapshot_http_json,
+                    vectis_metrics_snapshot_http_json_fields);
+
+static const lonejson_field vectis_metrics_snapshot_auth_json_fields[] = {
+    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_auth_json, allowed,
+                           "allowed"),
+    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_auth_json, denied,
+                           "denied"),
+    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_auth_json, required,
+                           "required"),
+    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_auth_json, redirected,
+                           "redirected")};
+
+LONEJSON_MAP_DEFINE(vectis_metrics_snapshot_auth_json_map,
+                    vectis_metrics_snapshot_auth_json,
+                    vectis_metrics_snapshot_auth_json_fields);
+
+static const lonejson_field vectis_metrics_snapshot_persistence_json_fields[] = {
+    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_persistence_json, writes,
+                           "writes"),
+    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_persistence_json, errors,
+                           "errors")};
+
+LONEJSON_MAP_DEFINE(vectis_metrics_snapshot_persistence_json_map,
+                    vectis_metrics_snapshot_persistence_json,
+                    vectis_metrics_snapshot_persistence_json_fields);
+
+static const lonejson_field vectis_metrics_snapshot_json_fields[] = {
+    LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_metrics_snapshot_document, format,
+                                    "format"),
+    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_document, version,
+                           "version"),
+    LONEJSON_FIELD_STRING_ALLOC_REQ(vectis_metrics_snapshot_document, app_name,
+                                    "app_name"),
+    LONEJSON_FIELD_OBJECT_REQ(vectis_metrics_snapshot_document, http, "http",
+                              &vectis_metrics_snapshot_http_json_map),
+    LONEJSON_FIELD_OBJECT_REQ(vectis_metrics_snapshot_document, auth, "auth",
+                              &vectis_metrics_snapshot_auth_json_map),
+    LONEJSON_FIELD_OBJECT_REQ(
+        vectis_metrics_snapshot_document, persistence, "persistence",
+        &vectis_metrics_snapshot_persistence_json_map)};
+
+LONEJSON_MAP_DEFINE(vectis_metrics_snapshot_json_map,
+                    vectis_metrics_snapshot_document,
+                    vectis_metrics_snapshot_json_fields);
+
+typedef struct vectis_metrics_lc_reader {
+  lc_source *source;
+  lc_error error;
+} vectis_metrics_lc_reader;
+
+static lonejson_read_result
+vectis_metrics_snapshot_read(void *userdata, unsigned char *buffer,
+                             size_t capacity) {
+  vectis_metrics_lc_reader *reader;
+  lonejson_read_result result;
+
+  result = lonejson_default_read_result();
+  reader = (vectis_metrics_lc_reader *)userdata;
+  if (reader == NULL || reader->source == NULL) {
+    result.error_code = EINVAL;
+    return result;
+  }
+  result.bytes_read =
+      reader->source->read(reader->source, buffer, capacity, &reader->error);
+  if (reader->error.code != LC_OK) {
+    result.error_code = EIO;
+  } else if (result.bytes_read == 0u) {
+    result.eof = 1;
+  }
+  return result;
+}
+
+static void vectis_metrics_counter_add(unsigned long long *counter,
+                                       unsigned long long value) {
+  if (counter != NULL && value != 0ULL) {
+    (void)__sync_fetch_and_add(counter, value);
+  }
+}
+
+static int vectis_metrics_restore_snapshot(
+    vectis_metrics_write_context *write,
+    lc_acquire_for_update_context *update, lc_error *error) {
+  vectis_app_impl *impl;
+  vectis_metrics_state *metrics;
+  vectis_metrics_shared_state *shared;
+  vectis_metrics_snapshot_document snapshot;
+  vectis_metrics_lc_reader reader;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  lonejson *runtime;
+
+  if (write == NULL || write->app == NULL || write->app->impl == NULL ||
+      update == NULL) {
+    return LC_ERR_INVALID;
+  }
+  impl = (vectis_app_impl *)write->app->impl;
+  metrics = impl->metrics;
+  if (metrics == NULL || metrics->snapshot_restored ||
+      !update->state.has_state) {
+    if (metrics != NULL) {
+      metrics->snapshot_restored = 1;
+    }
+    return LC_OK;
+  }
+
+  memset(&snapshot, 0, sizeof(snapshot));
+  memset(&reader, 0, sizeof(reader));
+  lc_error_init(&reader.error);
+  reader.source = update->state.reader;
+  runtime = vectis_lonejson_new(NULL);
+  if (runtime == NULL) {
+    lc_error_cleanup(&reader.error);
+    return LC_ERR_NOMEM;
+  }
+  json_status = lonejson_parse_reader(
+      runtime, &vectis_metrics_snapshot_json_map, &snapshot,
+      vectis_metrics_snapshot_read, &reader, &json_error);
+  lonejson_free(runtime);
+  lc_error_cleanup(&reader.error);
+  if (json_status != LONEJSON_STATUS_OK || snapshot.format == NULL ||
+      strcmp(snapshot.format, "vectis-metrics-snapshot") != 0 ||
+      snapshot.version != 1u || snapshot.app_name == NULL ||
+      impl->app_name == NULL || strcmp(snapshot.app_name, impl->app_name) != 0) {
+    lonejson_cleanup(&vectis_metrics_snapshot_json_map, &snapshot);
+    if (error != NULL) {
+      lc_error_init(error);
+      error->code = LC_ERR_INVALID;
+      error->message = vectis_strdup("persisted metrics snapshot is invalid");
+    }
+    return LC_ERR_INVALID;
+  }
+
+  shared = metrics->shared;
+  if (shared != NULL) {
+    vectis_metrics_counter_add(&shared->requests_total,
+                               snapshot.http.requests_total);
+    vectis_metrics_counter_add(&shared->status_buckets[1],
+                               snapshot.http.status.status_1xx);
+    vectis_metrics_counter_add(&shared->status_buckets[2],
+                               snapshot.http.status.status_2xx);
+    vectis_metrics_counter_add(&shared->status_buckets[3],
+                               snapshot.http.status.status_3xx);
+    vectis_metrics_counter_add(&shared->status_buckets[4],
+                               snapshot.http.status.status_4xx);
+    vectis_metrics_counter_add(&shared->status_buckets[5],
+                               snapshot.http.status.status_5xx);
+    vectis_metrics_counter_add(&shared->route_misses,
+                               snapshot.http.route_misses);
+    vectis_metrics_counter_add(&shared->body_rejects,
+                               snapshot.http.body_rejects);
+    vectis_metrics_counter_add(&shared->auth_allowed, snapshot.auth.allowed);
+    vectis_metrics_counter_add(&shared->auth_denied, snapshot.auth.denied);
+    vectis_metrics_counter_add(&shared->auth_required, snapshot.auth.required);
+    vectis_metrics_counter_add(&shared->auth_redirected,
+                               snapshot.auth.redirected);
+    vectis_metrics_counter_add(&shared->snapshot_writes,
+                               snapshot.persistence.writes);
+    vectis_metrics_counter_add(&shared->snapshot_errors,
+                               snapshot.persistence.errors);
+  }
+  metrics->snapshot_restored = 1;
+  lonejson_cleanup(&vectis_metrics_snapshot_json_map, &snapshot);
+  return LC_OK;
+}
+
+vectis_status vectis_internal_metrics_snapshot_key(
+    const char *storage_owner, const char *app_name, char *key,
+    size_t key_size, vectis_error *error) {
+  static const char hex[] = "0123456789abcdef";
+  EVP_MD_CTX *digest_context;
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned digest_size;
+  size_t i;
+
+  if (storage_owner == NULL || storage_owner[0] == '\0' || app_name == NULL ||
+      app_name[0] == '\0' || key == NULL ||
+      key_size < VECTIS_INTERNAL_METRICS_SNAPSHOT_KEY_SIZE) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "metrics snapshot identity is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  digest_context = EVP_MD_CTX_new();
+  if (digest_context == NULL ||
+      EVP_DigestInit_ex(digest_context, EVP_sha256(), NULL) != 1 ||
+      EVP_DigestUpdate(digest_context, storage_owner,
+                       strlen(storage_owner) + 1u) != 1 ||
+      EVP_DigestUpdate(digest_context, app_name, strlen(app_name)) != 1 ||
+      EVP_DigestFinal_ex(digest_context, digest, &digest_size) != 1 ||
+      digest_size != 32u) {
+    EVP_MD_CTX_free(digest_context);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to derive metrics snapshot key");
+    return VECTIS_ERR_STATE;
+  }
+  EVP_MD_CTX_free(digest_context);
+  memcpy(key, "snapshot.v1.", 12u);
+  for (i = 0u; i < digest_size; ++i) {
+    key[12u + i * 2u] = hex[digest[i] >> 4u];
+    key[13u + i * 2u] = hex[digest[i] & 0x0fu];
+  }
+  key[76u] = '\0';
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
 
 static int vectis_metrics_write_update(void *context,
                                        lc_acquire_for_update_context *update,
@@ -19404,6 +19717,15 @@ static int vectis_metrics_write_update(void *context,
       error->message = vectis_strdup("metrics write context is invalid");
     }
     return LC_ERR_INVALID;
+  }
+  rc = vectis_metrics_restore_snapshot(write, update, error);
+  if (rc != LC_OK) {
+    return rc;
+  }
+  vectis_mutable_bytes_cleanup(&write->json);
+  if (vectis_metrics_snapshot_json_impl(write->app, &write->json, NULL, NULL) !=
+      VECTIS_OK) {
+    return LC_ERR_SERVER;
   }
   source = NULL;
   rc =
@@ -19459,8 +19781,9 @@ static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
   lc_acquire_req req;
   lc_error lcerr;
   char *default_key_file;
-  char key[64];
+  char key[VECTIS_INTERNAL_METRICS_SNAPSHOT_KEY_SIZE];
   const char *endpoint;
+  const char *owner;
   int rc;
 
   if (app == NULL || app->impl == NULL) {
@@ -19472,11 +19795,7 @@ static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
     return VECTIS_OK;
   }
   memset(&write, 0, sizeof(write));
-  if (vectis_metrics_snapshot_json_impl(app, &write.json, NULL, NULL) !=
-      VECTIS_OK) {
-    vectis_metrics_note_snapshot_error(metrics);
-    return VECTIS_ERR_STATE;
-  }
+  write.app = app;
   endpoint = metrics->storage_endpoint;
   default_key_file = NULL;
   lc_client_config_init(&config);
@@ -19498,15 +19817,19 @@ static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
   if (rc == LC_OK) {
     lc_acquire_req_init(&req);
     req.namespace_name = config.default_namespace;
-    req.owner =
-        metrics->storage_owner != NULL ? metrics->storage_owner : "vectis";
+    owner = metrics->storage_owner != NULL ? metrics->storage_owner : "vectis";
+    req.owner = owner;
     req.ttl_seconds = 30L;
     req.block_seconds = config.timeout_ms >= 1000L ? 1L : 0L;
-    (void)snprintf(key, sizeof(key), "snapshot.%llu",
-                   (unsigned long long)time(NULL));
-    req.key = key;
-    rc = client->acquire_for_update(client, &req, vectis_metrics_write_update,
-                                    &write, &lcerr);
+    if (vectis_internal_metrics_snapshot_key(owner, impl->app_name, key,
+                                             sizeof(key), NULL) != VECTIS_OK) {
+      rc = LC_ERR_INVALID;
+    } else {
+      req.key = key;
+      rc = client->acquire_for_update(client, &req,
+                                      vectis_metrics_write_update, &write,
+                                      &lcerr);
+    }
   }
   if (client != NULL) {
     client->close(client);

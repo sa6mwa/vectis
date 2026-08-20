@@ -1406,10 +1406,13 @@ metrics_required_provider(const vectis_auth_provider_request *request,
 static int metrics_pouch_snapshot_contains_text(const char *endpoint,
                                                 const char *namespace_name,
                                                 const char *pouch_crypto_key,
+                                                const char *storage_owner,
+                                                const char *app_name,
                                                 const char *needle);
 static void remove_tree(const char *path);
 
 static void assert_metrics_surface(void) {
+  vectis_app_config app_config;
   vectis_app *app;
   vectis_metrics_config metrics;
   vectis_mutable_bytes snapshot;
@@ -1419,6 +1422,8 @@ static void assert_metrics_surface(void) {
   vectis_error error;
   vectis_status status;
   vectis_auth_provider provider;
+  char snapshot_key_a[VECTIS_INTERNAL_METRICS_SNAPSHOT_KEY_SIZE];
+  char snapshot_key_b[VECTIS_INTERNAL_METRICS_SNAPSHOT_KEY_SIZE];
 
   vectis_error_clear(&error);
   app = vectis_app_new(NULL, &error);
@@ -1543,6 +1548,30 @@ static void assert_metrics_surface(void) {
   assert(strstr((const char *)snapshot.data, "\"required\":1") != NULL);
   vectis_mutable_bytes_cleanup(&snapshot);
   app->close(app);
+
+  assert(vectis_internal_metrics_snapshot_key(
+             "shared-owner", "orders-api", snapshot_key_a,
+             sizeof(snapshot_key_a), &error) == VECTIS_OK);
+  assert(vectis_internal_metrics_snapshot_key(
+             "shared-owner", "billing-worker", snapshot_key_b,
+             sizeof(snapshot_key_b), &error) == VECTIS_OK);
+  assert(strcmp(snapshot_key_a, snapshot_key_b) != 0);
+  assert(vectis_internal_metrics_snapshot_key(
+             "shared-owner", "orders-api", snapshot_key_b,
+             sizeof(snapshot_key_b), &error) == VECTIS_OK);
+  assert(strcmp(snapshot_key_a, snapshot_key_b) == 0);
+
+  vectis_app_config_init(&app_config);
+  app = vectis_app_new(&app_config, &error);
+  assert(app != NULL);
+  vectis_metrics_config_init(&metrics);
+  metrics.persistence_enabled = 1;
+  status = app->metrics(app, &metrics, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strcmp(error.message,
+                "persistent metrics require an explicit non-default "
+                "app_name") == 0);
+  app->close(app);
 }
 
 static void assert_supervised_metrics_persistence_worker(void) {
@@ -1582,6 +1611,7 @@ static void assert_supervised_metrics_persistence_worker(void) {
   close(reserved_fd);
 
   vectis_app_config_init(&config);
+  config.app_name = "runtime-metrics-app";
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
   config.tls.port = port;
@@ -1664,24 +1694,44 @@ static void assert_supervised_metrics_persistence_worker(void) {
   vectis_http_response_cleanup(&response);
   found = metrics_pouch_snapshot_contains_text(
       endpoint, "vectis.runtime.metrics", pouch_crypto_key,
+      "runtime-test", "runtime-metrics-app",
       "\"service\":\"supervised metrics worker\"");
   assert(found);
 
   status = app->stop(app, &error);
   assert(status == VECTIS_OK);
   app->close(app);
+
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  status = app->metrics(app, &metrics, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  status = vectis_http_get(&http, metrics_url, &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200L);
+  assert(response.body != NULL);
+  assert(strstr((const char *)response.body,
+                "\"app_name\":\"runtime-metrics-app\"") != NULL);
+  assert(strstr((const char *)response.body, "\"requests_total\":0") == NULL);
+  assert(strstr((const char *)response.body, "\"5xx\":1") != NULL);
+  vectis_http_response_cleanup(&response);
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  app->close(app);
+
   lc_pouch_crypto_key_string_free(pouch_crypto_key);
   remove_tree(pouch_dir);
 }
 
-static void assert_metrics_persistence_stop_honors_shutdown_grace(void) {
+static void assert_metrics_persistence_restore_honors_startup_grace(void) {
   vectis_app_config config;
   vectis_metrics_config metrics;
   vectis_app *app;
   vectis_error error;
   vectis_status status;
   runtime_blackhole_server blackhole;
-  struct timespec pause_time;
   char endpoint[128];
   long started_ms;
   long elapsed_ms;
@@ -1695,6 +1745,7 @@ static void assert_metrics_persistence_stop_honors_shutdown_grace(void) {
   assert(written > 0 && (size_t)written < sizeof(endpoint));
 
   vectis_app_config_init(&config);
+  config.app_name = "runtime-blackhole-metrics-app";
   reserved_fd = reserve_loopback_port(&port);
   close(reserved_fd);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
@@ -1712,16 +1763,12 @@ static void assert_metrics_persistence_stop_honors_shutdown_grace(void) {
   metrics.storage_owner = "runtime-test";
   status = app->metrics(app, &metrics, &error);
   assert(status == VECTIS_OK);
-  status = app->start(app, &error);
-  assert(status == VECTIS_OK);
-
-  pause_time.tv_sec = 0;
-  pause_time.tv_nsec = 100000000L;
-  (void)nanosleep(&pause_time, NULL);
   started_ms = runtime_monotonic_millis();
-  status = app->stop(app, &error);
+  status = app->start(app, &error);
   elapsed_ms = runtime_monotonic_millis() - started_ms;
-  assert(status == VECTIS_OK);
+  assert(status == VECTIS_ERR_STATE);
+  assert(strcmp(error.message,
+                "failed to restore persistent metrics snapshot") == 0);
   assert(elapsed_ms < 2000L);
 
   app->close(app);
@@ -2079,19 +2126,21 @@ static void remove_tree(const char *path) {
 static int metrics_pouch_snapshot_contains_text(const char *endpoint,
                                                 const char *namespace_name,
                                                 const char *pouch_crypto_key,
+                                                const char *storage_owner,
+                                                const char *app_name,
                                                 const char *needle) {
   const char *endpoints[1];
   lc_client_config client_config;
   lc_client *client;
   lc_error lcerr;
-  time_t now;
-  long offset;
-  char key[64];
+  char key[VECTIS_INTERNAL_METRICS_SNAPSHOT_KEY_SIZE];
   int found;
   int rc;
 
   if (endpoint == NULL || namespace_name == NULL || pouch_crypto_key == NULL ||
-      needle == NULL) {
+      storage_owner == NULL || app_name == NULL || needle == NULL ||
+      vectis_internal_metrics_snapshot_key(storage_owner, app_name, key,
+                                           sizeof(key), NULL) != VECTIS_OK) {
     return 0;
   }
   endpoints[0] = endpoint;
@@ -2109,21 +2158,18 @@ static int metrics_pouch_snapshot_contains_text(const char *endpoint,
   }
 
   found = 0;
-  now = time(NULL);
-  for (offset = -10L; offset <= 10L && !found; ++offset) {
+  {
     lc_sink *sink;
     lc_get_res get_res;
     const void *bytes;
     size_t length;
 
-    if (snprintf(key, sizeof(key), "snapshot.%llu",
-                 (unsigned long long)(now + (time_t)offset)) <= 0) {
-      continue;
-    }
     sink = NULL;
     rc = lc_sink_to_memory(&sink, &lcerr);
     if (rc != LC_OK || sink == NULL) {
-      continue;
+      client->close(client);
+      lc_error_cleanup(&lcerr);
+      return 0;
     }
     memset(&get_res, 0, sizeof(get_res));
     rc = client->get(client, key, NULL, sink, &get_res, &lcerr);
@@ -2454,6 +2500,7 @@ static void assert_direct_supervision_policy_rejects_app_services(void) {
   vectis_status status;
 
   vectis_app_config_init(&config);
+  config.app_name = "runtime-direct-policy-app";
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.supervision_policy = VECTIS_SUPERVISION_DIRECT;
   app = vectis_app_new(&config, &error);
@@ -5242,6 +5289,7 @@ static void assert_runtime_phase_order_contract(void) {
   close(reserved_fd);
 
   vectis_app_config_init(&config);
+  config.app_name = "runtime-phase-order-app";
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
   config.tls.port = port;
@@ -6882,8 +6930,8 @@ static int run_named_runtime_test(const char *name) {
     assert_supervised_metrics_persistence_worker();
     return 1;
   }
-  if (strcmp(name, "metrics_persistence_stop_honors_shutdown_grace") == 0) {
-    assert_metrics_persistence_stop_honors_shutdown_grace();
+  if (strcmp(name, "metrics_persistence_restore_honors_startup_grace") == 0) {
+    assert_metrics_persistence_restore_honors_startup_grace();
     return 1;
   }
   if (strcmp(name, "direct_supervision_policy_rejects_app_services") == 0) {
@@ -7067,7 +7115,7 @@ int main(void) {
   assert_acme_state_dir_allows_existing_group_private_dir();
   assert_metrics_surface();
   assert_supervised_metrics_persistence_worker();
-  assert_metrics_persistence_stop_honors_shutdown_grace();
+  assert_metrics_persistence_restore_honors_startup_grace();
   assert_direct_supervision_policy_rejects_app_services();
   assert_consumer_service_declaration_before_routes();
   assert_managed_service_declaration_before_routes();
