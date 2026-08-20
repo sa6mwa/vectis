@@ -28,17 +28,17 @@ if supervised then
   server_config.port = port
   server_config.supervision_policy = "supervised"
 end
-local server = assert(vectis.server.new(server_config))
+local app = assert(vectis.app.new(server_config))
 
 if supervised then
-  assert(server:json({
+  assert(app:json({
     path = "/ready",
     body = '{"ok":true}\n',
     cache_control = "no-store",
   }) == true)
 end
 
-local callback_service, callback_err = server:cai_worker_service({
+local callback_service, callback_err = app:cai_worker_service({
   request_mailbox = requests,
   callback = function()
     error("CAI worker services must not call Lua callbacks")
@@ -47,7 +47,7 @@ local callback_service, callback_err = server:cai_worker_service({
 assert(callback_service == nil)
 assert(callback_err.message:find("does not accept Lua callbacks", 1, true))
 
-assert(server:cai_worker_service({
+assert(app:cai_worker_service({
   name = "lua-cai-worker",
   request_mailbox = requests,
   reply_broker = broker,
@@ -59,7 +59,7 @@ assert(server:cai_worker_service({
   },
 }) == true)
 
-local started, start_err = server:start()
+local started, start_err = app:start()
 assert(started == true, start_err and start_err.message or tostring(start_err))
 
 local event = assert(cai_worker.request({
@@ -88,7 +88,7 @@ assert(decoded.source == "vectis")
 assert(decoded.source_code == vectis.ERROR_SOURCE_VECTIS)
 assert(decoded.message:find("provider", 1, true))
 
-local states, states_err = server:cai_worker_service_states()
+local states, states_err = app:cai_worker_service_states()
 if states == nil then
   error(states_err and states_err.message or tostring(states_err))
 end
@@ -96,9 +96,9 @@ assert(#states == 1)
 assert(states[1].name == "lua-cai-worker")
 assert(states[1].started == true)
 
-local stopped, stop_err = server:stop()
+local stopped, stop_err = app:stop()
 assert(stopped == true, stop_err and stop_err.message or tostring(stop_err))
-server:close()
+app:close()
 broker:close()
 requests:close()
 

@@ -56,7 +56,7 @@ workflow_modules=(
   "vectis.mailbox|workflow:mailbox|package.loaded[\"vectis.mailbox\"] == mailbox|vectis.mailbox == mailbox|lua-mailbox.md"
   "vectis.mqtt|workflow:mqtt|package.loaded[\"vectis.mqtt\"] == mqtt|vectis.mqtt == mqtt|lua-mqtt.md"
   "vectis.rest|workflow:rest|package.loaded[\"vectis.rest\"] == rest|vectis.rest == rest|lua-rest.md"
-  "vectis.server|workflow:server-runtime|package.loaded[\"vectis.server\"] == server_module|vectis.server == server_module|lua-server.md"
+  "vectis.app|workflow:server-runtime|package.loaded[\"vectis.app\"] == app_module|vectis.app == app_module|lua-app.md"
   "vectis.smtp|workflow:smtp|package.loaded[\"vectis.smtp\"] == smtp|vectis.smtp == smtp|lua-smtp.md"
   "vectis.ssh|workflow:ssh-exec|package.loaded[\"vectis.ssh\"] == ssh|vectis.ssh == ssh|lua-ssh.md"
   "vectis.status|workflow:status-errors|package.loaded[\"vectis.status\"] == status|vectis.status == status|lua-status.md"

@@ -16,13 +16,13 @@ local request_opts = {
   no_signal = true,
 }
 
-local server = assert(vectis.server.new({
+local app = assert(vectis.app.new({
   app_name = "lua-metrics-ephemeral-example",
   bind = bind,
   port = port,
 }))
 
-assert(server:route({
+assert(app:route({
   path = "/",
   handler = function()
     return {
@@ -33,14 +33,14 @@ assert(server:route({
   end,
 }) == true)
 
-assert(server:metrics({
+assert(app:metrics({
   path = "/.metrics",
   json_path = "/.metrics/snapshot.json",
   title = "lua metrics ephemeral example",
   persistence_enabled = false,
 }) == true)
 
-assert(server:start() == true)
+assert(app:start() == true)
 
 local page
 for _ = 1, 20 do
@@ -70,10 +70,10 @@ if serve_forever then
   print("lua metrics ephemeral example listening on " .. base_url)
   print("metrics dashboard: " .. base_url .. "/.metrics")
   print("metrics JSON: " .. base_url .. "/.metrics/snapshot.json")
-  assert(server:wait() == true)
-  server:close()
+  assert(app:wait() == true)
+  app:close()
 else
-  assert(server:stop() == true)
-  server:close()
+  assert(app:stop() == true)
+  app:close()
   print("lua metrics ephemeral example ok")
 end

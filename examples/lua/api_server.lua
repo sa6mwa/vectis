@@ -48,7 +48,7 @@ local credential = assert(auth_flow:webdav_key({
 }))
 local authorization = assert(vectis.auth.basic_authorization(credential))
 
-local server = assert(vectis.server.new({
+local app = assert(vectis.app.new({
   app_name = "lua-api-example",
   bind = bind,
   port = port,
@@ -63,12 +63,12 @@ local order_response_schema = lonejson.schema("lua-api-order-response", {
   lonejson.field("created", lonejson.boolean({required = true})),
 })
 
-assert(server:json({
+assert(app:json({
   path = "/health",
   body = '{"ok":true,"service":"lua-api-example"}\n',
   cache_control = "no-store",
 }) == true)
-assert(server:json({
+assert(app:json({
   path = "/orders",
   method = "POST",
   status = 201,
@@ -91,12 +91,12 @@ assert(server:json({
     },
   },
 }) == true)
-assert(server:auth_json({
+assert(app:auth_json({
   path = "/admin/status",
   body = '{"ok":true,"admin":true}\n',
   auth = auth_flow:provider(),
 }) == true)
-assert(server:route({
+assert(app:route({
   path = "/stream",
   handler = function()
     local chunks = {"streaming ", "api ", "response\n"}
@@ -119,7 +119,7 @@ assert(server:route({
     }
   end,
 }) == true)
-assert(server:sse({
+assert(app:sse({
   path = "/events",
   open = function(request)
     assert(request.path == "/events")
@@ -143,7 +143,7 @@ assert(server:sse({
     return nil
   end,
 }) == true)
-assert(server:upload({
+assert(app:upload({
   path = "/upload/:name",
   buffer_bytes = 5,
   max_body_bytes = 4096,
@@ -184,7 +184,7 @@ assert(server:upload({
   end,
 }) == true)
 
-local openapi_json = assert(server:openapi({
+local openapi_json = assert(app:openapi({
   title = "Lua API Example",
   version = "1.0.0",
   format = "json",
@@ -192,14 +192,14 @@ local openapi_json = assert(server:openapi({
 assert(openapi_json:find('"openapi":"3.1.0"', 1, true))
 assert(openapi_json:find('"/orders"', 1, true))
 assert(openapi_json:find('"operationId":"createOrder"', 1, true))
-assert(server:json({
+assert(app:json({
   path = "/openapi.json",
   body = openapi_json,
   content_type = "application/json",
   cache_control = "no-store",
 }) == true)
 
-assert(server:start() == true)
+assert(app:start() == true)
 
 local health
 for _ = 1, 20 do
@@ -275,10 +275,10 @@ assert(uploaded.headers:lower():find("x-vectis-upload: streaming", 1, true))
 
 if serve_forever then
   print("lua api example listening on http://" .. bind .. ":" .. tostring(port))
-  assert(server:wait() == true)
-  server:close()
+  assert(app:wait() == true)
+  app:close()
 else
-  assert(server:stop() == true)
-  server:close()
-  print("lua api server example ok")
+  assert(app:stop() == true)
+  app:close()
+  print("lua api app example ok")
 end

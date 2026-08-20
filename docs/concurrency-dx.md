@@ -27,16 +27,16 @@ on that state. Worker threads, liblockdc consumer callbacks, OPC UA background
 callbacks, and Kore worker code must not call arbitrary Lua callbacks directly.
 
 `vectis_run()` and `app->run(app, &error)` are the foreground service entry
-points for libvectis applications. `server:run()` is the Lua facade over the
+points for libvectis applications. `app:run()` is the Lua facade over the
 same core lifecycle. Route-backed apps without app-owned background services may
 run as direct T1 Kore runtimes after the quiescence guard passes. Route-backed
 apps with app-owned services, metrics persistence, or forced supervision run as
 T2 supervised runtimes: Vectis forks a thread-clean Kore child first, then starts
 supervisor-domain services. Service-only apps run as T3 runtimes with no Kore
-fork boundary. `vectis_start()` and `server:start()` are managed starts for
+fork boundary. `vectis_start()` and `app:start()` are managed starts for
 tests, tools, and daemon-style Lua scripts that need the caller to continue;
 they must be paired with `wait()` or `stop()`. `vectis_restart()` and
-`server:restart()` are managed stop/start cycles for the whole app lifecycle;
+`app:restart()` are managed stop/start cycles for the whole app lifecycle;
 they replace the Kore child and restart app-owned daemon services instead of
 attempting an in-place TLS or worker mutation. On termination, the app shutdown
 sequence stops HTTP ingress and metrics, stops and waits app-created lockd
@@ -169,7 +169,7 @@ decode the copied envelopes with `vectis_curl_worker_http_event_build()` and
 bytes themselves.
 
 The Lua surface mirrors that C contract without adding a callback bridge:
-`server:curl_worker_service()` registers the managed service, retaining the
+`app:curl_worker_service()` registers the managed service, retaining the
 borrowed `vectis.mailbox` and optional `vectis.mailbox.broker` userdata until
 service close. `vectis.curl_worker.http_request()` builds the C HTTP request
 envelope as a normal mailbox event table, and
@@ -194,7 +194,7 @@ client or agent and run one operation. Replies carry Vectis status/source
 metadata, CAI dependency diagnostics, and explicitly named `text` or `raw_json`
 output fields. File-backed and lockdc document outputs are future extensions
 that must be named as such. Worker threads never call Lua tool callbacks.
-Lua-mounted MCP tools use the `server:mcp()` request broker and an owner-state
+Lua-mounted MCP tools use the `app:mcp()` request broker and an owner-state
 mailbox pump.
 
 Audio/SUS workers:

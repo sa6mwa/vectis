@@ -83,7 +83,7 @@ Lua docs:
 - [Lua libmdf](lua-libmdf.md)
 - [Lua MQTT](lua-mqtt.md)
 - [Lua OpenSSL](lua-openssl.md)
-- [Lua server](lua-server.md)
+- [Lua app](lua-app.md)
 - [Lua softline](lua-softline.md)
 - [Lua SMTP](lua-smtp.md)
 - [Lua SSH](lua-ssh.md)

@@ -8,19 +8,19 @@ local port = tonumber(port_env or "28586")
 local should_probe = port_env ~= nil and port > 0
 local base_url = "http://" .. bind .. ":" .. tostring(port)
 
-local server = assert(vectis.server.new({
+local app = assert(vectis.app.new({
   app_name = "lua-cai-live-service-adapter-example",
   bind = bind,
   port = port,
 }))
 
-assert(server:json({
+assert(app:json({
   path = "/ready",
   body = '{"ok":true,"service":"lua-cai-live-service-adapter-example"}\n',
   cache_control = "no-store",
 }) == true)
 
-assert(server:mcp({
+assert(app:mcp({
   path = "/mcp",
   name = "lua-cai-service-adapter-example",
   tools = {
@@ -36,7 +36,7 @@ assert(server:mcp({
   },
 }) == true)
 
-assert(server:start() == true)
+assert(app:start() == true)
 if should_probe then
   local ready
   for _ = 1, 20 do
@@ -56,8 +56,8 @@ if should_probe then
   assert(ready.status == 200)
   assert(ready.body:find('"ok":true', 1, true))
 end
-assert(server:stop() == true)
-server:close()
+assert(app:stop() == true)
+app:close()
 
 if os.getenv("VECTIS_LUA_CAI_LIVE") ~= "1" then
   print("SKIP: set VECTIS_LUA_CAI_LIVE=1 to run live CAI provider validation")

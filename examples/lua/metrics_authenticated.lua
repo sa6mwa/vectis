@@ -107,15 +107,15 @@ if not serve_forever then
 end
 local machine_authorization = "Bearer " .. machine_credential.api_key
 
-local server = assert(vectis.server.new({
+local app = assert(vectis.app.new({
   app_name = "lua-metrics-auth-example",
   bind = bind,
   port = port,
 }))
 
-assert(browser_flow:mount(server))
+assert(browser_flow:mount(app))
 
-assert(server:route({
+assert(app:route({
   path = "/",
   handler = function()
     return {
@@ -126,7 +126,7 @@ assert(server:route({
   end,
 }) == true)
 
-assert(server:metrics({
+assert(app:metrics({
   path = "/.metrics",
   json_path = "/.metrics/snapshot.json",
   title = "lua metrics authenticated example",
@@ -141,7 +141,7 @@ assert(server:metrics({
   storage_owner = "metrics-auth-example",
 }) == true)
 
-assert(server:start() == true)
+assert(app:start() == true)
 
 local page
 for _ = 1, 20 do
@@ -197,10 +197,10 @@ if serve_forever then
   print("metrics JSON: " .. base_url .. "/.metrics/snapshot.json")
   print("browser user: metrics-admin / metrics-password / configured TOTP")
   print("m2m bearer token: " .. machine_credential.api_key)
-  assert(server:wait() == true)
-  server:close()
+  assert(app:wait() == true)
+  app:close()
 else
-  assert(server:stop() == true)
-  server:close()
+  assert(app:stop() == true)
+  app:close()
   print("lua metrics authenticated example ok")
 end

@@ -218,13 +218,13 @@ end)
 
 ## Server Integration
 
-`vectis.server` consumes the same provider tables:
+`vectis.app` consumes the same provider tables:
 
-- `server:webdav({path_prefix=..., storage_path=..., auth=provider})`
-- `server:webdav_embedded_site({path_prefix=..., auth=provider})`
-- `server:auth_json({path=..., auth=provider, body=...})`
+- `app:webdav({path_prefix=..., storage_path=..., auth=provider})`
+- `app:webdav_embedded_site({path_prefix=..., auth=provider})`
+- `app:auth_json({path=..., auth=provider, body=...})`
 
-`server:auth_routes(opts)` registers the native browser login, email-token,
+`app:auth_routes(opts)` registers the native browser login, email-token,
 logout, and WebDAV-key endpoints. It accepts store fields plus:
 
 - `path_prefix` or `prefix`
@@ -262,7 +262,7 @@ local flow = vectis.auth.browser_flow({
 
 assert(flow:mount(server))
 
-assert(server:auth_json({
+assert(app:auth_json({
   path = "/api/status",
   auth = flow:provider(),
   body = '{"ok":true}\n',
@@ -277,8 +277,8 @@ local authorization = assert(flow:webdav_authorization({
 
 The helper methods are:
 
-- `routes(opts)`: merge and return the `server:auth_routes` option table.
-- `mount(server, opts)`: call `server:auth_routes(flow:routes(opts))`.
+- `routes(opts)`: merge and return the `app:auth_routes` option table.
+- `mount(server, opts)`: call `app:auth_routes(flow:routes(opts))`.
 - `provider(opts)`: create a native provider for guarded routes and WebDAV.
 - `webdav_key(opts)`: issue a WebDAV Basic credential after native login.
 - `webdav_authorization(opts)`: issue a WebDAV credential and format the Basic

@@ -15,25 +15,25 @@ local api = rest.client({
   no_signal = true,
 })
 
-local server = assert(vectis.server.new({
+local app = assert(vectis.app.new({
   app_name = "lua-downstream-api-example",
   bind = bind,
   port = port,
 }))
 
-assert(server:json({
+assert(app:json({
   path = "/inventory",
   body = '{"ok":true,"items":[{"sku":"VX-100","qty":7}]}\n',
   cache_control = "no-store",
 }) == true)
-assert(server:json({
+assert(app:json({
   path = "/events",
   method = "POST",
   status = 202,
   body = '{"ok":true,"accepted":true}\n',
 }) == true)
 
-assert(server:start() == true)
+assert(app:start() == true)
 
 local inventory
 for _ = 1, 20 do
@@ -65,10 +65,10 @@ assert(missing.error.http_status == 404)
 
 if serve_forever then
   print("lua downstream API example listening on " .. base_url)
-  assert(server:wait() == true)
-  server:close()
+  assert(app:wait() == true)
+  app:close()
 else
-  assert(server:stop() == true)
-  server:close()
+  assert(app:stop() == true)
+  app:close()
   print("lua downstream API example ok")
 end

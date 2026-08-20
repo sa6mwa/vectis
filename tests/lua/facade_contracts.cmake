@@ -790,7 +790,7 @@ local order_response_schema = lonejson.schema("openapi-order-response", {
 local error_response_schema = lonejson.schema("openapi-error-response", {
   lonejson.field("message", lonejson.string({required = true})),
 })
-local openapi_server = assert(vectis.server.new({
+local openapi_server = assert(vectis.app.new({
   app_name = "lua-openapi-contract",
   bind = "127.0.0.1",
   port = 28631,

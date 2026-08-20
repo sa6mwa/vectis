@@ -91,14 +91,14 @@ This is separate from direct `curl.perform()`: Lua builds copied mailbox events,
 the C-owned worker service performs transfers in the managed runtime domain, and
 Lua decodes copied replies.
 
-- `server:curl_worker_service(opts)` registers the C-owned worker. `opts`
+- `app:curl_worker_service(opts)` registers the C-owned worker. `opts`
   requires `request_mailbox` or `requests`, accepts optional `reply_broker` or
   `broker`, `name`, `poll_timeout_ms`, `start`, and an `http` table with the
   `vectis_http_client_config` fields supported by the C worker: `base_url`,
   `client_bundle_path`, `ca_bundle_path`/`ca_file`, `timeout_ms`,
   `connect_timeout_ms`, `follow_redirects`, `proxy_url`/`proxy`,
   low-speed controls, and retry controls.
-- `server:curl_worker_service_states()` returns copied managed-service
+- `app:curl_worker_service_states()` returns copied managed-service
   lifecycle diagnostics for registered curl workers.
 - `vectis.curl_worker.http_request(opts)` returns a normal
   `vectis.mailbox` event table with `kind`, `payload`, and `expects_reply`.

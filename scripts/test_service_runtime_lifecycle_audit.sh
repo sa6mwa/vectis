@@ -201,7 +201,7 @@ assert_lua_runtime_evidence() {
     sus_worker_service_states
   do
     require_egrep "$repo_root/src/vectis_cli.c" "\"$method_name\"" \
-      "Lua server receiver exposes $method_name"
+      "Lua app receiver exposes $method_name"
   done
   require_egrep "$repo_root/tests/lua/smoke.lua" \
     'direct Lua callbacks' \
@@ -209,9 +209,9 @@ assert_lua_runtime_evidence() {
   require_egrep "$repo_root/tests/lua/smoke.lua" \
     'pump_callback_failures' \
     "Lua mailbox pump callback failures are observable"
-  require_egrep "$repo_root/docs/lua-server.md" \
+  require_egrep "$repo_root/docs/lua-app.md" \
     'not shell commands or external sleep loops' \
-    "Lua server docs require Vectis waits"
+    "Lua app docs require Vectis waits"
 }
 
 assert_integration_and_example_evidence() {
@@ -227,7 +227,7 @@ assert_integration_and_example_evidence() {
   require_ctest vectis_example_lua_api_server_pack
   require_ctest vectis_example_mailbox_request_reply
   require_egrep "$repo_root/examples/lua/consumer_service.lua" \
-    'server:consumer_service' \
+    'app:consumer_service' \
     "Lua consumer service example declares service"
   require_egrep "$repo_root/examples/kore/kore_webdav_lockd_consumer_e2e.c" \
     'consumer_service' \
@@ -237,7 +237,7 @@ assert_integration_and_example_evidence() {
     "C mailbox example covers OPC UA monitor handoff"
   require_egrep "$repo_root/tests/lua/server_signal_shutdown.sh" \
     'run_lua_case TERM' \
-    "Lua server signal shutdown test sends SIGTERM"
+    "Lua app signal shutdown test sends SIGTERM"
   require_egrep "$repo_root/tests/lua/server_signal_shutdown.sh" \
     'run_c_case TERM' \
     "C server signal shutdown test sends SIGTERM"

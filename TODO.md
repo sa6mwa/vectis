@@ -92,10 +92,10 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Start/stop a real Kore runtime from `vectis`.
 - [x] Translate the currently supported `vectis_server_config` guardrails into concrete Kore runtime/config settings.
 - [x] Implement the remaining guardrails that Kore does not expose directly yet: response-write idle timeout, minimum body transfer rate, and keepalive request count.
-- [x] Expose Kore WebSocket max-frame and idle-timeout controls through libvectis and Lua server config.
-- [x] Expose the Kore HTTP Server header value through libvectis and Lua server config, with Vectis-owned validation.
-- [x] Expose Kore pretty framework error pages as an opt-in libvectis and Lua server config knob, defaulting off.
-- [x] Expose Kore worker death policy through libvectis and Lua server config, preserving restart as the default.
+- [x] Expose Kore WebSocket max-frame and idle-timeout controls through libvectis and Lua app config.
+- [x] Expose the Kore HTTP Server header value through libvectis and Lua app config, with Vectis-owned validation.
+- [x] Expose Kore pretty framework error pages as an opt-in libvectis and Lua app config knob, defaulting off.
+- [x] Expose Kore worker death policy through libvectis and Lua app config, preserving restart as the default.
 - [x] Wire `pslog` into the Kore runtime path so Vectis server logs and Kore runtime diagnostics use the configured app logger.
 - [x] Expose low-level Kore request/runtime escape hatches where practical for C handlers.
 - [x] Expose additional direct Kore configuration hooks where the startup lifecycle can report errors cleanly: listener bind/port and request-body disk-spool preflights now report occupied, invalid, or unusable startup inputs as Vectis errors before Kore can hit fatal setup paths.
@@ -114,11 +114,11 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Document and enforce Kore's server-global request-body ceiling: Vectis route body policies are semantic/materialization limits and must fit under `vectis_server_config.max_request_body_bytes`.
 - [x] Translate per-route body policies into concrete Kore request-body streaming and disk-offload tuning behavior without broadening the global ingress ceiling.
 - [x] Expose a Vectis-owned request-body spill directory for Kore disk offload from C and Lua, with live runtime coverage.
-- [x] Expose Kore HTTP worker count through validated Vectis C and Lua server config, preserving Kore's zero-as-auto behavior.
-- [x] Expose low-level Kore worker lifecycle/resource knobs through validated C and Lua server config: accept threshold, rlimit nofiles, CPU affinity, and worker shutdown timeout.
+- [x] Expose Kore HTTP worker count through validated Vectis C and Lua app config, preserving Kore's zero-as-auto behavior.
+- [x] Expose low-level Kore worker lifecycle/resource knobs through validated C and Lua app config: accept threshold, rlimit nofiles, CPU affinity, and worker shutdown timeout.
 - [x] Expose Kore's active HTTP request-object limit as validated C and Lua `request_limit`, preserving the default behavior of matching `max_connections`.
 - [x] Add a first C-owned WebSocket route surface over Kore handshakes, callback-borrowed connection handles, send helpers, and raw loopback integration coverage.
-- [x] Add Lua `vectis.server` WebSocket route helpers once the C surface has settled.
+- [x] Add Lua `vectis.app` WebSocket route helpers once the C surface has settled.
 - [x] Support Kore features through Vectis where practical, including websocket, static asset, file upload, and deeper runtime configuration features.
 - [x] Define the supported one-process multi-instance behavior based on what Kore can safely provide.
 - [x] Add real HTTP integration tests.
@@ -143,8 +143,8 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Support ACME runtime configuration through Kore for C services.
 - [x] Add ACME lifecycle examples/tests beyond startup validation, using a controlled ACME test server.
 - [x] Support key-material refresh through explicit Vectis app restart/reload semantics where the embedded Kore runtime cannot perform an in-place TLS context mutation.
-- [x] Expose Kore/OpenSSL TLS protocol version and cipher-list controls through libvectis and Lua server config with pre-start validation.
-- [x] Expose Kore listener backlog, HTTP request processing budget, and HSTS max-age controls through libvectis and Lua server config.
+- [x] Expose Kore/OpenSSL TLS protocol version and cipher-list controls through libvectis and Lua app config with pre-start validation.
+- [x] Expose Kore listener backlog, HTTP request processing budget, and HSTS max-age controls through libvectis and Lua app config.
 
 ## Area 7: JSON Surface
 
@@ -275,11 +275,11 @@ error, timeout, ownership, cleanup, logger, and streaming conventions.
 - [x] Keep CAI itself as the primary SDK for OpenAI mechanics; Vectis should provide integration glue and service-oriented DX, not a second CAI wrapper.
 - [x] Add a Lua `vectis.cai` service helper for normalized config, owned/borrowed client and agent workflows, ChatGPT auth aliases, one-shot response helpers, and Vectis-structured CAI errors while preserving direct `require("cai")`.
 - [x] Add a libvectis/Kore CAI MCP route adapter that mounts CAI's Streamable HTTP handler, streams request bodies into CAI as a `cai_source`, and names the current response side as file-backed rather than live streaming.
-- [x] Add Lua `server:mcp()` for Vectis-owned MCP servers with C-owned CAI tool registries populated from Lua raw JSON tool callbacks.
+- [x] Add Lua `app:mcp()` for Vectis-owned MCP servers with C-owned CAI tool registries populated from Lua raw JSON tool callbacks.
 - [x] Re-export the upstream CAI MCP client Lua binding through the existing CAI/vectis.libs surfaces and the `vectis.cai.mcp_client` alias without implementing a Vectis-owned duplicate client binding.
 - [x] Add descriptor-backed `vectis_cai_worker_service` for supervised one-shot CAI text/JSON work over bounded mailbox request/reply records, with runtime-domain CAI client/agent materialization and no borrowed Lua/Kore callback state.
 - [x] Add C helpers for `vectis.cai.request` and `vectis.cai.reply` mailbox envelope build/decode with deterministic service-only tests.
-- [x] Add Lua helpers for `vectis.cai.request` and `vectis.cai.reply` mailbox envelope build/decode, plus `server:cai_worker_service()` registration and deterministic service-only/supervised tests.
+- [x] Add Lua helpers for `vectis.cai.request` and `vectis.cai.reply` mailbox envelope build/decode, plus `app:cai_worker_service()` registration and deterministic service-only/supervised tests.
 
 ## Area 12: Lua Runtime and Framework
 
@@ -299,7 +299,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Configure Lua package paths so bundled/native Vectis modules load without user setup.
 - [x] Provide the first statically preloaded `require("vectis")` facade for the embedded Lua runner.
 - [x] Expand `require("vectis")` into the full high-level framework facade for currently documented workflow modules, with direct module identity preserved for every top-level alias.
-- [x] Register C-owned workflow tables (`vectis.auth`, `vectis.cert`, `vectis.embedded`, `vectis.server`, and `vectis.ssh`) as direct preloaded modules and top-level `require("vectis")` aliases.
+- [x] Register C-owned workflow tables (`vectis.auth`, `vectis.cert`, `vectis.embedded`, `vectis.app`, and `vectis.ssh`) as direct preloaded modules and top-level `require("vectis")` aliases.
 - [x] Add user-facing docs and smoke coverage for the direct `vectis.embedded` packed asset workflow module.
 - [x] Add a Lua coverage matrix under `docs/` that tracks every Vectis C SDK workflow and bundled dependency facade as `native`, `vectis DX`, `tested`, `packed-tested`, `live-tested`, or `intentionally C-only`.
 - [x] Add a lifecycle contract that fails when a bundled dependency or Vectis-owned C workflow is added without an explicit Lua coverage-matrix entry.
@@ -350,9 +350,9 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Extend DSV typed Lua parsing to support dynamic string fields without violating LoneJSON Lua record ownership/cleanup invariants.
 - [x] Add packed scenario coverage for DSV Lua workflows.
 - [x] Add Lua route-row handler integration for DSV routes.
-- [x] Add Lua WebDAV client helpers for PROPFIND, MKCOL, GET, PUT, COPY, MOVE, DELETE, auth headers, depth handling, destination handling, structured errors, and file-backed transfer; keep server-side WebDAV helpers on `vectis.server`.
-- [x] Add a C-owned Lua `server:webdav()` helper for ordinary Vectis-managed mutable WebDAV mounts, including unauthenticated mounts plus native and callback auth providers.
-- [x] Add a C-owned Lua `server:webdav_embedded()` helper for read-only WebDAV mounts over packed embedded assets, including native/callback auth providers.
+- [x] Add Lua WebDAV client helpers for PROPFIND, MKCOL, GET, PUT, COPY, MOVE, DELETE, auth headers, depth handling, destination handling, structured errors, and file-backed transfer; keep server-side WebDAV helpers on `vectis.app`.
+- [x] Add a C-owned Lua `app:webdav()` helper for ordinary Vectis-managed mutable WebDAV mounts, including unauthenticated mounts plus native and callback auth providers.
+- [x] Add a C-owned Lua `app:webdav_embedded()` helper for read-only WebDAV mounts over packed embedded assets, including native/callback auth providers.
 - [x] Expand Lua server-side WebDAV helpers beyond Vectis-managed storage so ordinary Lua apps can mount direct mutable disk docroots as WebDAV mounts without C glue.
 - [x] Add an initial narrow dependency-native OpenSSL Lua facade for stable primitives not covered by `vectis.cert`, while keeping Vectis certificate workflows as the default DX.
 - [x] Expand the dependency-native OpenSSL Lua facade with general EVP digest and HMAC helpers while keeping fixed SHA-256 helpers for common workflows.
@@ -375,16 +375,16 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add reusable Lua HTTP client defaults for retry policies, proxy/TLS/client-cert settings, protocol allowlists, timeouts, credentials, and merged headers.
 - [x] Add richer Lua HTTP file-backed response presets if repeated app workflows need more than `download_path`/`upload_path` plus client defaults.
 - [x] Add C-owned Lua fixed route helpers for text responses and redirects alongside JSON/auth JSON routes.
-- [x] Add Lua request-body streaming policies through a dedicated `server:upload()` helper; keep buffered routes, live `stream_source`/`server:sse` responses, and file-backed `spooled_source` behavior explicitly separate.
-- [x] Add C-owned Lua `server:route()` buffered request callback routes with method/path, named path/query/header lookup, bounded buffered body access, response headers, string bodies, status-only responses, and file responses.
-- [x] Add native/callback auth provider guards to Lua `server:route()` and expose the allowed principal to the handler request table.
-- [x] Add Lua `server:group()` buffered route groups with shared prefix/default auth/body/method settings and buffered before/after hooks, including short-circuit response support.
+- [x] Add Lua request-body streaming policies through a dedicated `app:upload()` helper; keep buffered routes, live `stream_source`/`app:sse` responses, and file-backed `spooled_source` behavior explicitly separate.
+- [x] Add C-owned Lua `app:route()` buffered request callback routes with method/path, named path/query/header lookup, bounded buffered body access, response headers, string bodies, status-only responses, and file responses.
+- [x] Add native/callback auth provider guards to Lua `app:route()` and expose the allowed principal to the handler request table.
+- [x] Add Lua `app:group()` buffered route groups with shared prefix/default auth/body/method settings and buffered before/after hooks, including short-circuit response support.
 - [x] Add explicit file-backed Lua `spooled_source` route responses for callback-produced bodies that should avoid one large Lua string without claiming true response streaming.
-- [x] Add packed API example coverage for live Lua `stream_source`, `server:sse`, and true request-body streaming upload routes.
-- [x] Add Lua OpenAPI route metadata and JSON/YAML generation helpers on the C-owned `vectis.server` receiver, including schema lifetime retention and packed API example coverage.
+- [x] Add packed API example coverage for live Lua `stream_source`, `app:sse`, and true request-body streaming upload routes.
+- [x] Add Lua OpenAPI route metadata and JSON/YAML generation helpers on the C-owned `vectis.app` receiver, including schema lifetime retention and packed API example coverage.
 - [x] Document and expose the core Lua auth facade for user DB configuration, credential storage location, password/TOTP/email-token factor policy, OAuth2/OIDC flows, WebDAV key issuance/revocation, and callback/native provider registration.
 - [x] Add higher-level Lua auth DX helpers for opinionated admin/browser flows on top of the existing C-owned native auth routes and provider contract.
-- [x] Add Lua CAI integration helpers once the CAI C SDK surface stabilizes: borrow/create clients, normalize config/auth paths, expose common CAI constructors and tool helpers, decorate CAI errors with Vectis status/source metadata, and preserve CAI as the primary OpenAI SDK. C embedders use the public CAI request/source and output sink adapters for true streaming HTTP/lockd/file integration; the current Lua server route surface uses CAI's dependency-native spooled/callback APIs rather than a Vectis request/response userdata bridge.
+- [x] Add Lua CAI integration helpers once the CAI C SDK surface stabilizes: borrow/create clients, normalize config/auth paths, expose common CAI constructors and tool helpers, decorate CAI errors with Vectis status/source metadata, and preserve CAI as the primary OpenAI SDK. C embedders use the public CAI request/source and output sink adapters for true streaming HTTP/lockd/file integration; the current Lua app route surface uses CAI's dependency-native spooled/callback APIs rather than a Vectis request/response userdata bridge.
 - [x] Add explicit Lua facade contracts for cpkt `sus`/whisper and cpkt audio/miniaudio, including streaming audio source/sink ownership, transcription/voice workflow shape, and deterministic smoke tests without requiring live external services.
 - [x] Add cpkt `sus`/whisper Lua transcriber receiver shells from `docs/lua-sus-audio-contract.md`, including model-created transcribers, PCM table transcription methods, revised text, and segment/progress/abort callback registration.
 - [x] Add cpkt `sus`/whisper Lua process-wide backend log sink configuration and log-level constants.
@@ -394,16 +394,16 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Implement the remaining cpkt audio/miniaudio Lua facade receiver shells from `docs/lua-sus-audio-contract.md`, including capture/playback device helpers behind opt-in tests.
 - [x] Add initial dependency-native cpkt `sus` and audio Lua modules with deterministic metadata, catalog/cache, callback decoder/encoder, VOX, PTT, preload, example, and packed execution coverage.
 - [x] Add user-facing Lua docs for the dependency-native cpkt `sus` and audio facades.
-- [x] Add descriptor-backed `vectis_audio_worker_service` over bounded `vectis.audio.decode`, `vectis.audio.encode`, and `vectis.audio.vox` mailbox records, with runtime-domain decoder/encoder/VOX materialization, C envelope helpers, Lua `vectis.audio_worker` helpers, `server:audio_worker_service()` registration, deterministic unit/example/packed coverage, and no managed-worker Lua callbacks.
+- [x] Add descriptor-backed `vectis_audio_worker_service` over bounded `vectis.audio.decode`, `vectis.audio.encode`, and `vectis.audio.vox` mailbox records, with runtime-domain decoder/encoder/VOX materialization, C envelope helpers, Lua `vectis.audio_worker` helpers, `app:audio_worker_service()` registration, deterministic unit/example/packed coverage, and no managed-worker Lua callbacks.
 - [x] Add the managed `vectis.audio.vox` worker contract with true segment/progress event semantics rather than a faux streaming materialized reply.
 - [x] Add descriptor-backed `vectis_sus_worker_service` over bounded `vectis.sus.transcribe_pcm` and `vectis.sus.transcribe_file` mailbox request/reply records, with runtime-domain model/transcriber materialization, explicit materialized/file-backed output naming, and deterministic no-model plus opt-in loaded-model coverage.
-- [x] Add Lua helpers for SUS worker mailbox envelope build/decode and `server:sus_worker_service()` registration without replacing direct `require("sus")`.
+- [x] Add Lua helpers for SUS worker mailbox envelope build/decode and `app:sus_worker_service()` registration without replacing direct `require("sus")`.
 - [x] Add Lua helpers for libmdf/softline where Vectis-owned terminal workflows need higher-level DX; keep their direct modules available without wrapping.
 - [ ] Integrate CAI agent mode with Vectis host adapters once CAI exposes stable agent tool/state/callback contracts; keep Agent Smith mechanics CAI-owned rather than adding a parallel Vectis agent runtime.
 - [x] Add deterministic Lua examples for dependency-native pslog, liblql, and softline module workflows without adding redundant Vectis-owned wrappers.
 - [x] Add packed execution coverage for dependency-native pslog, liblql, and softline Lua module workflows.
 - [x] Add a narrow Vectis-owned Lua logging helper over pslog for JSON logger defaults, default fields, and structured Vectis error metadata without replacing direct pslog access.
-- [x] Add deeper logger inheritance hooks for `vectis.server` and app-owned service components: managed service configs inherit the app logger by default, C embedders can override with a borrowed `pslog_logger *`, and Lua service registrations can opt out with `logger_disabled`.
+- [x] Add deeper logger inheritance hooks for `vectis.app` and app-owned service components: managed service configs inherit the app logger by default, C embedders can override with a borrowed `pslog_logger *`, and Lua service registrations can opt out with `logger_disabled`.
 - [x] Add packed execution coverage for deterministic local Lua facade examples covering XML, dependency-native OpenSSL/certs, generic curl protocols, CAI local APIs, MQTT/SMTP helper validation, and SCP helper validation.
 - [x] Add packed execution coverage for dependency-native libmdf render/stream examples and the mutable WebDAV fileserver example.
 - [x] Add deterministic Lua example and packed coverage for opt-in audio capture/playback device workflows.
@@ -415,7 +415,7 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Publish a separate `vectis` Lua rock for users who want to run the Vectis facade inside their own Lua 5.5 environment.
 - [x] Keep LuaRocks out of the `vectis` binary runtime and C binary SDK artifacts.
 - [x] Add a Vectis-owned Lua `vectis.kore` module for embedded-runtime
-  metadata and Kore-related constants without replacing `vectis.server`.
+  metadata and Kore-related constants without replacing `vectis.app`.
 - [x] Add a Vectis-owned Lua SSH command execution helper backed by libssh2.
 - [x] Keep the Lua framework model aligned with the C SDK model: dependency-native access plus a Vectis-owned DX layer with matching concepts and behavior.
 - [x] Support shebang execution through `#!/usr/local/bin/vectis`.
@@ -424,10 +424,10 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Add `options` to `vectis.http` and `vectis.rest.client` for method parity with C curl-backed OPTIONS workflows.
 - [x] Add `options_json` to `vectis.http` and its reusable client for JSON-normalized OPTIONS workflows.
 - [x] Extend the REST DX with lockd operation presets only where examples show repeated service boilerplate.
-- [x] Add a C-owned Lua `server:static_directory()` helper for serving disk docroots such as extracted packed asset trees.
+- [x] Add a C-owned Lua `app:static_directory()` helper for serving disk docroots such as extracted packed asset trees.
 - [x] Add extension-based content-type inference for C and Lua disk static file/directory routes, preserving explicit override and octet-stream fallback.
-- [x] Add a C-owned Lua `server:json()` helper for fixed unguarded JSON endpoints in packed API service scenarios, including explicit method and status configuration.
-- [x] Add matching method and status configuration to the C-owned Lua `server:auth_json()` helper for fixed guarded API endpoints.
+- [x] Add a C-owned Lua `app:json()` helper for fixed unguarded JSON endpoints in packed API service scenarios, including explicit method and status configuration.
+- [x] Add matching method and status configuration to the C-owned Lua `app:auth_json()` helper for fixed guarded API endpoints.
 - [x] Add Lua examples for API server, including packed execution coverage, lockd document workflow, and queue producer/dequeue workflows.
 - [x] Add Lua examples for downstream API calls with normal and packed execution coverage.
 - [x] Add a Lua example for SFTP transfer with deterministic local e2e coverage.
@@ -462,12 +462,12 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Document operational limits around signing, notarization, stripping, hardening tools, and platform-specific executable formats.
 - [x] Add first smoke test that packages and executes a Lua script artifact.
 - [x] Add deterministic e2e coverage for a packed Lua webserver with generated embedded assets, native auth routes, SMTP-delivered email-token login, auth-guarded JSON API route, WebDAV key issuance, authenticated embedded WebDAV reads, mutable WebDAV writes, WebDAV list/copy/move/delete, traversal denial, and embedded-versus-WebDAV mutation isolation.
-- [x] Add packed smoke coverage that extracts embedded assets and serves the extracted docroot through the Lua `server:static_directory()` C-owned route.
+- [x] Add packed smoke coverage that extracts embedded assets and serves the extracted docroot through the Lua `app:static_directory()` C-owned route.
 - [x] Add tests that package a Lua API service and a Lua consumer service, then execute both artifacts.
 - [x] Add a packed-service scenario that runs the embedded site/WebDAV server and lockd `startconsumer` service in the same self-contained Vectis binary and process, with HTTP/WebDAV requests still succeeding while the consumer receives and handles lockd messages.
 - [x] Harden Vectis as a landed-style production webserver for both libvectis embedders and the Lua-controlled `vectis` binary workflow, without carrying landed/taktiv.se-specific C bindings, layouts, or site stats.
   - [x] Add an opt-in C-owned `production_webserver` profile for libvectis and Lua that applies strict quiescence, fail-closed service handling, explicit request-body guardrails, longer graceful shutdown, and conservative autoblock rules while leaving metrics, auth, WebDAV, static mounts, and TLS material explicit.
-- [x] Add a generic Vectis metrics/stats handler for libvectis and a matching Lua `vectis.server` route helper that exposes basic runtime, server, request, auth, and Vectis service metrics only when explicitly enabled, with optional shared-route auth and lockdc/pouch snapshot persistence.
+- [x] Add a generic Vectis metrics/stats handler for libvectis and a matching Lua `vectis.app` route helper that exposes basic runtime, server, request, auth, and Vectis service metrics only when explicitly enabled, with optional shared-route auth and lockdc/pouch snapshot persistence.
 - [ ] Add a lossless liblockdc Pouch root migration operation, then use it to migrate existing plaintext Vectis roots to the default encrypted format without dropping state, attachments, transactions, or queues.
 
 ## Area 14: Verification and Release

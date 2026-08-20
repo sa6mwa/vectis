@@ -277,14 +277,14 @@ startup remain declared and not materialized.
 
 ## Managed Start Semantics
 
-`app->start()` and `server:start()` are nonblocking managed starts. A
+`app->start()` and `app:start()` are nonblocking managed starts. A
 route-backed app cannot be served by direct foreground Kore and return to the
 caller at the same time, so managed starts use a supervised child process for
 route-backed apps even when no background service is declared. The
 `supervision_policy = direct` setting means "fail if supervision is required by
 app-owned services"; it does not turn `start()` into a blocking direct Kore run.
 
-`app->run()` and `server:run()` are blocking production runs. For route-backed
+`app->run()` and `app:run()` are blocking production runs. For route-backed
 apps without app-owned services, `run()` uses T1 direct Kore runtime unless
 `supervision_policy = supervised` forces T2. For route-backed apps with
 app-owned services or metrics persistence, `run()` uses T2 unless
@@ -293,13 +293,13 @@ app-owned services or metrics persistence, `run()` uses T2 unless
 
 ## App Lifecycle Semantics
 
-`app->run(app, error)` and `server:run()` are production entry points:
+`app->run(app, error)` and `app:run()` are production entry points:
 
 - route-backed with no services: T1 direct Kore runtime;
 - route-backed with services or metrics persistence: T2 supervised Kore runtime;
 - service-only: T3 service-only runtime.
 
-`app->start(app, error)` and `server:start()` are managed starts:
+`app->start(app, error)` and `app:start()` are managed starts:
 
 - route-backed with no services: T2 so the caller can continue while Kore
   serves;
@@ -402,7 +402,7 @@ Callbacks:
 - They may publish to a supervisor mailbox or process bus.
 - They may not call arbitrary Lua callbacks.
 
-Lua `server:consumer_service(opts)`:
+Lua `app:consumer_service(opts)`:
 
 - registers a descriptor;
 - defaults `start = true`, meaning "start with the app runtime";
@@ -441,7 +441,7 @@ when auth is configured.
 Vectis exposes production-relevant Kore runtime knobs through validated
 Vectis-owned config fields rather than requiring users to patch Kore config
 files. `vectis_server_config.worker_count` and Lua
-`vectis.server.new({worker_count = ...})` configure Kore HTTP worker processes:
+`vectis.app.new({worker_count = ...})` configure Kore HTTP worker processes:
 zero preserves Kore's automatic CPU-count selection, while explicit nonzero
 values are validated against Vectis' public `VECTIS_SERVER_MAX_WORKER_COUNT`
 bound before startup. The public bound leaves room for Kore's reserved
@@ -455,7 +455,7 @@ exposes Kore's worker death policy as `worker_death_policy`, defaulting to
 restart, and Kore's opt-in generated HTML bodies for bodyless 4xx/5xx responses
 as `pretty_error_pages`, defaulting off for production-minimal error responses.
 `vectis_server_config.kore_quiet` and Lua
-`vectis.server.new({kore_quiet = true})` suppress native Kore lifecycle chatter
+`vectis.app.new({kore_quiet = true})` suppress native Kore lifecycle chatter
 without disabling Vectis-owned logging, metrics, route responses, or service
 lifecycle diagnostics. WebSocket
 `websocket_max_frame_bytes` maps to Kore's inbound frame payload ceiling, and
@@ -481,7 +481,7 @@ Kore does not create request-body spill files.
 When disk spooling is enabled, Vectis also owns the request-body spill directory
 used by both Kore's body offload path and Vectis' streaming receiver spooler
 through `vectis_server_config.request_body_spool_dir` and Lua
-`vectis.server.new({request_body_spool_dir = ...})`. Omission uses
+`vectis.app.new({request_body_spool_dir = ...})`. Omission uses
 a per-user runtime path under `XDG_RUNTIME_DIR` when available, otherwise a
 UID-scoped `/tmp/vectis-http-body-<uid>` path; an empty effective path is
 invalid. If the final spill directory already exists, Vectis rejects symlinks,
@@ -542,7 +542,7 @@ Implemented first slice:
   facade usage until a separate owner-state tool pump is specified.
 - C helpers build/decode the mailbox envelopes. Lua helpers under
   `vectis.cai_worker` are thin builders/decoders, and
-  `server:cai_worker_service()` registers the C-owned worker without accepting
+  `app:cai_worker_service()` registers the C-owned worker without accepting
   Lua callbacks.
 - Future CAI worker extensions may add lockdc queue ingress, raw response
   parameter pass-through, file-backed output, or lockdc document output, but
@@ -679,7 +679,7 @@ First implementation contract:
 - C helpers build/decode the audio decode/encode/VOX and SUS PCM/file
   transcription mailbox envelopes. Lua helpers under `vectis.audio_worker` and
   `vectis.sus_worker` are thin builders/decoders plus
-  `server:audio_worker_service()` / `server:sus_worker_service()`
+  `app:audio_worker_service()` / `app:sus_worker_service()`
   registration. These helpers do not replace direct `require("audio")` or
   `require("sus")`.
 - Request names must state source behavior: `file`, `url`, `pcm`, `decoder`,
@@ -777,7 +777,7 @@ from the process thread table before Kore forks, but it must fail closed when
 threads remain observable at the deadline. Darwin needs a platform-specific
 implementation or strict-mode failure until it exists.
 `vectis_app_config.quiescence_policy` and Lua
-`vectis.server.new({quiescence_policy = ...})` configure only the unavailable
+`vectis.app.new({quiescence_policy = ...})` configure only the unavailable
 inspection case: `strict` is the default and fails closed; `warn_unavailable`
 logs and continues when exact inspection is not implemented. It does not permit
 known active app-owned services or observable extra threads that outlive the
@@ -812,7 +812,7 @@ If a child or service exits unexpectedly, the default policy is fail closed:
 mark the app stopping, stop the rest of the runtime, and return an error from
 `run()`/`wait()`.
 `vectis_app_config.service_failure_policy` and Lua
-`vectis.server.new({service_failure_policy = ...})` configure monitored
+`vectis.app.new({service_failure_policy = ...})` configure monitored
 app-owned service failures. `fail_closed` is the default and stops the app;
 `continue` keeps the app running while preserving failed service diagnostics
 through the service state surface.
@@ -839,10 +839,10 @@ new runtime domain. Historical materialization still closes route declaration:
 routes and upload routes remain rejected after any app-owned service has ever
 materialized, even if the current handle was released during stop.
 `vectis_app_config.shutdown_grace_ms` and Lua
-`vectis.server.new({shutdown_grace_ms = ...})` configure this grace period; zero
+`vectis.app.new({shutdown_grace_ms = ...})` configure this grace period; zero
 or omission uses `VECTIS_APP_DEFAULT_SHUTDOWN_GRACE_MS`.
 `vectis_app_config_init_production_webserver()` and Lua
-`vectis.server.new({profile = "production_webserver"})` are opt-in production
+`vectis.app.new({profile = "production_webserver"})` are opt-in production
 webserver profiles over the same C-owned runtime surface. They keep route,
 metrics, auth, WebDAV, and TLS registration explicit, but apply strict
 quiescence, fail-closed service failures, a longer graceful shutdown deadline,
@@ -864,11 +864,11 @@ during rollback.
 `vectis_server_config` also owns low-level Kore worker lifecycle/resource knobs
 that affect production behavior but do not expose raw Kore configuration text:
 worker accept threshold, worker file descriptor rlimit, worker CPU affinity, and
-Kore worker shutdown timeout. Lua `vectis.server.new()` exposes the same names
+Kore worker shutdown timeout. Lua `vectis.app.new()` exposes the same names
 with validated inputs so profile overrides remain explicit and startup failures
 carry Vectis diagnostics.
 `vectis_app_config.supervision_policy` and Lua
-`vectis.server.new({supervision_policy = ...})` configure route-backed topology:
+`vectis.app.new({supervision_policy = ...})` configure route-backed topology:
 for blocking `run()`, `auto` chooses direct foreground Kore unless app-owned
 services require supervision, `direct` fails closed when such services are
 declared, and `supervised` forces the managed supervisor topology. For
@@ -917,33 +917,33 @@ or runs a service.
 
 Required semantics:
 
-- `server:run()` selects T1, T2, or T3 automatically from app declarations.
-- `server:start()` starts the selected managed runtime and returns; for
+- `app:run()` selects T1, T2, or T3 automatically from app declarations.
+- `app:start()` starts the selected managed runtime and returns; for
   route-backed apps this is a supervised child process because foreground Kore
   cannot both serve and return to the caller.
-- `server:wait()` waits for the selected runtime and shuts it down.
-- `server.new({supervision_policy = "auto" | "direct" | "supervised"})`
+- `app:wait()` waits for the selected runtime and shuts it down.
+- `app.new({supervision_policy = "auto" | "direct" | "supervised"})`
   mirrors the C topology policy.
-- `server.new({service_failure_policy = "fail_closed" | "continue"})` mirrors
+- `app.new({service_failure_policy = "fail_closed" | "continue"})` mirrors
   the C monitored service failure policy.
-- `server.new({quiescence_policy = "strict" | "warn_unavailable"})` mirrors
+- `app.new({quiescence_policy = "strict" | "warn_unavailable"})` mirrors
   the C quiescence policy.
-- `server:consumer_service({ start = true })` means start with the app runtime,
+- `app:consumer_service({ start = true })` means start with the app runtime,
   not start a pthread during declaration for route-backed apps.
-- `server:consumer_service_states()` returns copied lifecycle diagnostics for
+- `app:consumer_service_states()` returns copied lifecycle diagnostics for
   declared C-owned consumer services.
-- `server:opcua_server_service({ server = opcua_server, start = true })`
+- `app:opcua_server_service({ server = opcua_server, start = true })`
   registers a Lua-created OPC UA server as a Vectis managed service by
   borrowing the dependency-native server handle and retaining the Lua userdata
   until service close. Servers with Lua access-control or method callbacks are
   rejected because managed service threads must not enter Lua directly.
-- `server:opcua_server_service_states()` returns copied managed-service
+- `app:opcua_server_service_states()` returns copied managed-service
   lifecycle diagnostics for Lua-registered OPC UA services.
-- `server:curl_worker_service({ request_mailbox = box, reply_broker = broker,
+- `app:curl_worker_service({ request_mailbox = box, reply_broker = broker,
   start = true })` registers the C-owned curl worker service under the Vectis
   managed-service lifecycle. It borrows Lua mailbox/broker userdata, retains
   them until service close, and never invokes Lua from the worker thread.
-- `server:curl_worker_service_states()` returns copied managed-service
+- `app:curl_worker_service_states()` returns copied managed-service
   lifecycle diagnostics for Lua-registered curl worker services.
 - `vectis.curl_worker.http_request()` and
   `vectis.curl_worker.decode_http_response()` build/decode the copied C HTTP
@@ -992,21 +992,21 @@ Required semantics:
    - metrics snapshot transfer; hot route counters use a process-shared counter
      block and supervisor persistence snapshots aggregate that block.
 6. Lua lifecycle updates:
-   - align `server:consumer_service`, `server:run`, `server:start`,
-     `server:wait`;
+   - align `app:consumer_service`, `app:run`, `app:start`,
+     `app:wait`;
    - remove example shell sleeps;
    - document callback ownership.
 7. Extend service declarations:
    - generic managed service descriptors (`vectis_managed_service`);
    - OPC UA managed service descriptors (`vectis_opcua_server_service`);
-   - Lua `server:opcua_server_service` registration over borrowed
+   - Lua `app:opcua_server_service` registration over borrowed
      dependency-native `opcua.server` handles, with Lua callback-bearing
      servers rejected;
    - curl worker descriptors with generic mailbox/lockdc ingress and protocol-
      neutral transfer request records;
      first C/mailbox HTTP request/reply slice implemented as
      `vectis_curl_worker_service`, with Lua registration exposed as
-     `server:curl_worker_service()` and HTTP envelope helpers exposed as
+     `app:curl_worker_service()` and HTTP envelope helpers exposed as
      `vectis.curl_worker`;
    - audio/SUS worker descriptors with runtime-domain device/model
      materialization and mailbox event output; first implementation must cover
@@ -1071,7 +1071,7 @@ Unit tests:
 
 Integration/e2e tests:
 
-- Lua `server:consumer_service()` plus HTTP route starts without pre-Kore
+- Lua `app:consumer_service()` plus HTTP route starts without pre-Kore
   service thread creation;
 - supervised app handles SIGINT/SIGTERM/SIGQUIT cleanly;
 - lockdc consumer and Kore route run concurrently through a safe channel;

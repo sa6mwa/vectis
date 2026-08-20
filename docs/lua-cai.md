@@ -62,14 +62,14 @@ The request side of the MCP route preserves true upload-reader streaming into a
 model because CAI writes to a sink while Kore pulls route responses after the
 handler returns; it is intentionally not described as live response streaming.
 
-Lua applications can mount MCP servers through `server:mcp()` from
-`require("vectis.server")` or `require("vectis").server`. Unlike the C
+Lua applications can mount MCP servers through `app:mcp()` from
+`require("vectis.app")` or `require("vectis").app`. Unlike the C
 `vectis_register_cai_mcp_route()` adapter, the Lua helper uses a buffered normal
 Kore route so CAI and Lua tool callbacks execute in the same Kore route domain.
 This avoids both the upload-reader pthread and cross-process mailbox handoff:
 
 ```lua
-assert(server:mcp({
+assert(app:mcp({
   path = "/mcp",
   name = "site-tools",
   tools = {
@@ -114,7 +114,7 @@ The managed-worker surface is:
   `vectis.cai.request`
 - C reply helper: `vectis_cai_worker_response_decode()` consuming
   `vectis.cai.reply`
-- Lua: `server:cai_worker_service(opts)`
+- Lua: `app:cai_worker_service(opts)`
 - Lua helpers: `vectis.cai_worker.request(opts)` and
   `vectis.cai_worker.decode_reply(event)`
 
@@ -125,12 +125,12 @@ Kore request pointers, CAI clients, agents, or tool registries across the fork
 boundary. Worker replies carry Vectis status/source metadata, CAI dependency
 diagnostics, and explicitly named `text` or `raw_json` output.
 
-`server:cai_worker_service(opts)` accepts `request_mailbox`, optional
+`app:cai_worker_service(opts)` accepts `request_mailbox`, optional
 `reply_broker`, optional `name`, optional `poll_timeout_ms`, optional `start`,
 and a `client` table with copied CAI client defaults such as `api_key`,
 `api_key_env`, `base_url`, `timeout_ms`, `ca_bundle_path`, `ca_path`, and
 `logger_disabled`. Lua callbacks are deliberately rejected by this service; MCP
-tool implementation uses the `server:mcp()` request broker and an owner-state
+tool implementation uses the `app:mcp()` request broker and an owner-state
 mailbox pump. Managed CAI workers must publish copied events only.
 
 Agent-mode ownership is documented in

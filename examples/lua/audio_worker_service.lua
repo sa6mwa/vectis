@@ -30,12 +30,12 @@ local events = vectis.mailbox.new({
   max_payload_bytes = 262144,
 })
 
-local server = assert(vectis.server.new({
+local app = assert(vectis.app.new({
   app_name = "lua-audio-worker-example",
   service_failure_policy = "fail_closed",
 }))
 
-local callback_service, callback_err = server:audio_worker_service({
+local callback_service, callback_err = app:audio_worker_service({
   request_mailbox = requests,
   callback = function()
     error("audio worker services must not call Lua callbacks")
@@ -44,7 +44,7 @@ local callback_service, callback_err = server:audio_worker_service({
 assert(callback_service == nil)
 assert(callback_err.message:find("does not accept Lua callbacks", 1, true))
 
-assert(server:audio_worker_service({
+assert(app:audio_worker_service({
   name = "lua-audio-worker",
   request_mailbox = requests,
   reply_broker = broker,
@@ -54,7 +54,7 @@ assert(server:audio_worker_service({
   max_segment_frames = 8192,
 }) == true)
 
-local started, start_err = server:start()
+local started, start_err = app:start()
 assert(started == true, start_err and start_err.message or tostring(start_err))
 
 local encode_event = assert(audio_worker.encode_file_request({
@@ -147,7 +147,7 @@ end
 assert(saw_state)
 assert(saw_segment)
 
-local states, states_err = server:audio_worker_service_states()
+local states, states_err = app:audio_worker_service_states()
 if states == nil then
   error(states_err and states_err.message or tostring(states_err))
 end
@@ -155,9 +155,9 @@ assert(#states == 1)
 assert(states[1].name == "lua-audio-worker")
 assert(states[1].started == true)
 
-local stopped, stop_err = server:stop()
+local stopped, stop_err = app:stop()
 assert(stopped == true, stop_err and stop_err.message or tostring(stop_err))
-server:close()
+app:close()
 broker:close()
 events:close()
 requests:close()

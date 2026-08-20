@@ -10,7 +10,7 @@ assets.
 Production webserver mode is opt-in. It is enabled by:
 
 - C: `vectis_app_config_init_production_webserver()`
-- Lua: `vectis.server.new({profile = "production_webserver"})`
+- Lua: `vectis.app.new({profile = "production_webserver"})`
 
 The profile applies production defaults to the C-owned runtime surface:
 

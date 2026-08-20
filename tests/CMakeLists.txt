@@ -171,14 +171,14 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_websocket PROPERTIES
     LABELS "lua;smoke;local;integration"
     TIMEOUT 30)
-  add_test(NAME vectis_lua_server_restart
+  add_test(NAME vectis_lua_app_restart
            COMMAND "${CMAKE_COMMAND}"
                    "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
                    "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
                    "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
                    -P "${CMAKE_SOURCE_DIR}/tests/lua/server_restart.cmake")
-  set_tests_properties(vectis_lua_server_restart PROPERTIES
+  set_tests_properties(vectis_lua_app_restart PROPERTIES
     LABELS "lua;smoke;local;integration"
     TIMEOUT 30)
   add_test(NAME vectis_lua_http_redirect
@@ -540,7 +540,7 @@ if(TARGET vectis_bin)
                    "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
                    "-DVECTIS_SCRIPT=${CMAKE_SOURCE_DIR}/examples/lua/api_server.lua"
                    "-DVECTIS_PORT_ENV=VECTIS_LUA_API_EXAMPLE_PORT"
-                   "-DVECTIS_SUCCESS_MARKER=lua api server example ok"
+                   "-DVECTIS_SUCCESS_MARKER=lua api app example ok"
                    "-DVECTIS_LABEL=Lua API server example"
                    "-DVECTIS_EXTRA_ENV=VECTIS_LUA_API_EXAMPLE_AUTH_PATH=${CMAKE_CURRENT_BINARY_DIR}/vectis-lua-api-example-auth.json"
                    -P "${CMAKE_SOURCE_DIR}/tests/lua/run_example_with_port.cmake")

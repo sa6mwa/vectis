@@ -90,18 +90,18 @@ end
 
 ## Server Mounts
 
-Server-side WebDAV stays on `vectis.server`.
+Server-side WebDAV stays on `vectis.app`.
 
-- `server:webdav(opts)` registers an ordinary mutable WebDAV storage mount. By
+- `app:webdav(opts)` registers an ordinary mutable WebDAV storage mount. By
   default it uses Vectis-managed storage; set `root_dir` to serve a direct
   mutable disk docroot.
-- `server:webdav_embedded(opts)` registers a read-only WebDAV mount over packed
+- `app:webdav_embedded(opts)` registers a read-only WebDAV mount over packed
   embedded assets without extracting them. It supports `OPTIONS`, `PROPFIND`,
   `GET`, and `HEAD`; mutating WebDAV methods return `405`.
-- `server:webdav_embedded_site(opts)` extracts packed embedded assets into the
+- `app:webdav_embedded_site(opts)` extracts packed embedded assets into the
   mutable WebDAV storage tree, then registers a WebDAV mount over that storage.
 
-`server:webdav` requires:
+`app:webdav` requires:
 
 - `path_prefix`, defaulting to `/`.
 - `cache_dir`, an absolute cache/storage directory used for managed storage or
@@ -114,16 +114,16 @@ Server-side WebDAV stays on `vectis.server`.
 
 By default WebDAV mounts require auth. Set `auth_required = false` only for
 deliberately public mounts. Auth tables accept the same native and callback
-provider shapes used by `server:auth_json` and `server:webdav_embedded_site`.
-`server:webdav_embedded()` accepts the same auth fields plus optional
+provider shapes used by `app:auth_json` and `app:webdav_embedded_site`.
+`app:webdav_embedded()` accepts the same auth fields plus optional
 `cache_control` and fallback `content_type`; it requires a packed binary with
 embedded assets.
 
 ```lua
 local vectis = require("vectis")
-local server = assert(vectis.server.new({bind = "127.0.0.1", port = 8080}))
+local server = assert(vectis.app.new({bind = "127.0.0.1", port = 8080}))
 
-assert(server:webdav({
+assert(app:webdav({
   path_prefix = "/dav",
   cache_dir = "/var/lib/myapp",
   site_id = "default",
@@ -139,7 +139,7 @@ assert(server:webdav({
 Direct disk-root mounts use the same WebDAV auth contract:
 
 ```lua
-assert(server:webdav({
+assert(app:webdav({
   path_prefix = "/files",
   cache_dir = "/var/cache/myapp",
   site_id = "files",
@@ -148,4 +148,4 @@ assert(server:webdav({
 }) == true)
 ```
 
-`server:webdav_embedded()` is read-only over the packed asset tree.
+`app:webdav_embedded()` is read-only over the packed asset tree.

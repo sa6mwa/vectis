@@ -1,7 +1,7 @@
 # Vectis Lua Kore
 
 `vectis.kore` exposes the embedded Kore runtime contract to Lua code without
-creating a second server API. Use `vectis.server` to construct servers, routes,
+creating a second server API. Use `vectis.app` to construct servers, routes,
 WebDAV mounts, metrics endpoints, and managed services.
 
 The embedded `vectis` binary preloads a C-owned `vectis.kore` module:
@@ -33,5 +33,5 @@ the Vectis-owned Kore runtime. A `vectis` binary built with
 - `DEFAULT_WEBSOCKET_MAX_FRAME_BYTES`: default Vectis WebSocket frame ceiling.
 - `DEFAULT_WEBSOCKET_TIMEOUT_MS`: default Vectis WebSocket idle timeout.
 - `WORKER_DEATH_RESTART` and `WORKER_DEATH_TERMINATE`: worker death policy
-  constants matching `server.new({ worker_death_policy = ... })` semantics.
+  constants matching `app.new({ worker_death_policy = ... })` semantics.
 - `websocket`: WebSocket opcode constants.

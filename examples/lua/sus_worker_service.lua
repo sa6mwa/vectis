@@ -19,12 +19,12 @@ local broker = vectis.mailbox.broker({
   },
 })
 
-local server = assert(vectis.server.new({
+local app = assert(vectis.app.new({
   app_name = "lua-sus-worker-example",
   service_failure_policy = "fail_closed",
 }))
 
-local callback_service, callback_err = server:sus_worker_service({
+local callback_service, callback_err = app:sus_worker_service({
   request_mailbox = requests,
   callback = function()
     error("SUS worker services must not call Lua callbacks")
@@ -67,18 +67,18 @@ assert(event.kind == sus_worker.TRANSCRIBE_PCM_KIND)
 assert(event.expects_reply == true)
 
 if service_config.model_path == nil and service_config.cached_model == nil then
-  local started, start_err = server:start()
+  local started, start_err = app:start()
   assert(started == true, start_err and start_err.message or tostring(start_err))
 
-  local states, states_err = server:sus_worker_service_states()
+  local states, states_err = app:sus_worker_service_states()
   if states == nil then
     error(states_err and states_err.message or tostring(states_err))
   end
   assert(#states == 0)
 
-  local stopped, stop_err = server:stop()
+  local stopped, stop_err = app:stop()
   assert(stopped == true, stop_err and stop_err.message or tostring(stop_err))
-  server:close()
+  app:close()
   broker:close()
   requests:close()
 
@@ -86,9 +86,9 @@ if service_config.model_path == nil and service_config.cached_model == nil then
   return
 end
 
-assert(server:sus_worker_service(service_config) == true)
+assert(app:sus_worker_service(service_config) == true)
 
-local started, start_err = server:start()
+local started, start_err = app:start()
 assert(started == true, start_err and start_err.message or tostring(start_err))
 
 local reply, request_err = broker:request(event, { timeout_ms = 3000 })
@@ -105,7 +105,7 @@ assert(decoded.ok == true, decoded.message or "SUS transcription failed")
 assert(decoded.operation == "transcribe_pcm")
 assert(type(decoded.text) == "string")
 
-local states, states_err = server:sus_worker_service_states()
+local states, states_err = app:sus_worker_service_states()
 if states == nil then
   error(states_err and states_err.message or tostring(states_err))
 end
@@ -113,9 +113,9 @@ assert(#states == 1)
 assert(states[1].name == "lua-sus-worker")
 assert(states[1].started == true)
 
-local stopped, stop_err = server:stop()
+local stopped, stop_err = app:stop()
 assert(stopped == true, stop_err and stop_err.message or tostring(stop_err))
-server:close()
+app:close()
 broker:close()
 requests:close()
 

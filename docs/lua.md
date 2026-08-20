@@ -116,8 +116,8 @@ modules or C SDK workflows:
   [Lua MQTT](lua-mqtt.md).
 - `vectis.rest`: buffered JSON REST route and client helpers, documented in
   [Lua REST](lua-rest.md).
-- `vectis.server`: Kore-backed server, route, OpenAPI, and service helpers,
-  documented in [Lua server](lua-server.md).
+- `vectis.app`: Kore-backed server, route, OpenAPI, and service helpers,
+  documented in [Lua app](lua-app.md).
 - `vectis.status`: status/error-source constants and Lua error decoration,
   documented in [Lua status](lua-status.md).
 - `vectis.smtp`: SMTP send helper over curl, documented in
@@ -132,7 +132,7 @@ modules or C SDK workflows:
 
 Workflow tables including `vectis.auth`, `vectis.audio_worker`,
 `vectis.cert`, `vectis.cai_worker`, `vectis.curl_worker`, `vectis.embedded`,
-`vectis.kore`, `vectis.server`, `vectis.ssh`, and `vectis.sus_worker` are preloaded modules inside the embedded
+`vectis.kore`, `vectis.app`, `vectis.ssh`, and `vectis.sus_worker` are preloaded modules inside the embedded
 binary. `vectis.auth` re-exports the C-owned `vectis.auth.core` facade and adds Lua DX helpers. `require("vectis").auth` and
 `require("vectis.auth")` return the same table, and the same identity rule
 applies to the other workflow modules exposed through the top-level namespace.

@@ -87,7 +87,7 @@ run_lua_case() {
   rm -f "$log"
   cat >"$script" <<LUA
 local vectis = require("vectis")
-local server = assert(vectis.server.new({
+local server = assert(vectis.app.new({
   bind = "127.0.0.1",
   port = ${port},
   tls = { mode = "disabled" },

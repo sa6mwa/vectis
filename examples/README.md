@@ -98,7 +98,7 @@ kept out of the examples. A Lua example may require Vectis or bundled product
 modules, but it must not require another file from `examples/lua/`.
 Examples must not call `os.execute`, `io.popen`, C `system()`, shell `sleep`,
 or shell command wrappers for runtime waits. Long-running examples use
-`server:run()`, `server:wait()`, `server:stop()`, or `vectis.sleep_ms()` so the
+`app:run()`, `app:wait()`, `app:stop()`, or `vectis.sleep_ms()` so the
 same code works in scratch containers where `vectis` is the only executable.
 
 - `lua/mdf_render.lua`: libmdf Lua Markdown rendering through both
@@ -151,8 +151,8 @@ same code works in scratch containers where `vectis` is the only executable.
 - `lua/webdav_fileserver.lua`: mutable WebDAV fileserver mount and
   `vectis.webdav` client operations against a deterministic local server.
 - `lua/api_server.lua`: packable Lua API server script using direct
-  `server:json()`/`server:auth_json()` receivers, OpenAPI generation,
-  live `stream_source`, `server:sse()`, request-body streaming upload routes,
+  `app:json()`/`app:auth_json()` receivers, OpenAPI generation,
+  live `stream_source`, `app:sse()`, request-body streaming upload routes,
   `vectis.rest`/`vectis.http` client helpers for self-test traffic, and native
   issued credentials. By default it self-tests and exits; set
   `VECTIS_LUA_API_EXAMPLE_SERVE=1` to keep it listening. CTest also packs and
@@ -172,7 +172,7 @@ same code works in scratch containers where `vectis` is the only executable.
 - `lua/metrics_ephemeral.lua`: simple Hello World page with unauthenticated
   `/.metrics` dashboard and JSON snapshot using in-memory metrics only.
 - `lua/downstream_api.lua`: packable Lua downstream API client example using
-  direct `server:json()` receivers for the deterministic local API and
+  direct `app:json()` receivers for the deterministic local API and
   `vectis.rest` base-URL client helpers for the downstream calls. CTest runs
   both normal and packed forms.
 - `lua/sftp_transfer.lua`: curl-backed Lua SFTP upload/download through
@@ -187,7 +187,7 @@ same code works in scratch containers where `vectis` is the only executable.
 - `lua/lockd_queue.lua`: Vectis lockd helper queue enqueue/dequeue workflow
   with explicit ack against `LOCKD_ENDPOINT`.
 - `lua/consumer_service.lua`: long-running Lua service shape using
-  `server:consumer_service()` with the C-owned `webdav_marker` handler. In
+  `app:consumer_service()` with the C-owned `webdav_marker` handler. In
   self-test mode it enqueues a lockd message and observes marker files through a
   static route; set `VECTIS_LUA_CONSUMER_EXAMPLE_SERVE=1` to keep it running.
 

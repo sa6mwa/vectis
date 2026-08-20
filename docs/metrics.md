@@ -27,10 +27,10 @@ registered.
 
 ## Lua API
 
-Lua scripts register the same C-owned surface through `server:metrics(opts)`:
+Lua scripts register the same C-owned surface through `app:metrics(opts)`:
 
 ```lua
-assert(server:metrics({
+assert(app:metrics({
   path = "/.metrics",
   json_path = "/.metrics.json",
   title = "admin.example",
@@ -39,7 +39,7 @@ assert(server:metrics({
 ```
 
 `auth` uses the same native or callback auth provider table accepted by
-`server:route`, `server:webdav`, and `server:auth_json`. There is no
+`app:route`, `app:webdav`, and `app:auth_json`. There is no
 metrics-specific auth mechanism.
 
 The native authenticated shape is:

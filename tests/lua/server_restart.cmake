@@ -6,7 +6,7 @@ file(WRITE "${script}" [[
 local vectis = require("vectis")
 
 local port = assert(tonumber(os.getenv("VECTIS_SERVER_RESTART_PORT")))
-local server = assert(vectis.server.new({
+local server = assert(vectis.app.new({
   bind = "127.0.0.1",
   port = port,
   tls = { mode = "disabled" },

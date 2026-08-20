@@ -1,7 +1,7 @@
 # Lua REST Helpers
 
 `require("vectis").rest` is a Vectis-owned helper layer over
-`vectis.server`, `vectis.http`, LoneJSON, and `vectis.status`. It is for
+`vectis.app`, `vectis.http`, LoneJSON, and `vectis.status`. It is for
 buffered JSON API workflows. It is not a streaming route surface.
 
 ## Server Routes
@@ -11,13 +11,13 @@ buffered JSON API workflows. It is not a streaming route surface.
   If `err` itself contains a value LoneJSON cannot encode, `error_response`
   returns a minimal `500` JSON response describing the encode failure instead
   of raising a Lua assertion error.
-- `rest.route(server, opts)` wraps `server:route()` with buffered JSON request
+- `rest.route(server, opts)` wraps `app:route()` with buffered JSON request
   decoding, optional validation, handler error mapping, and JSON response
   serialization.
-- `rest.group(server, opts)` wraps `server:group()` for grouped buffered JSON
+- `rest.group(server, opts)` wraps `app:group()` for grouped buffered JSON
   routes with shared defaults.
 
-`rest.route` accepts ordinary `server:route` fields such as `path`, `method`,
+`rest.route` accepts ordinary `app:route` fields such as `path`, `method`,
 `methods`, `auth`, `before`, `after`, and `body`. Additional REST fields:
 
 - `decode_json = false` disables request body decoding.
@@ -55,7 +55,7 @@ assert(rest.route(server, {
 }) == true)
 ```
 
-REST routes are buffered. Use `server:dsv()` for DSV request-body streaming and
+REST routes are buffered. Use `app:dsv()` for DSV request-body streaming and
 future dedicated route surfaces for SSE or true streaming responses.
 
 REST does not provide lockd-specific route presets. Current public examples use

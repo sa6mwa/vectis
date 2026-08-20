@@ -1,6 +1,6 @@
-# Vectis Lua Server
+# Vectis Lua App
 
-`vectis.server` exposes C-owned server receivers for Lua applications. It
+`vectis.app` exposes C-owned app receivers for Lua applications. It
 supports fixed routes, buffered Lua request callbacks, static mounts, WebDAV,
 auth routes, and lockd consumer services.
 
@@ -12,25 +12,25 @@ The supported Kore runtime and route surface is audited in
 ```lua
 local vectis = require("vectis")
 
-local server = assert(vectis.server.new({
+local app = assert(vectis.app.new({
   bind = "127.0.0.1",
   port = 8080,
 }))
 
-assert(server:run() == true)
-server:close()
+assert(app:run() == true)
+app:close()
 ```
 
-`server:run()` enters the foreground server runtime and returns after `SIGINT`,
-`SIGTERM`, or `SIGQUIT`. `server:start()` starts a managed Kore child process
+`app:run()` enters the foreground server runtime and returns after `SIGINT`,
+`SIGTERM`, or `SIGQUIT`. `app:start()` starts a managed Kore child process
 for tests and tools that need the Lua parent to continue; pair it with
-`server:wait()` or `server:stop()`. `server:restart()` runs the same graceful
+`app:wait()` or `app:stop()`. `app:restart()` runs the same graceful
 stop/start sequence for the whole Vectis app, including Kore and app-owned
-daemon services. `server:reload()` is an alias for `server:restart()`. This is
+daemon services. `app:reload()` is an alias for `app:restart()`. This is
 the supported certificate rotation primitive for file-backed or source-backed
 TLS material: the next managed Kore child rereads the configured certificate,
 key, chain, and client CA material. Existing connections can be closed during
-the restart. In-memory PEM values are immutable after server construction.
+the restart. In-memory PEM values are immutable after app construction.
 `shutdown_grace_ms` controls the managed runtime grace period before forced
 child termination; zero or omission uses the Vectis default. `supervision_policy`
 accepts `auto`, `direct`, or `supervised`:
@@ -40,7 +40,7 @@ supervisor topology, `direct` fails if such services are declared, and
 `service_failure_policy` accepts `fail_closed` or `continue`; the default
 `fail_closed` stops the app when a monitored app-owned service fails, while
 `continue` leaves the app running and reports the failed service through
-`server:consumer_service_states()`.
+`app:consumer_service_states()`.
 `quiescence_policy` accepts `strict` or `warn_unavailable`; the default
 `strict` fails closed when Vectis cannot prove the declaration process is safe
 for Kore startup. `warn_unavailable` only applies on platforms without exact
@@ -88,16 +88,16 @@ profile as `vectis_app_config_init_production_webserver()`: strict quiescence,
 fail-closed service failure handling, a longer graceful shutdown window,
 explicit request-body guardrails, and conservative autoblock rules for repeated
 401, 403, 404, 429, TCP-stall, and TLS-failure events. Explicit fields in
-`vectis.server.new()` still override the profile. Metrics, auth routes, WebDAV
+`vectis.app.new()` still override the profile. Metrics, auth routes, WebDAV
 mounts, static mounts, and TLS material remain separate opt-in registrations.
 
-Managed app-owned services inherit the server/app logger for lifecycle events
+Managed app-owned services inherit the app logger for lifecycle events
 such as start, stop, and monitored failure. Lua service registration helpers
 accept `logger_disabled = true` to suppress service lifecycle logging and
 dependency logger inheritance for that service. C embedders can additionally
 provide a per-service `pslog_logger *` override on managed service configs.
 
-`vectis.server.new({tls = ...})` accepts the same manual and ACME modes as the
+`vectis.app.new({tls = ...})` accepts the same manual and ACME modes as the
 C app config. Manual TLS can use paths or in-memory PEM strings:
 
 - `cert_key_bundle_path`, `bundle_path`
@@ -155,7 +155,7 @@ It always uses a `308` response and preserves the request path and query while
 removing the cleartext listener port from `Host`.
 
 ```lua
-local server = assert(vectis.server.new({
+local app = assert(vectis.app.new({
   bind = "0.0.0.0",
   port = 8443,
   tls = {
@@ -191,11 +191,11 @@ select another lockd endpoint or object.
 
 ## Fixed Routes
 
-- `server:json(opts)` registers a fixed JSON response.
-- `server:auth_json(opts)` registers a fixed JSON response guarded by a native
+- `app:json(opts)` registers a fixed JSON response.
+- `app:auth_json(opts)` registers a fixed JSON response guarded by a native
   or callback auth provider.
-- `server:text(opts)` registers a fixed text response.
-- `server:redirect(opts)` registers a fixed redirect response with a
+- `app:text(opts)` registers a fixed text response.
+- `app:redirect(opts)` registers a fixed redirect response with a
   `Location` header.
 
 Common route fields:
@@ -207,17 +207,17 @@ Common route fields:
 - `content_type`
 - `cache_control`
 
-`server:redirect` also requires `location` and restricts status codes to
+`app:redirect` also requires `location` and restricts status codes to
 `300..399`.
 
 ```lua
-assert(server:text({
+assert(app:text({
   path = "/health",
   body = "ok\n",
   cache_control = "no-store",
 }) == true)
 
-assert(server:redirect({
+assert(app:redirect({
   path = "/docs",
   location = "/static/docs/index.html",
   status = 303,
@@ -226,7 +226,7 @@ assert(server:redirect({
 
 ## Lua Callback Routes
 
-`server:route(opts)` registers an ordinary route handled by a Lua callback.
+`app:route(opts)` registers an ordinary route handled by a Lua callback.
 The first callback surface is deliberately materialized, not streaming.
 
 Route fields:
@@ -236,7 +236,7 @@ Route fields:
 - `body`: `nil`, `false`, `"none"`, `true`, `"buffered"`, or
   `{mode = "buffered", max_bytes = ...}`
 - `auth`: optional native or callback auth provider config, using the same
-  contract as `server:auth_json`
+  contract as `app:auth_json`
 - `before`: optional function receiving the request before the handler
 - `after`: optional function receiving the request and handler response value
 - `handler`: function receiving a borrowed request table
@@ -290,7 +290,7 @@ table replaces it. Hooks are part of the buffered route surface; they do not
 make the route streaming.
 
 ```lua
-assert(server:route({
+assert(app:route({
   path = "/hello/:name",
   methods = {"GET", "POST"},
   body = {mode = "buffered", max_bytes = 4096},
@@ -304,7 +304,7 @@ assert(server:route({
   end,
 }) == true)
 
-assert(server:route({
+assert(app:route({
   path = "/report.txt",
   handler = function()
     local chunks = {"first\n", "second\n"}
@@ -326,7 +326,7 @@ assert(server:route({
   end,
 }) == true)
 
-assert(server:route({
+assert(app:route({
   path = "/events.txt",
   handler = function()
     local chunks = {"first\n", "second\n"}
@@ -345,15 +345,15 @@ assert(server:route({
 }) == true)
 ```
 
-`server:group(opts)` registers a group of buffered callback routes with shared
+`app:group(opts)` registers a group of buffered callback routes with shared
 defaults. The group accepts `prefix` or `path_prefix`, optional default `auth`,
 `before`, `after`, `method`, `methods`, and `body`, plus a non-empty `routes`
-array. Each route in `routes` is the same table accepted by `server:route()` and
+array. Each route in `routes` is the same table accepted by `app:route()` and
 overrides group defaults. Relative route paths are joined under the group
 prefix.
 
 ```lua
-assert(server:group({
+assert(app:group({
   prefix = "/api",
   auth = auth_provider,
   before = audit_request,
@@ -371,7 +371,7 @@ assert(server:group({
 
 ## DSV Row Routes
 
-`server:dsv(opts)` registers a C-owned streaming upload-reader route for
+`app:dsv(opts)` registers a C-owned streaming upload-reader route for
 CSV/TSV/DSV request bodies. It uses the same DSV parser and LoneJSON schema
 interop as `vectis.dsv.each()` and invokes Lua once per parsed row; it does not
 materialize the full request body.
@@ -399,7 +399,7 @@ local schema = lonejson.schema("row", {
 })
 
 local total = 0
-assert(server:dsv({
+assert(app:dsv({
   path = "/upload.csv",
   schema = schema,
   on_row = function(_, row)
@@ -417,17 +417,17 @@ assert(server:dsv({
 
 ## OpenAPI
 
-`server:openapi_doc(opts)` attaches OpenAPI metadata to a route path and
-methods. `server:openapi(opts)` generates an OpenAPI document from attached
+`app:openapi_doc(opts)` attaches OpenAPI metadata to a route path and
+methods. `app:openapi(opts)` generates an OpenAPI document from attached
 metadata using the C SDK generator.
 
 Route helpers also accept an `openapi` table and attach it after the route is
-registered. This works for `server:route()`, `server:group()`, fixed route
-helpers, `server:dsv()`, and higher-level wrappers such as `vectis.rest.route()`
-because they pass route fields through to `server:route()`.
+registered. This works for `app:route()`, `app:group()`, fixed route
+helpers, `app:dsv()`, and higher-level wrappers such as `vectis.rest.route()`
+because they pass route fields through to `app:route()`.
 
-OpenAPI schemas borrow Lua-owned LoneJSON schema userdata. The server retains
-those schema objects until `server:close()` so generated docs remain valid after
+OpenAPI schemas borrow Lua-owned LoneJSON schema userdata. The app retains
+those schema objects until `app:close()` so generated docs remain valid after
 normal Lua garbage collection.
 
 OpenAPI fields:
@@ -438,7 +438,7 @@ OpenAPI fields:
 - `request = {name = "...", schema = lonejson_schema}`
 - `responses = {{status = 200, description = "OK", name = "...", schema = ...}}`
 
-`server:openapi({title = "...", version = "...", format = "json"})` returns a
+`app:openapi({title = "...", version = "...", format = "json"})` returns a
 JSON string. `format = "yaml"` returns YAML.
 
 ```lua
@@ -449,7 +449,7 @@ local response_schema = lonejson.schema("order-response", {
   lonejson.field("id", lonejson.string({required = true})),
 })
 
-assert(server:route({
+assert(app:route({
   path = "/orders/:id?",
   method = "POST",
   openapi = {
@@ -471,7 +471,7 @@ assert(server:route({
   end,
 }) == true)
 
-local spec = assert(server:openapi({
+local spec = assert(app:openapi({
   title = "Orders API",
   version = "1.0.0",
   format = "json",
@@ -481,82 +481,82 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
 
 ## Mounts
 
-- `server:static_directory(opts)` serves a disk directory.
+- `app:static_directory(opts)` serves a disk directory.
   - `content_type` is optional. When omitted, Vectis infers the response type
     from the selected disk file extension and falls back to
     `application/octet-stream` for unknown extensions. When provided, it
     overrides inference for every file in the mount.
-- `server:static_file(opts)` serves one disk file.
+- `app:static_file(opts)` serves one disk file.
   - `content_type` is optional. When omitted, Vectis infers the response type
     from `file_path` and falls back to `application/octet-stream` for unknown
     extensions.
-- `server:static_embedded(opts)` serves packed embedded assets read-only.
-- `server:webdav(opts)` serves mutable WebDAV storage, either Vectis-managed
+- `app:static_embedded(opts)` serves packed embedded assets read-only.
+- `app:webdav(opts)` serves mutable WebDAV storage, either Vectis-managed
   storage or a direct disk `root_dir`.
-- `server:webdav_embedded(opts)` serves packed embedded assets through a
+- `app:webdav_embedded(opts)` serves packed embedded assets through a
   read-only WebDAV mount without extracting them.
-- `server:webdav_embedded_site(opts)` extracts packed assets into mutable
+- `app:webdav_embedded_site(opts)` extracts packed assets into mutable
   WebDAV storage and serves them.
-- `server:auth_routes(opts)` registers native login/auth/WebDAV-key routes.
-- `server:metrics(opts)` registers the opt-in C-owned metrics dashboard and
+- `app:auth_routes(opts)` registers native login/auth/WebDAV-key routes.
+- `app:metrics(opts)` registers the opt-in C-owned metrics dashboard and
   JSON snapshot routes.
-- `server:consumer_service(opts)` declares a C-owned lockd consumer service.
+- `app:consumer_service(opts)` declares a C-owned lockd consumer service.
   The default `start = true` means "start with the selected app runtime"; it
   does not create a consumer pthread while the Lua script is still declaring a
   route-backed server.
-- `server:consumer_service_states()` returns diagnostic snapshots for declared
+- `app:consumer_service_states()` returns diagnostic snapshots for declared
   consumer services, including whether each service is materialized,
   process-local, requested to start, running, monitored, or failed.
-- `server:curl_worker_service(opts)` declares a C-owned curl worker service over
+- `app:curl_worker_service(opts)` declares a C-owned curl worker service over
   a borrowed `vectis.mailbox` request queue and optional
   `vectis.mailbox.broker` reply adapter. Use `vectis.curl_worker` to build and
   decode the copied HTTP envelopes.
-- `server:curl_worker_service_states()` returns managed-service lifecycle
+- `app:curl_worker_service_states()` returns managed-service lifecycle
   diagnostics for declared curl worker services.
-- `server:cai_worker_service(opts)` declares a C-owned CAI worker service over
+- `app:cai_worker_service(opts)` declares a C-owned CAI worker service over
   a borrowed `vectis.mailbox` request queue and optional
   `vectis.mailbox.broker` reply adapter. Use `vectis.cai_worker` to build and
   decode copied one-shot text/raw-JSON request envelopes. Lua callbacks are not
   accepted by the managed worker.
-- `server:cai_worker_service_states()` returns managed-service lifecycle
+- `app:cai_worker_service_states()` returns managed-service lifecycle
   diagnostics for declared CAI worker services.
-- `server:audio_worker_service(opts)` declares a C-owned audio worker service
+- `app:audio_worker_service(opts)` declares a C-owned audio worker service
   over a borrowed `vectis.mailbox` request queue and optional
   `vectis.mailbox.broker` reply adapter plus optional `event_mailbox` for VOX
   observations. Use `vectis.audio_worker` to build and decode copied bounded
   file decode/encode envelopes and VOX state/segment events. Lua callbacks are
   not accepted by the managed worker.
-- `server:audio_worker_service_states()` returns managed-service lifecycle
+- `app:audio_worker_service_states()` returns managed-service lifecycle
   diagnostics for declared audio worker services.
-- `server:sus_worker_service(opts)` declares a C-owned SUS worker service over
+- `app:sus_worker_service(opts)` declares a C-owned SUS worker service over
   a borrowed `vectis.mailbox` request queue and optional
   `vectis.mailbox.broker` reply adapter. Use `vectis.sus_worker` to build and
   decode copied bounded PCM/file transcription envelopes. Lua callbacks are not
   accepted by the managed worker.
-- `server:sus_worker_service_states()` returns managed-service lifecycle
+- `app:sus_worker_service_states()` returns managed-service lifecycle
   diagnostics for declared SUS worker services.
-- `server:mcp(opts)` registers a C-owned CAI Streamable HTTP MCP route with
+- `app:mcp(opts)` registers a C-owned CAI Streamable HTTP MCP route with
   Lua-defined raw JSON tools.
 
-`server:wait()` waits for `SIGINT`, `SIGTERM`, or `SIGQUIT` after a
-process-backed `server:start()` and then runs the same app shutdown path as
-libvectis. If the server has not been started, `server:wait()` enters the same
-runtime as `server:run()`. Route-backed servers with declared background
+`app:wait()` waits for `SIGINT`, `SIGTERM`, or `SIGQUIT` after a
+process-backed `app:start()` and then runs the same app shutdown path as
+libvectis. If the app has not been started, `app:wait()` enters the same
+runtime as `app:run()`. Route-backed servers with declared background
 services use the supervised runtime so Kore starts from a thread-clean process
 and services materialize in the supervisor. Long-running scripts should use
-`server:run()` or `server:wait()`, not shell commands or external sleep loops.
+`app:run()` or `app:wait()`, not shell commands or external sleep loops.
 
-`server:upload(opts)` provides true request-body streaming through a bounded
+`app:upload(opts)` provides true request-body streaming through a bounded
 upload reader and Lua chunk callbacks.
 `stream_source` provides true live response streaming for buffered callback
-routes. `server:sse(opts)` provides an SSE-specific convenience helper on top
+routes. `app:sse(opts)` provides an SSE-specific convenience helper on top
 of `stream_source`.
 `spooled_source` is explicitly file-backed materialization, not live
 producer-to-transport streaming.
 
 ## WebSocket Routes
 
-`server:websocket(opts)` registers a Kore-backed WebSocket route. The route
+`app:websocket(opts)` registers a Kore-backed WebSocket route. The route
 callbacks receive borrowed connection handles owned by the active Kore callback;
 do not retain those handles after the callback returns.
 
@@ -576,7 +576,7 @@ The `ws` handle exposes `send(opcode, payload)`, `send_text(text)`,
 ```lua
 local vectis = require("vectis")
 
-assert(server:websocket({
+assert(app:websocket({
   path = "/ws",
   message = function(ws, opcode, payload)
     if opcode == vectis.websocket.TEXT then
@@ -588,7 +588,7 @@ assert(server:websocket({
 
 ## MCP Routes
 
-`server:mcp(opts)` mounts CAI's Streamable HTTP MCP server handler through the
+`app:mcp(opts)` mounts CAI's Streamable HTTP MCP server handler through the
 Vectis/Kore route system. The default path is `/mcp`, and the default methods
 are `GET`, `POST`, and `DELETE`. Lua MCP routes use a buffered normal route so
 Lua tool callbacks execute in the Kore route domain. The C
@@ -619,7 +619,7 @@ Tool fields:
   Return a JSON string or `nil, "message"` on failure.
 
 ```lua
-assert(server:mcp({
+assert(app:mcp({
   path = "/mcp",
   tools = {
     {
@@ -641,7 +641,7 @@ use the upstream CAI Lua facade through `cai.mcp_client` or
 
 ## Upload Routes
 
-`server:upload(opts)` registers a route whose request body is read through a
+`app:upload(opts)` registers a route whose request body is read through a
 bounded streaming reader. It does not populate `request.body`; handlers receive
 request metadata plus `body_streaming_upload = true`, and each non-empty chunk
 is delivered to `on_chunk(request, chunk, state)` without materializing the
@@ -662,7 +662,7 @@ Upload fields:
 - `max_body_bytes`: optional upload size limit.
 
 ```lua
-assert(server:upload({
+assert(app:upload({
   path = "/upload/:name",
   auth = auth_provider,
   buffer_bytes = 8192,
@@ -688,9 +688,9 @@ assert(server:upload({
 
 ## SSE Routes
 
-`server:sse(opts)` registers a GET route that returns
+`app:sse(opts)` registers a GET route that returns
 `text/event-stream; charset=utf-8` with live chunked transfer. It delegates to
-`server:route()`, so `path`, `method` or `methods`, `auth`, `before`, `after`,
+`app:route()`, so `path`, `method` or `methods`, `auth`, `before`, `after`,
 and `openapi` fields follow the normal callback route contract.
 
 SSE fields:
@@ -710,7 +710,7 @@ inside the requested `max_bytes`; Vectis does not split one logical SSE event
 across multiple reads.
 
 ```lua
-assert(server:sse({
+assert(app:sse({
   path = "/events",
   open = function(request)
     return { topic = request.query("topic") or "default", index = 1 }
@@ -731,11 +731,11 @@ assert(server:sse({
 
 ## Metrics
 
-`server:metrics(opts)` enables metrics collection and registers the dashboard
+`app:metrics(opts)` enables metrics collection and registers the dashboard
 and JSON snapshot routes. Metrics are disabled until this method is called.
 
 ```lua
-assert(server:metrics({
+assert(app:metrics({
   path = "/.metrics",
   json_path = "/.metrics.json",
   title = "admin.example",

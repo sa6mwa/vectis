@@ -7,7 +7,7 @@ code.
 
 ## Completed Runtime Configuration Surface
 
-`vectis_server_config` and `vectis.server.new({ ... })` cover the production
+`vectis_server_config` and `vectis.app.new({ ... })` cover the production
 runtime controls Vectis needs to ship:
 
 - connection and request guardrails: `max_connections`, `request_limit`,
@@ -38,16 +38,16 @@ can fail with native fatal setup behavior.
 Vectis supports practical Kore route features through explicit C receivers and
 Lua receiver methods:
 
-- ordinary C routes and Lua `server:get`, `server:post`, `server:put`,
-  `server:delete`, `server:head`, `server:options`, and `server:patch`
+- ordinary C routes and Lua `app:get`, `app:post`, `app:put`,
+  `app:delete`, `app:head`, `app:options`, and `app:patch`
 - JSON routes using LoneJSON-backed C adapters
-- `server:upload` and C upload routes with true request-body streaming and
+- `app:upload` and C upload routes with true request-body streaming and
   bounded memory or disk-spool policies
 - static disk content through `vectis_register_static_file`,
-  `vectis_register_static_directory`, `server:static_file`, and
-  `server:static_directory`
-- read-only packed content through `server:static_embedded`
-- WebSocket routes through `vectis_register_websocket` and `server:websocket`
+  `vectis_register_static_directory`, `app:static_file`, and
+  `app:static_directory`
+- read-only packed content through `app:static_embedded`
+- WebSocket routes through `vectis_register_websocket` and `app:websocket`
 - WebDAV and auth-guarded route helpers where Vectis owns the higher-level
   workflow above Kore
 

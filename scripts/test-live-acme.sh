@@ -86,7 +86,7 @@ local function new_server(name, lockd)
   if endpoint then tls.acme_storage_endpoint = endpoint end
   if namespace then tls.acme_storage_namespace = namespace end
   if key then tls.acme_storage_key = key end
-  local server, new_error = vectis.server.new({
+  local server, new_error = vectis.app.new({
     app_name = name,
     bind = bind,
     port = port,

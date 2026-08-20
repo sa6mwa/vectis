@@ -27,7 +27,7 @@ assert(vectis.cert.generate_bundle({
   valid_days = 1,
 }) == true)
 
-local server = assert(vectis.server.new({
+local server = assert(vectis.app.new({
   bind = "127.0.0.1",
   port = https_port,
   tls = {

@@ -33,7 +33,7 @@ elseif bundle ~= nil and bundle ~= "" then
   lockd_config.client_bundle_path = bundle
 end
 
-local server = assert(vectis.server.new({
+local app = assert(vectis.app.new({
   app_name = "lua-consumer-service-example",
   bind = bind,
   port = port,
@@ -41,17 +41,17 @@ local server = assert(vectis.server.new({
   lockd = lockd_config,
 }))
 
-assert(server:json({
+assert(app:json({
   path = "/health",
   body = '{"ok":true,"service":"lua-consumer-service-example"}\n',
   cache_control = "no-store",
 }) == true)
-assert(server:static_directory({
+assert(app:static_directory({
   path_prefix = "/markers",
   root_dir = marker_root,
   content_type = "text/plain",
 }) == true)
-assert(server:consumer_service({
+assert(app:consumer_service({
   queue = queue,
   owner = owner,
   name = "lua-consumer-service-example",
@@ -71,13 +71,13 @@ assert(server:consumer_service({
   },
 }) == true)
 
-assert(server:start() == true)
+assert(app:start() == true)
 
 if serve_forever then
   print("lua consumer service example listening on http://" .. bind .. ":" ..
       tostring(port))
-  assert(server:wait() == true)
-  server:close()
+  assert(app:wait() == true)
+  app:close()
   return
 end
 
@@ -159,7 +159,7 @@ end
 assert(done_marker.ok == true, done_marker.error and
     done_marker.error.message or "done marker was not written")
 
-assert(server:stop() == true)
-server:close()
+assert(app:stop() == true)
+app:close()
 
 print("lua consumer service example ok")

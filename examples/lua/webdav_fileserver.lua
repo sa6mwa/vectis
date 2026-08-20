@@ -11,17 +11,17 @@ local site_id = "example-" .. run_id
 local collection_path = "/dav/public-" .. run_id
 local file_path = collection_path .. "/readme.txt"
 
-local server = assert(vectis.server.new({
+local app = assert(vectis.app.new({
   bind = "127.0.0.1",
   port = port,
 }))
-assert(server:webdav({
+assert(app:webdav({
   path_prefix = "/dav",
   cache_dir = cache_dir,
   site_id = site_id,
   auth_required = false,
 }) == true)
-assert(server:start() == true)
+assert(app:start() == true)
 
 local ready
 for _ = 1, 20 do
@@ -92,7 +92,7 @@ local delete = webdav.delete({
 assert(delete.ok == true, delete.error and delete.error.message)
 assert(delete.status == 204)
 
-assert(server:stop() == true)
-server:close()
+assert(app:stop() == true)
+app:close()
 
 print("lua webdav fileserver example ok")

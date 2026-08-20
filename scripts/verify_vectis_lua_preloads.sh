@@ -39,7 +39,7 @@ local modules = {
   "vectis.auth",
   "vectis.cert",
   "vectis.embedded",
-  "vectis.server",
+  "vectis.app",
   "vectis.kore",
   "vectis.curl_worker",
   "vectis.cai_worker",
@@ -96,7 +96,7 @@ assert(loaded["vectis"].auth == loaded["vectis.auth"])
 assert(loaded["vectis.auth"].core == loaded["vectis.auth.core"])
 assert(loaded["vectis"].cert == loaded["vectis.cert"])
 assert(loaded["vectis"].embedded == loaded["vectis.embedded"])
-assert(loaded["vectis"].server == loaded["vectis.server"])
+assert(loaded["vectis"].app == loaded["vectis.app"])
 assert(loaded["vectis"].kore == loaded["vectis.kore"])
 assert(loaded["vectis"].curl_worker == loaded["vectis.curl_worker"])
 assert(loaded["vectis"].cai_worker == loaded["vectis.cai_worker"])
@@ -138,7 +138,7 @@ assert(type(loaded["vectis.auth"].provider_native) == "function")
 assert(type(loaded["vectis.auth"].browser_flow) == "function")
 assert(type(loaded["vectis.cert"].generate_bundle) == "function")
 assert(type(loaded["vectis.embedded"].read) == "function")
-assert(type(loaded["vectis.server"].new) == "function")
+assert(type(loaded["vectis.app"].new) == "function")
 assert(loaded["vectis.kore"].runtime_available == true)
 assert(loaded["vectis.kore"].runtime_model == "embedded")
 assert(loaded["vectis.kore"].websocket.TEXT == loaded["vectis"].websocket.TEXT)

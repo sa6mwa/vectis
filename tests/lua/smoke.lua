@@ -3,7 +3,9 @@ local auth_core = require("vectis.auth.core")
 local cert = require("vectis.cert")
 local embedded = require("vectis.embedded")
 local mailbox = require("vectis.mailbox")
-local server_module = require("vectis.server")
+local app_module = require("vectis.app")
+local obsolete_server_module_ok = pcall(require, "vectis.server")
+assert(obsolete_server_module_ok == false)
 local ssh = require("vectis.ssh")
 local vectis = require("vectis")
 local lockdc = require("lockdc")
@@ -256,7 +258,8 @@ do
 end
 assert(vectis.cert == cert)
 assert(vectis.embedded == embedded)
-assert(vectis.server == server_module)
+assert(vectis.app == app_module)
+assert(vectis.server == nil)
 assert(vectis.ssh == ssh)
 assert(vectis.kore == package.loaded["vectis.kore"])
 assert(vectis.kore.runtime_available == true)
@@ -388,7 +391,7 @@ assert(package.loaded["vectis.auth"] == auth)
 assert(package.loaded["vectis.auth.core"] == auth_core)
 assert(package.loaded["vectis.cert"] == cert)
 assert(package.loaded["vectis.embedded"] == embedded)
-assert(package.loaded["vectis.server"] == server_module)
+assert(package.loaded["vectis.app"] == app_module)
 assert(package.loaded["vectis.ssh"] == ssh)
 assert(package.loaded["vectis.kore"] == vectis.kore)
 assert(package.loaded["vectis.status"] == status)
@@ -923,7 +926,7 @@ local server
 do
   local smoke_lockd_dir = os.tmpname()
   os.remove(smoke_lockd_dir)
-  server = assert(vectis.server.new({
+  server = assert(vectis.app.new({
     app_name = "lua-smoke",
     port = 18080,
     lockd = {
@@ -1133,7 +1136,7 @@ assert(_G.__vectis_smoke_lifecycle_opcua_server:close() == true)
 _G.__vectis_smoke_lifecycle_opcua_server = nil
 
 do
-  local bad_shutdown_server, bad_shutdown_error = vectis.server.new({
+  local bad_shutdown_server, bad_shutdown_error = vectis.app.new({
     app_name = "lua-bad-shutdown-grace",
     port = 18160,
     shutdown_grace_ms = -1,
@@ -1145,7 +1148,7 @@ do
 end
 
 do
-  local bad_spool_server, bad_spool_error = vectis.server.new({
+  local bad_spool_server, bad_spool_error = vectis.app.new({
     app_name = "lua-bad-request-body-spool-dir",
     port = 18161,
     request_body_spool_dir = "",
@@ -1157,7 +1160,7 @@ do
 end
 
 do
-  local production_profile_server = assert(vectis.server.new({
+  local production_profile_server = assert(vectis.app.new({
     app_name = "lua-production-profile",
     profile = "production_webserver",
     port = 18168,
@@ -1167,7 +1170,7 @@ end
 
 do
   local ok, err = pcall(function()
-    return vectis.server.new({
+    return vectis.app.new({
       app_name = "lua-bad-profile",
       profile = "debug-ish",
       port = 18167,
@@ -1178,7 +1181,7 @@ do
 end
 
 do
-  local worker_count_server = assert(vectis.server.new({
+  local worker_count_server = assert(vectis.app.new({
     app_name = "lua-worker-count",
     port = 18169,
     worker_count = 1,
@@ -1216,7 +1219,7 @@ do
 end
 
 do
-  local bad_worker_count_server, bad_worker_count_error = vectis.server.new({
+  local bad_worker_count_server, bad_worker_count_error = vectis.app.new({
     app_name = "lua-bad-worker-count",
     port = 18173,
     worker_count = 256,
@@ -1228,7 +1231,7 @@ do
 end
 
 do
-  local bad_kore_curl_server, bad_kore_curl_error = vectis.server.new({
+  local bad_kore_curl_server, bad_kore_curl_error = vectis.app.new({
     app_name = "lua-bad-kore-curl-timeout",
     port = 18174,
     kore_curl_timeout_seconds = vectis.kore.MAX_KORE_CURL_TIMEOUT_SECONDS + 1,
@@ -1241,7 +1244,7 @@ end
 
 do
   local bad_worker_shutdown_server, bad_worker_shutdown_error =
-    vectis.server.new({
+    vectis.app.new({
       app_name = "lua-bad-worker-shutdown-timeout",
       port = 18174,
       worker_shutdown_timeout_ms = -1,
@@ -1254,7 +1257,7 @@ end
 
 do
   local ok, err = pcall(function()
-    return vectis.server.new({
+    return vectis.app.new({
       app_name = "lua-bad-worker-death-policy",
       port = 18175,
       worker_death_policy = "replace",
@@ -1265,7 +1268,7 @@ do
 end
 
 do
-  local direct_policy_server = assert(vectis.server.new({
+  local direct_policy_server = assert(vectis.app.new({
     app_name = "lua-direct-supervision-policy",
     port = 18162,
     supervision_policy = "direct",
@@ -1274,7 +1277,7 @@ do
 end
 
 do
-  local supervised_policy_server = assert(vectis.server.new({
+  local supervised_policy_server = assert(vectis.app.new({
     app_name = "lua-supervised-supervision-policy",
     port = 18163,
     supervision_policy = "supervised",
@@ -1284,7 +1287,7 @@ end
 
 do
   local ok, err = pcall(function()
-    return vectis.server.new({
+    return vectis.app.new({
       app_name = "lua-bad-supervision-policy",
       port = 18168,
       supervision_policy = "invalid",
@@ -1295,7 +1298,7 @@ do
 end
 
 do
-  local service_policy_server = assert(vectis.server.new({
+  local service_policy_server = assert(vectis.app.new({
     app_name = "lua-service-failure-continue-policy",
     port = 18164,
     service_failure_policy = "continue",
@@ -1305,7 +1308,7 @@ end
 
 do
   local ok, err = pcall(function()
-    return vectis.server.new({
+    return vectis.app.new({
       app_name = "lua-bad-service-failure-policy",
       port = 18165,
       service_failure_policy = "invalid",
@@ -1316,7 +1319,7 @@ do
 end
 
 do
-  local quiescence_policy_server = assert(vectis.server.new({
+  local quiescence_policy_server = assert(vectis.app.new({
     app_name = "lua-quiescence-warn-unavailable-policy",
     port = 18166,
     quiescence_policy = "warn_unavailable",
@@ -1326,7 +1329,7 @@ end
 
 do
   local ok, err = pcall(function()
-    return vectis.server.new({
+    return vectis.app.new({
       app_name = "lua-bad-quiescence-policy",
       port = 18167,
       quiescence_policy = "invalid",
@@ -1336,7 +1339,7 @@ do
   assert(tostring(err):match("quiescence_policy"))
 end
 
-local tls_bundle_pem_server = assert(vectis.server.new({
+local tls_bundle_pem_server = assert(vectis.app.new({
   app_name = "lua-manual-tls-bundle-pem",
   port = 18170,
   tls = {
@@ -1349,7 +1352,7 @@ local tls_bundle_pem_server = assert(vectis.server.new({
 }))
 tls_bundle_pem_server:close()
 
-local tls_split_pem_server = assert(vectis.server.new({
+local tls_split_pem_server = assert(vectis.app.new({
   app_name = "lua-manual-tls-split-pem",
   port = 18171,
   tls = {
@@ -1364,7 +1367,7 @@ local tls_split_pem_server = assert(vectis.server.new({
 }))
 tls_split_pem_server:close()
 
-local tls_client_ca_pem_server = assert(vectis.server.new({
+local tls_client_ca_pem_server = assert(vectis.app.new({
   app_name = "lua-manual-tls-client-ca-pem",
   port = 18172,
   tls = {
@@ -1381,7 +1384,7 @@ tls_client_ca_pem_server:close()
 
 do
   local ok, err = pcall(function()
-    return vectis.server.new({
+    return vectis.app.new({
       app_name = "lua-bad-tls-version",
       port = 18175,
       tls = {
@@ -1398,7 +1401,7 @@ local acme_auth_path = os.tmpname()
 os.remove(acme_auth_path)
 assert(vectis.auth.store_init({ credentials_path = acme_auth_path }))
 
-local acme_missing_domain = assert(vectis.server.new({
+local acme_missing_domain = assert(vectis.app.new({
   app_name = "lua-acme-missing-domain",
   port = 18180,
   tls = {
@@ -1417,7 +1420,7 @@ assert(acme_error.status == vectis.ERR_INVALID)
 assert(acme_error.message:match("tls%.domains"))
 acme_missing_domain:close()
 
-local acme_duplicate, acme_duplicate_error = vectis.server.new({
+local acme_duplicate, acme_duplicate_error = vectis.app.new({
   app_name = "lua-acme-duplicate-domain",
   port = 18181,
   tls = {
@@ -1431,7 +1434,7 @@ assert(type(acme_duplicate_error) == "table")
 assert(acme_duplicate_error.status == vectis.ERR_INVALID)
 assert(acme_duplicate_error.message:match("duplicate"))
 
-local acme_missing_email = assert(vectis.server.new({
+local acme_missing_email = assert(vectis.app.new({
   app_name = "lua-acme-missing-email",
   port = 18182,
   tls = {

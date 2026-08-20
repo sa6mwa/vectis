@@ -18,20 +18,20 @@ local broker = vectis.mailbox.broker({
   },
 })
 
-local server = assert(vectis.server.new({
+local app = assert(vectis.app.new({
   app_name = "lua-curl-worker-example",
   bind = bind,
   port = port,
   supervision_policy = "supervised",
 }))
 
-assert(server:json({
+assert(app:json({
   path = "/hello",
   body = '{"message":"hello from vectis"}\n',
   cache_control = "no-store",
 }) == true)
 
-assert(server:curl_worker_service({
+assert(app:curl_worker_service({
   name = "lua-curl-worker",
   request_mailbox = requests,
   reply_broker = broker,
@@ -44,7 +44,7 @@ assert(server:curl_worker_service({
   },
 }) == true)
 
-local started, start_err = server:start()
+local started, start_err = app:start()
 assert(started == true, start_err and start_err.message or tostring(start_err))
 
 local response
@@ -78,7 +78,7 @@ assert(response.status == 200)
 assert(response.content_type == "application/json")
 assert(response.body:find('"message":"hello from vectis"', 1, true))
 
-local states, states_err = server:curl_worker_service_states()
+local states, states_err = app:curl_worker_service_states()
 if states == nil then
   error(states_err and states_err.message or tostring(states_err))
 end
@@ -86,9 +86,9 @@ assert(#states == 1)
 assert(states[1].name == "lua-curl-worker")
 assert(states[1].started == true)
 
-local stopped, stop_err = server:stop()
+local stopped, stop_err = app:stop()
 assert(stopped == true, stop_err and stop_err.message or tostring(stop_err))
-server:close()
+app:close()
 broker:close()
 requests:close()
 

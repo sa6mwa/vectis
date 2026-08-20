@@ -138,7 +138,7 @@ local webdav_key = assert(vectis.auth.webdav_key({
   password = "cert-password",
 }))
 local basic_auth = "Basic " .. base64(webdav_key.client_id .. ":" .. webdav_key.client_secret)
-local server = assert(vectis.server.new({
+local server = assert(vectis.app.new({
   bind = "127.0.0.1",
   port = port,
   hsts_max_age_seconds = 31536000,

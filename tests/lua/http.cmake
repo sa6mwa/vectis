@@ -229,7 +229,7 @@ do
   assert(body == "uploaded through curl file source\n")
 end
 
-local api_server = assert(vectis.server.new({
+local api_server = assert(vectis.app.new({
   app_name = "lua-http-smoke-app",
   bind = "127.0.0.1",
   port = 28484,

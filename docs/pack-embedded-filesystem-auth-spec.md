@@ -205,9 +205,9 @@ API ownership:
 - Developer-provided Lua auth or route callbacks cross the C/Lua boundary
   through explicit callback contracts; the native implementation remains usable
   from C without Lua translation.
-- Lua server helpers return C-owned app receiver wrappers. For example,
-  `vectis.server.new()` creates a native `vectis_app`, and
-  `server:static_embedded()` registers a read-only embedded docroot through
+- Lua app helpers return C-owned app receiver wrappers. For example,
+  `vectis.app.new()` creates a native `vectis_app`, and
+  `app:static_embedded()` registers a read-only embedded docroot through
   `app->static_embedded`; Lua does not implement the server dispatch path.
 
 Required Lua concepts:
@@ -226,46 +226,46 @@ Required Lua concepts:
 - `vectis.cert.validate_bundle(path_or_table)`
 - `vectis.cert.validate_pair({certificate_path=..., private_key_path=...,
   ca_bundle_path=...})`
-- `vectis.server.new({bind=..., port=..., tls={mode="manual",
+- `vectis.app.new({bind=..., port=..., tls={mode="manual",
   cert_key_bundle_path=..., domain=...}})`
-- `vectis.server.new({bind=..., port=..., tls={mode="manual",
+- `vectis.app.new({bind=..., port=..., tls={mode="manual",
   cert_path=..., key_path=..., ca_path=..., domain=...}})`
-- `vectis.server.new({bind=..., port=..., tls={mode="acme",
+- `vectis.app.new({bind=..., port=..., tls={mode="acme",
   domains={"example.com", "www.example.com"}, email=...,
   provider=..., acme_storage_endpoint=...}})`
-- `server:static_directory({path_prefix=..., root_dir=..., index_file=...})`
-- `server:static_embedded({path_prefix=..., cache_control=...})`
-- `server:webdav_embedded_site({path_prefix=..., cache_dir=..., site_id=...,
+- `app:static_directory({path_prefix=..., root_dir=..., index_file=...})`
+- `app:static_embedded({path_prefix=..., cache_control=...})`
+- `app:webdav_embedded_site({path_prefix=..., cache_dir=..., site_id=...,
   extract_policy=..., auth={kind="native", credentials_path=...}})`
-- `server:webdav_embedded_site({path_prefix=..., cache_dir=..., site_id=...,
+- `app:webdav_embedded_site({path_prefix=..., cache_dir=..., site_id=...,
   auth={provider=vectis.auth.provider_callback(fn), purpose=...}})` for
   developer-provided auth adapters wired into the C-owned WebDAV receiver.
-- `server:webdav_embedded_site({path_prefix=..., auth=provider})` where
+- `app:webdav_embedded_site({path_prefix=..., auth=provider})` where
   `provider` is a `vectis.auth.provider_native(...)` or
   `vectis.auth.provider_callback(...)` result.
-- `server:auth_routes({path_prefix=..., credentials_path=...,
+- `app:auth_routes({path_prefix=..., credentials_path=...,
   auth_state_path=..., realm=..., login_template_path=...,
   required_factors={"email_token"}})`
-- `server:auth_routes({path_prefix=..., credentials_path=...,
+- `app:auth_routes({path_prefix=..., credentials_path=...,
   auth_state_path=..., realm=...,
   login_template_embedded_path="/templates/login.html"})`
-- `server:json({path=..., method=..., status=..., body=...,
+- `app:json({path=..., method=..., status=..., body=...,
   cache_control=...})` for small C-owned unguarded JSON endpoints in service
   scenarios.
-- `server:text({path=..., method=..., status=..., body=...,
+- `app:text({path=..., method=..., status=..., body=...,
   cache_control=...})` for small C-owned unguarded text endpoints in service
   scenarios.
-- `server:redirect({path=..., location=..., status=..., body=...,
+- `app:redirect({path=..., location=..., status=..., body=...,
   cache_control=...})` for small C-owned redirect endpoints in service
   scenarios.
-- `server:auth_json({path=..., method=..., status=...,
+- `app:auth_json({path=..., method=..., status=...,
   auth={kind="native", credentials_path=...}, body=...})` for small C-owned
   guarded JSON endpoints in service scenarios.
-- `server:auth_json({path=..., auth={provider=...}, body=...})` for guarded
+- `app:auth_json({path=..., auth={provider=...}, body=...})` for guarded
   service endpoints backed by a native or developer-provided auth provider.
-- `server:auth_json({path=..., auth=provider, body=...})` for the same
+- `app:auth_json({path=..., auth=provider, body=...})` for the same
   provider-object shorthand accepted by WebDAV mounts.
-- `server:consumer_service({ ... })` is the Lua registration point for
+- `app:consumer_service({ ... })` is the Lua registration point for
   same-process lockd consumer service wiring. It creates a C-owned
   `vectis_consumer_service` receiver around liblockdc and starts it by default.
   The initial built-in handler is `handler.kind = "webdav_marker"`, which
@@ -273,8 +273,8 @@ Required Lua concepts:
   callback. Direct Lua `on_message` callbacks remain rejected; a future Lua
   callback implementation needs an explicit C adapter or worker-owned Lua
   state/queue bridge.
-- `server:run()` for foreground serving, plus process-backed `server:start()`,
-  `server:wait()`, `server:stop()`, and `server:close()` for managed test/tool
+- `app:run()` for foreground serving, plus process-backed `app:start()`,
+  `app:wait()`, `app:stop()`, and `app:close()` for managed test/tool
   flows
 
 Streaming semantics:
@@ -597,7 +597,7 @@ and direct all-factor WebDAV keys, revokes those keys through their native
 logout routes where they are no longer needed, proves revoked keys are rejected
 by both guarded API routes and WebDAV, and proves WebDAV mutations do not change
 embedded read-only assets. It also embeds the lockd client bundle, starts a
-C-owned lockd consumer service from the packed Lua server config, enqueues a
+C-owned lockd consumer service from the packed Lua app config, enqueues a
 lockd message through the Lua `lockdc` facade, proves the packed consumer writes
 WebDAV-visible markers, and proves WebDAV and guarded API routes remain
 responsive while the packed consumer service is processing. Focused
@@ -609,7 +609,7 @@ module can open a client from the packed in-memory lockd bundle source without
 writing a runtime PEM file, generates a private self-signed certificate bundle,
 starts an HTTPS packed asset server with `tls.mode = "manual"`, and fetches the
 embedded site over HTTPS. It also extracts packed assets to disk, serves that
-extracted tree through the Lua `server:static_directory()` C receiver, and
+extracted tree through the Lua `app:static_directory()` C receiver, and
 fetches both the generated index and asset through the disk docroot mount. It
 also proves extraction verify, skip-existing, repair, and overwrite policies do
 not prune unrelated user-created files. Pack
@@ -738,7 +738,7 @@ runtime configuration and credentials.
 - The native login route set belongs in the C-owned Vectis app/server surface,
   with shared auth-service logic underneath. The public C receiver surface is
   `app->auth_routes(app, ...)`; Lua configures that C-owned route set through
-  `server:auth_routes(...)`. Lua may provide application routing glue, but it
+  `app:auth_routes(...)`. Lua may provide application routing glue, but it
   does not own the built-in auth route lifecycle or WebDAV key issuance
   semantics.
 - Pending auth state uses the same LoneJSON-backed store format as credentials,

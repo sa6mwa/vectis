@@ -85,7 +85,7 @@ local callback_provider = assert(vectis.auth.provider_callback(function(request)
   }
 end))
 
-local server = assert(vectis.server.new({
+local server = assert(vectis.app.new({
   bind = "127.0.0.1",
   port = port,
 }))

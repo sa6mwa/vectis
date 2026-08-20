@@ -846,7 +846,7 @@ run_lua_examples() {
     '  username = "packed-email-only@example.com",' \
     '  password = "packed-password",' \
     '}))' \
-    'local server = assert(vectis.server.new({' \
+    'local server = assert(vectis.app.new({' \
     '  app_name = "vectis-packed-service-e2e",' \
     '  bind = "127.0.0.1",' \
     '  port = port,' \
@@ -1177,7 +1177,7 @@ run_lua_examples() {
     '  key_bits = 2048,' \
     '  valid_days = 1,' \
     '}))' \
-    'local server = assert(vectis.server.new({' \
+    'local server = assert(vectis.app.new({' \
     '  app_name = "vectis-packed-https-e2e",' \
     '  bind = "127.0.0.1",' \
     '  port = port,' \
@@ -1231,7 +1231,7 @@ run_lua_examples() {
     'local credentials_path = assert(os.getenv("VECTIS_ACME_STATE_CREDENTIALS"))' \
     'local provider = assert(os.getenv("VECTIS_ACME_STATE_PROVIDER"))' \
     'assert(vectis.auth.store_init({ credentials_path = credentials_path }))' \
-    'local server = assert(vectis.server.new({' \
+    'local server = assert(vectis.app.new({' \
     '  app_name = "vectis-acme-state-e2e",' \
     '  bind = "127.0.0.1",' \
     '  port = port,' \
