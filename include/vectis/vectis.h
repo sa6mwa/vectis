@@ -493,7 +493,11 @@ typedef struct vectis_lockd_config {
   /* Local pouch:// storage is encrypted by default. These fields mirror the
    * liblockdc Pouch key provisioning controls; they are ignored by remote
    * lockd endpoints. When neither key field is supplied for a Pouch endpoint,
-   * Vectis uses its own XDG configuration key file and creates it securely. */
+   * Vectis uses its own XDG configuration key file and creates it securely.
+   * A non-empty VECTIS_POUCH_CRYPTO_KEY environment value overrides these key
+   * fields for Vectis-owned local Pouch clients without creating a key file.
+   * Existing roots are neither migrated nor reinitialized: a plaintext root
+   * or a root encrypted with another key fails to open and is left intact. */
   const char *pouch_crypto_key;
   const char *pouch_crypto_key_file;
   int pouch_crypto_generate_key_file;

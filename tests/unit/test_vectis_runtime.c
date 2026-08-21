@@ -1676,7 +1676,10 @@ static void assert_supervised_metrics_persistence_worker(void) {
   vectis_status status;
   lc_error lcerr;
   char pouch_dir[] = "/tmp/vectis-runtime-metrics.XXXXXX";
-  char *pouch_crypto_key;
+  const char *existing_environment_key;
+  char *configured_pouch_crypto_key;
+  char *environment_pouch_crypto_key;
+  char *saved_environment_key;
   char endpoint[4096];
   char metrics_url[256];
   char stream_url[256];
@@ -1685,15 +1688,33 @@ static void assert_supervised_metrics_persistence_worker(void) {
   int reserved_fd;
   int written;
   int found;
+  int had_environment_key;
   int wrote;
   int i;
 
   assert(mkdtemp(pouch_dir) != NULL);
-  pouch_crypto_key = NULL;
+  configured_pouch_crypto_key = NULL;
+  environment_pouch_crypto_key = NULL;
+  saved_environment_key = NULL;
   lc_error_init(&lcerr);
-  assert(lc_pouch_crypto_generate_key_string(&pouch_crypto_key, &lcerr) ==
-         LC_OK);
+  assert(lc_pouch_crypto_generate_key_string(&configured_pouch_crypto_key,
+                                             &lcerr) == LC_OK);
   lc_error_cleanup(&lcerr);
+  lc_error_init(&lcerr);
+  assert(lc_pouch_crypto_generate_key_string(&environment_pouch_crypto_key,
+                                             &lcerr) == LC_OK);
+  lc_error_cleanup(&lcerr);
+  existing_environment_key = getenv("VECTIS_POUCH_CRYPTO_KEY");
+  had_environment_key = existing_environment_key != NULL;
+  if (had_environment_key) {
+    saved_environment_key =
+        (char *)malloc(strlen(existing_environment_key) + 1u);
+    assert(saved_environment_key != NULL);
+    memcpy(saved_environment_key, existing_environment_key,
+           strlen(existing_environment_key) + 1u);
+  }
+  assert(setenv("VECTIS_POUCH_CRYPTO_KEY", environment_pouch_crypto_key, 1) ==
+         0);
   written = snprintf(endpoint, sizeof(endpoint),
                      "pouch://%s?single_writer=false", pouch_dir);
   assert(written > 0 && (size_t)written < sizeof(endpoint));
@@ -1705,7 +1726,7 @@ static void assert_supervised_metrics_persistence_worker(void) {
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
   config.tls.port = port;
-  config.lockd.pouch_crypto_key = pouch_crypto_key;
+  config.lockd.pouch_crypto_key = configured_pouch_crypto_key;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   memset(&response, 0, sizeof(response));
@@ -1783,8 +1804,9 @@ static void assert_supervised_metrics_persistence_worker(void) {
   assert(strstr((const char *)response.body, "\"writes\":1") != NULL);
   vectis_http_response_cleanup(&response);
   found = metrics_pouch_snapshot_contains_text(
-      endpoint, "vectis.runtime.metrics", pouch_crypto_key, "runtime-test",
-      "runtime-metrics-app", "\"service\":\"supervised metrics worker\"");
+      endpoint, "vectis.runtime.metrics", environment_pouch_crypto_key,
+      "runtime-test", "runtime-metrics-app",
+      "\"service\":\"supervised metrics worker\"");
   assert(found);
 
   status = app->stop(app, &error);
@@ -1810,7 +1832,14 @@ static void assert_supervised_metrics_persistence_worker(void) {
   assert(status == VECTIS_OK);
   app->close(app);
 
-  lc_pouch_crypto_key_string_free(pouch_crypto_key);
+  if (had_environment_key) {
+    assert(setenv("VECTIS_POUCH_CRYPTO_KEY", saved_environment_key, 1) == 0);
+  } else {
+    assert(unsetenv("VECTIS_POUCH_CRYPTO_KEY") == 0);
+  }
+  free(saved_environment_key);
+  lc_pouch_crypto_key_string_free(environment_pouch_crypto_key);
+  lc_pouch_crypto_key_string_free(configured_pouch_crypto_key);
   remove_tree(pouch_dir);
 }
 

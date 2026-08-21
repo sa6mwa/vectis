@@ -468,7 +468,9 @@ allocator/`FILE *` ownership, or an embedding-only concern.
 - [x] Harden Vectis as a landed-style production webserver for both libvectis embedders and the Lua-controlled `vectis` binary workflow, without carrying landed/taktiv.se-specific C bindings, layouts, or site stats.
   - [x] Add an opt-in C-owned `production_webserver` profile for libvectis and Lua that applies strict quiescence, fail-closed service handling, explicit request-body guardrails, longer graceful shutdown, and conservative autoblock rules while leaving metrics, auth, WebDAV, static mounts, and TLS material explicit.
 - [x] Add a generic Vectis metrics/stats handler for libvectis and a matching Lua `vectis.app` route helper that exposes basic runtime, server, request, auth, and Vectis service metrics only when explicitly enabled, with optional shared-route auth and lockdc/pouch snapshot persistence.
-- [ ] Add a lossless liblockdc Pouch root migration operation, then use it to migrate existing plaintext Vectis roots to the default encrypted format without dropping state, attachments, transactions, or queues.
+- [x] Keep Vectis local Pouch roots fail-closed: new roots are encrypted by
+  default, while plaintext or key-mismatched existing roots are neither
+  migrated nor reinitialized and must fail unchanged.
 
 ## Area 14: Verification and Release
 

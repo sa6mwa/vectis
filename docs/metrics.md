@@ -101,6 +101,17 @@ as other Vectis persistence. With no key setting, Vectis securely generates
 `${XDG_CONFIG_HOME:-$HOME/.config}/vectis/pouch.key`. Remote endpoints and
 separate liblockdc clients do not use these fields.
 
+`VECTIS_POUCH_CRYPTO_KEY` provides a non-empty, deterministic key override
+for Vectis-owned local Pouch clients. It takes precedence over the app lockd
+key and key-file settings, is passed directly to liblockdc without being
+logged or persisted by Vectis, and lets a container reopen the same root on
+each start when it receives the same secret. An empty value is a configuration
+error.
+
+Vectis never migrates or reinitializes an existing local root. A legacy
+plaintext root or a root encrypted with another key fails to open and remains
+unchanged; Vectis does not fall back to plaintext or offer a force option.
+
 Snapshots are written under the `vectis.metrics` namespace by default. Runtime
 write failures increment the persistence error counter and do not block request
 processing.

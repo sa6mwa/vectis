@@ -1,5 +1,6 @@
 #include "vectis_acme_state.h"
 #include "vectis_internal.h"
+#include "vectis_pouch_crypto.h"
 
 #include <arpa/inet.h>
 #include <cpkt/audio.h>
@@ -10652,6 +10653,8 @@ static vectis_status vectis_configure_pouch_client(lc_client_config *config,
                                                    const vectis_app_impl *impl,
                                                    char **default_key_file,
                                                    vectis_error *error) {
+  const char *environment_key;
+
   if (default_key_file != NULL) {
     *default_key_file = NULL;
   }
@@ -10667,9 +10670,25 @@ static vectis_status vectis_configure_pouch_client(lc_client_config *config,
         impl->pouch_crypto_generate_key_file_set;
     config->pouch_compression = impl->pouch_compression;
   }
+  environment_key = getenv(VECTIS_POUCH_CRYPTO_KEY_ENV);
+  if (environment_key != NULL) {
+    if (environment_key[0] == '\0') {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       VECTIS_POUCH_CRYPTO_KEY_ENV " must not be empty");
+      return VECTIS_ERR_INVALID;
+    }
+    config->pouch_crypto_key = environment_key;
+    config->pouch_crypto_key_file = NULL;
+    config->pouch_crypto_generate_key_file = 0;
+    config->pouch_crypto_generate_key_file_set = 1;
+    return VECTIS_OK;
+  }
   if (config->pouch_crypto_key != NULL ||
       config->pouch_crypto_key_file != NULL ||
       vectis_endpoint_has_pouch_crypto_option(endpoint)) {
+    /* Do not retry without encryption or reinitialize an existing root. A
+     * plaintext root or a different key must fail through liblockdc unchanged.
+     */
     return VECTIS_OK;
   }
   if (default_key_file == NULL) {

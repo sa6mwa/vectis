@@ -151,11 +151,22 @@ lockd = {
 With no key setting, Vectis creates `${XDG_CONFIG_HOME:-$HOME/.config}/vectis/pouch.key`
 with mode 0600. This is a Vectis key used only by Vectis-owned local Pouch
 persistence; separate liblockdc clients retain their own configuration.
-Existing plaintext Pouch roots are deliberately not opened
-with the new encrypted configuration: current liblockdc has no lossless
-whole-root migration API for state, attachment, transaction, and queue data.
-Keep the old root intact and migrate it with a future liblockdc Pouch migration
-operation rather than copying only Vectis-visible objects.
+
+For deterministic container or other short-lived deployments, set
+`VECTIS_POUCH_CRYPTO_KEY` to a non-empty liblockdc Pouch key string (for
+example, `lc-pouch-key-v1:<base64url>`). It takes precedence over the app
+`lockd` key and key-file settings for every Vectis-owned local Pouch client,
+including metrics and ACME state. Vectis passes the value directly to
+liblockdc, never logs it, and does not create a key file. Supply the same key
+on every start that must reopen the same root; an empty environment value is a
+configuration error.
+
+Existing Pouch roots are never migrated or reinitialized by Vectis. A legacy
+plaintext root, or a root encrypted with a different key, fails to open with
+the configured encryption and is left intact. For pre-release data that may be
+discarded, deliberately provision a new empty root; for retained data, restore
+the original key. Vectis never falls back to plaintext and provides no force or
+automatic-overwrite option.
 
 To add a canonical cleartext-to-HTTPS redirect listener without registering a
 route, enable it explicitly inside `tls`. `http_redirect` defaults to false;

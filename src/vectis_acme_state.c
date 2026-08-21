@@ -1,4 +1,5 @@
 #include "vectis_acme_state.h"
+#include "vectis_pouch_crypto.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -316,6 +317,7 @@ static int vectis_acme_state_client_open(const vectis_acme_state_config *config,
                                          lc_error *lcerr) {
   lc_client_config client_config;
   char *default_key_file;
+  const char *environment_key;
   int rc;
 
   *client = NULL;
@@ -336,9 +338,22 @@ static int vectis_acme_state_client_open(const vectis_acme_state_config *config,
     client_config.pouch_crypto_generate_key_file_set =
         config->pouch_crypto_generate_key_file_set;
     client_config.pouch_compression = config->pouch_compression;
-    if (client_config.pouch_crypto_key == NULL &&
-        client_config.pouch_crypto_key_file == NULL &&
-        !vectis_acme_state_endpoint_has_pouch_crypto_option(config->endpoint)) {
+    environment_key = getenv(VECTIS_POUCH_CRYPTO_KEY_ENV);
+    if (environment_key != NULL) {
+      if (environment_key[0] == '\0') {
+        lcerr->code = LC_ERR_INVALID;
+        lcerr->message = vectis_acme_state_strdup(VECTIS_POUCH_CRYPTO_KEY_ENV
+                                                  " must not be empty");
+        return LC_ERR_INVALID;
+      }
+      client_config.pouch_crypto_key = environment_key;
+      client_config.pouch_crypto_key_file = NULL;
+      client_config.pouch_crypto_generate_key_file = 0;
+      client_config.pouch_crypto_generate_key_file_set = 1;
+    } else if (client_config.pouch_crypto_key == NULL &&
+               client_config.pouch_crypto_key_file == NULL &&
+               !vectis_acme_state_endpoint_has_pouch_crypto_option(
+                   config->endpoint)) {
       default_key_file = vectis_persistence_default_pouch_key_file();
       if (default_key_file == NULL) {
         lcerr->code = LC_ERR_TRANSPORT;

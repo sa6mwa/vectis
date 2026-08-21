@@ -81,12 +81,91 @@ static void generate_key_file(const char *path) {
   lc_error_cleanup(&error);
 }
 
+static void write_plaintext_state(const char *endpoint,
+                                  const char *namespace_name, const char *key,
+                                  const char *contents) {
+  const char *endpoints[1];
+  lc_client_config config;
+  lc_client *client;
+  lc_lease *lease;
+  lc_source *source;
+  lc_acquire_req acquire;
+  lc_release_req release;
+  lc_update_opts options;
+  lc_error error;
+
+  endpoints[0] = endpoint;
+  client = NULL;
+  lease = NULL;
+  source = NULL;
+  lc_error_init(&error);
+  lc_client_config_init(&config);
+  config.endpoints = endpoints;
+  config.endpoint_count = 1u;
+  config.default_namespace = namespace_name;
+  assert(lc_client_open(&config, &client, &error) == LC_OK);
+  lc_acquire_req_init(&acquire);
+  acquire.namespace_name = namespace_name;
+  acquire.key = key;
+  acquire.owner = "test";
+  acquire.ttl_seconds = 30L;
+  acquire.block_seconds = 1L;
+  assert(client->acquire(client, &acquire, &lease, &error) == LC_OK);
+  assert(lc_source_from_memory(contents, strlen(contents), &source, &error) ==
+         LC_OK);
+  lc_update_opts_init(&options);
+  options.content_type = "text/plain";
+  assert(lease->update(lease, source, &options, &error) == LC_OK);
+  source->close(source);
+  lc_release_req_init(&release);
+  assert(lease->release(lease, &release, &error) == LC_OK);
+  client->close(client);
+  lc_error_cleanup(&error);
+}
+
+static void assert_plaintext_state(const char *endpoint,
+                                   const char *namespace_name, const char *key,
+                                   const char *contents) {
+  const char *endpoints[1];
+  lc_client_config config;
+  lc_client *client;
+  lc_sink *sink;
+  lc_get_res result;
+  lc_error error;
+  const void *bytes;
+  size_t size;
+
+  endpoints[0] = endpoint;
+  client = NULL;
+  sink = NULL;
+  memset(&result, 0, sizeof(result));
+  lc_error_init(&error);
+  lc_client_config_init(&config);
+  config.endpoints = endpoints;
+  config.endpoint_count = 1u;
+  config.default_namespace = namespace_name;
+  assert(lc_client_open(&config, &client, &error) == LC_OK);
+  assert(lc_sink_to_memory(&sink, &error) == LC_OK);
+  assert(client->get(client, key, NULL, sink, &result, &error) == LC_OK);
+  assert(lc_sink_memory_bytes(sink, &bytes, &size, &error) == LC_OK);
+  assert(size == strlen(contents));
+  assert(memcmp(bytes, contents, size) == 0);
+  lc_get_res_cleanup(&result);
+  sink->close(sink);
+  client->close(client);
+  lc_error_cleanup(&error);
+}
+
 int main(void) {
   char root[] = "/tmp/vectis-acme-state-XXXXXX";
   char endpoint[4096];
   char storage[4096];
   char default_storage[4096];
   char default_endpoint[4096];
+  char environment_storage[4096];
+  char environment_endpoint[4096];
+  char plaintext_storage[4096];
+  char plaintext_endpoint[4096];
   char default_config[4096];
   char default_key[4096];
   char key_file[4096];
@@ -104,8 +183,13 @@ int main(void) {
   char chain_two[4096];
   char key_two[4096];
   const char *domains[1];
+  const char *existing_environment_key;
   vectis_acme_state_config config;
   vectis_error error;
+  lc_error lcerr;
+  char *environment_key;
+  char *saved_environment_key;
+  int had_environment_key;
   int hydrated;
 
   assert(mkdtemp(root) != NULL);
@@ -115,6 +199,14 @@ int main(void) {
                   "%s/default-storage", root) > 0);
   assert(snprintf(default_endpoint, sizeof(default_endpoint), "pouch://%s",
                   default_storage) > 0);
+  assert(snprintf(environment_storage, sizeof(environment_storage),
+                  "%s/environment-storage", root) > 0);
+  assert(snprintf(environment_endpoint, sizeof(environment_endpoint),
+                  "pouch://%s", environment_storage) > 0);
+  assert(snprintf(plaintext_storage, sizeof(plaintext_storage),
+                  "%s/plaintext-storage", root) > 0);
+  assert(snprintf(plaintext_endpoint, sizeof(plaintext_endpoint), "pouch://%s",
+                  plaintext_storage) > 0);
   assert(snprintf(default_config, sizeof(default_config), "%s/default-config",
                   root) > 0);
   assert(snprintf(default_key, sizeof(default_key), "%s/vectis/pouch.key",
@@ -124,6 +216,18 @@ int main(void) {
                   root) > 0);
   generate_key_file(key_file);
   generate_key_file(wrong_key_file);
+  environment_key = NULL;
+  saved_environment_key = NULL;
+  existing_environment_key = getenv("VECTIS_POUCH_CRYPTO_KEY");
+  had_environment_key = existing_environment_key != NULL;
+  if (had_environment_key) {
+    saved_environment_key =
+        (char *)malloc(strlen(existing_environment_key) + 1u);
+    assert(saved_environment_key != NULL);
+    memcpy(saved_environment_key, existing_environment_key,
+           strlen(existing_environment_key) + 1u);
+  }
+  assert(unsetenv("VECTIS_POUCH_CRYPTO_KEY") == 0);
   assert(snprintf(runtime_one, sizeof(runtime_one), "%s/runtime-one", root) >
          0);
   assert(snprintf(runtime_two, sizeof(runtime_two), "%s/runtime-two", root) >
@@ -187,13 +291,68 @@ int main(void) {
   assert(vectis_acme_state_persist(&config, &error) == VECTIS_OK);
   assert_private_file(default_key);
 
+  lc_error_init(&lcerr);
+  assert(lc_pouch_crypto_generate_key_string(&environment_key, &lcerr) ==
+         LC_OK);
+  lc_error_cleanup(&lcerr);
+  assert(environment_key != NULL);
+  assert(setenv("VECTIS_POUCH_CRYPTO_KEY", environment_key, 1) == 0);
+  config.endpoint = environment_endpoint;
+  config.key = "environment-key";
+  config.runtime_dir = runtime_two;
+  config.pouch_crypto_key = NULL;
+  config.pouch_crypto_key_file = wrong_key_file;
+  config.pouch_crypto_generate_key_file = 0;
+  config.pouch_crypto_generate_key_file_set = 1;
+  assert(vectis_acme_state_persist(&config, &error) == VECTIS_OK);
+  hydrated = 0;
+  assert(vectis_acme_state_hydrate(&config, &hydrated, &error) == VECTIS_OK);
+  assert(hydrated != 0);
+  assert(setenv("VECTIS_POUCH_CRYPTO_KEY", "", 1) == 0);
+  hydrated = 0;
+  assert(vectis_acme_state_hydrate(&config, &hydrated, &error) ==
+         VECTIS_ERR_STATE);
+  assert(setenv("VECTIS_POUCH_CRYPTO_KEY", environment_key, 1) == 0);
+  hydrated = 0;
+  assert(vectis_acme_state_hydrate(&config, &hydrated, &error) == VECTIS_OK);
+  assert(hydrated != 0);
+  assert(unsetenv("VECTIS_POUCH_CRYPTO_KEY") == 0);
+  hydrated = 0;
+  assert(vectis_acme_state_hydrate(&config, &hydrated, &error) ==
+         VECTIS_ERR_STATE);
+
   config.endpoint = endpoint;
   config.key = "round-trip";
   config.pouch_crypto_key_file = wrong_key_file;
   hydrated = 0;
   assert(vectis_acme_state_hydrate(&config, &hydrated, &error) ==
          VECTIS_ERR_STATE);
+  config.pouch_crypto_key_file = key_file;
+  hydrated = 0;
+  assert(vectis_acme_state_hydrate(&config, &hydrated, &error) == VECTIS_OK);
+  assert(hydrated != 0);
+  assert_file(account_two, "account-key");
 
+  write_plaintext_state(plaintext_endpoint, "vectis.acme", "legacy",
+                        "legacy plaintext state");
+  config.endpoint = plaintext_endpoint;
+  config.key = "legacy";
+  config.pouch_crypto_key_file = NULL;
+  config.pouch_crypto_generate_key_file = 0;
+  config.pouch_crypto_generate_key_file_set = 0;
+  hydrated = 0;
+  assert(vectis_acme_state_hydrate(&config, &hydrated, &error) ==
+         VECTIS_ERR_STATE);
+  assert_plaintext_state(plaintext_endpoint, "vectis.acme", "legacy",
+                         "legacy plaintext state");
+
+  if (had_environment_key) {
+    assert(setenv("VECTIS_POUCH_CRYPTO_KEY", saved_environment_key, 1) == 0);
+  } else {
+    assert(unsetenv("VECTIS_POUCH_CRYPTO_KEY") == 0);
+  }
+  free(saved_environment_key);
+  lc_pouch_crypto_key_string_free(environment_key);
   remove_tree(root);
   return 0;
 }
