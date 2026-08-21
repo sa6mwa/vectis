@@ -1070,9 +1070,12 @@ typedef struct vectis_autoblock_config {
   int enabled;
   unsigned int window_seconds;
   unsigned int block_seconds;
-  /* Maximum number of peer records in the shared autoblock table. Zero uses
-   * the default. Enabled configs must not exceed VECTIS_AUTOBLOCK_MAX_ENTRIES.
-   */
+  /* Maximum number of address records in the shared autoblock table. Zero uses
+   * the default. Transport-level signals (accept, TCP stall, TLS failure, and
+   * malformed connection statuses) always use the accepted TCP peer address.
+   * Parsed HTTP requests may use a forwarded client address only under the
+   * trusted-proxy policy below. Enabled configs must not exceed
+   * VECTIS_AUTOBLOCK_MAX_ENTRIES. */
   unsigned int max_entries;
   unsigned int tcp_stall_threshold;
   unsigned int tls_failure_threshold;
@@ -1087,8 +1090,10 @@ typedef struct vectis_autoblock_config {
   vectis_autoblock_event_rule event_rules[VECTIS_AUTOBLOCK_MAX_EVENT_RULES];
   size_t event_rule_count;
   int proxy_enabled;
-  /* Optional borrowed trusted proxy list; count must not exceed
-   * VECTIS_AUTOBLOCK_MAX_TRUSTED_PROXIES and each entry must be non-empty. */
+  /* Optional borrowed trusted proxy list for parsed HTTP requests; count must
+   * not exceed VECTIS_AUTOBLOCK_MAX_TRUSTED_PROXIES and each entry must be
+   * non-empty. It never affects transport-level signals, which use the TCP
+   * peer address because request headers do not exist at that stage. */
   const char *const *trusted_proxies;
   size_t trusted_proxy_count;
 } vectis_autoblock_config;

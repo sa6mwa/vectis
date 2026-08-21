@@ -617,8 +617,11 @@ static int vectis_kore_autoblock_copy_ip(const char *value, char *out,
   return 1;
 }
 
-static int vectis_kore_autoblock_peer_ip(struct connection *connection,
-                                         char *out, size_t out_size) {
+/* This is deliberately the address recorded by Kore when it accepted the TCP
+ * connection. Do not use HTTP headers or an HTTP real-IP resolver here: this
+ * helper is also used before an HTTP request exists. */
+static int vectis_kore_autoblock_socket_peer_ip(struct connection *connection,
+                                                char *out, size_t out_size) {
   const char *ip;
 
   if (connection == NULL) {
@@ -669,13 +672,15 @@ static int vectis_kore_autoblock_header_first_ip(const char *value, char *out,
   return vectis_kore_autoblock_copy_ip(ip, out, out_size);
 }
 
-static int vectis_kore_autoblock_request_ip(struct http_request *request,
-                                            char *out, size_t out_size) {
+/* Forwarded client identity is meaningful only after a valid HTTP request was
+ * parsed, and only when its TCP peer is a configured trusted proxy. */
+static int vectis_kore_autoblock_http_client_ip(struct http_request *request,
+                                                char *out, size_t out_size) {
   const char *header;
   char peer[64];
 
-  if (request == NULL ||
-      !vectis_kore_autoblock_peer_ip(request->owner, peer, sizeof(peer))) {
+  if (request == NULL || !vectis_kore_autoblock_socket_peer_ip(
+                             request->owner, peer, sizeof(peer))) {
     return 0;
   }
   if (vectis_kore_autoblock_trusted_proxy(peer)) {
@@ -726,10 +731,9 @@ vectis_kore_autoblock_find_entry(const char *ip, unsigned long long now,
   return candidate;
 }
 
-static void
-vectis_kore_autoblock_note_counter(vectis_kore_autoblock_entry *entry,
-                                   const char *ip, unsigned int *counter,
-                                   unsigned int threshold, const char *reason) {
+static void vectis_kore_autoblock_note_counter(
+    vectis_kore_autoblock_entry *entry, const char *ip, unsigned int *counter,
+    unsigned int threshold, const char *reason, const char *address_kind) {
   unsigned long long now;
   unsigned long long window_ms;
   unsigned long long block_ms;
@@ -754,7 +758,8 @@ vectis_kore_autoblock_note_counter(vectis_kore_autoblock_entry *entry,
   (*counter)++;
   if (*counter >= threshold) {
     entry->blocked_until_ms = now + block_ms;
-    kore_log(LOG_NOTICE, "vectis autoblock ip=%s reason=%s threshold=%u", ip,
+    kore_log(LOG_NOTICE, "vectis autoblock %s=%s reason=%s threshold=%u",
+             address_kind != NULL ? address_kind : "ip", ip,
              reason != NULL ? reason : "rule", threshold);
   }
 }
@@ -778,7 +783,7 @@ int vectis_kore_autoblock_accept(struct connection *connection) {
   if (!vectis_kore_autoblock_enabled()) {
     return 1;
   }
-  if (!vectis_kore_autoblock_peer_ip(connection, ip, sizeof(ip))) {
+  if (!vectis_kore_autoblock_socket_peer_ip(connection, ip, sizeof(ip))) {
     return 1;
   }
   if (!vectis_kore_autoblock_lock()) {
@@ -787,7 +792,7 @@ int vectis_kore_autoblock_accept(struct connection *connection) {
   blocked = vectis_kore_autoblock_is_blocked_ip(ip);
   vectis_kore_autoblock_unlock();
   if (blocked) {
-    kore_log(LOG_NOTICE, "vectis autoblock dropping accepted peer ip=%s", ip);
+    kore_log(LOG_NOTICE, "vectis autoblock dropping accepted peer_ip=%s", ip);
   }
   return !blocked;
 }
@@ -797,7 +802,7 @@ void vectis_kore_autoblock_tcp_stall(struct connection *connection) {
   char ip[64];
 
   if (!vectis_kore_autoblock_enabled() ||
-      !vectis_kore_autoblock_peer_ip(connection, ip, sizeof(ip)) ||
+      !vectis_kore_autoblock_socket_peer_ip(connection, ip, sizeof(ip)) ||
       !vectis_kore_autoblock_lock()) {
     return;
   }
@@ -805,7 +810,8 @@ void vectis_kore_autoblock_tcp_stall(struct connection *connection) {
   if (entry != NULL) {
     vectis_kore_autoblock_note_counter(
         entry, ip, &entry->tcp_stalls,
-        vectis_kore_current.server.autoblock.tcp_stall_threshold, "tcp_stall");
+        vectis_kore_current.server.autoblock.tcp_stall_threshold, "tcp_stall",
+        "peer_ip");
   }
   vectis_kore_autoblock_unlock();
 }
@@ -815,7 +821,7 @@ void vectis_kore_autoblock_tls_failure(struct connection *connection) {
   char ip[64];
 
   if (!vectis_kore_autoblock_enabled() ||
-      !vectis_kore_autoblock_peer_ip(connection, ip, sizeof(ip)) ||
+      !vectis_kore_autoblock_socket_peer_ip(connection, ip, sizeof(ip)) ||
       !vectis_kore_autoblock_lock()) {
     return;
   }
@@ -824,7 +830,7 @@ void vectis_kore_autoblock_tls_failure(struct connection *connection) {
     vectis_kore_autoblock_note_counter(
         entry, ip, &entry->tls_failures,
         vectis_kore_current.server.autoblock.tls_failure_threshold,
-        "tls_failure");
+        "tls_failure", "peer_ip");
   }
   vectis_kore_autoblock_unlock();
 }
@@ -836,7 +842,7 @@ int vectis_kore_autoblock_request_allowed(struct http_request *request) {
   if (!vectis_kore_autoblock_enabled()) {
     return 1;
   }
-  if (!vectis_kore_autoblock_request_ip(request, ip, sizeof(ip))) {
+  if (!vectis_kore_autoblock_http_client_ip(request, ip, sizeof(ip))) {
     return 1;
   }
   if (!vectis_kore_autoblock_lock()) {
@@ -845,7 +851,7 @@ int vectis_kore_autoblock_request_allowed(struct http_request *request) {
   blocked = vectis_kore_autoblock_is_blocked_ip(ip);
   vectis_kore_autoblock_unlock();
   if (blocked) {
-    kore_log(LOG_NOTICE, "vectis autoblock dropping request ip=%s", ip);
+    kore_log(LOG_NOTICE, "vectis autoblock dropping request client_ip=%s", ip);
   }
   return !blocked;
 }
@@ -858,7 +864,7 @@ void vectis_kore_autoblock_http_status(struct http_request *request,
   size_t i;
 
   if (!vectis_kore_autoblock_enabled() ||
-      !vectis_kore_autoblock_request_ip(request, ip, sizeof(ip)) ||
+      !vectis_kore_autoblock_http_client_ip(request, ip, sizeof(ip)) ||
       !vectis_kore_autoblock_lock()) {
     return;
   }
@@ -873,7 +879,7 @@ void vectis_kore_autoblock_http_status(struct http_request *request,
         vectis_kore_autoblock_note_counter(
             entry, ip, &entry->status_counts[i],
             vectis_kore_current.server.autoblock.status_rules[i].threshold,
-            reason);
+            reason, "client_ip");
       }
     }
   }
@@ -888,7 +894,7 @@ void vectis_kore_autoblock_connection_status(struct connection *connection,
   size_t i;
 
   if (!vectis_kore_autoblock_enabled() ||
-      !vectis_kore_autoblock_peer_ip(connection, ip, sizeof(ip)) ||
+      !vectis_kore_autoblock_socket_peer_ip(connection, ip, sizeof(ip)) ||
       !vectis_kore_autoblock_lock()) {
     return;
   }
@@ -903,7 +909,7 @@ void vectis_kore_autoblock_connection_status(struct connection *connection,
         vectis_kore_autoblock_note_counter(
             entry, ip, &entry->status_counts[i],
             vectis_kore_current.server.autoblock.status_rules[i].threshold,
-            reason);
+            reason, "peer_ip");
       }
     }
   }
@@ -917,7 +923,7 @@ void vectis_kore_autoblock_request_event(struct http_request *request,
   size_t i;
 
   if (!vectis_kore_autoblock_enabled() || name == NULL ||
-      !vectis_kore_autoblock_request_ip(request, ip, sizeof(ip)) ||
+      !vectis_kore_autoblock_http_client_ip(request, ip, sizeof(ip)) ||
       !vectis_kore_autoblock_lock()) {
     return;
   }
@@ -930,8 +936,8 @@ void vectis_kore_autoblock_request_event(struct http_request *request,
       if (entry != NULL) {
         vectis_kore_autoblock_note_counter(
             entry, ip, &entry->event_counts[i],
-            vectis_kore_current.server.autoblock.event_rules[i].threshold,
-            name);
+            vectis_kore_current.server.autoblock.event_rules[i].threshold, name,
+            "client_ip");
       }
     }
   }
