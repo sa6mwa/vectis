@@ -53,7 +53,7 @@
 #define VECTIS_SERVER_PRODUCTION_AUTOBLOCK_429_THRESHOLD 5u
 #define VECTIS_AUTOBLOCK_MAX_STATUS_RULES 16u
 #define VECTIS_AUTOBLOCK_MAX_EVENT_RULES 16u
-#define VECTIS_AUTOBLOCK_MAX_TRUSTED_PROXIES 16u
+#define VECTIS_CLIENT_IP_MAX_TRUSTED_PROXIES 16u
 #define VECTIS_AUTOBLOCK_MAX_ENTRIES 65536u
 #define VECTIS_BODY_DEFAULT_UPLOAD_MAX_BYTES ((size_t)3221225472UL)
 #define VECTIS_BODY_DEFAULT_MEMORY_BUFFER_LIMIT_BYTES 262144u
@@ -1066,6 +1066,19 @@ typedef struct vectis_autoblock_event_rule {
   unsigned int threshold;
 } vectis_autoblock_event_rule;
 
+/*
+ * The trusted reverse proxies allowed to establish an HTTP client identity.
+ * When no trusted proxy is configured, a request's IP is always its accepted
+ * TCP peer. When the accepted peer is trusted, Vectis resolves a valid
+ * X-Forwarded-For chain from the proxy side and otherwise falls back to
+ * X-Real-IP. Entries are numeric IPv4 or IPv6 addresses and are borrowed at
+ * configuration time; Vectis copies them while constructing the app.
+ */
+typedef struct vectis_client_ip_config {
+  const char *const *trusted_proxies;
+  size_t trusted_proxy_count;
+} vectis_client_ip_config;
+
 typedef struct vectis_autoblock_config {
   int enabled;
   unsigned int window_seconds;
@@ -1073,9 +1086,8 @@ typedef struct vectis_autoblock_config {
   /* Maximum number of address records in the shared autoblock table. Zero uses
    * the default. Transport-level signals (accept, TCP stall, TLS failure, and
    * malformed connection statuses) always use the accepted TCP peer address.
-   * Parsed HTTP requests may use a forwarded client address only under the
-   * trusted-proxy policy below. Enabled configs must not exceed
-   * VECTIS_AUTOBLOCK_MAX_ENTRIES. */
+   * Parsed HTTP requests use the server-wide client_ip policy. Enabled configs
+   * must not exceed VECTIS_AUTOBLOCK_MAX_ENTRIES. */
   unsigned int max_entries;
   unsigned int tcp_stall_threshold;
   unsigned int tls_failure_threshold;
@@ -1089,13 +1101,6 @@ typedef struct vectis_autoblock_config {
    * and a positive threshold. */
   vectis_autoblock_event_rule event_rules[VECTIS_AUTOBLOCK_MAX_EVENT_RULES];
   size_t event_rule_count;
-  int proxy_enabled;
-  /* Optional borrowed trusted proxy list for parsed HTTP requests; count must
-   * not exceed VECTIS_AUTOBLOCK_MAX_TRUSTED_PROXIES and each entry must be
-   * non-empty. It never affects transport-level signals, which use the TCP
-   * peer address because request headers do not exist at that stage. */
-  const char *const *trusted_proxies;
-  size_t trusted_proxy_count;
 } vectis_autoblock_config;
 
 typedef enum vectis_worker_death_policy {
@@ -1212,6 +1217,7 @@ typedef struct vectis_server_config {
    * worker death stop the runtime instead of replacing the worker.
    */
   vectis_worker_death_policy worker_death_policy;
+  vectis_client_ip_config client_ip;
   vectis_autoblock_config autoblock;
 } vectis_server_config;
 
@@ -2449,6 +2455,7 @@ void vectis_server_config_init_production_webserver(
  * fail-closed service behavior, and uses a longer graceful shutdown window.
  */
 void vectis_app_config_init_production_webserver(vectis_app_config *config);
+void vectis_client_ip_config_init(vectis_client_ip_config *config);
 void vectis_autoblock_config_init(vectis_autoblock_config *config);
 void vectis_tls_config_init(vectis_tls_config *config);
 void vectis_lockd_config_init(vectis_lockd_config *config);
@@ -2938,6 +2945,12 @@ vectis_request_json_array_each(vectis_request *request, const char *array_path,
                                void *userdata, vectis_error *error);
 vectis_http_method vectis_request_method(vectis_request *request);
 const char *vectis_request_path(vectis_request *request);
+/*
+ * Returns the effective request IP. It is the accepted TCP peer unless that
+ * peer is configured in server.client_ip.trusted_proxies, in which case Vectis
+ * resolves the forwarded client chain supplied by that trusted proxy.
+ */
+const char *vectis_request_ip(vectis_request *request);
 const char *vectis_request_path_param(vectis_request *request,
                                       const char *name);
 const char *vectis_request_query(vectis_request *request, const char *name);

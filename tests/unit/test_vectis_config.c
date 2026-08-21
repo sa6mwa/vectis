@@ -143,6 +143,8 @@ int main(void) {
   assert(config.server.autoblock.window_seconds == 1800u);
   assert(config.server.autoblock.block_seconds == 3600u);
   assert(config.server.autoblock.max_entries == 8192u);
+  assert(config.server.client_ip.trusted_proxies == NULL);
+  assert(config.server.client_ip.trusted_proxy_count == 0u);
 
   vectis_server_config_init_production_webserver(&config.server);
   assert(config.server.max_request_body_bytes ==

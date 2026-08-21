@@ -400,6 +400,8 @@ typedef struct vectis_app_impl {
   char *domain;
   char **domains;
   size_t domain_count;
+  char **trusted_proxies;
+  size_t trusted_proxy_count;
   char *cert_key_bundle_path;
   void *cert_key_bundle_pem;
   size_t cert_key_bundle_pem_size;
@@ -498,6 +500,7 @@ typedef struct vectis_app_impl {
 struct vectis_request {
   vectis_http_method method;
   char *path;
+  char *ip;
   struct http_request *kore_request;
   vectis_bytes body;
   struct lc_source *body_reader;
@@ -1268,8 +1271,8 @@ static vectis_status vectis_metrics_worker_start(vectis_app *app,
                                                  vectis_error *error);
 static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
                                                      long timeout_ms);
-static long vectis_metrics_background_persistence_timeout_ms(
-    const vectis_app_impl *impl);
+static long
+vectis_metrics_background_persistence_timeout_ms(const vectis_app_impl *impl);
 static vectis_status
 vectis_metrics_worker_stop(vectis_app *app,
                            const struct timespec *shutdown_deadline,
@@ -2990,6 +2993,7 @@ void vectis_server_config_init(vectis_server_config *config) {
   config->server_header = VECTIS_SERVER_DEFAULT_SERVER_HEADER;
   config->pretty_error_pages = VECTIS_SERVER_DEFAULT_PRETTY_ERROR_PAGES;
   config->worker_death_policy = VECTIS_SERVER_DEFAULT_WORKER_DEATH_POLICY;
+  vectis_client_ip_config_init(&config->client_ip);
   vectis_autoblock_config_init(&config->autoblock);
 }
 
@@ -3028,6 +3032,13 @@ void vectis_autoblock_config_init(vectis_autoblock_config *config) {
   config->window_seconds = 1800u;
   config->block_seconds = 3600u;
   config->max_entries = 8192u;
+}
+
+void vectis_client_ip_config_init(vectis_client_ip_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
 }
 
 void vectis_app_config_init(vectis_app_config *config) {
@@ -3207,6 +3218,7 @@ vectis_effective_server_config(const vectis_server_config *config) {
   effective.access_log_path = config->access_log_path;
   effective.pretty_error_pages = config->pretty_error_pages;
   effective.worker_death_policy = config->worker_death_policy;
+  effective.client_ip = config->client_ip;
   effective.autoblock = config->autoblock;
   effective.autoblock.window_seconds =
       vectis_default_unsigned(config->autoblock.window_seconds, 1800u);
@@ -4963,6 +4975,31 @@ static void vectis_free_domains(vectis_app_impl *impl) {
   impl->domain_count = 0u;
 }
 
+static void vectis_free_trusted_proxies(vectis_app_impl *impl) {
+  size_t i;
+
+  if (impl->trusted_proxies == NULL) {
+    return;
+  }
+  for (i = 0u; i < impl->trusted_proxy_count; ++i) {
+    free(impl->trusted_proxies[i]);
+  }
+  free(impl->trusted_proxies);
+  impl->trusted_proxies = NULL;
+  impl->trusted_proxy_count = 0u;
+}
+
+static int vectis_is_ip_address(const char *value) {
+  struct in_addr ipv4;
+  struct in6_addr ipv6;
+
+  if (value == NULL || value[0] == '\0') {
+    return 0;
+  }
+  return inet_pton(AF_INET, value, &ipv4) == 1 ||
+         inet_pton(AF_INET6, value, &ipv6) == 1;
+}
+
 static int vectis_is_dns_hostname(const char *name) {
   size_t label_len;
   size_t total_len;
@@ -5048,6 +5085,34 @@ static vectis_status vectis_copy_domains(vectis_app_impl *impl,
     impl->domains[i] = vectis_strdup(tls->domains[i]);
     if (impl->domains[i] == NULL) {
       vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy tls.domain");
+      return VECTIS_ERR_NOMEM;
+    }
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status
+vectis_copy_trusted_proxies(vectis_app_impl *impl,
+                            const vectis_client_ip_config *client_ip,
+                            vectis_error *error) {
+  size_t i;
+
+  if (client_ip->trusted_proxy_count == 0u) {
+    return VECTIS_OK;
+  }
+  impl->trusted_proxies = (char **)calloc(client_ip->trusted_proxy_count,
+                                          sizeof(*impl->trusted_proxies));
+  if (impl->trusted_proxies == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate trusted proxy list");
+    return VECTIS_ERR_NOMEM;
+  }
+  impl->trusted_proxy_count = client_ip->trusted_proxy_count;
+  for (i = 0u; i < client_ip->trusted_proxy_count; ++i) {
+    impl->trusted_proxies[i] = vectis_strdup(client_ip->trusted_proxies[i]);
+    if (impl->trusted_proxies[i] == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy trusted proxy address");
       return VECTIS_ERR_NOMEM;
     }
   }
@@ -10126,6 +10191,7 @@ static void vectis_destroy_impl_final(vectis_app_impl *impl) {
   vectis_free_openapi_docs(impl);
   vectis_free_endpoints(impl);
   vectis_free_domains(impl);
+  vectis_free_trusted_proxies(impl);
   vectis_consumer_receiver_entries_cleanup(impl->consumer_receivers);
 
   free(impl->app_name);
@@ -10432,23 +10498,22 @@ vectis_validate_server_config(const vectis_server_config *config,
                      "server autoblock event_rule_count exceeds maximum");
     return VECTIS_ERR_INVALID;
   }
-  if (effective.autoblock.trusted_proxy_count >
-      VECTIS_AUTOBLOCK_MAX_TRUSTED_PROXIES) {
+  if (effective.client_ip.trusted_proxy_count >
+      VECTIS_CLIENT_IP_MAX_TRUSTED_PROXIES) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "server autoblock trusted_proxy_count exceeds maximum");
+                     "server client_ip trusted_proxy_count exceeds maximum");
     return VECTIS_ERR_INVALID;
   }
-  if (effective.autoblock.trusted_proxy_count > 0u &&
-      effective.autoblock.trusted_proxies == NULL) {
+  if (effective.client_ip.trusted_proxy_count > 0u &&
+      effective.client_ip.trusted_proxies == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "server autoblock trusted_proxies is required");
+                     "server client_ip trusted_proxies is required");
     return VECTIS_ERR_INVALID;
   }
-  for (i = 0u; i < effective.autoblock.trusted_proxy_count; ++i) {
-    if (effective.autoblock.trusted_proxies[i] == NULL ||
-        effective.autoblock.trusted_proxies[i][0] == '\0') {
+  for (i = 0u; i < effective.client_ip.trusted_proxy_count; ++i) {
+    if (!vectis_is_ip_address(effective.client_ip.trusted_proxies[i])) {
       vectis_set_error(error, VECTIS_ERR_INVALID,
-                       "server autoblock trusted proxy must not be empty");
+                       "server client_ip trusted proxy must be an IP address");
       return VECTIS_ERR_INVALID;
     }
   }
@@ -11314,6 +11379,16 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
     free(app);
     return NULL;
   }
+  status =
+      vectis_copy_trusted_proxies(impl, &effective_server.client_ip, error);
+  if (status != VECTIS_OK) {
+    vectis_destroy_impl(impl);
+    free(app);
+    return NULL;
+  }
+  impl->server.client_ip.trusted_proxies =
+      (const char *const *)impl->trusted_proxies;
+  impl->server.client_ip.trusted_proxy_count = impl->trusted_proxy_count;
 
   if (effective->logger != NULL) {
     impl->logger = effective->logger;
@@ -19501,8 +19576,7 @@ LONEJSON_MAP_DEFINE(vectis_metrics_snapshot_http_json_map,
 static const lonejson_field vectis_metrics_snapshot_auth_json_fields[] = {
     LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_auth_json, allowed,
                            "allowed"),
-    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_auth_json, denied,
-                           "denied"),
+    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_auth_json, denied, "denied"),
     LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_auth_json, required,
                            "required"),
     LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_auth_json, redirected,
@@ -19512,11 +19586,11 @@ LONEJSON_MAP_DEFINE(vectis_metrics_snapshot_auth_json_map,
                     vectis_metrics_snapshot_auth_json,
                     vectis_metrics_snapshot_auth_json_fields);
 
-static const lonejson_field vectis_metrics_snapshot_persistence_json_fields[] = {
-    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_persistence_json, writes,
-                           "writes"),
-    LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_persistence_json, errors,
-                           "errors")};
+static const lonejson_field vectis_metrics_snapshot_persistence_json_fields[] =
+    {LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_persistence_json, writes,
+                            "writes"),
+     LONEJSON_FIELD_U64_REQ(vectis_metrics_snapshot_persistence_json, errors,
+                            "errors")};
 
 LONEJSON_MAP_DEFINE(vectis_metrics_snapshot_persistence_json_map,
                     vectis_metrics_snapshot_persistence_json,
@@ -19533,9 +19607,9 @@ static const lonejson_field vectis_metrics_snapshot_json_fields[] = {
                               &vectis_metrics_snapshot_http_json_map),
     LONEJSON_FIELD_OBJECT_REQ(vectis_metrics_snapshot_document, auth, "auth",
                               &vectis_metrics_snapshot_auth_json_map),
-    LONEJSON_FIELD_OBJECT_REQ(
-        vectis_metrics_snapshot_document, persistence, "persistence",
-        &vectis_metrics_snapshot_persistence_json_map)};
+    LONEJSON_FIELD_OBJECT_REQ(vectis_metrics_snapshot_document, persistence,
+                              "persistence",
+                              &vectis_metrics_snapshot_persistence_json_map)};
 
 LONEJSON_MAP_DEFINE(vectis_metrics_snapshot_json_map,
                     vectis_metrics_snapshot_document,
@@ -19546,9 +19620,9 @@ typedef struct vectis_metrics_lc_reader {
   lc_error error;
 } vectis_metrics_lc_reader;
 
-static lonejson_read_result
-vectis_metrics_snapshot_read(void *userdata, unsigned char *buffer,
-                             size_t capacity) {
+static lonejson_read_result vectis_metrics_snapshot_read(void *userdata,
+                                                         unsigned char *buffer,
+                                                         size_t capacity) {
   vectis_metrics_lc_reader *reader;
   lonejson_read_result result;
 
@@ -19575,9 +19649,10 @@ static void vectis_metrics_counter_add(unsigned long long *counter,
   }
 }
 
-static int vectis_metrics_restore_snapshot(
-    vectis_metrics_write_context *write,
-    lc_acquire_for_update_context *update, lc_error *error) {
+static int
+vectis_metrics_restore_snapshot(vectis_metrics_write_context *write,
+                                lc_acquire_for_update_context *update,
+                                lc_error *error) {
   vectis_app_impl *impl;
   vectis_metrics_state *metrics;
   vectis_metrics_shared_state *shared;
@@ -19618,7 +19693,8 @@ static int vectis_metrics_restore_snapshot(
   if (json_status != LONEJSON_STATUS_OK || snapshot.format == NULL ||
       strcmp(snapshot.format, "vectis-metrics-snapshot") != 0 ||
       snapshot.version != 1u || snapshot.app_name == NULL ||
-      impl->app_name == NULL || strcmp(snapshot.app_name, impl->app_name) != 0) {
+      impl->app_name == NULL ||
+      strcmp(snapshot.app_name, impl->app_name) != 0) {
     lonejson_cleanup(&vectis_metrics_snapshot_json_map, &snapshot);
     if (error != NULL) {
       lc_error_init(error);
@@ -19661,9 +19737,10 @@ static int vectis_metrics_restore_snapshot(
   return LC_OK;
 }
 
-vectis_status vectis_internal_metrics_snapshot_key(
-    const char *storage_owner, const char *app_name, char *key,
-    size_t key_size, vectis_error *error) {
+vectis_status vectis_internal_metrics_snapshot_key(const char *storage_owner,
+                                                   const char *app_name,
+                                                   char *key, size_t key_size,
+                                                   vectis_error *error) {
   static const char hex[] = "0123456789abcdef";
   EVP_MD_CTX *digest_context;
   unsigned char digest[EVP_MAX_MD_SIZE];
@@ -19826,9 +19903,8 @@ static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
       rc = LC_ERR_INVALID;
     } else {
       req.key = key;
-      rc = client->acquire_for_update(client, &req,
-                                      vectis_metrics_write_update, &write,
-                                      &lcerr);
+      rc = client->acquire_for_update(client, &req, vectis_metrics_write_update,
+                                      &write, &lcerr);
     }
   }
   if (client != NULL) {
@@ -31919,6 +31995,7 @@ void vectis_internal_request_cleanup(vectis_request *request) {
   vectis_kv_free_all(request->headers, request->header_count);
   vectis_request_close_body_reader(request);
   free(request->path);
+  free(request->ip);
   free(request->body_path);
   memset(request, 0, sizeof(*request));
   request->method = VECTIS_HTTP_ANY;
@@ -31960,6 +32037,32 @@ vectis_status vectis_internal_request_set_path(vectis_request *request,
   }
   free(request->path);
   request->path = copy;
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_internal_request_set_ip(vectis_request *request,
+                                             const char *ip,
+                                             vectis_error *error) {
+  char *copy;
+
+  if (request == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "request is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (ip == NULL || ip[0] == '\0') {
+    free(request->ip);
+    request->ip = NULL;
+    vectis_error_clear(error);
+    return VECTIS_OK;
+  }
+  copy = vectis_strdup(ip);
+  if (copy == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy request IP");
+    return VECTIS_ERR_NOMEM;
+  }
+  free(request->ip);
+  request->ip = copy;
   vectis_error_clear(error);
   return VECTIS_OK;
 }
@@ -32429,6 +32532,13 @@ const char *vectis_request_path(vectis_request *request) {
     return NULL;
   }
   return request->path;
+}
+
+const char *vectis_request_ip(vectis_request *request) {
+  if (request == NULL) {
+    return NULL;
+  }
+  return request->ip;
 }
 
 const char *vectis_request_path_param(vectis_request *request,

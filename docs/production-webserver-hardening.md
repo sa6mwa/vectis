@@ -27,17 +27,20 @@ static mounts, TLS material, ACME, or persistence. Those remain explicit
 application registrations so a Vectis service cannot silently expose a surface
 because a profile was selected.
 
-### Autoblock address identity
+### Request address identity
 
 Transport-level autoblock signals—accepted-connection checks, TCP stalls, TLS
 handshake failures, and malformed connection-level HTTP statuses—are keyed and
 logged using the accepted TCP peer address from Kore. They never consume
-`X-Forwarded-For`, `X-Real-IP`, or an HTTP access-log `real_ip` value: none is
-available before a request has been parsed. For parsed HTTP request status and
-event rules, Vectis uses the TCP peer by default. It uses the first valid
-`X-Forwarded-For` address, or `X-Real-IP` when no forwarded address is present,
-only when `proxy_enabled` is set and that TCP peer exactly matches a configured
-trusted proxy.
+`X-Forwarded-For` or `X-Real-IP`: none is available before a request has been
+parsed. Parsed HTTP requests have one effective `ip` shared by downstream C
+and Lua handlers and HTTP-level autoblock rules. It is the TCP peer by default.
+Configure `server.client_ip.trusted_proxies` (or Lua
+`client_ip.trusted_proxies`) to accept forwarded identity from known reverse
+proxies. For a trusted peer, Vectis resolves `X-Forwarded-For` right to left
+and uses the first untrusted address; a valid `X-Real-IP` is only a fallback.
+This prevents a client-supplied leftmost forwarded value from overriding an
+intermediary-appended chain.
 
 ## Implemented Surfaces
 

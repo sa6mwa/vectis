@@ -8826,6 +8826,7 @@ static vectis_status vectis_lua_push_route_request(lua_State *lua,
                                                    vectis_error *error) {
   vectis_bytes body;
   const char *path;
+  const char *ip;
 
   lua_newtable(lua);
   lua_pushstring(lua,
@@ -8835,6 +8836,11 @@ static vectis_status vectis_lua_push_route_request(lua_State *lua,
   if (path != NULL) {
     lua_pushstring(lua, path);
     lua_setfield(lua, -2, "path");
+  }
+  ip = vectis_request_ip(request);
+  if (ip != NULL) {
+    lua_pushstring(lua, ip);
+    lua_setfield(lua, -2, "ip");
   }
   if (principal != NULL && principal[0] != '\0') {
     lua_pushstring(lua, principal);
@@ -10967,6 +10973,7 @@ static int vectis_lua_app_new(lua_State *lua) {
   const char *quiescence_policy;
   const char *worker_death_policy;
   const char **lockd_endpoints;
+  const char **trusted_proxies;
   const char **tls_domains;
   const char *pem;
   size_t pem_size;
@@ -10975,6 +10982,7 @@ static int vectis_lua_app_new(lua_State *lua) {
 
   luaL_checktype(lua, 1, LUA_TTABLE);
   lockd_endpoints = NULL;
+  trusted_proxies = NULL;
   tls_domains = NULL;
   port = vectis_lua_table_size(lua, 1, "port", 8080u);
   if (port == 0u || port > 65535u) {
@@ -11115,6 +11123,17 @@ static int vectis_lua_app_new(lua_State *lua) {
       vectis_lua_table_string(lua, 1, "access_log_path");
   config.server.pretty_error_pages = vectis_lua_table_bool(
       lua, 1, "pretty_error_pages", config.server.pretty_error_pages);
+  lua_getfield(lua, 1, "client_ip");
+  if (!lua_isnil(lua, -1)) {
+    if (!lua_istable(lua, -1)) {
+      return luaL_error(lua, "app client_ip must be a table");
+    }
+    trusted_proxies = vectis_lua_string_array_field(
+        lua, -1, "trusted_proxies",
+        &config.server.client_ip.trusted_proxy_count);
+    config.server.client_ip.trusted_proxies = trusted_proxies;
+  }
+  lua_pop(lua, 1);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = bind != NULL ? bind : "127.0.0.1";
   config.tls.port = (unsigned short)port;
@@ -11291,6 +11310,7 @@ static int vectis_lua_app_new(lua_State *lua) {
   vectis_error_clear(&error);
   server->app = vectis_app_new(&config, &error);
   free(tls_domains);
+  free(trusted_proxies);
   free(lockd_endpoints);
   if (server->app == NULL) {
     return vectis_lua_push_error(

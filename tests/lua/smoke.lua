@@ -1169,6 +1169,23 @@ do
 end
 
 do
+  local proxy_identity_server = assert(vectis.app.new({
+    app_name = "lua-client-ip",
+    port = 18169,
+    client_ip = {trusted_proxies = {"127.0.0.1", "2001:db8::10"}},
+  }))
+  proxy_identity_server:close()
+  local invalid_proxy_server, invalid_proxy_error = vectis.app.new({
+    app_name = "lua-invalid-client-ip",
+    port = 18170,
+    client_ip = {trusted_proxies = {"not-an-ip"}},
+  })
+  assert(invalid_proxy_server == nil)
+  assert(type(invalid_proxy_error) == "table")
+  assert(invalid_proxy_error.message:find("trusted proxy", 1, true))
+end
+
+do
   local ok, err = pcall(function()
     return vectis.app.new({
       app_name = "lua-bad-profile",

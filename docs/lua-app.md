@@ -83,6 +83,15 @@ chatter; Vectis logging, metrics, and route responses are unaffected.
 `worker_death_policy` accepts `"restart"` and `"terminate"`; omission keeps
 Kore's restart behavior.
 
+`client_ip = {trusted_proxies = {"203.0.113.10", "2001:db8::10"}}` enables
+trusted reverse-proxy identity resolution. A route request's `ip` is otherwise
+the accepted TCP peer. When that peer is trusted, Vectis resolves
+`X-Forwarded-For` from right to left, stopping at the first untrusted address;
+it uses a valid `X-Real-IP` only when no valid forwarded chain is present.
+Trusted proxy entries must be numeric IPv4 or IPv6 addresses. Do not add a
+public address merely because it appears in a header: doing so would let an
+untrusted client select its own identity.
+
 `profile = "production_webserver"` applies the same C-owned production webserver
 profile as `vectis_app_config_init_production_webserver()`: strict quiescence,
 fail-closed service failure handling, a longer graceful shutdown window,
@@ -246,6 +255,7 @@ that are valid only during the handler call:
 
 - `method`
 - `path`
+- `ip`: the effective client address under the app's `client_ip` policy
 - `body`, `body_size`
 - `body_spooled`, `body_path`
 - `principal` when an auth provider allowed the request with a principal

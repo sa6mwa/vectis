@@ -9,6 +9,7 @@
 #include <kore/seccomp.h>
 #endif
 
+#include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -617,11 +618,9 @@ static int vectis_kore_autoblock_copy_ip(const char *value, char *out,
   return 1;
 }
 
-/* This is deliberately the address recorded by Kore when it accepted the TCP
- * connection. Do not use HTTP headers or an HTTP real-IP resolver here: this
- * helper is also used before an HTTP request exists. */
-static int vectis_kore_autoblock_socket_peer_ip(struct connection *connection,
-                                                char *out, size_t out_size) {
+/* The accepted TCP peer is the only address available before HTTP parsing. */
+static int vectis_kore_peer_ip(struct connection *connection, char *out,
+                               size_t out_size) {
   const char *ip;
 
   if (connection == NULL) {
@@ -631,16 +630,16 @@ static int vectis_kore_autoblock_socket_peer_ip(struct connection *connection,
   return vectis_kore_autoblock_copy_ip(ip, out, out_size);
 }
 
-static int vectis_kore_autoblock_trusted_proxy(const char *ip) {
+static int vectis_kore_trusted_proxy(const char *ip) {
   const char *trusted;
   size_t i;
 
-  if (ip == NULL || !vectis_kore_current.server.autoblock.proxy_enabled) {
+  if (ip == NULL) {
     return 0;
   }
-  for (i = 0u; i < vectis_kore_current.server.autoblock.trusted_proxy_count;
+  for (i = 0u; i < vectis_kore_current.server.client_ip.trusted_proxy_count;
        ++i) {
-    trusted = vectis_kore_current.server.autoblock.trusted_proxies[i];
+    trusted = vectis_kore_current.server.client_ip.trusted_proxies[i];
     if (trusted != NULL && strcmp(trusted, ip) == 0) {
       return 1;
     }
@@ -648,8 +647,17 @@ static int vectis_kore_autoblock_trusted_proxy(const char *ip) {
   return 0;
 }
 
-static int vectis_kore_autoblock_header_first_ip(const char *value, char *out,
-                                                 size_t out_size) {
+static int vectis_kore_ip_address(const char *value) {
+  struct in_addr ipv4;
+  struct in6_addr ipv6;
+
+  return value != NULL && value[0] != '\0' &&
+         (inet_pton(AF_INET, value, &ipv4) == 1 ||
+          inet_pton(AF_INET6, value, &ipv6) == 1);
+}
+
+static int vectis_kore_header_single_ip(const char *value, char *out,
+                                        size_t out_size) {
   char ip[64];
   size_t i;
 
@@ -659,7 +667,7 @@ static int vectis_kore_autoblock_header_first_ip(const char *value, char *out,
   while (*value == ' ' || *value == '\t') {
     value++;
   }
-  for (i = 0u; value[i] != '\0' && value[i] != ','; ++i) {
+  for (i = 0u; value[i] != '\0'; ++i) {
     if (i + 1u >= sizeof(ip)) {
       return 0;
     }
@@ -669,27 +677,78 @@ static int vectis_kore_autoblock_header_first_ip(const char *value, char *out,
     i--;
   }
   ip[i] = '\0';
-  return vectis_kore_autoblock_copy_ip(ip, out, out_size);
+  return vectis_kore_ip_address(ip) &&
+         vectis_kore_autoblock_copy_ip(ip, out, out_size);
 }
 
-/* Forwarded client identity is meaningful only after a valid HTTP request was
- * parsed, and only when its TCP peer is a configured trusted proxy. */
-static int vectis_kore_autoblock_http_client_ip(struct http_request *request,
-                                                char *out, size_t out_size) {
+static int vectis_kore_header_forwarded_ip(const char *value, char *out,
+                                           size_t out_size) {
+  const char *end;
+  const char *start;
+  const char *token_start;
+  char ip[64];
+  size_t len;
+
+  if (value == NULL || value[0] == '\0') {
+    return 0;
+  }
+  end = value + strlen(value);
+  while (end > value && (end[-1] == ' ' || end[-1] == '\t')) {
+    end--;
+  }
+  while (end > value) {
+    token_start = end;
+    while (token_start > value && token_start[-1] != ',') {
+      token_start--;
+    }
+    start = token_start;
+    while (start < end && (*start == ' ' || *start == '\t')) {
+      start++;
+    }
+    len = (size_t)(end - start);
+    while (len > 0u && (start[len - 1u] == ' ' || start[len - 1u] == '\t')) {
+      len--;
+    }
+    if (len == 0u || len >= sizeof(ip)) {
+      return 0;
+    }
+    memcpy(ip, start, len);
+    ip[len] = '\0';
+    if (!vectis_kore_ip_address(ip)) {
+      return 0;
+    }
+    if (!vectis_kore_trusted_proxy(ip)) {
+      return vectis_kore_autoblock_copy_ip(ip, out, out_size);
+    }
+    if (token_start == value) {
+      return vectis_kore_autoblock_copy_ip(ip, out, out_size);
+    }
+    end = token_start - 1;
+  }
+  return 0;
+}
+
+/* Forwarded identity is available only after parsing and only from a trusted
+ * TCP peer. X-Forwarded-For is resolved from the proxy side so clients cannot
+ * select a leftmost value they injected before an intermediary appended to it.
+ */
+static int vectis_kore_request_ip(struct http_request *request, char *out,
+                                  size_t out_size) {
   const char *header;
   char peer[64];
 
-  if (request == NULL || !vectis_kore_autoblock_socket_peer_ip(
-                             request->owner, peer, sizeof(peer))) {
+  if (request == NULL ||
+      !vectis_kore_peer_ip(request->owner, peer, sizeof(peer))) {
     return 0;
   }
-  if (vectis_kore_autoblock_trusted_proxy(peer)) {
-    if (http_request_header(request, "x-forwarded-for", &header) &&
-        vectis_kore_autoblock_header_first_ip(header, out, out_size)) {
-      return 1;
+  if (vectis_kore_trusted_proxy(peer)) {
+    if (http_request_header(request, "x-forwarded-for", &header)) {
+      if (vectis_kore_header_forwarded_ip(header, out, out_size)) {
+        return 1;
+      }
     }
     if (http_request_header(request, "x-real-ip", &header) &&
-        vectis_kore_autoblock_header_first_ip(header, out, out_size)) {
+        vectis_kore_header_single_ip(header, out, out_size)) {
       return 1;
     }
   }
@@ -783,7 +842,7 @@ int vectis_kore_autoblock_accept(struct connection *connection) {
   if (!vectis_kore_autoblock_enabled()) {
     return 1;
   }
-  if (!vectis_kore_autoblock_socket_peer_ip(connection, ip, sizeof(ip))) {
+  if (!vectis_kore_peer_ip(connection, ip, sizeof(ip))) {
     return 1;
   }
   if (!vectis_kore_autoblock_lock()) {
@@ -802,7 +861,7 @@ void vectis_kore_autoblock_tcp_stall(struct connection *connection) {
   char ip[64];
 
   if (!vectis_kore_autoblock_enabled() ||
-      !vectis_kore_autoblock_socket_peer_ip(connection, ip, sizeof(ip)) ||
+      !vectis_kore_peer_ip(connection, ip, sizeof(ip)) ||
       !vectis_kore_autoblock_lock()) {
     return;
   }
@@ -821,7 +880,7 @@ void vectis_kore_autoblock_tls_failure(struct connection *connection) {
   char ip[64];
 
   if (!vectis_kore_autoblock_enabled() ||
-      !vectis_kore_autoblock_socket_peer_ip(connection, ip, sizeof(ip)) ||
+      !vectis_kore_peer_ip(connection, ip, sizeof(ip)) ||
       !vectis_kore_autoblock_lock()) {
     return;
   }
@@ -842,7 +901,7 @@ int vectis_kore_autoblock_request_allowed(struct http_request *request) {
   if (!vectis_kore_autoblock_enabled()) {
     return 1;
   }
-  if (!vectis_kore_autoblock_http_client_ip(request, ip, sizeof(ip))) {
+  if (!vectis_kore_request_ip(request, ip, sizeof(ip))) {
     return 1;
   }
   if (!vectis_kore_autoblock_lock()) {
@@ -864,7 +923,7 @@ void vectis_kore_autoblock_http_status(struct http_request *request,
   size_t i;
 
   if (!vectis_kore_autoblock_enabled() ||
-      !vectis_kore_autoblock_http_client_ip(request, ip, sizeof(ip)) ||
+      !vectis_kore_request_ip(request, ip, sizeof(ip)) ||
       !vectis_kore_autoblock_lock()) {
     return;
   }
@@ -894,7 +953,7 @@ void vectis_kore_autoblock_connection_status(struct connection *connection,
   size_t i;
 
   if (!vectis_kore_autoblock_enabled() ||
-      !vectis_kore_autoblock_socket_peer_ip(connection, ip, sizeof(ip)) ||
+      !vectis_kore_peer_ip(connection, ip, sizeof(ip)) ||
       !vectis_kore_autoblock_lock()) {
     return;
   }
@@ -923,7 +982,7 @@ void vectis_kore_autoblock_request_event(struct http_request *request,
   size_t i;
 
   if (!vectis_kore_autoblock_enabled() || name == NULL ||
-      !vectis_kore_autoblock_http_client_ip(request, ip, sizeof(ip)) ||
+      !vectis_kore_request_ip(request, ip, sizeof(ip)) ||
       !vectis_kore_autoblock_lock()) {
     return;
   }
@@ -2147,12 +2206,20 @@ static vectis_status vectis_kore_copy_request_metadata(struct http_request *req,
                                                        vectis_request *request,
                                                        vectis_error *error) {
   vectis_status status;
+  char ip[64];
 
   status = vectis_kore_copy_headers(req, request, error);
   if (status != VECTIS_OK) {
     return status;
   }
-  return vectis_kore_copy_query(req, request, error);
+  status = vectis_kore_copy_query(req, request, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (vectis_kore_request_ip(req, ip, sizeof(ip))) {
+    return vectis_internal_request_set_ip(request, ip, error);
+  }
+  return vectis_internal_request_set_ip(request, NULL, error);
 }
 
 static int vectis_kore_run_main(void) {

@@ -209,6 +209,18 @@ static vectis_status sample_handler(vectis_app *app, vectis_request *request,
   return vectis_response_text(response, 200, "text/plain", "ok", error);
 }
 
+static vectis_status ip_handler(vectis_app *app, vectis_request *request,
+                                vectis_response *response, void *userdata,
+                                vectis_error *error) {
+  const char *ip;
+
+  (void)app;
+  (void)userdata;
+  ip = vectis_request_ip(request);
+  return vectis_response_text(response, ip != NULL ? 200 : 500, "text/plain",
+                              ip != NULL ? ip : "missing", error);
+}
+
 static vectis_status status_404_handler(vectis_app *app,
                                         vectis_request *request,
                                         vectis_response *response,
@@ -1386,6 +1398,74 @@ static const char *format_loopback_http_url(char *out, size_t out_size,
   return out;
 }
 
+static void assert_request_ip_identity(void) {
+  vectis_app_config config;
+  vectis_http_client_config http;
+  vectis_http_request request;
+  vectis_http_response response;
+  vectis_route_config route;
+  vectis_error error;
+  vectis_status status;
+  vectis_app *app;
+  const char *trusted_proxies[] = {"127.0.0.1", "192.0.2.1"};
+  const char *forwarded_headers[] = {
+      "X-Forwarded-For: 198.51.100.17, 192.0.2.1"};
+  char url[128];
+  unsigned short port;
+  int reserved_fd;
+  int attempt;
+
+  memset(&response, 0, sizeof(response));
+  reserved_fd = reserve_loopback_port(&port);
+  assert(reserved_fd >= 0);
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = port;
+  config.server.client_ip.trusted_proxies = trusted_proxies;
+  config.server.client_ip.trusted_proxy_count = 2u;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  route = vectis_route(VECTIS_HTTP_GET, "/ip", ip_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  (void)close(reserved_fd);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+
+  vectis_http_client_config_init(&http);
+  http.timeout_ms = 1000L;
+  http.connect_timeout_ms = 200L;
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = format_loopback_http_url(url, sizeof(url), port, "/ip");
+  status = VECTIS_ERR_STATE;
+  for (attempt = 0; attempt < 20 && status != VECTIS_OK; ++attempt) {
+    vectis_http_response_cleanup(&response);
+    status = vectis_http_execute(&http, &request, &response, &error);
+    if (status != VECTIS_OK) {
+      usleep(100000u);
+    }
+  }
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200L);
+  assert(response.body_size == strlen("127.0.0.1"));
+  assert(memcmp(response.body, "127.0.0.1", response.body_size) == 0);
+  vectis_http_response_cleanup(&response);
+
+  request.headers = forwarded_headers;
+  request.header_count = 1u;
+  status = vectis_http_execute(&http, &request, &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200L);
+  assert(response.body_size == strlen("198.51.100.17"));
+  assert(memcmp(response.body, "198.51.100.17", response.body_size) == 0);
+  vectis_http_response_cleanup(&response);
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  app->close(app);
+}
+
 static vectis_status
 metrics_required_provider(const vectis_auth_provider_request *request,
                           vectis_auth_provider_response *response,
@@ -1693,9 +1773,8 @@ static void assert_supervised_metrics_persistence_worker(void) {
   assert(strstr((const char *)response.body, "\"writes\":1") != NULL);
   vectis_http_response_cleanup(&response);
   found = metrics_pouch_snapshot_contains_text(
-      endpoint, "vectis.runtime.metrics", pouch_crypto_key,
-      "runtime-test", "runtime-metrics-app",
-      "\"service\":\"supervised metrics worker\"");
+      endpoint, "vectis.runtime.metrics", pouch_crypto_key, "runtime-test",
+      "runtime-metrics-app", "\"service\":\"supervised metrics worker\"");
   assert(found);
 
   status = app->stop(app, &error);
@@ -2322,6 +2401,7 @@ static void assert_server_config_validation(void) {
   vectis_app_config config;
   vectis_error error;
   vectis_app *app;
+  const char *invalid_trusted_proxies[] = {"proxy"};
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
@@ -2418,14 +2498,20 @@ static void assert_server_config_validation(void) {
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
-  config.server.autoblock.trusted_proxy_count =
-      VECTIS_AUTOBLOCK_MAX_TRUSTED_PROXIES + 1u;
+  config.server.client_ip.trusted_proxy_count =
+      VECTIS_CLIENT_IP_MAX_TRUSTED_PROXIES + 1u;
   assert_invalid_server_config(&config, "trusted_proxy_count");
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
-  config.server.autoblock.trusted_proxy_count = 1u;
+  config.server.client_ip.trusted_proxy_count = 1u;
   assert_invalid_server_config(&config, "trusted_proxies");
+
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.server.client_ip.trusted_proxies = invalid_trusted_proxies;
+  config.server.client_ip.trusted_proxy_count = 1u;
+  assert_invalid_server_config(&config, "IP address");
 
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
@@ -3037,6 +3123,9 @@ static void assert_kore_smoke(void) {
   vectis_app_config second_config;
   vectis_route_config second_route;
   const char *headers[] = {"x-vectis-trace: runtime-smoke"};
+  const char *trusted_proxies[] = {"127.0.0.1", "192.0.2.1"};
+  const char *forwarded_headers[] = {
+      "X-Forwarded-For: 198.51.100.17, 192.0.2.1"};
   const char *embedded_if_none_match_headers[] = {
       "If-None-Match: "
       "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\""};
@@ -3188,6 +3277,8 @@ static void assert_kore_smoke(void) {
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
   config.tls.port = port;
+  config.server.client_ip.trusted_proxies = trusted_proxies;
+  config.server.client_ip.trusted_proxy_count = 2u;
   config.server.max_request_header_bytes = 1024u;
   config.server.max_request_body_bytes = 2097152u;
   config.server.request_header_timeout_ms = 1000L;
@@ -3262,6 +3353,9 @@ static void assert_kore_smoke(void) {
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/health", sample_handler, NULL);
+  status = vectis_register_route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/ip", ip_handler, NULL);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
   route = vectis_route(VECTIS_HTTP_GET, "/kore-curl-config",
@@ -4148,6 +4242,28 @@ static void assert_kore_smoke(void) {
   assert(status == VECTIS_OK);
   assert(native_webdav_response.status_code == 201L);
   vectis_http_response_cleanup(&native_webdav_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = format_loopback_http_url(url, sizeof(url), port, "/ip");
+  status = vectis_http_execute(&http, &request, &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200L);
+  assert(response.body_size == strlen("127.0.0.1"));
+  assert(memcmp(response.body, "127.0.0.1", response.body_size) == 0);
+  vectis_http_response_cleanup(&response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = format_loopback_http_url(url, sizeof(url), port, "/ip");
+  request.headers = forwarded_headers;
+  request.header_count = 1u;
+  status = vectis_http_execute(&http, &request, &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200L);
+  assert(response.body_size == strlen("198.51.100.17"));
+  assert(memcmp(response.body, "198.51.100.17", response.body_size) == 0);
+  vectis_http_response_cleanup(&response);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
@@ -6906,6 +7022,10 @@ static int run_named_runtime_test(const char *name) {
     assert_route_body_policy_validation();
     return 1;
   }
+  if (strcmp(name, "request_ip_identity") == 0) {
+    assert_request_ip_identity();
+    return 1;
+  }
   if (strcmp(name, "get_only_server_does_not_create_spool_dir") == 0) {
     assert_get_only_server_does_not_create_spool_dir();
     return 1;
@@ -7109,6 +7229,7 @@ int main(void) {
   assert_server_config_validation();
   assert_runtime_control_frame_contract();
   assert_route_body_policy_validation();
+  assert_request_ip_identity();
   assert_get_only_server_does_not_create_spool_dir();
   assert_upload_server_rejects_file_spool_path();
   assert_upload_server_rejects_unsafe_spool_dir();
