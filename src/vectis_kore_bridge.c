@@ -630,6 +630,8 @@ static int vectis_kore_peer_ip(struct connection *connection, char *out,
   return vectis_kore_autoblock_copy_ip(ip, out, out_size);
 }
 
+static int vectis_kore_ip_equal(const char *left, const char *right);
+
 static int vectis_kore_trusted_proxy(const char *ip) {
   const char *trusted;
   size_t i;
@@ -640,7 +642,7 @@ static int vectis_kore_trusted_proxy(const char *ip) {
   for (i = 0u; i < vectis_kore_current.server.client_ip.trusted_proxy_count;
        ++i) {
     trusted = vectis_kore_current.server.client_ip.trusted_proxies[i];
-    if (trusted != NULL && strcmp(trusted, ip) == 0) {
+    if (vectis_kore_ip_equal(trusted, ip)) {
       return 1;
     }
   }
@@ -654,6 +656,26 @@ static int vectis_kore_ip_address(const char *value) {
   return value != NULL && value[0] != '\0' &&
          (inet_pton(AF_INET, value, &ipv4) == 1 ||
           inet_pton(AF_INET6, value, &ipv6) == 1);
+}
+
+static int vectis_kore_ip_equal(const char *left, const char *right) {
+  struct in_addr left_ipv4;
+  struct in_addr right_ipv4;
+  struct in6_addr left_ipv6;
+  struct in6_addr right_ipv6;
+
+  if (left == NULL || right == NULL) {
+    return 0;
+  }
+  if (inet_pton(AF_INET, left, &left_ipv4) == 1 &&
+      inet_pton(AF_INET, right, &right_ipv4) == 1) {
+    return memcmp(&left_ipv4, &right_ipv4, sizeof(left_ipv4)) == 0;
+  }
+  if (inet_pton(AF_INET6, left, &left_ipv6) == 1 &&
+      inet_pton(AF_INET6, right, &right_ipv6) == 1) {
+    return memcmp(&left_ipv6, &right_ipv6, sizeof(left_ipv6)) == 0;
+  }
+  return 0;
 }
 
 static int vectis_kore_header_single_ip(const char *value, char *out,

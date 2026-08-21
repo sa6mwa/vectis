@@ -1407,9 +1407,11 @@ static void assert_request_ip_identity(void) {
   vectis_error error;
   vectis_status status;
   vectis_app *app;
-  const char *trusted_proxies[] = {"127.0.0.1", "192.0.2.1"};
+  const char *trusted_proxies[] = {"127.0.0.1", "192.0.2.1", "2001:db8::1"};
   const char *forwarded_headers[] = {
       "X-Forwarded-For: 198.51.100.17, 192.0.2.1"};
+  const char *equivalent_ipv6_forwarded_headers[] = {
+      "X-Forwarded-For: 198.51.100.17, 2001:0db8:0:0:0:0:0:1"};
   char url[128];
   unsigned short port;
   int reserved_fd;
@@ -1423,7 +1425,7 @@ static void assert_request_ip_identity(void) {
   config.tls.bind = "127.0.0.1";
   config.tls.port = port;
   config.server.client_ip.trusted_proxies = trusted_proxies;
-  config.server.client_ip.trusted_proxy_count = 2u;
+  config.server.client_ip.trusted_proxy_count = 3u;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
   route = vectis_route(VECTIS_HTTP_GET, "/ip", ip_handler, NULL);
@@ -1454,6 +1456,14 @@ static void assert_request_ip_identity(void) {
   vectis_http_response_cleanup(&response);
 
   request.headers = forwarded_headers;
+  request.header_count = 1u;
+  status = vectis_http_execute(&http, &request, &response, &error);
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200L);
+  assert(response.body_size == strlen("198.51.100.17"));
+  assert(memcmp(response.body, "198.51.100.17", response.body_size) == 0);
+  vectis_http_response_cleanup(&response);
+  request.headers = equivalent_ipv6_forwarded_headers;
   request.header_count = 1u;
   status = vectis_http_execute(&http, &request, &response, &error);
   assert(status == VECTIS_OK);
@@ -1799,6 +1809,151 @@ static void assert_supervised_metrics_persistence_worker(void) {
   status = app->stop(app, &error);
   assert(status == VECTIS_OK);
   app->close(app);
+
+  lc_pouch_crypto_key_string_free(pouch_crypto_key);
+  remove_tree(pouch_dir);
+}
+
+static void assert_metrics_persistence_route_hit(unsigned short port) {
+  vectis_http_client_config http;
+  vectis_http_request request;
+  vectis_http_response response;
+  vectis_error error;
+  vectis_status status;
+  char url[128];
+  int attempt;
+
+  memset(&response, 0, sizeof(response));
+  vectis_http_client_config_init(&http);
+  http.timeout_ms = 1000L;
+  http.connect_timeout_ms = 200L;
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = format_loopback_http_url(url, sizeof(url), port, "/count");
+  status = VECTIS_ERR_STATE;
+  for (attempt = 0; attempt < 20 && status != VECTIS_OK; ++attempt) {
+    vectis_http_response_cleanup(&response);
+    status = vectis_http_execute(&http, &request, &response, &error);
+    if (status != VECTIS_OK) {
+      usleep(100000u);
+    }
+  }
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200L);
+  vectis_http_response_cleanup(&response);
+}
+
+static void assert_metrics_persistence_merges_shared_identity(void) {
+  vectis_app_config config;
+  vectis_metrics_config metrics;
+  vectis_route_config route;
+  vectis_mutable_bytes snapshot;
+  vectis_error error;
+  vectis_status status;
+  lc_error lcerr;
+  vectis_app *first;
+  vectis_app *second;
+  vectis_app *restored;
+  char pouch_dir[] = "/tmp/vectis-runtime-metrics-merge.XXXXXX";
+  char *pouch_crypto_key;
+  char endpoint[4096];
+  unsigned short first_port;
+  unsigned short second_port;
+  unsigned short restored_port;
+  int first_fd;
+  int second_fd;
+  int restored_fd;
+  int written;
+
+  assert(mkdtemp(pouch_dir) != NULL);
+  pouch_crypto_key = NULL;
+  lc_error_init(&lcerr);
+  assert(lc_pouch_crypto_generate_key_string(&pouch_crypto_key, &lcerr) ==
+         LC_OK);
+  lc_error_cleanup(&lcerr);
+  written = snprintf(endpoint, sizeof(endpoint),
+                     "pouch://%s?single_writer=false", pouch_dir);
+  assert(written > 0 && (size_t)written < sizeof(endpoint));
+  first_fd = reserve_loopback_port(&first_port);
+  second_fd = reserve_loopback_port(&second_port);
+  restored_fd = reserve_loopback_port(&restored_port);
+  assert(first_fd >= 0 && second_fd >= 0 && restored_fd >= 0);
+  close(first_fd);
+  close(second_fd);
+  close(restored_fd);
+
+  vectis_app_config_init(&config);
+  config.app_name = "runtime-metrics-shared-identity";
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = second_port;
+  config.server.worker_count = 1u;
+  config.lockd.pouch_crypto_key = pouch_crypto_key;
+  vectis_metrics_config_init(&metrics);
+  metrics.persistence_enabled = 1;
+  metrics.storage_endpoint = endpoint;
+  metrics.storage_namespace = "vectis.runtime.metrics.merge";
+  metrics.storage_owner = "runtime-test";
+  route = vectis_route(VECTIS_HTTP_GET, "/count", sample_handler, NULL);
+
+  /* Establish a second instance's checkpoint baseline before the first
+   * instance advances it. Restarting it below reproduces a stale writer
+   * without running two Kore parent loops in this process at once. */
+  second = vectis_app_new(&config, &error);
+  assert(second != NULL);
+  status = second->metrics(second, &metrics, &error);
+  assert(status == VECTIS_OK);
+  status = second->route(second, &route, &error);
+  assert(status == VECTIS_OK);
+  status = second->start(second, &error);
+  assert(status == VECTIS_OK);
+  status = second->stop(second, &error);
+  assert(status == VECTIS_OK);
+
+  config.tls.port = first_port;
+  first = vectis_app_new(&config, &error);
+  assert(first != NULL);
+  status = first->metrics(first, &metrics, &error);
+  assert(status == VECTIS_OK);
+  status = first->route(first, &route, &error);
+  assert(status == VECTIS_OK);
+  status = first->start(first, &error);
+  assert(status == VECTIS_OK);
+  assert_metrics_persistence_route_hit(first_port);
+
+  status = first->stop(first, &error);
+  assert(status == VECTIS_OK);
+  first->close(first);
+
+  status = second->start(second, &error);
+  assert(status == VECTIS_OK);
+  memset(&snapshot, 0, sizeof(snapshot));
+  status = vectis_metrics_snapshot_json(second, &snapshot, &error);
+  assert(status == VECTIS_OK);
+  assert(strstr((const char *)snapshot.data, "\"requests_total\":1") != NULL);
+  vectis_mutable_bytes_cleanup(&snapshot);
+  assert_metrics_persistence_route_hit(second_port);
+  status = second->stop(second, &error);
+  assert(status == VECTIS_OK);
+  second->close(second);
+
+  config.tls.port = restored_port;
+  restored = vectis_app_new(&config, &error);
+  assert(restored != NULL);
+  status = restored->metrics(restored, &metrics, &error);
+  assert(status == VECTIS_OK);
+  status = restored->route(restored, &route, &error);
+  assert(status == VECTIS_OK);
+  status = restored->start(restored, &error);
+  assert(status == VECTIS_OK);
+  memset(&snapshot, 0, sizeof(snapshot));
+  status = vectis_metrics_snapshot_json(restored, &snapshot, &error);
+  assert(status == VECTIS_OK);
+  assert(strstr((const char *)snapshot.data, "\"requests_total\":2") != NULL);
+  vectis_mutable_bytes_cleanup(&snapshot);
+  status = restored->stop(restored, &error);
+  assert(status == VECTIS_OK);
+  restored->close(restored);
 
   lc_pouch_crypto_key_string_free(pouch_crypto_key);
   remove_tree(pouch_dir);
@@ -7050,6 +7205,10 @@ static int run_named_runtime_test(const char *name) {
     assert_supervised_metrics_persistence_worker();
     return 1;
   }
+  if (strcmp(name, "metrics_persistence_merges_shared_identity") == 0) {
+    assert_metrics_persistence_merges_shared_identity();
+    return 1;
+  }
   if (strcmp(name, "metrics_persistence_restore_honors_startup_grace") == 0) {
     assert_metrics_persistence_restore_honors_startup_grace();
     return 1;
@@ -7236,6 +7395,7 @@ int main(void) {
   assert_acme_state_dir_allows_existing_group_private_dir();
   assert_metrics_surface();
   assert_supervised_metrics_persistence_worker();
+  assert_metrics_persistence_merges_shared_identity();
   assert_metrics_persistence_restore_honors_startup_grace();
   assert_direct_supervision_policy_rejects_app_services();
   assert_consumer_service_declaration_before_routes();

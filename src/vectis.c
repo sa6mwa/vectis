@@ -254,6 +254,7 @@ typedef struct vectis_metrics_state {
   int worker_done;
   int stop_worker;
   int snapshot_restored;
+  int restore_checkpoint_on_start;
   time_t started_at;
   time_t last_load_sample_at;
   time_t last_snapshot_at;
@@ -268,6 +269,10 @@ typedef struct vectis_metrics_state {
   unsigned snapshot_interval_seconds;
   int persistence_enabled;
   vectis_metrics_shared_state *shared;
+  /* Per-instance cumulative counters at the last successful checkpoint. */
+  vectis_metrics_shared_state persisted_counters;
+  /* Aggregate counters from the last checkpoint observed by this instance. */
+  vectis_metrics_shared_state checkpoint_counters;
   const vectis_auth_provider *auth_provider;
   char *auth_purpose;
   unsigned allowed_auth_modes;
@@ -1271,6 +1276,8 @@ static vectis_status vectis_metrics_worker_start(vectis_app *app,
                                                  vectis_error *error);
 static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
                                                      long timeout_ms);
+static void
+vectis_metrics_mark_checkpoint_restore(vectis_metrics_state *metrics);
 static long
 vectis_metrics_background_persistence_timeout_ms(const vectis_app_impl *impl);
 static vectis_status
@@ -11961,6 +11968,10 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
     }
   }
 
+  if (vectis_app_has_metrics_persistence(impl)) {
+    vectis_metrics_mark_checkpoint_restore(impl->metrics);
+  }
+
   if (route_count == 0u) {
     if (vectis_app_has_metrics_persistence(impl)) {
       status = vectis_metrics_persist_snapshot(
@@ -18824,6 +18835,134 @@ static void vectis_metrics_merge_shared(vectis_metrics_state *snapshot,
       vectis_metrics_counter_load(&shared->snapshot_errors);
 }
 
+static void
+vectis_metrics_counters_from_state(const vectis_metrics_state *state,
+                                   vectis_metrics_shared_state *out) {
+  size_t i;
+
+  if (out == NULL) {
+    return;
+  }
+  memset(out, 0, sizeof(*out));
+  if (state == NULL) {
+    return;
+  }
+  out->requests_total = state->requests_total;
+  for (i = 0u; i < 6u; ++i) {
+    out->status_buckets[i] = state->status_buckets[i];
+  }
+  out->route_misses = state->route_misses;
+  out->body_rejects = state->body_rejects;
+  out->auth_allowed = state->auth_allowed;
+  out->auth_denied = state->auth_denied;
+  out->auth_required = state->auth_required;
+  out->auth_redirected = state->auth_redirected;
+  out->snapshot_writes = state->snapshot_writes;
+  out->snapshot_errors = state->snapshot_errors;
+}
+
+static void vectis_metrics_counters_apply_to_state(
+    vectis_metrics_state *state, const vectis_metrics_shared_state *counters) {
+  size_t i;
+
+  if (state == NULL || counters == NULL) {
+    return;
+  }
+  state->requests_total = counters->requests_total;
+  for (i = 0u; i < 6u; ++i) {
+    state->status_buckets[i] = counters->status_buckets[i];
+  }
+  state->route_misses = counters->route_misses;
+  state->body_rejects = counters->body_rejects;
+  state->auth_allowed = counters->auth_allowed;
+  state->auth_denied = counters->auth_denied;
+  state->auth_required = counters->auth_required;
+  state->auth_redirected = counters->auth_redirected;
+  state->snapshot_writes = counters->snapshot_writes;
+  state->snapshot_errors = counters->snapshot_errors;
+}
+
+static void
+vectis_metrics_counters_add(vectis_metrics_shared_state *total,
+                            const vectis_metrics_shared_state *increment) {
+  size_t i;
+
+  if (total == NULL || increment == NULL) {
+    return;
+  }
+  total->requests_total += increment->requests_total;
+  for (i = 0u; i < 6u; ++i) {
+    total->status_buckets[i] += increment->status_buckets[i];
+  }
+  total->route_misses += increment->route_misses;
+  total->body_rejects += increment->body_rejects;
+  total->auth_allowed += increment->auth_allowed;
+  total->auth_denied += increment->auth_denied;
+  total->auth_required += increment->auth_required;
+  total->auth_redirected += increment->auth_redirected;
+  total->snapshot_writes += increment->snapshot_writes;
+  total->snapshot_errors += increment->snapshot_errors;
+}
+
+static int
+vectis_metrics_counters_delta(const vectis_metrics_shared_state *current,
+                              const vectis_metrics_shared_state *previous,
+                              vectis_metrics_shared_state *delta) {
+  size_t i;
+
+  if (current == NULL || previous == NULL || delta == NULL ||
+      current->requests_total < previous->requests_total ||
+      current->route_misses < previous->route_misses ||
+      current->body_rejects < previous->body_rejects ||
+      current->auth_allowed < previous->auth_allowed ||
+      current->auth_denied < previous->auth_denied ||
+      current->auth_required < previous->auth_required ||
+      current->auth_redirected < previous->auth_redirected ||
+      current->snapshot_writes < previous->snapshot_writes ||
+      current->snapshot_errors < previous->snapshot_errors) {
+    return 0;
+  }
+  for (i = 0u; i < 6u; ++i) {
+    if (current->status_buckets[i] < previous->status_buckets[i]) {
+      return 0;
+    }
+  }
+  delta->requests_total = current->requests_total - previous->requests_total;
+  for (i = 0u; i < 6u; ++i) {
+    delta->status_buckets[i] =
+        current->status_buckets[i] - previous->status_buckets[i];
+  }
+  delta->route_misses = current->route_misses - previous->route_misses;
+  delta->body_rejects = current->body_rejects - previous->body_rejects;
+  delta->auth_allowed = current->auth_allowed - previous->auth_allowed;
+  delta->auth_denied = current->auth_denied - previous->auth_denied;
+  delta->auth_required = current->auth_required - previous->auth_required;
+  delta->auth_redirected = current->auth_redirected - previous->auth_redirected;
+  delta->snapshot_writes = current->snapshot_writes - previous->snapshot_writes;
+  delta->snapshot_errors = current->snapshot_errors - previous->snapshot_errors;
+  return 1;
+}
+
+static void vectis_metrics_current_counters(vectis_metrics_state *metrics,
+                                            vectis_metrics_shared_state *out) {
+  vectis_metrics_state snapshot;
+  vectis_metrics_shared_state *shared;
+
+  if (out == NULL) {
+    return;
+  }
+  memset(out, 0, sizeof(*out));
+  if (metrics == NULL) {
+    return;
+  }
+  (void)pthread_mutex_lock(&metrics->mutex);
+  snapshot = *metrics;
+  shared = metrics->shared;
+  (void)pthread_mutex_unlock(&metrics->mutex);
+  vectis_metrics_merge_shared(&snapshot, shared);
+  vectis_metrics_counters_from_state(&snapshot, out);
+}
+
 static void vectis_metrics_sample_load_locked(vectis_metrics_state *metrics,
                                               time_t now) {
   double values[3];
@@ -18852,10 +18991,9 @@ static void vectis_metrics_sample_load_locked(vectis_metrics_state *metrics,
 #endif
 }
 
-static vectis_status
-vectis_metrics_snapshot_json_impl(vectis_app *app, vectis_mutable_bytes *out,
-                                  const char *title_override,
-                                  vectis_error *error) {
+static vectis_status vectis_metrics_snapshot_json_with_counters(
+    vectis_app *app, vectis_mutable_bytes *out, const char *title_override,
+    const vectis_metrics_shared_state *counters, vectis_error *error) {
   vectis_app_impl *impl;
   vectis_metrics_state snapshot;
   vectis_metrics_shared_state *shared;
@@ -18889,6 +19027,7 @@ vectis_metrics_snapshot_json_impl(vectis_app *app, vectis_mutable_bytes *out,
   shared = impl->metrics->shared;
   (void)pthread_mutex_unlock(&impl->metrics->mutex);
   vectis_metrics_merge_shared(&snapshot, shared);
+  vectis_metrics_counters_apply_to_state(&snapshot, counters);
 
   memset(&json, 0, sizeof(json));
   title = title_override != NULL && title_override[0] != '\0'
@@ -18990,6 +19129,14 @@ vectis_metrics_snapshot_json_impl(vectis_app *app, vectis_mutable_bytes *out,
   out->size = json.size;
   vectis_error_clear(error);
   return VECTIS_OK;
+}
+
+static vectis_status
+vectis_metrics_snapshot_json_impl(vectis_app *app, vectis_mutable_bytes *out,
+                                  const char *title_override,
+                                  vectis_error *error) {
+  return vectis_metrics_snapshot_json_with_counters(app, out, title_override,
+                                                    NULL, error);
 }
 
 vectis_status vectis_metrics_snapshot_json(vectis_app *app,
@@ -19504,6 +19651,9 @@ static char *vectis_metrics_default_storage_endpoint(void) {
 typedef struct vectis_metrics_write_context {
   vectis_app *app;
   vectis_mutable_bytes json;
+  vectis_metrics_shared_state persisted_counters;
+  vectis_metrics_shared_state checkpoint_counters;
+  int checkpoint_pending;
 } vectis_metrics_write_context;
 
 typedef struct vectis_metrics_snapshot_status_json {
@@ -19649,34 +19799,54 @@ static void vectis_metrics_counter_add(unsigned long long *counter,
   }
 }
 
+static void vectis_metrics_counters_atomic_add(
+    vectis_metrics_shared_state *total,
+    const vectis_metrics_shared_state *increment) {
+  size_t i;
+
+  if (total == NULL || increment == NULL) {
+    return;
+  }
+  vectis_metrics_counter_add(&total->requests_total, increment->requests_total);
+  for (i = 0u; i < 6u; ++i) {
+    vectis_metrics_counter_add(&total->status_buckets[i],
+                               increment->status_buckets[i]);
+  }
+  vectis_metrics_counter_add(&total->route_misses, increment->route_misses);
+  vectis_metrics_counter_add(&total->body_rejects, increment->body_rejects);
+  vectis_metrics_counter_add(&total->auth_allowed, increment->auth_allowed);
+  vectis_metrics_counter_add(&total->auth_denied, increment->auth_denied);
+  vectis_metrics_counter_add(&total->auth_required, increment->auth_required);
+  vectis_metrics_counter_add(&total->auth_redirected,
+                             increment->auth_redirected);
+  vectis_metrics_counter_add(&total->snapshot_writes,
+                             increment->snapshot_writes);
+  vectis_metrics_counter_add(&total->snapshot_errors,
+                             increment->snapshot_errors);
+}
+
 static int
-vectis_metrics_restore_snapshot(vectis_metrics_write_context *write,
-                                lc_acquire_for_update_context *update,
-                                lc_error *error) {
+vectis_metrics_snapshot_load(vectis_metrics_write_context *write,
+                             lc_acquire_for_update_context *update,
+                             vectis_metrics_snapshot_document *snapshot,
+                             int *has_snapshot, lc_error *error) {
   vectis_app_impl *impl;
-  vectis_metrics_state *metrics;
-  vectis_metrics_shared_state *shared;
-  vectis_metrics_snapshot_document snapshot;
   vectis_metrics_lc_reader reader;
   lonejson_error json_error;
   lonejson_status json_status;
   lonejson *runtime;
 
   if (write == NULL || write->app == NULL || write->app->impl == NULL ||
-      update == NULL) {
+      update == NULL || snapshot == NULL || has_snapshot == NULL) {
     return LC_ERR_INVALID;
   }
   impl = (vectis_app_impl *)write->app->impl;
-  metrics = impl->metrics;
-  if (metrics == NULL || metrics->snapshot_restored ||
-      !update->state.has_state) {
-    if (metrics != NULL) {
-      metrics->snapshot_restored = 1;
-    }
+  memset(snapshot, 0, sizeof(*snapshot));
+  *has_snapshot = update->state.has_state;
+  if (!*has_snapshot) {
     return LC_OK;
   }
 
-  memset(&snapshot, 0, sizeof(snapshot));
   memset(&reader, 0, sizeof(reader));
   lc_error_init(&reader.error);
   reader.source = update->state.reader;
@@ -19686,16 +19856,16 @@ vectis_metrics_restore_snapshot(vectis_metrics_write_context *write,
     return LC_ERR_NOMEM;
   }
   json_status = lonejson_parse_reader(
-      runtime, &vectis_metrics_snapshot_json_map, &snapshot,
+      runtime, &vectis_metrics_snapshot_json_map, snapshot,
       vectis_metrics_snapshot_read, &reader, &json_error);
   lonejson_free(runtime);
   lc_error_cleanup(&reader.error);
-  if (json_status != LONEJSON_STATUS_OK || snapshot.format == NULL ||
-      strcmp(snapshot.format, "vectis-metrics-snapshot") != 0 ||
-      snapshot.version != 1u || snapshot.app_name == NULL ||
+  if (json_status != LONEJSON_STATUS_OK || snapshot->format == NULL ||
+      strcmp(snapshot->format, "vectis-metrics-snapshot") != 0 ||
+      snapshot->version != 1u || snapshot->app_name == NULL ||
       impl->app_name == NULL ||
-      strcmp(snapshot.app_name, impl->app_name) != 0) {
-    lonejson_cleanup(&vectis_metrics_snapshot_json_map, &snapshot);
+      strcmp(snapshot->app_name, impl->app_name) != 0) {
+    lonejson_cleanup(&vectis_metrics_snapshot_json_map, snapshot);
     if (error != NULL) {
       lc_error_init(error);
       error->code = LC_ERR_INVALID;
@@ -19703,38 +19873,87 @@ vectis_metrics_restore_snapshot(vectis_metrics_write_context *write,
     }
     return LC_ERR_INVALID;
   }
+  return LC_OK;
+}
 
+static void vectis_metrics_counters_from_document(
+    const vectis_metrics_snapshot_document *snapshot,
+    vectis_metrics_shared_state *counters) {
+  if (snapshot == NULL || counters == NULL) {
+    return;
+  }
+  memset(counters, 0, sizeof(*counters));
+  counters->requests_total = snapshot->http.requests_total;
+  counters->status_buckets[1] = snapshot->http.status.status_1xx;
+  counters->status_buckets[2] = snapshot->http.status.status_2xx;
+  counters->status_buckets[3] = snapshot->http.status.status_3xx;
+  counters->status_buckets[4] = snapshot->http.status.status_4xx;
+  counters->status_buckets[5] = snapshot->http.status.status_5xx;
+  counters->route_misses = snapshot->http.route_misses;
+  counters->body_rejects = snapshot->http.body_rejects;
+  counters->auth_allowed = snapshot->auth.allowed;
+  counters->auth_denied = snapshot->auth.denied;
+  counters->auth_required = snapshot->auth.required;
+  counters->auth_redirected = snapshot->auth.redirected;
+  counters->snapshot_writes = snapshot->persistence.writes;
+  counters->snapshot_errors = snapshot->persistence.errors;
+}
+
+static int vectis_metrics_restore_snapshot(
+    vectis_metrics_state *metrics,
+    const vectis_metrics_snapshot_document *snapshot, int has_snapshot) {
+  vectis_metrics_shared_state restored;
+  vectis_metrics_shared_state previous;
+  vectis_metrics_shared_state increment;
+  vectis_metrics_shared_state current;
+  vectis_metrics_shared_state *shared;
+  int snapshot_restored;
+
+  if (metrics == NULL) {
+    return 0;
+  }
+  (void)pthread_mutex_lock(&metrics->mutex);
+  if (!metrics->restore_checkpoint_on_start) {
+    (void)pthread_mutex_unlock(&metrics->mutex);
+    return 1;
+  }
+  snapshot_restored = metrics->snapshot_restored;
+  previous = metrics->checkpoint_counters;
+  (void)pthread_mutex_unlock(&metrics->mutex);
+
+  memset(&restored, 0, sizeof(restored));
+  if (has_snapshot) {
+    vectis_metrics_counters_from_document(snapshot, &restored);
+  }
+  if (snapshot_restored) {
+    if (!vectis_metrics_counters_delta(&restored, &previous, &increment)) {
+      return 0;
+    }
+  } else {
+    increment = restored;
+  }
   shared = metrics->shared;
   if (shared != NULL) {
-    vectis_metrics_counter_add(&shared->requests_total,
-                               snapshot.http.requests_total);
-    vectis_metrics_counter_add(&shared->status_buckets[1],
-                               snapshot.http.status.status_1xx);
-    vectis_metrics_counter_add(&shared->status_buckets[2],
-                               snapshot.http.status.status_2xx);
-    vectis_metrics_counter_add(&shared->status_buckets[3],
-                               snapshot.http.status.status_3xx);
-    vectis_metrics_counter_add(&shared->status_buckets[4],
-                               snapshot.http.status.status_4xx);
-    vectis_metrics_counter_add(&shared->status_buckets[5],
-                               snapshot.http.status.status_5xx);
-    vectis_metrics_counter_add(&shared->route_misses,
-                               snapshot.http.route_misses);
-    vectis_metrics_counter_add(&shared->body_rejects,
-                               snapshot.http.body_rejects);
-    vectis_metrics_counter_add(&shared->auth_allowed, snapshot.auth.allowed);
-    vectis_metrics_counter_add(&shared->auth_denied, snapshot.auth.denied);
-    vectis_metrics_counter_add(&shared->auth_required, snapshot.auth.required);
-    vectis_metrics_counter_add(&shared->auth_redirected,
-                               snapshot.auth.redirected);
-    vectis_metrics_counter_add(&shared->snapshot_writes,
-                               snapshot.persistence.writes);
-    vectis_metrics_counter_add(&shared->snapshot_errors,
-                               snapshot.persistence.errors);
+    vectis_metrics_counters_atomic_add(shared, &increment);
   }
+  vectis_metrics_current_counters(metrics, &current);
+  (void)pthread_mutex_lock(&metrics->mutex);
   metrics->snapshot_restored = 1;
-  lonejson_cleanup(&vectis_metrics_snapshot_json_map, &snapshot);
-  return LC_OK;
+  metrics->restore_checkpoint_on_start = 0;
+  metrics->persisted_counters = current;
+  metrics->checkpoint_counters = restored;
+  (void)pthread_mutex_unlock(&metrics->mutex);
+  return 1;
+}
+
+static void
+vectis_metrics_mark_checkpoint_restore(vectis_metrics_state *metrics) {
+  if (metrics == NULL) {
+    return;
+  }
+  (void)pthread_mutex_lock(&metrics->mutex);
+  metrics->restore_checkpoint_on_start = 1;
+  (void)pthread_mutex_unlock(&metrics->mutex);
 }
 
 vectis_status vectis_internal_metrics_snapshot_key(const char *storage_owner,
@@ -19782,8 +20001,16 @@ static int vectis_metrics_write_update(void *context,
                                        lc_acquire_for_update_context *update,
                                        lc_error *error) {
   vectis_metrics_write_context *write;
+  vectis_app_impl *impl;
+  vectis_metrics_state *metrics;
+  vectis_metrics_snapshot_document snapshot;
+  vectis_metrics_shared_state current;
+  vectis_metrics_shared_state persisted;
+  vectis_metrics_shared_state delta;
+  vectis_metrics_shared_state merged;
   lc_source *source;
   lc_update_opts opts;
+  int has_snapshot;
   int rc;
 
   write = (vectis_metrics_write_context *)context;
@@ -19795,13 +20022,48 @@ static int vectis_metrics_write_update(void *context,
     }
     return LC_ERR_INVALID;
   }
-  rc = vectis_metrics_restore_snapshot(write, update, error);
+  impl = (vectis_app_impl *)write->app->impl;
+  metrics = impl->metrics;
+  if (metrics == NULL) {
+    return LC_ERR_INVALID;
+  }
+  rc = vectis_metrics_snapshot_load(write, update, &snapshot, &has_snapshot,
+                                    error);
   if (rc != LC_OK) {
     return rc;
   }
+  if (!vectis_metrics_restore_snapshot(metrics, &snapshot, has_snapshot)) {
+    lonejson_cleanup(&vectis_metrics_snapshot_json_map, &snapshot);
+    if (error != NULL) {
+      lc_error_init(error);
+      error->code = LC_ERR_SERVER;
+      error->message =
+          vectis_strdup("persisted metrics counters moved backwards");
+    }
+    return LC_ERR_SERVER;
+  }
+  vectis_metrics_current_counters(metrics, &current);
+  (void)pthread_mutex_lock(&metrics->mutex);
+  persisted = metrics->persisted_counters;
+  (void)pthread_mutex_unlock(&metrics->mutex);
+  if (!vectis_metrics_counters_delta(&current, &persisted, &delta)) {
+    lonejson_cleanup(&vectis_metrics_snapshot_json_map, &snapshot);
+    if (error != NULL) {
+      lc_error_init(error);
+      error->code = LC_ERR_SERVER;
+      error->message = vectis_strdup("metrics counters moved backwards");
+    }
+    return LC_ERR_SERVER;
+  }
+  memset(&merged, 0, sizeof(merged));
+  if (has_snapshot) {
+    vectis_metrics_counters_from_document(&snapshot, &merged);
+  }
+  vectis_metrics_counters_add(&merged, &delta);
   vectis_mutable_bytes_cleanup(&write->json);
-  if (vectis_metrics_snapshot_json_impl(write->app, &write->json, NULL, NULL) !=
-      VECTIS_OK) {
+  if (vectis_metrics_snapshot_json_with_counters(write->app, &write->json, NULL,
+                                                 &merged, NULL) != VECTIS_OK) {
+    lonejson_cleanup(&vectis_metrics_snapshot_json_map, &snapshot);
     return LC_ERR_SERVER;
   }
   source = NULL;
@@ -19814,6 +20076,12 @@ static int vectis_metrics_write_update(void *context,
   opts.content_type = "application/json";
   rc = update->lease->update(update->lease, source, &opts, error);
   source->close(source);
+  if (rc == LC_OK) {
+    write->persisted_counters = current;
+    write->checkpoint_counters = merged;
+    write->checkpoint_pending = 1;
+  }
+  lonejson_cleanup(&vectis_metrics_snapshot_json_map, &snapshot);
   return rc;
 }
 
@@ -19918,6 +20186,12 @@ static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
   if (rc != LC_OK) {
     vectis_metrics_note_snapshot_error(metrics);
     return VECTIS_ERR_STATE;
+  }
+  if (write.checkpoint_pending) {
+    (void)pthread_mutex_lock(&metrics->mutex);
+    metrics->persisted_counters = write.persisted_counters;
+    metrics->checkpoint_counters = write.checkpoint_counters;
+    (void)pthread_mutex_unlock(&metrics->mutex);
   }
   vectis_metrics_note_snapshot_write(metrics);
   return VECTIS_OK;

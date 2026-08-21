@@ -700,7 +700,11 @@ typedef struct vectis_metrics_config {
   int persistence_enabled;
   const char *storage_endpoint;
   const char *storage_namespace;
-  /* Combined with app_name to identify one logical app checkpoint. */
+  /*
+   * Combined with app_name to identify one logical app checkpoint. Instances
+   * sharing that identity merge their local monotonic counter deltas under the
+   * storage lease instead of overwriting each other's progress.
+   */
   const char *storage_owner;
   unsigned snapshot_interval_seconds;
 } vectis_metrics_config;

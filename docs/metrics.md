@@ -74,7 +74,9 @@ Persistence is opt-in and requires an explicit, non-default `app_name` in the
 app configuration. Vectis derives one deterministic current-checkpoint key from
 `storage_owner` and `app_name` inside the configured namespace. Apps sharing a
 storage endpoint and namespace must therefore use distinct names unless they
-intentionally represent the same logical app.
+intentionally represent the same logical app. Concurrent instances that share
+an identity merge each instance's newly observed monotonic counters while
+holding the checkpoint lease; one writer cannot overwrite another's progress.
 
 On startup, Vectis reads that exact checkpoint before making the app available.
 The HTML metrics URL, JSON metrics endpoint, and in-process JSON snapshots all
