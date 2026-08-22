@@ -84,6 +84,7 @@ Lua docs:
 - [Lua MQTT](lua-mqtt.md)
 - [Lua OpenSSL](lua-openssl.md)
 - [Lua app](lua-app.md)
+- [Serving a Lua site](lua-site.md)
 - [Lua softline](lua-softline.md)
 - [Lua SMTP](lua-smtp.md)
 - [Lua SSH](lua-ssh.md)

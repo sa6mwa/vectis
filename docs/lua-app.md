@@ -4,6 +4,9 @@
 supports fixed routes, buffered Lua request callbacks, static mounts, WebDAV,
 auth routes, and lockd consumer services.
 
+For the supported generic content-site composition of these receivers, see
+[Serving a Lua site](lua-site.md).
+
 The supported Kore runtime and route surface is audited in
 [`kore-runtime-surface-audit.md`](kore-runtime-surface-audit.md).
 

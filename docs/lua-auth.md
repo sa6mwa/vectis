@@ -245,6 +245,9 @@ transactions, email-token verification, and WebDAV-key issuance. Lua can mount
 the routes and can replace auth policy through providers, but the built-in
 native flow stays C-owned.
 
+[Serving a Lua site](lua-site.md) shows how a generic Lua site supplies a
+branded native login template while retaining this C-owned flow.
+
 `browser_flow(opts)` is a small Lua DX helper for that native route group. It
 does not implement a separate auth mechanism. It preserves the shared store and
 route configuration once and delegates to the C-owned functions:

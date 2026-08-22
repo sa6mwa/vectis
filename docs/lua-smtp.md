@@ -4,6 +4,9 @@
 facade. It keeps SMTP as a normal curl protocol surface while providing names
 that are convenient for app code.
 
+For using this helper from a Lua site form or notification route, see
+[Serving a Lua site](lua-site.md).
+
 ## API
 
 - `vectis.smtp.send(opts)` sends one message with `curl.perform()`.

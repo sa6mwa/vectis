@@ -118,6 +118,8 @@ modules or C SDK workflows:
   [Lua REST](lua-rest.md).
 - `vectis.app`: Kore-backed server, route, OpenAPI, and service helpers,
   documented in [Lua app](lua-app.md).
+- Generic content-site composition over `vectis.app`, native auth, WebDAV, and
+  SMTP is documented in [Serving a Lua site](lua-site.md).
 - `vectis.status`: status/error-source constants and Lua error decoration,
   documented in [Lua status](lua-status.md).
 - `vectis.smtp`: SMTP send helper over curl, documented in

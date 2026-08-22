@@ -91,6 +91,8 @@ end
 ## Server Mounts
 
 Server-side WebDAV stays on `vectis.app`.
+For a direct-root editor mount paired with a separate public static mount, see
+[Serving a Lua site](lua-site.md).
 
 - `app:webdav(opts)` registers an ordinary mutable WebDAV storage mount. By
   default it uses Vectis-managed storage; set `root_dir` to serve a direct

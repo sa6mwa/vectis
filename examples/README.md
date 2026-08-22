@@ -154,7 +154,9 @@ same code works in scratch containers where `vectis` is the only executable.
   form, native-authenticated editor route, authenticated WebDAV content mount,
   and public static publishing of editor-written content. It deliberately uses
   filesystem roots rather than packed assets; provide the
-  `VECTIS_LUA_SITE_*` paths when running it.
+  `VECTIS_LUA_SITE_*` paths when running it. See
+  [`docs/lua-site.md`](../docs/lua-site.md) for the deployment shape and auth
+  template contract.
 - `lua/api_server.lua`: packable Lua API server script using direct
   `app:json()`/`app:auth_json()` receivers, OpenAPI generation,
   live `stream_source`, `app:sse()`, request-body streaming upload routes,
