@@ -4974,6 +4974,8 @@ vectis_auth_user_login(const vectis_auth_store_config *store_config,
     return VECTIS_ERR_INVALID;
   }
   vectis_auth_result_init(out);
+  memset(&lock, 0, sizeof(lock));
+  lock.fd = -1;
   if (login_config == NULL || login_config->username == NULL ||
       login_config->username[0] == '\0' || login_config->password == NULL ||
       login_config->password[0] == '\0') {

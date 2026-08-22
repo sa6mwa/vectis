@@ -8,6 +8,10 @@ local port = tonumber(os.getenv("VECTIS_LUA_METRICS_PERSISTENT_EXAMPLE_PORT") or
     "28620")
 local storage_dir = os.getenv("VECTIS_LUA_METRICS_PERSISTENT_EXAMPLE_STORAGE") or
     "vectis-metrics-persistent-pouch"
+local run_id = os.getenv("VECTIS_PORT_RUN_ID")
+if run_id and run_id ~= "" then
+  storage_dir = storage_dir .. "-" .. run_id
+end
 local serve_forever =
     os.getenv("VECTIS_LUA_METRICS_PERSISTENT_EXAMPLE_SERVE") == "1"
 local base_url = "http://" .. bind .. ":" .. tostring(port)

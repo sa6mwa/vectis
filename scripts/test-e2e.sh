@@ -612,6 +612,9 @@ run_lua_examples() {
   packed_https_script="$work_dir/vectis-e2e-packed-https.lua"
   acme_state_script="$work_dir/vectis-e2e-acme-state.lua"
   acme_state_cache="$work_dir/vectis-e2e-acme-cache"
+  acme_state_storage="$work_dir/vectis-e2e-acme-storage"
+  acme_state_config="$work_dir/vectis-e2e-acme-config"
+  acme_state_pouch_key="lc-pouch-key-v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
   acme_state_credentials="$work_dir/vectis-e2e-acme-credentials.json"
   acme_state_log="$work_dir/lua-acme-state.log"
   acme_mock_log="$work_dir/acme-mock.log"
@@ -1228,6 +1231,7 @@ run_lua_examples() {
     'local vectis = require("vectis")' \
     'local port = tonumber(assert(os.getenv("VECTIS_ACME_STATE_PORT")))' \
     'local cache_dir = assert(os.getenv("VECTIS_ACME_STATE_CACHE"))' \
+    'local storage_dir = assert(os.getenv("VECTIS_ACME_STATE_STORAGE"))' \
     'local credentials_path = assert(os.getenv("VECTIS_ACME_STATE_CREDENTIALS"))' \
     'local provider = assert(os.getenv("VECTIS_ACME_STATE_PROVIDER"))' \
     'assert(vectis.auth.store_init({ credentials_path = credentials_path }))' \
@@ -1241,19 +1245,24 @@ run_lua_examples() {
     '    email = "ops@example.test",' \
     '    provider = provider,' \
     '    cache_dir = cache_dir,' \
+    '    acme_storage_endpoint = "pouch://" .. storage_dir,' \
     '  },' \
     '}))' \
     'assert(server:json({' \
     '  path = "/probe",' \
     '  body = [[{"ok":true,"surface":"acme-state"}]],' \
     '}))' \
-    'assert(server:start())' \
+    'local started, start_error = server:start()' \
+    'assert(started, start_error and start_error.message or "failed to start ACME server")' \
     'assert(server:wait())' >"$acme_state_script"
   start_server "lua acme state" "$acme_state_log" \
     env VECTIS_ACME_STATE_PORT="$kore_acme_port" \
       VECTIS_ACME_STATE_CACHE="$acme_state_cache" \
+      VECTIS_ACME_STATE_STORAGE="$acme_state_storage" \
       VECTIS_ACME_STATE_CREDENTIALS="$acme_state_credentials" \
       VECTIS_ACME_STATE_PROVIDER="http://127.0.0.1:$acme_mock_port/directory" \
+      XDG_CONFIG_HOME="$acme_state_config" \
+      VECTIS_POUCH_CRYPTO_KEY="$acme_state_pouch_key" \
       "$repo_root/build/debug/vectis" "$acme_state_script"
   count=0
   while [ ! -f "$acme_state_cache/account-key.pem" ] ||
@@ -1284,6 +1293,14 @@ run_lua_examples() {
       return 1
       ;;
   esac
+  if [ -e "$acme_state_config/vectis/pouch.key" ]; then
+    printf '%s\n' "ACME Pouch environment key was unexpectedly persisted" >&2
+    return 1
+  fi
+  if rg -a -F 'acme.localhost.test' "$acme_state_storage" >/dev/null; then
+    printf '%s\n' "ACME Pouch storage exposes plaintext certificate data" >&2
+    return 1
+  fi
   range_headers="$work_dir/packed-static-range.headers"
   range_body="$work_dir/packed-static-range.body"
   curl_head_or_log "$packed_service_log" "packed static app.js headers" \
