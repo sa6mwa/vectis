@@ -23,6 +23,7 @@ lua_consumer_port=${VECTIS_E2E_LUA_CONSUMER_PORT:-$((kore_basic_port + 9))}
 https_runtime_port=${VECTIS_E2E_HTTPS_RUNTIME_PORT:-$((kore_basic_port + 10))}
 https_mtls_runtime_port=${VECTIS_E2E_HTTPS_MTLS_RUNTIME_PORT:-$((kore_basic_port + 11))}
 acme_mock_port=${VECTIS_E2E_ACME_MOCK_PORT:-$((kore_basic_port + 12))}
+lua_site_port=${VECTIS_E2E_LUA_SITE_PORT:-$((kore_basic_port + 13))}
 pack_smtp_harness=${VECTIS_E2E_PACK_SMTP_HARNESS:-$repo_root/build/debug/tests/vectis_pack_smtp_harness}
 acme_mock_provider=${VECTIS_E2E_ACME_MOCK_PROVIDER:-$repo_root/build/debug/tests/vectis_acme_mock_provider}
 work_dir=$(mktemp -d)
@@ -603,6 +604,210 @@ run_static_asset_examples() {
       return 1
     fi
   done
+}
+
+run_lua_site_example() {
+  site_assets="$work_dir/lua-site-assets"
+  site_content="$work_dir/lua-site-content"
+  site_cache="$work_dir/lua-site-cache"
+  site_credentials="$work_dir/lua-site-credentials.json"
+  site_auth_state="$work_dir/lua-site-auth-state.json"
+  site_log="$work_dir/lua-site.log"
+  site_base="http://127.0.0.1:$lua_site_port"
+  site_body="$work_dir/lua-site-body.txt"
+  site_headers="$work_dir/lua-site-headers.txt"
+  site_client_id=
+  site_client_secret=
+  body=
+  status=
+
+  printf '[e2e] generic Lua site with authenticated WebDAV publishing\n'
+  mkdir -p "$site_assets" "$site_content"
+  printf '%s\n' \
+    'main { max-width: 42rem; margin: 2rem auto; }' \
+    >"$site_assets/site.css"
+  start_server "generic Lua site" "$site_log" \
+    env VECTIS_LUA_SITE_PORT="$lua_site_port" \
+      VECTIS_LUA_SITE_CREDENTIALS="$site_credentials" \
+      VECTIS_LUA_SITE_AUTH_STATE="$site_auth_state" \
+      VECTIS_LUA_SITE_ASSET_ROOT="$site_assets" \
+      VECTIS_LUA_SITE_CONTENT_ROOT="$site_content" \
+      VECTIS_LUA_SITE_CACHE="$site_cache" \
+      "$repo_root/build/debug/vectis" "$repo_root/examples/lua/site_server.lua"
+  wait_for_http "$site_base/" "generic Lua site" "$site_log"
+
+  body=$(curl_or_log "$site_log" "Lua site home page" --max-time 3 -fsS \
+    "$site_base/")
+  case "$body" in
+    *'id="site-home"'*'id="contact-form"'*'action="/contact"'*) ;;
+    *)
+      printf '%s\n' "Lua site home page did not render the expected form" >&2
+      printf '%s\n' "$body" >&2
+      return 1
+      ;;
+  esac
+  body=$(curl_or_log "$site_log" "Lua site asset" --max-time 3 -fsS \
+    "$site_base/assets/site.css")
+  if [ "$body" != 'main { max-width: 42rem; margin: 2rem auto; }' ]; then
+    printf '%s\n' "Lua site asset response was unexpected: $body" >&2
+    return 1
+  fi
+  curl_head_or_log "$site_log" "Lua site asset HEAD" "$site_headers" \
+    --max-time 3 -fsS "$site_base/assets/site.css"
+  grep -qi '^content-type: text/css' "$site_headers" || {
+    printf '%s\n' "Lua site asset HEAD did not report CSS content type" >&2
+    cat "$site_headers" >&2
+    return 1
+  }
+
+  status=$(curl --max-time 3 -sS -o "$site_body" -w '%{http_code}' \
+    "$site_base/admin")
+  if [ "$status" != "401" ]; then
+    printf '%s\n' "Anonymous Lua site admin request returned $status, expected 401" >&2
+    cat "$site_body" >&2
+    return 1
+  fi
+  status=$(curl --max-time 3 -sS -o "$site_body" -w '%{http_code}' \
+    "$site_base/content/welcome.txt")
+  if [ "$status" != "401" ]; then
+    printf '%s\n' "Anonymous WebDAV read returned $status, expected 401" >&2
+    cat "$site_body" >&2
+    return 1
+  fi
+  status=$(curl --max-time 3 -sS -o "$site_body" -w '%{http_code}' \
+    -X PUT --data-binary 'unauthorized edit' "$site_base/content/blocked.txt")
+  if [ "$status" != "401" ]; then
+    printf '%s\n' "Anonymous WebDAV write returned $status, expected 401" >&2
+    cat "$site_body" >&2
+    return 1
+  fi
+  if [ -e "$site_content/blocked.txt" ]; then
+    printf '%s\n' "Anonymous WebDAV write created content" >&2
+    return 1
+  fi
+
+  status=$(curl --max-time 3 -sS -o "$site_body" -w '%{http_code}' \
+    -X POST -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'name=&message=' "$site_base/contact")
+  if [ "$status" != "400" ] || [ "$(cat "$site_body")" != "name and message are required" ]; then
+    printf '%s\n' "Lua site invalid contact form was not rejected as expected" >&2
+    cat "$site_body" >&2
+    return 1
+  fi
+  status=$(curl --max-time 3 -sS -o "$site_body" -w '%{http_code}' \
+    -X POST -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'name=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890123&message=hello' \
+    "$site_base/contact")
+  if [ "$status" != "422" ]; then
+    printf '%s\n' "Lua site overlong contact form returned $status, expected 422" >&2
+    cat "$site_body" >&2
+    return 1
+  fi
+  status=$(curl --max-time 3 -sS -o "$site_body" -w '%{http_code}' \
+    -X POST -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "name=editor&message=$(printf '%0250d' 0)" "$site_base/contact")
+  if [ "$status" != "413" ]; then
+    printf '%s\n' "Lua site oversized contact form returned $status, expected 413" >&2
+    cat "$site_body" >&2
+    return 1
+  fi
+  status=$(curl --max-time 3 -sS -o "$site_body" -w '%{http_code}' \
+    -X POST -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=site-admin&password=wrong-password' "$site_base/auth/login")
+  if [ "$status" != "401" ]; then
+    printf '%s\n' "Lua site rejected login returned $status, expected 401" >&2
+    cat "$site_body" >&2
+    return 1
+  fi
+  status=$(curl --max-time 3 -sS -o "$site_body" -w '%{http_code}' \
+    -u 'not-a-client:not-a-secret' "$site_base/admin")
+  if [ "$status" != "401" ]; then
+    printf '%s\n' "Lua site forged editor credential returned $status, expected 401" >&2
+    cat "$site_body" >&2
+    return 1
+  fi
+
+  body=$(curl_or_log "$site_log" "Lua site valid login" --max-time 3 -fsS \
+    -X POST -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=site-admin&password=site-password' "$site_base/auth/login")
+  site_client_id=$(printf '%s\n' "$body" | sed -n 's/^client_id=//p')
+  site_client_secret=$(printf '%s\n' "$body" | sed -n 's/^client_secret=//p')
+  if [ -z "$site_client_id" ] || [ -z "$site_client_secret" ]; then
+    printf '%s\n' "Lua site login did not issue editor credentials" >&2
+    printf '%s\n' "$body" >&2
+    return 1
+  fi
+  body=$(curl_or_log "$site_log" "Lua site contact form" --max-time 3 -fsS \
+    -X POST -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'name=Editor&message=Hello+from+the+site' "$site_base/contact")
+  case "$body" in
+    *'id="contact-received"'*) ;;
+    *)
+      printf '%s\n' "Lua site valid contact form did not render confirmation" >&2
+      printf '%s\n' "$body" >&2
+      return 1
+      ;;
+  esac
+  body=$(curl_or_log "$site_log" "Lua site authenticated admin" --max-time 3 -fsS \
+    -u "$site_client_id:$site_client_secret" "$site_base/admin")
+  case "$body" in
+    *'id="site-admin"'*'site-admin'*) ;;
+    *)
+      printf '%s\n' "Lua site editor credential did not authorize admin route" >&2
+      printf '%s\n' "$body" >&2
+      return 1
+      ;;
+  esac
+
+  status=$(curl --max-time 3 -sS -o "$site_body" -w '%{http_code}' \
+    -u "$site_client_id:$site_client_secret" -X PUT \
+    --data-binary 'Welcome from the editor' "$site_base/content/welcome.txt")
+  if [ "$status" != "201" ] && [ "$status" != "204" ]; then
+    printf '%s\n' "Lua site authenticated WebDAV write returned $status" >&2
+    cat "$site_body" >&2
+    return 1
+  fi
+  body=$(curl_or_log "$site_log" "Lua site authenticated WebDAV read" --max-time 3 -fsS \
+    -u "$site_client_id:$site_client_secret" "$site_base/content/welcome.txt")
+  if [ "$body" != "Welcome from the editor" ]; then
+    printf '%s\n' "Lua site WebDAV read did not return editor content: $body" >&2
+    return 1
+  fi
+  body=$(curl_or_log "$site_log" "Lua site published content" --max-time 3 -fsS \
+    "$site_base/published/welcome.txt")
+  if [ "$body" != "Welcome from the editor" ]; then
+    printf '%s\n' "Lua site did not publish authenticated WebDAV edit: $body" >&2
+    return 1
+  fi
+  body=$(curl_or_log "$site_log" "Lua site WebDAV listing" --max-time 3 -fsS \
+    -u "$site_client_id:$site_client_secret" -X PROPFIND -H 'Depth: 1' \
+    "$site_base/content")
+  case "$body" in
+    *'/content/welcome.txt'*) ;;
+    *)
+      printf '%s\n' "Lua site WebDAV listing omitted editor content" >&2
+      printf '%s\n' "$body" >&2
+      return 1
+      ;;
+  esac
+
+  status=$(curl --max-time 3 -sS -D "$site_headers" -o "$site_body" -w '%{http_code}' \
+    -u "$site_client_id:$site_client_secret" -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' --data '' \
+    "$site_base/auth/logout")
+  if [ "$status" != "200" ] || [ "$(cat "$site_body")" != "logged_out=1" ]; then
+    printf '%s\n' "Lua site editor logout did not succeed" >&2
+    cat "$site_body" >&2
+    return 1
+  fi
+  assert_no_store_headers "$site_headers" "Lua site editor logout"
+  status=$(curl --max-time 3 -sS -o "$site_body" -w '%{http_code}' \
+    -u "$site_client_id:$site_client_secret" "$site_base/admin")
+  if [ "$status" != "401" ]; then
+    printf '%s\n' "Lua site logout left editor credential active: $status" >&2
+    cat "$site_body" >&2
+    return 1
+  fi
 }
 
 run_lua_examples() {
@@ -3385,4 +3590,5 @@ run_lockd_failure_examples
 run_service_examples
 run_downstream_http_examples
 run_static_asset_examples
+run_lua_site_example
 run_kore_examples

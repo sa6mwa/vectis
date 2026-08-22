@@ -150,6 +150,11 @@ same code works in scratch containers where `vectis` is the only executable.
   live transcription.
 - `lua/webdav_fileserver.lua`: mutable WebDAV fileserver mount and
   `vectis.webdav` client operations against a deterministic local server.
+- `lua/site_server.lua`: generic-binary Lua site shape with a rendered HTML
+  form, native-authenticated editor route, authenticated WebDAV content mount,
+  and public static publishing of editor-written content. It deliberately uses
+  filesystem roots rather than packed assets; provide the
+  `VECTIS_LUA_SITE_*` paths when running it.
 - `lua/api_server.lua`: packable Lua API server script using direct
   `app:json()`/`app:auth_json()` receivers, OpenAPI generation,
   live `stream_source`, `app:sse()`, request-body streaming upload routes,
