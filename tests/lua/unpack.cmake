@@ -4,8 +4,9 @@ set(bundle "${WORK_DIR}/vectis-unpack-bundle.pem")
 set(packed "${WORK_DIR}/vectis-unpack-packed")
 set(restored "${WORK_DIR}/vectis-unpack-restored")
 set(restored_default "${WORK_DIR}/vectis-unpack-default")
+set(restored_self "${WORK_DIR}/vectis-unpack-self")
 file(REMOVE "${script}" "${asset}" "${bundle}" "${packed}")
-file(REMOVE_RECURSE "${restored}" "${restored_default}" "${WORK_DIR}/not-packed")
+file(REMOVE_RECURSE "${restored}" "${restored_default}" "${restored_self}" "${WORK_DIR}/not-packed")
 
 file(WRITE "${script}" "assert(arg[1] == 'restored')\nprint('restored app')\n")
 file(WRITE "${asset}" "restored asset\n")
@@ -79,6 +80,36 @@ if(NOT default_unpack_result EQUAL 0 OR
    NOT EXISTS "${restored_default}/vectis" OR
    NOT EXISTS "${restored_default}/assets/site/asset.txt")
   message(FATAL_ERROR "default-directory unpack failed: ${default_unpack_stdout}${default_unpack_stderr}")
+endif()
+
+file(MAKE_DIRECTORY "${restored_self}")
+file(COPY_FILE "${packed}" "${restored_self}/vectis")
+execute_process(COMMAND "${restored_self}/vectis" -a unpack
+                WORKING_DIRECTORY "${restored_self}"
+                RESULT_VARIABLE self_unpack_result
+                OUTPUT_VARIABLE self_unpack_stdout
+                ERROR_VARIABLE self_unpack_stderr)
+if(self_unpack_result EQUAL 0 OR
+   NOT self_unpack_stderr MATCHES "output already exists.*use --force")
+  message(FATAL_ERROR "self-overwriting unpack was not refused")
+endif()
+execute_process(COMMAND "${restored_self}/vectis" -a unpack --force
+                WORKING_DIRECTORY "${restored_self}"
+                RESULT_VARIABLE force_unpack_result
+                OUTPUT_VARIABLE force_unpack_stdout
+                ERROR_VARIABLE force_unpack_stderr)
+if(NOT force_unpack_result EQUAL 0 OR
+   NOT EXISTS "${restored_self}/app.lua" OR
+   NOT EXISTS "${restored_self}/assets/site/asset.txt")
+  message(FATAL_ERROR "forced self-overwriting unpack failed: ${force_unpack_stdout}${force_unpack_stderr}")
+endif()
+execute_process(COMMAND "${restored_self}/vectis" "${restored_self}/app.lua" restored
+                RESULT_VARIABLE forced_runner_result
+                OUTPUT_VARIABLE forced_runner_stdout
+                ERROR_VARIABLE forced_runner_stderr)
+if(NOT forced_runner_result EQUAL 0 OR
+   NOT forced_runner_stdout MATCHES "restored app")
+  message(FATAL_ERROR "forced unpack did not replace the packed runner")
 endif()
 
 execute_process(COMMAND "${packed}" -a unpack --output-dir "${restored}"

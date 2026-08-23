@@ -47,6 +47,15 @@ and an `assets/` tree that preserves the packed virtual asset paths. The app
 script and assets are the packed bytes, and the generic binary is the exact
 runner prefix from the packed executable.
 
-Unpack validates every pack hash before writing and never overwrites output
-files or the `assets` directory. It does not restore the original host paths
-used as pack inputs; those are intentionally absent from the pack format.
+Unpack validates every pack hash before writing and refuses to overwrite an
+existing output by default. This includes a packed `./vectis` in the current
+directory. Use `-f` or `--force` only when intentionally replacing the regular
+output files and refreshing packed assets:
+
+```sh
+./vectis -a unpack --force
+```
+
+Force still rejects symlinks and non-regular file outputs. It does not restore
+the original host paths used as pack inputs; those are intentionally absent
+from the pack format.

@@ -703,7 +703,7 @@ static void vectis_cli_usage(FILE *stream) {
   fputs("       vectis -a|--action docs\n"
         "       vectis -a|--action source [--all | --module name ...] "
         "[--output file | --output-dir dir]\n"
-        "       vectis -a|--action unpack [--output-dir dir]\n",
+        "       vectis -a|--action unpack [--output-dir dir] [-f|--force]\n",
         stream);
   fputs("       vectis -a|--action credentials [--store credentials.json] "
         "(--init | --issue --subject user [--purpose name] "
@@ -3105,12 +3105,52 @@ static int vectis_cli_ensure_parent_dir(const char *path) {
   return vectis_cli_mkdir_p(parent);
 }
 
-static int vectis_cli_require_absent(const char *path) {
+static int vectis_cli_prepare_output_file(const char *path, int force,
+                                          int force_available) {
   struct stat st;
 
   if (lstat(path, &st) == 0) {
-    fprintf(stderr, "vectis: output already exists: %s\n", path);
+    if (!force) {
+      if (force_available) {
+        fprintf(stderr,
+                "vectis: output already exists: %s (use --force to "
+                "replace it)\n",
+                path);
+      } else {
+        fprintf(stderr, "vectis: output already exists: %s\n", path);
+      }
+      return -1;
+    }
+    if (!S_ISREG(st.st_mode)) {
+      fprintf(stderr, "vectis: forced output is not a regular file: %s\n",
+              path);
+      return -1;
+    }
+    return 0;
+  }
+  if (errno != ENOENT) {
+    fprintf(stderr, "vectis: failed to inspect output: %s\n", path);
     return -1;
+  }
+  return 0;
+}
+
+static int vectis_cli_prepare_output_dir(const char *path, int force) {
+  struct stat st;
+
+  if (lstat(path, &st) == 0) {
+    if (!force) {
+      fprintf(stderr,
+              "vectis: output already exists: %s (use --force to "
+              "replace it)\n",
+              path);
+      return -1;
+    }
+    if (!S_ISDIR(st.st_mode)) {
+      fprintf(stderr, "vectis: forced output is not a directory: %s\n", path);
+      return -1;
+    }
+    return 0;
   }
   if (errno != ENOENT) {
     fprintf(stderr, "vectis: failed to inspect output: %s\n", path);
@@ -3138,6 +3178,50 @@ static int vectis_cli_write_file(const char *path, const void *data,
   }
   if (executable && chmod(path, 0755) != 0) {
     fprintf(stderr, "vectis: failed to chmod output: %s\n", path);
+    return -1;
+  }
+  return 0;
+}
+
+static int vectis_cli_replace_file(const char *path, const void *data,
+                                   size_t size, int executable) {
+  char temporary[PATH_MAX];
+  FILE *file;
+  int descriptor;
+  int failed;
+  int temporary_length;
+
+  temporary_length =
+      snprintf(temporary, sizeof(temporary), "%s.vectis-unpack-XXXXXX", path);
+  if (temporary_length < 0 || (size_t)temporary_length >= sizeof(temporary)) {
+    fprintf(stderr, "vectis: unpack output path is too long: %s\n", path);
+    return -1;
+  }
+  descriptor = mkstemp(temporary);
+  if (descriptor < 0) {
+    fprintf(stderr, "vectis: failed to create unpack output: %s\n", path);
+    return -1;
+  }
+  file = fdopen(descriptor, "wb");
+  if (file == NULL) {
+    (void)close(descriptor);
+    (void)unlink(temporary);
+    fprintf(stderr, "vectis: failed to create unpack output: %s\n", path);
+    return -1;
+  }
+  failed = vectis_write_all(file, data, size) != 0;
+  if (fclose(file) != 0) {
+    failed = 1;
+  }
+  if (!failed && executable && chmod(temporary, 0755) != 0) {
+    failed = 1;
+  }
+  if (!failed && rename(temporary, path) != 0) {
+    failed = 1;
+  }
+  if (failed) {
+    (void)unlink(temporary);
+    fprintf(stderr, "vectis: failed to write output: %s\n", path);
     return -1;
   }
   return 0;
@@ -3257,7 +3341,8 @@ static int vectis_source_command(int argc, char **argv, int index) {
     free(modules);
     return 64;
   }
-  if (output_path != NULL && vectis_cli_require_absent(output_path) != 0) {
+  if (output_path != NULL &&
+      vectis_cli_prepare_output_file(output_path, 0, 0) != 0) {
     free(modules);
     return 1;
   }
@@ -3267,7 +3352,7 @@ static int vectis_source_command(int argc, char **argv, int index) {
                                        modules, module_count)) {
         if (vectis_cli_path_join(path, sizeof(path), output_dir,
                                  vectis_cli_lua_sources[i].path) != 0 ||
-            vectis_cli_require_absent(path) != 0) {
+            vectis_cli_prepare_output_file(path, 0, 0) != 0) {
           free(modules);
           return 1;
         }
@@ -3330,11 +3415,15 @@ static int vectis_unpack_command(int argc, char **argv, int index) {
   struct stat st;
   int rc;
   int i;
+  int force;
 
   output_dir = ".";
+  force = 0;
   for (i = index; i < argc; ++i) {
     if (strcmp(argv[i], "--output-dir") == 0 && i + 1 < argc) {
       output_dir = argv[++i];
+    } else if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--force") == 0) {
+      force = 1;
     } else {
       fprintf(stderr, "vectis: unknown unpack argument: %s\n", argv[i]);
       return 64;
@@ -3378,14 +3467,14 @@ static int vectis_unpack_command(int argc, char **argv, int index) {
                            "assets.json") != 0 ||
       vectis_cli_path_join(assets_path, sizeof(assets_path), output_dir,
                            "assets") != 0 ||
-      vectis_cli_require_absent(runner_path) != 0 ||
-      vectis_cli_require_absent(script_path) != 0 ||
+      vectis_cli_prepare_output_file(runner_path, force, 1) != 0 ||
+      vectis_cli_prepare_output_file(script_path, force, 1) != 0 ||
       (payload.bundle_size > 0u &&
-       vectis_cli_require_absent(bundle_path) != 0) ||
+       vectis_cli_prepare_output_file(bundle_path, force, 1) != 0) ||
       (payload.manifest_size > 0u &&
-       vectis_cli_require_absent(manifest_path) != 0) ||
+       vectis_cli_prepare_output_file(manifest_path, force, 1) != 0) ||
       (payload.asset_payload_size > 0u &&
-       vectis_cli_require_absent(assets_path) != 0)) {
+       vectis_cli_prepare_output_dir(assets_path, force) != 0)) {
     vectis_pack_embedded_payload_cleanup(&payload);
     return 1;
   }
@@ -3406,17 +3495,17 @@ static int vectis_unpack_command(int argc, char **argv, int index) {
       return 1;
     }
   }
-  if (vectis_cli_write_file(runner_path, payload.owned_bytes,
-                            (size_t)(payload.script - payload.owned_bytes),
-                            1) != 0 ||
-      vectis_cli_write_file(script_path, payload.script, payload.script_size,
-                            0) != 0 ||
+  if (vectis_cli_replace_file(runner_path, payload.owned_bytes,
+                              (size_t)(payload.script - payload.owned_bytes),
+                              1) != 0 ||
+      vectis_cli_replace_file(script_path, payload.script, payload.script_size,
+                              0) != 0 ||
       (payload.bundle_size > 0u &&
-       vectis_cli_write_file(bundle_path, payload.bundle, payload.bundle_size,
-                             0) != 0) ||
+       vectis_cli_replace_file(bundle_path, payload.bundle, payload.bundle_size,
+                               0) != 0) ||
       (payload.manifest_size > 0u &&
-       vectis_cli_write_file(manifest_path, payload.manifest,
-                             payload.manifest_size, 0) != 0)) {
+       vectis_cli_replace_file(manifest_path, payload.manifest,
+                               payload.manifest_size, 0) != 0)) {
     vectis_embedded_fs_close(assets);
     vectis_pack_embedded_payload_cleanup(&payload);
     return 1;
@@ -3424,6 +3513,9 @@ static int vectis_unpack_command(int argc, char **argv, int index) {
   if (assets != NULL) {
     vectis_embedded_fs_extract_config_init(&extract_config);
     extract_config.output_dir = assets_path;
+    if (force) {
+      extract_config.policy = VECTIS_EMBEDDED_FS_EXTRACT_OVERWRITE;
+    }
     vectis_error_clear(&error);
     if (vectis_embedded_fs_extract(assets, &extract_config, &error) !=
         VECTIS_OK) {
