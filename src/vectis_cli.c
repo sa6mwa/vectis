@@ -702,7 +702,7 @@ static void vectis_cli_usage(FILE *stream) {
 #endif
   fputs("       vectis -a|--action docs\n"
         "       vectis -a|--action source [--all | --module name ...] "
-        "[--output file | --output-dir dir]\n"
+        "[--output file | --output-dir dir] [-f|--force]\n"
         "       vectis -a|--action unpack [--output-dir dir] [-f|--force]\n",
         stream);
   fputs("       vectis -a|--action credentials [--store credentials.json] "
@@ -3273,6 +3273,7 @@ static int vectis_source_command(int argc, char **argv, int index) {
   size_t i;
   size_t module_count;
   size_t selected_count;
+  int force;
   int select_all;
 
   modules = (const char **)calloc((size_t)argc, sizeof(*modules));
@@ -3282,6 +3283,7 @@ static int vectis_source_command(int argc, char **argv, int index) {
   output_path = NULL;
   output_dir = NULL;
   module_count = 0u;
+  force = 0;
   select_all = 0;
   for (i = (size_t)index; i < (size_t)argc; ++i) {
     if (strcmp(argv[i], "--all") == 0) {
@@ -3292,6 +3294,8 @@ static int vectis_source_command(int argc, char **argv, int index) {
       output_path = argv[++i];
     } else if (strcmp(argv[i], "--output-dir") == 0 && i + 1u < (size_t)argc) {
       output_dir = argv[++i];
+    } else if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--force") == 0) {
+      force = 1;
     } else {
       fprintf(stderr, "vectis: unknown source argument: %s\n", argv[i]);
       free(modules);
@@ -3307,6 +3311,11 @@ static int vectis_source_command(int argc, char **argv, int index) {
   if (output_path != NULL && output_dir != NULL) {
     fputs("vectis: source accepts either --output or --output-dir, not both\n",
           stderr);
+    free(modules);
+    return 64;
+  }
+  if (force && output_path == NULL && output_dir == NULL) {
+    fputs("vectis: source --force requires --output or --output-dir\n", stderr);
     free(modules);
     return 64;
   }
@@ -3342,7 +3351,7 @@ static int vectis_source_command(int argc, char **argv, int index) {
     return 64;
   }
   if (output_path != NULL &&
-      vectis_cli_prepare_output_file(output_path, 0, 0) != 0) {
+      vectis_cli_prepare_output_file(output_path, force, 1) != 0) {
     free(modules);
     return 1;
   }
@@ -3352,7 +3361,7 @@ static int vectis_source_command(int argc, char **argv, int index) {
                                        modules, module_count)) {
         if (vectis_cli_path_join(path, sizeof(path), output_dir,
                                  vectis_cli_lua_sources[i].path) != 0 ||
-            vectis_cli_prepare_output_file(path, 0, 0) != 0) {
+            vectis_cli_prepare_output_file(path, force, 1) != 0) {
           free(modules);
           return 1;
         }

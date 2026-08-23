@@ -23,7 +23,8 @@ inspection transcript: every file is preceded by Lua comments that identify
 the embedded path, module, origin, and digest. It is not an executable combined
 Lua program. `--output` writes one selected module as its original raw bytes;
 `--output-dir` writes selected raw files under their embedded module paths.
-Neither output mode overwrites an existing file.
+Neither output mode overwrites an existing file unless `-f` or `--force` is
+given. `docs` is stdout-only and therefore has no output path to force.
 
 The source bundle contains Lua implementation and facade files only. Native
 C-backed modules remain documented but their implementation source is not

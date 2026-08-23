@@ -54,6 +54,29 @@ if(NOT source_file_contents STREQUAL source_expected_contents)
   message(FATAL_ERROR "source --output did not preserve raw Lua source")
 endif()
 
+file(WRITE "${source_output}" "conflicting output\n")
+execute_process(COMMAND "${VECTIS_BIN}" -a source --module vectis.lockd
+                        --output "${source_output}"
+                RESULT_VARIABLE source_conflict_result
+                OUTPUT_VARIABLE source_conflict_stdout
+                ERROR_VARIABLE source_conflict_stderr)
+if(source_conflict_result EQUAL 0 OR
+   NOT source_conflict_stderr MATCHES "output already exists.*use --force")
+  message(FATAL_ERROR "source --output did not refuse an existing file")
+endif()
+execute_process(COMMAND "${VECTIS_BIN}" -a source --module vectis.lockd
+                        --output "${source_output}" --force
+                RESULT_VARIABLE source_force_result
+                OUTPUT_VARIABLE source_force_stdout
+                ERROR_VARIABLE source_force_stderr)
+if(NOT source_force_result EQUAL 0)
+  message(FATAL_ERROR "source --output --force failed: ${source_force_stdout}${source_force_stderr}")
+endif()
+file(READ "${source_output}" source_forced_contents)
+if(NOT source_forced_contents STREQUAL source_expected_contents)
+  message(FATAL_ERROR "source --output --force did not replace the file")
+endif()
+
 execute_process(COMMAND "${VECTIS_BIN}" -a source --module vectis.lockd
                         --module lockdc --output-dir "${source_dir}"
                 RESULT_VARIABLE source_dir_result
@@ -69,6 +92,24 @@ if(NOT source_dir_lockd STREQUAL source_expected_contents OR
   message(FATAL_ERROR "source --output-dir did not preserve module paths")
 endif()
 
+execute_process(COMMAND "${VECTIS_BIN}" -a source --module vectis.lockd
+                        --output-dir "${source_dir}"
+                RESULT_VARIABLE source_dir_conflict_result
+                OUTPUT_VARIABLE source_dir_conflict_stdout
+                ERROR_VARIABLE source_dir_conflict_stderr)
+if(source_dir_conflict_result EQUAL 0 OR
+   NOT source_dir_conflict_stderr MATCHES "output already exists.*use --force")
+  message(FATAL_ERROR "source --output-dir did not refuse an existing file")
+endif()
+execute_process(COMMAND "${VECTIS_BIN}" -a source --module vectis.lockd
+                        --output-dir "${source_dir}" -f
+                RESULT_VARIABLE source_dir_force_result
+                OUTPUT_VARIABLE source_dir_force_stdout
+                ERROR_VARIABLE source_dir_force_stderr)
+if(NOT source_dir_force_result EQUAL 0)
+  message(FATAL_ERROR "source --output-dir --force failed: ${source_dir_force_stdout}${source_dir_force_stderr}")
+endif()
+
 execute_process(COMMAND "${VECTIS_BIN}" -a source --module does.not.exist
                 RESULT_VARIABLE source_missing_result
                 OUTPUT_VARIABLE source_missing_stdout
@@ -76,4 +117,13 @@ execute_process(COMMAND "${VECTIS_BIN}" -a source --module does.not.exist
 if(source_missing_result EQUAL 0 OR
    NOT source_missing_stderr MATCHES "matched no modules")
   message(FATAL_ERROR "unknown source module was not rejected")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" -a source --module vectis.lockd --force
+                RESULT_VARIABLE source_force_stdout_result
+                OUTPUT_VARIABLE source_force_stdout_stdout
+                ERROR_VARIABLE source_force_stdout_stderr)
+if(source_force_stdout_result EQUAL 0 OR
+   NOT source_force_stdout_stderr MATCHES "--force requires --output")
+  message(FATAL_ERROR "source --force without a filesystem output was not rejected")
 endif()
