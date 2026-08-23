@@ -65,6 +65,18 @@
 #include "vectis_status_lua_init.h"
 #include "vectis_terminal_lua_init.h"
 #include "vectis_webdav_lua_init.h"
+
+typedef struct vectis_cli_embedded_resource {
+  const char *path;
+  const char *module;
+  const char *origin;
+  const char *sha256;
+  size_t offset;
+  size_t size;
+} vectis_cli_embedded_resource;
+
+#include "vectis_cli_docs.h"
+#include "vectis_cli_lua_sources.h"
 #include "vectis_xml_lua_init.h"
 
 #define VECTIS_PACK_FOOTER_SIZE 256u
@@ -688,6 +700,11 @@ static void vectis_cli_usage(FILE *stream) {
         "[--follow-symlinks]\n",
         stream);
 #endif
+  fputs("       vectis -a|--action docs\n"
+        "       vectis -a|--action source [--all | --module name ...] "
+        "[--output file | --output-dir dir]\n"
+        "       vectis -a|--action unpack [--output-dir dir]\n",
+        stream);
   fputs("       vectis -a|--action credentials [--store credentials.json] "
         "(--init | --issue --subject user [--purpose name] "
         "[--basic] [--bearer] | --verify authorization | "
@@ -3012,6 +3029,416 @@ static int vectis_cli_oauth2_command(int argc, char **argv, int index) {
 }
 
 static int vectis_pack_command(int argc, char **argv, int index);
+static int vectis_self_path(const char *argv0, char *path, size_t path_size);
+static void
+vectis_pack_embedded_payload_init(vectis_pack_embedded_payload *payload);
+static void
+vectis_pack_embedded_payload_cleanup(vectis_pack_embedded_payload *payload);
+static int
+vectis_lua_load_embedded_payload(const char *self_path,
+                                 vectis_pack_embedded_payload *payload);
+static int vectis_lua_validate_embedded_payload(
+    const vectis_pack_embedded_payload *payload);
+
+static int vectis_cli_path_join(char *out, size_t out_size,
+                                const char *directory, const char *name) {
+  int written;
+
+  written = snprintf(
+      out, out_size, "%s%s%s", directory,
+      directory[0] != '\0' && directory[strlen(directory) - 1u] == '/' ? ""
+                                                                       : "/",
+      name);
+  return written >= 0 && (size_t)written < out_size ? 0 : -1;
+}
+
+static int vectis_cli_mkdir_p(const char *path) {
+  char copy[PATH_MAX];
+  char *part;
+  struct stat st;
+
+  if (path == NULL || path[0] == '\0' || strlen(path) >= sizeof(copy)) {
+    return -1;
+  }
+  memcpy(copy, path, strlen(path) + 1u);
+  for (part = copy + (copy[0] == '/' ? 1u : 0u);; ++part) {
+    int at_end;
+
+    if (*part != '/' && *part != '\0') {
+      continue;
+    }
+    at_end = *part == '\0';
+    if (*part == '/') {
+      *part = '\0';
+    }
+    if (copy[0] != '\0' && lstat(copy, &st) != 0) {
+      if (errno != ENOENT || mkdir(copy, 0755) != 0) {
+        return -1;
+      }
+    } else if (copy[0] != '\0' && !S_ISDIR(st.st_mode)) {
+      return -1;
+    }
+    if (at_end) {
+      break;
+    }
+    *part = '/';
+  }
+  return 0;
+}
+
+static int vectis_cli_ensure_parent_dir(const char *path) {
+  char parent[PATH_MAX];
+  char *slash;
+
+  if (path == NULL || strlen(path) >= sizeof(parent)) {
+    return -1;
+  }
+  memcpy(parent, path, strlen(path) + 1u);
+  slash = strrchr(parent, '/');
+  if (slash == NULL) {
+    return 0;
+  }
+  if (slash == parent) {
+    return 0;
+  }
+  *slash = '\0';
+  return vectis_cli_mkdir_p(parent);
+}
+
+static int vectis_cli_require_absent(const char *path) {
+  struct stat st;
+
+  if (lstat(path, &st) == 0) {
+    fprintf(stderr, "vectis: output already exists: %s\n", path);
+    return -1;
+  }
+  if (errno != ENOENT) {
+    fprintf(stderr, "vectis: failed to inspect output: %s\n", path);
+    return -1;
+  }
+  return 0;
+}
+
+static int vectis_cli_write_file(const char *path, const void *data,
+                                 size_t size, int executable) {
+  FILE *file;
+  int failed;
+
+  file = fopen(path, "wb");
+  failed = file == NULL;
+  if (!failed && vectis_write_all(file, data, size) != 0) {
+    failed = 1;
+  }
+  if (file != NULL && fclose(file) != 0) {
+    failed = 1;
+  }
+  if (failed) {
+    fprintf(stderr, "vectis: failed to write output: %s\n", path);
+    return -1;
+  }
+  if (executable && chmod(path, 0755) != 0) {
+    fprintf(stderr, "vectis: failed to chmod output: %s\n", path);
+    return -1;
+  }
+  return 0;
+}
+
+static int
+vectis_cli_resource_selected(const vectis_cli_embedded_resource *resource,
+                             int select_all, const char *const *modules,
+                             size_t module_count) {
+  size_t i;
+
+  if (select_all) {
+    return 1;
+  }
+  for (i = 0u; i < module_count; ++i) {
+    if (strcmp(resource->module, modules[i]) == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int vectis_docs_command(int argc, char **argv, int index) {
+  size_t i;
+
+  (void)argv;
+  if (index != argc) {
+    fputs("vectis: docs does not accept arguments\n", stderr);
+    return 64;
+  }
+  for (i = 0u; i < vectis_cli_docs_count; ++i) {
+    if (printf("<!-- vectis docs: %s; sha256: %s -->\n\n",
+               vectis_cli_docs[i].path, vectis_cli_docs[i].sha256) < 0 ||
+        fwrite(vectis_cli_docs_data + vectis_cli_docs[i].offset, 1u,
+               vectis_cli_docs[i].size, stdout) != vectis_cli_docs[i].size ||
+        fputs("\n\n", stdout) == EOF) {
+      fputs("vectis: failed to write documentation\n", stderr);
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int vectis_source_command(int argc, char **argv, int index) {
+  const char **modules;
+  const char *output_path;
+  const char *output_dir;
+  char path[PATH_MAX];
+  size_t i;
+  size_t module_count;
+  size_t selected_count;
+  int select_all;
+
+  modules = (const char **)calloc((size_t)argc, sizeof(*modules));
+  if (modules == NULL) {
+    return 70;
+  }
+  output_path = NULL;
+  output_dir = NULL;
+  module_count = 0u;
+  select_all = 0;
+  for (i = (size_t)index; i < (size_t)argc; ++i) {
+    if (strcmp(argv[i], "--all") == 0) {
+      select_all = 1;
+    } else if (strcmp(argv[i], "--module") == 0 && i + 1u < (size_t)argc) {
+      modules[module_count++] = argv[++i];
+    } else if (strcmp(argv[i], "--output") == 0 && i + 1u < (size_t)argc) {
+      output_path = argv[++i];
+    } else if (strcmp(argv[i], "--output-dir") == 0 && i + 1u < (size_t)argc) {
+      output_dir = argv[++i];
+    } else {
+      fprintf(stderr, "vectis: unknown source argument: %s\n", argv[i]);
+      free(modules);
+      return 64;
+    }
+  }
+  if (select_all && module_count > 0u) {
+    fputs("vectis: source accepts either --all or --module, not both\n",
+          stderr);
+    free(modules);
+    return 64;
+  }
+  if (output_path != NULL && output_dir != NULL) {
+    fputs("vectis: source accepts either --output or --output-dir, not both\n",
+          stderr);
+    free(modules);
+    return 64;
+  }
+  if (!select_all && module_count == 0u) {
+    if (output_path != NULL || output_dir != NULL) {
+      fputs("vectis: source output requires --all or --module\n", stderr);
+      free(modules);
+      return 64;
+    }
+    for (i = 0u; i < vectis_cli_lua_sources_count; ++i) {
+      printf("%s\t%s\t%s\t%s\n", vectis_cli_lua_sources[i].module,
+             vectis_cli_lua_sources[i].origin, vectis_cli_lua_sources[i].path,
+             vectis_cli_lua_sources[i].sha256);
+    }
+    free(modules);
+    return 0;
+  }
+  selected_count = 0u;
+  for (i = 0u; i < vectis_cli_lua_sources_count; ++i) {
+    if (vectis_cli_resource_selected(&vectis_cli_lua_sources[i], select_all,
+                                     modules, module_count)) {
+      selected_count++;
+    }
+  }
+  if (selected_count == 0u) {
+    fputs("vectis: source selection matched no modules\n", stderr);
+    free(modules);
+    return 64;
+  }
+  if (output_path != NULL && selected_count != 1u) {
+    fputs("vectis: --output requires exactly one selected module\n", stderr);
+    free(modules);
+    return 64;
+  }
+  if (output_path != NULL && vectis_cli_require_absent(output_path) != 0) {
+    free(modules);
+    return 1;
+  }
+  if (output_dir != NULL) {
+    for (i = 0u; i < vectis_cli_lua_sources_count; ++i) {
+      if (vectis_cli_resource_selected(&vectis_cli_lua_sources[i], select_all,
+                                       modules, module_count)) {
+        if (vectis_cli_path_join(path, sizeof(path), output_dir,
+                                 vectis_cli_lua_sources[i].path) != 0 ||
+            vectis_cli_require_absent(path) != 0) {
+          free(modules);
+          return 1;
+        }
+      }
+    }
+  }
+  for (i = 0u; i < vectis_cli_lua_sources_count; ++i) {
+    const vectis_cli_embedded_resource *resource = &vectis_cli_lua_sources[i];
+
+    if (!vectis_cli_resource_selected(resource, select_all, modules,
+                                      module_count)) {
+      continue;
+    }
+    if (output_path != NULL) {
+      if (vectis_cli_write_file(output_path,
+                                vectis_cli_lua_sources_data + resource->offset,
+                                resource->size, 0) != 0) {
+        free(modules);
+        return 1;
+      }
+    } else if (output_dir != NULL) {
+      if (vectis_cli_path_join(path, sizeof(path), output_dir,
+                               resource->path) != 0 ||
+          vectis_cli_ensure_parent_dir(path) != 0 ||
+          vectis_cli_write_file(path,
+                                vectis_cli_lua_sources_data + resource->offset,
+                                resource->size, 0) != 0) {
+        free(modules);
+        return 1;
+      }
+    } else if (printf("-- vectis source: %s\n-- module: %s\n-- origin: %s\n"
+                      "-- sha256: %s\n\n",
+                      resource->path, resource->module, resource->origin,
+                      resource->sha256) < 0 ||
+               fwrite(vectis_cli_lua_sources_data + resource->offset, 1u,
+                      resource->size, stdout) != resource->size ||
+               fputs("\n\n", stdout) == EOF) {
+      fputs("vectis: failed to write source\n", stderr);
+      free(modules);
+      return 1;
+    }
+  }
+  free(modules);
+  return 0;
+}
+
+static int vectis_unpack_command(int argc, char **argv, int index) {
+  const char *output_dir;
+  char self_path[PATH_MAX];
+  char runner_path[PATH_MAX];
+  char script_path[PATH_MAX];
+  char bundle_path[PATH_MAX];
+  char manifest_path[PATH_MAX];
+  char assets_path[PATH_MAX];
+  vectis_pack_embedded_payload payload;
+  vectis_embedded_fs_config fs_config;
+  vectis_embedded_fs_extract_config extract_config;
+  vectis_embedded_fs *assets;
+  vectis_error error;
+  struct stat st;
+  int rc;
+  int i;
+
+  output_dir = ".";
+  for (i = index; i < argc; ++i) {
+    if (strcmp(argv[i], "--output-dir") == 0 && i + 1 < argc) {
+      output_dir = argv[++i];
+    } else {
+      fprintf(stderr, "vectis: unknown unpack argument: %s\n", argv[i]);
+      return 64;
+    }
+  }
+  if (vectis_self_path(argv[0], self_path, sizeof(self_path)) != 0) {
+    fputs("vectis: failed to resolve current executable path\n", stderr);
+    return 1;
+  }
+  vectis_pack_embedded_payload_init(&payload);
+  rc = vectis_lua_load_embedded_payload(self_path, &payload);
+  if (rc < 0) {
+    fputs("vectis: unpack requires a packed Vectis executable\n", stderr);
+    return 1;
+  }
+  if (rc != 0 || vectis_lua_validate_embedded_payload(&payload) != 0) {
+    vectis_pack_embedded_payload_cleanup(&payload);
+    return 1;
+  }
+  if (lstat(output_dir, &st) == 0) {
+    if (!S_ISDIR(st.st_mode)) {
+      fprintf(stderr,
+              "vectis: unpack output directory is not a directory: %s\n",
+              output_dir);
+      vectis_pack_embedded_payload_cleanup(&payload);
+      return 1;
+    }
+  } else if (errno != ENOENT || vectis_cli_mkdir_p(output_dir) != 0) {
+    fprintf(stderr, "vectis: failed to create unpack output directory: %s\n",
+            output_dir);
+    vectis_pack_embedded_payload_cleanup(&payload);
+    return 1;
+  }
+  if (vectis_cli_path_join(runner_path, sizeof(runner_path), output_dir,
+                           "vectis") != 0 ||
+      vectis_cli_path_join(script_path, sizeof(script_path), output_dir,
+                           "app.lua") != 0 ||
+      vectis_cli_path_join(bundle_path, sizeof(bundle_path), output_dir,
+                           "lockd-bundle.pem") != 0 ||
+      vectis_cli_path_join(manifest_path, sizeof(manifest_path), output_dir,
+                           "assets.json") != 0 ||
+      vectis_cli_path_join(assets_path, sizeof(assets_path), output_dir,
+                           "assets") != 0 ||
+      vectis_cli_require_absent(runner_path) != 0 ||
+      vectis_cli_require_absent(script_path) != 0 ||
+      (payload.bundle_size > 0u &&
+       vectis_cli_require_absent(bundle_path) != 0) ||
+      (payload.manifest_size > 0u &&
+       vectis_cli_require_absent(manifest_path) != 0) ||
+      (payload.asset_payload_size > 0u &&
+       vectis_cli_require_absent(assets_path) != 0)) {
+    vectis_pack_embedded_payload_cleanup(&payload);
+    return 1;
+  }
+  assets = NULL;
+  if (payload.asset_payload_size > 0u) {
+    vectis_embedded_fs_config_init(&fs_config);
+    fs_config.payload = payload.asset_payload;
+    fs_config.payload_size = payload.asset_payload_size;
+    fs_config.manifest_json = payload.manifest;
+    fs_config.manifest_json_size = payload.manifest_size;
+    vectis_error_clear(&error);
+    if (vectis_embedded_fs_from_pack(&fs_config, &assets, &error) !=
+        VECTIS_OK) {
+      fprintf(stderr, "vectis: %s\n",
+              error.message[0] != '\0' ? error.message
+                                       : "embedded asset manifest is invalid");
+      vectis_pack_embedded_payload_cleanup(&payload);
+      return 1;
+    }
+  }
+  if (vectis_cli_write_file(runner_path, payload.owned_bytes,
+                            (size_t)(payload.script - payload.owned_bytes),
+                            1) != 0 ||
+      vectis_cli_write_file(script_path, payload.script, payload.script_size,
+                            0) != 0 ||
+      (payload.bundle_size > 0u &&
+       vectis_cli_write_file(bundle_path, payload.bundle, payload.bundle_size,
+                             0) != 0) ||
+      (payload.manifest_size > 0u &&
+       vectis_cli_write_file(manifest_path, payload.manifest,
+                             payload.manifest_size, 0) != 0)) {
+    vectis_embedded_fs_close(assets);
+    vectis_pack_embedded_payload_cleanup(&payload);
+    return 1;
+  }
+  if (assets != NULL) {
+    vectis_embedded_fs_extract_config_init(&extract_config);
+    extract_config.output_dir = assets_path;
+    vectis_error_clear(&error);
+    if (vectis_embedded_fs_extract(assets, &extract_config, &error) !=
+        VECTIS_OK) {
+      fprintf(stderr, "vectis: %s\n",
+              error.message[0] != '\0' ? error.message
+                                       : "failed to extract embedded assets");
+      vectis_embedded_fs_close(assets);
+      vectis_pack_embedded_payload_cleanup(&payload);
+      return 1;
+    }
+  }
+  vectis_embedded_fs_close(assets);
+  vectis_pack_embedded_payload_cleanup(&payload);
+  return 0;
+}
 
 static int vectis_action_command(int argc, char **argv, int index) {
   const char *action;
@@ -3025,6 +3452,15 @@ static int vectis_action_command(int argc, char **argv, int index) {
   if (strcmp(action, "pack") == 0) {
     return vectis_pack_command(argc, argv, index);
   }
+  if (strcmp(action, "docs") == 0) {
+    return vectis_docs_command(argc, argv, index);
+  }
+  if (strcmp(action, "source") == 0) {
+    return vectis_source_command(argc, argv, index);
+  }
+  if (strcmp(action, "unpack") == 0) {
+    return vectis_unpack_command(argc, argv, index);
+  }
   if (strcmp(action, "credentials") == 0) {
     return vectis_cli_credentials_command(argc, argv, index);
   }
@@ -3036,6 +3472,12 @@ static int vectis_action_command(int argc, char **argv, int index) {
   }
   fprintf(stderr, "vectis: unknown action: %s\n", action);
   return 64;
+}
+
+static int vectis_cli_preempts_embedded_app(const char *action) {
+  return action != NULL &&
+         (strcmp(action, "docs") == 0 || strcmp(action, "source") == 0 ||
+          strcmp(action, "unpack") == 0);
 }
 
 static void vectis_pack_make_footer(
@@ -21933,6 +22375,12 @@ static int vectis_lua_run_embedded(int argc, char **argv) {
 
 int vectis_cli_main(int argc, char **argv) {
   int rc;
+
+  if (argc > 2 &&
+      (strcmp(argv[1], "-a") == 0 || strcmp(argv[1], "--action") == 0) &&
+      vectis_cli_preempts_embedded_app(argv[2])) {
+    return vectis_action_command(argc, argv, 2);
+  }
 
   rc = vectis_lua_run_embedded(argc, argv);
   if (rc >= 0) {

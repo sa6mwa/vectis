@@ -436,6 +436,68 @@ function(vectis_generate_lua_init_header source_path symbol output_path)
   )
 endfunction()
 
+# Embed release-matched public documentation and Lua source in the CLI binary.
+# Entries use source_path|display_path|module|origin and are intentionally
+# configured at generate time so a source or documentation change reconfigures
+# the build before recompiling vectis_cli.c.
+function(vectis_generate_cli_resource_header output_path symbol)
+  set(vectis_cli_resource_entries "")
+  set(vectis_cli_resource_offset 0)
+  set(vectis_cli_resource_binary
+      "${CMAKE_BINARY_DIR}/generated/${symbol}.bin")
+  set(vectis_cli_resource_xxd_header
+      "${CMAKE_BINARY_DIR}/generated/include/${symbol}_data.h")
+  find_program(vectis_cli_resource_xxd NAMES xxd REQUIRED)
+  file(REMOVE "${vectis_cli_resource_binary}")
+
+  foreach(vectis_cli_resource_entry IN LISTS ARGN)
+    string(REPLACE "|" ";" vectis_cli_resource_fields
+                   "${vectis_cli_resource_entry}")
+    list(GET vectis_cli_resource_fields 0 vectis_cli_resource_source_path)
+    list(GET vectis_cli_resource_fields 1 vectis_cli_resource_display_path)
+    list(GET vectis_cli_resource_fields 2 vectis_cli_resource_module)
+    list(GET vectis_cli_resource_fields 3 vectis_cli_resource_origin)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${vectis_cli_resource_source_path}")
+    file(SIZE "${vectis_cli_resource_source_path}" vectis_cli_resource_size)
+    file(READ "${vectis_cli_resource_source_path}" vectis_cli_resource_contents)
+    file(APPEND "${vectis_cli_resource_binary}"
+         "${vectis_cli_resource_contents}")
+    file(SHA256 "${vectis_cli_resource_source_path}" vectis_cli_resource_sha256)
+    string(APPEND vectis_cli_resource_entries
+      "  {\"${vectis_cli_resource_display_path}\", \"${vectis_cli_resource_module}\", \"${vectis_cli_resource_origin}\", \"${vectis_cli_resource_sha256}\", ${vectis_cli_resource_offset}u, ${vectis_cli_resource_size}u},\n")
+    math(EXPR vectis_cli_resource_offset
+         "${vectis_cli_resource_offset} + ${vectis_cli_resource_size}")
+  endforeach()
+
+  execute_process(
+    COMMAND "${vectis_cli_resource_xxd}" -i -n "${symbol}_data"
+            "${vectis_cli_resource_binary}"
+    OUTPUT_FILE "${vectis_cli_resource_xxd_header}"
+    RESULT_VARIABLE vectis_cli_resource_xxd_result
+  )
+  if(NOT vectis_cli_resource_xxd_result EQUAL 0)
+    message(FATAL_ERROR "failed to generate ${symbol} resource header")
+  endif()
+  file(READ "${vectis_cli_resource_xxd_header}"
+       vectis_cli_resource_data_declaration)
+  string(REPLACE "unsigned char ${symbol}_data[]"
+                 "static const unsigned char ${symbol}_data[]"
+                 vectis_cli_resource_data_declaration
+                 "${vectis_cli_resource_data_declaration}")
+  string(REGEX REPLACE
+         "\nunsigned int ${symbol}_data_len = [0-9]+;[\r\n]*$"
+         "\n" vectis_cli_resource_data_declaration
+         "${vectis_cli_resource_data_declaration}")
+
+  set(vectis_cli_resource_symbol "${symbol}")
+  configure_file(
+    "${CMAKE_SOURCE_DIR}/cmake/vectis_cli_resources.h.in"
+    "${output_path}"
+    @ONLY
+  )
+endfunction()
+
 add_library(vectis_external_headers INTERFACE)
 target_include_directories(vectis_external_headers INTERFACE "${vectis_external_include_dir}")
 if(EXISTS "${vectis_kore_include_dir}/kore/kore.h")
@@ -746,6 +808,49 @@ elseif(VECTIS_BUILD_SHARED)
 endif()
 
 if(VECTIS_BUILD_BINARY)
+  file(GLOB_RECURSE vectis_cli_doc_files CONFIGURE_DEPENDS
+       RELATIVE "${CMAKE_SOURCE_DIR}/docs" "${CMAKE_SOURCE_DIR}/docs/*.md")
+  set(vectis_cli_doc_resources)
+  foreach(vectis_cli_doc_file IN LISTS vectis_cli_doc_files)
+    list(APPEND vectis_cli_doc_resources
+      "${CMAKE_SOURCE_DIR}/docs/${vectis_cli_doc_file}|docs/${vectis_cli_doc_file}||vectis")
+  endforeach()
+  vectis_generate_cli_resource_header(
+    "${CMAKE_BINARY_DIR}/generated/include/vectis_cli_docs.h"
+    "vectis_cli_docs"
+    ${vectis_cli_doc_resources}
+  )
+
+  set(vectis_cli_lua_resources
+    "${CMAKE_SOURCE_DIR}/lua/vectis.lua|vectis.lua|vectis|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/curl/init.lua|curl/init.lua|curl|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/auth.lua|vectis/auth.lua|vectis.auth|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/cai.lua|vectis/cai.lua|vectis.cai|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/dsv.lua|vectis/dsv.lua|vectis.dsv|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/http.lua|vectis/http.lua|vectis.http|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/kore.lua|vectis/kore.lua|vectis.kore|vectis standalone fallback"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/lockd.lua|vectis/lockd.lua|vectis.lockd|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/log.lua|vectis/log.lua|vectis.log|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/mqtt.lua|vectis/mqtt.lua|vectis.mqtt|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/rest.lua|vectis/rest.lua|vectis.rest|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/smtp.lua|vectis/smtp.lua|vectis.smtp|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/status.lua|vectis/status.lua|vectis.status|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/terminal.lua|vectis/terminal.lua|vectis.terminal|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/version.lua|vectis/version.lua|vectis.version|vectis standalone fallback"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/webdav.lua|vectis/webdav.lua|vectis.webdav|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/xml.lua|vectis/xml.lua|vectis.xml|vectis"
+    "${vectis_lockdc_lua_source_dir}/lua/lockdc/init.lua|lockdc/init.lua|lockdc|liblockdc"
+    "${vectis_lonejson_lua_source_dir}/lua/lonejson/init.lua|lonejson/init.lua|lonejson|lonejson"
+    "${vectis_pslog_lua_source_dir}/lua/pslog/init.lua|pslog/init.lua|pslog|pslog"
+    "${vectis_liblql_lua_source_dir}/lua/lql/init.lua|lql/init.lua|lql|liblql"
+    "${vectis_libmdf_lua_source_dir}/lua/libmdf.lua|libmdf.lua|libmdf|libmdf"
+  )
+  vectis_generate_cli_resource_header(
+    "${CMAKE_BINARY_DIR}/generated/include/vectis_cli_lua_sources.h"
+    "vectis_cli_lua_sources"
+    ${vectis_cli_lua_resources}
+  )
+
   vectis_generate_lua_init_header(
     "${vectis_lockdc_lua_source_dir}/lua/lockdc/init.lua"
     "vectis_lockdc_lua_init"

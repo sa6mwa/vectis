@@ -1,0 +1,79 @@
+set(source_output "${WORK_DIR}/vectis-source-output.lua")
+set(source_dir "${WORK_DIR}/vectis-source-tree")
+file(REMOVE "${source_output}")
+file(REMOVE_RECURSE "${source_dir}")
+
+execute_process(COMMAND "${VECTIS_BIN}" -a docs
+                RESULT_VARIABLE docs_result
+                OUTPUT_VARIABLE docs_stdout
+                ERROR_VARIABLE docs_stderr)
+if(NOT docs_result EQUAL 0)
+  message(FATAL_ERROR "vectis -a docs failed: ${docs_stdout}${docs_stderr}")
+endif()
+if(NOT docs_stdout MATCHES "vectis docs: docs/lua.md" OR
+   NOT docs_stdout MATCHES "Self-contained documentation and Lua source")
+  message(FATAL_ERROR "vectis -a docs omitted embedded documentation")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" -a source
+                RESULT_VARIABLE source_list_result
+                OUTPUT_VARIABLE source_list_stdout
+                ERROR_VARIABLE source_list_stderr)
+if(NOT source_list_result EQUAL 0)
+  message(FATAL_ERROR "vectis -a source failed: ${source_list_stdout}${source_list_stderr}")
+endif()
+if(NOT source_list_stdout MATCHES "vectis.lockd" OR
+   NOT source_list_stdout MATCHES "lockdc")
+  message(FATAL_ERROR "vectis -a source omitted public Lua modules")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" -a source --module vectis.lockd
+                RESULT_VARIABLE source_stdout_result
+                OUTPUT_VARIABLE source_stdout
+                ERROR_VARIABLE source_stderr)
+if(NOT source_stdout_result EQUAL 0)
+  message(FATAL_ERROR "selected vectis source failed: ${source_stdout}${source_stderr}")
+endif()
+if(NOT source_stdout MATCHES "-- vectis source: vectis/lockd.lua" OR
+   NOT source_stdout MATCHES "-- module: vectis.lockd" OR
+   NOT source_stdout MATCHES "function M.open")
+  message(FATAL_ERROR "selected source was not a Lua-commented transcript")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" -a source --module vectis.lockd
+                        --output "${source_output}"
+                RESULT_VARIABLE source_file_result
+                OUTPUT_VARIABLE source_file_stdout
+                ERROR_VARIABLE source_file_stderr)
+if(NOT source_file_result EQUAL 0)
+  message(FATAL_ERROR "source --output failed: ${source_file_stdout}${source_file_stderr}")
+endif()
+file(READ "${source_output}" source_file_contents)
+file(READ "${VECTIS_SOURCE_DIR}/lua/vectis/lockd.lua" source_expected_contents)
+if(NOT source_file_contents STREQUAL source_expected_contents)
+  message(FATAL_ERROR "source --output did not preserve raw Lua source")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" -a source --module vectis.lockd
+                        --module lockdc --output-dir "${source_dir}"
+                RESULT_VARIABLE source_dir_result
+                OUTPUT_VARIABLE source_dir_stdout
+                ERROR_VARIABLE source_dir_stderr)
+if(NOT source_dir_result EQUAL 0)
+  message(FATAL_ERROR "source --output-dir failed: ${source_dir_stdout}${source_dir_stderr}")
+endif()
+file(READ "${source_dir}/vectis/lockd.lua" source_dir_lockd)
+file(READ "${source_dir}/lockdc/init.lua" source_dir_lockdc)
+if(NOT source_dir_lockd STREQUAL source_expected_contents OR
+   NOT source_dir_lockdc MATCHES "return M")
+  message(FATAL_ERROR "source --output-dir did not preserve module paths")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" -a source --module does.not.exist
+                RESULT_VARIABLE source_missing_result
+                OUTPUT_VARIABLE source_missing_stdout
+                ERROR_VARIABLE source_missing_stderr)
+if(source_missing_result EQUAL 0 OR
+   NOT source_missing_stderr MATCHES "matched no modules")
+  message(FATAL_ERROR "unknown source module was not rejected")
+endif()

@@ -1,0 +1,7 @@
+@vectis_cli_resource_data_declaration@
+
+static const vectis_cli_embedded_resource @vectis_cli_resource_symbol@[] = {
+@vectis_cli_resource_entries@};
+
+static const size_t @vectis_cli_resource_symbol@_count =
+    sizeof(@vectis_cli_resource_symbol@) / sizeof(@vectis_cli_resource_symbol@[0]);

@@ -305,6 +305,15 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_audio_sus PROPERTIES
     LABELS "lua;smoke;local"
     TIMEOUT 30)
+  add_test(NAME vectis_cli_self_describe
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DVECTIS_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/self_describe.cmake")
+  set_tests_properties(vectis_cli_self_describe PROPERTIES
+    LABELS "cli;smoke;local"
+    TIMEOUT 30)
   add_test(NAME vectis_lua_sus_audio_live
            COMMAND "${CMAKE_COMMAND}" -E env
                    "VECTIS_BIN=$<TARGET_FILE:vectis_bin>"
@@ -322,6 +331,14 @@ if(TARGET vectis_bin)
       LABELS "cli;local"
       TIMEOUT 30)
   else()
+    add_test(NAME vectis_cli_unpack
+             COMMAND "${CMAKE_COMMAND}"
+                     "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                     "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                     -P "${CMAKE_SOURCE_DIR}/tests/lua/unpack.cmake")
+    set_tests_properties(vectis_cli_unpack PROPERTIES
+      LABELS "cli;smoke;local"
+      TIMEOUT 30)
     add_test(NAME vectis_lua_pack
              COMMAND "${CMAKE_COMMAND}"
                      "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
