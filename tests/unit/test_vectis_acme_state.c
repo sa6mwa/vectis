@@ -1,4 +1,5 @@
 #include "vectis_acme_state.h"
+#include "vectis_pouch_crypto.h"
 
 #include <assert.h>
 #include <dirent.h>
@@ -156,6 +157,25 @@ static void assert_plaintext_state(const char *endpoint,
   lc_error_cleanup(&error);
 }
 
+static void assert_pouch_crypto_query_option_detection(void) {
+  assert(!vectis_pouch_endpoint_has_crypto_option(NULL));
+  assert(!vectis_pouch_endpoint_has_crypto_option(
+      "pouch:///var/lib/pouch_crypto_key=data"));
+  assert(!vectis_pouch_endpoint_has_crypto_option(
+      "pouch:///var/lib/storage?note=pouch_crypto_key=data"));
+  assert(!vectis_pouch_endpoint_has_crypto_option(
+      "pouch:///var/lib/storage?pouch_crypto_key_file_backup=/tmp/key"));
+  assert(!vectis_pouch_endpoint_has_crypto_option(
+      "pouch:///var/lib/storage#?pouch_crypto_key=key"));
+  assert(vectis_pouch_endpoint_has_crypto_option(
+      "pouch:///var/lib/storage?pouch_crypto_key=key"));
+  assert(vectis_pouch_endpoint_has_crypto_option(
+      "pouch:///var/lib/storage?single_writer=false&pouch_crypto_key_file=/tmp/"
+      "key"));
+  assert(vectis_pouch_endpoint_has_crypto_option(
+      "pouch:///var/lib/storage?pouch_crypto_key"));
+}
+
 int main(void) {
   char root[] = "/tmp/vectis-acme-state-XXXXXX";
   char endpoint[4096];
@@ -192,6 +212,7 @@ int main(void) {
   int had_environment_key;
   int hydrated;
 
+  assert_pouch_crypto_query_option_detection();
   assert(mkdtemp(root) != NULL);
   assert(snprintf(storage, sizeof(storage), "%s/storage", root) > 0);
   assert(snprintf(endpoint, sizeof(endpoint), "pouch://%s", storage) > 0);

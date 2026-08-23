@@ -151,9 +151,11 @@ lockd = {
 }
 ```
 
-With no key setting, Vectis creates `${XDG_CONFIG_HOME:-$HOME/.config}/vectis/pouch.key`
-with mode 0600. This is a Vectis key used only by Vectis-owned local Pouch
-persistence; separate liblockdc clients retain their own configuration.
+With no key setting or exact `pouch_crypto_key`/`pouch_crypto_key_file`
+endpoint query option, Vectis creates
+`${XDG_CONFIG_HOME:-$HOME/.config}/vectis/pouch.key` with mode 0600. This is a
+Vectis key used only by Vectis-owned local Pouch persistence; separate
+liblockdc clients retain their own configuration.
 
 For deterministic container or other short-lived deployments, set
 `VECTIS_POUCH_CRYPTO_KEY` to a non-empty liblockdc Pouch key string (for

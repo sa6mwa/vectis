@@ -10642,12 +10642,6 @@ static int vectis_endpoint_is_pouch(const char *endpoint) {
   return endpoint != NULL && strncmp(endpoint, "pouch://", 8u) == 0;
 }
 
-static int vectis_endpoint_has_pouch_crypto_option(const char *endpoint) {
-  return endpoint != NULL &&
-         (strstr(endpoint, "pouch_crypto_key=") != NULL ||
-          strstr(endpoint, "pouch_crypto_key_file=") != NULL);
-}
-
 static vectis_status vectis_configure_pouch_client(lc_client_config *config,
                                                    const char *endpoint,
                                                    const vectis_app_impl *impl,
@@ -10685,7 +10679,7 @@ static vectis_status vectis_configure_pouch_client(lc_client_config *config,
   }
   if (config->pouch_crypto_key != NULL ||
       config->pouch_crypto_key_file != NULL ||
-      vectis_endpoint_has_pouch_crypto_option(endpoint)) {
+      vectis_pouch_endpoint_has_crypto_option(endpoint)) {
     /* Do not retry without encryption or reinitialize an existing root. A
      * plaintext root or a different key must fail through liblockdc unchanged.
      */

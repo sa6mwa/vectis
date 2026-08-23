@@ -97,9 +97,10 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/vectis/storage
 Local Pouch roots are encrypted at rest by default. They use the same
 `lockd.pouch_crypto_key`, `lockd.pouch_crypto_key_file`,
 `lockd.pouch_crypto_generate_key_file`, and `lockd.pouch_compression` settings
-as other Vectis persistence. With no key setting, Vectis securely generates
-`${XDG_CONFIG_HOME:-$HOME/.config}/vectis/pouch.key`. Remote endpoints and
-separate liblockdc clients do not use these fields.
+as other Vectis persistence. With no key setting or exact
+`pouch_crypto_key`/`pouch_crypto_key_file` endpoint query option, Vectis
+securely generates `${XDG_CONFIG_HOME:-$HOME/.config}/vectis/pouch.key`.
+Remote endpoints and separate liblockdc clients do not use these fields.
 
 `VECTIS_POUCH_CRYPTO_KEY` provides a non-empty, deterministic key override
 for Vectis-owned local Pouch clients. It takes precedence over the app lockd
