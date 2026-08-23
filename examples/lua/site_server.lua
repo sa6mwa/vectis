@@ -8,18 +8,6 @@ local asset_root = assert(os.getenv("VECTIS_LUA_SITE_ASSET_ROOT"))
 local content_root = assert(os.getenv("VECTIS_LUA_SITE_CONTENT_ROOT"))
 local cache_dir = assert(os.getenv("VECTIS_LUA_SITE_CACHE"))
 
-local function form_value(body, key)
-  local value = body:match("^" .. key .. "=([^&]*)") or
-      body:match("&" .. key .. "=([^&]*)")
-  if value == nil then
-    return nil
-  end
-  value = value:gsub("+", " ")
-  return value:gsub("%%(%x%x)", function(hex)
-    return string.char(tonumber(hex, 16))
-  end)
-end
-
 assert(vectis.mkdir_p(content_root) == true)
 assert(vectis.auth.store_init({
   credentials_path = credentials_path,
@@ -87,8 +75,20 @@ assert(app:route({
     max_bytes = 256,
   },
   handler = function(request)
-    local name = form_value(request.body or "", "name")
-    local message = form_value(request.body or "", "message")
+    local body = request.body or ""
+    local name = body:match("^name=([^&]*)") or body:match("&name=([^&]*)")
+    local message = body:match("^message=([^&]*)") or
+        body:match("&message=([^&]*)")
+    if name ~= nil then
+      name = name:gsub("+", " "):gsub("%%(%x%x)", function(hex)
+        return string.char(tonumber(hex, 16))
+      end)
+    end
+    if message ~= nil then
+      message = message:gsub("+", " "):gsub("%%(%x%x)", function(hex)
+        return string.char(tonumber(hex, 16))
+      end)
+    end
     if name == nil or name == "" or message == nil or message == "" then
       return {
         status = 400,
