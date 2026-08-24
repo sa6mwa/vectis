@@ -1232,11 +1232,12 @@ typedef struct vectis_server_config {
 } vectis_server_config;
 
 typedef enum vectis_supervision_policy {
-  /* Choose direct foreground Kore unless app-owned services require a managed
-   * supervisor topology. */
+  /* Choose direct foreground Kore unless app-owned services or persistent
+   * metrics require a managed supervisor topology. */
   VECTIS_SUPERVISION_AUTO = 0,
   /* Require direct foreground Kore for run(); fails if app-owned services are
-   * declared because those services require supervision. */
+   * declared or persistent metrics are enabled because they require
+   * supervision. */
   VECTIS_SUPERVISION_DIRECT = 1,
   /* Force the managed supervisor topology for route-backed apps. */
   VECTIS_SUPERVISION_SUPERVISED = 2

@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <assert.h>
 #include <dirent.h>
+#include <errno.h>
 #include <lc/lc.h>
 #include <netinet/in.h>
 #include <pthread.h>
@@ -134,6 +135,8 @@ typedef struct runtime_blackhole_server {
   unsigned short port;
   pid_t child_pid;
 } runtime_blackhole_server;
+
+static const char *runtime_test_program;
 
 static long runtime_monotonic_millis(void) {
   struct timespec now;
@@ -1870,6 +1873,220 @@ static void assert_metrics_persistence_route_hit(unsigned short port) {
   assert(status == VECTIS_OK);
   assert(response.status_code == 200L);
   vectis_http_response_cleanup(&response);
+}
+
+static void assert_metrics_persistence_snapshot_contains(unsigned short port,
+                                                         const char *needle) {
+  vectis_http_client_config http;
+  vectis_http_request request;
+  vectis_http_response response;
+  vectis_error error;
+  vectis_status status;
+  char url[128];
+  int attempt;
+  int found;
+  int written;
+
+  assert(needle != NULL);
+  memset(&response, 0, sizeof(response));
+  vectis_http_client_config_init(&http);
+  http.timeout_ms = 1000L;
+  http.connect_timeout_ms = 200L;
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  written = snprintf(url, sizeof(url), "http://127.0.0.1:%u/.metrics.json",
+                     (unsigned)port);
+  assert(written > 0 && (size_t)written < sizeof(url));
+  request.url = url;
+  status = VECTIS_ERR_STATE;
+  found = 0;
+  for (attempt = 0; attempt < 20 && !found; ++attempt) {
+    vectis_http_response_cleanup(&response);
+    status = vectis_http_execute(&http, &request, &response, &error);
+    found = status == VECTIS_OK && response.status_code == 200L &&
+            response.body != NULL &&
+            strstr((const char *)response.body, needle) != NULL;
+    if (!found) {
+      usleep(100000u);
+    }
+  }
+  assert(status == VECTIS_OK);
+  assert(response.status_code == 200L);
+  assert(response.body != NULL);
+  assert(found);
+  vectis_http_response_cleanup(&response);
+}
+
+static vectis_app *runtime_foreground_metrics_app(const char *port_name,
+                                                  vectis_error *error) {
+  vectis_app_config config;
+  vectis_metrics_config metrics;
+  vectis_route_config route;
+  const char *endpoint;
+  const char *key;
+  const char *port_text;
+  char *end;
+  unsigned long port;
+  vectis_app *app;
+  vectis_status status;
+
+  endpoint = getenv("VECTIS_RUNTIME_METRICS_ENDPOINT");
+  key = getenv("VECTIS_RUNTIME_METRICS_KEY");
+  port_text = getenv(port_name);
+  if (endpoint == NULL || key == NULL || port_text == NULL ||
+      port_text[0] == '\0') {
+    return NULL;
+  }
+  errno = 0;
+  port = strtoul(port_text, &end, 10);
+  if (errno != 0 || *end != '\0' || port == 0u || port > 65535u) {
+    return NULL;
+  }
+  vectis_app_config_init(&config);
+  config.app_name = "runtime-foreground-metrics-app";
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = (unsigned short)port;
+  config.lockd.pouch_crypto_key = key;
+  app = vectis_app_new(&config, error);
+  if (app == NULL) {
+    return NULL;
+  }
+  vectis_metrics_config_init(&metrics);
+  metrics.path = "/.metrics";
+  metrics.json_path = "/.metrics.json";
+  metrics.persistence_enabled = 1;
+  metrics.storage_endpoint = endpoint;
+  metrics.storage_namespace = "vectis.runtime.metrics.run";
+  metrics.storage_owner = "runtime-test";
+  metrics.snapshot_interval_seconds = 300u;
+  status = app->metrics(app, &metrics, error);
+  if (status == VECTIS_OK) {
+    route = vectis_route(VECTIS_HTTP_GET, "/count", sample_handler, NULL);
+    status = app->route(app, &route, error);
+  }
+  if (status != VECTIS_OK) {
+    app->close(app);
+    return NULL;
+  }
+  return app;
+}
+
+static int run_foreground_persistent_metrics_entry(void) {
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+
+  app =
+      runtime_foreground_metrics_app("VECTIS_RUNTIME_METRICS_RUN_PORT", &error);
+  if (app == NULL) {
+    return 1;
+  }
+  status = app->run(app, &error);
+  app->close(app);
+  return status == VECTIS_OK ? 0 : 1;
+}
+
+static pid_t runtime_spawn_named_test(const char *name) {
+  pid_t pid;
+
+  assert(runtime_test_program != NULL);
+  assert(name != NULL);
+  pid = fork();
+  assert(pid >= 0);
+  if (pid == 0) {
+    assert(setenv("VECTIS_RUNTIME_TEST", name, 1) == 0);
+    execl(runtime_test_program, runtime_test_program, (char *)NULL);
+    _exit(127);
+  }
+  return pid;
+}
+
+static void assert_foreground_run_restores_persistent_metrics(void) {
+  vectis_app_config config;
+  vectis_metrics_config metrics;
+  vectis_route_config route;
+  vectis_app *app;
+  vectis_error error;
+  vectis_status status;
+  lc_error lcerr;
+  char pouch_dir[] = "/tmp/vectis-runtime-metrics-run.XXXXXX";
+  char *pouch_crypto_key;
+  char endpoint[4096];
+  unsigned short seed_port;
+  unsigned short run_port;
+  pid_t run_pid;
+  int seed_fd;
+  int run_fd;
+  int child_status;
+  int written;
+  char run_port_text[16];
+
+  assert(mkdtemp(pouch_dir) != NULL);
+  pouch_crypto_key = NULL;
+  lc_error_init(&lcerr);
+  assert(lc_pouch_crypto_generate_key_string(&pouch_crypto_key, &lcerr) ==
+         LC_OK);
+  lc_error_cleanup(&lcerr);
+  written = snprintf(endpoint, sizeof(endpoint), "pouch://%s", pouch_dir);
+  assert(written > 0 && (size_t)written < sizeof(endpoint));
+  seed_fd = reserve_loopback_port(&seed_port);
+  run_fd = reserve_loopback_port(&run_port);
+  assert(seed_fd >= 0 && run_fd >= 0);
+  close(seed_fd);
+  close(run_fd);
+
+  vectis_app_config_init(&config);
+  config.app_name = "runtime-foreground-metrics-app";
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = seed_port;
+  config.lockd.pouch_crypto_key = pouch_crypto_key;
+  vectis_metrics_config_init(&metrics);
+  metrics.path = "/.metrics";
+  metrics.json_path = "/.metrics.json";
+  metrics.persistence_enabled = 1;
+  metrics.storage_endpoint = endpoint;
+  metrics.storage_namespace = "vectis.runtime.metrics.run";
+  metrics.storage_owner = "runtime-test";
+  metrics.snapshot_interval_seconds = 300u;
+  route = vectis_route(VECTIS_HTTP_GET, "/count", sample_handler, NULL);
+
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  status = app->metrics(app, &metrics, &error);
+  assert(status == VECTIS_OK);
+  status = app->route(app, &route, &error);
+  assert(status == VECTIS_OK);
+  status = app->start(app, &error);
+  assert(status == VECTIS_OK);
+  assert_metrics_persistence_route_hit(seed_port);
+  status = app->stop(app, &error);
+  assert(status == VECTIS_OK);
+  app->close(app);
+
+  written =
+      snprintf(run_port_text, sizeof(run_port_text), "%u", (unsigned)run_port);
+  assert(written > 0 && (size_t)written < sizeof(run_port_text));
+  assert(setenv("VECTIS_RUNTIME_METRICS_ENDPOINT", endpoint, 1) == 0);
+  assert(setenv("VECTIS_RUNTIME_METRICS_KEY", pouch_crypto_key, 1) == 0);
+  assert(setenv("VECTIS_RUNTIME_METRICS_RUN_PORT", run_port_text, 1) == 0);
+  run_pid = runtime_spawn_named_test("foreground_persistent_metrics_entry");
+  assert_metrics_persistence_snapshot_contains(run_port,
+                                               "\"requests_total\":1");
+  assert_metrics_persistence_route_hit(run_port);
+  assert_metrics_persistence_snapshot_contains(run_port,
+                                               "\"requests_total\":3");
+  assert(kill(run_pid, SIGTERM) == 0);
+  assert(waitpid(run_pid, &child_status, 0) == run_pid);
+  assert(WIFEXITED(child_status));
+  assert(WEXITSTATUS(child_status) == 0);
+
+  assert(unsetenv("VECTIS_RUNTIME_METRICS_ENDPOINT") == 0);
+  assert(unsetenv("VECTIS_RUNTIME_METRICS_KEY") == 0);
+  assert(unsetenv("VECTIS_RUNTIME_METRICS_RUN_PORT") == 0);
+  lc_pouch_crypto_key_string_free(pouch_crypto_key);
+  remove_tree(pouch_dir);
 }
 
 static void assert_metrics_persistence_merges_shared_identity(void) {
@@ -7185,7 +7402,9 @@ static void assert_supervised_wait_reports_managed_service_exit(void) {
 }
 
 #ifdef VECTIS_RUNTIME_HEADER_LIMIT_ONLY
-int main(void) {
+int main(int argc, char **argv) {
+  (void)argc;
+  runtime_test_program = argv[0];
   assert_default_header_limit_accepts_64k();
   return 0;
 }
@@ -7232,6 +7451,14 @@ static int run_named_runtime_test(const char *name) {
   }
   if (strcmp(name, "supervised_metrics_persistence_worker") == 0) {
     assert_supervised_metrics_persistence_worker();
+    return 1;
+  }
+  if (strcmp(name, "foreground_run_restores_persistent_metrics") == 0) {
+    assert_foreground_run_restores_persistent_metrics();
+    return 1;
+  }
+  if (strcmp(name, "foreground_persistent_metrics_entry") == 0) {
+    assert(run_foreground_persistent_metrics_entry() == 0);
     return 1;
   }
   if (strcmp(name, "metrics_persistence_merges_shared_identity") == 0) {
@@ -7401,7 +7628,7 @@ static int run_named_runtime_test(const char *name) {
   return 1;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
   vectis_app_config config;
   vectis_error error;
   vectis_app *app;
@@ -7410,6 +7637,8 @@ int main(void) {
   vectis_route_config route;
   vectis_body_policy policy;
 
+  (void)argc;
+  runtime_test_program = argv[0];
   if (run_named_runtime_test(getenv("VECTIS_RUNTIME_TEST"))) {
     return 0;
   }
@@ -7424,6 +7653,7 @@ int main(void) {
   assert_acme_state_dir_allows_existing_group_private_dir();
   assert_metrics_surface();
   assert_supervised_metrics_persistence_worker();
+  assert_foreground_run_restores_persistent_metrics();
   assert_metrics_persistence_merges_shared_identity();
   assert_metrics_persistence_restore_honors_startup_grace();
   assert_direct_supervision_policy_rejects_app_services();

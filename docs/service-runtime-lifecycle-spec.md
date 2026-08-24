@@ -870,8 +870,8 @@ carry Vectis diagnostics.
 `vectis_app_config.supervision_policy` and Lua
 `vectis.app.new({supervision_policy = ...})` configure route-backed topology:
 for blocking `run()`, `auto` chooses direct foreground Kore unless app-owned
-services require supervision, `direct` fails closed when such services are
-declared, and `supervised` forces the managed supervisor topology. For
+services or persistent metrics require supervision, `direct` fails closed when
+either is configured, and `supervised` forces the managed supervisor topology. For
 nonblocking managed `start()`, route-backed serving is always process-backed so
 Kore can continue after the call returns; `direct` still fails closed only when
 app-owned services or metrics persistence require supervisor-owned services.

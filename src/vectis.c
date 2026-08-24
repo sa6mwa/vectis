@@ -10080,7 +10080,8 @@ vectis_app_should_supervise_routes(const vectis_app_impl *impl,
     if (required) {
       vectis_set_error(
           error, VECTIS_ERR_STATE,
-          "direct supervision_policy cannot run app-owned services");
+          "direct supervision_policy cannot run app-owned services or "
+          "persistent metrics");
       return VECTIS_ERR_STATE;
     }
     *supervise_out = 0;
