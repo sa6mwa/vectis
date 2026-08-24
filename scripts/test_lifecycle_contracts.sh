@@ -1872,7 +1872,7 @@ for expected in \
   '^cai_sha256=46d7c0c88633b932b98d6e6e0c035d6d4c4c24e8576122961d6e5a8affa78b5d$' \
   '^lql_sha256=a32b3ecc33b0634df23c630843b1c2c16a8a2caa947109a33bad20965e47a399$' \
   '^lql_lua_sha256=b440ce543586ebfc9aafd0e09a700126b9d62d85b8c34ae2ac19b0990db28438$' \
-  '^softline_sha256=5d5e662269cf5bae9276f1ba7216dfb7e63127ea89c7c9b5f23cb33dbc970012$'
+  '^softline_sha256=2741b83260b7d61d0a55f71ff7fc4f3e1731786610b09631349e7b057814a304$'
 do
   if ! printf '%s\n' "$linux_deps_output" | grep -Eq "$expected"; then
     echo "Linux dependency preset did not expose expected upgraded dependency pin: $expected" >&2

@@ -65,7 +65,7 @@ archive cache. The current expected dependency set is:
 - `cai` 0.4.0 for OpenAI API, agent, tool, MCP, and Lua binding sources.
 - `liblql` 0.2.0 for the LQL dependency exposed by `liblockdc` 0.13.1.
 - `libmdf` 0.7.0 for Markdown-to-ANSI/HTML rendering and Lua binding sources.
-- `softline` 0.2.0 for line editing, terminal prompt UX, and Lua binding
+- `softline` 0.3.0 for line editing, terminal prompt UX, and Lua binding
   sources.
 - `libpslog` 0.9.0 for structured logging and Lua binding sources.
 - `libpid0` 0.4.2 for Linux PID 1 behavior in the `vectis` executable.
