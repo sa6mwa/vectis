@@ -2017,6 +2017,28 @@ for target in \
 do
   assert_contains "$repo_root/Makefile" "^$target:"
 done
+for kore_target in \
+  build-debug \
+  build-release \
+  build-asan \
+  build-coverage \
+  build-fuzz \
+  test-lifecycle \
+  test-instrumentation-presets \
+  test-install-tree \
+  package \
+  package-source
+do
+  assert_contains "$repo_root/Makefile" "^$kore_target:.*\\\$\\(KORE_PATCH_STAMP\\)"
+done
+assert_contains "$repo_root/Makefile" '^\$\(KORE_PATCH_STAMP\): \$\(ROOT\)/vendor/kore/REVISION \$\(ROOT\)/vendor/kore/patches/series'
+assert_contains "$repo_root/Makefile" 'scripts/vendor-kore\.sh apply'
+assert_contains "$repo_root/scripts/vendor-kore.sh" 'revision_file="\$vendor_root/REVISION"'
+assert_contains "$repo_root/scripts/vendor-kore.sh" 'git -C "\$upstream_dir" checkout --detach "\$upstream_revision"'
+if ! grep -Eq '^[0-9a-f]{40}$' "$repo_root/vendor/kore/REVISION"; then
+  echo "Kore revision must be a full Git commit" >&2
+  exit 1
+fi
 assert_contains "$repo_root/Makefile" 'scripts/test_service_runtime_lifecycle_audit\.sh'
 assert_contains "$repo_root/scripts/test_service_runtime_lifecycle_audit.sh" \
   'service runtime lifecycle audit ok'

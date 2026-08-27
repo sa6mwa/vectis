@@ -6,6 +6,8 @@ ROOT := $(CURDIR)
 CMAKE := cmake
 CTEST := ctest
 TIMED := bash ./scripts/run_timed.sh
+KORE_PATCH_STAMP := $(ROOT)/build/.kore-runtime-patches-applied
+KORE_PATCH_FILES := $(wildcard $(ROOT)/vendor/kore/patches/*.patch)
 
 DEBUG_PRESET := debug
 ASAN_PRESET := asan
@@ -95,7 +97,7 @@ help:
 build: build-debug
 test: test-debug
 
-test-lifecycle:
+test-lifecycle: $(KORE_PATCH_STAMP)
 	$(TIMED) test-lifecycle bash ./scripts/test_lifecycle_contracts.sh
 	$(TIMED) test-service-runtime-lifecycle bash ./scripts/test_service_runtime_lifecycle_audit.sh
 	$(TIMED) test-lua-facade-matrix bash ./scripts/test_lua_facade_matrix_contracts.sh
@@ -143,11 +145,11 @@ deps-cross:
 		printf '[deps] skipping deps-arm64-apple-darwin: osxcross toolchain not available\n'; \
 	fi
 
-build-debug: deps-debug
+build-debug: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) build-debug $(CMAKE) --preset $(DEBUG_PRESET)
 	$(TIMED) build-debug-compile $(CMAKE) --build --preset $(DEBUG_PRESET)
 
-build-release: deps-release deps-cross
+build-release: deps-release deps-cross $(KORE_PATCH_STAMP)
 	$(TIMED) build-x86_64-gnu $(CMAKE) --preset x86_64-linux-gnu-release
 	$(TIMED) build-x86_64-gnu-compile $(CMAKE) --build --preset x86_64-linux-gnu-release
 	$(TIMED) build-x86_64-musl $(CMAKE) --preset x86_64-linux-musl-release
@@ -168,10 +170,10 @@ build-release: deps-release deps-cross
 		printf '[build] skipping arm64-apple-darwin-release: osxcross toolchain not available\n'; \
 	fi
 
-package:
+package: $(KORE_PATCH_STAMP)
 	$(TIMED) package bash ./scripts/package.sh all
 
-package-source:
+package-source: $(KORE_PATCH_STAMP)
 	$(TIMED) package-source bash ./scripts/stage_release_sources.sh
 
 package-source-smoke: package-source
@@ -222,7 +224,7 @@ release:
 print-release-version:
 	@bash ./scripts/release_version.sh
 
-build-asan: deps-debug
+build-asan: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) build-asan $(CMAKE) --preset $(ASAN_PRESET)
 	$(TIMED) build-asan-compile $(CMAKE) --build --preset $(ASAN_PRESET)
 
@@ -232,13 +234,13 @@ valgrind: build-debug
 	@command -v valgrind >/dev/null 2>&1 || { printf '%s\n' 'valgrind is required for make valgrind' >&2; exit 2; }
 	$(TIMED) valgrind $(CTEST) --test-dir build/$(DEBUG_PRESET) --output-on-failure -T memcheck
 
-build-coverage: deps-debug
+build-coverage: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) build-coverage $(CMAKE) --preset $(COVERAGE_PRESET)
 	$(TIMED) build-coverage-compile $(CMAKE) --build --preset $(COVERAGE_PRESET)
 
 coverage: test-coverage
 
-build-fuzz: deps-debug
+build-fuzz: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) build-fuzz bash ./scripts/configure_fuzz.sh $(FUZZ_PRESET)
 	$(TIMED) build-fuzz-compile $(CMAKE) --build --preset $(FUZZ_PRESET)
 
@@ -300,7 +302,7 @@ test-asan: build-asan
 test-coverage: build-coverage
 	$(TIMED) test-coverage $(CTEST) --preset $(COVERAGE_PRESET)
 
-test-instrumentation-presets: deps-debug
+test-instrumentation-presets: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) test-asan-preset-link $(CMAKE) --preset $(ASAN_PRESET)
 	$(TIMED) test-asan-preset-link-compile $(CMAKE) --build --preset $(ASAN_PRESET) --target vectis_unit_header_cpp
 	$(TIMED) test-coverage-preset-link $(CMAKE) --preset $(COVERAGE_PRESET)
@@ -309,7 +311,7 @@ test-instrumentation-presets: deps-debug
 test-no-kore: deps-debug
 	$(TIMED) test-no-kore bash ./scripts/test-no-kore-build.sh
 
-test-install-tree:
+test-install-tree: $(KORE_PATCH_STAMP)
 	$(TIMED) deps-install-tree bash ./scripts/deps.sh deps-x86_64-linux-gnu
 	$(TIMED) configure-install-tree $(CMAKE) -S . -B build/x86_64-linux-gnu-install-tree -GNinja -DCMAKE_BUILD_TYPE=Release -DVECTIS_EXTERNAL_ROOT=.cache/deps/x86_64-linux-gnu -DVECTIS_BUILD_STATIC=ON -DVECTIS_BUILD_SHARED=ON -DVECTIS_BUILD_BINARY=ON -DVECTIS_BUILD_TESTS=ON -DVECTIS_INSTALL=ON -DVECTIS_DIST_DIR=build/x86_64-linux-gnu-install-tree/dist -DVECTIS_TARGET_ARCH=x86_64 -DVECTIS_TARGET_OS=linux -DVECTIS_TARGET_LIBC=gnu
 	$(TIMED) build-install-tree $(CMAKE) --build build/x86_64-linux-gnu-install-tree
@@ -329,8 +331,12 @@ format-check:
 vendor-kore:
 	$(TIMED) vendor-kore bash ./scripts/vendor-kore.sh sync
 
-vendor-kore-apply:
+$(KORE_PATCH_STAMP): $(ROOT)/vendor/kore/REVISION $(ROOT)/vendor/kore/patches/series $(KORE_PATCH_FILES)
 	$(TIMED) vendor-kore-apply bash ./scripts/vendor-kore.sh apply
+	@mkdir -p "$(dir $@)"
+	@touch "$@"
+
+vendor-kore-apply: $(KORE_PATCH_STAMP)
 
 vendor-kore-status:
 	bash ./scripts/vendor-kore.sh status
@@ -338,7 +344,7 @@ vendor-kore-status:
 vendor-kore-upgrade:
 	$(TIMED) vendor-kore-upgrade bash ./scripts/vendor-kore.sh upgrade
 
-build-kore: deps-debug vendor-kore
+build-kore: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) build-kore bash ./scripts/build-kore.sh ./.cache/deps/host-debug
 
 verify-kore-patches: deps-debug vendor-kore

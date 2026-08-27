@@ -7,8 +7,10 @@ vendor_root="$repo_root/vendor/kore"
 upstream_dir="$vendor_root/upstream"
 patch_dir="$vendor_root/patches"
 series_file="$patch_dir/series"
+revision_file="$vendor_root/REVISION"
 upstream_url="https://git.kore.io/kore.git"
 command=${1:-status}
+upstream_revision=
 
 ensure_series_file() {
   mkdir -p "$patch_dir"
@@ -17,9 +19,22 @@ ensure_series_file() {
   fi
 }
 
+ensure_revision_file() {
+  if [ ! -f "$revision_file" ]; then
+    echo "missing Kore revision file: $revision_file" >&2
+    exit 1
+  fi
+  upstream_revision=$(tr -d '\r\n' <"$revision_file")
+  if ! [[ "$upstream_revision" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    echo "Kore revision must be a full 40-character Git commit: $revision_file" >&2
+    exit 1
+  fi
+}
+
 ensure_checkout() {
   mkdir -p "$vendor_root"
   ensure_series_file
+  ensure_revision_file
   if [ ! -d "$upstream_dir/.git" ]; then
     git clone "$upstream_url" "$upstream_dir"
   fi
@@ -32,10 +47,22 @@ ensure_clean_tree() {
   fi
 }
 
+ensure_pinned_revision() {
+  local current_revision
+
+  current_revision=$(git -C "$upstream_dir" rev-parse HEAD)
+  if [ "$current_revision" = "$upstream_revision" ]; then
+    return
+  fi
+  ensure_clean_tree
+  git -C "$upstream_dir" checkout --detach "$upstream_revision"
+}
+
 apply_series() {
   local patch_name patch_path
 
   ensure_checkout
+  ensure_pinned_revision
   ensure_clean_tree
   while IFS= read -r patch_name; do
     [ -z "$patch_name" ] && continue
@@ -55,6 +82,7 @@ apply_series() {
 case "$command" in
   sync)
     ensure_checkout
+    ensure_pinned_revision
     echo "kore upstream ready at $upstream_dir"
     ;;
   apply)
@@ -65,13 +93,15 @@ case "$command" in
     ensure_checkout
     ensure_clean_tree
     git -C "$upstream_dir" fetch origin
-    git -C "$upstream_dir" pull --ff-only
-    echo "kore upstream upgraded"
+    ensure_pinned_revision
+    echo "kore upstream refreshed at pinned revision $upstream_revision"
     ;;
   status)
     ensure_checkout
+    ensure_pinned_revision
     printf 'upstream_dir=%s\n' "$upstream_dir"
     printf 'revision=%s\n' "$(git -C "$upstream_dir" rev-parse HEAD)"
+    printf 'pinned_revision=%s\n' "$upstream_revision"
     printf 'branch=%s\n' "$(git -C "$upstream_dir" rev-parse --abbrev-ref HEAD)"
     printf 'patch_count=%s\n' "$(grep -vc '^[[:space:]]*#\|^[[:space:]]*$' "$series_file" || true)"
     ;;
@@ -80,4 +110,3 @@ case "$command" in
     exit 2
     ;;
 esac
-

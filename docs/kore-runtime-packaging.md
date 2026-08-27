@@ -15,7 +15,8 @@ implementation detail.
 
 ## Build Contract
 
-- `vendor/kore/upstream` is the readable and upgradeable Kore source tree.
+- `vendor/kore/REVISION` records the exact Kore commit and `vendor/kore/upstream`
+  is the readable checkout of that revision.
 - `vendor/kore/patches/series` is the ordered Vectis patch stack.
 - `scripts/verify-kore-patches.sh` verifies that the patch stack still applies
   cleanly and builds against the provisioned SDK root.

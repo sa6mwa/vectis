@@ -1,12 +1,13 @@
 # Kore Vendoring
 
-`vendor/kore/upstream/` is a local checkout of upstream Kore.
+`vendor/kore/upstream/` is a local checkout of the Kore commit recorded in
+`vendor/kore/REVISION`.
 
 Local changes should be expressed as patch files in `vendor/kore/patches/`
 and listed in `vendor/kore/patches/series` in apply order.
 
 Treat `vendor/kore/upstream/` as disposable generated state. It is overwritten
-when Vectis pulls or reapplies a pinned Kore revision, so it must not be used as
+when Vectis reapplies the pinned Kore revision, so it must not be used as
 the authoritative place to preserve local changes. Do not force-add ignored or
 untracked files from this checkout, and do not use `git add -N -f` there to make
 patch generation work. Update the patch files instead, then verify them by
