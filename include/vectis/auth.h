@@ -655,6 +655,10 @@ vectis_auth_user_add_or_update(const vectis_auth_store_config *store_config,
                                const vectis_auth_user_config *user_config,
                                vectis_auth_user_enrollment *out,
                                vectis_error *error);
+/* Validates an email-token enrollment recipient. An email must be non-empty
+ * and no longer than VECTIS_AUTH_EMAIL_MAX. */
+vectis_status vectis_auth_user_email_validate(const char *email,
+                                              vectis_error *error);
 /* Sets the enrolled recipient for email-token authentication. The username
  * must already exist; email must be non-empty and no longer than
  * VECTIS_AUTH_EMAIL_MAX. */

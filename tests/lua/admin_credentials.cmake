@@ -340,6 +340,57 @@ if(NOT user_add_output MATCHES "totp_qr:")
 endif()
 
 execute_process(
+  COMMAND "${VECTIS_BIN}" -a users --store "${store}" --add
+          "email-validation-user@example.com" --password "original-password"
+  RESULT_VARIABLE email_validation_add_result
+  OUTPUT_VARIABLE email_validation_add_output
+  ERROR_VARIABLE email_validation_add_error)
+if(NOT email_validation_add_result EQUAL 0)
+  message(FATAL_ERROR
+    "users add for email validation regression failed: ${email_validation_add_error}")
+endif()
+
+string(REPEAT "a" 320 too_long_email)
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users --store "${store}" --add
+          "email-validation-user@example.com" --password "updated-password"
+          --email "${too_long_email}"
+  RESULT_VARIABLE invalid_email_update_result
+  OUTPUT_VARIABLE invalid_email_update_output
+  ERROR_VARIABLE invalid_email_update_error)
+if(invalid_email_update_result EQUAL 0)
+  message(FATAL_ERROR "users add accepted an overlong email enrollment")
+endif()
+if(NOT invalid_email_update_error MATCHES "auth email is too long")
+  message(FATAL_ERROR
+    "users add did not report invalid email: ${invalid_email_update_error}")
+endif()
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users --store "${store}" --login
+          "email-validation-user@example.com" --password "original-password"
+  RESULT_VARIABLE original_password_result
+  OUTPUT_VARIABLE original_password_output
+  ERROR_VARIABLE original_password_error)
+if(NOT original_password_result EQUAL 0 OR
+   NOT original_password_output MATCHES "authenticated=true")
+  message(FATAL_ERROR
+    "invalid email enrollment changed the existing user: ${original_password_error}")
+endif()
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users --store "${store}" --login
+          "email-validation-user@example.com" --password "updated-password"
+  RESULT_VARIABLE updated_password_result
+  OUTPUT_VARIABLE updated_password_output
+  ERROR_VARIABLE updated_password_error)
+if(NOT updated_password_result EQUAL 0 OR
+   NOT updated_password_output MATCHES "authenticated=false")
+  message(FATAL_ERROR
+    "invalid email enrollment changed the existing password: ${updated_password_error}")
+endif()
+
+execute_process(
   COMMAND "${VECTIS_BIN}" -a users --store "${store}" --login
           "admin-user@example.com" --password "admin-password"
   RESULT_VARIABLE user_login_missing_result

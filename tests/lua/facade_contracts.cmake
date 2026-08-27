@@ -97,6 +97,36 @@ local email_user = assert(vectis.auth.user_add({
 }))
 assert(email_user.email == "email-user@example.com")
 
+local empty_email_user, empty_email_err = vectis.auth.user_add({
+  credentials_path = auth_store,
+  username = "empty-email-user@example.com",
+  password = "empty-email-password",
+  email = "",
+})
+assert(empty_email_user == nil)
+assert_status_error(empty_email_err, vectis.ERR_INVALID, "auth email is required")
+local empty_email_login = assert(vectis.auth.user_login({
+  credentials_path = auth_store,
+  username = "empty-email-user@example.com",
+  password = "empty-email-password",
+}))
+assert(empty_email_login.authenticated == false)
+
+local long_email_user, long_email_err = vectis.auth.user_add({
+  credentials_path = auth_store,
+  username = "long-email-user@example.com",
+  password = "long-email-password",
+  email = string.rep("a", 320),
+})
+assert(long_email_user == nil)
+assert_status_error(long_email_err, vectis.ERR_INVALID, "auth email is too long")
+local long_email_login = assert(vectis.auth.user_login({
+  credentials_path = auth_store,
+  username = "long-email-user@example.com",
+  password = "long-email-password",
+}))
+assert(long_email_login.authenticated == false)
+
 local missing_totp = assert(vectis.auth.user_login({
   credentials_path = auth_store,
   username = "facade-admin@example.com",

@@ -4949,6 +4949,19 @@ vectis_auth_user_add_or_update(const vectis_auth_store_config *store_config,
   return status;
 }
 
+vectis_status vectis_auth_user_email_validate(const char *email,
+                                              vectis_error *error) {
+  if (email == NULL || email[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth email is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (strlen(email) > VECTIS_AUTH_EMAIL_MAX) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth email is too long");
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
+}
+
 vectis_status
 vectis_auth_user_email_set(const vectis_auth_store_config *store_config,
                            const char *username, const char *email,
@@ -4963,15 +4976,13 @@ vectis_auth_user_email_set(const vectis_auth_store_config *store_config,
   char *store_json;
   size_t store_len;
 
-  if (username == NULL || username[0] == '\0' || email == NULL ||
-      email[0] == '\0') {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "auth username and email are required");
+  if (username == NULL || username[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth username is required");
     return VECTIS_ERR_INVALID;
   }
-  if (strlen(email) > VECTIS_AUTH_EMAIL_MAX) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "auth email is too long");
-    return VECTIS_ERR_INVALID;
+  status = vectis_auth_user_email_validate(email, error);
+  if (status != VECTIS_OK) {
+    return status;
   }
   lock.fd = -1;
   lock.path = NULL;

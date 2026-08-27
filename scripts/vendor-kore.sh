@@ -8,7 +8,7 @@ upstream_dir="$vendor_root/upstream"
 patch_dir="$vendor_root/patches"
 series_file="$patch_dir/series"
 revision_file="$vendor_root/REVISION"
-upstream_url="https://git.kore.io/kore.git"
+upstream_url=${VECTIS_KORE_UPSTREAM_URL:-https://git.kore.io/kore.git}
 command=${1:-status}
 upstream_revision=
 
@@ -40,30 +40,43 @@ ensure_checkout() {
   fi
 }
 
-ensure_clean_tree() {
-  if [ -n "$(git -C "$upstream_dir" status --porcelain)" ]; then
-    echo "vendor/kore/upstream has local changes; clean it before applying or upgrading" >&2
+fetch_pinned_revision() {
+  if git -C "$upstream_dir" cat-file -e "${upstream_revision}^{commit}" 2>/dev/null; then
+    return
+  fi
+  git -C "$upstream_dir" fetch --no-tags origin
+  if ! git -C "$upstream_dir" cat-file -e "${upstream_revision}^{commit}" 2>/dev/null; then
+    echo "unable to fetch pinned Kore revision: $upstream_revision" >&2
     exit 1
   fi
+}
+
+reset_generated_checkout() {
+  git -C "$upstream_dir" reset --hard
+  git -C "$upstream_dir" clean -fdx
 }
 
 ensure_pinned_revision() {
   local current_revision
 
+  fetch_pinned_revision
   current_revision=$(git -C "$upstream_dir" rev-parse HEAD)
   if [ "$current_revision" = "$upstream_revision" ]; then
     return
   fi
-  ensure_clean_tree
   git -C "$upstream_dir" checkout --detach "$upstream_revision"
+}
+
+prepare_generated_checkout() {
+  ensure_checkout
+  reset_generated_checkout
+  ensure_pinned_revision
 }
 
 apply_series() {
   local patch_name patch_path
 
-  ensure_checkout
-  ensure_pinned_revision
-  ensure_clean_tree
+  prepare_generated_checkout
   while IFS= read -r patch_name; do
     [ -z "$patch_name" ] && continue
     case "$patch_name" in
@@ -81,8 +94,7 @@ apply_series() {
 
 case "$command" in
   sync)
-    ensure_checkout
-    ensure_pinned_revision
+    prepare_generated_checkout
     echo "kore upstream ready at $upstream_dir"
     ;;
   apply)
@@ -91,14 +103,14 @@ case "$command" in
     ;;
   upgrade)
     ensure_checkout
-    ensure_clean_tree
-    git -C "$upstream_dir" fetch origin
+    reset_generated_checkout
+    git -C "$upstream_dir" fetch --no-tags origin
     ensure_pinned_revision
     echo "kore upstream refreshed at pinned revision $upstream_revision"
     ;;
   status)
     ensure_checkout
-    ensure_pinned_revision
+    fetch_pinned_revision
     printf 'upstream_dir=%s\n' "$upstream_dir"
     printf 'revision=%s\n' "$(git -C "$upstream_dir" rev-parse HEAD)"
     printf 'pinned_revision=%s\n' "$upstream_revision"

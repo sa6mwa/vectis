@@ -2381,6 +2381,12 @@ static int vectis_cli_users_command(int argc, char **argv, int index) {
     return 64;
   }
   if (strcmp(action, "add") == 0) {
+    if (email != NULL) {
+      status = vectis_auth_user_email_validate(email, &error);
+      if (status != VECTIS_OK) {
+        return vectis_cli_auth_status(status, &error);
+      }
+    }
     vectis_auth_user_enrollment_init(&enrollment);
     status = vectis_auth_user_add_or_update(&store, &user, &enrollment, &error);
     if (status != VECTIS_OK) {
@@ -16670,12 +16676,18 @@ static int vectis_lua_auth_user_add(lua_State *lua) {
   vectis_lua_auth_store_config(lua, 1, &store);
   vectis_lua_auth_user_config(lua, 1, &user);
   email = vectis_lua_table_string(lua, 1, "email");
+  if (email != NULL) {
+    status = vectis_auth_user_email_validate(email, &error);
+    if (status != VECTIS_OK) {
+      return vectis_lua_push_error(lua, status, &error);
+    }
+  }
   vectis_auth_user_enrollment_init(&enrollment);
   status = vectis_auth_user_add_or_update(&store, &user, &enrollment, &error);
   if (status != VECTIS_OK) {
     return vectis_lua_push_error(lua, status, &error);
   }
-  if (email != NULL && email[0] != '\0') {
+  if (email != NULL) {
     status = vectis_auth_user_email_set(&store, user.username, email, &error);
     if (status != VECTIS_OK) {
       vectis_auth_user_enrollment_cleanup(&enrollment);
@@ -16691,7 +16703,7 @@ static int vectis_lua_auth_user_add(lua_State *lua) {
     lua_pushstring(lua, enrollment.generated_password);
     lua_setfield(lua, -2, "password");
   }
-  if (email != NULL && email[0] != '\0') {
+  if (email != NULL) {
     lua_pushstring(lua, email);
     lua_setfield(lua, -2, "email");
   }

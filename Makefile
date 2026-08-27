@@ -18,7 +18,7 @@ FUZZ_PRESET := fuzz
 	help \
 	deps-debug deps-release deps-cross \
 	build build-debug build-release build-asan build-coverage build-fuzz \
-	test test-debug test-lifecycle test-service-runtime-lifecycle test-lua-facade-matrix test-lua-facade-behavior test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
+	test test-debug test-lifecycle test-vendor-kore-lifecycle test-service-runtime-lifecycle test-lua-facade-matrix test-lua-facade-behavior test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
 	lua-env lua-rock lua-test test-opcua-lua-surface test-opcua-pubsub-live test-cai-live test-sus-audio-live test-sus-audio-hardening release-lua-artifacts \
 	dev-up dev-down dev-reset dev-ps dev-logs \
 	package package-source package-source-smoke package-checksums package-verify verify-release-archives verify-release-privacy verify-release-matrix release-darwin-smoke-bundle release-matrix prerelease-live prerelease-hardening lifecycle-version-contract release print-release-version clean-dist finalize-slice prerelease \
@@ -31,6 +31,7 @@ help:
 		'make build              Configure and build the debug preset.' \
 		'make test               Run the debug unit test preset.' \
 		'make test-lifecycle     Run lifecycle command/version/preset/privacy contract tests.' \
+		'make test-vendor-kore-lifecycle Exercise Kore pin refresh and patch reapplication.' \
 		'make test-service-runtime-lifecycle Run service runtime lifecycle evidence audit.' \
 		'make test-lua-facade-matrix Run Lua facade index/matrix/preload contract tests.' \
 		'make test-lua-facade-behavior Run Lua facade behavior coverage contract tests.' \
@@ -98,11 +99,15 @@ build: build-debug
 test: test-debug
 
 test-lifecycle: $(KORE_PATCH_STAMP)
+	$(TIMED) test-vendor-kore-lifecycle bash ./scripts/test_vendor_kore_lifecycle.sh
 	$(TIMED) test-lifecycle bash ./scripts/test_lifecycle_contracts.sh
 	$(TIMED) test-service-runtime-lifecycle bash ./scripts/test_service_runtime_lifecycle_audit.sh
 	$(TIMED) test-lua-facade-matrix bash ./scripts/test_lua_facade_matrix_contracts.sh
 	$(TIMED) test-lua-facade-behavior bash ./scripts/test_lua_facade_behavior_coverage.sh
 	$(TIMED) test-release-privacy-contracts bash ./scripts/test_release_privacy_contracts.sh
+
+test-vendor-kore-lifecycle:
+	$(TIMED) test-vendor-kore-lifecycle bash ./scripts/test_vendor_kore_lifecycle.sh
 
 test-service-runtime-lifecycle:
 	$(TIMED) test-service-runtime-lifecycle bash ./scripts/test_service_runtime_lifecycle_audit.sh

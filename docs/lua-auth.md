@@ -32,7 +32,8 @@ assert(vectis.auth.store_init({
 
 - `username`
 - `password`; if omitted, Vectis generates one
-- `email` to enroll the recipient for email-token authentication
+- `email` to enroll the recipient for email-token authentication; it must be
+  non-empty and at most 319 bytes
 - `totp` to generate a TOTP secret
 - `totp_secret` to set a specific TOTP secret
 - `totp_label`

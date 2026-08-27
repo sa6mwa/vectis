@@ -620,6 +620,12 @@ int main(void) {
   vectis_auth_user_config_init(&user);
   user.username = "email-user@example.com";
   user.password = "email-password";
+  status = vectis_auth_user_email_validate("", &error);
+  expect(status == VECTIS_ERR_INVALID,
+         "rejects an empty email-token enrollment recipient");
+  vectis_error_clear(&error);
+  status = vectis_auth_user_email_validate("email-user@example.com", &error);
+  expect_ok(status, &error, "accepts a valid email-token enrollment recipient");
   status = vectis_auth_user_add_or_update(&store, &user, &enrollment, &error);
   expect_ok(status, &error, "adds email-token user");
   vectis_auth_user_enrollment_cleanup(&enrollment);

@@ -2006,6 +2006,7 @@ for target in \
   release \
   finalize-slice \
   prerelease \
+  test-vendor-kore-lifecycle \
   test-service-runtime-lifecycle \
   test-lua-facade-matrix \
   lua-test \
@@ -2033,8 +2034,11 @@ do
 done
 assert_contains "$repo_root/Makefile" '^\$\(KORE_PATCH_STAMP\): \$\(ROOT\)/vendor/kore/REVISION \$\(ROOT\)/vendor/kore/patches/series'
 assert_contains "$repo_root/Makefile" 'scripts/vendor-kore\.sh apply'
+assert_contains "$repo_root/Makefile" 'scripts/test_vendor_kore_lifecycle\.sh'
 assert_contains "$repo_root/scripts/vendor-kore.sh" 'revision_file="\$vendor_root/REVISION"'
 assert_contains "$repo_root/scripts/vendor-kore.sh" 'git -C "\$upstream_dir" checkout --detach "\$upstream_revision"'
+assert_contains "$repo_root/scripts/vendor-kore.sh" 'git -C "\$upstream_dir" fetch --no-tags origin'
+assert_contains "$repo_root/scripts/vendor-kore.sh" 'git -C "\$upstream_dir" reset --hard'
 if ! grep -Eq '^[0-9a-f]{40}$' "$repo_root/vendor/kore/REVISION"; then
   echo "Kore revision must be a full Git commit" >&2
   exit 1
