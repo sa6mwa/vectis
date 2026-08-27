@@ -1781,6 +1781,7 @@ local user = assert(vectis.auth.user_add({
   credentials_path = auth_path,
   username = "lua-user@example.com",
   password = "lua-password",
+  email = "lua-user@example.com",
   totp_secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
   totp_label = "Vectis:lua-user@example.com",
   issuer = "Vectis",

@@ -103,6 +103,7 @@ typedef struct vectis_auth_claim_bool_probe {
 
 typedef struct vectis_auth_user_record {
   char username[VECTIS_AUTH_PRINCIPAL_MAX + 1u];
+  char email[VECTIS_AUTH_EMAIL_MAX + 1u];
   char password_salt[2u * VECTIS_AUTH_PASSWORD_SALT_BYTES + 1u];
   char password_hash[2u * VECTIS_AUTH_PASSWORD_HASH_BYTES + 1u];
   char password_kdf[64];
@@ -111,6 +112,11 @@ typedef struct vectis_auth_user_record {
   int totp_enabled;
   int found;
 } vectis_auth_user_record;
+
+static vectis_status
+vectis_auth_find_user_locked(const vectis_auth_store_config *store_config,
+                             lonejson *runtime, const char *username,
+                             vectis_auth_user_record *out, vectis_error *error);
 
 typedef struct vectis_auth_oauth2_flow_record {
   char flow_id[256];
@@ -1133,6 +1139,8 @@ static int vectis_auth_user_record_from_json(lonejson *runtime,
        vectis_auth_claim_uint(runtime, buffer, "password_iterations",
                               &out->password_iterations);
   if (ok) {
+    (void)vectis_auth_claim_string(runtime, buffer, "email", out->email,
+                                   sizeof(out->email));
     out->totp_enabled = vectis_auth_claim_bool(runtime, buffer, "totp_enabled",
                                                &out->totp_enabled)
                             ? out->totp_enabled
@@ -3418,8 +3426,9 @@ vectis_auth_issue_credential(const vectis_auth_store_config *store_config,
 
 static vectis_status vectis_auth_build_user_record_json(
     lonejson *runtime, const char *username, const char *salt_hex,
-    const char *hash_hex, int totp_enabled, const char *totp_secret,
-    lonejson_owned_buffer *out, vectis_error *error) {
+    const char *hash_hex, const char *password_kdf,
+    unsigned int password_iterations, const char *email, int totp_enabled,
+    const char *totp_secret, lonejson_owned_buffer *out, vectis_error *error) {
   lonejson_writer writer;
   lonejson_error json_error;
   lonejson_status status;
@@ -3437,19 +3446,25 @@ static vectis_status vectis_auth_build_user_record_json(
     status = lonejson_writer_string(&writer, username, strlen(username),
                                     &json_error);
   }
+  if (status == LONEJSON_STATUS_OK && email != NULL && email[0] != '\0') {
+    status = lonejson_writer_key(&writer, "email", 5u, &json_error);
+  }
+  if (status == LONEJSON_STATUS_OK && email != NULL && email[0] != '\0') {
+    status = lonejson_writer_string(&writer, email, strlen(email), &json_error);
+  }
   if (status == LONEJSON_STATUS_OK) {
     status = lonejson_writer_key(&writer, "password_kdf", 12u, &json_error);
   }
   if (status == LONEJSON_STATUS_OK) {
-    status = lonejson_writer_string(&writer, "pbkdf2-sha256", 13u, &json_error);
+    status = lonejson_writer_string(&writer, password_kdf, strlen(password_kdf),
+                                    &json_error);
   }
   if (status == LONEJSON_STATUS_OK) {
     status =
         lonejson_writer_key(&writer, "password_iterations", 19u, &json_error);
   }
   if (status == LONEJSON_STATUS_OK) {
-    status = lonejson_writer_u64(&writer, VECTIS_AUTH_PASSWORD_ITERATIONS,
-                                 &json_error);
+    status = lonejson_writer_u64(&writer, password_iterations, &json_error);
   }
   if (status == LONEJSON_STATUS_OK) {
     status = lonejson_writer_key(&writer, "password_salt", 13u, &json_error);
@@ -4300,6 +4315,7 @@ vectis_status vectis_auth_email_token_issue(
   vectis_auth_store_lock lock;
   vectis_auth_store_config state_store;
   vectis_auth_store_config temp_config;
+  vectis_auth_user_record user;
   lonejson *runtime;
   lonejson_owned_buffer token_json;
   vectis_status status;
@@ -4382,9 +4398,33 @@ vectis_status vectis_auth_email_token_issue(
     OPENSSL_cleanse(token_hash, sizeof(token_hash));
     return status;
   }
+  status = vectis_auth_lock_open(&config->store, &lock, error);
+  if (status == VECTIS_OK) {
+    status = vectis_auth_find_user_locked(&config->store, runtime,
+                                          config->username, &user, error);
+  }
+  if (lock.fd >= 0) {
+    vectis_auth_lock_close(&lock);
+    lock.fd = -1;
+  }
+  if (status != VECTIS_OK) {
+    lonejson_free(runtime);
+    OPENSSL_cleanse(token, sizeof(token));
+    OPENSSL_cleanse(token_hash, sizeof(token_hash));
+    return status;
+  }
+  if (!user.found || user.email[0] == '\0' ||
+      strcmp(config->email, user.email) != 0) {
+    lonejson_free(runtime);
+    OPENSSL_cleanse(token, sizeof(token));
+    OPENSSL_cleanse(token_hash, sizeof(token_hash));
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth email token recipient is not enrolled for user");
+    return VECTIS_ERR_INVALID;
+  }
   lonejson_owned_buffer_init(&token_json);
   status = vectis_auth_build_email_token_record_json(
-      runtime, transaction_id, config->username, effective_realm, config->email,
+      runtime, transaction_id, config->username, effective_realm, user.email,
       config->pending_transaction_id, token_hash, (int64_t)expires_at, 0u,
       max_attempts, &token_json, error);
   if (status != VECTIS_OK) {
@@ -4728,6 +4768,7 @@ vectis_auth_user_add_or_update(const vectis_auth_store_config *store_config,
                                vectis_error *error) {
   vectis_auth_store_lock lock;
   vectis_auth_store_config temp_config;
+  vectis_auth_user_record existing;
   lonejson *runtime;
   lonejson_owned_buffer user_json;
   vectis_totp totp;
@@ -4829,12 +4870,8 @@ vectis_auth_user_add_or_update(const vectis_auth_store_config *store_config,
     return status;
   }
   lonejson_owned_buffer_init(&user_json);
-  status = vectis_auth_build_user_record_json(
-      runtime, user_config->username, salt_hex, hash_hex,
-      user_config->enable_totp, secret_value, &user_json, error);
-  if (status == VECTIS_OK) {
-    status = vectis_auth_lock_open(store_config, &lock, error);
-  }
+  memset(&existing, 0, sizeof(existing));
+  status = vectis_auth_lock_open(store_config, &lock, error);
   if (status == VECTIS_OK) {
     store_json = NULL;
     store_len = 0u;
@@ -4844,6 +4881,16 @@ vectis_auth_user_add_or_update(const vectis_auth_store_config *store_config,
       status = vectis_auth_write_empty_store_locked(store_config, error);
     }
     free(store_json);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_find_user_locked(
+        store_config, runtime, user_config->username, &existing, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_build_user_record_json(
+        runtime, user_config->username, salt_hex, hash_hex, "pbkdf2-sha256",
+        VECTIS_AUTH_PASSWORD_ITERATIONS, existing.found ? existing.email : NULL,
+        user_config->enable_totp, secret_value, &user_json, error);
   }
   if (status == VECTIS_OK) {
     status = vectis_auth_drop_user_to_temp_locked(
@@ -4899,6 +4946,93 @@ vectis_auth_user_add_or_update(const vectis_auth_store_config *store_config,
   OPENSSL_cleanse(password, sizeof(password));
   OPENSSL_cleanse(salt_hex, sizeof(salt_hex));
   OPENSSL_cleanse(hash_hex, sizeof(hash_hex));
+  return status;
+}
+
+vectis_status
+vectis_auth_user_email_set(const vectis_auth_store_config *store_config,
+                           const char *username, const char *email,
+                           vectis_error *error) {
+  vectis_auth_store_lock lock;
+  vectis_auth_store_config temp_config;
+  vectis_auth_user_record user;
+  lonejson *runtime;
+  lonejson_owned_buffer user_json;
+  vectis_status status;
+  char temp_path[4096];
+  char *store_json;
+  size_t store_len;
+
+  if (username == NULL || username[0] == '\0' || email == NULL ||
+      email[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth username and email are required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (strlen(email) > VECTIS_AUTH_EMAIL_MAX) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth email is too long");
+    return VECTIS_ERR_INVALID;
+  }
+  lock.fd = -1;
+  lock.path = NULL;
+  runtime = NULL;
+  status = vectis_auth_lonejson_runtime(&runtime, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  lonejson_owned_buffer_init(&user_json);
+  store_json = NULL;
+  store_len = 0u;
+  temp_path[0] = '\0';
+  memset(&user, 0, sizeof(user));
+  status = vectis_auth_lock_open(store_config, &lock, error);
+  if (status == VECTIS_OK) {
+    status = vectis_auth_read_store_locked(store_config, &store_json,
+                                           &store_len, error);
+  }
+  if (status == VECTIS_OK && store_json == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth user is not enrolled");
+    status = VECTIS_ERR_INVALID;
+  }
+  free(store_json);
+  store_json = NULL;
+  store_len = 0u;
+  if (status == VECTIS_OK) {
+    status = vectis_auth_find_user_locked(store_config, runtime, username,
+                                          &user, error);
+  }
+  if (status == VECTIS_OK && !user.found) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth user is not enrolled");
+    status = VECTIS_ERR_INVALID;
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_build_user_record_json(
+        runtime, user.username, user.password_salt, user.password_hash,
+        user.password_kdf, user.password_iterations, email, user.totp_enabled,
+        user.totp_secret, &user_json, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_drop_user_to_temp_locked(
+        store_config, runtime, username, temp_path, sizeof(temp_path), error);
+  }
+  if (status == VECTIS_OK) {
+    temp_config = *store_config;
+    temp_config.credentials_path = temp_path;
+    status = vectis_auth_read_store_locked(&temp_config, &store_json,
+                                           &store_len, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_write_store_with_user_locked(store_config, store_json,
+                                                      store_len, user_json.data,
+                                                      user_json.len, error);
+  }
+  if (lock.fd >= 0) {
+    vectis_auth_lock_close(&lock);
+  }
+  vectis_auth_unlink_temp_path(temp_path);
+  free(store_json);
+  lonejson_owned_buffer_free(&user_json);
+  lonejson_free(runtime);
   return status;
 }
 

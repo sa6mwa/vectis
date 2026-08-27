@@ -710,7 +710,7 @@ static void vectis_cli_usage(FILE *stream) {
         "[--basic] [--bearer] | --verify authorization | "
         "--revoke client_id)\n"
         "       vectis -a|--action users [--store credentials.json] "
-        "(--add username [--password value] [--totp] | "
+        "(--add username [--password value] [--email address] [--totp] | "
         "--login username --password value [--totp-code code] | "
         "--webdav-key username --password value [--totp-code code])\n"
         "       vectis -a|--action oauth2 [--store credentials.json] "
@@ -2259,6 +2259,7 @@ static int vectis_cli_users_command(int argc, char **argv, int index) {
   vectis_status status;
   char default_path[4096];
   const char *action;
+  const char *email;
 
   if (vectis_cli_credentials_default_path(default_path, sizeof(default_path)) !=
       0) {
@@ -2270,6 +2271,7 @@ static int vectis_cli_users_command(int argc, char **argv, int index) {
   vectis_auth_user_config_init(&user);
   vectis_auth_login_config_init(&login);
   action = NULL;
+  email = NULL;
   while (index < argc) {
     if (strcmp(argv[index], "--store") == 0) {
       if (index + 1 >= argc) {
@@ -2310,6 +2312,13 @@ static int vectis_cli_users_command(int argc, char **argv, int index) {
       }
       user.password = argv[index + 1];
       login.password = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--email") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --email requires an address\n", stderr);
+        return 64;
+      }
+      email = argv[index + 1];
       index += 2;
     } else if (strcmp(argv[index], "--totp") == 0) {
       user.enable_totp = 1;
@@ -2377,7 +2386,17 @@ static int vectis_cli_users_command(int argc, char **argv, int index) {
     if (status != VECTIS_OK) {
       return vectis_cli_auth_status(status, &error);
     }
+    if (email != NULL) {
+      status = vectis_auth_user_email_set(&store, user.username, email, &error);
+      if (status != VECTIS_OK) {
+        vectis_auth_user_enrollment_cleanup(&enrollment);
+        return vectis_cli_auth_status(status, &error);
+      }
+    }
     printf("username=%s\n", enrollment.username);
+    if (email != NULL) {
+      printf("email=%s\n", email);
+    }
     if (enrollment.generated_password != NULL) {
       printf("password=%s\n", enrollment.generated_password);
     }
@@ -16644,15 +16663,24 @@ static int vectis_lua_auth_user_add(lua_State *lua) {
   vectis_auth_user_enrollment enrollment;
   vectis_error error;
   vectis_status status;
+  const char *email;
 
   luaL_checktype(lua, 1, LUA_TTABLE);
   vectis_error_clear(&error);
   vectis_lua_auth_store_config(lua, 1, &store);
   vectis_lua_auth_user_config(lua, 1, &user);
+  email = vectis_lua_table_string(lua, 1, "email");
   vectis_auth_user_enrollment_init(&enrollment);
   status = vectis_auth_user_add_or_update(&store, &user, &enrollment, &error);
   if (status != VECTIS_OK) {
     return vectis_lua_push_error(lua, status, &error);
+  }
+  if (email != NULL && email[0] != '\0') {
+    status = vectis_auth_user_email_set(&store, user.username, email, &error);
+    if (status != VECTIS_OK) {
+      vectis_auth_user_enrollment_cleanup(&enrollment);
+      return vectis_lua_push_error(lua, status, &error);
+    }
   }
   lua_newtable(lua);
   if (enrollment.username != NULL) {
@@ -16662,6 +16690,10 @@ static int vectis_lua_auth_user_add(lua_State *lua) {
   if (enrollment.generated_password != NULL) {
     lua_pushstring(lua, enrollment.generated_password);
     lua_setfield(lua, -2, "password");
+  }
+  if (email != NULL && email[0] != '\0') {
+    lua_pushstring(lua, email);
+    lua_setfield(lua, -2, "email");
   }
   if (enrollment.totp_secret != NULL) {
     lua_pushstring(lua, enrollment.totp_secret);

@@ -11,6 +11,7 @@ extern "C" {
 
 #define VECTIS_AUTH_DEFAULT_MAX_STORE_BYTES (1024u * 1024u)
 #define VECTIS_AUTH_PRINCIPAL_MAX 254u
+#define VECTIS_AUTH_EMAIL_MAX 319u
 #define VECTIS_AUTH_CHALLENGE_MAX 255u
 #define VECTIS_AUTH_GENERATED_PASSWORD_MAX 64u
 #define VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS 300u
@@ -155,8 +156,9 @@ typedef struct vectis_auth_smtp_config {
  *   POST <path_prefix>/webdav-key
  *   POST <path_prefix>/logout
  * The email-token endpoint accepts application/x-www-form-urlencoded fields
- * username and email, creates a single-use token transaction, and returns the
- * transaction data unless SMTP delivery is configured.
+ * username and email. The email must exactly match that user's enrolled
+ * recipient; it cannot select a delivery address.
+ * The endpoint returns transaction data unless SMTP delivery is configured.
  * The login, continue, and webdav-key POST endpoints accept username,
  * password, optional totp_code, and when require_email_token is set,
  * email_transaction_id plus email_token. They then issue a WebDAV Basic app
@@ -304,6 +306,7 @@ typedef struct vectis_auth_email_token_issue_config {
   vectis_auth_store_config store;
   const char *username;
   const char *realm;
+  /* Required. Must exactly match the user's enrolled email recipient. */
   const char *email;
   /* Optional pending auth transaction this email token is bound to. */
   const char *pending_transaction_id;
@@ -652,6 +655,13 @@ vectis_auth_user_add_or_update(const vectis_auth_store_config *store_config,
                                const vectis_auth_user_config *user_config,
                                vectis_auth_user_enrollment *out,
                                vectis_error *error);
+/* Sets the enrolled recipient for email-token authentication. The username
+ * must already exist; email must be non-empty and no longer than
+ * VECTIS_AUTH_EMAIL_MAX. */
+vectis_status
+vectis_auth_user_email_set(const vectis_auth_store_config *store_config,
+                           const char *username, const char *email,
+                           vectis_error *error);
 /* Checks whether a username is present in the credentials store. */
 vectis_status
 vectis_auth_user_exists(const vectis_auth_store_config *store_config,

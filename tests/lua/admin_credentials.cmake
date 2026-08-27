@@ -317,6 +317,7 @@ endif()
 execute_process(
   COMMAND "${VECTIS_BIN}" -a users --store "${store}" --add
           "admin-user@example.com" --password "admin-password"
+          --email "admin-user@example.com"
           --totp-secret "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
           --label "Vectis:admin-user@example.com" --issuer "Vectis"
   RESULT_VARIABLE user_add_result
@@ -327,6 +328,9 @@ if(NOT user_add_result EQUAL 0)
 endif()
 if(NOT user_add_output MATCHES "username=admin-user@example.com")
   message(FATAL_ERROR "users add did not report username")
+endif()
+if(NOT user_add_output MATCHES "email=admin-user@example.com")
+  message(FATAL_ERROR "users add did not report enrolled email")
 endif()
 if(NOT user_add_output MATCHES "totp_secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
   message(FATAL_ERROR "users add did not report TOTP secret")

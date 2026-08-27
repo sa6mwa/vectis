@@ -32,12 +32,13 @@ assert(vectis.auth.store_init({
 
 - `username`
 - `password`; if omitted, Vectis generates one
+- `email` to enroll the recipient for email-token authentication
 - `totp` to generate a TOTP secret
 - `totp_secret` to set a specific TOTP secret
 - `totp_label`
 - `totp_issuer` or `issuer`
 
-The result may include `username`, generated `password`, `totp_secret`,
+The result may include `username`, generated `password`, enrolled `email`, `totp_secret`,
 `totp_uri`, and ANSI `totp_qr`.
 
 `user_login(opts)` validates username/password and optional TOTP:
@@ -116,7 +117,7 @@ native C implementation.
 
 - `username`
 - `realm`
-- `email`
+- optional `email`, which must exactly match the user's enrolled recipient
 - `pending_transaction_id`
 - `transaction_id`
 - `token`
@@ -124,7 +125,8 @@ native C implementation.
 - `ttl_seconds`
 - `max_attempts`
 
-The result includes `transaction_id`, `token`, and `expires_at`.
+Delivery and the token record always use the enrolled recipient. The result
+includes `transaction_id`, `token`, and `expires_at`.
 
 `email_token_verify(opts)` validates a token and returns:
 

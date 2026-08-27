@@ -89,6 +89,14 @@ assert(type(user.totp_uri) == "string")
 assert(user.totp_uri:find("otpauth://totp/", 1, true))
 assert(type(user.totp_qr) == "string")
 
+local email_user = assert(vectis.auth.user_add({
+  credentials_path = auth_store,
+  username = "email-user@example.com",
+  password = "email-password",
+  email = "email-user@example.com",
+}))
+assert(email_user.email == "email-user@example.com")
+
 local missing_totp = assert(vectis.auth.user_login({
   credentials_path = auth_store,
   username = "facade-admin@example.com",
@@ -264,6 +272,20 @@ local email_token = assert(vectis.auth.email_token_issue({
   now = 1000,
   ttl_seconds = 300,
 }))
+local attacker_token, attacker_token_err = vectis.auth.email_token_issue({
+  credentials_path = auth_store,
+  state_path = auth_state,
+  username = "email-user@example.com",
+  realm = "facade",
+  email = "attacker@example.com",
+  transaction_id = "email-tx-attacker",
+  token = "attacker-token",
+  now = 1000,
+  ttl_seconds = 300,
+})
+assert(attacker_token == nil)
+assert_status_error(attacker_token_err, vectis.ERR_INVALID,
+                    "auth email token recipient")
 assert(email_token.transaction_id == "email-tx-1")
 assert(email_token.token == "123456")
 assert(email_token.expires_at == 1300)

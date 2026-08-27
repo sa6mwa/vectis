@@ -617,6 +617,32 @@ int main(void) {
            "auth rewrite preserves filesystem diagnostic");
   }
 
+  vectis_auth_user_config_init(&user);
+  user.username = "email-user@example.com";
+  user.password = "email-password";
+  status = vectis_auth_user_add_or_update(&store, &user, &enrollment, &error);
+  expect_ok(status, &error, "adds email-token user");
+  vectis_auth_user_enrollment_cleanup(&enrollment);
+  status = vectis_auth_user_email_set(&store, "email-user@example.com",
+                                      "email-user@example.com", &error);
+  expect_ok(status, &error, "enrolls email-token recipient");
+
+  vectis_auth_email_token_issue_config_init(&email_issue);
+  email_issue.store = store;
+  email_issue.username = "email-user@example.com";
+  email_issue.realm = "unit";
+  email_issue.email = "attacker@example.com";
+  email_issue.transaction_id = "email-tx-attacker";
+  email_issue.token = "attacker-token";
+  email_issue.now_seconds = 1000;
+  email_issue.ttl_seconds = 300;
+  status = vectis_auth_email_token_issue(&email_issue, &email_token, &error);
+  expect(status == VECTIS_ERR_INVALID,
+         "rejects email token delivery to an unenrolled recipient");
+  expect(!file_contains(state_path, "email-tx-attacker"),
+         "does not store token for an unenrolled recipient");
+  vectis_error_clear(&error);
+
   vectis_auth_email_token_issue_config_init(&email_issue);
   email_issue.store = store;
   email_issue.username = "email-user@example.com";

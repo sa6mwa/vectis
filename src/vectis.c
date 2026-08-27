@@ -16522,6 +16522,11 @@ static vectis_status vectis_auth_email_token_dispatch(vectis_app *app,
   if (status != VECTIS_OK) {
     vectis_auth_form_cleanup(&fields);
     vectis_auth_email_token_cleanup(&token);
+    if (status == VECTIS_ERR_INVALID) {
+      vectis_error_clear(error);
+      return vectis_response_text(response, 401, "text/plain; charset=utf-8",
+                                  "login failed\n", error);
+    }
     return status;
   }
   smtp_enabled =
