@@ -14481,6 +14481,7 @@ typedef struct vectis_auth_route_data {
   uint64_t email_token_ttl_seconds;
   unsigned int email_token_max_attempts;
   uint64_t pending_login_ttl_seconds;
+  vectis_auth_browser_session_config browser_session;
   vectis_auth_smtp_config email_smtp;
 } vectis_auth_route_data;
 
@@ -15637,6 +15638,18 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   total += config->login_template_html != NULL
                ? strlen(config->login_template_html) + 1u
                : 0u;
+  total += config->browser_session.cookie_name != NULL
+               ? strlen(config->browser_session.cookie_name) + 1u
+               : 0u;
+  total += config->browser_session.cookie_path != NULL
+               ? strlen(config->browser_session.cookie_path) + 1u
+               : 0u;
+  total += config->browser_session.purpose != NULL
+               ? strlen(config->browser_session.purpose) + 1u
+               : 0u;
+  total += config->browser_session.state_key != NULL
+               ? strlen(config->browser_session.state_key) + 1u
+               : 0u;
   total +=
       config->email_smtp.url != NULL ? strlen(config->email_smtp.url) + 1u : 0u;
   total += config->email_smtp.mail_from != NULL
@@ -15682,6 +15695,7 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   data->email_token_ttl_seconds = config->email_token_ttl_seconds;
   data->email_token_max_attempts = config->email_token_max_attempts;
   data->pending_login_ttl_seconds = config->pending_login_ttl_seconds;
+  data->browser_session = config->browser_session;
   data->email_smtp = config->email_smtp;
   cursor = (char *)(data + 1);
   if (config->email_smtp.allowed_recipients != NULL &&
@@ -15713,6 +15727,14 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   VECTIS_COPY_AUTH_ROUTE_FIELD(login_title, config->login_title);
   VECTIS_COPY_AUTH_ROUTE_FIELD(login_template_html,
                                config->login_template_html);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(browser_session.cookie_name,
+                               config->browser_session.cookie_name);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(browser_session.cookie_path,
+                               config->browser_session.cookie_path);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(browser_session.purpose,
+                               config->browser_session.purpose);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(browser_session.state_key,
+                               config->browser_session.state_key);
   VECTIS_COPY_AUTH_ROUTE_FIELD(email_smtp.url, config->email_smtp.url);
   VECTIS_COPY_AUTH_ROUTE_FIELD(email_smtp.mail_from,
                                config->email_smtp.mail_from);
@@ -16331,6 +16353,25 @@ static vectis_status vectis_auth_no_store(vectis_response *response,
   return vectis_response_header(response, "expires", "0", error);
 }
 
+static int vectis_auth_browser_navigation_request(vectis_request *request) {
+  const char *accept;
+  const char *mode;
+  const char *destination;
+
+  if (request == NULL) {
+    return 0;
+  }
+  accept = vectis_request_header(request, "accept");
+  mode = vectis_request_header(request, "sec-fetch-mode");
+  destination = vectis_request_header(request, "sec-fetch-dest");
+  if (accept == NULL || strcasestr(accept, "text/html") == NULL ||
+      mode == NULL || strcasecmp(mode, "navigate") != 0) {
+    return 0;
+  }
+  return destination == NULL || destination[0] == '\0' ||
+         strcasecmp(destination, "document") == 0;
+}
+
 static vectis_status
 vectis_auth_webdav_key_response(vectis_auth_issued_credential *credential,
                                 vectis_response *response,
@@ -16879,8 +16920,8 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
   issue.auth_modes = VECTIS_AUTH_MODE_BASIC;
   status =
       vectis_auth_issue_credential(&data->store, &issue, &credential, error);
-  vectis_auth_form_cleanup(&fields);
   if (status != VECTIS_OK) {
+    vectis_auth_form_cleanup(&fields);
     vectis_auth_issued_credential_cleanup(&credential);
     if (status == VECTIS_ERR_INVALID) {
       vectis_error_clear(error);
@@ -16890,9 +16931,23 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
     return status;
   }
   if (credential.client_id == NULL || credential.client_secret == NULL) {
+    vectis_auth_form_cleanup(&fields);
     vectis_auth_issued_credential_cleanup(&credential);
     return vectis_response_status(response, 401, error);
   }
+  if (data->browser_session.mode ==
+          VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER &&
+      vectis_auth_browser_navigation_request(request)) {
+    status = vectis_auth_browser_session_issue(
+        app, &data->browser_session, fields.username, 0u, response, error);
+    if (status != VECTIS_OK) {
+      (void)vectis_auth_revoke_client(&data->store, credential.client_id, NULL);
+      vectis_auth_form_cleanup(&fields);
+      vectis_auth_issued_credential_cleanup(&credential);
+      return status;
+    }
+  }
+  vectis_auth_form_cleanup(&fields);
   status = vectis_auth_webdav_key_response(&credential, response, error);
   vectis_auth_issued_credential_cleanup(&credential);
   return status;
@@ -16905,10 +16960,11 @@ static vectis_status vectis_auth_logout_dispatch(vectis_app *app,
                                                  vectis_error *error) {
   vectis_auth_route_data *data;
   vectis_auth_result result;
+  vectis_auth_browser_session_result session;
   const char *authorization;
+  const char *cookie;
   vectis_status status;
 
-  (void)app;
   data = (vectis_auth_route_data *)userdata;
   if (data == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "auth route is invalid");
@@ -16917,6 +16973,25 @@ static vectis_status vectis_auth_logout_dispatch(vectis_app *app,
   status = vectis_auth_no_store(response, error);
   if (status != VECTIS_OK) {
     return status;
+  }
+  cookie = vectis_request_header(request, "cookie");
+  if (data->browser_session.mode ==
+      VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER) {
+    vectis_auth_browser_session_result_init(&session);
+    status = vectis_auth_browser_session_verify(app, &data->browser_session,
+                                                cookie, 0u, &session, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    if (session.authenticated) {
+      status = vectis_auth_browser_session_revoke(app, &data->browser_session,
+                                                  cookie, response, error);
+      if (status != VECTIS_OK) {
+        return status;
+      }
+      return vectis_response_text(response, 200, "text/plain; charset=utf-8",
+                                  "logged_out=1\n", error);
+    }
   }
   authorization = vectis_request_header(request, "authorization");
   if (authorization == NULL || authorization[0] == '\0') {
@@ -16948,6 +17023,14 @@ static vectis_status vectis_auth_logout_dispatch(vectis_app *app,
   vectis_auth_result_cleanup(&result);
   if (status != VECTIS_OK) {
     return status;
+  }
+  if (data->browser_session.mode ==
+      VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER) {
+    status = vectis_auth_browser_session_revoke(app, &data->browser_session,
+                                                cookie, response, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
   }
   return vectis_response_text(response, 200, "text/plain; charset=utf-8",
                               "logged_out=1\n", error);
@@ -17017,6 +17100,7 @@ vectis_register_auth_routes(vectis_app *app,
   const vectis_auth_routes_config *effective;
   vectis_auth_routes_config resolved;
   vectis_status status;
+  vectis_app_impl *impl;
   char *login_template_html;
   char *path_prefix;
   unsigned int required_factors;
@@ -17036,6 +17120,19 @@ vectis_register_auth_routes(vectis_app *app,
       effective->store.credentials_path[0] == '\0') {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "auth route credentials_path is required");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_browser_session_config_validate(
+      &effective->browser_session, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  if (effective->browser_session.mode ==
+          VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER &&
+      !vectis_lockd_is_configured(impl)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser sessions require configured app Lockd");
     return VECTIS_ERR_INVALID;
   }
   path_prefix =

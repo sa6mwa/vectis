@@ -205,6 +205,14 @@ local browser_flow = assert(vectis.auth.browser_flow({
   allowed_modes = { vectis.auth.BASIC },
   required_factors = { "password", "totp" },
   login_title = "Facade Login",
+  browser_session = {
+    mode = "m2m_and_browser",
+    cookie_name = "facade_session",
+    cookie_path = "/app",
+    purpose = "facade-browser",
+    state_key = "facade.browser-session",
+    ttl_seconds = 3600,
+  },
   time = 59,
   window = 0,
 }))
@@ -215,12 +223,20 @@ assert(flow_routes.path_prefix == "/_vectis/auth")
 assert(flow_routes.realm == "facade-flow")
 assert(flow_routes.login_title == "Facade Login")
 assert(flow_routes.purpose == nil)
+assert(flow_routes.browser_session.mode == "m2m_and_browser")
+assert(flow_routes.browser_session.cookie_name == "facade_session")
+assert(flow_routes.browser_session.cookie_path == "/app")
+assert(flow_routes.browser_session.purpose == "facade-browser")
+assert(flow_routes.browser_session.state_key == "facade.browser-session")
+assert(flow_routes.browser_session.ttl_seconds == 3600)
 local flow_provider = assert(browser_flow:provider())
 assert(flow_provider.kind == "native")
 assert(flow_provider.credentials_path == auth_store)
 assert(flow_provider.state_path == auth_state)
 assert(flow_provider.purpose == "webdav")
 assert(flow_provider.realm == "facade-flow")
+assert(flow_provider.browser_session.mode == "m2m_and_browser")
+assert(flow_provider.browser_session.cookie_name == "facade_session")
 local flow_required = assert(flow_provider:authenticate({
   resource = "/dav",
   allowed_modes = "basic",
@@ -269,8 +285,15 @@ local callback_provider = vectis.auth.provider_callback(function(request)
     body = "login required",
     principal = "facade",
   }
-end)
+end, {
+  browser_session = {
+    mode = "m2m_and_browser",
+    cookie_name = "callback_session",
+  },
+})
 assert(callback_provider.kind == "callback")
+assert(callback_provider.browser_session.mode == "m2m_and_browser")
+assert(callback_provider.browser_session.cookie_name == "callback_session")
 local redirect = assert(callback_provider:authenticate({
   authorization = "Bearer callback",
   resource = "/admin",

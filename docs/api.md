@@ -45,7 +45,9 @@ Major groups:
 - WebDAV/auth routes: `vectis_webdav_mount_config`,
   `vectis_webdav_embedded_site_config`, and `vectis_auth_routes_config`.
 - Auth credentials: native users, issued credentials, OAuth2/OIDC WebDAV keys,
-  and `vectis_auth_basic_authorization()`.
+  Lockd-backed opaque browser sessions configured with
+  `vectis_auth_browser_session_config`, and
+  `vectis_auth_basic_authorization()`.
 - OpenAPI: `vectis_openapi_document`, route docs, request/response schemas, and
   generation helpers.
 - Lockd workflows: `vectis_lockd_config` (including encrypted local Pouch key

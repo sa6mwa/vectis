@@ -67,6 +67,25 @@ static unsigned short test_port_from_env(const char *name,
   return (unsigned short)parsed;
 }
 
+static unsigned short test_available_port(void) {
+  struct sockaddr_in address;
+  socklen_t address_size;
+  int fd;
+
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(fd >= 0);
+  memset(&address, 0, sizeof(address));
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  address.sin_port = htons(0u);
+  assert(bind(fd, (struct sockaddr *)&address, sizeof(address)) == 0);
+  address_size = (socklen_t)sizeof(address);
+  assert(getsockname(fd, (struct sockaddr *)&address, &address_size) == 0);
+  assert(close(fd) == 0);
+  assert(ntohs(address.sin_port) != 0u);
+  return ntohs(address.sin_port);
+}
+
 static void format_secure_url(char *out, size_t out_size, const char *host,
                               unsigned short port) {
   int written;
@@ -301,8 +320,17 @@ int main(void) {
   root_cert_pem = NULL;
   root_cert_pem_size = 0u;
   root_cert_source = NULL;
-  port = test_port_from_env("VECTIS_TEST_HTTPS_PORT", 28443u);
-  redirect_port = test_port_from_env("VECTIS_TEST_HTTPS_REDIRECT_PORT", 28080u);
+  port = test_port_from_env("VECTIS_TEST_HTTPS_PORT", 0u);
+  if (port == 0u) {
+    port = test_available_port();
+  }
+  redirect_port = test_port_from_env("VECTIS_TEST_HTTPS_REDIRECT_PORT", 0u);
+  if (redirect_port == 0u) {
+    redirect_port = test_available_port();
+  }
+  while (redirect_port == port) {
+    redirect_port = test_available_port();
+  }
   assert(redirect_port != port);
   format_secure_url(localhost_url, sizeof(localhost_url), "localhost", port);
   format_secure_url(loopback_url, sizeof(loopback_url), "127.0.0.1", port);

@@ -3514,6 +3514,7 @@ static void assert_kore_smoke(void) {
   vectis_auth_user_config auth_user;
   vectis_auth_user_enrollment auth_enrollment;
   vectis_auth_routes_config auth_routes;
+  vectis_auth_browser_session_config browser_session;
   vectis_auth_native_provider_config native_auth;
   vectis_auth_provider native_auth_provider;
   vectis_webdav_auth_provider_config native_webdav_auth;
@@ -3571,13 +3572,28 @@ static void assert_kore_smoke(void) {
   const char *webdav_required_headers[] = {"x-vectis-webdav-auth: required"};
   const char *webdav_deny_headers[] = {"x-vectis-webdav-auth: deny"};
   const char *native_webdav_headers[1];
+  const char *browser_m2m_headers[] = {"Accept: text/html"};
+  const char *browser_non_document_headers[] = {"Accept: text/html",
+                                                "Sec-Fetch-Mode: navigate",
+                                                "Sec-Fetch-Dest: iframe"};
+  const char *browser_navigation_headers[] = {"Accept: text/html",
+                                              "Sec-Fetch-Mode: navigate",
+                                              "Sec-Fetch-Dest: document"};
+  const char *browser_cookie_headers[1];
+  const char *browser_tampered_cookie_headers[1];
+  char browser_session_pouch_dir[] =
+      "/tmp/vectis-runtime-browser-session.XXXXXX";
+  char browser_session_endpoint[4096];
+  const char *browser_session_endpoints[1];
   vectis_error error;
   vectis_error second_error;
   vectis_status status;
   vectis_status second_status;
   vectis_app *app;
   vectis_app *second_app;
+  vectis_app *browser_session_app;
   vectis_embedded_fs *embedded_fs;
+  vectis_auth_browser_session_result browser_session_result;
   FILE *fp;
   char *default_spooled_body;
   char *stream_body;
@@ -3591,6 +3607,8 @@ static void assert_kore_smoke(void) {
   char auth_pending_transaction_id[128];
   char auth_totp_code[VECTIS_TOTP_CODE_LENGTH + 1u];
   char auth_totp_form[256];
+  char browser_cookie_header[512];
+  char browser_tampered_cookie_header[512];
   char url[512];
   unsigned short port;
   unsigned short second_port;
@@ -3602,7 +3620,10 @@ static void assert_kore_smoke(void) {
   size_t dsv_rows;
   long long dsv_total;
   size_t dsv_active;
+  size_t browser_cookie_size;
   long stream_file_size;
+  const char *browser_set_cookie;
+  const char *browser_cookie_end;
   int attempt;
   int i;
   int reserved_fd;
@@ -3669,15 +3690,24 @@ static void assert_kore_smoke(void) {
   memset(&json_source_doc, 0, sizeof(json_source_doc));
   memset(&body_spool_expectation, 0, sizeof(body_spool_expectation));
   embedded_fs = NULL;
+  browser_session_app = NULL;
   vectis_auth_user_enrollment_init(&auth_enrollment);
   vectis_auth_provider_init(&native_auth_provider);
   reserved_fd = reserve_loopback_port(&port);
   assert(reserved_fd >= 0);
   second_reserved_fd = -1;
   vectis_app_config_init(&config);
+  assert(mkdtemp(browser_session_pouch_dir) != NULL);
+  written =
+      snprintf(browser_session_endpoint, sizeof(browser_session_endpoint),
+               "pouch://%s?single_writer=false", browser_session_pouch_dir);
+  assert(written > 0 && (size_t)written < sizeof(browser_session_endpoint));
+  browser_session_endpoints[0] = browser_session_endpoint;
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
   config.tls.bind = "127.0.0.1";
   config.tls.port = port;
+  config.lockd.endpoints = browser_session_endpoints;
+  config.lockd.endpoint_count = 1u;
   config.server.client_ip.trusted_proxies = trusted_proxies;
   config.server.client_ip.trusted_proxy_count = 2u;
   config.server.max_request_header_bytes = 1024u;
@@ -3905,6 +3935,18 @@ static void assert_kore_smoke(void) {
   auth_routes.unix_seconds = 59u;
   status = app->auth_routes(app, &auth_routes, &error);
   assert(status == VECTIS_OK);
+  vectis_auth_browser_session_config_init(&browser_session);
+  browser_session.mode = VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER;
+  browser_session.cookie_name = "runtime_browser_session";
+  browser_session.purpose = "runtime-browser";
+  browser_session.state_key = "runtime.browser-session";
+  browser_session.ttl_seconds = 60u;
+  vectis_auth_routes_config_init(&auth_routes);
+  auth_routes.path_prefix = "/auth-browser";
+  auth_routes.store = auth_store;
+  auth_routes.browser_session = browser_session;
+  status = app->auth_routes(app, &auth_routes, &error);
+  assert(status == VECTIS_OK);
   vectis_auth_routes_config_init(&auth_routes);
   auth_routes.path_prefix = "/auth-totp-only";
   auth_routes.store = auth_store;
@@ -3924,6 +3966,8 @@ static void assert_kore_smoke(void) {
   assert(status == VECTIS_OK);
   vectis_auth_native_provider_config_init(&native_auth);
   native_auth.store = auth_store;
+  native_auth.app = app;
+  native_auth.browser_session = browser_session;
   native_auth.realm = "runtime";
   native_auth.allowed_auth_modes = VECTIS_AUTH_MODE_BASIC;
   status = vectis_auth_provider_from_native_store(&native_auth_provider,
@@ -4513,6 +4557,7 @@ static void assert_kore_smoke(void) {
                        "\"purpose\":\"webdav\""));
   assert(bytes_contain(auth_key_response.body, auth_key_response.body_size,
                        "\"sub\":\"runtime-user\""));
+  assert(vectis_http_response_header(&auth_key_response, "set-cookie") == NULL);
   vectis_http_response_cleanup(&auth_key_response);
 
   vectis_http_request_init(&request);
@@ -4643,6 +4688,146 @@ static void assert_kore_smoke(void) {
   assert(status == VECTIS_OK);
   assert(native_webdav_response.status_code == 201L);
   vectis_http_response_cleanup(&native_webdav_response);
+
+  /* Browser sessions are opt-in and require the complete navigation shape. */
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/auth-browser/login");
+  request.headers = browser_m2m_headers;
+  request.header_count = 1u;
+  request.content_type = "application/x-www-form-urlencoded";
+  request.body = "username=runtime-user&password=runtime-password";
+  request.body_size = strlen("username=runtime-user&password=runtime-password");
+  status = vectis_http_execute(&http, &request, &auth_key_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_key_response.status_code == 200L);
+  assert(vectis_http_response_header(&auth_key_response, "set-cookie") == NULL);
+  vectis_http_response_cleanup(&auth_key_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/auth-browser/login");
+  request.headers = browser_non_document_headers;
+  request.header_count = 3u;
+  request.content_type = "application/x-www-form-urlencoded";
+  request.body = "username=runtime-user&password=runtime-password";
+  request.body_size = strlen("username=runtime-user&password=runtime-password");
+  status = vectis_http_execute(&http, &request, &auth_key_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_key_response.status_code == 200L);
+  assert(vectis_http_response_header(&auth_key_response, "set-cookie") == NULL);
+  vectis_http_response_cleanup(&auth_key_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/auth-browser/login");
+  request.headers = browser_navigation_headers;
+  request.header_count = 3u;
+  request.content_type = "application/x-www-form-urlencoded";
+  request.body = "username=runtime-user&password=runtime-password";
+  request.body_size = strlen("username=runtime-user&password=runtime-password");
+  status = vectis_http_execute(&http, &request, &auth_key_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_key_response.status_code == 200L);
+  browser_set_cookie =
+      vectis_http_response_header(&auth_key_response, "set-cookie");
+  assert(browser_set_cookie != NULL);
+  assert(strncmp(browser_set_cookie, "runtime_browser_session=v1.",
+                 strlen("runtime_browser_session=v1.")) == 0);
+  assert(strstr(browser_set_cookie,
+                "; Path=/; Max-Age=60; HttpOnly; Secure; SameSite=Strict") !=
+         NULL);
+  browser_cookie_end = strchr(browser_set_cookie, ';');
+  assert(browser_cookie_end != NULL);
+  browser_cookie_size = (size_t)(browser_cookie_end - browser_set_cookie);
+  written =
+      snprintf(browser_cookie_header, sizeof(browser_cookie_header),
+               "Cookie: %.*s", (int)browser_cookie_size, browser_set_cookie);
+  assert(written > 0 && (size_t)written < sizeof(browser_cookie_header));
+  browser_cookie_headers[0] = browser_cookie_header;
+  assert((size_t)written + 1u <= sizeof(browser_tampered_cookie_header));
+  memcpy(browser_tampered_cookie_header, browser_cookie_header,
+         (size_t)written + 1u);
+  browser_tampered_cookie_header[written - 1] =
+      browser_tampered_cookie_header[written - 1] == '0' ? '1' : '0';
+  browser_tampered_cookie_headers[0] = browser_tampered_cookie_header;
+  vectis_http_response_cleanup(&auth_key_response);
+
+  /* A new app instance reads the signing key and session from Lockd. */
+  browser_session_app = vectis_app_new(&config, &error);
+  assert(browser_session_app != NULL);
+  vectis_auth_browser_session_result_init(&browser_session_result);
+  status = vectis_auth_browser_session_verify(
+      browser_session_app, &browser_session,
+      browser_cookie_header + strlen("Cookie: "), 0u, &browser_session_result,
+      &error);
+  assert(status == VECTIS_OK);
+  assert(browser_session_result.authenticated);
+  assert(strcmp(browser_session_result.principal, "runtime-user") == 0);
+  browser_session_app->close(browser_session_app);
+  browser_session_app = NULL;
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/dav-native/from-auth.txt");
+  request.headers = browser_cookie_headers;
+  request.header_count = 1u;
+  status =
+      vectis_http_execute(&http, &request, &native_webdav_get_response, &error);
+  assert(status == VECTIS_OK);
+  assert(native_webdav_get_response.status_code == 200L);
+  assert(native_webdav_get_response.body_size == strlen("native-webdav-body"));
+  assert(memcmp(native_webdav_get_response.body, "native-webdav-body",
+                strlen("native-webdav-body")) == 0);
+  vectis_http_response_cleanup(&native_webdav_get_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/dav-native/from-auth.txt");
+  request.headers = browser_tampered_cookie_headers;
+  request.header_count = 1u;
+  status =
+      vectis_http_execute(&http, &request, &native_webdav_get_response, &error);
+  assert(status == VECTIS_OK);
+  assert(native_webdav_get_response.status_code == 401L);
+  vectis_http_response_cleanup(&native_webdav_get_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/auth-browser/logout");
+  request.headers = browser_cookie_headers;
+  request.header_count = 1u;
+  request.content_type = "application/x-www-form-urlencoded";
+  request.body = "";
+  request.body_size = 0u;
+  status = vectis_http_execute(&http, &request, &auth_logout_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_logout_response.status_code == 200L);
+  assert(bytes_contain(auth_logout_response.body,
+                       auth_logout_response.body_size, "logged_out=1"));
+  assert(
+      strcmp(vectis_http_response_header(&auth_logout_response, "set-cookie"),
+             "runtime_browser_session=; Path=/; Max-Age=0; HttpOnly; "
+             "Secure; SameSite=Strict") == 0);
+  vectis_http_response_cleanup(&auth_logout_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/dav-native/from-auth.txt");
+  request.headers = browser_cookie_headers;
+  request.header_count = 1u;
+  status =
+      vectis_http_execute(&http, &request, &native_webdav_get_response, &error);
+  assert(status == VECTIS_OK);
+  assert(native_webdav_get_response.status_code == 401L);
+  vectis_http_response_cleanup(&native_webdav_get_response);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
@@ -5021,6 +5206,7 @@ static void assert_kore_smoke(void) {
   remove(access_log_path);
   remove_tree(webdav_cache_dir);
   remove_tree(body_spool_dir);
+  remove_tree(browser_session_pouch_dir);
   (void)remove(auth_store_path);
   app->close(app);
   vectis_embedded_fs_close(embedded_fs);

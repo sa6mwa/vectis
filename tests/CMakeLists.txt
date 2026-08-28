@@ -215,6 +215,15 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_lua_facade_contracts PROPERTIES
     LABELS "lua;local"
     TIMEOUT 30)
+  add_test(NAME vectis_lua_browser_sessions
+           COMMAND "${CMAKE_COMMAND}"
+                   "-DVECTIS_BIN=$<TARGET_FILE:vectis_bin>"
+                   "-DVECTIS_PORT_HELPER=$<TARGET_FILE:vectis_pick_port>"
+                   "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                   -P "${CMAKE_SOURCE_DIR}/tests/lua/browser_sessions.cmake")
+  set_tests_properties(vectis_lua_browser_sessions PROPERTIES
+    LABELS "lua;local;integration"
+    TIMEOUT 30)
   add_test(NAME vectis_lua_facade_behavior_coverage
            COMMAND bash
                    "${CMAKE_SOURCE_DIR}/scripts/test_lua_facade_behavior_coverage.sh")

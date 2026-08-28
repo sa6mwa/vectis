@@ -187,15 +187,21 @@ typedef struct vectis_lua_app_openapi_schema_ref {
 
 typedef struct vectis_lua_app_native_auth {
   lua_State *lua;
+  vectis_app *app;
   char *credentials_path;
   char *purpose;
   char *realm;
+  char *browser_session_cookie_name;
+  char *browser_session_cookie_path;
+  char *browser_session_purpose;
+  char *browser_session_state_key;
   char *callback_location;
   char *callback_content_type;
   char *callback_body;
   size_t callback_body_size;
   int callback_ref;
   unsigned allowed_auth_modes;
+  vectis_auth_browser_session_config browser_session;
   vectis_auth_native_provider_config native_config;
   vectis_auth_provider provider;
   vectis_webdav_auth_provider_config webdav_config;
@@ -1922,6 +1928,9 @@ static const char *vectis_cli_auth_mode_name(unsigned mode) {
   }
   if ((mode & VECTIS_AUTH_MODE_BEARER) != 0u) {
     return "bearer";
+  }
+  if ((mode & VECTIS_AUTH_MODE_BROWSER_SESSION) != 0u) {
+    return "browser_session";
   }
   return "default";
 }
@@ -6616,6 +6625,10 @@ static void vectis_lua_app_native_auth_free(vectis_lua_app_native_auth *auth) {
   free(auth->credentials_path);
   free(auth->purpose);
   free(auth->realm);
+  free(auth->browser_session_cookie_name);
+  free(auth->browser_session_cookie_path);
+  free(auth->browser_session_purpose);
+  free(auth->browser_session_state_key);
   free(auth);
 }
 
@@ -7237,9 +7250,11 @@ static vectis_status vectis_lua_app_callback_authenticate(
   int base;
   int response_index;
   const char *authorization;
+  const char *cookie;
   const char *action;
   const char *principal;
   lua_Integer status_code;
+  vectis_auth_browser_session_result session;
 
   auth = (vectis_lua_app_native_auth *)userdata;
   if (auth == NULL || auth->lua == NULL || auth->callback_ref == LUA_NOREF) {
@@ -7249,8 +7264,26 @@ static vectis_status vectis_lua_app_callback_authenticate(
   }
   lua = auth->lua;
   authorization = request != NULL ? request->authorization : NULL;
+  cookie = request != NULL ? request->cookie : NULL;
   if (authorization == NULL && request != NULL && request->request != NULL) {
     authorization = vectis_request_header(request->request, "authorization");
+  }
+  if (cookie == NULL && request != NULL && request->request != NULL) {
+    cookie = vectis_request_header(request->request, "cookie");
+  }
+  if (auth->browser_session.mode ==
+      VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER) {
+    vectis_auth_browser_session_result_init(&session);
+    if (vectis_auth_browser_session_verify(auth->app, &auth->browser_session,
+                                           cookie, 0u, &session,
+                                           error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_STATE;
+    }
+    if (session.authenticated) {
+      return vectis_auth_provider_response_set_authenticated(
+          response, session.principal, session.principal, "{\"session\":true}",
+          VECTIS_AUTH_MODE_BROWSER_SESSION, error);
+    }
   }
   base = lua_gettop(lua);
   vectis_lua_app_native_auth_clear_callback(auth);
@@ -7370,9 +7403,98 @@ static vectis_status vectis_lua_app_callback_authenticate(
   return VECTIS_OK;
 }
 
+static int vectis_lua_app_native_auth_browser_session(
+    lua_State *lua, int index, int provider_index,
+    vectis_lua_app_native_auth *auth, vectis_error *error) {
+  vectis_auth_browser_session_config config;
+  const char *mode;
+  int session_index;
+
+  if (auth == NULL) {
+    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
+                         "browser session auth adapter is required");
+    return 0;
+  }
+  vectis_auth_browser_session_config_init(&config);
+  index = lua_absindex(lua, index);
+  provider_index = lua_absindex(lua, provider_index);
+  session_index = 0;
+  lua_getfield(lua, index, "browser_session");
+  if (lua_istable(lua, -1)) {
+    session_index = lua_absindex(lua, -1);
+  } else {
+    lua_pop(lua, 1);
+    if (provider_index != index) {
+      lua_getfield(lua, provider_index, "browser_session");
+      if (lua_istable(lua, -1)) {
+        session_index = lua_absindex(lua, -1);
+      } else {
+        lua_pop(lua, 1);
+      }
+    }
+  }
+  if (session_index != 0) {
+    mode = vectis_lua_table_string(lua, session_index, "mode");
+    if (mode != NULL && strcmp(mode, "m2m_only") == 0) {
+      config.mode = VECTIS_AUTH_BROWSER_SESSION_M2M_ONLY;
+    } else if (mode != NULL && strcmp(mode, "m2m_and_browser") == 0) {
+      config.mode = VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER;
+    } else if (mode != NULL) {
+      lua_pop(lua, 1);
+      vectis_cli_error_set(
+          error, VECTIS_ERR_INVALID,
+          "browser_session.mode must be m2m_only or m2m_and_browser");
+      return 0;
+    }
+    config.cookie_name =
+        vectis_lua_table_string(lua, session_index, "cookie_name");
+    if (config.cookie_name == NULL) {
+      config.cookie_name = "vectis_session";
+    }
+    config.cookie_path =
+        vectis_lua_table_string(lua, session_index, "cookie_path");
+    if (config.cookie_path == NULL) {
+      config.cookie_path = "/";
+    }
+    config.purpose = vectis_lua_table_string(lua, session_index, "purpose");
+    if (config.purpose == NULL) {
+      config.purpose = "browser";
+    }
+    config.state_key = vectis_lua_table_string(lua, session_index, "state_key");
+    if (config.state_key == NULL) {
+      config.state_key = "auth.browser_session.v1";
+    }
+    config.ttl_seconds = (uint64_t)vectis_lua_table_size(
+        lua, session_index, "ttl_seconds", config.ttl_seconds);
+    lua_pop(lua, 1);
+  }
+  if (vectis_auth_browser_session_config_validate(&config, error) !=
+      VECTIS_OK) {
+    return 0;
+  }
+  auth->browser_session_cookie_name = vectis_cli_strdup(config.cookie_name);
+  auth->browser_session_cookie_path = vectis_cli_strdup(config.cookie_path);
+  auth->browser_session_purpose = vectis_cli_strdup(config.purpose);
+  auth->browser_session_state_key = vectis_cli_strdup(config.state_key);
+  if (auth->browser_session_cookie_name == NULL ||
+      auth->browser_session_cookie_path == NULL ||
+      auth->browser_session_purpose == NULL ||
+      auth->browser_session_state_key == NULL) {
+    vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
+                         "failed to copy browser session configuration");
+    return 0;
+  }
+  auth->browser_session = config;
+  auth->browser_session.cookie_name = auth->browser_session_cookie_name;
+  auth->browser_session.cookie_path = auth->browser_session_cookie_path;
+  auth->browser_session.purpose = auth->browser_session_purpose;
+  auth->browser_session.state_key = auth->browser_session_state_key;
+  return 1;
+}
+
 static vectis_lua_app_native_auth *
-vectis_lua_app_native_auth_new(lua_State *lua, int index, const char *context,
-                               vectis_error *error) {
+vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
+                               const char *context, vectis_error *error) {
   vectis_lua_app_native_auth *auth;
   const char *credentials_path;
   const char *kind;
@@ -7427,6 +7549,7 @@ vectis_lua_app_native_auth_new(lua_State *lua, int index, const char *context,
       return NULL;
     }
     auth->lua = lua;
+    auth->app = app;
     auth->callback_ref = LUA_NOREF;
     auth->purpose = vectis_cli_strdup(purpose != NULL ? purpose : "webdav");
     auth->realm = vectis_cli_strdup(realm != NULL ? realm : "vectis");
@@ -7437,6 +7560,14 @@ vectis_lua_app_native_auth_new(lua_State *lua, int index, const char *context,
       vectis_lua_app_native_auth_free(auth);
       vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
                            "failed to copy callback auth adapter config");
+      return NULL;
+    }
+    if (!vectis_lua_app_native_auth_browser_session(lua, index, provider_index,
+                                                    auth, error)) {
+      if (provider_index != index) {
+        lua_pop(lua, 1);
+      }
+      vectis_lua_app_native_auth_free(auth);
       return NULL;
     }
     lua_getfield(lua, provider_index, "callback");
@@ -7495,6 +7626,7 @@ vectis_lua_app_native_auth_new(lua_State *lua, int index, const char *context,
     return NULL;
   }
   auth->callback_ref = LUA_NOREF;
+  auth->app = app;
   auth->credentials_path = vectis_cli_strdup(credentials_path);
   auth->purpose = vectis_cli_strdup(purpose != NULL ? purpose : "webdav");
   auth->realm = vectis_cli_strdup(realm != NULL ? realm : "vectis");
@@ -7509,10 +7641,21 @@ vectis_lua_app_native_auth_new(lua_State *lua, int index, const char *context,
     return NULL;
   }
 
+  if (!vectis_lua_app_native_auth_browser_session(lua, index, provider_index,
+                                                  auth, error)) {
+    if (provider_index != index) {
+      lua_pop(lua, 1);
+    }
+    vectis_lua_app_native_auth_free(auth);
+    return NULL;
+  }
+
   vectis_auth_native_provider_config_init(&auth->native_config);
   auth->native_config.store.credentials_path = auth->credentials_path;
   auth->native_config.store.max_store_bytes = vectis_lua_table_size(
       lua, index, "max_store_bytes", VECTIS_AUTH_DEFAULT_MAX_STORE_BYTES);
+  auth->native_config.app = app;
+  auth->native_config.browser_session = auth->browser_session;
   auth->native_config.purpose = auth->purpose;
   auth->native_config.realm = auth->realm;
   auth->native_config.allowed_auth_modes = modes;
@@ -9074,7 +9217,7 @@ static int vectis_lua_app_webdav(lua_State *lua) {
           lua, VECTIS_ERR_INVALID,
           "webdav mount requires auth when auth_required is true");
     }
-    auth = vectis_lua_app_native_auth_new(lua, -1, "webdav mount", &error);
+    auth = vectis_lua_app_native_auth_new(lua, app, -1, "webdav mount", &error);
     lua_pop(lua, 1);
     if (auth == NULL) {
       return vectis_lua_push_error(
@@ -9157,8 +9300,8 @@ static int vectis_lua_app_webdav_embedded_site(lua_State *lua) {
           lua, VECTIS_ERR_INVALID,
           "webdav embedded site requires auth when auth_required is true");
     }
-    auth =
-        vectis_lua_app_native_auth_new(lua, -1, "webdav embedded site", &error);
+    auth = vectis_lua_app_native_auth_new(lua, app, -1, "webdav embedded site",
+                                          &error);
     lua_pop(lua, 1);
     if (auth == NULL) {
       return vectis_lua_push_error(
@@ -9227,7 +9370,7 @@ static int vectis_lua_app_webdav_embedded(lua_State *lua) {
           lua, VECTIS_ERR_INVALID,
           "embedded WebDAV mount requires auth when auth_required is true");
     }
-    auth = vectis_lua_app_native_auth_new(lua, -1, "embedded WebDAV mount",
+    auth = vectis_lua_app_native_auth_new(lua, app, -1, "embedded WebDAV mount",
                                           &error);
     lua_pop(lua, 1);
     if (auth == NULL) {
@@ -9292,7 +9435,8 @@ static int vectis_lua_app_metrics(lua_State *lua) {
   vectis_error_clear(&error);
   lua_getfield(lua, 2, "auth");
   if (lua_istable(lua, -1)) {
-    auth = vectis_lua_app_native_auth_new(lua, -1, "metrics route", &error);
+    auth =
+        vectis_lua_app_native_auth_new(lua, app, -1, "metrics route", &error);
     lua_pop(lua, 1);
     if (auth == NULL) {
       return vectis_lua_push_error(
@@ -10421,7 +10565,7 @@ static int vectis_lua_app_route(lua_State *lua) {
                                         "route auth must be a table");
     }
     vectis_error_clear(&error);
-    auth = vectis_lua_app_native_auth_new(lua, -1, "route", &error);
+    auth = vectis_lua_app_native_auth_new(lua, app, -1, "route", &error);
     lua_pop(lua, 1);
     if (auth == NULL) {
       return vectis_lua_push_error(
@@ -11373,7 +11517,8 @@ static int vectis_lua_app_auth_json(lua_State *lua) {
                                       "auth JSON route auth is required");
   }
   vectis_error_clear(&error);
-  auth = vectis_lua_app_native_auth_new(lua, -1, "auth JSON route", &error);
+  auth =
+      vectis_lua_app_native_auth_new(lua, app, -1, "auth JSON route", &error);
   lua_pop(lua, 1);
   if (auth == NULL) {
     return vectis_lua_push_error(
@@ -11438,6 +11583,8 @@ static int vectis_lua_app_auth_routes(lua_State *lua) {
   const char **smtp_allowed_recipients;
   vectis_lua_runtime_context *context;
   size_t smtp_allowed_recipient_count;
+  const char *browser_session_mode;
+  int browser_session_index;
   int email_token_index;
   int smtp_index;
 
@@ -11515,6 +11662,49 @@ static int vectis_lua_app_auth_routes(lua_State *lua) {
       lua, 2, "email_token_ttl_seconds", config.email_token_ttl_seconds);
   config.email_token_max_attempts = (unsigned int)vectis_lua_table_size(
       lua, 2, "email_token_max_attempts", config.email_token_max_attempts);
+  lua_getfield(lua, 2, "browser_session");
+  if (!lua_isnil(lua, -1)) {
+    luaL_checktype(lua, -1, LUA_TTABLE);
+    browser_session_index = lua_gettop(lua);
+    browser_session_mode =
+        vectis_lua_table_string(lua, browser_session_index, "mode");
+    if (browser_session_mode != NULL &&
+        strcmp(browser_session_mode, "m2m_only") == 0) {
+      config.browser_session.mode = VECTIS_AUTH_BROWSER_SESSION_M2M_ONLY;
+    } else if (browser_session_mode != NULL &&
+               strcmp(browser_session_mode, "m2m_and_browser") == 0) {
+      config.browser_session.mode = VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER;
+    } else if (browser_session_mode != NULL) {
+      lua_pop(lua, 1);
+      return vectis_lua_push_error_text(
+          lua, VECTIS_ERR_INVALID,
+          "browser_session.mode must be m2m_only or m2m_and_browser");
+    }
+    config.browser_session.cookie_name =
+        vectis_lua_table_string(lua, browser_session_index, "cookie_name");
+    if (config.browser_session.cookie_name == NULL) {
+      config.browser_session.cookie_name = "vectis_session";
+    }
+    config.browser_session.cookie_path =
+        vectis_lua_table_string(lua, browser_session_index, "cookie_path");
+    if (config.browser_session.cookie_path == NULL) {
+      config.browser_session.cookie_path = "/";
+    }
+    config.browser_session.purpose =
+        vectis_lua_table_string(lua, browser_session_index, "purpose");
+    if (config.browser_session.purpose == NULL) {
+      config.browser_session.purpose = "browser";
+    }
+    config.browser_session.state_key =
+        vectis_lua_table_string(lua, browser_session_index, "state_key");
+    if (config.browser_session.state_key == NULL) {
+      config.browser_session.state_key = "auth.browser_session.v1";
+    }
+    config.browser_session.ttl_seconds = (uint64_t)vectis_lua_table_size(
+        lua, browser_session_index, "ttl_seconds",
+        config.browser_session.ttl_seconds);
+  }
+  lua_pop(lua, 1);
   lua_getfield(lua, 2, "email_token");
   if (!lua_isnil(lua, -1)) {
     luaL_checktype(lua, -1, LUA_TTABLE);
@@ -12942,7 +13132,7 @@ static int vectis_lua_app_dsv(lua_State *lua) {
     }
     vectis_error_clear(&error);
     route_data->auth =
-        vectis_lua_app_native_auth_new(lua, -1, "DSV route", &error);
+        vectis_lua_app_native_auth_new(lua, app, -1, "DSV route", &error);
     lua_pop(lua, 1);
     if (route_data->auth == NULL) {
       vectis_lua_app_dsv_route_free(route_data);
@@ -13338,7 +13528,7 @@ static int vectis_lua_app_upload(lua_State *lua) {
     }
     vectis_error_clear(&error);
     route_data->auth =
-        vectis_lua_app_native_auth_new(lua, -1, "upload route", &error);
+        vectis_lua_app_native_auth_new(lua, app, -1, "upload route", &error);
     lua_pop(lua, 1);
     if (route_data->auth == NULL) {
       vectis_lua_app_upload_route_free(route_data);
@@ -16127,6 +16317,9 @@ static const char *vectis_lua_auth_mode_name(unsigned mode) {
   if ((mode & VECTIS_AUTH_MODE_BEARER) != 0u) {
     return "bearer";
   }
+  if ((mode & VECTIS_AUTH_MODE_BROWSER_SESSION) != 0u) {
+    return "browser_session";
+  }
   return "default";
 }
 
@@ -17301,6 +17494,13 @@ static int vectis_lua_auth_native_provider_authenticate(lua_State *lua) {
   vectis_error_clear(&error);
   vectis_auth_native_provider_config_init(&config);
   vectis_lua_auth_store_config(lua, 1, &config.store);
+  lua_getfield(lua, 1, "browser_session");
+  if (!lua_isnil(lua, -1)) {
+    /* This convenience call has no app/Lockd owner. It remains M2M-only;
+     * app-bound native providers retain the declared browser-session policy. */
+    config.browser_session.mode = VECTIS_AUTH_BROWSER_SESSION_M2M_ONLY;
+  }
+  lua_pop(lua, 1);
   config.purpose = vectis_lua_table_string(lua, 1, "purpose");
   config.realm = vectis_lua_table_string(lua, 1, "realm");
   config.allowed_auth_modes = vectis_lua_auth_modes_field(
@@ -17358,6 +17558,8 @@ static int vectis_lua_auth_provider_native(lua_State *lua) {
   lua_setfield(lua, -2, "realm");
   lua_getfield(lua, 1, "allowed_modes");
   lua_setfield(lua, -2, "allowed_modes");
+  lua_getfield(lua, 1, "browser_session");
+  lua_setfield(lua, -2, "browser_session");
   lua_pushcfunction(lua, vectis_lua_auth_native_provider_authenticate);
   lua_setfield(lua, -2, "authenticate");
   return 1;
@@ -17446,12 +17648,22 @@ static int vectis_lua_auth_callback_provider_authenticate(lua_State *lua) {
 }
 
 static int vectis_lua_auth_provider_callback(lua_State *lua) {
+  int has_options;
+
   luaL_checktype(lua, 1, LUA_TFUNCTION);
+  has_options = lua_gettop(lua) >= 2 && !lua_isnil(lua, 2);
+  if (has_options) {
+    luaL_checktype(lua, 2, LUA_TTABLE);
+  }
   lua_newtable(lua);
   lua_pushliteral(lua, "callback");
   lua_setfield(lua, -2, "kind");
   lua_pushvalue(lua, 1);
   lua_setfield(lua, -2, "callback");
+  if (has_options) {
+    lua_getfield(lua, 2, "browser_session");
+    lua_setfield(lua, -2, "browser_session");
+  }
   lua_pushcfunction(lua, vectis_lua_auth_callback_provider_authenticate);
   lua_setfield(lua, -2, "authenticate");
   return 1;

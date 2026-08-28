@@ -188,11 +188,13 @@ an auth provider.
 - `purpose`
 - `realm`
 - `allowed_modes`
+- `browser_session` (described below)
 
 The provider has `kind = "native"` and can be called as
 `provider:authenticate(request)`.
 
-`provider_callback(fn)` creates a developer-provided Lua provider. The callback
+`provider_callback(fn[, opts])` creates a developer-provided Lua provider. Its
+optional `opts.browser_session` is retained for app binding; the callback
 receives a request table and must return:
 
 - `action = "allow" | "deny" | "required" | "redirect"`
@@ -242,11 +244,61 @@ logout, and WebDAV-key endpoints. It accepts store fields plus:
 - `email_token_max_attempts`
 - `email_token = {ttl_seconds=..., max_attempts=...}`
 - `smtp` or `email_smtp` delivery configuration
+- `browser_session`
 
 The native implementation owns route lifecycle, factor sequencing, pending
 transactions, email-token verification, and WebDAV-key issuance. Lua can mount
 the routes and can replace auth policy through providers, but the built-in
 native flow stays C-owned.
+
+## Browser sessions
+
+Browser sessions are optional and are owned entirely by `libvectis`: Lua only
+declares policy and scope. Vectis creates the signing key, persists it and the
+opaque server-side session records through the app's configured Lockd store,
+and never exposes that key to Lua or application callbacks.
+
+Use the same `browser_session` table on `app:auth_routes` and on every native
+or callback provider that should accept the session. `browser_flow` forwards
+it to both `routes()` and `provider()` automatically.
+
+```lua
+browser_session = {
+  mode = "m2m_and_browser",
+  cookie_name = "vectis_session",       -- default
+  cookie_path = "/",                     -- default
+  purpose = "browser",                   -- default session audience
+  state_key = "auth.browser_session.v1", -- Lockd key prefix
+  ttl_seconds = 30 * 24 * 60 * 60,        -- default: 30 days
+}
+```
+
+`mode = "m2m_only"` is the default. It never issues or accepts session
+cookies, preserving an M2M-only endpoint. `mode = "m2m_and_browser"` requires
+an explicit app `lockd` configuration; it accepts valid sessions before native
+or callback authentication. A valid callback-provider session therefore does
+not invoke the Lua callback or expose a cookie for Lua to parse.
+The standalone `provider:authenticate(request)` convenience call has no app
+or Lockd owner, so it remains M2M-only even when its provider table also
+declares `browser_session` for later app binding.
+
+Vectis issues a cookie only after a successful native login/factor completion
+when the request looks like a browser navigation: `Accept` contains
+`text/html`, `Sec-Fetch-Mode` is `navigate`, and `Sec-Fetch-Dest`, when sent,
+is `document`. Missing or mismatched signals are treated as M2M and receive no
+cookie. OAuth/OIDC and other M2M authentications do not issue this cookie.
+
+Issued and cleared cookies are `HttpOnly`, `Secure`, and `SameSite=Strict`.
+Deploy browser sessions behind HTTPS; normal browsers do not send a `Secure`
+cookie over plain HTTP. `cookie_path` can narrow the cookie's browser scope,
+but it must include every protected route expected to accept the session.
+`POST /logout` accepts a valid session cookie, revokes its Lockd record, and
+returns a clearing cookie. It continues to revoke normal WebDAV credentials
+when authenticated with `Authorization`.
+
+The `lockd` table belongs on `vectis.app.new`; see [Vectis Lua App](lua-app.md)
+for encrypted local Pouch and remote Lockd configuration. Its persistence must
+outlive the server process when browser sessions must survive a restart.
 
 [Serving a Lua site](lua-site.md) shows how a generic Lua site supplies a
 branded native login template while retaining this C-owned flow.
@@ -264,6 +316,7 @@ local flow = vectis.auth.browser_flow({
   purpose = "webdav",
   allowed_modes = { vectis.auth.BASIC },
   required_factors = { "password", "totp", "email_token" },
+  browser_session = { mode = "m2m_and_browser" },
 })
 
 assert(flow:mount(server))

@@ -48,6 +48,7 @@ local route_keys = {
   "email_token",
   "smtp",
   "email_smtp",
+  "browser_session",
   "time",
   "window",
 }
@@ -61,6 +62,7 @@ local provider_keys = {
   "purpose",
   "realm",
   "allowed_modes",
+  "browser_session",
 }
 
 local webdav_key_keys = {

@@ -17,12 +17,51 @@ extern "C" {
 #define VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS 300u
 #define VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS 5u
 #define VECTIS_AUTH_PENDING_LOGIN_DEFAULT_TTL_SECONDS 300u
+#define VECTIS_AUTH_BROWSER_SESSION_DEFAULT_TTL_SECONDS (30u * 24u * 60u * 60u)
 
 typedef enum vectis_auth_mode {
   VECTIS_AUTH_MODE_DEFAULT = 0,
   VECTIS_AUTH_MODE_BASIC = 1u << 0,
-  VECTIS_AUTH_MODE_BEARER = 1u << 1
+  VECTIS_AUTH_MODE_BEARER = 1u << 1,
+  /* Server-side browser session authenticated through a Vectis cookie. */
+  VECTIS_AUTH_MODE_BROWSER_SESSION = 1u << 2
 } vectis_auth_mode;
+
+typedef enum vectis_auth_browser_session_mode {
+  /* Preserve M2M-only authentication and never issue or accept cookies. */
+  VECTIS_AUTH_BROWSER_SESSION_M2M_ONLY = 0,
+  /* Accept the configured cookie and issue it only to browser navigation. */
+  VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER = 1
+} vectis_auth_browser_session_mode;
+
+/*
+ * Browser sessions are owned by libvectis. The signing key and per-session
+ * records are persisted through the configured app Lockd client; Lua and C
+ * callers configure their scope but never manage the signing key.
+ */
+typedef struct vectis_auth_browser_session_config {
+  vectis_auth_browser_session_mode mode;
+  /* Cookie name. Zero/default is "vectis_session". */
+  const char *cookie_name;
+  /* Cookie Path attribute. Zero/default is "/". */
+  const char *cookie_path;
+  /* Session audience. Zero/default is "browser". */
+  const char *purpose;
+  /* Lockd key prefix. Zero/default is "auth.browser_session.v1". */
+  const char *state_key;
+  /* Zero uses VECTIS_AUTH_BROWSER_SESSION_DEFAULT_TTL_SECONDS. */
+  uint64_t ttl_seconds;
+} vectis_auth_browser_session_config;
+
+typedef struct vectis_auth_browser_session_result {
+  /* Nonzero only when the opaque cookie resolved to an active session. */
+  int authenticated;
+  /* Borrow-free principal and audience copied from Lockd-backed state. */
+  char principal[VECTIS_AUTH_PRINCIPAL_MAX + 1u];
+  char purpose[128];
+  /* Unix expiry time; zero when unauthenticated. */
+  uint64_t expires_at;
+} vectis_auth_browser_session_result;
 
 typedef struct vectis_auth_store_config {
   /* JSON credential store path. Callers choose the config directory and file.
@@ -80,6 +119,8 @@ typedef struct vectis_auth_provider_request {
   vectis_request *request;
   /* Borrowed raw HTTP Authorization header, when the caller already has it. */
   const char *authorization;
+  /* Borrowed raw HTTP Cookie header, when the caller already has it. */
+  const char *cookie;
   const char *purpose;
   const char *resource;
   unsigned allowed_auth_modes;
@@ -110,6 +151,9 @@ typedef struct vectis_auth_provider {
 
 typedef struct vectis_auth_native_provider_config {
   vectis_auth_store_config store;
+  /* Required only when browser_session.mode is M2M_AND_BROWSER. */
+  vectis_app *app;
+  vectis_auth_browser_session_config browser_session;
   const char *purpose;
   const char *realm;
   unsigned allowed_auth_modes;
@@ -209,6 +253,8 @@ struct vectis_auth_routes_config {
   unsigned int email_token_max_attempts;
   /* Zero uses VECTIS_AUTH_PENDING_LOGIN_DEFAULT_TTL_SECONDS. */
   uint64_t pending_login_ttl_seconds;
+  /* Optional browser-session policy. The default remains M2M-only. */
+  vectis_auth_browser_session_config browser_session;
   /*
    * Optional SMTP delivery for email-token issuance. When email_smtp.url is
    * set, <path_prefix>/email-token sends the token through SMTP and omits it
@@ -735,6 +781,39 @@ vectis_status vectis_auth_oidc_authorization_start(
 vectis_status vectis_auth_oidc_exchange_callback(
     const vectis_auth_oidc_token_exchange_config *config,
     vectis_auth_oidc_token_exchange *out, vectis_error *error);
+
+/* Initializes browser-session defaults; the default mode is M2M-only. */
+void vectis_auth_browser_session_config_init(
+    vectis_auth_browser_session_config *config);
+/* Validates the declarative policy without creating keys or sessions. */
+vectis_status vectis_auth_browser_session_config_validate(
+    const vectis_auth_browser_session_config *config, vectis_error *error);
+/* Clears a result to its unauthenticated state. */
+void vectis_auth_browser_session_result_init(
+    vectis_auth_browser_session_result *result);
+/*
+ * Validates the configured cookie in cookie_header against Lockd-backed
+ * server-side state. Missing, malformed, expired, revoked, and purpose-
+ * mismatched cookies produce an unauthenticated result, not an error.
+ */
+vectis_status vectis_auth_browser_session_verify(
+    vectis_app *app, const vectis_auth_browser_session_config *config,
+    const char *cookie_header, uint64_t unix_seconds,
+    vectis_auth_browser_session_result *out, vectis_error *error);
+/*
+ * Creates an opaque browser session and appends its HttpOnly, Secure,
+ * SameSite=Strict cookie to response. The secret and server-side state remain
+ * owned by libvectis.
+ */
+vectis_status vectis_auth_browser_session_issue(
+    vectis_app *app, const vectis_auth_browser_session_config *config,
+    const char *principal, uint64_t unix_seconds, vectis_response *response,
+    vectis_error *error);
+/* Revokes the session named by cookie_header and clears its cookie on response.
+ */
+vectis_status vectis_auth_browser_session_revoke(
+    vectis_app *app, const vectis_auth_browser_session_config *config,
+    const char *cookie_header, vectis_response *response, vectis_error *error);
 
 vectis_status
 vectis_auth_provider_from_callback(vectis_auth_provider *provider,

@@ -5,12 +5,15 @@
 
 #include <vectis/auth.h>
 
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <lc/lc.h>
 #include <limits.h>
 #include <lonejson.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
+#include <openssl/hmac.h>
 #include <openssl/rand.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -31,6 +34,18 @@
 #define VECTIS_AUTH_RANDOM_TOTP_BYTES 20u
 #define VECTIS_AUTH_RANDOM_OIDC_BYTES 16u
 #define VECTIS_AUTH_RANDOM_EMAIL_TOKEN_BYTES 16u
+#define VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES 32u
+#define VECTIS_AUTH_BROWSER_SESSION_ID_BYTES 32u
+#define VECTIS_AUTH_BROWSER_SESSION_HEX_BYTES                                  \
+  (2u * VECTIS_AUTH_BROWSER_SESSION_ID_BYTES)
+#define VECTIS_AUTH_BROWSER_SESSION_COOKIE_VALUE_MAX                           \
+  (3u + VECTIS_AUTH_BROWSER_SESSION_HEX_BYTES + 1u +                           \
+   2u * VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES + 1u)
+#define VECTIS_AUTH_BROWSER_SESSION_KEY_MAX 512u
+#define VECTIS_AUTH_BROWSER_SESSION_COOKIE_NAME_MAX 128u
+#define VECTIS_AUTH_BROWSER_SESSION_COOKIE_PATH_MAX 1024u
+#define VECTIS_AUTH_BROWSER_SESSION_PURPOSE_MAX 127u
+#define VECTIS_AUTH_BROWSER_SESSION_HEADER_MAX 1536u
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
 #endif
@@ -147,6 +162,57 @@ typedef struct vectis_auth_pending_login_record {
   int totp_required;
   int found;
 } vectis_auth_pending_login_record;
+
+typedef struct vectis_auth_browser_session_secret_record {
+  char secret[2u * VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES + 1u];
+} vectis_auth_browser_session_secret_record;
+
+typedef struct vectis_auth_browser_session_record {
+  char principal[VECTIS_AUTH_PRINCIPAL_MAX + 1u];
+  char purpose[VECTIS_AUTH_BROWSER_SESSION_PURPOSE_MAX + 1u];
+  lonejson_int64 expires_at;
+  int revoked;
+} vectis_auth_browser_session_record;
+
+typedef struct vectis_auth_browser_session_lc_reader {
+  lc_source *source;
+  lc_error error;
+} vectis_auth_browser_session_lc_reader;
+
+typedef struct vectis_auth_browser_session_secret_context {
+  int create;
+  int found;
+  char secret[2u * VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES + 1u];
+} vectis_auth_browser_session_secret_context;
+
+typedef struct vectis_auth_browser_session_record_context {
+  int found;
+  int revoke;
+  vectis_auth_browser_session_record record;
+} vectis_auth_browser_session_record_context;
+
+static const lonejson_field vectis_auth_browser_session_secret_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(vectis_auth_browser_session_secret_record,
+                                    secret, "secret", LONEJSON_OVERFLOW_FAIL)};
+
+LONEJSON_MAP_DEFINE(vectis_auth_browser_session_secret_map,
+                    vectis_auth_browser_session_secret_record,
+                    vectis_auth_browser_session_secret_fields);
+
+static const lonejson_field vectis_auth_browser_session_record_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(vectis_auth_browser_session_record,
+                                    principal, "principal",
+                                    LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(vectis_auth_browser_session_record, purpose,
+                                    "purpose", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_I64_REQ(vectis_auth_browser_session_record, expires_at,
+                           "expires_at"),
+    LONEJSON_FIELD_BOOL_REQ(vectis_auth_browser_session_record, revoked,
+                            "revoked")};
+
+LONEJSON_MAP_DEFINE(vectis_auth_browser_session_record_map,
+                    vectis_auth_browser_session_record,
+                    vectis_auth_browser_session_record_fields);
 
 typedef struct vectis_auth_user_find_state {
   lonejson *runtime;
@@ -2111,6 +2177,28 @@ void vectis_auth_provider_init(vectis_auth_provider *provider) {
   memset(provider, 0, sizeof(*provider));
 }
 
+void vectis_auth_browser_session_config_init(
+    vectis_auth_browser_session_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  config->mode = VECTIS_AUTH_BROWSER_SESSION_M2M_ONLY;
+  config->cookie_name = "vectis_session";
+  config->cookie_path = "/";
+  config->purpose = "browser";
+  config->state_key = "auth.browser_session.v1";
+  config->ttl_seconds = VECTIS_AUTH_BROWSER_SESSION_DEFAULT_TTL_SECONDS;
+}
+
+void vectis_auth_browser_session_result_init(
+    vectis_auth_browser_session_result *result) {
+  if (result == NULL) {
+    return;
+  }
+  memset(result, 0, sizeof(*result));
+}
+
 void vectis_auth_native_provider_config_init(
     vectis_auth_native_provider_config *config) {
   if (config == NULL) {
@@ -2118,6 +2206,7 @@ void vectis_auth_native_provider_config_init(
   }
   memset(config, 0, sizeof(*config));
   vectis_auth_store_config_init(&config->store);
+  vectis_auth_browser_session_config_init(&config->browser_session);
   config->realm = "vectis";
   config->allowed_auth_modes = VECTIS_AUTH_MODE_DEFAULT;
 }
@@ -2138,6 +2227,7 @@ void vectis_auth_routes_config_init(vectis_auth_routes_config *config) {
       VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS;
   config->pending_login_ttl_seconds =
       VECTIS_AUTH_PENDING_LOGIN_DEFAULT_TTL_SECONDS;
+  vectis_auth_browser_session_config_init(&config->browser_session);
   vectis_auth_smtp_config_init(&config->email_smtp);
 }
 
@@ -2693,6 +2783,810 @@ static vectis_status vectis_auth_token_sha256_hex(const char *token, char *out,
   vectis_auth_hex_encode(digest, sizeof(digest), out);
   OPENSSL_cleanse(digest, sizeof(digest));
   return VECTIS_OK;
+}
+
+static int vectis_auth_browser_session_cookie_name_valid(const char *value) {
+  const unsigned char *cursor;
+
+  if (value == NULL || value[0] == '\0' ||
+      strlen(value) > VECTIS_AUTH_BROWSER_SESSION_COOKIE_NAME_MAX) {
+    return 0;
+  }
+  cursor = (const unsigned char *)value;
+  while (*cursor != '\0') {
+    if (!(isalnum(*cursor) || *cursor == '!' || *cursor == '#' ||
+          *cursor == '$' || *cursor == '%' || *cursor == '&' ||
+          *cursor == '\'' || *cursor == '*' || *cursor == '+' ||
+          *cursor == '-' || *cursor == '.' || *cursor == '^' ||
+          *cursor == '_' || *cursor == '`' || *cursor == '|' ||
+          *cursor == '~')) {
+      return 0;
+    }
+    cursor++;
+  }
+  return 1;
+}
+
+static int vectis_auth_browser_session_text_valid(const char *value,
+                                                  size_t max_size) {
+  const unsigned char *cursor;
+
+  if (value == NULL || value[0] == '\0' || strlen(value) > max_size) {
+    return 0;
+  }
+  cursor = (const unsigned char *)value;
+  while (*cursor != '\0') {
+    if (*cursor < 0x20u || *cursor == 0x7fu || *cursor == ';' ||
+        *cursor == '\r' || *cursor == '\n') {
+      return 0;
+    }
+    cursor++;
+  }
+  return 1;
+}
+
+static const char *vectis_auth_browser_session_cookie_name(
+    const vectis_auth_browser_session_config *config) {
+  return config != NULL && config->cookie_name != NULL &&
+                 config->cookie_name[0] != '\0'
+             ? config->cookie_name
+             : "vectis_session";
+}
+
+static const char *vectis_auth_browser_session_cookie_path(
+    const vectis_auth_browser_session_config *config) {
+  return config != NULL && config->cookie_path != NULL &&
+                 config->cookie_path[0] != '\0'
+             ? config->cookie_path
+             : "/";
+}
+
+static const char *vectis_auth_browser_session_purpose(
+    const vectis_auth_browser_session_config *config) {
+  return config != NULL && config->purpose != NULL && config->purpose[0] != '\0'
+             ? config->purpose
+             : "browser";
+}
+
+static const char *vectis_auth_browser_session_state_key(
+    const vectis_auth_browser_session_config *config) {
+  return config != NULL && config->state_key != NULL &&
+                 config->state_key[0] != '\0'
+             ? config->state_key
+             : "auth.browser_session.v1";
+}
+
+static uint64_t vectis_auth_browser_session_ttl(
+    const vectis_auth_browser_session_config *config) {
+  return config != NULL && config->ttl_seconds != 0u
+             ? config->ttl_seconds
+             : VECTIS_AUTH_BROWSER_SESSION_DEFAULT_TTL_SECONDS;
+}
+
+static int vectis_auth_browser_session_enabled(
+    const vectis_auth_browser_session_config *config) {
+  return config != NULL &&
+         config->mode == VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER;
+}
+
+vectis_status vectis_auth_browser_session_config_validate(
+    const vectis_auth_browser_session_config *config, vectis_error *error) {
+  const char *cookie_name;
+  const char *cookie_path;
+  const char *purpose;
+  const char *state_key;
+  uint64_t ttl;
+
+  if (config == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session config is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->mode != VECTIS_AUTH_BROWSER_SESSION_M2M_ONLY &&
+      config->mode != VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session mode is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!vectis_auth_browser_session_enabled(config)) {
+    return VECTIS_OK;
+  }
+  cookie_name = vectis_auth_browser_session_cookie_name(config);
+  cookie_path = vectis_auth_browser_session_cookie_path(config);
+  purpose = vectis_auth_browser_session_purpose(config);
+  state_key = vectis_auth_browser_session_state_key(config);
+  ttl = vectis_auth_browser_session_ttl(config);
+  if (!vectis_auth_browser_session_cookie_name_valid(cookie_name)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session cookie_name is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (cookie_path[0] != '/' ||
+      !vectis_auth_browser_session_text_valid(
+          cookie_path, VECTIS_AUTH_BROWSER_SESSION_COOKIE_PATH_MAX)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session cookie_path is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!vectis_auth_browser_session_text_valid(
+          purpose, VECTIS_AUTH_BROWSER_SESSION_PURPOSE_MAX)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session purpose is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!vectis_auth_browser_session_text_valid(
+          state_key, VECTIS_AUTH_BROWSER_SESSION_KEY_MAX - 96u)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session state_key is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (ttl == 0u || ttl > (uint64_t)LONG_MAX) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session ttl_seconds is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_browser_session_now(uint64_t configured,
+                                                     uint64_t *out,
+                                                     vectis_error *error) {
+  time_t now;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session clock output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (configured != 0u) {
+    *out = configured;
+    return VECTIS_OK;
+  }
+  now = time(NULL);
+  if (now < (time_t)0) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to read browser session clock");
+    return VECTIS_ERR_STATE;
+  }
+  *out = (uint64_t)now;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_browser_session_key(
+    const vectis_auth_browser_session_config *config, const char *suffix,
+    char *out, size_t out_size, vectis_error *error) {
+  return vectis_format_key(out, out_size, error, "%s/%s",
+                           vectis_auth_browser_session_state_key(config),
+                           suffix);
+}
+
+static vectis_status vectis_auth_browser_session_lockd_error(
+    vectis_error *error, int code, const lc_error *lcerr, const char *message) {
+  vectis_auth_set_errorf(error, VECTIS_ERR_STATE, "%s: %s", message,
+                         lcerr != NULL && lcerr->message != NULL
+                             ? lcerr->message
+                             : "lockd operation failed");
+  if (error != NULL) {
+    error->source = VECTIS_ERROR_SOURCE_LOCKDC;
+    error->dependency_code = (long)code;
+    error->http_status = lcerr != NULL ? lcerr->http_status : 0L;
+    if (lcerr != NULL && lcerr->detail != NULL) {
+      (void)snprintf(error->detail, sizeof(error->detail), "%s", lcerr->detail);
+    }
+  }
+  return VECTIS_ERR_STATE;
+}
+
+static lonejson_read_result
+vectis_auth_browser_session_read(void *userdata, unsigned char *buffer,
+                                 size_t capacity) {
+  vectis_auth_browser_session_lc_reader *reader;
+  lonejson_read_result result;
+
+  result = lonejson_default_read_result();
+  reader = (vectis_auth_browser_session_lc_reader *)userdata;
+  if (reader == NULL || reader->source == NULL) {
+    result.error_code = EINVAL;
+    return result;
+  }
+  result.bytes_read =
+      reader->source->read(reader->source, buffer, capacity, &reader->error);
+  if (reader->error.code != LC_OK) {
+    result.error_code = EIO;
+  } else if (result.bytes_read == 0u) {
+    result.eof = 1;
+  }
+  return result;
+}
+
+static int
+vectis_auth_browser_session_snapshot_load(lc_acquire_for_update_context *update,
+                                          const lonejson_map *map, void *out,
+                                          lc_error *error) {
+  vectis_auth_browser_session_lc_reader reader;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  lonejson *runtime;
+
+  if (update == NULL || update->state.reader == NULL || map == NULL ||
+      out == NULL) {
+    if (error != NULL) {
+      lc_error_init(error);
+      error->code = LC_ERR_INVALID;
+      error->message = vectis_auth_strdup("browser session state is invalid");
+    }
+    return LC_ERR_INVALID;
+  }
+  memset(&reader, 0, sizeof(reader));
+  lc_error_init(&reader.error);
+  reader.source = update->state.reader;
+  lonejson_error_init(&json_error);
+  runtime = lonejson_new(NULL, &json_error);
+  if (runtime == NULL) {
+    lc_error_cleanup(&reader.error);
+    if (error != NULL) {
+      lc_error_init(error);
+      error->code = LC_ERR_NOMEM;
+      error->message =
+          vectis_auth_strdup("failed to allocate browser session parser");
+    }
+    return LC_ERR_NOMEM;
+  }
+  json_status =
+      lonejson_parse_reader(runtime, map, out, vectis_auth_browser_session_read,
+                            &reader, &json_error);
+  lonejson_free(runtime);
+  lc_error_cleanup(&reader.error);
+  if (json_status != LONEJSON_STATUS_OK) {
+    if (error != NULL) {
+      lc_error_init(error);
+      error->code = LC_ERR_PROTOCOL;
+      error->message = vectis_auth_strdup("browser session state is invalid");
+    }
+    return LC_ERR_PROTOCOL;
+  }
+  return LC_OK;
+}
+
+static int vectis_auth_browser_session_secret_update(
+    void *userdata, lc_acquire_for_update_context *update, lc_error *error) {
+  vectis_auth_browser_session_secret_context *context;
+  vectis_auth_browser_session_secret_record record;
+  unsigned char secret[VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES];
+  int rc;
+
+  context = (vectis_auth_browser_session_secret_context *)userdata;
+  if (context == NULL || update == NULL || update->lease == NULL) {
+    return LC_ERR_INVALID;
+  }
+  memset(&record, 0, sizeof(record));
+  if (update->state.has_state) {
+    rc = vectis_auth_browser_session_snapshot_load(
+        update, &vectis_auth_browser_session_secret_map, &record, error);
+    if (rc != LC_OK) {
+      return rc;
+    }
+    if (!vectis_auth_hex_decode(record.secret, secret, sizeof(secret))) {
+      OPENSSL_cleanse(secret, sizeof(secret));
+      if (error != NULL) {
+        lc_error_init(error);
+        error->code = LC_ERR_PROTOCOL;
+        error->message =
+            vectis_auth_strdup("browser session signing secret is invalid");
+      }
+      return LC_ERR_PROTOCOL;
+    }
+    OPENSSL_cleanse(secret, sizeof(secret));
+    vectis_auth_copy_fixed(context->secret, sizeof(context->secret),
+                           record.secret);
+    context->found = 1;
+    return LC_OK;
+  }
+  if (!context->create) {
+    return LC_OK;
+  }
+  if (RAND_bytes(secret, (int)sizeof(secret)) != 1) {
+    if (error != NULL) {
+      lc_error_init(error);
+      error->code = LC_ERR_SERVER;
+      error->message =
+          vectis_auth_strdup("failed to generate browser session signing key");
+    }
+    return LC_ERR_SERVER;
+  }
+  vectis_auth_hex_encode(secret, sizeof(secret), record.secret);
+  OPENSSL_cleanse(secret, sizeof(secret));
+  rc = update->lease->save(
+      update->lease, &vectis_auth_browser_session_secret_map, &record, error);
+  if (rc != LC_OK) {
+    return rc;
+  }
+  vectis_auth_copy_fixed(context->secret, sizeof(context->secret),
+                         record.secret);
+  context->found = 1;
+  return LC_OK;
+}
+
+static int vectis_auth_browser_session_record_update(
+    void *userdata, lc_acquire_for_update_context *update, lc_error *error) {
+  vectis_auth_browser_session_record_context *context;
+  int rc;
+
+  context = (vectis_auth_browser_session_record_context *)userdata;
+  if (context == NULL || update == NULL || update->lease == NULL) {
+    return LC_ERR_INVALID;
+  }
+  rc = LC_OK;
+  memset(&context->record, 0, sizeof(context->record));
+  context->found = update->state.has_state ? 1 : 0;
+  if (!context->found) {
+    return LC_OK;
+  }
+  rc = vectis_auth_browser_session_snapshot_load(
+      update, &vectis_auth_browser_session_record_map, &context->record, error);
+  if (rc != LC_OK) {
+    return rc;
+  }
+  if (context->revoke) {
+    context->record.revoked = 1;
+    rc = update->lease->save(update->lease,
+                             &vectis_auth_browser_session_record_map,
+                             &context->record, error);
+  }
+  return rc;
+}
+
+static vectis_status
+vectis_auth_browser_session_update(vectis_app *app, const char *key,
+                                   lc_acquire_for_update_handler_fn update,
+                                   void *userdata, vectis_error *error) {
+  lc_acquire_req request;
+  lc_error lcerr;
+  lc_client *client;
+  int rc;
+
+  if (app == NULL || key == NULL || update == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session Lockd state is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  client = vectis_lockd_client(app);
+  if (client == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "browser sessions require configured app Lockd");
+    return VECTIS_ERR_STATE;
+  }
+  lc_acquire_req_init(&request);
+  request.key = key;
+  request.owner = "vectis-auth-browser-session";
+  request.ttl_seconds = 30L;
+  lc_error_init(&lcerr);
+  rc = lc_acquire_for_update(client, &request, update, userdata, &lcerr);
+  if (rc != LC_OK) {
+    vectis_auth_browser_session_lockd_error(
+        error, rc, &lcerr, "failed to update browser session state");
+    lc_error_cleanup(&lcerr);
+    return VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_browser_session_signing_secret(
+    vectis_app *app, const vectis_auth_browser_session_config *config,
+    int create, char *out, size_t out_size, int *found, vectis_error *error) {
+  vectis_auth_browser_session_secret_context context;
+  char key[VECTIS_AUTH_BROWSER_SESSION_KEY_MAX];
+  vectis_status status;
+
+  if (out == NULL ||
+      out_size < 2u * VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES + 1u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session signing secret output is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_browser_session_key(config, "signing-key", key,
+                                           sizeof(key), error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  memset(&context, 0, sizeof(context));
+  context.create = create;
+  status = vectis_auth_browser_session_update(
+      app, key, vectis_auth_browser_session_secret_update, &context, error);
+  if (status != VECTIS_OK) {
+    OPENSSL_cleanse(&context, sizeof(context));
+    return status;
+  }
+  if (context.found) {
+    vectis_auth_copy_fixed(out, out_size, context.secret);
+  } else {
+    out[0] = '\0';
+  }
+  if (found != NULL) {
+    *found = context.found;
+  }
+  OPENSSL_cleanse(&context, sizeof(context));
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_browser_session_load_record(
+    vectis_app *app, const vectis_auth_browser_session_config *config,
+    const char *session_id, int revoke,
+    vectis_auth_browser_session_record_context *out, vectis_error *error) {
+  vectis_status status;
+  char key[VECTIS_AUTH_BROWSER_SESSION_KEY_MAX];
+
+  if (out == NULL || session_id == NULL ||
+      strlen(session_id) != VECTIS_AUTH_BROWSER_SESSION_HEX_BYTES) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session identifier is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_browser_session_key(config, session_id, key, sizeof(key),
+                                           error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  memset(out, 0, sizeof(*out));
+  out->revoke = revoke;
+  return vectis_auth_browser_session_update(
+      app, key, vectis_auth_browser_session_record_update, out, error);
+}
+
+static int vectis_auth_browser_session_sign(const char *secret_hex,
+                                            const char *session_id,
+                                            char *signature_hex,
+                                            size_t signature_size) {
+  unsigned char secret[VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES];
+  unsigned char signature[EVP_MAX_MD_SIZE];
+  unsigned int signature_len;
+  unsigned char *result;
+  int ok;
+
+  if (secret_hex == NULL || session_id == NULL || signature_hex == NULL ||
+      signature_size < 2u * VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES + 1u ||
+      !vectis_auth_hex_decode(secret_hex, secret, sizeof(secret))) {
+    return 0;
+  }
+  signature_len = 0u;
+  result = HMAC(EVP_sha256(), secret, (int)sizeof(secret),
+                (const unsigned char *)session_id, strlen(session_id),
+                signature, &signature_len);
+  ok = result != NULL &&
+       signature_len == VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES;
+  if (ok) {
+    vectis_auth_hex_encode(signature, signature_len, signature_hex);
+  }
+  OPENSSL_cleanse(secret, sizeof(secret));
+  OPENSSL_cleanse(signature, sizeof(signature));
+  return ok;
+}
+
+static int vectis_auth_browser_session_cookie_value(const char *cookie_header,
+                                                    const char *cookie_name,
+                                                    char *out,
+                                                    size_t out_size) {
+  const char *cursor;
+  const char *value;
+  const char *end;
+  size_t name_len;
+  size_t value_len;
+  int found;
+
+  if (out == NULL || out_size == 0u) {
+    return 0;
+  }
+  out[0] = '\0';
+  if (cookie_header == NULL || cookie_name == NULL) {
+    return 0;
+  }
+  name_len = strlen(cookie_name);
+  cursor = cookie_header;
+  found = 0;
+  while (*cursor != '\0') {
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == ';') {
+      cursor++;
+    }
+    if (*cursor == '\0') {
+      break;
+    }
+    if (strncmp(cursor, cookie_name, name_len) == 0 &&
+        cursor[name_len] == '=') {
+      value = cursor + name_len + 1u;
+      end = strchr(value, ';');
+      value_len = end != NULL ? (size_t)(end - value) : strlen(value);
+      while (value_len > 0u &&
+             (value[value_len - 1u] == ' ' || value[value_len - 1u] == '\t')) {
+        value_len--;
+      }
+      if (found || value_len == 0u || value_len >= out_size) {
+        out[0] = '\0';
+        return 0;
+      }
+      memcpy(out, value, value_len);
+      out[value_len] = '\0';
+      found = 1;
+    }
+    cursor = strchr(cursor, ';');
+    if (cursor == NULL) {
+      break;
+    }
+    cursor++;
+  }
+  return found;
+}
+
+static int vectis_auth_browser_session_parse_cookie(
+    const char *value,
+    char session_id[VECTIS_AUTH_BROWSER_SESSION_HEX_BYTES + 1u],
+    char signature[2u * VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES + 1u]) {
+  const char *separator;
+  unsigned char id_bytes[VECTIS_AUTH_BROWSER_SESSION_ID_BYTES];
+  unsigned char signature_bytes[VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES];
+  int valid;
+
+  if (value == NULL || strncmp(value, "v1.", 3u) != 0 ||
+      strlen(value) != VECTIS_AUTH_BROWSER_SESSION_COOKIE_VALUE_MAX - 1u) {
+    return 0;
+  }
+  separator = value + 3u + VECTIS_AUTH_BROWSER_SESSION_HEX_BYTES;
+  if (*separator != '.') {
+    return 0;
+  }
+  memcpy(session_id, value + 3u, VECTIS_AUTH_BROWSER_SESSION_HEX_BYTES);
+  session_id[VECTIS_AUTH_BROWSER_SESSION_HEX_BYTES] = '\0';
+  memcpy(signature, separator + 1u,
+         2u * VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES);
+  signature[2u * VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES] = '\0';
+  valid = vectis_auth_hex_decode(session_id, id_bytes, sizeof(id_bytes)) &&
+          vectis_auth_hex_decode(signature, signature_bytes,
+                                 sizeof(signature_bytes));
+  OPENSSL_cleanse(id_bytes, sizeof(id_bytes));
+  OPENSSL_cleanse(signature_bytes, sizeof(signature_bytes));
+  return valid;
+}
+
+static vectis_status vectis_auth_browser_session_clear_cookie(
+    const vectis_auth_browser_session_config *config, vectis_response *response,
+    vectis_error *error) {
+  char header[VECTIS_AUTH_BROWSER_SESSION_HEADER_MAX];
+  int written;
+
+  if (response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session response is required");
+    return VECTIS_ERR_INVALID;
+  }
+  written = snprintf(header, sizeof(header),
+                     "%s=; Path=%s; Max-Age=0; HttpOnly; Secure; "
+                     "SameSite=Strict",
+                     vectis_auth_browser_session_cookie_name(config),
+                     vectis_auth_browser_session_cookie_path(config));
+  if (written < 0 || (size_t)written >= sizeof(header)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session cookie header is too large");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_response_header(response, "set-cookie", header, error);
+}
+
+vectis_status vectis_auth_browser_session_verify(
+    vectis_app *app, const vectis_auth_browser_session_config *config,
+    const char *cookie_header, uint64_t unix_seconds,
+    vectis_auth_browser_session_result *out, vectis_error *error) {
+  char value[VECTIS_AUTH_BROWSER_SESSION_COOKIE_VALUE_MAX];
+  char session_id[VECTIS_AUTH_BROWSER_SESSION_HEX_BYTES + 1u];
+  char signature[2u * VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES + 1u];
+  char expected_signature[2u * VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES + 1u];
+  char secret[2u * VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES + 1u];
+  vectis_auth_browser_session_record_context record;
+  vectis_status status;
+  uint64_t now;
+  int found;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session result is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_browser_session_result_init(out);
+  status = vectis_auth_browser_session_config_validate(config, error);
+  if (status != VECTIS_OK || !vectis_auth_browser_session_enabled(config)) {
+    return status;
+  }
+  if (!vectis_auth_browser_session_cookie_value(
+          cookie_header, vectis_auth_browser_session_cookie_name(config), value,
+          sizeof(value)) ||
+      !vectis_auth_browser_session_parse_cookie(value, session_id, signature)) {
+    return VECTIS_OK;
+  }
+  status = vectis_auth_browser_session_signing_secret(
+      app, config, 0, secret, sizeof(secret), &found, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (!found ||
+      !vectis_auth_browser_session_sign(secret, session_id, expected_signature,
+                                        sizeof(expected_signature)) ||
+      CRYPTO_memcmp(signature, expected_signature, sizeof(signature) - 1u) !=
+          0) {
+    OPENSSL_cleanse(secret, sizeof(secret));
+    return VECTIS_OK;
+  }
+  OPENSSL_cleanse(secret, sizeof(secret));
+  status = vectis_auth_browser_session_load_record(app, config, session_id, 0,
+                                                   &record, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_auth_browser_session_now(unix_seconds, &now, error);
+  if (status != VECTIS_OK || !record.found || record.record.revoked ||
+      record.record.expires_at < 0 ||
+      (uint64_t)record.record.expires_at <= now ||
+      strcmp(record.record.purpose,
+             vectis_auth_browser_session_purpose(config)) != 0) {
+    return status;
+  }
+  out->authenticated = 1;
+  out->expires_at = (uint64_t)record.record.expires_at;
+  vectis_auth_copy_fixed(out->principal, sizeof(out->principal),
+                         record.record.principal);
+  vectis_auth_copy_fixed(out->purpose, sizeof(out->purpose),
+                         record.record.purpose);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_auth_browser_session_issue(
+    vectis_app *app, const vectis_auth_browser_session_config *config,
+    const char *principal, uint64_t unix_seconds, vectis_response *response,
+    vectis_error *error) {
+  vectis_auth_browser_session_record record;
+  char secret[2u * VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES + 1u];
+  char session_id[VECTIS_AUTH_BROWSER_SESSION_HEX_BYTES + 1u];
+  char signature[2u * VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES + 1u];
+  char key[VECTIS_AUTH_BROWSER_SESSION_KEY_MAX];
+  char header[VECTIS_AUTH_BROWSER_SESSION_HEADER_MAX];
+  unsigned char random_id[VECTIS_AUTH_BROWSER_SESSION_ID_BYTES];
+  lc_client *client;
+  vectis_status status;
+  uint64_t now;
+  uint64_t expires_at;
+  int found;
+  int written;
+
+  status = vectis_auth_browser_session_config_validate(config, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (!vectis_auth_browser_session_enabled(config) || principal == NULL ||
+      principal[0] == '\0' || strlen(principal) > VECTIS_AUTH_PRINCIPAL_MAX ||
+      response == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session issue configuration is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_browser_session_now(unix_seconds, &now, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (now > UINT64_MAX - vectis_auth_browser_session_ttl(config)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session expiry overflows");
+    return VECTIS_ERR_INVALID;
+  }
+  expires_at = now + vectis_auth_browser_session_ttl(config);
+  if (expires_at > (uint64_t)INT64_MAX) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session expiry is out of range");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_browser_session_signing_secret(
+      app, config, 1, secret, sizeof(secret), &found, error);
+  if (status != VECTIS_OK || !found) {
+    OPENSSL_cleanse(secret, sizeof(secret));
+    if (status == VECTIS_OK) {
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "browser session signing secret is unavailable");
+      return VECTIS_ERR_STATE;
+    }
+    return status;
+  }
+  if (vectis_auth_random_bytes(random_id, sizeof(random_id), error) !=
+      VECTIS_OK) {
+    OPENSSL_cleanse(secret, sizeof(secret));
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  vectis_auth_hex_encode(random_id, sizeof(random_id), session_id);
+  OPENSSL_cleanse(random_id, sizeof(random_id));
+  if (!vectis_auth_browser_session_sign(secret, session_id, signature,
+                                        sizeof(signature))) {
+    OPENSSL_cleanse(secret, sizeof(secret));
+    vectis_set_error(error, VECTIS_ERR_STATE, "failed to sign browser session");
+    return VECTIS_ERR_STATE;
+  }
+  OPENSSL_cleanse(secret, sizeof(secret));
+  status = vectis_auth_browser_session_key(config, session_id, key, sizeof(key),
+                                           error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  client = vectis_lockd_client(app);
+  if (client == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "browser sessions require configured app Lockd");
+    return VECTIS_ERR_STATE;
+  }
+  memset(&record, 0, sizeof(record));
+  vectis_auth_copy_fixed(record.principal, sizeof(record.principal), principal);
+  vectis_auth_copy_fixed(record.purpose, sizeof(record.purpose),
+                         vectis_auth_browser_session_purpose(config));
+  record.expires_at = (lonejson_int64)expires_at;
+  status = vectis_lockd_state_save(client, key, "vectis-auth-browser-session",
+                                   30L, &vectis_auth_browser_session_record_map,
+                                   &record, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  written = snprintf(
+      header, sizeof(header),
+      "%s=v1.%s.%s; Path=%s; Max-Age=%lu; HttpOnly; Secure; SameSite=Strict",
+      vectis_auth_browser_session_cookie_name(config), session_id, signature,
+      vectis_auth_browser_session_cookie_path(config),
+      (unsigned long)vectis_auth_browser_session_ttl(config));
+  if (written < 0 || (size_t)written >= sizeof(header)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session cookie header is too large");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_response_header(response, "set-cookie", header, error);
+}
+
+vectis_status vectis_auth_browser_session_revoke(
+    vectis_app *app, const vectis_auth_browser_session_config *config,
+    const char *cookie_header, vectis_response *response, vectis_error *error) {
+  char value[VECTIS_AUTH_BROWSER_SESSION_COOKIE_VALUE_MAX];
+  char session_id[VECTIS_AUTH_BROWSER_SESSION_HEX_BYTES + 1u];
+  char signature[2u * VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES + 1u];
+  char expected_signature[2u * VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES + 1u];
+  char secret[2u * VECTIS_AUTH_BROWSER_SESSION_SECRET_BYTES + 1u];
+  vectis_auth_browser_session_record_context record;
+  vectis_status status;
+  int found;
+
+  status = vectis_auth_browser_session_config_validate(config, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (!vectis_auth_browser_session_enabled(config)) {
+    return VECTIS_OK;
+  }
+  if (vectis_auth_browser_session_cookie_value(
+          cookie_header, vectis_auth_browser_session_cookie_name(config), value,
+          sizeof(value)) &&
+      vectis_auth_browser_session_parse_cookie(value, session_id, signature)) {
+    status = vectis_auth_browser_session_signing_secret(
+        app, config, 0, secret, sizeof(secret), &found, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    if (found &&
+        vectis_auth_browser_session_sign(secret, session_id, expected_signature,
+                                         sizeof(expected_signature)) &&
+        CRYPTO_memcmp(signature, expected_signature, sizeof(signature) - 1u) ==
+            0) {
+      status = vectis_auth_browser_session_load_record(app, config, session_id,
+                                                       1, &record, error);
+      OPENSSL_cleanse(secret, sizeof(secret));
+      if (status != VECTIS_OK) {
+        return status;
+      }
+    } else {
+      OPENSSL_cleanse(secret, sizeof(secret));
+    }
+  }
+  return vectis_auth_browser_session_clear_cookie(config, response, error);
 }
 
 static vectis_status vectis_auth_hash_password(
@@ -6342,8 +7236,10 @@ static vectis_status vectis_auth_native_provider_authenticate(
     vectis_error *error) {
   const vectis_auth_native_provider_config *config;
   const char *authorization;
+  const char *cookie;
   const char *purpose;
   vectis_auth_result result;
+  vectis_auth_browser_session_result session;
   lonejson *runtime;
   vectis_status status;
   unsigned allowed_modes;
@@ -6358,9 +7254,27 @@ static vectis_status vectis_auth_native_provider_authenticate(
   }
   vectis_auth_provider_response_init(response);
   authorization = request != NULL ? request->authorization : NULL;
+  cookie = request != NULL ? request->cookie : NULL;
   if ((authorization == NULL || authorization[0] == '\0') && request != NULL &&
       request->request != NULL) {
     authorization = vectis_request_header(request->request, "authorization");
+  }
+  if ((cookie == NULL || cookie[0] == '\0') && request != NULL &&
+      request->request != NULL) {
+    cookie = vectis_request_header(request->request, "cookie");
+  }
+  if (vectis_auth_browser_session_enabled(&config->browser_session)) {
+    vectis_auth_browser_session_result_init(&session);
+    status = vectis_auth_browser_session_verify(
+        config->app, &config->browser_session, cookie, 0u, &session, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    if (session.authenticated) {
+      return vectis_auth_provider_response_set_authenticated(
+          response, session.principal, session.principal, "{\"session\":true}",
+          VECTIS_AUTH_MODE_BROWSER_SESSION, error);
+    }
   }
   allowed_modes =
       request != NULL && request->allowed_auth_modes != VECTIS_AUTH_MODE_DEFAULT
@@ -6434,6 +7348,16 @@ vectis_status vectis_auth_provider_from_native_store(
       config->store.credentials_path[0] == '\0') {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "native auth provider store path is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_auth_browser_session_config_validate(&config->browser_session,
+                                                  error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (vectis_auth_browser_session_enabled(&config->browser_session) &&
+      config->app == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "native browser session auth requires an app");
     return VECTIS_ERR_INVALID;
   }
   provider->authenticate = vectis_auth_native_provider_authenticate;
