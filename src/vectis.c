@@ -16357,6 +16357,7 @@ static int vectis_auth_browser_navigation_request(vectis_request *request) {
   const char *accept;
   const char *mode;
   const char *destination;
+  const char *site;
 
   if (request == NULL) {
     return 0;
@@ -16364,8 +16365,10 @@ static int vectis_auth_browser_navigation_request(vectis_request *request) {
   accept = vectis_request_header(request, "accept");
   mode = vectis_request_header(request, "sec-fetch-mode");
   destination = vectis_request_header(request, "sec-fetch-dest");
+  site = vectis_request_header(request, "sec-fetch-site");
   if (accept == NULL || strcasestr(accept, "text/html") == NULL ||
-      mode == NULL || strcasecmp(mode, "navigate") != 0) {
+      mode == NULL || strcasecmp(mode, "navigate") != 0 || site == NULL ||
+      strcasecmp(site, "same-origin") != 0) {
     return 0;
   }
   return destination == NULL || destination[0] == '\0' ||

@@ -283,10 +283,12 @@ or Lockd owner, so it remains M2M-only even when its provider table also
 declares `browser_session` for later app binding.
 
 Vectis issues a cookie only after a successful native login/factor completion
-when the request looks like a browser navigation: `Accept` contains
-`text/html`, `Sec-Fetch-Mode` is `navigate`, and `Sec-Fetch-Dest`, when sent,
-is `document`. Missing or mismatched signals are treated as M2M and receive no
-cookie. OAuth/OIDC and other M2M authentications do not issue this cookie.
+when the request looks like a same-origin browser navigation: `Accept` contains
+`text/html`, `Sec-Fetch-Mode` is `navigate`, `Sec-Fetch-Site` is
+`same-origin`, and `Sec-Fetch-Dest`, when sent, is `document`. Missing or
+mismatched signals, including cross-site form submissions, are treated as M2M
+and receive no cookie. OAuth/OIDC and other M2M authentications do not issue
+this cookie.
 
 Issued and cleared cookies are `HttpOnly`, `Secure`, and `SameSite=Strict`.
 Deploy browser sessions behind HTTPS; normal browsers do not send a `Secure`

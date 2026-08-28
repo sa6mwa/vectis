@@ -136,6 +136,13 @@ typedef struct runtime_blackhole_server {
   pid_t child_pid;
 } runtime_blackhole_server;
 
+typedef struct runtime_browser_session_key_counter {
+  const char *prefix;
+  char key[512];
+  size_t key_size;
+  size_t count;
+} runtime_browser_session_key_counter;
+
 static const char *runtime_test_program;
 
 static long runtime_monotonic_millis(void) {
@@ -166,6 +173,78 @@ static int runtime_bytes_contains(vectis_bytes bytes, const char *needle) {
     }
   }
   return 0;
+}
+
+static int runtime_browser_session_key_begin(void *userdata, lc_error *error) {
+  runtime_browser_session_key_counter *counter;
+
+  (void)error;
+  counter = (runtime_browser_session_key_counter *)userdata;
+  assert(counter != NULL);
+  counter->key_size = 0u;
+  return 1;
+}
+
+static int runtime_browser_session_key_chunk(void *userdata, const char *bytes,
+                                             size_t size, lc_error *error) {
+  runtime_browser_session_key_counter *counter;
+
+  (void)error;
+  counter = (runtime_browser_session_key_counter *)userdata;
+  assert(counter != NULL);
+  assert(bytes != NULL);
+  assert(size < sizeof(counter->key) - counter->key_size);
+  memcpy(counter->key + counter->key_size, bytes, size);
+  counter->key_size += size;
+  return 1;
+}
+
+static int runtime_browser_session_key_end(void *userdata, lc_error *error) {
+  runtime_browser_session_key_counter *counter;
+
+  (void)error;
+  counter = (runtime_browser_session_key_counter *)userdata;
+  assert(counter != NULL);
+  counter->key[counter->key_size] = '\0';
+  if (strncmp(counter->key, counter->prefix, strlen(counter->prefix)) == 0) {
+    counter->count++;
+  }
+  return 1;
+}
+
+static size_t runtime_browser_session_record_count(vectis_app *app,
+                                                   const char *state_key) {
+  runtime_browser_session_key_counter counter;
+  lc_query_key_handler handler;
+  lc_query_req request;
+  lc_query_res response;
+  lc_error error;
+  lc_client *client;
+  char prefix[512];
+  int written;
+
+  assert(app != NULL);
+  assert(state_key != NULL);
+  written = snprintf(prefix, sizeof(prefix), "%s/", state_key);
+  assert(written > 0 && (size_t)written < sizeof(prefix));
+  memset(&counter, 0, sizeof(counter));
+  counter.prefix = prefix;
+  memset(&handler, 0, sizeof(handler));
+  handler.begin = runtime_browser_session_key_begin;
+  handler.chunk = runtime_browser_session_key_chunk;
+  handler.end = runtime_browser_session_key_end;
+  lc_query_req_init(&request);
+  request.selector_json = "{\"exists\":\"/cleanup_at\"}";
+  request.engine = "scan";
+  memset(&response, 0, sizeof(response));
+  lc_error_init(&error);
+  client = vectis_lockd_client(app);
+  assert(client != NULL);
+  assert(lc_query_keys(client, &request, &handler, &counter, &response,
+                       &error) == LC_OK);
+  lc_query_res_cleanup(&response);
+  lc_error_cleanup(&error);
+  return counter.count;
 }
 
 static int runtime_file_contains(const char *path, const char *needle) {
@@ -3576,9 +3655,12 @@ static void assert_kore_smoke(void) {
   const char *browser_non_document_headers[] = {"Accept: text/html",
                                                 "Sec-Fetch-Mode: navigate",
                                                 "Sec-Fetch-Dest: iframe"};
-  const char *browser_navigation_headers[] = {"Accept: text/html",
-                                              "Sec-Fetch-Mode: navigate",
-                                              "Sec-Fetch-Dest: document"};
+  const char *browser_cross_site_headers[] = {
+      "Accept: text/html", "Sec-Fetch-Mode: navigate",
+      "Sec-Fetch-Dest: document", "Sec-Fetch-Site: cross-site"};
+  const char *browser_navigation_headers[] = {
+      "Accept: text/html", "Sec-Fetch-Mode: navigate",
+      "Sec-Fetch-Dest: document", "Sec-Fetch-Site: same-origin"};
   const char *browser_cookie_headers[1];
   const char *browser_tampered_cookie_headers[1];
   char browser_session_pouch_dir[] =
@@ -3593,6 +3675,7 @@ static void assert_kore_smoke(void) {
   vectis_app *second_app;
   vectis_app *browser_session_app;
   vectis_embedded_fs *embedded_fs;
+  vectis_response *browser_expired_response;
   vectis_auth_browser_session_result browser_session_result;
   FILE *fp;
   char *default_spooled_body;
@@ -3691,6 +3774,7 @@ static void assert_kore_smoke(void) {
   memset(&body_spool_expectation, 0, sizeof(body_spool_expectation));
   embedded_fs = NULL;
   browser_session_app = NULL;
+  browser_expired_response = NULL;
   vectis_auth_user_enrollment_init(&auth_enrollment);
   vectis_auth_provider_init(&native_auth_provider);
   reserved_fd = reserve_loopback_port(&port);
@@ -4689,7 +4773,18 @@ static void assert_kore_smoke(void) {
   assert(native_webdav_response.status_code == 201L);
   vectis_http_response_cleanup(&native_webdav_response);
 
-  /* Browser sessions are opt-in and require the complete navigation shape. */
+  /* Browser sessions are opt-in, same-origin, and prune expired state. */
+  browser_expired_response = vectis_internal_response_new(&error);
+  assert(browser_expired_response != NULL);
+  status =
+      vectis_auth_browser_session_issue(app, &browser_session, "runtime-user",
+                                        1u, browser_expired_response, &error);
+  assert(status == VECTIS_OK);
+  vectis_internal_response_free(browser_expired_response);
+  browser_expired_response = NULL;
+  assert(runtime_browser_session_record_count(app, "runtime.browser-session") ==
+         1u);
+
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
   request.url =
@@ -4720,12 +4815,28 @@ static void assert_kore_smoke(void) {
   assert(vectis_http_response_header(&auth_key_response, "set-cookie") == NULL);
   vectis_http_response_cleanup(&auth_key_response);
 
+  /* A cross-site login can issue M2M credentials but never a session cookie. */
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/auth-browser/login");
+  request.headers = browser_cross_site_headers;
+  request.header_count = 4u;
+  request.content_type = "application/x-www-form-urlencoded";
+  request.body = "username=runtime-user&password=runtime-password";
+  request.body_size = strlen("username=runtime-user&password=runtime-password");
+  status = vectis_http_execute(&http, &request, &auth_key_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_key_response.status_code == 200L);
+  assert(vectis_http_response_header(&auth_key_response, "set-cookie") == NULL);
+  vectis_http_response_cleanup(&auth_key_response);
+
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
   request.url =
       format_loopback_http_url(url, sizeof(url), port, "/auth-browser/login");
   request.headers = browser_navigation_headers;
-  request.header_count = 3u;
+  request.header_count = 4u;
   request.content_type = "application/x-www-form-urlencoded";
   request.body = "username=runtime-user&password=runtime-password";
   request.body_size = strlen("username=runtime-user&password=runtime-password");
@@ -4755,6 +4866,8 @@ static void assert_kore_smoke(void) {
       browser_tampered_cookie_header[written - 1] == '0' ? '1' : '0';
   browser_tampered_cookie_headers[0] = browser_tampered_cookie_header;
   vectis_http_response_cleanup(&auth_key_response);
+  assert(runtime_browser_session_record_count(app, "runtime.browser-session") ==
+         1u);
 
   /* A new app instance reads the signing key and session from Lockd. */
   browser_session_app = vectis_app_new(&config, &error);
@@ -4816,6 +4929,8 @@ static void assert_kore_smoke(void) {
              "runtime_browser_session=; Path=/; Max-Age=0; HttpOnly; "
              "Secure; SameSite=Strict") == 0);
   vectis_http_response_cleanup(&auth_logout_response);
+  assert(runtime_browser_session_record_count(app, "runtime.browser-session") ==
+         0u);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;

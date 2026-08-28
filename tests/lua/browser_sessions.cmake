@@ -106,6 +106,7 @@ local browser_login = request("/auth/login", "POST", form, {
   ["Accept"] = "text/html",
   ["Sec-Fetch-Mode"] = "navigate",
   ["Sec-Fetch-Dest"] = "document",
+  ["Sec-Fetch-Site"] = "same-origin",
 })
 assert(browser_login.ok == true, browser_login.error)
 assert(browser_login.status == 200)
@@ -136,7 +137,9 @@ local logout = request("/auth/logout", "POST", "", {
   ["Cookie"] = cookie,
 })
 assert(logout.ok == true, logout.error)
-assert(logout.status == 200)
+assert(logout.status == 200,
+       "logout status=" .. tostring(logout.status) .. "\n" ..
+           (logout.body or "") .. "\n" .. (logout.headers or ""))
 assert(logout.headers:find("lua_browser_session=; Path=/; Max%-Age=0", 1))
 
 local revoked_response = request("/callback-protected", "GET", nil, {
