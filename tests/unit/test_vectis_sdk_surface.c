@@ -10,6 +10,7 @@
 #include <lc/lc.h>
 #include <lonejson.h>
 #include <vectis/vectis.h>
+#include <vectis/webdav.h>
 
 typedef struct sample_doc {
   char id[32];
@@ -1466,6 +1467,7 @@ static void assert_json_route_surface(void) {
   vectis_route_config raw_route;
   vectis_static_file_config static_file;
   vectis_static_directory_config static_dir;
+  vectis_webdav_mount_config webdav_mount;
   vectis_body_policy policy;
   vectis_error error;
   vectis_status status;
@@ -1593,6 +1595,14 @@ static void assert_json_route_surface(void) {
   static_dir.root_dir = static_dir_path;
   static_dir.content_type = "application/javascript";
   status = app->static_directory(app, &static_dir, &error);
+  assert(status == VECTIS_OK);
+  vectis_webdav_mount_config_init(&webdav_mount);
+  webdav_mount.path_prefix = "/webdav";
+  webdav_mount.storage.cache_dir = static_dir_path;
+  webdav_mount.storage.site_id = "sdk-surface";
+  webdav_mount.storage.root_dir = static_dir_path;
+  webdav_mount.auth_required = 0;
+  status = app->webdav(app, &webdav_mount, &error);
   assert(status == VECTIS_OK);
   status = vectis_internal_route_body_policy(app, VECTIS_HTTP_GET, "/assets/",
                                              &policy, &error);
@@ -1747,6 +1757,47 @@ static void assert_json_route_surface(void) {
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
+  fp = fopen(static_dir_outside_path, "wb");
+  assert(fp != NULL);
+  assert(fwrite("outside-webdav-root", 1u, 19u, fp) == 19u);
+  assert(fclose(fp) == 0);
+  status = vectis_internal_dispatch_route(
+      app, VECTIS_HTTP_GET, "/webdav/app.js", request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 200);
+  assert(vectis_internal_response_file_path(response) == NULL);
+  assert(strcmp(vectis_internal_response_content_type(response),
+                "application/octet-stream") == 0);
+  assert(remove(static_dir_file_path) == 0);
+  assert(symlink(static_dir_outside_path, static_dir_file_path) == 0);
+  source = vectis_internal_response_take_stream_source(response);
+  assert(source != NULL);
+  assert_source_equals(source, "static-dir", 10u);
+  lc_source_close(source);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+  assert(remove(static_dir_file_path) == 0);
+  fp = fopen(static_dir_file_path, "wb");
+  assert(fp != NULL);
+  assert(fwrite("static-dir", 1u, 10u, fp) == 10u);
+  assert(fclose(fp) == 0);
+
+  status = vectis_internal_dispatch_route(
+      app, VECTIS_HTTP_HEAD, "/webdav/app.js", request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 200);
+  assert(strcmp(vectis_internal_response_content_type(response),
+                "application/octet-stream") == 0);
+  assert(response_has_header(response, "content-length", "10"));
+  body = vectis_internal_response_body(response);
+  assert(body.data == NULL);
+  assert(body.size == 0u);
+  source = vectis_internal_response_take_stream_source(response);
+  assert(source != NULL);
+  lc_source_close(source);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+
   status = vectis_internal_dispatch_route(
       app, VECTIS_HTTP_HEAD, "/assets/app.js", request, response, &error);
   assert(status == VECTIS_OK);
@@ -1877,7 +1928,7 @@ static void assert_json_route_surface(void) {
   assert(route.body.mode == VECTIS_BODY_JSON);
   status = app->prefixed_json_route(app, "/api/v1", &route, &error);
   assert(status == VECTIS_OK);
-  assert(app->route_count(app) == 9u);
+  assert(app->route_count(app) == 10u);
   status = vectis_internal_route_body_policy(
       app, VECTIS_HTTP_POST, "/api/v1/typed/abc", &policy, &error);
   assert(status == VECTIS_OK);
@@ -1910,7 +1961,7 @@ static void assert_json_route_surface(void) {
                                         sample_json_typed_handler, NULL);
   status = app->prefixed_json_typed_route(app, "/api/v1", &typed_route, &error);
   assert(status == VECTIS_OK);
-  assert(app->route_count(app) == 10u);
+  assert(app->route_count(app) == 11u);
   status = vectis_internal_request_set_body(request, json, sizeof(json) - 1u,
                                             &error);
   assert(status == VECTIS_OK);

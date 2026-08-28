@@ -243,6 +243,8 @@ typedef struct vectis_lua_spooled_source {
   int read_ref;
   int reset_ref;
   int close_ref;
+  int pending_ref;
+  size_t pending_offset;
   int read_started;
 } vectis_lua_spooled_source;
 
@@ -9702,10 +9704,23 @@ static void vectis_lua_spooled_source_set_error(lc_error *error, int code,
   }
 }
 
+static void
+vectis_lua_spooled_source_clear_pending(vectis_lua_spooled_source *source) {
+  if (source == NULL) {
+    return;
+  }
+  if (source->lua != NULL && source->pending_ref != LUA_NOREF) {
+    luaL_unref(source->lua, LUA_REGISTRYINDEX, source->pending_ref);
+  }
+  source->pending_ref = LUA_NOREF;
+  source->pending_offset = 0u;
+}
+
 static void vectis_lua_spooled_source_free(vectis_lua_spooled_source *source) {
   if (source == NULL) {
     return;
   }
+  vectis_lua_spooled_source_clear_pending(source);
   if (source->lua != NULL && source->close_ref != LUA_NOREF) {
     int top;
     top = lua_gettop(source->lua);
@@ -9733,11 +9748,13 @@ static size_t vectis_lua_spooled_source_read(void *userdata, void *buffer,
   const char *chunk;
   size_t chunk_size;
   size_t copied;
+  size_t remaining;
   const char *message;
   int top;
 
   source = (vectis_lua_spooled_source *)userdata;
-  if (source == NULL || source->lua == NULL || source->read_ref == LUA_NOREF) {
+  if (source == NULL || source->lua == NULL || source->read_ref == LUA_NOREF ||
+      buffer == NULL || count == 0u) {
     vectis_lua_spooled_source_set_error(
         error, LC_ERR_INVALID,
         source != NULL && source->name != NULL &&
@@ -9749,6 +9766,35 @@ static size_t vectis_lua_spooled_source_read(void *userdata, void *buffer,
   source->read_started = 1;
   lua = source->lua;
   top = lua_gettop(lua);
+  if (source->pending_ref != LUA_NOREF) {
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, source->pending_ref);
+    if (!lua_isstring(lua, -1)) {
+      vectis_lua_spooled_source_clear_pending(source);
+      vectis_lua_spooled_source_set_error(
+          error, LC_ERR_INVALID,
+          "Lua response source has an invalid pending string chunk");
+      lua_settop(lua, top);
+      return 0u;
+    }
+    chunk = lua_tolstring(lua, -1, &chunk_size);
+    if (source->pending_offset >= chunk_size) {
+      vectis_lua_spooled_source_clear_pending(source);
+      vectis_lua_spooled_source_set_error(
+          error, LC_ERR_INVALID,
+          "Lua response source has an invalid pending chunk offset");
+      lua_settop(lua, top);
+      return 0u;
+    }
+    remaining = chunk_size - source->pending_offset;
+    copied = remaining < count ? remaining : count;
+    memcpy(buffer, chunk + source->pending_offset, copied);
+    source->pending_offset += copied;
+    if (source->pending_offset == chunk_size) {
+      vectis_lua_spooled_source_clear_pending(source);
+    }
+    lua_settop(lua, top);
+    return copied;
+  }
   lua_rawgeti(lua, LUA_REGISTRYINDEX, source->read_ref);
   lua_pushinteger(lua, (lua_Integer)count);
   if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
@@ -9776,7 +9822,12 @@ static size_t vectis_lua_spooled_source_read(void *userdata, void *buffer,
   if (copied > 0u) {
     memcpy(buffer, chunk, copied);
   }
-  lua_settop(lua, top);
+  if (copied < chunk_size) {
+    source->pending_offset = copied;
+    source->pending_ref = luaL_ref(lua, LUA_REGISTRYINDEX);
+  } else {
+    lua_settop(lua, top);
+  }
   return copied;
 }
 
@@ -9820,6 +9871,7 @@ static int vectis_lua_spooled_source_reset(void *userdata, lc_error *error) {
                                         "Lua response source reset failed");
     return LC_ERR_INVALID;
   }
+  vectis_lua_spooled_source_clear_pending(source);
   source->read_started = 0;
   return LC_OK;
 }
@@ -9912,6 +9964,7 @@ static vectis_status vectis_lua_response_callback_source(
   state->read_ref = LUA_NOREF;
   state->reset_ref = LUA_NOREF;
   state->close_ref = LUA_NOREF;
+  state->pending_ref = LUA_NOREF;
   status = vectis_lua_spooled_source_ref(lua, source_index, source_name, "read",
                                          1, &state->read_ref, error);
   if (status == VECTIS_OK) {

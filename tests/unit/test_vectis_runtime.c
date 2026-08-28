@@ -4584,6 +4584,24 @@ static void assert_kore_smoke(void) {
   vectis_http_response_cleanup(&webdav_get_response);
 
   vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_HEAD;
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/dav/runtime.txt");
+  request.headers = webdav_headers;
+  request.header_count = 1u;
+  status = vectis_http_execute(&http, &request, &webdav_get_response, &error);
+  assert(status == VECTIS_OK);
+  assert(webdav_get_response.status_code == 200L);
+  assert(webdav_get_response.content_type != NULL);
+  assert(strcmp(webdav_get_response.content_type, "application/octet-stream") ==
+         0);
+  assert(webdav_get_response.body_size == 0u);
+  assert(strcmp(vectis_http_response_header(&webdav_get_response,
+                                            "content-length"),
+                "11") == 0);
+  vectis_http_response_cleanup(&webdav_get_response);
+
+  vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_PROPFIND;
   request.url = format_loopback_http_url(url, sizeof(url), port, "/dav");
   request.headers = webdav_headers;

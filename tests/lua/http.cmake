@@ -421,6 +421,28 @@ assert(api_server:route({
     }
   end,
 }) == true)
+local oversized_response_chunk = string.rep("0123456789abcdef", 1024)
+assert(api_server:route({
+  path = "/dynamic-spooled-oversized",
+  handler = function()
+    local sent = false
+    return {
+      status = 200,
+      content_type = "text/plain",
+      spooled_source = {
+        read = function(max_bytes)
+          assert(type(max_bytes) == "number")
+          assert(max_bytes > 0)
+          if sent then
+            return nil
+          end
+          sent = true
+          return oversized_response_chunk
+        end,
+      },
+    }
+  end,
+}) == true)
 assert(api_server:route({
   path = "/dynamic-spooled-single-pass",
   handler = function()
@@ -476,6 +498,27 @@ assert(api_server:route({
         end,
         close = function()
           closed = true
+        end,
+      },
+    }
+  end,
+}) == true)
+assert(api_server:route({
+  path = "/dynamic-stream-oversized",
+  handler = function()
+    local sent = false
+    return {
+      status = 200,
+      content_type = "text/plain",
+      stream_source = {
+        read = function(max_bytes)
+          assert(type(max_bytes) == "number")
+          assert(max_bytes > 0)
+          if sent then
+            return nil
+          end
+          sent = true
+          return oversized_response_chunk
         end,
       },
     }
@@ -828,6 +871,16 @@ assert(dynamic_spooled.ok == true,
 assert(dynamic_spooled.status == 203)
 assert(dynamic_spooled.body == "spooled source response\n")
 assert(dynamic_spooled.headers:lower():find("x-vectis-spooled: callback", 1, true))
+local dynamic_spooled_oversized = vectis.http.get(
+    "http://127.0.0.1:28484/dynamic-spooled-oversized", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_spooled_oversized.ok == true,
+       dynamic_spooled_oversized.error and dynamic_spooled_oversized.error.message)
+assert(dynamic_spooled_oversized.status == 200)
+assert(dynamic_spooled_oversized.body == oversized_response_chunk)
 local dynamic_spooled_closed = vectis.http.get(
     "http://127.0.0.1:28484/files/spooled-close.txt", {
   timeout_ms = 2000,
@@ -867,6 +920,16 @@ assert(dynamic_stream.status == 202)
 assert(dynamic_stream.body == "live stream response\n")
 assert(dynamic_stream.headers:lower():find("x-vectis-stream: callback", 1, true))
 assert(dynamic_stream.headers:lower():find("transfer-encoding: chunked", 1, true))
+local dynamic_stream_oversized = vectis.http.get(
+    "http://127.0.0.1:28484/dynamic-stream-oversized", {
+  timeout_ms = 2000,
+  connect_timeout_ms = 1000,
+  no_signal = true,
+})
+assert(dynamic_stream_oversized.ok == true,
+       dynamic_stream_oversized.error and dynamic_stream_oversized.error.message)
+assert(dynamic_stream_oversized.status == 200)
+assert(dynamic_stream_oversized.body == oversized_response_chunk)
 local dynamic_sse = vectis.http.get(
     "http://127.0.0.1:28484/dynamic-sse", {
   timeout_ms = 2000,

@@ -292,7 +292,9 @@ Vectis reads chunks from Lua into a temporary response file, then serves that
 file through Kore. Use it when the application should avoid constructing one
 large Lua string but can accept file-backed materialization. The source table
 requires `read(max_bytes)` and accepts optional `reset()` and `close()`
-callbacks. `read` returns a string chunk or `nil`/`false` at EOF. `reset` is
+callbacks. `read` returns a string chunk or `nil`/`false` at EOF; a chunk may
+exceed `max_bytes`, and Vectis drains its remainder before invoking `read`
+again. `reset` is
 called before the first read when present; without it, the source is valid for
 the initial response pass only. `close` is called when C closes the callback
 source.
@@ -300,7 +302,9 @@ source.
 `stream_source` is a live response source, not file-backed materialization. The
 source table requires `read(max_bytes)` and accepts optional `reset()` and
 `close()`. `reset` is called once before streaming starts when present. `read`
-returns a string chunk or `nil`/`false` at EOF. Vectis sends the response with
+returns a string chunk or `nil`/`false` at EOF; a chunk may exceed `max_bytes`,
+and Vectis drains its remainder before invoking `read` again. Vectis sends the
+response with
 chunked transfer and reads the next Lua chunk only after Kore finishes sending
 the previous chunk. It does not write a temporary response file and does not
 concatenate the full response body.

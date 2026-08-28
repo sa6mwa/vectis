@@ -14732,6 +14732,46 @@ typedef struct vectis_webdav_propfind_state {
   vectis_status status;
 } vectis_webdav_propfind_state;
 
+static int vectis_webdav_response_file_fd(const vectis_webdav_route_data *data,
+                                          const char *resource,
+                                          const vectis_webdav_entry *entry) {
+  struct stat st;
+  int fd;
+
+  if (data == NULL || resource == NULL || resource[0] != '/' ||
+      resource[1] == '\0' || entry == NULL) {
+    errno = EINVAL;
+    return -1;
+  }
+  if (data->storage.root_dir != NULL) {
+    return vectis_static_open_file_fd(data->storage.root_dir, resource + 1u);
+  }
+  fd = open(entry->storage_path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  if (fd < 0) {
+    return -1;
+  }
+  if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+    vectis_static_fd_close(&fd);
+    errno = ENOENT;
+    return -1;
+  }
+  return fd;
+}
+
+static vectis_status vectis_webdav_file_response(
+    const vectis_webdav_route_data *data, vectis_request *request,
+    vectis_response *response, const char *resource,
+    const vectis_webdav_entry *entry, vectis_error *error) {
+  int fd;
+
+  fd = vectis_webdav_response_file_fd(data, resource, entry);
+  if (fd < 0) {
+    return vectis_response_status(response, 404, error);
+  }
+  return vectis_static_response_fd(
+      request, response, "application/octet-stream", resource + 1u, fd, error);
+}
+
 void vectis_webdav_mount_config_init(vectis_webdav_mount_config *config) {
   if (config == NULL) {
     return;
@@ -15605,11 +15645,8 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
         VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_INVALID;
     }
-    if (method == VECTIS_HTTP_HEAD) {
-      return vectis_response_status(response, 200, error);
-    }
-    return vectis_response_file(response, 200, "application/octet-stream",
-                                entry.storage_path, error);
+    return vectis_webdav_file_response(data, request, response, resource,
+                                       &entry, error);
   }
   if (method == VECTIS_HTTP_PUT) {
     memset(&body, 0, sizeof(body));
