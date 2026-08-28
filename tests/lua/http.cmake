@@ -1297,6 +1297,18 @@ assert(static_asset.status == 200)
 assert(static_asset.body == "static directory asset\n")
 assert(static_asset.headers:lower():find("content-type: text/plain", 1, true),
        static_asset.headers)
+local static_asset_head = vectis.http.head(
+    "http://127.0.0.1:28484/files/assets/app.txt", {
+      timeout_ms = 2000,
+      connect_timeout_ms = 1000,
+      no_signal = true,
+    })
+assert(static_asset_head.ok == true,
+       static_asset_head.error and static_asset_head.error.message)
+assert(static_asset_head.status == 200)
+assert(static_asset_head.body == "")
+assert(static_asset_head.headers:lower():find("content-length: 23", 1, true),
+       static_asset_head.headers)
 local inferred_static_index = vectis.http.request({
   url = "http://127.0.0.1:28484/site",
   protocols = "http",

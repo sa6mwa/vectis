@@ -13932,7 +13932,8 @@ static void vectis_static_fd_source_close(void *context) {
   }
 }
 
-static vectis_status vectis_static_response_fd(vectis_response *response,
+static vectis_status vectis_static_response_fd(vectis_request *request,
+                                               vectis_response *response,
                                                const char *content_type,
                                                const char *file_name, int fd,
                                                vectis_error *error) {
@@ -13963,6 +13964,15 @@ static vectis_status vectis_static_response_fd(vectis_response *response,
     return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
   lc_error_cleanup(&lcerr);
+  if (vectis_request_method(request) == VECTIS_HTTP_HEAD) {
+    status = vectis_response_source(
+        response, 200,
+        content_type != NULL ? content_type
+                             : vectis_static_inferred_content_type(file_name),
+        source, error);
+    lc_source_close(source);
+    return status;
+  }
   status = vectis_response_stream_source(
       response, 200,
       content_type != NULL ? content_type
@@ -14016,9 +14026,8 @@ static vectis_status vectis_static_directory_dispatch(vectis_app *app,
   if (file_fd < 0) {
     return vectis_response_status(response, 404, error);
   }
-  (void)request;
-  status = vectis_static_response_fd(response, data->content_type, relative,
-                                     file_fd, error);
+  status = vectis_static_response_fd(request, response, data->content_type,
+                                     relative, file_fd, error);
   return status;
 }
 

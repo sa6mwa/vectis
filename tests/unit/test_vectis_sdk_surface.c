@@ -1641,6 +1641,18 @@ static void assert_json_route_surface(void) {
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
+  status = vectis_internal_dispatch_route(
+      app, VECTIS_HTTP_HEAD, "/assets/app.js", request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 200);
+  assert(vectis_internal_response_file_path(response) != NULL);
+  assert(vectis_internal_response_file_temporary(response));
+  body = vectis_internal_response_body(response);
+  assert(body.data == NULL);
+  assert(body.size == 0u);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+
   status = vectis_internal_dispatch_route(app, VECTIS_HTTP_GET, "/assets/",
                                           request, response, &error);
   assert(status == VECTIS_OK);
