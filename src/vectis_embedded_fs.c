@@ -856,149 +856,329 @@ static vectis_status vectis_embedded_mkdir_p(const char *path,
   return status;
 }
 
-static vectis_status vectis_embedded_parent_dirs(const char *path,
-                                                 vectis_error *error) {
-  char *copy;
-  char *slash;
-  vectis_status status;
+static void vectis_embedded_fd_close(int *fd) {
+  if (fd != NULL && *fd >= 0) {
+    (void)close(*fd);
+    *fd = -1;
+  }
+}
 
-  copy = vectis_embedded_strdup(path);
-  if (copy == NULL) {
+static vectis_status vectis_embedded_open_root_fd(const char *path,
+                                                  int create_missing,
+                                                  int *out_fd,
+                                                  vectis_error *error) {
+  struct stat st;
+  vectis_status status;
+  int fd;
+
+  if (path == NULL || path[0] == '\0' || out_fd == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "embedded asset output directory is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out_fd = -1;
+  if (create_missing) {
+    status = vectis_embedded_mkdir_p(path, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
+  fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (fd < 0) {
+    if (errno == ENOENT) {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                 "embedded asset output directory is missing: "
+                                 "%s",
+                                 path);
+      return VECTIS_ERR_CONFLICT;
+    }
+    if (errno == ELOOP || errno == ENOTDIR) {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                 "embedded asset output directory is unsafe: "
+                                 "%s",
+                                 path);
+      return VECTIS_ERR_CONFLICT;
+    }
+    vectis_embedded_set_errorf(
+        error, VECTIS_ERR_INVALID,
+        "failed to open embedded asset output directory: "
+        "%s",
+        path);
+    return VECTIS_ERR_INVALID;
+  }
+  if (fstat(fd, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    vectis_embedded_fd_close(&fd);
+    vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                               "embedded asset output directory is unsafe: %s",
+                               path);
+    return VECTIS_ERR_CONFLICT;
+  }
+  *out_fd = fd;
+  return VECTIS_OK;
+}
+
+static int vectis_embedded_open_child_dir_at(int parent_fd, const char *name) {
+  struct stat st;
+  int fd;
+
+  fd = openat(parent_fd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (fd < 0) {
+    return -1;
+  }
+  if (fstat(fd, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    vectis_embedded_fd_close(&fd);
+    errno = ENOTDIR;
+    return -1;
+  }
+  return fd;
+}
+
+static vectis_status vectis_embedded_open_parent_fd(int root_fd,
+                                                    const char *asset_path,
+                                                    int create_missing,
+                                                    int *out_parent_fd,
+                                                    vectis_error *error) {
+  char *parent_path;
+  char *segment;
+  char *next_segment;
+  int current_fd;
+  int next_fd;
+  int saved_errno;
+
+  if (root_fd < 0 || asset_path == NULL || asset_path[0] != '/' ||
+      asset_path[1] == '\0' || out_parent_fd == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "embedded asset parent path is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out_parent_fd = -1;
+  parent_path = vectis_embedded_strdup(asset_path + 1u);
+  if (parent_path == NULL) {
     vectis_set_error(error, VECTIS_ERR_NOMEM,
                      "failed to allocate embedded asset parent path");
     return VECTIS_ERR_NOMEM;
   }
-  slash = strrchr(copy, '/');
-  if (slash == NULL || slash == copy) {
-    free(copy);
+  next_segment = strrchr(parent_path, '/');
+  if (next_segment == NULL) {
+    free(parent_path);
+    current_fd = dup(root_fd);
+    if (current_fd < 0) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "failed to open embedded asset output directory");
+      return VECTIS_ERR_INVALID;
+    }
+    *out_parent_fd = current_fd;
     return VECTIS_OK;
   }
-  *slash = '\0';
-  status = vectis_embedded_mkdir_p(copy, error);
-  free(copy);
-  return status;
-}
-
-static char *vectis_embedded_output_path(const char *root,
-                                         const char *asset_path) {
-  size_t root_size;
-  size_t rel_size;
-  size_t separator;
-  char *out;
-
-  root_size = strlen(root);
-  rel_size = strlen(asset_path + 1);
-  separator = root_size > 0u && root[root_size - 1u] == '/' ? 0u : 1u;
-  out = (char *)malloc(root_size + separator + rel_size + 1u);
-  if (out == NULL) {
-    return NULL;
+  *next_segment = '\0';
+  current_fd = dup(root_fd);
+  if (current_fd < 0) {
+    free(parent_path);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "failed to open embedded asset output directory");
+    return VECTIS_ERR_INVALID;
   }
-  memcpy(out, root, root_size);
-  if (separator) {
-    out[root_size] = '/';
+  segment = parent_path;
+  for (;;) {
+    next_segment = strchr(segment, '/');
+    if (next_segment != NULL) {
+      *next_segment = '\0';
+    }
+    next_fd = vectis_embedded_open_child_dir_at(current_fd, segment);
+    saved_errno = errno;
+    if (next_fd < 0 && create_missing && saved_errno == ENOENT) {
+      if (mkdirat(current_fd, segment, 0755) != 0 && errno != EEXIST) {
+        vectis_embedded_fd_close(&current_fd);
+        free(parent_path);
+        vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                                   "failed to create embedded asset parent "
+                                   "directory: %s",
+                                   asset_path);
+        return VECTIS_ERR_INVALID;
+      }
+      next_fd = vectis_embedded_open_child_dir_at(current_fd, segment);
+      saved_errno = errno;
+    }
+    if (next_fd < 0) {
+      vectis_embedded_fd_close(&current_fd);
+      free(parent_path);
+      if (saved_errno == ENOENT) {
+        vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                   "embedded asset parent directory is "
+                                   "missing: %s",
+                                   asset_path);
+        return VECTIS_ERR_CONFLICT;
+      }
+      if (saved_errno == ELOOP || saved_errno == ENOTDIR) {
+        vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                   "embedded asset parent directory is "
+                                   "unsafe: %s",
+                                   asset_path);
+        return VECTIS_ERR_CONFLICT;
+      }
+      vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                                 "failed to open embedded asset parent "
+                                 "directory: %s",
+                                 asset_path);
+      return VECTIS_ERR_INVALID;
+    }
+    vectis_embedded_fd_close(&current_fd);
+    current_fd = next_fd;
+    if (next_segment == NULL) {
+      break;
+    }
+    segment = next_segment + 1u;
   }
-  memcpy(out + root_size + separator, asset_path + 1, rel_size + 1u);
-  return out;
+  free(parent_path);
+  *out_parent_fd = current_fd;
+  return VECTIS_OK;
 }
 
 static vectis_status
-vectis_embedded_write_file(const char *path,
-                           const vectis_embedded_fs_impl_entry *entry,
-                           vectis_error *error) {
-  char *tmp_path;
+vectis_embedded_open_directory_at(int parent_fd, const char *leaf,
+                                  const char *asset_path, int create_missing,
+                                  int *out_fd, vectis_error *error) {
+  int fd;
+  int saved_errno;
+
+  *out_fd = -1;
+  fd = vectis_embedded_open_child_dir_at(parent_fd, leaf);
+  saved_errno = errno;
+  if (fd < 0 && create_missing && saved_errno == ENOENT) {
+    if (mkdirat(parent_fd, leaf, 0755) != 0 && errno != EEXIST) {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                                 "failed to create embedded asset directory: "
+                                 "%s",
+                                 asset_path);
+      return VECTIS_ERR_INVALID;
+    }
+    fd = vectis_embedded_open_child_dir_at(parent_fd, leaf);
+    saved_errno = errno;
+  }
+  if (fd < 0) {
+    if (saved_errno == ENOENT) {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                 "embedded asset directory is missing: %s",
+                                 asset_path);
+      return VECTIS_ERR_CONFLICT;
+    }
+    if (saved_errno == ELOOP || saved_errno == ENOTDIR) {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                 "embedded asset directory is unsafe: %s",
+                                 asset_path);
+      return VECTIS_ERR_CONFLICT;
+    }
+    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                               "failed to open embedded asset directory: %s",
+                               asset_path);
+    return VECTIS_ERR_INVALID;
+  }
+  *out_fd = fd;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_embedded_write_file_at(
+    int parent_fd, const char *leaf, const char *asset_path,
+    const vectis_embedded_fs_impl_entry *entry, vectis_error *error) {
+  char *temporary;
   FILE *fp;
   int fd;
   int open_errno;
   int written;
-  vectis_status status;
+  size_t temporary_size;
 
-  status = vectis_embedded_parent_dirs(path, error);
-  if (status != VECTIS_OK) {
-    return status;
-  }
-  tmp_path = (char *)malloc(strlen(path) + 64u);
-  if (tmp_path == NULL) {
+  temporary_size = strlen(leaf) + 64u;
+  temporary = (char *)malloc(temporary_size);
+  if (temporary == NULL) {
     vectis_set_error(error, VECTIS_ERR_NOMEM,
                      "failed to allocate embedded asset temp path");
     return VECTIS_ERR_NOMEM;
   }
-  written = snprintf(tmp_path, strlen(path) + 64u, "%s.tmp.%ld", path,
-                     (long)getpid());
-  if (written <= 0 || (size_t)written >= strlen(path) + 64u) {
-    free(tmp_path);
+  written =
+      snprintf(temporary, temporary_size, "%s.tmp.%ld", leaf, (long)getpid());
+  if (written <= 0 || (size_t)written >= temporary_size) {
+    free(temporary);
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "embedded asset temp path is too long");
     return VECTIS_ERR_INVALID;
   }
-  fd = open(tmp_path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  fd = openat(parent_fd, temporary,
+              O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
   if (fd < 0) {
     open_errno = errno;
     if (open_errno == EEXIST) {
       vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
                                  "embedded asset temp path already exists: %s",
-                                 tmp_path);
+                                 asset_path);
     } else {
       vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
-                                 "failed to create embedded asset: %s", path);
+                                 "failed to create embedded asset: %s",
+                                 asset_path);
     }
-    free(tmp_path);
+    free(temporary);
     return open_errno == EEXIST ? VECTIS_ERR_CONFLICT : VECTIS_ERR_INVALID;
   }
   fp = fdopen(fd, "wb");
   if (fp == NULL) {
     (void)close(fd);
-    (void)remove(tmp_path);
+    (void)unlinkat(parent_fd, temporary, 0);
     vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
-                               "failed to create embedded asset: %s", path);
-    free(tmp_path);
+                               "failed to create embedded asset: %s",
+                               asset_path);
+    free(temporary);
     return VECTIS_ERR_INVALID;
   }
   if (entry->size > 0u &&
       fwrite(entry->data, 1u, entry->size, fp) != entry->size) {
     (void)fclose(fp);
-    (void)remove(tmp_path);
-    free(tmp_path);
+    (void)unlinkat(parent_fd, temporary, 0);
+    free(temporary);
     vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
-                               "failed to write embedded asset: %s", path);
+                               "failed to write embedded asset: %s",
+                               asset_path);
     return VECTIS_ERR_INVALID;
   }
   if (fchmod(fd, vectis_embedded_extract_mode(entry->mode)) != 0) {
     (void)fclose(fp);
-    (void)remove(tmp_path);
-    free(tmp_path);
+    (void)unlinkat(parent_fd, temporary, 0);
+    free(temporary);
     vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
-                               "failed to set embedded asset mode: %s", path);
+                               "failed to set embedded asset mode: %s",
+                               asset_path);
     return VECTIS_ERR_INVALID;
   }
   if (fclose(fp) != 0) {
-    (void)remove(tmp_path);
-    free(tmp_path);
+    (void)unlinkat(parent_fd, temporary, 0);
+    free(temporary);
     vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
-                               "failed to write embedded asset: %s", path);
+                               "failed to write embedded asset: %s",
+                               asset_path);
     return VECTIS_ERR_INVALID;
   }
-  if (rename(tmp_path, path) != 0) {
-    (void)remove(tmp_path);
-    free(tmp_path);
+  if (renameat(parent_fd, temporary, parent_fd, leaf) != 0) {
+    (void)unlinkat(parent_fd, temporary, 0);
+    free(temporary);
     vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
-                               "failed to publish embedded asset: %s", path);
+                               "failed to publish embedded asset: %s",
+                               asset_path);
     return VECTIS_ERR_INVALID;
   }
-  free(tmp_path);
+  free(temporary);
   return VECTIS_OK;
 }
 
-static vectis_status
-vectis_embedded_file_matches_entry(const char *path,
-                                   const vectis_embedded_fs_impl_entry *entry,
-                                   int *matches, vectis_error *error) {
+static vectis_status vectis_embedded_file_matches_entry_at(
+    int parent_fd, const char *leaf, const char *asset_path,
+    const vectis_embedded_fs_impl_entry *entry, int *matches,
+    vectis_error *error) {
   EVP_MD_CTX *ctx;
-  FILE *fp;
+  struct stat st;
   unsigned char buffer[64u * 1024u];
   unsigned char digest[SHA256_DIGEST_LENGTH];
   char digest_hex[SHA256_DIGEST_LENGTH * 2u + 1u];
   unsigned int digest_size;
-  size_t nread;
+  ssize_t nread;
+  int fd;
   int failed;
 
   if (matches == NULL || entry == NULL || entry->sha256 == NULL) {
@@ -1007,27 +1187,45 @@ vectis_embedded_file_matches_entry(const char *path,
     return VECTIS_ERR_INVALID;
   }
   *matches = 0;
-  fp = fopen(path, "rb");
-  if (fp == NULL) {
+  fd = openat(parent_fd, leaf, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  if (fd < 0) {
+    if (errno == ENOENT) {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                 "embedded asset is missing: %s", asset_path);
+      return VECTIS_ERR_CONFLICT;
+    }
+    if (errno == ELOOP || errno == ENOTDIR) {
+      vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                 "embedded asset output is unsafe: %s",
+                                 asset_path);
+      return VECTIS_ERR_CONFLICT;
+    }
     vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
                                "failed to open embedded asset for verify: %s",
-                               path);
+                               asset_path);
     return VECTIS_ERR_INVALID;
+  }
+  if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+    vectis_embedded_fd_close(&fd);
+    vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                               "embedded asset output is not a file: %s",
+                               asset_path);
+    return VECTIS_ERR_CONFLICT;
   }
   ctx = EVP_MD_CTX_new();
   if (ctx == NULL) {
-    (void)fclose(fp);
+    vectis_embedded_fd_close(&fd);
     vectis_set_error(error, VECTIS_ERR_NOMEM,
                      "failed to allocate embedded asset verifier");
     return VECTIS_ERR_NOMEM;
   }
   failed = EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1;
-  while (!failed && (nread = fread(buffer, 1u, sizeof(buffer), fp)) > 0u) {
-    if (EVP_DigestUpdate(ctx, buffer, nread) != 1) {
+  while (!failed && (nread = read(fd, buffer, sizeof(buffer))) > 0) {
+    if (EVP_DigestUpdate(ctx, buffer, (size_t)nread) != 1) {
       failed = 1;
     }
   }
-  if (ferror(fp)) {
+  if (nread < 0) {
     failed = 1;
   }
   digest_size = 0u;
@@ -1036,12 +1234,13 @@ vectis_embedded_file_matches_entry(const char *path,
     failed = 1;
   }
   EVP_MD_CTX_free(ctx);
-  if (fclose(fp) != 0) {
+  if (close(fd) != 0) {
     failed = 1;
   }
   if (failed) {
     vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
-                               "failed to verify embedded asset: %s", path);
+                               "failed to verify embedded asset: %s",
+                               asset_path);
     return VECTIS_ERR_INVALID;
   }
   vectis_embedded_sha256_hex(digest, digest_hex);
@@ -1054,11 +1253,16 @@ vectis_embedded_extract_impl(const vectis_embedded_fs *self,
                              const vectis_embedded_fs_extract_config *config,
                              vectis_error *error) {
   const vectis_embedded_fs_impl *impl;
-  char *path;
+  const char *leaf;
   struct stat st;
   size_t i;
   vectis_status status;
+  int root_fd;
+  int parent_fd;
+  int directory_fd;
+  int exists;
   int matches;
+  int create_missing;
 
   if (self == NULL || self->impl == NULL || config == NULL ||
       config->output_dir == NULL || config->output_dir[0] == '\0') {
@@ -1066,100 +1270,123 @@ vectis_embedded_extract_impl(const vectis_embedded_fs *self,
                      "embedded fs extract output_dir is required");
     return VECTIS_ERR_INVALID;
   }
-  status = vectis_embedded_mkdir_p(config->output_dir, error);
+  create_missing = config->policy != VECTIS_EMBEDDED_FS_EXTRACT_VERIFY;
+  root_fd = -1;
+  status = vectis_embedded_open_root_fd(config->output_dir, create_missing,
+                                        &root_fd, error);
   if (status != VECTIS_OK) {
     return status;
   }
   impl = (const vectis_embedded_fs_impl *)self->impl;
+  status = VECTIS_OK;
   for (i = 0u; i < impl->count; ++i) {
-    path =
-        vectis_embedded_output_path(config->output_dir, impl->entries[i].path);
-    if (path == NULL) {
-      vectis_set_error(error, VECTIS_ERR_NOMEM,
-                       "failed to allocate embedded asset output path");
-      return VECTIS_ERR_NOMEM;
+    leaf = strrchr(impl->entries[i].path, '/') + 1u;
+    parent_fd = -1;
+    status = vectis_embedded_open_parent_fd(root_fd, impl->entries[i].path,
+                                            create_missing, &parent_fd, error);
+    if (status != VECTIS_OK) {
+      break;
     }
     if (impl->entries[i].kind == VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY) {
-      status = vectis_embedded_ensure_dir(path, error);
-      if (status == VECTIS_OK && chmod(path, vectis_embedded_extract_mode(
-                                                 impl->entries[i].mode)) != 0) {
+      directory_fd = -1;
+      status = vectis_embedded_open_directory_at(
+          parent_fd, leaf, impl->entries[i].path, create_missing, &directory_fd,
+          error);
+      if (status == VECTIS_OK &&
+          config->policy != VECTIS_EMBEDDED_FS_EXTRACT_VERIFY &&
+          fchmod(directory_fd,
+                 vectis_embedded_extract_mode(impl->entries[i].mode)) != 0) {
         vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
                                    "failed to set embedded directory mode: %s",
-                                   path);
+                                   impl->entries[i].path);
         status = VECTIS_ERR_INVALID;
       }
-      free(path);
+      vectis_embedded_fd_close(&directory_fd);
+      vectis_embedded_fd_close(&parent_fd);
       if (status != VECTIS_OK) {
-        return status;
+        break;
       }
       continue;
     }
-    if (lstat(path, &st) == 0) {
+    exists = fstatat(parent_fd, leaf, &st, AT_SYMLINK_NOFOLLOW) == 0;
+    if (!exists && errno != ENOENT) {
+      vectis_embedded_fd_close(&parent_fd);
+      vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
+                                 "failed to inspect embedded asset: %s",
+                                 impl->entries[i].path);
+      status = VECTIS_ERR_INVALID;
+      break;
+    }
+    if (exists) {
       if (S_ISLNK(st.st_mode)) {
+        vectis_embedded_fd_close(&parent_fd);
         vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
                                    "embedded asset output is a symlink: %s",
-                                   path);
-        free(path);
-        return VECTIS_ERR_CONFLICT;
+                                   impl->entries[i].path);
+        status = VECTIS_ERR_CONFLICT;
+        break;
       }
       if (!S_ISREG(st.st_mode)) {
+        vectis_embedded_fd_close(&parent_fd);
         vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
                                    "embedded asset output is not a file: %s",
-                                   path);
-        free(path);
-        return VECTIS_ERR_CONFLICT;
+                                   impl->entries[i].path);
+        status = VECTIS_ERR_CONFLICT;
+        break;
       }
       if (config->policy == VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING) {
-        free(path);
+        vectis_embedded_fd_close(&parent_fd);
         continue;
       }
       if (config->policy == VECTIS_EMBEDDED_FS_EXTRACT_VERIFY ||
           config->policy == VECTIS_EMBEDDED_FS_EXTRACT_REPAIR) {
         matches = 0;
-        status = vectis_embedded_file_matches_entry(path, &impl->entries[i],
-                                                    &matches, error);
+        status = vectis_embedded_file_matches_entry_at(
+            parent_fd, leaf, impl->entries[i].path, &impl->entries[i], &matches,
+            error);
         if (status != VECTIS_OK) {
-          free(path);
-          return status;
+          vectis_embedded_fd_close(&parent_fd);
+          break;
         }
         if (matches) {
-          free(path);
+          vectis_embedded_fd_close(&parent_fd);
           continue;
         }
         if (config->policy == VECTIS_EMBEDDED_FS_EXTRACT_VERIFY) {
+          vectis_embedded_fd_close(&parent_fd);
           vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
                                      "embedded asset verification failed: %s",
-                                     path);
-          free(path);
-          return VECTIS_ERR_CONFLICT;
+                                     impl->entries[i].path);
+          status = VECTIS_ERR_CONFLICT;
+          break;
         }
       }
-      if (config->policy != VECTIS_EMBEDDED_FS_EXTRACT_OVERWRITE) {
-        if (config->policy != VECTIS_EMBEDDED_FS_EXTRACT_REPAIR) {
-          vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
-                                     "embedded asset already exists: %s", path);
-          free(path);
-          return VECTIS_ERR_CONFLICT;
-        }
+      if (config->policy != VECTIS_EMBEDDED_FS_EXTRACT_OVERWRITE &&
+          config->policy != VECTIS_EMBEDDED_FS_EXTRACT_REPAIR) {
+        vectis_embedded_fd_close(&parent_fd);
+        vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                   "embedded asset already exists: %s",
+                                   impl->entries[i].path);
+        status = VECTIS_ERR_CONFLICT;
+        break;
       }
-    } else if (errno != ENOENT) {
-      vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
-                                 "failed to inspect embedded asset: %s", path);
-      free(path);
-      return VECTIS_ERR_INVALID;
     } else if (config->policy == VECTIS_EMBEDDED_FS_EXTRACT_VERIFY) {
+      vectis_embedded_fd_close(&parent_fd);
       vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
-                                 "embedded asset is missing: %s", path);
-      free(path);
-      return VECTIS_ERR_CONFLICT;
+                                 "embedded asset is missing: %s",
+                                 impl->entries[i].path);
+      status = VECTIS_ERR_CONFLICT;
+      break;
     }
-    status = vectis_embedded_write_file(path, &impl->entries[i], error);
-    free(path);
+    status = vectis_embedded_write_file_at(
+        parent_fd, leaf, impl->entries[i].path, &impl->entries[i], error);
+    vectis_embedded_fd_close(&parent_fd);
     if (status != VECTIS_OK) {
-      return status;
+      break;
     }
   }
-  return VECTIS_OK;
+  vectis_embedded_fd_close(&root_fd);
+  return status;
 }
 
 static void vectis_embedded_close_impl(vectis_embedded_fs *self) {

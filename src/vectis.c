@@ -126,6 +126,12 @@ typedef struct vectis_static_route_data {
   vectis_http_methods allowed_methods;
 } vectis_static_route_data;
 
+static vectis_status vectis_static_directory_dispatch(vectis_app *app,
+                                                      vectis_request *request,
+                                                      vectis_response *response,
+                                                      void *userdata,
+                                                      vectis_error *error);
+
 typedef struct vectis_mailbox_entry {
   char *kind;
   void *payload;
@@ -13799,7 +13805,8 @@ static vectis_status vectis_static_directory_dispatch(vectis_app *app,
   } else if (path[prefix_len] == '\0') {
     relative = data->index_file;
   } else if (path[prefix_len] == '/') {
-    relative = path + prefix_len + 1u;
+    relative = path[prefix_len + 1u] == '\0' ? data->index_file
+                                             : path + prefix_len + 1u;
   } else {
     return vectis_response_status(response, 404, error);
   }
@@ -23640,6 +23647,54 @@ static int vectis_route_path_matches(const vectis_route_entry *route,
   return 0;
 }
 
+static int vectis_request_path_has_trailing_slash(const char *path) {
+  size_t path_len;
+
+  if (path == NULL) {
+    return 0;
+  }
+  path_len = strlen(path);
+  return path_len > 1u && path[path_len - 1u] == '/';
+}
+
+static int vectis_trailing_slash_targets_static_directory(
+    vectis_app_impl *impl, vectis_http_method method, const char *path,
+    vectis_request *request, vectis_error *error) {
+  const vectis_static_route_data *data;
+  size_t i;
+  size_t prefix_len;
+  size_t saved_count;
+  int matches_static_directory;
+
+  matches_static_directory = 0;
+  saved_count = request->path_param_count;
+  (void)pthread_mutex_lock(&impl->mutex);
+  for (i = 0u; i < impl->route_count; ++i) {
+    vectis_kv_truncate(&request->path_params, &request->path_param_count,
+                       saved_count);
+    if (impl->routes[i].kind != VECTIS_ROUTE_ENTRY_HANDLER ||
+        !vectis_route_method_matches(&impl->routes[i], method) ||
+        !vectis_route_path_matches(&impl->routes[i], path, request, error)) {
+      continue;
+    }
+    matches_static_directory = 0;
+    if (impl->routes[i].handler == vectis_static_directory_dispatch) {
+      data = (const vectis_static_route_data *)impl->routes[i].userdata;
+      if (data != NULL && data->path_prefix != NULL) {
+        prefix_len = strlen(data->path_prefix);
+        matches_static_directory =
+            strncmp(path, data->path_prefix, prefix_len) == 0 &&
+            path[prefix_len] == '/' && path[prefix_len + 1u] == '\0';
+      }
+    }
+    break;
+  }
+  vectis_kv_truncate(&request->path_params, &request->path_param_count,
+                     saved_count);
+  (void)pthread_mutex_unlock(&impl->mutex);
+  return matches_static_directory;
+}
+
 vectis_status
 vectis_internal_dispatch_route(vectis_app *app, vectis_http_method method,
                                const char *path, vectis_request *request,
@@ -23662,19 +23717,24 @@ vectis_internal_dispatch_route(vectis_app *app, vectis_http_method method,
     vectis_set_error(error, VECTIS_ERR_INVALID, "response is required");
     return VECTIS_ERR_INVALID;
   }
+  impl = (vectis_app_impl *)app->impl;
   if (vectis_validate_request_path(path, error) != VECTIS_OK) {
-    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    if (!vectis_request_path_has_trailing_slash(path) ||
+        !vectis_trailing_slash_targets_static_directory(impl, method, path,
+                                                        request, error)) {
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    }
+    vectis_error_clear(error);
   }
   if (vectis_method_mask(method) == VECTIS_HTTP_METHODS_NONE) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP method is invalid");
-    return VECTIS_ERR_INVALID;
+    return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
   if (vectis_internal_request_set_path(request, path, error) != VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
   vectis_internal_request_set_method(request, method);
 
-  impl = (vectis_app_impl *)app->impl;
   handler = NULL;
   userdata = NULL;
   saved_count = request->path_param_count;
@@ -23745,7 +23805,16 @@ vectis_internal_match_websocket(vectis_app *app, vectis_http_method method,
                      "no websocket route matched request");
     return VECTIS_ERR_STATE;
   }
+  impl = (vectis_app_impl *)app->impl;
   if (vectis_validate_request_path(path, error) != VECTIS_OK) {
+    if (vectis_request_path_has_trailing_slash(path) &&
+        vectis_trailing_slash_targets_static_directory(impl, method, path,
+                                                       request, error)) {
+      vectis_error_clear(error);
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "no websocket route matched request");
+      return VECTIS_ERR_STATE;
+    }
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
   if (vectis_internal_request_set_path(request, path, error) != VECTIS_OK) {
@@ -23753,7 +23822,6 @@ vectis_internal_match_websocket(vectis_app *app, vectis_http_method method,
   }
   vectis_internal_request_set_method(request, method);
 
-  impl = (vectis_app_impl *)app->impl;
   saved_count = request->path_param_count;
   vectis_error_clear(error);
 
@@ -23809,17 +23877,24 @@ vectis_status vectis_internal_route_body_policy(vectis_app *app,
                      "body policy output is required");
     return VECTIS_ERR_INVALID;
   }
+  impl = (vectis_app_impl *)app->impl;
+  vectis_internal_request_init(&scratch);
   if (vectis_validate_request_path(path, error) != VECTIS_OK) {
-    return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    if (!vectis_request_path_has_trailing_slash(path) ||
+        !vectis_trailing_slash_targets_static_directory(impl, method, path,
+                                                        &scratch, error)) {
+      vectis_internal_request_cleanup(&scratch);
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    }
+    vectis_error_clear(error);
   }
   if (vectis_method_mask(method) == VECTIS_HTTP_METHODS_NONE) {
+    vectis_internal_request_cleanup(&scratch);
     vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP method is invalid");
     return VECTIS_ERR_INVALID;
   }
 
-  impl = (vectis_app_impl *)app->impl;
   status = VECTIS_ERR_STATE;
-  vectis_internal_request_init(&scratch);
   vectis_error_clear(error);
 
   (void)pthread_mutex_lock(&impl->mutex);
@@ -37493,6 +37568,14 @@ vectis_status vectis_ssh_sftp_upload_file(const vectis_ssh_config *config,
     (void)close(fd);
     return status;
   }
+  status = vectis_ssh_verify_host_key_sha256(session, config, error);
+  if (status != VECTIS_OK) {
+    (void)fclose(local);
+    libssh2_session_disconnect(session, "vectis shutdown");
+    libssh2_session_free(session);
+    (void)close(fd);
+    return status;
+  }
   status = vectis_ssh_authenticate(session, config, error);
   if (status != VECTIS_OK) {
     (void)fclose(local);
@@ -37646,6 +37729,14 @@ vectis_status vectis_ssh_sftp_download_file(const vectis_ssh_config *config,
     return VECTIS_ERR_STATE;
   }
   status = vectis_ssh_verify_known_host(session, config, error);
+  if (status != VECTIS_OK) {
+    (void)fclose(local);
+    libssh2_session_disconnect(session, "vectis shutdown");
+    libssh2_session_free(session);
+    (void)close(fd);
+    return status;
+  }
+  status = vectis_ssh_verify_host_key_sha256(session, config, error);
   if (status != VECTIS_OK) {
     (void)fclose(local);
     libssh2_session_disconnect(session, "vectis shutdown");

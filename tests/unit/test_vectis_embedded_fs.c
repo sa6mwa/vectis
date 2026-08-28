@@ -243,6 +243,8 @@ int main(void) {
   char tmp_symlink_temp[] = "/tmp/vectis-embedded-fs-tmp-link.XXXXXX";
   char tmp_outside_temp[] = "/tmp/vectis-embedded-fs-tmp-outside.XXXXXX";
   char directory_temp[] = "/tmp/vectis-embedded-fs-dir.XXXXXX";
+  char verify_temp[] = "/tmp/vectis-embedded-fs-verify.XXXXXX";
+  char verify_directory_temp[] = "/tmp/vectis-embedded-fs-verify-dir.XXXXXX";
   char extracted[512];
   char extracted_app[512];
   char user_file[512];
@@ -466,6 +468,20 @@ int main(void) {
   expect(strcmp(buffer, "user\n") == 0, "repair keeps user-created files");
   remove_tree(temp);
 
+  expect(mkdtemp(verify_temp) != NULL,
+         "creates verify no-mutation temp directory");
+  (void)snprintf(directory_path, sizeof(directory_path), "%s/missing-output",
+                 verify_temp);
+  vectis_embedded_fs_extract_config_init(&extract);
+  extract.output_dir = directory_path;
+  extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_VERIFY;
+  status = vectis_embedded_fs_extract(fs, &extract, &error);
+  expect(status == VECTIS_ERR_CONFLICT,
+         "verify rejects a missing output directory");
+  expect(lstat(directory_path, &st) != 0,
+         "verify does not create a missing output directory");
+  remove_tree(verify_temp);
+
   expect(mkdtemp(symlink_temp) != NULL,
          "creates symlink extraction temp directory");
   expect(mkdtemp(outside_temp) != NULL, "creates outside temp directory");
@@ -565,6 +581,30 @@ int main(void) {
   expect(status == VECTIS_OK && listed.count == 2u && listed.saw_assets_dir &&
              listed.saw_app && listed.dir_metadata,
          "lists embedded directory entries under prefix");
+  expect(mkdtemp(verify_directory_temp) != NULL,
+         "creates explicit-directory verify temp directory");
+  vectis_embedded_fs_extract_config_init(&extract);
+  extract.output_dir = verify_directory_temp;
+  extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_VERIFY;
+  status = vectis_embedded_fs_extract(directory_fs, &extract, &error);
+  expect(status == VECTIS_ERR_CONFLICT,
+         "verify rejects a missing embedded directory");
+  (void)snprintf(directory_path, sizeof(directory_path), "%s/assets",
+                 verify_directory_temp);
+  expect(lstat(directory_path, &st) != 0,
+         "verify does not create missing embedded directories");
+  expect(mkdir(directory_path, 0700) == 0,
+         "creates verify directory mode fixture");
+  status = vectis_embedded_fs_extract(directory_fs, &extract, &error);
+  expect(status == VECTIS_ERR_CONFLICT,
+         "verify rejects a missing file in an existing directory");
+  expect(stat(directory_path, &st) == 0 && (st.st_mode & 0777u) == 0700u,
+         "verify does not change existing directory permissions");
+  (void)snprintf(extracted_app, sizeof(extracted_app), "%s/app.txt",
+                 directory_path);
+  expect(lstat(extracted_app, &st) != 0,
+         "verify does not create missing files in existing directories");
+  remove_tree(verify_directory_temp);
   expect(mkdtemp(directory_temp) != NULL,
          "creates directory-entry extraction temp directory");
   vectis_embedded_fs_extract_config_init(&extract);

@@ -498,6 +498,18 @@ run_service_examples() {
     VECTIS_SSH_HOST_KEY_SHA256="$ssh_host_key_sha256" \
     "$repo_root/build/debug/examples/vectis_example_ssh_sftp"
 
+  printf '[e2e] libssh2 one-shot sftp rejects wrong SHA-256 host-key fingerprint pin\n'
+  if env VECTIS_SSH_HOST="127.0.0.1" \
+      VECTIS_SSH_PORT="$ssh_port" \
+      VECTIS_SSH_USERNAME="vectis" \
+      VECTIS_SSH_PASSWORD="vectispass" \
+      VECTIS_SSH_HOST_KEY_SHA256="$ssh_bad_host_key_sha256" \
+      "$repo_root/build/debug/examples/vectis_example_ssh_sftp"; then
+    printf '%s\n' \
+      "libssh2 one-shot SFTP unexpectedly accepted mismatched host-key fingerprint" >&2
+    return 1
+  fi
+
   printf '[e2e] libssh2 sftp rejects wrong known_hosts pin\n'
   if env VECTIS_SSH_HOST="127.0.0.1" \
       VECTIS_SSH_PORT="$ssh_port" \
@@ -1029,6 +1041,7 @@ run_lua_examples() {
     '  credentials_path = credentials_path,' \
     '  username = "packed-user@example.com",' \
     '  password = "packed-password",' \
+    '  email = "packed-user@example.test",' \
     '  totp_secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",' \
     '  totp_label = "Vectis:packed-user@example.com",' \
     '  issuer = "Vectis",' \
@@ -1053,6 +1066,13 @@ run_lua_examples() {
     '  credentials_path = credentials_path,' \
     '  username = "packed-email-only@example.com",' \
     '  password = "packed-password",' \
+    '  email = "packed-email-only@example.test",' \
+    '}))' \
+    'assert(vectis.auth.user_add({' \
+    '  credentials_path = credentials_path,' \
+    '  username = "packed-blocked@example.com",' \
+    '  password = "packed-password",' \
+    '  email = "packed-blocked@blocked.test",' \
     '}))' \
     'local server = assert(vectis.app.new({' \
     '  app_name = "vectis-packed-service-e2e",' \
@@ -2608,12 +2628,24 @@ run_lua_examples() {
     return 1
   fi
   assert_no_store_headers "$auth_headers" "packed expired token replay"
+  auth_headers="$work_dir/packed-mismatched-email-token.headers"
+  mismatched_email_status=$(curl --max-time 3 -sS -D "$auth_headers" \
+    -o /dev/null -w '%{http_code}' \
+    -X POST \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data 'username=packed-user%40example.com&email=packed-user%40blocked.test' \
+    "http://127.0.0.1:$kore_packed_port/auth/email-token")
+  if [ "$mismatched_email_status" != "401" ]; then
+    printf '%s\n' "Packed auth accepted a mismatched enrolled recipient: $mismatched_email_status" >&2
+    return 1
+  fi
+  assert_no_store_headers "$auth_headers" "packed mismatched email token"
   auth_headers="$work_dir/packed-blocked-email-token.headers"
   blocked_email_status=$(curl --max-time 3 -sS -D "$auth_headers" \
     -o /dev/null -w '%{http_code}' \
     -X POST \
     -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data 'username=packed-user%40example.com&email=packed-user%40blocked.test' \
+    --data 'username=packed-blocked%40example.com&email=packed-blocked%40blocked.test' \
     "http://127.0.0.1:$kore_packed_port/auth/email-token")
   if [ "$blocked_email_status" != "400" ]; then
     printf '%s\n' "Packed auth allowlisted SMTP route returned unexpected blocked-email status: $blocked_email_status" >&2
