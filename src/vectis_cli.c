@@ -688,7 +688,7 @@ static const char vectis_lonejson_lua_init[] =
     "return M\n";
 
 static void vectis_cli_usage(FILE *stream) {
-  fputs("usage: vectis [--version] [--help] [-x] script.lua [args...]\n"
+  fputs("usage: vectis [--version] [-h|--help] [-x] script.lua [args...]\n"
         "       -x traces Lua line execution to stderr\n",
         stream);
 #ifndef __APPLE__
@@ -701,7 +701,8 @@ static void vectis_cli_usage(FILE *stream) {
         stream);
 #endif
   fputs("       vectis -a|--action docs\n"
-        "       vectis -a|--action source [--all | --module name ...] "
+        "       vectis -a|--action source [--all | --module name ... | "
+        "module-or-resource-path ...] "
         "[--output file | --output-dir dir] [-f|--force]\n"
         "       vectis -a|--action unpack [--output-dir dir] [-f|--force]\n",
         stream);
@@ -3272,7 +3273,8 @@ static int vectis_cli_replace_file(const char *path, const void *data,
 static int
 vectis_cli_resource_selected(const vectis_cli_embedded_resource *resource,
                              int select_all, const char *const *modules,
-                             size_t module_count) {
+                             size_t module_count, const char *const *paths,
+                             size_t path_count) {
   size_t i;
 
   if (select_all) {
@@ -3280,6 +3282,12 @@ vectis_cli_resource_selected(const vectis_cli_embedded_resource *resource,
   }
   for (i = 0u; i < module_count; ++i) {
     if (strcmp(resource->module, modules[i]) == 0) {
+      return 1;
+    }
+  }
+  for (i = 0u; i < path_count; ++i) {
+    if (strcmp(resource->path, paths[i]) == 0 ||
+        strcmp(resource->module, paths[i]) == 0) {
       return 1;
     }
   }
@@ -3295,7 +3303,7 @@ static int vectis_docs_command(int argc, char **argv, int index) {
     return 64;
   }
   for (i = 0u; i < vectis_cli_docs_count; ++i) {
-    if (printf("<!-- vectis docs: %s; sha256: %s -->\n\n",
+    if (printf("> **Vectis document:** `%s`\n> **SHA-256:** `%s`\n\n",
                vectis_cli_docs[i].path, vectis_cli_docs[i].sha256) < 0 ||
         fwrite(vectis_cli_docs_data + vectis_cli_docs[i].offset, 1u,
                vectis_cli_docs[i].size, stdout) != vectis_cli_docs[i].size ||
@@ -3309,22 +3317,28 @@ static int vectis_docs_command(int argc, char **argv, int index) {
 
 static int vectis_source_command(int argc, char **argv, int index) {
   const char **modules;
+  const char **paths;
   const char *output_path;
   const char *output_dir;
   char path[PATH_MAX];
   size_t i;
   size_t module_count;
+  size_t path_count;
   size_t selected_count;
   int force;
   int select_all;
 
   modules = (const char **)calloc((size_t)argc, sizeof(*modules));
-  if (modules == NULL) {
+  paths = (const char **)calloc((size_t)argc, sizeof(*paths));
+  if (modules == NULL || paths == NULL) {
+    free(paths);
+    free(modules);
     return 70;
   }
   output_path = NULL;
   output_dir = NULL;
   module_count = 0u;
+  path_count = 0u;
   force = 0;
   select_all = 0;
   for (i = (size_t)index; i < (size_t)argc; ++i) {
@@ -3338,32 +3352,41 @@ static int vectis_source_command(int argc, char **argv, int index) {
       output_dir = argv[++i];
     } else if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--force") == 0) {
       force = 1;
+    } else if (argv[i][0] != '-') {
+      paths[path_count++] = argv[i];
     } else {
       fprintf(stderr, "vectis: unknown source argument: %s\n", argv[i]);
+      free(paths);
       free(modules);
       return 64;
     }
   }
-  if (select_all && module_count > 0u) {
-    fputs("vectis: source accepts either --all or --module, not both\n",
+  if (select_all && (module_count > 0u || path_count > 0u)) {
+    fputs("vectis: source accepts either --all or explicit module/path "
+          "selections, not both\n",
           stderr);
+    free(paths);
     free(modules);
     return 64;
   }
   if (output_path != NULL && output_dir != NULL) {
     fputs("vectis: source accepts either --output or --output-dir, not both\n",
           stderr);
+    free(paths);
     free(modules);
     return 64;
   }
   if (force && output_path == NULL && output_dir == NULL) {
     fputs("vectis: source --force requires --output or --output-dir\n", stderr);
+    free(paths);
     free(modules);
     return 64;
   }
-  if (!select_all && module_count == 0u) {
+  if (!select_all && module_count == 0u && path_count == 0u) {
     if (output_path != NULL || output_dir != NULL) {
-      fputs("vectis: source output requires --all or --module\n", stderr);
+      fputs("vectis: source output requires --all or a module/path selection\n",
+            stderr);
+      free(paths);
       free(modules);
       return 64;
     }
@@ -3372,38 +3395,45 @@ static int vectis_source_command(int argc, char **argv, int index) {
              vectis_cli_lua_sources[i].origin, vectis_cli_lua_sources[i].path,
              vectis_cli_lua_sources[i].sha256);
     }
+    free(paths);
     free(modules);
     return 0;
   }
   selected_count = 0u;
   for (i = 0u; i < vectis_cli_lua_sources_count; ++i) {
     if (vectis_cli_resource_selected(&vectis_cli_lua_sources[i], select_all,
-                                     modules, module_count)) {
+                                     modules, module_count, paths,
+                                     path_count)) {
       selected_count++;
     }
   }
   if (selected_count == 0u) {
-    fputs("vectis: source selection matched no modules\n", stderr);
+    fputs("vectis: source selection matched no modules or paths\n", stderr);
+    free(paths);
     free(modules);
     return 64;
   }
   if (output_path != NULL && selected_count != 1u) {
     fputs("vectis: --output requires exactly one selected module\n", stderr);
+    free(paths);
     free(modules);
     return 64;
   }
   if (output_path != NULL &&
       vectis_cli_prepare_output_file(output_path, force, 1) != 0) {
+    free(paths);
     free(modules);
     return 1;
   }
   if (output_dir != NULL) {
     for (i = 0u; i < vectis_cli_lua_sources_count; ++i) {
       if (vectis_cli_resource_selected(&vectis_cli_lua_sources[i], select_all,
-                                       modules, module_count)) {
+                                       modules, module_count, paths,
+                                       path_count)) {
         if (vectis_cli_path_join(path, sizeof(path), output_dir,
                                  vectis_cli_lua_sources[i].path) != 0 ||
             vectis_cli_prepare_output_file(path, force, 1) != 0) {
+          free(paths);
           free(modules);
           return 1;
         }
@@ -3414,13 +3444,14 @@ static int vectis_source_command(int argc, char **argv, int index) {
     const vectis_cli_embedded_resource *resource = &vectis_cli_lua_sources[i];
 
     if (!vectis_cli_resource_selected(resource, select_all, modules,
-                                      module_count)) {
+                                      module_count, paths, path_count)) {
       continue;
     }
     if (output_path != NULL) {
       if (vectis_cli_write_file(output_path,
                                 vectis_cli_lua_sources_data + resource->offset,
                                 resource->size, 0) != 0) {
+        free(paths);
         free(modules);
         return 1;
       }
@@ -3431,6 +3462,7 @@ static int vectis_source_command(int argc, char **argv, int index) {
           vectis_cli_write_file(path,
                                 vectis_cli_lua_sources_data + resource->offset,
                                 resource->size, 0) != 0) {
+        free(paths);
         free(modules);
         return 1;
       }
@@ -3442,10 +3474,12 @@ static int vectis_source_command(int argc, char **argv, int index) {
                       resource->size, stdout) != resource->size ||
                fputs("\n\n", stdout) == EOF) {
       fputs("vectis: failed to write source\n", stderr);
+      free(paths);
       free(modules);
       return 1;
     }
   }
+  free(paths);
   free(modules);
   return 0;
 }
@@ -22538,6 +22572,15 @@ static int vectis_lua_run_embedded(int argc, char **argv) {
 int vectis_cli_main(int argc, char **argv) {
   int rc;
 
+  if (argc > 1 &&
+      (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
+    vectis_cli_usage(stdout);
+    return 0;
+  }
+  if (argc > 1 && strcmp(argv[1], "--version") == 0) {
+    puts("vectis " VECTIS_VERSION);
+    return 0;
+  }
   if (argc > 2 &&
       (strcmp(argv[1], "-a") == 0 || strcmp(argv[1], "--action") == 0) &&
       vectis_cli_preempts_embedded_app(argv[2])) {
@@ -22549,14 +22592,6 @@ int vectis_cli_main(int argc, char **argv) {
     return rc;
   }
 
-  if (argc > 1 && strcmp(argv[1], "--help") == 0) {
-    vectis_cli_usage(stdout);
-    return 0;
-  }
-  if (argc > 1 && strcmp(argv[1], "--version") == 0) {
-    puts("vectis " VECTIS_VERSION);
-    return 0;
-  }
   if (argc > 1 &&
       (strcmp(argv[1], "-a") == 0 || strcmp(argv[1], "--action") == 0)) {
     return vectis_action_command(argc, argv, 2);

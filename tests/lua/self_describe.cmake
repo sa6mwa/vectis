@@ -3,6 +3,15 @@ set(source_dir "${WORK_DIR}/vectis-source-tree")
 file(REMOVE "${source_output}")
 file(REMOVE_RECURSE "${source_dir}")
 
+execute_process(COMMAND "${VECTIS_BIN}" -h
+                RESULT_VARIABLE help_result
+                OUTPUT_VARIABLE help_stdout
+                ERROR_VARIABLE help_stderr)
+if(NOT help_result EQUAL 0 OR
+   NOT help_stdout MATCHES "usage: vectis.*-h\\|--help")
+  message(FATAL_ERROR "vectis -h failed: ${help_stdout}${help_stderr}")
+endif()
+
 execute_process(COMMAND "${VECTIS_BIN}" -a docs
                 RESULT_VARIABLE docs_result
                 OUTPUT_VARIABLE docs_stdout
@@ -10,7 +19,8 @@ execute_process(COMMAND "${VECTIS_BIN}" -a docs
 if(NOT docs_result EQUAL 0)
   message(FATAL_ERROR "vectis -a docs failed: ${docs_stdout}${docs_stderr}")
 endif()
-if(NOT docs_stdout MATCHES "vectis docs: docs/lua.md" OR
+if(NOT docs_stdout MATCHES "Vectis document:.*docs/lua.md" OR
+   docs_stdout MATCHES "<!-- vectis docs:" OR
    NOT docs_stdout MATCHES "Self-contained documentation and Lua source")
   message(FATAL_ERROR "vectis -a docs omitted embedded documentation")
 endif()
@@ -33,6 +43,29 @@ execute_process(COMMAND "${VECTIS_BIN}" -a source --module vectis.lockd
                 ERROR_VARIABLE source_stderr)
 if(NOT source_stdout_result EQUAL 0)
   message(FATAL_ERROR "selected vectis source failed: ${source_stdout}${source_stderr}")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" -a source vectis/auth.lua
+                RESULT_VARIABLE source_path_result
+                OUTPUT_VARIABLE source_path_stdout
+                ERROR_VARIABLE source_path_stderr)
+if(NOT source_path_result EQUAL 0 OR
+   NOT source_path_stdout MATCHES "-- vectis source: vectis/auth.lua" OR
+   NOT source_path_stdout MATCHES "browser_flow")
+  message(FATAL_ERROR "source resource-path selection failed: ${source_path_stdout}${source_path_stderr}")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" -a source vectis.auth vectis.cai vectis.dsv lockdc libmdf
+                RESULT_VARIABLE source_modules_result
+                OUTPUT_VARIABLE source_modules_stdout
+                ERROR_VARIABLE source_modules_stderr)
+if(NOT source_modules_result EQUAL 0 OR
+   NOT source_modules_stdout MATCHES "-- module: vectis.auth" OR
+   NOT source_modules_stdout MATCHES "-- module: vectis.cai" OR
+   NOT source_modules_stdout MATCHES "-- module: vectis.dsv" OR
+   NOT source_modules_stdout MATCHES "-- module: lockdc" OR
+   NOT source_modules_stdout MATCHES "-- module: libmdf")
+  message(FATAL_ERROR "variadic source module selection failed: ${source_modules_stdout}${source_modules_stderr}")
 endif()
 if(NOT source_stdout MATCHES "-- vectis source: vectis/lockd.lua" OR
    NOT source_stdout MATCHES "-- module: vectis.lockd" OR

@@ -5,15 +5,19 @@ that shipped with that exact build. This is intended for offline inspection and
 for coding agents that begin with only a Vectis binary.
 
 `vectis -a docs` writes the complete documentation bundle to standard output.
-Each document begins with an HTML comment that records its embedded path and
-SHA-256 digest.
+Each document begins with a visible Markdown blockquote that records its
+embedded path and SHA-256 digest. This keeps the output Markdown-only while
+preserving the provenance needed to inspect the exact shipped documentation.
 
 `vectis -a source` lists available public Lua source modules. The list contains
 the module name, origin, embedded path, and SHA-256 digest. Select source with
-either `--all` or one or more exact `--module NAME` options:
+either `--all`, one or more exact `--module NAME` options, or one or more exact
+embedded module names or resource paths:
 
 ```sh
 vectis -a source --module vectis --module vectis.webdav
+vectis -a source vectis.auth vectis.cai vectis.dsv lockdc libmdf
+vectis -a source vectis/auth.lua
 vectis -a source --all --output-dir lua-source
 vectis -a source --module lockdc --output lockdc.lua
 ```
