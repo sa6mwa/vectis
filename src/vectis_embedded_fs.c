@@ -1181,6 +1181,7 @@ static vectis_status vectis_embedded_file_matches_entry_at(
                      "failed to allocate embedded asset verifier");
     return VECTIS_ERR_NOMEM;
   }
+  nread = 0;
   failed = EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1;
   while (!failed && (nread = read(fd, buffer, sizeof(buffer))) > 0) {
     if (EVP_DigestUpdate(ctx, buffer, (size_t)nread) != 1) {
