@@ -52,6 +52,13 @@ typedef struct failing_source_context {
   int read_count;
 } failing_source_context;
 
+typedef struct lockd_state_update_fake {
+  lc_client client;
+  lc_lease lease;
+  int release_calls;
+  int close_calls;
+} lockd_state_update_fake;
+
 typedef struct sample_xml_doc {
   char id[32];
   sample_xml_amount amount;
@@ -90,6 +97,83 @@ static int sample_bytes_contains(vectis_bytes bytes, const char *needle) {
     }
   }
   return 0;
+}
+
+static int response_has_header(const vectis_response *response,
+                               const char *name, const char *value) {
+  size_t i;
+
+  if (response == NULL || name == NULL || value == NULL) {
+    return 0;
+  }
+  for (i = 0u; i < vectis_internal_response_header_count(response); ++i) {
+    if (strcmp(vectis_internal_response_header_name(response, i), name) == 0 &&
+        strcmp(vectis_internal_response_header_value(response, i), value) ==
+            0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int lockd_state_update_fake_acquire(lc_client *client,
+                                           const lc_acquire_req *request,
+                                           lc_lease **out, lc_error *error) {
+  lockd_state_update_fake *fake;
+
+  (void)request;
+  (void)error;
+  fake = client != NULL ? (lockd_state_update_fake *)client->impl : NULL;
+  if (fake == NULL || out == NULL) {
+    return LC_ERR_INVALID;
+  }
+  *out = &fake->lease;
+  return LC_OK;
+}
+
+static int lockd_state_update_fake_load(lc_lease *lease,
+                                        const lonejson_map *map, void *state,
+                                        const lc_get_opts *options,
+                                        lc_get_res *result, lc_error *error) {
+  (void)lease;
+  (void)map;
+  (void)state;
+  (void)options;
+  (void)result;
+  (void)error;
+  return LC_OK;
+}
+
+static int lockd_state_update_fake_release(lc_lease *lease,
+                                           const lc_release_req *request,
+                                           lc_error *error) {
+  lockd_state_update_fake *fake;
+
+  (void)request;
+  (void)error;
+  fake = lease != NULL ? (lockd_state_update_fake *)lease->impl : NULL;
+  assert(fake != NULL);
+  fake->release_calls++;
+  return LC_OK;
+}
+
+static void lockd_state_update_fake_close(lc_lease *lease) {
+  lockd_state_update_fake *fake;
+
+  fake = lease != NULL ? (lockd_state_update_fake *)lease->impl : NULL;
+  assert(fake != NULL);
+  fake->close_calls++;
+}
+
+static vectis_status lockd_state_update_fails(lc_lease *lease, void *state,
+                                              int *save, void *userdata,
+                                              vectis_error *error) {
+  (void)lease;
+  (void)state;
+  (void)save;
+  (void)userdata;
+  vectis_set_error(error, VECTIS_ERR_STATE, "expected update failure");
+  return VECTIS_ERR_STATE;
 }
 
 static const lonejson_field sample_doc_fields[] = {
@@ -152,6 +236,28 @@ LONEJSON_MAP_DEFINE(sample_xml_blob_doc_map, sample_xml_blob_doc,
                     sample_xml_blob_doc_fields);
 LONEJSON_MAP_DEFINE(sample_xml_attr_doc_map, sample_xml_attr_doc,
                     sample_xml_attr_doc_fields);
+
+static void assert_lockd_state_update_release_ownership(void) {
+  lockd_state_update_fake fake;
+  sample_doc state;
+  vectis_error error;
+  vectis_status status;
+
+  memset(&fake, 0, sizeof(fake));
+  memset(&state, 0, sizeof(state));
+  fake.client.acquire = lockd_state_update_fake_acquire;
+  fake.client.impl = &fake;
+  fake.lease.load = lockd_state_update_fake_load;
+  fake.lease.release = lockd_state_update_fake_release;
+  fake.lease.close = lockd_state_update_fake_close;
+  fake.lease.impl = &fake;
+  status = vectis_lockd_state_update(&fake.client, "state/test", "test", 30L,
+                                     &sample_doc_map, &state,
+                                     lockd_state_update_fails, NULL, &error);
+  assert(status == VECTIS_ERR_STATE);
+  assert(fake.release_calls == 1);
+  assert(fake.close_calls == 0);
+}
 
 static vectis_status sample_json_handler(vectis_app *app,
                                          vectis_request *request, void *input,
@@ -1645,11 +1751,15 @@ static void assert_json_route_surface(void) {
       app, VECTIS_HTTP_HEAD, "/assets/app.js", request, response, &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 200);
-  assert(vectis_internal_response_file_path(response) != NULL);
-  assert(vectis_internal_response_file_temporary(response));
+  assert(vectis_internal_response_file_path(response) == NULL);
+  assert(!vectis_internal_response_file_temporary(response));
+  assert(response_has_header(response, "content-length", "10"));
   body = vectis_internal_response_body(response);
   assert(body.data == NULL);
   assert(body.size == 0u);
+  source = vectis_internal_response_take_stream_source(response);
+  assert(source != NULL);
+  lc_source_close(source);
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
@@ -2900,6 +3010,7 @@ int main(void) {
   assert_http_surface();
   assert_io_surface();
   assert_request_response_surface();
+  assert_lockd_state_update_release_ownership();
   assert_json_route_surface();
   assert_openapi_surface();
   assert_tls_source_surface();

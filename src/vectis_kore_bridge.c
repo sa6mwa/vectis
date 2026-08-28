@@ -2783,6 +2783,7 @@ static int vectis_kore_send_stream_response(struct http_request *req,
 
   if (req->method == HTTP_METHOD_HEAD) {
     lc_source_close(source);
+    req->flags |= HTTP_REQUEST_NO_CONTENT_LENGTH;
     http_response(req, status, NULL, 0);
     if (emitted_status != NULL) {
       *emitted_status = status;

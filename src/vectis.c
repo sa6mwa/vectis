@@ -10,6 +10,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <lc/lc.h>
 #include <libssh2.h>
 #include <libssh2_sftp.h>
@@ -136,6 +137,7 @@ static vectis_status vectis_static_directory_dispatch(vectis_app *app,
                                                       vectis_response *response,
                                                       void *userdata,
                                                       vectis_error *error);
+static void vectis_response_clear_payload(vectis_response *response);
 
 typedef struct vectis_mailbox_entry {
   char *kind;
@@ -13937,12 +13939,33 @@ static vectis_status vectis_static_response_fd(vectis_request *request,
                                                const char *content_type,
                                                const char *file_name, int fd,
                                                vectis_error *error) {
+  char content_length[3u * sizeof(((struct stat *)0)->st_size) + 2u];
+  struct stat st;
   vectis_static_fd_source *state;
   lc_source *source;
   lc_error lcerr;
   vectis_status status;
+  int length_written;
   int rc;
 
+  length_written = 0;
+  if (vectis_request_method(request) == VECTIS_HTTP_HEAD) {
+    if (fstat(fd, &st) != 0 || st.st_size < 0) {
+      vectis_static_fd_close(&fd);
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to inspect static file response");
+      return VECTIS_ERR_STATE;
+    }
+    length_written = snprintf(content_length, sizeof(content_length),
+                              "%" PRIuMAX, (uintmax_t)st.st_size);
+    if (length_written < 0 ||
+        (size_t)length_written >= sizeof(content_length)) {
+      vectis_static_fd_close(&fd);
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to format static file response length");
+      return VECTIS_ERR_STATE;
+    }
+  }
   state = (vectis_static_fd_source *)malloc(sizeof(*state));
   if (state == NULL) {
     vectis_static_fd_close(&fd);
@@ -13964,15 +13987,6 @@ static vectis_status vectis_static_response_fd(vectis_request *request,
     return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
   lc_error_cleanup(&lcerr);
-  if (vectis_request_method(request) == VECTIS_HTTP_HEAD) {
-    status = vectis_response_source(
-        response, 200,
-        content_type != NULL ? content_type
-                             : vectis_static_inferred_content_type(file_name),
-        source, error);
-    lc_source_close(source);
-    return status;
-  }
   status = vectis_response_stream_source(
       response, 200,
       content_type != NULL ? content_type
@@ -13980,6 +13994,14 @@ static vectis_status vectis_static_response_fd(vectis_request *request,
       source, error);
   if (status != VECTIS_OK) {
     lc_source_close(source);
+    return status;
+  }
+  if (length_written != 0) {
+    status = vectis_response_header(response, "content-length", content_length,
+                                    error);
+    if (status != VECTIS_OK) {
+      vectis_response_clear_payload(response);
+    }
   }
   return status;
 }
@@ -32617,8 +32639,9 @@ vectis_status vectis_lockd_state_update(struct lc_client *client,
     save = 1;
     status = update(lease, state, &save, userdata, error);
     if (status != VECTIS_OK) {
-      (void)lease->release(lease, &release, &lcerr);
-      lc_lease_close(lease);
+      if (lease->release(lease, &release, &lcerr) != LC_OK) {
+        lc_lease_close(lease);
+      }
       lc_error_cleanup(&lcerr);
       return status;
     }
