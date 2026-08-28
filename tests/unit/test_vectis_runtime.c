@@ -3594,6 +3594,7 @@ static void assert_kore_smoke(void) {
   vectis_auth_user_enrollment auth_enrollment;
   vectis_auth_routes_config auth_routes;
   vectis_auth_browser_session_config browser_session;
+  vectis_auth_browser_session_config foreign_browser_session;
   vectis_auth_native_provider_config native_auth;
   vectis_auth_provider native_auth_provider;
   vectis_webdav_auth_provider_config native_webdav_auth;
@@ -4025,6 +4026,10 @@ static void assert_kore_smoke(void) {
   browser_session.purpose = "runtime-browser";
   browser_session.state_key = "runtime.browser-session";
   browser_session.ttl_seconds = 60u;
+  vectis_auth_browser_session_config_init(&foreign_browser_session);
+  foreign_browser_session.mode = VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER;
+  foreign_browser_session.state_key = "aaa.browser-session";
+  foreign_browser_session.ttl_seconds = 60u;
   vectis_auth_routes_config_init(&auth_routes);
   auth_routes.path_prefix = "/auth-browser";
   auth_routes.store = auth_store;
@@ -4774,6 +4779,18 @@ static void assert_kore_smoke(void) {
   vectis_http_response_cleanup(&native_webdav_response);
 
   /* Browser sessions are opt-in, same-origin, and prune expired state. */
+  for (i = 0; i < 32; ++i) {
+    browser_expired_response = vectis_internal_response_new(&error);
+    assert(browser_expired_response != NULL);
+    status = vectis_auth_browser_session_issue(
+        app, &foreign_browser_session, "runtime-user", 1u,
+        browser_expired_response, &error);
+    assert(status == VECTIS_OK);
+    vectis_internal_response_free(browser_expired_response);
+    browser_expired_response = NULL;
+  }
+  assert(runtime_browser_session_record_count(app, "aaa.browser-session") ==
+         32u);
   browser_expired_response = vectis_internal_response_new(&error);
   assert(browser_expired_response != NULL);
   status =

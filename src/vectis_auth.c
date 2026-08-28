@@ -171,6 +171,8 @@ typedef struct vectis_auth_browser_session_secret_record {
 typedef struct vectis_auth_browser_session_record {
   char principal[VECTIS_AUTH_PRINCIPAL_MAX + 1u];
   char purpose[VECTIS_AUTH_BROWSER_SESSION_PURPOSE_MAX + 1u];
+  /* Hash of the configured state key, used to scope expiry cleanup. */
+  char state_key_hash[2u * VECTIS_AUTH_PASSWORD_HASH_BYTES + 1u];
   lonejson_int64 expires_at;
   /* Dedicated query field for bounded expiry cleanup. */
   lonejson_int64 cleanup_at;
@@ -214,6 +216,9 @@ static const lonejson_field vectis_auth_browser_session_record_fields[] = {
                                     LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_STRING_FIXED_REQ(vectis_auth_browser_session_record, purpose,
                                     "purpose", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(vectis_auth_browser_session_record,
+                                           state_key_hash, "state_key_hash",
+                                           LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_I64_REQ(vectis_auth_browser_session_record, expires_at,
                            "expires_at"),
     LONEJSON_FIELD_I64_REQ(vectis_auth_browser_session_record, cleanup_at,
@@ -3387,7 +3392,8 @@ static vectis_status vectis_auth_browser_session_prune(
   lc_query_res response;
   lc_error lcerr;
   char prefix[VECTIS_AUTH_BROWSER_SESSION_KEY_MAX];
-  char selector[128];
+  char selector[256];
+  char state_key_hash[2u * VECTIS_AUTH_PASSWORD_HASH_BYTES + 1u];
   const char *session_id;
   size_t prefix_size;
   size_t i;
@@ -3408,9 +3414,17 @@ static vectis_status vectis_auth_browser_session_prune(
     return VECTIS_ERR_INVALID;
   }
   prefix_size = (size_t)written;
-  written = snprintf(selector, sizeof(selector),
-                     "{\"range\":{\"field\":\"/cleanup_at\",\"lte\":%llu}}",
-                     (unsigned long long)now);
+  status = vectis_auth_token_sha256_hex(
+      vectis_auth_browser_session_state_key(config), state_key_hash,
+      sizeof(state_key_hash), error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  written = snprintf(
+      selector, sizeof(selector),
+      "{\"and\":[{\"eq\":{\"field\":\"/state_key_hash\",\"value\":\"%s\"}},"
+      "{\"range\":{\"field\":\"/cleanup_at\",\"lte\":%llu}}]}",
+      state_key_hash, (unsigned long long)now);
   if (written < 0 || (size_t)written >= sizeof(selector)) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "browser session cleanup selector is invalid");
@@ -3747,6 +3761,12 @@ vectis_status vectis_auth_browser_session_issue(
     return status;
   }
   memset(&record, 0, sizeof(record));
+  status = vectis_auth_token_sha256_hex(
+      vectis_auth_browser_session_state_key(config), record.state_key_hash,
+      sizeof(record.state_key_hash), error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
   vectis_auth_copy_fixed(record.principal, sizeof(record.principal), principal);
   vectis_auth_copy_fixed(record.purpose, sizeof(record.purpose),
                          vectis_auth_browser_session_purpose(config));
