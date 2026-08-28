@@ -696,43 +696,223 @@ static const char vectis_lonejson_lua_init[] =
     "return M\n";
 
 static void vectis_cli_usage(FILE *stream) {
-  fputs("usage: vectis [--version] [-h|--help] [-x] script.lua [args...]\n"
-        "       -x traces Lua line execution to stderr\n",
+  fputs("Vectis runs Lua applications and manages packed applications, "
+        "embedded source, and authentication state.\n\n"
+        "Usage:\n"
+        "  vectis [OPTIONS] SCRIPT [ARGUMENT ...]\n"
+        "  vectis --action ACTION [OPTIONS]\n\n"
+        "Application options:\n"
+        "  -x                         Trace Lua line execution to stderr.\n"
+        "  -h, --help                 Show this help and exit.\n"
+        "  --version                  Print the Vectis version and exit.\n\n"
+        "Actions:\n"
+        "  docs                       Print the embedded documentation.\n"
+        "  source                     List or export embedded Lua modules.\n"
+        "  pack                       Build a runnable packed application "
+        "(not macOS).\n"
+        "  unpack                     Extract a packed application.\n"
+        "  credentials                Issue, verify, or revoke credentials.\n"
+        "  users                      Manage users, logins, and WebDAV keys.\n"
+        "  oauth2                     Run and persist OAuth 2.0/OIDC flows.\n\n"
+        "Action help:\n"
+        "  vectis --action ACTION --help\n\n"
+        "Examples:\n"
+        "  vectis app.lua\n"
+        "  vectis --action source vectis.auth\n"
+        "  vectis --action pack --help\n",
         stream);
-#ifndef __APPLE__
-  fputs("       vectis -a|--action pack --script script.lua --output output "
-        "[--lockd-bundle bundle.pem] "
-        "[--asset source=/path] "
-        "[--asset-dir /mount:dir] [--asset-manifest assets.json] "
-        "[--content-type-map types.json] [--extract-mode mode] "
-        "[--follow-symlinks]\n",
+}
+
+static int vectis_cli_action_usage(FILE *stream, const char *action) {
+  if (strcmp(action, "docs") == 0) {
+    fputs("Usage:\n"
+          "  vectis --action docs\n\n"
+          "Print every documentation file embedded in this executable.\n",
+          stream);
+    return 0;
+  }
+  if (strcmp(action, "source") == 0) {
+    fputs(
+        "Usage:\n"
+        "  vectis --action source\n"
+        "  vectis --action source SELECTOR [SELECTOR ...]\n"
+        "      [--output FILE | --output-dir DIR] [-f|--force]\n\n"
+        "Selectors:\n"
+        "  --all                      Select every embedded Lua module.\n"
+        "  --module NAME              Select a module; repeat as needed.\n"
+        "  MODULE_OR_PATH             Select by module name or resource path.\n"
+        "                             Examples: vectis.auth, "
+        "vectis/auth.lua\n\n"
+        "Output:\n"
+        "  --output FILE              Write exactly one selected module.\n"
+        "  --output-dir DIR           Write selected modules below DIR.\n"
+        "  -f, --force                Replace existing output files.\n\n"
+        "With no selector, source lists available modules and resources.\n",
+        stream);
+    return 0;
+  }
+  if (strcmp(action, "pack") == 0) {
+#ifdef __APPLE__
+    fputs("The pack action is unavailable on macOS because modifying a Mach-O\n"
+          "executable invalidates its required code signature.\n",
+          stream);
+#else
+    fputs(
+        "Usage:\n"
+        "  vectis --action pack\n"
+        "      --script FILE\n"
+        "      --output FILE\n"
+        "      [--lockd-bundle FILE]\n"
+        "      [--asset SOURCE=/LOGICAL_PATH]\n"
+        "      [--asset-dir /LOGICAL_ROOT:SOURCE_DIR]\n"
+        "      [--asset-manifest FILE]\n"
+        "      [--content-type-map FILE]\n"
+        "      [--extract-mode MODE]\n"
+        "      [--follow-symlinks]\n\n"
+        "Required:\n"
+        "  --script FILE              Lua application to embed.\n"
+        "  --output FILE              Packed executable to create.\n\n"
+        "Optional payloads:\n"
+        "  --lockd-bundle FILE        Lockd client bundle to embed.\n"
+        "  --asset SOURCE=/PATH       Add one file at an absolute logical "
+        "path.\n"
+        "  --asset-dir /ROOT:DIR      Add a directory tree below /ROOT.\n"
+        "  --asset-manifest FILE      Read assets from a JSON manifest.\n"
+        "  --content-type-map FILE    Read logical-path content types from "
+        "JSON.\n\n"
+        "Extraction and symlinks:\n"
+        "  --extract-mode MODE        fail-exists, skip-existing, overwrite,\n"
+        "                             verify, or repair.\n"
+        "  --follow-symlinks          Resolve source symlinks while packing.\n",
         stream);
 #endif
-  fputs("       vectis -a|--action docs\n"
-        "       vectis -a|--action source [--all | --module name ... | "
-        "module-or-resource-path ...] "
-        "[--output file | --output-dir dir] [-f|--force]\n"
-        "       vectis -a|--action unpack [--output-dir dir] [-f|--force]\n",
+    return 0;
+  }
+  if (strcmp(action, "unpack") == 0) {
+    fputs(
+        "Usage:\n"
+        "  vectis --action unpack\n"
+        "      [--output-dir DIR]\n"
+        "      [-f|--force]\n\n"
+        "Extract the runner, app.lua, embedded Lockd bundle, and assets from\n"
+        "a packed Vectis executable.\n\n"
+        "  --output-dir DIR           Destination directory; default: .\n"
+        "  -f, --force                Replace existing extracted files.\n",
         stream);
-  fputs("       vectis -a|--action credentials [--store credentials.json] "
-        "(--init | --issue --subject user [--purpose name] "
-        "[--basic] [--bearer] | --verify authorization | "
-        "--revoke client_id)\n"
-        "       vectis -a|--action users [--store credentials.json] "
-        "(--add username [--password value] [--email address] [--totp] | "
-        "--login username --password value [--totp-code code] | "
-        "--webdav-key username --password value [--totp-code code])\n"
-        "       vectis -a|--action oauth2 [--store credentials.json] "
-        "(--authorize --authorization-endpoint url --client-id id "
-        "--redirect-uri uri | --exchange-callback flow_id --subject user "
-        "--token-endpoint url --client-id id --redirect-uri uri "
-        "--code-verifier value --callback-query query --expected-state state | "
-        "--client-credentials flow_id --subject user --token-endpoint url "
-        "--client-id id --client-secret value | --upsert-flow flow_id "
-        "--subject user --access-token token | --load-flow flow_id | "
-        "--ensure-flow flow_id [--now seconds] | "
-        "--webdav-key flow_id --subject user)\n",
+    return 0;
+  }
+  if (strcmp(action, "credentials") == 0) {
+    fputs("Usage:\n"
+          "  vectis --action credentials [--store FILE] --init\n"
+          "  vectis --action credentials [--store FILE] --issue\n"
+          "      --subject USER [--purpose NAME] [--basic] [--bearer]\n"
+          "  vectis --action credentials [--store FILE]\n"
+          "      --verify AUTHORIZATION [--basic] [--bearer]\n"
+          "  vectis --action credentials [--store FILE] --revoke CLIENT_ID\n\n"
+          "  --store FILE                Credential store path.\n"
+          "  --init                      Create or initialize the credential "
+          "store.\n"
+          "  --issue                     Issue a credential for --subject.\n"
+          "  --purpose NAME              Optional credential purpose.\n"
+          "  --verify AUTHORIZATION      Verify an HTTP Authorization value.\n"
+          "  --revoke CLIENT_ID          Revoke an issued credential.\n"
+          "  --basic                     Restrict issue or verify to Basic "
+          "auth.\n"
+          "  --bearer                    Restrict issue or verify to Bearer "
+          "auth.\n",
+          stream);
+    return 0;
+  }
+  if (strcmp(action, "users") == 0) {
+    fputs(
+        "Usage:\n"
+        "  vectis --action users [--store FILE] --add USER\n"
+        "      [--password VALUE] [--email ADDRESS] [--totp]\n"
+        "  vectis --action users [--store FILE] --login USER\n"
+        "      --password VALUE [--totp-code CODE]\n"
+        "  vectis --action users [--store FILE] --webdav-key USER\n"
+        "      --password VALUE [--totp-code CODE]\n\n"
+        "Store and enrollment:\n"
+        "  --store FILE                Credential store path.\n"
+        "  --add USER                  Add or update a user.\n"
+        "  --password VALUE, -p VALUE  Set the password or authenticate a "
+        "user.\n"
+        "  --email ADDRESS             Set the user email address.\n"
+        "  --totp                      Generate a TOTP secret for a new user.\n"
+        "  --totp-secret VALUE         Set an explicit TOTP secret.\n"
+        "  --issuer VALUE              TOTP issuer label.\n"
+        "  --label VALUE               TOTP account label.\n\n"
+        "Login:\n"
+        "  --login USER                Authenticate a user.\n"
+        "  --webdav-key USER           Issue a WebDAV credential after login.\n"
+        "  --totp-code CODE            TOTP code for login or WebDAV key "
+        "issue.\n"
+        "  --time SECONDS              Time used to validate the TOTP code.\n"
+        "  --window COUNT              Accepted adjacent TOTP periods "
+        "(0..10).\n",
         stream);
+    return 0;
+  }
+  if (strcmp(action, "oauth2") == 0) {
+    fputs(
+        "Usage:\n"
+        "  vectis --action oauth2 [--store FILE] OPERATION [OPTIONS]\n\n"
+        "Operations:\n"
+        "  --authorize                 Start an authorization-code flow.\n"
+        "  --exchange-callback FLOW_ID Exchange a callback and store its "
+        "flow.\n"
+        "  --client-credentials FLOW_ID\n"
+        "                             Request and store a client credential "
+        "flow.\n"
+        "  --upsert-flow FLOW_ID       Store a supplied token flow.\n"
+        "  --load-flow FLOW_ID         Print a stored token flow.\n"
+        "  --ensure-flow FLOW_ID       Refresh or validate a stored flow.\n"
+        "  --webdav-key FLOW_ID        Issue a WebDAV key from a stored "
+        "flow.\n\n"
+        "Common options:\n"
+        "  --store FILE                Credential store path.\n"
+        "  --subject USER              Subject for stored flow or WebDAV key.\n"
+        "  --webdav-client-id ID       Client ID for a derived WebDAV key.\n"
+        "  --flow-id FLOW_ID           Set the flow ID separately from "
+        "operation.\n\n"
+        "Authorization-code options:\n"
+        "  --authorization-endpoint URL\n"
+        "  --token-endpoint URL\n"
+        "  --client-id ID\n"
+        "  --client-secret VALUE\n"
+        "  --redirect-uri URI\n"
+        "  --scope VALUE\n"
+        "  --state VALUE\n"
+        "  --nonce VALUE\n"
+        "  --code-verifier VALUE\n"
+        "  --code-challenge VALUE\n"
+        "  --audience VALUE\n"
+        "  --resource VALUE\n"
+        "  --verifier-bytes COUNT\n"
+        "  --max-url-bytes COUNT\n"
+        "  --callback-query QUERY\n"
+        "  --expected-state VALUE\n\n"
+        "Token-flow options:\n"
+        "  --access-token VALUE\n"
+        "  --token-type VALUE\n"
+        "  --refresh-token VALUE\n"
+        "  --id-token VALUE\n"
+        "  --expires-at SECONDS\n"
+        "  --now SECONDS\n\n"
+        "Refresh and size limits:\n"
+        "  --refresh-skew-seconds SECONDS\n"
+        "  --max-retries COUNT\n"
+        "  --disable-refresh\n"
+        "  --disable-retry\n"
+        "  --keep-webdav-keys-on-failure\n"
+        "  --max-response-bytes COUNT\n"
+        "  --max-body-bytes COUNT\n"
+        "  --max-query-bytes COUNT\n"
+        "  --max-record-bytes COUNT\n",
+        stream);
+    return 0;
+  }
+  return -1;
 }
 
 static void vectis_pack_write_u64(unsigned char *out,
@@ -3637,6 +3817,14 @@ static int vectis_action_command(int argc, char **argv, int index) {
   }
   action = argv[index];
   index++;
+  if (index + 1 == argc &&
+      (strcmp(argv[index], "-h") == 0 || strcmp(argv[index], "--help") == 0)) {
+    if (vectis_cli_action_usage(stdout, action) == 0) {
+      return 0;
+    }
+    fprintf(stderr, "vectis: unknown action: %s\n", action);
+    return 64;
+  }
   if (strcmp(action, "pack") == 0) {
     return vectis_pack_command(argc, argv, index);
   }
@@ -22845,6 +23033,11 @@ int vectis_cli_main(int argc, char **argv) {
   if (argc > 1 && strcmp(argv[1], "--version") == 0) {
     puts("vectis " VECTIS_VERSION);
     return 0;
+  }
+  if (argc == 4 &&
+      (strcmp(argv[1], "-a") == 0 || strcmp(argv[1], "--action") == 0) &&
+      (strcmp(argv[3], "-h") == 0 || strcmp(argv[3], "--help") == 0)) {
+    return vectis_action_command(argc, argv, 2);
   }
   if (argc > 2 &&
       (strcmp(argv[1], "-a") == 0 || strcmp(argv[1], "--action") == 0) &&

@@ -72,6 +72,16 @@ if(NOT run_result EQUAL 0)
   message(FATAL_ERROR "packed vectis failed: ${run_stdout}${run_stderr}")
 endif()
 
+execute_process(COMMAND "${output}" --action credentials --help
+                RESULT_VARIABLE packed_help_result
+                OUTPUT_VARIABLE packed_help_stdout
+                ERROR_VARIABLE packed_help_stderr)
+if(NOT packed_help_result EQUAL 0 OR
+   NOT packed_help_stdout MATCHES "--verify AUTHORIZATION" OR
+   NOT packed_help_stdout MATCHES "--revoke CLIENT_ID")
+  message(FATAL_ERROR "packed action help failed: ${packed_help_stdout}${packed_help_stderr}")
+endif()
+
 execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${script}" --output "${asset_invalid_extract_mode_output}" --extract-mode invalid
                 RESULT_VARIABLE invalid_extract_mode_result
                 OUTPUT_VARIABLE invalid_extract_mode_stdout

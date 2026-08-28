@@ -8,8 +8,36 @@ execute_process(COMMAND "${VECTIS_BIN}" -h
                 OUTPUT_VARIABLE help_stdout
                 ERROR_VARIABLE help_stderr)
 if(NOT help_result EQUAL 0 OR
-   NOT help_stdout MATCHES "usage: vectis.*-h\\|--help")
+   NOT help_stdout MATCHES "Usage:" OR
+   NOT help_stdout MATCHES "Application options:" OR
+   NOT help_stdout MATCHES "Actions:" OR
+   NOT help_stdout MATCHES "source[ ]+List or export embedded Lua modules" OR
+   NOT help_stdout MATCHES "Action help:" OR
+   help_stdout MATCHES "--action pack --script")
   message(FATAL_ERROR "vectis -h failed: ${help_stdout}${help_stderr}")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" --action source --help
+                RESULT_VARIABLE source_help_result
+                OUTPUT_VARIABLE source_help_stdout
+                ERROR_VARIABLE source_help_stderr)
+if(NOT source_help_result EQUAL 0 OR
+   NOT source_help_stdout MATCHES "Selectors:" OR
+   NOT source_help_stdout MATCHES "--module NAME" OR
+   NOT source_help_stdout MATCHES "MODULE_OR_PATH" OR
+   NOT source_help_stdout MATCHES "Output:")
+  message(FATAL_ERROR "vectis --action source --help failed: ${source_help_stdout}${source_help_stderr}")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" --action credentials --help
+                RESULT_VARIABLE credentials_help_result
+                OUTPUT_VARIABLE credentials_help_stdout
+                ERROR_VARIABLE credentials_help_stderr)
+if(NOT credentials_help_result EQUAL 0 OR
+   NOT credentials_help_stdout MATCHES "--issue" OR
+   NOT credentials_help_stdout MATCHES "--verify AUTHORIZATION" OR
+   NOT credentials_help_stdout MATCHES "--revoke CLIENT_ID")
+  message(FATAL_ERROR "vectis --action credentials --help failed: ${credentials_help_stdout}${credentials_help_stderr}")
 endif()
 
 execute_process(COMMAND "${VECTIS_BIN}" -a docs
