@@ -240,6 +240,8 @@ int main(void) {
   char temp[] = "/tmp/vectis-embedded-fs.XXXXXX";
   char symlink_temp[] = "/tmp/vectis-embedded-fs-link.XXXXXX";
   char outside_temp[] = "/tmp/vectis-embedded-fs-outside.XXXXXX";
+  char root_symlink_temp[] = "/tmp/vectis-embedded-fs-root-link.XXXXXX";
+  char root_outside_temp[] = "/tmp/vectis-embedded-fs-root-outside.XXXXXX";
   char tmp_symlink_temp[] = "/tmp/vectis-embedded-fs-tmp-link.XXXXXX";
   char tmp_outside_temp[] = "/tmp/vectis-embedded-fs-tmp-outside.XXXXXX";
   char directory_temp[] = "/tmp/vectis-embedded-fs-dir.XXXXXX";
@@ -263,6 +265,18 @@ int main(void) {
       "\"sha256\":"
       "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"},"
       "{\"path\":\"/dup.txt\",\"offset\":6,\"size\":4,"
+      "\"sha256\":"
+      "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\"}]}";
+  static const char trailing_path_manifest[] =
+      "{\"format\":\"vectis-pack\",\"assets\":["
+      "{\"path\":\"/assets/\",\"kind\":\"directory\",\"mode\":365}]}";
+  static const char file_ancestor_manifest[] =
+      "{\"format\":\"vectis-pack\",\"assets\":["
+      "{\"path\":\"/foo\",\"offset\":0,\"size\":6,"
+      "\"sha256\":"
+      "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"},"
+      "{\"path\":\"/foo-bar\",\"kind\":\"directory\",\"mode\":365},"
+      "{\"path\":\"/foo/bar\",\"offset\":6,\"size\":4,"
       "\"sha256\":"
       "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\"}]}";
   static const char bounds_manifest[] =
@@ -500,6 +514,49 @@ int main(void) {
   remove_tree(symlink_temp);
   remove_tree(outside_temp);
 
+  expect(mkdtemp(root_symlink_temp) != NULL,
+         "creates intermediate-root symlink temp directory");
+  expect(mkdtemp(root_outside_temp) != NULL,
+         "creates intermediate-root symlink outside directory");
+  (void)snprintf(symlink_dir, sizeof(symlink_dir), "%s/root-link",
+                 root_symlink_temp);
+  (void)snprintf(directory_path, sizeof(directory_path), "%s/verified-output",
+                 root_outside_temp);
+  expect(mkdir(directory_path, 0755) == 0,
+         "creates intermediate-root verify fixture");
+  (void)snprintf(extracted, sizeof(extracted), "%s/index.html", directory_path);
+  write_file(extracted, "hello\n");
+  (void)snprintf(extracted_app, sizeof(extracted_app), "%s/assets",
+                 directory_path);
+  expect(mkdir(extracted_app, 0755) == 0,
+         "creates intermediate-root verify assets directory");
+  (void)snprintf(extracted_app, sizeof(extracted_app), "%s/assets/app.txt",
+                 directory_path);
+  write_file(extracted_app, "app\n");
+  expect(symlink(root_outside_temp, symlink_dir) == 0,
+         "creates intermediate output-root symlink");
+  (void)snprintf(extracted, sizeof(extracted), "%s/verified-output",
+                 symlink_dir);
+  vectis_embedded_fs_extract_config_init(&extract);
+  extract.output_dir = extracted;
+  extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_VERIFY;
+  status = vectis_embedded_fs_extract(fs, &extract, &error);
+  expect(status == VECTIS_ERR_CONFLICT,
+         "verify refuses an output root with an intermediate symlink");
+  (void)snprintf(extracted, sizeof(extracted), "%s/created-output",
+                 symlink_dir);
+  (void)snprintf(outside_app, sizeof(outside_app), "%s/created-output",
+                 root_outside_temp);
+  extract.output_dir = extracted;
+  extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_REPAIR;
+  status = vectis_embedded_fs_extract(fs, &extract, &error);
+  expect(status == VECTIS_ERR_CONFLICT,
+         "extract refuses an intermediate-symlink output root");
+  expect(lstat(outside_app, &st) != 0,
+         "intermediate-root extraction does not create outside output");
+  remove_tree(root_symlink_temp);
+  remove_tree(root_outside_temp);
+
   expect(mkdtemp(tmp_symlink_temp) != NULL,
          "creates temp-symlink extraction directory");
   expect(mkdtemp(tmp_outside_temp) != NULL,
@@ -633,6 +690,26 @@ int main(void) {
   status = vectis_embedded_fs_from_pack(&config, &fs, &error);
   expect(status == VECTIS_ERR_CONFLICT && fs == NULL,
          "rejects duplicate embedded paths");
+
+  vectis_embedded_fs_config_init(&config);
+  config.payload = "";
+  config.payload_size = 0u;
+  config.manifest_json = trailing_path_manifest;
+  config.manifest_json_size = sizeof(trailing_path_manifest) - 1u;
+  fs = NULL;
+  status = vectis_embedded_fs_from_pack(&config, &fs, &error);
+  expect(status == VECTIS_ERR_INVALID && fs == NULL,
+         "rejects trailing-slash embedded manifest paths");
+
+  vectis_embedded_fs_config_init(&config);
+  config.payload = "hello\napp\n";
+  config.payload_size = 10u;
+  config.manifest_json = file_ancestor_manifest;
+  config.manifest_json_size = sizeof(file_ancestor_manifest) - 1u;
+  fs = NULL;
+  status = vectis_embedded_fs_from_pack(&config, &fs, &error);
+  expect(status == VECTIS_ERR_CONFLICT && fs == NULL,
+         "rejects files that parent embedded manifest assets");
 
   vectis_embedded_fs_config_init(&config);
   config.payload = "hello\napp\n";

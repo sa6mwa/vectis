@@ -112,6 +112,9 @@ int main(void) {
   char outside_copy[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   char outside_collection[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   char symlink_path[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char intermediate_root[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char intermediate_root_link[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char intermediate_outside_file[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   char txn_dir[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   unsigned char *body;
   size_t body_size;
@@ -395,6 +398,25 @@ int main(void) {
   status = vectis_webdav_delete(&direct_config, "/link/secret.txt");
   expect(status != VECTIS_WEBDAV_OK && access(outside_file, F_OK) == 0,
          "rejects direct root deletes through symlinked ancestors");
+  expect(snprintf(intermediate_root_link, sizeof(intermediate_root_link),
+                  "%s/root-link", temp) > 0,
+         "formats intermediate direct root symlink");
+  expect(snprintf(intermediate_root, sizeof(intermediate_root), "%s/site",
+                  intermediate_root_link) > 0,
+         "formats direct root below intermediate symlink");
+  expect(snprintf(intermediate_outside_file, sizeof(intermediate_outside_file),
+                  "%s/site/escape.txt", outside_dir) > 0,
+         "formats intermediate-symlink outside target");
+  expect(symlink(outside_dir, intermediate_root_link) == 0,
+         "creates intermediate direct root symlink");
+  direct_config.root_dir = intermediate_root;
+  status = vectis_webdav_put(&direct_config, "/escape.txt",
+                             (const unsigned char *)"escape", 6u);
+  expect(status != VECTIS_WEBDAV_OK,
+         "rejects direct root with an intermediate symlink");
+  expect(access(intermediate_outside_file, F_OK) != 0,
+         "intermediate direct root symlink does not write outside root");
+  direct_config.root_dir = root_dir;
 
   limited_config = config;
   limited_config.site_id = "limited";

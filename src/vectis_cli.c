@@ -817,7 +817,8 @@ static int vectis_pack_logical_path_valid(const char *path) {
   size_t i;
   char c;
 
-  if (path == NULL || path[0] != '/' || path[1] == '\0') {
+  if (path == NULL || path[0] != '/' || path[1] == '\0' ||
+      path[strlen(path) - 1u] == '/') {
     return 0;
   }
   for (i = 0u; path[i] != '\0'; ++i) {
@@ -1837,6 +1838,8 @@ static int vectis_pack_collect(vectis_pack_payload *payload,
                                vectis_pack_asset_list *assets,
                                const char *extract_mode) {
   size_t i;
+  size_t j;
+  size_t previous_path_size;
 
   vectis_pack_payload_init(payload);
   if (vectis_read_all(script_path, &payload->script, &payload->script_size) !=
@@ -1862,6 +1865,20 @@ static int vectis_pack_collect(vectis_pack_payload *payload,
                 assets->items[i].logical_path);
         vectis_pack_payload_cleanup(payload);
         return 1;
+      }
+      for (j = 0u; j < i; ++j) {
+        previous_path_size = strlen(assets->items[j].logical_path);
+        if (assets->items[j].kind == VECTIS_PACK_ASSET_FILE &&
+            strncmp(assets->items[i].logical_path,
+                    assets->items[j].logical_path, previous_path_size) == 0 &&
+            assets->items[i].logical_path[previous_path_size] == '/') {
+          fprintf(stderr,
+                  "vectis: embedded file path conflicts with descendant asset: "
+                  "%s\n",
+                  assets->items[j].logical_path);
+          vectis_pack_payload_cleanup(payload);
+          return 1;
+        }
       }
     }
   }

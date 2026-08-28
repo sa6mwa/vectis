@@ -214,7 +214,8 @@ static int vectis_embedded_path_valid(const char *path) {
   const char *segment;
   size_t segment_size;
 
-  if (path == NULL || path[0] != '/' || path[1] == '\0') {
+  if (path == NULL || path[0] != '/' || path[1] == '\0' ||
+      path[strlen(path) - 1u] == '/') {
     return 0;
   }
   segment = path + 1;
@@ -774,147 +775,11 @@ vectis_embedded_stream_impl(const vectis_embedded_fs *self, const char *path,
   return VECTIS_OK;
 }
 
-static vectis_status vectis_embedded_ensure_dir(const char *path,
-                                                vectis_error *error) {
-  struct stat st;
-
-  if (lstat(path, &st) == 0) {
-    if (S_ISLNK(st.st_mode)) {
-      vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
-                                 "embedded asset directory is a symlink: %s",
-                                 path);
-      return VECTIS_ERR_CONFLICT;
-    }
-    if (!S_ISDIR(st.st_mode)) {
-      vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
-                                 "embedded asset directory is not a directory: "
-                                 "%s",
-                                 path);
-      return VECTIS_ERR_CONFLICT;
-    }
-    return VECTIS_OK;
-  }
-  if (errno != ENOENT) {
-    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
-                               "failed to inspect embedded asset directory: %s",
-                               path);
-    return VECTIS_ERR_INVALID;
-  }
-  if (mkdir(path, 0755) != 0 && errno != EEXIST) {
-    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
-                               "failed to create embedded asset directory: %s",
-                               path);
-    return VECTIS_ERR_INVALID;
-  }
-  if (lstat(path, &st) != 0) {
-    vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
-                               "failed to inspect embedded asset directory: %s",
-                               path);
-    return VECTIS_ERR_INVALID;
-  }
-  if (S_ISLNK(st.st_mode)) {
-    vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
-                               "embedded asset directory is a symlink: %s",
-                               path);
-    return VECTIS_ERR_CONFLICT;
-  }
-  if (!S_ISDIR(st.st_mode)) {
-    vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
-                               "embedded asset directory is not a directory: "
-                               "%s",
-                               path);
-    return VECTIS_ERR_CONFLICT;
-  }
-  return VECTIS_OK;
-}
-
-static vectis_status vectis_embedded_mkdir_p(const char *path,
-                                             vectis_error *error) {
-  char *copy;
-  char *p;
-  vectis_status status;
-
-  copy = vectis_embedded_strdup(path);
-  if (copy == NULL) {
-    vectis_set_error(error, VECTIS_ERR_NOMEM,
-                     "failed to allocate embedded asset directory path");
-    return VECTIS_ERR_NOMEM;
-  }
-  for (p = copy + 1; *p != '\0'; ++p) {
-    if (*p == '/') {
-      *p = '\0';
-      status = vectis_embedded_ensure_dir(copy, error);
-      if (status != VECTIS_OK) {
-        free(copy);
-        return status;
-      }
-      *p = '/';
-    }
-  }
-  status = vectis_embedded_ensure_dir(copy, error);
-  free(copy);
-  return status;
-}
-
 static void vectis_embedded_fd_close(int *fd) {
   if (fd != NULL && *fd >= 0) {
     (void)close(*fd);
     *fd = -1;
   }
-}
-
-static vectis_status vectis_embedded_open_root_fd(const char *path,
-                                                  int create_missing,
-                                                  int *out_fd,
-                                                  vectis_error *error) {
-  struct stat st;
-  vectis_status status;
-  int fd;
-
-  if (path == NULL || path[0] == '\0' || out_fd == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "embedded asset output directory is required");
-    return VECTIS_ERR_INVALID;
-  }
-  *out_fd = -1;
-  if (create_missing) {
-    status = vectis_embedded_mkdir_p(path, error);
-    if (status != VECTIS_OK) {
-      return status;
-    }
-  }
-  fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-  if (fd < 0) {
-    if (errno == ENOENT) {
-      vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
-                                 "embedded asset output directory is missing: "
-                                 "%s",
-                                 path);
-      return VECTIS_ERR_CONFLICT;
-    }
-    if (errno == ELOOP || errno == ENOTDIR) {
-      vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
-                                 "embedded asset output directory is unsafe: "
-                                 "%s",
-                                 path);
-      return VECTIS_ERR_CONFLICT;
-    }
-    vectis_embedded_set_errorf(
-        error, VECTIS_ERR_INVALID,
-        "failed to open embedded asset output directory: "
-        "%s",
-        path);
-    return VECTIS_ERR_INVALID;
-  }
-  if (fstat(fd, &st) != 0 || !S_ISDIR(st.st_mode)) {
-    vectis_embedded_fd_close(&fd);
-    vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
-                               "embedded asset output directory is unsafe: %s",
-                               path);
-    return VECTIS_ERR_CONFLICT;
-  }
-  *out_fd = fd;
-  return VECTIS_OK;
 }
 
 static int vectis_embedded_open_child_dir_at(int parent_fd, const char *name) {
@@ -931,6 +796,103 @@ static int vectis_embedded_open_child_dir_at(int parent_fd, const char *name) {
     return -1;
   }
   return fd;
+}
+
+static vectis_status vectis_embedded_open_root_fd(const char *path,
+                                                  int create_missing,
+                                                  int *out_fd,
+                                                  vectis_error *error) {
+  char *copy;
+  char *next_segment;
+  char *segment;
+  int current_fd;
+  int next_fd;
+  int saved_errno;
+
+  if (path == NULL || path[0] == '\0' || out_fd == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "embedded asset output directory is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out_fd = -1;
+  current_fd = open(path[0] == '/' ? "/" : ".",
+                    O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (current_fd < 0) {
+    vectis_embedded_set_errorf(
+        error, VECTIS_ERR_INVALID,
+        "failed to open embedded asset output directory: "
+        "%s",
+        path);
+    return VECTIS_ERR_INVALID;
+  }
+  copy = vectis_embedded_strdup(path);
+  if (copy == NULL) {
+    vectis_embedded_fd_close(&current_fd);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate embedded asset output directory");
+    return VECTIS_ERR_NOMEM;
+  }
+  segment = copy;
+  while (*segment == '/') {
+    segment++;
+  }
+  while (*segment != '\0') {
+    next_segment = strchr(segment, '/');
+    if (next_segment != NULL) {
+      *next_segment = '\0';
+    }
+    next_fd = vectis_embedded_open_child_dir_at(current_fd, segment);
+    saved_errno = errno;
+    if (next_fd < 0 && create_missing && saved_errno == ENOENT) {
+      if (mkdirat(current_fd, segment, 0755) != 0 && errno != EEXIST) {
+        vectis_embedded_fd_close(&current_fd);
+        free(copy);
+        vectis_embedded_set_errorf(
+            error, VECTIS_ERR_INVALID,
+            "failed to create embedded asset output directory: %s", path);
+        return VECTIS_ERR_INVALID;
+      }
+      next_fd = vectis_embedded_open_child_dir_at(current_fd, segment);
+      saved_errno = errno;
+    }
+    if (next_fd < 0) {
+      vectis_embedded_fd_close(&current_fd);
+      free(copy);
+      if (saved_errno == ENOENT) {
+        vectis_embedded_set_errorf(
+            error, VECTIS_ERR_CONFLICT,
+            "embedded asset output directory is missing: "
+            "%s",
+            path);
+        return VECTIS_ERR_CONFLICT;
+      }
+      if (saved_errno == ELOOP || saved_errno == ENOTDIR) {
+        vectis_embedded_set_errorf(error, VECTIS_ERR_CONFLICT,
+                                   "embedded asset output directory is unsafe: "
+                                   "%s",
+                                   path);
+        return VECTIS_ERR_CONFLICT;
+      }
+      vectis_embedded_set_errorf(
+          error, VECTIS_ERR_INVALID,
+          "failed to open embedded asset output directory: "
+          "%s",
+          path);
+      return VECTIS_ERR_INVALID;
+    }
+    vectis_embedded_fd_close(&current_fd);
+    current_fd = next_fd;
+    if (next_segment == NULL) {
+      break;
+    }
+    segment = next_segment + 1u;
+    while (*segment == '/') {
+      segment++;
+    }
+  }
+  free(copy);
+  *out_fd = current_fd;
+  return VECTIS_OK;
 }
 
 static vectis_status vectis_embedded_open_parent_fd(int root_fd,
@@ -1424,6 +1386,8 @@ vectis_embedded_fs_from_pack(const vectis_embedded_fs_config *config,
   lonejson_status json_status;
   lonejson *runtime;
   size_t i;
+  size_t j;
+  size_t previous_path_size;
 
   if (out == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
@@ -1567,6 +1531,23 @@ vectis_embedded_fs_from_pack(const vectis_embedded_fs_config *config,
                                    impl->entries[i].path);
         vectis_embedded_impl_destroy(impl);
         return VECTIS_ERR_CONFLICT;
+      }
+      for (j = 0u; j < i; ++j) {
+        previous_path_size = strlen(impl->entries[j].path);
+        if (impl->entries[j].kind == VECTIS_EMBEDDED_FS_ENTRY_FILE &&
+            strncmp(impl->entries[i].path, impl->entries[j].path,
+                    previous_path_size) == 0 &&
+            impl->entries[i].path[previous_path_size] == '/') {
+          lonejson_cleanup(&vectis_embedded_manifest_map, &doc);
+          lonejson_cleanup(&vectis_embedded_manifest_asset_map, &item);
+          lonejson_free(runtime);
+          vectis_embedded_set_errorf(
+              error, VECTIS_ERR_CONFLICT,
+              "embedded file path conflicts with descendant asset: %s",
+              impl->entries[j].path);
+          vectis_embedded_impl_destroy(impl);
+          return VECTIS_ERR_CONFLICT;
+        }
       }
     }
   }

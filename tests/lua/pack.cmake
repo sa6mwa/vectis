@@ -29,6 +29,8 @@ set(invalid_content_type_map "${WORK_DIR}/content-types-invalid.json")
 set(asset_script "${WORK_DIR}/vectis-pack-assets.lua")
 set(asset_output "${WORK_DIR}/vectis-pack-assets")
 set(asset_invalid_path_output "${WORK_DIR}/vectis-pack-assets-invalid-path")
+set(asset_trailing_path_output "${WORK_DIR}/vectis-pack-assets-trailing-path")
+set(asset_trailing_dir_output "${WORK_DIR}/vectis-pack-assets-trailing-dir")
 set(asset_invalid_manifest_path_output "${WORK_DIR}/vectis-pack-assets-invalid-manifest-path")
 set(asset_invalid_content_type_map_output "${WORK_DIR}/vectis-pack-assets-invalid-content-type-map")
 set(asset_symlink_reject_output "${WORK_DIR}/vectis-pack-assets-symlink-reject")
@@ -36,6 +38,7 @@ set(asset_symlink_asset_reject_output "${WORK_DIR}/vectis-pack-assets-symlink-as
 set(asset_symlink_manifest_reject_output "${WORK_DIR}/vectis-pack-assets-symlink-manifest-reject")
 set(asset_corrupt_output "${WORK_DIR}/vectis-pack-assets-corrupt")
 set(asset_duplicate_output "${WORK_DIR}/vectis-pack-assets-duplicate")
+set(asset_file_ancestor_output "${WORK_DIR}/vectis-pack-assets-file-ancestor")
 set(asset_invalid_extract_mode_output "${WORK_DIR}/vectis-pack-invalid-extract-mode")
 set(invalid_option_output "${WORK_DIR}/vectis-pack-invalid-option")
 set(no_asset_extract_dir "${WORK_DIR}/no-assets-extract")
@@ -614,6 +617,28 @@ if(NOT asset_invalid_path_stderr MATCHES "invalid embedded asset path")
   message(FATAL_ERROR "pack invalid --asset logical path failed with unexpected error: ${asset_invalid_path_stdout}${asset_invalid_path_stderr}")
 endif()
 
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${asset_script}" --output "${asset_trailing_path_output}" --asset "${asset_dir}/index.html=/assets/"
+                RESULT_VARIABLE asset_trailing_path_result
+                OUTPUT_VARIABLE asset_trailing_path_stdout
+                ERROR_VARIABLE asset_trailing_path_stderr)
+if(asset_trailing_path_result EQUAL 0)
+  message(FATAL_ERROR "pack trailing --asset logical path unexpectedly succeeded")
+endif()
+if(NOT asset_trailing_path_stderr MATCHES "invalid embedded asset path")
+  message(FATAL_ERROR "pack trailing --asset logical path failed with unexpected error: ${asset_trailing_path_stdout}${asset_trailing_path_stderr}")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${asset_script}" --output "${asset_trailing_dir_output}" --asset-dir "/assets/:${asset_dir}"
+                RESULT_VARIABLE asset_trailing_dir_result
+                OUTPUT_VARIABLE asset_trailing_dir_stdout
+                ERROR_VARIABLE asset_trailing_dir_stderr)
+if(asset_trailing_dir_result EQUAL 0)
+  message(FATAL_ERROR "pack trailing --asset-dir logical path unexpectedly succeeded")
+endif()
+if(NOT asset_trailing_dir_stderr MATCHES "invalid embedded asset directory path")
+  message(FATAL_ERROR "pack trailing --asset-dir logical path failed with unexpected error: ${asset_trailing_dir_stdout}${asset_trailing_dir_stderr}")
+endif()
+
 execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${asset_script}" --output "${asset_invalid_manifest_path_output}" --asset-manifest "${asset_invalid_path_manifest}"
                 RESULT_VARIABLE asset_invalid_manifest_path_result
                 OUTPUT_VARIABLE asset_invalid_manifest_path_stdout
@@ -719,4 +744,15 @@ if(asset_duplicate_result EQUAL 0)
 endif()
 if(NOT asset_duplicate_stderr MATCHES "duplicate embedded asset path")
   message(FATAL_ERROR "duplicate embedded asset path failed with unexpected error: ${asset_duplicate_stdout}${asset_duplicate_stderr}")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${asset_script}" --output "${asset_file_ancestor_output}" --asset "${asset_dir}/index.html=/foo" --asset "${asset_dir}/assets/app.css=/foo-bar" --asset "${asset_dir}/assets/app.txt=/foo/bar"
+                RESULT_VARIABLE asset_file_ancestor_result
+                OUTPUT_VARIABLE asset_file_ancestor_stdout
+                ERROR_VARIABLE asset_file_ancestor_stderr)
+if(asset_file_ancestor_result EQUAL 0)
+  message(FATAL_ERROR "file ancestor embedded asset paths unexpectedly packed")
+endif()
+if(NOT asset_file_ancestor_stderr MATCHES "embedded file path conflicts with descendant asset")
+  message(FATAL_ERROR "file ancestor embedded asset paths failed with unexpected error: ${asset_file_ancestor_stdout}${asset_file_ancestor_stderr}")
 endif()

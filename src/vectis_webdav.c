@@ -75,6 +75,11 @@ vectis_webdav_direct_mkcol(const vectis_webdav_config *config,
 static vectis_webdav_status vectis_webdav_direct_copy_or_move_fs(
     const vectis_webdav_config *config, const char *normalized_source,
     const char *normalized_destination, int overwrite, int remove_source);
+static int vectis_webdav_open_root_fd(const vectis_webdav_config *config,
+                                      int create_missing);
+static int vectis_webdav_copy_segment(char *out, size_t out_size,
+                                      const char **cursor);
+static int vectis_webdav_open_child_dir(int parent_fd, const char *name);
 
 static int vectis_webdav_path_append(char *out, size_t out_size,
                                      const char *left, const char *right) {
@@ -145,13 +150,19 @@ static int vectis_webdav_prepare(const vectis_webdav_config *config) {
   char path[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   static const char *const directories[] = {"content", "tombstones"};
   size_t i;
+  int root_fd;
 
   if (!vectis_webdav_base(config, base, sizeof(base)) ||
       !vectis_webdav_mkdir_p(base)) {
     return 0;
   }
   if (vectis_webdav_direct_root(config)) {
-    return vectis_webdav_mkdir_p(config->root_dir);
+    root_fd = vectis_webdav_open_root_fd(config, 1);
+    if (root_fd < 0) {
+      return 0;
+    }
+    (void)close(root_fd);
+    return 1;
   }
   for (i = 0u; i < sizeof(directories) / sizeof(directories[0]); ++i) {
     if (!vectis_webdav_path_append(path, sizeof(path), base, directories[i]) ||
@@ -641,22 +652,47 @@ static void vectis_webdav_fd_close(int *fd) {
   }
 }
 
-static int vectis_webdav_open_root_fd(const vectis_webdav_config *config) {
-  struct stat st;
-  int fd;
+static int vectis_webdav_open_root_fd(const vectis_webdav_config *config,
+                                      int create_missing) {
+  char segment[VECTIS_WEBDAV_PATH_MAX + 1u];
+  const char *cursor;
+  int current_fd;
+  int next_fd;
+  int saved_errno;
 
   if (!vectis_webdav_direct_root(config)) {
     return -1;
   }
-  fd = open(config->root_dir, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-  if (fd < 0) {
+  current_fd = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (current_fd < 0) {
     return -1;
   }
-  if (fstat(fd, &st) != 0 || !S_ISDIR(st.st_mode)) {
-    (void)close(fd);
-    return -1;
+  cursor = config->root_dir;
+  while (*cursor == '/') {
+    cursor++;
   }
-  return fd;
+  while (*cursor != '\0') {
+    if (!vectis_webdav_copy_segment(segment, sizeof(segment), &cursor)) {
+      vectis_webdav_fd_close(&current_fd);
+      return -1;
+    }
+    next_fd = vectis_webdav_open_child_dir(current_fd, segment);
+    saved_errno = errno;
+    if (next_fd < 0 && create_missing && saved_errno == ENOENT) {
+      if (mkdirat(current_fd, segment, 0700) != 0 && errno != EEXIST) {
+        vectis_webdav_fd_close(&current_fd);
+        return -1;
+      }
+      next_fd = vectis_webdav_open_child_dir(current_fd, segment);
+    }
+    if (next_fd < 0) {
+      vectis_webdav_fd_close(&current_fd);
+      return -1;
+    }
+    vectis_webdav_fd_close(&current_fd);
+    current_fd = next_fd;
+  }
+  return current_fd;
 }
 
 static int vectis_webdav_copy_segment(char *out, size_t out_size,
@@ -711,7 +747,7 @@ vectis_webdav_open_parent_fd(const vectis_webdav_config *config,
       normalized[1] == '\0') {
     return -1;
   }
-  current_fd = vectis_webdav_open_root_fd(config);
+  current_fd = vectis_webdav_open_root_fd(config, 0);
   if (current_fd < 0) {
     return -1;
   }
@@ -758,7 +794,7 @@ vectis_webdav_direct_open_existing(const vectis_webdav_config *config,
     return -1;
   }
   if (normalized[1] == '\0') {
-    fd = vectis_webdav_open_root_fd(config);
+    fd = vectis_webdav_open_root_fd(config, 0);
   } else {
     parent_fd = vectis_webdav_open_parent_fd(config, normalized, 0, leaf);
     if (parent_fd < 0) {
