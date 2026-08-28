@@ -508,6 +508,9 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
 ## Mounts
 
 - `app:static_directory(opts)` serves a disk directory.
+  - Vectis rejects symlinked root components and entries, so requests cannot
+    escape `root_dir`. Publish copied files or real directories instead of
+    symlink aliases.
   - `content_type` is optional. When omitted, Vectis infers the response type
     from the selected disk file extension and falls back to
     `application/octet-stream` for unknown extensions. When provided, it

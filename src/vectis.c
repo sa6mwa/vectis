@@ -9,6 +9,7 @@
 #include <curl/curl.h>
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <lc/lc.h>
 #include <libssh2.h>
 #include <libssh2_sftp.h>
@@ -125,6 +126,10 @@ typedef struct vectis_static_route_data {
   const char *not_found_content_type;
   vectis_http_methods allowed_methods;
 } vectis_static_route_data;
+
+typedef struct vectis_static_fd_source {
+  int fd;
+} vectis_static_fd_source;
 
 static vectis_status vectis_static_directory_dispatch(vectis_app *app,
                                                       vectis_request *request,
@@ -13754,25 +13759,219 @@ static int vectis_static_relative_path_safe(const char *path) {
   }
 }
 
-static char *vectis_join_file_path(const char *root, const char *relative,
-                                   vectis_error *error) {
-  size_t root_len;
-  size_t relative_len;
-  size_t need_slash;
-  char *path;
-
-  root_len = strlen(root);
-  relative_len = strlen(relative);
-  need_slash = root_len > 0u && root[root_len - 1u] == '/' ? 0u : 1u;
-  path = (char *)malloc(root_len + need_slash + relative_len + 1u);
-  if (path == NULL) {
-    vectis_set_error(error, VECTIS_ERR_NOMEM,
-                     "failed to allocate static file path");
-    return NULL;
+static void vectis_static_fd_close(int *fd) {
+  if (fd != NULL && *fd >= 0) {
+    (void)close(*fd);
+    *fd = -1;
   }
-  (void)snprintf(path, root_len + need_slash + relative_len + 1u, "%s%s%s",
-                 root, need_slash ? "/" : "", relative);
-  return path;
+}
+
+static int vectis_static_open_child_dir_at(int parent_fd, const char *name) {
+  struct stat st;
+  int fd;
+
+  fd = openat(parent_fd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (fd < 0) {
+    return -1;
+  }
+  if (fstat(fd, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    vectis_static_fd_close(&fd);
+    errno = ENOTDIR;
+    return -1;
+  }
+  return fd;
+}
+
+static int vectis_static_open_root_fd(const char *root_dir) {
+  char *copy;
+  char *next_segment;
+  char *segment;
+  int current_fd;
+  int next_fd;
+
+  if (root_dir == NULL || root_dir[0] == '\0') {
+    errno = EINVAL;
+    return -1;
+  }
+  current_fd = open(root_dir[0] == '/' ? "/" : ".",
+                    O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (current_fd < 0) {
+    return -1;
+  }
+  copy = vectis_strdup(root_dir);
+  if (copy == NULL) {
+    vectis_static_fd_close(&current_fd);
+    errno = ENOMEM;
+    return -1;
+  }
+  segment = copy;
+  while (*segment == '/') {
+    segment++;
+  }
+  while (*segment != '\0') {
+    next_segment = strchr(segment, '/');
+    if (next_segment != NULL) {
+      *next_segment = '\0';
+    }
+    next_fd = vectis_static_open_child_dir_at(current_fd, segment);
+    if (next_fd < 0) {
+      vectis_static_fd_close(&current_fd);
+      free(copy);
+      return -1;
+    }
+    vectis_static_fd_close(&current_fd);
+    current_fd = next_fd;
+    if (next_segment == NULL) {
+      break;
+    }
+    segment = next_segment + 1u;
+    while (*segment == '/') {
+      segment++;
+    }
+  }
+  free(copy);
+  return current_fd;
+}
+
+static int vectis_static_open_file_fd(const char *root_dir,
+                                      const char *relative) {
+  char *copy;
+  char *next_segment;
+  char *segment;
+  struct stat st;
+  int current_fd;
+  int next_fd;
+
+  current_fd = vectis_static_open_root_fd(root_dir);
+  if (current_fd < 0) {
+    return -1;
+  }
+  copy = vectis_strdup(relative);
+  if (copy == NULL) {
+    vectis_static_fd_close(&current_fd);
+    errno = ENOMEM;
+    return -1;
+  }
+  segment = copy;
+  while (*segment != '\0') {
+    next_segment = strchr(segment, '/');
+    if (next_segment != NULL) {
+      *next_segment = '\0';
+      next_fd = vectis_static_open_child_dir_at(current_fd, segment);
+    } else {
+      next_fd = openat(current_fd, segment, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    }
+    if (next_fd < 0) {
+      vectis_static_fd_close(&current_fd);
+      free(copy);
+      return -1;
+    }
+    vectis_static_fd_close(&current_fd);
+    current_fd = next_fd;
+    if (next_segment == NULL) {
+      break;
+    }
+    segment = next_segment + 1u;
+  }
+  free(copy);
+  if (fstat(current_fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+    vectis_static_fd_close(&current_fd);
+    errno = ENOENT;
+    return -1;
+  }
+  return current_fd;
+}
+
+static size_t vectis_static_fd_source_read(void *context, void *buffer,
+                                           size_t count, lc_error *error) {
+  vectis_static_fd_source *source;
+  ssize_t nread;
+
+  source = (vectis_static_fd_source *)context;
+  if (source == NULL || source->fd < 0 || buffer == NULL) {
+    if (error != NULL) {
+      lc_error_init(error);
+      error->code = LC_ERR_INVALID;
+    }
+    return 0u;
+  }
+  do {
+    nread = read(source->fd, buffer, count);
+  } while (nread < 0 && errno == EINTR);
+  if (nread < 0) {
+    if (error != NULL) {
+      lc_error_init(error);
+      error->code = LC_ERR_TRANSPORT;
+    }
+    return 0u;
+  }
+  return (size_t)nread;
+}
+
+static int vectis_static_fd_source_reset(void *context, lc_error *error) {
+  vectis_static_fd_source *source;
+
+  source = (vectis_static_fd_source *)context;
+  if (source == NULL || source->fd < 0 || lseek(source->fd, 0, SEEK_SET) < 0) {
+    if (error != NULL) {
+      lc_error_init(error);
+      error->code = LC_ERR_TRANSPORT;
+    }
+    return LC_ERR_TRANSPORT;
+  }
+  return LC_OK;
+}
+
+static void vectis_static_fd_source_close(void *context) {
+  vectis_static_fd_source *source;
+
+  source = (vectis_static_fd_source *)context;
+  if (source != NULL) {
+    vectis_static_fd_close(&source->fd);
+    free(source);
+  }
+}
+
+static vectis_status vectis_static_response_fd(vectis_response *response,
+                                               const char *content_type,
+                                               const char *file_name, int fd,
+                                               vectis_error *error) {
+  vectis_static_fd_source *state;
+  lc_source *source;
+  lc_error lcerr;
+  vectis_status status;
+  int rc;
+
+  state = (vectis_static_fd_source *)malloc(sizeof(*state));
+  if (state == NULL) {
+    vectis_static_fd_close(&fd);
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate static file reader");
+    return VECTIS_ERR_NOMEM;
+  }
+  state->fd = fd;
+  source = NULL;
+  lc_error_init(&lcerr);
+  rc = lc_source_from_callbacks(
+      vectis_static_fd_source_read, vectis_static_fd_source_reset,
+      vectis_static_fd_source_close, state, &source, &lcerr);
+  if (rc != LC_OK) {
+    vectis_static_fd_source_close(state);
+    (void)vectis_source_error(error, rc, &lcerr,
+                              "failed to create static file reader");
+    lc_error_cleanup(&lcerr);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  status = vectis_response_stream_source(
+      response, 200,
+      content_type != NULL ? content_type
+                           : vectis_static_inferred_content_type(file_name),
+      source, error);
+  if (status != VECTIS_OK) {
+    lc_source_close(source);
+  }
+  return status;
 }
 
 static vectis_status vectis_static_directory_dispatch(vectis_app *app,
@@ -13784,7 +13983,7 @@ static vectis_status vectis_static_directory_dispatch(vectis_app *app,
   const char *path;
   const char *relative;
   size_t prefix_len;
-  char *file_path;
+  int file_fd;
   vectis_status status;
 
   (void)app;
@@ -13813,13 +14012,13 @@ static vectis_status vectis_static_directory_dispatch(vectis_app *app,
   if (!vectis_static_relative_path_safe(relative)) {
     return vectis_response_status(response, 404, error);
   }
-  file_path = vectis_join_file_path(data->root_dir, relative, error);
-  if (file_path == NULL) {
-    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  file_fd = vectis_static_open_file_fd(data->root_dir, relative);
+  if (file_fd < 0) {
+    return vectis_response_status(response, 404, error);
   }
-  status = vectis_static_response(request, response, data->content_type,
-                                  file_path, error);
-  free(file_path);
+  (void)request;
+  status = vectis_static_response_fd(response, data->content_type, relative,
+                                     file_fd, error);
   return status;
 }
 

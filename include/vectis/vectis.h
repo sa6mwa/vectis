@@ -794,6 +794,9 @@ typedef struct vectis_static_file_config {
 
 typedef struct vectis_static_directory_config {
   const char *path_prefix;
+  /* Directory components and served entries must be real directories/files;
+   * Vectis rejects symlinks so a mount cannot escape its configured root.
+   */
   const char *root_dir;
   /* NULL infers from the selected disk file extension; unknown extensions fall
    * back to application/octet-stream. Non-NULL overrides inference for all

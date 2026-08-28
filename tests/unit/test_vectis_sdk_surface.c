@@ -1369,6 +1369,7 @@ static void assert_json_route_surface(void) {
   vectis_response *response;
   vectis_bytes body;
   vectis_mutable_bytes body_copy;
+  lc_source *source;
   lonejson *json_runtime;
   sample_doc output;
   sample_error_doc error_output;
@@ -1379,6 +1380,11 @@ static void assert_json_route_surface(void) {
   const char static_dir_path[] = "/tmp/vectis-static-dir";
   const char static_dir_file_path[] = "/tmp/vectis-static-dir/app.js";
   const char static_dir_index_path[] = "/tmp/vectis-static-dir/index.html";
+  const char static_dir_link_path[] = "/tmp/vectis-static-dir/outside-link";
+  const char static_dir_nested_link_path[] =
+      "/tmp/vectis-static-dir/outside-directory";
+  const char static_dir_outside_path[] = "/tmp/vectis-static-outside.txt";
+  const char static_dir_root_link_path[] = "/tmp/vectis-static-root-link";
   FILE *fp;
 
   vectis_app_config_init(&config);
@@ -1456,6 +1462,10 @@ static void assert_json_route_surface(void) {
   assert(fclose(fp) == 0);
   (void)remove(static_dir_file_path);
   (void)remove(static_dir_index_path);
+  (void)remove(static_dir_link_path);
+  (void)remove(static_dir_nested_link_path);
+  (void)remove(static_dir_outside_path);
+  (void)remove(static_dir_root_link_path);
   (void)rmdir(static_dir_path);
   assert(mkdir(static_dir_path, 0700) == 0);
   fp = fopen(static_dir_file_path, "wb");
@@ -1623,8 +1633,11 @@ static void assert_json_route_surface(void) {
       app, VECTIS_HTTP_GET, "/assets/app.js", request, response, &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 200);
-  assert(strcmp(vectis_internal_response_file_path(response),
-                static_dir_file_path) == 0);
+  assert(vectis_internal_response_file_path(response) == NULL);
+  source = vectis_internal_response_take_stream_source(response);
+  assert(source != NULL);
+  assert_source_equals(source, "static-dir", 10u);
+  lc_source_close(source);
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
@@ -1632,8 +1645,11 @@ static void assert_json_route_surface(void) {
                                           request, response, &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 200);
-  assert(strcmp(vectis_internal_response_file_path(response),
-                static_dir_index_path) == 0);
+  assert(vectis_internal_response_file_path(response) == NULL);
+  source = vectis_internal_response_take_stream_source(response);
+  assert(source != NULL);
+  assert_source_equals(source, "static-index", 12u);
+  lc_source_close(source);
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
 
@@ -1650,12 +1666,61 @@ static void assert_json_route_surface(void) {
                                           "/app.js", request, response, &error);
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 200);
-  assert(strcmp(vectis_internal_response_file_path(response),
-                static_dir_file_path) == 0);
+  assert(vectis_internal_response_file_path(response) == NULL);
+  source = vectis_internal_response_take_stream_source(response);
+  assert(source != NULL);
+  assert_source_equals(source, "static-dir", 10u);
+  lc_source_close(source);
   vectis_internal_response_cleanup(response);
   vectis_internal_request_cleanup(request);
   root_static_app->close(root_static_app);
   root_static_app = NULL;
+
+  assert(symlink(static_dir_path, static_dir_root_link_path) == 0);
+  root_static_app = vectis_app_new(&config, &error);
+  assert(root_static_app != NULL);
+  vectis_static_directory_config_init(&static_dir);
+  static_dir.path_prefix = "/";
+  static_dir.root_dir = static_dir_root_link_path;
+  status =
+      root_static_app->static_directory(root_static_app, &static_dir, &error);
+  assert(status == VECTIS_OK);
+  status = vectis_internal_dispatch_route(root_static_app, VECTIS_HTTP_GET,
+                                          "/app.js", request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 404);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+  root_static_app->close(root_static_app);
+  root_static_app = NULL;
+  assert(remove(static_dir_root_link_path) == 0);
+
+  fp = fopen(static_dir_outside_path, "wb");
+  assert(fp != NULL);
+  assert(fwrite("outside-static-root", 1u, 19u, fp) == 19u);
+  assert(fclose(fp) == 0);
+  assert(symlink(static_dir_outside_path, static_dir_link_path) == 0);
+  status = vectis_internal_dispatch_route(
+      app, VECTIS_HTTP_GET, "/assets/outside-link", request, response, &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 404);
+  assert(vectis_internal_response_file_path(response) == NULL);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+
+  assert(symlink("/tmp", static_dir_nested_link_path) == 0);
+  status = vectis_internal_dispatch_route(
+      app, VECTIS_HTTP_GET,
+      "/assets/outside-directory/vectis-static-outside.txt", request, response,
+      &error);
+  assert(status == VECTIS_OK);
+  assert(vectis_internal_response_status_code(response) == 404);
+  assert(vectis_internal_response_file_path(response) == NULL);
+  vectis_internal_response_cleanup(response);
+  vectis_internal_request_cleanup(request);
+  assert(remove(static_dir_link_path) == 0);
+  assert(remove(static_dir_nested_link_path) == 0);
+  assert(remove(static_dir_outside_path) == 0);
 
   assert(remove(static_dir_file_path) == 0);
   status = vectis_internal_dispatch_route(
