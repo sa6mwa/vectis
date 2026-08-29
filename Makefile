@@ -50,7 +50,7 @@ help:
 		'make test-sus-audio-live Run opt-in live SUS/audio loaded-model validation.' \
 		'make test-sus-audio-hardening Run hardening-only cached SUS/audio model transcription validation.' \
 		'make asan               Build and run the ASan/UBSan preset.' \
-		'make valgrind           Run debug CTest tests under host Valgrind when available.' \
+		'make valgrind           Run native debug unit facades under host Valgrind.' \
 		'make fuzz               Configure and build the fuzz preset.' \
 		'make fuzz-smoke         Build fuzz targets; bounded execution will be added with the lifecycle verifier.' \
 		'make coverage           Configure and test the coverage preset.' \
@@ -236,8 +236,7 @@ build-asan: deps-debug $(KORE_PATCH_STAMP)
 asan: test-asan
 
 valgrind: build-debug
-	@command -v valgrind >/dev/null 2>&1 || { printf '%s\n' 'valgrind is required for make valgrind' >&2; exit 2; }
-	$(TIMED) valgrind $(CTEST) --test-dir build/$(DEBUG_PRESET) --output-on-failure -T memcheck
+	$(TIMED) valgrind bash ./scripts/test_valgrind.sh build/$(DEBUG_PRESET)
 
 build-coverage: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) build-coverage $(CMAKE) --preset $(COVERAGE_PRESET)

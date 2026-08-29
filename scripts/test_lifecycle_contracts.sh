@@ -25,7 +25,7 @@ trap cleanup EXIT INT TERM
 assert_contains() {
   file=$1
   pattern=$2
-  if ! grep -Eq "$pattern" "$file"; then
+  if ! grep -Eq -- "$pattern" "$file"; then
     echo "missing lifecycle contract pattern in $file: $pattern" >&2
     exit 1
   fi
@@ -34,7 +34,7 @@ assert_contains() {
 assert_not_contains() {
   file=$1
   pattern=$2
-  if grep -Eq "$pattern" "$file"; then
+  if grep -Eq -- "$pattern" "$file"; then
     echo "forbidden lifecycle contract pattern in $file: $pattern" >&2
     exit 1
   fi
@@ -113,8 +113,8 @@ assert_action_surface_contract() {
     echo "vectis command surface must stay on -a/--action with no pack V2 or admin-operation aliases" >&2
     exit 1
   fi
-  assert_contains "$repo_root/src/vectis_cli.c" 'vectis -a\|--action pack'
-  assert_contains "$repo_root/src/vectis_cli.c" 'traces Lua line execution to stderr'
+  assert_contains "$repo_root/src/vectis_cli.c" 'vectis --action pack --help'
+  assert_contains "$repo_root/src/vectis_cli.c" 'Trace Lua line execution to stderr'
 }
 
 assert_lua_example_dx_contract() {
@@ -2035,6 +2035,13 @@ done
 assert_contains "$repo_root/Makefile" '^\$\(KORE_PATCH_STAMP\): \$\(ROOT\)/vendor/kore/REVISION \$\(ROOT\)/vendor/kore/patches/series'
 assert_contains "$repo_root/Makefile" 'scripts/vendor-kore\.sh apply'
 assert_contains "$repo_root/Makefile" 'scripts/test_vendor_kore_lifecycle\.sh'
+assert_contains "$repo_root/Makefile" 'scripts/test_valgrind\.sh build/\$\(DEBUG_PRESET\)'
+assert_not_contains "$repo_root/Makefile" 'ctest.*-T memcheck'
+assert_contains "$repo_root/scripts/test_valgrind.sh" '--leak-check=full'
+assert_contains "$repo_root/scripts/test_valgrind.sh" '--show-leak-kinds=definite,indirect,possible'
+assert_contains "$repo_root/scripts/test_valgrind.sh" '--track-origins=yes'
+assert_contains "$repo_root/scripts/test_valgrind.sh" '--error-exitcode=99'
+assert_contains "$repo_root/scripts/release_pipeline.sh" '  valgrind \\'
 assert_contains "$repo_root/scripts/vendor-kore.sh" 'revision_file="\$vendor_root/REVISION"'
 assert_contains "$repo_root/scripts/vendor-kore.sh" 'git -C "\$upstream_dir" checkout --detach "\$upstream_revision"'
 assert_contains "$repo_root/scripts/vendor-kore.sh" 'git -C "\$upstream_dir" fetch --no-tags origin'

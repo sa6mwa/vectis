@@ -12,6 +12,7 @@ for target in \
   test-cpkt-toolchains \
   lua-test \
   test-all \
+  valgrind \
   asan \
   fuzz-smoke \
   test-install-tree \
