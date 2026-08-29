@@ -88,6 +88,7 @@ if(vectis_script_command)
   string(ASCII 27 docs_pager_escape)
   if(NOT docs_pager_result EQUAL 0 OR
      NOT docs_pager_output MATCHES "${docs_pager_escape}\\[\\?1049h" OR
+     NOT docs_pager_output MATCHES "Vectis documentation" OR
      NOT docs_pager_output MATCHES "Vectis document:" OR
      NOT docs_pager_output MATCHES "docs/api.md")
     message(FATAL_ERROR "vectis --action docs -p did not run the terminal pager: ${docs_pager_output}${docs_pager_stderr}")

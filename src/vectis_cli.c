@@ -3601,7 +3601,7 @@ static int vectis_docs_command(int argc, char **argv, int index) {
     source.userdata = &pager_source;
     source.read = vectis_docs_pager_read;
     mdf_options_init(&pager_options);
-    status = mdf_pager_source("vectis-docs.md", &source, &pager_options,
+    status = mdf_pager_source("Vectis documentation", &source, &pager_options,
                               MDF_PAGER_FORMAT_MARKDOWN);
     if (status != MDF_OK) {
       fprintf(stderr, "vectis: failed to page documentation: %s\n",
