@@ -53,6 +53,49 @@ if(NOT docs_stdout MATCHES "Vectis document:.*docs/lua.md" OR
   message(FATAL_ERROR "vectis -a docs omitted embedded documentation")
 endif()
 
+execute_process(COMMAND "${VECTIS_BIN}" --action docs --help
+                RESULT_VARIABLE docs_help_result
+                OUTPUT_VARIABLE docs_help_stdout
+                ERROR_VARIABLE docs_help_stderr)
+if(NOT docs_help_result EQUAL 0 OR
+   NOT docs_help_stdout MATCHES "docs \\[-p\\|--pager\\]" OR
+   NOT docs_help_stdout MATCHES "interactive terminal pager")
+  message(FATAL_ERROR "vectis --action docs --help failed: ${docs_help_stdout}${docs_help_stderr}")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" --action docs --pager
+                RESULT_VARIABLE docs_pager_nonterminal_result
+                OUTPUT_VARIABLE docs_pager_nonterminal_stdout
+                ERROR_VARIABLE docs_pager_nonterminal_stderr)
+if(docs_pager_nonterminal_result EQUAL 0 OR
+   NOT docs_pager_nonterminal_stderr MATCHES "failed to page documentation" OR
+   NOT docs_pager_nonterminal_stderr MATCHES "invalid argument" OR
+   NOT docs_pager_nonterminal_stdout STREQUAL "")
+  message(FATAL_ERROR "vectis --action docs --pager did not reject a non-terminal: ${docs_pager_nonterminal_stdout}${docs_pager_nonterminal_stderr}")
+endif()
+
+find_program(vectis_script_command script)
+if(vectis_script_command)
+  set(docs_pager_capture "${WORK_DIR}/vectis-docs-pager.txt")
+  execute_process(
+    COMMAND /bin/sh -c
+            "(sleep 1; printf q) | \"${vectis_script_command}\" -q -e -c '\"${VECTIS_BIN}\" --action docs -p' /dev/null"
+    RESULT_VARIABLE docs_pager_result
+    OUTPUT_FILE "${docs_pager_capture}"
+    ERROR_VARIABLE docs_pager_stderr
+    TIMEOUT 15)
+  file(READ "${docs_pager_capture}" docs_pager_output)
+  string(ASCII 27 docs_pager_escape)
+  if(NOT docs_pager_result EQUAL 0 OR
+     NOT docs_pager_output MATCHES "${docs_pager_escape}\\[\\?1049h" OR
+     NOT docs_pager_output MATCHES "Vectis document:" OR
+     NOT docs_pager_output MATCHES "docs/api.md")
+    message(FATAL_ERROR "vectis --action docs -p did not run the terminal pager: ${docs_pager_output}${docs_pager_stderr}")
+  endif()
+else()
+  message(STATUS "SKIP: terminal-pager exercise requires the script command")
+endif()
+
 execute_process(COMMAND "${VECTIS_BIN}" -a source
                 RESULT_VARIABLE source_list_result
                 OUTPUT_VARIABLE source_list_stdout
