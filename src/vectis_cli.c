@@ -3499,6 +3499,7 @@ vectis_cli_resource_selected(const vectis_cli_embedded_resource *resource,
 
 static size_t vectis_docs_pager_read(void *userdata, char *dst, size_t cap,
                                      int *err) {
+  static const char separator[] = "\n\n";
   vectis_docs_pager_source *source;
   const char *data;
   size_t available;
@@ -3547,8 +3548,8 @@ static size_t vectis_docs_pager_read(void *userdata, char *dst, size_t cap,
       available =
           vectis_cli_docs[source->document_index].size - source->section_offset;
     } else {
-      data = "\n\n" + source->section_offset;
-      available = 2u - source->section_offset;
+      data = &separator[source->section_offset];
+      available = sizeof(separator) - 1u - source->section_offset;
     }
     copied = cap - written;
     if (copied > available) {
