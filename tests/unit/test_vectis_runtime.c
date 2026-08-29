@@ -3663,6 +3663,7 @@ static void assert_kore_smoke(void) {
       "Accept: text/html", "Sec-Fetch-Mode: navigate",
       "Sec-Fetch-Dest: document", "Sec-Fetch-Site: same-origin"};
   const char *browser_cookie_headers[1];
+  const char *browser_cookie_authorization_headers[2];
   const char *browser_tampered_cookie_headers[1];
   char browser_session_pouch_dir[] =
       "/tmp/vectis-runtime-browser-session.XXXXXX";
@@ -4894,6 +4895,8 @@ static void assert_kore_smoke(void) {
                "Cookie: %.*s", (int)browser_cookie_size, browser_set_cookie);
   assert(written > 0 && (size_t)written < sizeof(browser_cookie_header));
   browser_cookie_headers[0] = browser_cookie_header;
+  browser_cookie_authorization_headers[0] = browser_cookie_header;
+  browser_cookie_authorization_headers[1] = auth_header;
   assert((size_t)written + 1u <= sizeof(browser_tampered_cookie_header));
   memcpy(browser_tampered_cookie_header, browser_cookie_header,
          (size_t)written + 1u);
@@ -4949,8 +4952,8 @@ static void assert_kore_smoke(void) {
   request.method = VECTIS_HTTP_POST;
   request.url =
       format_loopback_http_url(url, sizeof(url), port, "/auth-browser/logout");
-  request.headers = browser_cookie_headers;
-  request.header_count = 1u;
+  request.headers = browser_cookie_authorization_headers;
+  request.header_count = 2u;
   request.content_type = "application/x-www-form-urlencoded";
   request.body = "";
   request.body_size = 0u;
@@ -4966,6 +4969,19 @@ static void assert_kore_smoke(void) {
   vectis_http_response_cleanup(&auth_logout_response);
   assert(runtime_browser_session_record_count(app, "runtime.browser-session") ==
          0u);
+
+  /* Logout revokes every valid credential included in the request. */
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_GET;
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/dav-native/from-auth.txt");
+  request.headers = native_webdav_headers;
+  request.header_count = 1u;
+  status =
+      vectis_http_execute(&http, &request, &native_webdav_get_response, &error);
+  assert(status == VECTIS_OK);
+  assert(native_webdav_get_response.status_code == 401L);
+  vectis_http_response_cleanup(&native_webdav_get_response);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
@@ -5000,37 +5016,6 @@ static void assert_kore_smoke(void) {
   assert(response.body_size == strlen("198.51.100.17"));
   assert(memcmp(response.body, "198.51.100.17", response.body_size) == 0);
   vectis_http_response_cleanup(&response);
-
-  vectis_http_request_init(&request);
-  request.method = VECTIS_HTTP_GET;
-  request.url = format_loopback_http_url(url, sizeof(url), port,
-                                         "/dav-native/from-auth.txt");
-  request.headers = native_webdav_headers;
-  request.header_count = 1u;
-  status =
-      vectis_http_execute(&http, &request, &native_webdav_get_response, &error);
-  assert(status == VECTIS_OK);
-  assert(native_webdav_get_response.status_code == 200L);
-  assert(native_webdav_get_response.body_size == strlen("native-webdav-body"));
-  assert(memcmp(native_webdav_get_response.body, "native-webdav-body",
-                strlen("native-webdav-body")) == 0);
-  vectis_http_response_cleanup(&native_webdav_get_response);
-
-  vectis_http_request_init(&request);
-  request.method = VECTIS_HTTP_POST;
-  request.url =
-      format_loopback_http_url(url, sizeof(url), port, "/auth/logout");
-  request.headers = native_webdav_headers;
-  request.header_count = 1u;
-  request.content_type = "application/x-www-form-urlencoded";
-  request.body = "";
-  request.body_size = 0u;
-  status = vectis_http_execute(&http, &request, &auth_logout_response, &error);
-  assert(status == VECTIS_OK);
-  assert(auth_logout_response.status_code == 200L);
-  assert(bytes_contain(auth_logout_response.body,
-                       auth_logout_response.body_size, "logged_out=1"));
-  vectis_http_response_cleanup(&auth_logout_response);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;

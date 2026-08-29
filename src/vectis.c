@@ -17233,6 +17233,7 @@ static vectis_status vectis_auth_logout_dispatch(vectis_app *app,
   vectis_auth_browser_session_result session;
   const char *authorization;
   const char *cookie;
+  int session_authenticated;
   vectis_status status;
 
   data = (vectis_auth_route_data *)userdata;
@@ -17245,6 +17246,7 @@ static vectis_status vectis_auth_logout_dispatch(vectis_app *app,
     return status;
   }
   cookie = vectis_request_header(request, "cookie");
+  session_authenticated = 0;
   if (data->browser_session.mode ==
       VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER) {
     vectis_auth_browser_session_result_init(&session);
@@ -17254,6 +17256,12 @@ static vectis_status vectis_auth_logout_dispatch(vectis_app *app,
       return status;
     }
     if (session.authenticated) {
+      session_authenticated = 1;
+    }
+  }
+  authorization = vectis_request_header(request, "authorization");
+  if (authorization == NULL || authorization[0] == '\0') {
+    if (session_authenticated) {
       status = vectis_auth_browser_session_revoke(app, &data->browser_session,
                                                   cookie, response, error);
       if (status != VECTIS_OK) {
@@ -17262,9 +17270,6 @@ static vectis_status vectis_auth_logout_dispatch(vectis_app *app,
       return vectis_response_text(response, 200, "text/plain; charset=utf-8",
                                   "logged_out=1\n", error);
     }
-  }
-  authorization = vectis_request_header(request, "authorization");
-  if (authorization == NULL || authorization[0] == '\0') {
     if (vectis_response_header(response, "www-authenticate", "Basic", error) !=
         VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_INVALID;
@@ -17282,6 +17287,15 @@ static vectis_status vectis_auth_logout_dispatch(vectis_app *app,
   }
   if (!result.authenticated || result.client_id == NULL) {
     vectis_auth_result_cleanup(&result);
+    if (session_authenticated) {
+      status = vectis_auth_browser_session_revoke(app, &data->browser_session,
+                                                  cookie, response, error);
+      if (status != VECTIS_OK) {
+        return status;
+      }
+      return vectis_response_text(response, 200, "text/plain; charset=utf-8",
+                                  "logged_out=1\n", error);
+    }
     if (vectis_response_header(response, "www-authenticate", "Basic", error) !=
         VECTIS_OK) {
       return error != NULL ? error->code : VECTIS_ERR_INVALID;
