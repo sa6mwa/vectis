@@ -1,5 +1,4 @@
 #include <arpa/inet.h>
-#include <assert.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +7,13 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+static void require(int condition, const char *message) {
+  if (!condition) {
+    fprintf(stderr, "vectis_ws_client: %s\n", message);
+    exit(EXIT_FAILURE);
+  }
+}
+
 static void send_all(int fd, const unsigned char *data, size_t size) {
   size_t offset;
   ssize_t written;
@@ -15,7 +21,7 @@ static void send_all(int fd, const unsigned char *data, size_t size) {
   offset = 0u;
   while (offset < size) {
     written = send(fd, data + offset, size - offset, 0);
-    assert(written > 0);
+    require(written > 0, "send failed");
     offset += (size_t)written;
   }
 }
@@ -25,12 +31,14 @@ static int connect_loopback(unsigned short port) {
   int fd;
 
   fd = socket(AF_INET, SOCK_STREAM, 0);
-  assert(fd >= 0);
+  require(fd >= 0, "socket failed");
   memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
   addr.sin_port = htons(port);
-  assert(inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr) == 1);
-  assert(connect(fd, (const struct sockaddr *)&addr, sizeof(addr)) == 0);
+  require(inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr) == 1,
+          "loopback address is invalid");
+  require(connect(fd, (const struct sockaddr *)&addr, sizeof(addr)) == 0,
+          "connect failed");
   return fd;
 }
 
@@ -44,7 +52,7 @@ static ssize_t recv_some(int fd, char *buffer, size_t size) {
   tv.tv_sec = 5;
   tv.tv_usec = 0;
   rc = select(fd + 1, &rfds, NULL, NULL, &tv);
-  assert(rc > 0);
+  require(rc > 0, "receive timed out");
   return recv(fd, buffer, size, 0);
 }
 
@@ -55,7 +63,7 @@ static void recv_exact(int fd, unsigned char *buffer, size_t size) {
   offset = 0u;
   while (offset < size) {
     nread = recv(fd, buffer + offset, size - offset, 0);
-    assert(nread > 0);
+    require(nread > 0, "receive failed");
     offset += (size_t)nread;
   }
 }
@@ -67,7 +75,7 @@ static void send_masked_text(int fd, const char *text) {
   size_t i;
 
   len = strlen(text);
-  assert(len < 126u);
+  require(len < 126u, "outgoing WebSocket message is too large");
   frame[0] = 0x81u;
   frame[1] = (unsigned char)(0x80u | len);
   memcpy(frame + 2u, mask, sizeof(mask));
@@ -82,12 +90,12 @@ static void recv_text(int fd, char *out, size_t out_size) {
   size_t len;
 
   recv_exact(fd, header, sizeof(header));
-  assert((header[0] & 0x80u) == 0x80u);
-  assert((header[0] & 0x0fu) == 0x01u);
-  assert((header[1] & 0x80u) == 0u);
+  require((header[0] & 0x80u) == 0x80u, "WebSocket reply is not final");
+  require((header[0] & 0x0fu) == 0x01u, "WebSocket reply is not text");
+  require((header[1] & 0x80u) == 0u, "WebSocket reply is masked");
   len = (size_t)(header[1] & 0x7fu);
-  assert(len < 126u);
-  assert(len + 1u <= out_size);
+  require(len < 126u, "WebSocket reply is too large");
+  require(len + 1u <= out_size, "WebSocket reply buffer is too small");
   recv_exact(fd, (unsigned char *)out, len);
   out[len] = '\0';
 }
@@ -122,16 +130,18 @@ int main(int argc, char **argv) {
                      "Sec-WebSocket-Version: 13\r\n"
                      "\r\n",
                      path);
-  assert(written > 0 && (size_t)written < sizeof(request));
+  require(written > 0 && (size_t)written < sizeof(request),
+          "WebSocket request is too large");
   send_all(fd, (const unsigned char *)request, (size_t)written);
   memset(response, 0, sizeof(response));
   nread = recv_some(fd, response, sizeof(response) - 1u);
-  assert(nread > 0);
+  require(nread > 0, "WebSocket handshake receive failed");
   response[(size_t)nread] = '\0';
-  assert(strstr(response, " 101 ") != NULL);
+  require(strstr(response, " 101 ") != NULL,
+          "WebSocket handshake was not accepted");
   send_masked_text(fd, message);
   recv_text(fd, reply, sizeof(reply));
-  assert(strcmp(reply, expected) == 0);
+  require(strcmp(reply, expected) == 0, "WebSocket reply did not match");
   (void)shutdown(fd, SHUT_RDWR);
   (void)close(fd);
   return 0;
