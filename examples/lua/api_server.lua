@@ -7,6 +7,8 @@ local bind = os.getenv("VECTIS_LUA_API_EXAMPLE_BIND") or "127.0.0.1"
 local port = tonumber(os.getenv("VECTIS_LUA_API_EXAMPLE_PORT") or "28585")
 local credentials_path = os.getenv("VECTIS_LUA_API_EXAMPLE_AUTH_PATH") or
     "vectis-lua-api-example-credentials.json"
+local lockd_path = os.getenv("VECTIS_LUA_API_EXAMPLE_LOCKD_PATH") or
+    "vectis-lua-api-example-lockd"
 local serve_forever = os.getenv("VECTIS_LUA_API_EXAMPLE_SERVE") == "1"
 
 local api = rest.client({
@@ -36,15 +38,18 @@ assert(vectis.auth.user_add({
   password = "api-password",
 }).username == "api-user")
 
-local auth_flow = vectis.auth.browser_flow({
+local auth_flow = vectis.auth.workflow({
   credentials_path = credentials_path,
   realm = "lua-api-example",
   purpose = "webdav",
+  credential_purpose = "webdav",
 })
 
-local credential = assert(auth_flow:webdav_key({
-  username = "api-user",
-  password = "api-password",
+local credential = assert(vectis.auth.issue({
+  credentials_path = credentials_path,
+  subject = "api-user",
+  purpose = "webdav",
+  modes = {"basic"},
 }))
 local authorization = assert(vectis.auth.basic_authorization(credential))
 
@@ -52,7 +57,9 @@ local app = assert(vectis.app.new({
   app_name = "lua-api-example",
   bind = bind,
   port = port,
+  lockd = { endpoints = {"pouch://" .. lockd_path .. "?single_writer=false"} },
 }))
+assert(auth_flow:mount(app))
 
 local order_request_schema = lonejson.schema("lua-api-order-request", {
   lonejson.field("sku", lonejson.string({required = true})),

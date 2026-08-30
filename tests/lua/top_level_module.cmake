@@ -130,7 +130,7 @@ assert(vectis.lockd == require("vectis.lockd"))
 assert(vectis.dsv == require("vectis.dsv"))
 assert(vectis.xml == require("vectis.xml"))
 
-local flow = vectis.auth.browser_flow({
+local flow = vectis.auth.workflow({
   credentials_path = "credentials.json",
   state_path = "state.json",
   path_prefix = "/_vectis/auth",
@@ -151,11 +151,6 @@ assert(provider.credentials_path == "credentials.json")
 assert(provider.state_path == "state.json")
 assert(provider.purpose == "webdav")
 assert(provider.realm == "admin")
-local authorization = assert(flow:webdav_authorization({
-  username = "admin",
-  password = "secret",
-}))
-assert(authorization == "Basic admin:secret")
 local mounted
 local server = {
   auth_routes = function(self, opts)

@@ -530,7 +530,8 @@ assert(spec:find('"openapi":"3.1.0"', 1, true))
   read-only WebDAV mount without extracting them.
 - `app:webdav_embedded_site(opts)` extracts packed assets into mutable
   WebDAV storage and serves them.
-- `app:auth_routes(opts)` registers native login/auth/WebDAV-key routes.
+- `app:auth_routes(opts)` registers the C-owned ordered browser/M2M
+  authentication workflow.
 - `app:metrics(opts)` registers the opt-in C-owned metrics dashboard and
   JSON snapshot routes.
 - `app:consumer_service(opts)` declares a C-owned lockd consumer service.

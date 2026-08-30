@@ -93,15 +93,15 @@ assert(ready.ok == true, ready.error)
 assert(ready.status == 200)
 
 local form = "username=lua-session-user&password=lua-session-password"
-local m2m_login = request("/auth/login", "POST", form, {
+local m2m_login = request("/auth/continue", "POST", form, {
   ["Content-Type"] = "application/x-www-form-urlencoded",
   ["Accept"] = "text/html",
 })
 assert(m2m_login.ok == true, m2m_login.error)
-assert(m2m_login.status == 200)
+assert(m2m_login.status == 403)
 assert(m2m_login.headers:lower():find("set-cookie:", 1, true) == nil)
 
-local browser_login = request("/auth/login", "POST", form, {
+local browser_login = request("/auth/continue", "POST", form, {
   ["Content-Type"] = "application/x-www-form-urlencoded",
   ["Accept"] = "text/html",
   ["Sec-Fetch-Mode"] = "navigate",
@@ -109,7 +109,7 @@ local browser_login = request("/auth/login", "POST", form, {
   ["Sec-Fetch-Site"] = "same-origin",
 })
 assert(browser_login.ok == true, browser_login.error)
-assert(browser_login.status == 200)
+assert(browser_login.status == 303)
 local set_cookie = assert(browser_login.headers:match(
     "[Ss]et%-[Cc]ookie:%s*([^\r\n]+)"), browser_login.headers)
 assert(set_cookie:find("HttpOnly", 1, true))

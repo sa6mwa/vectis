@@ -5021,30 +5021,6 @@ static int vectis_lua_table_bool(lua_State *lua, int index, const char *field,
   return value;
 }
 
-static int vectis_lua_auth_factor_bit(const char *name, unsigned int *out) {
-  if (out == NULL) {
-    return 0;
-  }
-  if (name == NULL || name[0] == '\0') {
-    return 0;
-  }
-  if (strcmp(name, "password") == 0) {
-    *out = VECTIS_AUTH_ROUTE_FACTOR_PASSWORD;
-    return 1;
-  }
-  if (strcmp(name, "totp") == 0 || strcmp(name, "totp_code") == 0 ||
-      strcmp(name, "totp-code") == 0) {
-    *out = VECTIS_AUTH_ROUTE_FACTOR_TOTP;
-    return 1;
-  }
-  if (strcmp(name, "email_token") == 0 || strcmp(name, "email-token") == 0 ||
-      strcmp(name, "email") == 0) {
-    *out = VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN;
-    return 1;
-  }
-  return 0;
-}
-
 static int vectis_lua_ascii_equal_ci(const char *left, const char *right) {
   unsigned char lc;
   unsigned char rc;
@@ -5186,64 +5162,49 @@ vectis_lua_route_methods(lua_State *lua, int index,
   return methods;
 }
 
-static int vectis_lua_auth_required_factors(lua_State *lua, int index,
-                                            const char *field,
-                                            unsigned int *out) {
-  unsigned int bits;
-  unsigned int bit;
+static int vectis_lua_auth_workflow_steps(
+    lua_State *lua, int index, const char *field,
+    vectis_auth_workflow_step out[3], size_t *out_count) {
   const char *name;
   size_t count;
   size_t i;
-  int type;
 
-  if (out == NULL) {
+  if (out_count == NULL) {
     return 0;
   }
+  *out_count = 0u;
   index = lua_absindex(lua, index);
   lua_getfield(lua, index, field);
   if (lua_isnil(lua, -1)) {
     lua_pop(lua, 1);
-    return 0;
-  }
-  type = lua_type(lua, -1);
-  if (type == LUA_TSTRING) {
-    name = lua_tostring(lua, -1);
-    if (!vectis_lua_auth_factor_bit(name, &bit)) {
-      lua_pop(lua, 1);
-      luaL_error(lua,
-                 "auth route required_factors contains unsupported factor");
-      return 0;
-    }
-    *out = bit;
-    lua_pop(lua, 1);
     return 1;
   }
-  if (type != LUA_TTABLE) {
-    lua_pop(lua, 1);
-    luaL_error(lua, "auth route required_factors must be a string or table");
-    return 0;
-  }
-  bits = 0u;
+  luaL_checktype(lua, -1, LUA_TTABLE);
   count = lua_rawlen(lua, -1);
-  if (count == 0u) {
+  if (count == 0u || count > 3u) {
     lua_pop(lua, 1);
-    luaL_error(lua, "auth route required_factors must not be empty");
+    luaL_error(lua, "auth workflow steps must contain one to three steps");
     return 0;
   }
   for (i = 0u; i < count; ++i) {
     lua_rawgeti(lua, -1, (lua_Integer)i + 1);
     name = luaL_checkstring(lua, -1);
-    if (!vectis_lua_auth_factor_bit(name, &bit)) {
+    if (strcmp(name, "email_code") == 0) {
+      out[i] = VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE;
+    } else if (strcmp(name, "password") == 0) {
+      out[i] = VECTIS_AUTH_WORKFLOW_STEP_PASSWORD;
+    } else if (strcmp(name, "totp") == 0) {
+      out[i] = VECTIS_AUTH_WORKFLOW_STEP_TOTP;
+    } else {
       lua_pop(lua, 2);
       luaL_error(lua,
-                 "auth route required_factors contains unsupported factor");
+                 "auth workflow steps must use email_code, password, or totp");
       return 0;
     }
-    bits |= bit;
     lua_pop(lua, 1);
   }
   lua_pop(lua, 1);
-  *out = bits;
+  *out_count = count;
   return 1;
 }
 
@@ -11936,15 +11897,17 @@ static int vectis_lua_app_auth_routes(lua_State *lua) {
   const char *state_path;
   const char *realm;
   const char *login_title;
-  const char *login_template_html;
-  const char *login_template_path;
-  const char *login_template_embedded_path;
+  const char *credential_purpose;
+  const char *browser_template_html;
+  const char *browser_template_path;
+  const char *browser_template_embedded_path;
   const char **smtp_allowed_recipients;
+  vectis_auth_workflow_step steps[3];
   vectis_lua_runtime_context *context;
   size_t smtp_allowed_recipient_count;
+  size_t step_count;
   const char *browser_session_mode;
   int browser_session_index;
-  int email_token_index;
   int smtp_index;
 
   app = vectis_lua_app_app(lua, 1);
@@ -11980,47 +11943,51 @@ static int vectis_lua_app_auth_routes(lua_State *lua) {
   if (login_title != NULL) {
     config.login_title = login_title;
   }
-  login_template_html = vectis_lua_table_string(lua, 2, "login_template_html");
-  if (login_template_html != NULL) {
-    config.login_template_html = login_template_html;
+  credential_purpose = vectis_lua_table_string(lua, 2, "credential_purpose");
+  if (credential_purpose != NULL) {
+    config.credential_purpose = credential_purpose;
   }
-  login_template_path = vectis_lua_table_string(lua, 2, "login_template_path");
-  if (login_template_path == NULL) {
-    login_template_path = vectis_lua_table_string(lua, 2, "template_path");
+  browser_template_html = vectis_lua_table_string(lua, 2, "browser_template_html");
+  if (browser_template_html != NULL) {
+    config.browser_template_html = browser_template_html;
   }
-  if (login_template_path != NULL) {
-    config.login_template_path = login_template_path;
+  browser_template_path = vectis_lua_table_string(lua, 2, "browser_template_path");
+  if (browser_template_path != NULL) {
+    config.browser_template_path = browser_template_path;
   }
-  login_template_embedded_path =
-      vectis_lua_table_string(lua, 2, "login_template_embedded_path");
-  if (login_template_embedded_path == NULL) {
-    login_template_embedded_path =
-        vectis_lua_table_string(lua, 2, "template_embedded_path");
-  }
-  if (login_template_embedded_path != NULL) {
+  browser_template_embedded_path =
+      vectis_lua_table_string(lua, 2, "browser_template_embedded_path");
+  if (browser_template_embedded_path != NULL) {
     context =
         (vectis_lua_runtime_context *)cpkt_lua_runtime_context_from_state(lua);
     if (context == NULL || context->embedded_fs == NULL) {
       return vectis_lua_push_error_text(
           lua, VECTIS_ERR_INVALID,
-          "auth route embedded login template requires packed assets");
+          "auth route embedded browser template requires packed assets");
     }
-    config.login_template_embedded_path = login_template_embedded_path;
-    config.login_template_fs = context->embedded_fs;
+    config.browser_template_embedded_path = browser_template_embedded_path;
+    config.browser_template_fs = context->embedded_fs;
   }
   config.max_body_bytes =
       vectis_lua_table_size(lua, 2, "max_body_bytes", config.max_body_bytes);
   config.unix_seconds = (uint64_t)vectis_lua_table_size(lua, 2, "time", 0u);
   config.totp_window =
       (unsigned int)vectis_lua_table_size(lua, 2, "window", 0u);
-  config.require_email_token =
-      vectis_lua_table_bool(lua, 2, "require_email_token", 0);
-  (void)vectis_lua_auth_required_factors(lua, 2, "required_factors",
-                                         &config.required_factors);
-  config.email_token_ttl_seconds = (uint64_t)vectis_lua_table_size(
-      lua, 2, "email_token_ttl_seconds", config.email_token_ttl_seconds);
-  config.email_token_max_attempts = (unsigned int)vectis_lua_table_size(
-      lua, 2, "email_token_max_attempts", config.email_token_max_attempts);
+  step_count = 0u;
+  (void)vectis_lua_auth_workflow_steps(lua, 2, "steps", steps, &step_count);
+  if (step_count > 0u) {
+    config.steps = steps;
+    config.step_count = step_count;
+  }
+  config.workflow_state_key =
+      vectis_lua_table_string(lua, 2, "workflow_state_key");
+  if (config.workflow_state_key == NULL) {
+    config.workflow_state_key = "auth.workflow.v1";
+  }
+  config.workflow_ttl_seconds = (uint64_t)vectis_lua_table_size(
+      lua, 2, "workflow_ttl_seconds", config.workflow_ttl_seconds);
+  config.email_code_max_attempts = (unsigned int)vectis_lua_table_size(
+      lua, 2, "email_code_max_attempts", config.email_code_max_attempts);
   lua_getfield(lua, 2, "browser_session");
   if (!lua_isnil(lua, -1)) {
     luaL_checktype(lua, -1, LUA_TTABLE);
@@ -12062,17 +12029,6 @@ static int vectis_lua_app_auth_routes(lua_State *lua) {
     config.browser_session.ttl_seconds = (uint64_t)vectis_lua_table_size(
         lua, browser_session_index, "ttl_seconds",
         config.browser_session.ttl_seconds);
-  }
-  lua_pop(lua, 1);
-  lua_getfield(lua, 2, "email_token");
-  if (!lua_isnil(lua, -1)) {
-    luaL_checktype(lua, -1, LUA_TTABLE);
-    email_token_index = lua_gettop(lua);
-    config.email_token_ttl_seconds = (uint64_t)vectis_lua_table_size(
-        lua, email_token_index, "ttl_seconds", config.email_token_ttl_seconds);
-    config.email_token_max_attempts = (unsigned int)vectis_lua_table_size(
-        lua, email_token_index, "max_attempts",
-        config.email_token_max_attempts);
   }
   lua_pop(lua, 1);
   lua_getfield(lua, 2, "email_smtp");

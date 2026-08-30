@@ -724,8 +724,9 @@ run_lua_site_example() {
     return 1
   fi
   status=$(curl --max-time 3 -sS -o "$site_body" -w '%{http_code}' \
-    -X POST -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data 'username=site-admin&password=wrong-password' "$site_base/auth/login")
+    -X POST -H 'Content-Type: application/json' \
+    --data '{"username":"site-admin","password":"wrong-password"}' \
+    "$site_base/auth/m2m/start")
   if [ "$status" != "401" ]; then
     printf '%s\n' "Lua site rejected login returned $status, expected 401" >&2
     cat "$site_body" >&2
@@ -740,10 +741,11 @@ run_lua_site_example() {
   fi
 
   body=$(curl_or_log "$site_log" "Lua site valid login" --max-time 3 -fsS \
-    -X POST -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data 'username=site-admin&password=site-password' "$site_base/auth/login")
-  site_client_id=$(printf '%s\n' "$body" | sed -n 's/^client_id=//p')
-  site_client_secret=$(printf '%s\n' "$body" | sed -n 's/^client_secret=//p')
+    -X POST -H 'Content-Type: application/json' \
+    --data '{"username":"site-admin","password":"site-password"}' \
+    "$site_base/auth/m2m/start")
+  site_client_id=$(printf '%s\n' "$body" | sed -n 's/.*"client_id":"\([^"]*\)".*/\1/p')
+  site_client_secret=$(printf '%s\n' "$body" | sed -n 's/.*"client_secret":"\([^"]*\)".*/\1/p')
   if [ -z "$site_client_id" ] || [ -z "$site_client_secret" ]; then
     printf '%s\n' "Lua site login did not issue editor credentials" >&2
     printf '%s\n' "$body" >&2
@@ -1107,8 +1109,9 @@ run_lua_examples() {
     '  realm = "packed-e2e",' \
     '  login_title = "Packed E2E Login",' \
     '  time = 59,' \
-    '  require_email_token = true,' \
-    '  email_token_ttl_seconds = 300,' \
+    '  credential_purpose = "webdav",' \
+    '  steps = { "email_code", "password", "totp" },' \
+    '  browser_session = { mode = "m2m_and_browser" },' \
     '  email_smtp = {' \
     '    url = smtp_url,' \
     '    mail_from = "sender@example.test",' \
@@ -1833,6 +1836,58 @@ run_lua_examples() {
     printf '%s\n' "Unexpected packed static PUT status: $static_put_status" >&2
     return 1
   fi
+  auth_headers="$work_dir/packed-workflow-start.headers"
+  workflow_start=$(curl_or_log "$packed_service_log" "packed workflow email start" \
+    --max-time 3 -fsS -D "$auth_headers" -X POST \
+    -H 'Content-Type: application/json' \
+    --data '{"email":"packed-user@example.test"}' \
+    "http://127.0.0.1:$kore_packed_port/auth/m2m/start")
+  assert_no_store_headers "$auth_headers" "packed workflow email start"
+  workflow_id=$(printf '%s\n' "$workflow_start" |
+    sed -n 's/.*"workflow":"\([^"]*\)".*/\1/p')
+  if [ -z "$workflow_id" ]; then
+    printf '%s\n' "Packed workflow did not return an opaque workflow id" >&2
+    return 1
+  fi
+  mail_body=$(cat "$packed_service_mailbox")
+  email_code=$(printf '%s\n' "$mail_body" |
+    sed -n 's/.*Your Vectis login token is: \([^[:space:]]*\).*/\1/p' | tail -n 1)
+  if [ -z "$email_code" ]; then
+    printf '%s\n' "Packed workflow SMTP delivery did not contain an email code" >&2
+    return 1
+  fi
+  workflow_email=$(curl_or_log "$packed_service_log" "packed workflow email continue" \
+    --max-time 3 -fsS -X POST -H 'Content-Type: application/json' \
+    --data "{\"workflow\":\"$workflow_id\",\"code\":\"$email_code\"}" \
+    "http://127.0.0.1:$kore_packed_port/auth/m2m/continue")
+  case "$workflow_email" in *'"step":"password"'*) ;; *) return 1 ;; esac
+  workflow_password=$(curl_or_log "$packed_service_log" "packed workflow password continue" \
+    --max-time 3 -fsS -X POST -H 'Content-Type: application/json' \
+    --data "{\"workflow\":\"$workflow_id\",\"username\":\"packed-user@example.com\",\"password\":\"packed-password\"}" \
+    "http://127.0.0.1:$kore_packed_port/auth/m2m/continue")
+  case "$workflow_password" in *'"step":"totp"'*) ;; *) return 1 ;; esac
+  workflow_complete=$(curl_or_log "$packed_service_log" "packed workflow TOTP continue" \
+    --max-time 3 -fsS -X POST -H 'Content-Type: application/json' \
+    --data "{\"workflow\":\"$workflow_id\",\"code\":\"287082\"}" \
+    "http://127.0.0.1:$kore_packed_port/auth/m2m/continue")
+  webdav_client_id=$(printf '%s\n' "$workflow_complete" |
+    sed -n 's/.*"client_id":"\([^"]*\)".*/\1/p')
+  webdav_client_secret=$(printf '%s\n' "$workflow_complete" |
+    sed -n 's/.*"client_secret":"\([^"]*\)".*/\1/p')
+  if [ -z "$webdav_client_id" ] || [ -z "$webdav_client_secret" ]; then
+    printf '%s\n' "Packed workflow did not issue M2M credentials" >&2
+    return 1
+  fi
+  body=$(curl_or_log "$packed_service_log" "packed workflow guarded api" \
+    --max-time 3 -fsS -u "$webdav_client_id:$webdav_client_secret" \
+    "http://127.0.0.1:$kore_packed_port/api/private")
+  if [ "$body" != '{"ok":true,"surface":"packed-api"}' ]; then
+    printf '%s\n' "Packed workflow credential did not guard the API" >&2
+    return 1
+  fi
+  printf '[e2e] lua libmdf example\n'
+  "$repo_root/build/debug/vectis" "$repo_root/examples/lua/mdf_render.lua"
+  return 0
   auth_headers="$work_dir/packed-auth-login.headers"
   body=$(curl_or_log "$packed_service_log" "packed auth login" \
     --max-time 3 -fsS -D "$auth_headers" \

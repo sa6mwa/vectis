@@ -123,7 +123,7 @@ execute_process(COMMAND "${VECTIS_BIN}" -a source vectis/auth.lua
                 ERROR_VARIABLE source_path_stderr)
 if(NOT source_path_result EQUAL 0 OR
    NOT source_path_stdout MATCHES "-- vectis source: vectis/auth.lua" OR
-   NOT source_path_stdout MATCHES "browser_flow")
+   NOT source_path_stdout MATCHES "function M.workflow")
   message(FATAL_ERROR "source resource-path selection failed: ${source_path_stdout}${source_path_stderr}")
 endif()
 

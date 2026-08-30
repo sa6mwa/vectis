@@ -135,7 +135,7 @@ end
 assert(type(loaded["vectis"].error_source_string) == "function")
 assert(loaded["vectis"].error_source_string(loaded["vectis"].ERROR_SOURCE_VECTIS) == "vectis")
 assert(type(loaded["vectis.auth"].provider_native) == "function")
-assert(type(loaded["vectis.auth"].browser_flow) == "function")
+assert(type(loaded["vectis.auth"].workflow) == "function")
 assert(type(loaded["vectis.cert"].generate_bundle) == "function")
 assert(type(loaded["vectis.embedded"].read) == "function")
 assert(type(loaded["vectis.app"].new) == "function")

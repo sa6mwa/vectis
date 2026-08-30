@@ -304,7 +304,7 @@ local rock_agent_result = assert(vectis.cai.with_agent({
 end))
 assert(rock_agent_result == "agent")
 assert(rock_agent.closed == true)
-local flow = vectis.auth.browser_flow({
+local flow = vectis.auth.workflow({
   credentials_path = "credentials.json",
   state_path = "state.json",
   realm = "rock",
@@ -316,11 +316,10 @@ assert(provider.credentials_path == "credentials.json")
 assert(provider.state_path == "state.json")
 assert(provider.purpose == "webdav")
 assert(provider.realm == "rock")
-local authorization = assert(flow:webdav_authorization({
-  username = "rock-user",
-  password = "rock-password",
-}))
-assert(authorization == "Basic rock-user:rock-password")
+local routes = flow:routes({ steps = { "password", "totp" } })
+assert(routes.credentials_path == "credentials.json")
+assert(routes.steps[1] == "password")
+assert(routes.steps[2] == "totp")
 local dsv = loaded["vectis.dsv"]
 assert(dsv.to_string({ rows = { { "a", "b" } } }) == "a,b\n")
 assert(type(dsv.parse("a,b\n")) == "table")

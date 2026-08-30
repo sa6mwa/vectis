@@ -236,6 +236,13 @@ typedef struct vectis_auth_user_find_state {
   vectis_auth_user_record record;
 } vectis_auth_user_find_state;
 
+typedef struct vectis_auth_user_email_find_state {
+  lonejson *runtime;
+  const char *email;
+  vectis_auth_user_record record;
+  int duplicate;
+} vectis_auth_user_email_find_state;
+
 typedef struct vectis_auth_user_drop_state {
   lonejson *runtime;
   const char *username;
@@ -1509,6 +1516,42 @@ static lonejson_status vectis_auth_user_find_item(
   return status;
 }
 
+static lonejson_status vectis_auth_user_email_find_item(
+    void *user, const lonejson_array_rewrite_context *context, void *item,
+    lonejson_array_rewrite_result *result, lonejson_error *error) {
+  vectis_auth_user_email_find_state *state;
+  lonejson_json_value *value;
+  lonejson_owned_buffer json;
+  vectis_auth_user_record record;
+  lonejson_status status;
+
+  (void)context;
+  (void)result;
+  state = (vectis_auth_user_email_find_state *)user;
+  value = (lonejson_json_value *)item;
+  if (state == NULL || state->email == NULL || state->duplicate) {
+    return LONEJSON_STATUS_OK;
+  }
+  lonejson_owned_buffer_init(&json);
+  memset(&record, 0, sizeof(record));
+  status = value->methods->write_to_sink(value, lonejson_owned_buffer_sink,
+                                         &json, error);
+  if (status == LONEJSON_STATUS_OK &&
+      vectis_auth_user_record_from_json(state->runtime, json.data, json.len,
+                                        &record) &&
+      record.email[0] != '\0' && strcmp(record.email, state->email) == 0) {
+    if (state->record.found) {
+      memset(&state->record, 0, sizeof(state->record));
+      state->duplicate = 1;
+    } else {
+      state->record = record;
+      state->record.found = 1;
+    }
+  }
+  lonejson_owned_buffer_free(&json);
+  return status;
+}
+
 static lonejson_status vectis_auth_user_drop_item(
     void *user, const lonejson_array_rewrite_context *context, void *item,
     lonejson_array_rewrite_result *result, lonejson_error *error) {
@@ -2236,13 +2279,12 @@ void vectis_auth_routes_config_init(vectis_auth_routes_config *config) {
   vectis_auth_store_config_init(&config->store);
   config->realm = "vectis";
   config->login_title = "Vectis Login";
+  config->credential_purpose = "workflow";
   config->max_body_bytes = 8192u;
-  config->required_factors = VECTIS_AUTH_ROUTE_FACTOR_PASSWORD;
-  config->email_token_ttl_seconds = VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS;
-  config->email_token_max_attempts =
+  config->workflow_state_key = "auth.workflow.v1";
+  config->workflow_ttl_seconds = VECTIS_AUTH_WORKFLOW_DEFAULT_TTL_SECONDS;
+  config->email_code_max_attempts =
       VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS;
-  config->pending_login_ttl_seconds =
-      VECTIS_AUTH_PENDING_LOGIN_DEFAULT_TTL_SECONDS;
   vectis_auth_browser_session_config_init(&config->browser_session);
   vectis_auth_smtp_config_init(&config->email_smtp);
 }
@@ -2294,6 +2336,22 @@ void vectis_auth_password_check_config_init(
 
 void vectis_auth_password_check_result_init(
     vectis_auth_password_check_result *result) {
+  if (result == NULL) {
+    return;
+  }
+  memset(result, 0, sizeof(*result));
+}
+
+void vectis_auth_totp_check_config_init(vectis_auth_totp_check_config *config) {
+  if (config == NULL) {
+    return;
+  }
+  memset(config, 0, sizeof(*config));
+  vectis_auth_store_config_init(&config->store);
+  config->totp_window = 1u;
+}
+
+void vectis_auth_totp_check_result_init(vectis_auth_totp_check_result *result) {
   if (result == NULL) {
     return;
   }
@@ -3468,6 +3526,29 @@ static vectis_status vectis_auth_browser_session_prune(
   return VECTIS_OK;
 }
 
+vectis_status vectis_auth_browser_session_cleanup(
+    vectis_app *app, const vectis_auth_browser_session_config *config,
+    uint64_t unix_seconds, vectis_error *error) {
+  lc_client *client;
+  uint64_t now;
+
+  if (app == NULL || config == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session cleanup requires app and configuration");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_auth_browser_session_now(unix_seconds, &now, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  client = vectis_lockd_client(app);
+  if (client == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "browser sessions require configured app Lockd");
+    return VECTIS_ERR_STATE;
+  }
+  return vectis_auth_browser_session_prune(app, client, config, now, error);
+}
+
 static int vectis_auth_browser_session_sign(const char *secret_hex,
                                             const char *session_id,
                                             char *signature_hex,
@@ -3755,10 +3836,6 @@ vectis_status vectis_auth_browser_session_issue(
     vectis_set_error(error, VECTIS_ERR_STATE,
                      "browser sessions require configured app Lockd");
     return VECTIS_ERR_STATE;
-  }
-  status = vectis_auth_browser_session_prune(app, client, config, now, error);
-  if (status != VECTIS_OK) {
-    return status;
   }
   memset(&record, 0, sizeof(record));
   status = vectis_auth_token_sha256_hex(
@@ -6243,6 +6320,92 @@ vectis_auth_user_exists(const vectis_auth_store_config *store_config,
   return status;
 }
 
+vectis_status vectis_auth_user_find_by_email(
+    const vectis_auth_store_config *store_config, const char *email,
+    char *username_out, size_t username_out_size, int *out_found,
+    vectis_error *error) {
+  vectis_auth_store_lock lock;
+  vectis_auth_user_email_find_state state;
+  lonejson_json_value item_value;
+  lonejson_array_rewrite_options options;
+  lonejson *runtime;
+  lonejson_error json_error;
+  lonejson_status json_status;
+  vectis_status status;
+  char temp_path[4096];
+
+  if (out_found == NULL || username_out == NULL || username_out_size == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth email lookup output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out_found = 0;
+  username_out[0] = '\0';
+  status = vectis_auth_user_email_validate(email, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  memset(&lock, 0, sizeof(lock));
+  lock.fd = -1;
+  runtime = NULL;
+  temp_path[0] = '\0';
+  status = vectis_auth_lonejson_runtime(&runtime, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_auth_lock_open(store_config, &lock, error);
+  if (status == VECTIS_OK) {
+    memset(&state, 0, sizeof(state));
+    state.runtime = runtime;
+    state.email = email;
+    memset(&options, 0, sizeof(options));
+    lonejson_json_value_init(runtime, &item_value);
+    lonejson_error_init(&json_error);
+    json_status = lonejson_json_value_enable_parse_capture(&item_value,
+                                                            &json_error);
+    if (json_status == LONEJSON_STATUS_OK) {
+      options.item_value = &item_value;
+      options.item = vectis_auth_user_email_find_item;
+      options.user = &state;
+      status = vectis_auth_rewrite_array_to_temp_locked(
+          runtime, "users", store_config->credentials_path, "users-email-find",
+          temp_path, sizeof(temp_path), &options, &json_error, error);
+      if (status == VECTIS_OK) {
+        json_status = LONEJSON_STATUS_OK;
+      } else if (status != VECTIS_ERR_INVALID) {
+        lonejson_json_value_cleanup(&item_value);
+        vectis_auth_lock_close(&lock);
+        vectis_auth_unlink_temp_path(temp_path);
+        lonejson_free(runtime);
+        return status;
+      } else {
+        json_status = json_error.code;
+      }
+    }
+    lonejson_json_value_cleanup(&item_value);
+    if (json_status != LONEJSON_STATUS_OK) {
+      status = vectis_auth_lonejson_error(error, json_status, &json_error,
+                                          "failed to read auth users");
+    } else if (!state.duplicate && state.record.found) {
+      if (strlen(state.record.username) >= username_out_size) {
+        vectis_set_error(error, VECTIS_ERR_INVALID,
+                         "auth email lookup output is too small");
+        status = VECTIS_ERR_INVALID;
+      } else {
+        memcpy(username_out, state.record.username,
+               strlen(state.record.username) + 1u);
+        *out_found = 1;
+      }
+    }
+  }
+  if (lock.fd >= 0) {
+    vectis_auth_lock_close(&lock);
+  }
+  vectis_auth_unlink_temp_path(temp_path);
+  lonejson_free(runtime);
+  return status;
+}
+
 vectis_status
 vectis_auth_user_login(const vectis_auth_store_config *store_config,
                        const vectis_auth_login_config *login_config,
@@ -6368,6 +6531,62 @@ vectis_auth_user_password_check(const vectis_auth_password_check_config *config,
     out->authenticated = 1;
     out->totp_required = record.totp_enabled ? 1 : 0;
   }
+  return VECTIS_OK;
+}
+
+vectis_status vectis_auth_user_totp_check(
+    const vectis_auth_totp_check_config *config,
+    vectis_auth_totp_check_result *out, vectis_error *error) {
+  vectis_auth_store_lock lock;
+  vectis_auth_user_record record;
+  lonejson *runtime;
+  vectis_totp totp;
+  vectis_status status;
+  uint64_t now;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth TOTP-check result is required");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_totp_check_result_init(out);
+  if (config == NULL || config->username == NULL ||
+      config->username[0] == '\0' || config->totp_code == NULL ||
+      config->totp_code[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth TOTP-check username and code are required");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&lock, 0, sizeof(lock));
+  lock.fd = -1;
+  runtime = NULL;
+  status = vectis_auth_lock_open(&config->store, &lock, error);
+  if (status == VECTIS_OK) {
+    status = vectis_auth_lonejson_runtime(&runtime, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_find_user_locked(&config->store, runtime,
+                                          config->username, &record, error);
+  }
+  if (lock.fd >= 0) {
+    vectis_auth_lock_close(&lock);
+  }
+  if (status != VECTIS_OK) {
+    lonejson_free(runtime);
+    return status;
+  }
+  if (record.found && record.totp_enabled &&
+      vectis_totp_init(&totp, record.totp_secret) == VECTIS_TOTP_QR_OK) {
+    now = config->unix_seconds != 0u ? config->unix_seconds
+                                     : (uint64_t)time(NULL);
+    out->authenticated = vectis_totp_validate(
+                             &totp, config->totp_code, now,
+                             config->totp_window != 0u ? config->totp_window
+                                                       : 1u)
+                             ? 1
+                             : 0;
+  }
+  lonejson_free(runtime);
   return VECTIS_OK;
 }
 

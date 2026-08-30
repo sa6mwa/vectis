@@ -1356,9 +1356,20 @@ static void vectis_kore_control_timer(void *arg, u_int64_t now) {
   }
 }
 
+static void vectis_kore_auth_cleanup_timer(void *arg, u_int64_t now) {
+  (void)arg;
+  (void)now;
+  if (kore_quit == KORE_QUIT_NONE && vectis_kore_current.app != NULL) {
+    vectis_internal_auth_cleanup_tick(vectis_kore_current.app);
+  }
+}
+
 void vectis_kore_parent_timers(void) {
   if (vectis_kore_current.control_fd >= 0) {
     (void)kore_timer_add(vectis_kore_control_timer, 100, NULL, 0);
+  }
+  if (vectis_kore_current.app != NULL) {
+    (void)kore_timer_add(vectis_kore_auth_cleanup_timer, 60000, NULL, 0);
   }
 }
 

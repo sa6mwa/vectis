@@ -21,8 +21,10 @@
 #include <lonejson.h>
 #include <netdb.h>
 #include <openssl/bn.h>
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
+#include <openssl/rand.h>
 #include <openssl/rsa.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
@@ -79,6 +81,8 @@ typedef struct vectis_route_entry {
   void *userdata;
   int owns_userdata;
 } vectis_route_entry;
+
+typedef struct vectis_auth_cleanup_entry vectis_auth_cleanup_entry;
 
 typedef struct vectis_json_route_adapter {
   const lonejson_map *input_map;
@@ -503,6 +507,7 @@ typedef struct vectis_app_impl {
   vectis_metrics_state *metrics;
   struct lc_client *lockd_client;
   pid_t lockd_client_pid;
+  vectis_auth_cleanup_entry *auth_cleanup_entries;
   struct vectis_consumer_receiver_entry *consumer_receivers;
   struct vectis_managed_service_impl *managed_services;
   struct vectis_consumer_service_impl *consumer_services;
@@ -1207,6 +1212,7 @@ static vectis_status vectis_open_lockd_client(vectis_app_impl *impl,
                                               vectis_error *error);
 static void
 vectis_close_lockd_client_for_current_process(vectis_app_impl *impl);
+static void vectis_free_auth_cleanup_entries(vectis_app_impl *impl);
 static void vectis_close_cai_client_for_current_process(vectis_app_impl *impl);
 static vectis_status
 vectis_app_validate_quiescent_for_kore(const vectis_app_impl *impl,
@@ -10210,6 +10216,7 @@ static void vectis_destroy_impl_final(vectis_app_impl *impl) {
   vectis_metrics_state_destroy(impl->metrics);
   impl->metrics = NULL;
   vectis_free_routes(impl);
+  vectis_free_auth_cleanup_entries(impl);
   vectis_free_openapi_docs(impl);
   vectis_free_endpoints(impl);
   vectis_free_domains(impl);
@@ -14702,18 +14709,307 @@ typedef struct vectis_auth_route_data {
   const char *path_prefix;
   const char *realm;
   const char *login_title;
-  const char *login_template_html;
+  const char *credential_purpose;
+  const char *browser_template_html;
+  const char *workflow_state_key;
+  const vectis_auth_workflow_step *steps;
+  vectis_auth_workflow_step steps_storage[3];
+  size_t step_count;
+  uint64_t workflow_ttl_seconds;
   size_t max_body_bytes;
   uint64_t unix_seconds;
   unsigned int totp_window;
-  unsigned int required_factors;
-  int require_email_token;
-  uint64_t email_token_ttl_seconds;
-  unsigned int email_token_max_attempts;
-  uint64_t pending_login_ttl_seconds;
+  unsigned int email_code_max_attempts;
   vectis_auth_browser_session_config browser_session;
   vectis_auth_smtp_config email_smtp;
 } vectis_auth_route_data;
+
+struct vectis_auth_cleanup_entry {
+  vectis_auth_route_data *data;
+  vectis_auth_cleanup_entry *next;
+};
+
+static void vectis_free_auth_cleanup_entries(vectis_app_impl *impl) {
+  vectis_auth_cleanup_entry *entry;
+  vectis_auth_cleanup_entry *next;
+
+  if (impl == NULL) {
+    return;
+  }
+  entry = impl->auth_cleanup_entries;
+  impl->auth_cleanup_entries = NULL;
+  while (entry != NULL) {
+    next = entry->next;
+    free(entry->data);
+    free(entry);
+    entry = next;
+  }
+}
+
+#define VECTIS_AUTH_WORKFLOW_ID_BYTES 32u
+#define VECTIS_AUTH_WORKFLOW_ID_HEX_BYTES (2u * VECTIS_AUTH_WORKFLOW_ID_BYTES)
+#define VECTIS_AUTH_WORKFLOW_PRUNE_BATCH 32u
+#define VECTIS_AUTH_WORKFLOW_KEY_MAX 512u
+
+typedef struct vectis_auth_workflow_record {
+  char principal[VECTIS_AUTH_PRINCIPAL_MAX + 1u];
+  int principal_enrolled;
+  char state_key_hash[65];
+  char email[320];
+  char email_token_hash[65];
+  char return_path[2048];
+  lonejson_int64 expires_at;
+  lonejson_int64 cleanup_at;
+  uint64_t step_index;
+  uint64_t verified_steps;
+  uint64_t email_attempts;
+  uint64_t email_max_attempts;
+  int consumed;
+} vectis_auth_workflow_record;
+
+typedef struct vectis_auth_workflow_prune_context {
+  char keys[VECTIS_AUTH_WORKFLOW_PRUNE_BATCH][VECTIS_AUTH_WORKFLOW_KEY_MAX];
+  size_t current_size;
+  size_t count;
+} vectis_auth_workflow_prune_context;
+
+static const lonejson_field vectis_auth_workflow_record_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(vectis_auth_workflow_record, principal,
+                                    "principal", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_BOOL_REQ(vectis_auth_workflow_record, principal_enrolled,
+                            "principal_enrolled"),
+    LONEJSON_FIELD_STRING_FIXED_REQ(vectis_auth_workflow_record,
+                                    state_key_hash, "state_key_hash",
+                                    LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(vectis_auth_workflow_record, email,
+                                           "email", LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(vectis_auth_workflow_record,
+                                           email_token_hash,
+                                           "email_token_hash",
+                                           LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(vectis_auth_workflow_record,
+                                           return_path, "return_path",
+                                           LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_I64_REQ(vectis_auth_workflow_record, expires_at,
+                           "expires_at"),
+    LONEJSON_FIELD_I64_REQ(vectis_auth_workflow_record, cleanup_at,
+                           "cleanup_at"),
+    LONEJSON_FIELD_U64_REQ(vectis_auth_workflow_record, step_index,
+                            "step_index"),
+    LONEJSON_FIELD_U64_REQ(vectis_auth_workflow_record, verified_steps,
+                            "verified_steps"),
+    LONEJSON_FIELD_U64_REQ(vectis_auth_workflow_record, email_attempts,
+                            "email_attempts"),
+    LONEJSON_FIELD_U64_REQ(vectis_auth_workflow_record, email_max_attempts,
+                            "email_max_attempts"),
+    LONEJSON_FIELD_BOOL_REQ(vectis_auth_workflow_record, consumed,
+                            "consumed")};
+
+LONEJSON_MAP_DEFINE(vectis_auth_workflow_record_map,
+                    vectis_auth_workflow_record,
+                    vectis_auth_workflow_record_fields);
+
+static void vectis_auth_workflow_hex_encode(const unsigned char *source,
+                                            size_t source_size, char *out) {
+  static const char digits[] = "0123456789abcdef";
+  size_t i;
+
+  for (i = 0u; i < source_size; ++i) {
+    out[2u * i] = digits[source[i] >> 4u];
+    out[2u * i + 1u] = digits[source[i] & 0x0fu];
+  }
+  out[2u * source_size] = '\0';
+}
+
+static vectis_status vectis_auth_workflow_now(uint64_t configured,
+                                               uint64_t *out,
+                                               vectis_error *error) {
+  time_t now;
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow clock output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (configured != 0u) {
+    *out = configured;
+    return VECTIS_OK;
+  }
+  now = time(NULL);
+  if (now < (time_t)0) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to read auth workflow clock");
+    return VECTIS_ERR_STATE;
+  }
+  *out = (uint64_t)now;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_workflow_id(char out[
+    VECTIS_AUTH_WORKFLOW_ID_HEX_BYTES + 1u], vectis_error *error) {
+  unsigned char bytes[VECTIS_AUTH_WORKFLOW_ID_BYTES];
+
+  if (RAND_bytes(bytes, (int)sizeof(bytes)) != 1) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to generate auth workflow identifier");
+    return VECTIS_ERR_STATE;
+  }
+  vectis_auth_workflow_hex_encode(bytes, sizeof(bytes), out);
+  OPENSSL_cleanse(bytes, sizeof(bytes));
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_workflow_key(
+    const vectis_auth_route_data *data, const char *workflow_id, char *out,
+    size_t out_size, vectis_error *error) {
+  if (data == NULL || data->workflow_state_key == NULL ||
+      workflow_id == NULL || strlen(workflow_id) !=
+                                VECTIS_AUTH_WORKFLOW_ID_HEX_BYTES) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow key configuration is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_format_key(out, out_size, error, "%s/%s",
+                           data->workflow_state_key, workflow_id);
+}
+
+static vectis_status vectis_auth_workflow_load(
+    vectis_app *app, const vectis_auth_route_data *data, const char *workflow_id,
+    vectis_auth_workflow_record *record, vectis_error *error);
+static vectis_status vectis_auth_workflow_delete(
+    vectis_app *app, const vectis_auth_route_data *data, const char *id,
+    vectis_error *error);
+
+static vectis_status vectis_auth_workflow_prune(
+    vectis_app *app, const vectis_auth_route_data *data, uint64_t now,
+    vectis_error *error);
+
+static int vectis_auth_workflow_return_path_valid(const char *path);
+
+static vectis_status vectis_auth_workflow_create(
+    vectis_app *app, const vectis_auth_route_data *data, const char *principal,
+    int principal_enrolled, const char *return_path,
+    char workflow_id[VECTIS_AUTH_WORKFLOW_ID_HEX_BYTES + 1u],
+    vectis_error *error) {
+  vectis_auth_workflow_record record;
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned int digest_size;
+  struct lc_client *client;
+  uint64_t now;
+  char key[512];
+  vectis_status status;
+
+  if (app == NULL || data == NULL || principal == NULL || principal[0] == '\0' ||
+      strlen(principal) > VECTIS_AUTH_PRINCIPAL_MAX) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow creation configuration is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  client = vectis_lockd_client(app);
+  if (client == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "auth workflows require configured app Lockd");
+    return VECTIS_ERR_STATE;
+  }
+  status = vectis_auth_workflow_now(data->unix_seconds, &now, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (data->workflow_ttl_seconds == 0u ||
+      now > UINT64_MAX - data->workflow_ttl_seconds) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow expiry is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_workflow_id(workflow_id, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_auth_workflow_key(data, workflow_id, key, sizeof(key), error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  memset(&record, 0, sizeof(record));
+  (void)snprintf(record.principal, sizeof(record.principal), "%s", principal);
+  record.principal_enrolled = principal_enrolled != 0;
+  if (return_path != NULL && return_path[0] != '\0') {
+    if (!vectis_auth_workflow_return_path_valid(return_path)) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "auth workflow return path is invalid");
+      return VECTIS_ERR_INVALID;
+    }
+    (void)snprintf(record.return_path, sizeof(record.return_path), "%s",
+                   return_path);
+  }
+  digest_size = 0u;
+  if (EVP_Digest((const unsigned char *)data->workflow_state_key,
+                 strlen(data->workflow_state_key), digest, &digest_size,
+                 EVP_sha256(), NULL) != 1 || digest_size != 32u) {
+    OPENSSL_cleanse(digest, sizeof(digest));
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to hash auth workflow namespace");
+    return VECTIS_ERR_STATE;
+  }
+  vectis_auth_workflow_hex_encode(digest, digest_size, record.state_key_hash);
+  OPENSSL_cleanse(digest, sizeof(digest));
+  record.expires_at = (lonejson_int64)(now + data->workflow_ttl_seconds);
+  record.cleanup_at = record.expires_at;
+  record.email_max_attempts = data->email_code_max_attempts;
+  status = vectis_lockd_state_save(client, key, "vectis-auth-workflow", 30L,
+                                   &vectis_auth_workflow_record_map, &record,
+                                   error);
+  if (status == VECTIS_OK) {
+    status = vectis_auth_workflow_load(app, data, workflow_id, &record, error);
+  }
+  if (status != VECTIS_OK) {
+    OPENSSL_cleanse(workflow_id, VECTIS_AUTH_WORKFLOW_ID_HEX_BYTES + 1u);
+  }
+  return status;
+}
+
+static vectis_status vectis_auth_workflow_load(
+    vectis_app *app, const vectis_auth_route_data *data, const char *workflow_id,
+    vectis_auth_workflow_record *record, vectis_error *error) {
+  struct lc_client *client;
+  char key[512];
+  uint64_t now;
+  vectis_status status;
+
+  if (app == NULL || data == NULL || record == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow load configuration is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  client = vectis_lockd_client(app);
+  if (client == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "auth workflows require configured app Lockd");
+    return VECTIS_ERR_STATE;
+  }
+  status = vectis_auth_workflow_key(data, workflow_id, key, sizeof(key), error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  memset(record, 0, sizeof(*record));
+  status = vectis_lockd_state_load(client, key, "vectis-auth-workflow", 30L,
+                                   &vectis_auth_workflow_record_map, record,
+                                   error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_auth_workflow_now(data->unix_seconds, &now, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (record->consumed || record->expires_at < 0 ||
+      (uint64_t)record->expires_at <= now) {
+    (void)vectis_auth_workflow_delete(app, data, workflow_id, NULL);
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow is expired or consumed");
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
+}
 
 typedef struct vectis_auth_form_fields {
   char *username;
@@ -14723,6 +15019,7 @@ typedef struct vectis_auth_form_fields {
   char *email_transaction_id;
   char *email_token;
   char *pending_transaction_id;
+  char *return_path;
 } vectis_auth_form_fields;
 
 typedef struct vectis_webdav_propfind_state {
@@ -15902,8 +16199,14 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   total += path_prefix != NULL ? strlen(path_prefix) + 1u : 0u;
   total += config->realm != NULL ? strlen(config->realm) + 1u : 0u;
   total += config->login_title != NULL ? strlen(config->login_title) + 1u : 0u;
-  total += config->login_template_html != NULL
-               ? strlen(config->login_template_html) + 1u
+  total += config->credential_purpose != NULL
+               ? strlen(config->credential_purpose) + 1u
+               : 0u;
+  total += config->browser_template_html != NULL
+               ? strlen(config->browser_template_html) + 1u
+               : 0u;
+  total += config->workflow_state_key != NULL
+               ? strlen(config->workflow_state_key) + 1u
                : 0u;
   total += config->browser_session.cookie_name != NULL
                ? strlen(config->browser_session.cookie_name) + 1u
@@ -15957,11 +16260,9 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   data->max_body_bytes = config->max_body_bytes;
   data->unix_seconds = config->unix_seconds;
   data->totp_window = config->totp_window;
-  data->required_factors = config->required_factors;
-  data->require_email_token = config->require_email_token;
-  data->email_token_ttl_seconds = config->email_token_ttl_seconds;
-  data->email_token_max_attempts = config->email_token_max_attempts;
-  data->pending_login_ttl_seconds = config->pending_login_ttl_seconds;
+  data->step_count = config->step_count != 0u ? config->step_count : 1u;
+  data->workflow_ttl_seconds = config->workflow_ttl_seconds;
+  data->email_code_max_attempts = config->email_code_max_attempts;
   data->browser_session = config->browser_session;
   data->email_smtp = config->email_smtp;
   cursor = (char *)(data + 1);
@@ -15992,8 +16293,17 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   VECTIS_COPY_AUTH_ROUTE_FIELD(path_prefix, path_prefix);
   VECTIS_COPY_AUTH_ROUTE_FIELD(realm, config->realm);
   VECTIS_COPY_AUTH_ROUTE_FIELD(login_title, config->login_title);
-  VECTIS_COPY_AUTH_ROUTE_FIELD(login_template_html,
-                               config->login_template_html);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(credential_purpose, config->credential_purpose);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(browser_template_html,
+                               config->browser_template_html);
+  VECTIS_COPY_AUTH_ROUTE_FIELD(workflow_state_key, config->workflow_state_key);
+  data->steps = data->steps_storage;
+  if (config->steps != NULL && config->step_count > 0u) {
+    memcpy(data->steps_storage, config->steps,
+           config->step_count * sizeof(*config->steps));
+  } else {
+    data->steps_storage[0] = VECTIS_AUTH_WORKFLOW_STEP_PASSWORD;
+  }
   VECTIS_COPY_AUTH_ROUTE_FIELD(browser_session.cookie_name,
                                config->browser_session.cookie_name);
   VECTIS_COPY_AUTH_ROUTE_FIELD(browser_session.cookie_path,
@@ -16029,133 +16339,36 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   return data;
 }
 
-static int
-vectis_auth_template_source_count(const vectis_auth_routes_config *config) {
-  int count;
+static vectis_status vectis_register_auth_cleanup_entry(
+    vectis_app *app, const vectis_auth_routes_config *config,
+    const char *path_prefix, vectis_error *error) {
+  vectis_auth_cleanup_entry *entry;
+  vectis_app_impl *impl;
 
-  count = 0;
-  if (config->login_template_html != NULL) {
-    count++;
-  }
-  if (config->login_template_path != NULL) {
-    count++;
-  }
-  if (config->login_template_embedded_path != NULL) {
-    count++;
-  }
-  return count;
-}
-
-static vectis_status vectis_auth_read_template_file(const char *path,
-                                                    char **out,
-                                                    vectis_error *error) {
-  FILE *file;
-  long size;
-  char *data;
-  size_t nread;
-
-  if (path == NULL || path[0] == '\0' || out == NULL) {
+  if (app == NULL || app->impl == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "login template path is required");
+                     "auth cleanup registration requires an app");
     return VECTIS_ERR_INVALID;
   }
-  *out = NULL;
-  file = fopen(path, "rb");
-  if (file == NULL) {
-    vectis_set_errorf(error, VECTIS_ERR_STATE,
-                      "failed to open login template path: %s", path);
-    return VECTIS_ERR_STATE;
-  }
-  if (fseek(file, 0L, SEEK_END) != 0) {
-    (void)fclose(file);
-    vectis_set_errorf(error, VECTIS_ERR_STATE,
-                      "failed to seek login template path: %s", path);
-    return VECTIS_ERR_STATE;
-  }
-  size = ftell(file);
-  if (size < 0L || fseek(file, 0L, SEEK_SET) != 0) {
-    (void)fclose(file);
-    vectis_set_errorf(error, VECTIS_ERR_STATE,
-                      "failed to size login template path: %s", path);
-    return VECTIS_ERR_STATE;
-  }
-  data = (char *)malloc((size_t)size + 1u);
-  if (data == NULL) {
-    (void)fclose(file);
+  entry = (vectis_auth_cleanup_entry *)calloc(1u, sizeof(*entry));
+  if (entry == NULL) {
     vectis_set_error(error, VECTIS_ERR_NOMEM,
-                     "failed to allocate login template");
+                     "failed to allocate auth cleanup registration");
     return VECTIS_ERR_NOMEM;
   }
-  nread = fread(data, 1u, (size_t)size, file);
-  if (nread != (size_t)size || ferror(file)) {
-    (void)fclose(file);
-    free(data);
-    vectis_set_errorf(error, VECTIS_ERR_STATE,
-                      "failed to read login template path: %s", path);
-    return VECTIS_ERR_STATE;
+  entry->data = vectis_auth_route_data_new(config, path_prefix, error);
+  if (entry->data == NULL) {
+    free(entry);
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
-  if (fclose(file) != 0) {
-    free(data);
-    vectis_set_errorf(error, VECTIS_ERR_STATE,
-                      "failed to close login template path: %s", path);
-    return VECTIS_ERR_STATE;
-  }
-  data[(size_t)size] = '\0';
-  *out = data;
+  impl = (vectis_app_impl *)app->impl;
+  (void)pthread_mutex_lock(&impl->mutex);
+  entry->next = impl->auth_cleanup_entries;
+  impl->auth_cleanup_entries = entry;
+  (void)pthread_mutex_unlock(&impl->mutex);
   return VECTIS_OK;
 }
 
-static vectis_status
-vectis_auth_resolve_login_template(const vectis_auth_routes_config *config,
-                                   char **out, vectis_error *error) {
-  vectis_bytes body;
-  vectis_status status;
-  int found;
-
-  if (out == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "login template output is required");
-    return VECTIS_ERR_INVALID;
-  }
-  *out = NULL;
-  if (vectis_auth_template_source_count(config) > 1) {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "set only one login template source");
-    return VECTIS_ERR_INVALID;
-  }
-  if (config->login_template_path != NULL) {
-    return vectis_auth_read_template_file(config->login_template_path, out,
-                                          error);
-  }
-  if (config->login_template_embedded_path != NULL) {
-    if (config->login_template_fs == NULL) {
-      vectis_set_error(error, VECTIS_ERR_INVALID,
-                       "login template embedded fs is required");
-      return VECTIS_ERR_INVALID;
-    }
-    status = vectis_embedded_fs_read(config->login_template_fs,
-                                     config->login_template_embedded_path,
-                                     &found, &body, error);
-    if (status != VECTIS_OK) {
-      return status;
-    }
-    if (!found) {
-      vectis_set_errorf(error, VECTIS_ERR_INVALID,
-                        "embedded login template not found: %s",
-                        config->login_template_embedded_path);
-      return VECTIS_ERR_INVALID;
-    }
-    *out = (char *)malloc(body.size + 1u);
-    if (*out == NULL) {
-      vectis_set_error(error, VECTIS_ERR_NOMEM,
-                       "failed to allocate embedded login template");
-      return VECTIS_ERR_NOMEM;
-    }
-    memcpy(*out, body.data, body.size);
-    (*out)[body.size] = '\0';
-  }
-  return VECTIS_OK;
-}
 
 static int vectis_auth_form_hex(char ch) {
   if (ch >= '0' && ch <= '9') {
@@ -16226,6 +16439,7 @@ static void vectis_auth_form_cleanup(vectis_auth_form_fields *fields) {
   free(fields->email_transaction_id);
   free(fields->email_token);
   free(fields->pending_transaction_id);
+  free(fields->return_path);
   memset(fields, 0, sizeof(*fields));
 }
 
@@ -16251,6 +16465,8 @@ static vectis_status vectis_auth_form_set(vectis_auth_form_fields *fields,
              strcmp(key, "pending_login_transaction_id") == 0 ||
              strcmp(key, "auth_transaction_id") == 0) {
     target = &fields->pending_transaction_id;
+  } else if (strcmp(key, "return") == 0) {
+    target = &fields->return_path;
   }
   if (target == NULL) {
     free(value);
@@ -16353,257 +16569,46 @@ static vectis_status vectis_auth_html_escape(vectis_string_builder *builder,
   return VECTIS_OK;
 }
 
-static int vectis_auth_template_space(char ch) {
-  return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == '\f';
-}
 
-static int vectis_auth_template_name_equals(const char *name, size_t name_len,
-                                            const char *expected) {
-  size_t expected_len;
+static int vectis_auth_workflow_steps_valid(
+    const vectis_auth_workflow_step *steps, size_t step_count) {
+  size_t i;
+  int email_seen;
+  int password_seen;
+  int totp_seen;
 
-  expected_len = strlen(expected);
-  return name_len == expected_len && strncmp(name, expected, name_len) == 0;
-}
-
-static vectis_status
-vectis_auth_template_action(vectis_string_builder *builder,
-                            const vectis_auth_route_data *data,
-                            const char *suffix, vectis_error *error) {
-  vectis_string_builder action;
-  vectis_status status;
-
-  memset(&action, 0, sizeof(action));
-  status = vectis_string_builder_append(
-      &action, data->path_prefix != NULL ? data->path_prefix : "", error);
-  if (status == VECTIS_OK) {
-    status = vectis_string_builder_append(&action, suffix, error);
+  if (steps == NULL && step_count == 0u) {
+    return 1;
   }
-  if (status == VECTIS_OK) {
-    status = vectis_auth_html_escape(builder, action.data, error);
+  if (steps == NULL || step_count == 0u || step_count > 3u) {
+    return 0;
   }
-  vectis_string_builder_cleanup(&action);
-  return status;
-}
-
-static vectis_status vectis_auth_template_placeholder(
-    vectis_string_builder *builder, const vectis_auth_route_data *data,
-    const char *name, size_t name_len, int *matched, vectis_error *error) {
-  const char *value;
-
-  *matched = 1;
-  value = NULL;
-  if (vectis_auth_template_name_equals(name, name_len, "login_title")) {
-    value = data->login_title;
-  } else if (vectis_auth_template_name_equals(name, name_len, "realm")) {
-    value = data->realm;
-  } else if (vectis_auth_template_name_equals(name, name_len, "path_prefix")) {
-    value = data->path_prefix;
-  } else if (vectis_auth_template_name_equals(name, name_len,
-                                              "email_token_action")) {
-    return vectis_auth_template_action(builder, data, "/email-token", error);
-  } else if (vectis_auth_template_name_equals(name, name_len,
-                                              "continue_action")) {
-    return vectis_auth_template_action(builder, data, "/continue", error);
-  } else if (vectis_auth_template_name_equals(name, name_len,
-                                              "webdav_key_action")) {
-    return vectis_auth_template_action(builder, data, "/webdav-key", error);
-  } else {
-    *matched = 0;
-    return VECTIS_OK;
-  }
-  return vectis_auth_html_escape(builder, value, error);
-}
-
-static vectis_status
-vectis_auth_render_login_template(const vectis_auth_route_data *data,
-                                  vectis_string_builder *html,
-                                  vectis_error *error) {
-  const char *cursor;
-  const char *open;
-  const char *close;
-  const char *name_start;
-  const char *name_end;
-  vectis_status status;
-  size_t literal_len;
-  int matched;
-
-  cursor = data->login_template_html;
-  while (cursor != NULL && *cursor != '\0') {
-    open = strstr(cursor, "{{");
-    if (open == NULL) {
-      return vectis_string_builder_append(html, cursor, error);
-    }
-    literal_len = (size_t)(open - cursor);
-    status = vectis_string_builder_append_n(html, cursor, literal_len, error);
-    if (status != VECTIS_OK) {
-      return status;
-    }
-    close = strstr(open + 2, "}}");
-    if (close == NULL) {
-      return vectis_string_builder_append(html, open, error);
-    }
-    name_start = open + 2;
-    name_end = close;
-    while (name_start < name_end && vectis_auth_template_space(*name_start)) {
-      name_start++;
-    }
-    while (name_end > name_start && vectis_auth_template_space(name_end[-1])) {
-      name_end--;
-    }
-    status = vectis_auth_template_placeholder(html, data, name_start,
-                                              (size_t)(name_end - name_start),
-                                              &matched, error);
-    if (status != VECTIS_OK) {
-      return status;
-    }
-    if (!matched) {
-      status = vectis_string_builder_append_n(
-          html, open, (size_t)((close + 2) - open), error);
-      if (status != VECTIS_OK) {
-        return status;
+  email_seen = 0;
+  password_seen = 0;
+  totp_seen = 0;
+  for (i = 0u; i < step_count; ++i) {
+    if (steps[i] == VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE) {
+      if (email_seen || password_seen || totp_seen) {
+        return 0;
       }
+      email_seen = 1;
+    } else if (steps[i] == VECTIS_AUTH_WORKFLOW_STEP_PASSWORD) {
+      if (password_seen || totp_seen) {
+        return 0;
+      }
+      password_seen = 1;
+    } else if (steps[i] == VECTIS_AUTH_WORKFLOW_STEP_TOTP) {
+      if (totp_seen || (!email_seen && !password_seen)) {
+        return 0;
+      }
+      totp_seen = 1;
+    } else {
+      return 0;
     }
-    cursor = close + 2;
-  }
-  return VECTIS_OK;
-}
-
-static unsigned int
-vectis_auth_route_required_factors(const vectis_auth_route_data *data) {
-  unsigned int required_factors;
-
-  required_factors = data->required_factors != 0u
-                         ? data->required_factors
-                         : VECTIS_AUTH_ROUTE_FACTOR_PASSWORD;
-  if (data->require_email_token) {
-    required_factors |= VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN;
-  }
-  return required_factors;
-}
-
-static int vectis_auth_route_required_factors_valid(unsigned int factors) {
-  if ((factors & ~(VECTIS_AUTH_ROUTE_FACTOR_PASSWORD |
-                   VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN |
-                   VECTIS_AUTH_ROUTE_FACTOR_TOTP)) != 0u) {
-    return 0;
-  }
-  if ((factors & VECTIS_AUTH_ROUTE_FACTOR_TOTP) != 0u &&
-      (factors & VECTIS_AUTH_ROUTE_FACTOR_PASSWORD) == 0u) {
-    return 0;
   }
   return 1;
 }
 
-static vectis_status
-vectis_auth_login_form_response(const vectis_auth_route_data *data,
-                                vectis_response *response,
-                                vectis_error *error) {
-  vectis_string_builder html;
-  vectis_bytes body;
-  vectis_status status;
-  unsigned int required_factors;
-
-  if (data->login_template_html != NULL) {
-    memset(&html, 0, sizeof(html));
-    status = vectis_auth_render_login_template(data, &html, error);
-    if (status != VECTIS_OK) {
-      vectis_string_builder_cleanup(&html);
-      return status;
-    }
-    body.data = html.data;
-    body.size = html.size;
-    status = vectis_response_bytes(response, 200, "text/html; charset=utf-8",
-                                   body, error);
-    vectis_string_builder_cleanup(&html);
-    return status;
-  }
-  required_factors = vectis_auth_route_required_factors(data);
-  memset(&html, 0, sizeof(html));
-  status = vectis_string_builder_append(
-      &html, "<!doctype html><html><head><meta charset=\"utf-8\"><title>",
-      error);
-  if (status == VECTIS_OK) {
-    status = vectis_auth_html_escape(&html, data->login_title, error);
-  }
-  if (status == VECTIS_OK) {
-    status = vectis_string_builder_append(
-        &html, "</title></head><body><main><h1>", error);
-  }
-  if (status == VECTIS_OK) {
-    status = vectis_auth_html_escape(&html, data->login_title, error);
-  }
-  if (status == VECTIS_OK) {
-    status = vectis_string_builder_append(
-        &html, "</h1><form method=\"post\" action=\"", error);
-  }
-  if (status == VECTIS_OK) {
-    status = vectis_auth_template_action(&html, data, "/continue", error);
-  }
-  if (status == VECTIS_OK) {
-    status = vectis_string_builder_append(
-        &html,
-        "\"><label>Username <input name=\"username\" "
-        "autocomplete=\"username\"></label>",
-        error);
-  }
-  if (status == VECTIS_OK &&
-      (required_factors & VECTIS_AUTH_ROUTE_FACTOR_PASSWORD) != 0u) {
-    status = vectis_string_builder_append(
-        &html,
-        "<label>Password <input type=\"password\" name=\"password\" "
-        "autocomplete=\"current-password\"></label><label>TOTP <input "
-        "name=\"totp_code\" inputmode=\"numeric\" "
-        "autocomplete=\"one-time-code\"></label>",
-        error);
-  }
-  if (status == VECTIS_OK &&
-      (required_factors & VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN) != 0u) {
-    status = vectis_string_builder_append(
-        &html,
-        "<label>Email transaction <input name=\"email_transaction_id\" "
-        "autocomplete=\"one-time-code\"></label><label>Email token <input "
-        "name=\"email_token\" autocomplete=\"one-time-code\"></label>",
-        error);
-  }
-  if (status == VECTIS_OK) {
-    status = vectis_string_builder_append(
-        &html, "<button type=\"submit\">Create WebDAV key</button></form>",
-        error);
-  }
-  if (status == VECTIS_OK &&
-      (required_factors & VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN) != 0u) {
-    status = vectis_string_builder_append(
-        &html, "<form method=\"post\" action=\"", error);
-  }
-  if (status == VECTIS_OK &&
-      (required_factors & VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN) != 0u) {
-    status = vectis_auth_template_action(&html, data, "/email-token", error);
-  }
-  if (status == VECTIS_OK &&
-      (required_factors & VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN) != 0u) {
-    status = vectis_string_builder_append(
-        &html,
-        "\"><label>Username <input name=\"username\" "
-        "autocomplete=\"username\"></label><label>Email <input "
-        "type=\"email\" name=\"email\" autocomplete=\"email\"></label>"
-        "<button type=\"submit\">Send email token</button></form>",
-        error);
-  }
-  if (status == VECTIS_OK) {
-    status =
-        vectis_string_builder_append(&html, "</main></body></html>", error);
-  }
-  if (status != VECTIS_OK) {
-    vectis_string_builder_cleanup(&html);
-    return status;
-  }
-  body.data = html.data;
-  body.size = html.size;
-  status = vectis_response_bytes(response, 200, "text/html; charset=utf-8",
-                                 body, error);
-  vectis_string_builder_cleanup(&html);
-  return status;
-}
 
 static vectis_status vectis_auth_no_store(vectis_response *response,
                                           vectis_error *error) {
@@ -16642,287 +16647,1202 @@ static int vectis_auth_browser_navigation_request(vectis_request *request) {
          strcasecmp(destination, "document") == 0;
 }
 
-static vectis_status
-vectis_auth_webdav_key_response(vectis_auth_issued_credential *credential,
-                                vectis_response *response,
-                                vectis_error *error) {
-  vectis_string_builder text;
-  vectis_bytes body;
-  vectis_status status;
 
-  memset(&text, 0, sizeof(text));
-  status = vectis_string_builder_appendf(
-      &text, error, "client_id=%s\nclient_secret=%s\n",
-      credential->client_id != NULL ? credential->client_id : "",
-      credential->client_secret != NULL ? credential->client_secret : "");
-  if (status == VECTIS_OK && credential->claim_json != NULL) {
-    status = vectis_string_builder_append(&text, "claim_json=", error);
-    if (status == VECTIS_OK) {
-      status =
-          vectis_string_builder_append(&text, credential->claim_json, error);
-    }
-    if (status == VECTIS_OK) {
-      status = vectis_string_builder_append(&text, "\n", error);
-    }
+/* Native workflow routes deliberately keep only an opaque identifier in the
+ * client. Factors, token hashes, and the authenticated principal live in the
+ * Lockd record below. */
+#define VECTIS_AUTH_WORKFLOW_COOKIE_NAME "vectis_auth_flow"
+#define VECTIS_AUTH_WORKFLOW_COOKIE_MAX 512u
+
+typedef enum vectis_auth_workflow_update_kind {
+  VECTIS_AUTH_WORKFLOW_UPDATE_EMAIL_ISSUED,
+  VECTIS_AUTH_WORKFLOW_UPDATE_EMAIL_VERIFIED,
+  VECTIS_AUTH_WORKFLOW_UPDATE_STEP_VERIFIED
+} vectis_auth_workflow_update_kind;
+
+typedef struct vectis_auth_workflow_update_context {
+  const vectis_auth_route_data *data;
+  vectis_auth_workflow_update_kind kind;
+  uint64_t now;
+  uint64_t expected_step;
+  const char *email;
+  const char *token_hash;
+  int accepted;
+  int terminal;
+} vectis_auth_workflow_update_context;
+
+typedef struct vectis_auth_workflow_json_input {
+  char workflow[VECTIS_AUTH_WORKFLOW_ID_HEX_BYTES + 1u];
+  char email[320];
+  char username[VECTIS_AUTH_PRINCIPAL_MAX + 1u];
+  char password[512];
+  char code[128];
+} vectis_auth_workflow_json_input;
+
+typedef struct vectis_auth_workflow_json_output {
+  char workflow[VECTIS_AUTH_WORKFLOW_ID_HEX_BYTES + 1u];
+  char next[2048];
+  char step[32];
+  char required[32];
+  char client_id[256];
+  char client_secret[256];
+  lonejson_int64 expires_at;
+  int complete;
+} vectis_auth_workflow_json_output;
+
+static const lonejson_field vectis_auth_workflow_json_input_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(vectis_auth_workflow_json_input,
+                                           workflow, "workflow",
+                                           LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(vectis_auth_workflow_json_input,
+                                           email, "email",
+                                           LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(vectis_auth_workflow_json_input,
+                                           username, "username",
+                                           LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(vectis_auth_workflow_json_input,
+                                           password, "password",
+                                           LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(vectis_auth_workflow_json_input,
+                                           code, "code",
+                                           LONEJSON_OVERFLOW_FAIL)};
+
+LONEJSON_MAP_DEFINE(vectis_auth_workflow_json_input_map,
+                    vectis_auth_workflow_json_input,
+                    vectis_auth_workflow_json_input_fields);
+
+static const lonejson_field vectis_auth_workflow_json_output_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(vectis_auth_workflow_json_output,
+                                           workflow, "workflow",
+                                           LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(vectis_auth_workflow_json_output,
+                                           next, "next",
+                                           LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(vectis_auth_workflow_json_output,
+                                           step, "step",
+                                           LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(vectis_auth_workflow_json_output,
+                                           required, "required",
+                                           LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(vectis_auth_workflow_json_output,
+                                           client_id, "client_id",
+                                           LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(vectis_auth_workflow_json_output,
+                                           client_secret, "client_secret",
+                                           LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_I64_REQ(vectis_auth_workflow_json_output, expires_at,
+                           "expires_at"),
+    LONEJSON_FIELD_BOOL_REQ(vectis_auth_workflow_json_output, complete,
+                            "complete")};
+
+LONEJSON_MAP_DEFINE(vectis_auth_workflow_json_output_map,
+                    vectis_auth_workflow_json_output,
+                    vectis_auth_workflow_json_output_fields);
+
+static const char *vectis_auth_workflow_step_name(
+    vectis_auth_workflow_step step) {
+  switch (step) {
+  case VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE:
+    return "email_code";
+  case VECTIS_AUTH_WORKFLOW_STEP_PASSWORD:
+    return "password";
+  case VECTIS_AUTH_WORKFLOW_STEP_TOTP:
+    return "totp";
+  default:
+    return "";
   }
-  if (status != VECTIS_OK) {
-    vectis_string_builder_cleanup(&text);
-    return status;
-  }
-  body.data = text.data;
-  body.size = text.size;
-  status = vectis_response_bytes(response, 200, "text/plain; charset=utf-8",
-                                 body, error);
-  vectis_string_builder_cleanup(&text);
-  return status;
 }
 
-static vectis_status vectis_auth_email_token_route_response(
-    vectis_auth_email_token *token, int include_token,
+static vectis_auth_workflow_step vectis_auth_workflow_step_at(
+    const vectis_auth_route_data *data, uint64_t index) {
+  if (data == NULL || data->steps == NULL || index >= data->step_count) {
+    return VECTIS_AUTH_WORKFLOW_STEP_PASSWORD;
+  }
+  return data->steps[index];
+}
+
+static int vectis_auth_workflow_id_valid(const char *id) {
+  size_t i;
+
+  if (id == NULL || strlen(id) != VECTIS_AUTH_WORKFLOW_ID_HEX_BYTES) {
+    return 0;
+  }
+  for (i = 0u; i < VECTIS_AUTH_WORKFLOW_ID_HEX_BYTES; ++i) {
+    if (!((id[i] >= '0' && id[i] <= '9') ||
+          (id[i] >= 'a' && id[i] <= 'f'))) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static int vectis_auth_workflow_cookie_value(const char *header, char *out,
+                                             size_t out_size) {
+  const char *cursor;
+  const char *value;
+  const char *end;
+  size_t value_size;
+
+  if (out == NULL || out_size == 0u) {
+    return 0;
+  }
+  out[0] = '\0';
+  for (cursor = header != NULL ? header : ""; *cursor != '\0';) {
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == ';') {
+      cursor++;
+    }
+    if (strncmp(cursor, VECTIS_AUTH_WORKFLOW_COOKIE_NAME,
+                sizeof(VECTIS_AUTH_WORKFLOW_COOKIE_NAME) - 1u) == 0 &&
+        cursor[sizeof(VECTIS_AUTH_WORKFLOW_COOKIE_NAME) - 1u] == '=') {
+      value = cursor + sizeof(VECTIS_AUTH_WORKFLOW_COOKIE_NAME);
+      end = strchr(value, ';');
+      value_size = end != NULL ? (size_t)(end - value) : strlen(value);
+      if (value_size >= out_size || out[0] != '\0') {
+        out[0] = '\0';
+        return 0;
+      }
+      memcpy(out, value, value_size);
+      out[value_size] = '\0';
+    }
+    cursor = strchr(cursor, ';');
+    if (cursor == NULL) {
+      break;
+    }
+    cursor++;
+  }
+  return vectis_auth_workflow_id_valid(out);
+}
+
+static vectis_status vectis_auth_workflow_cookie(
+    const vectis_auth_route_data *data, const char *id, int clear,
     vectis_response *response, vectis_error *error) {
-  vectis_string_builder text;
-  vectis_bytes body;
-  vectis_status status;
+  char header[1024];
+  int written;
 
-  memset(&text, 0, sizeof(text));
-  status = vectis_string_builder_appendf(
-      &text, error, "transaction_id=%s\n",
-      token->transaction_id != NULL ? token->transaction_id : "");
-  if (status == VECTIS_OK && include_token) {
-    status = vectis_string_builder_appendf(
-        &text, error, "token=%s\n", token->token != NULL ? token->token : "");
-  }
-  if (status == VECTIS_OK) {
-    status =
-        vectis_string_builder_appendf(&text, error, "expires_at=%llu\n",
-                                      (unsigned long long)token->expires_at);
-  }
-  if (status != VECTIS_OK) {
-    vectis_string_builder_cleanup(&text);
-    return status;
-  }
-  body.data = text.data;
-  body.size = text.size;
-  status = vectis_response_bytes(response, 200, "text/plain; charset=utf-8",
-                                 body, error);
-  vectis_string_builder_cleanup(&text);
-  return status;
-}
-
-static vectis_status
-vectis_auth_pending_login_response(const vectis_auth_pending_login *pending,
-                                   vectis_response *response,
-                                   vectis_error *error) {
-  vectis_string_builder text;
-  vectis_bytes body;
-  vectis_status status;
-
-  memset(&text, 0, sizeof(text));
-  status = vectis_string_builder_appendf(
-      &text, error, "pending_transaction_id=%s\n",
-      pending->transaction_id != NULL ? pending->transaction_id : "");
-  if (status == VECTIS_OK) {
-    status =
-        vectis_string_builder_appendf(&text, error, "expires_at=%llu\n",
-                                      (unsigned long long)pending->expires_at);
-  }
-  if (status == VECTIS_OK) {
-    status = vectis_string_builder_appendf(&text, error, "totp_required=%d\n",
-                                           pending->totp_required ? 1 : 0);
-  }
-  if (status != VECTIS_OK) {
-    vectis_string_builder_cleanup(&text);
-    return status;
-  }
-  body.data = text.data;
-  body.size = text.size;
-  status = vectis_response_bytes(response, 202, "text/plain; charset=utf-8",
-                                 body, error);
-  vectis_string_builder_cleanup(&text);
-  return status;
-}
-
-static vectis_status vectis_auth_login_dispatch(vectis_app *app,
-                                                vectis_request *request,
-                                                vectis_response *response,
-                                                void *userdata,
-                                                vectis_error *error) {
-  vectis_auth_route_data *data;
-  vectis_status status;
-
-  (void)app;
-  (void)request;
-  data = (vectis_auth_route_data *)userdata;
-  if (data == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "auth route is invalid");
+  if (data == NULL || response == NULL || data->path_prefix == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow cookie configuration is invalid");
     return VECTIS_ERR_INVALID;
   }
-  status = vectis_auth_no_store(response, error);
-  if (status != VECTIS_OK) {
-    return status;
+  if (clear) {
+    written = snprintf(header, sizeof(header),
+                       "%s=; Path=%s; Max-Age=0; HttpOnly; Secure; SameSite=Strict",
+                       VECTIS_AUTH_WORKFLOW_COOKIE_NAME, data->path_prefix);
+  } else {
+    written = snprintf(header, sizeof(header),
+                       "%s=%s; Path=%s; Max-Age=%lu; HttpOnly; Secure; SameSite=Strict",
+                       VECTIS_AUTH_WORKFLOW_COOKIE_NAME, id, data->path_prefix,
+                       (unsigned long)data->workflow_ttl_seconds);
   }
-  return vectis_auth_login_form_response(data, response, error);
-}
-
-static vectis_status vectis_auth_email_token_dispatch(vectis_app *app,
-                                                      vectis_request *request,
-                                                      vectis_response *response,
-                                                      void *userdata,
-                                                      vectis_error *error) {
-  vectis_auth_route_data *data;
-  vectis_mutable_bytes body;
-  vectis_auth_form_fields fields;
-  vectis_auth_email_token_issue_config issue;
-  vectis_auth_email_token token;
-  vectis_auth_email_message message;
-  const char *content_type;
-  vectis_status status;
-  int smtp_enabled;
-  int user_exists;
-
-  (void)app;
-  data = (vectis_auth_route_data *)userdata;
-  if (data == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "auth route is invalid");
+  if (written < 0 || (size_t)written >= sizeof(header)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow cookie is too large");
     return VECTIS_ERR_INVALID;
   }
-  status = vectis_auth_no_store(response, error);
+  return vectis_response_header(response, "set-cookie", header, error);
+}
+
+static vectis_status vectis_auth_workflow_delete(
+    vectis_app *app, const vectis_auth_route_data *data, const char *id,
+    vectis_error *error) {
+  struct lc_client *client;
+  struct lc_lease *lease;
+  lc_acquire_req acquire;
+  lc_remove_req remove;
+  lc_release_req release;
+  lc_error operation_error;
+  lc_error release_error;
+  char key[512];
+  int rc;
+  int release_rc;
+  vectis_status status;
+
+  if (!vectis_auth_workflow_id_valid(id)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow identifier is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_workflow_key(data, id, key, sizeof(key), error);
   if (status != VECTIS_OK) {
     return status;
   }
-  content_type = vectis_request_header(request, "content-type");
-  if (content_type != NULL &&
-      strncasecmp(content_type, "application/x-www-form-urlencoded",
-                  strlen("application/x-www-form-urlencoded")) != 0) {
-    return vectis_response_status(response, 415, error);
+  client = vectis_lockd_client(app);
+  if (client == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "auth workflows require configured app Lockd");
+    return VECTIS_ERR_STATE;
   }
-  memset(&body, 0, sizeof(body));
-  status = vectis_request_body_read_all(request, &body, error);
-  if (status != VECTIS_OK) {
-    return status;
+  lc_acquire_req_init(&acquire);
+  acquire.key = key;
+  acquire.owner = "vectis-auth-workflow";
+  acquire.ttl_seconds = 30L;
+  lc_remove_req_init(&remove);
+  lc_release_req_init(&release);
+  lc_error_init(&operation_error);
+  lc_error_init(&release_error);
+  lease = NULL;
+  rc = lc_acquire(client, &acquire, &lease, &operation_error);
+  if (rc != LC_OK) {
+    (void)vectis_set_lockdc_error(error, rc, &operation_error,
+                                  "failed to acquire auth workflow state");
+    lc_error_cleanup(&operation_error);
+    lc_error_cleanup(&release_error);
+    return VECTIS_ERR_STATE;
   }
-  status = vectis_auth_parse_form((const char *)body.data, body.size, &fields,
-                                  error);
-  vectis_mutable_bytes_cleanup(&body);
-  if (status != VECTIS_OK) {
-    return status;
+  rc = lease->remove(lease, &remove, &operation_error);
+  release_rc = lease->release(lease, &release, &release_error);
+  if (release_rc != LC_OK) {
+    lc_lease_close(lease);
   }
-  if (fields.username == NULL || fields.username[0] == '\0' ||
-      fields.email == NULL || fields.email[0] == '\0') {
-    vectis_auth_form_cleanup(&fields);
-    return vectis_response_text(response, 400, "text/plain; charset=utf-8",
-                                "username and email are required\n", error);
+  if (rc != LC_OK) {
+    (void)vectis_set_lockdc_error(error, rc, &operation_error,
+                                  "failed to delete auth workflow state");
   }
-  user_exists = 0;
-  status = vectis_auth_user_exists(&data->store, fields.username, &user_exists,
-                                   error);
-  if (status != VECTIS_OK) {
-    vectis_auth_form_cleanup(&fields);
-    return status;
+  lc_error_cleanup(&operation_error);
+  lc_error_cleanup(&release_error);
+  return rc == LC_OK ? VECTIS_OK : VECTIS_ERR_STATE;
+}
+
+static int vectis_auth_workflow_prune_key_begin(void *userdata,
+                                                lc_error *error) {
+  vectis_auth_workflow_prune_context *context;
+
+  (void)error;
+  context = (vectis_auth_workflow_prune_context *)userdata;
+  if (context == NULL || context->count >= VECTIS_AUTH_WORKFLOW_PRUNE_BATCH) {
+    return 0;
   }
-  if (!user_exists) {
-    vectis_auth_form_cleanup(&fields);
-    vectis_error_clear(error);
-    return vectis_response_text(response, 401, "text/plain; charset=utf-8",
-                                "login failed\n", error);
-  }
-  vectis_auth_email_token_issue_config_init(&issue);
-  issue.store = data->store;
-  issue.username = fields.username;
-  issue.realm = data->realm;
-  issue.email = fields.email;
-  issue.pending_transaction_id = fields.pending_transaction_id;
-  issue.now_seconds = data->unix_seconds;
-  issue.ttl_seconds = data->email_token_ttl_seconds;
-  issue.max_attempts = data->email_token_max_attempts;
-  vectis_auth_email_token_init(&token);
-  status = vectis_auth_email_token_issue(&issue, &token, error);
-  if (status != VECTIS_OK) {
-    vectis_auth_form_cleanup(&fields);
-    vectis_auth_email_token_cleanup(&token);
-    if (status == VECTIS_ERR_INVALID) {
-      vectis_error_clear(error);
-      return vectis_response_text(response, 401, "text/plain; charset=utf-8",
-                                  "login failed\n", error);
+  context->current_size = 0u;
+  return 1;
+}
+
+static int vectis_auth_workflow_prune_key_chunk(void *userdata,
+                                                const char *bytes, size_t size,
+                                                lc_error *error) {
+  vectis_auth_workflow_prune_context *context;
+
+  context = (vectis_auth_workflow_prune_context *)userdata;
+  if (context == NULL || bytes == NULL ||
+      context->count >= VECTIS_AUTH_WORKFLOW_PRUNE_BATCH ||
+      size > VECTIS_AUTH_WORKFLOW_KEY_MAX - 1u - context->current_size) {
+    if (error != NULL) {
+      lc_error_init(error);
+      error->code = LC_ERR_INVALID;
+      error->message = vectis_strdup("auth workflow cleanup key is invalid");
     }
+    return 0;
+  }
+  memcpy(context->keys[context->count] + context->current_size, bytes, size);
+  context->current_size += size;
+  return 1;
+}
+
+static int vectis_auth_workflow_prune_key_end(void *userdata, lc_error *error) {
+  vectis_auth_workflow_prune_context *context;
+
+  context = (vectis_auth_workflow_prune_context *)userdata;
+  if (context == NULL || context->count >= VECTIS_AUTH_WORKFLOW_PRUNE_BATCH) {
+    if (error != NULL) {
+      lc_error_init(error);
+      error->code = LC_ERR_INVALID;
+      error->message = vectis_strdup("auth workflow cleanup key is invalid");
+    }
+    return 0;
+  }
+  context->keys[context->count][context->current_size] = '\0';
+  context->count++;
+  return 1;
+}
+
+static vectis_status vectis_auth_workflow_prune(
+    vectis_app *app, const vectis_auth_route_data *data, uint64_t now,
+    vectis_error *error) {
+  vectis_auth_workflow_prune_context context;
+  lc_query_key_handler handler;
+  lc_query_req request;
+  lc_query_res response;
+  lc_error lcerr;
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned int digest_size;
+  char prefix[VECTIS_AUTH_WORKFLOW_KEY_MAX];
+  char state_key_hash[65];
+  char selector[256];
+  const char *id;
+  size_t prefix_size;
+  size_t i;
+  int rc;
+  int written;
+  vectis_status status;
+  struct lc_client *client;
+
+  if (app == NULL || data == NULL || data->workflow_state_key == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow cleanup configuration is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  client = vectis_lockd_client(app);
+  if (client == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "auth workflows require configured app Lockd");
+    return VECTIS_ERR_STATE;
+  }
+  written = snprintf(prefix, sizeof(prefix), "%s/", data->workflow_state_key);
+  if (written < 0 || (size_t)written >= sizeof(prefix)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow cleanup prefix is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  prefix_size = (size_t)written;
+  digest_size = 0u;
+  if (EVP_Digest((const unsigned char *)data->workflow_state_key,
+                 strlen(data->workflow_state_key), digest, &digest_size,
+                 EVP_sha256(), NULL) != 1 || digest_size != 32u) {
+    OPENSSL_cleanse(digest, sizeof(digest));
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to hash auth workflow namespace");
+    return VECTIS_ERR_STATE;
+  }
+  vectis_auth_workflow_hex_encode(digest, digest_size, state_key_hash);
+  OPENSSL_cleanse(digest, sizeof(digest));
+  written = snprintf(
+      selector, sizeof(selector),
+      "{\"and\":[{\"eq\":{\"field\":\"/state_key_hash\",\"value\":\"%s\"}},"
+      "{\"range\":{\"field\":\"/cleanup_at\",\"lte\":%llu}}]}",
+      state_key_hash, (unsigned long long)now);
+  if (written < 0 || (size_t)written >= sizeof(selector)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow cleanup selector is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(&context, 0, sizeof(context));
+  memset(&handler, 0, sizeof(handler));
+  memset(&response, 0, sizeof(response));
+  handler.begin = vectis_auth_workflow_prune_key_begin;
+  handler.chunk = vectis_auth_workflow_prune_key_chunk;
+  handler.end = vectis_auth_workflow_prune_key_end;
+  lc_query_req_init(&request);
+  request.selector_json = selector;
+  request.limit = (long)VECTIS_AUTH_WORKFLOW_PRUNE_BATCH;
+  request.engine = "scan";
+  lc_error_init(&lcerr);
+  rc = lc_query_keys(client, &request, &handler, &context, &response, &lcerr);
+  lc_query_res_cleanup(&response);
+  if (rc != LC_OK) {
+    (void)vectis_set_lockdc_error(error, rc, &lcerr,
+                                  "failed to query expired auth workflows");
+    lc_error_cleanup(&lcerr);
+    return VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  for (i = 0u; i < context.count; ++i) {
+    if (strncmp(context.keys[i], prefix, prefix_size) != 0) {
+      continue;
+    }
+    id = context.keys[i] + prefix_size;
+    if (!vectis_auth_workflow_id_valid(id)) {
+      continue;
+    }
+    status = vectis_auth_workflow_delete(app, data, id, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
+  vectis_error_clear(error);
+  return VECTIS_OK;
+}
+
+vectis_status vectis_auth_workflow_cleanup(
+    vectis_app *app, const vectis_auth_routes_config *config,
+    vectis_error *error) {
+  vectis_auth_routes_config defaults;
+  const vectis_auth_routes_config *effective;
+  vectis_auth_route_data *data;
+  uint64_t now;
+  vectis_status status;
+
+  if (app == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow cleanup requires an app");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config == NULL) {
+    vectis_auth_routes_config_init(&defaults);
+    effective = &defaults;
+  } else {
+    effective = config;
+  }
+  data = vectis_auth_route_data_new(effective, effective->path_prefix, error);
+  if (data == NULL) {
+    return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+  }
+  status = vectis_auth_workflow_now(data->unix_seconds, &now, error);
+  if (status == VECTIS_OK) {
+    status = vectis_auth_workflow_prune(app, data, now, error);
+  }
+  free(data);
+  return status;
+}
+
+void vectis_internal_auth_cleanup_tick(vectis_app *app) {
+  vectis_app_impl *impl;
+  vectis_auth_cleanup_entry *entry;
+  vectis_error error;
+  uint64_t now;
+
+  if (app == NULL || app->impl == NULL) {
+    return;
+  }
+  impl = (vectis_app_impl *)app->impl;
+  for (entry = impl->auth_cleanup_entries; entry != NULL;
+       entry = entry->next) {
+    vectis_error_clear(&error);
+    if (vectis_auth_workflow_now(entry->data->unix_seconds, &now, &error) !=
+        VECTIS_OK) {
+      continue;
+    }
+    vectis_error_clear(&error);
+    if (vectis_auth_workflow_prune(app, entry->data, now, &error) != VECTIS_OK &&
+        impl->logger != NULL) {
+      impl->logger->warnf(impl->logger, "vectis.auth.workflow_cleanup_failed",
+                          "error=%s detail=%s", error.message, error.detail);
+    }
+    if (entry->data->browser_session.mode ==
+        VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER) {
+      vectis_error_clear(&error);
+      if (vectis_auth_browser_session_cleanup(
+              app, &entry->data->browser_session, entry->data->unix_seconds,
+              &error) != VECTIS_OK &&
+          impl->logger != NULL) {
+        impl->logger->warnf(
+            impl->logger, "vectis.auth.browser_session_cleanup_failed",
+            "error=%s detail=%s", error.message, error.detail);
+      }
+    }
+  }
+}
+
+
+static vectis_status vectis_auth_workflow_update_callback(
+    struct lc_lease *lease, void *state, int *save, void *userdata,
+    vectis_error *error) {
+  vectis_auth_workflow_record *record;
+  vectis_auth_workflow_update_context *context;
+  vectis_auth_workflow_step step;
+
+  (void)lease;
+  record = (vectis_auth_workflow_record *)state;
+  context = (vectis_auth_workflow_update_context *)userdata;
+  if (record == NULL || context == NULL || save == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow update is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  *save = 0;
+  if (record->consumed || record->expires_at < 0 ||
+      (uint64_t)record->expires_at <= context->now ||
+      record->step_index != context->expected_step) {
+    return VECTIS_OK;
+  }
+  step = vectis_auth_workflow_step_at(context->data, record->step_index);
+  if (context->kind == VECTIS_AUTH_WORKFLOW_UPDATE_EMAIL_ISSUED) {
+    if (step != VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE ||
+        record->email_token_hash[0] != '\0' || context->email == NULL ||
+        context->token_hash == NULL) {
+      return VECTIS_OK;
+    }
+    (void)snprintf(record->email, sizeof(record->email), "%s", context->email);
+    (void)snprintf(record->email_token_hash, sizeof(record->email_token_hash),
+                   "%s", context->token_hash);
+    *save = 1;
+    context->accepted = 1;
+    return VECTIS_OK;
+  }
+  if (context->kind == VECTIS_AUTH_WORKFLOW_UPDATE_EMAIL_VERIFIED) {
+    if (step != VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE ||
+        record->email_token_hash[0] == '\0' || context->token_hash == NULL) {
+      return VECTIS_OK;
+    }
+    if (CRYPTO_memcmp(record->email_token_hash, context->token_hash,
+                      sizeof(record->email_token_hash) - 1u) != 0) {
+      record->email_attempts++;
+      if (record->email_attempts >= record->email_max_attempts) {
+        record->consumed = 1;
+      }
+      *save = 1;
+      return VECTIS_OK;
+    }
+  } else if (context->kind != VECTIS_AUTH_WORKFLOW_UPDATE_STEP_VERIFIED) {
+    return VECTIS_OK;
+  }
+  record->verified_steps |= ((uint64_t)1u << record->step_index);
+  record->step_index++;
+  record->email_token_hash[0] = '\0';
+  context->accepted = 1;
+  context->terminal = record->step_index >= context->data->step_count;
+  *save = 1;
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_workflow_update(
+    vectis_app *app, const vectis_auth_route_data *data, const char *id,
+    vectis_auth_workflow_update_context *context, vectis_error *error) {
+  struct lc_client *client;
+  vectis_auth_workflow_record record;
+  char key[512];
+  vectis_status status;
+
+  client = vectis_lockd_client(app);
+  if (client == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "auth workflows require configured app Lockd");
+    return VECTIS_ERR_STATE;
+  }
+  status = vectis_auth_workflow_key(data, id, key, sizeof(key), error);
+  if (status != VECTIS_OK) {
     return status;
   }
-  smtp_enabled =
-      data->email_smtp.url != NULL && data->email_smtp.url[0] != '\0';
-  if (smtp_enabled) {
+  memset(&record, 0, sizeof(record));
+  context->accepted = 0;
+  context->terminal = 0;
+  return vectis_lockd_state_update(client, key, "vectis-auth-workflow", 30L,
+                                   &vectis_auth_workflow_record_map, &record,
+                                   vectis_auth_workflow_update_callback,
+                                   context, error);
+}
+
+static vectis_status vectis_auth_workflow_token(char out[7],
+                                                vectis_error *error) {
+  static const char alphabet[] = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+  unsigned char random[6];
+  size_t i;
+
+  if (RAND_bytes(random, (int)sizeof(random)) != 1) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to generate auth email code");
+    return VECTIS_ERR_STATE;
+  }
+  for (i = 0u; i < sizeof(random); ++i) {
+    out[i] = alphabet[random[i] & 31u];
+  }
+  out[sizeof(random)] = '\0';
+  OPENSSL_cleanse(random, sizeof(random));
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_workflow_token_hash(const char *token,
+                                                     char out[65],
+                                                     vectis_error *error) {
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned int digest_size;
+
+  digest_size = 0u;
+  if (token == NULL || EVP_Digest((const unsigned char *)token, strlen(token),
+                                  digest, &digest_size, EVP_sha256(), NULL) != 1 ||
+      digest_size != 32u) {
+    OPENSSL_cleanse(digest, sizeof(digest));
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to hash auth email code");
+    return VECTIS_ERR_STATE;
+  }
+  vectis_auth_workflow_hex_encode(digest, digest_size, out);
+  OPENSSL_cleanse(digest, sizeof(digest));
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_workflow_send_email(
+    vectis_app *app, const vectis_auth_route_data *data, const char *email,
+    const char *id, int deliver, vectis_error *error) {
+  vectis_auth_email_message message;
+  vectis_auth_workflow_update_context update;
+  vectis_auth_workflow_record record;
+  char token[7];
+  char token_hash[65];
+  uint64_t now;
+  vectis_status status;
+
+  if (deliver && (data->email_smtp.url == NULL ||
+                  data->email_smtp.url[0] == '\0')) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "email-code workflows require SMTP delivery");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_workflow_now(data->unix_seconds, &now, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_auth_workflow_token(token, error);
+  if (status == VECTIS_OK) {
+    status = vectis_auth_workflow_token_hash(token, token_hash, error);
+  }
+  if (status == VECTIS_OK) {
+    memset(&update, 0, sizeof(update));
+    update.data = data;
+    update.kind = VECTIS_AUTH_WORKFLOW_UPDATE_EMAIL_ISSUED;
+    update.now = now;
+    update.expected_step = 0u;
+    update.email = email;
+    update.token_hash = token_hash;
+    status = vectis_auth_workflow_update(app, data, id, &update, error);
+  }
+  if (status == VECTIS_OK && !update.accepted) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow cannot issue an email code");
+    status = VECTIS_ERR_INVALID;
+  }
+  if (status == VECTIS_OK && deliver) {
+    status = vectis_auth_workflow_load(app, data, id, &record, error);
+  }
+  if (status == VECTIS_OK && deliver) {
     memset(&message, 0, sizeof(message));
-    message.username = fields.username;
+    message.username = record.principal;
     message.realm = data->realm;
-    message.email = fields.email;
-    message.transaction_id = token.transaction_id;
-    message.token = token.token;
-    message.expires_at = token.expires_at;
+    message.email = email;
+    message.transaction_id = id;
+    message.token = token;
+    message.expires_at = (uint64_t)record.expires_at;
     status = vectis_auth_email_token_deliver_smtp(&data->email_smtp, &message,
                                                   error);
-    if (status != VECTIS_OK) {
-      vectis_auth_email_token_verify_config consume;
-      vectis_auth_email_token_result consume_result;
-      const char *message_body;
-
-      vectis_auth_email_token_verify_config_init(&consume);
-      consume.store = data->store;
-      consume.transaction_id = token.transaction_id;
-      consume.username = fields.username;
-      consume.realm = data->realm;
-      consume.pending_transaction_id = fields.pending_transaction_id;
-      consume.token = token.token;
-      consume.now_seconds = data->unix_seconds;
-      vectis_auth_email_token_result_init(&consume_result);
-      (void)vectis_auth_email_token_verify(&consume, &consume_result, NULL);
-      vectis_auth_email_token_result_cleanup(&consume_result);
-      vectis_auth_form_cleanup(&fields);
-      vectis_auth_email_token_cleanup(&token);
-      if (status == VECTIS_ERR_INVALID) {
-        message_body = error != NULL && error->message[0] != '\0'
-                           ? error->message
-                           : "email token delivery failed";
-        return vectis_response_text(response, 400, "text/plain; charset=utf-8",
-                                    message_body, error);
-      }
-      return status;
-    }
   }
-  vectis_auth_form_cleanup(&fields);
-  status = vectis_auth_email_token_route_response(&token, !smtp_enabled,
-                                                  response, error);
-  vectis_auth_email_token_cleanup(&token);
+  OPENSSL_cleanse(token, sizeof(token));
+  OPENSSL_cleanse(token_hash, sizeof(token_hash));
+  if (status != VECTIS_OK) {
+    (void)vectis_auth_workflow_delete(app, data, id, NULL);
+  }
   return status;
 }
 
-static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
-                                                     vectis_request *request,
-                                                     vectis_response *response,
-                                                     void *userdata,
-                                                     vectis_error *error) {
-  vectis_auth_route_data *data;
-  vectis_mutable_bytes body;
-  vectis_auth_form_fields fields;
-  vectis_auth_login_config login;
-  vectis_auth_result login_result;
-  vectis_auth_password_check_config password_check;
+static vectis_status vectis_auth_workflow_begin(
+    vectis_app *app, const vectis_auth_route_data *data,
+    const vectis_auth_form_fields *fields, const char *return_path,
+    char id[VECTIS_AUTH_WORKFLOW_ID_HEX_BYTES + 1u],
+    vectis_auth_workflow_record *record, int *accepted, vectis_error *error) {
+  vectis_auth_workflow_step step;
+  vectis_auth_password_check_config password;
   vectis_auth_password_check_result password_result;
-  vectis_auth_pending_login_issue_config pending_issue;
-  vectis_auth_pending_login pending_login;
-  vectis_auth_pending_login_consume_config pending_consume;
-  vectis_auth_pending_login_result pending_result;
-  vectis_auth_email_token_verify_config email_token;
-  vectis_auth_email_token_result email_result;
+  vectis_auth_workflow_update_context update;
+  uint64_t now;
+  int email_found;
+  char principal[VECTIS_AUTH_PRINCIPAL_MAX + 1u];
+  vectis_status status;
+
+  if (accepted == NULL || record == NULL || fields == NULL ||
+      data == NULL || data->step_count == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow start is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  *accepted = 0;
+  id[0] = '\0';
+  memset(record, 0, sizeof(*record));
+  step = vectis_auth_workflow_step_at(data, 0u);
+  if (step == VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE) {
+    if (fields->email == NULL || fields->email[0] == '\0') {
+      return VECTIS_OK;
+    }
+    status = vectis_auth_user_email_validate(fields->email, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    email_found = 0;
+    memset(principal, 0, sizeof(principal));
+    status = vectis_auth_user_find_by_email(&data->store, fields->email,
+                                            principal, sizeof(principal),
+                                            &email_found, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    if (!email_found) {
+      (void)snprintf(principal, sizeof(principal), "unrecognized-email");
+    }
+    status = vectis_auth_workflow_create(app, data, principal, email_found,
+                                         return_path, id, error);
+    if (status == VECTIS_OK) {
+      status = vectis_auth_workflow_send_email(app, data, fields->email, id,
+                                               email_found, error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_auth_workflow_load(app, data, id, record, error);
+    }
+    if (status == VECTIS_OK) {
+      *accepted = 1;
+    }
+    return status;
+  }
+  if (step != VECTIS_AUTH_WORKFLOW_STEP_PASSWORD || fields->username == NULL ||
+      fields->password == NULL || fields->username[0] == '\0' ||
+      fields->password[0] == '\0') {
+    return VECTIS_OK;
+  }
+  vectis_auth_password_check_config_init(&password);
+  password.store = data->store;
+  password.username = fields->username;
+  password.password = fields->password;
+  vectis_auth_password_check_result_init(&password_result);
+  status = vectis_auth_user_password_check(&password, &password_result, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (!password_result.authenticated) {
+    return VECTIS_OK;
+  }
+  status = vectis_auth_workflow_create(app, data, fields->username, 1,
+                                       return_path, id, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_auth_workflow_now(data->unix_seconds, &now, error);
+  if (status == VECTIS_OK) {
+    memset(&update, 0, sizeof(update));
+    update.data = data;
+    update.kind = VECTIS_AUTH_WORKFLOW_UPDATE_STEP_VERIFIED;
+    update.now = now;
+    update.expected_step = 0u;
+    status = vectis_auth_workflow_update(app, data, id, &update, error);
+  }
+  if (status == VECTIS_OK && !update.accepted) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow state changed during password check");
+    status = VECTIS_ERR_INVALID;
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_workflow_load(app, data, id, record, error);
+  }
+  if (status == VECTIS_OK) {
+    *accepted = 1;
+  } else {
+    (void)vectis_auth_workflow_delete(app, data, id, NULL);
+  }
+  return status;
+}
+
+static vectis_status vectis_auth_workflow_continue(
+    vectis_app *app, const vectis_auth_route_data *data,
+    const char *id, const vectis_auth_form_fields *fields,
+    vectis_auth_workflow_record *record, int *accepted, vectis_error *error) {
+  vectis_auth_workflow_update_context update;
+  vectis_auth_password_check_config password;
+  vectis_auth_password_check_result password_result;
+  vectis_auth_totp_check_config totp;
+  vectis_auth_totp_check_result totp_result;
+  vectis_auth_workflow_step step;
+  char token_hash[65];
+  uint64_t now;
+  vectis_status status;
+
+  if (accepted == NULL || record == NULL || fields == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow continuation is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  *accepted = 0;
+  status = vectis_auth_workflow_load(app, data, id, record, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (record->step_index >= data->step_count) {
+    return VECTIS_OK;
+  }
+  status = vectis_auth_workflow_now(data->unix_seconds, &now, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  memset(&update, 0, sizeof(update));
+  update.data = data;
+  update.now = now;
+  update.expected_step = record->step_index;
+  step = vectis_auth_workflow_step_at(data, record->step_index);
+  if (step == VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE) {
+    if (fields->email_token == NULL || fields->email_token[0] == '\0') {
+      return VECTIS_OK;
+    }
+    status = vectis_auth_workflow_token_hash(fields->email_token, token_hash,
+                                             error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    update.kind = VECTIS_AUTH_WORKFLOW_UPDATE_EMAIL_VERIFIED;
+    update.token_hash = token_hash;
+    status = vectis_auth_workflow_update(app, data, id, &update, error);
+    OPENSSL_cleanse(token_hash, sizeof(token_hash));
+  } else if (step == VECTIS_AUTH_WORKFLOW_STEP_PASSWORD) {
+    if (fields->password == NULL || fields->password[0] == '\0') {
+      return VECTIS_OK;
+    }
+    vectis_auth_password_check_config_init(&password);
+    password.store = data->store;
+    password.username = record->principal;
+    password.password = fields->password;
+    vectis_auth_password_check_result_init(&password_result);
+    status = vectis_auth_user_password_check(&password, &password_result, error);
+    if (status != VECTIS_OK || !password_result.authenticated) {
+      return status;
+    }
+    update.kind = VECTIS_AUTH_WORKFLOW_UPDATE_STEP_VERIFIED;
+    status = vectis_auth_workflow_update(app, data, id, &update, error);
+  } else {
+    if (fields->totp_code == NULL || fields->totp_code[0] == '\0') {
+      return VECTIS_OK;
+    }
+    vectis_auth_totp_check_config_init(&totp);
+    totp.store = data->store;
+    totp.username = record->principal;
+    totp.totp_code = fields->totp_code;
+    totp.unix_seconds = data->unix_seconds;
+    totp.totp_window = data->totp_window;
+    vectis_auth_totp_check_result_init(&totp_result);
+    status = vectis_auth_user_totp_check(&totp, &totp_result, error);
+    if (status != VECTIS_OK || !totp_result.authenticated) {
+      return status;
+    }
+    update.kind = VECTIS_AUTH_WORKFLOW_UPDATE_STEP_VERIFIED;
+    status = vectis_auth_workflow_update(app, data, id, &update, error);
+  }
+  if (status != VECTIS_OK || !update.accepted) {
+    return status;
+  }
+  status = vectis_auth_workflow_load(app, data, id, record, error);
+  if (status == VECTIS_OK) {
+    *accepted = 1;
+  }
+  return status;
+}
+
+static vectis_status vectis_auth_workflow_issue_m2m(
+    vectis_app *app, const vectis_auth_route_data *data, const char *id,
+    const vectis_auth_workflow_record *record,
+    vectis_auth_workflow_json_output *out, vectis_error *error) {
   vectis_auth_issue_config issue;
   vectis_auth_issued_credential credential;
-  const char *content_type;
   vectis_status status;
-  unsigned int required_factors;
-  int has_pending;
-  int missing_email_token;
-  int needs_pending;
-  int pending_verified;
 
-  (void)app;
+  if (record == NULL || !record->principal_enrolled ||
+      record->step_index != data->step_count) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow is not complete");
+    return VECTIS_ERR_INVALID;
+  }
+  vectis_auth_issue_config_init(&issue);
+  issue.subject = record->principal;
+  issue.purpose = data->credential_purpose != NULL &&
+                          data->credential_purpose[0] != '\0'
+                      ? data->credential_purpose
+                      : "workflow";
+  issue.auth_modes = VECTIS_AUTH_MODE_BASIC | VECTIS_AUTH_MODE_BEARER;
+  vectis_auth_issued_credential_init(&credential);
+  status = vectis_auth_issue_credential(&data->store, &issue, &credential,
+                                         error);
+  if (status == VECTIS_OK &&
+      (credential.client_id == NULL || credential.client_secret == NULL ||
+       strlen(credential.client_id) >= sizeof(out->client_id) ||
+       strlen(credential.client_secret) >= sizeof(out->client_secret))) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to issue auth workflow credential");
+    status = VECTIS_ERR_STATE;
+  }
+  if (status == VECTIS_OK) {
+    (void)snprintf(out->client_id, sizeof(out->client_id), "%s",
+                   credential.client_id);
+    (void)snprintf(out->client_secret, sizeof(out->client_secret), "%s",
+                   credential.client_secret);
+    out->complete = 1;
+    status = vectis_auth_workflow_delete(app, data, id, error);
+  }
+  if (status != VECTIS_OK && credential.client_id != NULL) {
+    (void)vectis_auth_revoke_client(&data->store, credential.client_id, NULL);
+  }
+  vectis_auth_issued_credential_cleanup(&credential);
+  return status;
+}
+
+static vectis_status vectis_auth_workflow_redirect(vectis_response *response,
+                                                   const char *location,
+                                                   vectis_error *error) {
+  vectis_status status;
+
+  status = vectis_response_header(response, "location", location, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  return vectis_response_status(response, 303, error);
+}
+
+static vectis_status vectis_auth_workflow_issue_browser(
+    vectis_app *app, const vectis_auth_route_data *data, const char *id,
+    const vectis_auth_workflow_record *record, vectis_response *response,
+    vectis_error *error) {
+  const char *target;
+  vectis_status status;
+
+  if (data->browser_session.mode != VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER ||
+      record == NULL || !record->principal_enrolled ||
+      record->step_index != data->step_count) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser authentication is not enabled or complete");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_workflow_delete(app, data, id, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_auth_workflow_cookie(data, NULL, 1, response, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  status = vectis_auth_browser_session_issue(app, &data->browser_session,
+                                             record->principal,
+                                             data->unix_seconds, response,
+                                             error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  target = record->return_path[0] != '\0' ? record->return_path : "/";
+  return vectis_auth_workflow_redirect(response, target, error);
+}
+
+static vectis_status vectis_auth_workflow_default_shell(
+    vectis_string_builder *html, const vectis_auth_route_data *data,
+    const char *progress, const char *message, const char *content,
+    vectis_error *error) {
+  vectis_status status;
+
+  status = vectis_string_builder_append(
+      html,
+      "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+      "<meta name=\"color-scheme\" content=\"dark\"><title>", error);
+  if (status == VECTIS_OK) {
+    status = vectis_auth_html_escape(html, data->login_title, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(
+        html,
+        "</title><style>:root{color-scheme:dark}*{box-sizing:border-box}"
+        "body{margin:0;min-height:100vh;display:grid;place-items:center;"
+        "background:#10131a;color:#edf2ff;font:16px system-ui,sans-serif}"
+        "main{width:min(100% - 2rem,28rem);padding:2rem;border:1px solid #30394a;"
+        "border-radius:1rem;background:#181d27;box-shadow:0 1rem 3rem #0008}",
+        error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(
+        html, "h1{margin:0 0 .4rem;font-size:1.55rem}p{color:#b8c2d9}"
+        "form{display:grid;gap:1rem}label{display:grid;gap:.45rem;font-weight:650}"
+        "input{width:100%;padding:.8rem;border:1px solid #46536c;border-radius:.55rem;"
+        "background:#0e121a;color:inherit;font:inherit}", error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(
+        html, "button{padding:.8rem 1rem;border:0;border-radius:.55rem;background:#8eb7ff;"
+        "color:#07111f;font-weight:750;font:inherit;cursor:pointer}.notice{min-height:1.4rem}"
+        ".error{color:#ffb4ab}.progress{font-size:.9rem}</style></head><body><main><h1>",
+        error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_html_escape(html, data->login_title, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(html, "</h1><p class=\"progress\">", error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_html_escape(html, progress, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(html, "</p><p class=\"notice", error);
+  }
+  if (status == VECTIS_OK && message != NULL && message[0] != '\0') {
+    status = vectis_string_builder_append(html, " error", error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(html, "\">", error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_html_escape(html, message, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(html, "</p>", error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(html, content, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(html, "</main></body></html>", error);
+  }
+  return status;
+}
+
+static vectis_status vectis_auth_workflow_custom_shell(
+    vectis_string_builder *html, const vectis_auth_route_data *data,
+    const char *progress, const char *message, const char *content,
+    vectis_error *error) {
+  const char *cursor;
+  const char *open;
+  const char *close;
+  vectis_status status;
+
+  if (data->browser_template_html == NULL) {
+    return vectis_auth_workflow_default_shell(html, data, progress, message,
+                                              content, error);
+  }
+  cursor = data->browser_template_html;
+  while (*cursor != '\0') {
+    open = strstr(cursor, "{{");
+    if (open == NULL) {
+      return vectis_string_builder_append(html, cursor, error);
+    }
+    status = vectis_string_builder_append_n(html, cursor, (size_t)(open - cursor),
+                                            error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    close = strstr(open + 2, "}}");
+    if (close == NULL) {
+      return vectis_string_builder_append(html, open, error);
+    }
+    if ((size_t)(close - (open + 2)) == 5u &&
+        strncmp(open + 2, "title", 5u) == 0) {
+      status = vectis_auth_html_escape(html, data->login_title, error);
+    } else if ((size_t)(close - (open + 2)) == 8u &&
+               strncmp(open + 2, "progress", 8u) == 0) {
+      status = vectis_auth_html_escape(html, progress, error);
+    } else if ((size_t)(close - (open + 2)) == 5u &&
+               strncmp(open + 2, "error", 5u) == 0) {
+      status = vectis_auth_html_escape(html, message, error);
+    } else if ((size_t)(close - (open + 2)) == 7u &&
+               strncmp(open + 2, "content", 7u) == 0) {
+      status = vectis_string_builder_append(html, content, error);
+    } else {
+      status = vectis_string_builder_append_n(
+          html, open, (size_t)((close + 2) - open), error);
+    }
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    cursor = close + 2;
+  }
+  return VECTIS_OK;
+}
+
+static vectis_status vectis_auth_workflow_page(
+    const vectis_auth_route_data *data, const vectis_auth_workflow_record *record,
+    const char *return_path, const char *message, vectis_response *response,
+    vectis_error *error) {
+  vectis_string_builder html;
+  vectis_string_builder content;
+  vectis_auth_workflow_step step;
+  vectis_bytes body;
+  vectis_status status;
+  char action[2048];
+  char progress[128];
+
+  memset(&html, 0, sizeof(html));
+  memset(&content, 0, sizeof(content));
+  step = vectis_auth_workflow_step_at(data, record != NULL ? record->step_index : 0u);
+  if (record != NULL && step == VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE &&
+      record->email_token_hash[0] == '\0') {
+    (void)snprintf(progress, sizeof(progress), "Confirm your email address");
+  } else {
+    (void)snprintf(progress, sizeof(progress), "Step %lu of %lu: %s",
+                   (unsigned long)((record != NULL ? record->step_index : 0u) + 1u),
+                   (unsigned long)data->step_count,
+                   step == VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE ? "enter your email code" :
+                   step == VECTIS_AUTH_WORKFLOW_STEP_PASSWORD ? "sign in" :
+                   "enter your authenticator code");
+  }
+  if (snprintf(action, sizeof(action), "%s/continue", data->path_prefix) < 0 ||
+      strlen(action) >= sizeof(action)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth workflow action is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_string_builder_append(&content, "<form method=\"post\" action=\"", error);
+  if (status == VECTIS_OK) {
+    status = vectis_auth_html_escape(&content, action, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(&content, "\">", error);
+  }
+  if (status == VECTIS_OK && record == NULL && return_path != NULL &&
+      return_path[0] == '/') {
+    status = vectis_string_builder_append(&content,
+                                          "<input type=\"hidden\" name=\"return\" value=\"",
+                                          error);
+    if (status == VECTIS_OK) {
+      status = vectis_auth_html_escape(&content, return_path, error);
+    }
+    if (status == VECTIS_OK) {
+      status = vectis_string_builder_append(&content, "\">", error);
+    }
+  }
+  if (status == VECTIS_OK && step == VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE &&
+      (record == NULL || record->email_token_hash[0] == '\0')) {
+    status = vectis_string_builder_append(&content,
+        "<label>Email address<input name=\"email\" type=\"email\" required "
+        "autocomplete=\"email\"></label><button type=\"submit\">Continue</button>", error);
+  } else if (status == VECTIS_OK && step == VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE) {
+    status = vectis_string_builder_append(&content,
+        "<label>Email code<input name=\"email_token\" required maxlength=\"6\" "
+        "pattern=\"[A-Za-z0-9]{6}\" inputmode=\"text\" autocomplete=\"one-time-code\" "
+        "autofocus></label><button type=\"submit\">Verify code</button>"
+        "<script>(function(){var e=document.querySelector('[name=email_token]');"
+        "if(e)e.addEventListener('input',function(){if(this.value.length===6)this.form.requestSubmit()})}())</script>", error);
+  } else if (status == VECTIS_OK && step == VECTIS_AUTH_WORKFLOW_STEP_PASSWORD &&
+             record == NULL) {
+    status = vectis_string_builder_append(&content,
+        "<label>Username<input name=\"username\" required autocomplete=\"username\"></label>"
+        "<label>Password<input name=\"password\" type=\"password\" required "
+        "autocomplete=\"current-password\"></label><button type=\"submit\">Sign in</button>", error);
+  } else if (status == VECTIS_OK && step == VECTIS_AUTH_WORKFLOW_STEP_PASSWORD) {
+    status = vectis_string_builder_append(&content,
+        "<label>Password<input name=\"password\" type=\"password\" required "
+        "autocomplete=\"current-password\" autofocus></label><button type=\"submit\">Continue</button>", error);
+  } else if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(&content,
+        "<label>Authenticator code<input name=\"totp_code\" required inputmode=\"numeric\" "
+        "autocomplete=\"one-time-code\" autofocus></label><button type=\"submit\">Verify</button>", error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(&content, "</form>", error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_workflow_custom_shell(&html, data, progress, message,
+                                               content.data, error);
+  }
+  vectis_string_builder_cleanup(&content);
+  if (status != VECTIS_OK) {
+    vectis_string_builder_cleanup(&html);
+    return status;
+  }
+  body.data = html.data;
+  body.size = html.size;
+  status = vectis_response_bytes(response, 200, "text/html; charset=utf-8",
+                                 body, error);
+  vectis_string_builder_cleanup(&html);
+  return status;
+}
+
+static int vectis_auth_workflow_return_path_valid(const char *path) {
+  const unsigned char *cursor;
+
+  if (path == NULL || path[0] != '/' || path[1] == '/' ||
+      strlen(path) >= 2048u) {
+    return 0;
+  }
+  for (cursor = (const unsigned char *)path; *cursor != '\0'; ++cursor) {
+    if (*cursor < 0x20u || *cursor == 0x7fu || *cursor == '\\') {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static vectis_status vectis_auth_workflow_browser_login_dispatch(
+    vectis_app *app, vectis_request *request, vectis_response *response,
+    void *userdata, vectis_error *error) {
+  vectis_auth_route_data *data;
+  vectis_auth_workflow_record record;
+  const char *return_path;
+  char id[VECTIS_AUTH_WORKFLOW_ID_HEX_BYTES + 1u];
+  vectis_status status;
+
   data = (vectis_auth_route_data *)userdata;
   if (data == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "auth route is invalid");
@@ -16932,11 +17852,63 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
   if (status != VECTIS_OK) {
     return status;
   }
+  if (data->browser_session.mode != VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER) {
+    return vectis_response_status(response, 404, error);
+  }
+  if (vectis_auth_workflow_cookie_value(vectis_request_header(request, "cookie"),
+                                        id, sizeof(id))) {
+    status = vectis_auth_workflow_load(app, data, id, &record, error);
+    if (status == VECTIS_OK) {
+      return vectis_auth_workflow_page(data, &record, NULL, NULL, response,
+                                       error);
+    }
+    vectis_error_clear(error);
+    status = vectis_auth_workflow_cookie(data, NULL, 1, response, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
+  return_path = vectis_request_query(request, "return");
+  if (!vectis_auth_workflow_return_path_valid(return_path)) {
+    return_path = "/";
+  }
+  return vectis_auth_workflow_page(data, NULL, return_path, NULL, response,
+                                   error);
+}
+
+static vectis_status vectis_auth_workflow_browser_continue_dispatch(
+    vectis_app *app, vectis_request *request, vectis_response *response,
+    void *userdata, vectis_error *error) {
+  vectis_auth_route_data *data;
+  vectis_mutable_bytes body;
+  vectis_auth_form_fields fields;
+  vectis_auth_workflow_record record;
+  const char *content_type;
+  const char *return_path;
+  char id[VECTIS_AUTH_WORKFLOW_ID_HEX_BYTES + 1u];
+  char login_location[2048];
+  int accepted;
+  vectis_status status;
+
+  data = (vectis_auth_route_data *)userdata;
+  if (data == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth route is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_no_store(response, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (!vectis_auth_browser_navigation_request(request)) {
+    return vectis_response_text(response, 403, "text/plain; charset=utf-8",
+                                "browser login requires a same-origin navigation\n",
+                                error);
+  }
   content_type = vectis_request_header(request, "content-type");
-  if (content_type != NULL &&
-      strncasecmp(content_type, "application/x-www-form-urlencoded",
-                  strlen("application/x-www-form-urlencoded")) != 0) {
-    return vectis_response_status(response, 415, error);
+  if (content_type == NULL || strcasestr(content_type,
+                                         "application/x-www-form-urlencoded") == NULL) {
+    return vectis_response_text(response, 415, "text/plain; charset=utf-8",
+                                "browser login requires form data\n", error);
   }
   memset(&body, 0, sizeof(body));
   status = vectis_request_body_read_all(request, &body, error);
@@ -16949,278 +17921,201 @@ static vectis_status vectis_auth_webdav_key_dispatch(vectis_app *app,
   if (status != VECTIS_OK) {
     return status;
   }
-  required_factors = vectis_auth_route_required_factors(data);
-  if (!vectis_auth_route_required_factors_valid(required_factors)) {
-    vectis_auth_form_cleanup(&fields);
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "auth route required_factors is invalid");
-    return VECTIS_ERR_INVALID;
-  }
-  if (fields.username == NULL || fields.username[0] == '\0') {
-    vectis_auth_form_cleanup(&fields);
-    return vectis_response_text(response, 400, "text/plain; charset=utf-8",
-                                "username is required\n", error);
-  }
-  has_pending = fields.pending_transaction_id != NULL &&
-                fields.pending_transaction_id[0] != '\0';
-  pending_verified = 0;
-  missing_email_token =
-      (required_factors & VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN) != 0u &&
-      (fields.email_transaction_id == NULL ||
-       fields.email_transaction_id[0] == '\0' || fields.email_token == NULL ||
-       fields.email_token[0] == '\0');
-  if (has_pending && missing_email_token) {
-    vectis_auth_form_cleanup(&fields);
-    return vectis_response_text(
-        response, 400, "text/plain; charset=utf-8",
-        "email_transaction_id and email_token are required\n", error);
-  }
-  if ((required_factors & VECTIS_AUTH_ROUTE_FACTOR_PASSWORD) != 0u &&
-      !has_pending && (fields.password == NULL || fields.password[0] == '\0')) {
-    vectis_auth_form_cleanup(&fields);
-    return vectis_response_text(response, 400, "text/plain; charset=utf-8",
-                                "password or pending_transaction_id is "
-                                "required\n",
-                                error);
-  }
-  vectis_auth_login_config_init(&login);
-  login.username = fields.username;
-  login.password = fields.password;
-  login.totp_code = fields.totp_code;
-  login.unix_seconds = data->unix_seconds;
-  if (data->totp_window != 0u) {
-    login.totp_window = data->totp_window;
-  }
-  vectis_auth_issued_credential_init(&credential);
-  if ((required_factors & VECTIS_AUTH_ROUTE_FACTOR_PASSWORD) != 0u) {
-    if (has_pending) {
-      vectis_auth_pending_login_consume_config_init(&pending_consume);
-      pending_consume.store = data->store;
-      pending_consume.transaction_id = fields.pending_transaction_id;
-      pending_consume.username = fields.username;
-      pending_consume.realm = data->realm;
-      pending_consume.totp_code = fields.totp_code;
-      pending_consume.now_seconds = data->unix_seconds;
-      if (data->totp_window != 0u) {
-        pending_consume.totp_window = data->totp_window;
-      }
-      vectis_auth_pending_login_result_init(&pending_result);
-      status = vectis_auth_pending_login_verify(&pending_consume,
-                                                &pending_result, error);
-      if (status != VECTIS_OK) {
-        vectis_auth_form_cleanup(&fields);
-        vectis_auth_pending_login_result_cleanup(&pending_result);
-        vectis_auth_issued_credential_cleanup(&credential);
-        return status;
-      }
-      if (!pending_result.authenticated) {
-        if (pending_result.expired ||
-            (fields.totp_code != NULL && fields.totp_code[0] != '\0')) {
-          vectis_auth_pending_login_result_cleanup(&pending_result);
-          status = vectis_auth_pending_login_consume(&pending_consume,
-                                                     &pending_result, error);
-          if (status != VECTIS_OK) {
-            vectis_auth_form_cleanup(&fields);
-            vectis_auth_pending_login_result_cleanup(&pending_result);
-            vectis_auth_issued_credential_cleanup(&credential);
-            return status;
-          }
-        }
-        vectis_auth_form_cleanup(&fields);
-        vectis_auth_pending_login_result_cleanup(&pending_result);
-        vectis_auth_issued_credential_cleanup(&credential);
-        vectis_error_clear(error);
-        return vectis_response_text(response, 401, "text/plain; charset=utf-8",
-                                    "login failed\n", error);
-      }
-      pending_verified = 1;
-      if ((required_factors & VECTIS_AUTH_ROUTE_FACTOR_TOTP) != 0u &&
-          !pending_result.totp_required) {
-        vectis_auth_pending_login_result_cleanup(&pending_result);
-        vectis_auth_form_cleanup(&fields);
-        vectis_auth_issued_credential_cleanup(&credential);
-        vectis_error_clear(error);
-        return vectis_response_text(response, 401, "text/plain; charset=utf-8",
-                                    "login failed\n", error);
-      }
-      vectis_auth_pending_login_result_cleanup(&pending_result);
-    } else {
-      vectis_auth_password_check_config_init(&password_check);
-      password_check.store = data->store;
-      password_check.username = fields.username;
-      password_check.password = fields.password;
-      vectis_auth_password_check_result_init(&password_result);
-      status = vectis_auth_user_password_check(&password_check,
-                                               &password_result, error);
-      if (status != VECTIS_OK) {
-        vectis_auth_form_cleanup(&fields);
-        vectis_auth_issued_credential_cleanup(&credential);
-        return status;
-      }
-      if (!password_result.authenticated) {
-        vectis_auth_form_cleanup(&fields);
-        vectis_auth_issued_credential_cleanup(&credential);
-        vectis_error_clear(error);
-        return vectis_response_text(response, 401, "text/plain; charset=utf-8",
-                                    "login failed\n", error);
-      }
-      if ((required_factors & VECTIS_AUTH_ROUTE_FACTOR_TOTP) != 0u &&
-          !password_result.totp_required) {
-        vectis_auth_form_cleanup(&fields);
-        vectis_auth_issued_credential_cleanup(&credential);
-        vectis_error_clear(error);
-        return vectis_response_text(response, 401, "text/plain; charset=utf-8",
-                                    "login failed\n", error);
-      }
-      needs_pending =
-          missing_email_token ||
-          ((password_result.totp_required ||
-            (required_factors & VECTIS_AUTH_ROUTE_FACTOR_TOTP) != 0u) &&
-           (fields.totp_code == NULL || fields.totp_code[0] == '\0'));
-      if (needs_pending) {
-        vectis_auth_pending_login_issue_config_init(&pending_issue);
-        pending_issue.store = data->store;
-        pending_issue.username = fields.username;
-        pending_issue.password = fields.password;
-        pending_issue.realm = data->realm;
-        pending_issue.now_seconds = data->unix_seconds;
-        pending_issue.ttl_seconds = data->pending_login_ttl_seconds;
-        vectis_auth_pending_login_init(&pending_login);
-        status = vectis_auth_pending_login_issue(&pending_issue, &pending_login,
-                                                 error);
-        if (status != VECTIS_OK) {
-          vectis_auth_form_cleanup(&fields);
-          vectis_auth_pending_login_cleanup(&pending_login);
-          vectis_auth_issued_credential_cleanup(&credential);
-          return status;
-        }
-        if (!pending_login.authenticated) {
-          vectis_auth_form_cleanup(&fields);
-          vectis_auth_pending_login_cleanup(&pending_login);
-          vectis_auth_issued_credential_cleanup(&credential);
-          vectis_error_clear(error);
-          return vectis_response_text(response, 401,
-                                      "text/plain; charset=utf-8",
-                                      "login failed\n", error);
-        }
-        status =
-            vectis_auth_pending_login_response(&pending_login, response, error);
-        vectis_auth_form_cleanup(&fields);
-        vectis_auth_pending_login_cleanup(&pending_login);
-        vectis_auth_issued_credential_cleanup(&credential);
-        return status;
-      }
-      vectis_auth_result_init(&login_result);
-      status =
-          vectis_auth_user_login(&data->store, &login, &login_result, error);
-      if (status != VECTIS_OK) {
-        vectis_auth_form_cleanup(&fields);
-        vectis_auth_result_cleanup(&login_result);
-        vectis_auth_issued_credential_cleanup(&credential);
-        return status;
-      }
-      if (!login_result.authenticated) {
-        vectis_auth_form_cleanup(&fields);
-        vectis_auth_result_cleanup(&login_result);
-        vectis_auth_issued_credential_cleanup(&credential);
-        vectis_error_clear(error);
-        return vectis_response_text(response, 401, "text/plain; charset=utf-8",
-                                    "login failed\n", error);
-      }
-      vectis_auth_result_cleanup(&login_result);
-    }
-  }
-  if ((required_factors & VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN) != 0u) {
-    if (missing_email_token) {
-      vectis_auth_form_cleanup(&fields);
-      vectis_auth_issued_credential_cleanup(&credential);
-      return vectis_response_text(
-          response, 400, "text/plain; charset=utf-8",
-          "email_transaction_id and email_token are required\n", error);
-    }
-    vectis_auth_email_token_verify_config_init(&email_token);
-    email_token.store = data->store;
-    email_token.transaction_id = fields.email_transaction_id;
-    email_token.username = fields.username;
-    email_token.realm = data->realm;
-    email_token.pending_transaction_id = fields.pending_transaction_id;
-    email_token.token = fields.email_token;
-    email_token.now_seconds = data->unix_seconds;
-    vectis_auth_email_token_result_init(&email_result);
-    status = vectis_auth_email_token_verify(&email_token, &email_result, error);
-    if (status != VECTIS_OK) {
-      vectis_auth_form_cleanup(&fields);
-      vectis_auth_email_token_result_cleanup(&email_result);
-      vectis_auth_issued_credential_cleanup(&credential);
-      return status;
-    }
-    if (!email_result.verified) {
-      vectis_auth_form_cleanup(&fields);
-      vectis_auth_email_token_result_cleanup(&email_result);
-      vectis_auth_issued_credential_cleanup(&credential);
-      vectis_error_clear(error);
-      return vectis_response_text(response, 401, "text/plain; charset=utf-8",
-                                  "login failed\n", error);
-    }
-    vectis_auth_email_token_result_cleanup(&email_result);
-  }
-  if (pending_verified) {
-    vectis_auth_pending_login_result_init(&pending_result);
-    status = vectis_auth_pending_login_consume(&pending_consume,
-                                               &pending_result, error);
-    if (status != VECTIS_OK) {
-      vectis_auth_form_cleanup(&fields);
-      vectis_auth_pending_login_result_cleanup(&pending_result);
-      vectis_auth_issued_credential_cleanup(&credential);
-      return status;
-    }
-    if (!pending_result.authenticated) {
-      vectis_auth_form_cleanup(&fields);
-      vectis_auth_pending_login_result_cleanup(&pending_result);
-      vectis_auth_issued_credential_cleanup(&credential);
-      vectis_error_clear(error);
-      return vectis_response_text(response, 401, "text/plain; charset=utf-8",
-                                  "login failed\n", error);
-    }
-    vectis_auth_pending_login_result_cleanup(&pending_result);
-  }
-  vectis_auth_issue_config_init(&issue);
-  issue.subject = fields.username;
-  issue.purpose = "webdav";
-  issue.auth_modes = VECTIS_AUTH_MODE_BASIC;
-  status =
-      vectis_auth_issue_credential(&data->store, &issue, &credential, error);
-  if (status != VECTIS_OK) {
-    vectis_auth_form_cleanup(&fields);
-    vectis_auth_issued_credential_cleanup(&credential);
-    if (status == VECTIS_ERR_INVALID) {
-      vectis_error_clear(error);
-      return vectis_response_text(response, 401, "text/plain; charset=utf-8",
-                                  "login failed\n", error);
-    }
-    return status;
-  }
-  if (credential.client_id == NULL || credential.client_secret == NULL) {
-    vectis_auth_form_cleanup(&fields);
-    vectis_auth_issued_credential_cleanup(&credential);
-    return vectis_response_status(response, 401, error);
-  }
-  if (data->browser_session.mode ==
-          VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER &&
-      vectis_auth_browser_navigation_request(request)) {
-    status = vectis_auth_browser_session_issue(
-        app, &data->browser_session, fields.username, 0u, response, error);
-    if (status != VECTIS_OK) {
-      (void)vectis_auth_revoke_client(&data->store, credential.client_id, NULL);
-      vectis_auth_form_cleanup(&fields);
-      vectis_auth_issued_credential_cleanup(&credential);
-      return status;
-    }
+  if (!vectis_auth_workflow_cookie_value(vectis_request_header(request, "cookie"),
+                                         id, sizeof(id))) {
+    return_path = vectis_auth_workflow_return_path_valid(fields.return_path)
+                      ? fields.return_path
+                      : "/";
+    status = vectis_auth_workflow_begin(app, data, &fields, return_path, id,
+                                        &record, &accepted, error);
+  } else {
+    status = vectis_auth_workflow_continue(app, data, id, &fields, &record,
+                                           &accepted, error);
   }
   vectis_auth_form_cleanup(&fields);
-  status = vectis_auth_webdav_key_response(&credential, response, error);
-  vectis_auth_issued_credential_cleanup(&credential);
-  return status;
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (!accepted) {
+    if (id[0] != '\0') {
+      return vectis_auth_workflow_page(
+          data, &record, NULL,
+          "Those details could not be verified. Try again.", response, error);
+    }
+    return vectis_auth_workflow_page(data, NULL, "/",
+                                     "Those details could not be verified. Try again.",
+                                     response, error);
+  }
+  if (record.step_index >= data->step_count) {
+    return vectis_auth_workflow_issue_browser(app, data, id, &record, response,
+                                              error);
+  }
+  status = vectis_auth_workflow_cookie(data, id, 0, response, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (snprintf(login_location, sizeof(login_location), "%s/login",
+               data->path_prefix) < 0 ||
+      strlen(login_location) >= sizeof(login_location)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow login location is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  return vectis_auth_workflow_redirect(response, login_location, error);
+}
+
+static void vectis_auth_workflow_json_next(
+    const vectis_auth_route_data *data, const char *id,
+    const vectis_auth_workflow_record *record,
+    vectis_auth_workflow_json_output *out) {
+  vectis_auth_workflow_step step;
+
+  memset(out, 0, sizeof(*out));
+  if (record == NULL || record->step_index >= data->step_count) {
+    return;
+  }
+  step = vectis_auth_workflow_step_at(data, record->step_index);
+  (void)snprintf(out->workflow, sizeof(out->workflow), "%s", id);
+  (void)snprintf(out->next, sizeof(out->next), "%s/m2m/continue",
+                 data->path_prefix);
+  (void)snprintf(out->step, sizeof(out->step), "%s",
+                 vectis_auth_workflow_step_name(step));
+  if (step == VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE) {
+    (void)snprintf(out->required, sizeof(out->required), "%s",
+                   record->email_token_hash[0] == '\0' ? "email" : "code");
+  } else if (step == VECTIS_AUTH_WORKFLOW_STEP_PASSWORD) {
+    (void)snprintf(out->required, sizeof(out->required), "%s", "password");
+  } else {
+    (void)snprintf(out->required, sizeof(out->required), "%s", "code");
+  }
+  out->expires_at = record->expires_at;
+}
+
+static vectis_status vectis_auth_workflow_m2m_input(
+    vectis_request *request, vectis_auth_workflow_json_input *input,
+    vectis_error *error) {
+  const char *content_type;
+
+  content_type = vectis_request_header(request, "content-type");
+  if (content_type == NULL || strcasestr(content_type, "application/json") == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "M2M auth workflow requires application/json");
+    return VECTIS_ERR_INVALID;
+  }
+  memset(input, 0, sizeof(*input));
+  return vectis_request_json_into(request, &vectis_auth_workflow_json_input_map,
+                                  input, error);
+}
+
+static vectis_status vectis_auth_workflow_m2m_start_dispatch(
+    vectis_app *app, vectis_request *request, vectis_response *response,
+    void *userdata, vectis_error *error) {
+  vectis_auth_route_data *data;
+  vectis_auth_workflow_json_input input;
+  vectis_auth_workflow_json_output output;
+  vectis_auth_workflow_record record;
+  vectis_auth_form_fields fields;
+  char id[VECTIS_AUTH_WORKFLOW_ID_HEX_BYTES + 1u];
+  int accepted;
+  vectis_status status;
+
+  data = (vectis_auth_route_data *)userdata;
+  if (data == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth route is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_no_store(response, error);
+  if (status == VECTIS_OK) {
+    status = vectis_auth_workflow_m2m_input(request, &input, error);
+  }
+  if (status != VECTIS_OK) {
+    return vectis_response_error_json(response, 400, "invalid_request",
+                                      error != NULL ? error->message : "invalid request",
+                                      NULL, error);
+  }
+  memset(&fields, 0, sizeof(fields));
+  fields.email = input.email;
+  fields.username = input.username;
+  fields.password = input.password;
+  status = vectis_auth_workflow_begin(app, data, &fields, NULL, id, &record,
+                                      &accepted, error);
+  if (status != VECTIS_OK) {
+    return status;
+  }
+  if (!accepted) {
+    return vectis_response_error_json(response, 401, "authentication_failed",
+                                      "authentication could not be verified", NULL,
+                                      error);
+  }
+  if (record.step_index >= data->step_count) {
+    memset(&output, 0, sizeof(output));
+    status = vectis_auth_workflow_issue_m2m(app, data, id, &record, &output,
+                                            error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    return vectis_response_json(response, 201, &vectis_auth_workflow_json_output_map,
+                                &output, error);
+  }
+  vectis_auth_workflow_json_next(data, id, &record, &output);
+  return vectis_response_json(response, 202, &vectis_auth_workflow_json_output_map,
+                              &output, error);
+}
+
+static vectis_status vectis_auth_workflow_m2m_continue_dispatch(
+    vectis_app *app, vectis_request *request, vectis_response *response,
+    void *userdata, vectis_error *error) {
+  vectis_auth_route_data *data;
+  vectis_auth_workflow_json_input input;
+  vectis_auth_workflow_json_output output;
+  vectis_auth_workflow_record record;
+  vectis_auth_form_fields fields;
+  int accepted;
+  vectis_status status;
+
+  data = (vectis_auth_route_data *)userdata;
+  if (data == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth route is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  status = vectis_auth_no_store(response, error);
+  if (status == VECTIS_OK) {
+    status = vectis_auth_workflow_m2m_input(request, &input, error);
+  }
+  if (status != VECTIS_OK || !vectis_auth_workflow_id_valid(input.workflow)) {
+    return vectis_response_error_json(response, 400, "invalid_request",
+                                      "a valid workflow is required", NULL, error);
+  }
+  memset(&fields, 0, sizeof(fields));
+  fields.password = input.password;
+  fields.email_token = input.code;
+  fields.totp_code = input.code;
+  status = vectis_auth_workflow_continue(app, data, input.workflow, &fields,
+                                         &record, &accepted, error);
+  if (status != VECTIS_OK) {
+    vectis_error_clear(error);
+    return vectis_response_error_json(response, 401, "authentication_failed",
+                                      "authentication could not be verified", NULL,
+                                      error);
+  }
+  if (!accepted) {
+    return vectis_response_error_json(response, 401, "authentication_failed",
+                                      "authentication could not be verified", NULL,
+                                      error);
+  }
+  if (record.step_index >= data->step_count) {
+    memset(&output, 0, sizeof(output));
+    status = vectis_auth_workflow_issue_m2m(app, data, input.workflow, &record,
+                                            &output, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    return vectis_response_json(response, 201, &vectis_auth_workflow_json_output_map,
+                                &output, error);
+  }
+  vectis_auth_workflow_json_next(data, input.workflow, &record, &output);
+  return vectis_response_json(response, 202, &vectis_auth_workflow_json_output_map,
+                              &output, error);
 }
 
 static vectis_status vectis_auth_logout_dispatch(vectis_app *app,
@@ -17376,6 +18271,134 @@ static vectis_status vectis_register_auth_route_one(
   return status;
 }
 
+
+static vectis_status vectis_auth_resolve_browser_template(
+    const vectis_auth_routes_config *config, char **out, vectis_error *error) {
+  vectis_bytes embedded;
+  FILE *file;
+  long size;
+  size_t nread;
+  int sources;
+  int found;
+
+  /* A custom shell may style the page, but libvectis must retain the single
+   * current-step form. Requiring exactly one insertion point prevents a
+   * template from accidentally replacing or omitting the authentication UI. */
+#define VECTIS_AUTH_TEMPLATE_CONTENT "{{content}}"
+
+  if (out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser template output is required");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = NULL;
+  sources = (config->browser_template_html != NULL ? 1 : 0) +
+            (config->browser_template_path != NULL ? 1 : 0) +
+            (config->browser_template_embedded_path != NULL ? 1 : 0);
+  if (sources > 1) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "set only one browser template source");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->browser_template_html != NULL) {
+    *out = vectis_strdup(config->browser_template_html);
+    if (*out == NULL) {
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to copy browser template");
+      return VECTIS_ERR_NOMEM;
+    }
+    if (strstr(*out, VECTIS_AUTH_TEMPLATE_CONTENT) == NULL ||
+        strstr(strstr(*out, VECTIS_AUTH_TEMPLATE_CONTENT) +
+                   sizeof(VECTIS_AUTH_TEMPLATE_CONTENT) - 1u,
+               VECTIS_AUTH_TEMPLATE_CONTENT) != NULL) {
+      free(*out);
+      *out = NULL;
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "browser template must contain exactly one {{content}}");
+      return VECTIS_ERR_INVALID;
+    }
+    return VECTIS_OK;
+  }
+  if (config->browser_template_path != NULL) {
+    file = fopen(config->browser_template_path, "rb");
+    if (file == NULL || fseek(file, 0L, SEEK_END) != 0 ||
+        (size = ftell(file)) < 0L || fseek(file, 0L, SEEK_SET) != 0) {
+      if (file != NULL) {
+        (void)fclose(file);
+      }
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to read browser template path");
+      return VECTIS_ERR_STATE;
+    }
+    *out = (char *)malloc((size_t)size + 1u);
+    if (*out == NULL) {
+      (void)fclose(file);
+      vectis_set_error(error, VECTIS_ERR_NOMEM,
+                       "failed to allocate browser template");
+      return VECTIS_ERR_NOMEM;
+    }
+    nread = fread(*out, 1u, (size_t)size, file);
+    if (nread != (size_t)size || fclose(file) != 0) {
+      free(*out);
+      *out = NULL;
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to read browser template path");
+      return VECTIS_ERR_STATE;
+    }
+    (*out)[size] = '\0';
+    if (strstr(*out, VECTIS_AUTH_TEMPLATE_CONTENT) == NULL ||
+        strstr(strstr(*out, VECTIS_AUTH_TEMPLATE_CONTENT) +
+                   sizeof(VECTIS_AUTH_TEMPLATE_CONTENT) - 1u,
+               VECTIS_AUTH_TEMPLATE_CONTENT) != NULL) {
+      free(*out);
+      *out = NULL;
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "browser template must contain exactly one {{content}}");
+      return VECTIS_ERR_INVALID;
+    }
+    return VECTIS_OK;
+  }
+  if (config->browser_template_embedded_path == NULL) {
+    return VECTIS_OK;
+  }
+  if (config->browser_template_fs == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser template embedded fs is required");
+    return VECTIS_ERR_INVALID;
+  }
+  found = 0;
+  if (vectis_embedded_fs_read(config->browser_template_fs,
+                              config->browser_template_embedded_path, &found,
+                              &embedded, error) != VECTIS_OK) {
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  if (!found) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "embedded browser template was not found");
+    return VECTIS_ERR_INVALID;
+  }
+  *out = (char *)malloc(embedded.size + 1u);
+  if (*out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM,
+                     "failed to allocate browser template");
+    return VECTIS_ERR_NOMEM;
+  }
+  memcpy(*out, embedded.data, embedded.size);
+  (*out)[embedded.size] = '\0';
+  if (strstr(*out, VECTIS_AUTH_TEMPLATE_CONTENT) == NULL ||
+      strstr(strstr(*out, VECTIS_AUTH_TEMPLATE_CONTENT) +
+                 sizeof(VECTIS_AUTH_TEMPLATE_CONTENT) - 1u,
+             VECTIS_AUTH_TEMPLATE_CONTENT) != NULL) {
+    free(*out);
+    *out = NULL;
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser template must contain exactly one {{content}}");
+    return VECTIS_ERR_INVALID;
+  }
+  return VECTIS_OK;
+#undef VECTIS_AUTH_TEMPLATE_CONTENT
+}
+
 vectis_status
 vectis_register_auth_routes(vectis_app *app,
                             const vectis_auth_routes_config *config,
@@ -17385,11 +18408,12 @@ vectis_register_auth_routes(vectis_app *app,
   vectis_auth_routes_config resolved;
   vectis_status status;
   vectis_app_impl *impl;
-  char *login_template_html;
   char *path_prefix;
-  unsigned int required_factors;
+  char *browser_template_html;
+  size_t i;
+  int email_code_required;
 
-  login_template_html = NULL;
+  browser_template_html = NULL;
   if (app == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
     return VECTIS_ERR_INVALID;
@@ -17406,17 +18430,42 @@ vectis_register_auth_routes(vectis_app *app,
                      "auth route credentials_path is required");
     return VECTIS_ERR_INVALID;
   }
+  if (!vectis_auth_workflow_steps_valid(effective->steps,
+                                        effective->step_count)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow steps must be email_code, password, "
+                     "and optional trailing totp");
+    return VECTIS_ERR_INVALID;
+  }
+  email_code_required = 0;
+  for (i = 0u; i < effective->step_count; ++i) {
+    if (effective->steps[i] == VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE) {
+      email_code_required = 1;
+      break;
+    }
+  }
+  if (email_code_required &&
+      (effective->email_smtp.url == NULL || effective->email_smtp.url[0] == '\0')) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "email-code workflows require configured SMTP delivery");
+    return VECTIS_ERR_INVALID;
+  }
+  if (effective->workflow_state_key == NULL ||
+      effective->workflow_state_key[0] == '\0' ||
+      effective->workflow_ttl_seconds == 0u) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow Lockd state configuration is invalid");
+    return VECTIS_ERR_INVALID;
+  }
   status = vectis_auth_browser_session_config_validate(
       &effective->browser_session, error);
   if (status != VECTIS_OK) {
     return status;
   }
   impl = (vectis_app_impl *)app->impl;
-  if (effective->browser_session.mode ==
-          VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER &&
-      !vectis_lockd_is_configured(impl)) {
+  if (!vectis_lockd_is_configured(impl)) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "browser sessions require configured app Lockd");
+                     "auth workflows require configured app Lockd");
     return VECTIS_ERR_INVALID;
   }
   path_prefix =
@@ -17429,60 +18478,50 @@ vectis_register_auth_routes(vectis_app *app,
     free(path_prefix);
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
-  required_factors = effective->required_factors != 0u
-                         ? effective->required_factors
-                         : VECTIS_AUTH_ROUTE_FACTOR_PASSWORD;
-  if (effective->require_email_token) {
-    required_factors |= VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN;
-  }
-  if (!vectis_auth_route_required_factors_valid(required_factors)) {
-    free(path_prefix);
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "auth route required_factors is invalid");
-    return VECTIS_ERR_INVALID;
-  }
-  status = vectis_auth_resolve_login_template(effective, &login_template_html,
-                                              error);
+  resolved = *effective;
+  status = vectis_auth_resolve_browser_template(effective, &browser_template_html,
+                                                error);
   if (status != VECTIS_OK) {
     free(path_prefix);
     return status;
   }
-  resolved = *effective;
-  if (login_template_html != NULL) {
-    resolved.login_template_html = login_template_html;
-    resolved.login_template_path = NULL;
-    resolved.login_template_embedded_path = NULL;
-    resolved.login_template_fs = NULL;
-  }
-  status = vectis_register_auth_route_one(app, &resolved, path_prefix, "/login",
-                                          VECTIS_HTTP_GET,
-                                          vectis_auth_login_dispatch, error);
-  if (status == VECTIS_OK) {
+  resolved.browser_template_html = browser_template_html;
+  resolved.browser_template_path = NULL;
+  resolved.browser_template_embedded_path = NULL;
+  resolved.browser_template_fs = NULL;
+  status = VECTIS_OK;
+  if (resolved.browser_session.mode ==
+      VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER) {
     status = vectis_register_auth_route_one(
-        app, &resolved, path_prefix, "/login", VECTIS_HTTP_POST,
-        vectis_auth_webdav_key_dispatch, error);
+        app, &resolved, path_prefix, "/login", VECTIS_HTTP_GET,
+        vectis_auth_workflow_browser_login_dispatch, error);
   }
-  if (status == VECTIS_OK) {
-    status = vectis_register_auth_route_one(
-        app, &resolved, path_prefix, "/email-token", VECTIS_HTTP_POST,
-        vectis_auth_email_token_dispatch, error);
-  }
-  if (status == VECTIS_OK) {
+  if (status == VECTIS_OK && resolved.browser_session.mode ==
+                               VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER) {
     status = vectis_register_auth_route_one(
         app, &resolved, path_prefix, "/continue", VECTIS_HTTP_POST,
-        vectis_auth_webdav_key_dispatch, error);
+        vectis_auth_workflow_browser_continue_dispatch, error);
   }
   if (status == VECTIS_OK) {
     status = vectis_register_auth_route_one(
-        app, &resolved, path_prefix, "/webdav-key", VECTIS_HTTP_POST,
-        vectis_auth_webdav_key_dispatch, error);
+        app, &resolved, path_prefix, "/m2m/start", VECTIS_HTTP_POST,
+        vectis_auth_workflow_m2m_start_dispatch, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_register_auth_route_one(
+        app, &resolved, path_prefix, "/m2m/continue", VECTIS_HTTP_POST,
+        vectis_auth_workflow_m2m_continue_dispatch, error);
   }
   if (status == VECTIS_OK) {
     status = vectis_register_auth_route_one(app, &resolved, path_prefix,
                                             "/logout", VECTIS_HTTP_POST,
                                             vectis_auth_logout_dispatch, error);
   }
-  free(login_template_html);
+  if (status == VECTIS_OK) {
+    status = vectis_register_auth_cleanup_entry(app, &resolved, path_prefix,
+                                                error);
+  }
+  free(browser_template_html);
   free(path_prefix);
   return status;
 }

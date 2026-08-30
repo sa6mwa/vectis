@@ -19,11 +19,18 @@ assert(vectis.auth.user_add({
   password = "site-password",
 }).username == "site-admin")
 
+local browser_session = {
+  mode = "m2m_and_browser",
+  purpose = "lua-site-browser",
+  state_key = "lua-site.browser-session",
+}
+
 local native_auth = {
   kind = "native",
   credentials_path = credentials_path,
   realm = "lua-site-example",
   purpose = "webdav",
+  browser_session = browser_session,
 }
 
 local app = assert(vectis.app.new({
@@ -31,6 +38,9 @@ local app = assert(vectis.app.new({
   bind = bind,
   port = port,
   tls = { mode = "disabled" },
+  lockd = {
+    endpoints = {"pouch://" .. auth_state_path .. ".lockd?single_writer=false"},
+  },
 }))
 
 assert(app:static_directory({
@@ -48,7 +58,9 @@ assert(app:auth_routes({
   auth_state_path = auth_state_path,
   realm = "lua-site-example",
   login_title = "Lua Site Login",
-  required_factors = {"password"},
+  credential_purpose = "webdav",
+  steps = {"password"},
+  browser_session = browser_session,
 }) == true)
 
 assert(app:route({

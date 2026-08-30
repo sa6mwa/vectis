@@ -333,7 +333,70 @@ The WebDAV overlay model must support:
 - no accidental deletion of user-created files unless the caller selected an
   explicit pruning policy.
 
-## Native Auth Flow
+## Native Authentication Workflows
+
+Native authentication is an ordered, C-owned workflow. It has no all-fields
+form and no `/email-token` or `/webdav-key` finalization endpoints. Every
+factor is presented and verified before the next factor is disclosed.
+
+The supported step sequences are:
+
+- `password`
+- `password`, `totp`
+- `email_code`
+- `email_code`, `password`
+- `email_code`, `totp`
+- `email_code`, `password`, `totp`
+
+TOTP cannot be the sole step. Email-code sequences require SMTP and resolve a
+recipient only when it maps uniquely to an enrolled user; unknown or ambiguous
+recipients receive an opaque, non-completable workflow and no email delivery.
+
+`POST <prefix>/m2m/start` and `POST <prefix>/m2m/continue` accept JSON. A
+non-terminal response is `202` with an opaque `workflow`, the one next `step`,
+and its required field. A terminal response is `201` with `client_id` and
+`client_secret`. M2M responses never set cookies.
+
+When `browser_session.mode` is `m2m_and_browser`, `GET <prefix>/login` and
+same-origin document `POST <prefix>/continue` render the same ordered flow as
+a responsive dark-mode page. Browser continuations require
+`Sec-Fetch-Site: same-origin`, `Sec-Fetch-Mode: navigate`, and
+`Sec-Fetch-Dest: document`; cross-site login submission is rejected before
+credential or cookie issuance. The terminal browser result is a persistent,
+signed, HttpOnly, Secure, SameSite=Strict session cookie. M2M-only is the
+default and does not mount these browser routes.
+
+Workflow records, browser-session records, and the browser-session signing key
+are private libvectis data in the configured Lockd namespace. They are opaque
+to Lua, expire by configured TTL, are deleted at completion/revocation, and
+are pruned by the Vectis parent lifecycle timer. `credential_purpose` selects
+the issued credential purpose (default `workflow`) so native providers can
+align their accepted purpose with a WebDAV or API mount.
+
+Browser customization is a shell only: `browser_template_html`,
+`browser_template_path`, or `browser_template_embedded_path` must contain
+exactly one `{{content}}`. Vectis owns all controls, fields, error messages,
+workflow state, and form actions.
+
+Lua config mirrors the C route config through `vectis.auth.workflow(opts)`:
+
+```lua
+local flow = vectis.auth.workflow({
+  credentials_path = "credentials.json",
+  path_prefix = "/_vectis/auth",
+  steps = {"email_code", "password", "totp"},
+  credential_purpose = "webdav",
+  email_smtp = {url = "smtps://mail.example", mail_from = "auth@example"},
+  browser_session = {mode = "m2m_and_browser"},
+})
+assert(flow:mount(app))
+```
+
+## Removed Pre-Workflow Contract
+
+The following historical design is retained only as migration context. Its
+route names, `required_factors` policy, pending JSON-file state, and template
+placeholders are not supported by the current Vectis runtime.
 
 The native auth mechanism remains independent of WebDAV. WebDAV asks an auth
 adapter whether to allow, deny, challenge, or redirect. The native auth provider
@@ -494,6 +557,13 @@ local deterministic tests and with ACME/Let's Encrypt-style configuration in
 application deployments.
 
 ## E2E Scenario Contract
+
+The executable contract for current native auth is the Lockd-backed workflow
+suite: it verifies M2M password and password+TOTP continuations, browser
+same-origin enforcement and signed-session revocation, and the packed service
+email-code → password → TOTP progression. References below to the removed
+endpoint family describe the former implementation only and must not be used
+as an integration contract.
 
 Do not use Landed assets. Generate a generic test site during the test:
 

@@ -196,14 +196,14 @@ assert(allowed.result.auth_mode == "basic")
 
 assert(vectis.auth.core == require("vectis.auth.core"))
 assert(vectis.auth.core.provider_native == vectis.auth.provider_native)
-local browser_flow = assert(vectis.auth.browser_flow({
+local auth_workflow = assert(vectis.auth.workflow({
   credentials_path = auth_store,
   state_path = auth_state,
   path_prefix = "/_vectis/auth",
   realm = "facade-flow",
   purpose = "webdav",
   allowed_modes = { vectis.auth.BASIC },
-  required_factors = { "password", "totp" },
+  steps = { "password", "totp" },
   login_title = "Facade Login",
   browser_session = {
     mode = "m2m_and_browser",
@@ -216,7 +216,7 @@ local browser_flow = assert(vectis.auth.browser_flow({
   time = 59,
   window = 0,
 }))
-local flow_routes = browser_flow:routes()
+local flow_routes = auth_workflow:routes()
 assert(flow_routes.credentials_path == auth_store)
 assert(flow_routes.state_path == auth_state)
 assert(flow_routes.path_prefix == "/_vectis/auth")
@@ -229,7 +229,7 @@ assert(flow_routes.browser_session.cookie_path == "/app")
 assert(flow_routes.browser_session.purpose == "facade-browser")
 assert(flow_routes.browser_session.state_key == "facade.browser-session")
 assert(flow_routes.browser_session.ttl_seconds == 3600)
-local flow_provider = assert(browser_flow:provider())
+local flow_provider = assert(auth_workflow:provider())
 assert(flow_provider.kind == "native")
 assert(flow_provider.credentials_path == auth_store)
 assert(flow_provider.state_path == auth_state)
@@ -248,19 +248,6 @@ local flow_allowed = assert(flow_provider:authenticate({
   allowed_modes = "basic",
 }))
 assert(flow_allowed.action == "allow")
-local flow_key = assert(browser_flow:webdav_key({
-  username = "facade-admin@example.com",
-  password = "facade-password",
-  totp_code = "287082",
-}))
-assert(type(flow_key.client_id) == "string")
-assert(type(flow_key.client_secret) == "string")
-local flow_authorization = assert(browser_flow:webdav_authorization({
-  username = "facade-admin@example.com",
-  password = "facade-password",
-  totp_code = "287082",
-}))
-assert(flow_authorization:find("Basic ", 1, true) == 1)
 local mounted_routes
 local fake_server = {
   auth_routes = function(self, opts)
@@ -269,7 +256,7 @@ local fake_server = {
     return true
   end,
 }
-assert(browser_flow:mount(fake_server, { path_prefix = "/auth2" }) == true)
+assert(auth_workflow:mount(fake_server, { path_prefix = "/auth2" }) == true)
 assert(mounted_routes.path_prefix == "/auth2")
 assert(mounted_routes.credentials_path == auth_store)
 

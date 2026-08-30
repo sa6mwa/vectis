@@ -17,6 +17,7 @@ extern "C" {
 #define VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS 300u
 #define VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS 5u
 #define VECTIS_AUTH_PENDING_LOGIN_DEFAULT_TTL_SECONDS 300u
+#define VECTIS_AUTH_WORKFLOW_DEFAULT_TTL_SECONDS 600u
 #define VECTIS_AUTH_BROWSER_SESSION_DEFAULT_TTL_SECONDS (30u * 24u * 60u * 60u)
 
 typedef enum vectis_auth_mode {
@@ -187,72 +188,55 @@ typedef struct vectis_auth_smtp_config {
   void *configure_curl_userdata;
 } vectis_auth_smtp_config;
 
-#define VECTIS_AUTH_ROUTE_FACTOR_PASSWORD 0x01u
-#define VECTIS_AUTH_ROUTE_FACTOR_EMAIL_TOKEN 0x02u
-#define VECTIS_AUTH_ROUTE_FACTOR_TOTP 0x04u
+/* The native workflow accepts only these ordered steps. TOTP is valid only as
+ * a second factor after email-code and/or password authentication. */
+typedef enum vectis_auth_workflow_step {
+  VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE = 1,
+  VECTIS_AUTH_WORKFLOW_STEP_PASSWORD = 2,
+  VECTIS_AUTH_WORKFLOW_STEP_TOTP = 3
+} vectis_auth_workflow_step;
 
 /*
- * Native browser/login route set. Registers:
- *   GET  <path_prefix>/login
- *   POST <path_prefix>/login
- *   POST <path_prefix>/email-token
- *   POST <path_prefix>/continue
- *   POST <path_prefix>/webdav-key
- *   POST <path_prefix>/logout
- * The email-token endpoint accepts application/x-www-form-urlencoded fields
- * username and email. The email must exactly match that user's enrolled
- * recipient; it cannot select a delivery address.
- * The endpoint returns transaction data unless SMTP delivery is configured.
- * The login, continue, and webdav-key POST endpoints accept username,
- * password, optional totp_code, and when require_email_token is set,
- * email_transaction_id plus email_token. They then issue a WebDAV Basic app
- * key through the native credentials store. If password is valid but required
- * TOTP or email-token factors are missing, they return a short-lived
- * pending_transaction_id. A later POST may provide username,
- * pending_transaction_id, and the remaining factor fields without resending
- * the password.
- * The logout endpoint verifies the presented Authorization header and revokes
- * that client_id from the native credentials store.
+ * Native ordered authentication workflow. It always registers JSON M2M routes
+ * at <path_prefix>/m2m/start and <path_prefix>/m2m/continue. With browser
+ * sessions enabled it additionally registers GET <path_prefix>/login and
+ * POST <path_prefix>/continue, plus POST <path_prefix>/logout. Each request
+ * accepts exactly the current step; a browser receives a durable session at
+ * completion and an M2M client receives a client credential at completion.
  */
 struct vectis_auth_routes_config {
   const char *path_prefix;
   vectis_auth_store_config store;
   const char *realm;
   const char *login_title;
+  /* Credential audience issued when an M2M workflow completes. Zero/default
+   * is "workflow". Configure guarded routes with the same audience. */
+  const char *credential_purpose;
   /*
-   * Login form template sources. Set at most one. login_template_html is an
-   * inline HTML string; login_template_path is read from the local filesystem
-   * during registration; login_template_embedded_path is read from
-   * login_template_fs during registration. Custom login templates support
-   * HTML-escaped substitutions for {{login_title}}, {{realm}},
-   * {{path_prefix}}, {{email_token_action}}, {{continue_action}}, and
-   * {{webdav_key_action}}.
+   * Ordered workflow policy. A NULL/zero policy selects password-only.
    */
-  const char *login_template_html;
-  const char *login_template_path;
-  const char *login_template_embedded_path;
-  const vectis_embedded_fs *login_template_fs;
+  const vectis_auth_workflow_step *steps;
+  size_t step_count;
+  /* Lockd namespace for opaque, short-lived workflow records. */
+  const char *workflow_state_key;
+  /* Zero uses VECTIS_AUTH_WORKFLOW_DEFAULT_TTL_SECONDS. */
+  uint64_t workflow_ttl_seconds;
+  /*
+   * Optional browser page-shell template. Its C-owned substitutions are
+   * {{title}}, {{progress}}, {{error}}, and {{content}}. The content owns
+   * current-step controls and opaque workflow state.
+   */
+  const char *browser_template_html;
+  const char *browser_template_path;
+  const char *browser_template_embedded_path;
+  const vectis_embedded_fs *browser_template_fs;
   size_t max_body_bytes;
   /* Zero uses current time. Non-zero supports deterministic TOTP checks. */
   uint64_t unix_seconds;
   /* Zero uses the login default. */
   unsigned int totp_window;
-  /*
-   * WebDAV-key factor policy. Zero preserves the default password factor.
-   * The password factor validates the password and any enrolled TOTP for the
-   * user. The TOTP factor makes TOTP enrollment mandatory for the user and
-   * must be combined with the password factor. The email-token factor requires
-   * a verified email token transaction.
-   */
-  unsigned int required_factors;
-  /* Require email_transaction_id and email_token before issuing WebDAV keys. */
-  int require_email_token;
-  /* Zero uses VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS. */
-  uint64_t email_token_ttl_seconds;
   /* Zero uses VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS. */
-  unsigned int email_token_max_attempts;
-  /* Zero uses VECTIS_AUTH_PENDING_LOGIN_DEFAULT_TTL_SECONDS. */
-  uint64_t pending_login_ttl_seconds;
+  unsigned int email_code_max_attempts;
   /* Optional browser-session policy. The default remains M2M-only. */
   vectis_auth_browser_session_config browser_session;
   /*
@@ -307,6 +291,21 @@ typedef struct vectis_auth_password_check_result {
   int authenticated;
   int totp_required;
 } vectis_auth_password_check_result;
+
+/* Verifies a user's enrolled TOTP independently of password authentication.
+ * This is intended for a later, explicit workflow step; it does not make a
+ * TOTP-only login policy valid. */
+typedef struct vectis_auth_totp_check_config {
+  vectis_auth_store_config store;
+  const char *username;
+  const char *totp_code;
+  uint64_t unix_seconds;
+  unsigned int totp_window;
+} vectis_auth_totp_check_config;
+
+typedef struct vectis_auth_totp_check_result {
+  int authenticated;
+} vectis_auth_totp_check_result;
 
 typedef struct vectis_auth_pending_login_issue_config {
   vectis_auth_store_config store;
@@ -594,6 +593,10 @@ void vectis_auth_provider_init(vectis_auth_provider *provider);
 void vectis_auth_native_provider_config_init(
     vectis_auth_native_provider_config *config);
 void vectis_auth_routes_config_init(vectis_auth_routes_config *config);
+/* Deletes a bounded batch of expired native authentication workflows. */
+vectis_status vectis_auth_workflow_cleanup(
+    vectis_app *app, const vectis_auth_routes_config *config,
+    vectis_error *error);
 void vectis_auth_user_config_init(vectis_auth_user_config *config);
 void vectis_auth_user_enrollment_init(vectis_auth_user_enrollment *enrollment);
 void vectis_auth_user_enrollment_cleanup(
@@ -603,6 +606,8 @@ void vectis_auth_password_check_config_init(
     vectis_auth_password_check_config *config);
 void vectis_auth_password_check_result_init(
     vectis_auth_password_check_result *result);
+void vectis_auth_totp_check_config_init(vectis_auth_totp_check_config *config);
+void vectis_auth_totp_check_result_init(vectis_auth_totp_check_result *result);
 void vectis_auth_pending_login_issue_config_init(
     vectis_auth_pending_login_issue_config *config);
 void vectis_auth_pending_login_init(vectis_auth_pending_login *pending);
@@ -712,6 +717,13 @@ vectis_status
 vectis_auth_user_email_set(const vectis_auth_store_config *store_config,
                            const char *username, const char *email,
                            vectis_error *error);
+/* Looks up an enrolled recipient without exposing a user record. A missing
+ * recipient is reported as found == 0. username_out is populated only when
+ * exactly one enrolled user matches. */
+vectis_status vectis_auth_user_find_by_email(
+    const vectis_auth_store_config *store_config, const char *email,
+    char *username_out, size_t username_out_size, int *out_found,
+    vectis_error *error);
 /* Checks whether a username is present in the credentials store. */
 vectis_status
 vectis_auth_user_exists(const vectis_auth_store_config *store_config,
@@ -725,6 +737,9 @@ vectis_status
 vectis_auth_user_password_check(const vectis_auth_password_check_config *config,
                                 vectis_auth_password_check_result *out,
                                 vectis_error *error);
+vectis_status vectis_auth_user_totp_check(const vectis_auth_totp_check_config *config,
+                                          vectis_auth_totp_check_result *out,
+                                          vectis_error *error);
 vectis_status vectis_auth_pending_login_issue(
     const vectis_auth_pending_login_issue_config *config,
     vectis_auth_pending_login *out, vectis_error *error);
@@ -800,6 +815,11 @@ vectis_status vectis_auth_browser_session_verify(
     vectis_app *app, const vectis_auth_browser_session_config *config,
     const char *cookie_header, uint64_t unix_seconds,
     vectis_auth_browser_session_result *out, vectis_error *error);
+/* Removes a bounded batch of expired or revoked sessions for this Lockd key.
+ * Auth routes schedule this automatically; applications normally do not call it. */
+vectis_status vectis_auth_browser_session_cleanup(
+    vectis_app *app, const vectis_auth_browser_session_config *config,
+    uint64_t unix_seconds, vectis_error *error);
 /*
  * Creates an opaque browser session and appends its HttpOnly, Secure,
  * SameSite=Strict cookie to response. The secret and server-side state remain

@@ -38,9 +38,9 @@ A site normally has four separate filesystem roots:
 - a mutable content root written through authenticated WebDAV and served through
   a separate public static mount;
 - a WebDAV cache root for lock and transaction scratch state;
-- private, persistent native-auth credentials and auth-state files.
+- private, persistent native-auth credentials and Lockd state.
 
-Do not serve the private credential, auth-state, or WebDAV cache roots as static
+Do not serve the private credential, Lockd, or WebDAV cache roots as static
 content. Keep the WebDAV editor prefix separate from the public content prefix.
 For example, `/content` is editor-only while `/published` reads the same direct
 disk content root publicly.
@@ -54,15 +54,17 @@ local app = assert(vectis.app.new({
   port = 8080,
   profile = "production_webserver",
   tls = { cert_key_bundle_path = "/etc/my-site/tls.pem" },
+  lockd = { endpoints = {"pouch:///var/lib/my-site/lockd?single_writer=false"} },
 }))
 
 local credentials_path = "/var/lib/my-site/credentials.json"
-local auth_state_path = "/var/lib/my-site/auth-state.json"
+local browser_session = { mode = "m2m_and_browser", purpose = "my-site-browser" }
 local editor_auth = {
   kind = "native",
   credentials_path = credentials_path,
   realm = "my-site",
   purpose = "webdav",
+  browser_session = browser_session,
 }
 
 assert(app:static_directory({
@@ -76,10 +78,11 @@ assert(app:static_directory({
 assert(app:auth_routes({
   path_prefix = "/auth",
   credentials_path = credentials_path,
-  auth_state_path = auth_state_path,
   realm = "my-site",
-  login_template_path = "/srv/my-site/templates/login.html",
-  required_factors = {"password"},
+  credential_purpose = "webdav",
+  browser_template_path = "/srv/my-site/templates/login-shell.html",
+  steps = {"password"},
+  browser_session = browser_session,
 }) == true)
 assert(app:webdav({
   path_prefix = "/content",
@@ -115,49 +118,41 @@ limits, direct-root semantics, and all supported methods.
 
 ## Native login pages
 
-`app:auth_routes()` supplies a minimal browser login, factor continuation,
-email-token, WebDAV-key, and logout route group. The default pages are usable,
-but a site can provide its own presentation through exactly one of:
+`app:auth_routes()` is an ordered C-owned authentication workflow. It always
+offers JSON M2M start/continue endpoints, and with
+`browser_session.mode = "m2m_and_browser"` it offers the dark responsive
+browser form sequence at `<path_prefix>/login`. A browser page presents one
+factor only; password authentication completes before TOTP, and email codes
+complete before a later password or TOTP step.
 
-- `login_template_html` for inline HTML;
-- `login_template_path` (or `template_path`) for a file used by a generic
-  binary;
-- `login_template_embedded_path` (or `template_embedded_path`) for an asset in
-  a packed binary.
+For a site editor, configure a browser session and use the same session policy
+on the native provider that protects WebDAV. The app also needs a persistent
+Lockd endpoint because workflow state, browser-session records, and the
+libvectis signing key are stored there.
 
-Vectis reads the selected file or embedded template when the route group is
-registered. Change a template by updating its source and restarting the app;
-it is not a live-reloaded template engine.
+```lua
+local browser_session = {
+  mode = "m2m_and_browser",
+  purpose = "my-site-browser",
+  state_key = "my-site.browser-session",
+}
 
-Templates receive only escaped substitutions:
-
-- `{{login_title}}`, `{{realm}}`, and `{{path_prefix}}`;
-- `{{continue_action}}` for normal browser-factor submission;
-- `{{email_token_action}}` for email-token issuance;
-- `{{webdav_key_action}}` for explicit WebDAV-key finalization or diagnostics.
-
-For example:
-
-```html
-<!doctype html>
-<title>{{login_title}}</title>
-<link rel="stylesheet" href="/assets/site.css">
-<form method="post" action="{{continue_action}}" data-realm="{{realm}}">
-  <label>User <input name="username" autocomplete="username"></label>
-  <label>Password <input name="password" type="password"
-                         autocomplete="current-password"></label>
-  <button type="submit">Sign in</button>
-</form>
+assert(app:auth_routes({
+  path_prefix = "/auth",
+  credentials_path = credentials_path,
+  credential_purpose = "webdav",
+  steps = {"password", "totp"},
+  browser_template_path = "/srv/my-site/templates/login-shell.html",
+  browser_session = browser_session,
+}) == true)
 ```
 
-The template owns layout and branding, not security semantics. It must include
-the fields required by its configured `required_factors` policy (for example,
-`totp_code`, `email_transaction_id`, and `email_token` when those factors are
-used) and post to `{{continue_action}}`. Native code continues to own factor
-sequencing, pending transactions, key issuance, and logout revocation. Auth
-responses include no-store headers; custom pages should not add credential
-caching behavior.
-
+A custom shell is presentation only: set one browser template source and put
+exactly one `{{content}}` in it. Vectis injects the security-owned form and
+may also expand escaped `{{title}}`, `{{progress}}`, and `{{error}}` values.
+The default shell is usually sufficient and is dark by default, centered, and
+mobile-safe. See [Lua auth](lua-auth.md) for JSON continuation contracts and
+email-code policy.
 ## WebDAV editing and publication
 
 An editor first completes the configured native login policy. Vectis issues a

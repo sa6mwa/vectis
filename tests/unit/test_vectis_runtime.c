@@ -2615,6 +2615,40 @@ static int runtime_response_line_value(const void *body, size_t body_size,
   return 0;
 }
 
+static int runtime_json_string_value(const void *body, size_t body_size,
+                                     const char *key, char *out,
+                                     size_t out_size) {
+  const unsigned char *bytes;
+  char prefix[128];
+  size_t prefix_size;
+  size_t i;
+  size_t start;
+  size_t end;
+
+  if (body == NULL || key == NULL || out == NULL || out_size == 0u ||
+      snprintf(prefix, sizeof(prefix), "\"%s\":\"", key) < 0) {
+    return 0;
+  }
+  prefix_size = strlen(prefix);
+  bytes = (const unsigned char *)body;
+  for (i = 0u; i + prefix_size < body_size; ++i) {
+    if (memcmp(bytes + i, prefix, prefix_size) == 0) {
+      start = i + prefix_size;
+      end = start;
+      while (end < body_size && bytes[end] != '"') {
+        end++;
+      }
+      if (end == body_size || end - start >= out_size) {
+        return 0;
+      }
+      memcpy(out, bytes + start, end - start);
+      out[end - start] = '\0';
+      return 1;
+    }
+  }
+  return 0;
+}
+
 static vectis_status
 runtime_webdav_auth(const vectis_webdav_auth_request *request,
                     vectis_webdav_auth_response *response, void *userdata,
@@ -3593,6 +3627,9 @@ static void assert_kore_smoke(void) {
   vectis_auth_user_config auth_user;
   vectis_auth_user_enrollment auth_enrollment;
   vectis_auth_routes_config auth_routes;
+  vectis_auth_workflow_step password_totp_steps[2];
+  vectis_auth_workflow_step invalid_totp_steps[1];
+  vectis_auth_workflow_step email_steps[1];
   vectis_auth_browser_session_config browser_session;
   vectis_auth_browser_session_config foreign_browser_session;
   vectis_auth_native_provider_config native_auth;
@@ -3690,6 +3727,7 @@ static void assert_kore_smoke(void) {
   char auth_token[448];
   char auth_header[480];
   char auth_pending_transaction_id[128];
+  char auth_workflow_id[128];
   char auth_totp_code[VECTIS_TOTP_CODE_LENGTH + 1u];
   char auth_totp_form[256];
   char browser_cookie_header[512];
@@ -4040,18 +4078,40 @@ static void assert_kore_smoke(void) {
   vectis_auth_routes_config_init(&auth_routes);
   auth_routes.path_prefix = "/auth-totp-only";
   auth_routes.store = auth_store;
-  auth_routes.required_factors = VECTIS_AUTH_ROUTE_FACTOR_TOTP;
+  invalid_totp_steps[0] = VECTIS_AUTH_WORKFLOW_STEP_TOTP;
+  auth_routes.steps = invalid_totp_steps;
+  auth_routes.step_count = 1u;
   status = app->auth_routes(app, &auth_routes, &error);
   assert(status == VECTIS_ERR_INVALID);
-  assert(strstr(error.message, "required_factors") != NULL);
+  assert(strstr(error.message, "workflow steps") != NULL);
+  vectis_error_clear(&error);
+  vectis_auth_routes_config_init(&auth_routes);
+  auth_routes.path_prefix = "/auth-email-without-smtp";
+  auth_routes.store = auth_store;
+  email_steps[0] = VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE;
+  auth_routes.steps = email_steps;
+  auth_routes.step_count = 1u;
+  status = app->auth_routes(app, &auth_routes, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "SMTP") != NULL);
+  vectis_error_clear(&error);
+  vectis_auth_routes_config_init(&auth_routes);
+  auth_routes.path_prefix = "/auth-invalid-template";
+  auth_routes.store = auth_store;
+  auth_routes.browser_template_html = "<!doctype html><title>missing controls</title>";
+  status = app->auth_routes(app, &auth_routes, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "{{content}}") != NULL);
   vectis_error_clear(&error);
   vectis_auth_routes_config_init(&auth_routes);
   auth_routes.path_prefix = "/auth-totp-required";
   auth_routes.store = auth_store;
   auth_routes.login_title = "Runtime Explicit TOTP Login";
   auth_routes.unix_seconds = 59u;
-  auth_routes.required_factors =
-      VECTIS_AUTH_ROUTE_FACTOR_PASSWORD | VECTIS_AUTH_ROUTE_FACTOR_TOTP;
+  password_totp_steps[0] = VECTIS_AUTH_WORKFLOW_STEP_PASSWORD;
+  password_totp_steps[1] = VECTIS_AUTH_WORKFLOW_STEP_TOTP;
+  auth_routes.steps = password_totp_steps;
+  auth_routes.step_count = 2u;
   status = app->auth_routes(app, &auth_routes, &error);
   assert(status == VECTIS_OK);
   vectis_auth_native_provider_config_init(&native_auth);
@@ -4065,7 +4125,7 @@ static void assert_kore_smoke(void) {
   assert(status == VECTIS_OK);
   vectis_webdav_auth_provider_config_init(&native_webdav_auth);
   native_webdav_auth.provider = &native_auth_provider;
-  native_webdav_auth.purpose = "webdav";
+  native_webdav_auth.purpose = "workflow";
   native_webdav_auth.allowed_auth_modes = VECTIS_AUTH_MODE_BASIC;
   vectis_webdav_mount_config_init(&native_webdav_mount);
   native_webdav_mount.path_prefix = "/dav-native";
@@ -4618,162 +4678,83 @@ static void assert_kore_smoke(void) {
                        webdav_propfind_response.body_size, "/dav/runtime.txt"));
   vectis_http_response_cleanup(&webdav_propfind_response);
 
-  status = vectis_http_get(
-      &http, format_loopback_http_url(url, sizeof(url), port, "/auth/login"),
-      &auth_login_response, &error);
-  assert(status == VECTIS_OK);
-  assert(auth_login_response.status_code == 200L);
-  assert(auth_login_response.content_type != NULL);
-  assert(strcmp(auth_login_response.content_type, "text/html; charset=utf-8") ==
-         0);
-  assert(bytes_contain(auth_login_response.body, auth_login_response.body_size,
-                       "action=\"/auth/continue\""));
-  assert(!bytes_contain(auth_login_response.body, auth_login_response.body_size,
-                        "name=\"email_token\""));
-  vectis_http_response_cleanup(&auth_login_response);
 
+  /* M2M workflow accepts only the first password step and returns a credential
+   * only after that step completes. It never sets a browser session cookie. */
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url =
-      format_loopback_http_url(url, sizeof(url), port, "/auth/continue");
-  request.content_type = "application/x-www-form-urlencoded";
-  request.body = "username=runtime-user&password=wrong";
-  request.body_size = strlen("username=runtime-user&password=wrong");
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/auth/m2m/start");
+  request.content_type = "application/json";
+  request.body = "{\"username\":\"runtime-user\",\"password\":\"wrong\"}";
+  request.body_size = strlen((const char *)request.body);
   status = vectis_http_execute(&http, &request, &auth_bad_response, &error);
   assert(status == VECTIS_OK);
   assert(auth_bad_response.status_code == 401L);
   assert(bytes_contain(auth_bad_response.body, auth_bad_response.body_size,
-                       "login failed"));
+                       "authentication_failed"));
+  assert(vectis_http_response_header(&auth_bad_response, "set-cookie") == NULL);
   vectis_http_response_cleanup(&auth_bad_response);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = format_loopback_http_url(url, sizeof(url), port, "/auth/login");
-  request.content_type = "application/x-www-form-urlencoded";
-  request.body = "username=runtime-user&password=runtime-password";
-  request.body_size = strlen("username=runtime-user&password=runtime-password");
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/auth/m2m/start");
+  request.content_type = "application/json";
+  request.body = "{\"username\":\"runtime-user\",\"password\":\"runtime-password\"}";
+  request.body_size = strlen((const char *)request.body);
   status = vectis_http_execute(&http, &request, &auth_key_response, &error);
   assert(status == VECTIS_OK);
-  assert(auth_key_response.status_code == 200L);
-  assert(runtime_response_line_value(auth_key_response.body,
-                                     auth_key_response.body_size, "client_id",
-                                     auth_client_id, sizeof(auth_client_id)));
-  assert(runtime_response_line_value(
-      auth_key_response.body, auth_key_response.body_size, "client_secret",
-      auth_client_secret, sizeof(auth_client_secret)));
+  assert(auth_key_response.status_code == 201L);
   assert(bytes_contain(auth_key_response.body, auth_key_response.body_size,
-                       "\"purpose\":\"webdav\""));
-  assert(bytes_contain(auth_key_response.body, auth_key_response.body_size,
-                       "\"sub\":\"runtime-user\""));
+                       "\"complete\":true"));
+  assert(runtime_json_string_value(auth_key_response.body,
+                                   auth_key_response.body_size, "client_id",
+                                   auth_client_id, sizeof(auth_client_id)));
+  assert(runtime_json_string_value(auth_key_response.body,
+                                   auth_key_response.body_size, "client_secret",
+                                   auth_client_secret, sizeof(auth_client_secret)));
   assert(vectis_http_response_header(&auth_key_response, "set-cookie") == NULL);
   vectis_http_response_cleanup(&auth_key_response);
 
+  /* A password+TOTP workflow exposes only the next TOTP step. */
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url =
-      format_loopback_http_url(url, sizeof(url), port, "/auth/continue");
-  request.content_type = "application/x-www-form-urlencoded";
-  request.body = "username=runtime-totp&password=runtime-totp-password";
-  request.body_size =
-      strlen("username=runtime-totp&password=runtime-totp-password");
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/auth-totp-required/m2m/start");
+  request.content_type = "application/json";
+  request.body =
+      "{\"username\":\"runtime-totp\",\"password\":\"runtime-totp-password\"}";
+  request.body_size = strlen((const char *)request.body);
   status = vectis_http_execute(&http, &request, &auth_bad_response, &error);
   assert(status == VECTIS_OK);
   assert(auth_bad_response.status_code == 202L);
   assert(bytes_contain(auth_bad_response.body, auth_bad_response.body_size,
-                       "totp_required=1"));
-  assert(runtime_response_line_value(
-      auth_bad_response.body, auth_bad_response.body_size,
-      "pending_transaction_id", auth_pending_transaction_id,
-      sizeof(auth_pending_transaction_id)));
+                       "\"step\":\"totp\""));
+  assert(bytes_contain(auth_bad_response.body, auth_bad_response.body_size,
+                       "\"required\":\"code\""));
+  assert(runtime_json_string_value(auth_bad_response.body,
+                                   auth_bad_response.body_size, "workflow",
+                                   auth_workflow_id,
+                                   sizeof(auth_workflow_id)));
   vectis_http_response_cleanup(&auth_bad_response);
 
   written = snprintf(auth_totp_form, sizeof(auth_totp_form),
-                     "username=runtime-totp&pending_transaction_id=%s&"
-                     "totp_code=%s",
-                     auth_pending_transaction_id, auth_totp_code);
-  assert(written > 0 && (size_t)written < sizeof(auth_totp_form));
-  vectis_http_request_init(&request);
-  request.method = VECTIS_HTTP_POST;
-  request.url =
-      format_loopback_http_url(url, sizeof(url), port, "/auth/continue");
-  request.content_type = "application/x-www-form-urlencoded";
-  request.body = auth_totp_form;
-  request.body_size = strlen(auth_totp_form);
-  status = vectis_http_execute(&http, &request, &auth_key_response, &error);
-  assert(status == VECTIS_OK);
-  assert(auth_key_response.status_code == 200L);
-  assert(runtime_response_line_value(auth_key_response.body,
-                                     auth_key_response.body_size, "client_id",
-                                     auth_client_id, sizeof(auth_client_id)));
-  assert(runtime_response_line_value(
-      auth_key_response.body, auth_key_response.body_size, "client_secret",
-      auth_client_secret, sizeof(auth_client_secret)));
-  assert(bytes_contain(auth_key_response.body, auth_key_response.body_size,
-                       "\"purpose\":\"webdav\""));
-  assert(bytes_contain(auth_key_response.body, auth_key_response.body_size,
-                       "\"sub\":\"runtime-totp\""));
-  vectis_http_response_cleanup(&auth_key_response);
-
-  vectis_http_request_init(&request);
-  request.method = VECTIS_HTTP_POST;
-  request.url = format_loopback_http_url(url, sizeof(url), port,
-                                         "/auth-totp-required/login");
-  request.content_type = "application/x-www-form-urlencoded";
-  request.body = "username=runtime-user&password=runtime-password&"
-                 "totp_code=287082";
-  request.body_size = strlen("username=runtime-user&password=runtime-password&"
-                             "totp_code=287082");
-  status = vectis_http_execute(&http, &request, &auth_bad_response, &error);
-  assert(status == VECTIS_OK);
-  assert(auth_bad_response.status_code == 401L);
-  assert(bytes_contain(auth_bad_response.body, auth_bad_response.body_size,
-                       "login failed"));
-  vectis_http_response_cleanup(&auth_bad_response);
-
-  vectis_http_request_init(&request);
-  request.method = VECTIS_HTTP_POST;
-  request.url = format_loopback_http_url(url, sizeof(url), port,
-                                         "/auth-totp-required/login");
-  request.content_type = "application/x-www-form-urlencoded";
-  request.body = "username=runtime-totp&password=runtime-totp-password";
-  request.body_size =
-      strlen("username=runtime-totp&password=runtime-totp-password");
-  status = vectis_http_execute(&http, &request, &auth_bad_response, &error);
-  assert(status == VECTIS_OK);
-  assert(auth_bad_response.status_code == 202L);
-  assert(bytes_contain(auth_bad_response.body, auth_bad_response.body_size,
-                       "totp_required=1"));
-  assert(runtime_response_line_value(
-      auth_bad_response.body, auth_bad_response.body_size,
-      "pending_transaction_id", auth_pending_transaction_id,
-      sizeof(auth_pending_transaction_id)));
-  vectis_http_response_cleanup(&auth_bad_response);
-
-  written = snprintf(auth_totp_form, sizeof(auth_totp_form),
-                     "username=runtime-totp&pending_transaction_id=%s&"
-                     "totp_code=%s",
-                     auth_pending_transaction_id, auth_totp_code);
+                     "{\"workflow\":\"%s\",\"code\":\"%s\"}",
+                     auth_workflow_id, auth_totp_code);
   assert(written > 0 && (size_t)written < sizeof(auth_totp_form));
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
   request.url = format_loopback_http_url(url, sizeof(url), port,
-                                         "/auth-totp-required/continue");
-  request.content_type = "application/x-www-form-urlencoded";
+                                         "/auth-totp-required/m2m/continue");
+  request.content_type = "application/json";
   request.body = auth_totp_form;
   request.body_size = strlen(auth_totp_form);
   status = vectis_http_execute(&http, &request, &auth_key_response, &error);
   assert(status == VECTIS_OK);
-  assert(auth_key_response.status_code == 200L);
-  assert(runtime_response_line_value(auth_key_response.body,
-                                     auth_key_response.body_size, "client_id",
-                                     auth_client_id, sizeof(auth_client_id)));
-  assert(runtime_response_line_value(
-      auth_key_response.body, auth_key_response.body_size, "client_secret",
-      auth_client_secret, sizeof(auth_client_secret)));
+  assert(auth_key_response.status_code == 201L);
   assert(bytes_contain(auth_key_response.body, auth_key_response.body_size,
-                       "\"purpose\":\"webdav\""));
-  assert(bytes_contain(auth_key_response.body, auth_key_response.body_size,
-                       "\"sub\":\"runtime-totp\""));
+                       "\"complete\":true"));
   vectis_http_response_cleanup(&auth_key_response);
 
   assert(snprintf(auth_clear, sizeof(auth_clear), "%s:%s", auth_client_id,
@@ -4820,11 +4801,32 @@ static void assert_kore_smoke(void) {
   browser_expired_response = NULL;
   assert(runtime_browser_session_record_count(app, "runtime.browser-session") ==
          1u);
+  vectis_internal_auth_cleanup_tick(app);
+  assert(runtime_browser_session_record_count(app, "aaa.browser-session") ==
+         32u);
+  assert(runtime_browser_session_record_count(app, "runtime.browser-session") ==
+         0u);
+
+  status = vectis_http_get(
+      &http, format_loopback_http_url(url, sizeof(url), port,
+                                      "/auth-browser/login"),
+      &auth_login_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_login_response.status_code == 200L);
+  assert(bytes_contain(auth_login_response.body, auth_login_response.body_size,
+                       "color-scheme\" content=\"dark"));
+  assert(bytes_contain(auth_login_response.body, auth_login_response.body_size,
+                       "action=\"/auth-browser/continue\""));
+  assert(bytes_contain(auth_login_response.body, auth_login_response.body_size,
+                       "name=\"username\""));
+  assert(bytes_contain(auth_login_response.body, auth_login_response.body_size,
+                       "name=\"password\""));
+  vectis_http_response_cleanup(&auth_login_response);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url =
-      format_loopback_http_url(url, sizeof(url), port, "/auth-browser/login");
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/auth-browser/continue");
   request.headers = browser_m2m_headers;
   request.header_count = 1u;
   request.content_type = "application/x-www-form-urlencoded";
@@ -4832,14 +4834,14 @@ static void assert_kore_smoke(void) {
   request.body_size = strlen("username=runtime-user&password=runtime-password");
   status = vectis_http_execute(&http, &request, &auth_key_response, &error);
   assert(status == VECTIS_OK);
-  assert(auth_key_response.status_code == 200L);
+  assert(auth_key_response.status_code == 403L);
   assert(vectis_http_response_header(&auth_key_response, "set-cookie") == NULL);
   vectis_http_response_cleanup(&auth_key_response);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url =
-      format_loopback_http_url(url, sizeof(url), port, "/auth-browser/login");
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/auth-browser/continue");
   request.headers = browser_non_document_headers;
   request.header_count = 3u;
   request.content_type = "application/x-www-form-urlencoded";
@@ -4847,15 +4849,15 @@ static void assert_kore_smoke(void) {
   request.body_size = strlen("username=runtime-user&password=runtime-password");
   status = vectis_http_execute(&http, &request, &auth_key_response, &error);
   assert(status == VECTIS_OK);
-  assert(auth_key_response.status_code == 200L);
+  assert(auth_key_response.status_code == 403L);
   assert(vectis_http_response_header(&auth_key_response, "set-cookie") == NULL);
   vectis_http_response_cleanup(&auth_key_response);
 
-  /* A cross-site login can issue M2M credentials but never a session cookie. */
+  /* Cross-site browser navigation cannot authenticate or set a session. */
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url =
-      format_loopback_http_url(url, sizeof(url), port, "/auth-browser/login");
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/auth-browser/continue");
   request.headers = browser_cross_site_headers;
   request.header_count = 4u;
   request.content_type = "application/x-www-form-urlencoded";
@@ -4863,14 +4865,14 @@ static void assert_kore_smoke(void) {
   request.body_size = strlen("username=runtime-user&password=runtime-password");
   status = vectis_http_execute(&http, &request, &auth_key_response, &error);
   assert(status == VECTIS_OK);
-  assert(auth_key_response.status_code == 200L);
+  assert(auth_key_response.status_code == 403L);
   assert(vectis_http_response_header(&auth_key_response, "set-cookie") == NULL);
   vectis_http_response_cleanup(&auth_key_response);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url =
-      format_loopback_http_url(url, sizeof(url), port, "/auth-browser/login");
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/auth-browser/continue");
   request.headers = browser_navigation_headers;
   request.header_count = 4u;
   request.content_type = "application/x-www-form-urlencoded";
@@ -4878,7 +4880,7 @@ static void assert_kore_smoke(void) {
   request.body_size = strlen("username=runtime-user&password=runtime-password");
   status = vectis_http_execute(&http, &request, &auth_key_response, &error);
   assert(status == VECTIS_OK);
-  assert(auth_key_response.status_code == 200L);
+  assert(auth_key_response.status_code == 303L);
   browser_set_cookie =
       vectis_http_response_header(&auth_key_response, "set-cookie");
   assert(browser_set_cookie != NULL);

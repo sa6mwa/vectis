@@ -13,9 +13,7 @@ local storage_dir = os.getenv("VECTIS_LUA_METRICS_AUTH_EXAMPLE_STORAGE") or
     "vectis-metrics-auth-pouch"
 local serve_forever = os.getenv("VECTIS_LUA_METRICS_AUTH_EXAMPLE_SERVE") == "1"
 local base_url = "http://" .. bind .. ":" .. tostring(port)
-local totp_secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
 local totp_time = 59
-local totp_code = "287082"
 local request_opts = {
   protocols = "http",
   timeout_ms = 2000,
@@ -33,19 +31,20 @@ do
   credentials:close()
 end
 
-local browser_flow = vectis.auth.browser_flow({
+local auth_workflow = vectis.auth.workflow({
   credentials_path = credentials_path,
   state_path = state_path,
   path_prefix = "/_vectis/auth",
   realm = "metrics-example",
-  purpose = "webdav",
+  purpose = "metrics",
+  credential_purpose = "metrics",
   allowed_modes = { "basic" },
-  required_factors = { "password", "totp" },
+  steps = { "password", "totp" },
   time = totp_time,
   window = 0,
 })
 
-local browser_provider = assert(browser_flow:provider())
+local browser_provider = assert(auth_workflow:provider())
 local machine_credential = assert(vectis.auth.issue({
   credentials_path = credentials_path,
   state_path = state_path,
@@ -89,21 +88,14 @@ end))
 
 local browser_authorization
 if not serve_forever then
-  local password_only_authorization, password_only_error =
-      browser_flow:webdav_authorization({
-        username = "metrics-admin",
-        password = "metrics-password",
-      })
-  assert(password_only_authorization == nil)
-  assert(password_only_error.status == vectis.ERR_INVALID)
-
-  browser_authorization = assert(browser_flow:webdav_authorization({
-    username = "metrics-admin",
-    password = "metrics-password",
-    totp_code = totp_code,
-    time = totp_time,
-    window = 0,
+  local browser_credential = assert(vectis.auth.issue({
+    credentials_path = credentials_path,
+    state_path = state_path,
+    subject = "metrics-admin",
+    purpose = "metrics",
+    modes = {"basic"},
   }))
+  browser_authorization = assert(vectis.auth.basic_authorization(browser_credential))
 end
 local machine_authorization = "Bearer " .. machine_credential.api_key
 
@@ -111,9 +103,10 @@ local app = assert(vectis.app.new({
   app_name = "lua-metrics-auth-example",
   bind = bind,
   port = port,
+  lockd = { endpoints = {"pouch://" .. storage_dir .. "?single_writer=false"} },
 }))
 
-assert(browser_flow:mount(app))
+assert(auth_workflow:mount(app))
 
 assert(app:route({
   path = "/",
@@ -154,11 +147,6 @@ end
 assert(page.ok == true, page.error and page.error.message)
 assert(page.status == 200)
 assert(page.body:find("Hello, world.", 1, true))
-
-local login = http.get(base_url .. "/_vectis/auth/login", request_opts)
-assert(login.ok == true, login.error and login.error.message)
-assert(login.status == 200)
-assert(login.body:find('action="/_vectis/auth/continue"', 1, true))
 
 local anonymous = http.get(base_url .. "/.metrics/snapshot.json", request_opts)
 assert(anonymous.status == 401)

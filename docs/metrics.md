@@ -44,7 +44,7 @@ metrics-specific auth mechanism.
 
 The native authenticated shape is:
 
-- mount `vectis.auth.browser_flow(...):mount(server)` when browser login routes
+- mount `vectis.auth.workflow(...):mount(server)` when browser login routes
   are wanted;
 - guard metrics with `auth = flow:provider(...)` or another provider table;
 - issue native Bearer credentials with `vectis.auth.issue(..., modes={"bearer"})`

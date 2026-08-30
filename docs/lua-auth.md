@@ -223,132 +223,86 @@ end)
 
 ## Server Integration
 
-`vectis.app` consumes the same provider tables:
+`app:auth_routes(opts)` registers one C-owned ordered authentication workflow. It
+always exposes JSON continuations at `<path_prefix>/m2m/start` and
+`<path_prefix>/m2m/continue`, plus `<path_prefix>/logout`.
 
-- `app:webdav({path_prefix=..., storage_path=..., auth=provider})`
-- `app:webdav_embedded_site({path_prefix=..., auth=provider})`
-- `app:auth_json({path=..., auth=provider, body=...})`
+With `browser_session.mode = "m2m_and_browser"`, it additionally exposes
+`GET <path_prefix>/login` and `POST <path_prefix>/continue`. There are no
+all-fields login, email-token, or WebDAV-key routes. A request supplies only
+the current factor; a non-terminal response identifies the next endpoint and
+required field.
 
-`app:auth_routes(opts)` registers the native browser login, email-token,
-logout, and WebDAV-key endpoints. It accepts store fields plus:
+Set `steps` to one of these ordered policies:
 
-- `path_prefix` or `prefix`
-- `realm`
-- `login_title`
-- `login_template_html`
-- `login_template_path` or `template_path`
-- `login_template_embedded_path` or `template_embedded_path`
-- `required_factors`
-- `require_email_token`
-- `email_token_ttl_seconds`
-- `email_token_max_attempts`
-- `email_token = {ttl_seconds=..., max_attempts=...}`
-- `smtp` or `email_smtp` delivery configuration
-- `browser_session`
+- `{"password"}` or `{"password", "totp"}`
+- `{"email_code"}` or `{"email_code", "totp"}`
+- `{"email_code", "password"}` or
+  `{"email_code", "password", "totp"}`
 
-The native implementation owns route lifecycle, factor sequencing, pending
-transactions, email-token verification, and WebDAV-key issuance. Lua can mount
-the routes and can replace auth policy through providers, but the built-in
-native flow stays C-owned.
-
-## Browser sessions
-
-Browser sessions are optional and are owned entirely by `libvectis`: Lua only
-declares policy and scope. Vectis creates the signing key, persists it and the
-opaque server-side session records through the app's configured Lockd store,
-and never exposes that key to Lua or application callbacks.
-
-Use the same `browser_session` table on `app:auth_routes` and on every native
-or callback provider that should accept the session. `browser_flow` forwards
-it to both `routes()` and `provider()` automatically.
+TOTP is never a first or only factor. Email-code workflows require SMTP.
+Vectis matches an address to a unique enrolled recipient before delivery.
+Unknown addresses receive the same opaque workflow shape but no message and
+can never complete.
 
 ```lua
-browser_session = {
-  mode = "m2m_and_browser",
-  cookie_name = "vectis_session",       -- default
-  cookie_path = "/",                     -- default
-  purpose = "browser",                   -- default session audience
-  state_key = "auth.browser_session.v1", -- Lockd key prefix
-  ttl_seconds = 30 * 24 * 60 * 60,        -- default: 30 days
-}
-```
-
-`mode = "m2m_only"` is the default. It never issues or accepts session
-cookies, preserving an M2M-only endpoint. `mode = "m2m_and_browser"` requires
-an explicit app `lockd` configuration; it accepts valid sessions before native
-or callback authentication. A valid callback-provider session therefore does
-not invoke the Lua callback or expose a cookie for Lua to parse.
-The standalone `provider:authenticate(request)` convenience call has no app
-or Lockd owner, so it remains M2M-only even when its provider table also
-declares `browser_session` for later app binding.
-
-Vectis issues a cookie only after a successful native login/factor completion
-when the request looks like a same-origin browser navigation: `Accept` contains
-`text/html`, `Sec-Fetch-Mode` is `navigate`, `Sec-Fetch-Site` is
-`same-origin`, and `Sec-Fetch-Dest`, when sent, is `document`. Missing or
-mismatched signals, including cross-site form submissions, are treated as M2M
-and receive no cookie. OAuth/OIDC and other M2M authentications do not issue
-this cookie.
-
-Issued and cleared cookies are `HttpOnly`, `Secure`, and `SameSite=Strict`.
-Deploy browser sessions behind HTTPS; normal browsers do not send a `Secure`
-cookie over plain HTTP. `cookie_path` can narrow the cookie's browser scope,
-but it must include every protected route expected to accept the session.
-`POST /logout` accepts a valid session cookie, revokes its Lockd record, and
-returns a clearing cookie. It continues to revoke normal WebDAV credentials
-when authenticated with `Authorization`.
-
-The `lockd` table belongs on `vectis.app.new`; see [Vectis Lua App](lua-app.md)
-for encrypted local Pouch and remote Lockd configuration. Its persistence must
-outlive the server process when browser sessions must survive a restart.
-
-[Serving a Lua site](lua-site.md) shows how a generic Lua site supplies a
-branded native login template while retaining this C-owned flow.
-
-`browser_flow(opts)` is a small Lua DX helper for that native route group. It
-does not implement a separate auth mechanism. It preserves the shared store and
-route configuration once and delegates to the C-owned functions:
-
-```lua
-local flow = vectis.auth.browser_flow({
+local flow = vectis.auth.workflow({
   credentials_path = "credentials.json",
-  state_path = "auth-state.json",
   path_prefix = "/_vectis/auth",
-  realm = "admin",
-  purpose = "webdav",
-  allowed_modes = { vectis.auth.BASIC },
-  required_factors = { "password", "totp", "email_token" },
-  browser_session = { mode = "m2m_and_browser" },
+  credential_purpose = "admin-api",
+  steps = {"email_code", "password", "totp"},
+  email_smtp = {
+    url = "smtps://smtp.example.test",
+    mail_from = "security@example.test",
+  },
+  browser_session = {
+    mode = "m2m_and_browser",
+    purpose = "admin-browser",
+    state_key = "example.auth.browser-session",
+  },
 })
 
-assert(flow:mount(server))
-
+assert(flow:mount(app))
 assert(app:auth_json({
   path = "/api/status",
-  auth = flow:provider(),
+  auth = flow:provider({purpose = "admin-api"}),
   body = '{"ok":true}\n',
-}))
-
-local authorization = assert(flow:webdav_authorization({
-  username = "admin",
-  password = "secret",
-  totp_code = "123456",
 }))
 ```
 
-The helper methods are:
+The JSON start request contains only the first step, for example
+`{"email":"admin@example.test"}` or
+`{"username":"admin","password":"secret"}`. It returns either a
+terminal `201` with `client_id` and `client_secret`, or a `202` with
+`workflow`, `next`, `step`, and `required`. Send the opaque workflow id and
+exactly that next field to `next`. These custom M2M continuations are separate
+from OAuth/OIDC and existing client-id/client-secret protocols, which remain
+terminal M2M protocols and never require interactive factors.
 
-- `routes(opts)`: merge and return the `app:auth_routes` option table.
-- `mount(server, opts)`: call `app:auth_routes(flow:routes(opts))`.
-- `provider(opts)`: create a native provider for guarded routes and WebDAV.
-- `webdav_key(opts)`: issue a WebDAV Basic credential after native login.
-- `webdav_authorization(opts)`: issue a WebDAV credential and format the Basic
-  `Authorization` header.
+Browser pages are responsive, dark-by-default C-owned forms. Each page contains
+one factor. Six-character email codes auto-submit when complete. Vectis issues
+a browser cookie only after a same-origin document navigation succeeds;
+cross-site form posts receive `403`, never a cookie or M2M credential.
 
-`vectis.auth.core` is the C-owned auth facade. `vectis.auth` re-exports the
-same native functions and constants, adds `browser_flow`, and exposes the core
-table as `vectis.auth.core`.
+A browser workflow cookie is only an opaque short-lived identifier. The
+principal, completed factors, token hash, expiry, and consumed state live in
+Lockd. Completed, expired, and attempt-exhausted workflow records are deleted;
+the Kore parent performs bounded automatic cleanup once per minute. Browser
+session signing keys and session records are likewise Lockd-owned by
+libvectis; Lua never receives either secret.
 
+Custom browser shells are presentation-only. Set exactly one of
+`browser_template_html`, `browser_template_path`, or
+`browser_template_embedded_path`; every shell must contain exactly one
+`{{content}}` insertion point. Vectis owns the form and opaque state.
+`{{title}}`, `{{progress}}`, and `{{error}}` are escaped substitutions.
+
+`vectis.auth.workflow(opts)` is the Lua facade. It provides `routes(opts)`,
+`mount(app, opts)`, and `provider(opts)`; it stores no login state and does
+not implement cookies. The matching C API uses `vectis_auth_routes_config`.
+`vectis_auth_workflow_cleanup()` and
+`vectis_auth_browser_session_cleanup()` are available for explicit bounded
+maintenance outside request handlers.
 ## TOTP And QR Helpers
 
 `vectis.auth.totp.new(secret)` returns a TOTP helper for generating codes,
