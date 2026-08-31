@@ -22,10 +22,9 @@ inherit the Vectis process environment, credentials, or per-user `PATH` entries
 such as `~/.local/bin`.
 
 CAI 0.5's managed Smith terminal is not Bubblewrap-contained: the workspace is
-its working-directory constraint, not a filesystem sandbox. CAI's separately
-registered `exec_command` tool does use Bubblewrap on Linux and fails closed if
-it is unavailable. Do not use the Smith terminal against an untrusted host or
-where commands must be prevented from accessing files outside the workspace.
+its working-directory constraint, not a filesystem sandbox. Vectis uses this
+CAI terminal behavior unchanged. CAI's separately registered `exec_command`
+tool does use Bubblewrap on Linux and fails closed if it is unavailable.
 
 The default interactive presentation is Softline's normal chat theme. Output
 is streamed from CAI in bounded chunks into libmdf's streaming ANSI renderer
