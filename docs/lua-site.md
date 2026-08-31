@@ -7,8 +7,9 @@ Landed implementation or a requirement to pack the site into the executable.
 
 The runnable [`examples/lua/site_server.lua`](../examples/lua/site_server.lua)
 and its deterministic E2E scenario are the reference shape. The example uses
-fixed credentials and unencrypted HTTP only because the E2E harness creates a
-fresh isolated environment; do not deploy those values or that TLS setting.
+fixed credentials and an E2E-generated self-signed certificate only because
+the harness creates a fresh isolated environment; do not deploy those values
+or that certificate.
 
 ## Reference fixture configuration
 
@@ -19,7 +20,9 @@ contract is:
 | Variable | Required | Meaning |
 | --- | --- | --- |
 | `VECTIS_LUA_SITE_BIND` | no | Bind address; defaults to `127.0.0.1`. |
-| `VECTIS_LUA_SITE_PORT` | no | HTTP port; defaults to `28630`. |
+| `VECTIS_LUA_SITE_PORT` | no | HTTPS port; defaults to `8443`. |
+| `VECTIS_LUA_SITE_TLS_BUNDLE` | yes | Manual TLS certificate/key PEM bundle. |
+| `VECTIS_LUA_SITE_TLS_DOMAIN` | no | TLS hostname; defaults to `localhost`. |
 | `VECTIS_LUA_SITE_CREDENTIALS` | yes | Native credential-store path. |
 | `VECTIS_LUA_SITE_AUTH_STATE` | yes | State path for lower-level auth primitives; the fixture also derives its local Lockd/Pouch root from it. Native workflow and browser-session state live in Lockd. |
 | `VECTIS_LUA_SITE_ASSET_ROOT` | yes | Public static asset directory. |
@@ -129,6 +132,12 @@ For a site editor, configure a browser session and use the same session policy
 on the native provider that protects WebDAV. The app also needs a persistent
 Lockd endpoint because workflow state, browser-session records, and the
 libvectis signing key are stored there.
+
+Browser-capable workflows require `tls.mode = "manual"` or `"acme"`.
+Vectis always marks their workflow and session cookies `Secure`; it refuses to
+register them on a plaintext listener rather than issuing cookies browsers will
+discard. M2M-only workflows do not issue cookies and may run without TLS where
+that is otherwise appropriate.
 
 ```lua
 local browser_session = {

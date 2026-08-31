@@ -233,7 +233,10 @@ With `browser_session.mode = "m2m_and_browser"`, it additionally exposes
 `GET <path_prefix>/login` and `POST <path_prefix>/continue`. There are no
 all-fields login, email-token, or WebDAV-key routes. A request supplies only
 the current factor; a non-terminal response identifies the next endpoint and
-required field.
+required field. Browser-capable workflows require `tls.mode = "manual"` or
+`"acme"`; Vectis rejects them on plaintext listeners because their cookies are
+always `Secure`. M2M-only workflows never issue cookies and remain available
+without TLS where that is otherwise appropriate.
 
 Set `steps` to one of these ordered policies:
 

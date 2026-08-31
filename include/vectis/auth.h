@@ -237,7 +237,10 @@ struct vectis_auth_routes_config {
   unsigned int totp_window;
   /* Zero uses VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS. */
   unsigned int email_code_max_attempts;
-  /* Optional browser-session policy. The default remains M2M-only. */
+  /*
+   * Optional browser-session policy. The default remains M2M-only.
+   * M2M_AND_BROWSER requires the owning app to use manual or ACME TLS.
+   */
   vectis_auth_browser_session_config browser_session;
   /*
    * Optional SMTP delivery for email-token issuance. When email_smtp.url is

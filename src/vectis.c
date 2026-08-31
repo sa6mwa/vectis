@@ -16778,7 +16778,8 @@ static int vectis_auth_browser_navigation_request(vectis_request *request) {
 /* Native workflow routes deliberately keep only an opaque identifier in the
  * client. Factors, token hashes, and the authenticated principal live in the
  * Lockd record below. */
-#define VECTIS_AUTH_WORKFLOW_COOKIE_NAME "vectis_auth_flow"
+#define VECTIS_AUTH_WORKFLOW_COOKIE_PREFIX "vectis_auth_flow_"
+#define VECTIS_AUTH_WORKFLOW_COOKIE_NAME_MAX 64u
 #define VECTIS_AUTH_WORKFLOW_COOKIE_MAX 512u
 
 typedef enum vectis_auth_workflow_update_kind {
@@ -16903,25 +16904,63 @@ static int vectis_auth_workflow_id_valid(const char *id) {
   return 1;
 }
 
-static int vectis_auth_workflow_cookie_value(const char *header, char *out,
+static int vectis_auth_workflow_cookie_name(const vectis_auth_route_data *data,
+                                            char *out, size_t out_size) {
+  static const char domain[] = "vectis.auth.workflow.cookie.v1";
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned int digest_size;
+  char hex[2u * 32u + 1u];
+  EVP_MD_CTX *context;
+  int written;
+
+  if (data == NULL || data->path_prefix == NULL || out == NULL ||
+      out_size == 0u) {
+    return 0;
+  }
+  /* The route prefix supplies the namespace without exposing its text in the
+   * browser-visible cookie name. */
+  context = EVP_MD_CTX_new();
+  if (context == NULL || EVP_DigestInit_ex(context, EVP_sha256(), NULL) != 1 ||
+      EVP_DigestUpdate(context, domain, sizeof(domain) - 1u) != 1 ||
+      EVP_DigestUpdate(context, data->path_prefix,
+                       strlen(data->path_prefix)) != 1 ||
+      EVP_DigestFinal_ex(context, digest, &digest_size) != 1 ||
+      digest_size != 32u) {
+    EVP_MD_CTX_free(context);
+    OPENSSL_cleanse(digest, sizeof(digest));
+    return 0;
+  }
+  EVP_MD_CTX_free(context);
+  vectis_auth_workflow_hex_encode(digest, digest_size, hex);
+  OPENSSL_cleanse(digest, sizeof(digest));
+  written = snprintf(out, out_size, "%s%.32s",
+                     VECTIS_AUTH_WORKFLOW_COOKIE_PREFIX, hex);
+  OPENSSL_cleanse(hex, sizeof(hex));
+  return written > 0 && (size_t)written < out_size;
+}
+
+static int vectis_auth_workflow_cookie_value(const vectis_auth_route_data *data,
+                                             const char *header, char *out,
                                              size_t out_size) {
   const char *cursor;
   const char *value;
   const char *end;
+  char name[VECTIS_AUTH_WORKFLOW_COOKIE_NAME_MAX + 1u];
+  size_t name_size;
   size_t value_size;
 
-  if (out == NULL || out_size == 0u) {
+  if (out == NULL || out_size == 0u ||
+      !vectis_auth_workflow_cookie_name(data, name, sizeof(name))) {
     return 0;
   }
   out[0] = '\0';
+  name_size = strlen(name);
   for (cursor = header != NULL ? header : ""; *cursor != '\0';) {
     while (*cursor == ' ' || *cursor == '\t' || *cursor == ';') {
       cursor++;
     }
-    if (strncmp(cursor, VECTIS_AUTH_WORKFLOW_COOKIE_NAME,
-                sizeof(VECTIS_AUTH_WORKFLOW_COOKIE_NAME) - 1u) == 0 &&
-        cursor[sizeof(VECTIS_AUTH_WORKFLOW_COOKIE_NAME) - 1u] == '=') {
-      value = cursor + sizeof(VECTIS_AUTH_WORKFLOW_COOKIE_NAME);
+    if (strncmp(cursor, name, name_size) == 0 && cursor[name_size] == '=') {
+      value = cursor + name_size + 1u;
       end = strchr(value, ';');
       value_size = end != NULL ? (size_t)(end - value) : strlen(value);
       if (value_size >= out_size || out[0] != '\0') {
@@ -16944,6 +16983,7 @@ static vectis_status vectis_auth_workflow_cookie(
     const vectis_auth_route_data *data, const char *id, int clear,
     vectis_response *response, vectis_error *error) {
   char header[1024];
+  char name[VECTIS_AUTH_WORKFLOW_COOKIE_NAME_MAX + 1u];
   int written;
 
   if (data == NULL || response == NULL || data->path_prefix == NULL) {
@@ -16951,14 +16991,19 @@ static vectis_status vectis_auth_workflow_cookie(
                      "auth workflow cookie configuration is invalid");
     return VECTIS_ERR_INVALID;
   }
+  if (!vectis_auth_workflow_cookie_name(data, name, sizeof(name))) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to derive auth workflow cookie name");
+    return VECTIS_ERR_STATE;
+  }
   if (clear) {
     written = snprintf(header, sizeof(header),
                        "%s=; Path=%s; Max-Age=0; HttpOnly; Secure; SameSite=Strict",
-                       VECTIS_AUTH_WORKFLOW_COOKIE_NAME, data->path_prefix);
+                       name, data->path_prefix);
   } else {
     written = snprintf(header, sizeof(header),
                        "%s=%s; Path=%s; Max-Age=%lu; HttpOnly; Secure; SameSite=Strict",
-                       VECTIS_AUTH_WORKFLOW_COOKIE_NAME, id, data->path_prefix,
+                       name, id, data->path_prefix,
                        (unsigned long)data->workflow_ttl_seconds);
   }
   if (written < 0 || (size_t)written >= sizeof(header)) {
@@ -17982,8 +18027,8 @@ static vectis_status vectis_auth_workflow_browser_login_dispatch(
   if (data->browser_session.mode != VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER) {
     return vectis_response_status(response, 404, error);
   }
-  if (vectis_auth_workflow_cookie_value(vectis_request_header(request, "cookie"),
-                                        id, sizeof(id))) {
+  if (vectis_auth_workflow_cookie_value(
+          data, vectis_request_header(request, "cookie"), id, sizeof(id))) {
     status = vectis_auth_workflow_load(app, data, id, &record, error);
     if (status == VECTIS_OK) {
       return vectis_auth_workflow_page(data, &record, NULL, NULL, response,
@@ -18048,8 +18093,8 @@ static vectis_status vectis_auth_workflow_browser_continue_dispatch(
   if (status != VECTIS_OK) {
     return status;
   }
-  if (!vectis_auth_workflow_cookie_value(vectis_request_header(request, "cookie"),
-                                         id, sizeof(id))) {
+  if (!vectis_auth_workflow_cookie_value(
+          data, vectis_request_header(request, "cookie"), id, sizeof(id))) {
     return_path = vectis_auth_workflow_return_path_valid(fields.return_path)
                       ? fields.return_path
                       : "/";
@@ -18598,6 +18643,18 @@ vectis_register_auth_routes(vectis_app *app,
     return status;
   }
   impl = (vectis_app_impl *)app->impl;
+  if (impl == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "app implementation is required");
+    return VECTIS_ERR_INVALID;
+  }
+  if (effective->browser_session.mode ==
+          VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER &&
+      impl->tls_mode != VECTIS_TLS_MODE_MANUAL &&
+      impl->tls_mode != VECTIS_TLS_MODE_ACME) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser auth workflows require TLS (tls.mode manual or acme)");
+    return VECTIS_ERR_INVALID;
+  }
   if (!vectis_lockd_is_configured(impl)) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "auth workflows require configured app Lockd");

@@ -1,7 +1,9 @@
 local vectis = require("vectis")
 
 local bind = os.getenv("VECTIS_LUA_SITE_BIND") or "127.0.0.1"
-local port = tonumber(os.getenv("VECTIS_LUA_SITE_PORT") or "28630")
+local port = tonumber(os.getenv("VECTIS_LUA_SITE_PORT") or "8443")
+local tls_bundle_path = assert(os.getenv("VECTIS_LUA_SITE_TLS_BUNDLE"))
+local tls_domain = os.getenv("VECTIS_LUA_SITE_TLS_DOMAIN") or "localhost"
 local credentials_path = assert(os.getenv("VECTIS_LUA_SITE_CREDENTIALS"))
 local auth_state_path = assert(os.getenv("VECTIS_LUA_SITE_AUTH_STATE"))
 local asset_root = assert(os.getenv("VECTIS_LUA_SITE_ASSET_ROOT"))
@@ -37,7 +39,11 @@ local app = assert(vectis.app.new({
   app_name = "lua-site-example",
   bind = bind,
   port = port,
-  tls = { mode = "disabled" },
+  tls = {
+    mode = "manual",
+    cert_key_bundle_path = tls_bundle_path,
+    domain = tls_domain,
+  },
   lockd = {
     endpoints = {"pouch://" .. auth_state_path .. ".lockd?single_writer=false"},
   },
@@ -153,6 +159,6 @@ assert(webdav_mounted == true,
        webdav_mount_error and webdav_mount_error.message or "WebDAV mount failed")
 
 assert(app:start() == true)
-print("lua site example listening on http://" .. bind .. ":" .. tostring(port))
+print("lua site example listening on https://" .. tls_domain .. ":" .. tostring(port))
 assert(app:wait() == true)
 app:close()

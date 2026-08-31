@@ -17,12 +17,20 @@ local port_text = assert(arg[1], "port is required")
 local port = tonumber(port_text)
 local auth_path = assert(arg[2], "auth path is required")
 local pouch_dir = assert(arg[3], "pouch directory is required")
-local base = "http://127.0.0.1:" .. tostring(port)
+local cert_path = pouch_dir .. "/browser-session.pem"
+local base = "https://localhost:" .. tostring(port)
 local session = {
   mode = "m2m_and_browser",
   cookie_name = "lua_browser_session",
   purpose = "lua-browser",
   state_key = "lua.browser-session",
+  ttl_seconds = 60,
+}
+local flow_session = {
+  mode = "m2m_and_browser",
+  cookie_name = "lua_flow_session",
+  purpose = "lua-flow-browser",
+  state_key = "lua.flow-browser-session",
   ttl_seconds = 60,
 }
 
@@ -32,9 +40,11 @@ local function request(path, method, body, headers)
     method = method,
     body = body,
     headers = headers,
-    protocols = "http",
+    protocols = "https",
     timeout_ms = 2000,
     connect_timeout_ms = 500,
+    verify_peer = false,
+    verify_host = false,
     no_signal = true,
   })
 end
@@ -45,10 +55,28 @@ assert(vectis.auth.user_add({
   username = "lua-session-user",
   password = "lua-session-password",
 }).username == "lua-session-user")
+assert(vectis.auth.user_add({
+  credentials_path = auth_path,
+  username = "lua-flow-user",
+  password = "lua-flow-password",
+  totp_secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+}).username == "lua-flow-user")
+assert(vectis.cert.generate_bundle({
+  common_name = "localhost",
+  ip_addresses = "127.0.0.1",
+  output_bundle_path = cert_path,
+  key_bits = 2048,
+  valid_days = 1,
+}) == true)
 
 local server = assert(vectis.app.new({
   bind = "127.0.0.1",
   port = port,
+  tls = {
+    mode = "manual",
+    cert_key_bundle_path = cert_path,
+    domain = "localhost",
+  },
   lockd = {
     endpoints = {"pouch://" .. pouch_dir .. "?single_writer=false"},
   },
@@ -57,6 +85,18 @@ assert(server:auth_routes({
   path_prefix = "/auth",
   credentials_path = auth_path,
   browser_session = session,
+}) == true)
+assert(server:auth_routes({
+  path_prefix = "/flow",
+  credentials_path = auth_path,
+  steps = {"password", "totp"},
+  browser_session = flow_session,
+}) == true)
+assert(server:auth_routes({
+  path_prefix = "/flow/admin",
+  credentials_path = auth_path,
+  steps = {"password", "totp"},
+  browser_session = flow_session,
 }) == true)
 assert(server:auth_json({
   path = "/callback-protected",
@@ -116,6 +156,50 @@ assert(set_cookie:find("HttpOnly", 1, true))
 assert(set_cookie:find("Secure", 1, true))
 assert(set_cookie:find("SameSite=Strict", 1, true))
 local cookie = assert(set_cookie:match("^([^;]+)"))
+
+local function workflow_cookie(response)
+  local header = assert(response.headers:match(
+      "[Ss]et%-[Cc]ookie:%s*([^\r\n]+)"), response.headers)
+  local value = assert(header:match("^([^;]+)"))
+  local name = assert(value:match("^([^=]+)="))
+  assert(name:match("^vectis_auth_flow_[0-9a-f]+$"))
+  return value, name
+end
+
+local navigation_headers = {
+  ["Content-Type"] = "application/x-www-form-urlencoded",
+  ["Accept"] = "text/html",
+  ["Sec-Fetch-Mode"] = "navigate",
+  ["Sec-Fetch-Dest"] = "document",
+  ["Sec-Fetch-Site"] = "same-origin",
+}
+local parent_flow = request("/flow/continue", "POST",
+    "username=lua-flow-user&password=lua-flow-password", navigation_headers)
+assert(parent_flow.ok == true, parent_flow.error)
+assert(parent_flow.status == 303)
+local parent_flow_cookie, parent_flow_name = workflow_cookie(parent_flow)
+local child_flow = request("/flow/admin/continue", "POST",
+    "username=lua-flow-user&password=lua-flow-password", navigation_headers)
+assert(child_flow.ok == true, child_flow.error)
+assert(child_flow.status == 303)
+local child_flow_cookie, child_flow_name = workflow_cookie(child_flow)
+assert(parent_flow_name ~= child_flow_name)
+local flow_totp = assert(vectis.auth.totp.new(
+    "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"))
+local child_complete = request("/flow/admin/continue", "POST",
+    "totp_code=" .. flow_totp:generate(os.time()), {
+      ["Content-Type"] = "application/x-www-form-urlencoded",
+      ["Accept"] = "text/html",
+      ["Sec-Fetch-Mode"] = "navigate",
+      ["Sec-Fetch-Dest"] = "document",
+      ["Sec-Fetch-Site"] = "same-origin",
+      ["Cookie"] = parent_flow_cookie .. "; " .. child_flow_cookie,
+    })
+assert(child_complete.ok == true, child_complete.error)
+assert(child_complete.status == 303,
+       "nested workflow status=" .. tostring(child_complete.status) .. " body=" ..
+           tostring(child_complete.body) .. " headers=" ..
+           tostring(child_complete.headers))
 
 local session_response = request("/callback-protected", "GET", nil, {
   ["Cookie"] = cookie,

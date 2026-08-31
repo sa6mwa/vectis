@@ -153,7 +153,8 @@ same code works in scratch containers where `vectis` is the only executable.
 - `lua/site_server.lua`: generic-binary Lua site shape with a rendered HTML
   form, native-authenticated editor route, authenticated WebDAV content mount,
   and public static publishing of editor-written content. It deliberately uses
-  filesystem roots rather than packed assets; provide the
+  filesystem roots rather than packed assets and requires a manual TLS bundle;
+  provide the
   `VECTIS_LUA_SITE_*` paths when running it. See
   [`docs/lua-site.md`](../docs/lua-site.md) for the deployment shape and auth
   template contract.
