@@ -14,10 +14,18 @@ vectis -a smith
 ```
 
 Use `-w DIR` to select the workspace and `-s ID` to resume or create a named
-session. The terminal tool is rooted at that workspace: its working directory
-cannot escape the root, but it has CAI's standard minimal system environment,
-so ordinary commands such as `/bin/sh`, `make`, and `git` remain available.
-It never inherits the Vectis process environment or its credentials.
+session. The terminal starts in that workspace and its requested working
+directory cannot escape it. It has CAI's fixed system `PATH`
+(`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), so ordinary
+commands such as `/bin/sh`, `make`, and `git` remain available. It does not
+inherit the Vectis process environment, credentials, or per-user `PATH` entries
+such as `~/.local/bin`.
+
+CAI 0.5's managed Smith terminal is not Bubblewrap-contained: the workspace is
+its working-directory constraint, not a filesystem sandbox. CAI's separately
+registered `exec_command` tool does use Bubblewrap on Linux and fails closed if
+it is unavailable. Do not use the Smith terminal against an untrusted host or
+where commands must be prevented from accessing files outside the workspace.
 
 The default interactive presentation is Softline's normal chat theme. Output
 is streamed from CAI in bounded chunks into libmdf's streaming ANSI renderer
