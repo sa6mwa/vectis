@@ -4121,7 +4121,8 @@ static void assert_kore_smoke(void) {
   vectis_auth_routes_config_init(&auth_routes);
   auth_routes.path_prefix = "/auth-invalid-template";
   auth_routes.store = auth_store;
-  auth_routes.browser_template_html = "<!doctype html><title>missing controls</title>";
+  auth_routes.browser_template_html =
+      "<!doctype html><title>missing controls</title>";
   status = app->auth_routes(app, &auth_routes, &error);
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "{{content}}") != NULL);
@@ -4733,13 +4734,12 @@ static void assert_kore_smoke(void) {
                        webdav_propfind_response.body_size, "/dav/runtime.txt"));
   vectis_http_response_cleanup(&webdav_propfind_response);
 
-
   /* M2M workflow accepts only the first password step and returns a credential
    * only after that step completes. It never sets a browser session cookie. */
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = format_loopback_http_url(url, sizeof(url), port,
-                                         "/auth/m2m/start");
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/auth/m2m/start");
   request.content_type = "application/json";
   request.body = "{\"username\":\"runtime-user\",\"password\":\"wrong\"}";
   request.body_size = strlen((const char *)request.body);
@@ -4753,10 +4753,11 @@ static void assert_kore_smoke(void) {
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
-  request.url = format_loopback_http_url(url, sizeof(url), port,
-                                         "/auth/m2m/start");
+  request.url =
+      format_loopback_http_url(url, sizeof(url), port, "/auth/m2m/start");
   request.content_type = "application/json";
-  request.body = "{\"username\":\"runtime-user\",\"password\":\"runtime-password\"}";
+  request.body =
+      "{\"username\":\"runtime-user\",\"password\":\"runtime-password\"}";
   request.body_size = strlen((const char *)request.body);
   status = vectis_http_execute(&http, &request, &auth_key_response, &error);
   assert(status == VECTIS_OK);
@@ -4766,9 +4767,9 @@ static void assert_kore_smoke(void) {
   assert(runtime_json_string_value(auth_key_response.body,
                                    auth_key_response.body_size, "client_id",
                                    auth_client_id, sizeof(auth_client_id)));
-  assert(runtime_json_string_value(auth_key_response.body,
-                                   auth_key_response.body_size, "client_secret",
-                                   auth_client_secret, sizeof(auth_client_secret)));
+  assert(runtime_json_string_value(
+      auth_key_response.body, auth_key_response.body_size, "client_secret",
+      auth_client_secret, sizeof(auth_client_secret)));
   assert(vectis_http_response_header(&auth_key_response, "set-cookie") == NULL);
   vectis_http_response_cleanup(&auth_key_response);
 
@@ -4806,13 +4807,12 @@ static void assert_kore_smoke(void) {
                        "\"required\":\"code\""));
   assert(runtime_json_string_value(auth_bad_response.body,
                                    auth_bad_response.body_size, "workflow",
-                                   auth_workflow_id,
-                                   sizeof(auth_workflow_id)));
+                                   auth_workflow_id, sizeof(auth_workflow_id)));
   vectis_http_response_cleanup(&auth_bad_response);
 
   written = snprintf(auth_totp_form, sizeof(auth_totp_form),
-                     "{\"workflow\":\"%s\",\"code\":\"%s\"}",
-                     auth_workflow_id, auth_totp_code);
+                     "{\"workflow\":\"%s\",\"code\":\"%s\"}", auth_workflow_id,
+                     auth_totp_code);
   assert(written > 0 && (size_t)written < sizeof(auth_totp_form));
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
@@ -4843,13 +4843,12 @@ static void assert_kore_smoke(void) {
   assert(auth_bad_response.status_code == 202L);
   assert(runtime_json_string_value(auth_bad_response.body,
                                    auth_bad_response.body_size, "workflow",
-                                   auth_workflow_id,
-                                   sizeof(auth_workflow_id)));
+                                   auth_workflow_id, sizeof(auth_workflow_id)));
   vectis_http_response_cleanup(&auth_bad_response);
 
   written = snprintf(auth_totp_form, sizeof(auth_totp_form),
-                     "{\"workflow\":\"%s\",\"code\":\"%s\"}",
-                     auth_workflow_id, auth_totp_code);
+                     "{\"workflow\":\"%s\",\"code\":\"%s\"}", auth_workflow_id,
+                     auth_totp_code);
   assert(written > 0 && (size_t)written < sizeof(auth_totp_form));
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
@@ -4928,8 +4927,8 @@ static void assert_kore_smoke(void) {
          32u);
   assert(runtime_browser_session_record_count(app, "runtime.browser-session") ==
          1u);
-  status = vectis_auth_browser_session_cleanup(app, &browser_session, 0u,
-                                                &error);
+  status =
+      vectis_auth_browser_session_cleanup(app, &browser_session, 0u, &error);
   assert(status == VECTIS_OK);
   assert(runtime_browser_session_record_count(app, "runtime.browser-session") ==
          0u);

@@ -600,9 +600,10 @@ void vectis_auth_native_provider_config_init(
     vectis_auth_native_provider_config *config);
 void vectis_auth_routes_config_init(vectis_auth_routes_config *config);
 /* Deletes a bounded batch of expired native authentication workflows. */
-vectis_status vectis_auth_workflow_cleanup(
-    vectis_app *app, const vectis_auth_routes_config *config,
-    vectis_error *error);
+vectis_status
+vectis_auth_workflow_cleanup(vectis_app *app,
+                             const vectis_auth_routes_config *config,
+                             vectis_error *error);
 void vectis_auth_user_config_init(vectis_auth_user_config *config);
 void vectis_auth_user_enrollment_init(vectis_auth_user_enrollment *enrollment);
 void vectis_auth_user_enrollment_cleanup(
@@ -726,10 +727,11 @@ vectis_auth_user_email_set(const vectis_auth_store_config *store_config,
 /* Looks up an enrolled recipient without exposing a user record. A missing
  * recipient is reported as found == 0. username_out is populated only when
  * exactly one enrolled user matches. */
-vectis_status vectis_auth_user_find_by_email(
-    const vectis_auth_store_config *store_config, const char *email,
-    char *username_out, size_t username_out_size, int *out_found,
-    vectis_error *error);
+vectis_status
+vectis_auth_user_find_by_email(const vectis_auth_store_config *store_config,
+                               const char *email, char *username_out,
+                               size_t username_out_size, int *out_found,
+                               vectis_error *error);
 /* Checks whether a username is present in the credentials store. */
 vectis_status
 vectis_auth_user_exists(const vectis_auth_store_config *store_config,
@@ -743,9 +745,10 @@ vectis_status
 vectis_auth_user_password_check(const vectis_auth_password_check_config *config,
                                 vectis_auth_password_check_result *out,
                                 vectis_error *error);
-vectis_status vectis_auth_user_totp_check(const vectis_auth_totp_check_config *config,
-                                          vectis_auth_totp_check_result *out,
-                                          vectis_error *error);
+vectis_status
+vectis_auth_user_totp_check(const vectis_auth_totp_check_config *config,
+                            vectis_auth_totp_check_result *out,
+                            vectis_error *error);
 vectis_status vectis_auth_pending_login_issue(
     const vectis_auth_pending_login_issue_config *config,
     vectis_auth_pending_login *out, vectis_error *error);
@@ -822,7 +825,8 @@ vectis_status vectis_auth_browser_session_verify(
     const char *cookie_header, uint64_t unix_seconds,
     vectis_auth_browser_session_result *out, vectis_error *error);
 /* Removes a bounded batch of expired or revoked sessions for this Lockd key.
- * Auth routes schedule this automatically; applications normally do not call it. */
+ * Auth routes schedule this automatically; applications normally do not call
+ * it. */
 vectis_status vectis_auth_browser_session_cleanup(
     vectis_app *app, const vectis_auth_browser_session_config *config,
     uint64_t unix_seconds, vectis_error *error);

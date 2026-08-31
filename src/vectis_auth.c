@@ -6320,10 +6320,11 @@ vectis_auth_user_exists(const vectis_auth_store_config *store_config,
   return status;
 }
 
-vectis_status vectis_auth_user_find_by_email(
-    const vectis_auth_store_config *store_config, const char *email,
-    char *username_out, size_t username_out_size, int *out_found,
-    vectis_error *error) {
+vectis_status
+vectis_auth_user_find_by_email(const vectis_auth_store_config *store_config,
+                               const char *email, char *username_out,
+                               size_t username_out_size, int *out_found,
+                               vectis_error *error) {
   vectis_auth_store_lock lock;
   vectis_auth_user_email_find_state state;
   lonejson_json_value item_value;
@@ -6368,8 +6369,8 @@ vectis_status vectis_auth_user_find_by_email(
       memset(&options, 0, sizeof(options));
       lonejson_json_value_init(runtime, &item_value);
       lonejson_error_init(&json_error);
-      json_status = lonejson_json_value_enable_parse_capture(&item_value,
-                                                              &json_error);
+      json_status =
+          lonejson_json_value_enable_parse_capture(&item_value, &json_error);
       if (json_status == LONEJSON_STATUS_OK) {
         options.item_value = &item_value;
         options.item = vectis_auth_user_email_find_item;
@@ -6538,9 +6539,10 @@ vectis_auth_user_password_check(const vectis_auth_password_check_config *config,
   return VECTIS_OK;
 }
 
-vectis_status vectis_auth_user_totp_check(
-    const vectis_auth_totp_check_config *config,
-    vectis_auth_totp_check_result *out, vectis_error *error) {
+vectis_status
+vectis_auth_user_totp_check(const vectis_auth_totp_check_config *config,
+                            vectis_auth_totp_check_result *out,
+                            vectis_error *error) {
   vectis_auth_store_lock lock;
   vectis_auth_user_record record;
   lonejson *runtime;
@@ -6583,12 +6585,12 @@ vectis_status vectis_auth_user_totp_check(
       vectis_totp_init(&totp, record.totp_secret) == VECTIS_TOTP_QR_OK) {
     now = config->unix_seconds != 0u ? config->unix_seconds
                                      : (uint64_t)time(NULL);
-    out->authenticated = vectis_totp_validate(
-                             &totp, config->totp_code, now,
+    out->authenticated =
+        vectis_totp_validate(&totp, config->totp_code, now,
                              config->totp_window != 0u ? config->totp_window
                                                        : 1u)
-                             ? 1
-                             : 0;
+            ? 1
+            : 0;
   }
   lonejson_free(runtime);
   return VECTIS_OK;

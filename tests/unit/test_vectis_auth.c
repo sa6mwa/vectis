@@ -606,9 +606,9 @@ int main(void) {
   vectis_auth_store_config_init(&empty_store);
   empty_store.credentials_path = empty_credentials_path;
   email_found = 1;
-  status = vectis_auth_user_find_by_email(
-      &empty_store, "new-user@example.com", bearer_header,
-      sizeof(bearer_header), &email_found, &error);
+  status = vectis_auth_user_find_by_email(&empty_store, "new-user@example.com",
+                                          bearer_header, sizeof(bearer_header),
+                                          &email_found, &error);
   expect_ok(status, &error,
             "looks up email against an uninitialized credentials store");
   expect(!email_found && bearer_header[0] == '\0',

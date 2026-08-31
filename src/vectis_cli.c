@@ -5187,9 +5187,10 @@ vectis_lua_route_methods(lua_State *lua, int index,
   return methods;
 }
 
-static int vectis_lua_auth_workflow_steps(
-    lua_State *lua, int index, const char *field,
-    vectis_auth_workflow_step out[3], size_t *out_count) {
+static int vectis_lua_auth_workflow_steps(lua_State *lua, int index,
+                                          const char *field,
+                                          vectis_auth_workflow_step out[3],
+                                          size_t *out_count) {
   const char *name;
   size_t count;
   size_t i;
@@ -11972,11 +11973,13 @@ static int vectis_lua_app_auth_routes(lua_State *lua) {
   if (credential_purpose != NULL) {
     config.credential_purpose = credential_purpose;
   }
-  browser_template_html = vectis_lua_table_string(lua, 2, "browser_template_html");
+  browser_template_html =
+      vectis_lua_table_string(lua, 2, "browser_template_html");
   if (browser_template_html != NULL) {
     config.browser_template_html = browser_template_html;
   }
-  browser_template_path = vectis_lua_table_string(lua, 2, "browser_template_path");
+  browser_template_path =
+      vectis_lua_table_string(lua, 2, "browser_template_path");
   if (browser_template_path != NULL) {
     config.browser_template_path = browser_template_path;
   }
