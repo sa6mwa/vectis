@@ -431,6 +431,7 @@ oauth2_mock_transport(const vectis_auth_oauth2_http_request *request,
 int main(void) {
   char temp[] = "/tmp/vectis-auth-unit.XXXXXX";
   char credentials_path[4096];
+  char empty_credentials_path[4096];
   char state_path[4096];
   char predictable_temp_path[4096];
   char symlink_victim_path[4096];
@@ -449,7 +450,9 @@ int main(void) {
   FILE *victim_fp;
   int written;
   int user_exists;
+  int email_found;
   vectis_auth_store_config store;
+  vectis_auth_store_config empty_store;
   vectis_auth_user_config user;
   vectis_auth_user_enrollment enrollment;
   vectis_auth_login_config login;
@@ -554,6 +557,12 @@ int main(void) {
     remove_tree(temp);
     return 1;
   }
+  written = snprintf(empty_credentials_path, sizeof(empty_credentials_path),
+                     "%s/empty-credentials.json", temp);
+  if (written < 0 || (size_t)written >= sizeof(empty_credentials_path)) {
+    remove_tree(temp);
+    return 1;
+  }
   written =
       snprintf(state_path, sizeof(state_path), "%s/auth-state.json", temp);
   if (written < 0 || (size_t)written >= sizeof(state_path)) {
@@ -594,6 +603,16 @@ int main(void) {
   vectis_auth_store_config_init(&store);
   store.credentials_path = credentials_path;
   store.state_path = state_path;
+  vectis_auth_store_config_init(&empty_store);
+  empty_store.credentials_path = empty_credentials_path;
+  email_found = 1;
+  status = vectis_auth_user_find_by_email(
+      &empty_store, "new-user@example.com", bearer_header,
+      sizeof(bearer_header), &email_found, &error);
+  expect_ok(status, &error,
+            "looks up email against an uninitialized credentials store");
+  expect(!email_found && bearer_header[0] == '\0',
+         "uninitialized credentials store has no enrolled email recipient");
   status = vectis_auth_store_init(&store, &error);
   expect_ok(status, &error, "initializes credentials store");
   expect(file_contains(symlink_victim_path, "preserve\n"),

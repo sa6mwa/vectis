@@ -6332,6 +6332,8 @@ vectis_status vectis_auth_user_find_by_email(
   lonejson_error json_error;
   lonejson_status json_status;
   vectis_status status;
+  char *store_json;
+  size_t store_size;
   char temp_path[4096];
 
   if (out_found == NULL || username_out == NULL || username_out_size == 0u) {
@@ -6348,6 +6350,8 @@ vectis_status vectis_auth_user_find_by_email(
   memset(&lock, 0, sizeof(lock));
   lock.fd = -1;
   runtime = NULL;
+  store_json = NULL;
+  store_size = 0u;
   temp_path[0] = '\0';
   status = vectis_auth_lonejson_runtime(&runtime, error);
   if (status != VECTIS_OK) {
@@ -6355,52 +6359,52 @@ vectis_status vectis_auth_user_find_by_email(
   }
   status = vectis_auth_lock_open(store_config, &lock, error);
   if (status == VECTIS_OK) {
-    memset(&state, 0, sizeof(state));
-    state.runtime = runtime;
-    state.email = email;
-    memset(&options, 0, sizeof(options));
-    lonejson_json_value_init(runtime, &item_value);
-    lonejson_error_init(&json_error);
-    json_status = lonejson_json_value_enable_parse_capture(&item_value,
-                                                            &json_error);
-    if (json_status == LONEJSON_STATUS_OK) {
-      options.item_value = &item_value;
-      options.item = vectis_auth_user_email_find_item;
-      options.user = &state;
-      status = vectis_auth_rewrite_array_to_temp_locked(
-          runtime, "users", store_config->credentials_path, "users-email-find",
-          temp_path, sizeof(temp_path), &options, &json_error, error);
-      if (status == VECTIS_OK) {
-        json_status = LONEJSON_STATUS_OK;
-      } else if (status != VECTIS_ERR_INVALID) {
-        lonejson_json_value_cleanup(&item_value);
-        vectis_auth_lock_close(&lock);
-        vectis_auth_unlink_temp_path(temp_path);
-        lonejson_free(runtime);
-        return status;
-      } else {
-        json_status = json_error.code;
+    status = vectis_auth_read_store_locked(store_config, &store_json,
+                                           &store_size, error);
+    if (status == VECTIS_OK && store_json != NULL) {
+      memset(&state, 0, sizeof(state));
+      state.runtime = runtime;
+      state.email = email;
+      memset(&options, 0, sizeof(options));
+      lonejson_json_value_init(runtime, &item_value);
+      lonejson_error_init(&json_error);
+      json_status = lonejson_json_value_enable_parse_capture(&item_value,
+                                                              &json_error);
+      if (json_status == LONEJSON_STATUS_OK) {
+        options.item_value = &item_value;
+        options.item = vectis_auth_user_email_find_item;
+        options.user = &state;
+        status = vectis_auth_rewrite_array_to_temp_locked(
+            runtime, "users", store_config->credentials_path,
+            "users-email-find", temp_path, sizeof(temp_path), &options,
+            &json_error, error);
+        if (status == VECTIS_OK) {
+          json_status = LONEJSON_STATUS_OK;
+        } else if (status == VECTIS_ERR_INVALID) {
+          json_status = json_error.code;
+        }
       }
-    }
-    lonejson_json_value_cleanup(&item_value);
-    if (json_status != LONEJSON_STATUS_OK) {
-      status = vectis_auth_lonejson_error(error, json_status, &json_error,
-                                          "failed to read auth users");
-    } else if (!state.duplicate && state.record.found) {
-      if (strlen(state.record.username) >= username_out_size) {
-        vectis_set_error(error, VECTIS_ERR_INVALID,
-                         "auth email lookup output is too small");
-        status = VECTIS_ERR_INVALID;
-      } else {
-        memcpy(username_out, state.record.username,
-               strlen(state.record.username) + 1u);
-        *out_found = 1;
+      lonejson_json_value_cleanup(&item_value);
+      if (json_status != LONEJSON_STATUS_OK) {
+        status = vectis_auth_lonejson_error(error, json_status, &json_error,
+                                            "failed to read auth users");
+      } else if (!state.duplicate && state.record.found) {
+        if (strlen(state.record.username) >= username_out_size) {
+          vectis_set_error(error, VECTIS_ERR_INVALID,
+                           "auth email lookup output is too small");
+          status = VECTIS_ERR_INVALID;
+        } else {
+          memcpy(username_out, state.record.username,
+                 strlen(state.record.username) + 1u);
+          *out_found = 1;
+        }
       }
     }
   }
   if (lock.fd >= 0) {
     vectis_auth_lock_close(&lock);
   }
+  free(store_json);
   vectis_auth_unlink_temp_path(temp_path);
   lonejson_free(runtime);
   return status;

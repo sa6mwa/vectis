@@ -14755,6 +14755,7 @@ typedef struct vectis_auth_workflow_record {
   char principal[VECTIS_AUTH_PRINCIPAL_MAX + 1u];
   int principal_enrolled;
   char state_key_hash[65];
+  char route_policy_hash[65];
   char email[320];
   char email_token_hash[65];
   char return_path[2048];
@@ -14780,6 +14781,9 @@ static const lonejson_field vectis_auth_workflow_record_fields[] = {
                             "principal_enrolled"),
     LONEJSON_FIELD_STRING_FIXED_REQ(vectis_auth_workflow_record,
                                     state_key_hash, "state_key_hash",
+                                    LONEJSON_OVERFLOW_FAIL),
+    LONEJSON_FIELD_STRING_FIXED_REQ(vectis_auth_workflow_record,
+                                    route_policy_hash, "route_policy_hash",
                                     LONEJSON_OVERFLOW_FAIL),
     LONEJSON_FIELD_STRING_FIXED_OMIT_EMPTY(vectis_auth_workflow_record, email,
                                            "email", LONEJSON_OVERFLOW_FAIL),
@@ -14819,6 +14823,93 @@ static void vectis_auth_workflow_hex_encode(const unsigned char *source,
     out[2u * i + 1u] = digits[source[i] & 0x0fu];
   }
   out[2u * source_size] = '\0';
+}
+
+static int vectis_auth_workflow_hash_update_u64(EVP_MD_CTX *context,
+                                                uint64_t value) {
+  unsigned char bytes[8];
+  size_t i;
+
+  for (i = 0u; i < sizeof(bytes); ++i) {
+    bytes[sizeof(bytes) - 1u - i] = (unsigned char)(value & 0xffu);
+    value >>= 8u;
+  }
+  return EVP_DigestUpdate(context, bytes, sizeof(bytes)) == 1;
+}
+
+static int vectis_auth_workflow_hash_update_string(EVP_MD_CTX *context,
+                                                   const char *value) {
+  size_t value_size;
+
+  if (value == NULL) {
+    value_size = 0u;
+  } else {
+    value_size = strlen(value);
+  }
+  return vectis_auth_workflow_hash_update_u64(context, (uint64_t)value_size) &&
+         (value_size == 0u ||
+          EVP_DigestUpdate(context, value, value_size) == 1);
+}
+
+static vectis_status vectis_auth_workflow_route_policy_hash(
+    const vectis_auth_route_data *data, char out[65], vectis_error *error) {
+  static const char domain[] = "vectis.auth.workflow.route-policy.v1";
+  EVP_MD_CTX *context;
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned int digest_size;
+  size_t i;
+
+  if (data == NULL || out == NULL || data->path_prefix == NULL ||
+      data->workflow_state_key == NULL || data->steps == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow route policy is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  context = EVP_MD_CTX_new();
+  digest_size = 0u;
+  if (context == NULL || EVP_DigestInit_ex(context, EVP_sha256(), NULL) != 1 ||
+      !vectis_auth_workflow_hash_update_string(context, domain) ||
+      !vectis_auth_workflow_hash_update_string(context, data->path_prefix) ||
+      !vectis_auth_workflow_hash_update_string(context,
+                                                data->workflow_state_key) ||
+      !vectis_auth_workflow_hash_update_string(context,
+                                                data->store.credentials_path) ||
+      !vectis_auth_workflow_hash_update_string(context, data->store.state_path) ||
+      !vectis_auth_workflow_hash_update_string(context, data->credential_purpose) ||
+      !vectis_auth_workflow_hash_update_u64(context,
+                                            (uint64_t)data->step_count) ||
+      !vectis_auth_workflow_hash_update_u64(context,
+                                            data->workflow_ttl_seconds) ||
+      !vectis_auth_workflow_hash_update_u64(context,
+                                            (uint64_t)data->totp_window) ||
+      !vectis_auth_workflow_hash_update_u64(
+          context, (uint64_t)data->email_code_max_attempts)) {
+    EVP_MD_CTX_free(context);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to hash auth workflow route policy");
+    return VECTIS_ERR_STATE;
+  }
+  for (i = 0u; i < data->step_count; ++i) {
+    if (!vectis_auth_workflow_hash_update_u64(context,
+                                              (uint64_t)data->steps[i])) {
+      EVP_MD_CTX_free(context);
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to hash auth workflow route policy");
+      return VECTIS_ERR_STATE;
+    }
+  }
+  if (EVP_DigestFinal_ex(context, digest, &digest_size) != 1 ||
+      digest_size != 32u) {
+    EVP_MD_CTX_free(context);
+    OPENSSL_cleanse(digest, sizeof(digest));
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to hash auth workflow route policy");
+    return VECTIS_ERR_STATE;
+  }
+  EVP_MD_CTX_free(context);
+  vectis_auth_workflow_hex_encode(digest, digest_size, out);
+  OPENSSL_cleanse(digest, sizeof(digest));
+  return VECTIS_OK;
 }
 
 static vectis_status vectis_auth_workflow_now(uint64_t configured,
@@ -14952,6 +15043,12 @@ static vectis_status vectis_auth_workflow_create(
   }
   vectis_auth_workflow_hex_encode(digest, digest_size, record.state_key_hash);
   OPENSSL_cleanse(digest, sizeof(digest));
+  status = vectis_auth_workflow_route_policy_hash(
+      data, record.route_policy_hash, error);
+  if (status != VECTIS_OK) {
+    OPENSSL_cleanse(workflow_id, VECTIS_AUTH_WORKFLOW_ID_HEX_BYTES + 1u);
+    return status;
+  }
   record.expires_at = (lonejson_int64)(now + data->workflow_ttl_seconds);
   record.cleanup_at = record.expires_at;
   record.email_max_attempts = data->email_code_max_attempts;
@@ -14996,6 +15093,20 @@ static vectis_status vectis_auth_workflow_load(
                                    error);
   if (status != VECTIS_OK) {
     return status;
+  }
+  {
+    char route_policy_hash[65];
+
+    status = vectis_auth_workflow_route_policy_hash(data, route_policy_hash,
+                                                     error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+    if (strcmp(record->route_policy_hash, route_policy_hash) != 0) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "auth workflow belongs to another route policy");
+      return VECTIS_ERR_INVALID;
+    }
   }
   status = vectis_auth_workflow_now(data->unix_seconds, &now, error);
   if (status != VECTIS_OK) {

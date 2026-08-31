@@ -3624,12 +3624,14 @@ static void assert_kore_smoke(void) {
   vectis_webdav_config webdav_storage;
   vectis_webdav_mount_config webdav_mount;
   vectis_auth_store_config auth_store;
+  vectis_auth_store_config empty_auth_store;
   vectis_auth_user_config auth_user;
   vectis_auth_user_enrollment auth_enrollment;
   vectis_auth_routes_config auth_routes;
   vectis_auth_workflow_step password_totp_steps[2];
   vectis_auth_workflow_step invalid_totp_steps[1];
   vectis_auth_workflow_step email_steps[1];
+  vectis_auth_smtp_config email_smtp;
   vectis_auth_browser_session_config browser_session;
   vectis_auth_browser_session_config foreign_browser_session;
   vectis_auth_native_provider_config native_auth;
@@ -3685,6 +3687,7 @@ static void assert_kore_smoke(void) {
   char webdav_cache_dir[] = "/tmp/vectis-runtime-webdav.XXXXXX";
   char body_spool_dir[] = "/tmp/vectis-runtime-body-spool.XXXXXX";
   char body_spool_child_dir[4096];
+  char empty_auth_store_path[4096];
   const char *webdav_headers[] = {"x-vectis-webdav-auth: ok"};
   const char *webdav_required_headers[] = {"x-vectis-webdav-auth: required"};
   const char *webdav_deny_headers[] = {"x-vectis-webdav-auth: deny"};
@@ -3865,10 +3868,15 @@ static void assert_kore_smoke(void) {
          sizeof(static_module_body) - 1u);
   assert(fclose(fp) == 0);
   assert(mkdtemp(webdav_cache_dir) != NULL);
+  written = snprintf(empty_auth_store_path, sizeof(empty_auth_store_path),
+                     "%s/empty-auth.json", webdav_cache_dir);
+  assert(written > 0 && (size_t)written < sizeof(empty_auth_store_path));
   (void)remove(auth_store_path);
   (void)remove(access_log_path);
   vectis_auth_store_config_init(&auth_store);
   auth_store.credentials_path = auth_store_path;
+  vectis_auth_store_config_init(&empty_auth_store);
+  empty_auth_store.credentials_path = empty_auth_store_path;
   status = vectis_auth_store_init(&auth_store, &error);
   assert(status == VECTIS_OK);
   vectis_auth_user_config_init(&auth_user);
@@ -4110,6 +4118,36 @@ static void assert_kore_smoke(void) {
   auth_routes.unix_seconds = 59u;
   password_totp_steps[0] = VECTIS_AUTH_WORKFLOW_STEP_PASSWORD;
   password_totp_steps[1] = VECTIS_AUTH_WORKFLOW_STEP_TOTP;
+  auth_routes.steps = password_totp_steps;
+  auth_routes.step_count = 2u;
+  status = app->auth_routes(app, &auth_routes, &error);
+  assert(status == VECTIS_OK);
+  vectis_auth_smtp_config_init(&email_smtp);
+  email_smtp.url = "smtp://127.0.0.1:1";
+  email_smtp.mail_from = "login@example.com";
+  vectis_auth_routes_config_init(&auth_routes);
+  auth_routes.path_prefix = "/auth-first-email";
+  auth_routes.store = empty_auth_store;
+  auth_routes.unix_seconds = 59u;
+  auth_routes.steps = email_steps;
+  auth_routes.step_count = 1u;
+  auth_routes.email_smtp = email_smtp;
+  status = app->auth_routes(app, &auth_routes, &error);
+  assert(status == VECTIS_OK);
+  vectis_auth_routes_config_init(&auth_routes);
+  auth_routes.path_prefix = "/auth-cross-a";
+  auth_routes.store = auth_store;
+  auth_routes.credential_purpose = "cross-a";
+  auth_routes.unix_seconds = 59u;
+  auth_routes.steps = password_totp_steps;
+  auth_routes.step_count = 2u;
+  status = app->auth_routes(app, &auth_routes, &error);
+  assert(status == VECTIS_OK);
+  vectis_auth_routes_config_init(&auth_routes);
+  auth_routes.path_prefix = "/auth-cross-b";
+  auth_routes.store = auth_store;
+  auth_routes.credential_purpose = "cross-b";
+  auth_routes.unix_seconds = 59u;
   auth_routes.steps = password_totp_steps;
   auth_routes.step_count = 2u;
   status = app->auth_routes(app, &auth_routes, &error);
@@ -4717,6 +4755,22 @@ static void assert_kore_smoke(void) {
   assert(vectis_http_response_header(&auth_key_response, "set-cookie") == NULL);
   vectis_http_response_cleanup(&auth_key_response);
 
+  /* A first-use email workflow returns the opaque pending state rather than
+   * failing while no user credentials file has been created. */
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/auth-first-email/m2m/start");
+  request.content_type = "application/json";
+  request.body = "{\"email\":\"new-user@example.com\"}";
+  request.body_size = strlen((const char *)request.body);
+  status = vectis_http_execute(&http, &request, &auth_bad_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_bad_response.status_code == 202L);
+  assert(bytes_contain(auth_bad_response.body, auth_bad_response.body_size,
+                       "\"step\":\"email_code\""));
+  vectis_http_response_cleanup(&auth_bad_response);
+
   /* A password+TOTP workflow exposes only the next TOTP step. */
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_POST;
@@ -4747,6 +4801,57 @@ static void assert_kore_smoke(void) {
   request.method = VECTIS_HTTP_POST;
   request.url = format_loopback_http_url(url, sizeof(url), port,
                                          "/auth-totp-required/m2m/continue");
+  request.content_type = "application/json";
+  request.body = auth_totp_form;
+  request.body_size = strlen(auth_totp_form);
+  status = vectis_http_execute(&http, &request, &auth_key_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_key_response.status_code == 201L);
+  assert(bytes_contain(auth_key_response.body, auth_key_response.body_size,
+                       "\"complete\":true"));
+  vectis_http_response_cleanup(&auth_key_response);
+
+  /* Workflow state is bound to the route policy, even when routes share the
+   * default Lockd namespace. */
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/auth-cross-a/m2m/start");
+  request.content_type = "application/json";
+  request.body =
+      "{\"username\":\"runtime-totp\",\"password\":\"runtime-totp-password\"}";
+  request.body_size = strlen((const char *)request.body);
+  status = vectis_http_execute(&http, &request, &auth_bad_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_bad_response.status_code == 202L);
+  assert(runtime_json_string_value(auth_bad_response.body,
+                                   auth_bad_response.body_size, "workflow",
+                                   auth_workflow_id,
+                                   sizeof(auth_workflow_id)));
+  vectis_http_response_cleanup(&auth_bad_response);
+
+  written = snprintf(auth_totp_form, sizeof(auth_totp_form),
+                     "{\"workflow\":\"%s\",\"code\":\"%s\"}",
+                     auth_workflow_id, auth_totp_code);
+  assert(written > 0 && (size_t)written < sizeof(auth_totp_form));
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/auth-cross-b/m2m/continue");
+  request.content_type = "application/json";
+  request.body = auth_totp_form;
+  request.body_size = strlen(auth_totp_form);
+  status = vectis_http_execute(&http, &request, &auth_bad_response, &error);
+  assert(status == VECTIS_OK);
+  assert(auth_bad_response.status_code == 401L);
+  assert(bytes_contain(auth_bad_response.body, auth_bad_response.body_size,
+                       "authentication_failed"));
+  vectis_http_response_cleanup(&auth_bad_response);
+
+  vectis_http_request_init(&request);
+  request.method = VECTIS_HTTP_POST;
+  request.url = format_loopback_http_url(url, sizeof(url), port,
+                                         "/auth-cross-a/m2m/continue");
   request.content_type = "application/json";
   request.body = auth_totp_form;
   request.body_size = strlen(auth_totp_form);
