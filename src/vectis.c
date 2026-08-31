@@ -15051,7 +15051,9 @@ static vectis_status vectis_auth_workflow_create(
   }
   record.expires_at = (lonejson_int64)(now + data->workflow_ttl_seconds);
   record.cleanup_at = record.expires_at;
-  record.email_max_attempts = data->email_code_max_attempts;
+  record.email_max_attempts = data->email_code_max_attempts != 0u
+                                  ? data->email_code_max_attempts
+                                  : VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS;
   status = vectis_lockd_state_save(client, key, "vectis-auth-workflow", 30L,
                                    &vectis_auth_workflow_record_map, &record,
                                    error);
@@ -16290,6 +16292,9 @@ vectis_status vectis_register_webdav_embedded_site(
   return vectis_register_webdav(app, &mount, error);
 }
 
+static int vectis_auth_workflow_steps_valid(
+    const vectis_auth_workflow_step *steps, size_t step_count);
+
 static vectis_auth_route_data *
 vectis_auth_route_data_new(const vectis_auth_routes_config *config,
                            const char *path_prefix, vectis_error *error) {
@@ -16300,6 +16305,13 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   size_t len;
   size_t i;
 
+  if (config == NULL ||
+      !vectis_auth_workflow_steps_valid(config->steps, config->step_count)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth workflow steps must be email_code, password, "
+                     "and optional trailing totp");
+    return NULL;
+  }
   total = sizeof(*data);
   total += config->store.credentials_path != NULL
                ? strlen(config->store.credentials_path) + 1u
@@ -16372,8 +16384,12 @@ vectis_auth_route_data_new(const vectis_auth_routes_config *config,
   data->unix_seconds = config->unix_seconds;
   data->totp_window = config->totp_window;
   data->step_count = config->step_count != 0u ? config->step_count : 1u;
-  data->workflow_ttl_seconds = config->workflow_ttl_seconds;
-  data->email_code_max_attempts = config->email_code_max_attempts;
+  data->workflow_ttl_seconds = config->workflow_ttl_seconds != 0u
+                                   ? config->workflow_ttl_seconds
+                                   : VECTIS_AUTH_WORKFLOW_DEFAULT_TTL_SECONDS;
+  data->email_code_max_attempts = config->email_code_max_attempts != 0u
+                                      ? config->email_code_max_attempts
+                                      : VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS;
   data->browser_session = config->browser_session;
   data->email_smtp = config->email_smtp;
   cursor = (char *)(data + 1);
@@ -18535,6 +18551,15 @@ vectis_register_auth_routes(vectis_app *app,
   } else {
     effective = config;
   }
+  resolved = *effective;
+  if (resolved.workflow_ttl_seconds == 0u) {
+    resolved.workflow_ttl_seconds = VECTIS_AUTH_WORKFLOW_DEFAULT_TTL_SECONDS;
+  }
+  if (resolved.email_code_max_attempts == 0u) {
+    resolved.email_code_max_attempts =
+        VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS;
+  }
+  effective = &resolved;
   if (effective->store.credentials_path == NULL ||
       effective->store.credentials_path[0] == '\0') {
     vectis_set_error(error, VECTIS_ERR_INVALID,
@@ -18562,8 +18587,7 @@ vectis_register_auth_routes(vectis_app *app,
     return VECTIS_ERR_INVALID;
   }
   if (effective->workflow_state_key == NULL ||
-      effective->workflow_state_key[0] == '\0' ||
-      effective->workflow_ttl_seconds == 0u) {
+      effective->workflow_state_key[0] == '\0') {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "auth workflow Lockd state configuration is invalid");
     return VECTIS_ERR_INVALID;
@@ -18589,7 +18613,6 @@ vectis_register_auth_routes(vectis_app *app,
     free(path_prefix);
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
   }
-  resolved = *effective;
   status = vectis_auth_resolve_browser_template(effective, &browser_template_html,
                                                 error);
   if (status != VECTIS_OK) {

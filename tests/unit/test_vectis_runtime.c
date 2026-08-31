@@ -3631,6 +3631,7 @@ static void assert_kore_smoke(void) {
   vectis_auth_workflow_step password_totp_steps[2];
   vectis_auth_workflow_step invalid_totp_steps[1];
   vectis_auth_workflow_step email_steps[1];
+  vectis_auth_workflow_step oversized_steps[4];
   vectis_auth_smtp_config email_smtp;
   vectis_auth_browser_session_config browser_session;
   vectis_auth_browser_session_config foreign_browser_session;
@@ -4093,6 +4094,18 @@ static void assert_kore_smoke(void) {
   assert(status == VECTIS_ERR_INVALID);
   assert(strstr(error.message, "workflow steps") != NULL);
   vectis_error_clear(&error);
+  oversized_steps[0] = VECTIS_AUTH_WORKFLOW_STEP_PASSWORD;
+  oversized_steps[1] = VECTIS_AUTH_WORKFLOW_STEP_TOTP;
+  oversized_steps[2] = VECTIS_AUTH_WORKFLOW_STEP_PASSWORD;
+  oversized_steps[3] = VECTIS_AUTH_WORKFLOW_STEP_TOTP;
+  vectis_auth_routes_config_init(&auth_routes);
+  auth_routes.store = auth_store;
+  auth_routes.steps = oversized_steps;
+  auth_routes.step_count = 4u;
+  status = vectis_auth_workflow_cleanup(app, &auth_routes, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(strstr(error.message, "workflow steps") != NULL);
+  vectis_error_clear(&error);
   vectis_auth_routes_config_init(&auth_routes);
   auth_routes.path_prefix = "/auth-email-without-smtp";
   auth_routes.store = auth_store;
@@ -4116,6 +4129,7 @@ static void assert_kore_smoke(void) {
   auth_routes.store = auth_store;
   auth_routes.login_title = "Runtime Explicit TOTP Login";
   auth_routes.unix_seconds = 59u;
+  auth_routes.workflow_ttl_seconds = 0u;
   password_totp_steps[0] = VECTIS_AUTH_WORKFLOW_STEP_PASSWORD;
   password_totp_steps[1] = VECTIS_AUTH_WORKFLOW_STEP_TOTP;
   auth_routes.steps = password_totp_steps;
@@ -4131,6 +4145,7 @@ static void assert_kore_smoke(void) {
   auth_routes.unix_seconds = 59u;
   auth_routes.steps = email_steps;
   auth_routes.step_count = 1u;
+  auth_routes.email_code_max_attempts = 0u;
   auth_routes.email_smtp = email_smtp;
   status = app->auth_routes(app, &auth_routes, &error);
   assert(status == VECTIS_OK);
