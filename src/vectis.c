@@ -18412,6 +18412,22 @@ static char *vectis_auth_route_prefix_normalize(const char *prefix,
   return normalized;
 }
 
+static int vectis_auth_browser_cookie_path_covers_request(
+    const char *cookie_path, const char *request_path) {
+  size_t cookie_path_size;
+
+  if (cookie_path == NULL || request_path == NULL || cookie_path[0] == '\0') {
+    return 0;
+  }
+  cookie_path_size = strlen(cookie_path);
+  if (strncmp(cookie_path, request_path, cookie_path_size) != 0) {
+    return 0;
+  }
+  return request_path[cookie_path_size] == '\0' ||
+         cookie_path[cookie_path_size - 1u] == '/' ||
+         request_path[cookie_path_size] == '/';
+}
+
 static vectis_status vectis_register_auth_route_one(
     vectis_app *app, const vectis_auth_routes_config *config,
     const char *path_prefix, const char *suffix, vectis_http_method method,
@@ -18580,12 +18596,17 @@ vectis_register_auth_routes(vectis_app *app,
   vectis_auth_routes_config resolved;
   vectis_status status;
   vectis_app_impl *impl;
+  const char *browser_cookie_path;
   char *path_prefix;
+  char *browser_continue_path;
+  char *browser_logout_path;
   char *browser_template_html;
   size_t i;
   int email_code_required;
 
   browser_template_html = NULL;
+  browser_continue_path = NULL;
+  browser_logout_path = NULL;
   if (app == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "app is required");
     return VECTIS_ERR_INVALID;
@@ -18669,6 +18690,38 @@ vectis_register_auth_routes(vectis_app *app,
                                  error) != VECTIS_OK) {
     free(path_prefix);
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (effective->browser_session.mode ==
+      VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER) {
+    browser_cookie_path = effective->browser_session.cookie_path != NULL &&
+                                  effective->browser_session.cookie_path[0] != '\0'
+                              ? effective->browser_session.cookie_path
+                              : "/";
+    browser_continue_path =
+        vectis_join_route_prefix(path_prefix, "/continue", error);
+    browser_logout_path = vectis_join_route_prefix(path_prefix, "/logout", error);
+    if (browser_continue_path == NULL || browser_logout_path == NULL) {
+      free(browser_continue_path);
+      free(browser_logout_path);
+      free(path_prefix);
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    }
+    if (!vectis_auth_browser_cookie_path_covers_request(
+            browser_cookie_path, browser_continue_path) ||
+        !vectis_auth_browser_cookie_path_covers_request(
+            browser_cookie_path, browser_logout_path)) {
+      vectis_set_errorf(
+          error,
+          VECTIS_ERR_INVALID,
+          "browser session cookie_path %s must cover auth routes %s and %s",
+          browser_cookie_path, browser_continue_path, browser_logout_path);
+      free(browser_continue_path);
+      free(browser_logout_path);
+      free(path_prefix);
+      return VECTIS_ERR_INVALID;
+    }
+    free(browser_continue_path);
+    free(browser_logout_path);
   }
   status = vectis_auth_resolve_browser_template(effective, &browser_template_html,
                                                 error);

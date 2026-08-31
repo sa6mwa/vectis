@@ -44,7 +44,10 @@ typedef struct vectis_auth_browser_session_config {
   vectis_auth_browser_session_mode mode;
   /* Cookie name. Zero/default is "vectis_session". */
   const char *cookie_name;
-  /* Cookie Path attribute. Zero/default is "/". */
+  /*
+   * Cookie Path attribute. Zero/default is "/". For browser auth routes,
+   * the path must cover both <path_prefix>/continue and <path_prefix>/logout.
+   */
   const char *cookie_path;
   /* Session audience. Zero/default is "browser". */
   const char *purpose;

@@ -238,6 +238,10 @@ required field. Browser-capable workflows require `tls.mode = "manual"` or
 always `Secure`. M2M-only workflows never issue cookies and remain available
 without TLS where that is otherwise appropriate.
 
+When setting `browser_session.cookie_path`, make it cover both the browser
+continuation and logout routes. For example, `cookie_path = "/app"` can serve
+an auth workflow at `/app/auth`, while it cannot serve one at `/_vectis/auth`.
+
 Set `steps` to one of these ordered policies:
 
 - `{"password"}` or `{"password", "totp"}`

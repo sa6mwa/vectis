@@ -81,6 +81,32 @@ local server = assert(vectis.app.new({
     endpoints = {"pouch://" .. pouch_dir .. "?single_writer=false"},
   },
 }))
+local covered_cookie_route, covered_cookie_route_err = server:auth_routes({
+  path_prefix = "/app/auth",
+  credentials_path = auth_path,
+  browser_session = {
+    mode = "m2m_and_browser",
+    cookie_path = "/app",
+    purpose = "lua-covered-browser",
+    state_key = "lua.covered-browser-session",
+  },
+})
+assert(covered_cookie_route == true, covered_cookie_route_err and
+    covered_cookie_route_err.message)
+local invalid_cookie_route, invalid_cookie_route_err = server:auth_routes({
+  path_prefix = "/invalid-cookie-path",
+  credentials_path = auth_path,
+  browser_session = {
+    mode = "m2m_and_browser",
+    cookie_path = "/app",
+    purpose = "lua-invalid-browser",
+    state_key = "lua.invalid-browser-session",
+  },
+})
+assert(invalid_cookie_route == nil)
+assert(type(invalid_cookie_route_err) == "table")
+assert(invalid_cookie_route_err.status == vectis.ERR_INVALID)
+assert(invalid_cookie_route_err.message:find("cookie_path", 1, true))
 assert(server:auth_routes({
   path_prefix = "/auth",
   credentials_path = auth_path,
