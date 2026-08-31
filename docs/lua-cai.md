@@ -6,7 +6,7 @@ Vectis should add only service-integration glue around CAI when a workflow needs
 to cross Vectis-owned concepts such as routes, lockd payloads, files, logging,
 or auth.
 
-The pinned CAI dependency is `0.4.0`. The module is preloaded and also
+The pinned CAI dependency is `0.5.0`. The module is preloaded and also
 available as `require("vectis").libs.cai`; both names return the same module
 table.
 
@@ -133,8 +133,45 @@ and a `client` table with copied CAI client defaults such as `api_key`,
 tool implementation uses the `app:mcp()` request broker and an owner-state
 mailbox pump. Managed CAI workers must publish copied events only.
 
-Agent-mode ownership is documented in
-[CAI Agent And Vectis Integration](cai-agent-vectis-integration.md). The short
-version is that CAI owns agent orchestration, tool/session contracts, and model
-behavior; Vectis supplies host adapters for lockdc/pouch state, routes,
-services, auth, and dependency-backed tools.
+## Agent Smith
+
+`require("vectis.smith")` is the non-TUI facade for CAI's built-in Smith
+preset. CAI still owns the agent loop, provider protocol, tool semantics,
+steering, queued turns, and session journal format. The facade keeps Vectis
+applications on the same error and ownership conventions as the rest of the
+Lua surface:
+
+```lua
+local smith = require("vectis.smith")
+
+local runtime, err = smith.open({
+  workspace_directory = ".",
+  client_config = { api_key_env = "OPENAI_API_KEY" },
+  runtime = {
+    session_id = "release-notes",
+    event_callback = function(event)
+      if event.type == "text_delta" then
+        io.write(event.data)
+      end
+    end,
+  },
+})
+assert(runtime, err and err.message)
+assert(runtime:submit("Draft the release notes."))
+while runtime:state() ~= "completed" do
+  assert(runtime:pump(100))
+end
+runtime:close()
+```
+
+Use `runtime:steer(text)` to add direction at CAI's next safe boundary and
+`runtime:queue(text)` to add a FIFO turn after the active turn. The Lua facade
+does not own a terminal UI; use `vectis -a smith` for Softline presentation.
+When Lua needs durable state, pass CAI's typed `session_store` handle in the
+runtime options. C hosts can use Vectis's LockDC adapter directly; see
+[Agent Smith](agent-smith.md).
+
+Vectis deliberately does not turn agent mode into a second AI SDK. CAI owns
+agent orchestration, tool/session contracts, and model behavior; Vectis
+supplies host adapters for LockDC/Pouch state, service lifecycle, auth, and
+dependency-backed tools.

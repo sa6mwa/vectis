@@ -40,7 +40,7 @@ one deployable package:
 - SSH command execution and SFTP transfers through libssh2.
 - OpenSSL-backed key, CSR, certificate, CA, and PEM bundle workflows.
 - Structured logging through `libpslog`.
-- CAI-backed OpenAI API, agent, tool, and MCP primitives.
+- CAI-backed OpenAI API, Agent Smith, tool, and MCP primitives.
 - libmdf-backed Markdown rendering for terminal and HTML output.
 - Native ordered browser and M2M authentication workflows, Lockd-backed
   browser sessions, issued credentials, and auth providers for API and WebDAV
@@ -62,7 +62,8 @@ archive cache. The current expected dependency set is:
   storage support.
 - `lonejson` 0.42.0 for typed JSON parsing, serialization, streaming arrays,
   spooled fields, and C/Lua bindings.
-- `cai` 0.4.0 for OpenAI API, agent, tool, MCP, and Lua binding sources.
+- `cai` 0.5.0 for OpenAI API, agent runtime, Smith preset, tool, MCP, and Lua
+  binding sources.
 - `liblql` 0.2.0 for the LQL dependency exposed by `liblockdc` 0.13.1.
 - `libmdf` 0.8.0 for Markdown-to-ANSI/HTML rendering, terminal paging, and Lua
   binding sources.
@@ -189,6 +190,11 @@ protocol layer. The intended Vectis role is to make CAI usable beside ordinary
 service work: lockd-backed state, HTTP routes, queue consumers, tool callbacks,
 MCP integration, and OpenAI API calls should share the same logging,
 configuration, and packaging story.
+
+The `vectis -a smith` action hosts CAI's interactive Smith coding preset with
+LockDC-backed durable sessions, streaming Markdown terminal output, and a
+workspace-rooted terminal tool. Its non-TUI Lua counterpart is
+`require("vectis.smith")`. See [Agent Smith](docs/agent-smith.md).
 
 libmdf and softline provide the Markdown rendering, terminal paging, and line
 editing facilities used by the executable and exposed through their bundled Lua

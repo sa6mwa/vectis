@@ -66,6 +66,10 @@ Major groups:
   fingerprint pinning through `host_key_sha256`.
 - MQTT: `vectis_mqtt_config`, publish, and JSON publish helpers.
 - Certificates: key, CSR, bundle, CA, validation, and inspection workflows.
+- Agent Smith: `vectis_smith_store` adapts durable LockDC state to CAI session
+  callbacks; `vectis_smith` provides owner-thread Smith open, submit,
+  steering, queued-turn, pump, state, and wakeup-fd operations. See
+  [Agent Smith](agent-smith.md).
 
 ## Lua Surface
 
@@ -79,6 +83,7 @@ Lua docs:
 - [Lua auth](lua-auth.md)
 - [Lua certificates](lua-certs.md)
 - [Lua CAI](lua-cai.md)
+- [Agent Smith](agent-smith.md)
 - [Lua curl](lua-curl.md)
 - [Lua DSV](lua-dsv.md)
 - [Lua HTTP](lua-http.md)

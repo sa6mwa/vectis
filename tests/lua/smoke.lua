@@ -282,6 +282,19 @@ assert(type(embedded.list) == "function")
 assert(type(embedded.extract) == "function")
 assert(vectis.log == log)
 assert(vectis.cai == vcai)
+do
+  local smith = require("vectis.smith")
+  local smith_config = smith.config({
+    workspace_directory = ".",
+    client_config = { api_key_env = "VECTIS_TEST_SMITH_KEY" },
+    runtime = { session_id = "smoke-session" },
+  })
+  assert(vectis.smith == smith)
+  assert(smith_config.client == nil)
+  assert(smith_config.client_config.api_key_env == "VECTIS_TEST_SMITH_KEY")
+  assert(smith_config.runtime.workspace_directory == ".")
+  assert(smith_config.runtime.session_id == "smoke-session")
+end
 assert(vcai.native == cai)
 assert(vcai.tool_schema == cai.tool_schema)
 assert(vcai.response_params == cai.response_params)

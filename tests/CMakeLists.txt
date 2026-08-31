@@ -106,6 +106,45 @@ if(TARGET vectis_bin)
   set_tests_properties(vectis_cli_version PROPERTIES
     LABELS "smoke;local"
     TIMEOUT 30)
+  add_executable(vectis_smith_cli_stream
+    unit/test_vectis_smith_cli_stream.c)
+  target_include_directories(vectis_smith_cli_stream PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/src"
+    "${VECTIS_EXTERNAL_ROOT}/include")
+  target_compile_definitions(vectis_smith_cli_stream PRIVATE
+    _POSIX_C_SOURCE=200809L)
+  target_link_libraries(vectis_smith_cli_stream PRIVATE
+    ${vectis_test_link_target}
+    cai::cai_static
+    libmdf::mdf_static
+    softline::softline_static)
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(vectis_smith_cli_stream PRIVATE m)
+  endif()
+  set_target_properties(vectis_smith_cli_stream PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF)
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(vectis_smith_cli_stream PRIVATE
+      -std=c99
+      -UNDEBUG
+      -Wall
+      -Wextra
+      -Werror
+      -Wpedantic
+      -Wstrict-prototypes
+      -Wmissing-prototypes
+      -Wshadow
+      -Wpointer-arith
+      -Wcast-qual
+      -Wwrite-strings)
+  endif()
+  add_test(NAME vectis_smith_cli_stream COMMAND vectis_smith_cli_stream)
+  set_tests_properties(vectis_smith_cli_stream PROPERTIES
+    LABELS "cli;unit;local"
+    TIMEOUT 30)
   add_test(NAME vectis_lua_smoke
            COMMAND vectis_bin "${CMAKE_SOURCE_DIR}/tests/lua/smoke.lua" first second)
   set_tests_properties(vectis_lua_smoke PROPERTIES

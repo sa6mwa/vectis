@@ -62,6 +62,7 @@
 #include "vectis_opcua_lua.h"
 #include "vectis_pslog_lua_init.h"
 #include "vectis_rest_lua_init.h"
+#include "vectis_smith_lua_init.h"
 #include "vectis_smtp_lua_init.h"
 #include "vectis_status_lua_init.h"
 #include "vectis_terminal_lua_init.h"
@@ -722,7 +723,8 @@ static void vectis_cli_usage(FILE *stream) {
         "  unpack                     Extract a packed application.\n"
         "  credentials                Issue, verify, or revoke credentials.\n"
         "  users                      Manage users, logins, and WebDAV keys.\n"
-        "  oauth2                     Run and persist OAuth 2.0/OIDC flows.\n\n"
+        "  oauth2                     Run and persist OAuth 2.0/OIDC flows.\n"
+        "  smith                      Run the interactive Agent Smith.\n\n"
         "Action help:\n"
         "  vectis --action ACTION --help\n\n"
         "Examples:\n"
@@ -760,6 +762,26 @@ static int vectis_cli_action_usage(FILE *stream, const char *action) {
         "  --output-dir DIR           Write selected modules below DIR.\n"
         "  -f, --force                Replace existing output files.\n\n"
         "With no selector, source lists available modules and resources.\n",
+        stream);
+    return 0;
+  }
+  if (strcmp(action, "smith") == 0) {
+    fputs(
+        "Usage:\n"
+        "  vectis --action smith [OPTIONS]\n"
+        "  vectis --action smith [OPTIONS] -e PROMPT\n\n"
+        "Run CAI's Smith preset in the current workspace. Without -e, an\n"
+        "interactive Softline editor supports direct steering and Tab-queued\n"
+        "follow-up turns. -e submits one turn and exits after it completes.\n"
+        "ChatGPT auth state is preferred; OPENAI_API_KEY is a fallback.\n\n"
+        "Options:\n"
+        "  -e, --execute PROMPT       Submit one turn, then exit.\n"
+        "  -s, --session ID           Resume or create this session.\n"
+        "  -w, --workspace DIR        Root Smith's file and terminal tools "
+        "here.\n"
+        "      --state-endpoint URL   LockDC endpoint for durable state.\n"
+        "      --state-namespace NAME LockDC namespace (default: "
+        "vectis.smith).\n",
         stream);
     return 0;
   }
@@ -3964,6 +3986,9 @@ static int vectis_action_command(int argc, char **argv, int index) {
   if (strcmp(action, "oauth2") == 0) {
     return vectis_cli_oauth2_command(argc, argv, index);
   }
+  if (strcmp(action, "smith") == 0) {
+    return vectis_smith_cli_command(argc, argv, index);
+  }
   fprintf(stderr, "vectis: unknown action: %s\n", action);
   return 64;
 }
@@ -3971,7 +3996,7 @@ static int vectis_action_command(int argc, char **argv, int index) {
 static int vectis_cli_preempts_embedded_app(const char *action) {
   return action != NULL &&
          (strcmp(action, "docs") == 0 || strcmp(action, "source") == 0 ||
-          strcmp(action, "unpack") == 0);
+          strcmp(action, "unpack") == 0 || strcmp(action, "smith") == 0);
 }
 
 static void vectis_pack_make_footer(
@@ -20940,6 +20965,12 @@ static int luaopen_vectis(lua_State *lua) {
   }
   lua_setfield(lua, -2, "cai");
   lua_getglobal(lua, "require");
+  lua_pushliteral(lua, "vectis.smith");
+  if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
+    return lua_error(lua);
+  }
+  lua_setfield(lua, -2, "smith");
+  lua_getglobal(lua, "require");
   lua_pushliteral(lua, "vectis.webdav");
   if (lua_pcall(lua, 1, 1, 0) != LUA_OK) {
     return lua_error(lua);
@@ -22691,6 +22722,12 @@ vectis_lua_register_modules(cpkt_lua_runtime *runtime) {
   status = cpkt_lua_runtime_register_lua_module(
       runtime, "vectis.cai", vectis_cai_lua_init, sizeof(vectis_cai_lua_init),
       "vectis.cai");
+  if (status != CPKT_LUA_RUNTIME_OK) {
+    return status;
+  }
+  status = cpkt_lua_runtime_register_lua_module(
+      runtime, "vectis.smith", vectis_smith_lua_init,
+      sizeof(vectis_smith_lua_init), "vectis.smith");
   if (status != CPKT_LUA_RUNTIME_OK) {
     return status;
   }

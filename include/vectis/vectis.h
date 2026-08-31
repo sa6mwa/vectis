@@ -4,8 +4,10 @@
 #ifndef LONEJSON_WITH_CURL
 #define LONEJSON_WITH_CURL 1
 #endif
+#include <cai/agent_runtime.h>
 #include <cai/cai.h>
 #include <cai/mcp.h>
+#include <cai/session_store.h>
 #include <cpkt/opcua.h>
 #include <curl/curl.h>
 #include <lonejson.h>
@@ -98,6 +100,8 @@ typedef struct vectis_embedded_fs vectis_embedded_fs;
 typedef struct vectis_sftp vectis_sftp;
 typedef struct vectis_ssh vectis_ssh;
 typedef struct vectis_ssh_sftp_session vectis_ssh_sftp_session;
+typedef struct vectis_smith_store vectis_smith_store;
+typedef struct vectis_smith vectis_smith;
 typedef struct vectis_ssh_sftp_file vectis_ssh_sftp_file;
 typedef struct vectis_ssh_sftp_dir vectis_ssh_sftp_dir;
 typedef struct vectis_mqtt vectis_mqtt;
@@ -3067,6 +3071,73 @@ vectis_status vectis_cai_output_enqueue(cai_output *output,
                                         const struct lc_enqueue_req *request,
                                         struct lc_enqueue_res *out,
                                         vectis_error *error);
+
+/** Configuration for a durable CAI agent-session store backed by LockDC.
+ * `client` is borrowed and must remain open until the store and every Smith
+ * runtime using it have been closed. `owner` and `lease_ttl_seconds` select
+ * the LockDC lease used to serialize updates; NULL/zero choose safe defaults.
+ */
+typedef struct vectis_smith_store_config {
+  struct lc_client *client;
+  const char *owner;
+  long lease_ttl_seconds;
+} vectis_smith_store_config;
+
+/** Initialize a zero-defaultable LockDC Smith-store configuration. */
+void vectis_smith_store_config_init(vectis_smith_store_config *config);
+/** Open a LockDC-backed durable CAI agent-session store. */
+vectis_status vectis_smith_store_new(const vectis_smith_store_config *config,
+                                     vectis_smith_store **out,
+                                     vectis_error *error);
+/** Close a Smith store after every runtime borrowing it has been closed. */
+void vectis_smith_store_destroy(vectis_smith_store *store);
+/** Return the CAI callback store borrowed from `store`. */
+const cai_agent_session_store *
+vectis_smith_store_session_store(const vectis_smith_store *store);
+
+/** Configuration for the Vectis facade over CAI's built-in Smith runtime.
+ * Supply either `client` (borrowed) or `client_config` to create a client.
+ * When `store` is supplied, its durable LockDC callbacks replace
+ * `runtime.session_store`; callers must not set both. CAI owns the model loop,
+ * preset, event semantics, steering, and queued turns.
+ */
+typedef struct vectis_smith_config {
+  cai_client *client;
+  cai_client_config client_config;
+  cai_agent_runtime_config runtime;
+  vectis_smith_store *store;
+} vectis_smith_config;
+
+/** Initialize a Smith configuration using CAI's Smith preset defaults. */
+void vectis_smith_config_init(vectis_smith_config *config);
+/** Open the owner-thread Smith runtime. */
+vectis_status vectis_smith_open(const vectis_smith_config *config,
+                                vectis_smith **out, vectis_error *error);
+/** Close a Smith runtime and any CAI client created by Vectis. */
+void vectis_smith_close(vectis_smith *smith);
+/** Return the borrowed underlying CAI runtime for advanced composition. */
+cai_agent_runtime *vectis_smith_runtime(vectis_smith *smith);
+/** Submit an immediate turn while Smith is idle or completed. */
+vectis_status vectis_smith_submit(vectis_smith *smith, const char *text,
+                                  vectis_error *error);
+/** Queue steering for CAI's next safe model or tool boundary. */
+vectis_status vectis_smith_submit_steering(vectis_smith *smith,
+                                           const char *text,
+                                           vectis_error *error);
+/** Queue a FIFO turn after the active turn completes. */
+vectis_status vectis_smith_submit_queued(vectis_smith *smith, const char *text,
+                                         vectis_error *error);
+/** Pump events from the owner thread. */
+vectis_status vectis_smith_pump(vectis_smith *smith, long timeout_ms,
+                                vectis_error *error);
+/** Return the borrowed runtime wakeup fd for poll-loop integration. */
+vectis_status vectis_smith_wakeup_fd(const vectis_smith *smith, int *out_fd,
+                                     vectis_error *error);
+/** Return Smith's owner-thread run state. */
+vectis_status vectis_smith_state(vectis_smith *smith, cai_agent_run_state *out,
+                                 vectis_error *error);
+/** Return Smith's stable session id, borrowed until vectis_smith_close(). */
+const char *vectis_smith_session_id(const vectis_smith *smith);
 
 void vectis_http_client_config_init(vectis_http_client_config *config);
 vectis_status vectis_http_client_new(const vectis_http_client_config *config,

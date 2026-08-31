@@ -54,6 +54,7 @@ local workflow_modules = {
   log = "vectis.log",
   http = "vectis.http",
   cai = "vectis.cai",
+  smith = "vectis.smith",
   webdav = "vectis.webdav",
   rest = "vectis.rest",
   terminal = "vectis.terminal",

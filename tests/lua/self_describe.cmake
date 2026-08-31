@@ -12,9 +12,41 @@ if(NOT help_result EQUAL 0 OR
    NOT help_stdout MATCHES "Application options:" OR
    NOT help_stdout MATCHES "Actions:" OR
    NOT help_stdout MATCHES "source[ ]+List or export embedded Lua modules" OR
+   NOT help_stdout MATCHES "smith[ ]+Run the interactive Agent Smith" OR
    NOT help_stdout MATCHES "Action help:" OR
    help_stdout MATCHES "--action pack --script")
   message(FATAL_ERROR "vectis -h failed: ${help_stdout}${help_stderr}")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" --action smith --help
+                RESULT_VARIABLE smith_help_result
+                OUTPUT_VARIABLE smith_help_stdout
+                ERROR_VARIABLE smith_help_stderr)
+if(NOT smith_help_result EQUAL 0 OR
+   NOT smith_help_stdout MATCHES "--execute PROMPT" OR
+   NOT smith_help_stdout MATCHES "--state-endpoint URL" OR
+   NOT smith_help_stdout MATCHES "ChatGPT auth state is preferred")
+  message(FATAL_ERROR "vectis --action smith --help failed: ${smith_help_stdout}${smith_help_stderr}")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" --action smith --not-a-real-option
+                RESULT_VARIABLE smith_invalid_result
+                OUTPUT_VARIABLE smith_invalid_stdout
+                ERROR_VARIABLE smith_invalid_stderr)
+if(smith_invalid_result EQUAL 0 OR
+   NOT smith_invalid_stderr MATCHES "unknown smith argument" OR
+   NOT smith_invalid_stdout STREQUAL "")
+  message(FATAL_ERROR "vectis --action smith did not reject invalid options: ${smith_invalid_stdout}${smith_invalid_stderr}")
+endif()
+
+execute_process(COMMAND "${VECTIS_BIN}" --action smith -e
+                RESULT_VARIABLE smith_missing_prompt_result
+                OUTPUT_VARIABLE smith_missing_prompt_stdout
+                ERROR_VARIABLE smith_missing_prompt_stderr)
+if(smith_missing_prompt_result EQUAL 0 OR
+   NOT smith_missing_prompt_stderr MATCHES "-e requires a prompt" OR
+   NOT smith_missing_prompt_stdout STREQUAL "")
+  message(FATAL_ERROR "vectis --action smith did not reject a missing prompt: ${smith_missing_prompt_stdout}${smith_missing_prompt_stderr}")
 endif()
 
 execute_process(COMMAND "${VECTIS_BIN}" --action source --help

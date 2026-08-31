@@ -55,7 +55,7 @@ set(VECTIS_EXPECTED_SYSTEM_VERSION "0.9.0")
 set(VECTIS_EXPECTED_LOCKDC_VERSION "0.13.1")
 set(VECTIS_EXPECTED_LONEJSON_VERSION "0.42.0")
 set(VECTIS_EXPECTED_PSLOG_VERSION "0.9.0")
-set(VECTIS_EXPECTED_CAI_VERSION "0.4.0")
+set(VECTIS_EXPECTED_CAI_VERSION "0.5.0")
 set(VECTIS_EXPECTED_LIBLQL_VERSION "0.2.0")
 set(VECTIS_EXPECTED_LIBMDF_VERSION "0.8.0")
 set(VECTIS_EXPECTED_SOFTLINE_VERSION "0.3.0")
@@ -160,7 +160,11 @@ if(EXISTS "${vectis_dependency_manifest}")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/lonejson.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/pslog.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/cai.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/agent_runtime.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/mcp.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/session_store.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/smith.h")
+  vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/tools/terminal.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/cai/auth.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/lql/lql.h")
   vectis_require_dependency_file("${VECTIS_EXTERNAL_ROOT}/include/libmdf.h")
@@ -562,6 +566,7 @@ set(vectis_sources
   src/vectis_acme_state.c
   src/vectis_auth.c
   src/vectis_embedded_fs.c
+  src/vectis_smith.c
   src/vectis_totp_qr.c
   src/vectis_webdav.c
 )
@@ -827,6 +832,7 @@ if(VECTIS_BUILD_BINARY)
     "${CMAKE_SOURCE_DIR}/lua/curl/init.lua|curl/init.lua|curl|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/auth.lua|vectis/auth.lua|vectis.auth|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/cai.lua|vectis/cai.lua|vectis.cai|vectis"
+    "${CMAKE_SOURCE_DIR}/lua/vectis/smith.lua|vectis/smith.lua|vectis.smith|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/dsv.lua|vectis/dsv.lua|vectis.dsv|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/http.lua|vectis/http.lua|vectis.http|vectis"
     "${CMAKE_SOURCE_DIR}/lua/vectis/kore.lua|vectis/kore.lua|vectis.kore|vectis standalone fallback"
@@ -901,6 +907,11 @@ if(VECTIS_BUILD_BINARY)
     "${CMAKE_SOURCE_DIR}/lua/vectis/cai.lua"
     "vectis_cai_lua_init"
     "${CMAKE_BINARY_DIR}/generated/include/vectis_cai_lua_init.h"
+  )
+  vectis_generate_lua_init_header(
+    "${CMAKE_SOURCE_DIR}/lua/vectis/smith.lua"
+    "vectis_smith_lua_init"
+    "${CMAKE_BINARY_DIR}/generated/include/vectis_smith_lua_init.h"
   )
   vectis_generate_lua_init_header(
     "${CMAKE_SOURCE_DIR}/lua/vectis/rest.lua"
@@ -1207,6 +1218,7 @@ if(VECTIS_BUILD_BINARY)
 
   set(vectis_binary_runner_sources
     src/vectis_cli.c
+    src/vectis_smith_cli.c
     src/vectis_main.c
     $<TARGET_OBJECTS:vectis_lockdc_lua>
     $<TARGET_OBJECTS:vectis_pslog_lua>
