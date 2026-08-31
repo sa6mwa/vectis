@@ -21,7 +21,7 @@ contract is:
 | `VECTIS_LUA_SITE_BIND` | no | Bind address; defaults to `127.0.0.1`. |
 | `VECTIS_LUA_SITE_PORT` | no | HTTP port; defaults to `28630`. |
 | `VECTIS_LUA_SITE_CREDENTIALS` | yes | Native credential-store path. |
-| `VECTIS_LUA_SITE_AUTH_STATE` | yes | Native pending-login and email-token state path. |
+| `VECTIS_LUA_SITE_AUTH_STATE` | yes | State path for lower-level auth primitives; the fixture also derives its local Lockd/Pouch root from it. Native workflow and browser-session state live in Lockd. |
 | `VECTIS_LUA_SITE_ASSET_ROOT` | yes | Public static asset directory. |
 | `VECTIS_LUA_SITE_CONTENT_ROOT` | yes | Direct editable and publicly served content directory. |
 | `VECTIS_LUA_SITE_CACHE` | yes | WebDAV cache, lock, and transaction-scratch directory. |

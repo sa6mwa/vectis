@@ -1,9 +1,9 @@
 # Vectis Lua Auth
 
 `vectis.auth` exposes the C-owned Vectis auth implementation to Lua. The Lua
-surface is intentionally a facade over the same native store, factor, token,
-provider, and WebDAV-key workflows used by `libvectis` and the C-owned server
-receivers.
+surface is intentionally a facade over the same native store, factors, tokens,
+providers, issued credentials, and ordered login workflows used by `libvectis`
+and the C-owned server receivers.
 
 ## Store
 
@@ -14,8 +14,10 @@ Most auth functions accept the same store fields:
 - `max_store_bytes`
 
 `credentials_path` stores durable users, issued credentials, and OAuth2/OIDC
-flows. `state_path` stores higher-churn auth state when the application wants
-that separated from durable credentials.
+flows. `state_path` separates the higher-churn records used by lower-level auth
+primitives such as directly issued email tokens. Native ordered workflow and
+browser-session records are always libvectis-owned Lockd state, not JSON files
+at either path.
 
 ```lua
 local vectis = require("vectis")

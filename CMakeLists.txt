@@ -810,7 +810,8 @@ endif()
 if(VECTIS_BUILD_BINARY)
   file(GLOB_RECURSE vectis_cli_doc_files CONFIGURE_DEPENDS
        RELATIVE "${CMAKE_SOURCE_DIR}/docs" "${CMAKE_SOURCE_DIR}/docs/*.md")
-  set(vectis_cli_doc_resources)
+  set(vectis_cli_doc_resources
+    "${CMAKE_SOURCE_DIR}/README.md|README.md||vectis")
   foreach(vectis_cli_doc_file IN LISTS vectis_cli_doc_files)
     list(APPEND vectis_cli_doc_resources
       "${CMAKE_SOURCE_DIR}/docs/${vectis_cli_doc_file}|docs/${vectis_cli_doc_file}||vectis")

@@ -55,8 +55,8 @@ The production webserver shape includes:
 - static directory serving for extracted packed assets;
 - mutable WebDAV fileserver mounts and read-only WebDAV mounts over embedded
   packed assets;
-- packed Lua webserver execution with generated assets, auth, email-token login,
-  WebDAV key issuance, WebDAV reads/writes/list/copy/move/delete, traversal
+- packed Lua webserver execution with generated assets, native ordered login,
+  issued credentials, WebDAV reads/writes/list/copy/move/delete, traversal
   denial, and embedded-vs-mutable storage isolation;
 - packed service execution where Kore HTTP/WebDAV serving and a lockdc
   `startconsumer` service run in the same self-contained Vectis binary/process;

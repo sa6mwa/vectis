@@ -18,8 +18,10 @@ Vectis has two primary deliverables:
 - `vectis`: an executable that embeds the provisioned Lua runtime and statically
   registered native modules for script and packed-service execution.
 
-The C SDK is the primary surface today. The Lua runtime is present and can run
-scripts, but the higher-level Lua framework is still being filled in.
+The C SDK and Lua runtime expose the same Vectis-owned server, authentication,
+state, asset, and protocol workflows. Lua is a facade over C-owned behavior
+where Vectis owns the runtime contract; dependency-native Lua modules remain
+direct upstream-style surfaces.
 
 ## Scope
 
@@ -40,13 +42,11 @@ one deployable package:
 - Structured logging through `libpslog`.
 - CAI-backed OpenAI API, agent, tool, and MCP primitives.
 - libmdf-backed Markdown rendering for terminal and HTML output.
-- A direct escape hatch to the bundled dependency headers when the Vectis facade is
-  intentionally not enough.
-
-MTConnect is planned as a protocol surface. It is not documented here as an
-implemented runtime feature yet; the intended direction is to make it a typed
-protocol integration alongside XML/DSV/JSON and the existing curl/SSH/SFTP/MQTT
-client surfaces.
+- Native ordered browser and M2M authentication workflows, Lockd-backed
+  browser sessions, issued credentials, and auth providers for API and WebDAV
+  mounts.
+- A direct escape hatch to the bundled dependency headers when the Vectis facade
+  is intentionally not enough.
 
 ## Dependency Baseline
 
@@ -190,16 +190,10 @@ service work: lockd-backed state, HTTP routes, queue consumers, tool callbacks,
 MCP integration, and OpenAI API calls should share the same logging,
 configuration, and packaging story.
 
-libmdf and softline are included so AI/agent terminal workflows have the
-rendering and prompt-editing dependencies needed by future Agent Smith work.
-Vectis does not yet wire CAI streaming responses through libmdf or softline
-automatically, but the C SDK dependencies and `require("libmdf")` /
-`require("softline")` Lua modules are available for that integration.
-
-MTConnect is the next protocol family planned for this stack. The expected
-shape is a typed, streaming-aware integration rather than a bare string/DOM API.
-Until that surface lands, MTConnect should be treated as forward-looking
-roadmap, not an advertised SDK feature.
+libmdf and softline provide the Markdown rendering, terminal paging, and line
+editing facilities used by the executable and exposed through their bundled Lua
+modules. Vectis does not present unimplemented protocol integrations as SDK
+features; the current public surface is documented in [the API index](docs/api.md).
 
 ## Lua Runtime
 
@@ -237,8 +231,8 @@ metadata. Packed Lua can use `vectis.embedded.has_assets()`, `stat()`,
 `list()`, `read()`, `chunks()`, and `extract()` to serve read-only assets or
 initialize, verify, or repair an extracted WebDAV docroot.
 
-The high-level Lua web/service framework is still an active implementation
-area. The C SDK is the stable design source until Lua parity catches up.
+Use [Lua surface](docs/lua.md) for the shipped Lua modules and ownership rules.
+Use [the API index](docs/api.md) for the C SDK and cross-surface contract.
 
 ## Local Development
 
@@ -367,9 +361,9 @@ The release packaging boundary is documented in
 private Vectis-owned object runtime, not shipped as a standalone public
 `libkore` artifact or external runtime dependency.
 
-## Current Status
+## Shipped Surface
 
-Implemented and covered by local tests:
+The following shipped surfaces are covered by the local suite:
 
 - C SDK object/config/error surfaces.
 - Kore-backed route registration, startup, request mapping, static assets,
@@ -383,26 +377,20 @@ Implemented and covered by local tests:
   cert/key pair validation.
 - Lua manual TLS server configuration supports both combined certificate/key
   bundles and split certificate/key paths.
-- Lua app helpers include C-owned fixed guarded and unguarded JSON endpoints
-  with explicit method and status configuration for small API/status routes.
-- Lua app helpers expose C-owned static directory mounts for serving disk
-  docroots such as extracted packed assets.
-- Optional lockd app integration and managed consumer-service helpers.
+- C-owned browser/M2M login workflows, Lockd-backed browser sessions, native
+  and callback auth providers, and scoped issued credentials.
+- Lua app helpers for guarded and unguarded JSON endpoints, static directories,
+  packed assets, WebDAV, metrics, and managed services.
+- Lockd app integration and managed consumer-service helpers.
 - Lua runner, shebang/script execution, and Linux packed-script support.
 - Bundled CAI, libmdf, and softline Lua modules for AI/tool workflows,
   Markdown rendering, and terminal prompt UX.
 - Release packaging, install-tree checks, lifecycle tests, privacy checks, and
   generated SDK verification.
-
-Still active or planned:
-
-- Higher-level Lua service framework and broader Lua protocol helpers.
-- Deeper CAI/Vectis/libmdf/softline facade integration beyond bundled
-  dependency/runtime registration.
-- MTConnect protocol support.
 - `vectis -a pack` is unavailable on Darwin because appending content
   invalidates the Mach-O code signature; the platform boundary is documented in
   [docs/pack-platform-operability.md](docs/pack-platform-operability.md).
-- Additional protocol examples and long-running hardening gates.
 
-Track detailed engineering work in [TODO.md](TODO.md).
+The maintained public contract is the source headers plus the linked
+documentation. [TODO.md](TODO.md) tracks work items without redefining that
+contract.
