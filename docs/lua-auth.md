@@ -292,6 +292,15 @@ Browser pages are responsive, dark-by-default C-owned forms. Each page contains
 one factor. Six-character email codes auto-submit when complete. Vectis issues
 a browser cookie only after a same-origin document navigation succeeds;
 cross-site form posts receive `403`, never a cookie or M2M credential.
+The prompt names only the controls on the page; it never exposes a step count,
+the total number of factors, or a later factor.
+
+When `workflow:provider()` protects an HTML GET route, an unauthenticated
+browser navigation redirects to `<path_prefix>/login?return=<requested-path>`.
+The completed workflow returns to that server-derived path. A visitor who opens
+the login page directly, without `return`, is redirected to `/` after success.
+Non-browser and M2M requests continue to receive their normal authentication
+challenge rather than a login redirect.
 
 A browser workflow cookie is only an opaque short-lived identifier. The
 principal, completed factors, token hash, expiry, and consumed state live in

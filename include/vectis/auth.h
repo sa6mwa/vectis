@@ -13,6 +13,7 @@ extern "C" {
 #define VECTIS_AUTH_PRINCIPAL_MAX 254u
 #define VECTIS_AUTH_EMAIL_MAX 319u
 #define VECTIS_AUTH_CHALLENGE_MAX 255u
+#define VECTIS_AUTH_REDIRECT_LOCATION_MAX 8192u
 #define VECTIS_AUTH_GENERATED_PASSWORD_MAX 64u
 #define VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_TTL_SECONDS 300u
 #define VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS 5u
@@ -133,11 +134,14 @@ typedef struct vectis_auth_provider_request {
 typedef struct vectis_auth_provider_response {
   vectis_auth_action action;
   int status_code;
-  /* Borrowed adapter-owned response fields. Vectis does not free them. */
+  /* Adapter-owned response fields. Vectis does not free location/content/body.
+   */
   const char *location;
   const char *content_type;
   const void *body;
   size_t body_size;
+  /* Storage for a native provider's browser login redirect. */
+  char redirect_location[VECTIS_AUTH_REDIRECT_LOCATION_MAX];
   char www_authenticate[VECTIS_AUTH_CHALLENGE_MAX + 1u];
   char principal[VECTIS_AUTH_PRINCIPAL_MAX + 1u];
   vectis_auth_result result;
@@ -158,6 +162,10 @@ typedef struct vectis_auth_native_provider_config {
   /* Required only when browser_session.mode is M2M_AND_BROWSER. */
   vectis_app *app;
   vectis_auth_browser_session_config browser_session;
+  /* Optional root-relative browser login endpoint. When set, unauthenticated
+   * HTML GET navigations redirect here with their requested path as `return`.
+   */
+  const char *browser_login_path;
   const char *purpose;
   const char *realm;
   unsigned allowed_auth_modes;

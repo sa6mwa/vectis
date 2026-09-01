@@ -17926,24 +17926,23 @@ vectis_auth_workflow_page(const vectis_auth_route_data *data,
   vectis_bytes body;
   vectis_status status;
   char action[2048];
-  char progress[128];
+  const char *progress;
 
   memset(&html, 0, sizeof(html));
   memset(&content, 0, sizeof(content));
   step = vectis_auth_workflow_step_at(data,
                                       record != NULL ? record->step_index : 0u);
-  if (record != NULL && step == VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE &&
-      record->email_token_hash[0] == '\0') {
-    (void)snprintf(progress, sizeof(progress), "Confirm your email address");
+  if (step == VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE &&
+      (record == NULL || record->email_token_hash[0] == '\0')) {
+    progress = "Enter your email address";
+  } else if (step == VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE) {
+    progress = "Enter your email code";
+  } else if (step == VECTIS_AUTH_WORKFLOW_STEP_PASSWORD && record == NULL) {
+    progress = "Enter your username and password";
+  } else if (step == VECTIS_AUTH_WORKFLOW_STEP_PASSWORD) {
+    progress = "Enter your password";
   } else {
-    (void)snprintf(
-        progress, sizeof(progress), "Step %lu of %lu: %s",
-        (unsigned long)((record != NULL ? record->step_index : 0u) + 1u),
-        (unsigned long)data->step_count,
-        step == VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE ? "enter your email code"
-        : step == VECTIS_AUTH_WORKFLOW_STEP_PASSWORD
-            ? "sign in"
-            : "enter your authenticator code");
+    progress = "Enter your authenticator code";
   }
   if (snprintf(action, sizeof(action), "%s/continue", data->path_prefix) < 0 ||
       strlen(action) >= sizeof(action)) {

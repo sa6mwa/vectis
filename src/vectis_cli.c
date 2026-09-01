@@ -201,6 +201,7 @@ typedef struct vectis_lua_app_native_auth {
   char *credentials_path;
   char *purpose;
   char *realm;
+  char *browser_login_path;
   char *browser_session_cookie_name;
   char *browser_session_cookie_path;
   char *browser_session_purpose;
@@ -6920,6 +6921,7 @@ static void vectis_lua_app_native_auth_free(vectis_lua_app_native_auth *auth) {
   free(auth->credentials_path);
   free(auth->purpose);
   free(auth->realm);
+  free(auth->browser_login_path);
   free(auth->browser_session_cookie_name);
   free(auth->browser_session_cookie_path);
   free(auth->browser_session_purpose);
@@ -7795,6 +7797,7 @@ vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
   const char *kind;
   const char *purpose;
   const char *realm;
+  const char *browser_login_path;
   unsigned modes;
   int provider_index;
 
@@ -7818,6 +7821,12 @@ vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
   realm = vectis_lua_table_string(lua, index, "realm");
   if (realm == NULL && provider_index != index) {
     realm = vectis_lua_table_string(lua, provider_index, "realm");
+  }
+  browser_login_path =
+      vectis_lua_table_string(lua, index, "browser_login_path");
+  if (browser_login_path == NULL && provider_index != index) {
+    browser_login_path =
+        vectis_lua_table_string(lua, provider_index, "browser_login_path");
   }
   modes = vectis_lua_auth_modes_field(lua, index, "allowed_modes", 0u);
   if (modes == 0u && provider_index != index) {
@@ -7925,8 +7934,10 @@ vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
   auth->credentials_path = vectis_cli_strdup(credentials_path);
   auth->purpose = vectis_cli_strdup(purpose != NULL ? purpose : "webdav");
   auth->realm = vectis_cli_strdup(realm != NULL ? realm : "vectis");
+  auth->browser_login_path = vectis_cli_strdup(browser_login_path);
   if (auth->credentials_path == NULL || auth->purpose == NULL ||
-      auth->realm == NULL) {
+      auth->realm == NULL ||
+      (browser_login_path != NULL && auth->browser_login_path == NULL)) {
     if (provider_index != index) {
       lua_pop(lua, 1);
     }
@@ -7951,6 +7962,7 @@ vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
       lua, index, "max_store_bytes", VECTIS_AUTH_DEFAULT_MAX_STORE_BYTES);
   auth->native_config.app = app;
   auth->native_config.browser_session = auth->browser_session;
+  auth->native_config.browser_login_path = auth->browser_login_path;
   auth->native_config.purpose = auth->purpose;
   auth->native_config.realm = auth->realm;
   auth->native_config.allowed_auth_modes = modes;
@@ -17903,6 +17915,8 @@ static int vectis_lua_auth_provider_native(lua_State *lua) {
   lua_setfield(lua, -2, "allowed_modes");
   lua_getfield(lua, 1, "browser_session");
   lua_setfield(lua, -2, "browser_session");
+  lua_getfield(lua, 1, "browser_login_path");
+  lua_setfield(lua, -2, "browser_login_path");
   lua_pushcfunction(lua, vectis_lua_auth_native_provider_authenticate);
   lua_setfield(lua, -2, "authenticate");
   return 1;

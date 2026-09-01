@@ -7703,6 +7703,82 @@ vectis_auth_provider_require(const vectis_auth_native_provider_config *config,
   }
 }
 
+static int vectis_auth_browser_login_path_valid(const char *path) {
+  const unsigned char *cursor;
+
+  if (path == NULL || path[0] != '/' || path[1] == '/' ||
+      strchr(path, '?') != NULL || strchr(path, '#') != NULL) {
+    return 0;
+  }
+  for (cursor = (const unsigned char *)path; *cursor != '\0'; ++cursor) {
+    if (*cursor < 0x20u || *cursor == 0x7fu || *cursor == '\\') {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static int vectis_auth_browser_navigation_request(
+    const vectis_auth_provider_request *request) {
+  const char *accept;
+
+  if (request == NULL || request->request == NULL ||
+      vectis_request_method(request->request) != VECTIS_HTTP_GET) {
+    return 0;
+  }
+  accept = vectis_request_header(request->request, "accept");
+  return accept != NULL && strcasestr(accept, "text/html") != NULL;
+}
+
+static int vectis_auth_native_provider_login_redirect(
+    const vectis_auth_native_provider_config *config,
+    const vectis_auth_provider_request *request,
+    vectis_auth_provider_response *response) {
+  static const char hex[] = "0123456789ABCDEF";
+  const char *resource;
+  size_t used;
+  const unsigned char *cursor;
+
+  if (config == NULL || response == NULL ||
+      !vectis_auth_browser_login_path_valid(config->browser_login_path) ||
+      !vectis_auth_browser_navigation_request(request) ||
+      request->resource == NULL || request->resource[0] != '/') {
+    return 0;
+  }
+  resource = request->resource;
+  used = strlen(config->browser_login_path);
+  if (used + sizeof("?return=") > sizeof(response->redirect_location)) {
+    return 0;
+  }
+  memcpy(response->redirect_location, config->browser_login_path, used);
+  memcpy(response->redirect_location + used,
+         "?return=", sizeof("?return=") - 1u);
+  used += sizeof("?return=") - 1u;
+  for (cursor = (const unsigned char *)resource; *cursor != '\0'; ++cursor) {
+    if ((*cursor >= 'A' && *cursor <= 'Z') ||
+        (*cursor >= 'a' && *cursor <= 'z') ||
+        (*cursor >= '0' && *cursor <= '9') || *cursor == '-' ||
+        *cursor == '_' || *cursor == '.' || *cursor == '~' || *cursor == '/') {
+      if (used + 1u >= sizeof(response->redirect_location)) {
+        return 0;
+      }
+      response->redirect_location[used++] = (char)*cursor;
+    } else {
+      if (used + 3u >= sizeof(response->redirect_location)) {
+        return 0;
+      }
+      response->redirect_location[used++] = '%';
+      response->redirect_location[used++] = hex[*cursor >> 4u];
+      response->redirect_location[used++] = hex[*cursor & 0x0fu];
+    }
+  }
+  response->redirect_location[used] = '\0';
+  response->action = VECTIS_AUTH_REDIRECT;
+  response->status_code = 303;
+  response->location = response->redirect_location;
+  return 1;
+}
+
 static vectis_status vectis_auth_native_provider_authenticate(
     const vectis_auth_provider_request *request,
     vectis_auth_provider_response *response, void *userdata,
@@ -7754,6 +7830,9 @@ static vectis_status vectis_auth_native_provider_authenticate(
           ? request->allowed_auth_modes
           : config->allowed_auth_modes;
   if (authorization == NULL || authorization[0] == '\0') {
+    if (vectis_auth_native_provider_login_redirect(config, request, response)) {
+      return VECTIS_OK;
+    }
     vectis_auth_provider_require(config, allowed_modes, response);
     return VECTIS_OK;
   }
@@ -7826,6 +7905,18 @@ vectis_status vectis_auth_provider_from_native_store(
   if (vectis_auth_browser_session_config_validate(&config->browser_session,
                                                   error) != VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if (config->browser_login_path != NULL &&
+      !vectis_auth_browser_login_path_valid(config->browser_login_path)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "native browser login path is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (config->browser_login_path != NULL &&
+      !vectis_auth_browser_session_enabled(&config->browser_session)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "native browser login path requires browser sessions");
+    return VECTIS_ERR_INVALID;
   }
   if (vectis_auth_browser_session_enabled(&config->browser_session) &&
       config->app == NULL) {

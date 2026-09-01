@@ -237,6 +237,7 @@ assert(flow_provider.purpose == "webdav")
 assert(flow_provider.realm == "facade-flow")
 assert(flow_provider.browser_session.mode == "m2m_and_browser")
 assert(flow_provider.browser_session.cookie_name == "facade_session")
+assert(flow_provider.browser_login_path == "/_vectis/auth/login")
 local flow_required = assert(flow_provider:authenticate({
   resource = "/dav",
   allowed_modes = "basic",

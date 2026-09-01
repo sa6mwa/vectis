@@ -124,6 +124,31 @@ assert(server:auth_routes({
   steps = {"password", "totp"},
   browser_session = flow_session,
 }) == true)
+assert(server:auth_routes({
+  path_prefix = "/email-flow",
+  credentials_path = auth_path,
+  steps = {"email_code", "password", "totp"},
+  email_smtp = {
+    url = "smtp://127.0.0.1:1",
+    mail_from = "login@example.test",
+  },
+  browser_session = flow_session,
+}) == true)
+local redirect_flow = assert(vectis.auth.workflow({
+  credentials_path = auth_path,
+  path_prefix = "/redirect-flow",
+  purpose = "stats",
+  steps = {"password"},
+  browser_session = flow_session,
+}))
+assert(redirect_flow:mount(server) == true)
+local stats_route, stats_route_err = server:auth_json({
+  path = "/.stats",
+  body = '{"stats":true}\n',
+  auth = redirect_flow:provider(),
+})
+assert(stats_route == true,
+       stats_route_err and stats_route_err.message or "stats route failed")
 assert(server:auth_json({
   path = "/callback-protected",
   body = '{"session":"accepted"}\n',
@@ -158,6 +183,17 @@ end
 assert(ready.ok == true, ready.error)
 assert(ready.status == 200)
 
+local email_flow_page = request("/email-flow/login", "GET")
+assert(email_flow_page.ok == true, email_flow_page.error)
+assert(email_flow_page.status == 200)
+assert(email_flow_page.body:find("Enter your email address", 1, true),
+       email_flow_page.body)
+assert(email_flow_page.body:find("Email address", 1, true))
+assert(email_flow_page.body:find("Step ", 1, true) == nil)
+assert(email_flow_page.body:find("email code", 1, true) == nil)
+assert(email_flow_page.body:find("password", 1, true) == nil)
+assert(email_flow_page.body:find("authenticator code", 1, true) == nil)
+
 local form = "username=lua-session-user&password=lua-session-password"
 local m2m_login = request("/auth/continue", "POST", form, {
   ["Content-Type"] = "application/x-www-form-urlencoded",
@@ -176,12 +212,45 @@ local browser_login = request("/auth/continue", "POST", form, {
 })
 assert(browser_login.ok == true, browser_login.error)
 assert(browser_login.status == 303)
+assert(browser_login.headers:lower():find("location: /", 1, true))
 local set_cookie = assert(browser_login.headers:match(
     "[Ss]et%-[Cc]ookie:%s*([^\r\n]+)"), browser_login.headers)
 assert(set_cookie:find("HttpOnly", 1, true))
 assert(set_cookie:find("Secure", 1, true))
 assert(set_cookie:find("SameSite=Strict", 1, true))
 local cookie = assert(set_cookie:match("^([^;]+)"))
+
+local navigation_headers = {
+  ["Content-Type"] = "application/x-www-form-urlencoded",
+  ["Accept"] = "text/html",
+  ["Sec-Fetch-Mode"] = "navigate",
+  ["Sec-Fetch-Dest"] = "document",
+  ["Sec-Fetch-Site"] = "same-origin",
+}
+local protected_redirect = request("/.stats", "GET", nil, {
+  ["Accept"] = "text/html",
+})
+assert(protected_redirect.ok == true, protected_redirect.error)
+assert(protected_redirect.status == 303)
+assert(protected_redirect.headers:lower():find(
+    "location: /redirect-flow/login?return=/.stats", 1, true),
+    protected_redirect.headers)
+local redirect_complete = request("/redirect-flow/continue", "POST",
+    "username=lua-session-user&password=lua-session-password&return=/.stats",
+    navigation_headers)
+assert(redirect_complete.ok == true, redirect_complete.error)
+assert(redirect_complete.status == 303)
+assert(redirect_complete.headers:lower():find("location: /.stats", 1, true),
+       redirect_complete.headers)
+local redirect_session_cookie = assert(redirect_complete.headers:match(
+    "[Ss]et%-[Cc]ookie:%s*(lua_flow_session=[^;]+)"),
+    redirect_complete.headers)
+local protected_page = request("/.stats", "GET", nil, {
+  ["Cookie"] = redirect_session_cookie,
+})
+assert(protected_page.ok == true, protected_page.error)
+assert(protected_page.status == 200)
+assert(protected_page.body == '{"stats":true}\n')
 
 local function workflow_cookie(response)
   local header = assert(response.headers:match(
@@ -192,13 +261,6 @@ local function workflow_cookie(response)
   return value, name
 end
 
-local navigation_headers = {
-  ["Content-Type"] = "application/x-www-form-urlencoded",
-  ["Accept"] = "text/html",
-  ["Sec-Fetch-Mode"] = "navigate",
-  ["Sec-Fetch-Dest"] = "document",
-  ["Sec-Fetch-Site"] = "same-origin",
-}
 local parent_flow = request("/flow/continue", "POST",
     "username=lua-flow-user&password=lua-flow-password", navigation_headers)
 assert(parent_flow.ok == true, parent_flow.error)

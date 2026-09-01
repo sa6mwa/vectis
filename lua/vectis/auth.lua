@@ -62,6 +62,7 @@ local provider_keys = {
   "realm",
   "allowed_modes",
   "browser_session",
+  "browser_login_path",
 }
 
 local function select_keys(source, keys)
@@ -82,8 +83,16 @@ function workflow:routes(opts)
 end
 
 function workflow:provider(opts)
-  return core.provider_native(select_keys(merge_tables(self.config, opts),
-                                          provider_keys))
+  local config = merge_tables(self.config, opts)
+  local provider = select_keys(config, provider_keys)
+  local path_prefix = config.path_prefix or config.prefix
+
+  if provider.browser_login_path == nil and path_prefix ~= nil then
+    path_prefix = path_prefix:gsub("/+$", "")
+    provider.browser_login_path =
+        (path_prefix == "" and "" or path_prefix) .. "/login"
+  end
+  return core.provider_native(provider)
 end
 
 function workflow:mount(server, opts)
