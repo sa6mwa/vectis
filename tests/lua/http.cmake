@@ -1463,7 +1463,11 @@ assert(metrics_html_response.status == 200)
 assert(metrics_html_response.headers:lower():find(
     "content-type: text/html; charset=utf-8", 1, true))
 assert(metrics_html_response.body:find("lua http metrics", 1, true))
-assert(metrics_html_response.body:find("/.metrics.json", 1, true))
+assert(metrics_html_response.body:find(
+    '<a href="/.metrics.json">View JSON snapshot</a>', 1, true))
+assert(metrics_html_response.body:find("<h2>JSON snapshot</h2>", 1, true) == nil)
+assert(metrics_html_response.body:find('"format":"vectis-metrics-snapshot"',
+    1, true) == nil)
 assert(metrics_snapshot.persistence.enabled == true)
 assert(api_server:stop() == true)
 api_server:close()

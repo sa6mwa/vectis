@@ -1646,6 +1646,11 @@ static void assert_metrics_surface(void) {
                 "text/html; charset=utf-8") == 0);
   body = vectis_internal_response_body(response);
   assert(runtime_bytes_contains(body, "runtime metrics"));
+  assert(runtime_bytes_contains(
+      body, "<a href=\"/metrics.json\">View JSON snapshot</a>"));
+  assert(!runtime_bytes_contains(body, "<h2>JSON snapshot</h2>"));
+  assert(
+      !runtime_bytes_contains(body, "\"format\":\"vectis-metrics-snapshot\""));
   vectis_internal_response_free(response);
   vectis_internal_request_free(request);
   app->close(app);
@@ -1685,8 +1690,9 @@ static void assert_metrics_surface(void) {
   assert(status == VECTIS_OK);
   assert(vectis_internal_response_status_code(response) == 200);
   body = vectis_internal_response_body(response);
-  assert(runtime_bytes_contains(body, "JSON: /&lt;json&gt;&amp;&quot;"));
-  assert(!runtime_bytes_contains(body, "JSON: /<json>"));
+  assert(runtime_bytes_contains(
+      body, "<a href=\"/&lt;json&gt;&amp;&quot;\">View JSON snapshot</a>"));
+  assert(!runtime_bytes_contains(body, "<a href=\"/<json>&\"\">"));
   vectis_internal_response_free(response);
   vectis_internal_request_free(request);
   app->close(app);

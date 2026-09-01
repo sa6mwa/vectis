@@ -21011,7 +21011,6 @@ static const char *vectis_metrics_request_title(vectis_app_impl *impl,
 
 static vectis_status vectis_metrics_dashboard_html(vectis_app *app,
                                                    vectis_request *request,
-                                                   vectis_mutable_bytes *json,
                                                    vectis_mutable_bytes *out,
                                                    vectis_error *error) {
   vectis_app_impl *impl;
@@ -21030,7 +21029,7 @@ static vectis_status vectis_metrics_dashboard_html(vectis_app *app,
   unsigned load_5m_pct;
   unsigned load_15m_pct;
 
-  if (app == NULL || app->impl == NULL || json == NULL || out == NULL) {
+  if (app == NULL || app->impl == NULL || out == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "metrics dashboard arguments are required");
     return VECTIS_ERR_INVALID;
@@ -21168,7 +21167,8 @@ static vectis_status vectis_metrics_dashboard_html(vectis_app *app,
           error) != VECTIS_OK ||
       vectis_string_builder_append(
           &html,
-          ".json{white-space:pre-wrap;overflow:auto;padding:10px;color:#c5c8cc}"
+          ".toolbar a{color:#8ab4f8;text-decoration:none}"
+          ".toolbar a:hover{text-decoration:underline}"
           ".legend{display:flex;gap:10px;color:var(--muted);",
           error) != VECTIS_OK ||
       vectis_string_builder_append(
@@ -21198,14 +21198,15 @@ static vectis_status vectis_metrics_dashboard_html(vectis_app *app,
           &html,
           "</h1></header><div class=\"toolbar\"><div class=\"summary\">Vectis "
           "runtime metrics, in-memory collection</div><div "
-          "class=\"summary\">JSON: ",
+          "class=\"summary\"><a href=\"",
           error) != VECTIS_OK ||
       vectis_metrics_html_escape(
           &html,
           impl->metrics->json_path != NULL ? impl->metrics->json_path : "",
           error) != VECTIS_OK ||
       vectis_string_builder_append(&html,
-                                   "</div></div><main class=\"dashboard\">",
+                                   "\">View JSON snapshot</a></div></div>"
+                                   "<main class=\"dashboard\">",
                                    error) != VECTIS_OK ||
       vectis_string_builder_appendf(
           &html, error,
@@ -21265,14 +21266,8 @@ static vectis_status vectis_metrics_dashboard_html(vectis_app *app,
           &html,
           "<div class=\"legend\"><span><i "
           "style=\"background:var(--blue)\"></i>raw host load</span>"
-          "</div></section><section class=\"panel wide\"><h2>JSON "
-          "snapshot</h2><pre class=\"json\">",
-          error) != VECTIS_OK ||
-      vectis_metrics_html_escape(&html, (const char *)json->data, error) !=
-          VECTIS_OK ||
-      vectis_string_builder_append(&html,
-                                   "</pre></section></main></body></html>\n",
-                                   error) != VECTIS_OK) {
+          "</div></section></main></body></html>\n",
+          error) != VECTIS_OK) {
     vectis_string_builder_cleanup(&html);
     return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
@@ -21311,13 +21306,12 @@ static vectis_status vectis_metrics_route_handler(vectis_app *app,
   title = impl->metrics->title != NULL && impl->metrics->title[0] != '\0'
               ? impl->metrics->title
               : vectis_metrics_request_title(impl, request);
-  memset(&json, 0, sizeof(json));
-  memset(&html, 0, sizeof(html));
-  status = vectis_metrics_snapshot_json_impl(app, &json, title, error);
-  if (status != VECTIS_OK) {
-    return status;
-  }
   if (!route->html) {
+    memset(&json, 0, sizeof(json));
+    status = vectis_metrics_snapshot_json_impl(app, &json, title, error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
     body.data = json.data;
     body.size = json.size;
     status =
@@ -21325,8 +21319,8 @@ static vectis_status vectis_metrics_route_handler(vectis_app *app,
     vectis_mutable_bytes_cleanup(&json);
     return status;
   }
-  status = vectis_metrics_dashboard_html(app, request, &json, &html, error);
-  vectis_mutable_bytes_cleanup(&json);
+  memset(&html, 0, sizeof(html));
+  status = vectis_metrics_dashboard_html(app, request, &html, error);
   if (status != VECTIS_OK) {
     return status;
   }

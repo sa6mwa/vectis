@@ -25,6 +25,9 @@ The `vectis_app_config` used to construct `app` must set an explicit
 snapshot as JSON. It fails with `VECTIS_ERR_STATE` when metrics were not
 registered.
 
+The dashboard presents metrics as HTML and links to `json_path` for the raw
+snapshot; it does not embed the raw JSON in the page.
+
 ## Lua API
 
 Lua scripts register the same C-owned surface through `app:metrics(opts)`:
