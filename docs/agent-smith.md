@@ -5,13 +5,52 @@ surface. CAI owns the agent loop, model protocol, tool semantics, review
 subagents, and session journal contract. Vectis owns the command-line
 experience, LockDC/Pouch persistence, workspace boundary, and C/Lua facades.
 
-## Command Line
+## Modes
 
-Start an interactive session in the current directory:
+Smith has two distinct products. They must not be described as interchangeable.
+
+### Exec mode
+
+Exec mode is non-interactive command-line execution. It submits one prompt,
+streams its response to the invoking terminal, and exits after that turn:
+
+```sh
+vectis -a smith -s release-notes -e 'Summarize the current changes.'
+```
+
+It has no live editor or local prompt queue. It remains useful for scripts and
+one-shot terminal work.
+
+### Interactive TUI mode
+
+Interactive mode is the full coding-agent terminal UI:
 
 ```sh
 vectis -a smith
 ```
+
+It has a non-negotiable liveness contract:
+
+- The user can always type, edit, paste, queue, edit queued messages, issue
+  supported commands, interrupt, and submit steering input. An active model
+  request, tool call, renderer, checkpoint, or any other agent activity never
+  takes ownership of the editor or delays input processing.
+- CAI runs on a dedicated owner thread. Softline runs only on the UI thread.
+  No worker, including CAI and libmdf, may call a Softline receiver directly.
+- CAI text events flow immediately through libmdf's real streaming renderer to
+  the live Softline prompt. Output is bounded-chunk producer-to-consumer flow;
+  it is never held until a turn completes or materialized as a full response.
+- While CAI has an active turn, ordinary Enter submissions stay in Softline's
+  local FIFO queue. When CAI reaches a terminal state, Smith submits exactly
+  the oldest local queued turn and repeats until the local queue is empty.
+- A steering submission is delivered to CAI's active turn immediately. A
+  steering action on an empty editor promotes the newest local queued message
+  and delivers it as steering. If CAI has become idle before it is accepted,
+  the CAI owner submits it as the next normal turn instead; it is never lost.
+- The Softline status bar is a UI-thread projection of the latest available
+  agent/runtime state: run state, model/tool activity, queue state, stream and
+  renderer failures, and other relevant bounded status. It is refreshed when
+  the relevant subsystem signals a state change, not only after the next key.
 
 Use `-w DIR` to select the workspace and `-s ID` to resume or create a named
 session. The terminal starts in that workspace and its requested working
@@ -21,25 +60,22 @@ commands such as `/bin/sh`, `make`, and `git` remain available. It does not
 inherit the Vectis process environment, credentials, or per-user `PATH` entries
 such as `~/.local/bin`.
 
-CAI 0.5's managed Smith terminal is not Bubblewrap-contained: the workspace is
+CAI's managed Smith terminal is not Bubblewrap-contained: the workspace is
 its working-directory constraint, not a filesystem sandbox. Vectis uses this
 CAI terminal behavior unchanged. CAI's separately registered `exec_command`
 tool does use Bubblewrap on Linux and fails closed if it is unavailable.
 
-The default interactive presentation is Softline's normal chat theme. Output
-is streamed from CAI in bounded chunks into libmdf's streaming ANSI renderer
-and printed above the live prompt; it is never assembled into a complete
-response first. While a turn is active, ordinary input steers the current run
-and input submitted with Softline's queue command (Tab) is retained as the
-next turn. `:quit` and `:exit` leave the editor.
+`:quit` and `:exit` leave the editor after a defined shutdown policy has
+stopped/drained the agent and renderer.
 
-For one finished turn without a TUI:
+### Current implementation status
 
-```sh
-vectis -a smith -s release-notes -e 'Summarize the current changes.'
-```
-
-This still streams output, but exits after CAI finishes that turn.
+The current `vectis -a smith` loop is **not yet compliant interactive TUI
+mode**. It pumps CAI only from Softline's idle callback on the UI thread, so
+typing can delay CAI work and output. It must not be called a complete coding
+agent UI. The required cutover is documented in
+[CAI Agent And Vectis Integration](cai-agent-vectis-integration.md); it is
+blocked on Softline's required external-event and queue-control APIs.
 
 Smith first opens CAI's persisted ChatGPT subscription authentication state.
 CAI uses `CAI_CHATGPT_AUTH_JSON` when set, otherwise its XDG state file. If no
@@ -77,16 +113,17 @@ the `lc_client` and `vectis_smith_store` alive for every borrowing runtime.
 
 - `vectis_smith_store_new()` creates the LockDC-backed
   `cai_agent_session_store` adapter.
-- `vectis_smith_open()` creates an owner-thread CAI Smith runtime and exposes
+- `vectis_smith_open()` creates the owner-thread CAI Smith runtime and exposes
   `submit`, `submit_steering`, `submit_queued`, `pump`, `state`, and
-  `wakeup_fd` wrappers.
+  `wakeup_fd` wrappers for non-TUI hosts and the future dedicated Smith worker.
 
 Applications pass either a borrowed `cai_client` or `cai_client_config`, and
 provide a workspace in `vectis_smith_config.runtime.workspace_directory`.
 Passing `store` installs its LockDC session store; it is intentionally
 exclusive with a caller-supplied CAI session store. The caller drives `pump`
 from the runtime owner thread and closes the runtime before destroying its
-store or LockDC client.
+store or LockDC client. The interactive UI is a host of this API, not a reason
+to weaken its owner-thread contract.
 
 ## Lua
 
