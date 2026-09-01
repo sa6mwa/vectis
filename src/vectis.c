@@ -17820,6 +17820,16 @@ vectis_auth_workflow_default_shell(vectis_string_builder *html,
   if (status == VECTIS_OK) {
     status = vectis_string_builder_append(
         html,
+        ".otp{margin:0;padding:0;border:0;min-width:0}.otp legend{padding:0 "
+        "0 "
+        ".45rem;font-weight:650}.otp-cells{display:grid;grid-template-columns:"
+        "repeat(6,minmax(0,1fr));gap:.5rem}.otp-cell{min-width:0;padding:.8rem "
+        ".1rem;text-align:center;font-size:1.35rem;letter-spacing:.05em}",
+        error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(
+        html,
         "button{padding:.8rem "
         "1rem;border:0;border-radius:.55rem;background:#8eb7ff;"
         "color:#07111f;font-weight:750;font:inherit;cursor:pointer}.notice{min-"
@@ -17915,6 +17925,99 @@ vectis_auth_workflow_custom_shell(vectis_string_builder *html,
   return VECTIS_OK;
 }
 
+static vectis_status vectis_auth_workflow_code_input(
+    vectis_string_builder *content, const char *label, const char *name,
+    const char *inputmode, const char *pattern, const char *character_pattern,
+    vectis_error *error) {
+  size_t index;
+  vectis_status status;
+
+  status = vectis_string_builder_appendf(
+      content, error,
+      "<fieldset class=\"otp\"><legend>%s</legend><input type=\"hidden\" "
+      "name=\"%s\" data-otp-value><div class=\"otp-cells\" "
+      "role=\"group\" aria-label=\"%s\">",
+      label, name, label);
+  for (index = 0u; status == VECTIS_OK && index < 6u; ++index) {
+    status = vectis_string_builder_appendf(
+        content, error,
+        "<input class=\"otp-cell\" type=\"password\" inputmode=\"%s\" "
+        "autocomplete=\"%s\" maxlength=\"1\" aria-label=\"Character %zu "
+        "of 6\"%s>",
+        inputmode, index == 0u ? "one-time-code" : "off", index + 1u,
+        index == 0u ? " autofocus" : "");
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(
+        content,
+        "</div></fieldset><script>(function(){var "
+        "root=document.currentScript.previousElementSibling,"
+        "hidden=root.querySelector('[data-otp-value]'),cells=[].slice.call("
+        "root.querySelectorAll('.otp-cell')),form=root.parentNode,allowed=/",
+        error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(content, character_pattern, error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(
+        content,
+        "/;function sync(){hidden.value=cells.map(function(cell){return "
+        "cell.value}).join('')}function done(){return cells.every("
+        "function(cell){return cell.value.length===1})}function focus(index){"
+        "cells[Math.min(index,cells.length-1)].focus()}function "
+        "fill(start,text){"
+        "var "
+        "chars=String(text||'').split('').filter(function(character){return "
+        "allowed.test(character)});if(!chars.length){return}",
+        error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(
+        content,
+        "chars.slice(0,cells.length-start).forEach(function(character,index){"
+        "cells[start+index].value=character});sync();if(done()){form."
+        "requestSubmit()}"
+        "else{focus(start+chars.length)}}cells.forEach(function(cell,index){"
+        "cell.addEventListener('input',function(){var "
+        "text=cell.value;cell.value='';"
+        "if(text){fill(index,text)}else{sync()}});cell.addEventListener('paste'"
+        ","
+        "function(event){var "
+        "clipboard=event.clipboardData||window.clipboardData;",
+        error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_append(
+        content,
+        "if(clipboard){event.preventDefault();fill(index,clipboard.getData('"
+        "text'))}});"
+        "cell.addEventListener('keydown',function(event){if(event.key==='"
+        "Backspace'||"
+        "event.key==='Delete'){event.preventDefault();if(cell.value){cell."
+        "value='';"
+        "sync()}else "
+        "if(index>0){cells[index-1].value='';sync();focus(index-1)}}"
+        "else "
+        "if(event.key==='ArrowLeft'&&index>0){event.preventDefault();focus("
+        "index-1)}"
+        "else "
+        "if(event.key==='ArrowRight'&&index+1<cells.length){event."
+        "preventDefault();"
+        "focus(index+1)}})})}())</script>",
+        error);
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_string_builder_appendf(
+        content, error,
+        "<noscript><label>%s<input name=\"%s\" required maxlength=\"6\" "
+        "pattern=\"%s\" inputmode=\"%s\" autocomplete=\"one-time-code\" "
+        "autofocus></label></noscript>",
+        label, name, pattern, inputmode);
+  }
+  return status;
+}
+
 static vectis_status
 vectis_auth_workflow_page(const vectis_auth_route_data *data,
                           const vectis_auth_workflow_record *record,
@@ -17979,17 +18082,13 @@ vectis_auth_workflow_page(const vectis_auth_route_data *data,
         error);
   } else if (status == VECTIS_OK &&
              step == VECTIS_AUTH_WORKFLOW_STEP_EMAIL_CODE) {
-    status = vectis_string_builder_append(
-        &content,
-        "<label>Email code<input name=\"email_token\" required maxlength=\"6\" "
-        "pattern=\"[A-Za-z0-9]{6}\" inputmode=\"text\" "
-        "autocomplete=\"one-time-code\" "
-        "autofocus></label><button type=\"submit\">Verify code</button>"
-        "<script>(function(){var "
-        "e=document.querySelector('[name=email_token]');"
-        "if(e)e.addEventListener('input',function(){if(this.value.length===6)"
-        "this.form.requestSubmit()})}())</script>",
-        error);
+    status = vectis_auth_workflow_code_input(
+        &content, "Email code", "email_token", "text", "[A-Za-z0-9]{6}",
+        "[A-Za-z0-9]", error);
+    if (status == VECTIS_OK) {
+      status = vectis_string_builder_append(
+          &content, "<button type=\"submit\">Verify code</button>", error);
+    }
   } else if (status == VECTIS_OK &&
              step == VECTIS_AUTH_WORKFLOW_STEP_PASSWORD && record == NULL) {
     status = vectis_string_builder_append(
@@ -18009,13 +18108,13 @@ vectis_auth_workflow_page(const vectis_auth_route_data *data,
         "type=\"submit\">Continue</button>",
         error);
   } else if (status == VECTIS_OK) {
-    status = vectis_string_builder_append(
-        &content,
-        "<label>Authenticator code<input name=\"totp_code\" required "
-        "inputmode=\"numeric\" "
-        "autocomplete=\"one-time-code\" autofocus></label><button "
-        "type=\"submit\">Verify</button>",
-        error);
+    status = vectis_auth_workflow_code_input(&content, "Authenticator code",
+                                             "totp_code", "numeric", "[0-9]{6}",
+                                             "[0-9]", error);
+    if (status == VECTIS_OK) {
+      status = vectis_string_builder_append(
+          &content, "<button type=\"submit\">Verify</button>", error);
+    }
   }
   if (status == VECTIS_OK) {
     status = vectis_string_builder_append(&content, "</form>", error);

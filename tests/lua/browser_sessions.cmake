@@ -254,18 +254,51 @@ assert(protected_page.body == '{"stats":true}\n')
 
 local function workflow_cookie(response)
   local header = assert(response.headers:match(
-      "[Ss]et%-[Cc]ookie:%s*([^\r\n]+)"), response.headers)
+    "[Ss]et%-[Cc]ookie:%s*([^\r\n]+)"), response.headers)
   local value = assert(header:match("^([^;]+)"))
   local name = assert(value:match("^([^=]+)="))
   assert(name:match("^vectis_auth_flow_[0-9a-f]+$"))
   return value, name
 end
 
+local function assert_six_cell_code_input(page, field_name, character_pattern)
+  local cell_count
+
+  assert(page.body:find('name="' .. field_name .. '" data%-otp%-value'))
+  assert(page.body:find('class="otp%-cells"', 1))
+  assert(page.body:find('class="otp%-cell" type="password"', 1))
+  _, cell_count = page.body:gsub('class="otp%-cell"', '')
+  assert(cell_count == 6, "expected six code cells, got " .. cell_count)
+  assert(page.body:find("allowed=/" .. character_pattern .. "/", 1, true))
+  assert(page.body:find('clipboardData', 1, true))
+  assert(page.body:find('form.requestSubmit()', 1, true))
+end
+
+local email_flow_start = request("/email-flow/continue", "POST",
+    "email=missing%40example.test", navigation_headers)
+assert(email_flow_start.ok == true, email_flow_start.error)
+assert(email_flow_start.status == 303)
+local email_flow_cookie = workflow_cookie(email_flow_start)
+local email_code_page = request("/email-flow/login", "GET", nil, {
+  ["Cookie"] = email_flow_cookie,
+})
+assert(email_code_page.ok == true, email_code_page.error)
+assert(email_code_page.status == 200)
+assert(email_code_page.body:find("Enter your email code", 1, true))
+assert_six_cell_code_input(email_code_page, "email_token", "[A-Za-z0-9]")
+
 local parent_flow = request("/flow/continue", "POST",
     "username=lua-flow-user&password=lua-flow-password", navigation_headers)
 assert(parent_flow.ok == true, parent_flow.error)
 assert(parent_flow.status == 303)
 local parent_flow_cookie, parent_flow_name = workflow_cookie(parent_flow)
+local totp_code_page = request("/flow/login", "GET", nil, {
+  ["Cookie"] = parent_flow_cookie,
+})
+assert(totp_code_page.ok == true, totp_code_page.error)
+assert(totp_code_page.status == 200)
+assert(totp_code_page.body:find("Enter your authenticator code", 1, true))
+assert_six_cell_code_input(totp_code_page, "totp_code", "[0-9]")
 local child_flow = request("/flow/admin/continue", "POST",
     "username=lua-flow-user&password=lua-flow-password", navigation_headers)
 assert(child_flow.ok == true, child_flow.error)
