@@ -1,4 +1,5 @@
 #include "vectis_cli.h"
+#include "vectis_internal.h"
 
 #include <cai/agent_runtime.h>
 #include <cai/auth.h>
@@ -693,8 +694,53 @@ static int vectis_smith_cli_default_state_endpoint(char *out,
   return written >= 0 && (size_t)written < out_capacity ? 0 : -1;
 }
 
+static void vectis_smith_cli_redact_endpoint(const char *endpoint, char *out,
+                                             size_t out_capacity) {
+  const char *end;
+  const char *authority;
+  const char *at;
+  const char *slash;
+  size_t length;
+
+  if (out == NULL || out_capacity == 0u) {
+    return;
+  }
+  out[0] = '\0';
+  if (endpoint == NULL) {
+    return;
+  }
+  end = strchr(endpoint, '?');
+  length = end == NULL ? strlen(endpoint) : (size_t)(end - endpoint);
+  authority = strstr(endpoint, "://");
+  if (authority != NULL) {
+    authority += 3u;
+    slash = memchr(authority, '/', length - (size_t)(authority - endpoint));
+    at = memchr(authority, '@', slash == NULL
+                                     ? length - (size_t)(authority - endpoint)
+                                     : (size_t)(slash - authority));
+    if (at != NULL) {
+      size_t prefix = (size_t)(authority - endpoint);
+      size_t suffix = length - (size_t)(at + 1 - endpoint);
+      if (prefix + suffix >= out_capacity) {
+        return;
+      }
+      memcpy(out, endpoint, prefix);
+      memcpy(out + prefix, at + 1, suffix);
+      out[prefix + suffix] = '\0';
+      return;
+    }
+  }
+  if (length >= out_capacity) {
+    length = out_capacity - 1u;
+  }
+  memcpy(out, endpoint, length);
+  out[length] = '\0';
+}
+
 static int vectis_smith_cli_open_store(const char *endpoint,
                                        const char *namespace_name,
+                                       pslog_logger *logger, char *failure,
+                                       size_t failure_capacity,
                                        lc_client **out_client,
                                        vectis_smith_store **out_store) {
   lc_client_config client_config;
@@ -703,20 +749,33 @@ static int vectis_smith_cli_open_store(const char *endpoint,
   vectis_error error;
   const char *endpoints[1];
   char owner[64];
+  char diagnostic_endpoint[PATH_MAX + 64u];
+  char dependency_message[256];
   char *key_file;
   int rc;
 
   *out_client = NULL;
   *out_store = NULL;
+  if (failure != NULL && failure_capacity != 0u) {
+    failure[0] = '\0';
+  }
   key_file = NULL;
   endpoints[0] = endpoint;
   lc_client_config_init(&client_config);
   client_config.endpoints = endpoints;
   client_config.endpoint_count = 1u;
   client_config.default_namespace = namespace_name;
+  client_config.logger = logger;
   if (strncmp(endpoint, "pouch://", 8u) == 0) {
     lc_error_init(&lcerr);
     rc = lc_pouch_crypto_default_key_file(&key_file, &lcerr);
+    if (rc != LC_OK && failure != NULL && failure_capacity != 0u) {
+      vectis_smith_lockdc_diagnostic_message(lcerr.message,
+                                             dependency_message,
+                                             sizeof(dependency_message));
+      (void)snprintf(failure, failure_capacity, "%s",
+                     dependency_message);
+    }
     lc_error_cleanup(&lcerr);
     if (rc != LC_OK) {
       return -1;
@@ -727,6 +786,11 @@ static int vectis_smith_cli_open_store(const char *endpoint,
   }
   lc_error_init(&lcerr);
   rc = lc_client_open(&client_config, out_client, &lcerr);
+  if (rc != LC_OK && failure != NULL && failure_capacity != 0u) {
+    vectis_smith_lockdc_diagnostic_message(lcerr.message, dependency_message,
+                                           sizeof(dependency_message));
+    (void)snprintf(failure, failure_capacity, "%s", dependency_message);
+  }
   lc_error_cleanup(&lcerr);
   lc_pouch_crypto_key_string_free(key_file);
   if (rc != LC_OK) {
@@ -736,12 +800,86 @@ static int vectis_smith_cli_open_store(const char *endpoint,
   store_config.client = *out_client;
   (void)snprintf(owner, sizeof(owner), "vectis-smith-cli-%ld", (long)getpid());
   store_config.owner = owner;
+  vectis_smith_cli_redact_endpoint(endpoint, diagnostic_endpoint,
+                                   sizeof(diagnostic_endpoint));
   if (vectis_smith_store_new(&store_config, out_store, &error) != VECTIS_OK) {
+    if (failure != NULL && failure_capacity != 0u) {
+      (void)snprintf(failure, failure_capacity, "%s", error.message);
+    }
+    lc_client_close(*out_client);
+    *out_client = NULL;
+    return -1;
+  }
+  if (vectis_smith_store_set_diagnostic_context(*out_store,
+                                                 diagnostic_endpoint,
+                                                 namespace_name) != 0) {
+    if (failure != NULL && failure_capacity != 0u) {
+      (void)snprintf(failure, failure_capacity,
+                     "failed to retain lockdc diagnostic context");
+    }
+    vectis_smith_store_destroy(*out_store);
+    *out_store = NULL;
     lc_client_close(*out_client);
     *out_client = NULL;
     return -1;
   }
   return 0;
+}
+
+static int vectis_smith_cli_verbosity_argument(const char *argument) {
+  size_t index;
+
+  if (argument == NULL) {
+    return 0;
+  }
+  if (strcmp(argument, "--verbose") == 0) {
+    return 1;
+  }
+  if (argument[0] != '-' || argument[1] != 'v') {
+    return 0;
+  }
+  for (index = 1u; argument[index] == 'v'; ++index) {
+  }
+  return argument[index] == '\0' ? (int)(index - 1u) : 0;
+}
+
+static int vectis_smith_cli_logging_requested(void) {
+  static const char *const names[] = {
+      "LOG_MODE",          "LOG_LEVEL",      "LOG_DISABLE_TIMESTAMP",
+      "LOG_VERBOSE_FIELDS", "LOG_NO_COLOR",   "LOG_FORCE_COLOR",
+      "LOG_PALETTE",       "LOG_OUTPUT",     "LOG_OUTPUT_FILE_MODE",
+      "LOG_TIME_FORMAT",   "LOG_UTC"};
+  size_t index;
+
+  for (index = 0u; index < sizeof(names) / sizeof(names[0]); ++index) {
+    if (getenv(names[index]) != NULL) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static pslog_logger *vectis_smith_cli_logger_new(int verbosity) {
+  pslog_config config;
+  pslog_logger *root;
+  pslog_logger *logger;
+
+  if (verbosity == 0 && !vectis_smith_cli_logging_requested()) {
+    return NULL;
+  }
+  pslog_default_config(&config);
+  config.output = pslog_output_from_fp(stderr, 0);
+  root = pslog_new_from_env("LOG_", &config);
+  if (root == NULL) {
+    return NULL;
+  }
+  if (verbosity == 0) {
+    return root;
+  }
+  logger = root->with_level(root, verbosity == 1 ? PSLOG_LEVEL_DEBUG
+                                                  : PSLOG_LEVEL_TRACE);
+  root->destroy(root);
+  return logger;
 }
 
 typedef struct vectis_smith_cli_ui {
@@ -927,7 +1065,8 @@ static int vectis_smith_cli_interactive(const vectis_smith_config *smith_config,
   return rc;
 }
 
-int vectis_smith_cli_command(int argc, char **argv, int index) {
+int vectis_smith_cli_command(int argc, char **argv, int index,
+                             int initial_verbosity) {
   vectis_smith_cli_render render;
   vectis_smith_config config;
   vectis_error error;
@@ -944,8 +1083,12 @@ int vectis_smith_cli_command(int argc, char **argv, int index) {
   const char *state_namespace;
   char workspace[4096];
   char default_state_endpoint[PATH_MAX + 64u];
+  char state_diagnostic_endpoint[PATH_MAX + 64u];
+  char state_failure[512];
   lc_client *state_client;
+  pslog_logger *logger;
   vectis_smith_store *store;
+  int verbosity;
   int rc;
 
   prompt = NULL;
@@ -953,8 +1096,11 @@ int vectis_smith_cli_command(int argc, char **argv, int index) {
   workspace_arg = NULL;
   state_endpoint_arg = NULL;
   state_namespace = "vectis.smith";
+  verbosity = initial_verbosity;
   while (index < argc) {
-    if (strcmp(argv[index], "-e") == 0 ||
+    if (vectis_smith_cli_verbosity_argument(argv[index]) != 0) {
+      verbosity += vectis_smith_cli_verbosity_argument(argv[index]);
+    } else if (strcmp(argv[index], "-e") == 0 ||
         strcmp(argv[index], "--execute") == 0) {
       if (index + 1 >= argc) {
         fprintf(stderr, "vectis: %s requires a prompt\n", argv[index]);
@@ -994,9 +1140,18 @@ int vectis_smith_cli_command(int argc, char **argv, int index) {
     }
     ++index;
   }
+  logger = vectis_smith_cli_logger_new(verbosity);
+  if ((verbosity != 0 || vectis_smith_cli_logging_requested()) &&
+      logger == NULL) {
+    fputs("vectis: failed to configure pslog diagnostics\n", stderr);
+    return 1;
+  }
   if (vectis_smith_cli_get_workspace(workspace, sizeof(workspace),
                                      workspace_arg) != 0) {
     fputs("vectis: failed to resolve Smith workspace\n", stderr);
+    if (logger != NULL) {
+      logger->destroy(logger);
+    }
     return 1;
   }
   memset(&render, 0, sizeof(render));
@@ -1008,6 +1163,8 @@ int vectis_smith_cli_command(int argc, char **argv, int index) {
   terminal_config.root_path = workspace;
   config.runtime.terminal_tool_config = &terminal_config;
   config.client_config.api_key_env = "OPENAI_API_KEY";
+  config.client_config.logger = logger;
+  config.runtime.logger = logger;
   config.runtime.workspace_directory = workspace;
   config.runtime.session_id = session_id;
   config.runtime.resume_latest = session_id == NULL;
@@ -1015,6 +1172,7 @@ int vectis_smith_cli_command(int argc, char **argv, int index) {
   config.runtime.event_context = &render;
   chatgpt_auth = NULL;
   cai_chatgpt_auth_config_init(&auth_config);
+  auth_config.logger = logger;
   cai_error_init(&caierr);
   if (cai_chatgpt_auth_open(&auth_config, &chatgpt_auth, &caierr) == CAI_OK) {
     config.client_config.chatgpt_auth = chatgpt_auth;
@@ -1026,17 +1184,31 @@ int vectis_smith_cli_command(int argc, char **argv, int index) {
       fputs("vectis: failed to create default Smith state directory\n", stderr);
       cai_chatgpt_auth_close(chatgpt_auth);
       vectis_smith_cli_render_cleanup(&render);
+      if (logger != NULL) {
+        logger->destroy(logger);
+      }
       return 1;
     }
     state_endpoint_arg = default_state_endpoint;
   }
   state_client = NULL;
   store = NULL;
-  if (vectis_smith_cli_open_store(state_endpoint_arg, state_namespace,
+  vectis_smith_cli_redact_endpoint(state_endpoint_arg,
+                                   state_diagnostic_endpoint,
+                                   sizeof(state_diagnostic_endpoint));
+  if (vectis_smith_cli_open_store(state_endpoint_arg, state_namespace, logger,
+                                  state_failure, sizeof(state_failure),
                                   &state_client, &store) != 0) {
-    fputs("vectis: failed to open durable Smith LockDC state\n", stderr);
+    fprintf(stderr,
+            "vectis: lockdc error: unable to open durable Smith state "
+            "(endpoint=%s namespace=%s): %s\n",
+            state_diagnostic_endpoint, state_namespace,
+            state_failure[0] != '\0' ? state_failure : "unknown lockdc error");
     cai_chatgpt_auth_close(chatgpt_auth);
     vectis_smith_cli_render_cleanup(&render);
+    if (logger != NULL) {
+      logger->destroy(logger);
+    }
     return 1;
   }
   config.store = store;
@@ -1074,5 +1246,8 @@ int vectis_smith_cli_command(int argc, char **argv, int index) {
   lc_client_close(state_client);
   cai_chatgpt_auth_close(chatgpt_auth);
   vectis_smith_cli_render_cleanup(&render);
+  if (logger != NULL) {
+    logger->destroy(logger);
+  }
   return rc;
 }

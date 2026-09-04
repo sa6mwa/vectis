@@ -3084,10 +3084,10 @@ vectis_status vectis_cai_output_enqueue(cai_output *output,
                                         struct lc_enqueue_res *out,
                                         vectis_error *error);
 
-/** Configuration for a durable CAI agent-session store backed by LockDC.
+/** Configuration for a durable CAI agent-session store backed by lockdc.
  * `client` is borrowed and must remain open until the store and every Smith
  * runtime using it have been closed. `owner` and `lease_ttl_seconds` select
- * the LockDC lease used to serialize updates; NULL/zero choose safe defaults.
+ * the lockdc lease used to serialize updates; NULL/zero choose safe defaults.
  */
 typedef struct vectis_smith_store_config {
   struct lc_client *client;
@@ -3095,9 +3095,9 @@ typedef struct vectis_smith_store_config {
   long lease_ttl_seconds;
 } vectis_smith_store_config;
 
-/** Initialize a zero-defaultable LockDC Smith-store configuration. */
+/** Initialize a zero-defaultable lockdc Smith-store configuration. */
 void vectis_smith_store_config_init(vectis_smith_store_config *config);
-/** Open a LockDC-backed durable CAI agent-session store. */
+/** Open a lockdc-backed durable CAI agent-session store. */
 vectis_status vectis_smith_store_new(const vectis_smith_store_config *config,
                                      vectis_smith_store **out,
                                      vectis_error *error);
@@ -3109,7 +3109,7 @@ vectis_smith_store_session_store(const vectis_smith_store *store);
 
 /** Configuration for the Vectis facade over CAI's built-in Smith runtime.
  * Supply either `client` (borrowed) or `client_config` to create a client.
- * When `store` is supplied, its durable LockDC callbacks replace
+ * When `store` is supplied, its durable lockdc callbacks replace
  * `runtime.session_store`; callers must not set both. CAI owns the model loop,
  * preset, event semantics, steering, and queued turns.
  */

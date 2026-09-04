@@ -192,6 +192,34 @@ static void test_softline_queued_turns_profile(void) {
   sl_destroy(editor);
 }
 
+static void test_cli_diagnostic_endpoint_redaction(void) {
+  char endpoint[256];
+  char message[256];
+
+  vectis_smith_cli_redact_endpoint(
+      "https://operator:secret@lockd.example/v1?access_token=secret", endpoint,
+      sizeof(endpoint));
+  assert(strcmp(endpoint, "https://lockd.example/v1") == 0);
+  vectis_smith_cli_redact_endpoint(
+      "pouch:///var/lib/vectis?crypto_key=secret&single_writer=false", endpoint,
+      sizeof(endpoint));
+  assert(strcmp(endpoint, "pouch:///var/lib/vectis") == 0);
+  vectis_smith_lockdc_diagnostic_message(
+      "request to https://operator:secret@lockd.example/v1 failed", message,
+      sizeof(message));
+  assert(strcmp(message, "lockdc returned a redacted dependency error") == 0);
+  vectis_smith_lockdc_diagnostic_message("pouch binary control record magic mismatch",
+                                         message, sizeof(message));
+  assert(strcmp(message, "pouch binary control record magic mismatch") == 0);
+}
+
+static void test_cli_verbosity_arguments(void) {
+  assert(vectis_smith_cli_verbosity_argument("-v") == 1);
+  assert(vectis_smith_cli_verbosity_argument("-vv") == 2);
+  assert(vectis_smith_cli_verbosity_argument("--verbose") == 1);
+  assert(vectis_smith_cli_verbosity_argument("--version") == 0);
+}
+
 static void test_interactive_queue_and_promote(void) {
   char transcript[4096];
   char log[256];
@@ -284,6 +312,8 @@ int main(void) {
   test_render_multiple_responses();
   test_agent_control_bridge_is_fifo();
   test_softline_queued_turns_profile();
+  test_cli_diagnostic_endpoint_redaction();
+  test_cli_verbosity_arguments();
   test_interactive_queue_and_promote();
   return 0;
 }

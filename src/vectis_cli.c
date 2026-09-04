@@ -772,20 +772,26 @@ static int vectis_cli_action_usage(FILE *stream, const char *action) {
   if (strcmp(action, "smith") == 0) {
     fputs(
         "Usage:\n"
-        "  vectis --action smith [OPTIONS]\n"
-        "  vectis --action smith [OPTIONS] -e PROMPT\n\n"
+        "  vectis [--verbose ...] --action smith [OPTIONS]\n"
+        "  vectis [--verbose ...] --action smith [OPTIONS] -e PROMPT\n\n"
         "Run CAI's Smith preset in the current workspace. Without -e, an\n"
-        "interactive Softline editor supports direct steering and Tab-queued\n"
-        "follow-up turns. -e submits one turn and exits after it completes.\n"
+        "interactive Softline editor queues Enter follow-up turns while busy\n"
+        "and sends Alt-Enter input as direct steering. -e submits one turn\n"
+        "and exits after it completes.\n"
         "ChatGPT auth state is preferred; OPENAI_API_KEY is a fallback.\n\n"
         "Options:\n"
         "  -e, --execute PROMPT       Submit one turn, then exit.\n"
         "  -s, --session ID           Resume or create this session.\n"
         "  -w, --workspace DIR        Root Smith's file and terminal tools "
         "here.\n"
-        "      --state-endpoint URL   LockDC endpoint for durable state.\n"
-        "      --state-namespace NAME LockDC namespace (default: "
-        "vectis.smith).\n",
+        "  -v, --verbose              Enable debug pslog diagnostics; repeat "
+        "for trace.\n"
+        "      --state-endpoint URL   lockdc endpoint for durable state.\n"
+        "      --state-namespace NAME lockdc namespace (default: "
+        "vectis.smith).\n\n"
+        "pslog also reads LOG_* settings such as LOG_LEVEL. Command-line "
+        "verbosity takes precedence. Diagnostics redact endpoint credentials "
+        "and query values.\n",
         stream);
     return 0;
   }
@@ -4049,7 +4055,8 @@ static int vectis_unpack_command(int argc, char **argv, int index) {
   return 0;
 }
 
-static int vectis_action_command(int argc, char **argv, int index) {
+static int vectis_action_command(int argc, char **argv, int index,
+                                 int initial_verbosity) {
   const char *action;
 
   if (index >= argc) {
@@ -4088,10 +4095,34 @@ static int vectis_action_command(int argc, char **argv, int index) {
     return vectis_cli_oauth2_command(argc, argv, index);
   }
   if (strcmp(action, "smith") == 0) {
-    return vectis_smith_cli_command(argc, argv, index);
+    return vectis_smith_cli_command(argc, argv, index, initial_verbosity);
   }
   fprintf(stderr, "vectis: unknown action: %s\n", action);
   return 64;
+}
+
+static int vectis_cli_leading_verbosity(int argc, char **argv,
+                                        int *next_index) {
+  int index;
+  int verbosity;
+
+  index = 1;
+  verbosity = 0;
+  while (index < argc) {
+    if (strcmp(argv[index], "--verbose") == 0 ||
+        strcmp(argv[index], "-v") == 0) {
+      ++verbosity;
+    } else if (strcmp(argv[index], "-vv") == 0) {
+      verbosity += 2;
+    } else {
+      break;
+    }
+    ++index;
+  }
+  if (next_index != NULL) {
+    *next_index = index;
+  }
+  return verbosity;
 }
 
 static int vectis_cli_preempts_embedded_app(const char *action) {
@@ -23265,26 +23296,34 @@ static int vectis_lua_run_embedded(int argc, char **argv) {
 }
 
 int vectis_cli_main(int argc, char **argv) {
+  int action_index;
   int rc;
+  int verbosity;
 
-  if (argc > 1 &&
-      (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
+  verbosity = vectis_cli_leading_verbosity(argc, argv, &action_index);
+
+  if (action_index < argc &&
+      (strcmp(argv[action_index], "-h") == 0 ||
+       strcmp(argv[action_index], "--help") == 0)) {
     vectis_cli_usage(stdout);
     return 0;
   }
-  if (argc > 1 && strcmp(argv[1], "--version") == 0) {
+  if (action_index < argc && strcmp(argv[action_index], "--version") == 0) {
     puts("vectis " VECTIS_VERSION);
     return 0;
   }
-  if (argc == 4 &&
-      (strcmp(argv[1], "-a") == 0 || strcmp(argv[1], "--action") == 0) &&
-      (strcmp(argv[3], "-h") == 0 || strcmp(argv[3], "--help") == 0)) {
-    return vectis_action_command(argc, argv, 2);
+  if (action_index + 3 == argc &&
+      (strcmp(argv[action_index], "-a") == 0 ||
+       strcmp(argv[action_index], "--action") == 0) &&
+      (strcmp(argv[action_index + 2], "-h") == 0 ||
+       strcmp(argv[action_index + 2], "--help") == 0)) {
+    return vectis_action_command(argc, argv, action_index + 1, verbosity);
   }
-  if (argc > 2 &&
-      (strcmp(argv[1], "-a") == 0 || strcmp(argv[1], "--action") == 0) &&
-      vectis_cli_preempts_embedded_app(argv[2])) {
-    return vectis_action_command(argc, argv, 2);
+  if (action_index + 1 < argc &&
+      (strcmp(argv[action_index], "-a") == 0 ||
+       strcmp(argv[action_index], "--action") == 0) &&
+      vectis_cli_preempts_embedded_app(argv[action_index + 1])) {
+    return vectis_action_command(argc, argv, action_index + 1, verbosity);
   }
 
   rc = vectis_lua_run_embedded(argc, argv);
@@ -23292,9 +23331,10 @@ int vectis_cli_main(int argc, char **argv) {
     return rc;
   }
 
-  if (argc > 1 &&
-      (strcmp(argv[1], "-a") == 0 || strcmp(argv[1], "--action") == 0)) {
-    return vectis_action_command(argc, argv, 2);
+  if (action_index + 1 < argc &&
+      (strcmp(argv[action_index], "-a") == 0 ||
+       strcmp(argv[action_index], "--action") == 0)) {
+    return vectis_action_command(argc, argv, action_index + 1, verbosity);
   }
   if (argc > 1 && strcmp(argv[1], "-x") == 0) {
     if (argc > 2) {

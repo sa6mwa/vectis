@@ -5259,7 +5259,7 @@ static pslog_logger *vectis_make_owned_logger(const vectis_app_config *config,
   psconf.min_level = config->min_log_level;
   psconf.output = pslog_output_from_fp(stderr, 0);
 
-  root = pslog_new(&psconf);
+  root = pslog_new_from_env("LOG_", &psconf);
   if (root == NULL) {
     vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to create vectis logger");
     return NULL;

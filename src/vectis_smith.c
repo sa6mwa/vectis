@@ -42,6 +42,8 @@ typedef struct vectis_smith_memory_source {
 struct vectis_smith_store {
   struct lc_client *client;
   char *owner;
+  char *diagnostic_endpoint;
+  char *diagnostic_namespace;
   long lease_ttl_seconds;
   pthread_mutex_t mutex;
   cai_agent_session_store callbacks;
@@ -112,6 +114,26 @@ static void vectis_smith_set_error(vectis_error *error, vectis_status status,
   }
 }
 
+void vectis_smith_lockdc_diagnostic_message(const char *message, char *out,
+                                            size_t out_capacity) {
+  if (out == NULL || out_capacity == 0u) {
+    return;
+  }
+  if (message == NULL || message[0] == '\0') {
+    (void)snprintf(out, out_capacity, "%s", "unknown lockdc error");
+    return;
+  }
+  if (strstr(message, "://") != NULL || strstr(message, "crypto_key") != NULL ||
+      strstr(message, "token") != NULL || strstr(message, "secret") != NULL ||
+      strstr(message, "password") != NULL ||
+      strstr(message, "authorization") != NULL) {
+    (void)snprintf(out, out_capacity, "%s",
+                   "lockdc returned a redacted dependency error");
+    return;
+  }
+  (void)snprintf(out, out_capacity, "%s", message);
+}
+
 static int vectis_smith_hash(const char *value,
                              char out[SHA256_DIGEST_LENGTH * 2u + 1u]) {
   unsigned char digest[SHA256_DIGEST_LENGTH];
@@ -160,7 +182,10 @@ static int vectis_smith_acquire(vectis_smith_store *store, const char *key,
                                 lc_lease **out, cai_error *error) {
   lc_acquire_req request;
   lc_error lcerr;
-  char message[256];
+  char message[512];
+  char dependency_message[256];
+  const char *endpoint;
+  const char *namespace_name;
   int rc;
 
   lc_acquire_req_init(&request);
@@ -170,10 +195,19 @@ static int vectis_smith_acquire(vectis_smith_store *store, const char *key,
   request.ttl_seconds = store->lease_ttl_seconds;
   rc = lc_acquire(store->client, &request, out, &lcerr);
   if (rc != LC_OK) {
+    vectis_smith_lockdc_diagnostic_message(lcerr.message, dependency_message,
+                                           sizeof(dependency_message));
+    endpoint = store->diagnostic_endpoint != NULL
+                   ? store->diagnostic_endpoint
+                   : "configured lockdc endpoint";
+    namespace_name = store->diagnostic_namespace != NULL
+                         ? store->diagnostic_namespace
+                         : "client default namespace";
     (void)snprintf(message, sizeof(message),
-                   "failed to acquire LockDC Smith state: %s",
-                   lcerr.message == NULL ? "unknown LockDC error"
-                                         : lcerr.message);
+                   "lockdc error: unable to acquire Smith state "
+                   "(endpoint=%s namespace=%s code=%d): %s",
+                   endpoint, namespace_name, lcerr.code,
+                   dependency_message);
     vectis_smith_set_cai_error(error, CAI_ERR_TRANSPORT, message);
   }
   lc_error_cleanup(&lcerr);
@@ -191,7 +225,7 @@ static int vectis_smith_release(lc_lease *lease, cai_error *error) {
   if (rc != LC_OK) {
     lc_lease_close(lease);
     vectis_smith_set_cai_error(error, CAI_ERR_TRANSPORT,
-                               "failed to release LockDC Smith state");
+                               "failed to release lockdc Smith state");
   }
   lc_error_cleanup(&lcerr);
   return rc == LC_OK ? CAI_OK : error->code;
@@ -829,6 +863,31 @@ void vectis_smith_store_config_init(vectis_smith_store_config *config) {
   }
 }
 
+int vectis_smith_store_set_diagnostic_context(vectis_smith_store *store,
+                                              const char *endpoint,
+                                              const char *namespace_name) {
+  char *endpoint_copy;
+  char *namespace_copy;
+
+  if (store == NULL) {
+    return -1;
+  }
+  endpoint_copy = endpoint == NULL ? NULL : vectis_smith_strdup(endpoint);
+  namespace_copy = namespace_name == NULL ? NULL
+                                           : vectis_smith_strdup(namespace_name);
+  if ((endpoint != NULL && endpoint_copy == NULL) ||
+      (namespace_name != NULL && namespace_copy == NULL)) {
+    free(namespace_copy);
+    free(endpoint_copy);
+    return -1;
+  }
+  free(store->diagnostic_namespace);
+  free(store->diagnostic_endpoint);
+  store->diagnostic_endpoint = endpoint_copy;
+  store->diagnostic_namespace = namespace_copy;
+  return 0;
+}
+
 vectis_status vectis_smith_store_new(const vectis_smith_store_config *config,
                                      vectis_smith_store **out,
                                      vectis_error *error) {
@@ -837,7 +896,7 @@ vectis_status vectis_smith_store_new(const vectis_smith_store_config *config,
 
   if (out == NULL || config == NULL || config->client == NULL) {
     vectis_smith_set_error(error, VECTIS_ERR_INVALID,
-                           "Smith store requires a LockDC client and output");
+                           "Smith store requires a lockdc client and output");
     return VECTIS_ERR_INVALID;
   }
   *out = NULL;
@@ -855,6 +914,8 @@ vectis_status vectis_smith_store_new(const vectis_smith_store_config *config,
     store->owner = vectis_smith_strdup(config->owner);
   }
   if (store->owner == NULL || pthread_mutex_init(&store->mutex, NULL) != 0) {
+    free(store->diagnostic_namespace);
+    free(store->diagnostic_endpoint);
     free(store->owner);
     free(store);
     vectis_smith_set_error(error, VECTIS_ERR_NOMEM,
@@ -878,6 +939,8 @@ vectis_status vectis_smith_store_new(const vectis_smith_store_config *config,
 void vectis_smith_store_destroy(vectis_smith_store *store) {
   if (store != NULL) {
     (void)pthread_mutex_destroy(&store->mutex);
+    free(store->diagnostic_namespace);
+    free(store->diagnostic_endpoint);
     free(store->owner);
     free(store);
   }

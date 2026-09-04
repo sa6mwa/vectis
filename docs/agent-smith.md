@@ -3,7 +3,7 @@
 Vectis ships CAI 0.5's `smith` coding-agent preset as a Vectis-hosted product
 surface. CAI owns the agent loop, model protocol, tool semantics, review
 subagents, and session journal contract. Vectis owns the command-line
-experience, LockDC/Pouch persistence, workspace boundary, and C/Lua facades.
+experience, lockdc/Pouch persistence, workspace boundary, and C/Lua facades.
 
 ## Modes
 
@@ -83,19 +83,29 @@ and CAI is never pumped by the editor idle callback.
 Smith first opens CAI's persisted ChatGPT subscription authentication state.
 CAI uses `CAI_CHATGPT_AUTH_JSON` when set, otherwise its XDG state file. If no
 ChatGPT state is available, Smith falls back to `OPENAI_API_KEY`. Vectis does
-not copy OAuth refresh tokens into its LockDC store.
+not copy OAuth refresh tokens into its lockdc store.
+
+## Diagnostics
+
+Smith is quiet by default. Set any standard libpslog `LOG_*` setting to enable
+structured diagnostics for Vectis, CAI, and lockdc; for example,
+`LOG_LEVEL=debug vectis -a smith`. `-v`/`--verbose` selects debug, while two
+occurrences (`-vv`, `-v -v`, or `--verbose --verbose`) select trace and take
+precedence over `LOG_LEVEL`. Ordinary errors never require logging: lockdc
+failures identify the redacted endpoint, namespace, status code, and library
+message. Credentials and endpoint query values are never printed.
 
 ## Durable sessions
 
 The CLI persists Smith checkpoints and ordered steering/queued-turn events in
-LockDC. Its default endpoint is:
+lockdc. Its default endpoint is:
 
 ```text
 pouch://$XDG_STATE_HOME/vectis/smith?single_writer=false
 ```
 
 When `XDG_STATE_HOME` is unset, it uses
-`$HOME/.local/state/vectis/smith`. Pouch encryption follows LockDC's normal
+`$HOME/.local/state/vectis/smith`. Pouch encryption follows lockdc's normal
 per-user key-file handling. Override the store deliberately when a deployment
 needs shared or remote state:
 
@@ -106,7 +116,7 @@ vectis -a smith --state-endpoint 'https://lockd.example/v1' \
 
 The session scope is CAI's opaque workspace identity. A checkpoint includes a
 watermark; Vectis replays only the strictly later durable events, in sequence,
-when a session resumes. The LockDC adapter serializes updates with a short
+when a session resumes. The lockdc adapter serializes updates with a short
 lease. It is valid for use by multiple CAI runtimes as long as the caller keeps
 the `lc_client` and `vectis_smith_store` alive for every borrowing runtime.
 
@@ -114,7 +124,7 @@ the `lc_client` and `vectis_smith_store` alive for every borrowing runtime.
 
 `include/vectis/vectis.h` exposes two layers:
 
-- `vectis_smith_store_new()` creates the LockDC-backed
+- `vectis_smith_store_new()` creates the lockdc-backed
   `cai_agent_session_store` adapter.
 - `vectis_smith_open()` creates the owner-thread CAI Smith runtime and exposes
   `submit`, `submit_steering`, `submit_queued`, `pump`, `state`, and
@@ -122,10 +132,10 @@ the `lc_client` and `vectis_smith_store` alive for every borrowing runtime.
 
 Applications pass either a borrowed `cai_client` or `cai_client_config`, and
 provide a workspace in `vectis_smith_config.runtime.workspace_directory`.
-Passing `store` installs its LockDC session store; it is intentionally
+Passing `store` installs its lockdc session store; it is intentionally
 exclusive with a caller-supplied CAI session store. The caller drives `pump`
 from the runtime owner thread and closes the runtime before destroying its
-store or LockDC client. The interactive UI is a host of this API, not a reason
+store or lockdc client. The interactive UI is a host of this API, not a reason
 to weaken its owner-thread contract.
 
 ## Lua
