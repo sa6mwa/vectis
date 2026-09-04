@@ -9,11 +9,12 @@ if(NOT DEFINED VECTIS_SOURCE_DIR)
 endif()
 
 file(MAKE_DIRECTORY "${WORK_DIR}/admin")
-set(store "${WORK_DIR}/admin/credentials.json")
-file(REMOVE "${store}" "${store}.lock")
+set(pouch_root "${WORK_DIR}/admin/pouch")
+set(lockd_endpoint "pouch://${pouch_root}?single_writer=false")
+file(REMOVE_RECURSE "${pouch_root}")
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a credentials --store "${store}" --init
+  COMMAND "${VECTIS_BIN}" -a credentials --lockd-endpoint "${lockd_endpoint}" --init
   RESULT_VARIABLE init_result
   OUTPUT_VARIABLE init_output
   ERROR_VARIABLE init_error)
@@ -53,7 +54,7 @@ if(NOT oauth_authorize_output MATCHES "nonce=admin-nonce")
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a oauth2 --store "${store}" --exchange-callback
+  COMMAND "${VECTIS_BIN}" -a oauth2 --lockd-endpoint "${lockd_endpoint}" --exchange-callback
           "bad-callback-flow" --subject "admin-oidc@example.com"
           --token-endpoint "https://idp.example.test/token"
           --client-id "admin-client"
@@ -75,7 +76,7 @@ if(oauth_exchange_bad_output MATCHES "stored_flow=")
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a oauth2 --store "${store}" --client-credentials
+  COMMAND "${VECTIS_BIN}" -a oauth2 --lockd-endpoint "${lockd_endpoint}" --client-credentials
           "bad-client-flow" --subject "admin-m2m@example.com"
           --client-id "admin-client" --client-secret "admin-secret"
   RESULT_VARIABLE oauth_client_bad_result
@@ -92,7 +93,7 @@ if(oauth_client_bad_output MATCHES "stored_flow=")
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a oauth2 --store "${store}" --upsert-flow
+  COMMAND "${VECTIS_BIN}" -a oauth2 --lockd-endpoint "${lockd_endpoint}" --upsert-flow
           "admin-flow" --subject "admin-oidc@example.com"
           --access-token "admin-access-token" --token-type "Bearer"
           --refresh-token "admin-refresh-token" --scope "openid dav"
@@ -108,7 +109,7 @@ if(NOT oauth_upsert_output MATCHES "stored_flow=admin-flow")
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a oauth2 --store "${store}" --load-flow
+  COMMAND "${VECTIS_BIN}" -a oauth2 --lockd-endpoint "${lockd_endpoint}" --load-flow
           "admin-flow"
   RESULT_VARIABLE oauth_load_result
   OUTPUT_VARIABLE oauth_load_output
@@ -133,7 +134,7 @@ if(NOT oauth_load_output MATCHES "expires_at=5200")
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a oauth2 --store "${store}" --ensure-flow
+  COMMAND "${VECTIS_BIN}" -a oauth2 --lockd-endpoint "${lockd_endpoint}" --ensure-flow
           "admin-flow" --now "1000"
   RESULT_VARIABLE oauth_ensure_result
   OUTPUT_VARIABLE oauth_ensure_output
@@ -155,7 +156,7 @@ if(NOT oauth_ensure_output MATCHES "access_token=admin-access-token")
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a oauth2 --store "${store}" --webdav-key
+  COMMAND "${VECTIS_BIN}" -a oauth2 --lockd-endpoint "${lockd_endpoint}" --webdav-key
           "admin-flow" --subject "admin-oidc@example.com"
   RESULT_VARIABLE oauth_webdav_key_result
   OUTPUT_VARIABLE oauth_webdav_key_output
@@ -218,7 +219,7 @@ endif()
 string(STRIP "${oauth_basic_secret}" oauth_basic_secret)
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a credentials --store "${store}" --verify
+  COMMAND "${VECTIS_BIN}" -a credentials --lockd-endpoint "${lockd_endpoint}" --verify
           "Basic ${oauth_basic_secret}" --basic
   RESULT_VARIABLE oauth_verify_result
   OUTPUT_VARIABLE oauth_verify_output
@@ -237,7 +238,7 @@ if(NOT oauth_verify_output MATCHES "\"oauth2_flow_id\":\"admin-flow\"")
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a oauth2 --store "${store}" --webdav-key
+  COMMAND "${VECTIS_BIN}" -a oauth2 --lockd-endpoint "${lockd_endpoint}" --webdav-key
           "missing-admin-flow" --subject "admin-oidc@example.com"
   RESULT_VARIABLE oauth_missing_webdav_key_result
   OUTPUT_VARIABLE oauth_missing_webdav_key_output
@@ -253,7 +254,7 @@ if(oauth_missing_webdav_key_output MATCHES "client_secret=")
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a credentials --store "${store}" --issue
+  COMMAND "${VECTIS_BIN}" -a credentials --lockd-endpoint "${lockd_endpoint}" --issue
           --subject "admin@example.com" --purpose "webdav" --bearer
   RESULT_VARIABLE issue_result
   OUTPUT_VARIABLE issue_output
@@ -273,7 +274,7 @@ endif()
 set(api_key "${CMAKE_MATCH_1}")
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a credentials --store "${store}" --verify
+  COMMAND "${VECTIS_BIN}" -a credentials --lockd-endpoint "${lockd_endpoint}" --verify
           "Bearer ${api_key}" --bearer
   RESULT_VARIABLE verify_result
   OUTPUT_VARIABLE verify_output
@@ -289,7 +290,7 @@ if(NOT verify_output MATCHES "auth_mode=bearer")
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a credentials --store "${store}" --revoke
+  COMMAND "${VECTIS_BIN}" -a credentials --lockd-endpoint "${lockd_endpoint}" --revoke
           "${client_id}"
   RESULT_VARIABLE revoke_result
   OUTPUT_VARIABLE revoke_output
@@ -302,7 +303,7 @@ if(NOT revoke_output MATCHES "revoked=${client_id}")
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a credentials --store "${store}" --verify
+  COMMAND "${VECTIS_BIN}" -a credentials --lockd-endpoint "${lockd_endpoint}" --verify
           "Bearer ${api_key}" --bearer
   RESULT_VARIABLE revoked_verify_result
   OUTPUT_VARIABLE revoked_verify_output
@@ -315,7 +316,7 @@ if(NOT revoked_verify_output MATCHES "authenticated=false")
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a users --store "${store}" --add
+  COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${lockd_endpoint}" --add
           "admin-user@example.com" --password "admin-password"
           --email "admin-user@example.com"
           --totp-secret "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
@@ -340,7 +341,7 @@ if(NOT user_add_output MATCHES "totp_qr:")
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a users --store "${store}" --add
+  COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${lockd_endpoint}" --add
           "email-validation-user@example.com" --password "original-password"
   RESULT_VARIABLE email_validation_add_result
   OUTPUT_VARIABLE email_validation_add_output
@@ -352,7 +353,7 @@ endif()
 
 string(REPEAT "a" 320 too_long_email)
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a users --store "${store}" --add
+  COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${lockd_endpoint}" --add
           "email-validation-user@example.com" --password "updated-password"
           --email "${too_long_email}"
   RESULT_VARIABLE invalid_email_update_result
@@ -367,7 +368,7 @@ if(NOT invalid_email_update_error MATCHES "auth email is too long")
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a users --store "${store}" --login
+  COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${lockd_endpoint}" --login
           "email-validation-user@example.com" --password "original-password"
   RESULT_VARIABLE original_password_result
   OUTPUT_VARIABLE original_password_output
@@ -379,7 +380,7 @@ if(NOT original_password_result EQUAL 0 OR
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a users --store "${store}" --login
+  COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${lockd_endpoint}" --login
           "email-validation-user@example.com" --password "updated-password"
   RESULT_VARIABLE updated_password_result
   OUTPUT_VARIABLE updated_password_output
@@ -391,7 +392,7 @@ if(NOT updated_password_result EQUAL 0 OR
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a users --store "${store}" --login
+  COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${lockd_endpoint}" --login
           "admin-user@example.com" --password "admin-password"
   RESULT_VARIABLE user_login_missing_result
   OUTPUT_VARIABLE user_login_missing_output
@@ -404,7 +405,7 @@ if(NOT user_login_missing_output MATCHES "authenticated=false")
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a users --store "${store}" --login
+  COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${lockd_endpoint}" --login
           "admin-user@example.com" --password "admin-password"
           --totp-code "287082" --time "59" --window "0"
   RESULT_VARIABLE user_login_result
@@ -418,7 +419,7 @@ if(NOT user_login_output MATCHES "authenticated=true")
 endif()
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" -a users --store "${store}" --webdav-key
+  COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${lockd_endpoint}" --webdav-key
           "admin-user@example.com" --password "admin-password"
           --totp-code "287082" --time "59" --window "0"
   RESULT_VARIABLE webdav_key_result
@@ -437,15 +438,17 @@ if(NOT webdav_key_output MATCHES "\"purpose\":\"webdav\"")
   message(FATAL_ERROR "users webdav-key did not carry webdav purpose")
 endif()
 
+set(trace_script "${WORK_DIR}/admin/trace.lua")
+file(WRITE "${trace_script}"
+     "assert(arg[1] == 'first')\nassert(arg[2] == 'second')\n")
 execute_process(
-  COMMAND "${VECTIS_BIN}" -x "${VECTIS_SOURCE_DIR}/tests/lua/smoke.lua" first
-          second
+  COMMAND "${VECTIS_BIN}" -x "${trace_script}" first second
   RESULT_VARIABLE trace_result
   OUTPUT_VARIABLE trace_output
   ERROR_VARIABLE trace_error)
 if(NOT trace_result EQUAL 0)
   message(FATAL_ERROR "-x Lua tracing failed (${trace_result}): ${trace_error}")
 endif()
-if(NOT trace_error MATCHES "\\+ .*smoke\\.lua:[0-9]+")
+if(NOT trace_error MATCHES "\\+ .*trace\\.lua:[0-9]+")
   message(FATAL_ERROR "-x did not emit Lua line trace output: ${trace_error}")
 endif()

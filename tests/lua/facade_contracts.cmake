@@ -14,23 +14,10 @@ local lockd = require("vectis.lockd")
 local xml = require("vectis.xml")
 
 local work_dir = assert(arg[1], "work directory argument is required")
-local auth_store = work_dir .. "/facade-auth-credentials.json"
-local auth_state = work_dir .. "/facade-auth-state.json"
-os.remove(auth_store)
-os.remove(auth_store .. ".lock")
-os.remove(auth_state)
-os.remove(auth_state .. ".lock")
-
-local bad_size_ok, bad_size_err = pcall(function()
-  vectis.auth.store_init({
-    credentials_path = auth_store,
-    state_path = auth_state,
-    max_store_bytes = -1,
-  })
-end)
-assert(bad_size_ok == false)
-assert(tostring(bad_size_err):find("max_store_bytes must be non-negative", 1,
-                                   true))
+local auth_endpoint = "pouch://" .. work_dir .. "/facade-auth-pouch?single_writer=false"
+local auth_app = assert(vectis.app.new({
+  lockd = { endpoints = { auth_endpoint } },
+}))
 
 local function assert_status_error(err, status, message_fragment)
   assert(type(err) == "table")
@@ -71,12 +58,11 @@ assert_status_error(canonical_source, status.ERR_STATE,
                     "source string must follow source_code")
 
 assert(vectis.auth.store_init({
-  credentials_path = auth_store,
-  state_path = auth_state,
+  app = auth_app,
 }) == true)
 
 local user = assert(vectis.auth.user_add({
-  credentials_path = auth_store,
+  app = auth_app,
   username = "facade-admin@example.com",
   password = "facade-password",
   totp_secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
@@ -90,7 +76,7 @@ assert(user.totp_uri:find("otpauth://totp/", 1, true))
 assert(type(user.totp_qr) == "string")
 
 local email_user = assert(vectis.auth.user_add({
-  credentials_path = auth_store,
+  app = auth_app,
   username = "email-user@example.com",
   password = "email-password",
   email = "email-user@example.com",
@@ -98,7 +84,7 @@ local email_user = assert(vectis.auth.user_add({
 assert(email_user.email == "email-user@example.com")
 
 local empty_email_user, empty_email_err = vectis.auth.user_add({
-  credentials_path = auth_store,
+  app = auth_app,
   username = "empty-email-user@example.com",
   password = "empty-email-password",
   email = "",
@@ -106,14 +92,14 @@ local empty_email_user, empty_email_err = vectis.auth.user_add({
 assert(empty_email_user == nil)
 assert_status_error(empty_email_err, vectis.ERR_INVALID, "auth email is required")
 local empty_email_login = assert(vectis.auth.user_login({
-  credentials_path = auth_store,
+  app = auth_app,
   username = "empty-email-user@example.com",
   password = "empty-email-password",
 }))
 assert(empty_email_login.authenticated == false)
 
 local long_email_user, long_email_err = vectis.auth.user_add({
-  credentials_path = auth_store,
+  app = auth_app,
   username = "long-email-user@example.com",
   password = "long-email-password",
   email = string.rep("a", 320),
@@ -121,21 +107,21 @@ local long_email_user, long_email_err = vectis.auth.user_add({
 assert(long_email_user == nil)
 assert_status_error(long_email_err, vectis.ERR_INVALID, "auth email is too long")
 local long_email_login = assert(vectis.auth.user_login({
-  credentials_path = auth_store,
+  app = auth_app,
   username = "long-email-user@example.com",
   password = "long-email-password",
 }))
 assert(long_email_login.authenticated == false)
 
 local missing_totp = assert(vectis.auth.user_login({
-  credentials_path = auth_store,
+  app = auth_app,
   username = "facade-admin@example.com",
   password = "facade-password",
 }))
 assert(missing_totp.authenticated == false)
 
 local login = assert(vectis.auth.user_login({
-  credentials_path = auth_store,
+  app = auth_app,
   username = "facade-admin@example.com",
   password = "facade-password",
   totp_code = "287082",
@@ -145,7 +131,7 @@ local login = assert(vectis.auth.user_login({
 assert(login.authenticated == true)
 
 local webdav_key = assert(vectis.auth.webdav_key({
-  credentials_path = auth_store,
+  app = auth_app,
   username = "facade-admin@example.com",
   password = "facade-password",
   totp_code = "287082",
@@ -161,7 +147,7 @@ local authorization = assert(vectis.auth.basic_authorization(webdav_key))
 assert(authorization:find("Basic ", 1, true) == 1)
 
 local verified = assert(vectis.auth.verify({
-  credentials_path = auth_store,
+  app = auth_app,
   authorization = authorization,
   allowed_modes = { "basic" },
 }))
@@ -170,7 +156,7 @@ assert(verified.auth_mode == "basic")
 assert(verified.client_id == webdav_key.client_id)
 
 local native_provider = assert(vectis.auth.provider_native({
-  credentials_path = auth_store,
+  app = auth_app,
   purpose = "webdav",
   realm = "facade",
   allowed_modes = { vectis.auth.BASIC },
@@ -197,8 +183,7 @@ assert(allowed.result.auth_mode == "basic")
 assert(vectis.auth.core == require("vectis.auth.core"))
 assert(vectis.auth.core.provider_native == vectis.auth.provider_native)
 local auth_workflow = assert(vectis.auth.workflow({
-  credentials_path = auth_store,
-  state_path = auth_state,
+  app = auth_app,
   path_prefix = "/_vectis/auth",
   realm = "facade-flow",
   purpose = "webdav",
@@ -217,8 +202,7 @@ local auth_workflow = assert(vectis.auth.workflow({
   window = 0,
 }))
 local flow_routes = auth_workflow:routes()
-assert(flow_routes.credentials_path == auth_store)
-assert(flow_routes.state_path == auth_state)
+assert(flow_routes.app == auth_app)
 assert(flow_routes.path_prefix == "/_vectis/auth")
 assert(flow_routes.realm == "facade-flow")
 assert(flow_routes.login_title == "Facade Login")
@@ -231,8 +215,7 @@ assert(flow_routes.browser_session.state_key == "facade.browser-session")
 assert(flow_routes.browser_session.ttl_seconds == 3600)
 local flow_provider = assert(auth_workflow:provider())
 assert(flow_provider.kind == "native")
-assert(flow_provider.credentials_path == auth_store)
-assert(flow_provider.state_path == auth_state)
+assert(flow_provider.app == auth_app)
 assert(flow_provider.purpose == "webdav")
 assert(flow_provider.realm == "facade-flow")
 assert(flow_provider.browser_session.mode == "m2m_and_browser")
@@ -259,7 +242,7 @@ local fake_server = {
 }
 assert(auth_workflow:mount(fake_server, { path_prefix = "/auth2" }) == true)
 assert(mounted_routes.path_prefix == "/auth2")
-assert(mounted_routes.credentials_path == auth_store)
+assert(mounted_routes.app == auth_app)
 
 local callback_seen = false
 local callback_provider = vectis.auth.provider_callback(function(request)
@@ -303,8 +286,7 @@ assert_status_error(invalid_response_err, vectis.ERR_INVALID,
                     "auth callback response action")
 
 local email_token = assert(vectis.auth.email_token_issue({
-  credentials_path = auth_store,
-  state_path = auth_state,
+  app = auth_app,
   username = "email-user@example.com",
   realm = "facade",
   email = "email-user@example.com",
@@ -314,8 +296,7 @@ local email_token = assert(vectis.auth.email_token_issue({
   ttl_seconds = 300,
 }))
 local attacker_token, attacker_token_err = vectis.auth.email_token_issue({
-  credentials_path = auth_store,
-  state_path = auth_state,
+  app = auth_app,
   username = "email-user@example.com",
   realm = "facade",
   email = "attacker@example.com",
@@ -332,8 +313,7 @@ assert(email_token.token == "123456")
 assert(email_token.expires_at == 1300)
 
 local wrong_email_token = assert(vectis.auth.email_token_verify({
-  credentials_path = auth_store,
-  state_path = auth_state,
+  app = auth_app,
   transaction_id = "email-tx-1",
   username = "email-user@example.com",
   realm = "facade",
@@ -345,8 +325,7 @@ assert(wrong_email_token.expired == false)
 assert(wrong_email_token.failed_attempts == 1)
 
 local good_email_token = assert(vectis.auth.email_token_verify({
-  credentials_path = auth_store,
-  state_path = auth_state,
+  app = auth_app,
   transaction_id = "email-tx-1",
   username = "email-user@example.com",
   realm = "facade",
@@ -360,8 +339,7 @@ assert(good_email_token.realm == "facade")
 assert(good_email_token.email == "email-user@example.com")
 
 local replayed_email_token = assert(vectis.auth.email_token_verify({
-  credentials_path = auth_store,
-  state_path = auth_state,
+  app = auth_app,
   transaction_id = "email-tx-1",
   username = "email-user@example.com",
   realm = "facade",
@@ -372,8 +350,7 @@ assert(replayed_email_token.verified == false)
 assert(replayed_email_token.expired == false)
 
 assert(vectis.auth.email_token_issue({
-  credentials_path = auth_store,
-  state_path = auth_state,
+  app = auth_app,
   username = "email-user@example.com",
   realm = "facade",
   email = "email-user@example.com",
@@ -385,8 +362,7 @@ assert(vectis.auth.email_token_issue({
 }))
 
 local limited_wrong_one = assert(vectis.auth.email_token_verify({
-  credentials_path = auth_store,
-  state_path = auth_state,
+  app = auth_app,
   transaction_id = "email-tx-limited",
   username = "email-user@example.com",
   realm = "facade",
@@ -398,8 +374,7 @@ assert(limited_wrong_one.failed_attempts == 1)
 assert(limited_wrong_one.max_attempts == 2)
 
 local limited_wrong_two = assert(vectis.auth.email_token_verify({
-  credentials_path = auth_store,
-  state_path = auth_state,
+  app = auth_app,
   transaction_id = "email-tx-limited",
   username = "email-user@example.com",
   realm = "facade",
@@ -411,8 +386,7 @@ assert(limited_wrong_two.failed_attempts == 2)
 assert(limited_wrong_two.max_attempts == 2)
 
 local limited_consumed = assert(vectis.auth.email_token_verify({
-  credentials_path = auth_store,
-  state_path = auth_state,
+  app = auth_app,
   transaction_id = "email-tx-limited",
   username = "email-user@example.com",
   realm = "facade",
@@ -423,8 +397,7 @@ assert(limited_consumed.verified == false)
 assert(limited_consumed.expired == false)
 
 assert(vectis.auth.email_token_issue({
-  credentials_path = auth_store,
-  state_path = auth_state,
+  app = auth_app,
   username = "email-user@example.com",
   realm = "facade",
   email = "email-user@example.com",
@@ -436,8 +409,7 @@ assert(vectis.auth.email_token_issue({
 }))
 
 local wrong_pending = assert(vectis.auth.email_token_verify({
-  credentials_path = auth_store,
-  state_path = auth_state,
+  app = auth_app,
   transaction_id = "email-tx-scoped",
   username = "email-user@example.com",
   realm = "facade",
@@ -449,8 +421,7 @@ assert(wrong_pending.verified == false)
 assert(wrong_pending.expired == false)
 
 local scoped_email_token = assert(vectis.auth.email_token_verify({
-  credentials_path = auth_store,
-  state_path = auth_state,
+  app = auth_app,
   transaction_id = "email-tx-scoped",
   username = "email-user@example.com",
   realm = "facade",
@@ -462,8 +433,7 @@ assert(scoped_email_token.verified == true)
 assert(scoped_email_token.pending_transaction_id == "pending-email-1")
 
 assert(vectis.auth.email_token_issue({
-  credentials_path = auth_store,
-  state_path = auth_state,
+  app = auth_app,
   username = "email-user@example.com",
   realm = "facade",
   email = "email-user@example.com",
@@ -474,8 +444,7 @@ assert(vectis.auth.email_token_issue({
 }))
 
 local expired_email_token = assert(vectis.auth.email_token_verify({
-  credentials_path = auth_store,
-  state_path = auth_state,
+  app = auth_app,
   transaction_id = "email-tx-expired",
   username = "email-user@example.com",
   realm = "facade",
@@ -486,8 +455,7 @@ assert(expired_email_token.verified == false)
 assert(expired_email_token.expired == true)
 
 local consumed_expired_token = assert(vectis.auth.email_token_verify({
-  credentials_path = auth_store,
-  state_path = auth_state,
+  app = auth_app,
   transaction_id = "email-tx-expired",
   username = "email-user@example.com",
   realm = "facade",
@@ -612,14 +580,14 @@ assert(refreshed.flow.refresh_token == "new-refresh")
 assert(refreshed.flow.expires_at == 8200)
 
 assert(vectis.auth.oauth2_flow_upsert({
-  credentials_path = auth_store,
+  app = auth_app,
   flow_id = "facade-flow",
   subject = "facade-oidc@example.com",
   flow = exchange.flow,
 }) == true)
 
 local loaded_flow = assert(vectis.auth.oauth2_flow_load({
-  credentials_path = auth_store,
+  app = auth_app,
   flow_id = "facade-flow",
 }))
 assert(loaded_flow.found == true)
@@ -629,7 +597,7 @@ assert(loaded_flow.flow.access_token == "browser-token")
 assert(loaded_flow.flow.refresh_token == "browser-refresh")
 
 local stored_ready = assert(vectis.auth.oauth2_stored_flow_ensure({
-  credentials_path = auth_store,
+  app = auth_app,
   flow_id = "facade-flow",
   now = 1000,
 }))
@@ -639,7 +607,7 @@ assert(stored_ready.result.refreshed == false)
 assert(stored_ready.flow.access_token == "browser-token")
 
 local oauth_webdav_key = assert(vectis.auth.oauth2_webdav_key({
-  credentials_path = auth_store,
+  app = auth_app,
   flow_id = "facade-flow",
   subject = "facade-oidc@example.com",
 }))
@@ -650,7 +618,7 @@ assert(oauth_webdav_key.claim_json:find("\"oauth2_flow_id\":\"facade-flow\"", 1,
 local oauth_authorization =
     assert(vectis.auth.basic_authorization(oauth_webdav_key))
 local oauth_verified = assert(vectis.auth.verify({
-  credentials_path = auth_store,
+  app = auth_app,
   authorization = oauth_authorization,
   allowed_modes = "basic",
 }))

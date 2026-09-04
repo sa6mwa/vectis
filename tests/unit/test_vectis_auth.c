@@ -430,11 +430,9 @@ oauth2_mock_transport(const vectis_auth_oauth2_http_request *request,
 
 int main(void) {
   char temp[] = "/tmp/vectis-auth-unit.XXXXXX";
-  char credentials_path[4096];
-  char empty_credentials_path[4096];
-  char state_path[4096];
-  char predictable_temp_path[4096];
-  char symlink_victim_path[4096];
+  char endpoint[4096];
+  char pouch_key_path[4096];
+  const char *endpoints[1];
   char bearer_header[1024];
   char basic_clear[1024];
   char basic_token[1400];
@@ -447,7 +445,8 @@ int main(void) {
   char oauth_basic_header[1500];
   char smtp_url[128];
   char totp_code[VECTIS_TOTP_CODE_LENGTH + 1u];
-  FILE *victim_fp;
+  vectis_app_config app_config;
+  vectis_app *app;
   int written;
   int user_exists;
   int email_found;
@@ -551,60 +550,38 @@ int main(void) {
     perror("mkdtemp");
     return 1;
   }
-  written = snprintf(credentials_path, sizeof(credentials_path),
-                     "%s/credentials.json", temp);
-  if (written < 0 || (size_t)written >= sizeof(credentials_path)) {
+  written = snprintf(endpoint, sizeof(endpoint),
+                     "pouch://%s/auth-state?single_writer=false", temp);
+  if (written < 0 || (size_t)written >= sizeof(endpoint)) {
     remove_tree(temp);
     return 1;
   }
-  written = snprintf(empty_credentials_path, sizeof(empty_credentials_path),
-                     "%s/empty-credentials.json", temp);
-  if (written < 0 || (size_t)written >= sizeof(empty_credentials_path)) {
+  endpoints[0] = endpoint;
+  written = snprintf(pouch_key_path, sizeof(pouch_key_path), "%s/pouch.key",
+                     temp);
+  if (written < 0 || (size_t)written >= sizeof(pouch_key_path)) {
     remove_tree(temp);
     return 1;
   }
-  written =
-      snprintf(state_path, sizeof(state_path), "%s/auth-state.json", temp);
-  if (written < 0 || (size_t)written >= sizeof(state_path)) {
-    remove_tree(temp);
-    return 1;
-  }
-  written = snprintf(symlink_victim_path, sizeof(symlink_victim_path),
-                     "%s/auth-temp-victim.txt", temp);
-  if (written < 0 || (size_t)written >= sizeof(symlink_victim_path)) {
-    remove_tree(temp);
-    return 1;
-  }
-  victim_fp = fopen(symlink_victim_path, "wb");
-  if (victim_fp == NULL) {
-    remove_tree(temp);
-    return 1;
-  }
-  if (fputs("preserve\n", victim_fp) < 0) {
-    (void)fclose(victim_fp);
-    remove_tree(temp);
-    return 1;
-  }
-  if (fclose(victim_fp) != 0) {
-    remove_tree(temp);
-    return 1;
-  }
-  written = snprintf(predictable_temp_path, sizeof(predictable_temp_path),
-                     "%s.tmp.%ld", credentials_path, (long)getpid());
-  if (written < 0 || (size_t)written >= sizeof(predictable_temp_path)) {
-    remove_tree(temp);
-    return 1;
-  }
-  if (symlink(symlink_victim_path, predictable_temp_path) != 0) {
+  vectis_app_config_init(&app_config);
+  app_config.lockd.endpoints = endpoints;
+  app_config.lockd.endpoint_count = 1u;
+  app_config.lockd.pouch_crypto_key_file = pouch_key_path;
+  app_config.lockd.pouch_crypto_generate_key_file = 1;
+  app_config.lockd.pouch_crypto_generate_key_file_set = 1;
+  app = vectis_app_new(&app_config, &error);
+  if (app == NULL) {
     remove_tree(temp);
     return 1;
   }
 
   vectis_auth_store_config_init(&store);
-  store.credentials_path = credentials_path;
-  store.state_path = state_path;
+  store.app = app;
+  store.state_key = "auth/v1/store";
+  store.transient_state_key = "auth/v1/transient";
   vectis_auth_store_config_init(&empty_store);
-  empty_store.credentials_path = empty_credentials_path;
+  empty_store.app = app;
+  empty_store.state_key = "auth/v1/empty";
   email_found = 1;
   status = vectis_auth_user_find_by_email(&empty_store, "new-user@example.com",
                                           bearer_header, sizeof(bearer_header),
@@ -615,27 +592,11 @@ int main(void) {
          "uninitialized credentials store has no enrolled email recipient");
   status = vectis_auth_store_init(&store, &error);
   expect_ok(status, &error, "initializes credentials store");
-  expect(file_contains(symlink_victim_path, "preserve\n"),
-         "auth store initialization does not follow predictable temp symlink");
-  (void)unlink(predictable_temp_path);
   user_exists = 1;
   status = vectis_auth_user_exists(&store, "dav-user@example.com", &user_exists,
                                    &error);
   expect_ok(status, &error, "checks absent auth user");
   expect(!user_exists, "absent auth user is reported missing");
-  if (geteuid() != 0) {
-    expect(chmod(temp, 0500) == 0, "makes auth store directory non-writable");
-    vectis_error_clear(&error);
-    user_exists = 1;
-    status = vectis_auth_user_exists(&store, "dav-user@example.com",
-                                     &user_exists, &error);
-    expect(chmod(temp, 0700) == 0, "restores auth store directory permissions");
-    expect(status == VECTIS_ERR_STATE,
-           "unwritable auth store directory reports state failure");
-    expect(strstr(error.message, "failed to create auth temp store") != NULL,
-           "auth rewrite preserves filesystem diagnostic");
-  }
-
   vectis_auth_user_config_init(&user);
   user.username = "email-user@example.com";
   user.password = "email-password";
@@ -664,8 +625,6 @@ int main(void) {
   status = vectis_auth_email_token_issue(&email_issue, &email_token, &error);
   expect(status == VECTIS_ERR_INVALID,
          "rejects email token delivery to an unenrolled recipient");
-  expect(!file_contains(state_path, "email-tx-attacker"),
-         "does not store token for an unenrolled recipient");
   vectis_error_clear(&error);
 
   vectis_auth_email_token_issue_config_init(&email_issue);
@@ -679,10 +638,6 @@ int main(void) {
   email_issue.ttl_seconds = 300;
   status = vectis_auth_email_token_issue(&email_issue, &email_token, &error);
   expect_ok(status, &error, "issues email auth token");
-  expect(file_contains(state_path, "email-tx-1"),
-         "email token is stored in auth state file");
-  expect(!file_contains(credentials_path, "email-tx-1"),
-         "email token is not stored in credentials file");
   expect(email_token.transaction_id != NULL &&
              strcmp(email_token.transaction_id, "email-tx-1") == 0,
          "email token carries transaction id");
@@ -872,6 +827,7 @@ int main(void) {
     email_message.email = "email-user@example.test";
     email_message.transaction_id = "email-tx-smtp";
     email_message.token = "135790";
+    email_message.effect_key = "auth-email-code/email-tx-smtp";
     email_message.expires_at = 1600;
     status = vectis_auth_email_token_deliver_smtp(&smtp_config, &email_message,
                                                   &error);
@@ -883,6 +839,13 @@ int main(void) {
            "SMTP delivery includes token");
     expect(strstr(smtp_server.data, "email-tx-smtp") != NULL,
            "SMTP delivery includes transaction id");
+    expect(strstr(smtp_server.data,
+                  "Message-ID: <email-tx-smtp@vectis.invalid>") != NULL,
+           "SMTP delivery includes stable message identity");
+    expect(strstr(smtp_server.data,
+                  "X-Vectis-Idempotency-Key: auth-email-code/email-tx-smtp") !=
+               NULL,
+           "SMTP delivery includes outbox idempotency key");
   } else {
     expect(0, "starts SMTP mock server");
   }
@@ -1232,10 +1195,6 @@ int main(void) {
   user.totp_issuer = "Vectis";
   status = vectis_auth_user_add_or_update(&store, &user, &enrollment, &error);
   expect_ok(status, &error, "adds TOTP user");
-  expect(file_contains(credentials_path, "dav-user@example.com"),
-         "user is stored in credentials file");
-  expect(!file_contains(state_path, "dav-user@example.com"),
-         "user is not stored in auth state file");
   user_exists = 0;
   status = vectis_auth_user_exists(&store, "dav-user@example.com", &user_exists,
                                    &error);
@@ -1394,10 +1353,6 @@ int main(void) {
   status =
       vectis_auth_pending_login_issue(&pending_issue, &pending_login, &error);
   expect_ok(status, &error, "issues pending login for TOTP user");
-  expect(file_contains(state_path, "pending-login-wrong-totp"),
-         "pending login is stored in auth state file");
-  expect(!file_contains(credentials_path, "pending-login-wrong-totp"),
-         "pending login is not stored in credentials file");
   expect(pending_login.authenticated, "pending login is authenticated");
   expect(pending_login.totp_required, "pending login reports TOTP required");
   expect(pending_login.transaction_id != NULL &&
@@ -1741,6 +1696,7 @@ int main(void) {
   vectis_auth_issued_credential_cleanup(&bearer);
   vectis_mutable_bytes_cleanup(&basic_authorization);
   vectis_internal_request_free(webdav_vectis_request);
+  app->close(app);
   remove_tree(temp);
   return failures == 0 ? 0 : 1;
 }

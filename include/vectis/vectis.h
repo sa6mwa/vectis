@@ -2935,16 +2935,28 @@ vectis_status vectis_lockd_state_load(struct lc_client *client, const char *key,
                                       const char *owner, long ttl_seconds,
                                       const lonejson_map *map, void *out,
                                       vectis_error *error);
+vectis_status vectis_lockd_state_load_in_namespace(
+    struct lc_client *client, const char *namespace_name, const char *key,
+    const char *owner, long ttl_seconds, const lonejson_map *map, void *out,
+    vectis_error *error);
 vectis_status vectis_lockd_state_save(struct lc_client *client, const char *key,
                                       const char *owner, long ttl_seconds,
                                       const lonejson_map *map,
                                       const void *value, vectis_error *error);
+vectis_status vectis_lockd_state_save_in_namespace(
+    struct lc_client *client, const char *namespace_name, const char *key,
+    const char *owner, long ttl_seconds, const lonejson_map *map,
+    const void *value, vectis_error *error);
 vectis_status vectis_lockd_state_update(struct lc_client *client,
                                         const char *key, const char *owner,
                                         long ttl_seconds,
                                         const lonejson_map *map, void *state,
                                         vectis_lockd_state_update_fn update,
                                         void *userdata, vectis_error *error);
+vectis_status vectis_lockd_state_update_in_namespace(
+    struct lc_client *client, const char *namespace_name, const char *key,
+    const char *owner, long ttl_seconds, const lonejson_map *map, void *state,
+    vectis_lockd_state_update_fn update, void *userdata, vectis_error *error);
 
 vectis_status vectis_request_json_into(vectis_request *request,
                                        const lonejson_map *map, void *out,

@@ -65,7 +65,7 @@ same store contract without changing onboarding records or browser behavior.
 When no endpoint is configured, Vectis opens exactly one local endpoint:
 
 ```text
-pouch://${XDG_STATE_HOME:-$HOME/.local/state}/vectis/storage
+pouch://${XDG_STATE_HOME:-$HOME/.local/state}/vectis/storage?single_writer=false
 ```
 
 It uses the existing Vectis Pouch encryption policy:
@@ -101,7 +101,7 @@ The standard domains are:
 | `auth.workflow` | `vectis.auth` | ordered M2M/browser login workflows |
 | `auth.browser_session` | `vectis.auth` | session signing keys and sessions |
 | `auth.onboarding` | `vectis.auth` | invitations and onboarding progress |
-| `auth.profile` | `vectis.auth` | completed user profiles |
+| `auth.profile` | `vectis.profile` | completed user profiles |
 | `auth.delivery` | `vectis.auth` | transactional outbox records and dispatcher cursor/state |
 
 The default namespace names a storage boundary, not an authorization boundary.

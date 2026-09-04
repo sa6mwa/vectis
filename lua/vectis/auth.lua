@@ -27,11 +27,11 @@ local function merge_tables(base, extra)
 end
 
 local route_keys = {
-  "credentials_path",
-  "path",
-  "state_path",
-  "auth_state_path",
-  "max_store_bytes",
+  "app",
+  "namespace",
+  "state_key",
+  "transient_state_key",
+  "max_record_bytes",
   "path_prefix",
   "prefix",
   "realm",
@@ -53,11 +53,11 @@ local route_keys = {
 }
 
 local provider_keys = {
-  "credentials_path",
-  "path",
-  "state_path",
-  "auth_state_path",
-  "max_store_bytes",
+  "app",
+  "namespace",
+  "state_key",
+  "transient_state_key",
+  "max_record_bytes",
   "purpose",
   "realm",
   "allowed_modes",

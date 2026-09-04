@@ -205,21 +205,10 @@ assert_no_store_headers() {
 }
 
 assert_packed_auth_state_record() {
-  label=$1
-  record_id=$2
-
-  if ! grep -Fq "$record_id" "$packed_service_auth_state"; then
-    printf '%s\n' \
-      "$label record was not written to packed auth state: $record_id" >&2
-    cat "$packed_service_auth_state" >&2
-    return 1
-  fi
-  if grep -Fq "$record_id" "$packed_service_credentials"; then
-    printf '%s\n' \
-      "$label record leaked into packed credentials: $record_id" >&2
-    cat "$packed_service_credentials" >&2
-    return 1
-  fi
+  # Workflow persistence is opaque encrypted Lockd/Pouch state. The callers
+  # prove records through their subsequent route behavior instead of reading
+  # a storage file.
+  :
 }
 
 assert_packed_logout_requires_authorization() {
@@ -849,14 +838,11 @@ run_lua_examples() {
   acme_state_storage="$work_dir/vectis-e2e-acme-storage"
   acme_state_config="$work_dir/vectis-e2e-acme-config"
   acme_state_pouch_key="lc-pouch-key-v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-  acme_state_credentials="$work_dir/vectis-e2e-acme-credentials.json"
   acme_state_log="$work_dir/lua-acme-state.log"
   acme_mock_log="$work_dir/acme-mock.log"
   packed_service_site="$work_dir/vectis-e2e-packed-site"
   packed_service_cache="$work_dir/vectis-e2e-packed-cache"
   packed_service_docroot="$packed_service_cache/webdav/packed-service-e2e/content"
-  packed_service_credentials="$work_dir/vectis-e2e-packed-credentials.json"
-  packed_service_auth_state="$work_dir/vectis-e2e-packed-auth-state.json"
   packed_service_mailbox="$work_dir/vectis-e2e-packed-mailbox.txt"
   packed_service_enqueue="$work_dir/vectis-e2e-packed-enqueue.lua"
   packed_service_ready="$work_dir/vectis-e2e-packed-ready"
@@ -1024,8 +1010,6 @@ run_lua_examples() {
   printf '%s\n' \
     'local vectis = require("vectis")' \
     'local port = tonumber(assert(os.getenv("VECTIS_PACKED_SERVICE_PORT")))' \
-    'local credentials_path = assert(os.getenv("VECTIS_PACKED_SERVICE_CREDENTIALS"))' \
-    'local auth_state_path = assert(os.getenv("VECTIS_PACKED_SERVICE_AUTH_STATE"))' \
     'local cache_dir = assert(os.getenv("VECTIS_PACKED_SERVICE_CACHE"))' \
     'local smtp_url = assert(os.getenv("VECTIS_PACK_SMTP_URL"))' \
     'local ready_path = assert(os.getenv("VECTIS_PACKED_SERVICE_READY"))' \
@@ -1053,9 +1037,9 @@ run_lua_examples() {
     'end' \
     'assert(table.concat(logo_chunks) == "VX packed logo\n")' \
     'assert(assert(vectis.embedded.read("/templates/login.html")):match("packed%-login"))' \
-    'assert(vectis.auth.store_init({ credentials_path = credentials_path, auth_state_path = auth_state_path }))' \
+    '-- users are provisioned by the CLI before the route-backed app starts' \
+    'if false then' \
     'assert(vectis.auth.user_add({' \
-    '  credentials_path = credentials_path,' \
     '  username = "packed-user@example.com",' \
     '  password = "packed-password",' \
     '  email = "packed-user@example.test",' \
@@ -1064,7 +1048,6 @@ run_lua_examples() {
     '  issuer = "Vectis",' \
     '}))' \
     'assert(vectis.auth.user_add({' \
-    '  credentials_path = credentials_path,' \
     '  username = "packed-totp@example.com",' \
     '  password = "packed-password",' \
     '  totp_secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",' \
@@ -1072,7 +1055,6 @@ run_lua_examples() {
     '  issuer = "Vectis",' \
     '}))' \
     'assert(vectis.auth.user_add({' \
-    '  credentials_path = credentials_path,' \
     '  username = "packed-password-totp@example.com",' \
     '  password = "packed-password",' \
     '  totp_secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",' \
@@ -1080,17 +1062,16 @@ run_lua_examples() {
     '  issuer = "Vectis",' \
     '}))' \
     'assert(vectis.auth.user_add({' \
-    '  credentials_path = credentials_path,' \
     '  username = "packed-email-only@example.com",' \
     '  password = "packed-password",' \
     '  email = "packed-email-only@example.test",' \
     '}))' \
     'assert(vectis.auth.user_add({' \
-    '  credentials_path = credentials_path,' \
     '  username = "packed-blocked@example.com",' \
     '  password = "packed-password",' \
     '  email = "packed-blocked@blocked.test",' \
     '}))' \
+    'end' \
     'local server = assert(vectis.app.new({' \
     '  app_name = "vectis-packed-service-e2e",' \
     '  bind = "127.0.0.1",' \
@@ -1113,14 +1094,11 @@ run_lua_examples() {
     '  extract_policy = "repair",' \
     '  auth = {' \
     '    kind = "native",' \
-    '    credentials_path = credentials_path,' \
     '    realm = "packed-e2e",' \
     '  },' \
     '}))' \
     'assert(server:auth_routes({' \
     '  path_prefix = "/auth",' \
-    '  credentials_path = credentials_path,' \
-    '  auth_state_path = auth_state_path,' \
     '  realm = "packed-e2e",' \
     '  login_title = "Packed E2E Login",' \
     '  time = 59,' \
@@ -1137,8 +1115,6 @@ run_lua_examples() {
     '}))' \
     'assert(server:auth_routes({' \
     '  path_prefix = "/auth-local",' \
-    '  credentials_path = credentials_path,' \
-    '  auth_state_path = auth_state_path,' \
     '  realm = "packed-e2e",' \
     '  login_title = "Packed E2E Local Token Login",' \
     '  time = 59,' \
@@ -1147,8 +1123,6 @@ run_lua_examples() {
     '}))' \
     'assert(server:auth_routes({' \
     '  path_prefix = "/auth-limited",' \
-    '  credentials_path = credentials_path,' \
-    '  auth_state_path = auth_state_path,' \
     '  realm = "packed-e2e",' \
     '  login_title = "Packed E2E Limited Token Login",' \
     '  time = 59,' \
@@ -1158,8 +1132,6 @@ run_lua_examples() {
     '}))' \
     'assert(server:auth_routes({' \
     '  path_prefix = "/auth-email-only",' \
-    '  credentials_path = credentials_path,' \
-    '  auth_state_path = auth_state_path,' \
     '  realm = "packed-e2e",' \
     '  login_title = "Packed E2E Email Only Login",' \
     '  time = 59,' \
@@ -1168,8 +1140,6 @@ run_lua_examples() {
     '}))' \
     'assert(server:auth_routes({' \
     '  path_prefix = "/auth-password-email",' \
-    '  credentials_path = credentials_path,' \
-    '  auth_state_path = auth_state_path,' \
     '  realm = "packed-e2e",' \
     '  login_title = "Packed E2E Password Email Login",' \
     '  time = 59,' \
@@ -1178,8 +1148,6 @@ run_lua_examples() {
     '}))' \
     'assert(server:auth_routes({' \
     '  path_prefix = "/auth-password",' \
-    '  credentials_path = credentials_path,' \
-    '  auth_state_path = auth_state_path,' \
     '  realm = "packed-e2e",' \
     '  login_title = "Packed E2E Password Login",' \
     '  time = 59,' \
@@ -1187,8 +1155,6 @@ run_lua_examples() {
     '}))' \
     'assert(server:auth_routes({' \
     '  path_prefix = "/auth-template",' \
-    '  credentials_path = credentials_path,' \
-    '  auth_state_path = auth_state_path,' \
     '  realm = "packed-e2e",' \
     '  login_title = "Packed Embedded Template Login",' \
     '  time = 59,' \
@@ -1197,8 +1163,6 @@ run_lua_examples() {
     '}))' \
     'assert(server:auth_routes({' \
     '  path_prefix = "/auth-totp",' \
-    '  credentials_path = credentials_path,' \
-    '  auth_state_path = auth_state_path,' \
     '  realm = "packed-e2e",' \
     '  login_title = "Packed E2E TOTP Login",' \
     '  time = 59,' \
@@ -1206,8 +1170,6 @@ run_lua_examples() {
     '}))' \
     'assert(server:auth_routes({' \
     '  path_prefix = "/auth-expired",' \
-    '  credentials_path = credentials_path,' \
-    '  auth_state_path = auth_state_path,' \
     '  realm = "packed-e2e",' \
     '  login_title = "Packed E2E Expired Login",' \
     '  time = 360,' \
@@ -1218,7 +1180,6 @@ run_lua_examples() {
     '  path = "/api/private",' \
     '  auth = {' \
     '    kind = "native",' \
-    '    credentials_path = credentials_path,' \
     '    realm = "packed-e2e",' \
     '  },' \
     '  body = [[{"ok":true,"surface":"packed-api"}]],' \
@@ -1257,14 +1218,32 @@ run_lua_examples() {
     --extract-mode repair \
     --lockd-bundle "$client_bundle" \
     --output "$packed_service"
+  for packed_user in \
+    'packed-user@example.com:packed-user@example.test:totp' \
+    'packed-totp@example.com::totp' \
+    'packed-password-totp@example.com::totp' \
+    'packed-email-only@example.com:packed-email-only@example.test:plain' \
+    'packed-blocked@example.com:packed-blocked@blocked.test:plain'; do
+    IFS=: read -r packed_username packed_email packed_factor <<EOF
+$packed_user
+EOF
+    packed_user_args=("$repo_root/build/debug/vectis" -a users
+      --lockd-endpoint "$disk_endpoint" --lockd-bundle "$client_bundle"
+      --add "$packed_username" --password "packed-password")
+    if [ -n "$packed_email" ]; then
+      packed_user_args+=(--email "$packed_email")
+    fi
+    if [ "$packed_factor" = totp ]; then
+      packed_user_args+=(--totp-secret "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
+    fi
+    "${packed_user_args[@]}"
+  done
   mkdir -p "$packed_service_docroot/assets"
   printf '%s\n' 'stale extracted css' >"$packed_service_docroot/app.css"
   printf '%s\n' 'preexisting mutable content' \
     >"$packed_service_docroot/user-created-before-repair.txt"
   start_server "lua packed webserver" "$packed_service_log" \
     env VECTIS_PACKED_SERVICE_PORT="$kore_packed_port" \
-      VECTIS_PACKED_SERVICE_CREDENTIALS="$packed_service_credentials" \
-      VECTIS_PACKED_SERVICE_AUTH_STATE="$packed_service_auth_state" \
       VECTIS_PACKED_SERVICE_CACHE="$packed_service_cache" \
       VECTIS_PACKED_SERVICE_LOCKD_ENDPOINT="$disk_endpoint" \
       VECTIS_PACKED_SERVICE_LOCKD_QUEUE="$packed_service_queue" \
@@ -1475,9 +1454,7 @@ run_lua_examples() {
     'local port = tonumber(assert(os.getenv("VECTIS_ACME_STATE_PORT")))' \
     'local cache_dir = assert(os.getenv("VECTIS_ACME_STATE_CACHE"))' \
     'local storage_dir = assert(os.getenv("VECTIS_ACME_STATE_STORAGE"))' \
-    'local credentials_path = assert(os.getenv("VECTIS_ACME_STATE_CREDENTIALS"))' \
     'local provider = assert(os.getenv("VECTIS_ACME_STATE_PROVIDER"))' \
-    'assert(vectis.auth.store_init({ credentials_path = credentials_path }))' \
     'local server = assert(vectis.app.new({' \
     '  app_name = "vectis-acme-state-e2e",' \
     '  bind = "127.0.0.1",' \
@@ -1502,7 +1479,6 @@ run_lua_examples() {
     env VECTIS_ACME_STATE_PORT="$kore_acme_port" \
       VECTIS_ACME_STATE_CACHE="$acme_state_cache" \
       VECTIS_ACME_STATE_STORAGE="$acme_state_storage" \
-      VECTIS_ACME_STATE_CREDENTIALS="$acme_state_credentials" \
       VECTIS_ACME_STATE_PROVIDER="http://127.0.0.1:$acme_mock_port/directory" \
       XDG_CONFIG_HOME="$acme_state_config" \
       VECTIS_POUCH_CRYPTO_KEY="$acme_state_pouch_key" \

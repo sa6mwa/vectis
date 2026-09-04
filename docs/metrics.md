@@ -145,7 +145,7 @@ the operator CLI:
 
 ```sh
 vectis -a users \
-  --store vectis-metrics-auth-example-credentials.json \
+  --lockd-endpoint pouch://vectis-metrics-auth-example-pouch?single_writer=false \
   --add metrics-admin \
   --password metrics-password \
   --totp-secret GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ \

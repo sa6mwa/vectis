@@ -68,7 +68,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-store="$work/credentials.json"
+lockd_endpoint="pouch://$work/auth-pouch?single_writer=false"
 flow_id=${VECTIS_LIVE_OAUTH2_FLOW_ID:-live-m2m}
 subject=${VECTIS_LIVE_OAUTH2_SUBJECT:-live-oauth2}
 
@@ -150,7 +150,7 @@ EOF
 
 oauth_args=(
   "$vectis_bin" -a oauth2
-  --store "$store"
+  --lockd-endpoint "$lockd_endpoint"
   --client-credentials "$flow_id"
   --subject "$subject"
   --token-endpoint "$VECTIS_LIVE_OAUTH2_TOKEN_ENDPOINT"
@@ -181,13 +181,13 @@ assert_output_line oauth2_client_credentials "stored_flow=$flow_id"
 assert_output_contains oauth2_client_credentials '^access_token='
 
 run_capture oauth2_load_flow \
-  "$vectis_bin" -a oauth2 --store "$store" --load-flow "$flow_id"
+  "$vectis_bin" -a oauth2 --lockd-endpoint "$lockd_endpoint" --load-flow "$flow_id"
 assert_output_contains oauth2_load_flow '^found=true$'
 assert_output_line oauth2_load_flow "flow_id=$flow_id"
 assert_output_line oauth2_load_flow "subject=$subject"
 
 run_capture oauth2_webdav_key \
-  "$vectis_bin" -a oauth2 --store "$store" --webdav-key "$flow_id" \
+  "$vectis_bin" -a oauth2 --lockd-endpoint "$lockd_endpoint" --webdav-key "$flow_id" \
   --subject "$subject"
 assert_output_contains oauth2_webdav_key '^client_id='
 assert_output_contains oauth2_webdav_key '^client_secret='
@@ -214,7 +214,7 @@ fi
 basic_secret=$(printf '%s' "$webdav_client_id:$webdav_client_secret" |
   base64 | tr -d '\n')
 run_capture webdav_basic_verify \
-  "$vectis_bin" -a credentials --store "$store" --verify \
+  "$vectis_bin" -a credentials --lockd-endpoint "$lockd_endpoint" --verify \
   "Basic $basic_secret" --basic
 assert_output_contains webdav_basic_verify '^authenticated=true$'
 assert_output_contains webdav_basic_verify '^auth_mode=basic$'

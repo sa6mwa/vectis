@@ -213,6 +213,7 @@ static int runtime_browser_session_key_end(void *userdata, lc_error *error) {
 }
 
 static size_t runtime_browser_session_record_count(vectis_app *app,
+                                                   const char *namespace_name,
                                                    const char *state_key) {
   runtime_browser_session_key_counter counter;
   lc_query_key_handler handler;
@@ -224,6 +225,7 @@ static size_t runtime_browser_session_record_count(vectis_app *app,
   int written;
 
   assert(app != NULL);
+  assert(namespace_name != NULL);
   assert(state_key != NULL);
   written = snprintf(prefix, sizeof(prefix), "%s/", state_key);
   assert(written > 0 && (size_t)written < sizeof(prefix));
@@ -234,6 +236,7 @@ static size_t runtime_browser_session_record_count(vectis_app *app,
   handler.chunk = runtime_browser_session_key_chunk;
   handler.end = runtime_browser_session_key_end;
   lc_query_req_init(&request);
+  request.namespace_name = namespace_name;
   request.selector_json = "{\"exists\":\"/cleanup_at\"}";
   request.engine = "scan";
   memset(&response, 0, sizeof(response));
@@ -3677,7 +3680,6 @@ static void assert_kore_smoke(void) {
   const char response_file_path[] = "/tmp/vectis-runtime-response.txt";
   const char static_module_path[] = "/tmp/vectis-runtime-module.mjs";
   const char access_log_path[] = "/tmp/vectis-runtime-access.log";
-  const char auth_store_path[] = "/tmp/vectis-runtime-auth.json";
   const char response_file_body[] = "file-response";
   const char static_module_body[] = "export const ok = true;\n";
   static const unsigned char embedded_payload[] = "hello\napp\n";
@@ -3694,7 +3696,6 @@ static void assert_kore_smoke(void) {
   char webdav_cache_dir[] = "/tmp/vectis-runtime-webdav.XXXXXX";
   char body_spool_dir[] = "/tmp/vectis-runtime-body-spool.XXXXXX";
   char body_spool_child_dir[4096];
-  char empty_auth_store_path[4096];
   const char *webdav_headers[] = {"x-vectis-webdav-auth: ok"};
   const char *webdav_required_headers[] = {"x-vectis-webdav-auth: required"};
   const char *webdav_deny_headers[] = {"x-vectis-webdav-auth: deny"};
@@ -3875,15 +3876,14 @@ static void assert_kore_smoke(void) {
          sizeof(static_module_body) - 1u);
   assert(fclose(fp) == 0);
   assert(mkdtemp(webdav_cache_dir) != NULL);
-  written = snprintf(empty_auth_store_path, sizeof(empty_auth_store_path),
-                     "%s/empty-auth.json", webdav_cache_dir);
-  assert(written > 0 && (size_t)written < sizeof(empty_auth_store_path));
-  (void)remove(auth_store_path);
   (void)remove(access_log_path);
   vectis_auth_store_config_init(&auth_store);
-  auth_store.credentials_path = auth_store_path;
+  auth_store.lockd = &config.lockd;
+  auth_store.state_key = "auth/v1/runtime";
+  auth_store.transient_state_key = "auth/v1/runtime-transient";
   vectis_auth_store_config_init(&empty_auth_store);
-  empty_auth_store.credentials_path = empty_auth_store_path;
+  empty_auth_store.lockd = &config.lockd;
+  empty_auth_store.state_key = "auth/v1/runtime-empty";
   status = vectis_auth_store_init(&auth_store, &error);
   assert(status == VECTIS_OK);
   vectis_auth_user_config_init(&auth_user);
@@ -4082,6 +4082,7 @@ static void assert_kore_smoke(void) {
   browser_session.ttl_seconds = 60u;
   vectis_auth_browser_session_config_init(&foreign_browser_session);
   foreign_browser_session.mode = VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER;
+  foreign_browser_session.namespace_name = "vectis.auth.foreign";
   foreign_browser_session.state_key = "aaa.browser-session";
   foreign_browser_session.ttl_seconds = 60u;
   vectis_auth_routes_config_init(&auth_routes);
@@ -4916,8 +4917,10 @@ static void assert_kore_smoke(void) {
     vectis_internal_response_free(browser_expired_response);
     browser_expired_response = NULL;
   }
-  assert(runtime_browser_session_record_count(app, "aaa.browser-session") ==
-         32u);
+  assert(runtime_browser_session_record_count(
+             app, "vectis.auth.foreign", "aaa.browser-session") == 32u);
+  assert(runtime_browser_session_record_count(app, "vectis.auth",
+                                              "aaa.browser-session") == 0u);
   browser_expired_response = vectis_internal_response_new(&error);
   assert(browser_expired_response != NULL);
   status =
@@ -4926,18 +4929,18 @@ static void assert_kore_smoke(void) {
   assert(status == VECTIS_OK);
   vectis_internal_response_free(browser_expired_response);
   browser_expired_response = NULL;
-  assert(runtime_browser_session_record_count(app, "runtime.browser-session") ==
-         1u);
+  assert(runtime_browser_session_record_count(
+             app, "vectis.auth", "runtime.browser-session") == 1u);
   vectis_internal_auth_cleanup_tick(app);
-  assert(runtime_browser_session_record_count(app, "aaa.browser-session") ==
-         32u);
-  assert(runtime_browser_session_record_count(app, "runtime.browser-session") ==
-         1u);
+  assert(runtime_browser_session_record_count(
+             app, "vectis.auth.foreign", "aaa.browser-session") == 32u);
+  assert(runtime_browser_session_record_count(
+             app, "vectis.auth", "runtime.browser-session") == 1u);
   status =
       vectis_auth_browser_session_cleanup(app, &browser_session, 0u, &error);
   assert(status == VECTIS_OK);
-  assert(runtime_browser_session_record_count(app, "runtime.browser-session") ==
-         0u);
+  assert(runtime_browser_session_record_count(
+             app, "vectis.auth", "runtime.browser-session") == 0u);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;
@@ -5289,7 +5292,6 @@ static void assert_kore_smoke(void) {
   remove_tree(webdav_cache_dir);
   remove_tree(body_spool_dir);
   remove_tree(browser_session_pouch_dir);
-  (void)remove(auth_store_path);
   app->close(app);
   vectis_embedded_fs_close(embedded_fs);
 }

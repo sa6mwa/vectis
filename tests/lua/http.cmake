@@ -3,7 +3,8 @@ set(download_source "${WORK_DIR}/vectis-http-download-source.txt")
 set(download_target "${WORK_DIR}/vectis-http-download-target.txt")
 set(upload_source "${WORK_DIR}/vectis-http-upload-source.txt")
 set(upload_target "${WORK_DIR}/vectis-http-upload-target.txt")
-set(auth_path "${WORK_DIR}/vectis-http-auth.json")
+set(auth_pouch_root "${WORK_DIR}/vectis-http-auth-pouch")
+set(auth_lockd_endpoint "pouch://${auth_pouch_root}?single_writer=false")
 set(metrics_storage_dir "${WORK_DIR}/vectis-http-metrics-pouch")
 set(static_dir "${WORK_DIR}/vectis-http-static")
 set(script "${WORK_DIR}/vectis-http-smoke.lua")
@@ -16,10 +17,41 @@ file(WRITE "${static_dir}/index.html" "static directory index\n")
 file(WRITE "${static_dir}/assets/app.txt" "static directory asset\n")
 file(WRITE "${static_dir}/assets/app.css" "body { color: #123456; }\n")
 file(WRITE "${static_dir}/assets/blob.vct" "opaque static asset\n")
-file(REMOVE "${download_target}" "${upload_target}" "${auth_path}"
-            "${auth_path}.lock")
+file(REMOVE "${download_target}" "${upload_target}")
+file(REMOVE_RECURSE "${auth_pouch_root}")
 file(REMOVE_RECURSE "${metrics_storage_dir}")
 file(MAKE_DIRECTORY "${metrics_storage_dir}")
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${auth_lockd_endpoint}"
+          --add "http-user" --password "http-password"
+  RESULT_VARIABLE auth_user_result
+  OUTPUT_VARIABLE auth_user_output
+  ERROR_VARIABLE auth_user_error)
+if(NOT auth_user_result EQUAL 0)
+  message(FATAL_ERROR "HTTP auth user provisioning failed: ${auth_user_error}")
+endif()
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${auth_lockd_endpoint}"
+          --webdav-key "http-user" --password "http-password"
+  RESULT_VARIABLE auth_key_result
+  OUTPUT_VARIABLE auth_key_output
+  ERROR_VARIABLE auth_key_error)
+if(NOT auth_key_result EQUAL 0)
+  message(FATAL_ERROR "HTTP auth key provisioning failed: ${auth_key_error}")
+endif()
+string(REGEX MATCH "client_id=([^\n]+)" auth_client_id_match
+       "${auth_key_output}")
+if(NOT auth_client_id_match)
+  message(FATAL_ERROR "HTTP auth key did not include client_id")
+endif()
+set(auth_client_id "${CMAKE_MATCH_1}")
+string(REGEX MATCH "client_secret=([^\n]+)" auth_client_secret_match
+       "${auth_key_output}")
+if(NOT auth_client_secret_match)
+  message(FATAL_ERROR "HTTP auth key did not include client_secret")
+endif()
+set(auth_client_secret "${CMAKE_MATCH_1}")
 
 file(WRITE "${script}" [[
 local vectis = require("vectis")
@@ -31,9 +63,11 @@ local download_url = "file://" .. assert(arg[2])
 local download_path = assert(arg[3])
 local upload_path = assert(arg[4])
 local upload_url = "file://" .. assert(arg[5])
-local auth_path = assert(arg[6])
-local static_dir = assert(arg[7])
-local metrics_storage_dir = assert(arg[8])
+local auth_lockd_endpoint = assert(arg[6])
+local auth_client_id = assert(arg[7])
+local auth_client_secret = assert(arg[8])
+local static_dir = assert(arg[9])
+local metrics_storage_dir = assert(arg[10])
 
 local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local function base64(data)
@@ -233,20 +267,10 @@ local api_server = assert(vectis.app.new({
   app_name = "lua-http-smoke-app",
   bind = "127.0.0.1",
   port = 28484,
+  lockd = { endpoints = {auth_lockd_endpoint} },
 }))
 assert(type(api_server.group) == "function")
-assert(vectis.auth.store_init({credentials_path = auth_path}) == true)
-assert(vectis.auth.user_add({
-  credentials_path = auth_path,
-  username = "http-user",
-  password = "http-password",
-}).username == "http-user")
-local http_key = assert(vectis.auth.webdav_key({
-  credentials_path = auth_path,
-  username = "http-user",
-  password = "http-password",
-}))
-local http_basic_auth = "Basic " .. base64(http_key.client_id .. ":" .. http_key.client_secret)
+local http_basic_auth = "Basic " .. base64(auth_client_id .. ":" .. auth_client_secret)
 assert(api_server:json({
   path = "/status",
   body = '{"ok":true,"surface":"json"}\n',
@@ -288,14 +312,15 @@ assert(api_server:auth_json({
   status_code = 202,
   auth = {
     kind = "native",
-    credentials_path = auth_path,
+    state_key = "auth/v1/store",
     realm = "http",
     purpose = "webdav",
   },
   body = '{"ok":true,"guarded":true}\n',
 }) == true)
 local native_provider = assert(vectis.auth.provider_native({
-  credentials_path = auth_path,
+  app = api_server,
+  state_key = "auth/v1/store",
   realm = "http-provider",
   purpose = "webdav",
 }))
@@ -1488,8 +1513,10 @@ assert(streamed.response_json.message == "vectis-http")
 
 execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${json_file}"
                         "${download_source}" "${download_target}"
-                        "${upload_source}" "${upload_target}" "${auth_path}"
-                        "${static_dir}" "${metrics_storage_dir}"
+                        "${upload_source}" "${upload_target}"
+                        "${auth_lockd_endpoint}" "${auth_client_id}"
+                        "${auth_client_secret}" "${static_dir}"
+                        "${metrics_storage_dir}"
                 RESULT_VARIABLE http_result
                 OUTPUT_VARIABLE http_stdout
                 ERROR_VARIABLE http_stderr)

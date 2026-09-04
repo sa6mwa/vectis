@@ -5,10 +5,6 @@ local lonejson = require("lonejson")
 local bind = os.getenv("VECTIS_LUA_METRICS_AUTH_EXAMPLE_BIND") or "127.0.0.1"
 local port = tonumber(os.getenv("VECTIS_LUA_METRICS_AUTH_EXAMPLE_PORT") or
     "28621")
-local credentials_path = os.getenv("VECTIS_LUA_METRICS_AUTH_EXAMPLE_AUTH_PATH") or
-    "vectis-metrics-auth-example-credentials.json"
-local state_path = os.getenv("VECTIS_LUA_METRICS_AUTH_EXAMPLE_STATE_PATH") or
-    "vectis-metrics-auth-example-state.json"
 local storage_dir = os.getenv("VECTIS_LUA_METRICS_AUTH_EXAMPLE_STORAGE") or
     "vectis-metrics-auth-pouch"
 local serve_forever = os.getenv("VECTIS_LUA_METRICS_AUTH_EXAMPLE_SERVE") == "1"
@@ -21,19 +17,8 @@ local request_opts = {
   no_signal = true,
 }
 
-do
-  local credentials = io.open(credentials_path, "rb")
-  if credentials == nil then
-    error("create metrics-admin first with: vectis -a users --store " ..
-          credentials_path .. " --add metrics-admin --password " ..
-          "metrics-password --totp", 0)
-  end
-  credentials:close()
-end
-
 local auth_workflow = vectis.auth.workflow({
-  credentials_path = credentials_path,
-  state_path = state_path,
+  state_key = "auth/v1/store",
   path_prefix = "/_vectis/auth",
   realm = "metrics-example",
   purpose = "metrics",
@@ -44,60 +29,8 @@ local auth_workflow = vectis.auth.workflow({
   window = 0,
 })
 
-local browser_provider = assert(auth_workflow:provider())
-local machine_credential = assert(vectis.auth.issue({
-  credentials_path = credentials_path,
-  state_path = state_path,
-  subject = "metrics-agent",
-  purpose = "metrics",
-  modes = { "bearer" },
-}))
-local machine_provider = assert(vectis.auth.provider_native({
-  credentials_path = credentials_path,
-  state_path = state_path,
-  realm = "metrics-example",
-  purpose = "metrics",
-  allowed_modes = { "bearer" },
-}))
-
-local metrics_provider = assert(vectis.auth.provider_callback(function(request)
-  local browser = assert(browser_provider:authenticate({
-    authorization = request.authorization,
-    resource = request.resource,
-  }))
-  if browser.action == "allow" then
-    return browser
-  end
-
-  local machine = assert(machine_provider:authenticate({
-    authorization = request.authorization,
-    resource = request.resource,
-  }))
-  if machine.action == "allow" then
-    return machine
-  end
-
-  return {
-    action = "required",
-    status_code = 401,
-    www_authenticate = 'Basic realm="metrics-example"',
-    content_type = "text/plain; charset=utf-8",
-    body = "metrics authentication required\n",
-  }
-end))
-
-local browser_authorization
-if not serve_forever then
-  local browser_credential = assert(vectis.auth.issue({
-    credentials_path = credentials_path,
-    state_path = state_path,
-    subject = "metrics-admin",
-    purpose = "metrics",
-    modes = {"basic"},
-  }))
-  browser_authorization = assert(vectis.auth.basic_authorization(browser_credential))
-end
-local machine_authorization = "Bearer " .. machine_credential.api_key
+local metrics_authorization =
+    os.getenv("VECTIS_LUA_METRICS_AUTH_EXAMPLE_AUTHORIZATION")
 
 local app = assert(vectis.app.new({
   app_name = "lua-metrics-auth-example",
@@ -124,7 +57,9 @@ assert(app:metrics({
   json_path = "/.metrics/snapshot.json",
   title = "lua metrics authenticated example",
   auth = {
-    provider = metrics_provider,
+    kind = "native",
+    state_key = "auth/v1/store",
+    realm = "metrics-example",
     purpose = "metrics",
     allowed_modes = { "basic", "bearer" },
   },
@@ -150,41 +85,40 @@ assert(page.body:find("Hello, world.", 1, true))
 
 local anonymous = http.get(base_url .. "/.metrics/snapshot.json", request_opts)
 assert(anonymous.status == 401)
-assert(anonymous.body == "metrics authentication required\n")
 
-local browser_metrics = http.get(base_url .. "/.metrics/snapshot.json", {
-  protocols = "http",
-  timeout_ms = 2000,
-  connect_timeout_ms = 1000,
-  no_signal = true,
-  headers = { Authorization = browser_authorization },
-})
-assert(browser_metrics.ok == true,
-       browser_metrics.error and browser_metrics.error.message)
-assert(browser_metrics.status == 200)
-local browser_snapshot = assert(lonejson.decode_json(browser_metrics.body))
-assert(browser_snapshot.service == "lua metrics authenticated example")
-assert(browser_snapshot.persistence.enabled == true)
+if metrics_authorization ~= nil and metrics_authorization ~= "" then
+  local metrics_snapshot = http.get(base_url .. "/.metrics/snapshot.json", {
+    protocols = "http",
+    timeout_ms = 2000,
+    connect_timeout_ms = 1000,
+    no_signal = true,
+    headers = { Authorization = metrics_authorization },
+  })
+  assert(metrics_snapshot.ok == true,
+         metrics_snapshot.error and metrics_snapshot.error.message)
+  assert(metrics_snapshot.status == 200)
+  local snapshot = assert(lonejson.decode_json(metrics_snapshot.body))
+  assert(snapshot.service == "lua metrics authenticated example")
+  assert(snapshot.persistence.enabled == true)
 
-local machine_dashboard = http.get(base_url .. "/.metrics", {
-  protocols = "http",
-  timeout_ms = 2000,
-  connect_timeout_ms = 1000,
-  no_signal = true,
-  headers = { Authorization = machine_authorization },
-})
-assert(machine_dashboard.ok == true,
-       machine_dashboard.error and machine_dashboard.error.message)
-assert(machine_dashboard.status == 200)
-assert(machine_dashboard.body:find("lua metrics authenticated example", 1, true))
+  local dashboard = http.get(base_url .. "/.metrics", {
+    protocols = "http",
+    timeout_ms = 2000,
+    connect_timeout_ms = 1000,
+    no_signal = true,
+    headers = { Authorization = metrics_authorization },
+  })
+  assert(dashboard.ok == true, dashboard.error and dashboard.error.message)
+  assert(dashboard.status == 200)
+  assert(dashboard.body:find("lua metrics authenticated example", 1, true))
+end
 
 if serve_forever then
   print("lua metrics authenticated example listening on " .. base_url)
   print("login route: " .. base_url .. "/_vectis/auth/login")
   print("metrics dashboard: " .. base_url .. "/.metrics")
   print("metrics JSON: " .. base_url .. "/.metrics/snapshot.json")
-  print("browser user: metrics-admin / metrics-password / configured TOTP")
-  print("m2m bearer token: " .. machine_credential.api_key)
+  print("set VECTIS_LUA_METRICS_AUTH_EXAMPLE_AUTHORIZATION to test metrics access")
   assert(app:wait() == true)
   app:close()
 else

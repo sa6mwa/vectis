@@ -2,12 +2,44 @@ include("${CMAKE_CURRENT_LIST_DIR}/port_retry.cmake")
 
 set(cache_dir "${WORK_DIR}/vectis-webdav-server-cache")
 set(root_dir "${WORK_DIR}/vectis-webdav-server-root")
-set(auth_path "${WORK_DIR}/vectis-webdav-server-auth.json")
+set(auth_pouch_root "${WORK_DIR}/vectis-webdav-server-auth-pouch")
+set(auth_lockd_endpoint "pouch://${auth_pouch_root}?single_writer=false")
 set(script "${WORK_DIR}/vectis-webdav-server.lua")
 
 file(REMOVE_RECURSE "${cache_dir}")
 file(REMOVE_RECURSE "${root_dir}")
-file(REMOVE "${auth_path}" "${auth_path}.lock")
+file(REMOVE_RECURSE "${auth_pouch_root}")
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${auth_lockd_endpoint}"
+          --add "dav-user" --password "dav-password"
+  RESULT_VARIABLE auth_user_result
+  OUTPUT_VARIABLE auth_user_output
+  ERROR_VARIABLE auth_user_error)
+if(NOT auth_user_result EQUAL 0)
+  message(FATAL_ERROR "WebDAV auth user provisioning failed: ${auth_user_error}")
+endif()
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${auth_lockd_endpoint}"
+          --webdav-key "dav-user" --password "dav-password"
+  RESULT_VARIABLE auth_key_result
+  OUTPUT_VARIABLE auth_key_output
+  ERROR_VARIABLE auth_key_error)
+if(NOT auth_key_result EQUAL 0)
+  message(FATAL_ERROR "WebDAV auth key provisioning failed: ${auth_key_error}")
+endif()
+string(REGEX MATCH "client_id=([^\n]+)" auth_client_id_match
+       "${auth_key_output}")
+if(NOT auth_client_id_match)
+  message(FATAL_ERROR "WebDAV auth key did not include client_id")
+endif()
+set(auth_client_id "${CMAKE_MATCH_1}")
+string(REGEX MATCH "client_secret=([^\n]+)" auth_client_secret_match
+       "${auth_key_output}")
+if(NOT auth_client_secret_match)
+  message(FATAL_ERROR "WebDAV auth key did not include client_secret")
+endif()
+set(auth_client_secret "${CMAKE_MATCH_1}")
 
 string(CONFIGURE [=[
 local vectis = require("vectis")
@@ -16,7 +48,9 @@ local webdav = require("vectis.webdav")
 local port = tonumber(assert(os.getenv("VECTIS_WEBDAV_SERVER_PORT")))
 local cache_dir = [[@cache_dir@]]
 local root_dir = [[@root_dir@]]
-local auth_path = [[@auth_path@]]
+local auth_lockd_endpoint = [[@auth_lockd_endpoint@]]
+local auth_client_id = [[@auth_client_id@]]
+local auth_client_secret = [[@auth_client_secret@]]
 local base = "http://127.0.0.1:" .. tostring(port)
 
 local function base64(data)
@@ -58,18 +92,7 @@ local function read_file(path)
   return body
 end
 
-assert(vectis.auth.store_init({credentials_path = auth_path}) == true)
-assert(vectis.auth.user_add({
-  credentials_path = auth_path,
-  username = "dav-user",
-  password = "dav-password",
-}).username == "dav-user")
-local key = assert(vectis.auth.webdav_key({
-  credentials_path = auth_path,
-  username = "dav-user",
-  password = "dav-password",
-}))
-local basic_auth = "Basic " .. base64(key.client_id .. ":" .. key.client_secret)
+local basic_auth = "Basic " .. base64(auth_client_id .. ":" .. auth_client_secret)
 
 local callback_provider = assert(vectis.auth.provider_callback(function(request)
   if request.authorization == "Bearer callback-dav" and
@@ -88,6 +111,7 @@ end))
 local server = assert(vectis.app.new({
   bind = "127.0.0.1",
   port = port,
+  lockd = { endpoints = {auth_lockd_endpoint} },
 }))
 assert(server:webdav({
   path_prefix = "/open",
@@ -109,7 +133,7 @@ assert(server:webdav({
   conceal_unauthorized = false,
   auth = {
     kind = "native",
-    credentials_path = auth_path,
+    state_key = "auth/v1/store",
     realm = "native-dav",
     purpose = "webdav",
   },

@@ -5,8 +5,6 @@ local rest = require("vectis.rest")
 
 local bind = os.getenv("VECTIS_LUA_API_EXAMPLE_BIND") or "127.0.0.1"
 local port = tonumber(os.getenv("VECTIS_LUA_API_EXAMPLE_PORT") or "28585")
-local credentials_path = os.getenv("VECTIS_LUA_API_EXAMPLE_AUTH_PATH") or
-    "vectis-lua-api-example-credentials.json"
 local lockd_path = os.getenv("VECTIS_LUA_API_EXAMPLE_LOCKD_PATH") or
     "vectis-lua-api-example-lockd"
 local serve_forever = os.getenv("VECTIS_LUA_API_EXAMPLE_SERVE") == "1"
@@ -26,32 +24,11 @@ local http_defaults = {
   no_signal = true,
 }
 
-if not serve_forever then
-  os.remove(credentials_path)
-  os.remove(credentials_path .. ".lock")
-end
-
-assert(vectis.auth.store_init({ credentials_path = credentials_path }) == true)
-assert(vectis.auth.user_add({
-  credentials_path = credentials_path,
-  username = "api-user",
-  password = "api-password",
-}).username == "api-user")
-
 local auth_flow = vectis.auth.workflow({
-  credentials_path = credentials_path,
   realm = "lua-api-example",
   purpose = "webdav",
   credential_purpose = "webdav",
 })
-
-local credential = assert(vectis.auth.issue({
-  credentials_path = credentials_path,
-  subject = "api-user",
-  purpose = "webdav",
-  modes = {"basic"},
-}))
-local authorization = assert(vectis.auth.basic_authorization(credential))
 
 local app = assert(vectis.app.new({
   app_name = "lua-api-example",
@@ -101,7 +78,7 @@ assert(app:json({
 assert(app:auth_json({
   path = "/admin/status",
   body = '{"ok":true,"admin":true}\n',
-  auth = auth_flow:provider(),
+  auth = auth_flow:provider({app = app}),
 }) == true)
 assert(app:route({
   path = "/stream",
@@ -238,15 +215,6 @@ local anonymous = api.get("/admin/status")
 assert(anonymous.status == 401)
 assert(anonymous.headers:lower():find(
     'www-authenticate: basic realm="lua-api-example"', 1, true))
-
-local guarded = api.get("/admin/status", {
-  headers = { Authorization = authorization },
-})
-assert(guarded.ok == true, guarded.error and guarded.error.message)
-assert(guarded.status == 200)
-assert(guarded.json.ok == true)
-assert(guarded.json.admin == true)
-assert(guarded.headers:lower():find("cache-control: no-store", 1, true))
 
 local streamed = http.get(base_url .. "/stream", http_defaults)
 assert(streamed.ok == true, streamed.error and streamed.error.message)

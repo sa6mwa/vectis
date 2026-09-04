@@ -1086,18 +1086,12 @@ assert(_G.__vectis_mcp_session_bad == nil)
 assert(type(_G.__vectis_mcp_session_bad_err) == "table")
 assert(_G.__vectis_mcp_session_bad_err.status == vectis.ERR_INVALID)
 assert(_G.__vectis_mcp_session_bad_err.message:match("session"))
-local route_auth_path = os.tmpname()
-os.remove(route_auth_path)
-local route_auth_state_path = os.tmpname()
-os.remove(route_auth_state_path)
 assert(vectis.auth.store_init({
-  credentials_path = route_auth_path,
-  auth_state_path = route_auth_state_path,
+  app = server,
 }))
 assert(server:auth_routes({
   path_prefix = "/_auth-state",
-  credentials_path = route_auth_path,
-  auth_state_path = route_auth_state_path,
+  state_key = "auth/v1/route-state",
   realm = "lua-route-state",
 }) == true)
 do
@@ -1427,10 +1421,6 @@ do
   assert(tostring(err):match("tls%.version"))
 end
 
-local acme_auth_path = os.tmpname()
-os.remove(acme_auth_path)
-assert(vectis.auth.store_init({ credentials_path = acme_auth_path }))
-
 local acme_missing_domain = assert(vectis.app.new({
   app_name = "lua-acme-missing-domain",
   port = 18180,
@@ -1441,7 +1431,7 @@ local acme_missing_domain = assert(vectis.app.new({
 }))
 assert(acme_missing_domain:auth_json({
   path = "/probe",
-  auth = { kind = "native", credentials_path = acme_auth_path },
+  auth = { kind = "native", state_key = "auth/v1/acme" },
 }) == true)
 local acme_started, acme_error = acme_missing_domain:start()
 assert(acme_started == nil)
@@ -1476,7 +1466,7 @@ local acme_missing_email = assert(vectis.app.new({
 }))
 assert(acme_missing_email:auth_json({
   path = "/probe",
-  auth = { kind = "native", credentials_path = acme_auth_path },
+  auth = { kind = "native", state_key = "auth/v1/acme" },
 }) == true)
 acme_started, acme_error = acme_missing_email:start()
 assert(acme_started == nil)
@@ -1590,31 +1580,33 @@ assert(ensured.result.refreshed == true)
 assert(ensured.flow.access_token == "refreshed-token")
 assert(ensured.flow.refresh_token == "new-refresh")
 assert(ensured.flow.expires_at == 8200)
-local auth_path = os.tmpname()
-os.remove(auth_path)
-local auth_state_path = os.tmpname()
-os.remove(auth_state_path)
-local function file_contains(path, text)
-  local file = io.open(path, "rb")
-  if not file then
-    return false
+local auth_pouch_root = os.tmpname()
+os.remove(auth_pouch_root)
+local auth_app = assert(vectis.app.new({
+  app_name = "lua-smoke-auth",
+  lockd = { endpoints = { "pouch://" .. auth_pouch_root .. "?single_writer=false" } },
+}))
+for _, name in ipairs({
+  "store_init", "oauth2_flow_upsert", "oauth2_flow_load",
+  "oauth2_webdav_key", "oauth2_stored_flow_ensure", "issue", "verify",
+  "provider_native", "user_add", "user_login", "email_token_issue",
+  "email_token_verify", "webdav_key", "revoke",
+}) do
+  local operation = vectis.auth[name]
+  vectis.auth[name] = function(opts)
+    opts.app = auth_app
+    return operation(opts)
   end
-  local body = file:read("*a")
-  file:close()
-  return body:find(text, 1, true) ~= nil
 end
 assert(vectis.auth.store_init({
-  credentials_path = auth_path,
-  state_path = auth_state_path,
+  app = auth_app,
 }))
 assert(vectis.auth.oauth2_flow_upsert({
-  credentials_path = auth_path,
   flow_id = "lua-browser-flow",
   subject = "lua-browser-oidc@example.com",
   flow = exchanged.flow,
 }))
 local browser_flow_key = assert(vectis.auth.oauth2_webdav_key({
-  credentials_path = auth_path,
   flow_id = "lua-browser-flow",
   subject = "lua-browser-oidc@example.com",
 }))
@@ -1622,7 +1614,6 @@ assert(type(browser_flow_key.client_id) == "string")
 assert(type(browser_flow_key.client_secret) == "string")
 assert(browser_flow_key.claim_json:match('"oauth2_flow_id":"lua%-browser%-flow"'))
 local browser_flow_verified = assert(vectis.auth.verify({
-  credentials_path = auth_path,
   authorization = "Basic " .. base64_encode(
     browser_flow_key.client_id .. ":" .. browser_flow_key.client_secret),
   allowed_modes = { "basic" },
@@ -1630,7 +1621,6 @@ local browser_flow_verified = assert(vectis.auth.verify({
 assert(browser_flow_verified.authenticated == true)
 assert(browser_flow_verified.claim_json:match('"oauth2_flow_id":"lua%-browser%-flow"'))
 assert(vectis.auth.oauth2_flow_upsert({
-  credentials_path = auth_path,
   flow_id = "lua-flow",
   subject = "lua-oidc@example.com",
   flow = {
@@ -1644,7 +1634,6 @@ assert(vectis.auth.oauth2_flow_upsert({
   },
 }))
 local loaded_flow = assert(vectis.auth.oauth2_flow_load({
-  credentials_path = auth_path,
   flow_id = "lua-flow",
 }))
 assert(loaded_flow.found == true)
@@ -1655,7 +1644,6 @@ assert(loaded_flow.flow.refresh_token == "lua-refresh-token")
 assert(loaded_flow.flow.expires_at == 5200)
 assert(loaded_flow.flow.has_expires_at == true)
 local oauth_webdav_key = assert(vectis.auth.oauth2_webdav_key({
-  credentials_path = auth_path,
   flow_id = "lua-flow",
   subject = "lua-oidc@example.com",
 }))
@@ -1663,7 +1651,6 @@ assert(type(oauth_webdav_key.client_id) == "string")
 assert(type(oauth_webdav_key.client_secret) == "string")
 assert(oauth_webdav_key.claim_json:match('"oauth2_flow_id":"lua%-flow"'))
 local oauth_webdav_verified = assert(vectis.auth.verify({
-  credentials_path = auth_path,
   authorization = "Basic " .. base64_encode(
     oauth_webdav_key.client_id .. ":" .. oauth_webdav_key.client_secret),
   allowed_modes = { "basic" },
@@ -1671,7 +1658,6 @@ local oauth_webdav_verified = assert(vectis.auth.verify({
 assert(oauth_webdav_verified.authenticated == true)
 assert(oauth_webdav_verified.claim_json:match('"oauth2_flow_id":"lua%-flow"'))
 local stored_ensure, stored_ensure_error = vectis.auth.oauth2_stored_flow_ensure({
-  credentials_path = auth_path,
   flow_id = "lua-flow",
   transport = oauth_transport("fail"),
   token_endpoint = "https://idp.example.test/token",
@@ -1682,20 +1668,17 @@ local stored_ensure, stored_ensure_error = vectis.auth.oauth2_stored_flow_ensure
 assert(stored_ensure == nil)
 assert(type(stored_ensure_error) == "table")
 local oauth_webdav_revoked = assert(vectis.auth.verify({
-  credentials_path = auth_path,
   authorization = "Basic " .. base64_encode(
     oauth_webdav_key.client_id .. ":" .. oauth_webdav_key.client_secret),
   allowed_modes = { "basic" },
 }))
 assert(oauth_webdav_revoked.authenticated == false)
 local oauth_webdav_retained_key = assert(vectis.auth.oauth2_webdav_key({
-  credentials_path = auth_path,
   flow_id = "lua-flow",
   subject = "lua-oidc@example.com",
 }))
 local retained_ensure, retained_ensure_error =
   vectis.auth.oauth2_stored_flow_ensure({
-    credentials_path = auth_path,
     flow_id = "lua-flow",
     transport = oauth_transport("fail"),
     token_endpoint = "https://idp.example.test/token",
@@ -1707,7 +1690,6 @@ local retained_ensure, retained_ensure_error =
 assert(retained_ensure == nil)
 assert(type(retained_ensure_error) == "table")
 local oauth_webdav_retained = assert(vectis.auth.verify({
-  credentials_path = auth_path,
   authorization = "Basic " .. base64_encode(
     oauth_webdav_retained_key.client_id .. ":" ..
       oauth_webdav_retained_key.client_secret),
@@ -1715,7 +1697,6 @@ local oauth_webdav_retained = assert(vectis.auth.verify({
 }))
 assert(oauth_webdav_retained.authenticated == true)
 local issued = assert(vectis.auth.issue({
-  credentials_path = auth_path,
   subject = "lua@example.com",
   purpose = "webdav",
   modes = { "bearer" },
@@ -1724,7 +1705,6 @@ assert(type(issued.client_id) == "string")
 assert(type(issued.api_key) == "string")
 assert(issued.client_secret == nil)
 local verified = assert(vectis.auth.verify({
-  credentials_path = auth_path,
   authorization = "Bearer " .. issued.api_key,
   allowed_modes = { "bearer" },
 }))
@@ -1732,7 +1712,6 @@ assert(verified.authenticated == true)
 assert(verified.auth_mode == "bearer")
 assert(verified.claim_json:match('"purpose":"webdav"'))
 local native_provider = assert(vectis.auth.provider_native({
-  credentials_path = auth_path,
   purpose = "webdav",
   realm = "lua",
   allowed_modes = { "bearer" },
@@ -1791,7 +1770,6 @@ assert(callback_invalid == nil)
 assert(callback_invalid_error.status_string == "invalid")
 assert(callback_invalid_error.message:match("action"))
 local user = assert(vectis.auth.user_add({
-  credentials_path = auth_path,
   username = "lua-user@example.com",
   password = "lua-password",
   email = "lua-user@example.com",
@@ -1804,13 +1782,11 @@ assert(user.totp_secret == "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
 assert(user.totp_uri:find("otpauth://totp/", 1, true) == 1)
 assert(user.totp_qr:find("\226\150\136", 1, true))
 local missing_totp = assert(vectis.auth.user_login({
-  credentials_path = auth_path,
   username = "lua-user@example.com",
   password = "lua-password",
 }))
 assert(missing_totp.authenticated == false)
 local logged_in = assert(vectis.auth.user_login({
-  credentials_path = auth_path,
   username = "lua-user@example.com",
   password = "lua-password",
   totp_code = "287082",
@@ -1819,8 +1795,6 @@ local logged_in = assert(vectis.auth.user_login({
 }))
 assert(logged_in.authenticated == true)
 local email_token = assert(vectis.auth.email_token_issue({
-  credentials_path = auth_path,
-  state_path = auth_state_path,
   username = "lua-user@example.com",
   realm = "lua",
   email = "lua-user@example.com",
@@ -1831,14 +1805,10 @@ local email_token = assert(vectis.auth.email_token_issue({
   ttl_seconds = 300,
   max_attempts = 2,
 }))
-assert(file_contains(auth_state_path, "lua-email-tx-1"))
-assert(not file_contains(auth_path, "lua-email-tx-1"))
 assert(email_token.transaction_id == "lua-email-tx-1")
 assert(email_token.token == "123456")
 assert(email_token.expires_at == 1300)
 local wrong_pending_email_token = assert(vectis.auth.email_token_verify({
-  credentials_path = auth_path,
-  state_path = auth_state_path,
   transaction_id = "lua-email-tx-1",
   username = "lua-user@example.com",
   realm = "lua",
@@ -1851,8 +1821,6 @@ assert(wrong_pending_email_token.expired == false)
 assert(wrong_pending_email_token.failed_attempts == 0)
 assert(wrong_pending_email_token.max_attempts == 0)
 local wrong_email_token = assert(vectis.auth.email_token_verify({
-  credentials_path = auth_path,
-  state_path = auth_state_path,
   transaction_id = "lua-email-tx-1",
   username = "lua-user@example.com",
   realm = "lua",
@@ -1866,8 +1834,6 @@ assert(wrong_email_token.pending_transaction_id == "lua-pending-1")
 assert(wrong_email_token.failed_attempts == 1)
 assert(wrong_email_token.max_attempts == 2)
 local verified_email_token = assert(vectis.auth.email_token_verify({
-  credentials_path = auth_path,
-  state_path = auth_state_path,
   transaction_id = "lua-email-tx-1",
   username = "lua-user@example.com",
   realm = "lua",
@@ -1884,8 +1850,6 @@ assert(verified_email_token.pending_transaction_id == "lua-pending-1")
 assert(verified_email_token.failed_attempts == 1)
 assert(verified_email_token.max_attempts == 2)
 local replayed_email_token = assert(vectis.auth.email_token_verify({
-  credentials_path = auth_path,
-  state_path = auth_state_path,
   transaction_id = "lua-email-tx-1",
   username = "lua-user@example.com",
   realm = "lua",
@@ -1895,8 +1859,6 @@ local replayed_email_token = assert(vectis.auth.email_token_verify({
 assert(replayed_email_token.verified == false)
 assert(replayed_email_token.expired == false)
 local expiring_email_token = assert(vectis.auth.email_token_issue({
-  credentials_path = auth_path,
-  state_path = auth_state_path,
   username = "lua-user@example.com",
   realm = "lua",
   email = "lua-user@example.com",
@@ -1907,8 +1869,6 @@ local expiring_email_token = assert(vectis.auth.email_token_issue({
 }))
 assert(expiring_email_token.expires_at == 1300)
 local expired_email_token = assert(vectis.auth.email_token_verify({
-  credentials_path = auth_path,
-  state_path = auth_state_path,
   transaction_id = "lua-email-tx-2",
   username = "lua-user@example.com",
   realm = "lua",
@@ -1918,8 +1878,6 @@ local expired_email_token = assert(vectis.auth.email_token_verify({
 assert(expired_email_token.verified == false)
 assert(expired_email_token.expired == true)
 local expired_replay_email_token = assert(vectis.auth.email_token_verify({
-  credentials_path = auth_path,
-  state_path = auth_state_path,
   transaction_id = "lua-email-tx-2",
   username = "lua-user@example.com",
   realm = "lua",
@@ -1929,7 +1887,6 @@ local expired_replay_email_token = assert(vectis.auth.email_token_verify({
 assert(expired_replay_email_token.verified == false)
 assert(expired_replay_email_token.expired == false)
 local webdav_key = assert(vectis.auth.webdav_key({
-  credentials_path = auth_path,
   username = "lua-user@example.com",
   password = "lua-password",
   totp_code = "287082",
@@ -1959,15 +1916,13 @@ assert(totp:qr("Vectis:auth", "Vectis"):find("\226\150\136", 1, true))
 local qr = assert(vectis.auth.qr.new("vectis"))
 assert(qr:size() > 0)
 assert(qr:ansi():find("\226\150\136", 1, true))
-assert(vectis.auth.revoke({ credentials_path = auth_path, client_id = issued.client_id }))
+assert(vectis.auth.revoke({ client_id = issued.client_id }))
 local revoked = assert(vectis.auth.verify({
-  credentials_path = auth_path,
   authorization = "Bearer " .. issued.api_key,
   allowed_modes = { "bearer" },
 }))
 assert(revoked.authenticated == false)
-os.remove(auth_path)
-os.remove(auth_path .. ".lock")
+auth_app:close()
 
 assert(type(lonejson) == "table")
 assert(lonejson.encode_json(lonejson.json_null) == "null")

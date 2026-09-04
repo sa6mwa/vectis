@@ -1,13 +1,34 @@
 include("${CMAKE_CURRENT_LIST_DIR}/port_retry.cmake")
 
-set(auth_path "${WORK_DIR}/vectis-browser-session-auth.json")
 set(pouch_dir "${WORK_DIR}/vectis-browser-session-pouch")
 set(script "${WORK_DIR}/vectis-browser-session.lua")
 
-file(REMOVE "${auth_path}" "${auth_path}.lock")
 file(REMOVE_RECURSE "${pouch_dir}")
 file(MAKE_DIRECTORY "${pouch_dir}")
 vectis_pick_test_port(port)
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users
+          --lockd-endpoint "pouch://${pouch_dir}?single_writer=false"
+          --add "lua-session-user" --password "lua-session-password"
+          --email "lua-session-user@example.test"
+  RESULT_VARIABLE seed_user_result
+  OUTPUT_VARIABLE seed_user_output
+  ERROR_VARIABLE seed_user_error)
+if(NOT seed_user_result EQUAL 0)
+  message(FATAL_ERROR "failed to seed browser-session user: ${seed_user_error}")
+endif()
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users
+          --lockd-endpoint "pouch://${pouch_dir}?single_writer=false"
+          --add "lua-flow-user" --password "lua-flow-password"
+          --totp-secret "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+  RESULT_VARIABLE seed_flow_user_result
+  OUTPUT_VARIABLE seed_flow_user_output
+  ERROR_VARIABLE seed_flow_user_error)
+if(NOT seed_flow_user_result EQUAL 0)
+  message(FATAL_ERROR "failed to seed browser-flow user: ${seed_flow_user_error}")
+endif()
 
 string(CONFIGURE [=[
 local curl = require("curl")
@@ -15,8 +36,7 @@ local vectis = require("vectis")
 
 local port_text = assert(arg[1], "port is required")
 local port = tonumber(port_text)
-local auth_path = assert(arg[2], "auth path is required")
-local pouch_dir = assert(arg[3], "pouch directory is required")
+local pouch_dir = assert(arg[2], "pouch directory is required")
 local cert_path = pouch_dir .. "/browser-session.pem"
 local base = "https://localhost:" .. tostring(port)
 local session = {
@@ -49,18 +69,6 @@ local function request(path, method, body, headers)
   })
 end
 
-assert(vectis.auth.store_init({credentials_path = auth_path}) == true)
-assert(vectis.auth.user_add({
-  credentials_path = auth_path,
-  username = "lua-session-user",
-  password = "lua-session-password",
-}).username == "lua-session-user")
-assert(vectis.auth.user_add({
-  credentials_path = auth_path,
-  username = "lua-flow-user",
-  password = "lua-flow-password",
-  totp_secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
-}).username == "lua-flow-user")
 assert(vectis.cert.generate_bundle({
   common_name = "localhost",
   ip_addresses = "127.0.0.1",
@@ -83,7 +91,7 @@ local server = assert(vectis.app.new({
 }))
 local covered_cookie_route, covered_cookie_route_err = server:auth_routes({
   path_prefix = "/app/auth",
-  credentials_path = auth_path,
+  state_key = "auth/v1/store",
   browser_session = {
     mode = "m2m_and_browser",
     cookie_path = "/app",
@@ -95,7 +103,7 @@ assert(covered_cookie_route == true, covered_cookie_route_err and
     covered_cookie_route_err.message)
 local invalid_cookie_route, invalid_cookie_route_err = server:auth_routes({
   path_prefix = "/invalid-cookie-path",
-  credentials_path = auth_path,
+  state_key = "auth/v1/store",
   browser_session = {
     mode = "m2m_and_browser",
     cookie_path = "/app",
@@ -109,24 +117,24 @@ assert(invalid_cookie_route_err.status == vectis.ERR_INVALID)
 assert(invalid_cookie_route_err.message:find("cookie_path", 1, true))
 assert(server:auth_routes({
   path_prefix = "/auth",
-  credentials_path = auth_path,
+  state_key = "auth/v1/store",
   browser_session = session,
 }) == true)
 assert(server:auth_routes({
   path_prefix = "/flow",
-  credentials_path = auth_path,
+  state_key = "auth/v1/store",
   steps = {"password", "totp"},
   browser_session = flow_session,
 }) == true)
 assert(server:auth_routes({
   path_prefix = "/flow/admin",
-  credentials_path = auth_path,
+  state_key = "auth/v1/store",
   steps = {"password", "totp"},
   browser_session = flow_session,
 }) == true)
 assert(server:auth_routes({
   path_prefix = "/email-flow",
-  credentials_path = auth_path,
+  state_key = "auth/v1/store",
   steps = {"email_code", "password", "totp"},
   email_smtp = {
     url = "smtp://127.0.0.1:1",
@@ -135,7 +143,7 @@ assert(server:auth_routes({
   browser_session = flow_session,
 }) == true)
 local redirect_flow = assert(vectis.auth.workflow({
-  credentials_path = auth_path,
+  state_key = "auth/v1/store",
   path_prefix = "/redirect-flow",
   purpose = "stats",
   steps = {"password"},
@@ -145,7 +153,7 @@ assert(redirect_flow:mount(server) == true)
 local stats_route, stats_route_err = server:auth_json({
   path = "/.stats",
   body = '{"stats":true}\n',
-  auth = redirect_flow:provider(),
+  auth = redirect_flow:provider({app = server}),
 })
 assert(stats_route == true,
        stats_route_err and stats_route_err.message or "stats route failed")
@@ -172,7 +180,8 @@ assert(server:auth_json({
     end,
   },
 }) == true)
-assert(server:start() == true)
+local start_ok, start_err = server:start()
+assert(start_ok == true, start_err and start_err.message or "server start failed")
 
 local ready
 for _ = 1, 30 do
@@ -275,7 +284,7 @@ local function assert_six_cell_code_input(page, field_name, character_pattern)
 end
 
 local email_flow_start = request("/email-flow/continue", "POST",
-    "email=missing%40example.test", navigation_headers)
+    "email=lua-session-user%40example.test", navigation_headers)
 assert(email_flow_start.ok == true, email_flow_start.error)
 assert(email_flow_start.status == 303)
 local email_flow_cookie = workflow_cookie(email_flow_start)
@@ -361,7 +370,7 @@ print("vectis-lua-browser-sessions-ok")
 file(WRITE "${script}" "${script_body}")
 
 execute_process(
-  COMMAND "${VECTIS_BIN}" "${script}" "${port}" "${auth_path}" "${pouch_dir}"
+  COMMAND "${VECTIS_BIN}" "${script}" "${port}" "${pouch_dir}"
   RESULT_VARIABLE browser_session_result
   OUTPUT_VARIABLE browser_session_stdout
   ERROR_VARIABLE browser_session_stderr)

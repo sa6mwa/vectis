@@ -4,7 +4,8 @@ set(key_path "${WORK_DIR}/lua-key.pem")
 set(csr_key_path "${WORK_DIR}/lua-csr-key.pem")
 set(csr_path "${WORK_DIR}/lua-cert.csr")
 set(malformed_path "${WORK_DIR}/lua-malformed-cert.pem")
-set(auth_path "${WORK_DIR}/lua-cert-auth.json")
+set(pouch_root "${WORK_DIR}/lua-cert-pouch")
+set(lockd_endpoint "pouch://${pouch_root}?single_writer=false")
 set(script "${WORK_DIR}/lua-certs-smoke.lua")
 
 if(NOT DEFINED VECTIS_PORT_HELPER)
@@ -23,9 +24,40 @@ if(NOT picked_port MATCHES "^[1-9][0-9]*$")
 endif()
 
 file(REMOVE "${bundle_path}" "${cert_path}" "${key_path}" "${csr_key_path}"
-            "${csr_path}" "${malformed_path}" "${auth_path}"
-            "${auth_path}.lock")
+            "${csr_path}" "${malformed_path}")
+file(REMOVE_RECURSE "${pouch_root}")
 file(WRITE "${malformed_path}" "not a certificate\n")
+
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${lockd_endpoint}"
+          --add "cert-user" --password "cert-password"
+  RESULT_VARIABLE user_add_result
+  OUTPUT_VARIABLE user_add_output
+  ERROR_VARIABLE user_add_error)
+if(NOT user_add_result EQUAL 0)
+  message(FATAL_ERROR "certs user provisioning failed: ${user_add_error}")
+endif()
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${lockd_endpoint}"
+          --webdav-key "cert-user" --password "cert-password"
+  RESULT_VARIABLE webdav_key_result
+  OUTPUT_VARIABLE webdav_key_output
+  ERROR_VARIABLE webdav_key_error)
+if(NOT webdav_key_result EQUAL 0)
+  message(FATAL_ERROR "certs WebDAV key provisioning failed: ${webdav_key_error}")
+endif()
+string(REGEX MATCH "client_id=([^\n]+)" webdav_client_id_match
+       "${webdav_key_output}")
+if(NOT webdav_client_id_match)
+  message(FATAL_ERROR "certs WebDAV key did not include client_id")
+endif()
+set(webdav_client_id "${CMAKE_MATCH_1}")
+string(REGEX MATCH "client_secret=([^\n]+)" webdav_client_secret_match
+       "${webdav_key_output}")
+if(NOT webdav_client_secret_match)
+  message(FATAL_ERROR "certs WebDAV key did not include client_secret")
+endif()
+set(webdav_client_secret "${CMAKE_MATCH_1}")
 
 file(WRITE "${script}" [[
 local vectis = require("vectis")
@@ -37,8 +69,10 @@ local key_path = assert(arg[3])
 local csr_key_path = assert(arg[4])
 local csr_path = assert(arg[5])
 local malformed_path = assert(arg[6])
-local auth_path = assert(arg[7])
-local port = assert(tonumber(arg[8]))
+local lockd_endpoint = assert(arg[7])
+local client_id = assert(arg[8])
+local client_secret = assert(arg[9])
+local port = assert(tonumber(arg[10]))
 
 local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local function base64(data)
@@ -126,21 +160,11 @@ local csr_body = read_file(csr_path)
 assert(csr_body:find("BEGIN CERTIFICATE REQUEST", 1, true))
 assert(csr_body:find("END CERTIFICATE REQUEST", 1, true))
 
-assert(vectis.auth.store_init({credentials_path = auth_path}) == true)
-assert(vectis.auth.user_add({
-  credentials_path = auth_path,
-  username = "cert-user",
-  password = "cert-password",
-}).username == "cert-user")
-local webdav_key = assert(vectis.auth.webdav_key({
-  credentials_path = auth_path,
-  username = "cert-user",
-  password = "cert-password",
-}))
-local basic_auth = "Basic " .. base64(webdav_key.client_id .. ":" .. webdav_key.client_secret)
+local basic_auth = "Basic " .. base64(client_id .. ":" .. client_secret)
 local server = assert(vectis.app.new({
   bind = "127.0.0.1",
   port = port,
+  lockd = { endpoints = {lockd_endpoint} },
   hsts_max_age_seconds = 31536000,
   tls = {
     mode = "manual",
@@ -156,7 +180,7 @@ assert(server:auth_json({
   path = "/probe",
   auth = {
     kind = "native",
-    credentials_path = auth_path,
+    state_key = "auth/v1/store",
     realm = "certs",
     purpose = "webdav",
   },
@@ -203,7 +227,8 @@ assert(malformed_inspect_error.message:find("parse certificate", 1, true))
 
 execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${bundle_path}"
                         "${cert_path}" "${key_path}" "${csr_key_path}"
-                        "${csr_path}" "${malformed_path}" "${auth_path}"
+                        "${csr_path}" "${malformed_path}" "${lockd_endpoint}"
+                        "${webdav_client_id}" "${webdav_client_secret}"
                         "${picked_port}"
                 RESULT_VARIABLE certs_result
                 OUTPUT_VARIABLE certs_stdout

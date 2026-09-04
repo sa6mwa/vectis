@@ -23,15 +23,15 @@ contract is:
 | `VECTIS_LUA_SITE_PORT` | no | HTTPS port; defaults to `8443`. |
 | `VECTIS_LUA_SITE_TLS_BUNDLE` | yes | Manual TLS certificate/key PEM bundle. |
 | `VECTIS_LUA_SITE_TLS_DOMAIN` | no | TLS hostname; defaults to `localhost`. |
-| `VECTIS_LUA_SITE_CREDENTIALS` | yes | Native credential-store path. |
-| `VECTIS_LUA_SITE_AUTH_STATE` | yes | State path for lower-level auth primitives; the fixture also derives its local Lockd/Pouch root from it. Native workflow and browser-session state live in Lockd. |
+| `VECTIS_LUA_SITE_LOCKD_ENDPOINT` | yes | Shared Lockd or encrypted `pouch://` endpoint for all Vectis state. |
+| `VECTIS_LUA_SITE_AUTH_STATE_KEY` | no | Auth record key; defaults to `auth/v1/store`. |
 | `VECTIS_LUA_SITE_ASSET_ROOT` | yes | Public static asset directory. |
 | `VECTIS_LUA_SITE_CONTENT_ROOT` | yes | Direct editable and publicly served content directory. |
 | `VECTIS_LUA_SITE_CACHE` | yes | WebDAV cache, lock, and transaction-scratch directory. |
 
 The example creates a fixed `site-admin` user for E2E isolation. Treat it as a
-test fixture; production deployment should provision its own users and keep
-the credentials and state paths persistent and private.
+test fixture; production deployment should provision its own users through the
+CLI and keep the selected Lockd/Pouch root persistent and private.
 
 ## Site shape
 
@@ -41,7 +41,7 @@ A site normally has four separate filesystem roots:
 - a mutable content root written through authenticated WebDAV and served through
   a separate public static mount;
 - a WebDAV cache root for lock and transaction scratch state;
-- private, persistent native-auth credentials and Lockd state.
+- one private, persistent Lockd/Pouch root for native-auth and Vectis state.
 
 Do not serve the private credential, Lockd, or WebDAV cache roots as static
 content. Keep the WebDAV editor prefix separate from the public content prefix.
@@ -60,11 +60,11 @@ local app = assert(vectis.app.new({
   lockd = { endpoints = {"pouch:///var/lib/my-site/lockd?single_writer=false"} },
 }))
 
-local credentials_path = "/var/lib/my-site/credentials.json"
+local auth_state_key = "auth/v1/store"
 local browser_session = { mode = "m2m_and_browser", purpose = "my-site-browser" }
 local editor_auth = {
   kind = "native",
-  credentials_path = credentials_path,
+  state_key = auth_state_key,
   realm = "my-site",
   purpose = "webdav",
   browser_session = browser_session,
@@ -80,7 +80,7 @@ assert(app:static_directory({
 }) == true)
 assert(app:auth_routes({
   path_prefix = "/auth",
-  credentials_path = credentials_path,
+  state_key = auth_state_key,
   realm = "my-site",
   credential_purpose = "webdav",
   browser_template_path = "/srv/my-site/templates/login-shell.html",
@@ -148,7 +148,7 @@ local browser_session = {
 
 assert(app:auth_routes({
   path_prefix = "/auth",
-  credentials_path = credentials_path,
+  state_key = auth_state_key,
   credential_purpose = "webdav",
   steps = {"password", "totp"},
   browser_template_path = "/srv/my-site/templates/login-shell.html",

@@ -198,7 +198,9 @@ typedef struct vectis_lua_app_openapi_schema_ref {
 typedef struct vectis_lua_app_native_auth {
   lua_State *lua;
   vectis_app *app;
-  char *credentials_path;
+  char *namespace_name;
+  char *state_key;
+  char *transient_state_key;
   char *purpose;
   char *realm;
   char *browser_login_path;
@@ -206,6 +208,7 @@ typedef struct vectis_lua_app_native_auth {
   char *browser_session_cookie_path;
   char *browser_session_purpose;
   char *browser_session_state_key;
+  char *browser_session_namespace_name;
   char *callback_location;
   char *callback_content_type;
   char *callback_body;
@@ -838,13 +841,24 @@ static int vectis_cli_action_usage(FILE *stream, const char *action) {
   }
   if (strcmp(action, "credentials") == 0) {
     fputs("Usage:\n"
-          "  vectis --action credentials [--store FILE] --init\n"
-          "  vectis --action credentials [--store FILE] --issue\n"
+          "  vectis --action credentials [STATE OPTIONS] --init\n"
+          "  vectis --action credentials [STATE OPTIONS] --issue\n"
           "      --subject USER [--purpose NAME] [--basic] [--bearer]\n"
-          "  vectis --action credentials [--store FILE]\n"
+          "  vectis --action credentials [STATE OPTIONS]\n"
           "      --verify AUTHORIZATION [--basic] [--bearer]\n"
-          "  vectis --action credentials [--store FILE] --revoke CLIENT_ID\n\n"
-          "  --store FILE                Credential store path.\n"
+          "  vectis --action credentials [STATE OPTIONS] --revoke CLIENT_ID\n\n"
+          "State options:\n"
+          "  --state-key KEY             Auth state record (default: auth/v1/store).\n"
+          "  --transient-state-key KEY   Optional transient auth state record.\n"
+          "  --lockd-endpoint URL        Lockd or pouch endpoint.\n"
+          "  --lockd-namespace NAME      Auth state namespace (default: vectis.auth).\n"
+          "  --lockd-unix-socket PATH    Lockd Unix socket.\n"
+          "  --lockd-bundle FILE         Lockd client bundle.\n"
+          "  --pouch-crypto-key VALUE    Pouch encryption key.\n"
+          "  --pouch-crypto-key-file FILE Pouch encryption key file.\n"
+          "  --pouch-crypto-generate-key-file\n"
+          "                             Create the selected Pouch key file.\n"
+          "  --pouch-compression MODE    Pouch compression mode.\n"
           "  --init                      Create or initialize the credential "
           "store.\n"
           "  --issue                     Issue a credential for --subject.\n"
@@ -861,14 +875,23 @@ static int vectis_cli_action_usage(FILE *stream, const char *action) {
   if (strcmp(action, "users") == 0) {
     fputs(
         "Usage:\n"
-        "  vectis --action users [--store FILE] --add USER\n"
+        "  vectis --action users [STATE OPTIONS] --add USER\n"
         "      [--password VALUE] [--email ADDRESS] [--totp]\n"
-        "  vectis --action users [--store FILE] --login USER\n"
+        "  vectis --action users [STATE OPTIONS] --login USER\n"
         "      --password VALUE [--totp-code CODE]\n"
-        "  vectis --action users [--store FILE] --webdav-key USER\n"
+        "  vectis --action users [STATE OPTIONS] --webdav-key USER\n"
         "      --password VALUE [--totp-code CODE]\n\n"
         "Store and enrollment:\n"
-        "  --store FILE                Credential store path.\n"
+        "  --state-key KEY             Auth state record (default: auth/v1/store).\n"
+        "  --lockd-endpoint URL        Lockd or pouch endpoint.\n"
+        "  --lockd-namespace NAME      Auth state namespace (default: vectis.auth).\n"
+        "  --lockd-unix-socket PATH    Lockd Unix socket.\n"
+        "  --lockd-bundle FILE         Lockd client bundle.\n"
+        "  --pouch-crypto-key VALUE    Pouch encryption key.\n"
+        "  --pouch-crypto-key-file FILE Pouch encryption key file.\n"
+        "  --pouch-crypto-generate-key-file\n"
+        "                             Create the selected Pouch key file.\n"
+        "  --pouch-compression MODE    Pouch compression mode.\n"
         "  --add USER                  Add or update a user.\n"
         "  --password VALUE, -p VALUE  Set the password or authenticate a "
         "user.\n"
@@ -891,7 +914,7 @@ static int vectis_cli_action_usage(FILE *stream, const char *action) {
   if (strcmp(action, "oauth2") == 0) {
     fputs(
         "Usage:\n"
-        "  vectis --action oauth2 [--store FILE] OPERATION [OPTIONS]\n\n"
+        "  vectis --action oauth2 [STATE OPTIONS] OPERATION [OPTIONS]\n\n"
         "Operations:\n"
         "  --authorize                 Start an authorization-code flow.\n"
         "  --exchange-callback FLOW_ID Exchange a callback and store its "
@@ -905,7 +928,16 @@ static int vectis_cli_action_usage(FILE *stream, const char *action) {
         "  --webdav-key FLOW_ID        Issue a WebDAV key from a stored "
         "flow.\n\n"
         "Common options:\n"
-        "  --store FILE                Credential store path.\n"
+        "  --state-key KEY             Auth state record (default: auth/v1/store).\n"
+        "  --lockd-endpoint URL        Lockd or pouch endpoint.\n"
+        "  --lockd-namespace NAME      Auth state namespace (default: vectis.auth).\n"
+        "  --lockd-unix-socket PATH    Lockd Unix socket.\n"
+        "  --lockd-bundle FILE         Lockd client bundle.\n"
+        "  --pouch-crypto-key VALUE    Pouch encryption key.\n"
+        "  --pouch-crypto-key-file FILE Pouch encryption key file.\n"
+        "  --pouch-crypto-generate-key-file\n"
+        "                             Create the selected Pouch key file.\n"
+        "  --pouch-compression MODE    Pouch compression mode.\n"
         "  --subject USER              Subject for stored flow or WebDAV key.\n"
         "  --webdav-client-id ID       Client ID for a derived WebDAV key.\n"
         "  --flow-id FLOW_ID           Set the flow ID separately from "
@@ -2152,29 +2184,6 @@ static const char *vectis_cli_auth_mode_name(unsigned mode) {
   return "default";
 }
 
-static int vectis_cli_credentials_default_path(char *out, size_t out_size) {
-  const char *config_dir;
-  const char *home;
-  int written;
-
-  config_dir = getenv("VECTIS_CONFIG_DIR");
-  if (config_dir != NULL && config_dir[0] != '\0') {
-    written = snprintf(out, out_size, "%s/credentials.json", config_dir);
-    return written > 0 && (size_t)written < out_size ? 0 : -1;
-  }
-  config_dir = getenv("XDG_CONFIG_HOME");
-  if (config_dir != NULL && config_dir[0] != '\0') {
-    written = snprintf(out, out_size, "%s/vectis/credentials.json", config_dir);
-    return written > 0 && (size_t)written < out_size ? 0 : -1;
-  }
-  home = getenv("HOME");
-  if (home == NULL || home[0] == '\0') {
-    return -1;
-  }
-  written = snprintf(out, out_size, "%s/.config/vectis/credentials.json", home);
-  return written > 0 && (size_t)written < out_size ? 0 : -1;
-}
-
 static int vectis_cli_auth_status(vectis_status status,
                                   const vectis_error *error) {
   const char *message;
@@ -2217,38 +2226,118 @@ static void vectis_cli_error_set(vectis_error *error, vectis_status status,
   }
 }
 
+/* Parse the Lockd selection shared by the auth administration actions.  The
+ * pointed-to argv strings remain valid through the synchronous action, so no
+ * ownership transfer is needed here. */
+static int vectis_cli_auth_store_lockd_option(
+    int argc, char **argv, int *index, vectis_auth_store_config *store,
+    vectis_lockd_config *lockd, const char **endpoints) {
+  const char *option;
+
+  if (argc <= 0 || argv == NULL || index == NULL || *index >= argc ||
+      store == NULL || lockd == NULL || endpoints == NULL) {
+    return 0;
+  }
+  option = argv[*index];
+  if (strcmp(option, "--lockd-endpoint") == 0) {
+    if (*index + 1 >= argc) {
+      fputs("vectis: --lockd-endpoint requires a URL\n", stderr);
+      return -1;
+    }
+    if (lockd->endpoint_count != 0u) {
+      fputs("vectis: --lockd-endpoint may be specified only once\n", stderr);
+      return -1;
+    }
+    endpoints[0] = argv[*index + 1];
+    lockd->endpoints = endpoints;
+    lockd->endpoint_count = 1u;
+    store->lockd = lockd;
+    *index += 2;
+    return 1;
+  }
+  if (strcmp(option, "--lockd-unix-socket") == 0 ||
+      strcmp(option, "--lockd-bundle") == 0 ||
+      strcmp(option, "--lockd-namespace") == 0 ||
+      strcmp(option, "--pouch-crypto-key") == 0 ||
+      strcmp(option, "--pouch-crypto-key-file") == 0 ||
+      strcmp(option, "--pouch-compression") == 0) {
+    if (*index + 1 >= argc) {
+      fprintf(stderr, "vectis: %s requires a value\n", option);
+      return -1;
+    }
+    if (strcmp(option, "--lockd-unix-socket") == 0) {
+      lockd->unix_socket_path = argv[*index + 1];
+    } else if (strcmp(option, "--lockd-bundle") == 0) {
+      lockd->client_bundle_path = argv[*index + 1];
+    } else if (strcmp(option, "--lockd-namespace") == 0) {
+      lockd->default_namespace = argv[*index + 1];
+      store->namespace_name = argv[*index + 1];
+    } else if (strcmp(option, "--pouch-crypto-key") == 0) {
+      lockd->pouch_crypto_key = argv[*index + 1];
+    } else if (strcmp(option, "--pouch-crypto-key-file") == 0) {
+      lockd->pouch_crypto_key_file = argv[*index + 1];
+    } else {
+      lockd->pouch_compression = argv[*index + 1];
+    }
+    store->lockd = lockd;
+    *index += 2;
+    return 1;
+  }
+  if (strcmp(option, "--pouch-crypto-generate-key-file") == 0) {
+    lockd->pouch_crypto_generate_key_file = 1;
+    lockd->pouch_crypto_generate_key_file_set = 1;
+    store->lockd = lockd;
+    (*index)++;
+    return 1;
+  }
+  return 0;
+}
+
 static int vectis_cli_credentials_command(int argc, char **argv, int index) {
   vectis_auth_store_config store;
+  vectis_lockd_config lockd;
+  const char *lockd_endpoints[1];
   vectis_auth_issue_config issue;
   vectis_auth_issued_credential credential;
   vectis_auth_result result;
   vectis_error error;
   vectis_status status;
-  char default_path[4096];
   const char *action;
   const char *authorization;
   const char *revoke_client_id;
   unsigned explicit_modes;
 
-  if (vectis_cli_credentials_default_path(default_path, sizeof(default_path)) !=
-      0) {
-    fputs("vectis: unable to resolve default credentials path\n", stderr);
-    return 1;
-  }
   vectis_auth_store_config_init(&store);
-  store.credentials_path = default_path;
+  vectis_lockd_config_init(&lockd);
+  lockd_endpoints[0] = NULL;
   vectis_auth_issue_config_init(&issue);
   action = NULL;
   authorization = NULL;
   revoke_client_id = NULL;
   explicit_modes = 0u;
   while (index < argc) {
-    if (strcmp(argv[index], "--store") == 0) {
+    int lockd_option = vectis_cli_auth_store_lockd_option(
+        argc, argv, &index, &store, &lockd, lockd_endpoints);
+    if (lockd_option < 0) {
+      return 64;
+    }
+    if (lockd_option > 0) {
+      continue;
+    }
+    if (strcmp(argv[index], "--state-key") == 0) {
       if (index + 1 >= argc) {
-        fputs("vectis: --store requires a path\n", stderr);
+        fputs("vectis: --state-key requires a logical Lockd key\n", stderr);
         return 64;
       }
-      store.credentials_path = argv[index + 1];
+      store.state_key = argv[index + 1];
+      index += 2;
+    } else if (strcmp(argv[index], "--transient-state-key") == 0) {
+      if (index + 1 >= argc) {
+        fputs("vectis: --transient-state-key requires a logical Lockd key\n",
+              stderr);
+        return 64;
+      }
+      store.transient_state_key = argv[index + 1];
       index += 2;
     } else if (strcmp(argv[index], "--init") == 0) {
       action = "init";
@@ -2311,7 +2400,8 @@ static int vectis_cli_credentials_command(int argc, char **argv, int index) {
     if (status != VECTIS_OK) {
       return vectis_cli_auth_status(status, &error);
     }
-    printf("initialized=%s\n", store.credentials_path);
+    printf("initialized=%s\n",
+           store.state_key != NULL ? store.state_key : "auth/v1/store");
     return 0;
   }
   if (strcmp(action, "issue") == 0) {
@@ -2494,6 +2584,8 @@ static int vectis_cli_token_flow_copy_arg(const char *value, char **out) {
 
 static int vectis_cli_users_command(int argc, char **argv, int index) {
   vectis_auth_store_config store;
+  vectis_lockd_config lockd;
+  const char *lockd_endpoints[1];
   vectis_auth_user_config user;
   vectis_auth_user_enrollment enrollment;
   vectis_auth_login_config login;
@@ -2501,28 +2593,31 @@ static int vectis_cli_users_command(int argc, char **argv, int index) {
   vectis_auth_issued_credential credential;
   vectis_error error;
   vectis_status status;
-  char default_path[4096];
   const char *action;
   const char *email;
 
-  if (vectis_cli_credentials_default_path(default_path, sizeof(default_path)) !=
-      0) {
-    fputs("vectis: unable to resolve default credentials path\n", stderr);
-    return 1;
-  }
   vectis_auth_store_config_init(&store);
-  store.credentials_path = default_path;
+  vectis_lockd_config_init(&lockd);
+  lockd_endpoints[0] = NULL;
   vectis_auth_user_config_init(&user);
   vectis_auth_login_config_init(&login);
   action = NULL;
   email = NULL;
   while (index < argc) {
-    if (strcmp(argv[index], "--store") == 0) {
+    int lockd_option = vectis_cli_auth_store_lockd_option(
+        argc, argv, &index, &store, &lockd, lockd_endpoints);
+    if (lockd_option < 0) {
+      return 64;
+    }
+    if (lockd_option > 0) {
+      continue;
+    }
+    if (strcmp(argv[index], "--state-key") == 0) {
       if (index + 1 >= argc) {
-        fputs("vectis: --store requires a path\n", stderr);
+        fputs("vectis: --state-key requires a logical Lockd key\n", stderr);
         return 64;
       }
-      store.credentials_path = argv[index + 1];
+      store.state_key = argv[index + 1];
       index += 2;
     } else if (strcmp(argv[index], "--add") == 0) {
       if (index + 1 >= argc) {
@@ -2689,6 +2784,8 @@ static int vectis_cli_users_command(int argc, char **argv, int index) {
 
 static int vectis_cli_oauth2_command(int argc, char **argv, int index) {
   vectis_auth_store_config store;
+  vectis_lockd_config lockd;
+  const char *lockd_endpoints[1];
   vectis_auth_oidc_authorization_config authorization_config;
   vectis_auth_oidc_authorization authorization;
   vectis_auth_oidc_token_exchange_config exchange_config;
@@ -2703,7 +2800,6 @@ static int vectis_cli_oauth2_command(int argc, char **argv, int index) {
   vectis_auth_issued_credential credential;
   vectis_error error;
   vectis_status status;
-  char default_path[4096];
   const char *action;
   const char *flow_id;
   const char *subject;
@@ -2732,13 +2828,9 @@ static int vectis_cli_oauth2_command(int argc, char **argv, int index) {
   size_t max_body_bytes;
   size_t max_query_bytes;
 
-  if (vectis_cli_credentials_default_path(default_path, sizeof(default_path)) !=
-      0) {
-    fputs("vectis: unable to resolve default credentials path\n", stderr);
-    return 1;
-  }
   vectis_auth_store_config_init(&store);
-  store.credentials_path = default_path;
+  vectis_lockd_config_init(&lockd);
+  lockd_endpoints[0] = NULL;
   vectis_auth_oidc_authorization_config_init(&authorization_config);
   action = NULL;
   flow_id = NULL;
@@ -2767,12 +2859,20 @@ static int vectis_cli_oauth2_command(int argc, char **argv, int index) {
   max_body_bytes = 0u;
   max_query_bytes = 0u;
   while (index < argc) {
-    if (strcmp(argv[index], "--store") == 0) {
+    int lockd_option = vectis_cli_auth_store_lockd_option(
+        argc, argv, &index, &store, &lockd, lockd_endpoints);
+    if (lockd_option < 0) {
+      return 64;
+    }
+    if (lockd_option > 0) {
+      continue;
+    }
+    if (strcmp(argv[index], "--state-key") == 0) {
       if (index + 1 >= argc) {
-        fputs("vectis: --store requires a path\n", stderr);
+        fputs("vectis: --state-key requires a logical Lockd key\n", stderr);
         return 64;
       }
-      store.credentials_path = argv[index + 1];
+      store.state_key = argv[index + 1];
       index += 2;
     } else if (strcmp(argv[index], "--authorize") == 0) {
       action = "authorize";
@@ -6918,7 +7018,9 @@ static void vectis_lua_app_native_auth_free(vectis_lua_app_native_auth *auth) {
     auth->callback_ref = LUA_NOREF;
   }
   vectis_lua_app_native_auth_clear_callback(auth);
-  free(auth->credentials_path);
+  free(auth->namespace_name);
+  free(auth->state_key);
+  free(auth->transient_state_key);
   free(auth->purpose);
   free(auth->realm);
   free(auth->browser_login_path);
@@ -6926,6 +7028,7 @@ static void vectis_lua_app_native_auth_free(vectis_lua_app_native_auth *auth) {
   free(auth->browser_session_cookie_path);
   free(auth->browser_session_purpose);
   free(auth->browser_session_state_key);
+  free(auth->browser_session_namespace_name);
   free(auth);
 }
 
@@ -7761,6 +7864,8 @@ static int vectis_lua_app_native_auth_browser_session(
     if (config.state_key == NULL) {
       config.state_key = "auth.browser_session.v1";
     }
+    config.namespace_name =
+        vectis_lua_table_string(lua, session_index, "namespace");
     config.ttl_seconds = (uint64_t)vectis_lua_table_size(
         lua, session_index, "ttl_seconds", config.ttl_seconds);
     lua_pop(lua, 1);
@@ -7773,10 +7878,14 @@ static int vectis_lua_app_native_auth_browser_session(
   auth->browser_session_cookie_path = vectis_cli_strdup(config.cookie_path);
   auth->browser_session_purpose = vectis_cli_strdup(config.purpose);
   auth->browser_session_state_key = vectis_cli_strdup(config.state_key);
+  auth->browser_session_namespace_name =
+      vectis_cli_strdup(config.namespace_name);
   if (auth->browser_session_cookie_name == NULL ||
       auth->browser_session_cookie_path == NULL ||
       auth->browser_session_purpose == NULL ||
-      auth->browser_session_state_key == NULL) {
+      auth->browser_session_state_key == NULL ||
+      (config.namespace_name != NULL &&
+       auth->browser_session_namespace_name == NULL)) {
     vectis_cli_error_set(error, VECTIS_ERR_NOMEM,
                          "failed to copy browser session configuration");
     return 0;
@@ -7786,6 +7895,7 @@ static int vectis_lua_app_native_auth_browser_session(
   auth->browser_session.cookie_path = auth->browser_session_cookie_path;
   auth->browser_session.purpose = auth->browser_session_purpose;
   auth->browser_session.state_key = auth->browser_session_state_key;
+  auth->browser_session.namespace_name = auth->browser_session_namespace_name;
   return 1;
 }
 
@@ -7793,7 +7903,9 @@ static vectis_lua_app_native_auth *
 vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
                                const char *context, vectis_error *error) {
   vectis_lua_app_native_auth *auth;
-  const char *credentials_path;
+  const char *namespace_name;
+  const char *state_key;
+  const char *transient_state_key;
   const char *kind;
   const char *purpose;
   const char *realm;
@@ -7906,19 +8018,11 @@ vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
                          "app auth kind must be native or callback");
     return NULL;
   }
-  credentials_path =
-      vectis_lua_table_string(lua, provider_index, "credentials_path");
-  if (credentials_path == NULL) {
-    credentials_path = vectis_lua_table_string(lua, provider_index, "path");
-  }
-  if (credentials_path == NULL || credentials_path[0] == '\0') {
-    if (provider_index != index) {
-      lua_pop(lua, 1);
-    }
-    vectis_cli_error_set(error, VECTIS_ERR_INVALID,
-                         "native auth credentials_path is required");
-    return NULL;
-  }
+  namespace_name =
+      vectis_lua_table_string(lua, provider_index, "namespace");
+  state_key = vectis_lua_table_string(lua, provider_index, "state_key");
+  transient_state_key =
+      vectis_lua_table_string(lua, provider_index, "transient_state_key");
 
   auth = (vectis_lua_app_native_auth *)calloc(1u, sizeof(*auth));
   if (auth == NULL) {
@@ -7931,11 +8035,16 @@ vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
   }
   auth->callback_ref = LUA_NOREF;
   auth->app = app;
-  auth->credentials_path = vectis_cli_strdup(credentials_path);
+  auth->namespace_name = vectis_cli_strdup(namespace_name);
+  auth->state_key = vectis_cli_strdup(state_key);
+  auth->transient_state_key = vectis_cli_strdup(transient_state_key);
   auth->purpose = vectis_cli_strdup(purpose != NULL ? purpose : "webdav");
   auth->realm = vectis_cli_strdup(realm != NULL ? realm : "vectis");
   auth->browser_login_path = vectis_cli_strdup(browser_login_path);
-  if (auth->credentials_path == NULL || auth->purpose == NULL ||
+  if ((namespace_name != NULL && auth->namespace_name == NULL) ||
+      (state_key != NULL && auth->state_key == NULL) ||
+      (transient_state_key != NULL && auth->transient_state_key == NULL) ||
+      auth->purpose == NULL ||
       auth->realm == NULL ||
       (browser_login_path != NULL && auth->browser_login_path == NULL)) {
     if (provider_index != index) {
@@ -7957,9 +8066,12 @@ vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
   }
 
   vectis_auth_native_provider_config_init(&auth->native_config);
-  auth->native_config.store.credentials_path = auth->credentials_path;
-  auth->native_config.store.max_store_bytes = vectis_lua_table_size(
-      lua, index, "max_store_bytes", VECTIS_AUTH_DEFAULT_MAX_STORE_BYTES);
+  auth->native_config.store.app = app;
+  auth->native_config.store.namespace_name = auth->namespace_name;
+  auth->native_config.store.state_key = auth->state_key;
+  auth->native_config.store.transient_state_key = auth->transient_state_key;
+  auth->native_config.store.max_record_bytes = vectis_lua_table_size(
+      lua, index, "max_record_bytes", VECTIS_AUTH_DEFAULT_MAX_STORE_BYTES);
   auth->native_config.app = app;
   auth->native_config.browser_session = auth->browser_session;
   auth->native_config.browser_login_path = auth->browser_login_path;
@@ -11931,8 +12043,8 @@ static int vectis_lua_app_auth_routes(lua_State *lua) {
   vectis_error error;
   vectis_status status;
   const char *path_prefix;
-  const char *credentials_path;
-  const char *state_path;
+  const char *state_key;
+  const char *transient_state_key;
   const char *realm;
   const char *login_title;
   const char *credential_purpose;
@@ -11956,23 +12068,20 @@ static int vectis_lua_app_auth_routes(lua_State *lua) {
   if (path_prefix == NULL) {
     path_prefix = vectis_lua_table_string(lua, 2, "prefix");
   }
-  credentials_path = vectis_lua_table_string(lua, 2, "credentials_path");
-  if (credentials_path == NULL) {
-    credentials_path = vectis_lua_table_string(lua, 2, "path");
-  }
-  state_path = vectis_lua_table_string(lua, 2, "state_path");
-  if (state_path == NULL) {
-    state_path = vectis_lua_table_string(lua, 2, "auth_state_path");
-  }
+  state_key = vectis_lua_table_string(lua, 2, "state_key");
+  transient_state_key =
+      vectis_lua_table_string(lua, 2, "transient_state_key");
 
   vectis_auth_routes_config_init(&config);
   if (path_prefix != NULL) {
     config.path_prefix = path_prefix;
   }
-  config.store.credentials_path = credentials_path;
-  config.store.state_path = state_path;
-  config.store.max_store_bytes = vectis_lua_table_size(
-      lua, 2, "max_store_bytes", config.store.max_store_bytes);
+  config.store.app = app;
+  config.store.state_key = state_key;
+  config.store.transient_state_key = transient_state_key;
+  config.store.namespace_name = vectis_lua_table_string(lua, 2, "namespace");
+  config.store.max_record_bytes = vectis_lua_table_size(
+      lua, 2, "max_record_bytes", config.store.max_record_bytes);
   realm = vectis_lua_table_string(lua, 2, "realm");
   if (realm != NULL) {
     config.realm = realm;
@@ -12066,6 +12175,8 @@ static int vectis_lua_app_auth_routes(lua_State *lua) {
     if (config.browser_session.state_key == NULL) {
       config.browser_session.state_key = "auth.browser_session.v1";
     }
+    config.browser_session.namespace_name =
+        vectis_lua_table_string(lua, browser_session_index, "namespace");
     config.browser_session.ttl_seconds = (uint64_t)vectis_lua_table_size(
         lua, browser_session_index, "ttl_seconds",
         config.browser_session.ttl_seconds);
@@ -16714,23 +16825,26 @@ static int vectis_lua_copy_optional_string_field(lua_State *lua, int source,
 
 static void vectis_lua_auth_store_config(lua_State *lua, int index,
                                          vectis_auth_store_config *config) {
-  const char *path;
-  const char *state_path;
+  vectis_lua_app *app;
 
   vectis_auth_store_config_init(config);
   index = lua_absindex(lua, index);
-  path = vectis_lua_table_string(lua, index, "credentials_path");
-  if (path == NULL) {
-    path = vectis_lua_table_string(lua, index, "path");
+  lua_getfield(lua, index, "app");
+  if (!lua_isnil(lua, -1)) {
+    app = (vectis_lua_app *)luaL_testudata(lua, -1, VECTIS_LUA_APP);
+    if (app == NULL || app->app == NULL) {
+      luaL_error(lua, "auth app must be an open vectis app");
+      return;
+    }
+    config->app = app->app;
   }
-  config->credentials_path = path;
-  state_path = vectis_lua_table_string(lua, index, "state_path");
-  if (state_path == NULL) {
-    state_path = vectis_lua_table_string(lua, index, "auth_state_path");
-  }
-  config->state_path = state_path;
-  config->max_store_bytes = vectis_lua_table_size(
-      lua, index, "max_store_bytes", VECTIS_AUTH_DEFAULT_MAX_STORE_BYTES);
+  lua_pop(lua, 1);
+  config->state_key = vectis_lua_table_string(lua, index, "state_key");
+  config->transient_state_key =
+      vectis_lua_table_string(lua, index, "transient_state_key");
+  config->namespace_name = vectis_lua_table_string(lua, index, "namespace");
+  config->max_record_bytes = vectis_lua_table_size(
+      lua, index, "max_record_bytes", VECTIS_AUTH_DEFAULT_MAX_STORE_BYTES);
 }
 
 static void vectis_lua_auth_push_result(lua_State *lua,
@@ -17897,16 +18011,16 @@ static int vectis_lua_auth_provider_native(lua_State *lua) {
   lua_setfield(lua, -2, "kind");
   lua_pushvalue(lua, 1);
   lua_setfield(lua, -2, "config");
-  lua_getfield(lua, 1, "credentials_path");
-  lua_setfield(lua, -2, "credentials_path");
-  lua_getfield(lua, 1, "path");
-  lua_setfield(lua, -2, "path");
-  lua_getfield(lua, 1, "state_path");
-  lua_setfield(lua, -2, "state_path");
-  lua_getfield(lua, 1, "auth_state_path");
-  lua_setfield(lua, -2, "auth_state_path");
-  lua_getfield(lua, 1, "max_store_bytes");
-  lua_setfield(lua, -2, "max_store_bytes");
+  lua_getfield(lua, 1, "app");
+  lua_setfield(lua, -2, "app");
+  lua_getfield(lua, 1, "state_key");
+  lua_setfield(lua, -2, "state_key");
+  lua_getfield(lua, 1, "transient_state_key");
+  lua_setfield(lua, -2, "transient_state_key");
+  lua_getfield(lua, 1, "namespace");
+  lua_setfield(lua, -2, "namespace");
+  lua_getfield(lua, 1, "max_record_bytes");
+  lua_setfield(lua, -2, "max_record_bytes");
   lua_getfield(lua, 1, "purpose");
   lua_setfield(lua, -2, "purpose");
   lua_getfield(lua, 1, "realm");

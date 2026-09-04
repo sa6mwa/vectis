@@ -22,7 +22,13 @@ typedef struct vectis_acme_state_config {
   long timeout_ms;
 } vectis_acme_state_config;
 
-char *vectis_acme_state_default_endpoint(vectis_error *error);
+/*
+ * Vectis-owned durable state shares one encrypted Pouch root by default.
+ * The endpoint opts into Pouch multi-writer mode because independently
+ * started Vectis processes (for example the server and `vectis -a`) must be
+ * able to use the same root concurrently.
+ */
+char *vectis_persistence_default_pouch_endpoint(vectis_error *error);
 char *vectis_persistence_default_pouch_key_file(void);
 char *vectis_acme_state_default_key(const char *const *domains,
                                     size_t domain_count, vectis_error *error);

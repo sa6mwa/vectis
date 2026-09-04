@@ -12,8 +12,39 @@ set(bundle_output "${WORK_DIR}/vectis-pack-bundle")
 set(corrupt_output "${WORK_DIR}/vectis-pack-bundle-corrupt")
 set(api_service_script "${WORK_DIR}/vectis-pack-api-service.lua")
 set(api_service_output "${WORK_DIR}/vectis-pack-api-service")
-set(api_service_credentials "${WORK_DIR}/api-service-credentials.json")
+set(api_service_pouch_root "${WORK_DIR}/api-service-auth-pouch")
+set(api_service_lockd_endpoint "pouch://${api_service_pouch_root}?single_writer=false")
 vectis_pick_test_port(api_service_port)
+file(REMOVE_RECURSE "${api_service_pouch_root}")
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users
+          --lockd-endpoint "${api_service_lockd_endpoint}"
+          --add "api-user" --password "api-password"
+  RESULT_VARIABLE api_service_user_result
+  OUTPUT_VARIABLE api_service_user_output
+  ERROR_VARIABLE api_service_user_error)
+if(NOT api_service_user_result EQUAL 0)
+  message(FATAL_ERROR "failed to seed packed API user: ${api_service_user_error}")
+endif()
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users
+          --lockd-endpoint "${api_service_lockd_endpoint}"
+          --webdav-key "api-user" --password "api-password"
+  RESULT_VARIABLE api_service_key_result
+  OUTPUT_VARIABLE api_service_key_output
+  ERROR_VARIABLE api_service_key_error)
+if(NOT api_service_key_result EQUAL 0)
+  message(FATAL_ERROR "failed to issue packed API credential: ${api_service_key_error}")
+endif()
+string(REGEX MATCH "client_id=([^\n\r]+)" api_service_client_id_match
+       "${api_service_key_output}")
+set(api_service_client_id "${CMAKE_MATCH_1}")
+string(REGEX MATCH "client_secret=([^\n\r]+)" api_service_client_secret_match
+       "${api_service_key_output}")
+set(api_service_client_secret "${CMAKE_MATCH_1}")
+if(api_service_client_id STREQUAL "" OR api_service_client_secret STREQUAL "")
+  message(FATAL_ERROR "packed API credential output was incomplete")
+endif()
 set(consumer_service_script "${WORK_DIR}/vectis-pack-consumer-service.lua")
 set(consumer_service_output "${WORK_DIR}/vectis-pack-consumer-service")
 set(consumer_service_cache_dir "${WORK_DIR}/consumer-service-cache")
@@ -44,13 +75,36 @@ set(invalid_option_output "${WORK_DIR}/vectis-pack-invalid-option")
 set(no_asset_extract_dir "${WORK_DIR}/no-assets-extract")
 set(asset_extract_dir "${WORK_DIR}/extracted-site")
 set(asset_webdav_cache_dir "${WORK_DIR}/webdav-cache")
-set(asset_webdav_credentials "${WORK_DIR}/webdav-credentials.json")
-set(asset_webdav_state "${WORK_DIR}/webdav-auth-state.json")
+set(asset_auth_pouch_root "${WORK_DIR}/asset-auth-pouch")
+set(asset_auth_lockd_endpoint "pouch://${asset_auth_pouch_root}?single_writer=false")
 set(asset_https_cert_bundle "${WORK_DIR}/pack-self-signed.pem")
 set(asset_smtp_mailbox "${WORK_DIR}/pack-smtp-mailbox.txt")
 vectis_pick_test_port(asset_http_port)
 vectis_pick_test_port(asset_https_port)
 vectis_pick_test_port(asset_disk_port)
+file(REMOVE_RECURSE "${asset_auth_pouch_root}")
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${asset_auth_lockd_endpoint}"
+          --add "pack-user" --password "pack-password"
+  RESULT_VARIABLE asset_auth_user_result ERROR_VARIABLE asset_auth_user_error)
+if(NOT asset_auth_user_result EQUAL 0)
+  message(FATAL_ERROR "failed to seed packed asset user: ${asset_auth_user_error}")
+endif()
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${asset_auth_lockd_endpoint}"
+          --webdav-key "pack-user" --password "pack-password"
+  RESULT_VARIABLE asset_auth_key_result OUTPUT_VARIABLE asset_auth_key_output
+  ERROR_VARIABLE asset_auth_key_error)
+if(NOT asset_auth_key_result EQUAL 0)
+  message(FATAL_ERROR "failed to issue packed asset credential: ${asset_auth_key_error}")
+endif()
+string(REGEX MATCH "client_id=([^\n\r]+)" asset_auth_client_id_match "${asset_auth_key_output}")
+set(asset_auth_client_id "${CMAKE_MATCH_1}")
+string(REGEX MATCH "client_secret=([^\n\r]+)" asset_auth_client_secret_match "${asset_auth_key_output}")
+set(asset_auth_client_secret "${CMAKE_MATCH_1}")
+if(asset_auth_client_id STREQUAL "" OR asset_auth_client_secret STREQUAL "")
+  message(FATAL_ERROR "packed asset credential output was incomplete")
+endif()
 
 file(WRITE "${sibling_module}" "return { value = 'packed-sibling-loaded' }\n")
 file(WRITE "${script}" "local vectis = require(\"vectis\")\nlocal sibling = require(\"vectis_pack_sibling\")\nlocal function assert_status_error(err, status, message)\n  assert(type(err) == \"table\")\n  assert(err.status == status)\n  assert(err.status_string == vectis.status_string(status))\n  assert(err.source == \"vectis\")\n  assert(err.source_code == vectis.ERROR_SOURCE_VECTIS)\n  assert(err.message == message)\nend\nassert(vectis.status_string(vectis.OK) == \"ok\")\nassert(sibling.value == \"packed-sibling-loaded\")\nassert(vectis.has_embedded_lockd_bundle() == false)\nassert(vectis.embedded_lockd_bundle_size() == 0)\nlocal missing_source, missing_source_err = vectis.embedded_lockd_bundle_source()\nassert(missing_source == nil)\nassert_status_error(missing_source_err, vectis.ERR_STATE, \"no embedded lockd bundle\")\nlocal missing_embedded_bundle_ok, missing_embedded_bundle_err = pcall(function()\n  vectis.app.new({lockd = {endpoints = {\"https://127.0.0.1:1\"}, client_bundle = \"embedded\"}})\nend)\nassert(missing_embedded_bundle_ok == false)\nassert(tostring(missing_embedded_bundle_err):match(\"no embedded lockd bundle\"))\nassert(vectis.embedded.has_assets() == false)\nassert(vectis.embedded.default_extract_policy() == \"fail_exists\")\nlocal missing_tree_sha, missing_tree_sha_err = vectis.embedded.tree_sha256()\nassert(missing_tree_sha == nil)\nassert_status_error(missing_tree_sha_err, vectis.ERR_STATE, \"no embedded assets\")\nassert(#vectis.embedded.list(\"/\") == 0)\nlocal extracted, extract_err = vectis.embedded.extract({to = [[${no_asset_extract_dir}]]})\nassert(extracted == nil)\nassert_status_error(extract_err, vectis.ERR_STATE, \"no embedded assets\")\nlocal chunks, chunks_err = vectis.embedded.chunks(\"/missing.txt\", 4)\nassert(chunks == nil)\nassert_status_error(chunks_err, vectis.ERR_STATE, \"no embedded assets\")\nassert(arg[0]:match(\"vectis%-pack%-smoke$\"))\nassert(arg[1] == \"first\")\nassert(arg[2] == \"second\")\n")
@@ -158,7 +212,9 @@ endif()
 string(CONFIGURE [=[
 local vectis = require("vectis")
 local curl = require("curl")
-local credentials = [[@api_service_credentials@]]
+local auth_endpoint = [[@api_service_lockd_endpoint@]]
+local auth_client_id = [[@api_service_client_id@]]
+local auth_client_secret = [[@api_service_client_secret@]]
 local port = @api_service_port@
 local function base64(data)
   local chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -176,29 +232,20 @@ local function base64(data)
   end
   return table.concat(out)
 end
-assert(vectis.auth.store_init({ credentials_path = credentials }) == true)
-assert(vectis.auth.user_add({
-  credentials_path = credentials,
-  username = "api-user",
-  password = "api-password",
-}).username == "api-user")
-local key = assert(vectis.auth.webdav_key({
-  credentials_path = credentials,
-  username = "api-user",
-  password = "api-password",
-}))
-local authorization = "Basic " .. base64(key.client_id .. ":" .. key.client_secret)
 local server = assert(vectis.app.new({
   app_name = "packed-api-service",
   bind = "127.0.0.1",
   port = port,
+  lockd = { endpoints = { auth_endpoint } },
 }))
+local authorization = "Basic " .. base64(auth_client_id .. ":" .. auth_client_secret)
 assert(server:auth_json({
   path = "/api/status",
-  auth = { kind = "native", credentials_path = credentials, realm = "api", purpose = "webdav" },
+  auth = { kind = "native", state_key = "auth/v1/store", realm = "api", purpose = "webdav" },
   body = '{"ok":true,"service":"api"}\n',
 }) == true)
-assert(server:start() == true)
+local started, start_err = server:start()
+assert(started == true, start_err and start_err.message or "server start failed")
 local function request(headers)
   local response
   for _ = 1, 20 do
@@ -238,7 +285,6 @@ if(NOT api_service_pack_result EQUAL 0)
   message(FATAL_ERROR "packed API service packaging failed: ${api_service_pack_stdout}${api_service_pack_stderr}")
 endif()
 
-file(REMOVE "${api_service_credentials}")
 execute_process(COMMAND "${api_service_output}"
                 RESULT_VARIABLE api_service_run_result
                 OUTPUT_VARIABLE api_service_run_stdout
@@ -332,6 +378,22 @@ file(APPEND "${asset_script}" "local missing, err = vectis.embedded.read(\"/miss
 file(APPEND "${asset_script}" "local function fetch_http(path)\n  local response\n  for _ = 1, 20 do\n    response = curl.perform({url = \"http://127.0.0.1:28181\" .. path, protocols = \"http\", timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true})\n    if response.ok then return response end\n    assert(vectis.sleep_ms(100) == true)\n  end\n  return response\nend\nlocal function request_http(method, path, body, authorization)\n  return curl.perform({url = \"http://127.0.0.1:28181\" .. path, method = method, body = body, headers = authorization and {Authorization = authorization} or nil, protocols = \"http\", timeout_ms = 2000, connect_timeout_ms = 1000, no_signal = true})\nend\nlocal served_root = fetch_http(\"/\")\nassert(served_root.ok == true, served_root.error)\nassert(served_root.status == 200)\nassert(served_root.body:match(\"Acme Test\"))\nlocal served_asset = fetch_http(\"/assets/app.txt\")\nassert(served_asset.ok == true, served_asset.error)\nassert(served_asset.status == 200)\nassert(served_asset.body == \"generic embedded asset\\n\")\nassert(served_asset.headers:lower():find(\"etag:\", 1, true))\nassert(served_asset.headers:lower():find(\"cache-control: max-age=60\", 1, true))\nlocal anonymous_put = request_http(\"PUT\", \"/dav/assets/app.txt\", \"blocked\\n\")\nassert(anonymous_put.status == 401)\nlocal webdav_read = request_http(\"GET\", \"/dav/assets/app.txt\", nil, basic_auth)\nassert(webdav_read.ok == true, webdav_read.error)\nassert(webdav_read.status == 200)\nassert(webdav_read.body == \"generic embedded asset\\n\")\nlocal webdav_put = request_http(\"PUT\", \"/dav/assets/app.txt\", \"webdav mutated\\n\", basic_auth)\nassert(webdav_put.ok == true, webdav_put.error)\nassert(webdav_put.status == 201 or webdav_put.status == 204)\nlocal webdav_mutated = request_http(\"GET\", \"/dav/assets/app.txt\", nil, basic_auth)\nassert(webdav_mutated.ok == true, webdav_mutated.error)\nassert(webdav_mutated.status == 200)\nassert(webdav_mutated.body == \"webdav mutated\\n\")\nlocal embedded_after_webdav = fetch_http(\"/assets/app.txt\")\nassert(embedded_after_webdav.body == \"generic embedded asset\\n\")\nassert(server:stop() == true)\nserver:close()\n")
 file(APPEND "${asset_script}" "assert(vectis.embedded.extract({to = extract_to}) == true)\nassert(read_file(extract_to .. \"/index.html\"):match(\"Acme Test\"))\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\nassert(read_file(extract_to .. \"/assets/app.css\"):match(\"#123456\"))\nassert(read_file(extract_to .. \"/assets/app.js\"):match(\"vectisPackAsset\"))\nassert(read_file(extract_to .. \"/assets/logo.vxsite\") == \"VX\\n\")\nassert(read_file(extract_to .. \"/templates/login.html\"):match(\"username\"))\nassert(vectis.embedded.extract({to = extract_to, policy = \"verify\"}) == true)\nlocal extracted, extract_err = vectis.embedded.extract({to = extract_to, policy = \"fail_exists\"})\nassert(extracted == nil)\nassert(extract_err:match(\"embedded asset already exists\"))\nwrite_file(extract_to .. \"/assets/app.txt\", \"mutated\\n\")\nassert(vectis.embedded.extract({to = extract_to}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\nwrite_file(extract_to .. \"/assets/app.txt\", \"mutated\\n\")\nlocal verified, verify_err = vectis.embedded.extract({to = extract_to, policy = \"verify\"})\nassert(verified == nil)\nassert(verify_err:match(\"embedded asset verification failed\"))\nassert(vectis.embedded.extract({to = extract_to, policy = \"skip-existing\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"mutated\\n\")\nassert(vectis.embedded.extract({to = extract_to, policy = \"repair\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\nwrite_file(extract_to .. \"/user-created.txt\", \"user\\n\")\nos.remove(extract_to .. \"/assets/app.txt\")\nlocal missing_verify, missing_verify_err = vectis.embedded.extract({to = extract_to, policy = \"verify\"})\nassert(missing_verify == nil)\nassert(missing_verify_err:match(\"embedded asset is missing\"))\nassert(vectis.embedded.extract({to = extract_to, policy = \"repair\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\nassert(read_file(extract_to .. \"/user-created.txt\") == \"user\\n\")\nassert(vectis.embedded.extract({to = extract_to, policy = \"overwrite\"}) == true)\nassert(read_file(extract_to .. \"/assets/app.txt\") == \"generic embedded asset\\n\")\n")
 file(READ "${asset_script}" asset_script_body)
+string(REPLACE
+       "local webdav_credentials = [[${asset_webdav_credentials}]]"
+       "local auth_endpoint = [[${asset_auth_lockd_endpoint}]]\nlocal auth_client_id = [[${asset_auth_client_id}]]\nlocal auth_client_secret = [[${asset_auth_client_secret}]]\nlocal https_cert_bundle = [[${asset_https_cert_bundle}]]"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "assert(vectis.auth.store_init({credentials_path = webdav_credentials}) == true)\nassert(vectis.auth.user_add({credentials_path = webdav_credentials, username = \"pack-user\", password = \"pack-password\"}).username == \"pack-user\")\nlocal webdav_key = assert(vectis.auth.webdav_key({credentials_path = webdav_credentials, username = \"pack-user\", password = \"pack-password\"}))\nassert(type(webdav_key.client_id) == \"string\")\nassert(type(webdav_key.client_secret) == \"string\")\nlocal basic_auth = \"Basic \" .. base64(webdav_key.client_id .. \":\" .. webdav_key.client_secret)"
+       "local basic_auth = \"Basic \" .. base64(auth_client_id .. \":\" .. auth_client_secret)"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "local server = assert(vectis.app.new({bind = \"127.0.0.1\", port = 28181}))"
+       "local server = assert(vectis.app.new({bind = \"127.0.0.1\", port = 28181, lockd = { endpoints = {auth_endpoint} }}))"
+       asset_script_body "${asset_script_body}")
+string(REPLACE
+       "auth = {kind = \"native\", credentials_path = webdav_credentials, realm = \"pack\", purpose = \"webdav\"}"
+       "auth = {kind = \"native\", state_key = \"auth/v1/store\", realm = \"pack\", purpose = \"webdav\"}"
+       asset_script_body "${asset_script_body}")
 string(REPLACE
        "local vectis = require(\"vectis\")\nlocal curl = require(\"curl\")"
        "local vectis = require(\"vectis\")\nlocal curl = require(\"curl\")\nlocal dsv = require(\"vectis.dsv\")\nlocal lonejson = require(\"lonejson\")\nlocal function assert_status_error(err, status, message_fragment)\n  assert(type(err) == \"table\")\n  assert(err.status == status, tostring(err.status) .. \" ~= \" .. tostring(status) .. \": \" .. tostring(err.message))\n  assert(err.status_string == vectis.status_string(status))\n  assert(err.source == \"vectis\")\n  assert(err.source_code == vectis.ERROR_SOURCE_VECTIS)\n  assert(err.message:find(message_fragment, 1, true), err.message)\nend"
@@ -709,7 +771,7 @@ if(NOT asset_pack_result EQUAL 0)
 endif()
 
 file(REMOVE_RECURSE "${asset_extract_dir}" "${asset_webdav_cache_dir}")
-file(REMOVE "${asset_webdav_credentials}" "${asset_webdav_state}" "${asset_https_cert_bundle}" "${asset_smtp_mailbox}")
+file(REMOVE "${asset_https_cert_bundle}" "${asset_smtp_mailbox}")
 execute_process(COMMAND "${VECTIS_PACK_SMTP_HARNESS}" "${asset_output}" "${asset_smtp_mailbox}"
                 RESULT_VARIABLE asset_run_result
                 OUTPUT_VARIABLE asset_run_stdout

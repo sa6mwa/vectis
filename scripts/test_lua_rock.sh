@@ -207,8 +207,9 @@ stub("vectis.auth.core", {
   provider_native = function(opts)
     return {
       kind = "native",
-      credentials_path = opts.credentials_path,
-      state_path = opts.state_path,
+      app = opts.app,
+      namespace = opts.namespace,
+      state_key = opts.state_key,
       purpose = opts.purpose,
       realm = opts.realm,
     }
@@ -304,20 +305,23 @@ local rock_agent_result = assert(vectis.cai.with_agent({
 end))
 assert(rock_agent_result == "agent")
 assert(rock_agent.closed == true)
+local app = {}
 local flow = vectis.auth.workflow({
-  credentials_path = "credentials.json",
-  state_path = "state.json",
+  app = app,
+  namespace = "rock.auth",
+  state_key = "auth/v1/rock",
   realm = "rock",
   purpose = "webdav",
 })
 local provider = assert(flow:provider())
 assert(provider.kind == "native")
-assert(provider.credentials_path == "credentials.json")
-assert(provider.state_path == "state.json")
+assert(provider.app == app)
+assert(provider.namespace == "rock.auth")
+assert(provider.state_key == "auth/v1/rock")
 assert(provider.purpose == "webdav")
 assert(provider.realm == "rock")
 local routes = flow:routes({ steps = { "password", "totp" } })
-assert(routes.credentials_path == "credentials.json")
+assert(routes.app == app)
 assert(routes.steps[1] == "password")
 assert(routes.steps[2] == "totp")
 local dsv = loaded["vectis.dsv"]

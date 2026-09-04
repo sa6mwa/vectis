@@ -59,11 +59,11 @@ static int vectis_acme_state_mkdirs(const char *path) {
          (errno == EEXIST && stat(copy, &st) == 0 && S_ISDIR(st.st_mode));
 }
 
-char *vectis_acme_state_default_endpoint(vectis_error *error) {
+char *vectis_persistence_default_pouch_endpoint(vectis_error *error) {
   const char *state_home;
   const char *home;
   char path[4096];
-  char endpoint[4110];
+  char endpoint[4140];
   int written;
 
   state_home = getenv("XDG_STATE_HOME");
@@ -73,7 +73,7 @@ char *vectis_acme_state_default_endpoint(vectis_error *error) {
     home = getenv("HOME");
     if (home == NULL || home[0] != '/') {
       vectis_set_error(error, VECTIS_ERR_STATE,
-                       "XDG_STATE_HOME or HOME is required for ACME state");
+                       "XDG_STATE_HOME or HOME is required for Vectis state");
       return NULL;
     }
     written =
@@ -82,13 +82,14 @@ char *vectis_acme_state_default_endpoint(vectis_error *error) {
   if (written <= 0 || (size_t)written >= sizeof(path) ||
       !vectis_acme_state_mkdirs(path)) {
     vectis_set_error(error, VECTIS_ERR_STATE,
-                     "failed to create default ACME Pouch state directory");
+                     "failed to create default Vectis Pouch state directory");
     return NULL;
   }
-  written = snprintf(endpoint, sizeof(endpoint), "pouch://%s", path);
+  written = snprintf(endpoint, sizeof(endpoint),
+                     "pouch://%s?single_writer=false", path);
   if (written <= 0 || (size_t)written >= sizeof(endpoint)) {
     vectis_set_error(error, VECTIS_ERR_STATE,
-                     "default ACME Pouch endpoint path is too long");
+                     "default Vectis Pouch endpoint path is too long");
     return NULL;
   }
   return vectis_acme_state_strdup(endpoint);

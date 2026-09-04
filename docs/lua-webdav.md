@@ -131,7 +131,7 @@ assert(app:webdav({
   site_id = "default",
   auth = {
     kind = "native",
-    credentials_path = "/etc/myapp/credentials.json",
+    state_key = "auth/v1/store",
     realm = "myapp",
     purpose = "webdav",
   },

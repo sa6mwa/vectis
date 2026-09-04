@@ -4,23 +4,14 @@ local bind = os.getenv("VECTIS_LUA_SITE_BIND") or "127.0.0.1"
 local port = tonumber(os.getenv("VECTIS_LUA_SITE_PORT") or "8443")
 local tls_bundle_path = assert(os.getenv("VECTIS_LUA_SITE_TLS_BUNDLE"))
 local tls_domain = os.getenv("VECTIS_LUA_SITE_TLS_DOMAIN") or "localhost"
-local credentials_path = assert(os.getenv("VECTIS_LUA_SITE_CREDENTIALS"))
-local auth_state_path = assert(os.getenv("VECTIS_LUA_SITE_AUTH_STATE"))
+local lockd_endpoint = assert(os.getenv("VECTIS_LUA_SITE_LOCKD_ENDPOINT"))
+local auth_state_key = os.getenv("VECTIS_LUA_SITE_AUTH_STATE_KEY") or
+    "auth/v1/store"
 local asset_root = assert(os.getenv("VECTIS_LUA_SITE_ASSET_ROOT"))
 local content_root = assert(os.getenv("VECTIS_LUA_SITE_CONTENT_ROOT"))
 local cache_dir = assert(os.getenv("VECTIS_LUA_SITE_CACHE"))
 
 assert(vectis.mkdir_p(content_root) == true)
-assert(vectis.auth.store_init({
-  credentials_path = credentials_path,
-  auth_state_path = auth_state_path,
-}) == true)
-assert(vectis.auth.user_add({
-  credentials_path = credentials_path,
-  username = "site-admin",
-  password = "site-password",
-}).username == "site-admin")
-
 local browser_session = {
   mode = "m2m_and_browser",
   purpose = "lua-site-browser",
@@ -29,7 +20,7 @@ local browser_session = {
 
 local native_auth = {
   kind = "native",
-  credentials_path = credentials_path,
+  state_key = auth_state_key,
   realm = "lua-site-example",
   purpose = "webdav",
   browser_session = browser_session,
@@ -45,7 +36,7 @@ local app = assert(vectis.app.new({
     domain = tls_domain,
   },
   lockd = {
-    endpoints = {"pouch://" .. auth_state_path .. ".lockd?single_writer=false"},
+    endpoints = {lockd_endpoint},
   },
 }))
 
@@ -60,8 +51,7 @@ assert(app:static_directory({
 }) == true)
 assert(app:auth_routes({
   path_prefix = "/auth",
-  credentials_path = credentials_path,
-  auth_state_path = auth_state_path,
+  state_key = auth_state_key,
   realm = "lua-site-example",
   login_title = "Lua Site Login",
   credential_purpose = "webdav",

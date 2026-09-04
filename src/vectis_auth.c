@@ -27,6 +27,9 @@
 
 #include <vectis/totp_qr.h>
 
+/* Keep the established implementation's local names while its storage moves
+ * from paths to versioned Lockd keys. These aliases are private to this
+ * translation unit; they do not preserve the removed public path API. */
 #define VECTIS_AUTH_PASSWORD_SALT_BYTES 16u
 #define VECTIS_AUTH_PASSWORD_HASH_BYTES 32u
 #define VECTIS_AUTH_PASSWORD_ITERATIONS 150000u
@@ -52,8 +55,13 @@
 #endif
 
 typedef struct vectis_auth_store_lock {
-  int fd;
-  char *path;
+  lc_client *client;
+  lc_lease *lease;
+  vectis_app *owned_app;
+  const vectis_auth_store_config *config;
+  char *key;
+  char *state_json;
+  size_t state_size;
 } vectis_auth_store_lock;
 
 typedef struct vectis_auth_client_id_probe {
@@ -371,17 +379,6 @@ static void vectis_auth_set_errorf(vectis_error *error, vectis_status code,
   vectis_set_error(error, code, message);
 }
 
-static vectis_status vectis_auth_set_errno(vectis_error *error,
-                                           const char *message,
-                                           const char *path) {
-  if (path != NULL) {
-    vectis_auth_set_errorf(error, VECTIS_ERR_STATE, "%s: %s", message, path);
-  } else {
-    vectis_set_error(error, VECTIS_ERR_STATE, message);
-  }
-  return VECTIS_ERR_STATE;
-}
-
 static vectis_status
 vectis_auth_lonejson_error(vectis_error *error, lonejson_status status,
                            const lonejson_error *json_error,
@@ -421,139 +418,422 @@ static unsigned vectis_auth_mode_from_lonejson(unsigned mode) {
   return VECTIS_AUTH_MODE_DEFAULT;
 }
 
-static int vectis_auth_parent_dir(const char *path, char *out,
-                                  size_t out_size) {
-  const char *slash;
-  size_t len;
+static pthread_key_t vectis_auth_active_store_lock_key;
+static pthread_once_t vectis_auth_active_store_lock_once = PTHREAD_ONCE_INIT;
 
-  if (path == NULL || out == NULL || out_size == 0u) {
-    return 0;
-  }
-  slash = strrchr(path, '/');
-  if (slash == NULL) {
-    if (out_size < 2u) {
-      return 0;
-    }
-    out[0] = '.';
-    out[1] = '\0';
-    return 1;
-  }
-  len = slash == path ? 1u : (size_t)(slash - path);
-  if (len + 1u > out_size) {
-    return 0;
-  }
-  memcpy(out, path, len);
-  out[len] = '\0';
-  return 1;
+static void vectis_auth_active_store_lock_init(void) {
+  (void)pthread_key_create(&vectis_auth_active_store_lock_key, NULL);
 }
 
-static int vectis_auth_mkdir_p(const char *path) {
-  char temp[4096];
-  char *cursor;
-  size_t len;
+static vectis_auth_store_lock *vectis_auth_active_store_lock(void) {
+  (void)pthread_once(&vectis_auth_active_store_lock_once,
+                     vectis_auth_active_store_lock_init);
+  return (vectis_auth_store_lock *)pthread_getspecific(
+      vectis_auth_active_store_lock_key);
+}
 
-  if (path == NULL || path[0] == '\0') {
-    return 0;
-  }
-  len = strlen(path);
-  if (len >= sizeof(temp)) {
-    return 0;
-  }
-  memcpy(temp, path, len + 1u);
-  cursor = temp;
-  if (cursor[0] == '/') {
-    cursor++;
-  }
-  for (; *cursor != '\0'; ++cursor) {
-    if (*cursor == '/') {
-      *cursor = '\0';
-      if (temp[0] != '\0' && mkdir(temp, 0700) != 0 && errno != EEXIST) {
-        return 0;
-      }
-      *cursor = '/';
+static const char *
+vectis_auth_store_namespace(const vectis_auth_store_config *config) {
+  return config != NULL && config->namespace_name != NULL &&
+                 config->namespace_name[0] != '\0'
+             ? config->namespace_name
+             : "vectis.auth";
+}
+
+static const char *vectis_auth_store_key(
+    const vectis_auth_store_config *config) {
+  return config != NULL && config->state_key != NULL &&
+                 config->state_key[0] != '\0'
+             ? config->state_key
+             : "auth/v1/store";
+}
+
+static vectis_status vectis_auth_lockd_error(vectis_error *error, int rc,
+                                             const lc_error *lcerr,
+                                             const char *message) {
+  vectis_auth_set_errorf(error, VECTIS_ERR_STATE, "%s: %s", message,
+                         lcerr != NULL && lcerr->message != NULL
+                             ? lcerr->message
+                             : "unknown lockdc error");
+  if (error != NULL) {
+    error->source = VECTIS_ERROR_SOURCE_LOCKDC;
+    error->dependency_code = (long)rc;
+    error->http_status = lcerr != NULL ? lcerr->http_status : 0L;
+    if (lcerr != NULL && lcerr->detail != NULL) {
+      (void)snprintf(error->detail, sizeof(error->detail), "%s",
+                     lcerr->detail);
     }
   }
-  return mkdir(temp, 0700) == 0 || errno == EEXIST;
+  return VECTIS_ERR_STATE;
 }
 
-static vectis_status vectis_auth_prepare_parent(const char *path,
-                                                vectis_error *error) {
-  char parent[4096];
+static vectis_status vectis_auth_lock_read_state(vectis_auth_store_lock *lock,
+                                                 vectis_error *error) {
+  lc_sink *sink;
+  lc_get_res get;
+  lc_error lcerr;
+  const void *bytes;
+  size_t size;
+  size_t limit;
+  int rc;
 
-  if (!vectis_auth_parent_dir(path, parent, sizeof(parent)) ||
-      !vectis_auth_mkdir_p(parent)) {
-    return vectis_auth_set_errno(error, "failed to create auth store parent",
-                                 path);
+  if (lock == NULL || lock->lease == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE, "auth Lockd lease is required");
+    return VECTIS_ERR_STATE;
   }
-  return VECTIS_OK;
+  sink = NULL;
+  memset(&get, 0, sizeof(get));
+  lc_error_init(&lcerr);
+  rc = lc_sink_to_memory(&sink, &lcerr);
+  if (rc == LC_OK) {
+    rc = lock->lease->get(lock->lease, sink, NULL, &get, &lcerr);
+  }
+  if (rc == LC_OK && !get.no_content) {
+    rc = lc_sink_memory_bytes(sink, &bytes, &size, &lcerr);
+  } else {
+    bytes = NULL;
+    size = 0u;
+  }
+  limit = lock->config->max_record_bytes != 0u
+              ? lock->config->max_record_bytes
+              : VECTIS_AUTH_DEFAULT_MAX_STORE_BYTES;
+  if (rc == LC_OK && size > limit) {
+    rc = LC_ERR_PROTOCOL;
+    lcerr.message = vectis_auth_strdup("auth Lockd state exceeds limit");
+  }
+  if (rc == LC_OK && size > 0u) {
+    lock->state_json = (char *)malloc(size + 1u);
+    if (lock->state_json == NULL) {
+      rc = LC_ERR_NOMEM;
+      lcerr.message = vectis_auth_strdup("failed to allocate auth Lockd state");
+    } else {
+      memcpy(lock->state_json, bytes, size);
+      lock->state_json[size] = '\0';
+      lock->state_size = size;
+    }
+  }
+  lc_get_res_cleanup(&get);
+  if (sink != NULL) {
+    lc_sink_close(sink);
+  }
+  if (rc != LC_OK) {
+    (void)vectis_auth_lockd_error(error, rc, &lcerr,
+                                  "failed to load auth Lockd state");
+  }
+  lc_error_cleanup(&lcerr);
+  return rc == LC_OK ? VECTIS_OK : VECTIS_ERR_STATE;
 }
+
+static void vectis_auth_lock_close(vectis_auth_store_lock *lock);
 
 static vectis_status
 vectis_auth_lock_open(const vectis_auth_store_config *config,
                       vectis_auth_store_lock *lock, vectis_error *error) {
-  size_t path_len;
+  vectis_app_config app_config;
+  lc_acquire_req acquire;
+  lc_error lcerr;
+  char owner[96];
+  int rc;
 
-  if (config == NULL || config->credentials_path == NULL ||
-      config->credentials_path[0] == '\0' || lock == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "auth credentials_path is required");
+  if (config == NULL || lock == NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth store is required");
     return VECTIS_ERR_INVALID;
   }
-  if (vectis_auth_prepare_parent(config->credentials_path, error) !=
-      VECTIS_OK) {
-    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  if (config->app != NULL && config->lockd != NULL) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth store app and standalone Lockd are exclusive");
+    return VECTIS_ERR_INVALID;
+  }
+  if (vectis_auth_active_store_lock() != NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "nested auth Lockd store operations are not supported");
+    return VECTIS_ERR_STATE;
   }
   memset(lock, 0, sizeof(*lock));
-  lock->fd = -1;
-  path_len = strlen(config->credentials_path) + 6u;
-  lock->path = (char *)malloc(path_len);
-  if (lock->path == NULL) {
-    vectis_set_error(error, VECTIS_ERR_NOMEM,
-                     "failed to allocate auth lock path");
+  lock->config = config;
+  lock->key = vectis_auth_strdup(vectis_auth_store_key(config));
+  if (lock->key == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy auth state key");
     return VECTIS_ERR_NOMEM;
   }
-  if ((size_t)snprintf(lock->path, path_len, "%s.lock",
-                       config->credentials_path) >= path_len) {
-    free(lock->path);
-    lock->path = NULL;
-    vectis_set_error(error, VECTIS_ERR_INVALID, "auth lock path is too long");
-    return VECTIS_ERR_INVALID;
-  }
-  lock->fd = open(lock->path, O_CREAT | O_RDWR, 0600);
-  if (lock->fd < 0 || flock(lock->fd, LOCK_EX) != 0) {
-    if (lock->fd >= 0) {
-      (void)close(lock->fd);
+  if (config->app != NULL) {
+    lock->owned_app = NULL;
+    lock->client = vectis_lockd_client(config->app);
+  } else {
+    vectis_app_config_init(&app_config);
+    if (config->lockd != NULL) {
+      app_config.lockd = *config->lockd;
     }
-    free(lock->path);
-    lock->path = NULL;
-    return vectis_auth_set_errno(error, "failed to lock auth store",
-                                 config->credentials_path);
+    lock->owned_app = vectis_app_new(&app_config, error);
+    if (lock->owned_app != NULL) {
+      lock->client = vectis_lockd_client(lock->owned_app);
+    }
   }
+  if (lock->client == NULL) {
+    vectis_auth_lock_close(lock);
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to open auth Lockd state client");
+    return VECTIS_ERR_STATE;
+  }
+  lc_acquire_req_init(&acquire);
+  acquire.namespace_name = vectis_auth_store_namespace(config);
+  acquire.key = lock->key;
+  (void)snprintf(owner, sizeof(owner), "vectis-auth-%ld", (long)getpid());
+  acquire.owner = owner;
+  acquire.ttl_seconds = 30L;
+  acquire.block_seconds = 30L;
+  lc_error_init(&lcerr);
+  rc = lock->client->acquire(lock->client, &acquire, &lock->lease, &lcerr);
+  if (rc != LC_OK) {
+    (void)vectis_auth_lockd_error(error, rc, &lcerr,
+                                  "failed to acquire auth Lockd state");
+    lc_error_cleanup(&lcerr);
+    vectis_auth_lock_close(lock);
+    return VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  if (vectis_auth_lock_read_state(lock, error) != VECTIS_OK) {
+    vectis_auth_lock_close(lock);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  (void)pthread_setspecific(vectis_auth_active_store_lock_key, lock);
   return VECTIS_OK;
 }
 
 static void vectis_auth_lock_close(vectis_auth_store_lock *lock) {
+  lc_release_req release;
+  lc_error lcerr;
+
   if (lock == NULL) {
     return;
   }
-  if (lock->fd >= 0) {
-    (void)flock(lock->fd, LOCK_UN);
-    (void)close(lock->fd);
+  if (vectis_auth_active_store_lock() == lock) {
+    (void)pthread_setspecific(vectis_auth_active_store_lock_key, NULL);
   }
-  free(lock->path);
-  lock->fd = -1;
-  lock->path = NULL;
+  if (lock->lease != NULL) {
+    lc_release_req_init(&release);
+    lc_error_init(&lcerr);
+    if (lock->lease->release(lock->lease, &release, &lcerr) != LC_OK) {
+      lc_lease_close(lock->lease);
+    }
+    lc_error_cleanup(&lcerr);
+  }
+  if (lock->owned_app != NULL) {
+    lock->owned_app->close(lock->owned_app);
+  }
+  free(lock->key);
+  free(lock->state_json);
+  memset(lock, 0, sizeof(*lock));
+}
+
+static vectis_status vectis_auth_store_read_key(
+    vectis_auth_store_lock *active, const vectis_auth_store_config *config,
+    const char *key, char **out, size_t *out_size, vectis_error *error) {
+  lc_acquire_req acquire;
+  lc_release_req release;
+  lc_get_res get;
+  lc_sink *sink;
+  lc_lease *lease;
+  lc_error lcerr;
+  const void *bytes;
+  size_t size;
+  size_t limit;
+  int rc;
+
+  *out = NULL;
+  *out_size = 0u;
+  if (active == NULL || active->client == NULL || key == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "auth Lockd client is required for state read");
+    return VECTIS_ERR_STATE;
+  }
+  lc_acquire_req_init(&acquire);
+  acquire.namespace_name = vectis_auth_store_namespace(config);
+  acquire.key = key;
+  acquire.owner = "vectis-auth-rewrite";
+  acquire.ttl_seconds = 30L;
+  acquire.block_seconds = 30L;
+  lc_error_init(&lcerr);
+  lease = NULL;
+  rc = active->client->acquire(active->client, &acquire, &lease, &lcerr);
+  sink = NULL;
+  memset(&get, 0, sizeof(get));
+  if (rc == LC_OK) {
+    rc = lc_sink_to_memory(&sink, &lcerr);
+  }
+  if (rc == LC_OK) {
+    rc = lease->get(lease, sink, NULL, &get, &lcerr);
+  }
+  if (rc == LC_OK && !get.no_content) {
+    rc = lc_sink_memory_bytes(sink, &bytes, &size, &lcerr);
+  } else {
+    bytes = NULL;
+    size = 0u;
+  }
+  limit = config->max_record_bytes != 0u ? config->max_record_bytes
+                                         : VECTIS_AUTH_DEFAULT_MAX_STORE_BYTES;
+  if (rc == LC_OK && size > limit) {
+    rc = LC_ERR_PROTOCOL;
+    lcerr.message = vectis_auth_strdup("auth Lockd state exceeds limit");
+  }
+  if (rc == LC_OK && size > 0u) {
+    *out = (char *)malloc(size + 1u);
+    if (*out == NULL) {
+      rc = LC_ERR_NOMEM;
+      lcerr.message = vectis_auth_strdup("failed to allocate auth Lockd state");
+    } else {
+      memcpy(*out, bytes, size);
+      (*out)[size] = '\0';
+      *out_size = size;
+    }
+  }
+  lc_get_res_cleanup(&get);
+  if (sink != NULL) {
+    lc_sink_close(sink);
+  }
+  if (lease != NULL) {
+    lc_release_req_init(&release);
+    if (lease->release(lease, &release, &lcerr) != LC_OK) {
+      lc_lease_close(lease);
+    }
+  }
+  if (rc != LC_OK) {
+    free(*out);
+    *out = NULL;
+    *out_size = 0u;
+    (void)vectis_auth_lockd_error(error, rc, &lcerr,
+                                  "failed to read auth Lockd state");
+  }
+  lc_error_cleanup(&lcerr);
+  return rc == LC_OK ? VECTIS_OK : VECTIS_ERR_STATE;
+}
+
+static vectis_status vectis_auth_store_write_key(
+    vectis_auth_store_lock *active, const vectis_auth_store_config *config,
+    const char *key, const char *data, size_t len, vectis_error *error) {
+  lc_acquire_req acquire;
+  lc_release_req release;
+  lc_update_opts update;
+  lc_source *source;
+  lc_lease *lease;
+  lc_error lcerr;
+  int rc;
+
+  if (active == NULL || active->client == NULL || key == NULL || data == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "auth Lockd client is required for state write");
+    return VECTIS_ERR_STATE;
+  }
+  lc_acquire_req_init(&acquire);
+  acquire.namespace_name = vectis_auth_store_namespace(config);
+  acquire.key = key;
+  acquire.owner = "vectis-auth-rewrite";
+  acquire.ttl_seconds = 30L;
+  acquire.block_seconds = 30L;
+  lc_error_init(&lcerr);
+  lease = NULL;
+  source = NULL;
+  rc = active->client->acquire(active->client, &acquire, &lease, &lcerr);
+  if (rc == LC_OK) {
+    rc = lc_source_from_memory(data, len, &source, &lcerr);
+  }
+  if (rc == LC_OK) {
+    lc_update_opts_init(&update);
+    update.content_type = "application/json";
+    rc = lease->update(lease, source, &update, &lcerr);
+  }
+  if (source != NULL) {
+    lc_source_close(source);
+  }
+  if (lease != NULL) {
+    lc_release_req_init(&release);
+    if (lease->release(lease, &release, &lcerr) != LC_OK) {
+      lc_lease_close(lease);
+    }
+  }
+  if (rc != LC_OK) {
+    (void)vectis_auth_lockd_error(error, rc, &lcerr,
+                                  "failed to save auth Lockd state");
+  }
+  lc_error_cleanup(&lcerr);
+  return rc == LC_OK ? VECTIS_OK : VECTIS_ERR_STATE;
+}
+
+static void vectis_auth_unlink_temp_path(const char *temp_path) {
+  vectis_auth_store_lock *active;
+  lc_acquire_req acquire;
+  lc_release_req release;
+  lc_remove_req remove;
+  lc_lease *lease;
+  lc_error lcerr;
+
+  active = vectis_auth_active_store_lock();
+  if (temp_path == NULL || temp_path[0] == '\0' || active == NULL ||
+      active->client == NULL) {
+    return;
+  }
+  lc_acquire_req_init(&acquire);
+  acquire.namespace_name = vectis_auth_store_namespace(active->config);
+  acquire.key = temp_path;
+  acquire.owner = "vectis-auth-rewrite";
+  acquire.ttl_seconds = 30L;
+  lc_remove_req_init(&remove);
+  lc_release_req_init(&release);
+  lc_error_init(&lcerr);
+  lease = NULL;
+  if (active->client->acquire(active->client, &acquire, &lease, &lcerr) == LC_OK) {
+    (void)lease->remove(lease, &remove, &lcerr);
+    if (lease->release(lease, &release, &lcerr) != LC_OK) {
+      lc_lease_close(lease);
+    }
+  }
+  lc_error_cleanup(&lcerr);
+}
+
+static vectis_status vectis_auth_read_store_locked(
+    const vectis_auth_store_config *config, char **out, size_t *out_size,
+    vectis_error *error);
+static vectis_status vectis_auth_write_store_locked(
+    const vectis_auth_store_config *config, const char *data, size_t len,
+    vectis_error *error);
+
+static vectis_status vectis_auth_replace_store_from_temp_locked(
+    const vectis_auth_store_config *config, const char *temp_key,
+    vectis_error *error) {
+  vectis_auth_store_config temporary;
+  char *state;
+  size_t size;
+  vectis_status status;
+
+  if (config == NULL || temp_key == NULL || temp_key[0] == '\0') {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "auth Lockd replacement state is required");
+    return VECTIS_ERR_INVALID;
+  }
+  temporary = *config;
+  temporary.state_key = temp_key;
+  state = NULL;
+  size = 0u;
+  status = vectis_auth_read_store_locked(&temporary, &state, &size, error);
+  if (status == VECTIS_OK && state == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "auth Lockd replacement state is missing");
+    status = VECTIS_ERR_STATE;
+  }
+  if (status == VECTIS_OK) {
+    status = vectis_auth_write_store_locked(config, state, size, error);
+  }
+  free(state);
+  vectis_auth_unlink_temp_path(temp_key);
+  return status;
 }
 
 static vectis_status
 vectis_auth_read_store_locked(const vectis_auth_store_config *config,
                               char **out, size_t *out_size,
                               vectis_error *error) {
-  struct stat st;
-  FILE *fp;
-  char *buffer;
-  size_t nread;
-  size_t max_store_bytes;
+  vectis_auth_store_lock *lock;
+  size_t size;
 
   if (out == NULL || out_size == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
@@ -562,134 +842,85 @@ vectis_auth_read_store_locked(const vectis_auth_store_config *config,
   }
   *out = NULL;
   *out_size = 0u;
-  if (stat(config->credentials_path, &st) != 0) {
-    if (errno == ENOENT) {
-      return VECTIS_OK;
-    }
-    return vectis_auth_set_errno(error, "failed to stat auth store",
-                                 config->credentials_path);
+  lock = vectis_auth_active_store_lock();
+  if (lock == NULL || config == NULL || lock->config == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "auth store must be read under its Lockd lease");
+    return VECTIS_ERR_STATE;
   }
-  if (!S_ISREG(st.st_mode) || st.st_size < 0) {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "auth store must be a regular file");
-    return VECTIS_ERR_INVALID;
+  if (strcmp(lock->key, vectis_auth_store_key(config)) != 0) {
+    return vectis_auth_store_read_key(lock, config, vectis_auth_store_key(config),
+                                      out, out_size, error);
   }
-  max_store_bytes = config->max_store_bytes != 0u
-                        ? config->max_store_bytes
-                        : VECTIS_AUTH_DEFAULT_MAX_STORE_BYTES;
-  if ((size_t)st.st_size > max_store_bytes) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "auth store exceeds limit");
-    return VECTIS_ERR_INVALID;
+  if (lock->state_json == NULL) {
+    return VECTIS_OK;
   }
-  fp = fopen(config->credentials_path, "rb");
-  if (fp == NULL) {
-    return vectis_auth_set_errno(error, "failed to open auth store",
-                                 config->credentials_path);
-  }
-  buffer = (char *)malloc((size_t)st.st_size + 1u);
-  if (buffer == NULL) {
-    (void)fclose(fp);
-    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to allocate auth store");
+  size = lock->state_size;
+  *out = (char *)malloc(size + 1u);
+  if (*out == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy auth Lockd state");
     return VECTIS_ERR_NOMEM;
   }
-  nread = fread(buffer, 1u, (size_t)st.st_size, fp);
-  if (nread != (size_t)st.st_size || fclose(fp) != 0) {
-    free(buffer);
-    return vectis_auth_set_errno(error, "failed to read auth store",
-                                 config->credentials_path);
-  }
-  buffer[nread] = '\0';
-  *out = buffer;
-  *out_size = nread;
+  memcpy(*out, lock->state_json, size + 1u);
+  *out_size = size;
   return VECTIS_OK;
-}
-
-static vectis_status
-vectis_auth_create_temp_for_path(const char *target_path, const char *label,
-                                 char *temp_path, size_t temp_path_size,
-                                 int *out_fd, vectis_error *error) {
-  int fd;
-  int written;
-
-  if (target_path == NULL || target_path[0] == '\0' || label == NULL ||
-      label[0] == '\0' || temp_path == NULL || temp_path_size == 0u ||
-      out_fd == NULL) {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "auth temp path input is required");
-    return VECTIS_ERR_INVALID;
-  }
-  *out_fd = -1;
-  written =
-      snprintf(temp_path, temp_path_size, "%s.%s.XXXXXX", target_path, label);
-  if (written < 0 || (size_t)written >= temp_path_size) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "auth temp path is too long");
-    return VECTIS_ERR_INVALID;
-  }
-  fd = mkstemp(temp_path);
-  if (fd < 0) {
-    return vectis_auth_set_errno(error, "failed to create auth temp store",
-                                 temp_path);
-  }
-  (void)fcntl(fd, F_SETFD, FD_CLOEXEC);
-  if (fchmod(fd, 0600) != 0) {
-    (void)close(fd);
-    (void)unlink(temp_path);
-    return vectis_auth_set_errno(error, "failed to protect auth temp store",
-                                 temp_path);
-  }
-  *out_fd = fd;
-  return VECTIS_OK;
-}
-
-static void vectis_auth_unlink_temp_path(const char *temp_path) {
-  if (temp_path != NULL && temp_path[0] != '\0') {
-    (void)unlink(temp_path);
-  }
 }
 
 static vectis_status
 vectis_auth_write_store_locked(const vectis_auth_store_config *config,
                                const char *data, size_t len,
                                vectis_error *error) {
-  char temp_path[4096];
-  int fd;
-  size_t offset;
-  ssize_t nwrite;
+  vectis_auth_store_lock *lock;
+  lc_source *source;
+  lc_update_opts update;
+  lc_error lcerr;
+  char *copy;
+  int rc;
 
-  if (vectis_auth_create_temp_for_path(config->credentials_path, "tmp",
-                                       temp_path, sizeof(temp_path), &fd,
-                                       error) != VECTIS_OK) {
-    return error != NULL ? error->code : VECTIS_ERR_STATE;
+  lock = vectis_auth_active_store_lock();
+  if (config == NULL || data == NULL || lock == NULL || lock->lease == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "auth store must be written under its Lockd lease");
+    return VECTIS_ERR_STATE;
   }
-  offset = 0u;
-  while (offset < len) {
-    nwrite = write(fd, data + offset, len - offset);
-    if (nwrite <= 0) {
-      (void)close(fd);
-      (void)unlink(temp_path);
-      return vectis_auth_set_errno(error, "failed to write auth temp store",
-                                   temp_path);
-    }
-    offset += (size_t)nwrite;
+  if (len > (config->max_record_bytes != 0u ? config->max_record_bytes
+                                            : VECTIS_AUTH_DEFAULT_MAX_STORE_BYTES)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth Lockd state exceeds limit");
+    return VECTIS_ERR_INVALID;
   }
-  if (fsync(fd) != 0) {
-    int saved_errno = errno;
-    (void)close(fd);
-    (void)unlink(temp_path);
-    errno = saved_errno;
-    return vectis_auth_set_errno(error, "failed to flush auth temp store",
-                                 temp_path);
+  if (strcmp(lock->key, vectis_auth_store_key(config)) != 0) {
+    return vectis_auth_store_write_key(lock, config, vectis_auth_store_key(config),
+                                       data, len, error);
   }
-  if (close(fd) != 0) {
-    (void)unlink(temp_path);
-    return vectis_auth_set_errno(error, "failed to flush auth temp store",
-                                 temp_path);
+  copy = (char *)malloc(len + 1u);
+  if (copy == NULL) {
+    vectis_set_error(error, VECTIS_ERR_NOMEM, "failed to copy auth Lockd state");
+    return VECTIS_ERR_NOMEM;
   }
-  if (rename(temp_path, config->credentials_path) != 0) {
-    (void)unlink(temp_path);
-    return vectis_auth_set_errno(error, "failed to replace auth store",
-                                 config->credentials_path);
+  memcpy(copy, data, len);
+  copy[len] = '\0';
+  source = NULL;
+  lc_error_init(&lcerr);
+  rc = lc_source_from_memory(data, len, &source, &lcerr);
+  if (rc == LC_OK) {
+    lc_update_opts_init(&update);
+    update.content_type = "application/json";
+    rc = lock->lease->update(lock->lease, source, &update, &lcerr);
   }
+  if (source != NULL) {
+    lc_source_close(source);
+  }
+  if (rc != LC_OK) {
+    free(copy);
+    (void)vectis_auth_lockd_error(error, rc, &lcerr,
+                                  "failed to save auth Lockd state");
+    lc_error_cleanup(&lcerr);
+    return VECTIS_ERR_STATE;
+  }
+  lc_error_cleanup(&lcerr);
+  free(lock->state_json);
+  lock->state_json = copy;
+  lock->state_size = len;
   return VECTIS_OK;
 }
 
@@ -699,81 +930,105 @@ static vectis_status vectis_auth_rewrite_array_to_temp_locked(
     const lonejson_array_rewrite_options *options, lonejson_error *json_error,
     vectis_error *error) {
   lonejson_error local_json_error;
+  lonejson_buffer_reader reader;
+  lonejson_owned_buffer output;
   lonejson_status json_status;
-  vectis_status status;
-  int input_fd;
-  int output_fd;
-  int saved_errno;
+  vectis_auth_store_lock *lock;
+  vectis_auth_store_config source_config;
+  char *other_state;
+  const char *input_json;
+  size_t input_size;
+  unsigned char random[8];
+  size_t i;
+  int written;
 
   if (json_error == NULL) {
     json_error = &local_json_error;
   }
   lonejson_error_init(json_error);
-  input_fd = -1;
-  output_fd = -1;
-  status = vectis_auth_create_temp_for_path(input_path, label, temp_path,
-                                            temp_path_size, &output_fd, error);
-  if (status != VECTIS_OK) {
+  lock = vectis_auth_active_store_lock();
+  if (runtime == NULL || selector == NULL || input_path == NULL || label == NULL ||
+      temp_path == NULL || temp_path_size == 0u || options == NULL ||
+      lock == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "auth rewrite requires an active Lockd state snapshot");
     json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
     vectis_auth_copy_fixed(json_error->message, sizeof(json_error->message),
                            error != NULL && error->message[0] != '\0'
                                ? error->message
-                               : "failed to create auth rewrite temp file");
-    return status;
+                               : "auth rewrite Lockd state is invalid");
+    return VECTIS_ERR_STATE;
   }
-  input_fd = open(input_path, O_RDONLY | O_CLOEXEC);
-  if (input_fd < 0) {
-    saved_errno = errno;
-    (void)close(output_fd);
-    (void)unlink(temp_path);
-    errno = saved_errno;
-    status =
-        vectis_auth_set_errno(error, "failed to read auth store", input_path);
+  other_state = NULL;
+  input_json = lock->state_json;
+  input_size = lock->state_size;
+  if (strcmp(lock->key, input_path) != 0) {
+    source_config = *lock->config;
+    source_config.state_key = input_path;
+    if (vectis_auth_store_read_key(lock, &source_config, input_path,
+                                   &other_state, &input_size, error) !=
+            VECTIS_OK ||
+        other_state == NULL) {
+      free(other_state);
+      json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
+      vectis_auth_copy_fixed(json_error->message, sizeof(json_error->message),
+                             error != NULL && error->message[0] != '\0'
+                                 ? error->message
+                                 : "auth rewrite Lockd state is unavailable");
+      return VECTIS_ERR_STATE;
+    }
+    input_json = other_state;
+  }
+  if (input_json == NULL) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "auth rewrite source state is not initialized");
+    free(other_state);
+    json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
+    return VECTIS_ERR_STATE;
+  }
+  if (RAND_bytes(random, (int)sizeof(random)) != 1) {
+    vectis_set_error(error, VECTIS_ERR_STATE,
+                     "failed to create auth Lockd rewrite key");
     json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
     vectis_auth_copy_fixed(json_error->message, sizeof(json_error->message),
                            error != NULL && error->message[0] != '\0'
                                ? error->message
-                               : "failed to read auth store");
-    return status;
+                               : "failed to create auth Lockd rewrite key");
+    free(other_state);
+    return VECTIS_ERR_STATE;
   }
-  json_status = lonejson_array_rewrite_fd_to_fd(runtime, selector, input_fd,
-                                                output_fd, options, json_error);
-  saved_errno = errno;
-  (void)close(input_fd);
-  if (json_status != LONEJSON_STATUS_OK) {
-    (void)close(output_fd);
-    (void)unlink(temp_path);
-    errno = saved_errno;
+  written = snprintf(temp_path, temp_path_size, "auth/v1/tmp/%s-%ld-",
+                     label, (long)getpid());
+  if (written < 0 || (size_t)written >= temp_path_size ||
+      (size_t)written + 2u * sizeof(random) + 1u > temp_path_size) {
+    vectis_set_error(error, VECTIS_ERR_INVALID, "auth rewrite key is too long");
+    json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
+    free(other_state);
     return VECTIS_ERR_INVALID;
   }
-  if (fsync(output_fd) != 0) {
-    saved_errno = errno;
-    (void)close(output_fd);
-    (void)unlink(temp_path);
-    errno = saved_errno;
-    status = vectis_auth_set_errno(error, "failed to flush auth temp store",
-                                   temp_path);
-    json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
-    vectis_auth_copy_fixed(json_error->message, sizeof(json_error->message),
-                           error != NULL && error->message[0] != '\0'
-                               ? error->message
-                               : "failed to flush auth temp store");
-    return status;
+  for (i = 0u; i < sizeof(random); ++i) {
+    static const char hex[] = "0123456789abcdef";
+    temp_path[(size_t)written + 2u * i] = hex[random[i] >> 4];
+    temp_path[(size_t)written + 2u * i + 1u] = hex[random[i] & 0x0f];
   }
-  if (close(output_fd) != 0) {
-    saved_errno = errno;
-    (void)unlink(temp_path);
-    errno = saved_errno;
-    status = vectis_auth_set_errno(error, "failed to flush auth temp store",
-                                   temp_path);
-    json_error->code = LONEJSON_STATUS_CALLBACK_FAILED;
-    vectis_auth_copy_fixed(json_error->message, sizeof(json_error->message),
-                           error != NULL && error->message[0] != '\0'
-                               ? error->message
-                               : "failed to flush auth temp store");
-    return status;
+  temp_path[(size_t)written + 2u * sizeof(random)] = '\0';
+  lonejson_buffer_reader_init(&reader, input_json, input_size);
+  lonejson_owned_buffer_init(&output);
+  json_status = lonejson_array_rewrite_reader(
+      runtime, selector, lonejson_buffer_reader_read, &reader,
+      lonejson_owned_buffer_sink, &output, options, json_error);
+  if (json_status == LONEJSON_STATUS_OK) {
+    vectis_auth_store_config temporary;
+    temporary = *lock->config;
+    temporary.state_key = temp_path;
+    if (vectis_auth_write_store_locked(&temporary, output.data, output.len,
+                                       error) != VECTIS_OK) {
+      json_status = LONEJSON_STATUS_CALLBACK_FAILED;
+    }
   }
-  return VECTIS_OK;
+  lonejson_owned_buffer_free(&output);
+  free(other_state);
+  return json_status == LONEJSON_STATUS_OK ? VECTIS_OK : VECTIS_ERR_INVALID;
 }
 
 static int vectis_auth_path_is_client_id(const lonejson_value_path *path) {
@@ -1888,8 +2143,9 @@ vectis_auth_effective_state_store(const vectis_auth_store_config *config) {
 
   if (config != NULL) {
     state = *config;
-    if (config->state_path != NULL && config->state_path[0] != '\0') {
-      state.credentials_path = config->state_path;
+    if (config->transient_state_key != NULL &&
+        config->transient_state_key[0] != '\0') {
+      state.state_key = config->transient_state_key;
     }
   } else {
     memset(&state, 0, sizeof(state));
@@ -1899,9 +2155,9 @@ vectis_auth_effective_state_store(const vectis_auth_store_config *config) {
 
 static int
 vectis_auth_has_separate_state_store(const vectis_auth_store_config *config) {
-  return config != NULL && config->state_path != NULL &&
-         config->state_path[0] != '\0' && config->credentials_path != NULL &&
-         strcmp(config->state_path, config->credentials_path) != 0;
+  return config != NULL && config->transient_state_key != NULL &&
+         config->transient_state_key[0] != '\0' && config->state_key != NULL &&
+         strcmp(config->transient_state_key, config->state_key) != 0;
 }
 
 static vectis_status vectis_auth_writer_copy_store_arrays(
@@ -2080,7 +2336,7 @@ void vectis_auth_store_config_init(vectis_auth_store_config *config) {
     return;
   }
   memset(config, 0, sizeof(*config));
-  config->max_store_bytes = VECTIS_AUTH_DEFAULT_MAX_STORE_BYTES;
+  config->max_record_bytes = VECTIS_AUTH_DEFAULT_MAX_STORE_BYTES;
 }
 
 void vectis_auth_issue_config_init(vectis_auth_issue_config *config) {
@@ -2930,6 +3186,14 @@ static const char *vectis_auth_browser_session_state_key(
              : "auth.browser_session.v1";
 }
 
+static const char *vectis_auth_browser_session_namespace(
+    const vectis_auth_browser_session_config *config) {
+  return config != NULL && config->namespace_name != NULL &&
+                 config->namespace_name[0] != '\0'
+             ? config->namespace_name
+             : "vectis.auth";
+}
+
 static uint64_t vectis_auth_browser_session_ttl(
     const vectis_auth_browser_session_config *config) {
   return config != NULL && config->ttl_seconds != 0u
@@ -2949,6 +3213,7 @@ vectis_status vectis_auth_browser_session_config_validate(
   const char *cookie_path;
   const char *purpose;
   const char *state_key;
+  const char *namespace_name;
   uint64_t ttl;
 
   if (config == NULL) {
@@ -2969,6 +3234,7 @@ vectis_status vectis_auth_browser_session_config_validate(
   cookie_path = vectis_auth_browser_session_cookie_path(config);
   purpose = vectis_auth_browser_session_purpose(config);
   state_key = vectis_auth_browser_session_state_key(config);
+  namespace_name = vectis_auth_browser_session_namespace(config);
   ttl = vectis_auth_browser_session_ttl(config);
   if (!vectis_auth_browser_session_cookie_name_valid(cookie_name)) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
@@ -2992,6 +3258,12 @@ vectis_status vectis_auth_browser_session_config_validate(
           state_key, VECTIS_AUTH_BROWSER_SESSION_KEY_MAX - 96u)) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "browser session state_key is invalid");
+    return VECTIS_ERR_INVALID;
+  }
+  if (!vectis_auth_browser_session_text_valid(
+          namespace_name, VECTIS_AUTH_BROWSER_SESSION_KEY_MAX - 96u)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "browser session namespace is invalid");
     return VECTIS_ERR_INVALID;
   }
   if (ttl == 0u || ttl > (uint64_t)LONG_MAX) {
@@ -3205,7 +3477,9 @@ static int vectis_auth_browser_session_record_update(
 }
 
 static vectis_status
-vectis_auth_browser_session_update(vectis_app *app, const char *key,
+vectis_auth_browser_session_update(
+    vectis_app *app, const vectis_auth_browser_session_config *config,
+    const char *key,
                                    lc_acquire_for_update_handler_fn update,
                                    void *userdata, vectis_error *error) {
   lc_acquire_req request;
@@ -3213,7 +3487,7 @@ vectis_auth_browser_session_update(vectis_app *app, const char *key,
   lc_client *client;
   int rc;
 
-  if (app == NULL || key == NULL || update == NULL) {
+  if (app == NULL || config == NULL || key == NULL || update == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "browser session Lockd state is invalid");
     return VECTIS_ERR_INVALID;
@@ -3225,6 +3499,7 @@ vectis_auth_browser_session_update(vectis_app *app, const char *key,
     return VECTIS_ERR_STATE;
   }
   lc_acquire_req_init(&request);
+  request.namespace_name = vectis_auth_browser_session_namespace(config);
   request.key = key;
   request.owner = "vectis-auth-browser-session";
   request.ttl_seconds = 30L;
@@ -3262,7 +3537,8 @@ static vectis_status vectis_auth_browser_session_signing_secret(
   memset(&context, 0, sizeof(context));
   context.create = create;
   status = vectis_auth_browser_session_update(
-      app, key, vectis_auth_browser_session_secret_update, &context, error);
+      app, config, key, vectis_auth_browser_session_secret_update, &context,
+      error);
   if (status != VECTIS_OK) {
     OPENSSL_cleanse(&context, sizeof(context));
     return status;
@@ -3299,7 +3575,8 @@ static vectis_status vectis_auth_browser_session_load_record(
   }
   memset(out, 0, sizeof(*out));
   return vectis_auth_browser_session_update(
-      app, key, vectis_auth_browser_session_record_update, out, error);
+      app, config, key, vectis_auth_browser_session_record_update, out,
+      error);
 }
 
 static int vectis_auth_browser_session_id_valid(const char *session_id);
@@ -3336,6 +3613,7 @@ static vectis_status vectis_auth_browser_session_delete_record(
     return VECTIS_ERR_STATE;
   }
   lc_acquire_req_init(&acquire);
+  acquire.namespace_name = vectis_auth_browser_session_namespace(config);
   acquire.key = key;
   acquire.owner = "vectis-auth-browser-session";
   acquire.ttl_seconds = 30L;
@@ -3495,6 +3773,7 @@ static vectis_status vectis_auth_browser_session_prune(
   handler.chunk = vectis_auth_browser_session_prune_key_chunk;
   handler.end = vectis_auth_browser_session_prune_key_end;
   lc_query_req_init(&request);
+  request.namespace_name = vectis_auth_browser_session_namespace(config);
   request.selector_json = selector;
   request.limit = (long)VECTIS_AUTH_BROWSER_SESSION_PRUNE_BATCH;
   request.engine = "scan";
@@ -3849,9 +4128,10 @@ vectis_status vectis_auth_browser_session_issue(
                          vectis_auth_browser_session_purpose(config));
   record.expires_at = (lonejson_int64)expires_at;
   record.cleanup_at = (lonejson_int64)expires_at;
-  status = vectis_lockd_state_save(client, key, "vectis-auth-browser-session",
-                                   30L, &vectis_auth_browser_session_record_map,
-                                   &record, error);
+  status = vectis_lockd_state_save_in_namespace(
+      client, vectis_auth_browser_session_namespace(config), key,
+      "vectis-auth-browser-session", 30L,
+      &vectis_auth_browser_session_record_map, &record, error);
   if (status != VECTIS_OK) {
     return status;
   }
@@ -4589,7 +4869,6 @@ vectis_auth_issue_credential(const vectis_auth_store_config *store_config,
   vectis_auth_issued_credential_init(out);
   runtime = NULL;
   memset(&lock, 0, sizeof(lock));
-  lock.fd = -1;
   status = vectis_auth_lonejson_runtime(&runtime, error);
   if (status != VECTIS_OK) {
     return status;
@@ -5195,7 +5474,7 @@ static vectis_status vectis_auth_drop_oauth2_flow_to_temp_locked(
     options.item = vectis_auth_oauth2_flow_drop_item;
     options.user = &state;
     status = vectis_auth_rewrite_array_to_temp_locked(
-        runtime, "oauth2_flows", store_config->credentials_path, "oauth2",
+        runtime, "oauth2_flows", vectis_auth_store_key(store_config), "oauth2",
         temp_path, temp_path_size, &options, &json_error, error);
     if (status == VECTIS_OK) {
       json_status = LONEJSON_STATUS_OK;
@@ -5248,7 +5527,7 @@ static vectis_status vectis_auth_find_oauth2_flow_locked(
     options.item = vectis_auth_oauth2_flow_find_item;
     options.user = &state;
     status = vectis_auth_rewrite_array_to_temp_locked(
-        runtime, "oauth2_flows", store_config->credentials_path, "oauth2-find",
+        runtime, "oauth2_flows", vectis_auth_store_key(store_config), "oauth2-find",
         temp_path, sizeof(temp_path), &options, &json_error, error);
     if (status == VECTIS_OK) {
       json_status = LONEJSON_STATUS_OK;
@@ -5296,7 +5575,7 @@ static vectis_status vectis_auth_revoke_oauth2_flow_credentials_locked(
     options.item = vectis_auth_oauth2_webdav_revoke_item;
     options.user = &state;
     status = vectis_auth_rewrite_array_to_temp_locked(
-        runtime, "credentials", store_config->credentials_path, "oauth2-revoke",
+        runtime, "credentials", vectis_auth_store_key(store_config), "oauth2-revoke",
         temp_path, sizeof(temp_path), &options, &json_error, error);
     if (status == VECTIS_OK) {
       json_status = LONEJSON_STATUS_OK;
@@ -5317,12 +5596,8 @@ static vectis_status vectis_auth_revoke_oauth2_flow_credentials_locked(
     vectis_auth_unlink_temp_path(temp_path);
     return VECTIS_OK;
   }
-  if (rename(temp_path, store_config->credentials_path) != 0) {
-    vectis_auth_unlink_temp_path(temp_path);
-    return vectis_auth_set_errno(error, "failed to replace auth store",
-                                 store_config->credentials_path);
-  }
-  return VECTIS_OK;
+  return vectis_auth_replace_store_from_temp_locked(store_config, temp_path,
+                                                    error);
 }
 
 static vectis_status vectis_auth_drop_email_token_to_temp_locked(
@@ -5352,7 +5627,7 @@ static vectis_status vectis_auth_drop_email_token_to_temp_locked(
     options.item = vectis_auth_email_token_drop_item;
     options.user = &state;
     status = vectis_auth_rewrite_array_to_temp_locked(
-        runtime, "email_tokens", store_config->credentials_path, "email-tokens",
+        runtime, "email_tokens", vectis_auth_store_key(store_config), "email-tokens",
         temp_path, temp_path_size, &options, &json_error, error);
     if (status == VECTIS_OK) {
       json_status = LONEJSON_STATUS_OK;
@@ -5404,7 +5679,7 @@ static vectis_status vectis_auth_find_email_token_locked(
     options.item = vectis_auth_email_token_find_item;
     options.user = &state;
     status = vectis_auth_rewrite_array_to_temp_locked(
-        runtime, "email_tokens", store_config->credentials_path,
+        runtime, "email_tokens", vectis_auth_store_key(store_config),
         "email-tokens-find", temp_path, sizeof(temp_path), &options,
         &json_error, error);
     if (status == VECTIS_OK) {
@@ -5453,7 +5728,7 @@ static vectis_status vectis_auth_drop_pending_login_to_temp_locked(
     options.item = vectis_auth_pending_login_drop_item;
     options.user = &state;
     status = vectis_auth_rewrite_array_to_temp_locked(
-        runtime, "pending_logins", store_config->credentials_path,
+        runtime, "pending_logins", vectis_auth_store_key(store_config),
         "pending-logins", temp_path, temp_path_size, &options, &json_error,
         error);
     if (status == VECTIS_OK) {
@@ -5506,7 +5781,7 @@ static vectis_status vectis_auth_find_pending_login_locked(
     options.item = vectis_auth_pending_login_find_item;
     options.user = &state;
     status = vectis_auth_rewrite_array_to_temp_locked(
-        runtime, "pending_logins", store_config->credentials_path,
+        runtime, "pending_logins", vectis_auth_store_key(store_config),
         "pending-logins-find", temp_path, sizeof(temp_path), &options,
         &json_error, error);
     if (status == VECTIS_OK) {
@@ -5557,7 +5832,6 @@ vectis_status vectis_auth_email_token_issue(
   }
   vectis_auth_email_token_init(out);
   memset(&lock, 0, sizeof(lock));
-  lock.fd = -1;
   if (config == NULL || config->username == NULL ||
       config->username[0] == '\0' || config->email == NULL ||
       config->email[0] == '\0') {
@@ -5622,9 +5896,8 @@ vectis_status vectis_auth_email_token_issue(
     status = vectis_auth_find_user_locked(&config->store, runtime,
                                           config->username, &user, error);
   }
-  if (lock.fd >= 0) {
+  if (lock.lease != NULL) {
     vectis_auth_lock_close(&lock);
-    lock.fd = -1;
   }
   if (status != VECTIS_OK) {
     lonejson_free(runtime);
@@ -5673,7 +5946,7 @@ vectis_status vectis_auth_email_token_issue(
   }
   if (status == VECTIS_OK) {
     temp_config = state_store;
-    temp_config.credentials_path = temp_path;
+    temp_config.state_key = temp_path;
     free(store_json);
     store_json = NULL;
     store_len = 0u;
@@ -5696,7 +5969,7 @@ vectis_status vectis_auth_email_token_issue(
       status = VECTIS_ERR_NOMEM;
     }
   }
-  if (lock.fd >= 0) {
+  if (lock.lease != NULL) {
     vectis_auth_lock_close(&lock);
   }
   lonejson_owned_buffer_free(&token_json);
@@ -5737,7 +6010,6 @@ vectis_status vectis_auth_email_token_verify(
   vectis_auth_email_token_result_init(out);
   lonejson_owned_buffer_init(&token_json);
   memset(&lock, 0, sizeof(lock));
-  lock.fd = -1;
   temp_path[0] = '\0';
   store_json = NULL;
   if (config == NULL || config->transaction_id == NULL ||
@@ -5833,7 +6105,7 @@ vectis_status vectis_auth_email_token_verify(
     }
     if (status == VECTIS_OK) {
       temp_config = state_store;
-      temp_config.credentials_path = temp_path;
+      temp_config.state_key = temp_path;
       store_len = 0u;
       status = vectis_auth_read_store_locked(&temp_config, &store_json,
                                              &store_len, error);
@@ -5844,7 +6116,7 @@ vectis_status vectis_auth_email_token_verify(
           error);
     }
     if (temp_path[0] != '\0') {
-      (void)unlink(temp_path);
+      vectis_auth_unlink_temp_path(temp_path);
       temp_path[0] = '\0';
     }
   }
@@ -5852,15 +6124,12 @@ vectis_status vectis_auth_email_token_verify(
     status = vectis_auth_drop_email_token_to_temp_locked(
         &state_store, runtime, config->transaction_id, temp_path,
         sizeof(temp_path), error);
-    if (status == VECTIS_OK &&
-        rename(temp_path, state_store.credentials_path) != 0) {
-      (void)unlink(temp_path);
-      status =
-          vectis_auth_set_errno(error, "failed to consume auth email token",
-                                state_store.credentials_path);
+    if (status == VECTIS_OK) {
+      status = vectis_auth_replace_store_from_temp_locked(
+          &state_store, temp_path, error);
     }
   }
-  if (lock.fd >= 0) {
+  if (lock.lease != NULL) {
     vectis_auth_lock_close(&lock);
   }
   lonejson_owned_buffer_free(&token_json);
@@ -5897,7 +6166,7 @@ static vectis_status vectis_auth_drop_user_to_temp_locked(
     options.item = vectis_auth_user_drop_item;
     options.user = &state;
     status = vectis_auth_rewrite_array_to_temp_locked(
-        runtime, "users", store_config->credentials_path, "users", temp_path,
+        runtime, "users", vectis_auth_store_key(store_config), "users", temp_path,
         temp_path_size, &options, &json_error, error);
     if (status == VECTIS_OK) {
       json_status = LONEJSON_STATUS_OK;
@@ -5947,7 +6216,7 @@ static vectis_status vectis_auth_find_user_locked(
     options.item = vectis_auth_user_find_item;
     options.user = &state;
     status = vectis_auth_rewrite_array_to_temp_locked(
-        runtime, "users", store_config->credentials_path, "users-find",
+        runtime, "users", vectis_auth_store_key(store_config), "users-find",
         temp_path, sizeof(temp_path), &options, &json_error, error);
     if (status == VECTIS_OK) {
       json_status = LONEJSON_STATUS_OK;
@@ -6017,8 +6286,6 @@ vectis_auth_user_add_or_update(const vectis_auth_store_config *store_config,
   if (out != NULL) {
     vectis_auth_user_enrollment_init(out);
   }
-  lock.fd = -1;
-  lock.path = NULL;
   password[0] = '\0';
   secret[0] = '\0';
   password_value = user_config->password;
@@ -6118,7 +6385,7 @@ vectis_auth_user_add_or_update(const vectis_auth_store_config *store_config,
   }
   if (status == VECTIS_OK) {
     temp_config = *store_config;
-    temp_config.credentials_path = temp_path;
+    temp_config.state_key = temp_path;
     store_json = NULL;
     store_len = 0u;
     status = vectis_auth_read_store_locked(&temp_config, &store_json,
@@ -6129,7 +6396,7 @@ vectis_auth_user_add_or_update(const vectis_auth_store_config *store_config,
           error);
     }
     free(store_json);
-    (void)unlink(temp_path);
+    vectis_auth_unlink_temp_path(temp_path);
   }
   if (status == VECTIS_OK && out != NULL) {
     out->username = vectis_auth_strdup(user_config->username);
@@ -6155,7 +6422,7 @@ vectis_auth_user_add_or_update(const vectis_auth_store_config *store_config,
   }
   if (status == VECTIS_OK) {
     vectis_auth_lock_close(&lock);
-  } else if (lock.fd >= 0) {
+  } else if (lock.lease != NULL) {
     vectis_auth_lock_close(&lock);
   }
   lonejson_owned_buffer_free(&user_json);
@@ -6203,8 +6470,6 @@ vectis_auth_user_email_set(const vectis_auth_store_config *store_config,
   if (status != VECTIS_OK) {
     return status;
   }
-  lock.fd = -1;
-  lock.path = NULL;
   runtime = NULL;
   status = vectis_auth_lonejson_runtime(&runtime, error);
   if (status != VECTIS_OK) {
@@ -6247,7 +6512,7 @@ vectis_auth_user_email_set(const vectis_auth_store_config *store_config,
   }
   if (status == VECTIS_OK) {
     temp_config = *store_config;
-    temp_config.credentials_path = temp_path;
+    temp_config.state_key = temp_path;
     status = vectis_auth_read_store_locked(&temp_config, &store_json,
                                            &store_len, error);
   }
@@ -6256,7 +6521,7 @@ vectis_auth_user_email_set(const vectis_auth_store_config *store_config,
                                                       store_len, user_json.data,
                                                       user_json.len, error);
   }
-  if (lock.fd >= 0) {
+  if (lock.lease != NULL) {
     vectis_auth_lock_close(&lock);
   }
   vectis_auth_unlink_temp_path(temp_path);
@@ -6288,7 +6553,6 @@ vectis_auth_user_exists(const vectis_auth_store_config *store_config,
     return VECTIS_ERR_INVALID;
   }
   memset(&lock, 0, sizeof(lock));
-  lock.fd = -1;
   status = vectis_auth_lock_open(store_config, &lock, error);
   if (status != VECTIS_OK) {
     return status;
@@ -6349,7 +6613,6 @@ vectis_auth_user_find_by_email(const vectis_auth_store_config *store_config,
     return status;
   }
   memset(&lock, 0, sizeof(lock));
-  lock.fd = -1;
   runtime = NULL;
   store_json = NULL;
   store_size = 0u;
@@ -6376,7 +6639,7 @@ vectis_auth_user_find_by_email(const vectis_auth_store_config *store_config,
         options.item = vectis_auth_user_email_find_item;
         options.user = &state;
         status = vectis_auth_rewrite_array_to_temp_locked(
-            runtime, "users", store_config->credentials_path,
+            runtime, "users", vectis_auth_store_key(store_config),
             "users-email-find", temp_path, sizeof(temp_path), &options,
             &json_error, error);
         if (status == VECTIS_OK) {
@@ -6402,7 +6665,7 @@ vectis_auth_user_find_by_email(const vectis_auth_store_config *store_config,
       }
     }
   }
-  if (lock.fd >= 0) {
+  if (lock.lease != NULL) {
     vectis_auth_lock_close(&lock);
   }
   free(store_json);
@@ -6430,7 +6693,6 @@ vectis_auth_user_login(const vectis_auth_store_config *store_config,
   }
   vectis_auth_result_init(out);
   memset(&lock, 0, sizeof(lock));
-  lock.fd = -1;
   if (login_config == NULL || login_config->username == NULL ||
       login_config->username[0] == '\0' || login_config->password == NULL ||
       login_config->password[0] == '\0') {
@@ -6564,7 +6826,6 @@ vectis_auth_user_totp_check(const vectis_auth_totp_check_config *config,
     return VECTIS_ERR_INVALID;
   }
   memset(&lock, 0, sizeof(lock));
-  lock.fd = -1;
   runtime = NULL;
   status = vectis_auth_lock_open(&config->store, &lock, error);
   if (status == VECTIS_OK) {
@@ -6574,7 +6835,7 @@ vectis_auth_user_totp_check(const vectis_auth_totp_check_config *config,
     status = vectis_auth_find_user_locked(&config->store, runtime,
                                           config->username, &record, error);
   }
-  if (lock.fd >= 0) {
+  if (lock.lease != NULL) {
     vectis_auth_lock_close(&lock);
   }
   if (status != VECTIS_OK) {
@@ -6622,7 +6883,6 @@ vectis_status vectis_auth_pending_login_issue(
   }
   vectis_auth_pending_login_init(out);
   memset(&lock, 0, sizeof(lock));
-  lock.fd = -1;
   if (config == NULL || config->username == NULL ||
       config->username[0] == '\0' || config->password == NULL ||
       config->password[0] == '\0') {
@@ -6679,15 +6939,13 @@ vectis_status vectis_auth_pending_login_issue(
       (!record.found ||
        !vectis_auth_verify_password(&record, config->password))) {
     vectis_auth_lock_close(&lock);
-    lock.fd = -1;
     lonejson_owned_buffer_free(&pending_json);
     lonejson_free(runtime);
     free(store_json);
     return VECTIS_OK;
   }
-  if (lock.fd >= 0 && vectis_auth_has_separate_state_store(&config->store)) {
+  if (lock.lease != NULL && vectis_auth_has_separate_state_store(&config->store)) {
     vectis_auth_lock_close(&lock);
-    lock.fd = -1;
     free(store_json);
     store_json = NULL;
     store_len = 0u;
@@ -6712,7 +6970,7 @@ vectis_status vectis_auth_pending_login_issue(
   }
   if (status == VECTIS_OK) {
     temp_config = state_store;
-    temp_config.credentials_path = temp_path;
+    temp_config.state_key = temp_path;
     free(store_json);
     store_json = NULL;
     store_len = 0u;
@@ -6739,7 +6997,7 @@ vectis_status vectis_auth_pending_login_issue(
       status = VECTIS_ERR_NOMEM;
     }
   }
-  if (lock.fd >= 0) {
+  if (lock.lease != NULL) {
     vectis_auth_lock_close(&lock);
   }
   lonejson_owned_buffer_free(&pending_json);
@@ -6771,7 +7029,6 @@ static vectis_status vectis_auth_pending_login_check(
   }
   vectis_auth_pending_login_result_init(out);
   memset(&lock, 0, sizeof(lock));
-  lock.fd = -1;
   if (config == NULL || config->transaction_id == NULL ||
       config->transaction_id[0] == '\0' || config->username == NULL ||
       config->username[0] == '\0') {
@@ -6843,15 +7100,12 @@ static vectis_status vectis_auth_pending_login_check(
     status = vectis_auth_drop_pending_login_to_temp_locked(
         &state_store, runtime, config->transaction_id, temp_path,
         sizeof(temp_path), error);
-    if (status == VECTIS_OK &&
-        rename(temp_path, state_store.credentials_path) != 0) {
-      (void)unlink(temp_path);
-      status =
-          vectis_auth_set_errno(error, "failed to consume auth pending login",
-                                state_store.credentials_path);
+    if (status == VECTIS_OK) {
+      status = vectis_auth_replace_store_from_temp_locked(
+          &state_store, temp_path, error);
     }
   }
-  if (lock.fd >= 0) {
+  if (lock.lease != NULL) {
     vectis_auth_lock_close(&lock);
   }
   lonejson_free(runtime);
@@ -7042,8 +7296,6 @@ vectis_status vectis_auth_oauth2_token_flow_upsert(
                      "OAuth2 token flow_id is required");
     return VECTIS_ERR_INVALID;
   }
-  lock.fd = -1;
-  lock.path = NULL;
   runtime = NULL;
   status = vectis_auth_lonejson_runtime(&runtime, error);
   if (status != VECTIS_OK) {
@@ -7075,7 +7327,7 @@ vectis_status vectis_auth_oauth2_token_flow_upsert(
   }
   if (status == VECTIS_OK) {
     temp_config = config->store;
-    temp_config.credentials_path = temp_path;
+    temp_config.state_key = temp_path;
     store_json = NULL;
     store_len = 0u;
     status = vectis_auth_read_store_locked(&temp_config, &store_json,
@@ -7086,9 +7338,9 @@ vectis_status vectis_auth_oauth2_token_flow_upsert(
           error);
     }
     free(store_json);
-    (void)unlink(temp_path);
+    vectis_auth_unlink_temp_path(temp_path);
   }
-  if (lock.fd >= 0) {
+  if (lock.lease != NULL) {
     vectis_auth_lock_close(&lock);
   }
   lonejson_owned_buffer_free(&flow_json);
@@ -7503,7 +7755,7 @@ vectis_status vectis_auth_verify_authorization(
   memset(&store, 0, sizeof(store));
   store.json = store_json;
   store.len = store_len;
-  store.max_store_bytes = store_config->max_store_bytes;
+  store.max_store_bytes = store_config->max_record_bytes;
   memset(&request, 0, sizeof(request));
   request.store = &store;
   request.authorization_header = authorization;
@@ -7587,7 +7839,7 @@ vectis_auth_revoke_client(const vectis_auth_store_config *store_config,
     options.item = vectis_auth_revoke_item;
     options.user = &state;
     status = vectis_auth_rewrite_array_to_temp_locked(
-        runtime, "credentials", store_config->credentials_path, "revoke",
+        runtime, "credentials", vectis_auth_store_key(store_config), "revoke",
         temp_path, sizeof(temp_path), &options, &json_error, error);
     if (status == VECTIS_OK) {
       json_status = LONEJSON_STATUS_OK;
@@ -7614,16 +7866,11 @@ vectis_auth_revoke_client(const vectis_auth_store_config *store_config,
     vectis_auth_lock_close(&lock);
     return VECTIS_OK;
   }
-  if (rename(temp_path, store_config->credentials_path) != 0) {
-    vectis_auth_unlink_temp_path(temp_path);
-    lonejson_free(runtime);
-    vectis_auth_lock_close(&lock);
-    return vectis_auth_set_errno(error, "failed to replace auth store",
-                                 store_config->credentials_path);
-  }
+  status = vectis_auth_replace_store_from_temp_locked(store_config, temp_path,
+                                                       error);
   lonejson_free(runtime);
   vectis_auth_lock_close(&lock);
-  return VECTIS_OK;
+  return status;
 }
 
 vectis_status vectis_auth_provider_response_set_authenticated(
@@ -7895,12 +8142,15 @@ vectis_auth_provider_from_callback(vectis_auth_provider *provider,
 vectis_status vectis_auth_provider_from_native_store(
     vectis_auth_provider *provider, vectis_auth_native_provider_config *config,
     vectis_error *error) {
-  if (provider == NULL || config == NULL ||
-      config->store.credentials_path == NULL ||
-      config->store.credentials_path[0] == '\0') {
+  if (provider == NULL || config == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "native auth provider store path is required");
+                     "native auth provider configuration is required");
     return VECTIS_ERR_INVALID;
+  }
+  if (config->browser_session.namespace_name == NULL ||
+      config->browser_session.namespace_name[0] == '\0') {
+    config->browser_session.namespace_name =
+        vectis_auth_store_namespace(&config->store);
   }
   if (vectis_auth_browser_session_config_validate(&config->browser_session,
                                                   error) != VECTIS_OK) {

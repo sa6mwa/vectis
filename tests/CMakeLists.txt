@@ -607,7 +607,7 @@ if(TARGET vectis_bin)
                    "-DVECTIS_PORT_ENV=VECTIS_LUA_API_EXAMPLE_PORT"
                    "-DVECTIS_SUCCESS_MARKER=lua api app example ok"
                    "-DVECTIS_LABEL=Lua API server example"
-                   "-DVECTIS_EXTRA_ENV=VECTIS_LUA_API_EXAMPLE_AUTH_PATH=${CMAKE_CURRENT_BINARY_DIR}/vectis-lua-api-example-auth.json"
+                   "-DVECTIS_EXTRA_ENV=VECTIS_LUA_API_EXAMPLE_LOCKD_PATH=${CMAKE_CURRENT_BINARY_DIR}/vectis-lua-api-example-lockd"
                    -P "${CMAKE_SOURCE_DIR}/tests/lua/run_example_with_port.cmake")
   set_tests_properties(vectis_example_lua_api_server PROPERTIES
     LABELS "lua;example-smoke;local"

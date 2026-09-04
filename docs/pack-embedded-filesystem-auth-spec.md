@@ -174,10 +174,10 @@ record. The Vectis lifecycle performs bounded automatic cleanup; applications
 may additionally call `vectis_auth_workflow_cleanup()` and
 `vectis_auth_browser_session_cleanup()` outside request handlers.
 
-The optional credentials `state_path` remains available for lower-level auth
-primitives such as directly issued email tokens and stored OAuth2/OIDC flows.
-It is not the persistence location for native ordered workflow or browser
-session state.
+Standalone auth operations use the selected Lockd/Pouch root and logical
+`state_key` / `transient_state_key` records. Native ordered workflow and
+browser-session state are also Lockd-owned; none of these records are JSON
+files in the packed application's filesystem.
 
 ## Example composition
 
@@ -185,7 +185,7 @@ session state.
 local vectis = require("vectis")
 
 local flow = vectis.auth.workflow({
-  credentials_path = "/var/lib/my-service/credentials.json",
+  state_key = "auth/v1/store",
   path_prefix = "/auth",
   credential_purpose = "webdav",
   steps = {"email_code", "password", "totp"},

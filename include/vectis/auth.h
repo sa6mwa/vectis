@@ -54,6 +54,8 @@ typedef struct vectis_auth_browser_session_config {
   const char *purpose;
   /* Lockd key prefix. Zero/default is "auth.browser_session.v1". */
   const char *state_key;
+  /* Lockd namespace. Zero/default inherits the auth store namespace. */
+  const char *namespace_name;
   /* Zero uses VECTIS_AUTH_BROWSER_SESSION_DEFAULT_TTL_SECONDS. */
   uint64_t ttl_seconds;
 } vectis_auth_browser_session_config;
@@ -69,17 +71,25 @@ typedef struct vectis_auth_browser_session_result {
 } vectis_auth_browser_session_result;
 
 typedef struct vectis_auth_store_config {
-  /* JSON credential store path. Callers choose the config directory and file.
-   */
-  const char *credentials_path;
   /*
-   * Optional JSON auth state path for high-churn pending_login and email_token
-   * records. When NULL or empty, transient auth state is stored in
-   * credentials_path for single-file deployments.
+   * Borrowed app for route-owned state. When absent, Lockd is opened from the
+   * optional `lockd` selection. Leaving both unset selects Vectis's shared
+   * encrypted default Pouch root.
    */
-  const char *state_path;
-  /* Maximum store bytes accepted when reading. Zero uses the default. */
-  size_t max_store_bytes;
+  vectis_app *app;
+  /* Optional standalone Lockd selection. It must be NULL when `app` is set. */
+  const vectis_lockd_config *lockd;
+  /* Zero/default is the security-state namespace "vectis.auth". */
+  const char *namespace_name;
+  /* Zero/default is the durable credential/user state key "auth/v1/store". */
+  const char *state_key;
+  /*
+   * Optional transient state key. Zero/default shares `state_key`; callers
+   * may choose a separate Lockd record for high-churn tokens and logins.
+   */
+  const char *transient_state_key;
+  /* Maximum Lockd state record bytes accepted. Zero uses the default. */
+  size_t max_record_bytes;
 } vectis_auth_store_config;
 
 typedef struct vectis_auth_issue_config {
@@ -177,6 +187,8 @@ typedef struct vectis_auth_email_message {
   const char *email;
   const char *transaction_id;
   const char *token;
+  /* Optional stable idempotency key supplied unchanged as an SMTP header. */
+  const char *effect_key;
   uint64_t expires_at;
 } vectis_auth_email_message;
 

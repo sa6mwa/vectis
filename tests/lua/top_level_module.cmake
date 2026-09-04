@@ -49,8 +49,8 @@ package.preload["vectis.auth.core"] = function()
       return {
         kind = "native",
         config = opts,
-        credentials_path = opts.credentials_path,
-        state_path = opts.state_path,
+        state_key = opts.state_key,
+        transient_state_key = opts.transient_state_key,
         purpose = opts.purpose,
         realm = opts.realm,
         allowed_modes = opts.allowed_modes,
@@ -131,24 +131,24 @@ assert(vectis.dsv == require("vectis.dsv"))
 assert(vectis.xml == require("vectis.xml"))
 
 local flow = vectis.auth.workflow({
-  credentials_path = "credentials.json",
-  state_path = "state.json",
+  state_key = "auth/v1/top-level",
+  transient_state_key = "auth/v1/top-level-transient",
   path_prefix = "/_vectis/auth",
   realm = "admin",
   purpose = "webdav",
   allowed_modes = { vectis.auth.BASIC },
 })
 local routes = flow:routes({ login_title = "Admin Login" })
-assert(routes.credentials_path == "credentials.json")
-assert(routes.state_path == "state.json")
+assert(routes.state_key == "auth/v1/top-level")
+assert(routes.transient_state_key == "auth/v1/top-level-transient")
 assert(routes.path_prefix == "/_vectis/auth")
 assert(routes.realm == "admin")
 assert(routes.login_title == "Admin Login")
 assert(routes.purpose == nil)
 local provider = assert(flow:provider())
 assert(provider.kind == "native")
-assert(provider.credentials_path == "credentials.json")
-assert(provider.state_path == "state.json")
+assert(provider.state_key == "auth/v1/top-level")
+assert(provider.transient_state_key == "auth/v1/top-level-transient")
 assert(provider.purpose == "webdav")
 assert(provider.realm == "admin")
 local mounted

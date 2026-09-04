@@ -175,8 +175,9 @@ same code works in scratch containers where `vectis` is the only executable.
   TOTP, native issued Bearer credentials for M2M-style access, and opt-in
   `pouch://` persistence. External OAuth2/OIDC M2M validation is plugged in
   through the same callback-provider contract; it is not a separate
-  metrics-specific adapter. Create the user before running it:
-  `vectis -a users --store vectis-metrics-auth-example-credentials.json --add metrics-admin --password metrics-password --totp-secret GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ --label Vectis:metrics-admin --issuer "Vectis Metrics Example"`.
+  metrics-specific adapter. Provision users in the same encrypted Pouch root
+  before starting the server, for example:
+  `vectis -a users --lockd-endpoint 'pouch:///srv/vectis/state?single_writer=false' --add metrics-admin --password metrics-password --totp-secret GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ --label Vectis:metrics-admin --issuer "Vectis Metrics Example"`.
 - `lua/metrics_ephemeral.lua`: simple Hello World page with unauthenticated
   `/.metrics` dashboard and JSON snapshot using in-memory metrics only.
 - `lua/downstream_api.lua`: packable Lua downstream API client example using
