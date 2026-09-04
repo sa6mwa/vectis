@@ -839,10 +839,14 @@ static int vectis_smith_cli_interactive(const vectis_smith_config *smith_config,
   render->notify_fd = wake_fds[1];
   if (vectis_smith_cli_agent_start(&agent, smith_config, render,
                                    wake_fds[1]) != 0) {
-    vectis_smith_cli_agent_snapshot(&agent, &state, &failed, NULL, 0u);
+    char message[256];
+
+    vectis_smith_cli_agent_snapshot(&agent, &state, &failed, message,
+                                     sizeof(message));
     (void)state;
     (void)failed;
-    fputs("vectis: failed to open Smith runtime\n", stderr);
+    fprintf(stderr, "vectis: %s\n",
+            message[0] == '\0' ? "failed to open Smith runtime" : message);
     vectis_smith_cli_agent_stop(&agent, render);
     render->notify_fd = -1;
     (void)close(wake_fds[0]);

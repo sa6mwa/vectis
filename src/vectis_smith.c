@@ -160,6 +160,7 @@ static int vectis_smith_acquire(vectis_smith_store *store, const char *key,
                                 lc_lease **out, cai_error *error) {
   lc_acquire_req request;
   lc_error lcerr;
+  char message[256];
   int rc;
 
   lc_acquire_req_init(&request);
@@ -169,8 +170,11 @@ static int vectis_smith_acquire(vectis_smith_store *store, const char *key,
   request.ttl_seconds = store->lease_ttl_seconds;
   rc = lc_acquire(store->client, &request, out, &lcerr);
   if (rc != LC_OK) {
-    vectis_smith_set_cai_error(error, CAI_ERR_TRANSPORT,
-                               "failed to acquire LockDC Smith state");
+    (void)snprintf(message, sizeof(message),
+                   "failed to acquire LockDC Smith state: %s",
+                   lcerr.message == NULL ? "unknown LockDC error"
+                                         : lcerr.message);
+    vectis_smith_set_cai_error(error, CAI_ERR_TRANSPORT, message);
   }
   lc_error_cleanup(&lcerr);
   return rc == LC_OK ? CAI_OK : error->code;
