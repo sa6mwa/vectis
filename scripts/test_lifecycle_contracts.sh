@@ -1068,12 +1068,12 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$lua_index" '\[Lua CAI\]\(lua-cai\.md\)'
   assert_contains "$repo_root/docs/api.md" '\[Lua CAI\]\(lua-cai\.md\)'
   assert_contains "$repo_root/docs/lua-cai.md" 'dependency-native CAI Lua module'
-  assert_contains "$repo_root/docs/lua-cai.md" 'The pinned CAI dependency is `0\.4\.0`'
+  assert_contains "$repo_root/docs/lua-cai.md" 'The pinned CAI dependency is `0\.5\.0`'
   assert_contains "$repo_root/docs/lua-cai.md" '`vectis\.cai` is a service DX'
   assert_contains "$repo_root/docs/lua-cai.md" 'not a second AI SDK'
   assert_contains "$repo_root/docs/lua-cai.md" 'The C adapters preserve true streaming'
   assert_contains "$repo_root/TODO.md" '\[x\] Track CAI as a dependency once its C SDK surface stabilizes'
-  assert_contains "$matrix" 'Dependency-native CAI 0\.4\.0 module is preloaded'
+  assert_contains "$matrix" 'Dependency-native CAI 0\.5\.0 module is preloaded'
   assert_contains "$matrix" '`vectis\.cai` covers normalized service config'
   assert_contains "$lua_index" '\[Lua libmdf\]\(lua-libmdf\.md\)'
   assert_contains "$lua_index" '\[Lua softline\]\(lua-softline\.md\)'
@@ -1865,10 +1865,10 @@ if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^libpid0_version=0\.4\.2$'; 
 fi
 for expected in \
   '^system_sha256=0bbb1cbaf60b0a94fb5a6b3756123088b45e2bef9e38079038f22e3c07febb2e$' \
-  '^liblockdc_sha256=fcce40120a8e6c6990efdb4d54c427011619abb280a8ecbd4644b720eda7cbb8$' \
+  '^liblockdc_sha256=1d33b654e913df65227ccc36890b88f6aa056448c89bbccfaaa49d9402877f6c$' \
   '^lonejson_sha256=e04f80b907d92f7e38f825fbd339297e85372fc1ce110abb9a93715ee450ece3$' \
   '^pslog_sha256=7981ce7e60f6f1e144042e7a9192bb661472756ae34336fb0c2ed8316b31945f$' \
-  '^cai_sha256=46d7c0c88633b932b98d6e6e0c035d6d4c4c24e8576122961d6e5a8affa78b5d$' \
+  '^cai_sha256=f73696bf4b79537e5ebe307a6e1ce5a28b455b557b6c6fbfcd92f9e37046b0c9$' \
   '^lql_sha256=a32b3ecc33b0634df23c630843b1c2c16a8a2caa947109a33bad20965e47a399$' \
   '^lql_lua_sha256=b440ce543586ebfc9aafd0e09a700126b9d62d85b8c34ae2ac19b0990db28438$' \
   '^softline_sha256=2741b83260b7d61d0a55f71ff7fc4f3e1731786610b09631349e7b057814a304$'
