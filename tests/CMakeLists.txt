@@ -120,7 +120,7 @@ if(TARGET vectis_bin)
     libmdf::mdf_static
     softline::softline_static)
   if(UNIX AND NOT APPLE)
-    target_link_libraries(vectis_smith_cli_stream PRIVATE m)
+    target_link_libraries(vectis_smith_cli_stream PRIVATE m util)
   endif()
   set_target_properties(vectis_smith_cli_stream PROPERTIES
     C_STANDARD 99

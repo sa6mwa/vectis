@@ -40,13 +40,16 @@ It has a non-negotiable liveness contract:
 - CAI text events flow immediately through libmdf's real streaming renderer to
   the live Softline prompt. Output is bounded-chunk producer-to-consumer flow;
   it is never held until a turn completes or materialized as a full response.
-- While CAI has an active turn, ordinary Enter submissions stay in Softline's
-  local FIFO queue. When CAI reaches a terminal state, Smith submits exactly
-  the oldest local queued turn and repeats until the local queue is empty.
-- A steering submission is delivered to CAI's active turn immediately. A
-  steering action on an empty editor promotes the newest local queued message
-  and delivers it as steering. If CAI has become idle before it is accepted,
-  the CAI owner submits it as the next normal turn instead; it is never lost.
+- While CAI has an active turn, Enter puts a nonempty draft in Softline's
+  local FIFO. When CAI reaches an idle boundary, Softline releases exactly the
+  oldest local queued turn; Smith starts it and returns Softline to busy before
+  another entry can release. Alt-E edits the newest queued draft.
+- Alt-Enter sends a nonempty draft as steering immediately. On an empty editor
+  it promotes the newest local queued draft and sends it as steering. If CAI
+  has become idle before the owner accepts it, the same text becomes its next
+  normal turn; it is never lost. Ctrl-Enter has no Smith-specific mapping.
+- Commands beginning with `:` bypass busy-turn queueing, so `:quit` and
+  `:exit` remain available while a model or tool is active.
 - The Softline status bar is a UI-thread projection of the latest available
   agent/runtime state: run state, model/tool activity, queue state, stream and
   renderer failures, and other relevant bounded status. It is refreshed when
@@ -68,14 +71,14 @@ tool does use Bubblewrap on Linux and fails closed if it is unavailable.
 `:quit` and `:exit` leave the editor after a defined shutdown policy has
 stopped/drained the agent and renderer.
 
-### Current implementation status
+### Implementation
 
-The current `vectis -a smith` loop is **not yet compliant interactive TUI
-mode**. It pumps CAI only from Softline's idle callback on the UI thread, so
-typing can delay CAI work and output. It must not be called a complete coding
-agent UI. The required cutover is documented in
-[CAI Agent And Vectis Integration](cai-agent-vectis-integration.md); it is
-blocked on Softline's required external-event and queue-control APIs.
+Interactive Smith uses a dedicated CAI owner thread, a dedicated bounded
+libmdf renderer thread, and the Softline UI owner thread. A nonblocking UI
+wake channel carries renderer output and state changes to a Softline watch;
+the watch drains bounded ANSI output with `print_above()` and refreshes the
+status line without taking ownership of the draft. No worker calls Softline,
+and CAI is never pumped by the editor idle callback.
 
 Smith first opens CAI's persisted ChatGPT subscription authentication state.
 CAI uses `CAI_CHATGPT_AUTH_JSON` when set, otherwise its XDG state file. If no
@@ -115,7 +118,7 @@ the `lc_client` and `vectis_smith_store` alive for every borrowing runtime.
   `cai_agent_session_store` adapter.
 - `vectis_smith_open()` creates the owner-thread CAI Smith runtime and exposes
   `submit`, `submit_steering`, `submit_queued`, `pump`, `state`, and
-  `wakeup_fd` wrappers for non-TUI hosts and the future dedicated Smith worker.
+  `wakeup_fd` wrappers for non-TUI hosts and the dedicated Smith worker.
 
 Applications pass either a borrowed `cai_client` or `cai_client_config`, and
 provide a workspace in `vectis_smith_config.runtime.workspace_directory`.

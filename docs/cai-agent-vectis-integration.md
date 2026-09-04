@@ -71,20 +71,19 @@ thread. A callback applies only the newest available snapshot, so a burst of
 events cannot show an older state after a newer one. Any relevant state change
 signals the wake FD; status is not dependent on a later keystroke.
 
-Softline owns ordinary interactive follow-up prompts in its local FIFO, using
-manual queue delivery. During an active CAI turn, Enter appends locally. When
-the worker publishes a terminal state, the UI takes exactly the oldest item and
-submits it as one normal CAI turn; it does not bulk-submit or duplicate entries.
-A typed steering input, or promotion of the newest local queue item from an
-empty steering editor, is sent through the control bridge immediately. The
-worker sends it as steering if still active, otherwise as the next normal turn.
-Queue mutation and preview rendering remain inside Softline.
+Softline owns ordinary interactive follow-up prompts in its local FIFO through
+its `queued-turns` profile. While the worker reports busy, Enter appends
+locally. On an idle transition Softline releases exactly one oldest item; Smith
+places it on the bounded control bridge and immediately marks the UI busy again.
+Alt-Enter sends a nonempty draft as steering, or promotes the newest queued
+entry when the draft is empty. The worker applies steering only while CAI is
+active and otherwise accepts that promoted text as the next normal turn. Queue
+mutation, previews, Alt-E editing, and key handling remain inside Softline.
 
-The current idle-callback implementation is transitional and does not satisfy
-this contract: it pumps CAI on the Softline owner thread and has no external
-wakeup integration. Smith must not be described as a complete interactive TUI
-until this topology is implemented and verified under concurrent streaming,
-editing, queue manipulation, status changes, and tool execution.
+The implemented topology keeps CAI ownership, Markdown rendering, and
+Softline ownership separate. The UI never invokes `pump` or state inspection;
+the worker publishes immutable state and renderer output through the wake
+channel, which the Softline watch processes in bounded batches.
 
 ## Interactive verification gate
 
