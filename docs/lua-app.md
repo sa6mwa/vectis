@@ -176,6 +176,11 @@ automatic-overwrite option.
 To add a canonical cleartext-to-HTTPS redirect listener without registering a
 route, enable it explicitly inside `tls`. `http_redirect` defaults to false;
 when enabled it binds the TLS address and local port `8080` unless overridden.
+`port` and `http_redirect_port` are local listener ports. Set
+`presented_https_port` and `presented_http_port` when a proxy or firewall
+forwards public ports to those listeners. A presented port of `0` (the default)
+uses its corresponding listener port. The redirect always uses the presented
+HTTPS port, omitting `:443`; it never leaks the local TLS listener port.
 It always uses a `308` response and preserves the request path and query while
 removing the cleartext listener port from `Host`.
 
@@ -189,6 +194,8 @@ local app = assert(vectis.app.new({
     email = "ops@example.com",
     http_redirect = true,
     http_redirect_port = 8080,
+    presented_https_port = 443,
+    presented_http_port = 80,
   },
 }))
 ```

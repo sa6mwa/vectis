@@ -61,6 +61,8 @@ int main(void) {
   assert(config.tls.version == VECTIS_TLS_VERSION_DEFAULT);
   assert(config.tls.cipher_list == NULL);
   assert(config.tls.port == 8443u);
+  assert(config.tls.presented_https_port == 0u);
+  assert(config.tls.presented_http_port == 0u);
   assert(strcmp(config.tls.domain, "*") == 0);
   assert(config.tls.domains == NULL);
   assert(config.tls.domain_count == 0u);

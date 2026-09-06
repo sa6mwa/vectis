@@ -104,7 +104,8 @@ static void format_clear_url(char *out, size_t out_size, const char *host,
   assert(written > 0 && (size_t)written < out_size);
 }
 
-static void assert_http_redirect(unsigned short port, unsigned short tls_port,
+static void assert_http_redirect(unsigned short port,
+                                 unsigned short presented_https_port,
                                  const char *host) {
   struct sockaddr_in address;
   char location[256];
@@ -140,9 +141,14 @@ static void assert_http_redirect(unsigned short port, unsigned short tls_port,
   response[received] = '\0';
   (void)close(fd);
   assert(strstr(response, " 308 ") != NULL);
-  written = snprintf(location, sizeof(location),
-                     "location: https://%s:%u/secure?from=http\r\n", host,
-                     (unsigned)tls_port);
+  if (presented_https_port == 443u) {
+    written = snprintf(location, sizeof(location),
+                       "location: https://%s/secure?from=http\r\n", host);
+  } else {
+    written = snprintf(location, sizeof(location),
+                       "location: https://%s:%u/secure?from=http\r\n", host,
+                       (unsigned)presented_https_port);
+  }
   assert(written > 0 && (size_t)written < sizeof(location));
   assert(strstr(response, location) != NULL);
 }
@@ -431,6 +437,8 @@ int main(void) {
   config.tls.port = port;
   config.tls.http_redirect_enabled = 1;
   config.tls.http_redirect_port = redirect_port;
+  config.tls.presented_https_port = 443u;
+  config.tls.presented_http_port = 80u;
   config.tls.certificate_path = server_cert_path;
   config.tls.private_key_path = server_key_path;
   config.tls.ca_bundle_path = intermediate_cert_path;
@@ -441,7 +449,7 @@ int main(void) {
   assert(status == VECTIS_OK);
   status = app->start(app, &error);
   assert(status == VECTIS_OK);
-  assert_http_redirect(redirect_port, port, "attacker.example");
+  assert_http_redirect(redirect_port, 443u, "attacker.example");
   status = vectis_stop(app, &error);
   assert(status == VECTIS_OK);
   app->close(app);

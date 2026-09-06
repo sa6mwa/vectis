@@ -1369,6 +1369,8 @@ local tls_bundle_pem_server = assert(vectis.app.new({
   tls = {
     mode = "manual",
     version = "both",
+    presented_https_port = 443,
+    presented_http_port = 80,
     cert_key_bundle_pem = "-----BEGIN CERTIFICATE-----\nplaceholder\n" ..
         "-----END CERTIFICATE-----\n-----BEGIN PRIVATE KEY-----\n" ..
         "placeholder\n-----END PRIVATE KEY-----\n",

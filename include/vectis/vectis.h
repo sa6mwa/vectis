@@ -539,17 +539,28 @@ typedef struct vectis_tls_config {
   /* Optional OpenSSL cipher-list string applied to the Kore TLS context. */
   const char *cipher_list;
   const char *bind;
+  /* Local TLS listener port. This is independent from presented_https_port. */
   unsigned short port;
   /*
    * When enabled, Vectis also listens for cleartext HTTP and returns a 308
-   * redirect to the HTTPS URL. The listener defaults to tls.bind and 8080;
-   * set http_redirect_bind and http_redirect_port to override either. The
-   * Host must match tls.domain in manual mode or tls.domains in ACME mode;
-   * the manual default "*" intentionally accepts any valid Host.
+   * redirect to the HTTPS URL. The local listener defaults to tls.bind and
+   * 8080; set http_redirect_bind and http_redirect_port to override either.
+   *
+   * presented_https_port and presented_http_port describe the corresponding
+   * externally visible ports when a proxy or firewall forwards them to local
+   * listener ports. A zero presented port uses its local listener port.
+   * HTTP-to-HTTPS redirects use presented_https_port, omitting it when it is
+   * 443. presented_http_port is retained as the public cleartext origin for
+   * Vectis configuration and integrations; it does not appear in an HTTPS
+   * redirect target. Host must match tls.domain in manual mode or tls.domains
+   * in ACME mode; the manual default "*" intentionally accepts any valid
+   * Host.
    */
   int http_redirect_enabled;
   const char *http_redirect_bind;
   unsigned short http_redirect_port;
+  unsigned short presented_https_port;
+  unsigned short presented_http_port;
   const char *const *domains;
   size_t domain_count;
   const char *domain;

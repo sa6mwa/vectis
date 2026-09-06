@@ -487,7 +487,9 @@ typedef struct vectis_app_impl {
   vectis_service_failure_policy service_failure_policy;
   vectis_quiescence_policy quiescence_policy;
   unsigned short port;
+  unsigned short presented_https_port;
   unsigned short http_redirect_port;
+  unsigned short presented_http_port;
   int http_redirect_enabled;
   vectis_tls_mode tls_mode;
   vectis_tls_version tls_version;
@@ -11327,12 +11329,19 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   impl->quiescence_policy = effective->quiescence_policy;
   impl->port =
       vectis_default_ushort(effective->tls.port, VECTIS_TLS_DEFAULT_PORT);
+  impl->presented_https_port = vectis_default_ushort(
+      effective->tls.presented_https_port, impl->port);
   impl->http_redirect_enabled = effective->tls.http_redirect_enabled;
   impl->http_redirect_port =
       effective->tls.http_redirect_enabled
           ? vectis_default_ushort(effective->tls.http_redirect_port,
                                   VECTIS_TLS_HTTP_REDIRECT_DEFAULT_PORT)
           : 0u;
+  impl->presented_http_port = effective->tls.http_redirect_enabled
+                                  ? vectis_default_ushort(
+                                        effective->tls.presented_http_port,
+                                        impl->http_redirect_port)
+                                  : 0u;
   impl->tls_mode = effective->tls.mode;
   impl->tls_version = effective->tls.version;
   impl->require_client_certificate = effective->tls.require_client_certificate;
@@ -11571,9 +11580,11 @@ vectis_app_make_kore_runtime_config(vectis_app *app, vectis_app_impl *impl,
   kore_config->app_name = impl->app_name;
   kore_config->bind = impl->bind;
   kore_config->port = impl->port;
+  kore_config->presented_https_port = impl->presented_https_port;
   kore_config->http_redirect_enabled = impl->http_redirect_enabled;
   kore_config->http_redirect_bind = impl->http_redirect_bind;
   kore_config->http_redirect_port = impl->http_redirect_port;
+  kore_config->presented_http_port = impl->presented_http_port;
   kore_config->domain = impl->domain;
   kore_config->domains = (const char *const *)impl->domains;
   kore_config->domain_count = impl->domain_count;
