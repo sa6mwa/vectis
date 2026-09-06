@@ -2665,6 +2665,7 @@ typedef struct vectis_kore_response_stream {
   struct connection *connection;
   struct lc_source *source;
   int remove;
+  int chunked;
 } vectis_kore_response_stream;
 
 static void
@@ -2707,8 +2708,12 @@ static int vectis_kore_response_stream_chunk_sent(struct netbuf *nb) {
       connection->disconnect = NULL;
       connection->flags &= ~CONN_IS_BUSY;
       if (ret == KORE_RESULT_OK && !stream->remove) {
-        http_start_recv(connection);
-        net_send_queue(connection, "0\r\n\r\n", 5u);
+        if (stream->chunked) {
+          net_send_queue(connection, "0\r\n\r\n", 5u);
+        }
+        if (!(connection->flags & CONN_CLOSE_EMPTY)) {
+          http_start_recv(connection);
+        }
       } else if (!stream->remove) {
         kore_connection_disconnect(connection);
       }
@@ -2749,21 +2754,26 @@ vectis_kore_response_stream_next(vectis_kore_response_stream *stream) {
   }
   lc_error_cleanup(&lcerr);
 
-  written =
-      snprintf(prefix, sizeof(prefix), "%llx\r\n", (unsigned long long)nread);
-  if (written <= 0 || (size_t)written >= sizeof(prefix)) {
-    return KORE_RESULT_ERROR;
+  prefix_len = 0u;
+  if (stream->chunked) {
+    written =
+        snprintf(prefix, sizeof(prefix), "%llx\r\n", (unsigned long long)nread);
+    if (written <= 0 || (size_t)written >= sizeof(prefix)) {
+      return KORE_RESULT_ERROR;
+    }
+    prefix_len = (size_t)written;
   }
-  prefix_len = (size_t)written;
-  packet_size = prefix_len + nread + 2u;
+  packet_size = prefix_len + nread + (stream->chunked ? 2u : 0u);
   packet = (char *)malloc(packet_size);
   if (packet == NULL) {
     return KORE_RESULT_ERROR;
   }
   memcpy(packet, prefix, prefix_len);
   memcpy(packet + prefix_len, buffer, nread);
-  packet[prefix_len + nread] = '\r';
-  packet[prefix_len + nread + 1u] = '\n';
+  if (stream->chunked) {
+    packet[prefix_len + nread] = '\r';
+    packet[prefix_len + nread + 1u] = '\n';
+  }
 
   net_send_stream(stream->connection, packet, packet_size,
                   vectis_kore_response_stream_chunk_sent, &nb);
@@ -2800,7 +2810,8 @@ static int vectis_kore_send_stream_response(struct http_request *req,
     return 0;
   }
 
-  if (req->method == HTTP_METHOD_HEAD) {
+  if (req->method == HTTP_METHOD_HEAD || (status >= 100 && status < 200) ||
+      status == 204 || status == 304) {
     lc_source_close(source);
     req->flags |= HTTP_REQUEST_NO_CONTENT_LENGTH;
     http_response(req, status, NULL, 0);
@@ -2835,12 +2846,17 @@ static int vectis_kore_send_stream_response(struct http_request *req,
   }
   stream->connection = req->owner;
   stream->source = source;
+  stream->chunked = !(req->flags & HTTP_VERSION_1_0);
   stream->connection->hdlr_extra = stream;
   stream->connection->flags |= CONN_IS_BUSY;
   stream->connection->disconnect = vectis_kore_response_stream_disconnect;
 
   req->flags |= HTTP_REQUEST_NO_CONTENT_LENGTH;
-  http_response_header(req, "transfer-encoding", "chunked");
+  if (stream->chunked) {
+    http_response_header(req, "transfer-encoding", "chunked");
+  } else {
+    stream->connection->flags |= CONN_CLOSE_EMPTY;
+  }
   http_response(req, status, NULL, 0);
   if (emitted_status != NULL) {
     *emitted_status = status;
@@ -2854,7 +2870,12 @@ static int vectis_kore_send_stream_response(struct http_request *req,
       stream->connection->disconnect = NULL;
       stream->connection->flags &= ~CONN_IS_BUSY;
       if (stream_result == KORE_RESULT_OK) {
-        net_send_queue(stream->connection, "0\r\n\r\n", 5u);
+        if (stream->chunked) {
+          net_send_queue(stream->connection, "0\r\n\r\n", 5u);
+        }
+        if (!(stream->connection->flags & CONN_CLOSE_EMPTY)) {
+          http_start_recv(stream->connection);
+        }
       } else {
         kore_connection_disconnect(stream->connection);
       }

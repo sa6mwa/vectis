@@ -2429,6 +2429,128 @@ static size_t websocket_recv_text(int fd, char *out, size_t out_size) {
   return len;
 }
 
+static vectis_status framing_stream_handler(vectis_app *app,
+                                            vectis_request *request,
+                                            vectis_response *response,
+                                            void *userdata,
+                                            vectis_error *error) {
+  static char payload[20000];
+  lc_source *source;
+  const char *path;
+  size_t size;
+  int status;
+  (void)app;
+  (void)userdata;
+  path = vectis_request_path(request);
+  status = strstr(path, "204") != NULL   ? 204
+           : strstr(path, "304") != NULL ? 304
+                                         : 200;
+  size = strstr(path, "empty") != NULL ? 0u : sizeof(payload);
+  memset(payload, 'x', sizeof(payload));
+  assert(lc_source_from_memory(payload, size, &source, NULL) == LC_OK);
+  return vectis_response_stream_source(response, status, "text/plain", source,
+                                       error);
+}
+
+static size_t framing_read_headers(int fd, char *buffer, size_t capacity) {
+  size_t used;
+  used = 0u;
+  while (used + 1u < capacity) {
+    assert(socket_recv_some(fd, buffer + used, 1u, 2000L) == 1);
+    buffer[++used] = '\0';
+    if (used >= 4u && strcmp(buffer + used - 4u, "\r\n\r\n") == 0)
+      return used;
+  }
+  assert(0);
+  return 0u;
+}
+
+static void assert_stream_framing(void) {
+  const char *paths[] = {"/framing-empty", "/framing-204", "/framing-304",
+                         "/framing-data"};
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_route_config route;
+  vectis_error error;
+  unsigned short port;
+  int reserved;
+  char request[256];
+  char headers[4096];
+  char body[22000];
+  size_t i;
+  size_t used;
+  ssize_t nread;
+  struct timeval timeout;
+  int fd;
+  reserved = reserve_loopback_port(&port);
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = port;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  for (i = 0u; i < 4u; ++i) {
+    route =
+        vectis_route(VECTIS_HTTP_GET, paths[i], framing_stream_handler, NULL);
+    assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
+  }
+  (void)close(reserved);
+  assert(app->start(app, &error) == VECTIS_OK);
+  for (i = 0u; i < 3u; ++i) {
+    fd = connect_local(port);
+    (void)snprintf(request, sizeof(request),
+                   "GET %s HTTP/1.1\r\nHost: localhost\r\n\r\n", paths[i]);
+    socket_send_all(fd, request, strlen(request));
+    framing_read_headers(fd, headers, sizeof(headers));
+    assert(strncmp(headers, "HTTP/1.1 ", 9u) == 0);
+    assert(strstr(headers, i == 0u   ? " 200 "
+                           : i == 1u ? " 204 "
+                                     : " 304 ") != NULL);
+    if (i == 0u) {
+      websocket_read_exact(fd, (unsigned char *)body, 5u);
+      assert(memcmp(body, "0\r\n\r\n", 5u) == 0);
+    } else {
+      assert(strstr(headers, "transfer-encoding:") == NULL);
+    }
+    socket_send_all(
+        fd, "GET /framing-empty HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        strlen("GET /framing-empty HTTP/1.1\r\nHost: localhost\r\n\r\n"));
+    framing_read_headers(fd, headers, sizeof(headers));
+    assert(strncmp(headers, "HTTP/1.1 200 ", 13u) == 0);
+    websocket_read_exact(fd, (unsigned char *)body, 5u);
+    assert(memcmp(body, "0\r\n\r\n", 5u) == 0);
+    (void)close(fd);
+  }
+  /* Exercise several source reads and actual EOF, not just a first chunk. */
+  for (i = 0u; i < 2u; ++i) {
+    fd = connect_local(port);
+    timeout.tv_sec = 2;
+    timeout.tv_usec = 0;
+    assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
+           0);
+    (void)snprintf(request, sizeof(request),
+                   "GET %s HTTP/1.0\r\nHost: localhost\r\n\r\n",
+                   i == 0u ? "/framing-data" : "/framing-empty");
+    socket_send_all(fd, request, strlen(request));
+    framing_read_headers(fd, headers, sizeof(headers));
+    assert(strncmp(headers, "HTTP/1.0 200 ", 13u) == 0);
+    assert(strstr(headers, "transfer-encoding:") == NULL);
+    assert(strstr(headers, "content-length:") == NULL);
+    used = 0u;
+    while ((nread = recv(fd, body + used, sizeof(body) - used, 0)) > 0) {
+      used += (size_t)nread;
+      assert(used < sizeof(body));
+    }
+    assert(nread == 0);
+    assert(used == (i == 0u ? 20000u : 0u));
+    while (used > 0u)
+      assert(body[--used] == 'x');
+    (void)close(fd);
+  }
+  assert(app->stop(app, &error) == VECTIS_OK);
+  app->close(app);
+}
+
 static void assert_websocket_echo(unsigned short port) {
   const char *request;
   char response[2048];
@@ -4279,6 +4401,7 @@ static void assert_kore_smoke(void) {
       &failing_stream_response, &error);
   assert(status != VECTIS_OK);
   vectis_http_response_cleanup(&failing_stream_response);
+  assert_stream_framing();
 
   status = vectis_http_get(
       &http, format_loopback_http_url(url, sizeof(url), port, "/state-error"),
