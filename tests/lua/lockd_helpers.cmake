@@ -14,6 +14,29 @@ local acked_messages = 0
 local saved_value
 local loaded_value = { type = "account.loaded", id = "1001" }
 local dequeued_value = { type = "order.created", id = "1001" }
+local userdata_serial = 0
+local function userdata_handle(methods)
+  userdata_serial = userdata_serial + 1
+  local path = "lockd-handle-" .. userdata_serial
+  local handle = assert(io.open(path, "w+"))
+  assert(os.remove(path))
+  local original = getmetatable(handle)
+  local close = methods.close
+  methods.close = function(self)
+    debug.setmetatable(self, original)
+    assert(io.close(self))
+    close(self)
+  end
+  debug.setmetatable(handle, {
+    __index = methods,
+    __gc = function(self)
+      debug.setmetatable(self, original)
+      original.__gc(self)
+    end,
+  })
+  assert(type(handle) == "userdata")
+  return handle
+end
 
 package.loaded.vectis = {
   ERR_STATE = 3,
@@ -149,7 +172,7 @@ package.loaded.lockdc = {
       function lease:get_attachment()
         return "attachment"
       end
-      return lease
+      return userdata_handle(lease)
     end
     function client:dequeue(req)
       dequeued_req = req
@@ -179,7 +202,7 @@ package.loaded.lockdc = {
       function message:close()
         closed_messages = closed_messages + 1
       end
-      return message
+      return userdata_handle(message)
     end
     function client:close()
       closed_clients = closed_clients + 1

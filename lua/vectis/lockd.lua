@@ -114,7 +114,8 @@ local function json_request(req)
 end
 
 local function close_handle(handle)
-  if type(handle) == "table" and type(handle.close) == "function" then
+  if (type(handle) == "table" or type(handle) == "userdata") and
+      type(handle.close) == "function" then
     handle:close()
   end
 end
