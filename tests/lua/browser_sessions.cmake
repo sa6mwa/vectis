@@ -223,7 +223,10 @@ assert(browser_login.ok == true, browser_login.error)
 assert(browser_login.status == 303)
 assert(browser_login.headers:lower():find("location: /", 1, true))
 local set_cookie = assert(browser_login.headers:match(
-    "[Ss]et%-[Cc]ookie:%s*([^\r\n]+)"), browser_login.headers)
+    "[Ss]et%-[Cc]ookie:%s*(lua_browser_session=[^\r\n]+)"), browser_login.headers)
+local cleared_workflow = assert(browser_login.headers:match(
+    "[Ss]et%-[Cc]ookie:%s*(vectis_auth_flow_[^\r\n]+)"), browser_login.headers)
+assert(cleared_workflow:find("Max-Age=0", 1, true), cleared_workflow)
 assert(set_cookie:find("HttpOnly", 1, true))
 assert(set_cookie:find("Secure", 1, true))
 assert(set_cookie:find("SameSite=Strict", 1, true))

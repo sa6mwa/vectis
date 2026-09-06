@@ -1391,6 +1391,34 @@ static void assert_request_response_surface(void) {
   vectis_body_spill_result_cleanup(&spill_result);
 
   status = vectis_response_text(response, 201, "text/plain", text, &error);
+  {
+    const char *bad_types[] = {"text/plain\r\nX-Injected: yes",
+                               "text/plain\nX: yes", "text/plain\rX: yes"};
+    size_t bad_index;
+    vectis_bytes probe_body;
+    lc_source *probe_source;
+    probe_body.data = "safe";
+    probe_body.size = 4u;
+    for (bad_index = 0u; bad_index < 3u; ++bad_index) {
+      assert(vectis_response_text(response, 200, bad_types[bad_index], "safe",
+                                  &error) == VECTIS_ERR_INVALID);
+      assert(vectis_response_bytes(response, 200, bad_types[bad_index],
+                                   probe_body, &error) == VECTIS_ERR_INVALID);
+      assert(vectis_response_file(response, 200, bad_types[bad_index],
+                                  "/unused", &error) == VECTIS_ERR_INVALID);
+      assert(lc_source_from_memory("safe", 4u, &probe_source, NULL) == LC_OK);
+      assert(vectis_response_stream_source(response, 200, bad_types[bad_index],
+                                           probe_source,
+                                           &error) == VECTIS_ERR_INVALID);
+      assert(vectis_response_source(response, 200, bad_types[bad_index],
+                                    probe_source,
+                                    &error) == VECTIS_ERR_INVALID);
+      lc_source_close(probe_source);
+      assert(strcmp(vectis_internal_response_content_type(response),
+                    "text/plain") == 0);
+      assert(vectis_internal_response_status_code(response) == 201);
+    }
+  }
   assert(status == VECTIS_OK);
   body = vectis_internal_response_body(response);
   assert(vectis_internal_response_status_code(response) == 201);

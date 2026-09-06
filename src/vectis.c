@@ -35868,9 +35868,10 @@ vectis_status vectis_response_text(vectis_response *response, int status_code,
     vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP status code is invalid");
     return VECTIS_ERR_INVALID;
   }
-  if (content_type == NULL || content_type[0] == '\0') {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "response content_type is required");
+  if (!vectis_header_value_valid(content_type) || content_type[0] == '\0') {
+    vectis_set_error(
+        error, VECTIS_ERR_INVALID,
+        "response content_type is required and must be a valid header value");
     return VECTIS_ERR_INVALID;
   }
   if (text == NULL) {
@@ -35897,9 +35898,10 @@ vectis_status vectis_response_bytes(vectis_response *response, int status_code,
     vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP status code is invalid");
     return VECTIS_ERR_INVALID;
   }
-  if (content_type == NULL || content_type[0] == '\0') {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "response content_type is required");
+  if (!vectis_header_value_valid(content_type) || content_type[0] == '\0') {
+    vectis_set_error(
+        error, VECTIS_ERR_INVALID,
+        "response content_type is required and must be a valid header value");
     return VECTIS_ERR_INVALID;
   }
   if (body.data == NULL && body.size > 0u) {
@@ -35946,9 +35948,10 @@ vectis_status vectis_response_file(vectis_response *response, int status_code,
     vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP status code is invalid");
     return VECTIS_ERR_INVALID;
   }
-  if (content_type == NULL || content_type[0] == '\0') {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "response content_type is required");
+  if (!vectis_header_value_valid(content_type) || content_type[0] == '\0') {
+    vectis_set_error(
+        error, VECTIS_ERR_INVALID,
+        "response content_type is required and must be a valid header value");
     return VECTIS_ERR_INVALID;
   }
   if (path == NULL || path[0] == '\0') {
@@ -35998,10 +36001,14 @@ static vectis_status vectis_response_file_owned(vectis_response *response,
     vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP status code is invalid");
     return VECTIS_ERR_INVALID;
   }
-  if (content_type == NULL || content_type[0] == '\0') {
+  if (!vectis_header_value_valid(content_type) || content_type[0] == '\0') {
+    if (temporary && path != NULL) {
+      (void)unlink(path);
+    }
     free(path);
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "response content type is required");
+    vectis_set_error(
+        error, VECTIS_ERR_INVALID,
+        "response content type is required and must be a valid header value");
     return VECTIS_ERR_INVALID;
   }
   if (path == NULL || path[0] == '\0') {
@@ -36095,9 +36102,10 @@ vectis_status vectis_response_stream_source(vectis_response *response,
     vectis_set_error(error, VECTIS_ERR_INVALID, "HTTP status code is invalid");
     return VECTIS_ERR_INVALID;
   }
-  if (content_type == NULL || content_type[0] == '\0') {
-    vectis_set_error(error, VECTIS_ERR_INVALID,
-                     "response content type is required");
+  if (!vectis_header_value_valid(content_type) || content_type[0] == '\0') {
+    vectis_set_error(
+        error, VECTIS_ERR_INVALID,
+        "response content type is required and must be a valid header value");
     return VECTIS_ERR_INVALID;
   }
   if (source == NULL) {
@@ -36130,6 +36138,12 @@ vectis_status vectis_response_source(vectis_response *response, int status_code,
   char *path;
   size_t nread;
 
+  if (!vectis_header_value_valid(content_type) || content_type[0] == '\0') {
+    vectis_set_error(
+        error, VECTIS_ERR_INVALID,
+        "response content type is required and must be a valid header value");
+    return VECTIS_ERR_INVALID;
+  }
   if (source == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "response source is required");
     return VECTIS_ERR_INVALID;

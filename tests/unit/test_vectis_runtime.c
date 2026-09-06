@@ -2448,6 +2448,11 @@ static vectis_status framing_stream_handler(vectis_app *app,
   size = strstr(path, "empty") != NULL ? 0u : sizeof(payload);
   memset(payload, 'x', sizeof(payload));
   assert(lc_source_from_memory(payload, size, &source, NULL) == LC_OK);
+  assert(vectis_response_header(response, "Set-Cookie",
+                                "workflow=; Max-Age=0; Path=/",
+                                error) == VECTIS_OK);
+  assert(vectis_response_header(response, "set-cookie",
+                                "session=present; Path=/", error) == VECTIS_OK);
   return vectis_response_stream_source(response, status, "text/plain", source,
                                        error);
 }
@@ -2502,6 +2507,9 @@ static void assert_stream_framing(void) {
                    "GET %s HTTP/1.1\r\nHost: localhost\r\n\r\n", paths[i]);
     socket_send_all(fd, request, strlen(request));
     framing_read_headers(fd, headers, sizeof(headers));
+    assert(strstr(headers, "Set-Cookie: workflow=; Max-Age=0; Path=/\r\n") !=
+           NULL);
+    assert(strstr(headers, "set-cookie: session=present; Path=/\r\n") != NULL);
     assert(strncmp(headers, "HTTP/1.1 ", 9u) == 0);
     assert(strstr(headers, i == 0u   ? " 200 "
                            : i == 1u ? " 204 "

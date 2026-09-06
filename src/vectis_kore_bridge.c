@@ -2898,14 +2898,26 @@ static void vectis_kore_send_response(vectis_app *app, struct http_request *req,
   int status;
   int emitted_status;
   size_t i;
+  struct http_header *cookie_header;
+  const char *header_name;
+  const char *header_value;
 
   status = vectis_internal_response_status_code(response);
   if (status == 0) {
     status = 204;
   }
   for (i = 0u; i < vectis_internal_response_header_count(response); ++i) {
-    http_response_header(req, vectis_internal_response_header_name(response, i),
-                         vectis_internal_response_header_value(response, i));
+    header_name = vectis_internal_response_header_name(response, i);
+    header_value = vectis_internal_response_header_value(response, i);
+    if (strcasecmp(header_name, "set-cookie") == 0) {
+      /* Use Kore's header pool so request teardown owns each separate field. */
+      cookie_header = kore_pool_get(&http_header_pool);
+      cookie_header->header = kore_strdup(header_name);
+      cookie_header->value = kore_strdup(header_value);
+      TAILQ_INSERT_TAIL(&req->resp_headers, cookie_header, list);
+    } else {
+      http_response_header(req, header_name, header_value);
+    }
   }
   content_type = vectis_internal_response_content_type(response);
   if (content_type != NULL) {
