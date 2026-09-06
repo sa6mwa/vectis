@@ -2470,6 +2470,136 @@ static size_t framing_read_headers(int fd, char *buffer, size_t capacity) {
   return 0u;
 }
 
+static vectis_status upload_redirect_handler(vectis_app *app,
+                                             vectis_request *request,
+                                             vectis_response *response,
+                                             void *userdata,
+                                             vectis_error *error) {
+  vectis_mutable_bytes body;
+  vectis_bytes bytes;
+  vectis_status status;
+  const char *path;
+  size_t i;
+  (void)app;
+  (void)userdata;
+  memset(&body, 0, sizeof(body));
+  assert(vectis_request_body_read_all(request, &body, error) == VECTIS_OK);
+  assert(body.size == 20000u);
+  for (i = 0u; i < body.size; ++i) {
+    assert(((unsigned char *)body.data)[i] == (unsigned char)(i % 251u));
+  }
+  path = vectis_request_path(request);
+  if (strcmp(path, "/received") != 0) {
+    assert(vectis_response_header(response, "location", "/received", error) ==
+           VECTIS_OK);
+    status = vectis_response_status(
+        response, strcmp(path, "/307") == 0 ? 307 : 308, error);
+  } else {
+    assert(
+        vectis_response_header(
+            response, "x-upload-method",
+            vectis_request_method(request) == VECTIS_HTTP_PUT ? "PUT" : "PATCH",
+            error) == VECTIS_OK);
+    bytes.data = body.data;
+    bytes.size = body.size;
+    status = vectis_response_bytes(response, 200, "application/octet-stream",
+                                   bytes, error);
+  }
+  vectis_mutable_bytes_cleanup(&body);
+  return status;
+}
+
+static void assert_upload_redirect_replay(void) {
+  const char *paths[] = {"/307", "/308", "/received"};
+  const char *headers[] = {"Expect:"};
+  vectis_app_config config;
+  vectis_app *app;
+  vectis_route_config route;
+  vectis_error error;
+  vectis_http_client_config http_config;
+  vectis_http_client *client;
+  vectis_http_request request;
+  vectis_http_response response;
+  unsigned short port;
+  int reserved;
+  unsigned char payload[20000];
+  char url[256];
+  char filename[] = "redirect-upload.XXXXXX";
+  FILE *file;
+  int file_fd;
+  size_t i;
+  int method;
+  int from_file;
+  int redirect;
+
+  for (i = 0u; i < sizeof(payload); ++i)
+    payload[i] = (unsigned char)(i % 251u);
+  file_fd = mkstemp(filename);
+  assert(file_fd >= 0);
+  file = fdopen(file_fd, "wb");
+  assert(file != NULL);
+  assert(fwrite(payload, 1u, sizeof(payload), file) == sizeof(payload));
+  assert(fclose(file) == 0);
+  reserved = reserve_loopback_port(&port);
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  config.tls.bind = "127.0.0.1";
+  config.tls.port = port;
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  for (i = 0u; i < 3u; ++i) {
+    route = vectis_route_methods(VECTIS_HTTP_METHODS_PUT |
+                                     VECTIS_HTTP_METHODS_PATCH,
+                                 paths[i], upload_redirect_handler, NULL);
+    route.body = vectis_body_buffered_max(sizeof(payload));
+    assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
+  }
+  (void)close(reserved);
+  assert(app->start(app, &error) == VECTIS_OK);
+  vectis_http_client_config_init(&http_config);
+  http_config.timeout_ms = 5000L;
+  assert(vectis_http_client_new(&http_config, &client, &error) == VECTIS_OK);
+  assert(client != NULL);
+  for (method = 0; method < 2; ++method) {
+    for (from_file = 0; from_file < 2; ++from_file) {
+      for (redirect = 0; redirect < 2; ++redirect) {
+        vectis_http_request_init(&request);
+        request.method = method == 0 ? VECTIS_HTTP_PUT : VECTIS_HTTP_PATCH;
+        request.url =
+            format_loopback_http_url(url, sizeof(url), port, paths[redirect]);
+        request.headers = headers;
+        request.header_count = 1u;
+        request.content_type = "application/octet-stream";
+        if (from_file)
+          request.body_path = filename;
+        else {
+          request.body = payload;
+          request.body_size = sizeof(payload);
+        }
+        memset(&response, 0, sizeof(response));
+        assert(vectis_http_client_execute(client, &request, &response,
+                                          &error) == VECTIS_OK);
+        if (response.status_code != 200L)
+          fprintf(stderr,
+                  "upload replay method=%d file=%d redirect=%d status=%ld "
+                  "body=%.*s\n",
+                  method, from_file, redirect, response.status_code,
+                  (int)response.body_size, (const char *)response.body);
+        assert(response.status_code == 200L);
+        assert(response.body_size == sizeof(payload));
+        assert(memcmp(response.body, payload, sizeof(payload)) == 0);
+        assert(strcmp(vectis_http_response_header(&response, "x-upload-method"),
+                      method == 0 ? "PUT" : "PATCH") == 0);
+        vectis_http_response_cleanup(&response);
+      }
+    }
+  }
+  vectis_http_client_close(client);
+  assert(app->stop(app, &error) == VECTIS_OK);
+  app->close(app);
+  assert(unlink(filename) == 0);
+}
+
 static void assert_stream_framing(void) {
   const char *paths[] = {"/framing-empty", "/framing-204", "/framing-304",
                          "/framing-data"};
@@ -4410,6 +4540,7 @@ static void assert_kore_smoke(void) {
   assert(status != VECTIS_OK);
   vectis_http_response_cleanup(&failing_stream_response);
   assert_stream_framing();
+  assert_upload_redirect_replay();
 
   status = vectis_http_get(
       &http, format_loopback_http_url(url, sizeof(url), port, "/state-error"),

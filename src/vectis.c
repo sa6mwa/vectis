@@ -37408,6 +37408,26 @@ static size_t vectis_curl_write_stream(char *ptr, size_t size, size_t nmemb,
   return bytes;
 }
 
+static int vectis_curl_rewind_file(void *userdata, curl_off_t offset,
+                                   int origin) {
+  if (userdata == NULL || origin != SEEK_SET || offset != 0) {
+    return CURL_SEEKFUNC_CANTSEEK;
+  }
+  return fseek((FILE *)userdata, 0L, SEEK_SET) == 0 ? CURL_SEEKFUNC_OK
+                                                    : CURL_SEEKFUNC_FAIL;
+}
+
+static int vectis_curl_rewind_memory(void *userdata, curl_off_t offset,
+                                     int origin) {
+  vectis_curl_request_body *body;
+  body = (vectis_curl_request_body *)userdata;
+  if (body == NULL || origin != SEEK_SET || offset != 0) {
+    return CURL_SEEKFUNC_CANTSEEK;
+  }
+  body->offset = 0u;
+  return CURL_SEEKFUNC_OK;
+}
+
 static size_t vectis_curl_read_file(char *ptr, size_t size, size_t nmemb,
                                     void *userdata) {
   return fread(ptr, size, nmemb, (FILE *)userdata);
@@ -38292,6 +38312,8 @@ vectis_http_execute_once(const vectis_http_client_config *client,
     }
     (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION, vectis_curl_read_file);
     (void)curl_easy_setopt(curl, CURLOPT_READDATA, request_body.file);
+    (void)curl_easy_setopt(curl, CURLOPT_SEEKFUNCTION, vectis_curl_rewind_file);
+    (void)curl_easy_setopt(curl, CURLOPT_SEEKDATA, request_body.file);
     if (request_body.file_size >= 0L) {
       if (request->method == VECTIS_HTTP_POST) {
         (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE,
@@ -38330,6 +38352,9 @@ vectis_http_execute_once(const vectis_http_client_config *client,
       (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION,
                              vectis_curl_read_memory);
       (void)curl_easy_setopt(curl, CURLOPT_READDATA, &request_body);
+      (void)curl_easy_setopt(curl, CURLOPT_SEEKFUNCTION,
+                             vectis_curl_rewind_memory);
+      (void)curl_easy_setopt(curl, CURLOPT_SEEKDATA, &request_body);
       (void)curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE,
                              (curl_off_t)request_body.size);
     }
