@@ -1,6 +1,6 @@
 # Lockd-Backed Authentication and Self-Service Onboarding
 
-Status: implementation authority; unblocked by liblockdc 0.14.0, which
+Status: implementation authority; unblocked by liblockdc 0.15.0, which
 provides transactional inbox/outbox operations.
 
 ## Purpose
@@ -235,7 +235,7 @@ and error diagnostics direct operators to the common Lockd/Pouch options.
 
 ## Transactional delivery dependency
 
-The implementation requires liblockdc 0.14.0 or later for transactional
+The implementation requires liblockdc 0.15.0 or later for transactional
 inbox/outbox operations. It must use that API directly; Vectis must not
 implement an equivalent queue, lease convention, polling format, or retry
 protocol on top of ordinary Lockd records.

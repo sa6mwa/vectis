@@ -1865,7 +1865,7 @@ if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^libpid0_version=0\.4\.2$'; 
 fi
 for expected in \
   '^system_sha256=0bbb1cbaf60b0a94fb5a6b3756123088b45e2bef9e38079038f22e3c07febb2e$' \
-  '^liblockdc_sha256=1d33b654e913df65227ccc36890b88f6aa056448c89bbccfaaa49d9402877f6c$' \
+  '^liblockdc_sha256=cc942533bd845b04885052047342f37e16ea898a33ef6f1aa5492b09ac69ebc2$' \
   '^lonejson_sha256=e04f80b907d92f7e38f825fbd339297e85372fc1ce110abb9a93715ee450ece3$' \
   '^pslog_sha256=7981ce7e60f6f1e144042e7a9192bb661472756ae34336fb0c2ed8316b31945f$' \
   '^cai_sha256=f73696bf4b79537e5ebe307a6e1ce5a28b455b557b6c6fbfcd92f9e37046b0c9$' \
