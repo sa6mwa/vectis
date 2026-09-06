@@ -186,6 +186,129 @@ static void test_destination_auth(const vectis_webdav_config *storage) {
   app->close(app);
 }
 
+static void test_special_file(const vectis_webdav_config *storage) {
+  char path[4096];
+  pid_t child;
+  int result;
+  vectis_webdav_entry entry;
+  (void)snprintf(path, sizeof(path), "%s/fifo", storage->root_dir);
+  expect(mkfifo(path, 0600) == 0, "create FIFO without writer");
+  child = fork();
+  expect(child >= 0, "fork bounded FIFO lookup");
+  if (child == 0) {
+    alarm(2u);
+    _exit(vectis_webdav_lookup(storage, "/fifo", &entry) == VECTIS_WEBDAV_OK
+              ? 1
+              : 0);
+  }
+  if (child > 0) {
+    expect(waitpid(child, &result, 0) == child && WIFEXITED(result) &&
+               WEXITSTATUS(result) == 0,
+           "FIFO lookup rejects special file without blocking");
+  }
+  expect(unlink(path) == 0, "remove test FIFO");
+}
+
+static void test_destination_authority(const vectis_webdav_config *storage) {
+  static const char *destinations[] = {"https://other-host/dav/target",
+                                       "https://local:444/dav/target",
+                                       "ftp://local/dav/target",
+                                       "//other-host/dav/target",
+                                       "https://user@local/dav/target",
+                                       "https://local?x/dav/target",
+                                       "https://LOCAL:443/dav/target",
+                                       "https://local/dav/target",
+                                       "/dav/target"};
+  vectis_app_config config;
+  vectis_webdav_mount_config mount;
+  vectis_app *app;
+  vectis_request *request;
+  vectis_response *response;
+  vectis_error error;
+  vectis_webdav_entry entry;
+  vectis_http_method method;
+  unsigned char *body;
+  size_t size;
+  size_t i;
+  size_t h;
+  int move;
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  app = vectis_app_new(&config, &error);
+  expect(app != NULL, "create authority regression app");
+  if (app == NULL)
+    return;
+  vectis_webdav_mount_config_init(&mount);
+  mount.path_prefix = "/dav";
+  mount.storage = *storage;
+  mount.auth_required = 0;
+  expect(app->webdav(app, &mount, &error) == VECTIS_OK,
+         "mount authority regression storage");
+  for (move = 0; move < 2; ++move) {
+    method = move ? VECTIS_HTTP_MOVE : VECTIS_HTTP_COPY;
+    for (i = 0u; i < sizeof(destinations) / sizeof(destinations[0]); ++i) {
+      expect(vectis_webdav_put(storage, "/source", (const unsigned char *)"new",
+                               3u) == VECTIS_WEBDAV_OK,
+             "create transfer source");
+      expect(vectis_webdav_put(storage, "/target", (const unsigned char *)"old",
+                               3u) == VECTIS_WEBDAV_OK,
+             "create transfer target");
+      request = vectis_internal_request_new(&error);
+      response = vectis_internal_response_new(&error);
+      vectis_internal_request_set_method(request, method);
+      expect(vectis_internal_request_set_path(request, "/dav/source", &error) ==
+                 VECTIS_OK,
+             "set authority source path");
+      expect(vectis_internal_request_add_header(request, "host", "local",
+                                                &error) == VECTIS_OK,
+             "set request authority");
+      expect(vectis_internal_request_add_header(
+                 request, "destination", destinations[i], &error) == VECTIS_OK,
+             "set transfer destination");
+      expect(vectis_internal_dispatch_route(app, method, "/dav/source", request,
+                                            response, &error) == VECTIS_OK,
+             "dispatch authority transfer");
+      expect(vectis_internal_response_status_code(response) ==
+                 (i < 6u ? 400 : 201),
+             "reject unsupported destination and accept local authority");
+      body = NULL;
+      size = 0u;
+      expect(vectis_webdav_read(storage, "/target", &body, &size, &entry) ==
+                     VECTIS_WEBDAV_OK &&
+                 size == 3u && memcmp(body, i < 6u ? "old" : "new", 3u) == 0,
+             "destination reflects only accepted operations");
+      free(body);
+      if (i < 6u)
+        expect(vectis_webdav_lookup(storage, "/source", &entry) ==
+                   VECTIS_WEBDAV_OK,
+               "rejected MOVE preserves source");
+      vectis_internal_request_free(request);
+      vectis_internal_response_free(response);
+    }
+  }
+  for (move = 0; move < 2; ++move) {
+    method = move ? VECTIS_HTTP_HEAD : VECTIS_HTTP_GET;
+    request = vectis_internal_request_new(&error);
+    response = vectis_internal_response_new(&error);
+    vectis_internal_request_set_method(request, method);
+    expect(vectis_internal_request_set_path(request, "/dav/target", &error) ==
+               VECTIS_OK,
+           "set retrieval path");
+    expect(vectis_internal_dispatch_route(app, method, "/dav/target", request,
+                                          response, &error) == VECTIS_OK &&
+               vectis_internal_response_status_code(response) == 200,
+           "retrieve regular file");
+    for (h = 0u; h < vectis_internal_response_header_count(response); ++h) {
+      expect(strcmp(vectis_internal_response_header_name(response, h),
+                    "etag") != 0,
+             "omit unavailable ETag on GET and HEAD");
+    }
+    vectis_internal_request_free(request);
+    vectis_internal_response_free(response);
+  }
+  app->close(app);
+}
+
 static void test_failed_move(const vectis_webdav_config *storage) {
   char parent[4096];
   unsigned char *body;
@@ -431,6 +554,8 @@ int main(void) {
          "allow permission regression child access");
   test_failed_move(&direct_config);
   test_destination_auth(&direct_config);
+  test_special_file(&direct_config);
+  test_destination_authority(&direct_config);
   cstatus = vectis_webdav_content_dir(&direct_config, content_dir, &error);
   expect(cstatus == VECTIS_OK && strcmp(content_dir, root_dir) == 0,
          "reports direct WebDAV root as content directory");

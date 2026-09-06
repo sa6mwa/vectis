@@ -2143,6 +2143,14 @@ static vectis_status vectis_kore_copy_headers(struct http_request *req,
   struct http_header *header;
   vectis_status status;
 
+  /* Kore keeps Host outside req_headers, including its original port. */
+  if (req->host != NULL) {
+    status = vectis_internal_request_add_header(request, "host", req->host,
+                                                 error);
+    if (status != VECTIS_OK) {
+      return status;
+    }
+  }
   TAILQ_FOREACH(header, &req->req_headers, list) {
     if (header->header == NULL || header->header[0] == '\0') {
       continue;

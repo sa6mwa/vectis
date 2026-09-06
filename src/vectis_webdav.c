@@ -801,7 +801,7 @@ vectis_webdav_direct_open_existing(const vectis_webdav_config *config,
       return -1;
     }
     fd = openat(parent_fd, leaf,
-                O_RDONLY | O_NOFOLLOW | O_CLOEXEC |
+                O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC |
                     (want_dir ? O_DIRECTORY : 0));
     vectis_webdav_fd_close(&parent_fd);
   }

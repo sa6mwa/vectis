@@ -15798,11 +15798,17 @@ vectis_webdav_propfind(const vectis_webdav_route_data *data,
 
 static int
 vectis_webdav_destination_path(const vectis_webdav_route_data *data,
+                               vectis_request *request,
                                const char *destination,
                                char out[VECTIS_WEBDAV_PATH_MAX + 1u]) {
   const char *path;
   const char *scheme;
   const char *end;
+  const char *host;
+  const char *default_port;
+  size_t authority_length;
+  size_t host_length;
+  size_t default_length;
   char request_path[VECTIS_WEBDAV_PATH_MAX + 1u];
   size_t length;
 
@@ -15812,10 +15818,44 @@ vectis_webdav_destination_path(const vectis_webdav_route_data *data,
   path = destination;
   scheme = strstr(destination, "://");
   if (scheme != NULL) {
+    if ((size_t)(scheme - destination) == 4u &&
+        strncasecmp(destination, "http", 4u) == 0) {
+      default_port = ":80";
+    } else if ((size_t)(scheme - destination) == 5u &&
+               strncasecmp(destination, "https", 5u) == 0) {
+      default_port = ":443";
+    } else {
+      return 0;
+    }
     path = strchr(scheme + 3u, '/');
     if (path == NULL) {
       return 0;
     }
+    host = vectis_request_header(request, "host");
+    if (host == NULL || host[0] == '\0') {
+      return 0;
+    }
+    authority_length = (size_t)(path - (scheme + 3u));
+    host_length = strlen(host);
+    if (strcspn(scheme + 3u, "@\\?# \t\r\n") < authority_length ||
+        strcspn(host, "@\\/?# \t\r\n") < host_length) {
+      return 0;
+    }
+    default_length = strlen(default_port);
+    if (authority_length > default_length &&
+        memcmp(path - default_length, default_port, default_length) == 0) {
+      authority_length -= default_length;
+    }
+    if (host_length > default_length &&
+        strcmp(host + host_length - default_length, default_port) == 0) {
+      host_length -= default_length;
+    }
+    if (authority_length == 0u || authority_length != host_length ||
+        strncasecmp(scheme + 3u, host, host_length) != 0) {
+      return 0;
+    }
+  } else if (path[0] != '/' || path[1] == '/') {
+    return 0;
   }
   end = strpbrk(path, "?#");
   length = end != NULL ? (size_t)(end - path) : strlen(path);
@@ -16130,10 +16170,6 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
         entry.kind != VECTIS_WEBDAV_ENTRY_FILE) {
       return vectis_response_status(response, 404, error);
     }
-    if (vectis_response_header(response, "etag", entry.etag, error) !=
-        VECTIS_OK) {
-      return error != NULL ? error->code : VECTIS_ERR_INVALID;
-    }
     return vectis_webdav_file_response(data, request, response, resource,
                                        &entry, error);
   }
@@ -16166,7 +16202,7 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
   }
   if (method == VECTIS_HTTP_COPY || method == VECTIS_HTTP_MOVE) {
     destination = vectis_request_header(request, "destination");
-    if (!vectis_webdav_destination_path(data, destination, target)) {
+    if (!vectis_webdav_destination_path(data, request, destination, target)) {
       return vectis_response_status(response, 400, error);
     }
     if (vectis_webdav_authenticate_request(data, request, method, target,
