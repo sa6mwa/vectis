@@ -222,6 +222,7 @@ static int vectis_webdav_touch_atomic(const char *path) {
   char temporary[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   int fd;
   int written;
+  int close_result;
 
   if (!vectis_webdav_parent_dir(path, parent, sizeof(parent)) ||
       !vectis_webdav_mkdir_p(parent)) {
@@ -236,9 +237,14 @@ static int vectis_webdav_touch_atomic(const char *path) {
   if (fd == -1) {
     return 0;
   }
-  if (fchmod(fd, 0600) == -1 || fsync(fd) == -1 || close(fd) == -1 ||
-      rename(temporary, path) == -1) {
+  if (fchmod(fd, 0600) == -1 || fsync(fd) == -1) {
     (void)close(fd);
+    (void)unlink(temporary);
+    return 0;
+  }
+  close_result = close(fd);
+  fd = -1;
+  if (close_result == -1 || rename(temporary, path) == -1) {
     (void)unlink(temporary);
     return 0;
   }
@@ -254,6 +260,7 @@ static int vectis_webdav_write_atomic(const char *path,
   ssize_t written_bytes;
   int fd;
   int written;
+  int close_result;
 
   if ((body == NULL && body_size != 0u) ||
       !vectis_webdav_parent_dir(path, parent, sizeof(parent)) ||
@@ -284,8 +291,14 @@ static int vectis_webdav_write_atomic(const char *path,
     }
     offset += (size_t)written_bytes;
   }
-  if (fsync(fd) == -1 || close(fd) == -1 || rename(temporary, path) == -1) {
+  if (fsync(fd) == -1) {
     (void)close(fd);
+    (void)unlink(temporary);
+    return 0;
+  }
+  close_result = close(fd);
+  fd = -1;
+  if (close_result == -1 || rename(temporary, path) == -1) {
     (void)unlink(temporary);
     return 0;
   }
@@ -881,6 +894,7 @@ static int vectis_webdav_write_atomic_at(int parent_fd, const char *leaf,
   int fd;
   int i;
   int n;
+  int close_result;
 
   if (parent_fd < 0 || leaf == NULL || (body == NULL && body_size != 0u)) {
     return 0;
@@ -911,9 +925,15 @@ static int vectis_webdav_write_atomic_at(int parent_fd, const char *leaf,
     }
     offset += (size_t)written_bytes;
   }
-  if (fsync(fd) != 0 || close(fd) != 0 ||
-      renameat(parent_fd, temporary, parent_fd, leaf) != 0) {
+  if (fsync(fd) != 0) {
     (void)close(fd);
+    (void)unlinkat(parent_fd, temporary, 0);
+    return 0;
+  }
+  close_result = close(fd);
+  fd = -1;
+  if (close_result != 0 ||
+      renameat(parent_fd, temporary, parent_fd, leaf) != 0) {
     (void)unlinkat(parent_fd, temporary, 0);
     return 0;
   }
