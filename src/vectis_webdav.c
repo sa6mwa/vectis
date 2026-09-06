@@ -1198,10 +1198,7 @@ static vectis_webdav_status vectis_webdav_direct_copy_or_move_fs(
         config->max_file_bytes);
     if (ok && remove_source) {
       ok = vectis_webdav_direct_remove_tree_at(source_parent_fd, source_leaf);
-      if (!ok) {
-        (void)vectis_webdav_direct_remove_tree_at(destination_parent_fd,
-                                                  destination_leaf);
-      }
+      /* Removal may already have deleted source children. Keep the copy. */
     } else if (!ok) {
       (void)vectis_webdav_direct_remove_tree_at(destination_parent_fd,
                                                 destination_leaf);
@@ -1266,13 +1263,17 @@ static vectis_webdav_status vectis_webdav_direct_copy_or_move_fs(
   if (ok && remove_source) {
     ok = vectis_webdav_direct_remove_tree_at(source_parent_fd, source_leaf);
     if (!ok) {
-      (void)vectis_webdav_direct_remove_tree_at(destination_parent_fd,
-                                                destination_leaf);
-      if (backup_created) {
-        (void)renameat(txn_fd, backup_leaf, destination_parent_fd,
-                       destination_leaf);
-        backup_created = 0;
+      /* The source may be partially removed. Preserve the complete new
+       * destination and any overwritten destination in txn/backup for
+       * recovery; neither copy is safe to discard or roll back here. */
+      vectis_webdav_fd_close(&txn_fd);
+      if (!backup_created) {
+        (void)vectis_webdav_direct_remove_tree_at(destination_parent_fd,
+                                                  txn_leaf);
       }
+      vectis_webdav_fd_close(&source_parent_fd);
+      vectis_webdav_fd_close(&destination_parent_fd);
+      return VECTIS_WEBDAV_IO;
     }
   }
   if (backup_created) {

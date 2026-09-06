@@ -81,6 +81,9 @@ typedef struct vectis_webdav_auth_request {
   vectis_request *request;
   vectis_http_method method;
   const char *mount_path_prefix;
+  /* Normalized resource being authorized. COPY and MOVE invoke the callback
+   * for both source and destination before storage is mutated. The underlying
+   * request still describes the original source URL on both calls. */
   const char *resource_path;
 } vectis_webdav_auth_request;
 
@@ -175,6 +178,11 @@ vectis_webdav_status vectis_webdav_mkcol(const vectis_webdav_config *config,
 vectis_webdav_status vectis_webdav_copy(const vectis_webdav_config *config,
                                         const char *source,
                                         const char *destination, int overwrite);
+/* Direct-root source removal can fail after deleting some children. On that
+ * IO result, the complete destination is preserved. An overwritten destination
+ * remains in a .vectis-txn-prefixed recovery directory (backup child) in the
+ * destination parent. Inspect and
+ * recover these copies before retrying or removing the remaining source. */
 vectis_webdav_status vectis_webdav_move(const vectis_webdav_config *config,
                                         const char *source,
                                         const char *destination, int overwrite);

@@ -1,3 +1,5 @@
+#include "vectis_internal.h"
+#include <sys/wait.h>
 #include <vectis/webdav.h>
 
 #include <dirent.h>
@@ -99,8 +101,144 @@ allow_webdav_auth(const vectis_webdav_auth_request *request,
   return VECTIS_OK;
 }
 
+static vectis_status subtree_auth(const vectis_webdav_auth_request *request,
+                                  vectis_webdav_auth_response *response,
+                                  void *userdata, vectis_error *error) {
+  int *calls;
+  calls = (int *)userdata;
+  ++*calls;
+  vectis_error_clear(error);
+  vectis_webdav_auth_response_init(response);
+  response->action = strncmp(request->resource_path, "/allowed/", 9u) == 0
+                         ? VECTIS_WEBDAV_AUTH_ALLOW
+                         : VECTIS_WEBDAV_AUTH_DENY;
+  return VECTIS_OK;
+}
+
+static void test_destination_auth(const vectis_webdav_config *storage) {
+  vectis_app_config config;
+  vectis_webdav_mount_config mount;
+  vectis_app *app;
+  vectis_request *request;
+  vectis_response *response;
+  vectis_error error;
+  vectis_webdav_entry entry;
+  unsigned char *body;
+  size_t size;
+  int calls;
+  int move;
+  vectis_http_method method;
+
+  expect(vectis_webdav_put(storage, "/allowed/source",
+                           (const unsigned char *)"new",
+                           3u) == VECTIS_WEBDAV_OK,
+         "create authorized source");
+  expect(vectis_webdav_put(storage, "/private/target",
+                           (const unsigned char *)"old",
+                           3u) == VECTIS_WEBDAV_OK,
+         "create protected destination");
+  vectis_app_config_init(&config);
+  config.tls.mode = VECTIS_TLS_MODE_DISABLED;
+  app = vectis_app_new(&config, &error);
+  expect(app != NULL, "create authorization regression app");
+  if (app == NULL)
+    return;
+  vectis_webdav_mount_config_init(&mount);
+  mount.path_prefix = "/dav";
+  mount.storage = *storage;
+  mount.auth = subtree_auth;
+  mount.auth_userdata = &calls;
+  expect(app->webdav(app, &mount, &error) == VECTIS_OK,
+         "mount restricted subtree");
+  for (move = 0; move < 2; ++move) {
+    calls = 0;
+    method = move ? VECTIS_HTTP_MOVE : VECTIS_HTTP_COPY;
+    request = vectis_internal_request_new(&error);
+    response = vectis_internal_response_new(&error);
+    vectis_internal_request_set_method(request, method);
+    expect(vectis_internal_request_set_path(request, "/dav/allowed/source",
+                                            &error) == VECTIS_OK,
+           "set source path");
+    expect(vectis_internal_request_add_header(request, "destination",
+                                              "/dav/private//target",
+                                              &error) == VECTIS_OK,
+           "set destination");
+    expect(vectis_internal_dispatch_route(app, method, "/dav/allowed/source",
+                                          request, response,
+                                          &error) == VECTIS_OK,
+           "dispatch restricted transfer");
+    expect(calls == 2, "authorize source and normalized destination");
+    expect(vectis_internal_response_status_code(response) == 404,
+           "conceal denied destination");
+    expect(vectis_webdav_lookup(storage, "/allowed/source", &entry) ==
+               VECTIS_WEBDAV_OK,
+           "denial preserves source");
+    body = NULL;
+    size = 0u;
+    expect(vectis_webdav_read(storage, "/private/target", &body, &size,
+                              &entry) == VECTIS_WEBDAV_OK &&
+               size == 3u && memcmp(body, "old", 3u) == 0,
+           "denial preserves destination contents");
+    free(body);
+    vectis_internal_request_free(request);
+    vectis_internal_response_free(response);
+  }
+  app->close(app);
+}
+
+static void test_failed_move(const vectis_webdav_config *storage) {
+  char parent[4096];
+  unsigned char *body;
+  size_t size;
+  vectis_webdav_entry entry;
+  int overwrite;
+  pid_t child;
+  int result;
+
+  /* Drop root privileges in a child so permission failures are reproducible. */
+  child = fork();
+  expect(child >= 0, "fork permission regression");
+  if (child == 0) {
+    if (geteuid() == 0 && setuid(65534) != 0)
+      _exit(2);
+    for (overwrite = 0; overwrite < 2; ++overwrite) {
+      expect(vectis_webdav_put(storage, "/locked/source/file",
+                               (const unsigned char *)"precious",
+                               8u) == VECTIS_WEBDAV_OK,
+             "create move source");
+      if (overwrite)
+        expect(vectis_webdav_put(storage, "/destination/old",
+                                 (const unsigned char *)"old",
+                                 3u) == VECTIS_WEBDAV_OK,
+               "create overwrite destination");
+      (void)snprintf(parent, sizeof(parent), "%s/locked", storage->root_dir);
+      expect(chmod(parent, 0500) == 0, "lock source parent");
+      expect(vectis_webdav_move(storage, "/locked/source", "/destination",
+                                overwrite) == VECTIS_WEBDAV_IO,
+             "report incomplete source removal");
+      body = NULL;
+      size = 0u;
+      expect(vectis_webdav_read(storage, "/destination/file", &body, &size,
+                                &entry) == VECTIS_WEBDAV_OK &&
+                 size == 8u && memcmp(body, "precious", 8u) == 0,
+             "failed move preserves complete destination");
+      free(body);
+      expect(chmod(parent, 0700) == 0, "restore source parent permissions");
+      expect(vectis_webdav_delete(storage, "/destination") == VECTIS_WEBDAV_OK,
+             "clean regression destination");
+    }
+    _exit(failures ? 1 : 0);
+  }
+  if (child > 0) {
+    expect(waitpid(child, &result, 0) == child && WIFEXITED(result) &&
+               WEXITSTATUS(result) == 0,
+           "permission failure regressions pass");
+  }
+}
+
 int main(void) {
-  char temp[] = "/tmp/vectis-webdav-unit.XXXXXX";
+  char temp[4096];
+  char cwd[2048];
   char normalized[VECTIS_WEBDAV_PATH_MAX + 1u];
   char content_dir[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   char root_dir[VECTIS_WEBDAV_STORAGE_PATH_MAX];
@@ -134,6 +272,9 @@ int main(void) {
   list_state listed;
   int i;
 
+  if (getcwd(cwd, sizeof(cwd)) == NULL)
+    return 1;
+  (void)snprintf(temp, sizeof(temp), "%s/vectis-webdav-unit.XXXXXX", cwd);
   if (mkdtemp(temp) == NULL) {
     perror("mkdtemp");
     return 1;
@@ -285,6 +426,11 @@ int main(void) {
   direct_config = config;
   direct_config.site_id = "direct";
   direct_config.root_dir = root_dir;
+  expect(mkdir(root_dir, 0777) == 0, "create regression root");
+  expect(chmod(temp, 0755) == 0 && chmod(root_dir, 0777) == 0,
+         "allow permission regression child access");
+  test_failed_move(&direct_config);
+  test_destination_auth(&direct_config);
   cstatus = vectis_webdav_content_dir(&direct_config, content_dir, &error);
   expect(cstatus == VECTIS_OK && strcmp(content_dir, root_dir) == 0,
          "reports direct WebDAV root as content directory");

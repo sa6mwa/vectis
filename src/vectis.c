@@ -16169,6 +16169,14 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
     if (!vectis_webdav_destination_path(data, destination, target)) {
       return vectis_response_status(response, 400, error);
     }
+    if (vectis_webdav_authenticate_request(data, request, method, target,
+                                           response, &authorized,
+                                           error) != VECTIS_OK) {
+      return error != NULL ? error->code : VECTIS_ERR_INVALID;
+    }
+    if (!authorized) {
+      return VECTIS_OK;
+    }
     overwrite_header = vectis_request_header(request, "overwrite");
     overwrite =
         overwrite_header == NULL || strcasecmp(overwrite_header, "F") != 0;
