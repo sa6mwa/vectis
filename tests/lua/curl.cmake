@@ -169,6 +169,14 @@ if(NOT schema_result EQUAL 0)
   message(FATAL_ERROR "curl schema validation failed: ${schema_stdout}${schema_stderr}")
 endif()
 
+execute_process(COMMAND "${VECTIS_BIN}"
+                        "${CMAKE_CURRENT_LIST_DIR}/curl_option_errors.lua" "${body_file}"
+                RESULT_VARIABLE options_result
+                OUTPUT_VARIABLE options_stdout ERROR_VARIABLE options_stderr)
+if(NOT options_result EQUAL 0)
+  message(FATAL_ERROR "curl option rejection failed: ${options_stdout}${options_stderr}")
+endif()
+
 find_program(http_upload_python NAMES python3)
 if(http_upload_python)
   execute_process(COMMAND "${http_upload_python}"

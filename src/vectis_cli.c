@@ -15880,18 +15880,16 @@ static int vectis_lua_curl_rewind_json(void *userdata, curl_off_t offset,
 }
 
 static int vectis_lua_curl_apply_method(lua_State *lua, CURL *curl,
-                                        int option_index, int is_smtp,
-                                        int has_streaming_upload,
+                                        int option_index, const char *method,
+                                        int is_smtp, int has_streaming_upload,
                                         int has_raw_upload, int has_multipart,
                                         lonejson_curl_upload *json_upload) {
-  const char *method;
   const char *body;
   size_t body_size;
 
   if (is_smtp) {
     return 0;
   }
-  method = vectis_lua_table_string(lua, option_index, "method");
   lua_getfield(lua, option_index, "body");
   body = lua_tolstring(lua, -1, &body_size);
   if (method == NULL) {
@@ -15990,10 +15988,6 @@ static int vectis_lua_curl_apply_protocol_options(lua_State *lua, CURL *curl,
   long long_value;
 
   proxy_type = 0L;
-  value = vectis_lua_table_string(lua, option_index, "protocols");
-  if (value != NULL) {
-    (void)curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, value);
-  }
   value = vectis_lua_table_string(lua, option_index, "proxy");
   if (value != NULL) {
     (void)curl_easy_setopt(curl, CURLOPT_PROXY, value);
@@ -16376,6 +16370,8 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   lonejson_record_view request_record;
   lonejson_record_view response_record;
   const char *url;
+  const char *method;
+  const char *protocols;
   const char *username;
   const char *password;
   const char *upload_path;
@@ -16404,6 +16400,27 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   if (url == NULL || url[0] == '\0') {
     return luaL_error(lua, "curl url is required");
   }
+  /* Keep these values rooted on the Lua stack and validate before opening
+   * files or allocating transport state. Do not reread them during setup. */
+  lua_getfield(lua, 1, "method");
+  if (!lua_isnil(lua, -1) && lua_type(lua, -1) != LUA_TSTRING)
+    return luaL_error(lua, "curl method must be a string");
+  method = lua_tostring(lua, -1);
+  if (method != NULL && strlen(method) != lua_rawlen(lua, -1))
+    return luaL_error(lua, "curl method must not contain NUL bytes");
+  if (method != NULL && strcmp(method, "GET") != 0 &&
+      strcmp(method, "HEAD") != 0 && strcmp(method, "POST") != 0 &&
+      strcmp(method, "PUT") != 0 && strcmp(method, "PATCH") != 0 &&
+      strcmp(method, "DELETE") != 0 && strcmp(method, "OPTIONS") != 0 &&
+      strcmp(method, "PROPFIND") != 0 && strcmp(method, "MKCOL") != 0 &&
+      strcmp(method, "COPY") != 0 && strcmp(method, "MOVE") != 0)
+    return luaL_error(lua, "unsupported curl method: %s", method);
+  lua_getfield(lua, 1, "protocols");
+  if (!lua_isnil(lua, -1) && lua_type(lua, -1) != LUA_TSTRING)
+    return luaL_error(lua, "curl protocols must be a string");
+  protocols = lua_tostring(lua, -1);
+  if (protocols != NULL && strlen(protocols) != lua_rawlen(lua, -1))
+    return luaL_error(lua, "curl protocols must not contain NUL bytes");
 
   memset(&body, 0, sizeof(body));
   memset(&response, 0, sizeof(response));
@@ -16496,6 +16513,16 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   }
 
   (void)curl_easy_setopt(curl, CURLOPT_URL, url);
+  if (protocols != NULL) {
+    code = curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, protocols);
+    if (code != CURLE_OK) {
+      curl_easy_cleanup(curl);
+      if (file_upload.file != NULL)
+        (void)fclose(file_upload.file);
+      return luaL_error(lua, "invalid curl protocols: %s",
+                        curl_easy_strerror(code));
+    }
+  }
   (void)curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
   if (has_streaming_upload) {
     json_status =
@@ -16622,10 +16649,10 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   if (has_streaming_upload) {
     is_upload = 1;
   }
-  vectis_lua_curl_apply_method(lua, curl, 1, is_smtp, has_streaming_upload,
-                               is_upload && !has_streaming_upload &&
-                                   !has_multipart,
-                               has_multipart, &json_upload);
+  vectis_lua_curl_apply_method(
+      lua, curl, 1, method, is_smtp, has_streaming_upload,
+      is_upload && !has_streaming_upload && !has_multipart, has_multipart,
+      &json_upload);
 
   retry_delay_ms = retry_config.initial_delay_ms;
   if (retry_config.max_delay_ms > 0L &&
