@@ -29,6 +29,7 @@
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
+#include <poll.h>
 #include <pthread.h>
 #include <regex.h>
 #include <signal.h>
@@ -39790,50 +39791,85 @@ static vectis_status vectis_ssh_authenticate(LIBSSH2_SESSION *session,
   return VECTIS_OK;
 }
 
-static vectis_status vectis_ssh_read_channel(LIBSSH2_CHANNEL *channel,
+static vectis_status vectis_ssh_read_channel(LIBSSH2_SESSION *session,
+                                             LIBSSH2_CHANNEL *channel, int fd,
+                                             long timeout_ms,
                                              vectis_ssh_exec_result *result,
                                              vectis_error *error) {
   char buffer[8192];
   ssize_t n;
   ssize_t nerr;
-  int active;
+  struct pollfd socket_poll;
+  int directions;
+  int rc;
+  int64_t idle_started;
+  int64_t remaining;
   vectis_status status;
 
-  active = 1;
-  while (active) {
-    active = 0;
+  idle_started = vectis_monotonic_millis();
+  for (;;) {
     n = libssh2_channel_read(channel, buffer, sizeof(buffer));
-    while (n > 0) {
+    if (n > 0) {
       status = vectis_append_output(&result->stdout_data, &result->stdout_size,
                                     buffer, (size_t)n, error);
       if (status != VECTIS_OK) {
         return status;
       }
-      active = 1;
-      n = libssh2_channel_read(channel, buffer, sizeof(buffer));
     }
     nerr = libssh2_channel_read_stderr(channel, buffer, sizeof(buffer));
-    while (nerr > 0) {
+    if (nerr > 0) {
       status = vectis_append_output(&result->stderr_data, &result->stderr_size,
                                     buffer, (size_t)nerr, error);
       if (status != VECTIS_OK) {
         return status;
       }
-      active = 1;
-      nerr = libssh2_channel_read_stderr(channel, buffer, sizeof(buffer));
-    }
-    if (libssh2_channel_eof(channel)) {
-      break;
-    }
-    if (n == LIBSSH2_ERROR_EAGAIN || nerr == LIBSSH2_ERROR_EAGAIN || active) {
-      continue;
     }
     if (n < 0 && n != LIBSSH2_ERROR_EAGAIN) {
       vectis_set_error(error, VECTIS_ERR_STATE, "failed to read SSH stdout");
+      if (error != NULL)
+        error->dependency_code = (long)n;
       return VECTIS_ERR_STATE;
     }
     if (nerr < 0 && nerr != LIBSSH2_ERROR_EAGAIN) {
       vectis_set_error(error, VECTIS_ERR_STATE, "failed to read SSH stderr");
+      if (error != NULL)
+        error->dependency_code = (long)nerr;
+      return VECTIS_ERR_STATE;
+    }
+    /* Drain buffered data even after remote EOF, without starving either
+     * stream. */
+    if (n > 0 || nerr > 0) {
+      idle_started = vectis_monotonic_millis();
+      continue;
+    }
+    if (libssh2_channel_eof(channel))
+      break;
+    remaining = timeout_ms - (vectis_monotonic_millis() - idle_started);
+    if (remaining <= 0) {
+      vectis_set_error(error, VECTIS_ERR_TIMEOUT,
+                       "timed out waiting for SSH output");
+      if (error != NULL)
+        error->dependency_code = LIBSSH2_ERROR_TIMEOUT;
+      return VECTIS_ERR_TIMEOUT;
+    }
+    directions = libssh2_session_block_directions(session);
+    socket_poll.fd = fd;
+    socket_poll.events = 0;
+    if (directions & LIBSSH2_SESSION_BLOCK_INBOUND)
+      socket_poll.events |= POLLIN;
+    if (directions & LIBSSH2_SESSION_BLOCK_OUTBOUND)
+      socket_poll.events |= POLLOUT;
+    if (socket_poll.events == 0)
+      socket_poll.events = POLLIN;
+    socket_poll.revents = 0;
+    rc = poll(&socket_poll, 1u, remaining > INT_MAX ? INT_MAX : (int)remaining);
+    if (rc < 0 && errno != EINTR) {
+      vectis_set_error(error, VECTIS_ERR_STATE,
+                       "failed to wait for SSH output");
+      return VECTIS_ERR_STATE;
+    }
+    if (rc > 0 && (socket_poll.revents & POLLNVAL)) {
+      vectis_set_error(error, VECTIS_ERR_STATE, "SSH output socket is invalid");
       return VECTIS_ERR_STATE;
     }
   }
@@ -39952,7 +39988,10 @@ vectis_status vectis_ssh_exec(const vectis_ssh_config *config,
     }
     return VECTIS_ERR_STATE;
   }
-  status = vectis_ssh_read_channel(channel, result, error);
+  libssh2_session_set_blocking(session, 0);
+  status = vectis_ssh_read_channel(session, channel, fd, config->timeout_ms,
+                                   result, error);
+  libssh2_session_set_blocking(session, 1);
   result->exit_status = libssh2_channel_get_exit_status(channel);
   (void)libssh2_channel_close(channel);
   libssh2_channel_free(channel);

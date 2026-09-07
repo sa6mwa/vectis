@@ -231,3 +231,22 @@ execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${upload_path}"
 if(NOT ssh_sftp_result EQUAL 0)
   message(FATAL_ERROR "vectis SSH/SFTP Lua smoke failed: ${ssh_sftp_stdout}${ssh_sftp_stderr}")
 endif()
+
+# Optional local integration fixture; Paramiko is test-only, not an SDK dependency.
+find_program(ssh_test_python NAMES python3)
+if(ssh_test_python)
+  execute_process(COMMAND "${ssh_test_python}" -c "import paramiko"
+                  RESULT_VARIABLE ssh_paramiko_result OUTPUT_QUIET ERROR_QUIET)
+endif()
+if(ssh_test_python AND ssh_paramiko_result EQUAL 0)
+  execute_process(COMMAND "${ssh_test_python}"
+                          "${CMAKE_CURRENT_LIST_DIR}/../ssh_output.py" "${VECTIS_BIN}"
+                  RESULT_VARIABLE ssh_output_result
+                  OUTPUT_VARIABLE ssh_output_stdout ERROR_VARIABLE ssh_output_stderr
+                  TIMEOUT 60)
+  if(NOT ssh_output_result EQUAL 0)
+    message(FATAL_ERROR "SSH output regression failed: ${ssh_output_stdout}${ssh_output_stderr}")
+  endif()
+else()
+  message(STATUS "SSH output integration not run: Python3/Paramiko unavailable")
+endif()
