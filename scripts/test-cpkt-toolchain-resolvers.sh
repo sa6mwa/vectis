@@ -41,20 +41,31 @@ make_bootlin_collection() {
   make_executable "$root/bin/$prefix-g++" "#!/bin/sh\ncase \"\$1\" in\n  -print-file-name=libstdc++.a) printf '%s\\n' '$root/runtime/libstdc++.a' ;;\n  -print-file-name=libgcc.a) printf '%s\\n' '$root/runtime/libgcc.a' ;;\n  *) exit 1 ;;\nesac"
 }
 
-make_bootlin_collection \
-  x86-64--glibc--stable-2025.08-1 \
-  x86_64-linux \
-  x86_64-buildroot-linux-gnu/sysroot
-
-bootlin_description=$(CPKT_TOOLCHAIN_CACHE="$cache" "$bootlin_resolver" discover x86_64-linux-gnu)
-require_line 'source=bootlin' "$bootlin_description"
-require_line 'status=ready' "$bootlin_description"
-require_line "cc=$cache/roots/x86-64--glibc--stable-2025.08-1/bin/x86_64-linux-gcc" "$bootlin_description"
-require_line "ld=$cache/roots/x86-64--glibc--stable-2025.08-1/bin/x86_64-linux-ld" "$bootlin_description"
-require_line "nm=$cache/roots/x86-64--glibc--stable-2025.08-1/bin/x86_64-linux-nm" "$bootlin_description"
-bootlin_env=$(CPKT_TOOLCHAIN_CACHE="$cache" "$bootlin_resolver" env x86_64-linux-gnu)
-printf '%s\n' "$bootlin_env" | grep -Fq "export CC=$cache/roots/x86-64--glibc--stable-2025.08-1/bin/x86_64-linux-gcc" || fail 'Bootlin env did not export the pinned compiler'
-printf '%s\n' "$bootlin_env" | grep -Fq "export LD=$cache/roots/x86-64--glibc--stable-2025.08-1/bin/x86_64-linux-ld" || fail 'Bootlin env did not export the pinned linker'
-printf '%s\n' "$bootlin_env" | grep -Fq "export NM=$cache/roots/x86-64--glibc--stable-2025.08-1/bin/x86_64-linux-nm" || fail 'Bootlin env did not export the pinned nm'
+for target in x86_64-linux-gnu x86_64-linux-musl aarch64-linux-gnu aarch64-linux-musl armhf-linux-gnu armhf-linux-musl; do
+  case "$target" in
+    x86_64-*) arch=x86-64; prefix=x86_64-linux; triple=x86_64-buildroot-linux ;;
+    aarch64-*) arch=aarch64; prefix=aarch64-linux; triple=aarch64-buildroot-linux ;;
+    armhf-*) arch=armv7-eabihf; prefix=arm-linux; triple=arm-buildroot-linux ;;
+  esac
+  case "$target" in
+    *-gnu) libc=glibc; abi=gnu ;;
+    *-musl) libc=musl; abi=musl ;;
+  esac
+  if [[ "$arch" == armv7-eabihf ]]; then abi="${abi}eabihf"; fi
+  name="$arch--$libc--stable-2026.08-1"
+  make_bootlin_collection "$name" "$prefix" "$triple-$abi/sysroot"
+  bootlin_description=$(CPKT_TOOLCHAIN_CACHE="$cache" "$bootlin_resolver" discover "$target")
+  require_line 'source=bootlin' "$bootlin_description"
+  require_line 'status=ready' "$bootlin_description"
+  require_line "archive=$name.tar.xz" "$bootlin_description"
+  require_line "sysroot=$cache/roots/$name/$triple-$abi/sysroot" "$bootlin_description"
+  bootlin_env=$(CPKT_TOOLCHAIN_CACHE="$cache" "$bootlin_resolver" env "$target")
+  for tool in cc ld nm; do
+    driver=$tool
+    if [[ "$tool" == cc ]]; then driver=gcc; fi
+    require_line "$tool=$cache/roots/$name/bin/$prefix-$driver" "$bootlin_description"
+    printf '%s\n' "$bootlin_env" | grep -Fq "export ${tool^^}=$cache/roots/$name/bin/$prefix-$driver" || fail "Bootlin env did not export $tool for $target"
+  done
+done
 
 printf 'toolchain resolver tests passed\n'

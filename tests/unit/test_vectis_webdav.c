@@ -457,17 +457,22 @@ static void test_dotfile_listing(const vectis_webdav_config *storage) {
       body = vectis_internal_response_body(response);
       expect(body.data != NULL, "PROPFIND has XML body");
       if (body.data != NULL) {
-        expect(
-            strstr((const char *)body.data, "/dav/dotfiles/.config") != NULL &&
-                strstr((const char *)body.data, "/dav/dotfiles/.hidden") !=
-                    NULL &&
-                strstr((const char *)body.data, "/dav/dotfiles/.vectis-user") !=
-                    NULL,
-            "PROPFIND exposes user dotfiles and hidden collections");
-        expect(strstr((const char *)body.data, ".vectis-tmp-") == NULL &&
-                   strstr((const char *)body.data, ".vectis-txn-") == NULL &&
-                   strstr((const char *)body.data, ".deleted") == NULL,
-               "PROPFIND excludes internal and deleted entries");
+        char *xml;
+        xml = (char *)malloc(body.size + 1u);
+        expect(xml != NULL, "allocates terminated PROPFIND test string");
+        if (xml != NULL) {
+          memcpy(xml, body.data, body.size);
+          xml[body.size] = '\0';
+          expect(strstr(xml, "/dav/dotfiles/.config") != NULL &&
+                     strstr(xml, "/dav/dotfiles/.hidden") != NULL &&
+                     strstr(xml, "/dav/dotfiles/.vectis-user") != NULL,
+                 "PROPFIND exposes user dotfiles and hidden collections");
+          expect(strstr(xml, ".vectis-tmp-") == NULL &&
+                     strstr(xml, ".vectis-txn-") == NULL &&
+                     strstr(xml, ".deleted") == NULL,
+                 "PROPFIND excludes internal and deleted entries");
+          free(xml);
+        }
       }
     }
     vectis_internal_request_free(request);
