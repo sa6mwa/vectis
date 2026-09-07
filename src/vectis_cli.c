@@ -16312,6 +16312,50 @@ static void vectis_lua_curl_push_result(lua_State *lua, CURLcode code,
   }
 }
 
+/* Only Lua-owned records are allocated here: luaL_error can safely unwind
+ * schema validation and assignment before any transport resources exist. */
+static int vectis_lua_curl_prepare_schema(lua_State *lua, int is_request,
+                                          int *schema_index, int *record_index,
+                                          lonejson_schema_view *schema,
+                                          lonejson_record_view *record) {
+  lonejson_error error;
+  lonejson_status status;
+  int value_index;
+  const char *field;
+  field = is_request ? "request_schema" : "response_schema";
+  lua_getfield(lua, 1, field);
+  if (lua_isnil(lua, -1)) {
+    lua_pop(lua, 1);
+    return 0;
+  }
+  *schema_index = lua_gettop(lua);
+  (void)vectis_lua_lonejson_check_schema(lua, *schema_index, schema, field);
+  value_index = 0;
+  if (is_request) {
+    lua_getfield(lua, 1, "body_json");
+    if (lua_isnil(lua, -1))
+      return luaL_error(lua, "curl request_schema requires body_json");
+    value_index = lua_gettop(lua);
+  }
+  lonejson_error_init(&error);
+  status =
+      lonejson_lua_new_record(lua, *schema_index, record_index, record, &error);
+  if (status != LONEJSON_STATUS_OK)
+    return luaL_error(lua, "lonejson %s record failed: %s", field,
+                      error.message);
+  if (is_request) {
+    (void)vectis_lua_lonejson_assign_table(lua, *schema_index, *record_index,
+                                           value_index);
+    vectis_lua_lonejson_record_view_init(record);
+    status =
+        lonejson_lua_check_record(lua, *record_index, schema, record, &error);
+    if (status != LONEJSON_STATUS_OK)
+      return luaL_error(lua, "lonejson request record failed: %s",
+                        error.message);
+  }
+  return 1;
+}
+
 static int vectis_lua_curl_perform(lua_State *lua) {
   CURL *curl;
   CURLcode code;
@@ -16346,7 +16390,6 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   int is_smtp;
   int is_upload;
   int request_schema_index;
-  int request_value_index;
   int request_record_index;
   int response_schema_index;
   int response_record_index;
@@ -16383,7 +16426,6 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   mime = NULL;
   download_file = NULL;
   request_schema_index = 0;
-  request_value_index = 0;
   request_record_index = 0;
   response_schema_index = 0;
   response_record_index = 0;
@@ -16411,6 +16453,23 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   if (vectis_lua_curl_validate_smtp(lua, 1, upload_path) != 0) {
     return 1;
   }
+  download_path = vectis_lua_table_string(lua, 1, "download_path");
+  if (download_path != NULL && download_path[0] == '\0')
+    return luaL_error(lua, "curl download_path must not be empty");
+  if (upload_path != NULL &&
+      vectis_lua_curl_has_table_field(lua, 1, "request_schema"))
+    return luaL_error(lua,
+                      "curl request_schema cannot be used with upload_path");
+  if (download_path != NULL &&
+      vectis_lua_curl_has_table_field(lua, 1, "response_schema"))
+    return luaL_error(lua,
+                      "curl response_schema cannot be used with download_path");
+  has_streaming_upload = vectis_lua_curl_prepare_schema(
+      lua, 1, &request_schema_index, &request_record_index, &request_schema,
+      &request_record);
+  has_streaming_response = vectis_lua_curl_prepare_schema(
+      lua, 0, &response_schema_index, &response_record_index, &response_schema,
+      &response_record);
   if (upload_path != NULL) {
     if (has_multipart) {
       return luaL_error(lua, "curl multipart cannot be used with upload_path");
@@ -16427,13 +16486,6 @@ static int vectis_lua_curl_perform(lua_State *lua) {
       file_upload.size = (curl_off_t)upload_stat.st_size;
     }
   }
-  download_path = vectis_lua_table_string(lua, 1, "download_path");
-  if (download_path != NULL && download_path[0] == '\0') {
-    if (file_upload.file != NULL) {
-      (void)fclose(file_upload.file);
-    }
-    return luaL_error(lua, "curl download_path must not be empty");
-  }
   (void)pthread_once(&vectis_lua_curl_once, vectis_lua_curl_global_init_once);
   curl = curl_easy_init();
   if (curl == NULL) {
@@ -16445,48 +16497,12 @@ static int vectis_lua_curl_perform(lua_State *lua) {
 
   (void)curl_easy_setopt(curl, CURLOPT_URL, url);
   (void)curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
-  lua_getfield(lua, 1, "request_schema");
-  if (!lua_isnil(lua, -1)) {
-    if (file_upload.file != NULL) {
-      curl_easy_cleanup(curl);
-      (void)fclose(file_upload.file);
-      return luaL_error(lua, "curl request_schema cannot be used with "
-                             "upload_path");
-    }
-    request_schema_index = lua_gettop(lua);
-    (void)vectis_lua_lonejson_check_schema(
-        lua, request_schema_index, &request_schema, "curl request_schema");
-    lua_getfield(lua, 1, "body_json");
-    if (lua_isnil(lua, -1)) {
-      return luaL_error(lua, "curl request_schema requires body_json");
-    }
-    request_value_index = lua_gettop(lua);
-    memset(&json_error, 0, sizeof(json_error));
-    vectis_lua_lonejson_record_view_init(&request_record);
-    json_status = lonejson_lua_new_record(lua, request_schema_index,
-                                          &request_record_index,
-                                          &request_record, &json_error);
-    if (json_status != LONEJSON_STATUS_OK) {
-      return luaL_error(lua, "lonejson request record failed: %s",
-                        json_error.message[0] != '\0' ? json_error.message
-                                                      : "invalid record");
-    }
-    (void)vectis_lua_lonejson_assign_table(
-        lua, request_schema_index, request_record_index, request_value_index);
-    memset(&json_error, 0, sizeof(json_error));
-    vectis_lua_lonejson_record_view_init(&request_record);
-    json_status =
-        lonejson_lua_check_record(lua, request_record_index, &request_schema,
-                                  &request_record, &json_error);
-    if (json_status != LONEJSON_STATUS_OK) {
-      return luaL_error(lua, "lonejson request record failed: %s",
-                        json_error.message[0] != '\0' ? json_error.message
-                                                      : "invalid record");
-    }
+  if (has_streaming_upload) {
     json_status =
         lonejson_curl_upload_init(&json_upload, request_schema.runtime,
                                   request_schema.map, request_record.record);
     if (json_status != LONEJSON_STATUS_OK) {
+      curl_easy_cleanup(curl);
       return luaL_error(lua, "lonejson curl upload init failed");
     }
     has_streaming_upload = 1;
@@ -16497,39 +16513,9 @@ static int vectis_lua_curl_perform(lua_State *lua) {
     (void)curl_easy_setopt(curl, CURLOPT_SEEKFUNCTION,
                            vectis_lua_curl_rewind_json);
     (void)curl_easy_setopt(curl, CURLOPT_SEEKDATA, &json_rewind);
-  } else {
-    lua_pop(lua, 1);
   }
 
-  lua_getfield(lua, 1, "response_schema");
-  if (!lua_isnil(lua, -1)) {
-    if (download_path != NULL) {
-      curl_easy_cleanup(curl);
-      if (has_streaming_upload) {
-        lonejson_curl_upload_cleanup(&json_upload);
-      }
-      if (file_upload.file != NULL) {
-        (void)fclose(file_upload.file);
-      }
-      return luaL_error(lua, "curl response_schema cannot be used with "
-                             "download_path");
-    }
-    response_schema_index = lua_gettop(lua);
-    (void)vectis_lua_lonejson_check_schema(
-        lua, response_schema_index, &response_schema, "curl response_schema");
-    memset(&json_error, 0, sizeof(json_error));
-    vectis_lua_lonejson_record_view_init(&response_record);
-    json_status = lonejson_lua_new_record(lua, response_schema_index,
-                                          &response_record_index,
-                                          &response_record, &json_error);
-    if (json_status != LONEJSON_STATUS_OK) {
-      if (has_streaming_upload) {
-        lonejson_curl_upload_cleanup(&json_upload);
-      }
-      return luaL_error(lua, "lonejson response record failed: %s",
-                        json_error.message[0] != '\0' ? json_error.message
-                                                      : "invalid record");
-    }
+  if (has_streaming_response) {
     json_status =
         lonejson_curl_parse_init(&json_response, response_schema.runtime,
                                  response_schema.map, response_record.record);
@@ -16537,6 +16523,9 @@ static int vectis_lua_curl_perform(lua_State *lua) {
       if (has_streaming_upload) {
         lonejson_curl_upload_cleanup(&json_upload);
       }
+      curl_easy_cleanup(curl);
+      if (file_upload.file != NULL)
+        (void)fclose(file_upload.file);
       return luaL_error(lua, "lonejson curl parse init failed");
     }
     has_streaming_response = 1;
@@ -16546,7 +16535,6 @@ static int vectis_lua_curl_perform(lua_State *lua) {
                            vectis_lua_curl_stream_response_write);
     (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, &stream_response);
   } else {
-    lua_pop(lua, 1);
     if (download_path != NULL) {
       download_file = fopen(download_path, "wb");
       if (download_file == NULL) {

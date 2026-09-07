@@ -161,6 +161,14 @@ if(NOT curl_result EQUAL 0)
   message(FATAL_ERROR "vectis curl Lua smoke failed: ${curl_stdout}${curl_stderr}")
 endif()
 
+execute_process(COMMAND "${VECTIS_BIN}"
+                        "${CMAKE_CURRENT_LIST_DIR}/curl_schema_errors.lua" "${body_file}"
+                RESULT_VARIABLE schema_result
+                OUTPUT_VARIABLE schema_stdout ERROR_VARIABLE schema_stderr)
+if(NOT schema_result EQUAL 0)
+  message(FATAL_ERROR "curl schema validation failed: ${schema_stdout}${schema_stderr}")
+endif()
+
 find_program(http_upload_python NAMES python3)
 if(http_upload_python)
   execute_process(COMMAND "${http_upload_python}"
