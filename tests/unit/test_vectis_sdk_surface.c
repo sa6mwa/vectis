@@ -3085,7 +3085,52 @@ static void assert_xml_surface(void) {
   free(large_xml);
 }
 
+static void assert_static_fifo_rejected(void) {
+  char root[] = "static-fifo.XXXXXX";
+  char path[128];
+  vectis_app_config config;
+  vectis_static_directory_config mount;
+  vectis_app *app;
+  vectis_request *request;
+  vectis_response *response;
+  vectis_error error;
+  vectis_status status;
+  int method;
+
+  assert(mkdtemp(root) != NULL);
+  assert(snprintf(path, sizeof(path), "%s/pipe", root) > 0);
+  assert(mkfifo(path, 0600) == 0);
+  vectis_app_config_init(&config);
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  vectis_static_directory_config_init(&mount);
+  mount.path_prefix = "/files/";
+  mount.root_dir = root;
+  assert(app->static_directory(app, &mount, &error) == VECTIS_OK);
+  request = vectis_internal_request_new(&error);
+  response = vectis_internal_response_new(&error);
+  assert(request != NULL && response != NULL);
+  for (method = 0; method < 2; ++method) {
+    /* A regression must fail promptly instead of hanging the test suite. */
+    alarm(5u);
+    status = vectis_internal_dispatch_route(
+        app, method == 0 ? VECTIS_HTTP_GET : VECTIS_HTTP_HEAD, "/files/pipe",
+        request, response, &error);
+    alarm(0u);
+    assert(status == VECTIS_OK);
+    assert(vectis_internal_response_status_code(response) == 404);
+    vectis_internal_request_cleanup(request);
+    vectis_internal_response_cleanup(response);
+  }
+  vectis_internal_request_free(request);
+  vectis_internal_response_free(response);
+  app->close(app);
+  assert(unlink(path) == 0);
+  assert(rmdir(root) == 0);
+}
+
 int main(void) {
+  assert_static_fifo_rejected();
   assert_http_surface();
   assert_io_surface();
   assert_request_response_surface();

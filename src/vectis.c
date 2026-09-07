@@ -13897,7 +13897,8 @@ static int vectis_static_open_file_fd(const char *root_dir,
       *next_segment = '\0';
       next_fd = vectis_static_open_child_dir_at(current_fd, segment);
     } else {
-      next_fd = openat(current_fd, segment, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+      next_fd = openat(current_fd, segment,
+                       O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     }
     if (next_fd < 0) {
       vectis_static_fd_close(&current_fd);
