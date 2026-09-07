@@ -68,6 +68,13 @@ local function merge_headers(default_headers, request_headers)
   if request_headers ~= nil then
     headers = headers or {}
     for key, value in pairs(request_headers) do
+      if type(key) == "string" then
+        for existing in pairs(headers) do
+          if type(existing) == "string" and existing:lower() == key:lower() then
+            headers[existing] = nil
+          end
+        end
+      end
       headers[key] = value
     end
   end

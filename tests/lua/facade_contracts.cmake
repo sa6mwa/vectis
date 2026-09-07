@@ -1,6 +1,6 @@
 set(script "${WORK_DIR}/facade-contracts.lua")
 
-file(WRITE "${script}" [[
+file(WRITE "${script}" [=[
 local vectis = require("vectis")
 local dsv = require("vectis.dsv")
 local http = require("vectis.http")
@@ -665,6 +665,36 @@ assert_status_error(bad_xml_err, vectis.ERR_INVALID, "root element")
 assert(bad_xml_err.source == "vectis")
 assert(bad_xml_err.source_code == vectis.ERROR_SOURCE_VECTIS)
 
+local curl = require("curl")
+local original_perform = curl.perform
+local captured_headers
+curl.perform = function(opts)
+  captured_headers = opts.headers
+  return {ok = true, status = 200, body = ""}
+end
+for _, names in ipairs({
+  {"Authorization", "authorization"},
+  {"authorization", "AUTHORIZATION"},
+  {"Accept", "aCcEpT"},
+}) do
+  local defaults = {[names[1]] = "old", ["X-Retained"] = "yes"}
+  local overrides = {[names[2]] = "new"}
+  local client = http.client({headers = defaults})
+  assert(client.get("https://example.invalid/", {headers = overrides}).ok)
+  local count = 0
+  for key, value in pairs(captured_headers) do
+    count = count + 1
+    assert((key == names[2] and value == "new") or
+           (key == "X-Retained" and value == "yes"))
+  end
+  assert(count == 2)
+  assert(defaults[names[1]] == "old")
+  assert(overrides[names[2]] == "new")
+  assert(client.get("https://example.invalid/").ok)
+  assert(captured_headers[names[1]] == "old")
+end
+curl.perform = original_perform
+
 local invalid_http = http.normalize(nil)
 assert(invalid_http.ok == false)
 assert(invalid_http.transport_ok == false)
@@ -956,7 +986,7 @@ assert(bad_webdav_ok == false)
 assert(tostring(bad_webdav_err):find("destination", 1, true))
 
 print("vectis-lua-facade-contracts-ok")
-]])
+]=])
 
 execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${WORK_DIR}"
                 RESULT_VARIABLE facade_contracts_result
