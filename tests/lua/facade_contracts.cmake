@@ -221,6 +221,22 @@ assert(flow_provider.realm == "facade-flow")
 assert(flow_provider.browser_session.mode == "m2m_and_browser")
 assert(flow_provider.browser_session.cookie_name == "facade_session")
 assert(flow_provider.browser_login_path == "/_vectis/auth/login")
+for index, session in ipairs({false, {}, {mode = "m2m_only"}}) do
+  local flow = vectis.auth.workflow({
+    app = auth_app, path_prefix = "/auth", browser_session = session or nil,
+  })
+  local provider = assert(flow:provider())
+  assert(provider.browser_login_path == nil)
+  assert(provider:authenticate({resource = "/protected"}).action == "required")
+  assert(auth_app:auth_json({
+    path = "/m2m-workflow-" .. index, method = "GET",
+    auth = provider, body = '{"ok":true}',
+  }))
+end
+assert(auth_workflow:provider({browser_session = {mode = "m2m_only"}})
+    .browser_login_path == nil)
+assert(auth_workflow:provider({browser_login_path = "/custom/login"})
+    .browser_login_path == "/custom/login")
 local flow_required = assert(flow_provider:authenticate({
   resource = "/dav",
   allowed_modes = "basic",

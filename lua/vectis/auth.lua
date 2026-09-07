@@ -87,7 +87,9 @@ function workflow:provider(opts)
   local provider = select_keys(config, provider_keys)
   local path_prefix = config.path_prefix or config.prefix
 
-  if provider.browser_login_path == nil and path_prefix ~= nil then
+  if provider.browser_login_path == nil and path_prefix ~= nil and
+      type(config.browser_session) == "table" and
+      config.browser_session.mode == "m2m_and_browser" then
     path_prefix = path_prefix:gsub("/+$", "")
     provider.browser_login_path =
         (path_prefix == "" and "" or path_prefix) .. "/login"
