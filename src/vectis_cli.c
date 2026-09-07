@@ -853,36 +853,39 @@ static int vectis_cli_action_usage(FILE *stream, const char *action) {
     return 0;
   }
   if (strcmp(action, "credentials") == 0) {
-    fputs("Usage:\n"
-          "  vectis --action credentials [STATE OPTIONS] --init\n"
-          "  vectis --action credentials [STATE OPTIONS] --issue\n"
-          "      --subject USER [--purpose NAME] [--basic] [--bearer]\n"
-          "  vectis --action credentials [STATE OPTIONS]\n"
-          "      --verify AUTHORIZATION [--basic] [--bearer]\n"
-          "  vectis --action credentials [STATE OPTIONS] --revoke CLIENT_ID\n\n"
-          "State options:\n"
-          "  --state-key KEY             Auth state record (default: auth/v1/store).\n"
-          "  --transient-state-key KEY   Optional transient auth state record.\n"
-          "  --lockd-endpoint URL        Lockd or pouch endpoint.\n"
-          "  --lockd-namespace NAME      Auth state namespace (default: vectis.auth).\n"
-          "  --lockd-unix-socket PATH    Lockd Unix socket.\n"
-          "  --lockd-bundle FILE         Lockd client bundle.\n"
-          "  --pouch-crypto-key VALUE    Pouch encryption key.\n"
-          "  --pouch-crypto-key-file FILE Pouch encryption key file.\n"
-          "  --pouch-crypto-generate-key-file\n"
-          "                             Create the selected Pouch key file.\n"
-          "  --pouch-compression MODE    Pouch compression mode.\n"
-          "  --init                      Create or initialize the credential "
-          "store.\n"
-          "  --issue                     Issue a credential for --subject.\n"
-          "  --purpose NAME              Optional credential purpose.\n"
-          "  --verify AUTHORIZATION      Verify an HTTP Authorization value.\n"
-          "  --revoke CLIENT_ID          Revoke an issued credential.\n"
-          "  --basic                     Restrict issue or verify to Basic "
-          "auth.\n"
-          "  --bearer                    Restrict issue or verify to Bearer "
-          "auth.\n",
-          stream);
+    fputs(
+        "Usage:\n"
+        "  vectis --action credentials [STATE OPTIONS] --init\n"
+        "  vectis --action credentials [STATE OPTIONS] --issue\n"
+        "      --subject USER [--purpose NAME] [--basic] [--bearer]\n"
+        "  vectis --action credentials [STATE OPTIONS]\n"
+        "      --verify AUTHORIZATION [--basic] [--bearer]\n"
+        "  vectis --action credentials [STATE OPTIONS] --revoke CLIENT_ID\n\n"
+        "State options:\n"
+        "  --state-key KEY             Auth state record (default: "
+        "auth/v1/store).\n"
+        "  --transient-state-key KEY   Optional transient auth state record.\n"
+        "  --lockd-endpoint URL        Lockd or pouch endpoint.\n"
+        "  --lockd-namespace NAME      Auth state namespace (default: "
+        "vectis.auth).\n"
+        "  --lockd-unix-socket PATH    Lockd Unix socket.\n"
+        "  --lockd-bundle FILE         Lockd client bundle.\n"
+        "  --pouch-crypto-key VALUE    Pouch encryption key.\n"
+        "  --pouch-crypto-key-file FILE Pouch encryption key file.\n"
+        "  --pouch-crypto-generate-key-file\n"
+        "                             Create the selected Pouch key file.\n"
+        "  --pouch-compression MODE    Pouch compression mode.\n"
+        "  --init                      Create or initialize the credential "
+        "store.\n"
+        "  --issue                     Issue a credential for --subject.\n"
+        "  --purpose NAME              Optional credential purpose.\n"
+        "  --verify AUTHORIZATION      Verify an HTTP Authorization value.\n"
+        "  --revoke CLIENT_ID          Revoke an issued credential.\n"
+        "  --basic                     Restrict issue or verify to Basic "
+        "auth.\n"
+        "  --bearer                    Restrict issue or verify to Bearer "
+        "auth.\n",
+        stream);
     return 0;
   }
   if (strcmp(action, "users") == 0) {
@@ -895,9 +898,11 @@ static int vectis_cli_action_usage(FILE *stream, const char *action) {
         "  vectis --action users [STATE OPTIONS] --webdav-key USER\n"
         "      --password VALUE [--totp-code CODE]\n\n"
         "Store and enrollment:\n"
-        "  --state-key KEY             Auth state record (default: auth/v1/store).\n"
+        "  --state-key KEY             Auth state record (default: "
+        "auth/v1/store).\n"
         "  --lockd-endpoint URL        Lockd or pouch endpoint.\n"
-        "  --lockd-namespace NAME      Auth state namespace (default: vectis.auth).\n"
+        "  --lockd-namespace NAME      Auth state namespace (default: "
+        "vectis.auth).\n"
         "  --lockd-unix-socket PATH    Lockd Unix socket.\n"
         "  --lockd-bundle FILE         Lockd client bundle.\n"
         "  --pouch-crypto-key VALUE    Pouch encryption key.\n"
@@ -941,9 +946,11 @@ static int vectis_cli_action_usage(FILE *stream, const char *action) {
         "  --webdav-key FLOW_ID        Issue a WebDAV key from a stored "
         "flow.\n\n"
         "Common options:\n"
-        "  --state-key KEY             Auth state record (default: auth/v1/store).\n"
+        "  --state-key KEY             Auth state record (default: "
+        "auth/v1/store).\n"
         "  --lockd-endpoint URL        Lockd or pouch endpoint.\n"
-        "  --lockd-namespace NAME      Auth state namespace (default: vectis.auth).\n"
+        "  --lockd-namespace NAME      Auth state namespace (default: "
+        "vectis.auth).\n"
         "  --lockd-unix-socket PATH    Lockd Unix socket.\n"
         "  --lockd-bundle FILE         Lockd client bundle.\n"
         "  --pouch-crypto-key VALUE    Pouch encryption key.\n"
@@ -2242,9 +2249,10 @@ static void vectis_cli_error_set(vectis_error *error, vectis_status status,
 /* Parse the Lockd selection shared by the auth administration actions.  The
  * pointed-to argv strings remain valid through the synchronous action, so no
  * ownership transfer is needed here. */
-static int vectis_cli_auth_store_lockd_option(
-    int argc, char **argv, int *index, vectis_auth_store_config *store,
-    vectis_lockd_config *lockd, const char **endpoints) {
+static int vectis_cli_auth_store_lockd_option(int argc, char **argv, int *index,
+                                              vectis_auth_store_config *store,
+                                              vectis_lockd_config *lockd,
+                                              const char **endpoints) {
   const char *option;
 
   if (argc <= 0 || argv == NULL || index == NULL || *index >= argc ||
@@ -8056,8 +8064,7 @@ vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
                          "app auth kind must be native or callback");
     return NULL;
   }
-  namespace_name =
-      vectis_lua_table_string(lua, provider_index, "namespace");
+  namespace_name = vectis_lua_table_string(lua, provider_index, "namespace");
   state_key = vectis_lua_table_string(lua, provider_index, "state_key");
   transient_state_key =
       vectis_lua_table_string(lua, provider_index, "transient_state_key");
@@ -8082,8 +8089,7 @@ vectis_lua_app_native_auth_new(lua_State *lua, vectis_app *app, int index,
   if ((namespace_name != NULL && auth->namespace_name == NULL) ||
       (state_key != NULL && auth->state_key == NULL) ||
       (transient_state_key != NULL && auth->transient_state_key == NULL) ||
-      auth->purpose == NULL ||
-      auth->realm == NULL ||
+      auth->purpose == NULL || auth->realm == NULL ||
       (browser_login_path != NULL && auth->browser_login_path == NULL)) {
     if (provider_index != index) {
       lua_pop(lua, 1);
@@ -12107,8 +12113,7 @@ static int vectis_lua_app_auth_routes(lua_State *lua) {
     path_prefix = vectis_lua_table_string(lua, 2, "prefix");
   }
   state_key = vectis_lua_table_string(lua, 2, "state_key");
-  transient_state_key =
-      vectis_lua_table_string(lua, 2, "transient_state_key");
+  transient_state_key = vectis_lua_table_string(lua, 2, "transient_state_key");
 
   vectis_auth_routes_config_init(&config);
   if (path_prefix != NULL) {
@@ -23416,9 +23421,8 @@ int vectis_cli_main(int argc, char **argv) {
 
   verbosity = vectis_cli_leading_verbosity(argc, argv, &action_index);
 
-  if (action_index < argc &&
-      (strcmp(argv[action_index], "-h") == 0 ||
-       strcmp(argv[action_index], "--help") == 0)) {
+  if (action_index < argc && (strcmp(argv[action_index], "-h") == 0 ||
+                              strcmp(argv[action_index], "--help") == 0)) {
     vectis_cli_usage(stdout);
     return 0;
   }

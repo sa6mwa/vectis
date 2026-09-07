@@ -560,8 +560,8 @@ int main(void) {
     return 1;
   }
   endpoints[0] = endpoint;
-  written = snprintf(pouch_key_path, sizeof(pouch_key_path), "%s/pouch.key",
-                     temp);
+  written =
+      snprintf(pouch_key_path, sizeof(pouch_key_path), "%s/pouch.key", temp);
   if (written < 0 || (size_t)written >= sizeof(pouch_key_path)) {
     remove_tree(temp);
     return 1;

@@ -11332,19 +11332,19 @@ vectis_app *vectis_app_new(const vectis_app_config *config,
   impl->quiescence_policy = effective->quiescence_policy;
   impl->port =
       vectis_default_ushort(effective->tls.port, VECTIS_TLS_DEFAULT_PORT);
-  impl->presented_https_port = vectis_default_ushort(
-      effective->tls.presented_https_port, impl->port);
+  impl->presented_https_port =
+      vectis_default_ushort(effective->tls.presented_https_port, impl->port);
   impl->http_redirect_enabled = effective->tls.http_redirect_enabled;
   impl->http_redirect_port =
       effective->tls.http_redirect_enabled
           ? vectis_default_ushort(effective->tls.http_redirect_port,
                                   VECTIS_TLS_HTTP_REDIRECT_DEFAULT_PORT)
           : 0u;
-  impl->presented_http_port = effective->tls.http_redirect_enabled
-                                  ? vectis_default_ushort(
-                                        effective->tls.presented_http_port,
-                                        impl->http_redirect_port)
-                                  : 0u;
+  impl->presented_http_port =
+      effective->tls.http_redirect_enabled
+          ? vectis_default_ushort(effective->tls.presented_http_port,
+                                  impl->http_redirect_port)
+          : 0u;
   impl->tls_mode = effective->tls.mode;
   impl->tls_version = effective->tls.version;
   impl->require_client_certificate = effective->tls.require_client_certificate;
@@ -14935,8 +14935,8 @@ vectis_auth_workflow_route_policy_hash(const vectis_auth_route_data *data,
                                                data->workflow_state_key) ||
       !vectis_auth_workflow_hash_update_string(context,
                                                data->store.state_key) ||
-      !vectis_auth_workflow_hash_update_string(context,
-                                               data->store.transient_state_key) ||
+      !vectis_auth_workflow_hash_update_string(
+          context, data->store.transient_state_key) ||
       !vectis_auth_workflow_hash_update_string(context,
                                                data->credential_purpose) ||
       !vectis_auth_workflow_hash_update_u64(context,
@@ -15048,9 +15048,9 @@ vectis_auth_workflow_delete(vectis_app *app, const vectis_auth_route_data *data,
 static vectis_status
 vectis_auth_workflow_prune(vectis_app *app, const vectis_auth_route_data *data,
                            uint64_t now, vectis_error *error);
-static vectis_status vectis_auth_workflow_deliver_email_job(
-    const vectis_auth_route_data *data, lc_outbox_job *job,
-    vectis_error *error);
+static vectis_status
+vectis_auth_workflow_deliver_email_job(const vectis_auth_route_data *data,
+                                       lc_outbox_job *job, vectis_error *error);
 
 static int vectis_auth_workflow_return_path_valid(const char *path);
 
@@ -15134,9 +15134,8 @@ static vectis_status vectis_auth_workflow_create(
           ? data->email_code_max_attempts
           : VECTIS_AUTH_EMAIL_TOKEN_DEFAULT_MAX_ATTEMPTS;
   status = vectis_lockd_state_save_in_namespace(
-      client, vectis_auth_workflow_namespace(data), key,
-      "vectis-auth-workflow", 30L, &vectis_auth_workflow_record_map, &record,
-      error);
+      client, vectis_auth_workflow_namespace(data), key, "vectis-auth-workflow",
+      30L, &vectis_auth_workflow_record_map, &record, error);
   if (status == VECTIS_OK) {
     status = vectis_auth_workflow_load(app, data, workflow_id, &record, error);
   }
@@ -15173,9 +15172,8 @@ vectis_auth_workflow_load(vectis_app *app, const vectis_auth_route_data *data,
   }
   memset(record, 0, sizeof(*record));
   status = vectis_lockd_state_load_in_namespace(
-      client, vectis_auth_workflow_namespace(data), key,
-      "vectis-auth-workflow", 30L, &vectis_auth_workflow_record_map, record,
-      error);
+      client, vectis_auth_workflow_namespace(data), key, "vectis-auth-workflow",
+      30L, &vectis_auth_workflow_record_map, record, error);
   if (status != VECTIS_OK) {
     return status;
   }
@@ -15813,8 +15811,7 @@ vectis_webdav_propfind(const vectis_webdav_route_data *data,
 
 static int
 vectis_webdav_destination_path(const vectis_webdav_route_data *data,
-                               vectis_request *request,
-                               const char *destination,
+                               vectis_request *request, const char *destination,
                                char out[VECTIS_WEBDAV_PATH_MAX + 1u]) {
   const char *path;
   const char *scheme;
@@ -17399,8 +17396,8 @@ vectis_auth_workflow_cleanup(vectis_app *app,
   } else {
     effective = config;
   }
-  data = vectis_auth_route_data_new(app, effective, effective->path_prefix,
-                                    error);
+  data =
+      vectis_auth_route_data_new(app, effective, effective->path_prefix, error);
   if (data == NULL) {
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
@@ -17606,8 +17603,8 @@ static vectis_status vectis_auth_workflow_update(
   context->accepted = 0;
   context->terminal = 0;
   return vectis_lockd_state_update_in_namespace(
-      client, vectis_auth_workflow_namespace(data), key,
-      "vectis-auth-workflow", 30L, &vectis_auth_workflow_record_map, &record,
+      client, vectis_auth_workflow_namespace(data), key, "vectis-auth-workflow",
+      30L, &vectis_auth_workflow_record_map, &record,
       vectis_auth_workflow_update_callback, context, error);
 }
 
@@ -17650,12 +17647,14 @@ static vectis_status vectis_auth_workflow_token_hash(const char *token,
   return VECTIS_OK;
 }
 
-static int vectis_auth_smtp_recipient_allowed(
-    const vectis_auth_smtp_config *config, const char *recipient);
+static int
+vectis_auth_smtp_recipient_allowed(const vectis_auth_smtp_config *config,
+                                   const char *recipient);
 
-static vectis_status vectis_auth_workflow_deliver_email_job(
-    const vectis_auth_route_data *data, lc_outbox_job *job,
-    vectis_error *error) {
+static vectis_status
+vectis_auth_workflow_deliver_email_job(const vectis_auth_route_data *data,
+                                       lc_outbox_job *job,
+                                       vectis_error *error) {
   vectis_auth_email_outbox_payload payload;
   vectis_auth_email_message message;
   lc_sink *sink;
@@ -17670,7 +17669,8 @@ static vectis_status vectis_auth_workflow_deliver_email_job(
 
   if (data == NULL || job == NULL || data->email_smtp.url == NULL ||
       job->kind == NULL || strcmp(job->kind, "vectis.auth.email-code") != 0 ||
-      job->destination == NULL || strcmp(job->destination, data->email_smtp.url) != 0) {
+      job->destination == NULL ||
+      strcmp(job->destination, data->email_smtp.url) != 0) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "auth email outbox job does not belong to this route");
     return VECTIS_ERR_INVALID;
@@ -17687,8 +17687,8 @@ static vectis_status vectis_auth_workflow_deliver_email_job(
     rc = lc_sink_memory_bytes(sink, &bytes, &size, &lcerr);
   }
   if (rc != LC_OK) {
-    status = vectis_set_lockdc_error(error, rc, &lcerr,
-                                     "failed to read auth email outbox payload");
+    status = vectis_set_lockdc_error(
+        error, rc, &lcerr, "failed to read auth email outbox payload");
     goto cleanup;
   }
   runtime = vectis_lonejson_new(error);
@@ -17696,11 +17696,13 @@ static vectis_status vectis_auth_workflow_deliver_email_job(
     status = error != NULL ? error->code : VECTIS_ERR_NOMEM;
     goto cleanup;
   }
-  json_status = lonejson_parse_buffer(runtime, &vectis_auth_email_outbox_payload_map,
-                                      &payload, bytes, size, &json_error);
+  json_status =
+      lonejson_parse_buffer(runtime, &vectis_auth_email_outbox_payload_map,
+                            &payload, bytes, size, &json_error);
   if (json_status != LONEJSON_STATUS_OK) {
-    status = vectis_set_lonejson_error(error, json_status, &json_error,
-                                       "failed to parse auth email outbox payload");
+    status =
+        vectis_set_lonejson_error(error, json_status, &json_error,
+                                  "failed to parse auth email outbox payload");
     goto cleanup;
   }
   memset(&message, 0, sizeof(message));
@@ -17711,8 +17713,8 @@ static vectis_status vectis_auth_workflow_deliver_email_job(
   message.token = payload.token;
   message.effect_key = job->effect_key;
   message.expires_at = (uint64_t)payload.expires_at;
-  status = vectis_auth_email_token_deliver_smtp(&data->email_smtp, &message,
-                                                error);
+  status =
+      vectis_auth_email_token_deliver_smtp(&data->email_smtp, &message, error);
 
 cleanup:
   OPENSSL_cleanse(payload.token, sizeof(payload.token));
@@ -17814,9 +17816,9 @@ static vectis_status vectis_auth_workflow_stage_email_outbox(
     goto cleanup;
   }
   payload.expires_at = (lonejson_int64)(now + data->workflow_ttl_seconds);
-  payload_json = lonejson_serialize_alloc(runtime,
-                                          &vectis_auth_email_outbox_payload_map,
-                                          &payload, &payload_size, &json_error);
+  payload_json =
+      lonejson_serialize_alloc(runtime, &vectis_auth_email_outbox_payload_map,
+                               &payload, &payload_size, &json_error);
   if (payload_json == NULL) {
     status = vectis_set_lonejson_error(error, LONEJSON_STATUS_INVALID_JSON,
                                        &json_error,
@@ -17845,22 +17847,23 @@ static vectis_status vectis_auth_workflow_stage_email_outbox(
   rc = workflow->append_outbox(workflow, &entry, source, &transaction, &receipt,
                                &lcerr);
   if (rc != LC_OK || transaction == NULL) {
-    status = vectis_set_lockdc_error(error, rc != LC_OK ? rc : LC_ERR_PROTOCOL,
-                                     &lcerr,
-                                     "failed to stage auth email outbox");
+    status =
+        vectis_set_lockdc_error(error, rc != LC_OK ? rc : LC_ERR_PROTOCOL,
+                                &lcerr, "failed to stage auth email outbox");
     goto cleanup;
   }
   lc_workflow_participant_request_init(&participant_request);
-  participant_request.acquire.namespace_name = vectis_auth_workflow_namespace(data);
+  participant_request.acquire.namespace_name =
+      vectis_auth_workflow_namespace(data);
   participant_request.acquire.key = workflow_key;
   participant_request.acquire.owner = "vectis-auth-workflow";
   participant_request.acquire.ttl_seconds = 30L;
   rc = transaction->acquire(transaction, &participant_request, &participant,
                             &lcerr);
   if (rc != LC_OK || participant == NULL) {
-    status = vectis_set_lockdc_error(error, rc != LC_OK ? rc : LC_ERR_PROTOCOL,
-                                     &lcerr,
-                                     "failed to join auth workflow transaction");
+    status = vectis_set_lockdc_error(
+        error, rc != LC_OK ? rc : LC_ERR_PROTOCOL, &lcerr,
+        "failed to join auth workflow transaction");
     goto cleanup;
   }
   rc = lc_sink_to_memory(&sink, &lcerr);
@@ -17873,16 +17876,17 @@ static vectis_status vectis_auth_workflow_stage_email_outbox(
     rc = lc_sink_memory_bytes(sink, &bytes, &record_size, &lcerr);
   }
   if (rc != LC_OK) {
-    status = vectis_set_lockdc_error(error, rc, &lcerr,
-                                     "failed to read auth workflow transaction");
+    status = vectis_set_lockdc_error(
+        error, rc, &lcerr, "failed to read auth workflow transaction");
     goto cleanup;
   }
   memset(&record, 0, sizeof(record));
   json_status = lonejson_parse_buffer(runtime, &vectis_auth_workflow_record_map,
                                       &record, bytes, record_size, &json_error);
   if (json_status != LONEJSON_STATUS_OK) {
-    status = vectis_set_lonejson_error(error, json_status, &json_error,
-                                       "failed to parse auth workflow transaction");
+    status =
+        vectis_set_lonejson_error(error, json_status, &json_error,
+                                  "failed to parse auth workflow transaction");
     goto cleanup;
   }
   memset(&update, 0, sizeof(update));
@@ -17892,8 +17896,8 @@ static vectis_status vectis_auth_workflow_stage_email_outbox(
   update.expected_step = 0u;
   update.email = email;
   update.token_hash = token_hash;
-  status = vectis_auth_workflow_update_callback(NULL, &record, &rc, &update,
-                                                 error);
+  status =
+      vectis_auth_workflow_update_callback(NULL, &record, &rc, &update, error);
   if (status != VECTIS_OK || !update.accepted) {
     if (status == VECTIS_OK) {
       vectis_set_error(error, VECTIS_ERR_INVALID,
@@ -17902,12 +17906,13 @@ static vectis_status vectis_auth_workflow_stage_email_outbox(
     }
     goto cleanup;
   }
-  record_json = lonejson_serialize_alloc(runtime, &vectis_auth_workflow_record_map,
-                                         &record, &record_size, &json_error);
+  record_json =
+      lonejson_serialize_alloc(runtime, &vectis_auth_workflow_record_map,
+                               &record, &record_size, &json_error);
   if (record_json == NULL) {
-    status = vectis_set_lonejson_error(error, LONEJSON_STATUS_INVALID_JSON,
-                                       &json_error,
-                                       "failed to serialize auth workflow transaction");
+    status = vectis_set_lonejson_error(
+        error, LONEJSON_STATUS_INVALID_JSON, &json_error,
+        "failed to serialize auth workflow transaction");
     goto cleanup;
   }
   lc_source_close(source);
@@ -17919,8 +17924,8 @@ static vectis_status vectis_auth_workflow_stage_email_outbox(
     rc = participant->update(participant, source, &update_options, &lcerr);
   }
   if (rc != LC_OK) {
-    status = vectis_set_lockdc_error(error, rc, &lcerr,
-                                     "failed to update auth workflow transaction");
+    status = vectis_set_lockdc_error(
+        error, rc, &lcerr, "failed to update auth workflow transaction");
     goto cleanup;
   }
   /* commit() consumes enrolled participant handles. */
@@ -17960,7 +17965,8 @@ static vectis_status vectis_auth_workflow_stage_email_outbox(
     }
     job = NULL;
     /* The state and effect are committed. A delivery failure is represented by
-     * the durable retry state rather than rolling back a valid login attempt. */
+     * the durable retry state rather than rolling back a valid login attempt.
+     */
     status = VECTIS_OK;
   } else if (job != NULL) {
     lc_outbox_retry retry;
@@ -18022,8 +18028,10 @@ static vectis_status vectis_auth_workflow_send_email(
                      "email-code workflows require SMTP delivery");
     return VECTIS_ERR_INVALID;
   }
-  if (deliver && !vectis_auth_smtp_recipient_allowed(&data->email_smtp, email)) {
-    vectis_set_error(error, VECTIS_ERR_INVALID, "SMTP recipient is not allowed");
+  if (deliver &&
+      !vectis_auth_smtp_recipient_allowed(&data->email_smtp, email)) {
+    vectis_set_error(error, VECTIS_ERR_INVALID,
+                     "SMTP recipient is not allowed");
     return VECTIS_ERR_INVALID;
   }
   status = vectis_auth_workflow_now(data->unix_seconds, &now, error);
@@ -34732,9 +34740,9 @@ vectis_status vectis_lockd_state_update(struct lc_client *client,
                                         const lonejson_map *map, void *state,
                                         vectis_lockd_state_update_fn update,
                                         void *userdata, vectis_error *error) {
-  return vectis_lockd_state_update_in_namespace(
-      client, NULL, key, owner, ttl_seconds, map, state, update, userdata,
-      error);
+  return vectis_lockd_state_update_in_namespace(client, NULL, key, owner,
+                                                ttl_seconds, map, state, update,
+                                                userdata, error);
 }
 
 vectis_request *vectis_internal_request_new(vectis_error *error) {
@@ -37818,7 +37826,8 @@ vectis_auth_smtp_build_body(const vectis_auth_smtp_config *config,
   memset(body, 0, sizeof(*body));
   status = vectis_string_builder_appendf(
       body, error,
-      "From: %s\r\nTo: %s\r\nSubject: %s\r\nMessage-ID: <%s@vectis.invalid>\r\n",
+      "From: %s\r\nTo: %s\r\nSubject: %s\r\nMessage-ID: "
+      "<%s@vectis.invalid>\r\n",
       config->mail_from, message->email,
       config->subject != NULL && config->subject[0] != '\0'
           ? config->subject

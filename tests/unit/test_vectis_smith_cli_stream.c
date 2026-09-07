@@ -4,8 +4,8 @@
 #include <pty.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 /* The CLI bridge is intentionally source-included so this test exercises its
  * private bounded queues and real libmdf streaming renderer without opening a
@@ -40,8 +40,7 @@ static void test_log(const char *prefix, const char *text) {
 }
 
 vectis_status vectis_smith_test_open(const vectis_smith_config *config,
-                                     vectis_smith **out,
-                                     vectis_error *error) {
+                                     vectis_smith **out, vectis_error *error) {
   test_runtime_state = CAI_AGENT_IDLE;
   test_event_callback = config->runtime.event_callback;
   test_event_context = config->runtime.event_context;
@@ -51,9 +50,7 @@ vectis_status vectis_smith_test_open(const vectis_smith_config *config,
   return VECTIS_OK;
 }
 
-void vectis_smith_test_close(vectis_smith *smith) {
-  (void)smith;
-}
+void vectis_smith_test_close(vectis_smith *smith) { (void)smith; }
 
 vectis_status vectis_smith_test_submit_steering(vectis_smith *smith,
                                                 const char *text,
@@ -155,12 +152,10 @@ static void test_agent_control_bridge_is_fifo(void) {
   agent.notify_fd = -1;
   assert(pthread_mutex_init(&agent.mutex, NULL) == 0);
   assert(pthread_cond_init(&agent.changed, NULL) == 0);
-  assert(vectis_smith_cli_agent_submit(&agent,
-                                        VECTIS_SMITH_CLI_CONTROL_NORMAL,
-                                        "next") == 0);
-  assert(vectis_smith_cli_agent_submit(&agent,
-                                        VECTIS_SMITH_CLI_CONTROL_STEERING,
-                                        "steer") == 0);
+  assert(vectis_smith_cli_agent_submit(&agent, VECTIS_SMITH_CLI_CONTROL_NORMAL,
+                                       "next") == 0);
+  assert(vectis_smith_cli_agent_submit(
+             &agent, VECTIS_SMITH_CLI_CONTROL_STEERING, "steer") == 0);
   assert(vectis_smith_cli_agent_take_control(&agent, &control));
   assert(control.kind == VECTIS_SMITH_CLI_CONTROL_NORMAL);
   assert(strcmp(control.text, "next") == 0);
@@ -182,9 +177,8 @@ static void test_softline_queued_turns_profile(void) {
   editor = sl_create();
   assert(editor != NULL);
   assert(sl_set_prompt_queue(editor, 1, 4, 2) == SL_OK);
-  assert(sl_set_prompt_queue_profile(editor,
-                                     SL_PROMPT_QUEUE_PROFILE_QUEUED_TURNS) ==
-         SL_OK);
+  assert(sl_set_prompt_queue_profile(
+             editor, SL_PROMPT_QUEUE_PROFILE_QUEUED_TURNS) == SL_OK);
   assert(sl_get_prompt_queue_profile(editor, &profile) == SL_OK);
   assert(profile == SL_PROMPT_QUEUE_PROFILE_QUEUED_TURNS);
   assert(sl_get_prompt_queue_keys(editor, &keys) == SL_OK);
@@ -208,8 +202,8 @@ static void test_cli_diagnostic_endpoint_redaction(void) {
       "request to https://operator:secret@lockd.example/v1 failed", message,
       sizeof(message));
   assert(strcmp(message, "lockdc returned a redacted dependency error") == 0);
-  vectis_smith_lockdc_diagnostic_message("pouch binary control record magic mismatch",
-                                         message, sizeof(message));
+  vectis_smith_lockdc_diagnostic_message(
+      "pouch binary control record magic mismatch", message, sizeof(message));
   assert(strcmp(message, "pouch binary control record magic mismatch") == 0);
 }
 
@@ -279,8 +273,8 @@ static void test_interactive_queue_and_promote(void) {
     fds[1].events = POLLIN;
     assert(poll(fds, 2u, 20) >= 0);
     if ((fds[0].revents & POLLIN) != 0) {
-      length = read(log_fds[0], log + log_length,
-                    sizeof(log) - log_length - 1u);
+      length =
+          read(log_fds[0], log + log_length, sizeof(log) - log_length - 1u);
       if (length > 0) {
         log_length += (size_t)length;
         log[log_length] = '\0';

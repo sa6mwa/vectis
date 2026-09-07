@@ -170,8 +170,7 @@ static void vectis_smith_cli_drain_limited(vectis_smith_cli_render *render,
       capacity = limit - drained;
     }
     (void)pthread_mutex_lock(&render->mutex);
-    length =
-        vectis_smith_cli_ring_read(&render->rendered, buffer, capacity);
+    length = vectis_smith_cli_ring_read(&render->rendered, buffer, capacity);
     (void)pthread_cond_broadcast(&render->changed);
     (void)pthread_mutex_unlock(&render->mutex);
     if (length == 0u) {
@@ -350,13 +349,15 @@ static int vectis_smith_cli_render_failed(vectis_smith_cli_render *render) {
   return failed;
 }
 
-static int vectis_smith_cli_render_event(
-    void *userdata, const cai_agent_runtime_event *event, cai_error *error) {
+static int vectis_smith_cli_render_event(void *userdata,
+                                         const cai_agent_runtime_event *event,
+                                         cai_error *error) {
   vectis_smith_cli_render *render;
 
   (void)error;
   render = (vectis_smith_cli_render *)userdata;
-  return event->type == CAI_AGENT_EVENT_TEXT_DELTA && event->data_length != 0u &&
+  return event->type == CAI_AGENT_EVENT_TEXT_DELTA &&
+                 event->data_length != 0u &&
                  vectis_smith_cli_render_append(render, event->data,
                                                 event->data_length) != 0
              ? CAI_ERR_NOMEM
@@ -410,8 +411,9 @@ static void vectis_smith_cli_agent_fail(vectis_smith_cli_agent *agent,
   vectis_smith_cli_notify(agent->notify_fd);
 }
 
-static int vectis_smith_cli_agent_event(
-    void *userdata, const cai_agent_runtime_event *event, cai_error *error) {
+static int vectis_smith_cli_agent_event(void *userdata,
+                                        const cai_agent_runtime_event *event,
+                                        cai_error *error) {
   vectis_smith_cli_agent *agent;
 
   (void)error;
@@ -427,8 +429,8 @@ static int vectis_smith_cli_agent_event(
   return CAI_OK;
 }
 
-static int vectis_smith_cli_agent_take_control(
-    vectis_smith_cli_agent *agent, vectis_smith_cli_control *out) {
+static int vectis_smith_cli_agent_take_control(vectis_smith_cli_agent *agent,
+                                               vectis_smith_cli_control *out) {
   (void)pthread_mutex_lock(&agent->mutex);
   if (agent->control_count == 0u) {
     (void)pthread_mutex_unlock(&agent->mutex);
@@ -519,9 +521,9 @@ static void *vectis_smith_cli_agent_thread(void *userdata) {
 }
 
 static int vectis_smith_cli_agent_start(vectis_smith_cli_agent *agent,
-                                         const vectis_smith_config *config,
-                                         vectis_smith_cli_render *render,
-                                         int notify_fd) {
+                                        const vectis_smith_config *config,
+                                        vectis_smith_cli_render *render,
+                                        int notify_fd) {
   memset(agent, 0, sizeof(*agent));
   if (pthread_mutex_init(&agent->mutex, NULL) != 0) {
     return -1;
@@ -584,9 +586,9 @@ static void vectis_smith_cli_agent_stop(vectis_smith_cli_agent *agent,
   (void)pthread_mutex_destroy(&agent->mutex);
 }
 
-static int vectis_smith_cli_agent_submit(
-    vectis_smith_cli_agent *agent, vectis_smith_cli_control_kind kind,
-    const char *text) {
+static int vectis_smith_cli_agent_submit(vectis_smith_cli_agent *agent,
+                                         vectis_smith_cli_control_kind kind,
+                                         const char *text) {
   size_t tail;
   char *copy;
 
@@ -616,9 +618,9 @@ static int vectis_smith_cli_agent_submit(
 }
 
 static void vectis_smith_cli_agent_snapshot(vectis_smith_cli_agent *agent,
-                                             cai_agent_run_state *state,
-                                             int *failed, char *message,
-                                             size_t message_capacity) {
+                                            cai_agent_run_state *state,
+                                            int *failed, char *message,
+                                            size_t message_capacity) {
   (void)pthread_mutex_lock(&agent->mutex);
   *state = agent->state;
   *failed = agent->failed;
@@ -715,9 +717,9 @@ static void vectis_smith_cli_redact_endpoint(const char *endpoint, char *out,
   if (authority != NULL) {
     authority += 3u;
     slash = memchr(authority, '/', length - (size_t)(authority - endpoint));
-    at = memchr(authority, '@', slash == NULL
-                                     ? length - (size_t)(authority - endpoint)
-                                     : (size_t)(slash - authority));
+    at = memchr(authority, '@',
+                slash == NULL ? length - (size_t)(authority - endpoint)
+                              : (size_t)(slash - authority));
     if (at != NULL) {
       size_t prefix = (size_t)(authority - endpoint);
       size_t suffix = length - (size_t)(at + 1 - endpoint);
@@ -770,11 +772,9 @@ static int vectis_smith_cli_open_store(const char *endpoint,
     lc_error_init(&lcerr);
     rc = lc_pouch_crypto_default_key_file(&key_file, &lcerr);
     if (rc != LC_OK && failure != NULL && failure_capacity != 0u) {
-      vectis_smith_lockdc_diagnostic_message(lcerr.message,
-                                             dependency_message,
+      vectis_smith_lockdc_diagnostic_message(lcerr.message, dependency_message,
                                              sizeof(dependency_message));
-      (void)snprintf(failure, failure_capacity, "%s",
-                     dependency_message);
+      (void)snprintf(failure, failure_capacity, "%s", dependency_message);
     }
     lc_error_cleanup(&lcerr);
     if (rc != LC_OK) {
@@ -810,9 +810,8 @@ static int vectis_smith_cli_open_store(const char *endpoint,
     *out_client = NULL;
     return -1;
   }
-  if (vectis_smith_store_set_diagnostic_context(*out_store,
-                                                 diagnostic_endpoint,
-                                                 namespace_name) != 0) {
+  if (vectis_smith_store_set_diagnostic_context(*out_store, diagnostic_endpoint,
+                                                namespace_name) != 0) {
     if (failure != NULL && failure_capacity != 0u) {
       (void)snprintf(failure, failure_capacity,
                      "failed to retain lockdc diagnostic context");
@@ -845,10 +844,10 @@ static int vectis_smith_cli_verbosity_argument(const char *argument) {
 
 static int vectis_smith_cli_logging_requested(void) {
   static const char *const names[] = {
-      "LOG_MODE",          "LOG_LEVEL",      "LOG_DISABLE_TIMESTAMP",
-      "LOG_VERBOSE_FIELDS", "LOG_NO_COLOR",   "LOG_FORCE_COLOR",
-      "LOG_PALETTE",       "LOG_OUTPUT",     "LOG_OUTPUT_FILE_MODE",
-      "LOG_TIME_FORMAT",   "LOG_UTC"};
+      "LOG_MODE",           "LOG_LEVEL",    "LOG_DISABLE_TIMESTAMP",
+      "LOG_VERBOSE_FIELDS", "LOG_NO_COLOR", "LOG_FORCE_COLOR",
+      "LOG_PALETTE",        "LOG_OUTPUT",   "LOG_OUTPUT_FILE_MODE",
+      "LOG_TIME_FORMAT",    "LOG_UTC"};
   size_t index;
 
   for (index = 0u; index < sizeof(names) / sizeof(names[0]); ++index) {
@@ -877,7 +876,7 @@ static pslog_logger *vectis_smith_cli_logger_new(int verbosity) {
     return root;
   }
   logger = root->with_level(root, verbosity == 1 ? PSLOG_LEVEL_DEBUG
-                                                  : PSLOG_LEVEL_TRACE);
+                                                 : PSLOG_LEVEL_TRACE);
   root->destroy(root);
   return logger;
 }
@@ -895,8 +894,7 @@ static int vectis_smith_cli_nonblocking(int fd) {
   return flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0 ? -1 : 0;
 }
 
-static int vectis_smith_cli_ui_apply(sl_t *editor,
-                                     vectis_smith_cli_ui *ui) {
+static int vectis_smith_cli_ui_apply(sl_t *editor, vectis_smith_cli_ui *ui) {
   cai_agent_run_state state;
   const char *elements[3];
   char state_element[64];
@@ -904,14 +902,14 @@ static int vectis_smith_cli_ui_apply(sl_t *editor,
   int failed;
 
   vectis_smith_cli_agent_snapshot(ui->agent, &state, &failed, error_element,
-                                   sizeof(error_element));
+                                  sizeof(error_element));
   (void)snprintf(state_element, sizeof(state_element), "agent: %s",
                  vectis_smith_cli_state_name(state));
   elements[0] = "Smith";
   elements[1] = state_element;
   elements[2] = failed || error_element[0] != '\0' ? error_element : NULL;
-  if (sl_set_status_elements(editor, elements,
-                             elements[2] == NULL ? 2u : 3u) != SL_OK ||
+  if (sl_set_status_elements(editor, elements, elements[2] == NULL ? 2u : 3u) !=
+          SL_OK ||
       sl_set_status_busy(editor, vectis_smith_cli_is_active(state)) != SL_OK) {
     return SL_ERROR;
   }
@@ -928,21 +926,20 @@ static int vectis_smith_cli_ui_watch(sl_t *editor,
   ui = (vectis_smith_cli_ui *)userdata;
   while (read(ui->wake_fd, bytes, sizeof(bytes)) > 0) {
   }
-  vectis_smith_cli_drain_limited(ui->render,
-                                 VECTIS_SMITH_CLI_UI_DRAIN_BYTES);
+  vectis_smith_cli_drain_limited(ui->render, VECTIS_SMITH_CLI_UI_DRAIN_BYTES);
   return vectis_smith_cli_ui_apply(editor, ui);
 }
 
 static int vectis_smith_cli_command_enter(sl_t *editor, sl_key_t key,
-                                           void *userdata,
-                                           sl_key_action_t *action) {
+                                          void *userdata,
+                                          sl_key_action_t *action) {
   const char *buffer;
 
   (void)key;
   (void)userdata;
   buffer = sl_buffer(editor);
   *action = buffer != NULL && buffer[0] == ':' ? SL_KEY_ACTION_SUBMIT
-                                                : SL_KEY_ACTION_PASS;
+                                               : SL_KEY_ACTION_PASS;
   return SL_OK;
 }
 
@@ -975,12 +972,12 @@ static int vectis_smith_cli_interactive(const vectis_smith_config *smith_config,
     return 1;
   }
   render->notify_fd = wake_fds[1];
-  if (vectis_smith_cli_agent_start(&agent, smith_config, render,
-                                   wake_fds[1]) != 0) {
+  if (vectis_smith_cli_agent_start(&agent, smith_config, render, wake_fds[1]) !=
+      0) {
     char message[256];
 
     vectis_smith_cli_agent_snapshot(&agent, &state, &failed, message,
-                                     sizeof(message));
+                                    sizeof(message));
     (void)state;
     (void)failed;
     fprintf(stderr, "vectis: %s\n",
@@ -1011,8 +1008,8 @@ static int vectis_smith_cli_interactive(const vectis_smith_config *smith_config,
   ui.render = render;
   ui.wake_fd = wake_fds[0];
   rc = 0;
-  if (sl_set_prompt_queue_profile(editor,
-                                  SL_PROMPT_QUEUE_PROFILE_QUEUED_TURNS) != SL_OK ||
+  if (sl_set_prompt_queue_profile(
+          editor, SL_PROMPT_QUEUE_PROFILE_QUEUED_TURNS) != SL_OK ||
       sl_bind_key(editor, SL_KEY_ENTER, vectis_smith_cli_command_enter, NULL) !=
           SL_OK ||
       sl_watch_add(editor, wake_fds[0], SL_WATCH_READ | SL_WATCH_HANGUP,
@@ -1101,7 +1098,7 @@ int vectis_smith_cli_command(int argc, char **argv, int index,
     if (vectis_smith_cli_verbosity_argument(argv[index]) != 0) {
       verbosity += vectis_smith_cli_verbosity_argument(argv[index]);
     } else if (strcmp(argv[index], "-e") == 0 ||
-        strcmp(argv[index], "--execute") == 0) {
+               strcmp(argv[index], "--execute") == 0) {
       if (index + 1 >= argc) {
         fprintf(stderr, "vectis: %s requires a prompt\n", argv[index]);
         return 64;

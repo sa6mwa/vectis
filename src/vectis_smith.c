@@ -206,8 +206,7 @@ static int vectis_smith_acquire(vectis_smith_store *store, const char *key,
     (void)snprintf(message, sizeof(message),
                    "lockdc error: unable to acquire Smith state "
                    "(endpoint=%s namespace=%s code=%d): %s",
-                   endpoint, namespace_name, lcerr.code,
-                   dependency_message);
+                   endpoint, namespace_name, lcerr.code, dependency_message);
     vectis_smith_set_cai_error(error, CAI_ERR_TRANSPORT, message);
   }
   lc_error_cleanup(&lcerr);
@@ -873,8 +872,8 @@ int vectis_smith_store_set_diagnostic_context(vectis_smith_store *store,
     return -1;
   }
   endpoint_copy = endpoint == NULL ? NULL : vectis_smith_strdup(endpoint);
-  namespace_copy = namespace_name == NULL ? NULL
-                                           : vectis_smith_strdup(namespace_name);
+  namespace_copy =
+      namespace_name == NULL ? NULL : vectis_smith_strdup(namespace_name);
   if ((endpoint != NULL && endpoint_copy == NULL) ||
       (namespace_name != NULL && namespace_copy == NULL)) {
     free(namespace_copy);

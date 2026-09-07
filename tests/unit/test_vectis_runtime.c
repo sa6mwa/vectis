@@ -5416,8 +5416,8 @@ static void assert_kore_smoke(void) {
     vectis_internal_response_free(browser_expired_response);
     browser_expired_response = NULL;
   }
-  assert(runtime_browser_session_record_count(
-             app, "vectis.auth.foreign", "aaa.browser-session") == 32u);
+  assert(runtime_browser_session_record_count(app, "vectis.auth.foreign",
+                                              "aaa.browser-session") == 32u);
   assert(runtime_browser_session_record_count(app, "vectis.auth",
                                               "aaa.browser-session") == 0u);
   browser_expired_response = vectis_internal_response_new(&error);
@@ -5428,18 +5428,18 @@ static void assert_kore_smoke(void) {
   assert(status == VECTIS_OK);
   vectis_internal_response_free(browser_expired_response);
   browser_expired_response = NULL;
-  assert(runtime_browser_session_record_count(
-             app, "vectis.auth", "runtime.browser-session") == 1u);
+  assert(runtime_browser_session_record_count(app, "vectis.auth",
+                                              "runtime.browser-session") == 1u);
   vectis_internal_auth_cleanup_tick(app);
-  assert(runtime_browser_session_record_count(
-             app, "vectis.auth.foreign", "aaa.browser-session") == 32u);
-  assert(runtime_browser_session_record_count(
-             app, "vectis.auth", "runtime.browser-session") == 1u);
+  assert(runtime_browser_session_record_count(app, "vectis.auth.foreign",
+                                              "aaa.browser-session") == 32u);
+  assert(runtime_browser_session_record_count(app, "vectis.auth",
+                                              "runtime.browser-session") == 1u);
   status =
       vectis_auth_browser_session_cleanup(app, &browser_session, 0u, &error);
   assert(status == VECTIS_OK);
-  assert(runtime_browser_session_record_count(
-             app, "vectis.auth", "runtime.browser-session") == 0u);
+  assert(runtime_browser_session_record_count(app, "vectis.auth",
+                                              "runtime.browser-session") == 0u);
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_GET;

@@ -2145,8 +2145,8 @@ static vectis_status vectis_kore_copy_headers(struct http_request *req,
 
   /* Kore keeps Host outside req_headers, including its original port. */
   if (req->host != NULL) {
-    status = vectis_internal_request_add_header(request, "host", req->host,
-                                                 error);
+    status =
+        vectis_internal_request_add_header(request, "host", req->host, error);
     if (status != VECTIS_OK) {
       return status;
     }
@@ -3387,11 +3387,10 @@ int vectis_kore_http_redirect_route(struct http_request *req) {
         snprintf(location, sizeof(location), "https://%s%s%s%s", authority,
                  path, query != NULL ? "?" : "", query != NULL ? query : "");
   } else {
-    written = snprintf(location, sizeof(location), "https://%s:%u%s%s%s",
-                       authority,
-                       (unsigned)vectis_kore_current.presented_https_port,
-                       path, query != NULL ? "?" : "",
-                       query != NULL ? query : "");
+    written =
+        snprintf(location, sizeof(location), "https://%s:%u%s%s%s", authority,
+                 (unsigned)vectis_kore_current.presented_https_port, path,
+                 query != NULL ? "?" : "", query != NULL ? query : "");
   }
   if (written <= 0 || (size_t)written >= sizeof(location)) {
     http_response(req, 414, NULL, 0);
