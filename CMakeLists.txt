@@ -33,6 +33,7 @@ option(VECTIS_BUILD_SHARED "Build the shared vectis library." OFF)
 option(VECTIS_BUILD_BINARY "Build the vectis executable." ON)
 option(VECTIS_BUILD_TESTS "Build vectis unit tests." ON)
 option(VECTIS_BUILD_EXAMPLES "Build vectis SDK examples." ON)
+option(VECTIS_BUILD_BENCHMARKS "Build Vectis performance benchmarks." OFF)
 option(VECTIS_BUILD_FUZZERS "Build fuzz targets." OFF)
 option(VECTIS_WITH_KORE_RUNTIME "Build the embedded Kore runtime adapter." ON)
 option(VECTIS_ENABLE_COVERAGE "Build with coverage instrumentation." OFF)
@@ -1300,6 +1301,10 @@ endif()
 
 if(VECTIS_BUILD_EXAMPLES)
   add_subdirectory(examples)
+endif()
+
+if(VECTIS_BUILD_BENCHMARKS)
+  add_subdirectory(bench)
 endif()
 
 if(VECTIS_INSTALL)

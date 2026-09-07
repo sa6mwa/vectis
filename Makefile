@@ -18,6 +18,7 @@ FUZZ_PRESET := fuzz
 	help \
 	deps-debug deps-release deps-cross \
 	build build-debug build-release build-asan build-coverage build-fuzz \
+	bench-metrics-storage \
 	test test-debug test-lifecycle test-vendor-kore-lifecycle test-service-runtime-lifecycle test-lua-facade-matrix test-lua-facade-behavior test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
 	lua-env lua-rock lua-test test-opcua-lua-surface test-opcua-pubsub-live test-cai-live test-sus-audio-live test-sus-audio-hardening release-lua-artifacts \
 	dev-up dev-down dev-reset dev-ps dev-logs \
@@ -68,6 +69,7 @@ help:
 		'make build-coverage     Configure and build the coverage preset.' \
 		'make test-instrumentation-presets Build the sanitizer and coverage preset link-regression targets.' \
 		'make build-fuzz         Configure and build the fuzz preset.' \
+		'make bench-metrics-storage Time encrypted Pouch layouts for 6m/12m (Python 3.9+; METRICS_BENCH_ARGS=--smoke for a short check).' \
 		'make deps-debug         Provision host debug dependencies into .cache/.' \
 		'make deps-release       Provision x86_64 GNU and musl release dependencies.' \
 		'make deps-cross         Provision aarch64 and armhf GNU/musl release dependencies, plus Darwin when osxcross is available.' \
@@ -247,6 +249,11 @@ coverage: test-coverage
 build-fuzz: deps-debug $(KORE_PATCH_STAMP)
 	$(TIMED) build-fuzz bash ./scripts/configure_fuzz.sh $(FUZZ_PRESET)
 	$(TIMED) build-fuzz-compile $(CMAKE) --build --preset $(FUZZ_PRESET)
+
+bench-metrics-storage: deps-debug $(KORE_PATCH_STAMP)
+	$(TIMED) bench-metrics-storage-configure $(CMAKE) --preset $(DEBUG_PRESET) -DVECTIS_BUILD_BENCHMARKS=ON
+	$(TIMED) bench-metrics-storage-build $(CMAKE) --build --preset $(DEBUG_PRESET) --target vectis
+	$(TIMED) bench-metrics-storage python3 $(ROOT)/bench/metrics_storage.py --binary $(ROOT)/build/$(DEBUG_PRESET)/vectis --root $(ROOT)/build/$(DEBUG_PRESET)/bench $(METRICS_BENCH_ARGS)
 
 fuzz: build-fuzz
 
