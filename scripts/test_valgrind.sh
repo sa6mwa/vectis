@@ -6,10 +6,13 @@ if [ "$#" -ne 1 ]; then
   exit 2
 fi
 
-build_dir=$1
+build_dir=$(CDPATH= cd -- "$1" && pwd -P)
 valgrind_bin=${VALGRIND:-valgrind}
 timeout_bin=${TIMEOUT:-timeout}
 unit_dir="$build_dir/tests/unit"
+# Unit fixtures that use the working directory belong under build/, not the
+# repository root from which make valgrind was invoked.
+cd "$build_dir"
 # Keep Memcheck focused on native Vectis façades. The complete unit suite runs
 # under the normal and ASan gates; dependency-heavy cryptography and model
 # fixtures would make the prerelease memory gate impractically slow.

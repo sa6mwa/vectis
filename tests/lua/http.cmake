@@ -765,6 +765,8 @@ local dsv_route_rows = {}
 local dsv_route_sum = 0
 assert(api_server:dsv({
   path = "/dynamic-dsv",
+  -- Force producer backpressure before an early authorization response.
+  buffer_bytes = 1,
   schema = dsv_route_schema,
   auth = {
     provider = callback_provider,
@@ -1130,7 +1132,10 @@ local dynamic_dsv_required = vectis.http.post("http://127.0.0.1:28484/dynamic-ds
   no_signal = true,
 })
 assert(dynamic_dsv_required.ok == false)
-assert(dynamic_dsv_required.error.http_status == 401)
+assert(dynamic_dsv_required.error.http_status == 401,
+       "anonymous DSV status=" .. tostring(dynamic_dsv_required.status) ..
+       " error=" .. tostring(dynamic_dsv_required.error.message) ..
+       " body=" .. tostring(dynamic_dsv_required.body))
 local dynamic_dsv_allowed = vectis.http.post("http://127.0.0.1:28484/dynamic-dsv", {
   body = "id,count\nalpha,2\nbeta,3\n",
   headers = {

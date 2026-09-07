@@ -13452,6 +13452,10 @@ static int vectis_lua_app_dsv_copy_config(lua_State *lua, int index,
 }
 
 static vectis_status
+vectis_lua_app_upload_drain_reader(struct lc_source *reader,
+                                   size_t buffer_bytes, vectis_error *error);
+
+static vectis_status
 vectis_lua_app_dsv_dispatch(vectis_app *app, vectis_request *request,
                             struct lc_source *reader, vectis_response *response,
                             void *userdata, vectis_error *error) {
@@ -13477,8 +13481,12 @@ vectis_lua_app_dsv_dispatch(vectis_app *app, vectis_request *request,
   status = vectis_lua_app_route_auth_gate(route->auth, route->purpose, request,
                                           response, principal,
                                           sizeof(principal), &allowed, error);
-  if (status != VECTIS_OK || !allowed) {
+  if (status != VECTIS_OK) {
     return status;
+  }
+  if (!allowed) {
+    return vectis_lua_app_upload_drain_reader(reader, route->buffer_bytes,
+                                              error);
   }
 
   lua = route->lua;

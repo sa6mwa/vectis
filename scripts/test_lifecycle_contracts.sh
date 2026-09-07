@@ -1300,7 +1300,7 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$repo_root/scripts/test_lua_rock.sh" 'terminal\.markdown'
   assert_contains "$repo_root/tests/lua/smoke.lua" 'vectis\.auth\.basic_authorization'
   assert_contains "$repo_root/tests/lua/facade_contracts.cmake" 'vectis\.auth\.workflow'
-  assert_contains "$repo_root/examples/lua/api_server.lua" 'vectis\.auth\.basic_authorization'
+  assert_contains "$repo_root/examples/lua/api_server.lua" 'auth_flow:provider'
   assert_contains "$repo_root/examples/lua/api_server.lua" 'vectis\.auth\.workflow'
   assert_contains "$repo_root/examples/lua/api_server.lua" 'require\("vectis\.rest"\)'
   assert_contains "$repo_root/examples/lua/api_server.lua" 'app:auth_json'

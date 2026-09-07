@@ -33688,6 +33688,7 @@ vectis_status vectis_xml_parse_lonejson_source(const vectis_source *source,
   lonejson *runtime;
   vectis_status status;
 
+  vectis_error_clear(error);
   if (out == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "XML lonejson output struct is required");
@@ -35205,6 +35206,7 @@ vectis_status vectis_request_json_into(vectis_request *request,
   if (runtime == NULL) {
     return error != NULL ? error->code : VECTIS_ERR_NOMEM;
   }
+  memset(&parse, 0, sizeof(parse));
   json_status = lonejson_curl_parse_init(&parse, runtime, map, out);
   if (json_status != LONEJSON_STATUS_OK) {
     vectis_set_errorf(error, VECTIS_ERR_INVALID,

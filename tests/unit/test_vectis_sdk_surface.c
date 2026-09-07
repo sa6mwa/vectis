@@ -2960,9 +2960,12 @@ static void assert_xml_surface(void) {
   memset(&roundtrip_doc, 0, sizeof(roundtrip_doc));
   memset(&serialized, 0, sizeof(serialized));
   xml_source = vectis_source_from_memory(xml, sizeof(xml) - 1u);
+  /* An output error must not become input to unknown-attribute handling. */
+  memset(&error, 0xa5, sizeof(error));
   status = vectis_xml_parse_lonejson_source(&xml_source, &sample_xml_doc_map,
                                             &config, &doc, &error);
   assert(status == VECTIS_OK);
+  assert(error.code == VECTIS_OK);
   assert(strcmp(doc.id, " inv-001 ") == 0);
   assert(strcmp(doc.amount.currency, "SEK") == 0);
   assert(doc.amount.text > 123.49 && doc.amount.text < 123.51);
