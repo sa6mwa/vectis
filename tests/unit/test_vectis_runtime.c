@@ -2509,6 +2509,23 @@ static vectis_status upload_redirect_handler(vectis_app *app,
   return status;
 }
 
+static vectis_status empty_post_handler(vectis_app *app,
+                                        vectis_request *request,
+                                        vectis_response *response,
+                                        void *userdata, vectis_error *error) {
+  vectis_mutable_bytes body;
+  vectis_status status;
+  (void)app;
+  (void)userdata;
+  memset(&body, 0, sizeof(body));
+  assert(vectis_request_body_read_all(request, &body, error) == VECTIS_OK);
+  status =
+      vectis_response_text(response, 200, "text/plain",
+                           body.size == 0u ? "empty" : "stdin leaked", error);
+  vectis_mutable_bytes_cleanup(&body);
+  return status;
+}
+
 static void assert_upload_redirect_replay(void) {
   const char *paths[] = {"/307", "/308", "/received"};
   const char *headers[] = {"Expect:"};
@@ -2531,6 +2548,12 @@ static void assert_upload_redirect_replay(void) {
   int method;
   int from_file;
   int redirect;
+  int stdin_pipe[2];
+  int saved_stdin;
+  ssize_t unread_size;
+  char unread[64];
+  const char secret[] = "UNRELATED_STDIN_SECRET";
+  vectis_status status;
 
   for (i = 0u; i < sizeof(payload); ++i)
     payload[i] = (unsigned char)(i % 251u);
@@ -2554,12 +2577,47 @@ static void assert_upload_redirect_replay(void) {
     route.body = vectis_body_buffered_max(sizeof(payload));
     assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
   }
+  route =
+      vectis_route(VECTIS_HTTP_POST, "/empty-post", empty_post_handler, NULL);
+  route.body = vectis_body_buffered_max(1024u);
+  assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
   (void)close(reserved);
   assert(app->start(app, &error) == VECTIS_OK);
   vectis_http_client_config_init(&http_config);
   http_config.timeout_ms = 5000L;
   assert(vectis_http_client_new(&http_config, &client, &error) == VECTIS_OK);
   assert(client != NULL);
+  for (i = 0u; i < 2u; ++i) {
+    assert(pipe(stdin_pipe) == 0);
+    assert(write(stdin_pipe[1], secret, sizeof(secret)) == sizeof(secret));
+    assert(close(stdin_pipe[1]) == 0);
+    saved_stdin = dup(STDIN_FILENO);
+    assert(saved_stdin >= 0);
+    assert(dup2(stdin_pipe[0], STDIN_FILENO) == STDIN_FILENO);
+    clearerr(stdin);
+    vectis_http_request_init(&request);
+    request.method = VECTIS_HTTP_POST;
+    request.url =
+        format_loopback_http_url(url, sizeof(url), port, "/empty-post");
+    request.headers = headers;
+    request.header_count = 1u;
+    if (i == 1u)
+      request.body = "";
+    memset(&response, 0, sizeof(response));
+    status = vectis_http_execute(&http_config, &request, &response, &error);
+    assert(dup2(saved_stdin, STDIN_FILENO) == STDIN_FILENO);
+    assert(close(saved_stdin) == 0);
+    clearerr(stdin);
+    unread_size = read(stdin_pipe[0], unread, sizeof(unread));
+    assert(close(stdin_pipe[0]) == 0);
+    assert(status == VECTIS_OK);
+    assert(response.status_code == 200L);
+    assert(response.body_size == 5u);
+    assert(memcmp(response.body, "empty", 5u) == 0);
+    assert(unread_size == (ssize_t)sizeof(secret));
+    assert(memcmp(unread, secret, sizeof(secret)) == 0);
+    vectis_http_response_cleanup(&response);
+  }
   for (method = 0; method < 2; ++method) {
     for (from_file = 0; from_file < 2; ++from_file) {
       for (redirect = 0; redirect < 2; ++redirect) {

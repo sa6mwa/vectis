@@ -38372,6 +38372,14 @@ vectis_http_execute_once(const vectis_http_client_config *client,
     }
   }
 
+  if (request->method == VECTIS_HTTP_POST && !request_body.json_upload_active &&
+      request_body.file == NULL && request_body.data == NULL &&
+      request_body.size == 0u) {
+    /* Never let libcurl's default POST reader consume process stdin. */
+    (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "");
+    (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)0);
+  }
+
   if (request->download_path != NULL) {
     download_file = fopen(request->download_path, "wb");
     if (download_file == NULL) {
