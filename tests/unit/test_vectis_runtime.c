@@ -42,6 +42,14 @@ typedef struct source_json_doc {
   lonejson_source payload;
 } source_json_doc;
 
+typedef struct fixed_json_doc {
+  char payload[16];
+} fixed_json_doc;
+
+typedef struct reader_json_doc {
+  lonejson_json_value payload;
+} reader_json_doc;
+
 typedef struct runtime_dsv_row {
   char id[32];
   lonejson_int64 count;
@@ -267,6 +275,16 @@ static int runtime_file_contains(const char *path, const char *needle) {
 
 static const lonejson_field source_json_doc_fields[] = {
     LONEJSON_FIELD_STRING_SOURCE_REQ(source_json_doc, payload, "payload")};
+
+static const lonejson_field fixed_json_doc_fields[] = {
+    LONEJSON_FIELD_STRING_FIXED_REQ(fixed_json_doc, payload, "payload",
+                                    LONEJSON_OVERFLOW_FAIL)};
+LONEJSON_MAP_DEFINE(fixed_json_doc_map, fixed_json_doc, fixed_json_doc_fields);
+
+static const lonejson_field reader_json_doc_fields[] = {
+    LONEJSON_FIELD_JSON_VALUE_REQ(reader_json_doc, payload, "payload")};
+LONEJSON_MAP_DEFINE(reader_json_doc_map, reader_json_doc,
+                    reader_json_doc_fields);
 
 static const lonejson_field runtime_dsv_row_fields[] = {
     LONEJSON_FIELD_STRING_FIXED_REQ(runtime_dsv_row, id, "id",
@@ -2526,6 +2544,79 @@ static vectis_status empty_post_handler(vectis_app *app,
   return status;
 }
 
+static vectis_status json_redirect_handler(vectis_app *app,
+                                           vectis_request *request,
+                                           vectis_response *response,
+                                           void *userdata,
+                                           vectis_error *error) {
+  vectis_mutable_bytes body;
+  const char *path;
+  const char expected[] = "{\"payload\":\"abc\"}";
+  (void)app;
+  (void)userdata;
+  memset(&body, 0, sizeof(body));
+  assert(vectis_request_body_read_all(request, &body, error) == VECTIS_OK);
+  assert(body.size == sizeof(expected) - 1u);
+  assert(memcmp(body.data, expected, body.size) == 0);
+  vectis_mutable_bytes_cleanup(&body);
+  path = vectis_request_path(request);
+  if (strcmp(path, "/json-received") != 0) {
+    assert(vectis_response_header(response, "location", "/json-received",
+                                  error) == VECTIS_OK);
+    return vectis_response_status(
+        response, strcmp(path, "/json-307") == 0 ? 307 : 308, error);
+  }
+  assert(vectis_response_header(
+             response, "x-upload-method",
+             vectis_http_method_string(vectis_request_method(request)),
+             error) == VECTIS_OK);
+  return vectis_response_text(response, 200, "text/plain", "json-replayed",
+                              error);
+}
+
+typedef struct json_redirect_server {
+  int listener;
+  int status;
+} json_redirect_server;
+
+static void *json_redirect_server_run(void *userdata) {
+  json_redirect_server *server;
+  struct timeval timeout;
+  char wire[4096];
+  char response[256];
+  size_t used;
+  ssize_t count;
+  int fd;
+  int length;
+
+  server = (json_redirect_server *)userdata;
+  fd = accept(server->listener, NULL, NULL);
+  assert(fd >= 0);
+  timeout.tv_sec = 5;
+  timeout.tv_usec = 0;
+  assert(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ==
+         0);
+  used = 0u;
+  wire[0] = '\0';
+  while (strstr(wire, "\r\n0\r\n\r\n") == NULL) {
+    assert(used < sizeof(wire) - 1u);
+    count = recv(fd, wire + used, sizeof(wire) - 1u - used, 0);
+    assert(count > 0);
+    used += (size_t)count;
+    wire[used] = '\0';
+  }
+  /* Consume the entire one-shot upload before asking curl to replay it. */
+  assert(strstr(wire, "abc") != NULL);
+  length = snprintf(response, sizeof(response),
+                    "HTTP/1.1 %d Redirect\r\nLocation: /json-received\r\n"
+                    "Content-Length: 0\r\nConnection: close\r\n\r\n",
+                    server->status);
+  assert(length > 0 && (size_t)length < sizeof(response));
+  assert(send(fd, response, (size_t)length, 0) == length);
+  assert(close(fd) == 0);
+  return NULL;
+}
+
 static void assert_upload_redirect_replay(void) {
   const char *paths[] = {"/307", "/308", "/received"};
   const char *headers[] = {"Expect:"};
@@ -2554,6 +2645,17 @@ static void assert_upload_redirect_replay(void) {
   char unread[64];
   const char secret[] = "UNRELATED_STDIN_SECRET";
   vectis_status status;
+  const char *json_paths[] = {"/json-307", "/json-308", "/json-received"};
+  const vectis_http_method json_methods[] = {VECTIS_HTTP_POST, VECTIS_HTTP_PUT,
+                                             VECTIS_HTTP_PATCH};
+  fixed_json_doc fixed_doc;
+  source_json_doc source_doc;
+  int source_kind;
+  reader_json_doc reader_doc;
+  lonejson_buffer_reader reader;
+  json_redirect_server json_server;
+  pthread_t json_thread;
+  unsigned short json_port;
 
   for (i = 0u; i < sizeof(payload); ++i)
     payload[i] = (unsigned char)(i % 251u);
@@ -2581,6 +2683,14 @@ static void assert_upload_redirect_replay(void) {
       vectis_route(VECTIS_HTTP_POST, "/empty-post", empty_post_handler, NULL);
   route.body = vectis_body_buffered_max(1024u);
   assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
+  for (i = 0u; i < 3u; ++i) {
+    route = vectis_route_methods(VECTIS_HTTP_METHODS_POST |
+                                     VECTIS_HTTP_METHODS_PUT |
+                                     VECTIS_HTTP_METHODS_PATCH,
+                                 json_paths[i], json_redirect_handler, NULL);
+    route.body = vectis_body_buffered_max(1024u);
+    assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
+  }
   (void)close(reserved);
   assert(app->start(app, &error) == VECTIS_OK);
   vectis_http_client_config_init(&http_config);
@@ -2649,6 +2759,75 @@ static void assert_upload_redirect_replay(void) {
         assert(strcmp(vectis_http_response_header(&response, "x-upload-method"),
                       method == 0 ? "PUT" : "PATCH") == 0);
         vectis_http_response_cleanup(&response);
+      }
+    }
+  }
+  file = fopen(filename, "wb");
+  assert(file != NULL);
+  assert(fwrite("abc", 1u, 3u, file) == 3u);
+  assert(fclose(file) == 0);
+  memset(&fixed_doc, 0, sizeof(fixed_doc));
+  memcpy(fixed_doc.payload, "abc", 4u);
+  for (source_kind = 0; source_kind < 3; ++source_kind) {
+    for (method = 0; method < 3; ++method) {
+      for (redirect = 0; redirect < 2; ++redirect) {
+        lonejson_source_init(&source_doc.payload);
+        if (source_kind == 1) {
+          assert(lonejson_source_set_path(&source_doc.payload, filename,
+                                          NULL) == LONEJSON_STATUS_OK);
+        } else if (source_kind == 2) {
+          lonejson_json_value_init(NULL, &reader_doc.payload);
+          lonejson_buffer_reader_init(&reader, "\"abc\"", 5u);
+          assert(lonejson_json_value_set_reader(
+                     &reader_doc.payload, lonejson_buffer_reader_read, &reader,
+                     NULL) == LONEJSON_STATUS_OK);
+          assert(!lonejson_json_value_is_rewindable(&reader_doc.payload));
+        }
+        vectis_http_request_init(&request);
+        request.method = json_methods[method];
+        request.url = format_loopback_http_url(url, sizeof(url), port,
+                                               json_paths[redirect]);
+        if (source_kind == 2) {
+          json_server.listener = reserve_loopback_port(&json_port);
+          assert(listen(json_server.listener, 1) == 0);
+          json_server.status = redirect == 0 ? 307 : 308;
+          assert(pthread_create(&json_thread, NULL, json_redirect_server_run,
+                                &json_server) == 0);
+          request.url = format_loopback_http_url(url, sizeof(url), json_port,
+                                                 json_paths[redirect]);
+        }
+        request.headers = headers;
+        request.header_count = 1u;
+        request.json_map =
+            source_kind == 0 ? &fixed_json_doc_map : &source_json_doc_map;
+        request.json_value = source_kind == 0 ? (const void *)&fixed_doc
+                                              : (const void *)&source_doc;
+        if (source_kind == 2) {
+          request.json_map = &reader_json_doc_map;
+          request.json_value = &reader_doc;
+        }
+        memset(&response, 0, sizeof(response));
+        status =
+            vectis_http_client_execute(client, &request, &response, &error);
+        if (source_kind == 2) {
+          assert(pthread_join(json_thread, NULL) == 0);
+          assert(close(json_server.listener) == 0);
+          assert(status != VECTIS_OK);
+          assert(error.source == VECTIS_ERROR_SOURCE_CURL);
+          assert(error.dependency_code == 65L); /* CURLE_SEND_FAIL_REWIND */
+          lonejson_json_value_cleanup(&reader_doc.payload);
+        } else {
+          assert(status == VECTIS_OK);
+          assert(response.status_code == 200L);
+          assert(response.body_size == strlen("json-replayed"));
+          assert(memcmp(response.body, "json-replayed", response.body_size) ==
+                 0);
+          assert(
+              strcmp(vectis_http_response_header(&response, "x-upload-method"),
+                     vectis_http_method_string(request.method)) == 0);
+        }
+        vectis_http_response_cleanup(&response);
+        lonejson_source_cleanup(&source_doc.payload);
       }
     }
   }
@@ -8000,6 +8179,10 @@ int main(int argc, char **argv) {
 }
 #else
 static int run_named_runtime_test(const char *name) {
+  if (name != NULL && strcmp(name, "upload_redirect_replay") == 0) {
+    assert_upload_redirect_replay();
+    return 1;
+  }
   if (name == NULL || name[0] == '\0') {
     return 0;
   }
