@@ -7988,11 +7988,14 @@ static int vectis_auth_native_provider_login_redirect(
 
   if (config == NULL || response == NULL ||
       !vectis_auth_browser_login_path_valid(config->browser_login_path) ||
-      !vectis_auth_browser_navigation_request(request) ||
-      request->resource == NULL || request->resource[0] != '/') {
+      !vectis_auth_browser_navigation_request(request)) {
     return 0;
   }
-  resource = request->resource;
+  /* Authorization resources may be mount-relative; browser returns are not. */
+  resource = vectis_request_path(request->request);
+  if (resource == NULL || resource[0] != '/') {
+    return 0;
+  }
   used = strlen(config->browser_login_path);
   if (used + sizeof("?return=") > sizeof(response->redirect_location)) {
     return 0;

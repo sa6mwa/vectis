@@ -334,7 +334,10 @@ sample_auth_provider(const vectis_auth_provider_request *request,
     vectis_auth_provider_response_cleanup(response);
     response->action = VECTIS_AUTH_REDIRECT;
     response->status_code = 303;
-    response->location = "/auth/login?next=/dav/docs";
+    (void)snprintf(response->redirect_location,
+                   sizeof(response->redirect_location),
+                   "/auth/login?next=/dav/docs");
+    response->location = response->redirect_location;
     response->content_type = "text/plain";
     response->body = "login required";
     response->body_size = strlen((const char *)response->body);
@@ -1598,6 +1601,40 @@ int main(void) {
     webdav_vectis_request = NULL;
   }
 
+  native_provider_config.app = app;
+  native_provider_config.browser_session.mode =
+      VECTIS_AUTH_BROWSER_SESSION_M2M_AND_BROWSER;
+  native_provider_config.browser_login_path = "/auth/login";
+  status = vectis_auth_provider_from_native_store(
+      &provider, &native_provider_config, &error);
+  expect_ok(status, &error, "creates native browser auth provider");
+  webdav_vectis_request = vectis_internal_request_new(&error);
+  expect(webdav_vectis_request != NULL, "creates browser WebDAV request");
+  if (webdav_vectis_request != NULL) {
+    vectis_internal_request_set_method(webdav_vectis_request, VECTIS_HTTP_GET);
+    status = vectis_internal_request_set_path(webdav_vectis_request,
+                                              "/dav/docs", &error);
+    expect_ok(status, &error, "sets mounted browser request path");
+    status = vectis_internal_request_add_header(webdav_vectis_request, "accept",
+                                                "text/html", &error);
+    expect_ok(status, &error, "sets browser navigation Accept");
+    webdav_request.request = webdav_vectis_request;
+    webdav_request.method = VECTIS_HTTP_GET;
+    status = vectis_webdav_auth_provider(&webdav_request, &webdav_response,
+                                         &webdav_auth_config, &error);
+    expect_ok(status, &error, "redirects unauthenticated browser WebDAV");
+    expect(webdav_response.action == VECTIS_WEBDAV_AUTH_REDIRECT &&
+               webdav_response.status_code == 303,
+           "browser WebDAV redirects to login");
+    expect(webdav_response.location != NULL &&
+               strcmp(webdav_response.location,
+                      "/auth/login?return=/dav/docs") == 0,
+           "browser redirect survives cleanup and retains mount prefix");
+    vectis_internal_request_free(webdav_vectis_request);
+    webdav_vectis_request = NULL;
+    webdav_request.request = NULL;
+  }
+
   status = vectis_auth_provider_from_callback(
       &custom_provider, sample_auth_provider, (void *)"allow", &error);
   expect_ok(status, &error, "creates callback auth provider");
@@ -1660,6 +1697,9 @@ int main(void) {
         webdav_vectis_request, "authorization", "Bearer webdav-token", &error);
     expect_ok(status, &error, "adds callback Authorization header");
     webdav_request.request = webdav_vectis_request;
+    status = vectis_internal_request_set_path(webdav_vectis_request,
+                                              "/dav/docs", &error);
+    expect_ok(status, &error, "sets callback mounted request path");
     status = vectis_webdav_auth_provider(&webdav_request, &webdav_response,
                                          &webdav_auth_config, &error);
     expect_ok(status, &error,

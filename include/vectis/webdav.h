@@ -98,6 +98,8 @@ typedef struct vectis_webdav_auth_response {
   size_t body_size;
   char www_authenticate_value[VECTIS_AUTH_CHALLENGE_MAX + 1u];
   char principal[VECTIS_WEBDAV_PRINCIPAL_MAX + 1u];
+  /* Storage used by the provider adapter for its copied Location value. */
+  char redirect_location[VECTIS_AUTH_REDIRECT_LOCATION_MAX];
 } vectis_webdav_auth_response;
 
 typedef vectis_status (*vectis_webdav_auth_fn)(

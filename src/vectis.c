@@ -15366,7 +15366,18 @@ vectis_webdav_auth_provider(const vectis_webdav_auth_request *request,
   }
   vectis_webdav_auth_response_init(response);
   response->status_code = auth_response.status_code;
-  response->location = auth_response.location;
+  if (auth_response.location != NULL) {
+    if (strlen(auth_response.location) >= sizeof(response->redirect_location)) {
+      vectis_auth_provider_response_cleanup(&auth_response);
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "WebDAV auth redirect location is too long");
+      return VECTIS_ERR_INVALID;
+    }
+    vectis_webdav_copy_fixed(response->redirect_location,
+                             sizeof(response->redirect_location),
+                             auth_response.location);
+    response->location = response->redirect_location;
+  }
   response->content_type = auth_response.content_type;
   response->body = auth_response.body;
   response->body_size = auth_response.body_size;
