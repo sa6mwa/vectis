@@ -681,10 +681,13 @@ static int vectis_webdav_open_root_fd(const vectis_webdav_config *config,
     return -1;
   }
   cursor = config->root_dir;
-  while (*cursor == '/') {
-    cursor++;
-  }
-  while (*cursor != '\0') {
+  for (;;) {
+    while (*cursor == '/') {
+      cursor++;
+    }
+    if (*cursor == '\0') {
+      break;
+    }
     if (!vectis_webdav_copy_segment(segment, sizeof(segment), &cursor)) {
       vectis_webdav_fd_close(&current_fd);
       return -1;

@@ -478,6 +478,54 @@ static void test_dotfile_listing(const vectis_webdav_config *storage) {
          "removes dotfile fixtures");
 }
 
+static void test_root_separators(const char *temp) {
+  static const char *suffixes[] = {"", "/", "///"};
+  char root[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  vectis_webdav_config config;
+  vectis_webdav_entry entry;
+  unsigned char *body;
+  size_t size;
+  size_t i;
+  list_state listed;
+
+  for (i = 0u; i < sizeof(suffixes) / sizeof(suffixes[0]); ++i) {
+    (void)snprintf(root, sizeof(root), "%s//separator-root-%lu%s", temp,
+                   (unsigned long)i, suffixes[i]);
+    vectis_webdav_config_init(&config);
+    config.cache_dir = temp;
+    config.site_id = "separators";
+    config.root_dir = root;
+    expect(vectis_webdav_put(&config, "/file", (const unsigned char *)"data",
+                             4u) == VECTIS_WEBDAV_OK,
+           "create missing root with separators and write file");
+    expect(vectis_webdav_lookup(&config, "/file", &entry) == VECTIS_WEBDAV_OK &&
+               entry.kind == VECTIS_WEBDAV_ENTRY_FILE,
+           "lookup file through root with separators");
+    body = NULL;
+    size = 0u;
+    expect(vectis_webdav_read(&config, "/file", &body, &size, &entry) ==
+                   VECTIS_WEBDAV_OK &&
+               size == 4u && memcmp(body, "data", 4u) == 0,
+           "read file through root with separators");
+    free(body);
+    memset(&listed, 0, sizeof(listed));
+    expect(vectis_webdav_list(&config, "/", count_entry, &listed) ==
+                   VECTIS_WEBDAV_OK &&
+               listed.files == 1,
+           "list root with separators");
+    expect(vectis_webdav_mkcol(&config, "/dir") == VECTIS_WEBDAV_OK,
+           "create collection through root with separators");
+    expect(vectis_webdav_copy(&config, "/file", "/dir/copy", 0) ==
+               VECTIS_WEBDAV_OK,
+           "copy through root with separators");
+    expect(vectis_webdav_move(&config, "/dir/copy", "/moved", 0) ==
+               VECTIS_WEBDAV_OK,
+           "move through root with separators");
+    expect(vectis_webdav_delete(&config, "/moved") == VECTIS_WEBDAV_OK,
+           "delete through root with separators");
+  }
+}
+
 int main(void) {
   char temp[4096];
   char cwd[2048];
@@ -522,6 +570,7 @@ int main(void) {
     return 1;
   }
 
+  test_root_separators(temp);
   vectis_webdav_config_init(&config);
   config.cache_dir = temp;
   config.site_id = "test";
