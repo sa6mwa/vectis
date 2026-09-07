@@ -2425,6 +2425,12 @@ static int vectis_webdav_list_path(const char *base_path, const char *name,
   return written >= 0 && (size_t)written < VECTIS_WEBDAV_PATH_MAX + 1u;
 }
 
+static int vectis_webdav_internal_entry(const char *name) {
+  return strcmp(name, ".") == 0 || strcmp(name, "..") == 0 ||
+         strncmp(name, ".vectis-tmp-", sizeof(".vectis-tmp-") - 1u) == 0 ||
+         strncmp(name, ".vectis-txn-", sizeof(".vectis-txn-") - 1u) == 0;
+}
+
 vectis_webdav_status vectis_webdav_list(const vectis_webdav_config *config,
                                         const char *path,
                                         vectis_webdav_list_callback callback,
@@ -2462,8 +2468,7 @@ vectis_webdav_status vectis_webdav_list(const vectis_webdav_config *config,
       return VECTIS_WEBDAV_IO;
     }
     while ((item = readdir(directory)) != NULL) {
-      if (strcmp(item->d_name, ".") == 0 || strcmp(item->d_name, "..") == 0 ||
-          item->d_name[0] == '.') {
+      if (vectis_webdav_internal_entry(item->d_name)) {
         continue;
       }
       if (!vectis_webdav_list_path(normalized, item->d_name, child_path)) {
@@ -2496,8 +2501,7 @@ vectis_webdav_status vectis_webdav_list(const vectis_webdav_config *config,
     return errno == ENOENT ? VECTIS_WEBDAV_NOT_FOUND : VECTIS_WEBDAV_IO;
   }
   while ((item = readdir(directory)) != NULL) {
-    if (strcmp(item->d_name, ".") == 0 || strcmp(item->d_name, "..") == 0 ||
-        item->d_name[0] == '.') {
+    if (vectis_webdav_internal_entry(item->d_name)) {
       continue;
     }
     if (!vectis_webdav_list_path(normalized, item->d_name, child_path) ||

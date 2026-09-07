@@ -359,6 +359,125 @@ static void test_failed_move(const vectis_webdav_config *storage) {
   }
 }
 
+static int dotfile_entry(const char *path, vectis_webdav_entry_kind kind,
+                         size_t size, void *userdata) {
+  unsigned *seen;
+  const char *name;
+  seen = (unsigned *)userdata;
+  name = strrchr(path, '/') + 1;
+  if (strcmp(name, ".hidden") == 0) {
+    expect(kind == VECTIS_WEBDAV_ENTRY_COLLECTION, "lists hidden collection");
+    *seen |= 1u;
+  } else {
+    expect(kind == VECTIS_WEBDAV_ENTRY_FILE && size == 1u,
+           "lists dotfile with its size");
+    if (strcmp(name, ".config") == 0)
+      *seen |= 2u;
+    else if (strcmp(name, "visible.txt") == 0)
+      *seen |= 4u;
+    else if (strcmp(name, ".vectis-user") == 0)
+      *seen |= 8u;
+    else
+      expect(0, "listing excludes internal entries and deleted dotfiles");
+  }
+  return 1;
+}
+
+static void test_dotfile_listing(const vectis_webdav_config *storage) {
+  vectis_webdav_config config;
+  vectis_app_config app_config;
+  vectis_webdav_mount_config mount;
+  vectis_app *app;
+  vectis_request *request;
+  vectis_response *response;
+  vectis_error error;
+  vectis_bytes body;
+  char content[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  char disk[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  const char *files[] = {".config", "visible.txt", ".vectis-user", ".deleted"};
+  char path[128];
+  size_t i;
+  unsigned seen;
+
+  config = *storage;
+  config.max_total_bytes = 1024u * 1024u;
+  expect(vectis_webdav_mkcol(&config, "/dotfiles") == VECTIS_WEBDAV_OK,
+         "creates dotfile test collection");
+  expect(vectis_webdav_mkcol(&config, "/dotfiles/.hidden") == VECTIS_WEBDAV_OK,
+         "creates hidden collection");
+  for (i = 0u; i < sizeof(files) / sizeof(files[0]); ++i) {
+    (void)snprintf(path, sizeof(path), "/dotfiles/%s", files[i]);
+    expect(vectis_webdav_put(&config, path, (const unsigned char *)"x", 1u) ==
+               VECTIS_WEBDAV_OK,
+           "uploads dotfile listing fixture");
+  }
+  expect(vectis_webdav_delete(&config, "/dotfiles/.deleted") ==
+             VECTIS_WEBDAV_OK,
+         "deletes dotfile fixture");
+  expect(vectis_webdav_content_dir(&config, content, &error) == VECTIS_OK,
+         "gets dotfile content directory");
+  (void)snprintf(disk, sizeof(disk), "%s/dotfiles/.vectis-tmp-test", content);
+  expect(write_test_file(disk, "internal"),
+         "creates internal temporary fixture");
+  (void)snprintf(disk, sizeof(disk), "%s/dotfiles/.vectis-txn-test", content);
+  expect(mkdir(disk, 0700) == 0, "creates internal transaction fixture");
+  seen = 0u;
+  expect(vectis_webdav_list(&config, "/dotfiles", dotfile_entry, &seen) ==
+                 VECTIS_WEBDAV_OK &&
+             seen == 15u,
+         "lists all user entries including dotfiles");
+
+  vectis_app_config_init(&app_config);
+  app = vectis_app_new(&app_config, &error);
+  expect(app != NULL, "creates dotfile PROPFIND app");
+  if (app != NULL) {
+    vectis_webdav_mount_config_init(&mount);
+    mount.path_prefix = "/dav";
+    mount.storage = config;
+    mount.auth_required = 0;
+    expect(app->webdav(app, &mount, &error) == VECTIS_OK,
+           "mounts dotfile storage");
+    request = vectis_internal_request_new(&error);
+    response = vectis_internal_response_new(&error);
+    expect(request != NULL && response != NULL, "creates PROPFIND request");
+    if (request != NULL && response != NULL) {
+      vectis_internal_request_set_method(request, VECTIS_HTTP_PROPFIND);
+      expect(vectis_internal_request_set_path(request, "/dav/dotfiles",
+                                              &error) == VECTIS_OK,
+             "sets PROPFIND path");
+      expect(vectis_internal_request_add_header(request, "depth", "1",
+                                                &error) == VECTIS_OK,
+             "sets PROPFIND depth");
+      expect(vectis_internal_dispatch_route(app, VECTIS_HTTP_PROPFIND,
+                                            "/dav/dotfiles", request, response,
+                                            &error) == VECTIS_OK,
+             "dispatches dotfile PROPFIND");
+      expect(vectis_internal_response_status_code(response) == 207,
+             "PROPFIND returns multistatus");
+      body = vectis_internal_response_body(response);
+      expect(body.data != NULL, "PROPFIND has XML body");
+      if (body.data != NULL) {
+        expect(
+            strstr((const char *)body.data, "/dav/dotfiles/.config") != NULL &&
+                strstr((const char *)body.data, "/dav/dotfiles/.hidden") !=
+                    NULL &&
+                strstr((const char *)body.data, "/dav/dotfiles/.vectis-user") !=
+                    NULL,
+            "PROPFIND exposes user dotfiles and hidden collections");
+        expect(strstr((const char *)body.data, ".vectis-tmp-") == NULL &&
+                   strstr((const char *)body.data, ".vectis-txn-") == NULL &&
+                   strstr((const char *)body.data, ".deleted") == NULL,
+               "PROPFIND excludes internal and deleted entries");
+      }
+    }
+    vectis_internal_request_free(request);
+    vectis_internal_response_free(response);
+    app->close(app);
+  }
+  expect(vectis_webdav_delete(&config, "/dotfiles") == VECTIS_WEBDAV_OK,
+         "removes dotfile fixtures");
+}
+
 int main(void) {
   char temp[4096];
   char cwd[2048];
@@ -556,6 +675,8 @@ int main(void) {
   test_destination_auth(&direct_config);
   test_special_file(&direct_config);
   test_destination_authority(&direct_config);
+  test_dotfile_listing(&config);
+  test_dotfile_listing(&direct_config);
   cstatus = vectis_webdav_content_dir(&direct_config, content_dir, &error);
   expect(cstatus == VECTIS_OK && strcmp(content_dir, root_dir) == 0,
          "reports direct WebDAV root as content directory");
