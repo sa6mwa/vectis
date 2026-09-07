@@ -12,6 +12,15 @@ local function copy_table(source)
   return target
 end
 
+local function default_header(headers, name, value)
+  for key in pairs(headers) do
+    if type(key) == "string" and key:lower() == name then
+      return
+    end
+  end
+  headers[name] = value
+end
+
 function M.version()
   return core.version()
 end
@@ -23,9 +32,8 @@ end
 function M.json(opts)
   opts = copy_table(opts)
   opts.headers = copy_table(opts.headers)
-  opts.headers["content-type"] =
-      opts.headers["content-type"] or "application/json"
-  opts.headers.accept = opts.headers.accept or "application/json"
+  default_header(opts.headers, "content-type", "application/json")
+  default_header(opts.headers, "accept", "application/json")
 
   if opts.body_json ~= nil then
     opts.body = lonejson.encode_value(opts.body_json)
@@ -49,9 +57,8 @@ end
 function M.stream_json(opts)
   opts = copy_table(opts)
   opts.headers = copy_table(opts.headers)
-  opts.headers["content-type"] =
-      opts.headers["content-type"] or "application/json"
-  opts.headers.accept = opts.headers.accept or "application/json"
+  default_header(opts.headers, "content-type", "application/json")
+  default_header(opts.headers, "accept", "application/json")
 
   if opts.request ~= nil then
     opts.request_schema = opts.request.schema

@@ -4,7 +4,7 @@ set(script "${WORK_DIR}/curl-smoke.lua")
 
 file(WRITE "${body_file}" "plain curl body\n")
 file(WRITE "${json_file}" "{\"ok\":true,\"message\":\"streamed\"}\n")
-file(WRITE "${script}" [[
+file(WRITE "${script}" [=[
 local curl = require("curl")
 local lonejson = require("lonejson")
 local smtp = require("vectis.smtp")
@@ -19,6 +19,41 @@ assert(type(curl.perform) == "function")
 assert(type(curl.json) == "function")
 assert(type(curl.stream_json) == "function")
 assert(type(smtp.send) == "function")
+
+-- Observe the actual options handed to the transport by both facades.
+local original_perform = curl.core.perform
+curl.core.perform = function(opts) return opts end
+for _, perform in ipairs({curl.json, curl.stream_json}) do
+  for _, names in ipairs({
+    {"content-type", "accept"},
+    {"Content-Type", "Accept"},
+    {"CONTENT-type", "aCcEpT"},
+  }) do
+    local headers = {
+      [names[1]] = "application/merge-patch+json",
+      [names[2]] = "application/problem+json",
+    }
+    local opts = {headers = headers}
+    local result = perform(opts)
+    local count = 0
+    for key, value in pairs(result.headers) do
+      count = count + 1
+      assert(headers[key] == value)
+    end
+    assert(count == 2)
+    assert(opts.headers == headers and result.headers ~= headers)
+  end
+  local headers = {Accept = "text/plain"}
+  local result = perform({headers = headers})
+  assert(result.headers.Accept == "text/plain")
+  assert(result.headers.accept == nil)
+  assert(result.headers["content-type"] == "application/json")
+  assert(headers["content-type"] == nil)
+  result = perform({})
+  assert(result.headers.accept == "application/json")
+  assert(result.headers["content-type"] == "application/json")
+end
+curl.core.perform = original_perform
 
 local plain = curl.perform({
   url = body_url,
@@ -116,7 +151,7 @@ assert(smtp_file.ok == false)
 assert(smtp_file.transport_ok == false)
 assert(type(smtp_file.error) == "table")
 assert(type(smtp_file.error.message) == "string")
-]])
+]=])
 
 execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${body_file}" "${json_file}"
                 RESULT_VARIABLE curl_result
