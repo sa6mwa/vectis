@@ -15810,6 +15810,26 @@ static int vectis_lua_curl_apply_multipart(lua_State *lua, CURL *curl,
   return 1;
 }
 
+static int vectis_lua_curl_rewind_file(void *userdata, curl_off_t offset,
+                                       int origin) {
+  vectis_lua_curl_file_upload *file;
+  file = (vectis_lua_curl_file_upload *)userdata;
+  if (file == NULL || file->file == NULL || origin != SEEK_SET || offset != 0)
+    return CURL_SEEKFUNC_CANTSEEK;
+  return fseek(file->file, 0L, SEEK_SET) == 0 ? CURL_SEEKFUNC_OK
+                                              : CURL_SEEKFUNC_CANTSEEK;
+}
+
+static int vectis_lua_curl_rewind_buffer(void *userdata, curl_off_t offset,
+                                         int origin) {
+  vectis_lua_curl_buffer *buffer;
+  buffer = (vectis_lua_curl_buffer *)userdata;
+  if (buffer == NULL || origin != SEEK_SET || offset != 0)
+    return CURL_SEEKFUNC_CANTSEEK;
+  buffer->offset = 0u;
+  return CURL_SEEKFUNC_OK;
+}
+
 static int vectis_lua_curl_apply_upload(lua_State *lua, CURL *curl,
                                         int option_index,
                                         vectis_lua_curl_buffer *upload,
@@ -15826,6 +15846,9 @@ static int vectis_lua_curl_apply_upload(lua_State *lua, CURL *curl,
     (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION,
                            vectis_lua_curl_read_file);
     (void)curl_easy_setopt(curl, CURLOPT_READDATA, file);
+    (void)curl_easy_setopt(curl, CURLOPT_SEEKFUNCTION,
+                           vectis_lua_curl_rewind_file);
+    (void)curl_easy_setopt(curl, CURLOPT_SEEKDATA, file);
     if (file->size >= (curl_off_t)0) {
       (void)curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, file->size);
     }
@@ -15846,6 +15869,9 @@ static int vectis_lua_curl_apply_upload(lua_State *lua, CURL *curl,
   (void)curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
   (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION, vectis_lua_curl_read);
   (void)curl_easy_setopt(curl, CURLOPT_READDATA, upload);
+  (void)curl_easy_setopt(curl, CURLOPT_SEEKFUNCTION,
+                         vectis_lua_curl_rewind_buffer);
+  (void)curl_easy_setopt(curl, CURLOPT_SEEKDATA, upload);
   (void)curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE,
                          (curl_off_t)upload->size);
   return 1;
@@ -15982,21 +16008,16 @@ static int vectis_lua_curl_proxy_type(lua_State *lua, const char *value,
 }
 
 static int vectis_lua_curl_apply_protocol_options(lua_State *lua, CURL *curl,
-                                                  int option_index) {
+                                                  int option_index,
+                                                  long proxy_type) {
   const char *value;
-  long proxy_type;
   long long_value;
 
-  proxy_type = 0L;
   value = vectis_lua_table_string(lua, option_index, "proxy");
   if (value != NULL) {
     (void)curl_easy_setopt(curl, CURLOPT_PROXY, value);
   }
-  value = vectis_lua_table_string(lua, option_index, "proxy_type");
-  if (value != NULL) {
-    if (vectis_lua_curl_proxy_type(lua, value, &proxy_type) != 0) {
-      return 1;
-    }
+  if (proxy_type >= 0L) {
     (void)curl_easy_setopt(curl, CURLOPT_PROXYTYPE, proxy_type);
   }
   value = vectis_lua_table_string(lua, option_index, "proxy_username");
@@ -16372,6 +16393,8 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   const char *url;
   const char *method;
   const char *protocols;
+  const char *proxy_type_name;
+  long proxy_type;
   const char *username;
   const char *password;
   const char *upload_path;
@@ -16421,6 +16444,16 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   protocols = lua_tostring(lua, -1);
   if (protocols != NULL && strlen(protocols) != lua_rawlen(lua, -1))
     return luaL_error(lua, "curl protocols must not contain NUL bytes");
+  lua_getfield(lua, 1, "proxy_type");
+  if (!lua_isnil(lua, -1) && lua_type(lua, -1) != LUA_TSTRING)
+    return luaL_error(lua, "curl proxy_type must be a string");
+  proxy_type_name = lua_tostring(lua, -1);
+  proxy_type = -1L;
+  if (proxy_type_name != NULL) {
+    if (strlen(proxy_type_name) != lua_rawlen(lua, -1))
+      return luaL_error(lua, "curl proxy_type must not contain NUL bytes");
+    (void)vectis_lua_curl_proxy_type(lua, proxy_type_name, &proxy_type);
+  }
 
   memset(&body, 0, sizeof(body));
   memset(&response, 0, sizeof(response));
@@ -16617,7 +16650,7 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   if (password != NULL) {
     (void)curl_easy_setopt(curl, CURLOPT_PASSWORD, password);
   }
-  if (vectis_lua_curl_apply_protocol_options(lua, curl, 1) != 0) {
+  if (vectis_lua_curl_apply_protocol_options(lua, curl, 1, proxy_type) != 0) {
     curl_easy_cleanup(curl);
     vectis_lua_curl_buffer_free(&body);
     vectis_lua_curl_buffer_free(&response);

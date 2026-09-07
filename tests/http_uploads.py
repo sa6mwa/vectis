@@ -47,9 +47,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             else:
                 assert body == PAYLOAD
             self.server.requests.append((self.command, self.path))
-            if self.path in ("/json/307", "/json/308"):
+            if self.path.endswith(("/307", "/308")):
                 self.send_response(int(self.path.rsplit("/", 1)[1]))
-                self.send_header("Location", "/json/received")
+                self.send_header("Location", self.path.rsplit("/", 1)[0] + "/received")
                 self.send_header("Content-Length", "0")
                 self.end_headers()
             else:
@@ -89,9 +89,10 @@ def main():
             for method in ("POST", "PUT", "PATCH"):
                 for kind in ("file", "multipart", "raw", "json"):
                     assert (method, "/" + kind) in server.requests
-                assert server.requests.count((method, "/json/received")) == 2
-            assert len(server.requests) == 25, server.requests
-            print("Passed 19 uploads, including six JSON redirects (25 requests)")
+                for kind in ("json", "raw", "file"):
+                    assert server.requests.count((method, "/" + kind + "/received")) == 2
+            assert len(server.requests) == 49, server.requests
+            print("Passed 31 uploads, including 18 redirects (49 requests)")
 
 
 if __name__ == "__main__":

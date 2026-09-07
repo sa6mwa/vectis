@@ -20,6 +20,13 @@ for _ = 1, 30 do
     })
     assert(not ok and tostring(err):find("protocols", 1, true))
   end
+  for _, proxy_type in ipairs({"INVALID", "", "http\000INVALID", false, {}}) do
+    local ok, err = pcall(curl.perform, {
+      url = url, proxy_type = proxy_type, upload_path = path,
+      download_path = path, timeout_ms = 100,
+    })
+    assert(not ok and tostring(err):find("proxy_type", 1, true))
+  end
   for _, method in ipairs({"INVALID", "", "POST\000INVALID", false, {}}) do
     local ok, err = pcall(curl.perform, {
       url = url, method = method, upload_path = path, timeout_ms = 100,
