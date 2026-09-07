@@ -160,3 +160,17 @@ execute_process(COMMAND "${VECTIS_BIN}" "${script}" "${body_file}" "${json_file}
 if(NOT curl_result EQUAL 0)
   message(FATAL_ERROR "vectis curl Lua smoke failed: ${curl_stdout}${curl_stderr}")
 endif()
+
+find_program(http_upload_python NAMES python3)
+if(http_upload_python)
+  execute_process(COMMAND "${http_upload_python}"
+                          "${CMAKE_CURRENT_LIST_DIR}/../http_uploads.py" "${VECTIS_BIN}"
+                  RESULT_VARIABLE upload_result
+                  OUTPUT_VARIABLE upload_stdout ERROR_VARIABLE upload_stderr
+                  TIMEOUT 60)
+  if(NOT upload_result EQUAL 0)
+    message(FATAL_ERROR "Lua HTTP upload regression failed: ${upload_stdout}${upload_stderr}")
+  endif()
+else()
+  message(STATUS "Lua HTTP upload integration not run: Python3 unavailable")
+endif()

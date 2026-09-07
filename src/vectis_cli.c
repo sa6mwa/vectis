@@ -589,6 +589,13 @@ typedef struct vectis_lua_curl_file_upload {
   curl_off_t size;
 } vectis_lua_curl_file_upload;
 
+typedef struct vectis_lua_curl_json_rewind {
+  lonejson_curl_upload *upload;
+  lonejson *runtime;
+  const lonejson_map *map;
+  const void *record;
+} vectis_lua_curl_json_rewind;
+
 typedef struct vectis_lua_curl_retry_config {
   unsigned max_attempts;
   long initial_delay_ms;
@@ -15844,10 +15851,38 @@ static int vectis_lua_curl_apply_upload(lua_State *lua, CURL *curl,
   return 1;
 }
 
+static int vectis_lua_curl_rewind_json(void *userdata, curl_off_t offset,
+                                       int origin) {
+  vectis_lua_curl_json_rewind *state;
+  lonejson *measure_runtime;
+  lonejson_status status;
+  lonejson_error error;
+  size_t size;
+  state = (vectis_lua_curl_json_rewind *)userdata;
+  if (state == NULL || origin != SEEK_SET || offset != 0)
+    return CURL_SEEKFUNC_CANTSEEK;
+  /* Public measurement validates replayability without materializing JSON.
+   * Do this only when curl actually requests a replay. */
+  measure_runtime = lonejson_new(NULL, NULL);
+  if (measure_runtime == NULL)
+    return CURL_SEEKFUNC_FAIL;
+  lonejson_error_init(&error);
+  status = lonejson_generator_measure(measure_runtime, state->map,
+                                      state->record, &size, &error);
+  lonejson_free(measure_runtime);
+  if (status != LONEJSON_STATUS_OK)
+    return CURL_SEEKFUNC_CANTSEEK;
+  lonejson_curl_upload_cleanup(state->upload);
+  return lonejson_curl_upload_init(state->upload, state->runtime, state->map,
+                                   state->record) == LONEJSON_STATUS_OK
+             ? CURL_SEEKFUNC_OK
+             : CURL_SEEKFUNC_FAIL;
+}
+
 static int vectis_lua_curl_apply_method(lua_State *lua, CURL *curl,
                                         int option_index, int is_smtp,
                                         int has_streaming_upload,
-                                        int has_multipart,
+                                        int has_raw_upload, int has_multipart,
                                         lonejson_curl_upload *json_upload) {
   const char *method;
   const char *body;
@@ -15860,6 +15895,10 @@ static int vectis_lua_curl_apply_method(lua_State *lua, CURL *curl,
   lua_getfield(lua, option_index, "body");
   body = lua_tolstring(lua, -1, &body_size);
   if (method == NULL) {
+    if (has_raw_upload) {
+      lua_pop(lua, 1);
+      return 0; /* Preserve curl's default PUT for raw upload sources. */
+    }
     if (body != NULL || has_streaming_upload || has_multipart) {
       method = "POST";
     } else {
@@ -15868,10 +15907,16 @@ static int vectis_lua_curl_apply_method(lua_State *lua, CURL *curl,
     }
   }
   if (strcmp(method, "GET") == 0) {
-    (void)curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+    if (has_raw_upload)
+      (void)curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "GET");
+    else
+      (void)curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
   } else if (strcmp(method, "POST") == 0) {
     if (has_multipart) {
-      (void)curl_easy_setopt(curl, CURLOPT_POST, 1L);
+      /* Keep CURLOPT_MIMEPOST's body mode intact. */
+      (void)curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "POST");
+    } else if (has_raw_upload) {
+      (void)curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "POST");
     } else if (has_streaming_upload) {
       curl_off_t upload_size;
 
@@ -15895,8 +15940,8 @@ static int vectis_lua_curl_apply_method(lua_State *lua, CURL *curl,
              strcmp(method, "PROPFIND") == 0 || strcmp(method, "MKCOL") == 0 ||
              strcmp(method, "COPY") == 0 || strcmp(method, "MOVE") == 0) {
     (void)curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
-    if (has_multipart) {
-      /* CURLOPT_MIMEPOST already owns the request body. */
+    if (has_multipart || has_raw_upload) {
+      /* MIME or upload callbacks already own the request body. */
     } else if (has_streaming_upload) {
       (void)curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
       (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION,
@@ -16281,6 +16326,7 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   vectis_lua_curl_retry_config retry_config;
   lonejson_curl_parse json_response;
   lonejson_curl_upload json_upload;
+  vectis_lua_curl_json_rewind json_rewind;
   lonejson_schema_view request_schema;
   lonejson_schema_view response_schema;
   lonejson_record_view request_record;
@@ -16444,6 +16490,13 @@ static int vectis_lua_curl_perform(lua_State *lua) {
       return luaL_error(lua, "lonejson curl upload init failed");
     }
     has_streaming_upload = 1;
+    json_rewind.upload = &json_upload;
+    json_rewind.runtime = request_schema.runtime;
+    json_rewind.map = request_schema.map;
+    json_rewind.record = request_record.record;
+    (void)curl_easy_setopt(curl, CURLOPT_SEEKFUNCTION,
+                           vectis_lua_curl_rewind_json);
+    (void)curl_easy_setopt(curl, CURLOPT_SEEKDATA, &json_rewind);
   } else {
     lua_pop(lua, 1);
   }
@@ -16581,9 +16634,10 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   if (has_streaming_upload) {
     is_upload = 1;
   }
-  vectis_lua_curl_apply_method(
-      lua, curl, 1, is_smtp || (is_upload && !has_streaming_upload),
-      has_streaming_upload, has_multipart, &json_upload);
+  vectis_lua_curl_apply_method(lua, curl, 1, is_smtp, has_streaming_upload,
+                               is_upload && !has_streaming_upload &&
+                                   !has_multipart,
+                               has_multipart, &json_upload);
 
   retry_delay_ms = retry_config.initial_delay_ms;
   if (retry_config.max_delay_ms > 0L &&
