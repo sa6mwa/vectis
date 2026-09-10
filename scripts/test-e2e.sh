@@ -613,8 +613,7 @@ run_lua_site_example() {
   site_cache="$work_dir/lua-site-cache"
   site_tls_bundle="$work_dir/lua-site-tls.pem"
   site_tls_script="$work_dir/lua-site-tls.lua"
-  site_credentials="$work_dir/lua-site-credentials.json"
-  site_auth_state="$work_dir/lua-site-auth-state.json"
+  site_state_endpoint="pouch://$work_dir/lua-site-state"
   site_log="$work_dir/lua-site.log"
   site_base="https://localhost:$lua_site_port"
   site_body="$work_dir/lua-site-body.txt"
@@ -640,12 +639,14 @@ run_lua_site_example() {
     '}))' \
     >"$site_tls_script"
   "$repo_root/build/debug/vectis" "$site_tls_script" "$site_tls_bundle"
+  "$repo_root/build/debug/vectis" -a users \
+    --lockd-endpoint "$site_state_endpoint" \
+    --add site-admin --password site-password
   start_server "generic Lua site" "$site_log" \
     env VECTIS_LUA_SITE_PORT="$lua_site_port" \
       VECTIS_LUA_SITE_TLS_BUNDLE="$site_tls_bundle" \
       VECTIS_LUA_SITE_TLS_DOMAIN="localhost" \
-      VECTIS_LUA_SITE_CREDENTIALS="$site_credentials" \
-      VECTIS_LUA_SITE_AUTH_STATE="$site_auth_state" \
+      VECTIS_LUA_SITE_LOCKD_ENDPOINT="$site_state_endpoint" \
       VECTIS_LUA_SITE_ASSET_ROOT="$site_assets" \
       VECTIS_LUA_SITE_CONTENT_ROOT="$site_content" \
       VECTIS_LUA_SITE_CACHE="$site_cache" \

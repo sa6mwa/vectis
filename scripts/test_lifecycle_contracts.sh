@@ -40,6 +40,10 @@ assert_not_contains() {
   fi
 }
 
+for state_namespace in auth profile metrics acme smith; do
+  assert_contains "$repo_root/docker-compose.yaml" "\"vectis\\.${state_namespace}=rw\""
+done
+
 assert_host_debug_target() {
   host_system=$1
   host_machine=$2
