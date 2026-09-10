@@ -37,6 +37,14 @@ for _, method in ipairs({"POST", "PUT", "PATCH"}) do
         assert(result.status == 200 and result.body == method)
       end
     end
+    if kind == "json" then
+      opts.url = base .. "/json/retry"
+      opts.retry = {max_attempts = 2, initial_delay_ms = 0, max_delay_ms = 0,
+                    conditions = {"5xx"}}
+      result = curl.stream_json(opts)
+      assert(result.ok, result.error)
+      assert(result.status == 200 and result.body == method)
+    end
   end
 end
 local result = curl.perform({url = base .. "/file", upload_path = path})

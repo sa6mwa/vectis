@@ -1180,8 +1180,6 @@ typedef struct vectis_curl_request_body {
   char *owned_data;
   lonejson *json_runtime;
   lonejson_curl_upload json_upload;
-  const lonejson_map *json_map;
-  const void *json_value;
   curl_off_t json_size;
   int json_upload_active;
   FILE *file;
@@ -37453,27 +37451,6 @@ static int vectis_curl_rewind_memory(void *userdata, curl_off_t offset,
   return CURL_SEEKFUNC_OK;
 }
 
-static int vectis_curl_rewind_json(void *userdata, curl_off_t offset,
-                                   int origin) {
-  vectis_curl_request_body *body;
-  body = (vectis_curl_request_body *)userdata;
-  /* The size pass succeeds only for documents lonejson can replay. Unknown
-   * size means a non-rewindable source; do not consume or recreate it. */
-  if (body == NULL || origin != SEEK_SET || offset != 0 ||
-      !body->json_upload_active || body->json_size < 0) {
-    return CURL_SEEKFUNC_CANTSEEK;
-  }
-  lonejson_curl_upload_cleanup(&body->json_upload);
-  body->json_upload_active = 0;
-  if (lonejson_curl_upload_init(&body->json_upload, body->json_runtime,
-                                body->json_map,
-                                body->json_value) != LONEJSON_STATUS_OK) {
-    return CURL_SEEKFUNC_FAIL;
-  }
-  body->json_upload_active = 1;
-  return CURL_SEEKFUNC_OK;
-}
-
 static size_t vectis_curl_read_file(char *ptr, size_t size, size_t nmemb,
                                     void *userdata) {
   return fread(ptr, size, nmemb, (FILE *)userdata);
@@ -37634,6 +37611,8 @@ vectis_prepare_curl_body(const vectis_http_request *request,
       body->json_runtime = NULL;
       return VECTIS_ERR_INVALID;
     }
+    /* Preserve Content-Length for servers that require it. This measurement
+     * is independent of lonejson's content-free rewind capability check. */
     status = vectis_lonejson_count_upload_size(
         request->json_map, request->json_value, &body->json_size, error);
     if (status != VECTIS_OK) {
@@ -37643,8 +37622,6 @@ vectis_prepare_curl_body(const vectis_http_request *request,
       return status;
     }
     body->json_upload_active = 1;
-    body->json_map = request->json_map;
-    body->json_value = request->json_value;
     return VECTIS_OK;
   }
   if (request->body != NULL || request->body_size > 0u) {
@@ -38338,8 +38315,9 @@ vectis_http_execute_once(const vectis_http_client_config *client,
     (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION,
                            lonejson_curl_read_callback);
     (void)curl_easy_setopt(curl, CURLOPT_READDATA, &request_body.json_upload);
-    (void)curl_easy_setopt(curl, CURLOPT_SEEKFUNCTION, vectis_curl_rewind_json);
-    (void)curl_easy_setopt(curl, CURLOPT_SEEKDATA, &request_body);
+    (void)curl_easy_setopt(curl, CURLOPT_SEEKFUNCTION,
+                           lonejson_curl_seek_callback);
+    (void)curl_easy_setopt(curl, CURLOPT_SEEKDATA, &request_body.json_upload);
     if (request->method == VECTIS_HTTP_POST) {
       (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE,
                              request_body.json_size);

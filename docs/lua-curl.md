@@ -139,3 +139,8 @@ Request values are copied into a Lua-owned LoneJSON record and streamed through
 bytes are fed directly from libcurl's write callback into
 `lonejson_curl_write_callback()` and converted back to a Lua table at the end
 of the transfer.
+
+JSON uploads use lonejson's native seek callback for body-preserving redirects
+and its rewind API for configured retries. Replay does not measure or buffer the
+JSON document. One-shot sources cannot be replayed and return a curl rewind
+error; they are not silently materialized to make retries possible.

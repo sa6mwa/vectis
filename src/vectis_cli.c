@@ -589,13 +589,6 @@ typedef struct vectis_lua_curl_file_upload {
   curl_off_t size;
 } vectis_lua_curl_file_upload;
 
-typedef struct vectis_lua_curl_json_rewind {
-  lonejson_curl_upload *upload;
-  lonejson *runtime;
-  const lonejson_map *map;
-  const void *record;
-} vectis_lua_curl_json_rewind;
-
 typedef struct vectis_lua_curl_retry_config {
   unsigned max_attempts;
   long initial_delay_ms;
@@ -15890,34 +15883,6 @@ static int vectis_lua_curl_apply_upload(lua_State *lua, CURL *curl,
   return 1;
 }
 
-static int vectis_lua_curl_rewind_json(void *userdata, curl_off_t offset,
-                                       int origin) {
-  vectis_lua_curl_json_rewind *state;
-  lonejson *measure_runtime;
-  lonejson_status status;
-  lonejson_error error;
-  size_t size;
-  state = (vectis_lua_curl_json_rewind *)userdata;
-  if (state == NULL || origin != SEEK_SET || offset != 0)
-    return CURL_SEEKFUNC_CANTSEEK;
-  /* Public measurement validates replayability without materializing JSON.
-   * Do this only when curl actually requests a replay. */
-  measure_runtime = lonejson_new(NULL, NULL);
-  if (measure_runtime == NULL)
-    return CURL_SEEKFUNC_FAIL;
-  lonejson_error_init(&error);
-  status = lonejson_generator_measure(measure_runtime, state->map,
-                                      state->record, &size, &error);
-  lonejson_free(measure_runtime);
-  if (status != LONEJSON_STATUS_OK)
-    return CURL_SEEKFUNC_CANTSEEK;
-  lonejson_curl_upload_cleanup(state->upload);
-  return lonejson_curl_upload_init(state->upload, state->runtime, state->map,
-                                   state->record) == LONEJSON_STATUS_OK
-             ? CURL_SEEKFUNC_OK
-             : CURL_SEEKFUNC_FAIL;
-}
-
 static int vectis_lua_curl_apply_method(lua_State *lua, CURL *curl,
                                         int option_index, const char *method,
                                         int is_smtp, int has_streaming_upload,
@@ -16398,7 +16363,6 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   vectis_lua_curl_retry_config retry_config;
   lonejson_curl_parse json_response;
   lonejson_curl_upload json_upload;
-  vectis_lua_curl_json_rewind json_rewind;
   lonejson_schema_view request_schema;
   lonejson_schema_view response_schema;
   lonejson_record_view request_record;
@@ -16579,13 +16543,9 @@ static int vectis_lua_curl_perform(lua_State *lua) {
       return luaL_error(lua, "lonejson curl upload init failed");
     }
     has_streaming_upload = 1;
-    json_rewind.upload = &json_upload;
-    json_rewind.runtime = request_schema.runtime;
-    json_rewind.map = request_schema.map;
-    json_rewind.record = request_record.record;
     (void)curl_easy_setopt(curl, CURLOPT_SEEKFUNCTION,
-                           vectis_lua_curl_rewind_json);
-    (void)curl_easy_setopt(curl, CURLOPT_SEEKDATA, &json_rewind);
+                           lonejson_curl_seek_callback);
+    (void)curl_easy_setopt(curl, CURLOPT_SEEKDATA, &json_upload);
   }
 
   if (has_streaming_response) {
@@ -16783,22 +16743,13 @@ static int vectis_lua_curl_perform(lua_State *lua) {
       (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, download_file);
     }
     if (has_streaming_upload) {
-      lonejson_curl_upload_cleanup(&json_upload);
-      memset(&json_upload, 0, sizeof(json_upload));
-      json_status =
-          lonejson_curl_upload_init(&json_upload, request_schema.runtime,
-                                    request_schema.map, request_record.record);
+      json_status = lonejson_curl_upload_rewind(&json_upload);
       if (json_status != LONEJSON_STATUS_OK) {
-        curl_slist_free_all(headers);
-        curl_slist_free_all(recipients);
-        if (mime != NULL) {
-          curl_mime_free(mime);
-        }
-        curl_easy_cleanup(curl);
-        vectis_lua_curl_buffer_free(&body);
-        vectis_lua_curl_buffer_free(&response);
-        vectis_lua_curl_buffer_free(&response_headers);
-        return luaL_error(lua, "lonejson curl upload retry init failed");
+        code = CURLE_SEND_FAIL_REWIND;
+        (void)snprintf(error_buffer, sizeof(error_buffer),
+                       "lonejson curl upload cannot be rewound: %s",
+                       lonejson_status_string(json_status));
+        break;
       }
     }
     vectis_lua_curl_sleep_ms(retry_delay_ms);
