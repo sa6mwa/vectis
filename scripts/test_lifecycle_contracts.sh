@@ -1068,12 +1068,12 @@ assert_lua_coverage_matrix_contract() {
   assert_contains "$lua_index" '\[Lua CAI\]\(lua-cai\.md\)'
   assert_contains "$repo_root/docs/api.md" '\[Lua CAI\]\(lua-cai\.md\)'
   assert_contains "$repo_root/docs/lua-cai.md" 'dependency-native CAI Lua module'
-  assert_contains "$repo_root/docs/lua-cai.md" 'The pinned CAI dependency is `0\.5\.0`'
+  assert_contains "$repo_root/docs/lua-cai.md" 'The pinned CAI dependency is `0\.6\.0`'
   assert_contains "$repo_root/docs/lua-cai.md" '`vectis\.cai` is a service DX'
   assert_contains "$repo_root/docs/lua-cai.md" 'not a second AI SDK'
   assert_contains "$repo_root/docs/lua-cai.md" 'The C adapters preserve true streaming'
   assert_contains "$repo_root/TODO.md" '\[x\] Track CAI as a dependency once its C SDK surface stabilizes'
-  assert_contains "$matrix" 'Dependency-native CAI 0\.5\.0 module is preloaded'
+  assert_contains "$matrix" 'Dependency-native CAI 0\.6\.0 module is preloaded'
   assert_contains "$matrix" '`vectis\.cai` covers normalized service config'
   assert_contains "$lua_index" '\[Lua libmdf\]\(lua-libmdf\.md\)'
   assert_contains "$lua_index" '\[Lua softline\]\(lua-softline\.md\)'
@@ -1865,10 +1865,10 @@ if ! printf '%s\n' "$linux_deps_output" | grep -Eq '^libpid0_version=0\.4\.2$'; 
 fi
 for expected in \
   '^system_sha256=0bbb1cbaf60b0a94fb5a6b3756123088b45e2bef9e38079038f22e3c07febb2e$' \
-  '^liblockdc_sha256=cc942533bd845b04885052047342f37e16ea898a33ef6f1aa5492b09ac69ebc2$' \
-  '^lonejson_sha256=e04f80b907d92f7e38f825fbd339297e85372fc1ce110abb9a93715ee450ece3$' \
+  '^liblockdc_sha256=1f4777de5cd4c729f1012a2028ba6abc17c8773460969bf419ce15627f09f4bf$' \
+  '^lonejson_sha256=520e045c7bfe13396b9dd2ef664d2aaf723ff3173ac02e0f0fe08bcf96f14fa2$' \
   '^pslog_sha256=7981ce7e60f6f1e144042e7a9192bb661472756ae34336fb0c2ed8316b31945f$' \
-  '^cai_sha256=f73696bf4b79537e5ebe307a6e1ce5a28b455b557b6c6fbfcd92f9e37046b0c9$' \
+  '^cai_sha256=f7f78d9f847f1265267bbc33a6d6cb2058602d82967357ab561f36ebb1d0daf8$' \
   '^lql_sha256=a32b3ecc33b0634df23c630843b1c2c16a8a2caa947109a33bad20965e47a399$' \
   '^lql_lua_sha256=b440ce543586ebfc9aafd0e09a700126b9d62d85b8c34ae2ac19b0990db28438$' \
   '^softline_sha256=bf4b2577f43346772af7d61a1d4f6204e601fed6a0ab2a3779936f30a544ee09$'

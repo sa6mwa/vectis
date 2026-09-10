@@ -6,7 +6,7 @@ Vectis should add only service-integration glue around CAI when a workflow needs
 to cross Vectis-owned concepts such as routes, lockd payloads, files, logging,
 or auth.
 
-The pinned CAI dependency is `0.5.0`. The module is preloaded and also
+The pinned CAI dependency is `0.6.0`. The module is preloaded and also
 available as `require("vectis").libs.cai`; both names return the same module
 table.
 
