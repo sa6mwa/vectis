@@ -1298,7 +1298,8 @@ static void vectis_metrics_state_destroy(vectis_metrics_state *metrics);
 static vectis_status vectis_metrics_worker_start(vectis_app *app,
                                                  vectis_error *error);
 static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
-                                                     long timeout_ms);
+                                                     long timeout_ms,
+                                                     vectis_error *error);
 static void
 vectis_metrics_mark_checkpoint_restore(vectis_metrics_state *metrics);
 static long
@@ -12037,10 +12038,8 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
   if (route_count == 0u) {
     if (vectis_app_has_metrics_persistence(impl)) {
       status = vectis_metrics_persist_snapshot(
-          app, vectis_metrics_background_persistence_timeout_ms(impl));
+          app, vectis_metrics_background_persistence_timeout_ms(impl), error);
       if (status != VECTIS_OK) {
-        vectis_set_error(error, VECTIS_ERR_STATE,
-                         "failed to restore persistent metrics snapshot");
         return status;
       }
       impl->metrics->last_snapshot_at = time(NULL);
@@ -12055,10 +12054,8 @@ static vectis_status vectis_app_start_impl(vectis_app *app,
 
   if (route_count > 0u && vectis_app_has_metrics_persistence(impl)) {
     status = vectis_metrics_persist_snapshot(
-        app, vectis_metrics_background_persistence_timeout_ms(impl));
+        app, vectis_metrics_background_persistence_timeout_ms(impl), error);
     if (status != VECTIS_OK) {
-      vectis_set_error(error, VECTIS_ERR_STATE,
-                       "failed to restore persistent metrics snapshot");
       return status;
     }
     impl->metrics->last_snapshot_at = time(NULL);
@@ -22529,7 +22526,8 @@ vectis_metrics_background_persistence_timeout_ms(const vectis_app_impl *impl) {
 }
 
 static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
-                                                     long timeout_ms) {
+                                                     long timeout_ms,
+                                                     vectis_error *error) {
   vectis_app_impl *impl;
   vectis_metrics_state *metrics;
   vectis_metrics_write_context write;
@@ -22541,6 +22539,7 @@ static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
   char key[VECTIS_INTERNAL_METRICS_SNAPSHOT_KEY_SIZE];
   const char *endpoint;
   const char *owner;
+  vectis_status status;
   int rc;
 
   if (app == NULL || app->impl == NULL) {
@@ -22562,11 +22561,12 @@ static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
                                  ? metrics->storage_namespace
                                  : "vectis.metrics";
   config.timeout_ms = timeout_ms > 0L ? timeout_ms : 30000L;
-  if (vectis_configure_pouch_client(&config, endpoint, impl, &default_key_file,
-                                    NULL) != VECTIS_OK) {
+  status = vectis_configure_pouch_client(&config, endpoint, impl,
+                                         &default_key_file, error);
+  if (status != VECTIS_OK) {
     vectis_mutable_bytes_cleanup(&write.json);
     vectis_metrics_note_snapshot_error(metrics);
-    return VECTIS_ERR_STATE;
+    return status;
   }
   lc_error_init(&lcerr);
   client = NULL;
@@ -22592,6 +22592,10 @@ static vectis_status vectis_metrics_persist_snapshot(vectis_app *app,
   }
   if (default_key_file != NULL) {
     free(default_key_file);
+  }
+  if (rc != LC_OK) {
+    (void)vectis_set_lockdc_error(error, rc, &lcerr,
+                                  "metrics checkpoint persistence failed");
   }
   lc_error_cleanup(&lcerr);
   vectis_mutable_bytes_cleanup(&write.json);
@@ -22642,7 +22646,7 @@ static void vectis_metrics_persist_snapshot_if_due(vectis_app *app) {
   (void)pthread_mutex_unlock(&metrics->mutex);
 
   if (due) {
-    (void)vectis_metrics_persist_snapshot(app, timeout_ms);
+    (void)vectis_metrics_persist_snapshot(app, timeout_ms, NULL);
   }
 }
 
@@ -22780,7 +22784,7 @@ vectis_metrics_worker_stop(vectis_app *app,
     (void)pthread_mutex_unlock(&metrics->mutex);
     remaining_ms = vectis_deadline_remaining_ms(deadline);
     if (remaining_ms > 0L) {
-      (void)vectis_metrics_persist_snapshot(app, remaining_ms);
+      (void)vectis_metrics_persist_snapshot(app, remaining_ms, NULL);
     }
     vectis_app_record_lifecycle_sequence(impl, &impl->metrics_stop_sequence);
   }

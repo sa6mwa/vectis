@@ -3656,6 +3656,7 @@ provision_ssh_public_key
 install_ssh_public_key
 provision_ssh_known_hosts
 make -C "$repo_root" build-debug
+python3 "$repo_root/tests/metrics_startup.py" --binary "$repo_root/build/debug/vectis"
 
 cd "$work_dir"
 run_lua_examples

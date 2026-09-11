@@ -43,6 +43,8 @@ assert_not_contains() {
 for state_namespace in auth profile metrics acme smith; do
   assert_contains "$repo_root/docker-compose.yaml" "\"vectis\\.${state_namespace}=rw\""
 done
+assert_contains "$repo_root/Makefile" '^perf-gate: build-debug'
+assert_contains "$repo_root/scripts/test-e2e.sh" 'tests/metrics_startup.py'
 
 assert_host_debug_target() {
   host_system=$1

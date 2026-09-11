@@ -1941,6 +1941,17 @@ static void assert_supervised_metrics_persistence_worker(void) {
   assert(status == VECTIS_OK);
   app->close(app);
 
+  app = vectis_app_new(&config, &error);
+  assert(app != NULL);
+  assert(app->metrics(app, &metrics, &error) == VECTIS_OK);
+  assert(setenv("VECTIS_POUCH_CRYPTO_KEY", "", 1) == 0);
+  status = app->start(app, &error);
+  assert(status == VECTIS_ERR_INVALID);
+  assert(error.code == status);
+  assert(strcmp(error.message, "VECTIS_POUCH_CRYPTO_KEY must not be empty") ==
+         0);
+  app->close(app);
+
   if (had_environment_key) {
     assert(setenv("VECTIS_POUCH_CRYPTO_KEY", saved_environment_key, 1) == 0);
   } else {
@@ -2353,8 +2364,10 @@ static void assert_metrics_persistence_restore_honors_startup_grace(void) {
   status = app->start(app, &error);
   elapsed_ms = runtime_monotonic_millis() - started_ms;
   assert(status == VECTIS_ERR_STATE);
-  assert(strcmp(error.message,
-                "failed to restore persistent metrics snapshot") == 0);
+  assert(strstr(error.message, "metrics checkpoint persistence failed:") !=
+         NULL);
+  assert(error.source == VECTIS_ERROR_SOURCE_LOCKDC);
+  assert(error.dependency_code != LC_OK);
   assert(elapsed_ms < 2000L);
 
   app->close(app);

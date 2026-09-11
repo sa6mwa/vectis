@@ -89,6 +89,34 @@ and are not restored. Missing checkpoints are treated as a first start; an
 unreadable or invalid checkpoint fails startup rather than silently publishing
 zeroed history.
 
+The single-checkpoint lookup does not make local storage recovery constant-time:
+opening Pouch can replay its persisted log before Vectis opens its listener.
+Vectis currently performs this open synchronously. Remote request timeouts do
+not establish a CPU/time bound on local Pouch recovery. Startup errors preserve
+the underlying lockdc message and dependency error metadata.
+
+`make perf-gate` (also mandatory in `make test-e2e` and hence `make test-all`)
+tests the actual binary against encrypted Pouch on Linux. It writes 20,000
+checkpoint versions, including acquire/update/release churn, and checks two
+fresh-process restarts after clean shutdown and a killed shared writer. A
+one-update store provides a small-store comparison. Each successful restart
+must serve HTTPS with the restored counters within **5 wall-clock seconds**
+and consume less than **2 CPU seconds** across the process tree. Fixture
+generation is excluded from these budgets and is separately bounded to 300
+seconds. Test state is isolated under `build/`; no deployed state is opened.
+The workload crosses the default 64 MiB log-segment size and the gate reports
+store size, readiness latency, and CPU consumption. These are regression
+budgets for this workload, not a guarantee for arbitrarily large stores or slow
+disks. The Python runner accepts `--updates`, `--ready-seconds`, and
+`--cpu-seconds` for explicit larger investigations; standard gates use fixed
+defaults.
+
+Pouch's default exclusive-writer lease may prevent immediate reopening after
+SIGKILL until the lease expires. The gate separately checks that this case
+fails promptly with the lockdc exclusive-writer diagnostic. Crash recovery is
+measured using an explicit `?single_writer=false` endpoint; Vectis does not
+bypass an exclusive lease or silently change the configured writer policy.
+
 The metrics worker updates the checkpoint at least five minutes apart through
 the public liblockdc client. `storage_endpoint` may point at a remote lockd
 endpoint or a local `pouch://` endpoint. When it is not set, Vectis uses:

@@ -18,7 +18,7 @@ FUZZ_PRESET := fuzz
 	help \
 	deps-debug deps-release deps-cross \
 	build build-debug build-release build-asan build-coverage build-fuzz \
-	bench-metrics-storage \
+	bench-metrics-storage perf-gate \
 	test test-debug test-lifecycle test-vendor-kore-lifecycle test-service-runtime-lifecycle test-lua-facade-matrix test-lua-facade-behavior test-target-tools test-cpkt-toolchains test-darwin-linker-route test-release-privacy-contracts asan test-asan valgrind coverage test-coverage fuzz fuzz-smoke test-instrumentation-presets test-install-tree test-no-kore test-e2e test-all \
 	lua-env lua-rock lua-test test-opcua-lua-surface test-opcua-pubsub-live test-cai-live test-sus-audio-live test-sus-audio-hardening release-lua-artifacts \
 	dev-up dev-down dev-reset dev-ps dev-logs \
@@ -70,6 +70,7 @@ help:
 		'make test-instrumentation-presets Build the sanitizer and coverage preset link-regression targets.' \
 		'make build-fuzz         Configure and build the fuzz preset.' \
 		'make bench-metrics-storage Time encrypted Pouch layouts for 6m/12m (Python 3.9+; METRICS_BENCH_ARGS=--smoke for a short check).' \
+		'make perf-gate          Gate encrypted metrics recovery through HTTPS readiness (Linux; Python 3).' \
 		'make deps-debug         Provision host debug dependencies into .cache/.' \
 		'make deps-release       Provision x86_64 GNU and musl release dependencies.' \
 		'make deps-cross         Provision aarch64 and armhf GNU/musl release dependencies, plus Darwin when osxcross is available.' \
@@ -304,6 +305,9 @@ test-debug: build-debug
 
 test-e2e:
 	$(TIMED) test-e2e bash ./scripts/test-e2e.sh
+
+perf-gate: build-debug
+	$(TIMED) perf-gate python3 $(ROOT)/tests/metrics_startup.py --binary $(ROOT)/build/$(DEBUG_PRESET)/vectis
 
 test-all: test test-e2e
 
