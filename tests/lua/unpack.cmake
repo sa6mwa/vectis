@@ -22,6 +22,50 @@ if(NOT pack_result EQUAL 0)
   message(FATAL_ERROR "pack for unpack test failed: ${pack_stdout}${pack_stderr}")
 endif()
 
+# A manifest can describe a nonempty tree without any file-content bytes.
+foreach(zero_kind empty_file directories)
+  set(zero_root "${WORK_DIR}/unpack-zero-${zero_kind}")
+  file(REMOVE_RECURSE "${zero_root}")
+  file(MAKE_DIRECTORY "${zero_root}/source")
+  set(zero_script "local embedded = require('vectis').embedded\nassert(embedded.has_assets())\nassert(#embedded.list('/') > 0)\n")
+  if(zero_kind STREQUAL "empty_file")
+    file(WRITE "${zero_root}/source/empty.txt" "")
+    set(zero_args --asset "${zero_root}/source/empty.txt=/empty.txt")
+    string(APPEND zero_script "assert(embedded.stat('/empty.txt').size == 0)\nassert(embedded.read('/empty.txt') == '')\nfor chunk in embedded.chunks('/empty.txt', 4) do error('unexpected chunk') end\n")
+    set(zero_entry "empty.txt")
+  else()
+    file(MAKE_DIRECTORY "${zero_root}/source/nested")
+    set(zero_args --asset-dir "/tree:${zero_root}/source")
+    string(APPEND zero_script "assert(embedded.stat('/tree/nested'))\n")
+    set(zero_entry "tree/nested")
+  endif()
+  file(WRITE "${zero_root}/app.lua" "${zero_script}")
+  execute_process(COMMAND "${VECTIS_BIN}" -a pack --script "${zero_root}/app.lua"
+                          --output "${zero_root}/packed" ${zero_args}
+                  RESULT_VARIABLE zero_result ERROR_VARIABLE zero_error)
+  if(NOT zero_result EQUAL 0)
+    message(FATAL_ERROR "zero-payload ${zero_kind} pack failed: ${zero_error}")
+  endif()
+  execute_process(COMMAND "${zero_root}/packed"
+                  RESULT_VARIABLE zero_result ERROR_VARIABLE zero_error)
+  if(NOT zero_result EQUAL 0)
+    message(FATAL_ERROR "zero-payload ${zero_kind} execution failed: ${zero_error}")
+  endif()
+  execute_process(COMMAND "${zero_root}/packed" -a unpack --output-dir "${zero_root}/restored"
+                  RESULT_VARIABLE zero_result ERROR_VARIABLE zero_error)
+  if(NOT zero_result EQUAL 0 OR NOT EXISTS "${zero_root}/restored/assets/${zero_entry}")
+    message(FATAL_ERROR "zero-payload ${zero_kind} unpack failed: ${zero_error}")
+  endif()
+  if(zero_kind STREQUAL "empty_file")
+    file(SIZE "${zero_root}/restored/assets/${zero_entry}" zero_size)
+    if(NOT zero_size EQUAL 0)
+      message(FATAL_ERROR "unpacked empty asset has content")
+    endif()
+  elseif(NOT IS_DIRECTORY "${zero_root}/restored/assets/${zero_entry}")
+    message(FATAL_ERROR "unpacked directory has wrong type")
+  endif()
+endforeach()
+
 execute_process(COMMAND "${packed}" -a docs
                 RESULT_VARIABLE packed_docs_result
                 OUTPUT_VARIABLE packed_docs_stdout

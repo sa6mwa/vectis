@@ -4004,13 +4004,13 @@ static int vectis_unpack_command(int argc, char **argv, int index) {
        vectis_cli_prepare_output_file(bundle_path, force, 1) != 0) ||
       (payload.manifest_size > 0u &&
        vectis_cli_prepare_output_file(manifest_path, force, 1) != 0) ||
-      (payload.asset_payload_size > 0u &&
+      (payload.manifest_size > 0u &&
        vectis_cli_prepare_output_dir(assets_path, force) != 0)) {
     vectis_pack_embedded_payload_cleanup(&payload);
     return 1;
   }
   assets = NULL;
-  if (payload.asset_payload_size > 0u) {
+  if (payload.manifest_size > 0u) {
     vectis_embedded_fs_config_init(&fs_config);
     fs_config.payload = payload.asset_payload;
     fs_config.payload_size = payload.asset_payload_size;
@@ -23365,7 +23365,7 @@ static int vectis_lua_run_embedded(int argc, char **argv) {
   rc = vectis_lua_run_buffer(
       argv[0], payload.script, payload.script_size,
       payload.bundle_size > 0u ? payload.bundle : NULL, payload.bundle_size,
-      payload.asset_payload_size > 0u ? payload.asset_payload : NULL,
+      payload.manifest_size > 0u ? payload.asset_payload : NULL,
       payload.asset_payload_size,
       payload.manifest_size > 0u ? payload.manifest : NULL,
       payload.manifest_size, argc, argv, 0);
