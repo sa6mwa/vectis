@@ -2473,6 +2473,7 @@ static vectis_status framing_stream_handler(vectis_app *app,
   (void)app;
   path = vectis_request_path(request);
   status = strstr(path, "204") != NULL   ? 204
+           : strstr(path, "205") != NULL ? 205
            : strstr(path, "304") != NULL ? 304
                                          : 200;
   size = strstr(path, "empty") != NULL ? 0u : sizeof(payload);
@@ -2862,10 +2863,11 @@ static void assert_upload_redirect_replay(void) {
 }
 
 static void assert_stream_framing(void) {
-  const char *paths[] = {"/framing-empty",      "/framing-204",
-                         "/framing-304",        "/framing-buffer-204",
-                         "/framing-buffer-304", "/framing-file-204",
-                         "/framing-file-304",   "/framing-data"};
+  const char *paths[] = {
+      "/framing-empty",      "/framing-204",        "/framing-304",
+      "/framing-buffer-204", "/framing-buffer-304", "/framing-file-204",
+      "/framing-file-304",   "/framing-205",        "/framing-buffer-205",
+      "/framing-file-205",   "/framing-data"};
   vectis_app_config config;
   vectis_app *app;
   vectis_route_config route;
@@ -2899,7 +2901,7 @@ static void assert_stream_framing(void) {
   }
   (void)close(reserved);
   assert(app->start(app, &error) == VECTIS_OK);
-  for (i = 0u; i < 7u; ++i) {
+  for (i = 0u; i < 10u; ++i) {
     fd = connect_local(port);
     (void)snprintf(request, sizeof(request),
                    "GET %s HTTP/1.1\r\nHost: localhost\r\n\r\n", paths[i]);
@@ -2909,16 +2911,21 @@ static void assert_stream_framing(void) {
            NULL);
     assert(strstr(headers, "set-cookie: session=present; Path=/\r\n") != NULL);
     assert(strncmp(headers, "HTTP/1.1 ", 9u) == 0);
-    assert(strstr(headers, i == 0u  ? " 200 "
-                           : i % 2u ? " 204 "
-                                    : " 304 ") != NULL);
-    if (i == 0u || i % 2u) {
+    assert(strstr(headers, i >= 7u   ? " 205 "
+                           : i == 0u ? " 200 "
+                           : i % 2u  ? " 204 "
+                                     : " 304 ") != NULL);
+    if (i >= 7u || i == 0u || i % 2u) {
       assert(strstr(headers, "cOnTeNt-LeNgTh:") == NULL);
     } else {
       assert(strstr(headers, "cOnTeNt-LeNgTh: 20000\r\n") != NULL);
     }
     assert(strstr(headers, "tRaNsFeR-EnCoDiNg:") == NULL);
-    assert(strstr(headers, "content-length:") == NULL);
+    if (i >= 7u) {
+      assert(strstr(headers, "content-length: 0\r\n") != NULL);
+    } else {
+      assert(strstr(headers, "content-length:") == NULL);
+    }
     if (i == 0u) {
       websocket_read_exact(fd, (unsigned char *)body, 5u);
       assert(memcmp(body, "0\r\n\r\n", 5u) == 0);

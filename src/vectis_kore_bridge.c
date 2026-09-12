@@ -2906,7 +2906,8 @@ static void vectis_kore_send_response(vectis_app *app, struct http_request *req,
   if (status == 0) {
     status = 204;
   }
-  bodyless = (status >= 100 && status < 200) || status == 204 || status == 304;
+  bodyless = (status >= 100 && status < 200) || status == 204 ||
+             status == 205 || status == 304;
   stream_source = vectis_internal_response_take_stream_source(response);
   for (i = 0u; i < vectis_internal_response_header_count(response); ++i) {
     header_name = vectis_internal_response_header_name(response, i);
@@ -2940,7 +2941,10 @@ static void vectis_kore_send_response(vectis_app *app, struct http_request *req,
     if (stream_source != NULL) {
       lc_source_close(stream_source);
     }
-    req->flags |= HTTP_REQUEST_NO_CONTENT_LENGTH;
+    /* Unlike 204/304, 205 needs an explicit zero length for keep-alive. */
+    if (status != 205) {
+      req->flags |= HTTP_REQUEST_NO_CONTENT_LENGTH;
+    }
     vectis_internal_metrics_note_http_status(app, status);
     http_response(req, status, NULL, 0);
     return;
