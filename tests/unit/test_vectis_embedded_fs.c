@@ -224,6 +224,83 @@ static void write_file(const char *path, const char *body) {
   assert(fclose(fp) == 0);
 }
 
+#ifdef VECTIS_TEST_WRAP_FCHMOD
+static const char *competing_path;
+int __real_fchmod(int fd, mode_t mode);
+int __wrap_fchmod(int fd, mode_t mode) {
+  if (competing_path != NULL) {
+    write_file(competing_path, "competitor");
+    competing_path = NULL;
+  }
+  return __real_fchmod(fd, mode);
+}
+#endif
+
+static void test_publication(void) {
+  char temp[] = "vectis-publication.XXXXXX";
+  char leaf[256];
+  char path[512];
+  char manifest[1024];
+  char buffer[32];
+  vectis_embedded_fs_config config;
+  vectis_embedded_fs_extract_config extract;
+  vectis_embedded_fs *fs;
+  vectis_error error;
+  vectis_status status;
+  unsigned i;
+  static const vectis_embedded_fs_extract_policy policies[] = {
+      VECTIS_EMBEDDED_FS_EXTRACT_FAIL_EXISTS,
+      VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING,
+      VECTIS_EMBEDDED_FS_EXTRACT_OVERWRITE, VECTIS_EMBEDDED_FS_EXTRACT_REPAIR};
+
+  assert(mkdtemp(temp) != NULL);
+  memset(leaf, 'a', sizeof(leaf) - 1u);
+  leaf[sizeof(leaf) - 1u] = '\0';
+  (void)snprintf(path, sizeof(path), "%s/%s", temp, leaf);
+  write_file(path, "supported");
+  assert(unlink(path) == 0);
+  (void)snprintf(
+      manifest, sizeof(manifest),
+      "{\"format\":\"vectis-pack\",\"assets\":[{\"path\":\"/%s\","
+      "\"offset\":0,\"size\":6,\"sha256\":"
+      "\"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03\"}]}",
+      leaf);
+  vectis_embedded_fs_config_init(&config);
+  config.manifest_json = manifest;
+  config.manifest_json_size = strlen(manifest);
+  config.payload = "hello\n";
+  config.payload_size = 6u;
+  fs = NULL;
+  assert(vectis_embedded_fs_from_pack(&config, &fs, &error) == VECTIS_OK);
+  vectis_embedded_fs_extract_config_init(&extract);
+  extract.output_dir = temp;
+  for (i = 0u; i < sizeof(policies) / sizeof(policies[0]); ++i) {
+    extract.policy = policies[i];
+    status = vectis_embedded_fs_extract(fs, &extract, &error);
+    expect(status == VECTIS_OK,
+           "extracts NAME_MAX file under each publication policy");
+    if (status == VECTIS_OK) {
+      read_file(path, buffer, sizeof(buffer));
+      expect(strcmp(buffer, "hello\n") == 0, "long filename payload matches");
+      assert(unlink(path) == 0);
+    }
+#ifdef VECTIS_TEST_WRAP_FCHMOD
+    competing_path = path;
+    status = vectis_embedded_fs_extract(fs, &extract, &error);
+    expect(competing_path == NULL, "injects destination after existence check");
+    competing_path = NULL;
+    expect(status == (i == 0u ? VECTIS_ERR_CONFLICT : VECTIS_OK),
+           "publication honors policy after concurrent destination creation");
+    read_file(path, buffer, sizeof(buffer));
+    expect(strcmp(buffer, i < 2u ? "competitor" : "hello\n") == 0,
+           "no-overwrite preserves competing content; overwrite replaces it");
+    assert(unlink(path) == 0);
+#endif
+  }
+  vectis_embedded_fs_close(fs);
+  expect(rmdir(temp) == 0, "publication leaves no temporary files");
+}
+
 int main(void) {
   vectis_error error;
   vectis_embedded_fs *fs;
@@ -328,6 +405,7 @@ int main(void) {
   vectis_embedded_fs_config config;
 
   vectis_error_clear(&error);
+  test_publication();
   fs = new_fixture_fs(&error);
   if (fs == NULL) {
     return 1;
@@ -567,8 +645,8 @@ int main(void) {
          "creates parent directory for temp symlink fixture");
   (void)snprintf(extracted_app, sizeof(extracted_app), "%s/assets/app.txt",
                  tmp_symlink_temp);
-  (void)snprintf(tmp_symlink, sizeof(tmp_symlink), "%s.tmp.%ld", extracted_app,
-                 (long)getpid());
+  (void)snprintf(tmp_symlink, sizeof(tmp_symlink), "%s/.vectis-tmp.%ld.0",
+                 symlink_dir, (long)getpid());
   (void)snprintf(tmp_outside_app, sizeof(tmp_outside_app), "%s/app.txt",
                  tmp_outside_temp);
   write_file(tmp_outside_app, "outside\n");
@@ -578,8 +656,8 @@ int main(void) {
   extract.output_dir = tmp_symlink_temp;
   extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_REPAIR;
   status = vectis_embedded_fs_extract(fs, &extract, &error);
-  expect(status == VECTIS_ERR_CONFLICT,
-         "extract refuses preexisting temp publish symlink");
+  expect(status == VECTIS_OK, "extract chooses another temp name without "
+                              "following preexisting symlink");
   read_file(tmp_outside_app, buffer, sizeof(buffer));
   expect(strcmp(buffer, "outside\n") == 0,
          "temp-symlink extraction does not write outside docroot");
