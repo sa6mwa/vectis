@@ -2831,6 +2831,29 @@ static void assert_upload_redirect_replay(void) {
           request.json_map = &reader_json_doc_map;
           request.json_value = &reader_doc;
         }
+        if (source_kind == 2) {
+          request.retry_max_attempts = 2u;
+          status =
+              vectis_http_client_execute(client, &request, &response, &error);
+          assert(status == VECTIS_ERR_INVALID);
+          assert(strstr(error.message, "cannot be retried safely") != NULL);
+          assert(reader.offset == 0u);
+          /* Client defaults must receive the same guard as request overrides.
+           */
+          vectis_http_client_config_init(&http_config);
+          http_config.retry_max_attempts = 2u;
+          request.retry_max_attempts = 0u;
+          status =
+              vectis_http_execute(&http_config, &request, &response, &error);
+          assert(status == VECTIS_ERR_INVALID);
+          assert(reader.offset == 0u);
+          /* NONE disables retries despite the attempt count, preserving
+           * one-shot streaming and the existing redirect rejection below. */
+          request.retry_max_attempts = 2u;
+          request.retry_conditions = VECTIS_HTTP_RETRY_NONE;
+        } else {
+          request.retry_max_attempts = 2u;
+        }
         memset(&response, 0, sizeof(response));
         status =
             vectis_http_client_execute(client, &request, &response, &error);

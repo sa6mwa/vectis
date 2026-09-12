@@ -38634,6 +38634,10 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
   long delay_ms;
   long max_delay_ms;
   vectis_http_retry_conditions retry_conditions;
+  lonejson *json_runtime;
+  lonejson_curl_upload json_upload;
+  lonejson_status json_status;
+  int replayable;
 
   vectis_http_client_config_init(&defaults);
   client_config = client != NULL ? client : &defaults;
@@ -38666,6 +38670,29 @@ vectis_status vectis_http_execute(const vectis_http_client_config *client,
     vectis_set_error(error, VECTIS_ERR_INVALID,
                      "HTTP response streaming cannot be retried safely");
     return VECTIS_ERR_INVALID;
+  }
+  if (max_attempts > 1u && request != NULL &&
+      (request->json_map != NULL || request->json_value != NULL)) {
+    if (request->json_map == NULL || request->json_value == NULL) {
+      vectis_set_error(
+          error, VECTIS_ERR_INVALID,
+          "JSON HTTP request requires both json_map and json_value");
+      return VECTIS_ERR_INVALID;
+    }
+    json_runtime = vectis_lonejson_new(error);
+    if (json_runtime == NULL)
+      return error != NULL ? error->code : VECTIS_ERR_NOMEM;
+    json_status = lonejson_curl_upload_init(
+        &json_upload, json_runtime, request->json_map, request->json_value);
+    replayable = json_status == LONEJSON_STATUS_OK &&
+                 lonejson_curl_upload_is_rewindable(&json_upload);
+    lonejson_curl_upload_cleanup(&json_upload);
+    lonejson_free(json_runtime);
+    if (!replayable) {
+      vectis_set_error(error, VECTIS_ERR_INVALID,
+                       "HTTP JSON request body cannot be retried safely");
+      return VECTIS_ERR_INVALID;
+    }
   }
 
   delay_ms =
