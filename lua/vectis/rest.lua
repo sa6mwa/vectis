@@ -376,7 +376,19 @@ local function join_url(base_url, path)
 end
 
 local function prepare_json_request(defaults, path, opts)
+  local headers = copy_table(defaults.headers)
+  for key, value in pairs(opts and opts.headers or {}) do
+    if type(key) == "string" then
+      for existing in pairs(headers) do
+        if type(existing) == "string" and existing:lower() == key:lower() then
+          headers[existing] = nil
+        end
+      end
+    end
+    headers[key] = value
+  end
   opts = merge_defaults(defaults, opts)
+  opts.headers = headers
   opts.url = join_url(assert(defaults.base_url, "base_url is required"), path)
   opts.base_url = nil
   if opts.json ~= nil then

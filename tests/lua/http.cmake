@@ -733,6 +733,8 @@ assert(rest.route(api_server, {
     return {
       id = request.param("id"),
       name = request.json.name,
+      received_content_type = request.header("content-type"),
+      request_id = request.header("x-request-id"),
       suffix = request.query("suffix"),
     }, {
       status = 201,
@@ -1111,6 +1113,21 @@ for _, invoke in ipairs({
 end
 assert(json_defaults.json.name == "DEFAULT")
 assert(override.json.name == "OVERRIDE")
+local default_headers = {["Content-Type"] = "application/merge-patch+json"}
+local header_client = rest.client({base_url = "http://127.0.0.1:28484",
+  headers = default_headers, protocols = "http", timeout_ms = 2000})
+local request_headers = {["X-Request-ID"] = "header-regression"}
+local inherited_type = header_client.post("/rest/echo/42", {
+  json = {name = "headers"}, headers = request_headers,
+})
+assert(inherited_type.ok and inherited_type.json.received_content_type == "application/merge-patch+json")
+assert(inherited_type.json.request_id == "header-regression")
+local overridden_type = header_client.post("/rest/echo/42", {
+  json = {name = "headers"}, headers = {["content-type"] = "application/json"},
+})
+assert(overridden_type.ok and overridden_type.json.received_content_type == "application/json")
+assert(default_headers["Content-Type"] == "application/merge-patch+json")
+assert(request_headers["Content-Type"] == nil and request_headers["content-type"] == nil)
 local rest_validation = rest_client.post("/rest/echo/42", {
   json = {},
 })
