@@ -113,6 +113,21 @@ assert(read_file(download_path) == "file backed upload\n")
 local copied = webdav.copy(request_opts("/dav/user/file.txt", {
   destination = base .. "/dav/user/copied.txt",
 }))
+local denied_delete = webdav.delete(request_opts("/dav/user/file.txt", {
+  headers = {["If-Match"] = '"stale-etag"'},
+}))
+assert(denied_delete.status == 412)
+assert(webdav.get(request_opts("/dav/user/file.txt")).body == "file backed upload\n")
+local shallow = webdav.copy(request_opts("/dav/user", {
+  destination = base .. "/dav/shallow", depth = 0,
+}))
+assert(shallow.status == 201)
+assert(webdav.get(request_opts("/dav/shallow/file.txt")).status == 404)
+assert(webdav.propfind(request_opts("/dav/shallow", {depth = 0})).status == 207)
+local bad_depth = webdav.copy(request_opts("/dav/user", {
+  destination = base .. "/dav/bad-depth", depth = 1,
+}))
+assert(bad_depth.status == 400)
 assert(copied.ok == true, copied.error and copied.error.message)
 assert(copied.status == 201 or copied.status == 204)
 

@@ -16152,6 +16152,7 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
   const char *path;
   const char *destination;
   const char *overwrite_header;
+  const char *depth_header;
   char resource[VECTIS_WEBDAV_PATH_MAX + 1u];
   char target[VECTIS_WEBDAV_PATH_MAX + 1u];
   int authorized;
@@ -16211,7 +16212,9 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
                : vectis_webdav_status_response(webdav_status, response, error);
   }
   if (method == VECTIS_HTTP_DELETE) {
-    webdav_status = vectis_webdav_delete(&data->storage, resource);
+    webdav_status = vectis_webdav_delete_conditional(
+        &data->storage, resource, vectis_request_header(request, "if-match"),
+        vectis_request_header(request, "if-none-match"));
     return webdav_status == VECTIS_WEBDAV_OK
                ? vectis_response_status(response, 204, error)
                : vectis_webdav_status_response(webdav_status, response, error);
@@ -16236,11 +16239,20 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
       return VECTIS_OK;
     }
     overwrite_header = vectis_request_header(request, "overwrite");
+    depth_header = vectis_request_header(request, "depth");
+    if (method == VECTIS_HTTP_COPY && depth_header != NULL &&
+        strcmp(depth_header, "0") != 0 &&
+        strcmp(depth_header, "infinity") != 0) {
+      return vectis_response_status(response, 400, error);
+    }
     overwrite =
         overwrite_header == NULL || strcasecmp(overwrite_header, "F") != 0;
     webdav_status =
         method == VECTIS_HTTP_COPY
-            ? vectis_webdav_copy(&data->storage, resource, target, overwrite)
+            ? vectis_webdav_copy_depth(
+                  &data->storage, resource, target, overwrite,
+                  depth_header != NULL && strcmp(depth_header, "0") == 0 ? 0
+                                                                         : -1)
             : vectis_webdav_move(&data->storage, resource, target, overwrite);
     return webdav_status == VECTIS_WEBDAV_OK
                ? vectis_response_status(response, 201, error)

@@ -186,11 +186,20 @@ vectis_webdav_put_conditional(const vectis_webdav_config *config,
                               const char *if_none_match);
 vectis_webdav_status vectis_webdav_delete(const vectis_webdav_config *config,
                                           const char *path);
+/* Same entity-tag and locking contract as put_conditional, for deletion. */
+vectis_webdav_status
+vectis_webdav_delete_conditional(const vectis_webdav_config *config,
+                                 const char *path, const char *if_match,
+                                 const char *if_none_match);
 vectis_webdav_status vectis_webdav_mkcol(const vectis_webdav_config *config,
                                          const char *path);
 vectis_webdav_status vectis_webdav_copy(const vectis_webdav_config *config,
                                         const char *source,
                                         const char *destination, int overwrite);
+/* depth is 0 (collection only) or -1 (infinity). Files copy at either depth. */
+vectis_webdav_status
+vectis_webdav_copy_depth(const vectis_webdav_config *config, const char *source,
+                         const char *destination, int overwrite, int depth);
 /* Direct-root source removal can fail after deleting some children. On that
  * IO result, the complete destination is preserved. An overwritten destination
  * remains in a .vectis-txn-prefixed recovery directory (backup child) in the

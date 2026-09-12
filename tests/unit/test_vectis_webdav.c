@@ -556,6 +556,94 @@ static void *conditional_write(void *arg) {
   return NULL;
 }
 
+static void *conditional_delete(void *arg) {
+  conditional_writer *writer = (conditional_writer *)arg;
+  char token;
+  if (read(writer->gate, &token, 1u) == 1)
+    writer->result = vectis_webdav_delete_conditional(
+        writer->config, "/conditional.txt", writer->etag, NULL);
+  return NULL;
+}
+
+static void test_delete_and_shallow_copy(const vectis_webdav_config *config) {
+  vectis_webdav_entry entry;
+  unsigned char *body;
+  size_t size;
+  char etag[67];
+  conditional_writer writers[8];
+  pthread_t threads[8];
+  int gate[2], i, winners = 0;
+  expect(vectis_webdav_put(config, "/conditional.txt",
+                           (const unsigned char *)"new",
+                           3u) == VECTIS_WEBDAV_OK,
+         "seed delete");
+  expect(vectis_webdav_delete_conditional(config, "/conditional.txt",
+                                          "\"stale\"",
+                                          NULL) == VECTIS_WEBDAV_PRECONDITION,
+         "stale delete denied");
+  expect(vectis_webdav_delete_conditional(config, "/conditional.txt", NULL,
+                                          "*") == VECTIS_WEBDAV_PRECONDITION,
+         "exclusive delete denied");
+  expect(vectis_webdav_read(config, "/conditional.txt", &body, &size, &entry) ==
+             VECTIS_WEBDAV_OK,
+         "failed delete preserves file");
+  expect(size == 3u && memcmp(body, "new", 3u) == 0, "preserves new revision");
+  free(body);
+  snprintf(etag, sizeof(etag), "\"%s\"", entry.etag);
+  expect(pipe(gate) == 0, "delete race gate");
+  for (i = 0; i < 8; ++i) {
+    writers[i].config = config;
+    writers[i].etag = etag;
+    writers[i].gate = gate[0];
+    writers[i].result = VECTIS_WEBDAV_IO;
+    expect(pthread_create(&threads[i], NULL, conditional_delete, &writers[i]) ==
+               0,
+           "start conditional deleter");
+  }
+  expect(write(gate[1], "12345678", 8u) == 8, "release deleters");
+  for (i = 0; i < 8; ++i) {
+    expect(pthread_join(threads[i], NULL) == 0, "join deleter");
+    if (writers[i].result == VECTIS_WEBDAV_OK)
+      ++winners;
+    else
+      expect(writers[i].result == VECTIS_WEBDAV_PRECONDITION, "delete loser");
+  }
+  close(gate[0]);
+  close(gate[1]);
+  expect(winners == 1, "one atomic conditional delete wins");
+  expect(vectis_webdav_mkcol(config, "/depth-source") == VECTIS_WEBDAV_OK,
+         "depth source");
+  expect(vectis_webdav_put(config, "/depth-source/child",
+                           (const unsigned char *)"x", 1u) == VECTIS_WEBDAV_OK,
+         "depth child");
+  expect(vectis_webdav_copy_depth(config, "/depth-source", "/depth-copy", 0,
+                                  0) == VECTIS_WEBDAV_OK,
+         "shallow copy");
+  expect(vectis_webdav_lookup(config, "/depth-copy", &entry) ==
+                 VECTIS_WEBDAV_OK &&
+             entry.kind == VECTIS_WEBDAV_ENTRY_COLLECTION,
+         "copies collection");
+  expect(vectis_webdav_lookup(config, "/depth-copy/child", &entry) ==
+             VECTIS_WEBDAV_NOT_FOUND,
+         "does not copy descendants");
+  expect(vectis_webdav_copy(config, "/depth-source", "/depth-copy", 1) ==
+             VECTIS_WEBDAV_OK,
+         "recursive overwrite");
+  expect(vectis_webdav_lookup(config, "/depth-copy/child", &entry) ==
+             VECTIS_WEBDAV_OK,
+         "recursive child exists");
+  expect(vectis_webdav_copy_depth(config, "/depth-source", "/depth-copy", 1,
+                                  0) == VECTIS_WEBDAV_OK,
+         "shallow overwrite");
+  expect(vectis_webdav_lookup(config, "/depth-copy/child", &entry) ==
+             VECTIS_WEBDAV_NOT_FOUND,
+         "shallow overwrite removes old descendants");
+  expect(vectis_webdav_delete(config, "/depth-copy") == VECTIS_WEBDAV_OK,
+         "clean copy");
+  expect(vectis_webdav_delete(config, "/depth-source") == VECTIS_WEBDAV_OK,
+         "clean source");
+}
+
 static void test_conditional_put(const vectis_webdav_config *config) {
   unsigned char *body;
   size_t size;
@@ -1007,6 +1095,8 @@ int main(void) {
   limited_config = config;
   test_conditional_put(&config);
   test_conditional_put(&direct_config);
+  test_delete_and_shallow_copy(&config);
+  test_delete_and_shallow_copy(&direct_config);
   limited_config.site_id = "limited";
   limited_config.max_total_bytes = 5u;
   limited_config.max_file_bytes = 4u;
