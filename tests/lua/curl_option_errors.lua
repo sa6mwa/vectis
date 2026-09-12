@@ -19,6 +19,21 @@ local function fd_count()
 end
 local before = fd_count()
 for _ = 1, 20 do
+  for _, opts in ipairs({{}, {body = false}, {body = {}}, {body = function() end}}) do
+    opts.url = "http://127.0.0.1:1/"
+    opts.upload = true
+    opts.download_path = path
+    opts.headers = {Accept = "text/plain"}
+    local ok, err = pcall(curl.perform, opts)
+    assert(not ok and tostring(err):find("body is required for upload", 1, true), tostring(err))
+  end
+end
+collectgarbage("collect")
+assert(fd_count() == before, "upload body rejection must not leak download files")
+source = assert(io.open(path, "rb"))
+assert(source:read("*a") == original, "upload body rejection must not truncate download files")
+source:close()
+for _ = 1, 20 do
   for _, headers in ipairs({false, "invalid", {broken = {}}, {broken = false},
       {"X-Valid: yes", {}}, {valid = "yes", broken = function() end}}) do
     local ok, err = pcall(curl.perform, {

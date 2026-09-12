@@ -15884,6 +15884,10 @@ static int vectis_lua_curl_apply_upload(lua_State *lua, CURL *curl,
   if (body == NULL) {
     return luaL_error(lua, "curl body is required for upload");
   }
+  if (curl == NULL) {
+    lua_pop(lua, 1);
+    return 1; /* Validate before acquiring transport resources. */
+  }
   if (!vectis_lua_curl_buffer_append(upload, body, body_size)) {
     return luaL_error(lua, "curl upload body allocation failed");
   }
@@ -16515,6 +16519,11 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   has_streaming_response = vectis_lua_curl_prepare_schema(
       lua, 0, &response_schema_index, &response_record_index, &response_schema,
       &response_record);
+  if (upload_path == NULL) {
+    (void)vectis_lua_curl_apply_upload(
+        lua, NULL, 1, NULL, vectis_lua_curl_has_table_field(lua, 1, "smtp"),
+        has_streaming_upload, NULL);
+  }
   if (upload_path != NULL) {
     if (has_multipart) {
       return luaL_error(lua, "curl multipart cannot be used with upload_path");
