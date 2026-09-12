@@ -5,6 +5,7 @@
 
 #include <vectis/auth.h>
 #include <vectis/vectis.h>
+#include <vectis/webdav.h>
 
 int vectis_smith_store_set_diagnostic_context(vectis_smith_store *store,
                                               const char *endpoint,
@@ -15,6 +16,15 @@ void vectis_smith_lockdc_diagnostic_message(const char *message, char *out,
 struct http_request;
 /* Quoted SHA-256 validator from the served descriptor; preserves its offset. */
 int vectis_internal_webdav_etag_fd(int fd, char out[67]);
+/* Returns 1 for a match, 0 for no match, -1 for malformed entity-tag lists. */
+int vectis_internal_webdav_tag_matches(const char *value, const char *etag,
+                                       int exists, int strong);
+/* A non-infinite Depth is ignored for files, rejected for collections under
+ * lock. */
+vectis_webdav_status vectis_internal_webdav_move_conditional_depth(
+    const vectis_webdav_config *config, const char *source,
+    const char *destination, int overwrite, const char *if_match,
+    const char *if_none_match, int infinite);
 
 typedef struct vectis_kore_runtime_config {
   vectis_app *app;

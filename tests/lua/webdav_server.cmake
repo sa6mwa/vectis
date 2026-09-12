@@ -232,6 +232,51 @@ for _, prefix in ipairs({"/open", "/disk"}) do
   local destination = prefix .. "/public/target.txt"
   assert(webdav.put(request_opts(destination, {body = "keep destination"})).ok)
   local original = webdav.get(request_opts(source)).body
+  local etag = assert(webdav.get(request_opts(source)).headers:match('[Ee][Tt][Aa][Gg]:%s*([^\r\n]+)'))
+  for _, method in ipairs({"GET", "HEAD"}) do
+    for _, case in ipairs({
+      {{["If-None-Match"] = "*"}, 304},
+      {{["If-None-Match"] = etag}, 304},
+      {{["If-None-Match"] = "W/" .. etag}, 304},
+      {{["If-None-Match"] = '"other,tag", ' .. etag}, 304},
+      {{["If-Match"] = '"wrong"'}, 412},
+      {{["If-Match"] = "W/" .. etag}, 412},
+      {{["If-Match"] = '"wrong"', ["If-None-Match"] = "*"}, 412},
+      {{["If-Match"] = etag}, 200},
+      {{["If-Match"] = "*"}, 200},
+      {{["If-None-Match"] = '"other"'}, 200},
+      {{["If-Match"] = etag .. ","}, 400},
+      {{["If-None-Match"] = etag .. ","}, 400},
+    }) do
+      local result = webdav.request(request_opts(source, {method = method, headers = case[1]}))
+      assert(result.status == case[2], tostring(result.status) .. " expected " .. case[2])
+      assert(result.headers:find(etag, 1, true))
+      if method == "HEAD" or case[2] ~= 200 then assert(result.body == "")
+      else assert(result.body == original) end
+    end
+  end
+  assert(webdav.mkcol(request_opts(prefix .. "/depth-move")).ok)
+  assert(webdav.put(request_opts(prefix .. "/depth-move/child", {body = "child"})).ok)
+  assert(webdav.mkcol(request_opts(prefix .. "/depth-target")).ok)
+  assert(webdav.put(request_opts(prefix .. "/depth-target/keep", {body = "keep"})).ok)
+  for _, depth in ipairs({"0", "1", "garbage"}) do
+    local result = webdav.move(request_opts(prefix .. "/depth-move", {
+      depth = depth, destination = base .. prefix .. "/depth-target",
+    }))
+    assert(result.status == 400)
+    assert(webdav.get(request_opts(prefix .. "/depth-move/child")).body == "child")
+    assert(webdav.get(request_opts(prefix .. "/depth-target/keep")).body == "keep")
+  end
+  assert(webdav.move(request_opts(prefix .. "/depth-move", {
+    depth = "infinity", destination = base .. prefix .. "/depth-target",
+  })).ok)
+  assert(webdav.get(request_opts(prefix .. "/depth-target/child")).body == "child")
+  assert(webdav.move(request_opts(prefix .. "/depth-target", {
+    destination = base .. prefix .. "/depth-move",
+  })).ok)
+  assert(webdav.move(request_opts(prefix .. "/depth-move/child", {
+    depth = 0, destination = base .. prefix .. "/depth-move/file",
+  })).ok)
   for _, operation in ipairs({webdav.copy, webdav.move}) do
     for _, headers in ipairs({{["If-Match"] = '"stale"'}, {["If-None-Match"] = "*"}}) do
       local result = operation(request_opts(source, {

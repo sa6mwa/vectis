@@ -15254,6 +15254,8 @@ static vectis_status vectis_webdav_file_response(
     const vectis_webdav_entry *entry, vectis_error *error) {
   int fd;
   char etag[67];
+  const char *condition;
+  int match;
 
   fd = vectis_webdav_response_file_fd(data, resource, entry);
   if (fd < 0) {
@@ -15266,6 +15268,22 @@ static vectis_status vectis_webdav_file_response(
   if (vectis_response_header(response, "etag", etag, error) != VECTIS_OK) {
     (void)close(fd);
     return error != NULL ? error->code : VECTIS_ERR_STATE;
+  }
+  condition = vectis_request_header(request, "if-match");
+  if (condition != NULL) {
+    match = vectis_internal_webdav_tag_matches(condition, etag, 1, 1);
+    if (match != 1) {
+      (void)close(fd);
+      return vectis_response_status(response, match < 0 ? 400 : 412, error);
+    }
+  }
+  condition = vectis_request_header(request, "if-none-match");
+  if (condition != NULL) {
+    match = vectis_internal_webdav_tag_matches(condition, etag, 1, 0);
+    if (match != 0) {
+      (void)close(fd);
+      return vectis_response_status(response, match < 0 ? 400 : 304, error);
+    }
   }
   return vectis_static_response_fd(
       request, response, "application/octet-stream", resource + 1u, fd, error);
@@ -16276,10 +16294,12 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
                                                                          : -1,
                   vectis_request_header(request, "if-match"),
                   vectis_request_header(request, "if-none-match"))
-            : vectis_webdav_move_conditional(
+            : vectis_internal_webdav_move_conditional_depth(
                   &data->storage, resource, target, overwrite,
                   vectis_request_header(request, "if-match"),
-                  vectis_request_header(request, "if-none-match"));
+                  vectis_request_header(request, "if-none-match"),
+                  depth_header == NULL ||
+                      strcmp(depth_header, "infinity") == 0);
     return webdav_status == VECTIS_WEBDAV_OK
                ? vectis_response_status(response, 201, error)
                : vectis_webdav_status_response(webdav_status, response, error);

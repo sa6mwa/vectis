@@ -1626,8 +1626,8 @@ int vectis_internal_webdav_etag_fd(int fd, char out[67]) {
 }
 
 /* Parse complete lists even after a match, so malformed tails fail closed. */
-static int vectis_webdav_tag_matches(const char *p, const char *etag,
-                                     int exists, int strong) {
+int vectis_internal_webdav_tag_matches(const char *p, const char *etag,
+                                       int exists, int strong) {
   const char *start;
   size_t length;
   int matched, weak;
@@ -1699,10 +1699,11 @@ vectis_webdav_check_conditions(const vectis_webdav_config *config,
   }
   match = if_match == NULL
               ? 1
-              : vectis_webdav_tag_matches(if_match, etag, exists, 1);
-  none = if_none_match == NULL
-             ? 0
-             : vectis_webdav_tag_matches(if_none_match, etag, exists, 0);
+              : vectis_internal_webdav_tag_matches(if_match, etag, exists, 1);
+  none =
+      if_none_match == NULL
+          ? 0
+          : vectis_internal_webdav_tag_matches(if_none_match, etag, exists, 0);
   if (match < 0 || none < 0)
     return VECTIS_WEBDAV_INVALID;
   return !match || none ? VECTIS_WEBDAV_PRECONDITION : VECTIS_WEBDAV_OK;
@@ -2153,6 +2154,11 @@ static vectis_webdav_status vectis_webdav_copy_or_move_direct(
     vectis_webdav_unlock(lock_fd);
     return status == VECTIS_WEBDAV_OK ? VECTIS_WEBDAV_TOMBSTONED : status;
   }
+  if (remove_source && shallow &&
+      source_entry.kind == VECTIS_WEBDAV_ENTRY_COLLECTION) {
+    vectis_webdav_unlock(lock_fd);
+    return VECTIS_WEBDAV_INVALID;
+  }
   if (source_entry.kind == VECTIS_WEBDAV_ENTRY_COLLECTION &&
       strncmp(normalized_destination, normalized_source,
               strlen(normalized_source)) == 0 &&
@@ -2334,6 +2340,11 @@ static vectis_webdav_status vectis_webdav_copy_or_move(
               source_entry.kind != VECTIS_WEBDAV_ENTRY_COLLECTION)) {
     vectis_webdav_unlock(lock_fd);
     return status == VECTIS_WEBDAV_OK ? VECTIS_WEBDAV_TOMBSTONED : status;
+  }
+  if (remove_source && shallow &&
+      source_entry.kind == VECTIS_WEBDAV_ENTRY_COLLECTION) {
+    vectis_webdav_unlock(lock_fd);
+    return VECTIS_WEBDAV_INVALID;
   }
   if (source_entry.kind == VECTIS_WEBDAV_ENTRY_COLLECTION &&
       strncmp(normalized_destination, normalized_source,
@@ -2604,8 +2615,17 @@ vectis_webdav_move_conditional(const vectis_webdav_config *config,
                                const char *source, const char *destination,
                                int overwrite, const char *if_match,
                                const char *if_none_match) {
+  return vectis_internal_webdav_move_conditional_depth(
+      config, source, destination, overwrite, if_match, if_none_match, 1);
+}
+
+vectis_webdav_status vectis_internal_webdav_move_conditional_depth(
+    const vectis_webdav_config *config, const char *source,
+    const char *destination, int overwrite, const char *if_match,
+    const char *if_none_match, int infinite) {
   return vectis_webdav_copy_or_move(config, source, destination, overwrite, 1,
-                                    0, NULL, 0u, 0, 0, if_match, if_none_match);
+                                    0, NULL, 0u, 0, !infinite, if_match,
+                                    if_none_match);
 }
 
 static int vectis_webdav_list_path(const char *base_path, const char *name,

@@ -87,6 +87,12 @@ COPY and MOVE honor source `If-Match` and `If-None-Match` headers under the
 storage mutation lock. Failed conditions return HTTP 412 without changing
 either resource. Filesystem writers outside Vectis must coordinate separately.
 
+Filesystem-backed GET and HEAD evaluate `If-Match` before `If-None-Match`
+against the served file's ETag. Failed `If-Match` returns 412; matching
+`If-None-Match` returns 304. Neither response sends the file body.
+Collection MOVE accepts omitted Depth or `infinity`; other values return 400
+without changing either resource. File MOVE ignores Depth.
+
 ```lua
 local listed = webdav.propfind({
   url = "https://example.test/dav/",
