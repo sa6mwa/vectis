@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -19,6 +20,84 @@ static vectis_status sample_handler(vectis_app *app, vectis_request *request,
   (void)request;
   (void)userdata;
   return vectis_response_text(response, 200, "text/plain", "ok", error);
+}
+
+static vectis_status framing_handler(vectis_app *app, vectis_request *request,
+                                     vectis_response *response, void *userdata,
+                                     vectis_error *error) {
+  const char *path;
+  lc_source *source;
+  vectis_status status;
+  (void)app;
+  path = vectis_request_path(request);
+  assert(vectis_response_header(response, "tRaNsFeR-EnCoDiNg", "chunked",
+                                error) == VECTIS_OK);
+  assert(vectis_response_header(response, "cOnTeNt-LeNgTh", "999", error) ==
+         VECTIS_OK);
+  if (strstr(path, "temporary") != NULL) {
+    assert(lc_source_from_memory("", 0u, &source, NULL) == LC_OK);
+    status = vectis_response_source(response, 200, "text/plain", source, error);
+    lc_source_close(source);
+    assert(status == VECTIS_OK);
+    return vectis_response_header(response, "x-test-temporary-path",
+                                  vectis_internal_response_file_path(response),
+                                  error);
+  }
+  if (strstr(path, "buffer") != NULL) {
+    return vectis_response_text(response, 200, "text/plain", "hello", error);
+  }
+  return vectis_response_file(response, 200, "text/plain", userdata, error);
+}
+
+static void assert_https_framing(unsigned short port, const char *ca_path) {
+  const char *paths[] = {"empty", "temporary", "buffer", "file", "file"};
+  const char *lengths[] = {"0", "0", "5", "5", "5"};
+  vectis_http_client_config config;
+  vectis_http_client *client;
+  vectis_http_request request;
+  vectis_http_response response;
+  vectis_error error;
+  char url[128];
+  size_t i;
+  size_t h;
+  size_t count;
+  const char *temporary_path;
+  vectis_http_client_config_init(&config);
+  config.ca_bundle_path = ca_path;
+  config.timeout_ms = 2000L;
+  assert(vectis_http_client_new(&config, &client, &error) == VECTIS_OK);
+  /* One client exercises connection reuse and the cached nonempty file path. */
+  for (i = 0u; i < sizeof(paths) / sizeof(paths[0]); ++i) {
+    snprintf(url, sizeof(url), "https://localhost:%u/framing-%s",
+             (unsigned)port, paths[i]);
+    vectis_http_request_init(&request);
+    request.url = url;
+    memset(&response, 0, sizeof(response));
+    assert(vectis_http_client_execute(client, &request, &response, &error) ==
+           VECTIS_OK);
+    assert(response.status_code == 200L);
+    assert(response.body_size == (i < 2u ? 0u : 5u));
+    if (response.body_size != 0u) {
+      assert(memcmp(response.body, "hello", 5u) == 0);
+    }
+    assert(vectis_http_response_header(&response, "transfer-encoding") == NULL);
+    count = 0u;
+    for (h = 0u; h < response.header_count; ++h) {
+      if (strcasecmp(response.headers[h].name, "content-length") == 0) {
+        ++count;
+        assert(strcmp(response.headers[h].value, lengths[i]) == 0);
+      }
+    }
+    assert(count == 1u);
+    if (i == 1u) {
+      temporary_path =
+          vectis_http_response_header(&response, "x-test-temporary-path");
+      assert(temporary_path != NULL);
+      assert(access(temporary_path, F_OK) != 0);
+    }
+    vectis_http_response_cleanup(&response);
+  }
+  vectis_http_client_close(client);
 }
 
 static vectis_status https_get(const char *url, const char *ca_bundle_path,
@@ -320,8 +399,18 @@ int main(void) {
   char localhost_url[128];
   char loopback_url[128];
   char redirect_url[128];
+  char empty_path[] = "vectis-https-empty-XXXXXX";
+  char file_path[] = "vectis-https-file-XXXXXX";
+  int fd;
 
   app = NULL;
+  fd = mkstemp(empty_path);
+  assert(fd >= 0);
+  assert(close(fd) == 0);
+  fd = mkstemp(file_path);
+  assert(fd >= 0);
+  assert(write(fd, "hello", 5u) == 5);
+  assert(close(fd) == 0);
   assert(vectis_internal_kore_autoblock_mutex_recovers_worker_death());
   root_cert_pem = NULL;
   root_cert_pem_size = 0u;
@@ -404,10 +493,23 @@ int main(void) {
   route = vectis_route(VECTIS_HTTP_GET, "/secure", sample_handler, NULL);
   status = vectis_register_route(app, &route, &error);
   assert(status == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/framing-empty", framing_handler,
+                       empty_path);
+  assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/framing-temporary", framing_handler,
+                       NULL);
+  assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
+  route =
+      vectis_route(VECTIS_HTTP_GET, "/framing-buffer", framing_handler, NULL);
+  assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
+  route = vectis_route(VECTIS_HTTP_GET, "/framing-file", framing_handler,
+                       file_path);
+  assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
   status = app->start(app, &error);
   assert(status == VECTIS_OK);
 
   assert_https_ok(localhost_url, root_cert_path, NULL);
+  assert_https_framing(port, root_cert_path);
   assert_http_redirect(redirect_port, port, "localhost");
   assert_http_redirect_rejected(redirect_port);
   assert_https_ok(redirect_url, root_cert_path, NULL);
@@ -468,5 +570,7 @@ int main(void) {
     lc_source_close(root_cert_source);
   }
   free(root_cert_pem);
+  assert(unlink(empty_path) == 0);
+  assert(unlink(file_path) == 0);
   return 0;
 }

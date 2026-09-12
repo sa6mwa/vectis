@@ -2911,15 +2911,15 @@ static void vectis_kore_send_response(vectis_app *app, struct http_request *req,
   for (i = 0u; i < vectis_internal_response_header_count(response); ++i) {
     header_name = vectis_internal_response_header_name(response, i);
     header_value = vectis_internal_response_header_value(response, i);
-    /* The adapter owns stream framing. HEAD/304 may retain an application's
+    /* The adapter owns response framing. HEAD/304 may retain an application's
      * representation length, but must not acquire a generated zero length. */
-    if (strcasecmp(header_name, "content-length") == 0 &&
-        ((bodyless && status != 304) || (stream_source != NULL && !bodyless &&
-                                         req->method != HTTP_METHOD_HEAD))) {
-      continue;
+    if (strcasecmp(header_name, "content-length") == 0) {
+      if (status != 304 && (bodyless || req->method != HTTP_METHOD_HEAD)) {
+        continue;
+      }
+      req->flags |= HTTP_REQUEST_NO_CONTENT_LENGTH;
     }
-    if (strcasecmp(header_name, "transfer-encoding") == 0 &&
-        (bodyless || stream_source != NULL)) {
+    if (strcasecmp(header_name, "transfer-encoding") == 0) {
       continue;
     }
     if (strcasecmp(header_name, "set-cookie") == 0) {
@@ -2979,6 +2979,17 @@ static void vectis_kore_send_response(vectis_app *app, struct http_request *req,
       }
       vectis_internal_metrics_note_http_status(app, 404);
       http_response(req, 404, NULL, 0);
+      return;
+    }
+    /* Kore's TLS file references mmap the file, which cannot accept zero
+     * length. There is no file payload to queue or cache in this case. */
+    if (st.st_size == 0) {
+      (void)close(fd);
+      if (vectis_internal_response_file_temporary(response)) {
+        (void)unlink(file_path);
+      }
+      vectis_internal_metrics_note_http_status(app, status);
+      http_response(req, status, NULL, 0);
       return;
     }
     ts.tv_sec = st.st_mtime;
