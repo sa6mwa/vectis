@@ -422,6 +422,8 @@ function M.client(defaults)
   defaults = copy_table(defaults)
   local http_defaults = copy_table(defaults)
   http_defaults.base_url = nil
+  -- REST consumes json during preparation; HTTP must not restore it afterward.
+  http_defaults.json = nil
   local http_client = http.client(http_defaults)
   local client = {http = http_client}
 

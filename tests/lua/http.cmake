@@ -1092,6 +1092,25 @@ assert(rest_echo.json.id == "42")
 assert(rest_echo.json.name == "alice")
 assert(rest_echo.json.suffix == "ok")
 assert(rest_echo.headers:lower():find("x-vectis-rest: echo", 1, true))
+local json_defaults = {
+  base_url = "http://127.0.0.1:28484", json = {name = "DEFAULT"},
+  protocols = "http", timeout_ms = 2000, no_signal = true,
+}
+local json_client = rest.client(json_defaults)
+local override = {json = {name = "OVERRIDE"}}
+for _, invoke in ipairs({
+  function(opts) return json_client.post("/rest/echo/42", opts) end,
+  function(opts) opts.method = "POST"; return json_client.request("/rest/echo/42", opts) end,
+}) do
+  local overridden = invoke(override)
+  assert(overridden.ok and overridden.json.name == "OVERRIDE")
+  local inherited = invoke({})
+  assert(inherited.ok and inherited.json.name == "DEFAULT")
+  local empty_override = invoke({json = {}})
+  assert(empty_override.status == 400, "empty per-request JSON must not restore defaults")
+end
+assert(json_defaults.json.name == "DEFAULT")
+assert(override.json.name == "OVERRIDE")
 local rest_validation = rest_client.post("/rest/echo/42", {
   json = {},
 })
