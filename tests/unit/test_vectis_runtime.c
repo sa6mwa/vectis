@@ -5091,6 +5091,31 @@ static void assert_kore_smoke(void) {
   assert(embedded_invalid_range_response.body_size == 0u);
   vectis_http_response_cleanup(&embedded_invalid_range_response);
 
+  {
+    const char *unsupported_ranges[] = {"Range: items=0-1",
+                                        "Range: widgets=99-100"};
+    int range_case;
+    int head;
+    for (range_case = 0; range_case < 2; ++range_case) {
+      for (head = 0; head < 2; ++head) {
+        request.method = head ? VECTIS_HTTP_HEAD : VECTIS_HTTP_GET;
+        request.headers = &unsupported_ranges[range_case];
+        request.header_count = 1u;
+        status = vectis_http_execute(&http, &request,
+                                     &embedded_invalid_range_response, &error);
+        assert(status == VECTIS_OK);
+        assert(embedded_invalid_range_response.status_code == 200L);
+        assert(vectis_http_response_header(&embedded_invalid_range_response,
+                                           "content-range") == NULL);
+        assert(embedded_invalid_range_response.body_size == (head ? 0u : 4u));
+        if (!head)
+          assert(memcmp(embedded_invalid_range_response.body, "app\n", 4u) ==
+                 0);
+        vectis_http_response_cleanup(&embedded_invalid_range_response);
+      }
+    }
+  }
+
   status =
       vectis_http_head(&http,
                        format_loopback_http_url(url, sizeof(url), port,

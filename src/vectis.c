@@ -14155,9 +14155,11 @@ vectis_static_embedded_parse_range(const char *header_value, size_t size,
   if (header_value == NULL || header_value[0] == '\0') {
     return 1;
   }
+  if (strncmp(header_value, "bytes=", 6u) != 0) {
+    return 1;
+  }
   out->requested = 1;
-  if (strncmp(header_value, "bytes=", 6u) != 0 ||
-      strchr(header_value, ',') != NULL) {
+  if (strchr(header_value, ',') != NULL) {
     return 1;
   }
   cursor = header_value + 6u;
