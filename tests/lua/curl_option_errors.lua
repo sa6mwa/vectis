@@ -19,6 +19,20 @@ local function fd_count()
 end
 local before = fd_count()
 for _ = 1, 20 do
+  for _, headers in ipairs({false, "invalid", {broken = {}}, {broken = false},
+      {"X-Valid: yes", {}}, {valid = "yes", broken = function() end}}) do
+    local ok, err = pcall(curl.perform, {
+      url = url, headers = headers, upload_path = path, download_path = path,
+    })
+    assert(not ok and tostring(err):find("header", 1, true), tostring(err))
+  end
+end
+collectgarbage("collect")
+assert(fd_count() == before, "header rejection must not leak upload/download files")
+source = assert(io.open(path, "rb"))
+assert(source:read("*a") == original, "header rejection must not truncate download files")
+source:close()
+for _ = 1, 20 do
   local ok, err = pcall(curl.stream_json, {
     url = url, upload_path = path, response = {schema = schema},
     retry = {max_attempts = 2},

@@ -15335,6 +15335,7 @@ static int vectis_lua_curl_append_header(lua_State *lua,
   return 0;
 }
 
+/* With curl == NULL, validate without acquiring native transfer resources. */
 static int vectis_lua_curl_apply_headers(lua_State *lua, CURL *curl,
                                          int option_index,
                                          struct curl_slist **headers) {
@@ -15356,11 +15357,12 @@ static int vectis_lua_curl_apply_headers(lua_State *lua, CURL *curl,
     }
     value = lua_tostring(lua, -1);
     key = lua_type(lua, -2) == LUA_TSTRING ? lua_tostring(lua, -2) : NULL;
-    vectis_lua_curl_append_header(lua, headers, key, value);
+    if (curl != NULL)
+      vectis_lua_curl_append_header(lua, headers, key, value);
     lua_pop(lua, 1);
   }
   lua_pop(lua, 1);
-  if (*headers != NULL) {
+  if (curl != NULL && *headers != NULL) {
     (void)curl_easy_setopt(curl, CURLOPT_HTTPHEADER, *headers);
   }
   return 0;
@@ -16473,6 +16475,7 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   response_record_index = 0;
   has_streaming_upload = 0;
   has_streaming_response = 0;
+  vectis_lua_curl_apply_headers(lua, NULL, 1, NULL);
   has_multipart = vectis_lua_curl_has_table_field(lua, 1, "multipart");
   vectis_lua_curl_retry_config_init(&retry_config);
   if (vectis_lua_curl_parse_retry_config(lua, 1, &retry_config) != 0) {
