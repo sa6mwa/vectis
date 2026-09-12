@@ -227,6 +227,27 @@ assert(read_file(root_dir .. "/public/moved.txt") == "direct disk webdav\n")
 local disk_delete = webdav.delete(request_opts("/disk/public/moved.txt"))
 assert(disk_delete.ok == true, disk_delete.error and disk_delete.error.message)
 assert(io.open(root_dir .. "/public/moved.txt", "rb") == nil)
+for _, prefix in ipairs({"/open", "/disk"}) do
+  local source = prefix .. "/public/readme.txt"
+  local destination = prefix .. "/public/target.txt"
+  assert(webdav.put(request_opts(destination, {body = "keep destination"})).ok)
+  local original = webdav.get(request_opts(source)).body
+  for _, operation in ipairs({webdav.copy, webdav.move}) do
+    for _, headers in ipairs({{["If-Match"] = '"stale"'}, {["If-None-Match"] = "*"}}) do
+      local result = operation(request_opts(source, {
+        destination = base .. destination, headers = headers,
+      }))
+      assert(result.status == 412)
+      assert(webdav.get(request_opts(source)).body == original)
+      assert(webdav.get(request_opts(destination)).body == "keep destination")
+    end
+  end
+  assert(webdav.copy(request_opts(source, {destination = base .. destination,
+    headers = {["If-Match"] = "*"}})).status == 201)
+  assert(webdav.get(request_opts(destination)).body == original)
+  assert(webdav.move(request_opts(destination, {destination = base .. prefix .. "/public/matched.txt",
+    headers = {["If-Match"] = "*"}})).status == 201)
+end
 
 local native_required = webdav.get(request_opts("/native/protected.txt"))
 assert(native_required.ok == false)

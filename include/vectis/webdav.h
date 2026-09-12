@@ -208,6 +208,20 @@ vectis_webdav_copy_depth(const vectis_webdav_config *config, const char *source,
 vectis_webdav_status vectis_webdav_move(const vectis_webdav_config *config,
                                         const char *source,
                                         const char *destination, int overwrite);
+/* Source entity-tag conditions share the mutation lock with COPY/MOVE.
+ * Same borrowed-header, failure and external-writer contract as
+ * put_conditional. COPY depth is 0 or -1 (infinity); MOVE always moves the
+ * complete resource. */
+vectis_webdav_status
+vectis_webdav_copy_conditional(const vectis_webdav_config *config,
+                               const char *source, const char *destination,
+                               int overwrite, int depth, const char *if_match,
+                               const char *if_none_match);
+vectis_webdav_status
+vectis_webdav_move_conditional(const vectis_webdav_config *config,
+                               const char *source, const char *destination,
+                               int overwrite, const char *if_match,
+                               const char *if_none_match);
 vectis_webdav_status vectis_webdav_list(const vectis_webdav_config *config,
                                         const char *path,
                                         vectis_webdav_list_callback callback,

@@ -78,6 +78,15 @@ Results are normalized with `vectis.http.normalize`.
 
 `PROPFIND` defaults `depth` to `1` when not supplied.
 
+Vectis servers support PROPFIND depths `0` and `1`. A raw request with omitted
+Depth or `Depth: infinity` receives HTTP 403 with the DAV
+`propfind-finite-depth` error; invalid depths receive HTTP 400. This applies
+to mutable and read-only embedded mounts.
+
+COPY and MOVE honor source `If-Match` and `If-None-Match` headers under the
+storage mutation lock. Failed conditions return HTTP 412 without changing
+either resource. Filesystem writers outside Vectis must coordinate separately.
+
 ```lua
 local listed = webdav.propfind({
   url = "https://example.test/dav/",

@@ -4241,7 +4241,7 @@ static void assert_kore_smoke(void) {
   char webdav_cache_dir[] = "/tmp/vectis-runtime-webdav.XXXXXX";
   char body_spool_dir[] = "/tmp/vectis-runtime-body-spool.XXXXXX";
   char body_spool_child_dir[4096];
-  const char *webdav_headers[] = {"x-vectis-webdav-auth: ok"};
+  const char *webdav_headers[] = {"x-vectis-webdav-auth: ok", "Depth: 1"};
   const char *webdav_required_headers[] = {"x-vectis-webdav-auth: required"};
   const char *webdav_deny_headers[] = {"x-vectis-webdav-auth: deny"};
   const char *native_webdav_headers[1];
@@ -5313,7 +5313,7 @@ static void assert_kore_smoke(void) {
   request.method = VECTIS_HTTP_PROPFIND;
   request.url = format_loopback_http_url(url, sizeof(url), port, "/dav");
   request.headers = webdav_headers;
-  request.header_count = 1u;
+  request.header_count = 2u;
   status =
       vectis_http_execute(&http, &request, &webdav_propfind_response, &error);
   assert(status == VECTIS_OK);

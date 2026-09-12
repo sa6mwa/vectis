@@ -15760,6 +15760,19 @@ static int vectis_webdav_propfind_entry(const char *path,
 }
 
 static vectis_status
+vectis_webdav_propfind_depth_error(const char *depth, vectis_response *response,
+                                   vectis_error *error) {
+  if (depth == NULL || strcmp(depth, "infinity") == 0) {
+    return vectis_response_text(
+        response, 403, "application/xml; charset=utf-8",
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+        "<D:error xmlns:D=\"DAV:\"><D:propfind-finite-depth/></D:error>",
+        error);
+  }
+  return vectis_response_status(response, 400, error);
+}
+
+static vectis_status
 vectis_webdav_propfind(const vectis_webdav_route_data *data,
                        const char *resource, vectis_request *request,
                        vectis_response *response, vectis_error *error) {
@@ -15771,6 +15784,10 @@ vectis_webdav_propfind(const vectis_webdav_route_data *data,
   vectis_webdav_status status;
   const char *depth;
 
+  depth = vectis_request_header(request, "depth");
+  if (depth == NULL || (strcmp(depth, "0") != 0 && strcmp(depth, "1") != 0)) {
+    return vectis_webdav_propfind_depth_error(depth, response, error);
+  }
   memset(&xml, 0, sizeof(xml));
   status = vectis_webdav_lookup(&data->storage, resource, &entry);
   if (status != VECTIS_WEBDAV_OK ||
@@ -16009,6 +16026,10 @@ static vectis_status vectis_webdav_embedded_propfind(
   const char *depth;
   int found;
 
+  depth = vectis_request_header(request, "depth");
+  if (depth == NULL || (strcmp(depth, "0") != 0 && strcmp(depth, "1") != 0)) {
+    return vectis_webdav_propfind_depth_error(depth, response, error);
+  }
   memset(&entry, 0, sizeof(entry));
   found = 0;
   status = vectis_webdav_embedded_exact(data->embedded_fs, resource, &found,
@@ -16249,11 +16270,16 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
         overwrite_header == NULL || strcasecmp(overwrite_header, "F") != 0;
     webdav_status =
         method == VECTIS_HTTP_COPY
-            ? vectis_webdav_copy_depth(
+            ? vectis_webdav_copy_conditional(
                   &data->storage, resource, target, overwrite,
                   depth_header != NULL && strcmp(depth_header, "0") == 0 ? 0
-                                                                         : -1)
-            : vectis_webdav_move(&data->storage, resource, target, overwrite);
+                                                                         : -1,
+                  vectis_request_header(request, "if-match"),
+                  vectis_request_header(request, "if-none-match"))
+            : vectis_webdav_move_conditional(
+                  &data->storage, resource, target, overwrite,
+                  vectis_request_header(request, "if-match"),
+                  vectis_request_header(request, "if-none-match"));
     return webdav_status == VECTIS_WEBDAV_OK
                ? vectis_response_status(response, 201, error)
                : vectis_webdav_status_response(webdav_status, response, error);

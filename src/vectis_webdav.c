@@ -2106,7 +2106,8 @@ vectis_webdav_status vectis_webdav_mkcol(const vectis_webdav_config *config,
 static vectis_webdav_status vectis_webdav_copy_or_move_direct(
     const vectis_webdav_config *config, const char *source,
     const char *destination, int overwrite, int remove_source,
-    int destination_embedded_exists, int shallow) {
+    int destination_embedded_exists, int shallow, const char *if_match,
+    const char *if_none_match) {
   vectis_webdav_entry source_entry;
   vectis_webdav_entry destination_entry;
   char normalized_source[VECTIS_WEBDAV_PATH_MAX + 1u];
@@ -2138,6 +2139,12 @@ static vectis_webdav_status vectis_webdav_copy_or_move_direct(
   lock_fd = vectis_webdav_lock(config);
   if (lock_fd < 0) {
     return VECTIS_WEBDAV_IO;
+  }
+  status = vectis_webdav_check_conditions(config, normalized_source, if_match,
+                                          if_none_match);
+  if (status != VECTIS_WEBDAV_OK) {
+    vectis_webdav_unlock(lock_fd);
+    return status;
   }
   status = vectis_webdav_lookup(config, normalized_source, &source_entry);
   if (status != VECTIS_WEBDAV_OK ||
@@ -2229,7 +2236,8 @@ static vectis_webdav_status vectis_webdav_copy_or_move(
     const vectis_webdav_config *config, const char *source,
     const char *destination, int overwrite, int remove_source,
     int embedded_source, const unsigned char *embedded_body,
-    size_t embedded_size, int destination_embedded_exists, int shallow) {
+    size_t embedded_size, int destination_embedded_exists, int shallow,
+    const char *if_match, const char *if_none_match) {
   vectis_webdav_entry source_entry;
   vectis_webdav_entry destination_entry;
   char normalized_source[VECTIS_WEBDAV_PATH_MAX + 1u];
@@ -2288,11 +2296,17 @@ static vectis_webdav_status vectis_webdav_copy_or_move(
     }
     return vectis_webdav_copy_or_move_direct(
         config, source, destination, overwrite, remove_source,
-        destination_embedded_exists, shallow);
+        destination_embedded_exists, shallow, if_match, if_none_match);
   }
   lock_fd = vectis_webdav_lock(config);
   if (lock_fd < 0) {
     return VECTIS_WEBDAV_IO;
+  }
+  status = vectis_webdav_check_conditions(config, normalized_source, if_match,
+                                          if_none_match);
+  if (status != VECTIS_WEBDAV_OK) {
+    vectis_webdav_unlock(lock_fd);
+    return status;
   }
   if (vectis_webdav_ancestor_tombstone_exists(config, normalized_source)) {
     vectis_webdav_unlock(lock_fd);
@@ -2560,19 +2574,38 @@ vectis_webdav_status vectis_webdav_copy(const vectis_webdav_config *config,
 vectis_webdav_status
 vectis_webdav_copy_depth(const vectis_webdav_config *config, const char *source,
                          const char *destination, int overwrite, int depth) {
+  return vectis_webdav_copy_conditional(config, source, destination, overwrite,
+                                        depth, NULL, NULL);
+}
+
+vectis_webdav_status
+vectis_webdav_copy_conditional(const vectis_webdav_config *config,
+                               const char *source, const char *destination,
+                               int overwrite, int depth, const char *if_match,
+                               const char *if_none_match) {
   if (depth != 0 && depth != -1) {
     return VECTIS_WEBDAV_INVALID;
   }
   return vectis_webdav_copy_or_move(config, source, destination, overwrite, 0,
-                                    0, NULL, 0u, 0, depth == 0);
+                                    0, NULL, 0u, 0, depth == 0, if_match,
+                                    if_none_match);
 }
 
 vectis_webdav_status vectis_webdav_move(const vectis_webdav_config *config,
                                         const char *source,
                                         const char *destination,
                                         int overwrite) {
+  return vectis_webdav_move_conditional(config, source, destination, overwrite,
+                                        NULL, NULL);
+}
+
+vectis_webdav_status
+vectis_webdav_move_conditional(const vectis_webdav_config *config,
+                               const char *source, const char *destination,
+                               int overwrite, const char *if_match,
+                               const char *if_none_match) {
   return vectis_webdav_copy_or_move(config, source, destination, overwrite, 1,
-                                    0, NULL, 0u, 0, 0);
+                                    0, NULL, 0u, 0, 0, if_match, if_none_match);
 }
 
 static int vectis_webdav_list_path(const char *base_path, const char *name,

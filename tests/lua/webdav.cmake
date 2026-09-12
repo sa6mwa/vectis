@@ -60,6 +60,7 @@ assert(server:webdav_embedded_site({
   auth_required = false,
   extract_policy = "repair",
 }) == true)
+assert(server:webdav_embedded({path_prefix = "/readonly", auth_required = false}) == true)
 assert(server:start() == true)
 
 local ready
@@ -71,6 +72,19 @@ end
 assert(ready.ok == true, ready.error and ready.error.message)
 assert(ready.status == 200)
 assert(ready.body == "embedded webdav source\n")
+for _, prefix in ipairs({"/dav", "/readonly"}) do
+  for _, opts in ipairs({{}, {depth = "infinity"}}) do
+    opts.method = "PROPFIND"
+    local result = webdav.request(request_opts(prefix .. "/assets", opts))
+    assert(result.status == 403, tostring(result.status))
+    assert(result.body:find('<D:propfind-finite-depth/>', 1, true))
+  end
+  assert(webdav.propfind(request_opts(prefix .. "/assets", {depth = 2})).status == 400)
+  assert(webdav.propfind(request_opts(prefix .. "/assets", {depth = 0})).status == 207)
+  local listed = webdav.propfind(request_opts(prefix .. "/assets", {depth = 1}))
+  assert(listed.status == 207)
+  assert(listed.body:find(prefix .. "/assets/source.txt", 1, true))
+end
 
 local missing = webdav.get(request_opts("/dav/assets/missing.txt"))
 assert(missing.ok == false)

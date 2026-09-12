@@ -565,6 +565,16 @@ static void *conditional_delete(void *arg) {
   return NULL;
 }
 
+static void *conditional_move(void *arg) {
+  conditional_writer *writer = (conditional_writer *)arg;
+  char token;
+  if (read(writer->gate, &token, 1u) == 1)
+    writer->result = vectis_webdav_move_conditional(
+        writer->config, "/conditional.txt", "/conditional-moved.txt", 1,
+        writer->etag, NULL);
+  return NULL;
+}
+
 static void test_delete_and_shallow_copy(const vectis_webdav_config *config) {
   vectis_webdav_entry entry;
   unsigned char *body;
@@ -611,6 +621,49 @@ static void test_delete_and_shallow_copy(const vectis_webdav_config *config) {
   close(gate[0]);
   close(gate[1]);
   expect(winners == 1, "one atomic conditional delete wins");
+  expect(vectis_webdav_put(config, "/conditional.txt",
+                           (const unsigned char *)"new",
+                           3u) == VECTIS_WEBDAV_OK,
+         "seed conditional transfer");
+  expect(vectis_webdav_copy_conditional(
+             config, "/conditional.txt", "/conditional-moved.txt", 1, -1,
+             "\"stale\"", NULL) == VECTIS_WEBDAV_PRECONDITION,
+         "reject stale copy");
+  expect(vectis_webdav_lookup(config, "/conditional-moved.txt", &entry) ==
+             VECTIS_WEBDAV_NOT_FOUND,
+         "rejected copy creates nothing");
+  expect(vectis_webdav_copy_conditional(config, "/conditional.txt",
+                                        "/conditional-moved.txt", 1, -1, etag,
+                                        NULL) == VECTIS_WEBDAV_OK,
+         "accept matching copy");
+  expect(pipe(gate) == 0, "move race gate");
+  winners = 0;
+  for (i = 0; i < 8; ++i) {
+    writers[i].gate = gate[0];
+    writers[i].result = VECTIS_WEBDAV_IO;
+    expect(pthread_create(&threads[i], NULL, conditional_move, &writers[i]) ==
+               0,
+           "start mover");
+  }
+  expect(write(gate[1], "12345678", 8u) == 8, "release movers");
+  for (i = 0; i < 8; ++i) {
+    expect(pthread_join(threads[i], NULL) == 0, "join mover");
+    if (writers[i].result == VECTIS_WEBDAV_OK)
+      ++winners;
+    else
+      expect(writers[i].result == VECTIS_WEBDAV_PRECONDITION, "move loser");
+  }
+  close(gate[0]);
+  close(gate[1]);
+  expect(winners == 1, "one atomic conditional move wins");
+  expect(vectis_webdav_read(config, "/conditional-moved.txt", &body, &size,
+                            &entry) == VECTIS_WEBDAV_OK,
+         "read moved data");
+  expect(size == 3u && memcmp(body, "new", 3u) == 0, "moved data preserved");
+  free(body);
+  expect(vectis_webdav_delete(config, "/conditional-moved.txt") ==
+             VECTIS_WEBDAV_OK,
+         "clean moved fixture");
   expect(vectis_webdav_mkcol(config, "/depth-source") == VECTIS_WEBDAV_OK,
          "depth source");
   expect(vectis_webdav_put(config, "/depth-source/child",
