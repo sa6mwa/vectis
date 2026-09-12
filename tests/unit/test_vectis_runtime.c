@@ -2471,19 +2471,30 @@ static vectis_status framing_stream_handler(vectis_app *app,
   size_t size;
   int status;
   (void)app;
-  (void)userdata;
   path = vectis_request_path(request);
   status = strstr(path, "204") != NULL   ? 204
            : strstr(path, "304") != NULL ? 304
                                          : 200;
   size = strstr(path, "empty") != NULL ? 0u : sizeof(payload);
   memset(payload, 'x', sizeof(payload));
-  assert(lc_source_from_memory(payload, size, &source, NULL) == LC_OK);
+  assert(vectis_response_header(response, "cOnTeNt-LeNgTh", "20000", error) ==
+         VECTIS_OK);
+  assert(vectis_response_header(response, "tRaNsFeR-EnCoDiNg", "chunked",
+                                error) == VECTIS_OK);
   assert(vectis_response_header(response, "Set-Cookie",
                                 "workflow=; Max-Age=0; Path=/",
                                 error) == VECTIS_OK);
   assert(vectis_response_header(response, "set-cookie",
                                 "session=present; Path=/", error) == VECTIS_OK);
+  if (strstr(path, "buffer") != NULL) {
+    return vectis_response_text(response, status, "text/plain", "unexpected",
+                                error);
+  }
+  if (strstr(path, "file") != NULL) {
+    return vectis_response_file(response, status, "text/plain", userdata,
+                                error);
+  }
+  assert(lc_source_from_memory(payload, size, &source, NULL) == LC_OK);
   return vectis_response_stream_source(response, status, "text/plain", source,
                                        error);
 }
@@ -2851,8 +2862,10 @@ static void assert_upload_redirect_replay(void) {
 }
 
 static void assert_stream_framing(void) {
-  const char *paths[] = {"/framing-empty", "/framing-204", "/framing-304",
-                         "/framing-data"};
+  const char *paths[] = {"/framing-empty",      "/framing-204",
+                         "/framing-304",        "/framing-buffer-204",
+                         "/framing-buffer-304", "/framing-file-204",
+                         "/framing-file-304",   "/framing-data"};
   vectis_app_config config;
   vectis_app *app;
   vectis_route_config route;
@@ -2867,6 +2880,11 @@ static void assert_stream_framing(void) {
   ssize_t nread;
   struct timeval timeout;
   int fd;
+  char filename[] = "vectis-framing-XXXXXX";
+  fd = mkstemp(filename);
+  assert(fd >= 0);
+  assert(write(fd, "unexpected", 10u) == 10);
+  assert(close(fd) == 0);
   reserved = reserve_loopback_port(&port);
   vectis_app_config_init(&config);
   config.tls.mode = VECTIS_TLS_MODE_DISABLED;
@@ -2874,14 +2892,14 @@ static void assert_stream_framing(void) {
   config.tls.port = port;
   app = vectis_app_new(&config, &error);
   assert(app != NULL);
-  for (i = 0u; i < 4u; ++i) {
-    route =
-        vectis_route(VECTIS_HTTP_GET, paths[i], framing_stream_handler, NULL);
+  for (i = 0u; i < sizeof(paths) / sizeof(paths[0]); ++i) {
+    route = vectis_route(VECTIS_HTTP_GET, paths[i], framing_stream_handler,
+                         filename);
     assert(vectis_register_route(app, &route, &error) == VECTIS_OK);
   }
   (void)close(reserved);
   assert(app->start(app, &error) == VECTIS_OK);
-  for (i = 0u; i < 3u; ++i) {
+  for (i = 0u; i < 7u; ++i) {
     fd = connect_local(port);
     (void)snprintf(request, sizeof(request),
                    "GET %s HTTP/1.1\r\nHost: localhost\r\n\r\n", paths[i]);
@@ -2891,9 +2909,16 @@ static void assert_stream_framing(void) {
            NULL);
     assert(strstr(headers, "set-cookie: session=present; Path=/\r\n") != NULL);
     assert(strncmp(headers, "HTTP/1.1 ", 9u) == 0);
-    assert(strstr(headers, i == 0u   ? " 200 "
-                           : i == 1u ? " 204 "
-                                     : " 304 ") != NULL);
+    assert(strstr(headers, i == 0u  ? " 200 "
+                           : i % 2u ? " 204 "
+                                    : " 304 ") != NULL);
+    if (i == 0u || i % 2u) {
+      assert(strstr(headers, "cOnTeNt-LeNgTh:") == NULL);
+    } else {
+      assert(strstr(headers, "cOnTeNt-LeNgTh: 20000\r\n") != NULL);
+    }
+    assert(strstr(headers, "tRaNsFeR-EnCoDiNg:") == NULL);
+    assert(strstr(headers, "content-length:") == NULL);
     if (i == 0u) {
       websocket_read_exact(fd, (unsigned char *)body, 5u);
       assert(memcmp(body, "0\r\n\r\n", 5u) == 0);
@@ -2924,6 +2949,8 @@ static void assert_stream_framing(void) {
     assert(strncmp(headers, "HTTP/1.0 200 ", 13u) == 0);
     assert(strstr(headers, "transfer-encoding:") == NULL);
     assert(strstr(headers, "content-length:") == NULL);
+    assert(strstr(headers, "cOnTeNt-LeNgTh:") == NULL);
+    assert(strstr(headers, "tRaNsFeR-EnCoDiNg:") == NULL);
     used = 0u;
     while ((nread = recv(fd, body + used, sizeof(body) - used, 0)) > 0) {
       used += (size_t)nread;
@@ -2937,6 +2964,7 @@ static void assert_stream_framing(void) {
   }
   assert(app->stop(app, &error) == VECTIS_OK);
   app->close(app);
+  assert(unlink(filename) == 0);
 }
 
 static void assert_websocket_echo(unsigned short port) {

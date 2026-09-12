@@ -2810,8 +2810,7 @@ static int vectis_kore_send_stream_response(struct http_request *req,
     return 0;
   }
 
-  if (req->method == HTTP_METHOD_HEAD || (status >= 100 && status < 200) ||
-      status == 204 || status == 304) {
+  if (req->method == HTTP_METHOD_HEAD) {
     lc_source_close(source);
     req->flags |= HTTP_REQUEST_NO_CONTENT_LENGTH;
     http_response(req, status, NULL, 0);
@@ -2897,6 +2896,7 @@ static void vectis_kore_send_response(vectis_app *app, struct http_request *req,
   int fd;
   int status;
   int emitted_status;
+  int bodyless;
   size_t i;
   struct http_header *cookie_header;
   const char *header_name;
@@ -2906,9 +2906,22 @@ static void vectis_kore_send_response(vectis_app *app, struct http_request *req,
   if (status == 0) {
     status = 204;
   }
+  bodyless = (status >= 100 && status < 200) || status == 204 || status == 304;
+  stream_source = vectis_internal_response_take_stream_source(response);
   for (i = 0u; i < vectis_internal_response_header_count(response); ++i) {
     header_name = vectis_internal_response_header_name(response, i);
     header_value = vectis_internal_response_header_value(response, i);
+    /* The adapter owns stream framing. HEAD/304 may retain an application's
+     * representation length, but must not acquire a generated zero length. */
+    if (strcasecmp(header_name, "content-length") == 0 &&
+        ((bodyless && status != 304) || (stream_source != NULL && !bodyless &&
+                                         req->method != HTTP_METHOD_HEAD))) {
+      continue;
+    }
+    if (strcasecmp(header_name, "transfer-encoding") == 0 &&
+        (bodyless || stream_source != NULL)) {
+      continue;
+    }
     if (strcasecmp(header_name, "set-cookie") == 0) {
       /* Use Kore's header pool so request teardown owns each separate field. */
       cookie_header = kore_pool_get(&http_header_pool);
@@ -2923,7 +2936,15 @@ static void vectis_kore_send_response(vectis_app *app, struct http_request *req,
   if (content_type != NULL) {
     http_response_header(req, "content-type", content_type);
   }
-  stream_source = vectis_internal_response_take_stream_source(response);
+  if (bodyless) {
+    if (stream_source != NULL) {
+      lc_source_close(stream_source);
+    }
+    req->flags |= HTTP_REQUEST_NO_CONTENT_LENGTH;
+    vectis_internal_metrics_note_http_status(app, status);
+    http_response(req, status, NULL, 0);
+    return;
+  }
   if (stream_source != NULL) {
     emitted_status = 500;
     if (!vectis_kore_send_stream_response(req, status, stream_source,
