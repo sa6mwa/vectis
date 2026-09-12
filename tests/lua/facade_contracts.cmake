@@ -995,6 +995,42 @@ assert(webdav_conflict.error.http_status == 409)
 assert_status_error(webdav_conflict.error, vectis.ERR_STATE,
                     "HTTP request failed")
 
+-- Convenience fields must never mutate a caller's reusable headers table.
+do
+  local perform = curl.perform
+  local sent
+  curl.perform = function(opts)
+    sent = opts
+    return {ok = true, status = 200, body = ""}
+  end
+  for _, string_form in ipairs({false, true}) do
+    local headers = {Accept = "text/plain", Depth = "original"}
+    local opts = {
+      headers = headers, authorization = "Bearer test-only-secret",
+      depth = 0, destination = "https://first.test/target", overwrite = "F",
+    }
+    if string_form then
+      webdav.get("https://first.test/source", opts)
+    else
+      opts.url = "https://first.test/source"
+      webdav.request(opts)
+    end
+    assert(sent.headers ~= headers)
+    assert(sent.headers.Authorization == opts.authorization)
+    assert(sent.headers.Depth == "0")
+    assert(sent.headers.Destination == opts.destination)
+    assert(sent.headers.Overwrite == "F")
+    assert(headers.Depth == "original")
+    assert(headers.Authorization == nil and headers.Destination == nil)
+    assert(headers.Overwrite == nil and headers.Accept == "text/plain")
+    webdav.get("https://second.test/source", {headers = headers})
+    assert(sent.url == "https://second.test/source")
+    assert(sent.headers.Authorization == nil and sent.headers.Destination == nil)
+    assert(sent.headers.Overwrite == nil and sent.headers.Depth == "original")
+  end
+  curl.perform = perform
+end
+
 local bad_webdav_ok, bad_webdav_err = pcall(function()
   webdav.copy({ url = "https://example.test/source" })
 end)

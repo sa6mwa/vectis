@@ -54,6 +54,7 @@ end
 
 function M.request(opts)
   opts = opts_from(opts)
+  opts.headers = copy_table(opts.headers)
   if opts.url == nil then
     error("vectis.webdav.request requires url", 2)
   end
