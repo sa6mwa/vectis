@@ -16006,11 +16006,10 @@ static int vectis_lua_curl_proxy_type(lua_State *lua, const char *value,
   return 0;
 }
 
-static int vectis_lua_curl_apply_protocol_options(lua_State *lua, CURL *curl,
-                                                  int option_index,
-                                                  long proxy_type) {
+static int vectis_lua_curl_apply_protocol_options(
+    lua_State *lua, CURL *curl, int option_index, long proxy_type,
+    long connect_timeout_ms, long low_speed_limit, long low_speed_time) {
   const char *value;
-  long long_value;
 
   value = vectis_lua_table_string(lua, option_index, "proxy");
   if (value != NULL) {
@@ -16051,18 +16050,14 @@ static int vectis_lua_curl_apply_protocol_options(lua_State *lua, CURL *curl,
   if (value != NULL) {
     (void)curl_easy_setopt(curl, CURLOPT_SSH_KNOWNHOSTS, value);
   }
-  long_value =
-      vectis_lua_table_long(lua, option_index, "connect_timeout_ms", 0L);
-  if (long_value > 0L) {
-    (void)curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, long_value);
+  if (connect_timeout_ms > 0L) {
+    (void)curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, connect_timeout_ms);
   }
-  long_value = vectis_lua_table_long(lua, option_index, "low_speed_limit", 0L);
-  if (long_value > 0L) {
-    (void)curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, long_value);
+  if (low_speed_limit > 0L) {
+    (void)curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, low_speed_limit);
   }
-  long_value = vectis_lua_table_long(lua, option_index, "low_speed_time", 0L);
-  if (long_value > 0L) {
-    (void)curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, long_value);
+  if (low_speed_time > 0L) {
+    (void)curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, low_speed_time);
   }
   if (vectis_lua_table_bool(lua, option_index, "tcp_keepalive", 0)) {
     (void)curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
@@ -16371,6 +16366,14 @@ static int vectis_lua_curl_prepare_schema(lua_State *lua, int is_request,
 }
 
 static int vectis_lua_curl_perform(lua_State *lua) {
+  static const char *const string_options[] = {
+      "ca_file",        "ca_path",          "client_cert",
+      "client_key",     "client_cert_type", "key_password",
+      "username",       "password",         "proxy",
+      "proxy_username", "proxy_password",   "interface",
+      "user_agent",     "accept_encoding",  "ssh_private_key",
+      "ssh_public_key", "ssh_known_hosts"};
+  size_t option_index;
   CURL *curl;
   CURLcode code;
   struct curl_slist *headers;
@@ -16401,6 +16404,9 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   lonejson_error json_error;
   lonejson_status json_status;
   long timeout_ms;
+  long connect_timeout_ms;
+  long low_speed_limit;
+  long low_speed_time;
   long retry_delay_ms;
   long response_code;
   unsigned attempt;
@@ -16480,6 +16486,15 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   has_streaming_upload = 0;
   has_streaming_response = 0;
   vectis_lua_curl_apply_headers(lua, NULL, 1, NULL);
+  for (option_index = 0u;
+       option_index < sizeof(string_options) / sizeof(string_options[0]);
+       ++option_index) {
+    (void)vectis_lua_table_string(lua, 1, string_options[option_index]);
+  }
+  timeout_ms = vectis_lua_table_long(lua, 1, "timeout_ms", 0L);
+  connect_timeout_ms = vectis_lua_table_long(lua, 1, "connect_timeout_ms", 0L);
+  low_speed_limit = vectis_lua_table_long(lua, 1, "low_speed_limit", 0L);
+  low_speed_time = vectis_lua_table_long(lua, 1, "low_speed_time", 0L);
   has_multipart = vectis_lua_curl_has_table_field(lua, 1, "multipart");
   vectis_lua_curl_retry_config_init(&retry_config);
   if (vectis_lua_curl_parse_retry_config(lua, 1, &retry_config) != 0) {
@@ -16637,7 +16652,6 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   (void)curl_easy_setopt(
       curl, CURLOPT_FOLLOWLOCATION,
       vectis_lua_table_bool(lua, 1, "follow_redirects", 0) ? 1L : 0L);
-  timeout_ms = vectis_lua_table_long(lua, 1, "timeout_ms", 0L);
   if (timeout_ms > 0L) {
     (void)curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout_ms);
   }
@@ -16654,7 +16668,9 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   if (password != NULL) {
     (void)curl_easy_setopt(curl, CURLOPT_PASSWORD, password);
   }
-  if (vectis_lua_curl_apply_protocol_options(lua, curl, 1, proxy_type) != 0) {
+  if (vectis_lua_curl_apply_protocol_options(
+          lua, curl, 1, proxy_type, connect_timeout_ms, low_speed_limit,
+          low_speed_time) != 0) {
     curl_easy_cleanup(curl);
     vectis_lua_curl_buffer_free(&body);
     vectis_lua_curl_buffer_free(&response);

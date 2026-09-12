@@ -18,6 +18,23 @@ local function fd_count()
   return count
 end
 local before = fd_count()
+for _, option in ipairs({"timeout_ms", "connect_timeout_ms", "low_speed_limit",
+    "low_speed_time", "ca_file", "ca_path", "client_cert", "client_key",
+    "client_cert_type", "key_password", "username", "password", "proxy",
+    "proxy_username", "proxy_password", "interface", "user_agent",
+    "accept_encoding", "ssh_private_key", "ssh_public_key", "ssh_known_hosts"}) do
+  for _ = 1, 10 do
+    local opts = {url = url, upload_path = path, download_path = path}
+    opts[option] = {}
+    local ok, err = pcall(curl.perform, opts)
+    assert(not ok, option .. " must reject invalid types: " .. tostring(err))
+  end
+  collectgarbage("collect")
+  assert(fd_count() == before, option .. " rejection must not leak files")
+  source = assert(io.open(path, "rb"))
+  assert(source:read("*a") == original, option .. " rejection must not truncate files")
+  source:close()
+end
 for _ = 1, 20 do
   for _, opts in ipairs({{}, {body = false}, {body = {}}, {body = function() end}}) do
     opts.url = "http://127.0.0.1:1/"
