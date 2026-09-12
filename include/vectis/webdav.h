@@ -25,7 +25,8 @@ typedef enum vectis_webdav_status {
   VECTIS_WEBDAV_IO = 5,
   VECTIS_WEBDAV_NOMEM = 6,
   VECTIS_WEBDAV_CONFLICT = 7,
-  VECTIS_WEBDAV_TOMBSTONED = 8
+  VECTIS_WEBDAV_TOMBSTONED = 8,
+  VECTIS_WEBDAV_PRECONDITION = 9
 } vectis_webdav_status;
 
 typedef enum vectis_webdav_entry_kind {
@@ -173,6 +174,16 @@ vectis_webdav_status vectis_webdav_put(const vectis_webdav_config *config,
                                        const char *path,
                                        const unsigned char *body,
                                        size_t body_size);
+/* Borrowed HTTP entity-tag lists (NULL means absent). Preconditions and write
+ * share the storage lock with all Vectis mutations using this configuration.
+ * Failed conditions return PRECONDITION without changing content; malformed
+ * lists return INVALID. External filesystem writers must coordinate separately.
+ */
+vectis_webdav_status
+vectis_webdav_put_conditional(const vectis_webdav_config *config,
+                              const char *path, const unsigned char *body,
+                              size_t body_size, const char *if_match,
+                              const char *if_none_match);
 vectis_webdav_status vectis_webdav_delete(const vectis_webdav_config *config,
                                           const char *path);
 vectis_webdav_status vectis_webdav_mkcol(const vectis_webdav_config *config,

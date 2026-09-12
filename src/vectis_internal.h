@@ -13,6 +13,8 @@ void vectis_smith_lockdc_diagnostic_message(const char *message, char *out,
                                             size_t out_capacity);
 
 struct http_request;
+/* Quoted SHA-256 validator from the served descriptor; preserves its offset. */
+int vectis_internal_webdav_etag_fd(int fd, char out[67]);
 
 typedef struct vectis_kore_runtime_config {
   vectis_app *app;

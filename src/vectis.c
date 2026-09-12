@@ -15249,10 +15249,19 @@ static vectis_status vectis_webdav_file_response(
     vectis_response *response, const char *resource,
     const vectis_webdav_entry *entry, vectis_error *error) {
   int fd;
+  char etag[67];
 
   fd = vectis_webdav_response_file_fd(data, resource, entry);
   if (fd < 0) {
     return vectis_response_status(response, 404, error);
+  }
+  if (!vectis_internal_webdav_etag_fd(fd, etag)) {
+    (void)close(fd);
+    return vectis_response_status(response, 500, error);
+  }
+  if (vectis_response_header(response, "etag", etag, error) != VECTIS_OK) {
+    (void)close(fd);
+    return error != NULL ? error->code : VECTIS_ERR_STATE;
   }
   return vectis_static_response_fd(
       request, response, "application/octet-stream", resource + 1u, fd, error);
@@ -15629,6 +15638,7 @@ static vectis_status vectis_webdav_status_response(vectis_webdav_status status,
   case VECTIS_WEBDAV_NOT_FOUND:
     return vectis_response_status(response, 404, error);
   case VECTIS_WEBDAV_EXISTS:
+  case VECTIS_WEBDAV_PRECONDITION:
     return vectis_response_status(response, 412, error);
   case VECTIS_WEBDAV_INVALID:
     return vectis_response_status(response, 400, error);
@@ -16187,9 +16197,10 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
     }
     response_body.data = body.data;
     response_body.size = body.size;
-    webdav_status = vectis_webdav_put(&data->storage, resource,
-                                      (const unsigned char *)response_body.data,
-                                      response_body.size);
+    webdav_status = vectis_webdav_put_conditional(
+        &data->storage, resource, (const unsigned char *)response_body.data,
+        response_body.size, vectis_request_header(request, "if-match"),
+        vectis_request_header(request, "if-none-match"));
     vectis_mutable_bytes_cleanup(&body);
     return webdav_status == VECTIS_WEBDAV_OK
                ? vectis_response_status(response, 201, error)

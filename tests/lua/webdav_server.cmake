@@ -159,6 +159,28 @@ for _ = 1, 20 do
 end
 assert(ready.transport_ok == true, ready.error and ready.error.message)
 
+for _, mount in ipairs({"/open", "/disk"}) do
+  local path = mount .. "/conditional.txt"
+  local function put(headers, body)
+    return webdav.put(request_opts(path, {headers = headers, body = body or "bad"}))
+  end
+  assert(put({["If-Match"] = "*"}).status == 412)
+  assert(put({["If-None-Match"] = "*"}, "original").ok)
+  local original = webdav.get(request_opts(path))
+  local etag = assert(original.headers:match('etag: ([^\r\n]+)'))
+  assert(etag:match('^"%x+"$'))
+  assert(put({["If-None-Match"] = "*"}).status == 412)
+  assert(put({["If-Match"] = '"wrong"'}).status == 412)
+  assert(put({["If-Match"] = "W/" .. etag}).status == 412)
+  assert(put({["If-None-Match"] = "W/" .. etag}).status == 412)
+  assert(put({["If-Match"] = etag .. ','}).status == 400)
+  assert(webdav.get(request_opts(path)).body == "original")
+  assert(put({["If-Match"] = '"wrong", ' .. etag}, "updated").ok)
+  assert(put({["If-Match"] = etag}).status == 412)
+  assert(webdav.get(request_opts(path)).body == "updated")
+  assert(webdav.delete(request_opts(path)).ok)
+end
+
 local open_mkcol = webdav.mkcol(request_opts("/open/public"))
 assert(open_mkcol.ok == true, open_mkcol.error and open_mkcol.error.message)
 assert(open_mkcol.status == 201)

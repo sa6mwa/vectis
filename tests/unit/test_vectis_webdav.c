@@ -4,6 +4,7 @@
 
 #include <dirent.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -299,10 +300,16 @@ static void test_destination_authority(const vectis_webdav_config *storage) {
                vectis_internal_response_status_code(response) == 200,
            "retrieve regular file");
     for (h = 0u; h < vectis_internal_response_header_count(response); ++h) {
-      expect(strcmp(vectis_internal_response_header_name(response, h),
-                    "etag") != 0,
-             "omit unavailable ETag on GET and HEAD");
+      if (strcmp(vectis_internal_response_header_name(response, h), "etag") ==
+          0) {
+        expect(strlen(vectis_internal_response_header_value(response, h)) ==
+                       66u &&
+                   vectis_internal_response_header_value(response, h)[0] == '"',
+               "GET and HEAD expose a quoted content validator");
+        break;
+      }
     }
+    expect(h < vectis_internal_response_header_count(response), "ETag present");
     vectis_internal_request_free(request);
     vectis_internal_response_free(response);
   }
@@ -529,6 +536,139 @@ static void test_root_separators(const char *temp) {
     expect(vectis_webdav_delete(&config, "/moved") == VECTIS_WEBDAV_OK,
            "delete through root with separators");
   }
+}
+
+typedef struct conditional_writer {
+  const vectis_webdav_config *config;
+  const char *etag;
+  int gate;
+  vectis_webdav_status result;
+} conditional_writer;
+
+static void *conditional_write(void *arg) {
+  conditional_writer *writer = (conditional_writer *)arg;
+  char token;
+  if (read(writer->gate, &token, 1u) != 1)
+    return NULL;
+  writer->result = vectis_webdav_put_conditional(
+      writer->config, "/conditional.txt", (const unsigned char *)"winner", 6u,
+      writer->etag, writer->etag == NULL ? "*" : NULL);
+  return NULL;
+}
+
+static void test_conditional_put(const vectis_webdav_config *config) {
+  unsigned char *body;
+  size_t size;
+  vectis_webdav_entry entry;
+  char etag[67], weak[70], list[90];
+  pthread_t threads[8];
+  pid_t children[8];
+  conditional_writer writers[8];
+  int gate[2], winners, phase, i, child_status;
+  expect(vectis_webdav_put_conditional(config, "/conditional.txt",
+                                       (const unsigned char *)"old", 3u, "*",
+                                       NULL) == VECTIS_WEBDAV_PRECONDITION,
+         "If-Match wildcard rejects missing resource");
+  for (phase = 0; phase < 2; ++phase) {
+    if (phase == 1) {
+      expect(vectis_webdav_put(config, "/conditional.txt",
+                               (const unsigned char *)"old",
+                               3u) == VECTIS_WEBDAV_OK,
+             "seed CAS");
+      expect(vectis_webdav_read(config, "/conditional.txt", &body, &size,
+                                &entry) == VECTIS_WEBDAV_OK,
+             "read CAS tag");
+      free(body);
+      snprintf(etag, sizeof(etag), "\"%s\"", entry.etag);
+    }
+    expect(pipe(gate) == 0, "create writer gate");
+    for (i = 0; i < 8; ++i) {
+      writers[i].config = config;
+      writers[i].etag = phase ? etag : NULL;
+      writers[i].gate = gate[0];
+      writers[i].result = VECTIS_WEBDAV_IO;
+      expect(pthread_create(&threads[i], NULL, conditional_write,
+                            &writers[i]) == 0,
+             "start conditional writer");
+    }
+    expect(write(gate[1], "12345678", 8u) == 8, "release competing writers");
+    winners = 0;
+    for (i = 0; i < 8; ++i) {
+      expect(pthread_join(threads[i], NULL) == 0, "join writer");
+      if (writers[i].result == VECTIS_WEBDAV_OK)
+        ++winners;
+      else
+        expect(writers[i].result == VECTIS_WEBDAV_PRECONDITION,
+               "loser rejects without mutation");
+    }
+    close(gate[0]);
+    close(gate[1]);
+    expect(winners == 1, "exactly one competing conditional write commits");
+  }
+  expect(vectis_webdav_read(config, "/conditional.txt", &body, &size, &entry) ==
+             VECTIS_WEBDAV_OK,
+         "read winner");
+  expect(size == 6u && memcmp(body, "winner", 6u) == 0,
+         "winning body preserved");
+  free(body);
+  snprintf(etag, sizeof(etag), "\"%s\"", entry.etag);
+  snprintf(weak, sizeof(weak), "W/%s", etag);
+  expect(vectis_webdav_put_conditional(config, "/conditional.txt",
+                                       (const unsigned char *)"bad", 3u, weak,
+                                       NULL) == VECTIS_WEBDAV_PRECONDITION,
+         "weak If-Match rejected");
+  expect(vectis_webdav_put_conditional(config, "/conditional.txt",
+                                       (const unsigned char *)"bad", 3u, NULL,
+                                       weak) == VECTIS_WEBDAV_PRECONDITION,
+         "weak If-None-Match matches");
+  expect(vectis_webdav_put_conditional(config, "/conditional.txt",
+                                       (const unsigned char *)"bad", 3u,
+                                       "\"x\",", NULL) == VECTIS_WEBDAV_INVALID,
+         "malformed list rejected");
+  snprintf(list, sizeof(list), "\"other,tag\", %s", etag);
+  expect(vectis_webdav_put_conditional(config, "/conditional.txt",
+                                       (const unsigned char *)"new", 3u, list,
+                                       NULL) == VECTIS_WEBDAV_OK,
+         "quoted comma and matching tag list accepted");
+  expect(vectis_webdav_delete(config, "/conditional.txt") == VECTIS_WEBDAV_OK,
+         "delete conditional fixture");
+  expect(vectis_webdav_put_conditional(config, "/conditional.txt",
+                                       (const unsigned char *)"new", 3u, NULL,
+                                       "*") == VECTIS_WEBDAV_OK,
+         "exclusive create replaces tombstone");
+  expect(vectis_webdav_delete(config, "/conditional.txt") == VECTIS_WEBDAV_OK,
+         "clean conditional fixture");
+  expect(pipe(gate) == 0, "create process writer gate");
+  for (i = 0; i < 8; ++i) {
+    children[i] = fork();
+    expect(children[i] >= 0, "fork conditional writer");
+    if (children[i] == 0) {
+      conditional_writer writer;
+      writer.config = config;
+      writer.etag = NULL;
+      writer.gate = gate[0];
+      writer.result = VECTIS_WEBDAV_IO;
+      conditional_write(&writer);
+      _exit(writer.result == VECTIS_WEBDAV_OK             ? 0
+            : writer.result == VECTIS_WEBDAV_PRECONDITION ? 1
+                                                          : 2);
+    }
+  }
+  expect(write(gate[1], "12345678", 8u) == 8, "release process writers");
+  winners = 0;
+  for (i = 0; i < 8; ++i) {
+    expect(waitpid(children[i], &child_status, 0) == children[i],
+           "join process writer");
+    expect(WIFEXITED(child_status) && WEXITSTATUS(child_status) <= 1,
+           "process write result");
+    if (WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0)
+      ++winners;
+  }
+  close(gate[0]);
+  close(gate[1]);
+  expect(winners == 1, "exactly one competing process commits");
+  expect(vectis_webdav_delete(config, "/conditional.txt") == VECTIS_WEBDAV_OK,
+         "clean process fixture");
 }
 
 int main(void) {
@@ -865,6 +1005,8 @@ int main(void) {
   direct_config.root_dir = root_dir;
 
   limited_config = config;
+  test_conditional_put(&config);
+  test_conditional_put(&direct_config);
   limited_config.site_id = "limited";
   limited_config.max_total_bytes = 5u;
   limited_config.max_file_bytes = 4u;

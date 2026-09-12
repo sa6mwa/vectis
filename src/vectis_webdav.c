@@ -6,12 +6,14 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <openssl/evp.h>
 #include <openssl/sha.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -308,7 +310,6 @@ static int vectis_webdav_write_atomic(const char *path,
 static int vectis_webdav_lock(const vectis_webdav_config *config) {
   char base[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   char path[VECTIS_WEBDAV_STORAGE_PATH_MAX];
-  struct flock lock;
   int fd;
 
   if (!vectis_webdav_prepare(config) ||
@@ -320,10 +321,8 @@ static int vectis_webdav_lock(const vectis_webdav_config *config) {
   if (fd == -1) {
     return -1;
   }
-  memset(&lock, 0, sizeof(lock));
-  lock.l_type = F_WRLCK;
-  lock.l_whence = SEEK_SET;
-  while (fcntl(fd, F_SETLKW, &lock) == -1) {
+  /* Separate open descriptions exclude threads as well as worker processes. */
+  while (flock(fd, LOCK_EX) == -1) {
     if (errno != EINTR) {
       (void)close(fd);
       return -1;
@@ -333,15 +332,10 @@ static int vectis_webdav_lock(const vectis_webdav_config *config) {
 }
 
 static void vectis_webdav_unlock(int fd) {
-  struct flock lock;
-
   if (fd < 0) {
     return;
   }
-  memset(&lock, 0, sizeof(lock));
-  lock.l_type = F_UNLCK;
-  lock.l_whence = SEEK_SET;
-  (void)fcntl(fd, F_SETLK, &lock);
+  (void)flock(fd, LOCK_UN);
   (void)close(fd);
 }
 
@@ -1398,6 +1392,8 @@ const char *vectis_webdav_status_string(vectis_webdav_status status) {
     return "conflict";
   case VECTIS_WEBDAV_TOMBSTONED:
     return "tombstoned";
+  case VECTIS_WEBDAV_PRECONDITION:
+    return "precondition failed";
   default:
     return "unknown";
   }
@@ -1586,10 +1582,141 @@ vectis_webdav_store_locked(const vectis_webdav_config *config,
   return VECTIS_WEBDAV_OK;
 }
 
+int vectis_internal_webdav_etag_fd(int fd, char out[67]) {
+  EVP_MD_CTX *ctx;
+  unsigned char buffer[8192], digest[32];
+  unsigned int size;
+  size_t i;
+  off_t offset;
+  ssize_t count;
+  int ok;
+  ctx = EVP_MD_CTX_new();
+  if (ctx == NULL)
+    return 0;
+  ok = EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) == 1;
+  offset = 0;
+  while (ok) {
+    count = pread(fd, buffer, sizeof(buffer), offset);
+    if (count < 0 && errno == EINTR)
+      continue;
+    if (count <= 0) {
+      ok = count == 0;
+      break;
+    }
+    ok = EVP_DigestUpdate(ctx, buffer, (size_t)count) == 1;
+    offset += count;
+  }
+  if (ok)
+    ok = EVP_DigestFinal_ex(ctx, digest, &size) == 1 && size == 32u;
+  EVP_MD_CTX_free(ctx);
+  if (!ok)
+    return 0;
+  out[0] = '"';
+  for (i = 0; i < 32u; ++i) {
+    out[1u + i * 2u] = vectis_webdav_hex[digest[i] >> 4u];
+    out[2u + i * 2u] = vectis_webdav_hex[digest[i] & 15u];
+  }
+  out[65] = '"';
+  out[66] = '\0';
+  return 1;
+}
+
+/* Parse complete lists even after a match, so malformed tails fail closed. */
+static int vectis_webdav_tag_matches(const char *p, const char *etag,
+                                     int exists, int strong) {
+  const char *start;
+  size_t length;
+  int matched, weak;
+  matched = 0;
+  while (*p == ' ' || *p == '\t')
+    ++p;
+  if (*p == '*') {
+    ++p;
+    while (*p == ' ' || *p == '\t')
+      ++p;
+    return *p == '\0' ? exists : -1;
+  }
+  for (;;) {
+    weak = p[0] == 'W' && p[1] == '/';
+    if (weak)
+      p += 2;
+    if (*p != '"')
+      return -1;
+    start = p++;
+    while (*p != '"') {
+      if ((unsigned char)*p < 0x21u || (unsigned char)*p == 0x7fu)
+        return -1;
+      ++p;
+    }
+    ++p;
+    length = (size_t)(p - start);
+    if (exists && (!strong || !weak) && strlen(etag) == length &&
+        memcmp(start, etag, length) == 0)
+      matched = 1;
+    while (*p == ' ' || *p == '\t')
+      ++p;
+    if (*p == '\0')
+      return matched;
+    if (*p++ != ',')
+      return -1;
+    while (*p == ' ' || *p == '\t')
+      ++p;
+  }
+}
+
+static vectis_webdav_status
+vectis_webdav_check_conditions(const vectis_webdav_config *config,
+                               const char *path, const char *if_match,
+                               const char *if_none_match) {
+  vectis_webdav_entry entry;
+  vectis_webdav_status status;
+  char etag[67];
+  int exists, fd, match, none;
+  if (if_match == NULL && if_none_match == NULL)
+    return VECTIS_WEBDAV_OK;
+  etag[0] = '\0';
+  status = vectis_webdav_lookup(config, path, &entry);
+  if (status != VECTIS_WEBDAV_OK && status != VECTIS_WEBDAV_NOT_FOUND)
+    return status;
+  exists = status == VECTIS_WEBDAV_OK &&
+           (entry.kind == VECTIS_WEBDAV_ENTRY_FILE ||
+            entry.kind == VECTIS_WEBDAV_ENTRY_COLLECTION);
+  if (exists && entry.kind == VECTIS_WEBDAV_ENTRY_FILE) {
+    fd = vectis_webdav_direct_root(config)
+             ? vectis_webdav_direct_open_existing(config, path, 0, NULL)
+             : open(entry.storage_path,
+                    O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0)
+      return VECTIS_WEBDAV_IO;
+    match = vectis_internal_webdav_etag_fd(fd, etag);
+    (void)close(fd);
+    if (!match)
+      return VECTIS_WEBDAV_IO;
+  }
+  match = if_match == NULL
+              ? 1
+              : vectis_webdav_tag_matches(if_match, etag, exists, 1);
+  none = if_none_match == NULL
+             ? 0
+             : vectis_webdav_tag_matches(if_none_match, etag, exists, 0);
+  if (match < 0 || none < 0)
+    return VECTIS_WEBDAV_INVALID;
+  return !match || none ? VECTIS_WEBDAV_PRECONDITION : VECTIS_WEBDAV_OK;
+}
+
 vectis_webdav_status vectis_webdav_put(const vectis_webdav_config *config,
                                        const char *path,
                                        const unsigned char *body,
                                        size_t body_size) {
+  return vectis_webdav_put_conditional(config, path, body, body_size, NULL,
+                                       NULL);
+}
+
+vectis_webdav_status
+vectis_webdav_put_conditional(const vectis_webdav_config *config,
+                              const char *path, const unsigned char *body,
+                              size_t body_size, const char *if_match,
+                              const char *if_none_match) {
   char normalized[VECTIS_WEBDAV_PATH_MAX + 1u];
   vectis_webdav_status status;
   int lock_fd;
@@ -1604,7 +1731,11 @@ vectis_webdav_status vectis_webdav_put(const vectis_webdav_config *config,
   if (lock_fd < 0) {
     return VECTIS_WEBDAV_IO;
   }
-  status = vectis_webdav_store_locked(config, normalized, body, body_size);
+  status = vectis_webdav_check_conditions(config, normalized, if_match,
+                                          if_none_match);
+  if (status == VECTIS_WEBDAV_OK) {
+    status = vectis_webdav_store_locked(config, normalized, body, body_size);
+  }
   vectis_webdav_unlock(lock_fd);
   return status;
 }
