@@ -14354,7 +14354,9 @@ static vectis_status vectis_static_embedded_response(
           vectis_request_header(request, "if-none-match"), entry->etag)) {
     return vectis_response_status(response, 304, error);
   }
-  range_header = vectis_request_header(request, "range");
+  range_header = vectis_request_method(request) == VECTIS_HTTP_GET
+                     ? vectis_request_header(request, "range")
+                     : NULL;
   if (range_header != NULL && range_header[0] != '\0') {
     if_range_header = vectis_request_header(request, "if-range");
     if (if_range_header != NULL && if_range_header[0] != '\0' &&
@@ -18717,8 +18719,10 @@ vectis_auth_workflow_page(const vectis_auth_route_data *data,
   }
   body.data = html.data;
   body.size = html.size;
-  status = vectis_response_bytes(response, 200, "text/html; charset=utf-8",
-                                 body, error);
+  /* Rejected browser credentials must participate in HTTP failure throttling.
+   */
+  status = vectis_response_bytes(response, message != NULL ? 403 : 200,
+                                 "text/html; charset=utf-8", body, error);
   vectis_string_builder_cleanup(&html);
   return status;
 }

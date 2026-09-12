@@ -78,6 +78,7 @@ assert(vectis.cert.generate_bundle({
 }) == true)
 
 local server = assert(vectis.app.new({
+  profile = "production_webserver",
   bind = "127.0.0.1",
   port = port,
   tls = {
@@ -365,6 +366,32 @@ local revoked_response = request("/callback-protected", "GET", nil, {
 assert(revoked_response.ok == true, revoked_response.error)
 assert(revoked_response.status == 401)
 assert(revoked_response.body == "callback invoked\n")
+
+-- Failures retain the generic current-step page and count toward the default
+-- production HTTP 403 limit (10), including the navigation rejection above.
+local function rejected(path, body, headers)
+  local result = request(path, "POST", body, headers or navigation_headers)
+  assert(result.ok == true, result.error)
+  assert(result.status == 403, tostring(result.status) .. " " .. result.body)
+  assert(result.body:find("Those details could not be verified. Try again.", 1, true))
+  assert(result.body:find("Step ", 1, true) == nil)
+  return result
+end
+local wrong_password = rejected("/auth/continue",
+    "username=lua-session-user&password=wrong")
+local unknown_user = rejected("/auth/continue",
+    "username=nonexistent-user&password=wrong")
+assert(wrong_password.body == unknown_user.body)
+local totp_headers = {}
+for key, value in pairs(navigation_headers) do totp_headers[key] = value end
+totp_headers.Cookie = parent_flow_cookie
+local wrong_totp = rejected("/flow/continue", "totp_code=invalid", totp_headers)
+assert(wrong_totp.body:find("Enter your authenticator code", 1, true))
+for _ = 1, 6 do
+  rejected("/auth/continue", "username=lua-session-user&password=wrong")
+end
+local blocked = request("/auth/continue", "POST", form, navigation_headers)
+assert(blocked.ok == false, "autoblock must reject even valid credentials after the limit")
 
 assert(server:stop() == true)
 server:close()

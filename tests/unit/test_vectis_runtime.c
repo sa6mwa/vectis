@@ -5012,13 +5012,25 @@ static void assert_kore_smoke(void) {
   status = vectis_http_execute(&http, &request, &embedded_range_head_response,
                                &error);
   assert(status == VECTIS_OK);
-  assert(embedded_range_head_response.status_code == 206L);
-  assert(strcmp(vectis_http_response_header(&embedded_range_head_response,
-                                            "content-range"),
-                "bytes 1-2/4") == 0);
+  assert(embedded_range_head_response.status_code == 200L);
+  assert(vectis_http_response_header(&embedded_range_head_response,
+                                     "content-range") == NULL);
   assert(strcmp(vectis_http_response_header(&embedded_range_head_response,
                                             "content-length"),
-                "2") == 0);
+                "4") == 0);
+  assert(embedded_range_head_response.body_size == 0u);
+  vectis_http_response_cleanup(&embedded_range_head_response);
+
+  request.headers = embedded_invalid_range_headers;
+  status = vectis_http_execute(&http, &request, &embedded_range_head_response,
+                               &error);
+  assert(status == VECTIS_OK);
+  assert(embedded_range_head_response.status_code == 200L);
+  assert(vectis_http_response_header(&embedded_range_head_response,
+                                     "content-range") == NULL);
+  assert(strcmp(vectis_http_response_header(&embedded_range_head_response,
+                                            "content-length"),
+                "4") == 0);
   assert(embedded_range_head_response.body_size == 0u);
   vectis_http_response_cleanup(&embedded_range_head_response);
 

@@ -1558,14 +1558,18 @@ EOF
   range_status=$(curl --max-time 3 -sS -D "$range_headers" -o /dev/null \
     -w '%{http_code}' --head -H 'Range: bytes=0-5' \
     "http://127.0.0.1:$kore_packed_port/site/app.js")
-  if [ "$range_status" != "206" ]; then
+  if [ "$range_status" != "200" ]; then
     printf '%s\n' "Unexpected packed static HEAD range status: $range_status" >&2
     sed 's/^/[packed-range-header] /' "$range_headers" >&2
     return 1
   fi
-  grep -qi '^content-range: bytes 0-5/' "$range_headers" || {
-    printf '%s\n' "Packed static HEAD range did not include Content-Range" >&2
+  if grep -qi '^content-range:' "$range_headers"; then
+    printf '%s\n' "Packed static HEAD must ignore Range" >&2
     sed 's/^/[packed-range-header] /' "$range_headers" >&2
+    return 1
+  fi
+  grep -qi '^content-length: 35' "$range_headers" || {
+    printf '%s\n' "Packed static HEAD must report the full asset length" >&2
     return 1
   }
   grep -qi '^accept-ranges: bytes' "$range_headers" || {
