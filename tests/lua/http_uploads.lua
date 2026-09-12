@@ -7,7 +7,7 @@ local schema = lonejson.schema("redirect-upload", {
   lonejson.field("payload", lonejson.string()),
 })
 for _, method in ipairs({"POST", "PUT", "PATCH"}) do
-  for _, kind in ipairs({"file", "multipart", "raw", "json"}) do
+  for _, kind in ipairs({"file", "multipart", "raw", "json", "buffered"}) do
     local opts = {
       url = base .. "/" .. kind,
       method = method,
@@ -21,6 +21,8 @@ for _, method in ipairs({"POST", "PUT", "PATCH"}) do
     elseif kind == "raw" then
       opts.upload = true
       opts.body = payload
+    elseif kind == "buffered" then
+      opts.body = payload
     else
       opts.request = {schema = schema, value = {payload = payload:gsub("%z", "_")}}
     end
@@ -28,13 +30,22 @@ for _, method in ipairs({"POST", "PUT", "PATCH"}) do
         or http[method:lower()](opts)
     assert(result.ok, result.error_message or result.error)
     assert(result.status == 200 and result.body == method, kind .. " " .. method)
-    if kind == "json" or kind == "raw" or kind == "file" then
+    do
       for _, code in ipairs({307, 308}) do
         opts.url = base .. "/" .. kind .. "/" .. code
         opts.follow_redirects = true
         result = kind == "json" and curl.stream_json(opts) or curl.perform(opts)
         assert(result.ok, result.error)
         assert(result.status == 200 and result.body == method)
+      end
+    end
+    if method == "POST" then
+      for _, code in ipairs({301, 302, 303}) do
+        opts.url = base .. "/" .. kind .. "/" .. code
+        opts.follow_redirects = true
+        result = kind == "json" and curl.stream_json(opts) or curl.perform(opts)
+        assert(result.ok, result.error)
+        assert(result.status == 200 and result.body == "GET", kind .. " redirect " .. code)
       end
     end
     if kind == "json" then

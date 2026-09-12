@@ -15677,17 +15677,20 @@ static int vectis_lua_curl_apply_multipart_part(lua_State *lua, curl_mime *mime,
 
   part = curl_mime_addpart(mime);
   if (part == NULL) {
-    return luaL_error(lua, "curl multipart part allocation failed");
+    lua_pushfstring(lua, "curl multipart part allocation failed");
+    return -1;
   }
   name = vectis_lua_table_string(lua, part_index, "name");
   if (name == NULL) {
     name = fallback_name;
   }
   if (name == NULL || name[0] == '\0') {
-    return luaL_error(lua, "curl multipart part name is required");
+    lua_pushfstring(lua, "curl multipart part name is required");
+    return -1;
   }
   if (curl_mime_name(part, name) != CURLE_OK) {
-    return luaL_error(lua, "curl multipart part name failed");
+    lua_pushfstring(lua, "curl multipart part name failed");
+    return -1;
   }
 
   path = vectis_lua_table_string(lua, part_index, "path");
@@ -15696,10 +15699,12 @@ static int vectis_lua_curl_apply_multipart_part(lua_State *lua, curl_mime *mime,
   }
   if (path != NULL) {
     if (path[0] == '\0') {
-      return luaL_error(lua, "curl multipart file path must not be empty");
+      lua_pushfstring(lua, "curl multipart file path must not be empty");
+      return -1;
     }
     if (curl_mime_filedata(part, path) != CURLE_OK) {
-      return luaL_error(lua, "curl multipart file path failed: %s", path);
+      lua_pushfstring(lua, "curl multipart file path failed: %s", path);
+      return -1;
     }
   } else {
     body = vectis_lua_table_lstring(lua, part_index, "value", &body_size);
@@ -15711,17 +15716,20 @@ static int vectis_lua_curl_apply_multipart_part(lua_State *lua, curl_mime *mime,
       body_size = 0u;
     }
     if (curl_mime_data(part, body, body_size) != CURLE_OK) {
-      return luaL_error(lua, "curl multipart data failed");
+      lua_pushfstring(lua, "curl multipart data failed");
+      return -1;
     }
   }
 
   filename = vectis_lua_table_string(lua, part_index, "filename");
   if (filename != NULL && curl_mime_filename(part, filename) != CURLE_OK) {
-    return luaL_error(lua, "curl multipart filename failed");
+    lua_pushfstring(lua, "curl multipart filename failed");
+    return -1;
   }
   content_type = vectis_lua_table_string(lua, part_index, "content_type");
   if (content_type != NULL && curl_mime_type(part, content_type) != CURLE_OK) {
-    return luaL_error(lua, "curl multipart content_type failed");
+    lua_pushfstring(lua, "curl multipart content_type failed");
+    return -1;
   }
   return 0;
 }
@@ -15745,12 +15753,14 @@ static int vectis_lua_curl_apply_multipart(lua_State *lua, CURL *curl,
     return 0;
   }
   if (!lua_istable(lua, -1)) {
-    return luaL_error(lua, "curl multipart must be a table");
+    lua_pushfstring(lua, "curl multipart must be a table");
+    return -1;
   }
   multipart_index = lua_gettop(lua);
   mime = curl_mime_init(curl);
   if (mime == NULL) {
-    return luaL_error(lua, "curl multipart allocation failed");
+    lua_pushfstring(lua, "curl multipart allocation failed");
+    return -1;
   }
   count = lua_rawlen(lua, multipart_index);
   part_count = 0u;
@@ -15758,12 +15768,13 @@ static int vectis_lua_curl_apply_multipart(lua_State *lua, CURL *curl,
     lua_rawgeti(lua, multipart_index, (lua_Integer)i + 1);
     if (!lua_istable(lua, -1)) {
       curl_mime_free(mime);
-      return luaL_error(lua, "curl multipart parts must be tables");
+      lua_pushfstring(lua, "curl multipart parts must be tables");
+      return -1;
     }
     if (vectis_lua_curl_apply_multipart_part(lua, mime, lua_gettop(lua),
                                              NULL) != 0) {
       curl_mime_free(mime);
-      return 1;
+      return -1;
     }
     part_count++;
     lua_pop(lua, 1);
@@ -15777,15 +15788,16 @@ static int vectis_lua_curl_apply_multipart(lua_State *lua, CURL *curl,
         if (vectis_lua_curl_apply_multipart_part(lua, mime, lua_gettop(lua),
                                                  name) != 0) {
           curl_mime_free(mime);
-          return 1;
+          return -1;
         }
         part_count++;
       } else {
         value = lua_tolstring(lua, -1, &value_size);
         if (value == NULL) {
           curl_mime_free(mime);
-          return luaL_error(lua,
-                            "curl multipart shorthand values must be strings");
+          lua_pushfstring(lua,
+                          "curl multipart shorthand values must be strings");
+          return -1;
         }
         lua_newtable(lua);
         lua_pushstring(lua, name);
@@ -15795,7 +15807,7 @@ static int vectis_lua_curl_apply_multipart(lua_State *lua, CURL *curl,
         if (vectis_lua_curl_apply_multipart_part(lua, mime, lua_gettop(lua),
                                                  NULL) != 0) {
           curl_mime_free(mime);
-          return 1;
+          return -1;
         }
         part_count++;
         lua_pop(lua, 1);
@@ -15806,11 +15818,13 @@ static int vectis_lua_curl_apply_multipart(lua_State *lua, CURL *curl,
   lua_pop(lua, 1);
   if (part_count == 0u) {
     curl_mime_free(mime);
-    return luaL_error(lua, "curl multipart requires at least one part");
+    lua_pushfstring(lua, "curl multipart requires at least one part");
+    return -1;
   }
   if (curl_easy_setopt(curl, CURLOPT_MIMEPOST, mime) != CURLE_OK) {
     curl_mime_free(mime);
-    return luaL_error(lua, "curl multipart setup failed");
+    lua_pushfstring(lua, "curl multipart setup failed");
+    return -1;
   }
   *mime_out = mime;
   return 1;
@@ -15887,7 +15901,8 @@ static int vectis_lua_curl_apply_method(lua_State *lua, CURL *curl,
                                         int option_index, const char *method,
                                         int is_smtp, int has_streaming_upload,
                                         int has_raw_upload, int has_multipart,
-                                        lonejson_curl_upload *json_upload) {
+                                        lonejson_curl_upload *json_upload,
+                                        curl_off_t raw_upload_size) {
   const char *body;
   size_t body_size;
 
@@ -15915,20 +15930,20 @@ static int vectis_lua_curl_apply_method(lua_State *lua, CURL *curl,
       (void)curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
   } else if (strcmp(method, "POST") == 0) {
     if (has_multipart) {
-      /* Keep CURLOPT_MIMEPOST's body mode intact. */
-      (void)curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "POST");
+      /* MIMEPOST already selects POST and lets curl switch on redirects. */
     } else if (has_raw_upload) {
-      (void)curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "POST");
+      (void)curl_easy_setopt(curl, CURLOPT_POST, 1L);
+      (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE,
+                             raw_upload_size);
     } else if (has_streaming_upload) {
       curl_off_t upload_size;
 
       upload_size = lonejson_curl_upload_size(json_upload);
-      (void)curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
-      (void)curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "POST");
+      (void)curl_easy_setopt(curl, CURLOPT_POST, 1L);
       (void)curl_easy_setopt(curl, CURLOPT_READFUNCTION,
                              lonejson_curl_read_callback);
       (void)curl_easy_setopt(curl, CURLOPT_READDATA, json_upload);
-      (void)curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE,
+      (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE,
                              upload_size > 0 ? upload_size : (curl_off_t)-1);
     } else {
       (void)curl_easy_setopt(curl, CURLOPT_POST, 1L);
@@ -16642,8 +16657,26 @@ static int vectis_lua_curl_perform(lua_State *lua) {
     (void)curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
   }
   if (has_multipart) {
-    if (vectis_lua_curl_apply_multipart(lua, curl, 1, &mime) == 0) {
-      return luaL_error(lua, "curl multipart setup did not create a body");
+    int multipart_result;
+    multipart_result = vectis_lua_curl_apply_multipart(lua, curl, 1, &mime);
+    if (multipart_result != 1) {
+      curl_slist_free_all(headers);
+      curl_mime_free(mime);
+      curl_easy_cleanup(curl);
+      if (download_file != NULL)
+        (void)fclose(download_file);
+      if (file_upload.file != NULL)
+        (void)fclose(file_upload.file);
+      if (has_streaming_response)
+        lonejson_curl_parse_cleanup(&json_response);
+      if (has_streaming_upload)
+        lonejson_curl_upload_cleanup(&json_upload);
+      vectis_lua_curl_buffer_free(&body);
+      vectis_lua_curl_buffer_free(&response);
+      vectis_lua_curl_buffer_free(&response_headers);
+      if (multipart_result == 0)
+        return luaL_error(lua, "curl multipart setup did not create a body");
+      return lua_error(lua);
     }
     is_smtp = 0;
     is_upload = 1;
@@ -16662,7 +16695,8 @@ static int vectis_lua_curl_perform(lua_State *lua) {
   vectis_lua_curl_apply_method(
       lua, curl, 1, method, is_smtp, has_streaming_upload,
       is_upload && !has_streaming_upload && !has_multipart, has_multipart,
-      &json_upload);
+      &json_upload,
+      file_upload.file != NULL ? file_upload.size : (curl_off_t)body.size);
 
   retry_delay_ms = retry_config.initial_delay_ms;
   if (retry_config.max_delay_ms > 0L &&

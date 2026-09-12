@@ -33,11 +33,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 body = b"".join(chunks)
             else:
                 body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-            if self.path.startswith("/json"):
+            if self.command == "GET":
+                assert body == b""
+            elif self.path.startswith("/json"):
                 assert self.headers.get("Content-Length") is None
                 assert self.headers.get("Transfer-Encoding", "").lower() == "chunked"
                 assert json.loads(body) == {"payload": PAYLOAD.replace(b"\x00", b"_").decode()}
-            elif self.path == "/multipart":
+            elif self.path.startswith("/multipart"):
                 mime = email.parser.BytesParser(policy=email.policy.default).parsebytes(
                     b"Content-Type: " + self.headers["Content-Type"].encode()
                     + b"\r\nMIME-Version: 1.0\r\n\r\n" + body
@@ -53,7 +55,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_response(503)
                 self.send_header("Content-Length", "0")
                 self.end_headers()
-            elif self.path.endswith(("/307", "/308")):
+            elif self.path.endswith(("/301", "/302", "/303", "/307", "/308")):
                 self.send_response(int(self.path.rsplit("/", 1)[1]))
                 self.send_header("Location", self.path.rsplit("/", 1)[0] + "/received")
                 self.send_header("Content-Length", "0")
@@ -67,7 +69,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.server.errors.append((self.command, self.path, repr(error)))
             self.close_connection = True
 
-    do_POST = do_PUT = do_PATCH = handle_upload
+    do_GET = do_POST = do_PUT = do_PATCH = handle_upload
 
 
 def main():
@@ -93,13 +95,14 @@ def main():
             assert not server.errors, server.errors
             assert result.returncode == 0, result.stdout + result.stderr
             for method in ("POST", "PUT", "PATCH"):
-                for kind in ("file", "multipart", "raw", "json"):
+                for kind in ("file", "multipart", "raw", "json", "buffered"):
                     assert (method, "/" + kind) in server.requests
-                for kind in ("json", "raw", "file"):
                     assert server.requests.count((method, "/" + kind + "/received")) == 2
                 assert server.requests.count((method, "/json/retry")) == 2
-            assert len(server.requests) == 55, server.requests
-            print("Passed 34 uploads, including 18 redirects and 3 retries (55 requests)")
+            for kind in ("file", "multipart", "raw", "json", "buffered"):
+                assert server.requests.count(("GET", "/" + kind + "/received")) == 3
+            assert len(server.requests) == 112, server.requests
+            print("Passed 64 uploads, including 45 redirects and 3 retries (112 requests)")
 
 
 if __name__ == "__main__":

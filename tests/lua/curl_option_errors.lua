@@ -27,6 +27,21 @@ for _ = 1, 20 do
 end
 collectgarbage("collect")
 assert(fd_count() == before, "streaming retry rejection must close upload files")
+before = fd_count()
+for _ = 1, 20 do
+  for _, parts in ipairs({
+    {{name = "valid", path = path}, {name = "missing", path = path .. ".missing"}},
+    {missing = {path = path .. ".missing"}},
+  }) do
+    local ok, err = pcall(curl.perform, {
+      url = "http://127.0.0.1:1/", multipart = parts,
+      download_path = path .. ".download", timeout_ms = 100,
+    })
+    assert(not ok and tostring(err):find("multipart file path failed", 1, true), tostring(err))
+  end
+end
+collectgarbage("collect")
+assert(fd_count() == before, "multipart rejection must close download files")
 
 for _ = 1, 30 do
   for _, protocols in ipairs({"", "https,typo", "typo", "file,typo",
