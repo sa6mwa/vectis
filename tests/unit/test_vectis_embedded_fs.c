@@ -666,6 +666,7 @@ int main(void) {
          "creates directory-entry extraction temp directory");
   vectis_embedded_fs_extract_config_init(&extract);
   extract.output_dir = directory_temp;
+  extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING;
   status = vectis_embedded_fs_extract(directory_fs, &extract, &error);
   expect(status == VECTIS_OK, "extracts explicit embedded directories");
   (void)snprintf(directory_path, sizeof(directory_path), "%s/assets",
@@ -678,6 +679,16 @@ int main(void) {
   read_file(extracted_app, buffer, sizeof(buffer));
   expect(strcmp(buffer, "app\n") == 0,
          "extracts file inside explicit embedded directory");
+  expect(chmod(directory_path, 0700) == 0, "make existing directory private");
+  status = vectis_embedded_fs_extract(directory_fs, &extract, &error);
+  expect(status == VECTIS_OK, "skip existing explicit directory succeeds");
+  expect(stat(directory_path, &st) == 0 && (st.st_mode & 0777u) == 0700u,
+         "skip existing preserves private directory permissions");
+  extract.policy = VECTIS_EMBEDDED_FS_EXTRACT_OVERWRITE;
+  status = vectis_embedded_fs_extract(directory_fs, &extract, &error);
+  expect(status == VECTIS_OK, "overwrite explicit directory succeeds");
+  expect(stat(directory_path, &st) == 0 && (st.st_mode & 0777u) == 0755u,
+         "overwrite still applies manifest directory permissions");
   remove_tree(directory_temp);
   vectis_embedded_fs_close(directory_fs);
 

@@ -996,18 +996,20 @@ static vectis_status vectis_embedded_open_parent_fd(int root_fd,
   return VECTIS_OK;
 }
 
-static vectis_status
-vectis_embedded_open_directory_at(int parent_fd, const char *leaf,
-                                  const char *asset_path, int create_missing,
-                                  int *out_fd, vectis_error *error) {
+static vectis_status vectis_embedded_open_directory_at(
+    int parent_fd, const char *leaf, const char *asset_path, int create_missing,
+    int *out_fd, int *created, vectis_error *error) {
   int fd;
   int saved_errno;
 
   *out_fd = -1;
+  *created = 0;
   fd = vectis_embedded_open_child_dir_at(parent_fd, leaf);
   saved_errno = errno;
   if (fd < 0 && create_missing && saved_errno == ENOENT) {
-    if (mkdirat(parent_fd, leaf, 0755) != 0 && errno != EEXIST) {
+    if (mkdirat(parent_fd, leaf, 0755) == 0) {
+      *created = 1;
+    } else if (errno != EEXIST) {
       vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
                                  "failed to create embedded asset directory: "
                                  "%s",
@@ -1223,6 +1225,7 @@ vectis_embedded_extract_impl(const vectis_embedded_fs *self,
   int root_fd;
   int parent_fd;
   int directory_fd;
+  int directory_created;
   int exists;
   int matches;
   int create_missing;
@@ -1254,9 +1257,11 @@ vectis_embedded_extract_impl(const vectis_embedded_fs *self,
       directory_fd = -1;
       status = vectis_embedded_open_directory_at(
           parent_fd, leaf, impl->entries[i].path, create_missing, &directory_fd,
-          error);
+          &directory_created, error);
       if (status == VECTIS_OK &&
           config->policy != VECTIS_EMBEDDED_FS_EXTRACT_VERIFY &&
+          (directory_created ||
+           config->policy != VECTIS_EMBEDDED_FS_EXTRACT_SKIP_EXISTING) &&
           fchmod(directory_fd,
                  vectis_embedded_extract_mode(impl->entries[i].mode)) != 0) {
         vectis_embedded_set_errorf(error, VECTIS_ERR_INVALID,
