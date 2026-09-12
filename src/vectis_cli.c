@@ -16591,6 +16591,10 @@ static int vectis_lua_curl_perform(lua_State *lua) {
     }
   }
   if (retry_config.max_attempts > 1u && has_streaming_response) {
+    if (file_upload.file != NULL) {
+      (void)fclose(file_upload.file);
+      file_upload.file = NULL;
+    }
     curl_easy_cleanup(curl);
     lonejson_curl_parse_cleanup(&json_response);
     if (has_streaming_upload) {

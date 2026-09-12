@@ -4,6 +4,29 @@ local source = assert(io.open(path, "rb"))
 local original = source:read("*a")
 source:close()
 local url = "file://" .. path
+local lonejson = require("lonejson")
+local schema = lonejson.schema("retry-response", {
+  lonejson.field("ok", lonejson.boolean()),
+  lonejson.field("message", lonejson.string()),
+})
+local function fd_count()
+  local count = 0
+  for fd = 0, 1024 do
+    local file = io.open("/proc/self/fd/" .. fd, "rb")
+    if file then count = count + 1; file:close() end
+  end
+  return count
+end
+local before = fd_count()
+for _ = 1, 20 do
+  local ok, err = pcall(curl.stream_json, {
+    url = url, upload_path = path, response = {schema = schema},
+    retry = {max_attempts = 2},
+  })
+  assert(not ok and tostring(err):find("streaming responses cannot be retried safely", 1, true), tostring(err))
+end
+collectgarbage("collect")
+assert(fd_count() == before, "streaming retry rejection must close upload files")
 
 for _ = 1, 30 do
   for _, protocols in ipairs({"", "https,typo", "typo", "file,typo",
