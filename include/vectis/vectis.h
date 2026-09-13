@@ -3123,6 +3123,9 @@ vectis_smith_store_session_store(const vectis_smith_store *store);
  * When `store` is supplied, its durable lockdc callbacks replace
  * `runtime.session_store`; callers must not set both. CAI owns the model loop,
  * preset, event semantics, steering, and queued turns.
+ * With `store` and `runtime.resume_latest`, a non-NULL `runtime.session_id`
+ * selects that named session instead of the latest session in the scope;
+ * a missing named session starts fresh under the supplied id.
  */
 typedef struct vectis_smith_config {
   cai_client *client;

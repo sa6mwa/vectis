@@ -53,6 +53,9 @@ struct vectis_smith {
   cai_client *client;
   int owns_client;
   cai_agent_runtime *runtime;
+  vectis_smith_store *store;
+  cai_agent_session_store named_store;
+  char requested_session[CAI_AGENT_SESSION_ID_MAX];
 };
 
 static const lonejson_field vectis_smith_record_fields[] = {
@@ -502,8 +505,8 @@ static int vectis_smith_store_checkpoint(void *context, const char *scope,
   return result;
 }
 
-static int vectis_smith_store_load_latest(
-    void *context, const char *scope, char *session_id,
+static int vectis_smith_store_load_selected(
+    void *context, const char *scope, const char *requested, char *session_id,
     size_t session_id_capacity, cai_source **out,
     unsigned long long *out_applied_event_sequence, cai_error *error) {
   vectis_smith_store *store;
@@ -528,7 +531,8 @@ static int vectis_smith_store_load_latest(
   *out_applied_event_sequence = 0u;
   store = (vectis_smith_store *)context;
   if (store == NULL || scope == NULL || scope[0] == '\0' ||
-      !vectis_smith_key("scope", scope, NULL, key, sizeof(key))) {
+      !vectis_smith_key(requested == NULL ? "scope" : "session", scope,
+                        requested, key, sizeof(key))) {
     vectis_smith_set_cai_error(error, CAI_ERR_INVALID,
                                "invalid Smith session scope");
     return CAI_ERR_INVALID;
@@ -538,6 +542,13 @@ static int vectis_smith_store_load_latest(
   result = vectis_smith_acquire(store, key, &lease, error);
   if (result == CAI_OK) {
     result = vectis_smith_load_record(lease, &record, &missing, error);
+    if (result == CAI_OK && !missing && requested != NULL &&
+        strcmp(requested, record.session_id) != 0) {
+      vectis_smith_set_cai_error(
+          error, CAI_ERR_PROTOCOL,
+          "Smith checkpoint metadata does not match requested session");
+      result = CAI_ERR_PROTOCOL;
+    }
   } else {
     missing = 1;
   }
@@ -612,6 +623,15 @@ static int vectis_smith_store_load_latest(
   }
   (void)pthread_mutex_unlock(&store->mutex);
   return result;
+}
+
+static int vectis_smith_store_load_latest(void *context, const char *scope,
+                                          char *session_id, size_t capacity,
+                                          cai_source **out,
+                                          unsigned long long *watermark,
+                                          cai_error *error) {
+  return vectis_smith_store_load_selected(context, scope, NULL, session_id,
+                                          capacity, out, watermark, error);
 }
 
 static int vectis_smith_attachment_text(lc_lease *lease, const char *name,
@@ -982,6 +1002,47 @@ void vectis_smith_config_init(vectis_smith_config *config) {
   }
 }
 
+static int vectis_smith_named_load(void *context, const char *scope,
+                                   char *session_id, size_t capacity,
+                                   cai_source **out,
+                                   unsigned long long *watermark,
+                                   cai_error *error) {
+  vectis_smith *smith = (vectis_smith *)context;
+  return vectis_smith_store_load_selected(smith->store, scope,
+                                          smith->requested_session, session_id,
+                                          capacity, out, watermark, error);
+}
+
+static int vectis_smith_named_checkpoint(void *context, const char *scope,
+                                         const char *session_id,
+                                         cai_source *state,
+                                         unsigned long long watermark,
+                                         cai_error *error) {
+  vectis_smith *smith = (vectis_smith *)context;
+  return vectis_smith_store_checkpoint(smith->store, scope, session_id, state,
+                                       watermark, error);
+}
+
+static int vectis_smith_named_append(void *context, const char *scope,
+                                     const char *session_id,
+                                     const cai_agent_session_event *event,
+                                     cai_error *error) {
+  vectis_smith *smith = (vectis_smith *)context;
+  return vectis_smith_store_append_event(smith->store, scope, session_id, event,
+                                         error);
+}
+
+static int vectis_smith_named_events(void *context, const char *scope,
+                                     const char *session_id,
+                                     unsigned long long after,
+                                     cai_agent_session_event_fn callback,
+                                     void *callback_context, cai_error *error) {
+  vectis_smith *smith = (vectis_smith *)context;
+  return vectis_smith_store_load_events_after(smith->store, scope, session_id,
+                                              after, callback, callback_context,
+                                              error);
+}
+
 vectis_status vectis_smith_open(const vectis_smith_config *config,
                                 vectis_smith **out, vectis_error *error) {
   vectis_smith *smith;
@@ -995,6 +1056,13 @@ vectis_status vectis_smith_open(const vectis_smith_config *config,
     return VECTIS_ERR_INVALID;
   }
   *out = NULL;
+  if (config->runtime.session_id != NULL &&
+      (config->runtime.session_id[0] == '\0' ||
+       strlen(config->runtime.session_id) >= CAI_AGENT_SESSION_ID_MAX)) {
+    vectis_smith_set_error(error, VECTIS_ERR_INVALID,
+                           "invalid Smith session id");
+    return VECTIS_ERR_INVALID;
+  }
   if (config->store != NULL && config->runtime.session_store != NULL) {
     vectis_smith_set_error(
         error, VECTIS_ERR_INVALID,
@@ -1026,6 +1094,16 @@ vectis_status vectis_smith_open(const vectis_smith_config *config,
   }
   if (config->store != NULL) {
     runtime.session_store = vectis_smith_store_session_store(config->store);
+    if (runtime.resume_latest && runtime.session_id != NULL) {
+      smith->store = config->store;
+      strcpy(smith->requested_session, runtime.session_id);
+      smith->named_store.context = smith;
+      smith->named_store.load_latest = vectis_smith_named_load;
+      smith->named_store.checkpoint = vectis_smith_named_checkpoint;
+      smith->named_store.append_event = vectis_smith_named_append;
+      smith->named_store.load_events_after = vectis_smith_named_events;
+      runtime.session_store = &smith->named_store;
+    }
   }
   rc =
       cai_agent_runtime_open(smith->client, &runtime, &smith->runtime, &caierr);

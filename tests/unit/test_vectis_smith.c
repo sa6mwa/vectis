@@ -98,6 +98,19 @@ static size_t failing_checkpoint_read(void *context, void *buffer,
   return 0u;
 }
 
+static void settle_offline_turn(vectis_smith *smith) {
+  vectis_error error;
+  cai_agent_run_state state;
+  int i;
+  for (i = 0; i < 200; ++i) {
+    (void)vectis_smith_pump(smith, 10L, &error);
+    assert(vectis_smith_state(smith, &state, &error) == VECTIS_OK);
+    if (state == CAI_AGENT_FAILED || state == CAI_AGENT_COMPLETED)
+      return;
+  }
+  assert(0 && "offline turn did not settle");
+}
+
 static void test_lockdc_store_checkpoint_and_events(void) {
   char directory[1024];
   char endpoint[sizeof(directory) + 32u];
@@ -272,6 +285,52 @@ static void test_lockdc_store_checkpoint_and_events(void) {
   }
 #endif
   cai_error_cleanup(&caierr);
+  {
+    vectis_smith_config config;
+    vectis_smith *smith;
+    char checkpoint_text[65536];
+    vectis_smith_config_init(&config);
+    config.store = store;
+    config.client_config.api_key = "offline-test-key";
+    config.client_config.base_url = "unsupported://offline-test";
+    config.client_config.timeout_ms = 10L;
+    config.runtime.workspace_directory = directory;
+    config.runtime.session_scope = "named-test";
+    config.runtime.disable_terminal = 1;
+    config.runtime.session_id = "named-one";
+    config.runtime.resume_latest = 1;
+    assert(vectis_smith_open(&config, &smith, &vectis_error) == VECTIS_OK);
+    assert(strcmp(vectis_smith_session_id(smith), "named-one") == 0);
+    assert(vectis_smith_submit_queued(smith, "remember first conversation",
+                                      &vectis_error) == VECTIS_OK);
+    settle_offline_turn(smith);
+    vectis_smith_close(smith);
+    config.runtime.session_id = "named-two";
+    assert(vectis_smith_open(&config, &smith, &vectis_error) == VECTIS_OK);
+    assert(strcmp(vectis_smith_session_id(smith), "named-two") == 0);
+    assert(vectis_smith_submit_queued(smith, "second conversation",
+                                      &vectis_error) == VECTIS_OK);
+    settle_offline_turn(smith);
+    vectis_smith_close(smith);
+    config.runtime.session_id = "named-one";
+    assert(vectis_smith_open(&config, &smith, &vectis_error) == VECTIS_OK);
+    assert(strcmp(vectis_smith_session_id(smith), "named-one") == 0);
+    assert(vectis_smith_submit_queued(smith, "followup", &vectis_error) ==
+           VECTIS_OK);
+    settle_offline_turn(smith);
+    vectis_smith_close(smith);
+    cai_error_init(&caierr);
+    assert(callbacks->load_latest(callbacks->context, "named-test", session_id,
+                                  sizeof(session_id), &loaded, &watermark,
+                                  &caierr) == CAI_OK);
+    assert(loaded != NULL && strcmp(session_id, "named-one") == 0);
+    nread = cai_source_read(loaded, checkpoint_text,
+                            sizeof(checkpoint_text) - 1u, &caierr);
+    checkpoint_text[nread] = '\0';
+    assert(strstr(checkpoint_text, "remember first conversation") != NULL);
+    cai_source_close(loaded);
+    cai_error_cleanup(&caierr);
+  }
   vectis_smith_store_destroy(store);
   lc_client_close(client);
   remove_tree(directory);

@@ -397,7 +397,102 @@ static void test_ui_rearms_pending_output(void) {
   vectis_smith_cli_render_cleanup(&render);
 }
 
+static void test_pending_turn_stays_busy(void) {
+  vectis_smith_cli_agent agent;
+  vectis_smith_cli_control control;
+  vectis_smith_cli_ui ui;
+  sl_prompt_queue_delivery_t delivery;
+  sl_t *editor = sl_create();
+  memset(&agent, 0, sizeof(agent));
+  memset(&ui, 0, sizeof(ui));
+  agent.notify_fd = -1;
+  pthread_mutex_init(&agent.mutex, NULL);
+  pthread_cond_init(&agent.changed, NULL);
+  ui.agent = &agent;
+  assert(editor != NULL);
+  assert(sl_set_prompt_queue(editor, 1, 4, 2) == SL_OK);
+  assert(sl_set_prompt_queue_profile(
+             editor, SL_PROMPT_QUEUE_PROFILE_QUEUED_TURNS) == SL_OK);
+  assert(vectis_smith_cli_agent_submit(&agent, VECTIS_SMITH_CLI_CONTROL_NORMAL,
+                                       "first") == 0);
+  assert(vectis_smith_cli_ui_apply(editor, &ui) == SL_OK);
+  assert(sl_get_prompt_queue_delivery(editor, &delivery) == SL_OK);
+  assert(delivery == SL_PROMPT_QUEUE_DELIVERY_MANUAL);
+  assert(vectis_smith_cli_agent_take_control(&agent, &control));
+  free(control.text);
+  /* Popping the bridge queue is not worker acknowledgement. */
+  assert(vectis_smith_cli_ui_apply(editor, &ui) == SL_OK);
+  assert(sl_get_prompt_queue_delivery(editor, &delivery) == SL_OK);
+  assert(delivery == SL_PROMPT_QUEUE_DELIVERY_MANUAL);
+  agent.state = CAI_AGENT_SAMPLING;
+  agent.pending_normal = 0u;
+  assert(vectis_smith_cli_ui_apply(editor, &ui) == SL_OK);
+  assert(sl_get_prompt_queue_delivery(editor, &delivery) == SL_OK);
+  assert(delivery == SL_PROMPT_QUEUE_DELIVERY_MANUAL);
+  agent.state = CAI_AGENT_COMPLETED;
+  assert(vectis_smith_cli_ui_apply(editor, &ui) == SL_OK);
+  assert(sl_get_prompt_queue_delivery(editor, &delivery) == SL_OK);
+  assert(delivery == SL_PROMPT_QUEUE_DELIVERY_AUTO);
+  assert(vectis_smith_cli_agent_submit(
+             &agent, VECTIS_SMITH_CLI_CONTROL_STEERING, "idle promotion") == 0);
+  assert(vectis_smith_cli_ui_apply(editor, &ui) == SL_OK);
+  assert(sl_get_prompt_queue_delivery(editor, &delivery) == SL_OK);
+  assert(delivery == SL_PROMPT_QUEUE_DELIVERY_MANUAL);
+  assert(vectis_smith_cli_agent_take_control(&agent, &control));
+  assert(control.kind == VECTIS_SMITH_CLI_CONTROL_NORMAL);
+  free(control.text);
+  sl_destroy(editor);
+  pthread_cond_destroy(&agent.changed);
+  pthread_mutex_destroy(&agent.mutex);
+}
+
+static void test_interactive_response_boundaries(void) {
+  vectis_smith_cli_render render;
+  vectis_smith_cli_agent agent;
+  cai_agent_runtime_event event;
+  char output[4096];
+  const char *answers[] = {"Hello world.", "Second answer."};
+  size_t length;
+  int i;
+  memset(&render, 0, sizeof(render));
+  memset(&agent, 0, sizeof(agent));
+  render.interactive = 1;
+  render.notify_fd = agent.notify_fd = -1;
+  pthread_mutex_init(&render.mutex, NULL);
+  pthread_cond_init(&render.changed, NULL);
+  pthread_mutex_init(&agent.mutex, NULL);
+  pthread_cond_init(&agent.changed, NULL);
+  agent.render = &render;
+  alarm(10u);
+  for (i = 0; i < 2; ++i) {
+    memset(&event, 0, sizeof(event));
+    event.type = CAI_AGENT_EVENT_TEXT_DELTA;
+    event.data = answers[i];
+    event.data_length = strlen(answers[i]);
+    assert(vectis_smith_cli_agent_event(&agent, &event, NULL) == CAI_OK);
+    event.type = CAI_AGENT_EVENT_RUN_STATE_CHANGED;
+    event.state = CAI_AGENT_COMPLETED;
+    assert(vectis_smith_cli_agent_event(&agent, &event, NULL) == CAI_OK);
+    pthread_mutex_lock(&render.mutex);
+    while (render.document_closed)
+      pthread_cond_wait(&render.changed, &render.mutex);
+    length = vectis_smith_cli_ring_read(&render.rendered, output,
+                                        sizeof(output) - 1u);
+    pthread_cond_broadcast(&render.changed);
+    pthread_mutex_unlock(&render.mutex);
+    output[length] = '\0';
+    assert(strstr(output, answers[i]) != NULL);
+    assert(strchr(output, '\n') != NULL);
+  }
+  alarm(0u);
+  vectis_smith_cli_render_cleanup(&render);
+  pthread_mutex_destroy(&agent.mutex);
+  pthread_cond_destroy(&agent.changed);
+}
+
 int main(void) {
+  test_pending_turn_stays_busy();
+  test_interactive_response_boundaries();
   test_large_exec_burst();
   test_ui_rearms_pending_output();
   test_render_multiple_responses();
