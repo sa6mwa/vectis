@@ -14,6 +14,18 @@ void vectis_smith_lockdc_diagnostic_message(const char *message, char *out,
                                             size_t out_capacity);
 
 struct http_request;
+/* Preflight runs under the storage mutation lock. It must not mutate storage.
+ */
+typedef int (*vectis_webdav_preflight_fn)(void *context);
+vectis_webdav_status vectis_internal_webdav_delete_authorized(
+    const vectis_webdav_config *config, const char *path, const char *if_match,
+    const char *if_none_match, vectis_webdav_preflight_fn preflight,
+    void *context);
+vectis_webdav_status vectis_internal_webdav_transfer_authorized(
+    const vectis_webdav_config *config, const char *source,
+    const char *destination, int overwrite, int move, int shallow,
+    const char *if_match, const char *if_none_match,
+    vectis_webdav_preflight_fn preflight, void *context);
 /* Quoted SHA-256 validator from the served descriptor; preserves its offset. */
 int vectis_internal_webdav_etag_fd(int fd, char out[67]);
 /* Returns 1 for a match, 0 for no match, -1 for malformed entity-tag lists. */

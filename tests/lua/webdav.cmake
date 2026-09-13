@@ -61,6 +61,11 @@ assert(server:webdav_embedded_site({
   extract_policy = "repair",
 }) == true)
 assert(server:webdav_embedded({path_prefix = "/readonly", auth_required = false}) == true)
+local hidden_provider = assert(vectis.auth.provider_callback(function(request)
+  if request.resource == "/assets/source.txt" then return {action = "deny", status_code = 404} end
+  return {action = "allow", principal = "listing-test"}
+end))
+assert(server:webdav_embedded({path_prefix = "/filtered", auth = {provider = hidden_provider}}))
 assert(server:start() == true)
 
 local ready
@@ -95,6 +100,10 @@ assert(missing.error.status_string == "state")
 assert(missing.error.source == "curl")
 assert(missing.error.http_status == 404)
 
+local filtered = webdav.propfind(request_opts("/filtered/assets", {depth = 1}))
+assert(filtered.status == 207)
+assert(not filtered.body:find("source.txt", 1, true))
+assert(webdav.get(request_opts("/filtered/assets/source.txt")).status == 404)
 local listed = webdav.propfind(request_opts("/dav/assets", {depth = 1}))
 assert(listed.ok == true, listed.error and listed.error.message)
 assert(listed.status == 207)

@@ -15226,6 +15226,7 @@ typedef struct vectis_auth_form_fields {
 
 typedef struct vectis_webdav_propfind_state {
   const vectis_webdav_route_data *data;
+  vectis_request *request;
   vectis_string_builder *xml;
   vectis_error *error;
   vectis_status status;
@@ -15683,6 +15684,152 @@ static vectis_status vectis_webdav_status_response(vectis_webdav_status status,
   }
 }
 
+/* Listings omit denied children without applying their challenge/redirect to
+ * the collection response. Provider errors still fail the request. */
+static vectis_status
+vectis_webdav_child_visible(const vectis_webdav_route_data *data,
+                            vectis_request *request, const char *path,
+                            int *visible, vectis_error *error) {
+  vectis_webdav_auth_request auth;
+  vectis_webdav_auth_response result;
+  vectis_status status;
+  *visible = 1;
+  if (!data->auth_required)
+    return VECTIS_OK;
+  auth.request = request;
+  auth.method = VECTIS_HTTP_PROPFIND;
+  auth.mount_path_prefix = data->path_prefix;
+  auth.resource_path = path;
+  vectis_webdav_auth_response_init(&result);
+  status = data->auth(&auth, &result, data->auth_userdata, error);
+  *visible = status == VECTIS_OK && result.action == VECTIS_WEBDAV_AUTH_ALLOW;
+  return status;
+}
+
+typedef struct vectis_webdav_authorization_path {
+  struct vectis_webdav_authorization_path *next;
+  char *path;
+} vectis_webdav_authorization_path;
+
+typedef struct vectis_webdav_authorization_walk {
+  const vectis_webdav_route_data *data;
+  vectis_request *request;
+  vectis_response *response;
+  vectis_error *error;
+  const char *source;
+  const char *target;
+  vectis_status status;
+  int authorized;
+  int recursive;
+  int overwrite;
+  int mapping;
+  vectis_webdav_authorization_path *pending;
+} vectis_webdav_authorization_walk;
+
+static int vectis_webdav_authorize_child(const char *path,
+                                         vectis_webdav_entry_kind kind,
+                                         size_t size, void *context) {
+  vectis_webdav_authorization_walk *walk = context;
+  vectis_webdav_authorization_path *node;
+  (void)kind;
+  (void)size;
+  node = calloc(1u, sizeof(*node));
+  if (node != NULL)
+    node->path = vectis_strdup(path);
+  if (node == NULL || node->path == NULL) {
+    free(node);
+    walk->status = VECTIS_ERR_NOMEM;
+    vectis_set_error(walk->error, walk->status,
+                     "failed to allocate WebDAV authorization path");
+    return 0;
+  }
+  node->next = walk->pending;
+  walk->pending = node;
+  return 1;
+}
+
+static int vectis_webdav_authorize_one(vectis_webdav_authorization_walk *walk,
+                                       const char *path) {
+  vectis_webdav_entry entry;
+  vectis_webdav_status status;
+  char mapped[VECTIS_WEBDAV_PATH_MAX + 1u];
+  int written;
+  walk->status = vectis_webdav_authenticate_request(
+      walk->data, walk->request, vectis_request_method(walk->request), path,
+      walk->response, &walk->authorized, walk->error);
+  if (walk->status != VECTIS_OK || !walk->authorized)
+    goto done;
+  if (walk->mapping && walk->target != NULL) {
+    written = snprintf(mapped, sizeof(mapped), "%s%s", walk->target,
+                       path + strlen(walk->source));
+    if (written < 0 || (size_t)written >= sizeof(mapped)) {
+      walk->status = VECTIS_ERR_INVALID;
+      vectis_set_error(walk->error, walk->status,
+                       "WebDAV destination path is too long");
+      goto done;
+    }
+    walk->status = vectis_webdav_authenticate_request(
+        walk->data, walk->request, vectis_request_method(walk->request), mapped,
+        walk->response, &walk->authorized, walk->error);
+    if (walk->status != VECTIS_OK || !walk->authorized)
+      goto done;
+  }
+  status = vectis_webdav_lookup(&walk->data->storage, path, &entry);
+  if (status == VECTIS_WEBDAV_NOT_FOUND || status == VECTIS_WEBDAV_TOMBSTONED)
+    goto done;
+  if (status == VECTIS_WEBDAV_OK && walk->recursive &&
+      entry.kind == VECTIS_WEBDAV_ENTRY_COLLECTION) {
+    status = vectis_webdav_list(&walk->data->storage, path,
+                                vectis_webdav_authorize_child, walk);
+  }
+  if (status != VECTIS_WEBDAV_OK && walk->status == VECTIS_OK) {
+    walk->status = VECTIS_ERR_STATE;
+    vectis_set_error(walk->error, walk->status,
+                     "failed to enumerate WebDAV authorization scope");
+  }
+done:
+  return walk->status == VECTIS_OK && walk->authorized;
+}
+
+static int vectis_webdav_authorize_tree(vectis_webdav_authorization_walk *walk,
+                                        const char *path) {
+  vectis_webdav_authorization_path *node;
+  if (!vectis_webdav_authorize_one(walk, path))
+    goto cleanup;
+  while (walk->pending != NULL) {
+    node = walk->pending;
+    walk->pending = node->next;
+    (void)vectis_webdav_authorize_one(walk, node->path);
+    free(node->path);
+    free(node);
+    if (walk->status != VECTIS_OK || !walk->authorized)
+      break;
+  }
+cleanup:
+  while (walk->pending != NULL) {
+    node = walk->pending;
+    walk->pending = node->next;
+    free(node->path);
+    free(node);
+  }
+  return walk->status == VECTIS_OK && walk->authorized;
+}
+
+static int vectis_webdav_authorize_mutation(void *context) {
+  vectis_webdav_authorization_walk *walk = context;
+  if (!walk->data->auth_required)
+    return 1;
+  walk->mapping = 1;
+  if (!vectis_webdav_authorize_tree(walk, walk->source))
+    return 0;
+  if (walk->target != NULL && walk->overwrite) {
+    walk->mapping = 0;
+    walk->recursive = 1;
+    return vectis_webdav_authorize_tree(walk, walk->target);
+  }
+  return 1;
+}
+
 static vectis_status vectis_webdav_xml_escape(vectis_string_builder *xml,
                                               const char *value,
                                               vectis_error *error) {
@@ -15776,11 +15923,18 @@ static int vectis_webdav_propfind_entry(const char *path,
                                         vectis_webdav_entry_kind kind,
                                         size_t size, void *userdata) {
   vectis_webdav_propfind_state *state;
+  int visible;
 
   state = (vectis_webdav_propfind_state *)userdata;
   if (state == NULL || state->status != VECTIS_OK) {
     return 0;
   }
+  state->status = vectis_webdav_child_visible(state->data, state->request, path,
+                                              &visible, state->error);
+  if (state->status != VECTIS_OK)
+    return 0;
+  if (!visible)
+    return 1;
   state->status = vectis_webdav_append_prop(state->data, path, kind, size,
                                             state->xml, state->error);
   return state->status == VECTIS_OK;
@@ -15837,6 +15991,7 @@ vectis_webdav_propfind(const vectis_webdav_route_data *data,
   if ((depth == NULL || strcmp(depth, "0") != 0) &&
       entry.kind == VECTIS_WEBDAV_ENTRY_COLLECTION) {
     state.data = data;
+    state.request = request;
     state.xml = &xml;
     state.error = error;
     state.status = VECTIS_OK;
@@ -15991,6 +16146,7 @@ vectis_webdav_embedded_exact(const vectis_embedded_fs *fs, const char *path,
 
 typedef struct vectis_webdav_embedded_propfind_state {
   const vectis_webdav_route_data *data;
+  vectis_request *request;
   const char *resource;
   size_t resource_len;
   vectis_string_builder *xml;
@@ -16022,6 +16178,7 @@ vectis_webdav_embedded_propfind_entry(const vectis_embedded_fs_entry *entry,
                                       void *userdata, vectis_error *error) {
   vectis_webdav_embedded_propfind_state *state;
   vectis_webdav_entry_kind kind;
+  int visible;
 
   state = (vectis_webdav_embedded_propfind_state *)userdata;
   if (state == NULL || state->status != VECTIS_OK || entry == NULL ||
@@ -16029,6 +16186,10 @@ vectis_webdav_embedded_propfind_entry(const vectis_embedded_fs_entry *entry,
       !vectis_webdav_embedded_immediate_child(state, entry->path)) {
     return VECTIS_OK;
   }
+  state->status = vectis_webdav_child_visible(state->data, state->request,
+                                              entry->path, &visible, error);
+  if (state->status != VECTIS_OK || !visible)
+    return state->status;
   if (entry->kind == VECTIS_EMBEDDED_FS_ENTRY_FILE) {
     kind = VECTIS_WEBDAV_ENTRY_FILE;
   } else if (entry->kind == VECTIS_EMBEDDED_FS_ENTRY_DIRECTORY) {
@@ -16089,6 +16250,7 @@ static vectis_status vectis_webdav_embedded_propfind(
       kind == VECTIS_WEBDAV_ENTRY_COLLECTION) {
     memset(&state, 0, sizeof(state));
     state.data = data;
+    state.request = request;
     state.resource = resource;
     state.resource_len = strlen(resource);
     state.xml = &xml;
@@ -16201,6 +16363,7 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
   const char *destination;
   const char *overwrite_header;
   const char *depth_header;
+  vectis_webdav_authorization_walk walk;
   char resource[VECTIS_WEBDAV_PATH_MAX + 1u];
   char target[VECTIS_WEBDAV_PATH_MAX + 1u];
   int authorized;
@@ -16221,6 +16384,14 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
   if (!authorized) {
     return VECTIS_OK;
   }
+  memset(&walk, 0, sizeof(walk));
+  walk.data = data;
+  walk.request = request;
+  walk.response = response;
+  walk.error = error;
+  walk.source = resource;
+  walk.authorized = 1;
+  walk.recursive = 1;
   if (method == VECTIS_HTTP_OPTIONS) {
     if (vectis_response_header(response, "dav", "1", error) != VECTIS_OK ||
         vectis_response_header(
@@ -16260,14 +16431,31 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
                : vectis_webdav_status_response(webdav_status, response, error);
   }
   if (method == VECTIS_HTTP_DELETE) {
-    webdav_status = vectis_webdav_delete_conditional(
+    webdav_status = vectis_internal_webdav_delete_authorized(
         &data->storage, resource, vectis_request_header(request, "if-match"),
-        vectis_request_header(request, "if-none-match"));
+        vectis_request_header(request, "if-none-match"),
+        vectis_webdav_authorize_mutation, &walk);
+    if (walk.status != VECTIS_OK || !walk.authorized)
+      return walk.status;
     return webdav_status == VECTIS_WEBDAV_OK
                ? vectis_response_status(response, 204, error)
                : vectis_webdav_status_response(webdav_status, response, error);
   }
   if (method == VECTIS_HTTP_MKCOL) {
+    lc_source *reader = vectis_request_body_reader(request);
+    lc_error read_error;
+    unsigned char byte;
+    size_t count = 0u;
+    lc_error_init(&read_error);
+    if (reader != NULL)
+      count = reader->read(reader, &byte, 1u, &read_error);
+    if (read_error.code != LC_OK) {
+      lc_error_cleanup(&read_error);
+      return vectis_response_status(response, 400, error);
+    }
+    lc_error_cleanup(&read_error);
+    if (count != 0u)
+      return vectis_response_status(response, 415, error);
     webdav_status = vectis_webdav_mkcol_conditional(
         &data->storage, resource, vectis_request_header(request, "if-match"),
         vectis_request_header(request, "if-none-match"));
@@ -16300,20 +16488,20 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
       return vectis_response_status(response, 400, error);
     }
     overwrite = overwrite_header == NULL || strcmp(overwrite_header, "T") == 0;
-    webdav_status =
+    walk.target = target;
+    walk.overwrite = overwrite;
+    walk.recursive = method == VECTIS_HTTP_MOVE || depth_header == NULL ||
+                     strcmp(depth_header, "0") != 0;
+    webdav_status = vectis_internal_webdav_transfer_authorized(
+        &data->storage, resource, target, overwrite, method == VECTIS_HTTP_MOVE,
         method == VECTIS_HTTP_COPY
-            ? vectis_webdav_copy_conditional(
-                  &data->storage, resource, target, overwrite,
-                  depth_header != NULL && strcmp(depth_header, "0") == 0 ? 0
-                                                                         : -1,
-                  vectis_request_header(request, "if-match"),
-                  vectis_request_header(request, "if-none-match"))
-            : vectis_internal_webdav_move_conditional_depth(
-                  &data->storage, resource, target, overwrite,
-                  vectis_request_header(request, "if-match"),
-                  vectis_request_header(request, "if-none-match"),
-                  depth_header == NULL ||
-                      strcmp(depth_header, "infinity") == 0);
+            ? !walk.recursive
+            : (depth_header != NULL && strcmp(depth_header, "infinity") != 0),
+        vectis_request_header(request, "if-match"),
+        vectis_request_header(request, "if-none-match"),
+        vectis_webdav_authorize_mutation, &walk);
+    if (walk.status != VECTIS_OK || !walk.authorized)
+      return walk.status;
     return webdav_status == VECTIS_WEBDAV_OK
                ? vectis_response_status(response, 201, error)
                : vectis_webdav_status_response(webdav_status, response, error);

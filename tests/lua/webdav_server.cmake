@@ -149,6 +149,17 @@ assert(server:webdav({
     allowed_modes = {"bearer"},
   },
 }) == true)
+local child_provider = assert(vectis.auth.provider_callback(function(request)
+  if request.resource:find("secret", 1, true) or request.resource == "/restricted/visible.txt" then
+    return {action = "deny", status_code = 404}
+  end
+  return {action = "allow", principal = "child-test"}
+end))
+for _, site in ipairs({"open", "disk"}) do
+  assert(server:webdav({path_prefix = "/guard-" .. site, cache_dir = cache_dir,
+    site_id = site, root_dir = site == "disk" and root_dir or nil,
+    auth = {provider = child_provider}}))
+end
 assert(server:start() == true)
 
 local ready
@@ -318,6 +329,49 @@ for _, prefix in ipairs({"/open", "/disk"}) do
       if operation == webdav.move then assert(remaining.status == 404)
       else assert(remaining.body == "replacement") end
     end
+  end
+end
+
+for _, site in ipairs({"open", "disk"}) do
+  local raw = "/" .. site
+  local guard = "/guard-" .. site
+  for _, path in ipairs({"/tree", "/tree/nested", "/plain", "/occupied", "/occupied/nested"}) do
+    assert(webdav.mkcol(request_opts(raw .. path)).ok)
+  end
+  for _, path in ipairs({"/tree/nested/secret.txt", "/tree/nested/visible.txt",
+      "/plain/visible.txt", "/occupied/nested/secret.txt"}) do
+    assert(webdav.put(request_opts(raw .. path, {body = path})).ok)
+  end
+  assert(webdav.get(request_opts(guard .. "/tree/nested/secret.txt")).status == 404)
+  local listing = webdav.propfind(request_opts(guard .. "/tree/nested", {depth = 1}))
+  assert(listing.status == 207)
+  assert(not listing.body:find("secret.txt", 1, true))
+  assert(listing.body:find("visible.txt", 1, true))
+  assert(webdav.delete(request_opts(guard .. "/tree")).status == 404)
+  assert(webdav.get(request_opts(raw .. "/tree/nested/secret.txt")).body == "/tree/nested/secret.txt")
+  for _, operation in ipairs({webdav.copy, webdav.move}) do
+    for _, pair in ipairs({{"/tree", "/plain"}, {"/plain", "/restricted"}, {"/plain", "/occupied"}}) do
+      local result = operation(request_opts(guard .. pair[1], {destination = base .. guard .. pair[2]}))
+      assert(result.status == 404, tostring(result.status))
+      assert(webdav.get(request_opts(raw .. "/tree/nested/secret.txt")).body == "/tree/nested/secret.txt")
+      assert(webdav.get(request_opts(raw .. "/plain/visible.txt")).body == "/plain/visible.txt")
+      assert(webdav.get(request_opts(raw .. "/occupied/nested/secret.txt")).body == "/occupied/nested/secret.txt")
+      assert(webdav.propfind(request_opts(raw .. "/restricted", {depth = 0})).status == 404)
+    end
+  end
+  assert(webdav.copy(request_opts(guard .. "/plain", {
+    destination = base .. guard .. "/occupied", depth = 0})).status == 404)
+  assert(webdav.copy(request_opts(guard .. "/tree", {
+    destination = base .. guard .. "/shallow-auth", depth = 0})).status == 201)
+  assert(webdav.get(request_opts(raw .. "/shallow-auth/nested/secret.txt")).status == 404)
+  assert(webdav.copy(request_opts(guard .. "/plain", {destination = base .. guard .. "/allowed-copy"})).status == 201)
+  assert(webdav.move(request_opts(guard .. "/allowed-copy", {destination = base .. guard .. "/allowed-move"})).status == 201)
+  assert(webdav.delete(request_opts(guard .. "/allowed-move")).status == 204)
+  for i, content_type in ipairs({"application/x-unknown", "application/xml"}) do
+    local path = raw .. "/body-mkcol-" .. i
+    assert(webdav.mkcol(request_opts(path, {body = "unsupported", headers = {["Content-Type"] = content_type}})).status == 415)
+    assert(webdav.propfind(request_opts(path, {depth = 0})).status == 404)
+    assert(webdav.mkcol(request_opts(path, {body = "", headers = {["Content-Type"] = content_type}})).status == 201)
   end
 end
 
