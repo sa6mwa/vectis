@@ -1980,6 +1980,8 @@ vectis_webdav_delete_conditional(const vectis_webdav_config *config,
   uint64_t usage;
   uint64_t resources;
   uint64_t additional_resources;
+  uint64_t removed_resources;
+  uint64_t removed_usage;
   vectis_webdav_status status;
   int lock_fd;
 
@@ -2023,8 +2025,25 @@ vectis_webdav_delete_conditional(const vectis_webdav_config *config,
     vectis_webdav_unlock(lock_fd);
     return VECTIS_WEBDAV_IO;
   }
-  additional_resources = 0u;
-  if (!vectis_webdav_missing_path_resources(tombstone_root, tombstone, 1,
+  removed_usage = 0u;
+  removed_resources = 0u;
+  if (!vectis_webdav_disk_usage(content, &removed_usage, &removed_resources) ||
+      resources < removed_resources) {
+    vectis_webdav_unlock(lock_fd);
+    return VECTIS_WEBDAV_IO;
+  }
+  resources -= removed_resources;
+  removed_usage = 0u;
+  removed_resources = 0u;
+  if (!vectis_webdav_disk_usage(tombstone, &removed_usage,
+                                &removed_resources) ||
+      resources < removed_resources) {
+    vectis_webdav_unlock(lock_fd);
+    return VECTIS_WEBDAV_IO;
+  }
+  resources -= removed_resources;
+  additional_resources = 1u; /* Replacement tombstone plus missing parents. */
+  if (!vectis_webdav_missing_path_resources(tombstone_root, tombstone, 0,
                                             &additional_resources)) {
     vectis_webdav_unlock(lock_fd);
     return VECTIS_WEBDAV_IO;

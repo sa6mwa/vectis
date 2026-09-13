@@ -1160,6 +1160,31 @@ int main(void) {
                              (const unsigned char *)"ab", 2u);
   expect(status == VECTIS_WEBDAV_LIMIT, "enforces aggregate quota");
 
+  limited_config = config;
+  limited_config.site_id = "delete-resource-quota";
+  limited_config.max_resources = 1u;
+  expect(vectis_webdav_put(&limited_config, "/a", (const unsigned char *)"a",
+                           1u) == VECTIS_WEBDAV_OK,
+         "fills resource quota");
+  expect(vectis_webdav_delete(&limited_config, "/a") == VECTIS_WEBDAV_OK,
+         "delete replaces content with tombstone at quota");
+  expect(vectis_webdav_delete(&limited_config, "/a") == VECTIS_WEBDAV_OK,
+         "repeated delete replaces tombstone at quota");
+  expect(vectis_webdav_delete(&limited_config, "/b") == VECTIS_WEBDAV_LIMIT,
+         "new tombstone still obeys quota");
+  limited_config.site_id = "delete-subtree-quota";
+  limited_config.max_resources = 3u;
+  expect(vectis_webdav_put(&limited_config, "/dir/a",
+                           (const unsigned char *)"a", 1u) == VECTIS_WEBDAV_OK,
+         "creates subtree at quota");
+  expect(vectis_webdav_delete(&limited_config, "/dir/a") == VECTIS_WEBDAV_OK,
+         "nested delete counts new tombstone parent");
+  expect(vectis_webdav_delete(&limited_config, "/dir") == VECTIS_WEBDAV_OK,
+         "collection delete subtracts content and descendant tombstones");
+  limited_config.max_resources = 1u;
+  expect(vectis_webdav_delete(&limited_config, "/dir") == VECTIS_WEBDAV_OK,
+         "collection tombstone leaves one resource");
+
   remove_tree(temp);
   return failures == 0 ? 0 : 1;
 }
