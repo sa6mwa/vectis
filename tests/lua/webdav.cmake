@@ -12,6 +12,9 @@ file(REMOVE "${download_path}" "${upload_path}" "${output}")
 file(MAKE_DIRECTORY "${site_dir}/assets")
 file(WRITE "${site_dir}/index.html" "<!doctype html><title>Vectis WebDAV</title>\n")
 file(WRITE "${site_dir}/assets/source.txt" "embedded webdav source\n")
+file(MAKE_DIRECTORY "${site_dir}/.vectis-txn-test" "${site_dir}/assets/.vectis-tmp-test")
+file(WRITE "${site_dir}/.vectis-txn-test/backup" "private")
+file(WRITE "${site_dir}/assets/.vectis-tmp-test/backup" "private")
 file(WRITE "${upload_path}" "file backed upload\n")
 
 string(CONFIGURE [=[
@@ -78,6 +81,13 @@ assert(ready.ok == true, ready.error and ready.error.message)
 assert(ready.status == 200)
 assert(ready.body == "embedded webdav source\n")
 for _, prefix in ipairs({"/dav", "/readonly"}) do
+  for _, path in ipairs({"/.vectis-txn-test/backup", "/assets/.vectis-tmp-test/backup"}) do
+    for _, method in ipairs({"GET", "HEAD", "OPTIONS", "PROPFIND", "PUT", "MKCOL", "DELETE", "COPY", "MOVE"}) do
+      assert(webdav.request(request_opts(prefix .. path, {
+        method = method, body = method == "PUT" and "replacement" or nil,
+        headers = {Destination = base .. prefix .. "/escaped", Depth = "0"}})).status == 404)
+    end
+  end
   for _, opts in ipairs({{}, {depth = "infinity"}}) do
     opts.method = "PROPFIND"
     local result = webdav.request(request_opts(prefix .. "/assets", opts))

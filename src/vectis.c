@@ -15572,7 +15572,21 @@ vectis_webdav_request_resource_path(const vectis_webdav_route_data *data,
       return 0;
     }
   }
-  return vectis_webdav_path_normalize(resource, out);
+  if (!vectis_webdav_path_normalize(resource, out)) {
+    return 0;
+  }
+  /* Staging and recovery data must never be addressable by a client.
+   * Keep storage normalization unrestricted for internal authorization walks.
+   */
+  resource = out;
+  while ((resource = strchr(resource, '/')) != NULL) {
+    resource++;
+    if (strncmp(resource, ".vectis-tmp-", sizeof(".vectis-tmp-") - 1u) == 0 ||
+        strncmp(resource, ".vectis-txn-", sizeof(".vectis-txn-") - 1u) == 0) {
+      return 0;
+    }
+  }
+  return 1;
 }
 
 static vectis_status
