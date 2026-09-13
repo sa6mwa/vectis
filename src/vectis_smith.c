@@ -213,12 +213,14 @@ static int vectis_smith_acquire(vectis_smith_store *store, const char *key,
   return rc == LC_OK ? CAI_OK : error->code;
 }
 
-static int vectis_smith_release(lc_lease *lease, cai_error *error) {
+static int vectis_smith_release(lc_lease *lease, int rollback,
+                                cai_error *error) {
   lc_release_req request;
   lc_error lcerr;
   int rc;
 
   lc_release_req_init(&request);
+  request.rollback = rollback;
   lc_error_init(&lcerr);
   rc = lease->release(lease, &request, &lcerr);
   if (rc != LC_OK) {
@@ -473,7 +475,7 @@ static int vectis_smith_store_checkpoint(void *context, const char *scope,
                                  "invalid Smith session scope");
       result = CAI_ERR_INVALID;
     } else {
-      result = vectis_smith_release(lease, error);
+      result = vectis_smith_release(lease, 0, error);
       lease = NULL;
       if (result == CAI_OK) {
         result = vectis_smith_acquire(store, key, &lease, error);
@@ -484,8 +486,16 @@ static int vectis_smith_store_checkpoint(void *context, const char *scope,
     }
   }
   if (lease != NULL) {
-    if (vectis_smith_release(lease, error) != CAI_OK && result == CAI_OK) {
-      result = error->code;
+    if (result == CAI_OK) {
+      result = vectis_smith_release(lease, 0, error);
+    } else {
+      cai_error rollback_error;
+
+      /* Never commit metadata without its attachment. Preserve the original
+       * persistence error even if rollback also fails. */
+      cai_error_init(&rollback_error);
+      (void)vectis_smith_release(lease, 1, &rollback_error);
+      cai_error_cleanup(&rollback_error);
     }
   }
   (void)pthread_mutex_unlock(&store->mutex);
@@ -532,7 +542,7 @@ static int vectis_smith_store_load_latest(
     missing = 1;
   }
   if (lease != NULL) {
-    if (vectis_smith_release(lease, error) != CAI_OK && result == CAI_OK) {
+    if (vectis_smith_release(lease, 0, error) != CAI_OK && result == CAI_OK) {
       result = error->code;
     }
     lease = NULL;
@@ -567,7 +577,7 @@ static int vectis_smith_store_load_latest(
           lease, VECTIS_SMITH_ATTACHMENT_CHECKPOINT, &bytes, &length, error);
     }
     if (lease != NULL) {
-      if (vectis_smith_release(lease, error) != CAI_OK && result == CAI_OK) {
+      if (vectis_smith_release(lease, 0, error) != CAI_OK && result == CAI_OK) {
         result = error->code;
       }
       lease = NULL;
@@ -724,7 +734,7 @@ static int vectis_smith_store_append_event(void *context, const char *scope,
   }
   free(encoded);
   if (lease != NULL) {
-    if (vectis_smith_release(lease, error) != CAI_OK && result == CAI_OK) {
+    if (vectis_smith_release(lease, 0, error) != CAI_OK && result == CAI_OK) {
       result = error->code;
     }
   }
@@ -861,7 +871,7 @@ static int vectis_smith_store_load_events_after(
   }
   lc_attachment_list_cleanup(&attachments);
   if (lease != NULL) {
-    if (vectis_smith_release(lease, error) != CAI_OK && result == CAI_OK) {
+    if (vectis_smith_release(lease, 0, error) != CAI_OK && result == CAI_OK) {
       result = error->code;
     }
   }

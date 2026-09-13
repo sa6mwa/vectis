@@ -84,6 +84,20 @@ static int replay_event(void *context, const cai_agent_session_event *event,
   return CAI_OK;
 }
 
+static size_t failing_checkpoint_read(void *context, void *buffer,
+                                      size_t capacity, cai_error *error) {
+  int *partial;
+
+  partial = (int *)context;
+  if (*partial && capacity != 0u) {
+    *partial = 0;
+    ((char *)buffer)[0] = '{';
+    return 1u;
+  }
+  error->code = CAI_ERR_TRANSPORT;
+  return 0u;
+}
+
 static void test_lockdc_store_checkpoint_and_events(void) {
   char directory[1024];
   char endpoint[sizeof(directory) + 32u];
@@ -176,6 +190,44 @@ static void test_lockdc_store_checkpoint_and_events(void) {
   assert(replay.sequences[1] == 6u);
   assert(strcmp(replay.types[0], "steering_queued") == 0);
   assert(strcmp(replay.types[1], "turn_queued") == 0);
+  {
+    cai_source_callbacks source_callbacks;
+    int attempt;
+    int partial;
+
+    for (attempt = 0; attempt < 2; ++attempt) {
+      partial = attempt;
+      memset(&source_callbacks, 0, sizeof(source_callbacks));
+      source_callbacks.context = &partial;
+      source_callbacks.read = failing_checkpoint_read;
+      assert(cai_source_from_callbacks(&source_callbacks, &state, &caierr) ==
+             CAI_OK);
+      assert(callbacks->checkpoint(callbacks->context, "workspace", "session-1",
+                                   state, 6u, &caierr) == CAI_ERR_TRANSPORT);
+      cai_source_close(state);
+      /* Reopen the store to verify persisted recovery state, not cached data.
+       */
+      vectis_smith_store_destroy(store);
+      assert(vectis_smith_store_new(&store_config, &store, &vectis_error) ==
+             VECTIS_OK);
+      callbacks = vectis_smith_store_session_store(store);
+      assert(callbacks->load_latest(callbacks->context, "workspace", session_id,
+                                    sizeof(session_id), &loaded, &watermark,
+                                    &caierr) == CAI_OK);
+      assert(strcmp(session_id, "session-1") == 0);
+      assert(watermark == 4u);
+      nread = cai_source_read(loaded, contents, sizeof(contents), &caierr);
+      assert(nread == sizeof(checkpoint) - 1u);
+      assert(memcmp(contents, checkpoint, nread) == 0);
+      cai_source_close(loaded);
+      memset(&replay, 0, sizeof(replay));
+      assert(callbacks->load_events_after(callbacks->context, "workspace",
+                                          "session-1", watermark, replay_event,
+                                          &replay, &caierr) == CAI_OK);
+      assert(replay.count == 2u);
+      assert(replay.sequences[0] == 5u && replay.sequences[1] == 6u);
+    }
+  }
 #ifdef VECTIS_TEST_SMITH_FAULTS
   /* Simulate a checkpoint interrupted after the session commit, before the
    * scope update. Bytes and watermark must still come from the same commit. */
