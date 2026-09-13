@@ -1,28 +1,25 @@
 #!/usr/bin/env bash
 set -eu
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH='' cd -- "$script_dir/.." && pwd)
 build_dir="$repo_root/build/no-kore"
-tmp_script="${TMPDIR:-/tmp}/vectis-no-kore-contract.$$"
+mkdir -p "$build_dir"
+tmp_script=$(mktemp "$build_dir/no-kore-contract.XXXXXXXX.lua")
+unset LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT
 
 cleanup() {
   rm -f "$tmp_script"
 }
 trap cleanup EXIT HUP INT TERM
 
-cmake -S "$repo_root" -B "$build_dir" -GNinja \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DVECTIS_EXTERNAL_ROOT="$repo_root/.cache/deps/host-debug" \
+cmake --preset debug -S "$repo_root" -B "$build_dir" \
   -DVECTIS_WITH_KORE_RUNTIME=OFF \
-  -DVECTIS_BUILD_STATIC=ON \
-  -DVECTIS_BUILD_SHARED=OFF \
-  -DVECTIS_BUILD_BINARY=ON \
   -DVECTIS_BUILD_TESTS=OFF \
-  -DVECTIS_BUILD_FUZZERS=OFF \
   -DVECTIS_INSTALL=OFF
 
 cmake --build "$build_dir"
+python3 "$script_dir/test_runtime_contract.py" "$build_dir"
 
 cat >"$tmp_script" <<'LUA'
 local vectis = require("vectis")

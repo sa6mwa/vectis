@@ -329,7 +329,7 @@ test-no-kore: deps-debug
 
 test-install-tree: $(KORE_PATCH_STAMP)
 	$(TIMED) deps-install-tree bash ./scripts/deps.sh deps-x86_64-linux-gnu
-	$(TIMED) configure-install-tree $(CMAKE) -S . -B build/x86_64-linux-gnu-install-tree -GNinja -DCMAKE_BUILD_TYPE=Release -DVECTIS_EXTERNAL_ROOT=.cache/deps/x86_64-linux-gnu -DVECTIS_BUILD_STATIC=ON -DVECTIS_BUILD_SHARED=ON -DVECTIS_BUILD_BINARY=ON -DVECTIS_BUILD_TESTS=ON -DVECTIS_INSTALL=ON -DVECTIS_DIST_DIR=build/x86_64-linux-gnu-install-tree/dist -DVECTIS_TARGET_ARCH=x86_64 -DVECTIS_TARGET_OS=linux -DVECTIS_TARGET_LIBC=gnu
+	$(TIMED) configure-install-tree $(CMAKE) --preset x86_64-linux-gnu-release -B build/x86_64-linux-gnu-install-tree -DVECTIS_BUILD_SHARED=ON -DVECTIS_DIST_DIR=build/x86_64-linux-gnu-install-tree/dist
 	$(TIMED) build-install-tree $(CMAKE) --build build/x86_64-linux-gnu-install-tree
 	$(TIMED) install-tree-direct $(CMAKE) --install build/x86_64-linux-gnu-install-tree --prefix build/x86_64-linux-gnu-install-tree/install
 	$(TIMED) verify-direct-install-tree-static bash ./scripts/verify_installed_sdk.sh build/x86_64-linux-gnu-install-tree/install static .cache/deps/x86_64-linux-gnu

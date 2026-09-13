@@ -18,6 +18,15 @@ creation. DT_RPATH covers transitive dependencies as well as direct dependencies
 The configured sysroot is the source of paths, not a duplicated cache location.
 Library targets and their exported usage requirements are not modified.
 
+Linux configuration must select a toolchain explicitly, normally through a
+checked-in preset. A plain `cmake -S . -B ...` without a toolchain is rejected
+before compiler discovery. The toolchain supplies the default target identity,
+so selecting it without repeating `VECTIS_TARGET_ID` still enables the runtime
+policy. No-Kore, install-tree and extracted-source smoke builds use the same
+presets as the ordinary debug/release builds.
+An explicitly supplied target identity that conflicts with the selected
+toolchain is rejected rather than disabling the matching runtime policy.
+
 ```sh
 make test
 ctest --preset debug -R vectis_runtime_contract --output-on-failure
@@ -191,3 +200,27 @@ Linux library-path environment overrides from SDK/release smoke checks.
 The earlier service e2e and release CLI results still apply to the unchanged
 executable link policy. This sweep did not rebuild the full release matrix or
 repeat service e2e. Cross-target execution remains outside the native policy.
+
+### Auxiliary-entry-point sweep
+
+A second sweep reproduced host compiler selection and missing runtime-test
+registration through a plain CMake configuration. The no-Kore, install-tree
+and source-archive smoke entry points were still using that route. They now
+select the existing presets; the startup guard and toolchain-derived identity
+prevent that accidental fallback. The regression also covers conflicting target
+identities and Release test configurations with the CLI disabled.
+
+- `make test-no-kore` passed, including runtime checks for 37 executables.
+- A fresh `make test-install-tree` passed direct-install and packaged static/
+  shared SDK checks. Its two Release runtime tests passed, including verification
+  that the CLI has no interpreter or dynamic dependencies.
+- `make package-source-smoke` extracted, built and passed all 89 tests using
+  Bootlin from the source archive.
+- Final debug suite: 90/90. Formatting, lifecycle/privacy, resolver and shell
+  checks passed. Both ASan runtime tests passed; the full sanitizer suite and
+  service e2e were not repeated, and the SSH leak remains unresolved.
+
+Evidence: `build/runtime-sweep2-no-kore.log`,
+`build/runtime-sweep2-install.log`, `build/runtime-sweep2-source.log`, and
+`build/runtime-sweep2-final.log`. The old host-built install-tree cache was
+preserved at `build/runtime-sweep2-host-install-tree` before the fresh build.

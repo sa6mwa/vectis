@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -eu
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH='' cd -- "$script_dir/.." && pwd)
 archive=${1:?usage: scripts/test_release_from_source.sh ARCHIVE}
 cmake_bin=${CMAKE:-cmake}
 work_root="$repo_root/build/source-smoke"
@@ -56,7 +56,7 @@ fi
 
 if [ "${VECTIS_SOURCE_SMOKE_BUILD:-1}" != "0" ]; then
   bash "$source_root/scripts/deps.sh" deps-host-debug
-  "$cmake_bin" -S "$source_root" -B "$work_root/build" -GNinja
+  "$cmake_bin" --preset debug -S "$source_root" -B "$work_root/build"
   "$cmake_bin" --build "$work_root/build"
   "$cmake_bin" --build "$work_root/build" --target test
 fi

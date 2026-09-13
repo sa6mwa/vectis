@@ -103,8 +103,9 @@ def main():
     if sdk:
         pass
     elif values.get("CMAKE_BUILD_TYPE") == "Release":
-        assert "INTERP" not in output(readelf, "-l", str(build / "vectis"))
-        assert "NEEDED" not in output(readelf, "-d", str(build / "vectis"))
+        if values.get("VECTIS_BUILD_BINARY") == "ON":
+            assert "INTERP" not in output(readelf, "-l", str(build / "vectis"))
+            assert "NEEDED" not in output(readelf, "-d", str(build / "vectis"))
     else:
         result = subprocess.run(["cmake", f"-DVECTIS_BINARY_DIR={build}",
                                  f"-DVECTIS_ROOT={root}", "-P",

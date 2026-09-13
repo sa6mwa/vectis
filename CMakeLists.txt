@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.21)
 
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_TOOLCHAIN_FILE)
+  message(FATAL_ERROR
+    "Linux builds require a pinned toolchain. Use cmake --preset debug, or set CMAKE_TOOLCHAIN_FILE to a cmake/toolchains/<target>.cmake file; use a fresh build directory when changing compilers.")
+endif()
+
 set(VECTIS_VERSION_OVERRIDE "" CACHE STRING "Deliberate release-candidate version override.")
 set(vectis_version_args)
 if(NOT VECTIS_VERSION_OVERRIDE STREQUAL "")
