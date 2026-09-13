@@ -9,6 +9,36 @@
 #include <unistd.h>
 #include <vectis/vectis.h>
 
+#ifdef VECTIS_TEST_SMITH_FAULTS
+static int fail_scope_acquire;
+static size_t fail_malloc_size;
+void *__real_malloc(size_t size);
+void *__wrap_malloc(size_t size);
+int __real_lc_acquire(lc_client *client, const lc_acquire_req *req,
+                      lc_lease **out, lc_error *error);
+int __wrap_lc_acquire(lc_client *client, const lc_acquire_req *req,
+                      lc_lease **out, lc_error *error);
+
+void *__wrap_malloc(size_t size) {
+  if (fail_malloc_size != 0u && size == fail_malloc_size) {
+    fail_malloc_size = 0u;
+    return NULL;
+  }
+  return __real_malloc(size);
+}
+
+int __wrap_lc_acquire(lc_client *client, const lc_acquire_req *req,
+                      lc_lease **out, lc_error *error) {
+  if (fail_scope_acquire && strstr(req->key, "scope/") != NULL) {
+    fail_scope_acquire = 0;
+    *out = NULL;
+    error->code = LC_ERR_INVALID;
+    return LC_ERR_INVALID;
+  }
+  return __real_lc_acquire(client, req, out, error);
+}
+#endif
+
 typedef struct smith_replay {
   unsigned long long sequences[4];
   char types[4][32];
@@ -55,7 +85,7 @@ static int replay_event(void *context, const cai_agent_session_event *event,
 }
 
 static void test_lockdc_store_checkpoint_and_events(void) {
-  char directory[] = "/tmp/vectis-smith-store.XXXXXX";
+  char directory[1024];
   char endpoint[sizeof(directory) + 32u];
   const char *endpoints[1];
   const char checkpoint[] = "{\"version\":1}";
@@ -78,6 +108,8 @@ static void test_lockdc_store_checkpoint_and_events(void) {
   size_t nread;
   smith_replay replay;
 
+  assert(getcwd(directory, sizeof(directory) - 40u) != NULL);
+  strcat(directory, "/vectis-smith-store.XXXXXX");
   assert(mkdtemp(directory) != NULL);
   assert(snprintf(endpoint, sizeof(endpoint), "pouch://%s?single_writer=false",
                   directory) > 0);
@@ -144,6 +176,49 @@ static void test_lockdc_store_checkpoint_and_events(void) {
   assert(replay.sequences[1] == 6u);
   assert(strcmp(replay.types[0], "steering_queued") == 0);
   assert(strcmp(replay.types[1], "turn_queued") == 0);
+#ifdef VECTIS_TEST_SMITH_FAULTS
+  /* Simulate a checkpoint interrupted after the session commit, before the
+   * scope update. Bytes and watermark must still come from the same commit. */
+  vectis_source = vectis_source_from_memory("new checkpoint", 14u);
+  assert(vectis_cai_source_from_source(&vectis_source, &state, &vectis_error) ==
+         VECTIS_OK);
+  fail_scope_acquire = 1;
+  assert(callbacks->checkpoint(callbacks->context, "workspace", "session-1",
+                               state, 6u, &caierr) != CAI_OK);
+  assert(fail_scope_acquire == 0);
+  cai_source_close(state);
+  assert(callbacks->load_latest(callbacks->context, "workspace", session_id,
+                                sizeof(session_id), &loaded, &watermark,
+                                &caierr) == CAI_OK);
+  assert(watermark == 6u);
+  assert(cai_source_read(loaded, contents, sizeof(contents), &caierr) == 14u);
+  assert(memcmp(contents, "new checkpoint", 14u) == 0);
+  cai_source_close(loaded);
+  memset(&replay, 0, sizeof(replay));
+  assert(callbacks->load_events_after(callbacks->context, "workspace",
+                                      "session-1", watermark, replay_event,
+                                      &replay, &caierr) == CAI_OK);
+  assert(replay.count == 0u);
+  {
+    char type[10001];
+    char data[10003];
+    int i;
+    memset(type, 't', sizeof(type) - 1u);
+    type[sizeof(type) - 1u] = '\0';
+    memset(data, 'd', sizeof(data) - 1u);
+    data[sizeof(data) - 1u] = '\0';
+    first.type = type;
+    first.data = data;
+    first.sequence = 7u;
+    for (i = 0; i < 2; ++i) {
+      fail_malloc_size = i == 0 ? sizeof(type) : sizeof(data);
+      assert(callbacks->append_event(callbacks->context, "workspace",
+                                     "session-1", &first,
+                                     &caierr) == CAI_ERR_NOMEM);
+      assert(fail_malloc_size == 0u);
+    }
+  }
+#endif
   cai_error_cleanup(&caierr);
   vectis_smith_store_destroy(store);
   lc_client_close(client);

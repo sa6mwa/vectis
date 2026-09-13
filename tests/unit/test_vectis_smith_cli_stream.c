@@ -122,9 +122,11 @@ static void test_render_multiple_responses(void) {
   assert(vectis_smith_cli_render_append(&render, "# first response\n", 17u) ==
          0);
   usleep(100000u);
-  (void)pthread_mutex_lock(&render.mutex);
-  assert(render.rendered.count != 0u);
-  (void)pthread_mutex_unlock(&render.mutex);
+  /* Exec output is delivered while the response is still open. */
+  {
+    struct pollfd ready = {pipe_fds[0], POLLIN, 0};
+    assert(poll(&ready, 1u, 1000) == 1);
+  }
   vectis_smith_cli_render_finish(&render);
   assert(!vectis_smith_cli_render_failed(&render));
   assert(vectis_smith_cli_render_append(&render, "second response\n", 16u) ==
@@ -302,7 +304,102 @@ static void test_interactive_queue_and_promote(void) {
   assert(close(log_fds[0]) == 0);
 }
 
+static void test_large_exec_burst(void) {
+  vectis_smith_cli_render render;
+  char *burst;
+  size_t length = 1024u * 1024u;
+  size_t i;
+  int saved_stdout;
+  FILE *output;
+
+  memset(&render, 0, sizeof(render));
+  render.notify_fd = -1;
+  assert(pthread_mutex_init(&render.mutex, NULL) == 0);
+  assert(pthread_cond_init(&render.changed, NULL) == 0);
+  burst = malloc(length);
+  assert(burst != NULL);
+  for (i = 0u; i < length; ++i)
+    burst[i] = i % 64u == 63u ? '\n' : 'x';
+  output = fopen("smith-burst-output.tmp", "w+");
+  assert(output != NULL);
+  assert(fflush(stdout) == 0);
+  saved_stdout = dup(STDOUT_FILENO);
+  assert(saved_stdout >= 0);
+  assert(dup2(fileno(output), STDOUT_FILENO) == STDOUT_FILENO);
+  alarm(10u);
+  assert(vectis_smith_cli_render_append(&render, burst, length) == 0);
+  vectis_smith_cli_render_finish(&render);
+  alarm(0u);
+  assert(!vectis_smith_cli_render_failed(&render));
+  assert(fflush(stdout) == 0);
+  assert(dup2(saved_stdout, STDOUT_FILENO) == STDOUT_FILENO);
+  assert(close(saved_stdout) == 0);
+  rewind(output);
+  i = 0u;
+  while (fgetc(output) != EOF)
+    ++i;
+  assert(i >= length);
+  assert(fclose(output) == 0);
+  assert(unlink("smith-burst-output.tmp") == 0);
+  free(burst);
+  vectis_smith_cli_render_cleanup(&render);
+}
+
+static void test_ui_rearms_pending_output(void) {
+  vectis_smith_cli_render render;
+  vectis_smith_cli_agent agent;
+  vectis_smith_cli_ui ui;
+  sl_t *editor;
+  int fds[2];
+  int saved_stdout;
+  int sink;
+  struct pollfd ready;
+
+  memset(&render, 0, sizeof(render));
+  memset(&agent, 0, sizeof(agent));
+  assert(pthread_mutex_init(&render.mutex, NULL) == 0);
+  assert(pthread_cond_init(&render.changed, NULL) == 0);
+  assert(pthread_mutex_init(&agent.mutex, NULL) == 0);
+  assert(pipe(fds) == 0);
+  assert(fcntl(fds[0], F_SETFL, O_NONBLOCK) == 0);
+  assert(fcntl(fds[1], F_SETFL, O_NONBLOCK) == 0);
+  render.notify_fd = fds[1];
+  memset(render.rendered.bytes, 'x', sizeof(render.rendered.bytes));
+  render.rendered.count = sizeof(render.rendered.bytes);
+  ui.agent = &agent;
+  ui.render = &render;
+  ui.wake_fd = fds[0];
+  editor = sl_create();
+  assert(editor != NULL);
+  assert(fflush(stdout) == 0);
+  saved_stdout = dup(STDOUT_FILENO);
+  sink = open("/dev/null", O_WRONLY);
+  assert(saved_stdout >= 0 && sink >= 0);
+  assert(dup2(sink, STDOUT_FILENO) == STDOUT_FILENO);
+  vectis_smith_cli_notify(fds[1]);
+  (void)vectis_smith_cli_ui_watch(editor, NULL, &ui);
+  assert(render.rendered.count ==
+         VECTIS_SMITH_CLI_QUEUE_BYTES - VECTIS_SMITH_CLI_UI_DRAIN_BYTES);
+  ready.fd = fds[0];
+  ready.events = POLLIN;
+  ready.revents = 0;
+  assert(poll(&ready, 1u, 1000) == 1);
+  (void)vectis_smith_cli_ui_watch(editor, NULL, &ui);
+  assert(render.rendered.count == 0u);
+  assert(poll(&ready, 1u, 0) == 0);
+  assert(dup2(saved_stdout, STDOUT_FILENO) == STDOUT_FILENO);
+  close(saved_stdout);
+  close(sink);
+  close(fds[0]);
+  close(fds[1]);
+  sl_destroy(editor);
+  pthread_mutex_destroy(&agent.mutex);
+  vectis_smith_cli_render_cleanup(&render);
+}
+
 int main(void) {
+  test_large_exec_burst();
+  test_ui_rearms_pending_output();
   test_render_multiple_responses();
   test_agent_control_bridge_is_fifo();
   test_softline_queued_turns_profile();

@@ -35,6 +35,8 @@ typedef struct vectis_smith_cli_render {
   vectis_smith_cli_ring markdown;
   vectis_smith_cli_ring rendered;
   pthread_t thread;
+  pthread_t output_thread;
+  int output_thread_started;
   int thread_started;
   int input_closed;
   int renderer_done;
@@ -191,6 +193,22 @@ static void vectis_smith_cli_drain(vectis_smith_cli_render *render) {
   vectis_smith_cli_drain_limited(render, (size_t)-1);
 }
 
+static void *vectis_smith_cli_output_thread(void *userdata) {
+  vectis_smith_cli_render *render = userdata;
+  for (;;) {
+    (void)pthread_mutex_lock(&render->mutex);
+    while (render->rendered.count == 0u && !render->renderer_done) {
+      (void)pthread_cond_wait(&render->changed, &render->mutex);
+    }
+    if (render->rendered.count == 0u && render->renderer_done) {
+      (void)pthread_mutex_unlock(&render->mutex);
+      return NULL;
+    }
+    (void)pthread_mutex_unlock(&render->mutex);
+    vectis_smith_cli_drain(render);
+  }
+}
+
 static void vectis_smith_cli_notify(int fd) {
   unsigned char byte;
 
@@ -282,8 +300,23 @@ static int vectis_smith_cli_render_start(vectis_smith_cli_render *render) {
   render->renderer_done = 0;
   render->renderer_failed = 0;
   (void)pthread_mutex_unlock(&render->mutex);
+  if (!render->interactive) {
+    if (pthread_create(&render->output_thread, NULL,
+                       vectis_smith_cli_output_thread, render) != 0) {
+      return -1;
+    }
+    render->output_thread_started = 1;
+  }
   if (pthread_create(&render->thread, NULL, vectis_smith_cli_render_thread,
                      render) != 0) {
+    (void)pthread_mutex_lock(&render->mutex);
+    render->renderer_done = 1;
+    (void)pthread_cond_broadcast(&render->changed);
+    (void)pthread_mutex_unlock(&render->mutex);
+    if (render->output_thread_started) {
+      (void)pthread_join(render->output_thread, NULL);
+      render->output_thread_started = 0;
+    }
     return -1;
   }
   render->thread_started = 1;
@@ -319,17 +352,22 @@ static void vectis_smith_cli_render_finish(vectis_smith_cli_render *render) {
   render->input_closed = 1;
   (void)pthread_cond_broadcast(&render->changed);
   (void)pthread_mutex_unlock(&render->mutex);
-  for (;;) {
-    (void)pthread_mutex_lock(&render->mutex);
-    if (render->renderer_done) {
+  if (render->output_thread_started) {
+    (void)pthread_join(render->output_thread, NULL);
+    render->output_thread_started = 0;
+  } else {
+    for (;;) {
+      (void)pthread_mutex_lock(&render->mutex);
+      if (render->renderer_done) {
+        (void)pthread_mutex_unlock(&render->mutex);
+        break;
+      }
       (void)pthread_mutex_unlock(&render->mutex);
-      break;
+      vectis_smith_cli_drain(render);
+      usleep(1000u);
     }
-    (void)pthread_mutex_unlock(&render->mutex);
     vectis_smith_cli_drain(render);
-    usleep(1000u);
   }
-  vectis_smith_cli_drain(render);
   (void)pthread_join(render->thread, NULL);
   render->thread_started = 0;
 }
@@ -927,6 +965,11 @@ static int vectis_smith_cli_ui_watch(sl_t *editor,
   while (read(ui->wake_fd, bytes, sizeof(bytes)) > 0) {
   }
   vectis_smith_cli_drain_limited(ui->render, VECTIS_SMITH_CLI_UI_DRAIN_BYTES);
+  (void)pthread_mutex_lock(&ui->render->mutex);
+  if (ui->render->rendered.count != 0u) {
+    vectis_smith_cli_notify(ui->render->notify_fd);
+  }
+  (void)pthread_mutex_unlock(&ui->render->mutex);
   return vectis_smith_cli_ui_apply(editor, ui);
 }
 
@@ -1226,7 +1269,6 @@ int vectis_smith_cli_command(int argc, char **argv, int index,
         rc = 1;
         break;
       }
-      vectis_smith_cli_drain(&render);
       if (vectis_smith_state(smith, &state, &error) != VECTIS_OK) {
         rc = 1;
         break;

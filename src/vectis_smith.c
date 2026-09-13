@@ -548,6 +548,21 @@ static int vectis_smith_store_load_latest(
       result = vectis_smith_acquire(store, key, &lease, error);
     }
     if (result == CAI_OK) {
+      vectis_smith_record session_record;
+      result =
+          vectis_smith_load_record(lease, &session_record, &missing, error);
+      if (result == CAI_OK && (missing || strcmp(session_record.session_id,
+                                                 record.session_id) != 0)) {
+        vectis_smith_set_cai_error(
+            error, CAI_ERR_PROTOCOL,
+            "Smith checkpoint metadata does not match key");
+        result = CAI_ERR_PROTOCOL;
+      }
+      if (result == CAI_OK) {
+        record = session_record;
+      }
+    }
+    if (result == CAI_OK) {
       result = vectis_smith_attachment_memory(
           lease, VECTIS_SMITH_ATTACHMENT_CHECKPOINT, &bytes, &length, error);
     }
@@ -673,8 +688,6 @@ static int vectis_smith_store_append_event(void *context, const char *scope,
     event_record.data =
         vectis_smith_strdup(event->data == NULL ? "" : event->data);
     if (event_record.type == NULL || event_record.data == NULL) {
-      free(event_record.type);
-      free(event_record.data);
       vectis_smith_set_cai_error(error, CAI_ERR_NOMEM,
                                  "failed to copy Smith session event");
       result = CAI_ERR_NOMEM;
