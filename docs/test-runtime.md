@@ -56,6 +56,11 @@ unexpected host dependencies fail the gate. It also checks child self-exec and
 includes a missing-runtime negative fixture. A Release run additionally checks
 that the CLI has no interpreter or dynamic dependencies.
 
+Every loader mapping is checked, including absolute-path `DT_NEEDED` entries
+printed without `=>`. Unknown output and non-absolute mappings are rejected.
+A compiled regression covers both named and absolute dependencies, paths with
+spaces, allowed versus forbidden library roots, and substituted pinned libc.
+
 Target enumeration uses one regenerated manifest, so disabling a target cannot
 leave a stale entry in the gate. A reconfiguration regression builds and runs a
 helper after removing an optional target. The standalone fuzz smoke entry point
@@ -224,3 +229,17 @@ Evidence: `build/runtime-sweep2-no-kore.log`,
 `build/runtime-sweep2-install.log`, `build/runtime-sweep2-source.log`, and
 `build/runtime-sweep2-final.log`. The old host-built install-tree cache was
 preserved at `build/runtime-sweep2-host-install-tree` before the fresh build.
+
+### Mapping-gate sweep
+
+A compiled probe exposed a verifier blind spot: absolute dependencies printed
+without `=>` were ignored. The checker now validates every mapping and rejects
+unrecognized output. Both loader formats have positive and negative regressions.
+No wrong-runtime mapping was found in the existing debug, ASan, coverage, fuzz,
+no-Kore or Release install-tree builds under the stricter checker.
+
+The debug suite passed 91/91, followed by formatting and lifecycle/privacy
+checks (`build/runtime-sweep3-final.log`). Shared SDK verification passed for
+three consumers and 36 installed examples (`build/runtime-sweep3-sdk.log`).
+This sweep changed no executable link policy. Full ASan and service e2e were
+not repeated; the documented SSH sanitizer leak remains unresolved.

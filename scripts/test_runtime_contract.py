@@ -16,7 +16,20 @@ def output(*args, **kwargs):
 def check_libraries(trace, libraries, roots):
     assert "not found" not in trace, trace
     checked = set()
-    for name, path in re.findall(r"(\S+) => (\S+)", trace):
+    for line in trace.splitlines():
+        if not line.strip():
+            continue
+        mapping = re.fullmatch(r"\s*(.+?)\s+\(0x[0-9a-fA-F]+\)\s*", line)
+        assert mapping, f"unrecognized runtime mapping: {line}"
+        entry = mapping.group(1)
+        if entry == "linux-vdso.so.1":
+            continue
+        if " => " in entry:
+            name, path = entry.split(" => ", 1)
+        else:
+            path = entry
+            name = Path(path).name
+        assert Path(path).is_absolute(), f"non-absolute runtime mapping: {line}"
         if name in libraries:
             assert any(os.path.samefile(path, candidate) for candidate in libraries[name]), (name, path)
         else:
