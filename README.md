@@ -249,6 +249,11 @@ make build
 make test
 ```
 
+Local GNU/Linux x86-64 executables (including the debug CLI and tests) select
+the pinned Bootlin loader and libraries at link time, without a runtime wrapper.
+The shipped Linux Release CLI remains static. See
+[test runtime policy and verification](docs/test-runtime.md).
+
 Useful gates:
 
 ```sh

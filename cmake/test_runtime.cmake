@@ -33,8 +33,7 @@ function(vectis_pin_local_executables directory)
       # RPATH covers transitive dependencies. The runtime contract verifies the
       # actual resolved paths, including dependencies found in the loader cache.
       set_property(TARGET ${target} APPEND PROPERTY BUILD_RPATH ${vectis_test_runtime_dirs})
-      file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/test-runtime/targets/${target}.txt"
-        CONTENT "$<TARGET_FILE:${target}>\n")
+      set_property(GLOBAL APPEND PROPERTY VECTIS_RUNTIME_TARGET_FILES "$<TARGET_FILE:${target}>")
     endif()
   endforeach()
   get_property(children DIRECTORY "${directory}" PROPERTY SUBDIRECTORIES)
@@ -42,7 +41,14 @@ function(vectis_pin_local_executables directory)
     vectis_pin_local_executables("${child}")
   endforeach()
 endfunction()
-cmake_language(DEFER CALL vectis_pin_local_executables "${CMAKE_SOURCE_DIR}")
+function(vectis_finalize_local_runtime)
+  vectis_pin_local_executables("${CMAKE_SOURCE_DIR}")
+  get_property(files GLOBAL PROPERTY VECTIS_RUNTIME_TARGET_FILES)
+  list(JOIN files "\n" manifest)
+  file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/test-runtime/targets.txt"
+    CONTENT "${manifest}\n")
+endfunction()
+cmake_language(DEFER CALL vectis_finalize_local_runtime)
 
 if(VECTIS_BUILD_TESTS OR VECTIS_BUILD_FUZZERS)
   get_filename_component(vectis_toolchain_cache "${CMAKE_SYSROOT}/../../../.." ABSOLUTE)

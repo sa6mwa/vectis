@@ -47,10 +47,12 @@ def main():
         for path in directory.glob("*.so*"):
             if path.is_file():
                 libraries.setdefault(path.name, set()).add(path.resolve())
-    manifests = sorted((build / "test-runtime/targets").glob("*.txt"))
-    assert manifests, "no local executable runtime manifests"
-    for manifest in manifests:
-        binary = Path(manifest.read_text().strip())
+    binaries = (build / "test-runtime/targets.txt").read_text().splitlines()
+    if sdk:
+        binaries += sys.argv[3:]
+    assert binaries, "no local executable runtime targets"
+    for filename in binaries:
+        binary = Path(filename)
         assert binary.is_file(), f"build all targets before verification: {binary}"
         assert f"[Requesting program interpreter: {loader}]" in output(readelf, "-l", str(binary)), binary
         trace = output(str(binary), env=dict(env, LD_TRACE_LOADED_OBJECTS="1"))
@@ -109,7 +111,7 @@ def main():
                                  str(root / "cmake/package_archive.cmake")],
                                 capture_output=True, text=True)
         assert result.returncode != 0 and "requires a Release build" in result.stderr, result
-    print(f"runtime contract passed: {len(manifests)} executables; pinned libraries; missing-runtime detection")
+    print(f"runtime contract passed: {len(binaries)} executables; pinned libraries; missing-runtime detection")
 
 
 if __name__ == "__main__":

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -eu
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH='' cd -- "$script_dir/.." && pwd)
 build_dir=${1:-"$repo_root/build/fuzz"}
-tmp_dir=${TMPDIR:-/tmp}/vectis-fuzz-smoke.$$
+tmp_dir=$(mktemp -d "$build_dir/fuzz-smoke.XXXXXXXX")
+unset LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT
 
 cleanup() {
   rm -rf "$tmp_dir"
@@ -16,6 +17,7 @@ value() {
 }
 
 afl_showmap=$("$script_dir/cpkt-aflpp.sh" discover | value afl_showmap)
+python3 "$script_dir/test_runtime_contract.py" "$build_dir"
 json_target="$build_dir/tests/fuzz/vectis_fuzz_json_validate"
 kore_target="$build_dir/tests/fuzz/vectis_fuzz_kore_bridge"
 

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -eu
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH='' cd -- "$script_dir/.." && pwd)
 requested_abi=${1:-all}
 cmake_bin=${CMAKE:-cmake}
 checksum_build_dir=
 
-unset LD_LIBRARY_PATH
+unset LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT
 
 verify_native_install_tree() {
   local preset="$1"
@@ -36,10 +36,8 @@ verify_native_install_tree() {
     echo "[package] missing executable vectis binary for $preset" >&2
     exit 1
   fi
-  LD_LIBRARY_PATH="$package_root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-    "$package_root/bin/vectis" --version >/dev/null
-  LD_LIBRARY_PATH="$package_root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-    bash "$script_dir/verify_vectis_lua_preloads.sh" \
+  "$package_root/bin/vectis" --version >/dev/null
+  bash "$script_dir/verify_vectis_lua_preloads.sh" \
       "$package_root/bin/vectis" \
       "${VECTIS_VERSION:-$("$script_dir/release_version.sh")}" >/dev/null
 }

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -eu
+unset LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH='' cd -- "$script_dir/.." && pwd)
 version=${VECTIS_VERSION:-$("$script_dir/release_version.sh")}
 dist_dir=${VECTIS_DIST_DIR:-"$repo_root/dist"}
 checksums="$dist_dir/vectis-$version-CHECKSUMS"
@@ -198,10 +199,16 @@ verify_linux_sdk_consumer_build() {
     -S "$repo_root/tests/install" \
     -B "$build_dir" \
     -DCMAKE_TOOLCHAIN_FILE="$toolchain" \
+    -DVECTIS_TARGET_ID="$target_id" \
+    -DCMAKE_PROJECT_INCLUDE="$repo_root/cmake/test_runtime.cmake" \
     -DVECTIS_EXTERNAL_ROOT="$root" \
     -DCMAKE_PREFIX_PATH="$root" \
     -DVECTIS_CONSUMER_LINK="$link_mode"
   "$cmake_bin" --build "$build_dir"
+  if [ "$target_id" = x86_64-linux-gnu ] &&
+     [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ]; then
+    python3 "$script_dir/test_runtime_contract.py" --sdk "$build_dir"
+  fi
 }
 
 while IFS= read -r artifact_name; do
@@ -314,10 +321,8 @@ while IFS= read -r artifact_name; do
               bash "$script_dir/verify_installed_sdk.sh" "$root" shared
             fi
             if [ -x "$root/bin/vectis" ]; then
-              LD_LIBRARY_PATH="$root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-                "$root/bin/vectis" --version >/dev/null
-              LD_LIBRARY_PATH="$root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-                bash "$script_dir/verify_vectis_lua_preloads.sh" \
+              "$root/bin/vectis" --version >/dev/null
+              bash "$script_dir/verify_vectis_lua_preloads.sh" \
                   "$root/bin/vectis" "$version" >/dev/null
             fi
           fi

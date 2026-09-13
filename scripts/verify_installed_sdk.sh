@@ -57,7 +57,7 @@ if [ "$(uname -s)" = Linux ]; then
   )
   runtime_flags=("-Wl,--dynamic-linker=$consumer_sysroot/lib/ld-linux-x86-64.so.2"
     '-Wl,--disable-new-dtags'
-    "-Wl,-rpath,$consumer_sysroot/lib:$consumer_sysroot/usr/lib:$runtime_library_path")
+    "-Wl,-rpath,$consumer_sysroot/lib:$consumer_sysroot/usr/lib:$consumer_sysroot/../lib64:$runtime_library_path")
   unset LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT
 fi
 
@@ -76,9 +76,7 @@ esac
   -DCMAKE_PREFIX_PATH="$cmake_prefix_path" \
   -DVECTIS_CONSUMER_LINK="$link_mode"
 "$cmake_bin" --build "$build_root"
-if [ "$(uname -s)" = Linux ]; then
-  python3 "$script_dir/test_runtime_contract.py" --sdk "$build_root"
-fi
+extra_runtime_binaries=()
 
 if command -v pkg-config >/dev/null 2>&1; then
   mkdir -p "$pkg_config_build_root"
@@ -100,6 +98,10 @@ EOF
     -o "$pkg_config_build_root/vectis_pkg_config_consumer" \
     "${pkg_flags[@]}"
   "$pkg_config_build_root/vectis_pkg_config_consumer"
+  extra_runtime_binaries+=("$pkg_config_build_root/vectis_pkg_config_consumer")
+fi
+if [ "$(uname -s)" = Linux ]; then
+  python3 "$script_dir/test_runtime_contract.py" --sdk "$build_root" "${extra_runtime_binaries[@]}"
 fi
 
 if [ "$link_mode" = "shared" ]; then
@@ -111,11 +113,9 @@ if [ "$link_mode" = "shared" ]; then
         "$build_root/vectis_install_consumer_cpp"
     fi
   else
-    LD_LIBRARY_PATH="$runtime_library_path${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-      "$build_root/vectis_install_consumer"
+    "$build_root/vectis_install_consumer"
     if [ -x "$build_root/vectis_install_consumer_cpp" ]; then
-      LD_LIBRARY_PATH="$runtime_library_path${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-        "$build_root/vectis_install_consumer_cpp"
+      "$build_root/vectis_install_consumer_cpp"
     fi
   fi
 else

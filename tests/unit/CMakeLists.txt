@@ -111,4 +111,8 @@ if(VECTIS_TARGET_ID STREQUAL "x86_64-linux-gnu" AND CMAKE_HOST_SYSTEM_NAME STREQ
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/test_runtime_contract.py"
             "${CMAKE_BINARY_DIR}")
   set_tests_properties(vectis_runtime_contract PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 30)
+  add_test(NAME vectis_runtime_reconfigure
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/test_runtime_reconfigure.py"
+            "${CMAKE_BINARY_DIR}")
+  set_tests_properties(vectis_runtime_reconfigure PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 30)
 endif()

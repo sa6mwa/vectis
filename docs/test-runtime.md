@@ -47,6 +47,11 @@ unexpected host dependencies fail the gate. It also checks child self-exec and
 includes a missing-runtime negative fixture. A Release run additionally checks
 that the CLI has no interpreter or dynamic dependencies.
 
+Target enumeration uses one regenerated manifest, so disabling a target cannot
+leave a stale entry in the gate. A reconfiguration regression builds and runs a
+helper after removing an optional target. The standalone fuzz smoke entry point
+also runs the mapping gate before AFL, without relying on CTest.
+
 This is runtime selection, not isolation. Missing runtime files can otherwise
 fall back through the system loader cache; even `-z nodefaultlib` does not exclude
 every host multiarch cache entry. The contract detects foreign mappings rather
@@ -62,6 +67,10 @@ SDK verification builds CMake and pkg-config consumers with the pinned toolchain
 and gives those local consumers Bootlin runtime paths. Installed example sources
 remain ordinary consumer sources. Host compatibility is a separate concern and
 is not established by the pinned-runtime test suite.
+The mapping gate covers pkg-config executables as well as CMake consumers and
+installed examples. Native GNU release-matrix SDK smoke builds use the same
+private link policy; cross-target smoke builds remain compile/link-only.
+Linux SDK and static-release smoke checks do not inject `LD_LIBRARY_PATH`.
 
 Release packaging rejects non-Release builds. Linux development CLI targets are
 not installed; library SDK development installs remain available. Existing
@@ -156,6 +165,29 @@ ctest --preset asan -R vectis_lua_ssh_sftp --output-on-failure
 ```
 
 Evidence: `build/runtime-asan-tests.log` and
-`build/runtime-asan-recheck.log`. Coverage and fuzz campaigns have not been run
-as part of this verification; their executable targets use the same CMake
-runtime policy.
+`build/runtime-asan-recheck.log`.
+
+### Cutover sweep
+
+The follow-up sweep added stale-manifest regression coverage, runtime mapping
+checks for standalone pkg-config consumers and fuzz smoke, and the shared
+runtime policy for native release-matrix SDK consumers. It removed unnecessary
+Linux library-path environment overrides from SDK/release smoke checks.
+
+- Fresh coverage build and complete suite: 89/89 passed
+  (`build/runtime-sweep-coverage.log`).
+- Standard debug build and complete suite: 90/90 passed, followed by formatting
+  and lifecycle/privacy checks (`build/runtime-sweep-final.log`). The additional
+  manifest regression was not part of the earlier timing comparison.
+- Fresh AFL build and bounded seed smoke passed; the gate checked all 49 local
+  executables (`build/runtime-sweep-fuzz.log`). This is not a long fuzz campaign.
+- Static and shared SDK verification each checked three consumers (including
+  pkg-config) and 36 installed examples; all passed
+  (`build/runtime-sweep-sdk-static.log`, `build/runtime-sweep-sdk-shared.log`).
+- Both runtime tests passed in the ASan configuration, including the sanitizer
+  shared-library mapping probe. The full ASan suite was not repeated; the SSH
+  leak above remains unresolved.
+
+The earlier service e2e and release CLI results still apply to the unchanged
+executable link policy. This sweep did not rebuild the full release matrix or
+repeat service e2e. Cross-target execution remains outside the native policy.
