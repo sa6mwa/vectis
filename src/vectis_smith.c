@@ -589,6 +589,7 @@ static int vectis_smith_store_load_selected(
     }
     if (lease != NULL) {
       if (vectis_smith_release(lease, 0, error) != CAI_OK && result == CAI_OK) {
+        free(bytes);
         result = error->code;
       }
       lease = NULL;

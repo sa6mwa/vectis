@@ -12,30 +12,64 @@
 #ifdef VECTIS_TEST_SMITH_FAULTS
 static int fail_scope_acquire;
 static size_t fail_malloc_size;
+static int fail_session_release;
+static size_t tracked_malloc_size;
+static void *tracked_checkpoint;
+static int checkpoint_allocations;
 void *__real_malloc(size_t size);
 void *__wrap_malloc(size_t size);
+void __real_free(void *pointer);
+void __wrap_free(void *pointer);
 int __real_lc_acquire(lc_client *client, const lc_acquire_req *req,
                       lc_lease **out, lc_error *error);
 int __wrap_lc_acquire(lc_client *client, const lc_acquire_req *req,
                       lc_lease **out, lc_error *error);
 
 void *__wrap_malloc(size_t size) {
+  void *pointer;
   if (fail_malloc_size != 0u && size == fail_malloc_size) {
     fail_malloc_size = 0u;
     return NULL;
   }
-  return __real_malloc(size);
+  pointer = __real_malloc(size);
+  if (tracked_malloc_size != 0u && size == tracked_malloc_size) {
+    assert(tracked_checkpoint == NULL);
+    tracked_checkpoint = pointer;
+    ++checkpoint_allocations;
+  }
+  return pointer;
+}
+
+void __wrap_free(void *pointer) {
+  if (pointer == tracked_checkpoint)
+    tracked_checkpoint = NULL;
+  __real_free(pointer);
+}
+
+static int fail_release(lc_lease *lease, const lc_release_req *request,
+                        lc_error *error) {
+  (void)lease;
+  (void)request;
+  fail_session_release = 0;
+  error->code = LC_ERR_TRANSPORT;
+  return LC_ERR_TRANSPORT;
 }
 
 int __wrap_lc_acquire(lc_client *client, const lc_acquire_req *req,
                       lc_lease **out, lc_error *error) {
+  int result;
   if (fail_scope_acquire && strstr(req->key, "scope/") != NULL) {
     fail_scope_acquire = 0;
     *out = NULL;
     error->code = LC_ERR_INVALID;
     return LC_ERR_INVALID;
   }
-  return __real_lc_acquire(client, req, out, error);
+  result = __real_lc_acquire(client, req, out, error);
+  if (result == LC_OK && fail_session_release &&
+      strstr(req->key, "session/") != NULL) {
+    (*out)->release = fail_release;
+  }
+  return result;
 }
 #endif
 
@@ -242,6 +276,35 @@ static void test_lockdc_store_checkpoint_and_events(void) {
     }
   }
 #ifdef VECTIS_TEST_SMITH_FAULTS
+  {
+    char large_checkpoint[100019];
+    char scope[64];
+    int attempt;
+    memset(large_checkpoint, 'x', sizeof(large_checkpoint));
+    for (attempt = 0; attempt < 3; ++attempt) {
+      /* A failed remote release leaves its server lease until expiry. Use
+       * independent keys so each attempt reaches the buffer cleanup path. */
+      snprintf(scope, sizeof(scope), "release-failure-%d", attempt);
+      vectis_source =
+          vectis_source_from_memory(large_checkpoint, sizeof(large_checkpoint));
+      assert(vectis_cai_source_from_source(&vectis_source, &state,
+                                           &vectis_error) == VECTIS_OK);
+      assert(callbacks->checkpoint(callbacks->context, scope, "session-release",
+                                   state, 4u, &caierr) == CAI_OK);
+      cai_source_close(state);
+      tracked_malloc_size = sizeof(large_checkpoint) + 1u;
+      checkpoint_allocations = 0;
+      fail_session_release = 1;
+      assert(callbacks->load_latest(callbacks->context, scope, session_id,
+                                    sizeof(session_id), &loaded, &watermark,
+                                    &caierr) == CAI_ERR_TRANSPORT);
+      assert(fail_session_release == 0);
+      assert(loaded == NULL);
+      assert(checkpoint_allocations == 1);
+      assert(tracked_checkpoint == NULL);
+      tracked_malloc_size = 0u;
+    }
+  }
   /* Simulate a checkpoint interrupted after the session commit, before the
    * scope update. Bytes and watermark must still come from the same commit. */
   vectis_source = vectis_source_from_memory("new checkpoint", 14u);

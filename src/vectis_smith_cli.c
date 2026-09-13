@@ -43,6 +43,8 @@ typedef struct vectis_smith_cli_render {
   int document_open;
   int renderer_done;
   int renderer_failed;
+  int turn_failed;
+  char turn_error[256];
   int interactive;
   int notify_fd;
   sl_t *editor;
@@ -436,6 +438,15 @@ static int vectis_smith_cli_render_event(void *userdata,
 
   (void)error;
   render = (vectis_smith_cli_render *)userdata;
+  if (event->type == CAI_AGENT_EVENT_RUN_FAILED) {
+    size_t length = event->data != NULL ? event->data_length : 0u;
+    if (length >= sizeof(render->turn_error))
+      length = sizeof(render->turn_error) - 1u;
+    render->turn_failed = 1;
+    if (length != 0u)
+      memcpy(render->turn_error, event->data, length);
+    render->turn_error[length] = '\0';
+  }
   return event->type == CAI_AGENT_EVENT_TEXT_DELTA &&
                  event->data_length != 0u &&
                  vectis_smith_cli_render_append(render, event->data,
@@ -1177,6 +1188,32 @@ static int vectis_smith_cli_interactive(const vectis_smith_config *smith_config,
   return rc;
 }
 
+static int vectis_smith_cli_exec(vectis_smith *smith,
+                                 vectis_smith_cli_render *render) {
+  vectis_error error;
+  cai_agent_run_state state;
+
+  do {
+    if (vectis_smith_pump(smith, 100L, &error) != VECTIS_OK ||
+        vectis_smith_state(smith, &state, &error) != VECTIS_OK) {
+      fprintf(stderr, "vectis: %s\n", error.message);
+      return 1;
+    }
+  } while (vectis_smith_cli_is_active(state));
+  if (state == CAI_AGENT_FAILED || render->turn_failed) {
+    fprintf(stderr, "vectis: Smith turn failed: %s\n",
+            render->turn_error[0] != '\0'
+                ? render->turn_error
+                : "CAI reported failure without a diagnostic");
+    return 1;
+  }
+  if (state == CAI_AGENT_CANCELLED) {
+    fputs("vectis: Smith turn cancelled\n", stderr);
+    return 1;
+  }
+  return 0;
+}
+
 int vectis_smith_cli_command(int argc, char **argv, int index,
                              int initial_verbosity) {
   vectis_smith_cli_render render;
@@ -1186,7 +1223,6 @@ int vectis_smith_cli_command(int argc, char **argv, int index,
   cai_chatgpt_auth *chatgpt_auth;
   cai_error caierr;
   cai_terminal_tool_config terminal_config;
-  cai_agent_run_state state;
   vectis_smith *smith;
   const char *prompt;
   const char *session_id;
@@ -1334,18 +1370,7 @@ int vectis_smith_cli_command(int argc, char **argv, int index,
     fprintf(stderr, "vectis: %s\n", error.message);
     rc = 1;
   } else {
-    rc = 0;
-    do {
-      if (vectis_smith_pump(smith, 100L, &error) != VECTIS_OK) {
-        fprintf(stderr, "vectis: %s\n", error.message);
-        rc = 1;
-        break;
-      }
-      if (vectis_smith_state(smith, &state, &error) != VECTIS_OK) {
-        rc = 1;
-        break;
-      }
-    } while (vectis_smith_cli_is_active(state));
+    rc = vectis_smith_cli_exec(smith, &render);
   }
   vectis_smith_cli_render_finish(&render);
   if (vectis_smith_cli_render_failed(&render)) {

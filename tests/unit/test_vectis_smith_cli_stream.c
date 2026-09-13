@@ -28,6 +28,7 @@ static cai_agent_run_state test_runtime_state;
 static cai_agent_runtime_event_fn test_event_callback;
 static void *test_event_context;
 static int test_emit_text;
+static int test_emit_failure;
 static int test_log_fd = -1;
 
 static void test_log(const char *prefix, const char *text) {
@@ -79,6 +80,15 @@ vectis_status vectis_smith_test_pump(vectis_smith *smith, long timeout_ms,
 
   (void)smith;
   (void)timeout_ms;
+  if (test_emit_failure) {
+    memset(&event, 0, sizeof(event));
+    event.type = CAI_AGENT_EVENT_RUN_FAILED;
+    event.data = "offline provider failureTRAILER";
+    event.data_length = strlen("offline provider failure");
+    assert(test_event_callback(test_event_context, &event, NULL) == CAI_OK);
+    test_runtime_state = CAI_AGENT_FAILED;
+    test_emit_failure = 0;
+  }
   if (test_emit_text) {
     memset(&event, 0, sizeof(event));
     event.type = CAI_AGENT_EVENT_TEXT_DELTA;
@@ -490,7 +500,45 @@ static void test_interactive_response_boundaries(void) {
   pthread_cond_destroy(&agent.changed);
 }
 
+static void test_exec_terminal_status(void) {
+  vectis_smith_cli_render render;
+  int fds[2];
+  int saved_stderr;
+  char diagnostic[1024];
+  ssize_t length;
+  memset(&render, 0, sizeof(render));
+  test_event_callback = vectis_smith_cli_render_event;
+  test_event_context = &render;
+  test_emit_text = 0;
+  test_emit_failure = 1;
+  assert(pipe(fds) == 0);
+  saved_stderr = dup(STDERR_FILENO);
+  assert(saved_stderr >= 0);
+  assert(dup2(fds[1], STDERR_FILENO) == STDERR_FILENO);
+  close(fds[1]);
+  /* The fake provider reports failure as an event; pump itself succeeds. */
+  assert(vectis_smith_cli_exec((vectis_smith *)1, &render) != 0);
+  memset(&render, 0, sizeof(render));
+  assert(vectis_smith_cli_exec((vectis_smith *)1, &render) != 0);
+  test_runtime_state = CAI_AGENT_CANCELLED;
+  assert(vectis_smith_cli_exec((vectis_smith *)1, &render) != 0);
+  assert(fflush(stderr) == 0);
+  assert(dup2(saved_stderr, STDERR_FILENO) == STDERR_FILENO);
+  close(saved_stderr);
+  length = read(fds[0], diagnostic, sizeof(diagnostic) - 1u);
+  assert(length > 0);
+  diagnostic[length] = '\0';
+  close(fds[0]);
+  assert(strstr(diagnostic, "offline provider failure") != NULL);
+  assert(strstr(diagnostic, "TRAILER") == NULL);
+  assert(strstr(diagnostic, "without a diagnostic") != NULL);
+  assert(strstr(diagnostic, "Smith turn cancelled") != NULL);
+  test_runtime_state = CAI_AGENT_COMPLETED;
+  assert(vectis_smith_cli_exec((vectis_smith *)1, &render) == 0);
+}
+
 int main(void) {
+  test_exec_terminal_status();
   test_pending_turn_stays_busy();
   test_interactive_response_boundaries();
   test_large_exec_burst();
