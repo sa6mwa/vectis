@@ -534,6 +534,9 @@ vectis_auth_lock_open(const vectis_auth_store_config *config,
   char owner[96];
   int rc;
 
+  if (lock != NULL) {
+    memset(lock, 0, sizeof(*lock));
+  }
   if (config == NULL || lock == NULL) {
     vectis_set_error(error, VECTIS_ERR_INVALID, "auth store is required");
     return VECTIS_ERR_INVALID;
@@ -548,7 +551,6 @@ vectis_auth_lock_open(const vectis_auth_store_config *config,
                      "nested auth Lockd store operations are not supported");
     return VECTIS_ERR_STATE;
   }
-  memset(lock, 0, sizeof(*lock));
   lock->config = config;
   lock->key = vectis_auth_strdup(vectis_auth_store_key(config));
   if (lock->key == NULL) {
@@ -5837,6 +5839,7 @@ vectis_status vectis_auth_email_token_issue(
     return VECTIS_ERR_INVALID;
   }
   vectis_auth_email_token_init(out);
+  temp_path[0] = '\0';
   memset(&lock, 0, sizeof(lock));
   if (config == NULL || config->username == NULL ||
       config->username[0] == '\0' || config->email == NULL ||
@@ -5975,6 +5978,7 @@ vectis_status vectis_auth_email_token_issue(
       status = VECTIS_ERR_NOMEM;
     }
   }
+  vectis_auth_unlink_temp_path(temp_path);
   if (lock.lease != NULL) {
     vectis_auth_lock_close(&lock);
   }
@@ -6527,10 +6531,10 @@ vectis_auth_user_email_set(const vectis_auth_store_config *store_config,
                                                       store_len, user_json.data,
                                                       user_json.len, error);
   }
+  vectis_auth_unlink_temp_path(temp_path);
   if (lock.lease != NULL) {
     vectis_auth_lock_close(&lock);
   }
-  vectis_auth_unlink_temp_path(temp_path);
   free(store_json);
   lonejson_owned_buffer_free(&user_json);
   lonejson_free(runtime);
@@ -6671,11 +6675,11 @@ vectis_auth_user_find_by_email(const vectis_auth_store_config *store_config,
       }
     }
   }
+  vectis_auth_unlink_temp_path(temp_path);
   if (lock.lease != NULL) {
     vectis_auth_lock_close(&lock);
   }
   free(store_json);
-  vectis_auth_unlink_temp_path(temp_path);
   lonejson_free(runtime);
   return status;
 }
@@ -6885,6 +6889,7 @@ vectis_status vectis_auth_pending_login_issue(
     return VECTIS_ERR_INVALID;
   }
   vectis_auth_pending_login_init(out);
+  temp_path[0] = '\0';
   memset(&lock, 0, sizeof(lock));
   if (config == NULL || config->username == NULL ||
       config->username[0] == '\0' || config->password == NULL ||
@@ -7001,6 +7006,7 @@ vectis_status vectis_auth_pending_login_issue(
       status = VECTIS_ERR_NOMEM;
     }
   }
+  vectis_auth_unlink_temp_path(temp_path);
   if (lock.lease != NULL) {
     vectis_auth_lock_close(&lock);
   }

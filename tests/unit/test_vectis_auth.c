@@ -1,5 +1,6 @@
 #include "vectis_internal.h"
 
+#include <lc/lc.h>
 #include <vectis/auth.h>
 #include <vectis/totp_qr.h>
 #include <vectis/webdav.h>
@@ -49,6 +50,70 @@ static void expect(int condition, const char *message) {
     fprintf(stderr, "failure: %s\n", message);
     failures++;
   }
+}
+
+typedef struct auth_key_scan {
+  char key[4096];
+  size_t length;
+  size_t records;
+  size_t temporary;
+} auth_key_scan;
+
+static int auth_key_begin(void *context, lc_error *error) {
+  auth_key_scan *scan = (auth_key_scan *)context;
+  (void)error;
+  scan->length = 0u;
+  return 1;
+}
+
+static int auth_key_chunk(void *context, const char *bytes, size_t length,
+                          lc_error *error) {
+  auth_key_scan *scan = (auth_key_scan *)context;
+  (void)error;
+  if (length >= sizeof(scan->key) - scan->length)
+    return 0;
+  memcpy(scan->key + scan->length, bytes, length);
+  scan->length += length;
+  return 1;
+}
+
+static int auth_key_end(void *context, lc_error *error) {
+  auth_key_scan *scan = (auth_key_scan *)context;
+  (void)error;
+  scan->key[scan->length] = '\0';
+  ++scan->records;
+  if (strncmp(scan->key, "auth/v1/tmp/", 12u) == 0)
+    ++scan->temporary;
+  return 1;
+}
+
+static void expect_no_auth_temporary_records(vectis_app *app) {
+  auth_key_scan scan;
+  lc_query_req request;
+  lc_query_res response;
+  lc_query_key_handler handler;
+  lc_error error;
+  memset(&scan, 0, sizeof(scan));
+  memset(&handler, 0, sizeof(handler));
+  handler.begin = auth_key_begin;
+  handler.chunk = auth_key_chunk;
+  handler.end = auth_key_end;
+  lc_query_req_init(&request);
+  request.namespace_name = "vectis.auth";
+  request.selector_json = "{\"exists\":\"/users\"}";
+  request.engine = "scan";
+  request.limit = 10000L;
+  memset(&response, 0, sizeof(response));
+  lc_error_init(&error);
+  expect(lc_query_keys(vectis_lockd_client(app), &request, &handler, &scan,
+                       &response, &error) == LC_OK,
+         "scans persisted auth records");
+  expect(response.cursor == NULL || response.cursor[0] == '\0',
+         "auth scan is complete");
+  expect(scan.records != 0u, "auth scan sees committed state");
+  expect(scan.temporary == 0u, "auth operations leave no temporary snapshots");
+  lc_query_res_cleanup(&response);
+  lc_error_cleanup(&error);
 }
 
 static int smtp_mock_send_all(int fd, const char *text) {
@@ -603,6 +668,25 @@ int main(void) {
   vectis_auth_user_config_init(&user);
   user.username = "email-user@example.com";
   user.password = "email-password";
+  status = vectis_auth_user_add_or_update(NULL, &user, &enrollment, &error);
+  expect(status == VECTIS_ERR_INVALID, "null user store is rejected safely");
+  vectis_auth_user_enrollment_cleanup(&enrollment);
+  status =
+      vectis_auth_user_email_set(NULL, user.username, user.username, &error);
+  expect(status == VECTIS_ERR_INVALID, "null email store is rejected safely");
+  {
+    vectis_auth_store_config invalid = store;
+    invalid.lockd = &app_config.lockd;
+    status =
+        vectis_auth_user_add_or_update(&invalid, &user, &enrollment, &error);
+    expect(status == VECTIS_ERR_INVALID,
+           "conflicting user store is rejected safely");
+    vectis_auth_user_enrollment_cleanup(&enrollment);
+    status = vectis_auth_user_email_set(&invalid, user.username, user.username,
+                                        &error);
+    expect(status == VECTIS_ERR_INVALID,
+           "conflicting email store is rejected safely");
+  }
   status = vectis_auth_user_email_validate("", &error);
   expect(status == VECTIS_ERR_INVALID,
          "rejects an empty email-token enrollment recipient");
@@ -615,6 +699,7 @@ int main(void) {
   status = vectis_auth_user_email_set(&store, "email-user@example.com",
                                       "email-user@example.com", &error);
   expect_ok(status, &error, "enrolls email-token recipient");
+  expect_no_auth_temporary_records(app);
 
   vectis_auth_email_token_issue_config_init(&email_issue);
   email_issue.store = store;
@@ -641,6 +726,7 @@ int main(void) {
   email_issue.ttl_seconds = 300;
   status = vectis_auth_email_token_issue(&email_issue, &email_token, &error);
   expect_ok(status, &error, "issues email auth token");
+  expect_no_auth_temporary_records(app);
   expect(email_token.transaction_id != NULL &&
              strcmp(email_token.transaction_id, "email-tx-1") == 0,
          "email token carries transaction id");
@@ -1436,6 +1522,7 @@ int main(void) {
   status =
       vectis_auth_pending_login_issue(&pending_issue, &pending_login, &error);
   expect_ok(status, &error, "issues pending login for TOTP user");
+  expect_no_auth_temporary_records(app);
   expect(pending_login.authenticated, "pending login is authenticated");
   expect(pending_login.totp_required, "pending login reports TOTP required");
   expect(pending_login.transaction_id != NULL &&
@@ -1816,6 +1903,7 @@ int main(void) {
   vectis_auth_issued_credential_cleanup(&bearer);
   vectis_mutable_bytes_cleanup(&basic_authorization);
   vectis_internal_request_free(webdav_vectis_request);
+  expect_no_auth_temporary_records(app);
   app->close(app);
   remove_tree(temp);
   return failures == 0 ? 0 : 1;
