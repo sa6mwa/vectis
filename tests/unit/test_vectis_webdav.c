@@ -583,6 +583,26 @@ static void test_delete_and_shallow_copy(const vectis_webdav_config *config) {
   conditional_writer writers[8];
   pthread_t threads[8];
   int gate[2], i, winners = 0;
+  expect(vectis_webdav_mkcol_conditional(config, "/conditional-col", "*",
+                                         NULL) == VECTIS_WEBDAV_PRECONDITION,
+         "MKCOL If-Match requires existing resource");
+  expect(vectis_webdav_lookup(config, "/conditional-col", &entry) ==
+             VECTIS_WEBDAV_NOT_FOUND,
+         "failed MKCOL leaves collection absent");
+  expect(vectis_webdav_mkcol_conditional(config, "/conditional-col", "invalid",
+                                         NULL) == VECTIS_WEBDAV_INVALID,
+         "MKCOL rejects malformed condition");
+  expect(vectis_webdav_mkcol_conditional(config, "/conditional-col", NULL,
+                                         "*") == VECTIS_WEBDAV_OK,
+         "MKCOL If-None-Match creates missing collection");
+  expect(vectis_webdav_mkcol_conditional(config, "/conditional-col", NULL,
+                                         "*") == VECTIS_WEBDAV_PRECONDITION,
+         "MKCOL If-None-Match rejects existing collection");
+  expect(vectis_webdav_mkcol_conditional(config, "/conditional-col", "*",
+                                         NULL) == VECTIS_WEBDAV_EXISTS,
+         "matching MKCOL condition retains existing-resource behavior");
+  expect(vectis_webdav_delete(config, "/conditional-col") == VECTIS_WEBDAV_OK,
+         "cleanup conditional collection");
   expect(vectis_webdav_put(config, "/conditional.txt",
                            (const unsigned char *)"new",
                            3u) == VECTIS_WEBDAV_OK,

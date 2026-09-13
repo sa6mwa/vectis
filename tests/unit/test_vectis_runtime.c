@@ -5373,6 +5373,35 @@ static void assert_kore_smoke(void) {
   vectis_http_response_cleanup(&webdav_get_response);
 
   vectis_http_request_init(&request);
+  {
+    const char *mkcol_headers[2];
+    vectis_webdav_entry mkcol_entry;
+    mkcol_headers[0] = webdav_headers[0];
+    mkcol_headers[1] = "If-Match: *";
+    request.method = VECTIS_HTTP_MKCOL;
+    request.url = format_loopback_http_url(url, sizeof(url), port,
+                                           "/dav/conditional-col");
+    request.headers = mkcol_headers;
+    request.header_count = 2u;
+    status = vectis_http_execute(&http, &request, &webdav_get_response, &error);
+    assert(status == VECTIS_OK && webdav_get_response.status_code == 412L);
+    vectis_http_response_cleanup(&webdav_get_response);
+    assert(vectis_webdav_lookup(&webdav_storage, "/conditional-col",
+                                &mkcol_entry) == VECTIS_WEBDAV_NOT_FOUND);
+    mkcol_headers[1] = "If-None-Match: *";
+    status = vectis_http_execute(&http, &request, &webdav_get_response, &error);
+    assert(status == VECTIS_OK && webdav_get_response.status_code == 201L);
+    vectis_http_response_cleanup(&webdav_get_response);
+    status = vectis_http_execute(&http, &request, &webdav_get_response, &error);
+    assert(status == VECTIS_OK && webdav_get_response.status_code == 412L);
+    vectis_http_response_cleanup(&webdav_get_response);
+    assert(vectis_webdav_lookup(&webdav_storage, "/conditional-col",
+                                &mkcol_entry) == VECTIS_WEBDAV_OK);
+    assert(mkcol_entry.kind == VECTIS_WEBDAV_ENTRY_COLLECTION);
+    assert(vectis_webdav_delete(&webdav_storage, "/conditional-col") ==
+           VECTIS_WEBDAV_OK);
+  }
+  vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_PROPFIND;
   request.url = format_loopback_http_url(url, sizeof(url), port, "/dav");
   request.headers = webdav_headers;

@@ -193,6 +193,11 @@ vectis_webdav_delete_conditional(const vectis_webdav_config *config,
                                  const char *if_none_match);
 vectis_webdav_status vectis_webdav_mkcol(const vectis_webdav_config *config,
                                          const char *path);
+/* Same entity-tag and locking contract as put_conditional, for creation. */
+vectis_webdav_status
+vectis_webdav_mkcol_conditional(const vectis_webdav_config *config,
+                                const char *path, const char *if_match,
+                                const char *if_none_match);
 vectis_webdav_status vectis_webdav_copy(const vectis_webdav_config *config,
                                         const char *source,
                                         const char *destination, int overwrite);

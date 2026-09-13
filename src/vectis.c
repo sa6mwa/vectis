@@ -16268,7 +16268,9 @@ static vectis_status vectis_webdav_dispatch(vectis_app *app,
                : vectis_webdav_status_response(webdav_status, response, error);
   }
   if (method == VECTIS_HTTP_MKCOL) {
-    webdav_status = vectis_webdav_mkcol(&data->storage, resource);
+    webdav_status = vectis_webdav_mkcol_conditional(
+        &data->storage, resource, vectis_request_header(request, "if-match"),
+        vectis_request_header(request, "if-none-match"));
     return webdav_status == VECTIS_WEBDAV_OK
                ? vectis_response_status(response, 201, error)
                : vectis_webdav_status_response(webdav_status, response, error);

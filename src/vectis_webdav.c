@@ -2065,6 +2065,13 @@ vectis_webdav_delete_conditional(const vectis_webdav_config *config,
 
 vectis_webdav_status vectis_webdav_mkcol(const vectis_webdav_config *config,
                                          const char *path) {
+  return vectis_webdav_mkcol_conditional(config, path, NULL, NULL);
+}
+
+vectis_webdav_status
+vectis_webdav_mkcol_conditional(const vectis_webdav_config *config,
+                                const char *path, const char *if_match,
+                                const char *if_none_match) {
   char normalized[VECTIS_WEBDAV_PATH_MAX + 1u];
   char disk[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   char content_root[VECTIS_WEBDAV_STORAGE_PATH_MAX];
@@ -2074,13 +2081,20 @@ vectis_webdav_status vectis_webdav_mkcol(const vectis_webdav_config *config,
   vectis_webdav_status status;
   int lock_fd;
 
-  if (!vectis_webdav_path_normalize(path, normalized) ||
+  if (!vectis_webdav_config_valid(config) ||
+      !vectis_webdav_path_normalize(path, normalized) ||
       normalized[1] == '\0') {
     return VECTIS_WEBDAV_INVALID;
   }
   lock_fd = vectis_webdav_lock(config);
   if (lock_fd < 0) {
     return VECTIS_WEBDAV_IO;
+  }
+  status = vectis_webdav_check_conditions(config, normalized, if_match,
+                                          if_none_match);
+  if (status != VECTIS_WEBDAV_OK) {
+    vectis_webdav_unlock(lock_fd);
+    return status;
   }
   if (vectis_webdav_ancestor_tombstone_exists(config, normalized)) {
     vectis_webdav_unlock(lock_fd);
