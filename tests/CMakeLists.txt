@@ -1,4 +1,10 @@
 if(VECTIS_BUILD_TESTS)
+  if(VECTIS_TARGET_ID STREQUAL "x86_64-linux-gnu" AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux"
+      AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64")
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_executable(vectis_runtime_probe helpers/vectis_runtime_probe.c)
+    target_compile_options(vectis_runtime_probe PRIVATE -Wall -Wextra -Werror -Wpedantic)
+  endif()
   add_subdirectory(unit)
 endif()
 

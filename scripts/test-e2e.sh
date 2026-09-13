@@ -26,7 +26,12 @@ acme_mock_port=${VECTIS_E2E_ACME_MOCK_PORT:-$((kore_basic_port + 12))}
 lua_site_port=${VECTIS_E2E_LUA_SITE_PORT:-$((kore_basic_port + 13))}
 pack_smtp_harness=${VECTIS_E2E_PACK_SMTP_HARNESS:-$repo_root/build/debug/tests/vectis_pack_smtp_harness}
 acme_mock_provider=${VECTIS_E2E_ACME_MOCK_PROVIDER:-$repo_root/build/debug/tests/vectis_acme_mock_provider}
-work_dir=$(mktemp -d)
+mkdir -p "$repo_root/build/e2e"
+work_dir=$(mktemp -d "$repo_root/build/e2e/run.XXXXXXXX")
+# Host service tools retain their XDG environment (rootless containerd uses it).
+export TMPDIR="$work_dir/tmp"
+mkdir -m 700 -p "$TMPDIR"
+unset LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT
 ssh_memory_key="$work_dir/vectis-e2e-ssh-key"
 ssh_bad_host_key="$work_dir/vectis-e2e-bad-host-key"
 ssh_known_hosts="$work_dir/vectis-e2e-known-hosts"

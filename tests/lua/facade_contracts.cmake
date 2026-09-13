@@ -1,4 +1,5 @@
 set(script "${WORK_DIR}/facade-contracts.lua")
+file(REMOVE_RECURSE "${WORK_DIR}/facade-auth-pouch")
 
 file(WRITE "${script}" [=[
 local vectis = require("vectis")

@@ -30,7 +30,8 @@ FUZZ_PRESET := fuzz
 help:
 	@printf '%s\n' \
 		'make build              Configure and build the debug preset.' \
-		'make test               Run the debug unit test preset.' \
+		'make test               Run all debug CTest tests with the pinned Bootlin runtime.' \
+		'make run-example EXAMPLE=mdf_render [ARGS=...]  Run a built example.' \
 		'make test-lifecycle     Run lifecycle command/version/preset/privacy contract tests.' \
 		'make test-vendor-kore-lifecycle Exercise Kore pin refresh and patch reapplication.' \
 		'make test-service-runtime-lifecycle Run service runtime lifecycle evidence audit.' \
@@ -385,3 +386,8 @@ clean:
 
 clean-dist:
 	$(TIMED) clean-dist $(CMAKE) -DVECTIS_ROOT=$(ROOT) -DVECTIS_DIST_DIR=$(ROOT)/dist -P $(ROOT)/cmake/package_clean_dist.cmake
+
+.PHONY: run-example
+run-example: build-debug
+	@test -n "$(EXAMPLE)" || { echo 'EXAMPLE is required (for example mdf_render)' >&2; exit 2; }
+	$(ROOT)/build/$(DEBUG_PRESET)/examples/vectis_example_$(EXAMPLE) $(ARGS)

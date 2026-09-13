@@ -1,0 +1,22 @@
+# CTest itself and host harnesses keep their host libc. Only test ELF targets
+# carry the pinned interpreter and RPATH.
+if(NOT DEFINED ENV{CPKT_TOOLCHAIN_CACHE})
+  set(ENV{CPKT_TOOLCHAIN_CACHE} "@vectis_toolchain_cache@")
+endif()
+if(NOT DEFINED ENV{CPKT_DEPENDENCY_CACHE})
+  set(ENV{CPKT_DEPENDENCY_CACHE} "@vectis_dependency_cache@")
+endif()
+foreach(pair IN ITEMS "XDG_CONFIG_HOME=config" "XDG_STATE_HOME=state"
+    "XDG_CACHE_HOME=cache" "XDG_RUNTIME_DIR=run" "TMPDIR=tmp")
+  string(REPLACE "=" ";" fields "${pair}")
+  list(GET fields 0 variable)
+  list(GET fields 1 leaf)
+  set(path "@CMAKE_BINARY_DIR@/test-runtime/${leaf}")
+  file(MAKE_DIRECTORY "${path}")
+  file(CHMOD "${path}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+  set(ENV{${variable}} "${path}")
+endforeach()
+unset(ENV{LD_LIBRARY_PATH})
+unset(ENV{LD_PRELOAD})
+unset(ENV{LD_AUDIT})
+set(ENV{VECTIS_BIN} "@CMAKE_BINARY_DIR@/vectis")

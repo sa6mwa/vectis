@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 
 import paramiko
 from paramiko.sftp import CMD_CLOSE
@@ -98,8 +99,8 @@ def serve(listener, key, errors, mode):
             deadline = time.monotonic() + 3
             while transport.is_active() and time.monotonic() < deadline:
                 time.sleep(0.01)
-    except BaseException as error:
-        errors.append(error)
+    except BaseException:
+        errors.append((mode, traceback.format_exc()))
 
 
 def main():
@@ -127,8 +128,8 @@ def main():
             finally:
                 thread.join(15)
             assert not thread.is_alive(), "SSH fixture did not stop"
-            assert not errors, errors
-            assert result.returncode == 0, result.stdout + result.stderr
+            assert not errors, (errors, result.returncode, result.stdout, result.stderr)
+            assert result.returncode == 0, (mode, result.stdout + result.stderr)
             assert elapsed < 4, (mode, elapsed)
             print(f"{mode}: passed in {elapsed:.3f}s")
 

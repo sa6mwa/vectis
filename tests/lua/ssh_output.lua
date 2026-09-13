@@ -4,7 +4,7 @@ if mode:find("sftp", 1, true) == 1 then
   local ok, err = vectis.ssh.sftp_upload_file({
     host = "127.0.0.1", port = tonumber(arg[1]), host_key_sha256 = arg[2],
     username = "test", password = "test", local_path = arg[4],
-    remote_path = "/upload", timeout_ms = 1000,
+    remote_path = "/upload", timeout_ms = 8000,
   })
   if mode == "sftp-close-failure" then
     assert(ok == nil and err, "failed CLOSE must not report success")
@@ -21,7 +21,10 @@ local result, err = vectis.ssh.exec({
   username = "test",
   password = "test",
   command = mode,
-  timeout_ms = (mode == "idle" or mode == "completion-timeout") and 200 or 8000,
+  -- This timeout also covers handshake. Leave negotiation margin so the
+  -- negative cases reach the I/O stage they assert, even on a loaded host.
+  -- The fixture still requires the operation to finish within four seconds.
+  timeout_ms = (mode == "idle" or mode == "completion-timeout") and 2000 or 8000,
 })
 if mode == "idle" or mode == "completion-timeout" then
   assert(result == nil)

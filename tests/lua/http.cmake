@@ -816,7 +816,8 @@ assert(api_server:metrics({
   storage_owner = "lua-http",
   snapshot_interval_seconds = 300,
 }) == true)
-assert(api_server:start() == true)
+local started, start_error = api_server:start()
+assert(started == true, start_error and start_error.message)
 local api_response
 for _ = 1, 20 do
   api_response = vectis.http.request({

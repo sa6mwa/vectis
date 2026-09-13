@@ -183,7 +183,8 @@ assert(app:json({
   cache_control = "no-store",
 }) == true)
 
-assert(app:start() == true)
+local started, start_error = app:start()
+assert(started == true, start_error and start_error.message)
 
 local health
 for _ = 1, 20 do

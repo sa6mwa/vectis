@@ -104,3 +104,11 @@ if(CMAKE_CXX_COMPILER)
 else()
   message(STATUS "C++ compiler not available; skipping vectis C++ header smoke test")
 endif()
+
+if(VECTIS_TARGET_ID STREQUAL "x86_64-linux-gnu" AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux"
+    AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64")
+  add_test(NAME vectis_runtime_contract
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/test_runtime_contract.py"
+            "${CMAKE_BINARY_DIR}")
+  set_tests_properties(vectis_runtime_contract PROPERTIES LABELS "unit;local;lifecycle" TIMEOUT 30)
+endif()
