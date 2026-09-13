@@ -1319,6 +1319,86 @@ int main(void) {
   expect(vectis_totp_generate(&totp, 59u, totp_code) == VECTIS_TOTP_QR_OK,
          "generates deterministic TOTP code");
 
+  {
+    vectis_auth_login_config window_login;
+    vectis_auth_totp_check_config window_check;
+    vectis_auth_totp_check_result window_result;
+    vectis_auth_pending_login_issue_config window_issue;
+    vectis_auth_pending_login_consume_config window_consume;
+    char code[VECTIS_TOTP_CODE_LENGTH + 1u];
+    unsigned int window;
+    unsigned int period;
+    int accepted;
+
+    vectis_auth_login_config_init(&window_login);
+    vectis_auth_totp_check_config_init(&window_check);
+    vectis_auth_pending_login_issue_config_init(&window_issue);
+    vectis_auth_pending_login_consume_config_init(&window_consume);
+    expect(window_login.totp_window == 1u && window_check.totp_window == 1u &&
+               window_consume.totp_window == 1u,
+           "TOTP configuration defaults retain one adjacent period");
+    window_login.username = "dav-user@example.com";
+    window_login.password = "correct horse battery staple";
+    window_login.unix_seconds = 89u;
+    window_login.totp_code = code;
+    window_check.store = store;
+    window_check.username = window_login.username;
+    window_check.unix_seconds = 89u;
+    window_check.totp_code = code;
+    window_issue.store = store;
+    window_issue.username = window_login.username;
+    window_issue.password = window_login.password;
+    window_issue.realm = "window-test";
+    window_issue.transaction_id = "pending-window-test";
+    window_issue.now_seconds = 89u;
+    window_issue.ttl_seconds = 300u;
+    window_consume.store = store;
+    window_consume.username = window_login.username;
+    window_consume.realm = window_issue.realm;
+    window_consume.transaction_id = window_issue.transaction_id;
+    window_consume.now_seconds = 89u;
+    window_consume.totp_code = code;
+    for (window = 0u; window <= 2u; ++window) {
+      window_login.totp_window = window;
+      window_check.totp_window = window;
+      window_consume.totp_window = window;
+      for (period = 0u; period <= 4u; ++period) {
+        expect(vectis_totp_generate(&totp, 29u + period * 30u, code) ==
+                   VECTIS_TOTP_QR_OK,
+               "generates code for window boundary test");
+        accepted = period + window >= 2u && period <= 2u + window;
+        status = vectis_auth_user_login(&store, &window_login, &result, &error);
+        expect_ok(status, &error, "checks login TOTP window");
+        expect(result.authenticated == accepted,
+               "login honors exact TOTP window");
+        vectis_auth_result_cleanup(&result);
+        status =
+            vectis_auth_user_totp_check(&window_check, &window_result, &error);
+        expect_ok(status, &error, "checks standalone TOTP window");
+        expect(window_result.authenticated == accepted,
+               "TOTP check honors exact window");
+        status = vectis_auth_pending_login_issue(&window_issue, &pending_login,
+                                                 &error);
+        expect_ok(status, &error, "issues pending login for window test");
+        expect(pending_login.authenticated,
+               "window test pending login created");
+        vectis_auth_pending_login_cleanup(&pending_login);
+        status = vectis_auth_pending_login_verify(&window_consume,
+                                                  &pending_result, &error);
+        expect_ok(status, &error, "verifies pending login TOTP window");
+        expect(pending_result.authenticated == accepted,
+               "pending verify honors exact window");
+        vectis_auth_pending_login_result_cleanup(&pending_result);
+        status = vectis_auth_pending_login_consume(&window_consume,
+                                                   &pending_result, &error);
+        expect_ok(status, &error, "consumes pending login with TOTP window");
+        expect(pending_result.authenticated == accepted,
+               "pending consume honors exact window");
+        vectis_auth_pending_login_result_cleanup(&pending_result);
+      }
+    }
+  }
+
   vectis_auth_password_check_config_init(&password_check);
   password_check.store = store;
   password_check.username = "dav-user@example.com";

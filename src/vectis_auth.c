@@ -6736,9 +6736,8 @@ vectis_auth_user_login(const vectis_auth_store_config *store_config,
     }
     now_seconds = login_config->unix_seconds != 0u ? login_config->unix_seconds
                                                    : (uint64_t)time(NULL);
-    if (!vectis_totp_validate(
-            &totp, login_config->totp_code, now_seconds,
-            login_config->totp_window != 0u ? login_config->totp_window : 1u)) {
+    if (!vectis_totp_validate(&totp, login_config->totp_code, now_seconds,
+                              login_config->totp_window)) {
       lonejson_free(runtime);
       return VECTIS_OK;
     }
@@ -6853,9 +6852,7 @@ vectis_auth_user_totp_check(const vectis_auth_totp_check_config *config,
     now = config->unix_seconds != 0u ? config->unix_seconds
                                      : (uint64_t)time(NULL);
     out->authenticated =
-        vectis_totp_validate(&totp, config->totp_code, now,
-                             config->totp_window != 0u ? config->totp_window
-                                                       : 1u)
+        vectis_totp_validate(&totp, config->totp_code, now, config->totp_window)
             ? 1
             : 0;
   }
@@ -7092,8 +7089,7 @@ static vectis_status vectis_auth_pending_login_check(
         vectis_totp_validate(&totp, config->totp_code,
                              config->now_seconds != 0u ? config->now_seconds
                                                        : (uint64_t)time(NULL),
-                             config->totp_window != 0u ? config->totp_window
-                                                       : 1u)) {
+                             config->totp_window)) {
       out->authenticated = 1;
       drop_record = 1;
     }

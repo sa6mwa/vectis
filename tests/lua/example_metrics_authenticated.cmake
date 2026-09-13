@@ -65,6 +65,29 @@ if(NOT totp_login_output MATCHES "authenticated=true")
   message(FATAL_ERROR "metrics example TOTP login did not authenticate")
 endif()
 
+foreach(totp_time IN ITEMS 29 89)
+  execute_process(
+    COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${lockd_endpoint}" --login
+            "metrics-admin" --password "metrics-password"
+            --totp-code "287082" --time "${totp_time}" --window "0"
+    RESULT_VARIABLE window_result
+    OUTPUT_VARIABLE window_output
+    ERROR_VARIABLE window_error)
+  if(NOT window_result EQUAL 0 OR NOT window_output MATCHES "authenticated=false")
+    message(FATAL_ERROR "zero TOTP window accepted an adjacent period at ${totp_time}: ${window_error}")
+  endif()
+endforeach()
+execute_process(
+  COMMAND "${VECTIS_BIN}" -a users --lockd-endpoint "${lockd_endpoint}" --login
+          "metrics-admin" --password "metrics-password"
+          --totp-code "287082" --time "89"
+  RESULT_VARIABLE default_window_result
+  OUTPUT_VARIABLE default_window_output
+  ERROR_VARIABLE default_window_error)
+if(NOT default_window_result EQUAL 0 OR NOT default_window_output MATCHES "authenticated=true")
+  message(FATAL_ERROR "default TOTP window rejected an adjacent period: ${default_window_error}")
+endif()
+
 execute_process(
   COMMAND "${VECTIS_BIN}" -a credentials --lockd-endpoint "${lockd_endpoint}"
           --issue --subject "metrics-agent" --purpose "metrics" --bearer
