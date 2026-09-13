@@ -367,6 +367,30 @@ for _, site in ipairs({"open", "disk"}) do
   assert(webdav.copy(request_opts(guard .. "/plain", {destination = base .. guard .. "/allowed-copy"})).status == 201)
   assert(webdav.move(request_opts(guard .. "/allowed-copy", {destination = base .. guard .. "/allowed-move"})).status == 201)
   assert(webdav.delete(request_opts(guard .. "/allowed-move")).status == 204)
+  for i, hidden in ipairs({".vectis-tmp-secret", ".vectis-txn-secret", ".vectis-tmp-dir/secret.txt", ".vectis-txn-dir/secret.txt"}) do
+    local src = "/hidden-source-" .. i
+    local dst = "/hidden-target-" .. i
+    assert(webdav.mkcol(request_opts(raw .. src)).ok)
+    assert(webdav.mkcol(request_opts(raw .. dst)).ok)
+    local directory = hidden:match("^(.+)/")
+    if directory then assert(webdav.mkcol(request_opts(raw .. src .. "/" .. directory)).ok) end
+    assert(webdav.put(request_opts(raw .. src .. "/" .. hidden, {body = "protected"})).ok)
+    assert(webdav.put(request_opts(raw .. dst .. "/keep.txt", {body = "keep"})).ok)
+    assert(webdav.delete(request_opts(guard .. src .. "/" .. hidden)).status == 404)
+    assert(webdav.delete(request_opts(guard .. src)).status == 404)
+    for _, operation in ipairs({webdav.copy, webdav.move}) do
+      assert(operation(request_opts(guard .. src, {destination = base .. guard .. dst})).status == 404)
+      -- Also protect hidden children removed by replacing the destination.
+      assert(operation(request_opts(guard .. dst, {destination = base .. guard .. src})).status == 404)
+      assert(webdav.get(request_opts(raw .. src .. "/" .. hidden)).body == "protected")
+      assert(webdav.get(request_opts(raw .. dst .. "/keep.txt")).body == "keep")
+    end
+    assert(webdav.copy(request_opts(guard .. dst, {destination = base .. guard .. src, depth = 0})).status == 404)
+    assert(webdav.copy(request_opts(guard .. src, {destination = base .. guard .. dst, depth = 0})).status == 201)
+    assert(webdav.get(request_opts(raw .. src .. "/" .. hidden)).body == "protected")
+    local listed = webdav.propfind(request_opts(raw .. src, {depth = 1}))
+    assert(listed.status == 207 and not listed.body:find(".vectis-", 1, true))
+  end
   for i, content_type in ipairs({"application/x-unknown", "application/xml"}) do
     local path = raw .. "/body-mkcol-" .. i
     assert(webdav.mkcol(request_opts(path, {body = "unsupported", headers = {["Content-Type"] = content_type}})).status == 415)

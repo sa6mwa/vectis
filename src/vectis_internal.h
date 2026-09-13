@@ -14,6 +14,12 @@ void vectis_smith_lockdc_diagnostic_message(const char *message, char *out,
                                             size_t out_capacity);
 
 struct http_request;
+/* Physical children for mutation authorization: no presentation/tombstone
+ * filtering, no symlink following. Non-directory entries are reported as
+ * leaves. Caller holds the storage mutation lock. */
+vectis_webdav_status vectis_internal_webdav_list_affected(
+    const vectis_webdav_config *config, const char *path,
+    vectis_webdav_list_callback callback, void *userdata);
 /* Preflight runs under the storage mutation lock. It must not mutate storage.
  */
 typedef int (*vectis_webdav_preflight_fn)(void *context);

@@ -72,6 +72,72 @@ static int check_mutation_lock(void *context) {
   return check->allow;
 }
 
+static int collect_affected(const char *path, vectis_webdav_entry_kind kind,
+                            size_t size, void *context) {
+  unsigned int *mask = context;
+  const char *name = strrchr(path, '/') + 1;
+  (void)size;
+  if (strcmp(name, "visible") == 0)
+    *mask |= 1u;
+  else if (strcmp(name, ".vectis-tmp-file") == 0)
+    *mask |= 2u;
+  else if (strcmp(name, ".vectis-txn-dir") == 0) {
+    assert(kind == VECTIS_WEBDAV_ENTRY_COLLECTION);
+    *mask |= 4u;
+  } else if (strcmp(name, "masked") == 0) {
+    assert(kind == VECTIS_WEBDAV_ENTRY_COLLECTION);
+    *mask |= 8u;
+  } else if (strcmp(name, "link") == 0) {
+    assert(kind == VECTIS_WEBDAV_ENTRY_FILE);
+    *mask |= 16u;
+  } else if (strcmp(name, "fifo") == 0) {
+    assert(kind == VECTIS_WEBDAV_ENTRY_FILE);
+    *mask |= 32u;
+  } else
+    assert(0);
+  return 1;
+}
+
+static void test_affected_enumeration(const vectis_webdav_config *config,
+                                      int direct) {
+  char path[VECTIS_WEBDAV_STORAGE_PATH_MAX];
+  unsigned int mask;
+  int lock_fd;
+  assert(vectis_webdav_mkcol(config, "/enumerate") == VECTIS_WEBDAV_OK);
+  assert(vectis_webdav_mkcol(config, "/enumerate/.vectis-txn-dir") ==
+         VECTIS_WEBDAV_OK);
+  assert(vectis_webdav_mkcol(config, "/enumerate/masked") == VECTIS_WEBDAV_OK);
+  assert(vectis_webdav_put(config, "/enumerate/visible",
+                           (const unsigned char *)"x", 1u) == VECTIS_WEBDAV_OK);
+  assert(vectis_webdav_put(config, "/enumerate/.vectis-tmp-file",
+                           (const unsigned char *)"x", 1u) == VECTIS_WEBDAV_OK);
+  assert(vectis_webdav_disk_path(config, "content", "/enumerate/link", path));
+  assert(symlink("masked", path) == 0);
+  assert(vectis_webdav_disk_path(config, "content", "/enumerate/fifo", path));
+  assert(mkfifo(path, 0600) == 0);
+  if (!direct) {
+    assert(vectis_webdav_disk_path(config, "tombstones", "/enumerate/masked",
+                                   path));
+    assert(vectis_webdav_touch_atomic(path));
+  }
+  mask = 0u;
+  assert(vectis_webdav_list(config, "/enumerate", collect_affected, &mask) ==
+         VECTIS_WEBDAV_OK);
+  assert(mask == (direct ? 9u : 1u));
+  lock_fd = vectis_webdav_lock(config);
+  assert(lock_fd >= 0);
+  mask = 0u;
+  assert(vectis_internal_webdav_list_affected(config, "/enumerate",
+                                              collect_affected,
+                                              &mask) == VECTIS_WEBDAV_OK);
+  assert(mask == 63u);
+  vectis_webdav_unlock(lock_fd);
+  assert(vectis_webdav_disk_path(config, "content", "/enumerate/link", path));
+  assert(unlink(path) == 0);
+  assert(vectis_webdav_disk_path(config, "content", "/enumerate/fifo", path));
+  assert(unlink(path) == 0);
+}
+
 static void test_authorization_preflight(const char *root) {
   vectis_webdav_config config;
   vectis_webdav_entry entry;
@@ -120,6 +186,7 @@ static void test_authorization_preflight(const char *root) {
     assert(vectis_internal_webdav_delete_authorized(
                &config, "/target", NULL, NULL, check_mutation_lock, &check) ==
            VECTIS_WEBDAV_OK);
+    test_affected_enumeration(&config, mode);
   }
 }
 

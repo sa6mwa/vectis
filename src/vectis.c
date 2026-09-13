@@ -15709,6 +15709,7 @@ vectis_webdav_child_visible(const vectis_webdav_route_data *data,
 typedef struct vectis_webdav_authorization_path {
   struct vectis_webdav_authorization_path *next;
   char *path;
+  vectis_webdav_entry_kind kind;
 } vectis_webdav_authorization_path;
 
 typedef struct vectis_webdav_authorization_walk {
@@ -15731,7 +15732,6 @@ static int vectis_webdav_authorize_child(const char *path,
                                          size_t size, void *context) {
   vectis_webdav_authorization_walk *walk = context;
   vectis_webdav_authorization_path *node;
-  (void)kind;
   (void)size;
   node = calloc(1u, sizeof(*node));
   if (node != NULL)
@@ -15744,12 +15744,15 @@ static int vectis_webdav_authorize_child(const char *path,
     return 0;
   }
   node->next = walk->pending;
+  node->kind = kind;
   walk->pending = node;
   return 1;
 }
 
 static int vectis_webdav_authorize_one(vectis_webdav_authorization_walk *walk,
-                                       const char *path) {
+                                       const char *path,
+                                       vectis_webdav_entry_kind kind,
+                                       int physical_child) {
   vectis_webdav_entry entry;
   vectis_webdav_status status;
   char mapped[VECTIS_WEBDAV_PATH_MAX + 1u];
@@ -15774,13 +15777,18 @@ static int vectis_webdav_authorize_one(vectis_webdav_authorization_walk *walk,
     if (walk->status != VECTIS_OK || !walk->authorized)
       goto done;
   }
-  status = vectis_webdav_lookup(&walk->data->storage, path, &entry);
+  if (physical_child) {
+    entry.kind = kind;
+    status = VECTIS_WEBDAV_OK;
+  } else {
+    status = vectis_webdav_lookup(&walk->data->storage, path, &entry);
+  }
   if (status == VECTIS_WEBDAV_NOT_FOUND || status == VECTIS_WEBDAV_TOMBSTONED)
     goto done;
   if (status == VECTIS_WEBDAV_OK && walk->recursive &&
       entry.kind == VECTIS_WEBDAV_ENTRY_COLLECTION) {
-    status = vectis_webdav_list(&walk->data->storage, path,
-                                vectis_webdav_authorize_child, walk);
+    status = vectis_internal_webdav_list_affected(
+        &walk->data->storage, path, vectis_webdav_authorize_child, walk);
   }
   if (status != VECTIS_WEBDAV_OK && walk->status == VECTIS_OK) {
     walk->status = VECTIS_ERR_STATE;
@@ -15794,12 +15802,12 @@ done:
 static int vectis_webdav_authorize_tree(vectis_webdav_authorization_walk *walk,
                                         const char *path) {
   vectis_webdav_authorization_path *node;
-  if (!vectis_webdav_authorize_one(walk, path))
+  if (!vectis_webdav_authorize_one(walk, path, VECTIS_WEBDAV_ENTRY_FILE, 0))
     goto cleanup;
   while (walk->pending != NULL) {
     node = walk->pending;
     walk->pending = node->next;
-    (void)vectis_webdav_authorize_one(walk, node->path);
+    (void)vectis_webdav_authorize_one(walk, node->path, node->kind, 1);
     free(node->path);
     free(node);
     if (walk->status != VECTIS_OK || !walk->authorized)

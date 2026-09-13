@@ -2710,10 +2710,10 @@ static int vectis_webdav_internal_entry(const char *name) {
          strncmp(name, ".vectis-txn-", sizeof(".vectis-txn-") - 1u) == 0;
 }
 
-vectis_webdav_status vectis_webdav_list(const vectis_webdav_config *config,
-                                        const char *path,
-                                        vectis_webdav_list_callback callback,
-                                        void *userdata) {
+static vectis_webdav_status
+vectis_webdav_list_impl(const vectis_webdav_config *config, const char *path,
+                        vectis_webdav_list_callback callback, void *userdata,
+                        int affected) {
   char normalized[VECTIS_WEBDAV_PATH_MAX + 1u];
   char disk[VECTIS_WEBDAV_STORAGE_PATH_MAX];
   char child_path[VECTIS_WEBDAV_PATH_MAX + 1u];
@@ -2747,7 +2747,8 @@ vectis_webdav_status vectis_webdav_list(const vectis_webdav_config *config,
       return VECTIS_WEBDAV_IO;
     }
     while ((item = readdir(directory)) != NULL) {
-      if (vectis_webdav_internal_entry(item->d_name)) {
+      if (strcmp(item->d_name, ".") == 0 || strcmp(item->d_name, "..") == 0 ||
+          (!affected && vectis_webdav_internal_entry(item->d_name))) {
         continue;
       }
       if (!vectis_webdav_list_path(normalized, item->d_name, child_path)) {
@@ -2760,7 +2761,7 @@ vectis_webdav_status vectis_webdav_list(const vectis_webdav_config *config,
         vectis_webdav_fd_close(&dir_fd);
         return VECTIS_WEBDAV_IO;
       }
-      if (S_ISREG(st.st_mode)) {
+      if (S_ISREG(st.st_mode) || (affected && !S_ISDIR(st.st_mode))) {
         if (!callback(child_path, VECTIS_WEBDAV_ENTRY_FILE, (size_t)st.st_size,
                       userdata)) {
           break;
@@ -2780,11 +2781,15 @@ vectis_webdav_status vectis_webdav_list(const vectis_webdav_config *config,
     return errno == ENOENT ? VECTIS_WEBDAV_NOT_FOUND : VECTIS_WEBDAV_IO;
   }
   while ((item = readdir(directory)) != NULL) {
-    if (vectis_webdav_internal_entry(item->d_name)) {
+    if (strcmp(item->d_name, ".") == 0 || strcmp(item->d_name, "..") == 0 ||
+        (!affected && vectis_webdav_internal_entry(item->d_name))) {
       continue;
     }
-    if (!vectis_webdav_list_path(normalized, item->d_name, child_path) ||
-        vectis_webdav_tombstone_exists(config, child_path)) {
+    if (!vectis_webdav_list_path(normalized, item->d_name, child_path)) {
+      (void)closedir(directory);
+      return VECTIS_WEBDAV_IO;
+    }
+    if (!affected && vectis_webdav_tombstone_exists(config, child_path)) {
       continue;
     }
     written =
@@ -2794,7 +2799,7 @@ vectis_webdav_status vectis_webdav_list(const vectis_webdav_config *config,
       (void)closedir(directory);
       return VECTIS_WEBDAV_IO;
     }
-    if (S_ISREG(st.st_mode)) {
+    if (S_ISREG(st.st_mode) || (affected && !S_ISDIR(st.st_mode))) {
       if (!callback(child_path, VECTIS_WEBDAV_ENTRY_FILE, (size_t)st.st_size,
                     userdata)) {
         break;
@@ -2807,4 +2812,17 @@ vectis_webdav_status vectis_webdav_list(const vectis_webdav_config *config,
   }
   (void)closedir(directory);
   return VECTIS_WEBDAV_OK;
+}
+
+vectis_webdav_status vectis_webdav_list(const vectis_webdav_config *config,
+                                        const char *path,
+                                        vectis_webdav_list_callback callback,
+                                        void *userdata) {
+  return vectis_webdav_list_impl(config, path, callback, userdata, 0);
+}
+
+vectis_webdav_status vectis_internal_webdav_list_affected(
+    const vectis_webdav_config *config, const char *path,
+    vectis_webdav_list_callback callback, void *userdata) {
+  return vectis_webdav_list_impl(config, path, callback, userdata, 1);
 }
