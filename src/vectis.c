@@ -40098,7 +40098,20 @@ vectis_status vectis_ssh_exec(const vectis_ssh_config *config,
   status = vectis_ssh_read_channel(session, channel, fd, config->timeout_ms,
                                    result, error);
   libssh2_session_set_blocking(session, 1);
-  result->exit_status = libssh2_channel_get_exit_status(channel);
+  if (status == VECTIS_OK) {
+    rc = libssh2_channel_wait_closed(channel);
+    if (rc != 0) {
+      status = rc == LIBSSH2_ERROR_TIMEOUT || rc == LIBSSH2_ERROR_SOCKET_TIMEOUT
+                   ? VECTIS_ERR_TIMEOUT
+                   : VECTIS_ERR_STATE;
+      vectis_set_error(error, status,
+                       "failed waiting for SSH remote completion");
+      if (error != NULL)
+        error->dependency_code = (long)rc;
+    } else {
+      result->exit_status = libssh2_channel_get_exit_status(channel);
+    }
+  }
   (void)libssh2_channel_close(channel);
   libssh2_channel_free(channel);
   libssh2_session_disconnect(session, "vectis shutdown");
@@ -40277,7 +40290,15 @@ vectis_status vectis_ssh_sftp_upload_file(const vectis_ssh_config *config,
     status = VECTIS_OK;
     vectis_error_clear(error);
   }
-  libssh2_sftp_close(remote);
+  rc = libssh2_sftp_close(remote);
+  if (rc != 0 && status == VECTIS_OK) {
+    status = VECTIS_ERR_STATE;
+    vectis_set_error(error, status, "failed to close remote SFTP upload file");
+    if (error != NULL) {
+      error->source = VECTIS_ERROR_SOURCE_LIBSSH2;
+      error->dependency_code = (long)rc;
+    }
+  }
   libssh2_sftp_shutdown(sftp);
   (void)fclose(local);
   libssh2_session_disconnect(session, "vectis shutdown");
