@@ -496,6 +496,186 @@ oauth2_mock_transport(const vectis_auth_oauth2_http_request *request,
   return VECTIS_OK;
 }
 
+static lc_client *fault_client;
+static int (*real_auth_acquire)(lc_client *, const lc_acquire_req *,
+                                lc_lease **, lc_error *);
+static const char *fail_release_prefix;
+static int fail_lookup;
+static int transient_acquires;
+static int injected_releases;
+static int rollback_releases;
+
+static int auth_release_failure(lc_lease *lease, const lc_release_req *request,
+                                lc_error *error) {
+  lc_release_op rollback;
+  lc_release_res result;
+  lc_error cleanup_error;
+  /* Roll back through the client API without consuming the local handle.
+   * The caller must close that handle after the injected release failure. */
+  lc_release_op_init(&rollback);
+  rollback.lease.namespace_name = lease->namespace_name;
+  rollback.lease.key = lease->key;
+  rollback.lease.lease_id = lease->lease_id;
+  rollback.lease.txn_id = lease->txn_id;
+  rollback.lease.fencing_token = lease->fencing_token;
+  rollback.rollback = 1;
+  memset(&result, 0, sizeof(result));
+  lc_error_init(&cleanup_error);
+  expect(fault_client->release(fault_client, &rollback, &result,
+                               &cleanup_error) == LC_OK,
+         "fault fixture rolls back durable lease");
+  lc_release_res_cleanup(&result);
+  lc_error_cleanup(&cleanup_error);
+  ++injected_releases;
+  rollback_releases += request->rollback != 0;
+  error->message = test_strdup("injected auth commit failure");
+  return LC_ERR_PROTOCOL;
+}
+
+static int auth_fault_acquire(lc_client *client, const lc_acquire_req *request,
+                              lc_lease **out, lc_error *error) {
+  int rc;
+  if (strcmp(request->key, "auth/v1/fault-transient") == 0)
+    ++transient_acquires;
+  if (fail_lookup &&
+      strstr(request->key, "auth/v1/tmp/users-find-") == request->key) {
+    fail_lookup = 0;
+    *out = NULL;
+    error->message = test_strdup("injected user lookup failure");
+    return LC_ERR_PROTOCOL;
+  }
+  rc = real_auth_acquire(client, request, out, error);
+  if (rc == LC_OK && fail_release_prefix != NULL &&
+      strncmp(request->key, fail_release_prefix, strlen(fail_release_prefix)) ==
+          0) {
+    (*out)->release = auth_release_failure;
+    fail_release_prefix = NULL;
+  }
+  return rc;
+}
+
+static void test_auth_storage_failures(vectis_app *app) {
+  vectis_auth_store_config store;
+  vectis_auth_user_config user;
+  vectis_auth_pending_login_issue_config issue;
+  vectis_auth_pending_login pending;
+  vectis_auth_pending_login_consume_config consume;
+  vectis_auth_pending_login_result pending_result;
+  vectis_auth_issue_config credential_config;
+  vectis_auth_issued_credential credential;
+  vectis_auth_issued_credential rejected;
+  vectis_auth_result result;
+  vectis_error error;
+  vectis_status status;
+  char authorization[1024];
+
+  vectis_error_clear(&error);
+  vectis_auth_store_config_init(&store);
+  store.app = app;
+  store.state_key = "auth/v1/fault-store";
+  store.transient_state_key = "auth/v1/fault-transient";
+  expect_ok(vectis_auth_store_init(&store, &error), &error,
+            "initializes fault-injection auth store");
+  vectis_auth_user_config_init(&user);
+  user.username = "fault-user";
+  user.password = "fixture-password";
+  expect_ok(vectis_auth_user_add_or_update(&store, &user, NULL, &error), &error,
+            "creates fault-injection user");
+  vectis_auth_pending_login_issue_config_init(&issue);
+  issue.store = store;
+  issue.username = user.username;
+  issue.password = user.password;
+  issue.transaction_id = "fault-login";
+  issue.now_seconds = 100u;
+  vectis_auth_issue_config_init(&credential_config);
+  credential_config.subject = "fault-user";
+  expect_ok(vectis_auth_issue_credential(&store, &credential_config,
+                                         &credential, &error),
+            &error, "issues credential for failed revocation");
+  snprintf(authorization, sizeof(authorization), "Bearer %s",
+           credential.api_key);
+
+  fault_client = vectis_lockd_client(app);
+  real_auth_acquire = fault_client->acquire;
+  fault_client->acquire = auth_fault_acquire;
+  fail_lookup = 1;
+  fail_release_prefix = store.state_key;
+  transient_acquires = 0;
+  status = vectis_auth_pending_login_issue(&issue, &pending, &error);
+  expect(status != VECTIS_OK && !pending.authenticated,
+         "lookup failure cannot authenticate through transient store");
+  expect(transient_acquires == 0, "lookup failure never opens transient store");
+  expect(strstr(error.message, "injected user lookup failure") != NULL,
+         "rollback failure preserves original lookup diagnostic");
+  expect(rollback_releases == 1, "failed lookup requests rollback");
+  vectis_auth_pending_login_cleanup(&pending);
+
+  fail_release_prefix = store.state_key;
+  status = vectis_auth_pending_login_issue(&issue, &pending, &error);
+  expect(status != VECTIS_OK && !pending.authenticated &&
+             transient_acquires == 0,
+         "auth lease release failure prevents transient store switch");
+  vectis_auth_pending_login_cleanup(&pending);
+
+  fail_release_prefix = store.transient_state_key;
+  status = vectis_auth_pending_login_issue(&issue, &pending, &error);
+  expect(status != VECTIS_OK && !pending.authenticated &&
+             pending.transaction_id == NULL,
+         "pending login commit failure clears authenticated output");
+  vectis_auth_pending_login_cleanup(&pending);
+  vectis_auth_pending_login_consume_config_init(&consume);
+  consume.store = store;
+  consume.username = user.username;
+  consume.transaction_id = issue.transaction_id;
+  consume.now_seconds = issue.now_seconds;
+  expect_ok(vectis_auth_pending_login_verify(&consume, &pending_result, &error),
+            &error, "reads pending login after failed commit");
+  expect(!pending_result.authenticated,
+         "failed pending login commit leaves no authenticating record");
+  vectis_auth_pending_login_result_cleanup(&pending_result);
+
+  fail_release_prefix = "auth/v1/tmp/users-find-";
+  transient_acquires = 0;
+  status = vectis_auth_pending_login_issue(&issue, &pending, &error);
+  expect(status != VECTIS_OK && !pending.authenticated &&
+             transient_acquires == 0,
+         "temporary rewrite commit failure propagates without authenticating");
+  vectis_auth_pending_login_cleanup(&pending);
+
+  fail_release_prefix = store.state_key;
+  status = vectis_auth_revoke_client(&store, credential.client_id, &error);
+  expect(status == VECTIS_ERR_STATE &&
+             error.source == VECTIS_ERROR_SOURCE_LOCKDC &&
+             error.dependency_code == LC_ERR_PROTOCOL &&
+             strstr(error.message, "injected auth commit failure") != NULL,
+         "revocation returns actionable commit failure");
+  expect_ok(vectis_auth_verify_authorization(&store, authorization,
+                                             VECTIS_AUTH_MODE_BEARER, &result,
+                                             &error),
+            &error, "reads credential after failed revocation");
+  expect(result.authenticated, "failed revocation did not commit");
+  vectis_auth_result_cleanup(&result);
+  fail_release_prefix = store.state_key;
+  status = vectis_auth_issue_credential(&store, &credential_config, &rejected,
+                                        &error);
+  expect(status == VECTIS_ERR_STATE && rejected.client_id == NULL &&
+             rejected.api_key == NULL,
+         "failed credential commit does not return an issued credential");
+  vectis_auth_issued_credential_cleanup(&rejected);
+  fail_release_prefix = store.state_key;
+  status = vectis_auth_verify_authorization(
+      &store, authorization, VECTIS_AUTH_MODE_BEARER, &result, &error);
+  expect(
+      status == VECTIS_ERR_STATE && !result.authenticated,
+      "failed read lease release does not authenticate or leak state buffer");
+  vectis_auth_result_cleanup(&result);
+  expect(injected_releases == 7, "all intended release faults exercised");
+  fault_client->acquire = real_auth_acquire;
+  expect_ok(vectis_auth_revoke_client(&store, credential.client_id, &error),
+            &error, "revocation succeeds after fault removal");
+  vectis_auth_issued_credential_cleanup(&credential);
+}
+
 int main(void) {
   char temp[] = "/tmp/vectis-auth-unit.XXXXXX";
   char endpoint[4096];
@@ -1904,6 +2084,7 @@ int main(void) {
   vectis_mutable_bytes_cleanup(&basic_authorization);
   vectis_internal_request_free(webdav_vectis_request);
   expect_no_auth_temporary_records(app);
+  test_auth_storage_failures(app);
   app->close(app);
   remove_tree(temp);
   return failures == 0 ? 0 : 1;
