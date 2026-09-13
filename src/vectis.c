@@ -14326,6 +14326,8 @@ static vectis_status vectis_static_embedded_response(
   vectis_static_embedded_range range;
   char content_range[96];
   int has_etag;
+  const char *if_match;
+  int match;
 
   content_type =
       entry->content_type != NULL ? entry->content_type : data->content_type;
@@ -14348,6 +14350,13 @@ static vectis_status vectis_static_embedded_response(
   if (vectis_response_header(response, "accept-ranges", "bytes", error) !=
       VECTIS_OK) {
     return error != NULL ? error->code : VECTIS_ERR_INVALID;
+  }
+  if_match = vectis_request_header(request, "if-match");
+  if (if_match != NULL) {
+    match = vectis_internal_webdav_tag_matches(
+        if_match, has_etag ? entry->etag : "", 1, 1);
+    if (match != 1)
+      return vectis_response_status(response, match < 0 ? 400 : 412, error);
   }
   if (has_etag &&
       vectis_static_embedded_if_none_match(

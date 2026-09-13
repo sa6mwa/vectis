@@ -4228,6 +4228,15 @@ static void assert_kore_smoke(void) {
   const char *embedded_if_none_match_headers[] = {
       "If-None-Match: "
       "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\""};
+  const char *embedded_match_cases[] = {
+      "If-Match: \"wrong\"",
+      "If-Match: "
+      "W/\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\"",
+      "If-Match: *",
+      "If-Match: \"wrong\", "
+      "\"8a8f60ecb09b7e64c6d5214a8043865e608507db8c3f61f995eae6d078875901\""};
+  const char *match_headers[4];
+  unsigned match_case;
   const char *embedded_if_none_match_miss_headers[] = {
       "If-None-Match: \"different\"", "Range: bytes=1-2"};
   const char *embedded_range_headers[] = {"Range: bytes=1-2"};
@@ -4971,6 +4980,20 @@ static void assert_kore_smoke(void) {
   request.method = VECTIS_HTTP_GET;
   request.url = format_loopback_http_url(url, sizeof(url), port,
                                          "/embedded/assets/app.txt");
+  for (match_case = 0u; match_case < 4u; ++match_case) {
+    match_headers[0] = embedded_match_cases[match_case];
+    match_headers[1] = "If-None-Match: *";
+    match_headers[2] = "Range: bytes=999-1000";
+    request.headers = match_headers;
+    request.header_count = 3u;
+    status = vectis_http_execute(&http, &request,
+                                 &embedded_not_modified_response, &error);
+    assert(status == VECTIS_OK);
+    assert(embedded_not_modified_response.status_code ==
+           (match_case < 2u ? 412L : 304L));
+    assert(embedded_not_modified_response.body_size == 0u);
+    vectis_http_response_cleanup(&embedded_not_modified_response);
+  }
   request.headers = embedded_if_none_match_headers;
   request.header_count = 1u;
   status = vectis_http_execute(&http, &request, &embedded_not_modified_response,
@@ -5212,6 +5235,23 @@ static void assert_kore_smoke(void) {
   assert(embedded_webdav_get_response.body_size == 4u);
   assert(memcmp(embedded_webdav_get_response.body, "app\n", 4u) == 0);
   vectis_http_response_cleanup(&embedded_webdav_get_response);
+
+  for (match_case = 0u; match_case < 4u; ++match_case) {
+    match_headers[0] = embedded_match_cases[match_case];
+    match_headers[1] = "If-None-Match: *";
+    match_headers[2] = "Range: bytes=999-1000";
+    match_headers[3] = webdav_headers[0];
+    request.headers = match_headers;
+    request.header_count = 4u;
+    request.method = VECTIS_HTTP_HEAD;
+    status = vectis_http_execute(&http, &request, &embedded_webdav_get_response,
+                                 &error);
+    assert(status == VECTIS_OK);
+    assert(embedded_webdav_get_response.status_code ==
+           (match_case < 2u ? 412L : 304L));
+    assert(embedded_webdav_get_response.body_size == 0u);
+    vectis_http_response_cleanup(&embedded_webdav_get_response);
+  }
 
   vectis_http_request_init(&request);
   request.method = VECTIS_HTTP_PUT;
